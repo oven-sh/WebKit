@@ -113,6 +113,12 @@ bool Lowering::tryLowerAllocation(Node* node)
     auto newFunction = [&](VirtualRegister scope, unsigned index, bool isExpression, FunctionKind kind) {
         LValue closedOver = node->scopeToStartFrom ? ancestorScope(node->scopeToStartFrom, node->remainingHops) : lowCell(node->use(scope));
         const KnownFunction* made = Graph::functionMadeBy(node);
+        if (Graph::makesNoFunctionObject(node)) {
+            RELEASE_ASSERT(kind == FunctionKind::Normal && made->summary->captures.isEmpty());
+            m_graph.remark("no-function-object"_s, made->executable->ecmaName().string());
+            setJSValue(node, closedOver);
+            return true;
+        }
         if (made && made->summary && !made->summary->captures.isEmpty()) {
             RELEASE_ASSERT(kind == FunctionKind::Normal || kind == FunctionKind::Async);
             auto& captures = made->summary->captures;
@@ -374,9 +380,15 @@ bool Lowering::tryLowerAllocation(Node* node)
         }));
         return true;
     }
-    case op_new_array_with_size:
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSize, m_instance, lowJSValue(node->use(node->as<OpNewArrayWithSize>().m_length))));
+    case op_new_array_with_size: {
+        LValue length = lowJSValue(node->use(node->as<OpNewArrayWithSize>().m_length));
+        if (usesDataStubs())
+            m_graph.remark("allocates-sized-array-through-helper"_s);
+        setJSValue(node, withHelper(Stub::HelperNewArrayWithSize, { length }, [&] {
+            return vmCall(node, pointerType(), Entry::operationAOTNewArrayWithSize, m_instance, length);
+        }));
         return true;
+    }
     case op_new_array_buffer: {
         LValue butterfly = lowCell(node->use(node->as<OpNewArrayBuffer>().m_immutableButterfly));
         setJSValue(node, withHelper(Stub::HelperNewArrayBuffer, { butterfly }, [&] {
@@ -583,9 +595,11 @@ void Lowering::lowerToThis(Node* node)
 
     m_out.appendTo(cellCase, objectCase);
     LValue type = cellType(value);
+    static_assert(ObjectType < FirstScopeType);
     if (isStrict)
-        results.append(m_out.anchor(value));
-    m_out.branch(m_out.aboveOrEqual(type, m_out.constInt32(ObjectType)), usually(objectCase), rarely(notObjectCase));
+        m_out.jump(objectCase);
+    else
+        m_out.branch(m_out.aboveOrEqual(type, m_out.constInt32(ObjectType)), usually(objectCase), rarely(slowCase));
 
     m_out.appendTo(objectCase, slowCase);
     results.append(m_out.anchor(value));
@@ -757,7 +771,9 @@ bool Lowering::tryLowerConversion(Node* node)
             return true;
         }
         LValue values = storeToScratch(node, bytecode.m_src, bytecode.m_count);
-        setJSValue(node, vmCall(node, Int64, Entry::operationAOTStrcat, m_instance, values, m_out.constInt32(bytecode.m_count)));
+        LValue count = m_out.constInt32(bytecode.m_count);
+        auto callOperation = [&] { return vmCall(node, Int64, Entry::operationAOTStrcat, m_instance, values, count); };
+        setJSValue(node, bytecode.m_count >= 2 && bytecode.m_count <= 5 ? withHelper(Stub::HelperStrcat, { values, count }, callOperation) : callOperation());
         return true;
     }
     case op_get_prototype_of: {

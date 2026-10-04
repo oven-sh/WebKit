@@ -88,6 +88,12 @@ static void countFailure(Slot* cache)
         cache->offset += 1u << Slot::attemptsShift;
 }
 
+static bool abandon(Slot* cache)
+{
+    cache->offset |= Slot::attemptsMask;
+    return false;
+}
+
 static bool tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
 static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
@@ -436,8 +442,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
     uint32_t attempts = (cache->offset & Slot::attemptsMask) >> Slot::attemptsShift;
     if (attempts == Slot::maxAttempts)
         return false;
-    constexpr uint32_t maxRetryAttempts = 4;
-    if (attempts >= maxRetryAttempts) {
+    if (attempts >= Slot::maxAttemptsForInheritedProperty) {
         cache->offset |= Slot::attemptsMask;
         return false;
     }
@@ -616,7 +621,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
     if (!base.isCell() || (!slot.isCacheablePut() && !slot.isTypedFieldCacheablePut()) || slot.base() != base.asCell())
         return false;
     if (!oldStructure->propertyAccessesAreCacheable() || oldStructure->isDictionary() || oldStructure->mayBePrototype())
-        return false;
+        return abandon(cache);
 
     VM& vm = globalObject->vm();
     JSCell* cell = base.asCell();
@@ -654,7 +659,7 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
     }
 
     if (newStructure->isDictionary() || newStructure->previousID() != oldStructure || oldStructure->outOfLineCapacity() != newStructure->outOfLineCapacity())
-        return false;
+        return abandon(cache);
 
     if (isDirect)
         stopWatching(data, cache);
@@ -753,7 +758,13 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
 
     if (oldStructure->isDictionary() || newStructure->isDictionary() || oldStructure->mayBePrototype() || newStructure->previousID() != oldStructure || !newStructure->propertyAccessesAreCacheable())
         return;
-    cache.initAsTransition(oldStructure->id(), newStructure->id(), uid, slot.cachedOffset(), newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity());
+    uint8_t reallocating = 0;
+    if (newStructure->outOfLineCapacity() != oldStructure->outOfLineCapacity()) {
+        bool allocatesInitialStorage = !oldStructure->outOfLineCapacity() && newStructure->outOfLineCapacity() == initialOutOfLineCapacity && slot.cachedOffset() == firstOutOfLineOffset
+            && oldStructure->typeInfo().type() == FinalObjectType && !hasIndexedProperties(oldStructure->indexingType());
+        reallocating = allocatesInitialStorage ? MegamorphicCache::StoreEntry::allocatesInitialOutOfLineStorage : MegamorphicCache::StoreEntry::reallocates;
+    }
+    cache.initAsTransition(oldStructure->id(), newStructure->id(), uid, slot.cachedOffset(), reallocating);
 }
 
 void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator allocator)
@@ -761,7 +772,15 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
     if (!allocator || SharedData::contains(cache))
         return;
     cache[0].clear();
-    fill(vm, data, &cache[2], first, 0, nullptr);
+    Slot& transition = cache[2];
+    transition.structureID = StructureID();
+    WTF::storeStoreFence();
+    transition.offset = 0;
+    transition.pointer = nullptr;
+    transition.newStructureID = last->id();
+    WTF::storeStoreFence();
+    transition.structureID = first->id();
+    data->instance->noteTransitionCached(&transition);
     fillAllocationCache(vm, data, cache, last, allocator, last->inlineCapacity(), callee);
 }
 

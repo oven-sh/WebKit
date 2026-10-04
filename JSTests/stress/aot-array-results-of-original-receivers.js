@@ -111,8 +111,7 @@ check(secondOfChain(new Listed(1, 2), x => x), "2[1,2] of a subclass", "the seco
 check(mapCalledOn({ length: 1, 0: 5 }, x => x) + mapCalledOn(withSpecies, x => x), "1[5]0object:odd", "Array.prototype.map called on an object and on an array with its own constructor");
 check(constructsSubclass(1, 2), "2[2,3] of a subclass", "map of a new instance of a subclass");
 for (let f of untyped)
-    doesNotApply(f, typedMethod);
-applies(mapsAnythingWithClosure, plainArray);
+    doesNotApply(f, typedMethod, plainArray);
 
 function extendsArray() { return class extends Array { }; }
 function extendsMapByName() { class Named extends Map { } return Named; }

@@ -41,6 +41,7 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     function equalsThree(s) { return s === "ert"; }
     function equalsEight(s) { return s === "ertyuiop"; }
     function equalsLong(s) { return s === "ertyuiopasdfg"; }
+    function equalsLonger(s) { return s === "ertyuiopasdfghjkl"; }
     function differsFromShort(s) { return s !== "ertyui"; }
     function startsWith(s) { return s.startsWith("ert"); }
     function endsWith(s) { return s.endsWith("yui"); }
@@ -73,9 +74,9 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     };
     const six = [slice(2, 8), slice(2, 8), slice(2, 8), slice(2, 8), slice(2, 8), slice(2, 8)];
     const otherSix = [slice(3, 9), slice(3, 9), slice(3, 9), slice(3, 9)];
-    const three = slice(2, 5), eight = slice(2, 10), thirteen = slice(2, 15), startsRight = slice(2, 9), startsWrong = slice(3, 9), endsRight = slice(1, 8), endsWrong = slice(1, 9);
+    const three = slice(2, 5), eight = slice(2, 10), thirteen = slice(2, 15), seventeen = slice(2, 19), startsRight = slice(2, 9), startsWrong = slice(3, 9), endsRight = slice(1, 8), endsWrong = slice(1, 9);
     becomesWide(narrow);
-    for (let string of [...six, ...otherSix, three, eight, thirteen, startsRight, startsWrong, endsRight, endsWrong])
+    for (let string of [...six, ...otherSix, three, eight, thirteen, seventeen, startsRight, startsWrong, endsRight, endsWrong])
         check(isRope(string), true, "the slices are still ropes");
 
     check(equalsShort(six[0]), true, "a slice and a literal of 6 characters");
@@ -84,6 +85,7 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
     check(equalsThree(three), true, "a slice and a literal of 3 characters");
     check(equalsEight(eight), true, "a slice and a literal of 8 characters");
     check(equalsLong(thirteen), true, "a slice and a literal of 13 characters");
+    check(equalsLonger(seventeen), true, "a slice and a literal of 17 characters");
     check(startsWith(startsRight), true, "startsWith on a slice");
     check(endsWith(endsRight), true, "endsWith on a slice");
     check(startsWith(startsWrong), false, "startsWith on another slice");
@@ -130,7 +132,8 @@ const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetByI
         applies("literalInLoopWithCall", "calls:IsStringEqualTo");
         applies("countInLoopWithCall", "calls:IsStringEqualTo");
         applies("equalsShort", "short-literal-comparison");
-        applies("equalsLong", "calls:IsStringEqualToConstant");
+        applies("equalsLong", "calls:IsStringEqualToLiteral9To16");
+        applies("equalsLonger", "calls:IsStringEqualToConstant");
         applies("startsWith", "calls:Latin1Characters");
     }
 })();

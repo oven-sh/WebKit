@@ -153,6 +153,7 @@ enum class Escape : uint8_t {
     ClosureLetsScopeOut,
     Iterated,
     Converted,
+    InheritedAccessor,
     Suspended,
     Other,
     NumberOfThem,
@@ -326,6 +327,7 @@ struct BasicBlock {
     bool isReentry { false };
     bool isRarelyExecuted { false };
 
+    BasicBlock* splitFrom { nullptr };
     BasicBlock* immediateDominator { nullptr };
     unsigned rpoIndex { 0 };
     unsigned dominatorPreNumber { 0 };
@@ -467,7 +469,6 @@ public:
     static CallOperands callOperands(const JSInstruction*);
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
     static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
-    static std::optional<TypeTable::FieldType> fieldTypeReadFromLayout(const Node* read, uint32_t layoutID);
     static std::optional<TypeTable::FieldType> fieldTypeInLayout(uint32_t layoutID, UniquedStringImpl* name);
     static bool isEscapingFunctionThis(const Node*);
     static std::optional<TypeTable::Field> typedBaseField(const Node* base, UniquedStringImpl* name);
@@ -476,6 +477,7 @@ public:
     void noteClassesDefined();
     static uint32_t closedMethodReadBy(const Node*);
     static const KnownFunction* functionMadeBy(const Node*);
+    static bool makesNoFunctionObject(const Node*);
     uint16_t thisLayoutID() const;
     Type thisTypeOnEntry() const;
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
@@ -521,7 +523,10 @@ public:
     {
         m_variableSummaries = summaries;
         m_summaryReader = reader;
+        m_canonicalScopes = summaries;
     }
+    void setCanonicalScopes(const VariableSummaries* summaries) { m_canonicalScopes = summaries; }
+    const void* canonicalScope(const void* scope) const { return m_canonicalScopes ? m_canonicalScopes->canonicalScope(scope) : scope; }
     VariableSummaries* variableSummaries() const { return m_variableSummaries; }
     void setNameForLog(const String& name) { m_nameForLog = name; }
     const String& nameForLog() const { return m_nameForLog; }
@@ -654,6 +659,7 @@ private:
     const CalleeHints* m_hints { nullptr };
     const FunctionSummary* m_summary { nullptr };
     VariableSummaries* m_variableSummaries { nullptr };
+    const VariableSummaries* m_canonicalScopes { nullptr };
     UncheckedKeyHashMap<std::pair<UnlinkedCodeBlock*, int>, Node*> m_constantCellsOfOtherCode;
     String m_nameForLog;
     unsigned m_summaryReader { VariableSummaries::nobody };
@@ -719,13 +725,20 @@ void clearDeadFrameSlots(Graph&);
 bool mayPromoteEnvironmentsOf(Graph&);
 void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const FunctionSummary* current);
 void scalarReplaceReadOnlyObjects(Graph&);
+bool foldBranchesOnKnownValues(Graph&);
+void foldBranchesDecidedByTypes(Graph&);
+std::optional<bool> isBranchTakenAccordingToTypes(Node* branch);
 void replaceReadsOfConstantObjects(Graph&);
 bool isAbsentFromObjectPrototype(UniquedStringImpl*);
 
 inline UnlinkedCodeBlock* Node::codeBlockOfConstant() const { return ownerOfConstant ? ownerOfConstant : graph->codeBlock(); }
 void recordReturnedLiterals(Graph&);
 void planMultiValueReturns(Graph&);
-uint32_t escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);
+struct EscapingParameters {
+    uint32_t ifPlainObjects { 0 };
+    uint32_t otherwise { 0 };
+};
+EscapingParameters escapingParameters(Graph&, Vector<const KnownFunction*>* calleesRead);
 
 } } // namespace JSC::AOT
 

@@ -75,6 +75,8 @@ ASCIILiteral nameOf(Escape escape)
         return "iterated or spread"_s;
     case Escape::Converted:
         return "converted, compared loosely or tested with instanceof"_s;
+    case Escape::InheritedAccessor:
+        return "read or written where its prototype may get an accessor"_s;
     case Escape::Suspended:
         return "yielded, awaited or kept by a generator"_s;
     case Escape::Other:
@@ -162,8 +164,9 @@ public:
         }
     }
 
-    uint32_t escapingParameters()
+    uint32_t escapingParameters(bool argumentsArePlainObjects)
     {
+        m_argumentsArePlainObjects = argumentsArePlainObjects;
         UnlinkedCodeBlock* code = m_graph.codeBlock();
         if (code->codeType() != FunctionCode || (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode))
             return std::numeric_limits<uint32_t>::max();
@@ -272,7 +275,7 @@ private:
         return result;
     }
 
-    Verdict escapeThroughCall(Node* call, VirtualRegister reg, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isTailCall, bool isParameter)
+    Verdict escapeThroughCall(Node* call, VirtualRegister reg, VirtualRegister calleeRegister, unsigned argc, unsigned argv, bool isTailCall, bool isParameter, bool isPlainObject)
     {
         if (reg == calleeRegister)
             return { };
@@ -288,7 +291,7 @@ private:
         if (known && isExact && known->forCall && known->summary) {
             if (m_calleesConsulted && !m_calleesConsulted->contains(known))
                 m_calleesConsulted->append(known);
-            uint32_t mask = known->summary->escapingParameters.load(std::memory_order_relaxed);
+            uint32_t mask = (isPlainObject ? known->summary->escapingParameters : known->summary->escapingParametersUnlessPlainObjects).load(std::memory_order_relaxed);
             bool isTracked = static_cast<unsigned>(index) < FunctionSummary::maxTrackedEscapingParameters;
             bool isDeclared = static_cast<unsigned>(index) < known->forCall->numParameters();
             bool leaksValue = (isTracked && (mask >> index & 1)) || ((!isTracked || !isDeclared) && (mask & FunctionSummary::extraArgumentsEscape));
@@ -331,10 +334,18 @@ private:
             return escapes(Escape::Other);
         }
 
-        bool isLocallyAllocatedArray = !isParameter && allocationKind(value) == AllocationKind::Array;
+        bool isLocallyAllocatedDenseArray = !isParameter && (value->isBytecode(op_new_array) || value->isBytecode(op_new_array_with_spread) || value->isBytecode(op_create_rest));
+        bool isPlainObject = isParameter ? m_argumentsArePlainObjects : allocationKind(value) == AllocationKind::Object;
+        Verdict unlessInherited = isPlainObject ? Verdict { } : escapes(Escape::InheritedAccessor);
+        auto unlessInheritedAt = [&](VirtualRegister property) {
+            Node* index = user->use(property);
+            if (!isParameter && value->isBytecode(op_new_array) && index->isInt32Constant() && static_cast<uint32_t>(index->constant.asInt32()) < value->as<OpNewArray>().m_argc)
+                return Verdict { };
+            return unlessInherited;
+        };
         switch (user->opcode) {
         case op_get_by_id:
-            return reg == user->as<OpGetById>().m_base ? Verdict { } : escapes(Escape::Other);
+            return reg == user->as<OpGetById>().m_base ? unlessInherited : escapes(Escape::Other);
         case op_get_by_id_direct:
         case op_get_length:
         case op_in_by_id:
@@ -375,11 +386,11 @@ private:
         case op_set_function_name:
             return { };
         case op_get_by_val:
-            return reg == user->as<OpGetByVal>().m_base ? Verdict { } : escapes(Escape::Converted);
+            return reg == user->as<OpGetByVal>().m_base ? unlessInheritedAt(user->as<OpGetByVal>().m_property) : escapes(Escape::Converted);
         case op_in_by_val:
             return reg == user->as<OpInByVal>().m_base ? Verdict { } : escapes(Escape::Converted);
         case op_del_by_val:
-            return reg == user->as<OpDelByVal>().m_base ? Verdict { } : escapes(Escape::Converted);
+            return reg == user->as<OpDelByVal>().m_base ? unlessInherited : escapes(Escape::Converted);
 
         case op_check_type:
         case op_type_tag:
@@ -394,10 +405,10 @@ private:
             auto bytecode = user->as<OpPutById>();
             if (reg == bytecode.m_value)
                 return escapes(Escape::StoredInProperty);
-            return user->graph->codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->underscoreProto ? escapes(Escape::Other) : Verdict { };
+            return user->graph->codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->underscoreProto ? escapes(Escape::Other) : unlessInherited;
         }
         case op_put_by_val:
-            return reg == user->as<OpPutByVal>().m_base ? Verdict { } : reg == user->as<OpPutByVal>().m_value ? escapes(Escape::StoredInProperty) : escapes(Escape::Converted);
+            return reg == user->as<OpPutByVal>().m_base ? unlessInheritedAt(user->as<OpPutByVal>().m_property) : reg == user->as<OpPutByVal>().m_value ? escapes(Escape::StoredInProperty) : escapes(Escape::Converted);
         case op_put_by_val_direct:
             return reg == user->as<OpPutByValDirect>().m_base ? Verdict { } : reg == user->as<OpPutByValDirect>().m_value ? escapes(Escape::StoredInProperty) : escapes(Escape::Converted);
         case op_put_to_scope:
@@ -435,15 +446,15 @@ private:
 
         case op_call: {
             auto bytecode = user->as<OpCall>();
-            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, isParameter);
+            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, isParameter, isPlainObject);
         }
         case op_call_ignore_result: {
             auto bytecode = user->as<OpCallIgnoreResult>();
-            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, isParameter);
+            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, false, isParameter, isPlainObject);
         }
         case op_tail_call: {
             auto bytecode = user->as<OpTailCall>();
-            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, user->graph->isInTailPosition, isParameter);
+            return escapeThroughCall(user, reg, bytecode.m_callee, bytecode.m_argc, bytecode.m_argv, user->graph->isInTailPosition, isParameter, isPlainObject);
         }
         case op_construct:
             return escapes(reg == user->as<OpConstruct>().m_callee ? Escape::Constructed : Escape::PassedInList);
@@ -468,7 +479,7 @@ private:
         case op_iterator_next:
         case op_iterator_close_check:
         case op_new_array_with_spread:
-            return isLocallyAllocatedArray && user->opcode == op_spread ? Verdict { } : escapes(Escape::Iterated);
+            return isLocallyAllocatedDenseArray && user->opcode == op_spread ? Verdict { } : escapes(Escape::Iterated);
 
         case op_eq:
         case op_neq:
@@ -491,6 +502,7 @@ private:
 
     Graph& m_graph;
     Vector<const KnownFunction*>* m_calleesConsulted;
+    bool m_argumentsArePlainObjects { false };
     UncheckedKeyHashMap<Node*, Vector<User, 4>> m_users;
     UncheckedKeyHashMap<Node*, Escape> m_escapes;
 };
@@ -925,6 +937,44 @@ void saveRegistersAtDefinitions(Graph& graph)
     unsigned frameIndex = graph.registerIndex(frameRegister);
     unsigned numberOfSavesElided = 0;
     unsigned numberOfStoresAdded = 0;
+    unsigned numberOfRestoredValuesNotSaved = 0;
+    auto elideSavesOfRestoredValues = [&](unsigned slot, const Vector<Node*, 4>& saves) {
+        UncheckedKeyHashMap<Node*, Vector<Node*, 2>> users;
+        UncheckedKeyHashSet<Node*> seen;
+        Vector<Node*, 8> worklist;
+        Vector<Node*, 8> changed;
+        for (Node* save : saves) {
+            if (!save->block->terminal()->isBytecode(op_ret))
+                return;
+            worklist.append(save->use(save->as<OpPutToScope>().m_value));
+        }
+        while (!worklist.isEmpty()) {
+            Node* value = worklist.takeLast();
+            if (!seen.add(value).isNewEntry)
+                continue;
+            if (value->kind == NodeKind::Phi || value->kind == NodeKind::Narrow || value->isBytecode(op_type_tag) || value->isBytecode(op_check_type)) {
+                for (auto& use : value->uses) {
+                    users.add(use.node, Vector<Node*, 2> { }).iterator->value.append(value);
+                    worklist.append(use.node);
+                }
+            } else if (!value->isBytecode(op_get_from_scope) || slotOf(value) != std::optional<unsigned> { slot })
+                changed.append(value);
+        }
+        UncheckedKeyHashSet<Node*> mayHaveChanged;
+        while (!changed.isEmpty()) {
+            Node* value = changed.takeLast();
+            if (!mayHaveChanged.add(value).isNewEntry)
+                continue;
+            if (auto it = users.find(value); it != users.end())
+                changed.appendVector(it->value);
+        }
+        for (Node* save : saves) {
+            if (mayHaveChanged.contains(save->use(save->as<OpPutToScope>().m_value)))
+                continue;
+            save->isElided = true;
+            ++numberOfRestoredValuesNotSaved;
+        }
+    };
     for (auto& [slot, saves] : savesBySlot) {
         Vector<Node*, 4> definitions;
         bool works = true;
@@ -957,10 +1007,14 @@ void saveRegistersAtDefinitions(Graph& graph)
                 break;
             }
         }
-        if (!works || definitions.size() != 1)
+        if (!works || definitions.size() != 1) {
+            elideSavesOfRestoredValues(slot, saves);
             continue;
-        if (Node* definition = definitions[0]; definition->kind == NodeKind::Bytecode && (definition->graph != &graph || frameIndex >= definition->block->valuesAtTail.size() || !definition->block->valuesAtTail[frameIndex]))
+        }
+        if (Node* definition = definitions[0]; definition->kind == NodeKind::Bytecode && (definition->graph != &graph || frameIndex >= definition->block->valuesAtTail.size() || !definition->block->valuesAtTail[frameIndex])) {
+            elideSavesOfRestoredValues(slot, saves);
             continue;
+        }
         Node* like = saves[0];
         for (Node* definition : definitions) {
             bool comesBeforeFrame = !definition->block || definition->kind != NodeKind::Bytecode || (definition->block != frame->block && definition->block->dominates(frame->block))
@@ -992,6 +1046,8 @@ void saveRegistersAtDefinitions(Graph& graph)
         graph.remark("saves-at-definition"_s, String::number(numberOfStoresAdded));
         graph.remark("does-not-save-at-suspension"_s, String::number(numberOfSavesElided));
     }
+    if (numberOfRestoredValuesNotSaved)
+        graph.remark("does-not-save-restored-value"_s, String::number(numberOfRestoredValuesNotSaved));
 }
 
 void clearDeadFrameSlots(Graph& graph)
@@ -1132,7 +1188,7 @@ void recordScopes(Graph& graph, VariableSummaries& summaries, const FunctionSumm
         for (const void* scope : local.values())
             mustExist.append({ scope, why });
         if (const DeclaredNamesLink* declaredNames = declaredNamesFor(graph.codeBlock()))
-            declaredNames->forEachScope([&](const void* scope) { mustExist.append({ scope, why }); });
+            declaredNames->forEachScope([&](const void* scope) { mustExist.append({ graph.canonicalScope(scope), why }); });
     };
     Vector<BasicBlock*, 8> blocksResumedIn;
     if (isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode())) {
@@ -1751,6 +1807,351 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
     }
 }
 
+static bool isFreshObject(const Node* node)
+{
+    return node->isBytecode(op_new_object) || node->isBytecode(op_new_array) || node->isBytecode(op_new_array_buffer) || node->isBytecode(op_new_func_exp);
+}
+
+static bool isKnownPrimitive(const Node* node)
+{
+    return node->kind == NodeKind::Constant && node->constant;
+}
+
+static const StringImpl* knownString(const Node* node)
+{
+    if (node->kind != NodeKind::ConstantCell || !node->reg.isConstant())
+        return nullptr;
+    JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
+    return constant && constant.isString() ? asString(constant)->tryGetValueImpl() : nullptr;
+}
+
+static std::optional<bool> negated(std::optional<bool> value)
+{
+    if (!value)
+        return std::nullopt;
+    return !*value;
+}
+
+static std::optional<bool> knownTruthiness(const Node* value)
+{
+    if (isFreshObject(value))
+        return true;
+    if (const StringImpl* string = knownString(value))
+        return !!string->length();
+    if (!isKnownPrimitive(value))
+        return std::nullopt;
+    if (value->constant.isBoolean())
+        return value->constant.asBoolean();
+    if (value->constant.isUndefinedOrNull())
+        return false;
+    if (!value->constant.isNumber())
+        return std::nullopt;
+    double number = value->constant.asNumber();
+    return number < 0 || number > 0;
+}
+
+static std::optional<bool> isKnownToBeUndefinedOrNull(const Node* value)
+{
+    if (isFreshObject(value) || knownString(value))
+        return false;
+    if (!isKnownPrimitive(value))
+        return std::nullopt;
+    return value->constant.isUndefinedOrNull();
+}
+
+static std::optional<bool> areKnownToBeStrictlyEqual(const Node* left, const Node* right)
+{
+    const StringImpl* leftString = knownString(left);
+    const StringImpl* rightString = knownString(right);
+    if (leftString && rightString)
+        return WTF::equal(leftString, rightString);
+    unsigned numberOfKinds = (isFreshObject(left) || isFreshObject(right)) + (leftString || rightString) + (isKnownPrimitive(left) || isKnownPrimitive(right));
+    if (numberOfKinds == 2)
+        return false;
+    if (!isKnownPrimitive(left) || !isKnownPrimitive(right))
+        return std::nullopt;
+    if (left->constant.isNumber() && right->constant.isNumber())
+        return left->constant.asNumber() == right->constant.asNumber();
+    return left->constant == right->constant;
+}
+
+static std::optional<bool> knownResultOfTest(const Node* node)
+{
+    switch (node->opcode) {
+    case op_stricteq:
+        return areKnownToBeStrictlyEqual(node->use(node->as<OpStricteq>().m_lhs), node->use(node->as<OpStricteq>().m_rhs));
+    case op_nstricteq:
+        return negated(areKnownToBeStrictlyEqual(node->use(node->as<OpNstricteq>().m_lhs), node->use(node->as<OpNstricteq>().m_rhs)));
+    case op_not:
+        return negated(knownTruthiness(node->use(node->as<OpNot>().m_operand)));
+    case op_is_undefined_or_null:
+        return isKnownToBeUndefinedOrNull(node->use(node->as<OpIsUndefinedOrNull>().m_operand));
+    case op_eq_null:
+        return isKnownToBeUndefinedOrNull(node->use(node->as<OpEqNull>().m_operand));
+    case op_neq_null:
+        return negated(isKnownToBeUndefinedOrNull(node->use(node->as<OpNeqNull>().m_operand)));
+    case op_typeof_is_undefined: {
+        Node* operand = node->use(node->as<OpTypeofIsUndefined>().m_operand);
+        if (isFreshObject(operand))
+            return false;
+        if (!isKnownPrimitive(operand))
+            return std::nullopt;
+        return operand->constant.isUndefined();
+    }
+    case op_typeof_is_function: {
+        Node* operand = node->use(node->as<OpTypeofIsFunction>().m_operand);
+        if (isFreshObject(operand))
+            return operand->opcode == op_new_func_exp;
+        if (!isKnownPrimitive(operand))
+            return std::nullopt;
+        return false;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static std::optional<bool> isKnownToBeTaken(const Node* branch)
+{
+    switch (branch->opcode) {
+    case op_jtrue:
+        return knownTruthiness(branch->use(branch->as<OpJtrue>().m_condition));
+    case op_jfalse:
+        return negated(knownTruthiness(branch->use(branch->as<OpJfalse>().m_condition)));
+    case op_jeq_null:
+        return isKnownToBeUndefinedOrNull(branch->use(branch->as<OpJeqNull>().m_value));
+    case op_jneq_null:
+        return negated(isKnownToBeUndefinedOrNull(branch->use(branch->as<OpJneqNull>().m_value)));
+    case op_jundefined_or_null:
+        return isKnownToBeUndefinedOrNull(branch->use(branch->as<OpJundefinedOrNull>().m_value));
+    case op_jnundefined_or_null:
+        return negated(isKnownToBeUndefinedOrNull(branch->use(branch->as<OpJnundefinedOrNull>().m_value)));
+    case op_jstricteq:
+        return areKnownToBeStrictlyEqual(branch->use(branch->as<OpJstricteq>().m_lhs), branch->use(branch->as<OpJstricteq>().m_rhs));
+    case op_jnstricteq:
+        return negated(areKnownToBeStrictlyEqual(branch->use(branch->as<OpJnstricteq>().m_lhs), branch->use(branch->as<OpJnstricteq>().m_rhs)));
+    default:
+        return std::nullopt;
+    }
+}
+
+static std::optional<int32_t> knownOffsetTakenBySwitch(const Node* branch)
+{
+    UnlinkedCodeBlock* codeBlock = branch->graph->codeBlock();
+    auto isKnown = [](const Node* value) { return isFreshObject(value) || isKnownPrimitive(value) || knownString(value); };
+    switch (branch->opcode) {
+    case op_switch_imm: {
+        auto bytecode = branch->as<OpSwitchImm>();
+        Node* scrutinee = branch->use(bytecode.m_scrutinee);
+        const auto& table = codeBlock->unlinkedSwitchJumpTable(bytecode.m_tableIndex);
+        if (!isKnown(scrutinee) || table.isList())
+            return std::nullopt;
+        if (!isKnownPrimitive(scrutinee) || !scrutinee->constant.isNumber())
+            return table.m_defaultOffset;
+        double number = scrutinee->constant.asNumber();
+        if (!(number >= std::numeric_limits<int32_t>::min() && number <= std::numeric_limits<int32_t>::max()) || number != static_cast<int32_t>(number))
+            return table.m_defaultOffset;
+        return table.offsetForValue(static_cast<int32_t>(number));
+    }
+    case op_switch_char: {
+        auto bytecode = branch->as<OpSwitchChar>();
+        Node* scrutinee = branch->use(bytecode.m_scrutinee);
+        const auto& table = codeBlock->unlinkedSwitchJumpTable(bytecode.m_tableIndex);
+        if (!isKnown(scrutinee) || table.isList())
+            return std::nullopt;
+        const StringImpl* string = knownString(scrutinee);
+        if (!string || string->length() != 1)
+            return table.m_defaultOffset;
+        return table.offsetForValue((*string)[0]);
+    }
+    case op_switch_string: {
+        auto bytecode = branch->as<OpSwitchString>();
+        Node* scrutinee = branch->use(bytecode.m_scrutinee);
+        if (!isKnown(scrutinee))
+            return std::nullopt;
+        const auto& table = codeBlock->unlinkedStringSwitchJumpTable(bytecode.m_tableIndex);
+        if (const StringImpl* string = knownString(scrutinee)) {
+            for (auto& entry : table.m_offsetTable) {
+                if (WTF::equal(entry.key.get(), string))
+                    return entry.value.m_branchOffset;
+            }
+        }
+        return table.m_defaultOffset;
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+static void forwardReadsOfFreshObjects(Graph& graph)
+{
+    UncheckedKeyHashMap<Node*, MultiValueReturnTable::Names> namesOfFreshObjects;
+    for (BasicBlock* block : graph.m_rpo) {
+        namesOfFreshObjects.clear();
+        for (Node* node : block->nodes) {
+            if (node->isElided)
+                continue;
+            for (auto& use : node->uses) {
+                if (namesOfFreshObjects.isEmpty())
+                    break;
+                auto fresh = namesOfFreshObjects.find(use.node);
+                if (fresh == namesOfFreshObjects.end())
+                    continue;
+                if (node->isBytecode(op_get_by_id) && !node->guard && !node->guarded) {
+                    const Identifier& name = node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property);
+                    size_t property = fresh->value.find(name.impl());
+                    if (property != notFound || isAbsentFromObjectPrototype(name.impl())) {
+                        graph.remark("forwards-read-of-fresh-object"_s, name.string());
+                        node->replacement = property == notFound ? graph.constant(jsUndefined()) : use.node->use(NewObjectPlan::registerOf(static_cast<unsigned>(property)));
+                        node->isElided = true;
+                        break;
+                    }
+                }
+                namesOfFreshObjects.remove(fresh);
+            }
+            if (!node->isBytecode(op_new_object) || !node->numberOfLiteralProperties || Graph::newObjectLayoutID(node))
+                continue;
+            if (auto names = literalNames(node))
+                namesOfFreshObjects.add(node, WTF::move(*names));
+        }
+    }
+}
+
+static void removeEdge(BasicBlock* from, BasicBlock* to)
+{
+    size_t index = to->predecessors.find(from);
+    RELEASE_ASSERT(index != notFound);
+    to->predecessors.removeAt(index);
+    for (Node* phi : to->phis)
+        phi->uses.removeAt(index);
+}
+
+static bool endsWithOrdinaryBranch(const BasicBlock* block)
+{
+    Node* branch = block->terminal();
+    return branch && branch->kind == NodeKind::Bytecode && !branch->guard && !branch->guarded && !block->endsWithGuard;
+}
+
+static bool keepOnlySuccessor(BasicBlock* block, BasicBlock* live)
+{
+    if (!live || !block->successors.contains(live))
+        return false;
+    Vector<BasicBlock*, 8> dead;
+    for (BasicBlock* successor : block->successors) {
+        if (successor != live && !dead.contains(successor))
+            dead.append(successor);
+    }
+    if (dead.isEmpty())
+        return false;
+    for (BasicBlock* successor : dead)
+        removeEdge(block, successor);
+    block->nodes.removeLast();
+    block->successors = { live };
+    return true;
+}
+
+static void removeUnreachableBlocks(Graph& graph)
+{
+    BitVector wasReachable(graph.blocks.size());
+    for (BasicBlock* block : graph.m_rpo)
+        wasReachable.set(block->index);
+    graph.computeBlockOrder();
+    for (auto& block : graph.blocks) {
+        if (block->isReachable || !wasReachable.get(block->index))
+            continue;
+        for (BasicBlock* successor : block->successors) {
+            if (successor->isReachable && successor->predecessors.contains(block.get()))
+                removeEdge(block.get(), successor);
+        }
+    }
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->predecessors.size() != 1)
+            continue;
+        for (Node* phi : block->phis) {
+            phi->replacement = phi->uses[0].node;
+            phi->isElided = true;
+        }
+        block->phis.shrink(0);
+    }
+}
+
+static void resolveReplacements(Graph& graph)
+{
+    auto resolve = [](Node* node) {
+        while (node->replacement)
+            node = node->replacement;
+        return node;
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis) {
+            for (auto& use : phi->uses)
+                use.node = resolve(use.node);
+        }
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses)
+                use.node = resolve(use.node);
+            if (node->target)
+                node->target = resolve(node->target);
+            if (node->graph->closureScope)
+                node->graph->closureScope = resolve(node->graph->closureScope);
+        }
+    }
+}
+
+bool foldBranchesOnKnownValues(Graph& graph)
+{
+    forwardReadsOfFreshObjects(graph);
+    bool hasFoldedBranch = false;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            for (auto& use : node->uses) {
+                while (use.node->replacement)
+                    use.node = use.node->replacement;
+            }
+            if (node->kind != NodeKind::Bytecode || node->isElided || node->guard || node->guarded)
+                continue;
+            if (auto result = knownResultOfTest(node)) {
+                node->replacement = graph.constant(jsBoolean(*result));
+                node->isElided = true;
+            }
+        }
+        if (!endsWithOrdinaryBranch(block))
+            continue;
+        Node* branch = block->terminal();
+        BasicBlock* live = nullptr;
+        if (auto offset = knownOffsetTakenBySwitch(branch))
+            live = block->graph->targetFrom(block, branch->bytecodeIndex.offset() + *offset);
+        else if (auto isTaken = isKnownToBeTaken(branch); isTaken && block->successors.size() == 2)
+            live = block->successors[*isTaken ? 0 : 1];
+        if (!keepOnlySuccessor(block, live))
+            continue;
+        graph.remark("folds-branch-after-replacement"_s);
+        hasFoldedBranch = true;
+    }
+    if (hasFoldedBranch)
+        removeUnreachableBlocks(graph);
+    resolveReplacements(graph);
+    return hasFoldedBranch;
+}
+
+void foldBranchesDecidedByTypes(Graph& graph)
+{
+    bool hasFoldedBranch = false;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (!endsWithOrdinaryBranch(block) || block->isGeneric || block->successors.size() != 2)
+            continue;
+        auto isTaken = isBranchTakenAccordingToTypes(block->terminal());
+        if (!isTaken || !keepOnlySuccessor(block, block->successors[*isTaken ? 0 : 1]))
+            continue;
+        graph.remark("folds-branch-by-type"_s);
+        hasFoldedBranch = true;
+    }
+    if (!hasFoldedBranch)
+        return;
+    removeUnreachableBlocks(graph);
+    resolveReplacements(graph);
+}
+
 void replaceReadsOfConstantObjects(Graph& graph)
 {
     VariableSummaries* summaries = graph.variableSummaries();
@@ -1919,9 +2320,10 @@ void analyzeEscapes(Graph& graph)
     analysis.analyzeAllocations();
 }
 
-uint32_t escapingParameters(Graph& graph, Vector<const KnownFunction*>* calleesRead)
+EscapingParameters escapingParameters(Graph& graph, Vector<const KnownFunction*>* calleesRead)
 {
-    return EscapeAnalysis(graph, calleesRead).escapingParameters();
+    EscapeAnalysis analysis(graph, calleesRead);
+    return { analysis.escapingParameters(true), analysis.escapingParameters(false) };
 }
 
 } } // namespace JSC::AOT

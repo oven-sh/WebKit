@@ -12,6 +12,7 @@
 #include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
+#include "BlockDirectoryInlines.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeStructs.h"
 #include "CachedTypes.h"
@@ -19,7 +20,9 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "MarkedBlockInlines.h"
 #include "SourceCodeKey.h"
+#include "SubspaceInlines.h"
 #include "UnlinkedFunctionCodeBlock.h"
 #include "UnlinkedFunctionExecutable.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
@@ -391,7 +394,7 @@ public:
             m_executables.append({ executable, moduleIndex });
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]) {
-                    executable->setAOTCode(kind, function->entry, function->index);
+                    executable->setAOTCode(kind, function->hasNoGeneralBody ? m_image.stubCodeOffset(Stub::ThrowCalledIndirectly) : function->entry, function->index);
                     fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, executableIndex, kind, lineStarts);
                 }
             }
@@ -937,6 +940,7 @@ struct VMProgram::Impl {
     std::unique_ptr<DecoderStringTable> ownStrings;
     std::unique_ptr<ProgramObjectsDecoder> decoder;
     Vector<JSCell*> createdSinceLastCollection;
+    bool hasVisitedEverythingInThisCollection { false };
     BitVector materializedExecutables;
     Vector<uint32_t> materializedIdentifierCount;
     Vector<UnlinkedFunctionExecutable*> unlinkedFunctions;
@@ -1290,7 +1294,8 @@ const IdentifierSet& VMProgram::identifierSet(uint32_t offsetOfSets, unsigned wh
 template<typename Visitor>
 void VMProgram::visit(Visitor& visitor, CollectionScope scope)
 {
-    if (scope == CollectionScope::Eden) {
+    bool visitsEverything = !std::is_same_v<Visitor, SlotVisitor> || (scope == CollectionScope::Full && !std::exchange(m_impl->hasVisitedEverythingInThisCollection, true));
+    if (!visitsEverything) {
         for (JSCell* cell : m_impl->createdSinceLastCollection)
             visitor.appendUnbarriered(cell);
         return;
@@ -1310,9 +1315,41 @@ void VMProgram::visit(Visitor& visitor, CollectionScope scope)
 template void VMProgram::visit(AbstractSlotVisitor&, CollectionScope);
 template void VMProgram::visit(SlotVisitor&, CollectionScope);
 
+static void verifyTypedFields(VM& vm)
+{
+    vm.heap.cellSpace.forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
+        JSCell* cell = static_cast<JSCell*>(heapCell);
+        if (cell->type() != FinalObjectType)
+            return;
+        Structure* structure = cell->structure();
+        uint16_t layoutID = structure->typedLayoutID();
+        if (!layoutID)
+            return;
+        bool usesFieldIDs = TypedLayoutTable::usesFieldIDs(layoutID);
+        unsigned numberOfSlots = std::min<unsigned>(structure->inlineCapacity(), std::min<unsigned>(TypedLayoutTable::inlineSlots(layoutID), usesFieldIDs ? Structure::numberOfSlotsWithFieldIDs : TypedLayoutTable::numberOfSlots(layoutID)));
+        for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
+            JSValue value = asObject(cell)->getDirect(static_cast<PropertyOffset>(slot));
+            if (!value)
+                continue;
+            const TypedLayoutTable::FieldType* fieldType = nullptr;
+            if (!usesFieldIDs)
+                fieldType = TypedLayoutTable::fieldTypeInSlot(layoutID, slot);
+            else if (uint16_t id = structure->fieldIDInSlot(slot); id && id != Structure::ambiguousFieldID)
+                fieldType = TypedLayoutTable::fieldTypeOf(TypedLayoutTable::fieldWithID(slot, id));
+            if (!fieldType || (!value.isInt32() && TypedLayoutTable::isValueOf(*fieldType, value)))
+                continue;
+            dataLogLn("GC Verifier: ERROR slot ", slot, " of ", RawPointer(cell), " with layout ", layoutID, " holds ", value, ", which is not a value of its type");
+            CRASH();
+        }
+    });
+}
+
 void VMProgram::didFinishCollection()
 {
+    if (Options::verifyGC() && TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::isAuditing()) [[unlikely]]
+        verifyTypedFields(m_vm);
     m_impl->createdSinceLastCollection.clear();
+    m_impl->hasVisitedEverythingInThisCollection = false;
     if (m_impl->ownStrings)
         m_impl->ownStrings->removeDeadRecentPlainStrings(m_vm);
     if (Options::verboseAOTCompilation()) [[unlikely]] {
@@ -1335,6 +1372,39 @@ void VMProgram::didFinishCollection()
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
         dataLogLn("; ", m_impl->stringSwitchJumpTables.size(), " + ", m_impl->identifierSets.size(), " tables of functions");
+        if (m_vm.heap.collectionScope().value_or(CollectionScope::Full) == CollectionScope::Full) {
+            dataLogLn("CENSUS begin");
+            m_vm.heap.objectSpace().forEachSubspace([&](Subspace& subspace) {
+                subspace.forEachDirectory([&](BlockDirectory& directory) {
+                size_t blocks = 0;
+                size_t capacity = 0;
+                size_t marked = 0;
+                size_t emptyBlocks = 0;
+                size_t blocksUnderAQuarter = 0;
+                directory.forEachBlock([&](MarkedBlock::Handle* handle) {
+                    size_t cells = handle->cellsPerBlock();
+                    size_t markedHere = handle->markCount();
+                    ++blocks;
+                    capacity += cells;
+                    marked += markedHere;
+                    emptyBlocks += !markedHere;
+                    blocksUnderAQuarter += markedHere * 4 < cells;
+                });
+                if (blocks)
+                    dataLogLn("BLOCKS\t", directory.subspace()->name(), "\t", directory.cellSize(), "\t", blocks, "\t", capacity, "\t", marked, "\t", emptyBlocks, "\t", blocksUnderAQuarter);
+                });
+                return IterationStatus::Continue;
+            });
+            size_t preciseAllocations = 0;
+            size_t preciseBytes = 0;
+            for (PreciseAllocation* allocation : m_vm.heap.objectSpace().preciseAllocations()) {
+                if (allocation->isMarked()) {
+                    ++preciseAllocations;
+                    preciseBytes += allocation->cellSize();
+                }
+            }
+            dataLogLn("PRECISE\t", preciseAllocations, "\t", preciseBytes);
+        }
     }
 }
 

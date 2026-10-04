@@ -525,6 +525,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID) [[unlikely]]
             evictTypedField(vm, propertyName);
     }
+    if (this->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+        if (TypedLayoutTable::isFieldOfInheritor(vm, this, propertyName.uid()))
+            return TypedFieldOfInheritorError;
+    }
     auto isRejectedAtOffset = [&](Structure* candidateStructure, PropertyOffset where) {
         if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFieldIDs || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
             return false;
@@ -702,6 +706,13 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (!isStructureExtensible()) [[unlikely]]
             return NonExtensibleObjectPropertyDefineError;
     }
+
+#if ENABLE(AOT)
+    if ((mode == PutModePut || newAttributes) && structure->shouldConvertFirstObjectToDictionaryForAdd(vm)) [[unlikely]] {
+        convertToDictionary(vm);
+        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+    }
+#endif
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.

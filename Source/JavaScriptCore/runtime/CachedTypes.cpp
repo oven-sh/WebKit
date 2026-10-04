@@ -6333,11 +6333,27 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& function : functionsToCompile) {
                 if (!function.forCall || !function.forConstruct)
                     continue;
-                for (UnlinkedFunctionCodeBlock* codeBlock : { function.forCall, function.forConstruct }) {
+                auto scopesOf = [](UnlinkedFunctionCodeBlock* codeBlock) {
+                    Vector<SymbolTable*, 8> scopes;
                     for (auto& constant : codeBlock->constantRegisters()) {
                         if (JSValue value = constant.get(); value && value.isCell() && value.asCell()->inherits<SymbolTable>())
-                            variableSummaries->giveUpOnScope(value.asCell());
+                            scopes.append(uncheckedDowncast<SymbolTable>(value.asCell()));
                     }
+                    return scopes;
+                };
+                auto scopesForCall = scopesOf(function.forCall);
+                auto scopesForConstruct = scopesOf(function.forConstruct);
+                bool areSameScopes = scopesForCall.size() == scopesForConstruct.size();
+                for (unsigned i = 0; areSameScopes && i < scopesForCall.size(); ++i)
+                    areSameScopes = scopesForConstruct[i]->isCloneOfScopePartOf(*scopesForCall[i]);
+                if (areSameScopes) {
+                    for (unsigned i = 0; i < scopesForCall.size(); ++i)
+                        variableSummaries->noteSameScope(scopesForConstruct[i], scopesForCall[i]);
+                    continue;
+                }
+                for (auto* scopes : { &scopesForCall, &scopesForConstruct }) {
+                    for (SymbolTable* scope : *scopes)
+                        variableSummaries->giveUpOnScope(scope);
                 }
             }
             for (unsigned index = 0; index < modules.size(); ++index) {
@@ -6401,6 +6417,13 @@ struct BytecodeLinkEncoder::Impl {
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
         };
+        struct FunctionCreationSite {
+            uint32_t maker;
+            uint32_t made;
+            bool makerIsStrict;
+            bool makerHasDynamicScope;
+        };
+        Vector<FunctionCreationSite> functionCreationSites;
         AOT::MultiValueReturnTable multiValueReturnTable;
         AOT::setMultiValueReturnTable(&multiValueReturnTable);
         auto forgetFunctionReturnValues = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
@@ -6490,9 +6513,17 @@ struct BytecodeLinkEncoder::Impl {
                 dataLogLn("AOT: ", programClasses.numberOfNonEscapingMethods(), " methods do not escape");
             BitVector hasVisibleCreationSite(programFunctions.size() + 1);
             for (auto& job : jobs) {
+                size_t firstCreationSite = functionCreationSites.size();
+                uint32_t maker = job.executable ? programFunctions.numberOf(job.executable) : 0;
+                bool makerIsStrict = job.executable ? job.executable->isInStrictContext() : job.codeBlock->codeType() == ModuleCode;
+                bool makerHasDynamicScope = false;
                 for (const auto& instruction : job.codeBlock->instructions()) {
                     UnlinkedFunctionExecutable* made = nullptr;
                     switch (instruction->opcodeID()) {
+                    case op_push_with_scope:
+                    case op_call_direct_eval:
+                        makerHasDynamicScope = true;
+                        break;
                     case op_new_func:
                         made = job.codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
                         break;
@@ -6520,9 +6551,14 @@ struct BytecodeLinkEncoder::Impl {
                     default:
                         break;
                     }
-                    if (made)
+                    if (made) {
                         hasVisibleCreationSite.set(programFunctions.numberOf(made));
+                        if (uint32_t number = programFunctions.numberOf(made))
+                            functionCreationSites.append({ maker, number, makerIsStrict, false });
+                    }
                 }
+                for (size_t site = firstCreationSite; site < functionCreationSites.size(); ++site)
+                    functionCreationSites[site].makerHasDynamicScope = makerHasDynamicScope;
             }
             for (auto& moduleHints : hints) {
                 if (!moduleHints)
@@ -6616,6 +6652,7 @@ struct BytecodeLinkEncoder::Impl {
                         mixType(unit.summary->thisType.load());
                         mixType(unit.summary->returnType.load());
                         mix(unit.summary->escapingParameters.load());
+                        mix(unit.summary->escapingParametersUnlessPlainObjects.load());
                         mix(unit.summary->needsReturnObject.load());
                         for (auto& type : unit.summary->returnValueTypes)
                             mixType(type.load());
@@ -6722,6 +6759,39 @@ struct BytecodeLinkEncoder::Impl {
                 unsigned dissolved = variableSummaries->dissolveScopes(closuresWithCaptures);
                 if (Options::verboseAOTCompilation()) [[unlikely]]
                     dataLogLn("AOT: ", dissolved, " scopes are never made; ", closuresWithCaptures, " functions hold what they capture");
+            }
+            {
+                BitVector isMadeBySloppyCode(programFunctions.size() + 1);
+                BitVector isUnderDynamicScope(programFunctions.size() + 1);
+                for (bool changed = true; changed;) {
+                    changed = false;
+                    for (auto& site : functionCreationSites) {
+                        if (!site.makerIsStrict)
+                            isMadeBySloppyCode.set(site.made);
+                        if (!isUnderDynamicScope.get(site.made) && (site.makerHasDynamicScope || isUnderDynamicScope.get(site.maker))) {
+                            isUnderDynamicScope.set(site.made);
+                            changed = true;
+                        }
+                    }
+                }
+                unsigned functionsWithoutObject = 0;
+                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                    const AOT::KnownFunction& function = *programFunctions.function(number);
+                    if (!function.summary->isNonEscaping || function.summary->needsObject.load(std::memory_order_relaxed) || function.forConstruct || !function.summary->captures.isEmpty() || isMadeBySloppyCode.get(number) || isUnderDynamicScope.get(number))
+                        continue;
+                    SourceParseMode mode = function.forCall->parseMode();
+                    const DeclaredNamesLink* declaredNames = AOT::declaredNamesFor(function.forCall);
+                    function.summary->takesScopeAsCallee = (mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode) && declaredNames && !declaredNames->scopeIsOutermostEnvironment();
+                    functionsWithoutObject += function.summary->takesScopeAsCallee;
+                }
+                if (Options::verboseAOTCompilation()) [[unlikely]] {
+                    unsigned sitesThatMakeNothing = 0;
+                    for (auto& site : functionCreationSites) {
+                        const AOT::KnownFunction* made = programFunctions.function(site.made);
+                        sitesThatMakeNothing += made && made->summary->takesScopeAsCallee;
+                    }
+                    dataLogLn("AOT: ", functionsWithoutObject, " functions have no function object; ", sitesThatMakeNothing, " sites make nothing");
+                }
             }
             for (bool changed = true; changed;) {
                 changed = false;
@@ -6991,8 +7061,20 @@ struct BytecodeLinkEncoder::Impl {
                     again = true;
                 }
             });
-            if (Options::verboseAOTCompilation()) [[unlikely]]
+            unsigned functionObjectsNeededAfterAll = 0;
+            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
+                AOT::FunctionSummary& summary = *programFunctions.function(number)->summary;
+                if (!summary.takesScopeAsCallee || !summary.needsObject.load(std::memory_order_relaxed))
+                    continue;
+                summary.takesScopeAsCallee = false;
+                summary.objectIsNeededAfterAll = true;
+                ++functionObjectsNeededAfterAll;
+                again = true;
+            }
+            if (Options::verboseAOTCompilation()) [[unlikely]] {
                 dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
+                dataLogLn("AOT: ", functionObjectsNeededAfterAll, " function objects are needed after all");
+            }
             RELEASE_ASSERT(declined.isEmpty());
             if (again) {
                 unreachedFunctions = 0;

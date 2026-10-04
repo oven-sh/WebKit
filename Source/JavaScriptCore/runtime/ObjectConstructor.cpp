@@ -326,6 +326,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetCanPerformFastPut && targetObject->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+        targetCanPerformFastPut = false;
+#endif
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.

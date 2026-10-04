@@ -194,6 +194,7 @@ namespace JSC {
     macro(copyDataProperties) \
     macro(cloneObject) \
     macro(noteClass) \
+    macro(typedLayoutsOfInheritors) \
     macro(meta) \
     macro(moduleLoader) \
     macro(instanceFieldInitializer) \

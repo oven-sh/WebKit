@@ -303,7 +303,7 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
     if (!m_aotInstance)
         m_aotInstance = m_onlyAOTInstance ? m_onlyAOTInstance : AOT::instanceForFrame(callFrame);
     m_frame.m_frameAOTFunction = { m_aotInstance, index };
-    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC);
+    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC, callFrame);
     m_frame.m_aotFunction = location.function;
     m_frame.m_aotInlineFrame = location.inlineFrame;
     m_frame.m_isTailDeleted = location.isTailCall && calleeRuns;

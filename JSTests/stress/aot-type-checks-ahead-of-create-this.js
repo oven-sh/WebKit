@@ -60,6 +60,30 @@ function ChecksFirst(a, b) {
 function AcceptsCallables(f) { this.f = $$t(f, 128); }
 function Unchecked(a) { this.x = a; }
 function AlwaysPasses() { this.x = $$t(1, 8); }
+function StoresThenChecks(a, b) {
+    this.x = a;
+    this.y = $$t(b, 16);
+}
+function StoresTwiceThenChecks(a, b, c) {
+    this.x = a;
+    this.y = b;
+    this.z = $$t(c, 16);
+}
+function withSetter() {
+    function NewTarget() { }
+    NewTarget.prototype = { set x(value) { log.push("set x=" + value); } };
+    return NewTarget;
+}
+function withProxy() {
+    function NewTarget() { }
+    NewTarget.prototype = new Proxy({ }, {
+        set(target, key, value, receiver) {
+            log.push("set " + String(key));
+            return Reflect.set(target, key, value, receiver);
+        }
+    });
+    return NewTarget;
+}
 
 check(construct(OneField, [1], OneField), "x=1", "a plain new.target, the check passes");
 check(construct(OneField, ["no"], OneField), "TypeError", "a plain new.target, the check fails");
@@ -97,6 +121,20 @@ check(construct(Base, ["no"], observed(Derived)), "prototype,TypeError", "a clas
 check(construct(Base, [3], observed(Derived)), "prototype,x=3", "a class, the check passes");
 check(Reflect.construct(Base, [3], Derived) instanceof Derived, true, "the prototype of new.target is used");
 
+for (let C of [StoresThenChecks, TwoFields]) {
+    check(construct(C, [1, 2], C), "TypeError", C.name + ": a plain new.target, the check after the store fails");
+    check(construct(C, [1, "s"], C), "x=1&y=s", C.name + ": a plain new.target, the check after the store passes");
+    check(construct(C, [1, 2], withSetter()), "set x=1,TypeError", C.name + ": the setter is called before the check fails");
+    check(construct(C, [1, "s"], withSetter()), "set x=1,y=s", C.name + ": the setter is called once when the check passes");
+    check(construct(C, [1, 2], withProxy()), "set x,TypeError", C.name + ": the proxy sees the store before the check fails");
+    check(construct(C, [1, "s"], withProxy()), "set x,set y,x=1&y=s", C.name + ": the proxy sees both stores in order");
+}
+check(construct(TwoFields, ["no", "s"], withSetter()), "TypeError", "the check ahead of the first store fails: the setter is not called");
+check(construct(ChecksFirst, [1, 2], withSetter()), "TypeError", "a check ahead of all stores fails: the setter is not called");
+check(construct(ChecksFirst, [1, "s"], withSetter()), "set x=1,y=s", "checks ahead of all stores pass: the setter is called");
+check(construct(StoresTwiceThenChecks, [1, 2, 3], withProxy()), "set x,set y,TypeError", "the proxy sees two stores before the check fails");
+check(construct(StoresTwiceThenChecks, [1, 2, "s"], withProxy()), "set x,set y,set z,x=1&y=2&z=s", "the proxy sees three stores in order");
+
 check(construct(Unchecked, [1], observed(Unchecked)), "prototype,x=1", "no check");
 check(construct(AlwaysPasses, [], observed(AlwaysPasses)), "prototype,x=1", "a check that is known to pass");
 
@@ -104,6 +142,10 @@ applies(OneField, planned, checksAhead);
 applies(TwoFields, planned, checksAhead);
 applies(ChecksFirst, planned, checksAhead);
 applies(AcceptsCallables, planned, checksAhead);
+applies(StoresThenChecks, planned);
+doesNotApply(StoresThenChecks, checksAhead);
+applies(StoresTwiceThenChecks, planned);
+doesNotApply(StoresTwiceThenChecks, checksAhead);
 applies(Unchecked, planned);
 doesNotApply(Unchecked, checksAhead);
 applies(AlwaysPasses, planned);

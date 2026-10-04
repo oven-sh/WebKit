@@ -108,6 +108,17 @@ Lowering::Lowering(Graph& graph, Procedure& proc)
     m_out.noteFoldedConstantsIn(graph.wideIntegerConstants);
 }
 
+static unsigned scratchWordsForCall(Node* node, unsigned argc, bool isConstruct)
+{
+    if (argc - 1 > numberOfArgumentGPRs || node->builtinCalled)
+        return argc;
+    bool isExact = false;
+    const KnownFunction* known = node->graph->knownCallee(node, &isExact);
+    if (known && isExact && (isConstruct ? known->conventionForConstruct : known->conventionForCall).signature == Signature::List)
+        return argc;
+    return 0;
+}
+
 static unsigned scratchWordsFor(Node* node)
 {
     if (node->kind != NodeKind::Bytecode || !node->instruction)
@@ -135,15 +146,15 @@ static unsigned scratchWordsFor(Node* node)
         return 2 * (list->isBytecode(op_new_array_with_spread) ? list->as<OpNewArrayWithSpread>().m_argc : 1);
     }
     case op_call:
-        return node->as<OpCall>().m_argc;
+        return scratchWordsForCall(node, node->as<OpCall>().m_argc, false);
     case op_call_ignore_result:
-        return node->as<OpCallIgnoreResult>().m_argc;
+        return scratchWordsForCall(node, node->as<OpCallIgnoreResult>().m_argc, false);
     case op_tail_call:
-        return node->as<OpTailCall>().m_argc;
+        return scratchWordsForCall(node, node->as<OpTailCall>().m_argc, false);
     case op_construct:
-        return node->as<OpConstruct>().m_argc;
+        return scratchWordsForCall(node, node->as<OpConstruct>().m_argc, true);
     case op_super_construct:
-        return node->as<OpSuperConstruct>().m_argc;
+        return scratchWordsForCall(node, node->as<OpSuperConstruct>().m_argc, true);
     case op_call_direct_eval:
         return node->as<OpCallDirectEval>().m_argc;
     case op_strcat:
@@ -190,7 +201,7 @@ bool Lowering::run()
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
     OwnData own = ownData();
     if (m_graph.startsCold) {
-        m_data = m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+        m_data = own.data;
         m_dataOnEntry = m_data;
         if (std::ranges::any_of(m_graph.m_rpo, [](BasicBlock* block) { return block->isLoopHeader; })) {
             m_dataInLoops = m_proc.addVariable(pointerType());
@@ -203,7 +214,7 @@ bool Lowering::run()
     m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
     if (m_graph.needsFunctionObject()) {
         m_calleeSlot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
-        if (m_graph.codeBlock()->codeType() == FunctionCode && AOT::needsFunctionObject(m_graph.codeBlock()))
+        if (m_graph.codeBlock()->codeType() == FunctionCode && AOT::needsFunctionObject(m_graph.codeBlock()) && !(m_graph.summary() && m_graph.summary()->takesScopeAsCallee))
             m_graph.calleeSlot = m_calleeSlot->as<B3::SlotBaseValue>()->slot();
     }
     if (m_graph.convention().signature == Signature::List)
@@ -359,12 +370,8 @@ LValue Lowering::wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool 
 
 Lowering::OwnData Lowering::ownData()
 {
-    LValue state = wordByIndex(nullptr, Instance::offsetOfStates(), sizeof(uint32_t), true);
-    LValue distance = m_out.shl(state, m_out.constInt32(Instance::stateWithDataShift));
-    LValue hasAny = isX86_64()
-        ? m_out.aboveOrEqual(distance, m_out.constIntPtr(static_cast<uintptr_t>(Instance::minStateWithData) << Instance::stateWithDataShift))
-        : m_out.aboveOrEqual(state, m_out.constIntPtr(Instance::minStateWithData));
-    return { hasAny, m_out.add(m_instance, distance) };
+    LValue data = wordByIndex(nullptr, Instance::offsetOfDataPointers(), sizeof(Data*), true);
+    return { m_out.notEqual(data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData)), data };
 }
 
 LValue Emitter::registerOnEntry(Reg reg)
@@ -411,8 +418,7 @@ LValue Lowering::dataHere()
 {
     if (!m_dataOnEntry || !m_block || m_block->isGeneric || m_block->isRarelyExecuted || m_out.m_block->frequency() > coldFrequency)
         return m_data;
-    OwnData own = ownData();
-    return m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData));
+    return ownData().data;
 }
 
 TypedPointer Lowering::slotWord(unsigned slot, unsigned word)
@@ -1015,6 +1021,8 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
 {
     if (Options::validateAOTInferredTypes() && rep == Rep::JSValue && (node->wasInferredUnreachable || (node->type && !isSubtype(TAll, node->type)))) [[unlikely]] {
         Type expected = node->wasInferredUnreachable ? TNone : node->type;
+        if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
+            expected = (expected & ~TFunction) | TOtherObject;
         unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
         if (node->kind == NodeKind::Argument)
             which += 100 * node->reg.toArgument();
@@ -1309,9 +1317,7 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_data = m_dataOnEntry;
         if (block->isInLoop && m_dataInLoops) {
             if (block->isLoopHeader) {
-                OwnData own = ownData();
-                m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops,
-                    m_out.select(own.hasAny, own.data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData)));
+                m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops, ownData().data);
             }
             m_data = m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Get, m_out.origin(), m_dataInLoops);
         }
@@ -1360,7 +1366,7 @@ void Lowering::lowerBlock(BasicBlock* block)
         }
         setCurrentNode(node);
         if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]] {
-            if (auto kind = allocationKind(node); kind && node->escape != Escape::NotAnalyzed && !node->isPromoted) {
+            if (auto kind = allocationKind(node); kind && node->escape != Escape::NotAnalyzed && !node->isPromoted && !Graph::makesNoFunctionObject(node)) {
                 if (stays(node->escape))
                     m_graph.remark(node->escape == Escape::StaysHere ? "allocation-stays-here"_s : "allocation-is-only-borrowed"_s, nameOf(*kind));
                 else
@@ -1368,7 +1374,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             }
         }
         m_nodePreservesFields = false;
-        if (!m_newCells.isEmpty() && mayCollectOrThrow(node))
+        if (!m_newCells.isEmpty() && (mayCollectOrThrow(node) || Graph::makesNoFunctionObject(node)))
             m_newCells.shrink(0);
         lowerNode(node);
         if (m_graph.failed())

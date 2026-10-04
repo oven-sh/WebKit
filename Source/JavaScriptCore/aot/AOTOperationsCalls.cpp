@@ -220,15 +220,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSizeOfVarargs, size_t, (Instance* instance,
         });
         if (!allSourcesAreCopyable) [[unlikely]] {
             bool threw = false;
-            const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
-            FunctionRef function = caller(instance, callFrame);
-            uint32_t callSite = callSiteAt(*function.info().function(), classifyAddress(returnAddress).offset);
+            CallSiteOverride where(*instance, callFrame->callerFrame());
             forEachSpread([&](EncodedJSValue& item, unsigned index) {
                 if (threw)
                     return;
-                std::optional<CallSiteOverride> where;
-                if (auto site = spreadSite(*function.info().function(), callSite, index))
-                    where.emplace(*function.instance, returnAddress, *site);
+                where.setItem(index);
                 JSCell* result = spread(globalObject, JSValue::decode(item));
                 if (scope.exception()) [[unlikely]] {
                     threw = true;
@@ -369,12 +365,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* instance, Slot* cache, JSCell* callee, uint64_t entryWord, uint32_t count))
 {
+    countOperationNamed(instance, __func__);
     Slot& target = cache[1];
     bool takesList = entryWord & 1ULL << EntryWord::isListBit;
     uint32_t numberOfParameters = entryWord >> EntryWord::numberOfParametersShift & ((1u << EntryWord::numberOfParametersBits) - 1);
     if (takesList || numberOfParameters > count || target.offset >= CalleeCache::maxAttempts * CalleeCache::attempt) {
         cache[0].clear();
         target.offset = CalleeCache::hasGivenUp;
+        instance->noteCalleeCacheAbandoned(cache);
         return;
     }
     instance->noteCalleeCacheFilled(cache);
@@ -388,10 +386,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* inst
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance* instance, Slot* cache, EncodedJSValue encodedCallee, void* callHostFunction, void* callInternalFunction))
 {
+    countOperationNamed(instance, __func__);
     Slot& target = cache[1];
     if (target.offset >= CalleeCache::maxAttempts * CalleeCache::attempt) {
         cache[0].clear();
         target.offset = CalleeCache::hasGivenUp;
+        instance->noteCalleeCacheAbandoned(cache);
         return;
     }
     target.offset += CalleeCache::attempt;
@@ -421,6 +421,15 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* insta
     instance->ensureData(index);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountMissOfCalleeCache, void, (Instance* instance, const void* returnAddress))
+{
+    countOperationNamed(instance, __func__);
+    ImageAddressInfo caller = classifyAddress(returnAddress);
+    if (caller.kind != ImageAddressInfo::Function || instance->dataIfExists(caller.index) || !(instance->infos[caller.index].flags & FunctionInfo::startsCold))
+        return;
+    instance->countMisses(caller.index, 1);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))
 {
     JSGlobalObject* globalObject = instance->globalObject;
@@ -429,6 +438,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (In
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwStackOverflowError(instance->globalObject, scope);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, (Instance* instance, EncodedJSValue callee))
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    throwTypeError(globalObject, scope, makeString("The function '"_s, uncheckedDowncast<JSFunction>(JSValue::decode(callee).asCell())->jsExecutable()->ecmaName().string(), "' was compiled for direct calls only"_s));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (Instance* instance, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope* callerScopeChain, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures))

@@ -77,6 +77,7 @@ extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineErr
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldOfInheritorError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError;

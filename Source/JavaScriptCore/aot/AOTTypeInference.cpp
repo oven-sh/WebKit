@@ -241,7 +241,7 @@ public:
         }
         if (calleesWithWidenedInputs && m_graph.summary())
             m_graph.summary()->knownTailCallees = WTF::move(m_knownTailCallees);
-        if (calleesWithWidenedInputs && programFunctions() && isReached()) {
+        if (programFunctions() && isReached()) {
             for (BasicBlock* block : m_graph.m_rpo) {
                 for (Node* phi : block->phis)
                     noteEscapesThrough(phi);
@@ -424,6 +424,8 @@ public:
                 if (!to->dominates(block))
                     continue;
                 for (Node* node : block->nodes) {
+                    if (node->kind == NodeKind::Narrow && node->narrowedTo == narrowedTo)
+                        continue;
                     for (auto& use : node->uses) {
                         if (use.node == value)
                             use.node = narrowed();
@@ -666,6 +668,10 @@ private:
             return;
         if (summary->isNonEscaping) {
             m_graph.remark("function-does-not-escape"_s);
+            if (summary->takesScopeAsCallee)
+                m_graph.remark("function-has-no-object"_s);
+            else if (summary->objectIsNeededAfterAll)
+                m_graph.remark("function-object-is-needed-after-all"_s);
             return;
         }
         if (!Options::aotRemarksPath() && !Options::aotTypeCoveragePath()) [[likely]]
@@ -690,6 +696,30 @@ private:
             m_graph.remark("function-escapes"_s, description);
         if (isOnlyThroughProperties)
             m_graph.remark("function-escapes-only-through-properties"_s);
+        if (!summary->typesPassedByDirectCalls[0].load()) {
+            m_graph.remark("open-function-has-no-direct-call"_s);
+            return;
+        }
+        bool passesUnboxedValues = false;
+        bool passesKnownKinds = false;
+        for (unsigned i = 1; i < std::min<unsigned>(m_graph.codeBlock()->numParameters(), FunctionSummary::maxParameters); ++i) {
+            Type type = summary->typesPassedByDirectCalls[i].load();
+            if (!type)
+                continue;
+            passesUnboxedValues |= isSubtype(type, TNumber) || isSubtype(type, TBoolean);
+            passesKnownKinds |= isSubtype(type, TString | TOther) || isSubtype(type, TAnyObject | TOther);
+        }
+        m_graph.remark(passesUnboxedValues ? "direct-calls-of-open-function-pass-unboxed-values"_s : passesKnownKinds ? "direct-calls-of-open-function-pass-known-kinds"_s : "direct-calls-of-open-function-pass-anything"_s);
+    }
+
+    void noteNeedsObject(Type type)
+    {
+        const KnownFunction* function = programFunctions()->function(functionNumberOf(type));
+        if (!function || !function->summary)
+            return;
+        bool wasKnown = function->summary->needsObject.exchange(true, std::memory_order_relaxed);
+        if (!wasKnown && function->summary->takesScopeAsCallee && Options::validateAOTInferredTypes()) [[unlikely]]
+            dataLogLn("AOT: contradicts the analysis: the function object of `", function->executable ? function->executable->ecmaName().string() : String(), "` @", function->key.module, ":", function->key.start, " is needed after all");
     }
 
     bool markEscaping(Type type, uint32_t why, UniquedStringImpl* name = nullptr)
@@ -697,6 +727,10 @@ private:
         const KnownFunction* function = programFunctions()->function(functionNumberOf(type));
         if (!function || !function->summary)
             return false;
+        if (!calleesWithWidenedInputs) {
+            noteNeedsObject(type);
+            return false;
+        }
         if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]
             function->summary->noteEscapeCause({ why, name });
         Vector<Type, FunctionSummary::maxParameters + 1> wasPassed;
@@ -753,6 +787,8 @@ private:
             if (use.reg == calleeRegister && use.reg.offset() != firstArgument) {
                 if (!followed)
                     recordIndirectCall(use.node->type);
+                else if (!isSubtype(use.node->type & TCell, TFunction))
+                    noteNeedsObject(use.node->type);
                 continue;
             }
             int index = use.reg.offset() - firstArgument;
@@ -858,8 +894,10 @@ private:
         case op_jneq_null:
         case op_jundefined_or_null:
         case op_jnundefined_or_null:
+        case op_get_scope:
         case op_get_parent_scope:
         case op_check_tdz:
+            return;
         case op_get_length:
         case op_get_prototype_of:
         case op_typeof:
@@ -881,10 +919,14 @@ private:
         case op_jeq_ptr:
         case op_jneq_ptr:
         case op_set_function_name:
+            for (auto& use : user->uses)
+                noteNeedsObject(use.node->type);
             return;
         case op_get_by_id:
+            noteNeedsObject(user->use(user->as<OpGetById>().m_base)->type);
             return noteReadOfProperty(user->use(user->as<OpGetById>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetById>().m_property));
         case op_get_by_id_direct:
+            noteNeedsObject(user->use(user->as<OpGetByIdDirect>().m_base)->type);
             return noteReadOfProperty(user->use(user->as<OpGetByIdDirect>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetByIdDirect>().m_property));
         case op_instanceof: {
             auto bytecode = user->as<OpInstanceof>();
@@ -896,6 +938,8 @@ private:
                     markEscaping(use.node->type, usedBy(user));
                 else if (!constructorIsHarmless)
                     markEscaping(use.node->type, FunctionSummary::RightOfInstanceof);
+                else
+                    noteNeedsObject(use.node->type);
             }
             return;
         }
@@ -903,6 +947,7 @@ private:
             auto bytecode = user->as<OpPutById>();
             const Identifier& property = user->graph->codeBlock()->identifier(bytecode.m_property);
             Type base = user->use(bytecode.m_base)->type;
+            noteNeedsObject(base);
             if (!bytecode.m_flags.isDirect() && !accessRunsNoProgramCode(base, property, Access::Write))
                 markEscaping(base, FunctionSummary::PropertyWritten, property.impl());
             markEscaping(user->use(bytecode.m_value)->type, FunctionSummary::StoredInProperty);
@@ -928,8 +973,10 @@ private:
             return;
         }
         case op_define_data_property:
-            if (auto* classes = programClasses(); classes && classes->isNonEscapingMethod(functionNumberOf(user->use(user->as<OpDefineDataProperty>().m_value)->type)))
+            if (auto* classes = programClasses(); classes && classes->isNonEscapingMethod(functionNumberOf(user->use(user->as<OpDefineDataProperty>().m_value)->type))) {
+                noteNeedsObject(user->use(user->as<OpDefineDataProperty>().m_value)->type);
                 return markOperandsEscapingExcept(user->as<OpDefineDataProperty>().m_value);
+            }
             markOperandsEscaping(user);
             return;
 
@@ -939,8 +986,10 @@ private:
         case op_to_object:
         case op_identity_with_profile:
         case op_resolve_scope:
-            for (auto& use : user->uses)
+            for (auto& use : user->uses) {
+                noteNeedsObject(use.node->type);
                 noteMergedInto(user->type, use.node->type, FunctionSummary::LostThroughAlias | static_cast<uint32_t>(user->opcode) << 8);
+            }
             return;
 
         case op_put_to_scope:
@@ -961,11 +1010,14 @@ private:
             return noteEscapingArguments(user, user->as<OpCallIgnoreResult>().m_callee, user->as<OpCallIgnoreResult>().m_argc, user->as<OpCallIgnoreResult>().m_argv);
         case op_tail_call: {
             noteEscapingArguments(user, user->as<OpTailCall>().m_callee, user->as<OpTailCall>().m_argc, user->as<OpTailCall>().m_argv);
-            recordReturnedValues(callResult(user));
+            if (user->graph == &m_graph)
+                recordReturnedValues(callResult(user));
             return;
         }
         case op_ret:
-            return recordReturnedValues(user->use(user->as<OpRet>().m_value)->type);
+            if (user->graph == &m_graph)
+                recordReturnedValues(user->use(user->as<OpRet>().m_value)->type);
+            return;
         default:
             markOperandsEscaping(user);
             return;
@@ -979,7 +1031,7 @@ private:
             markEscaping(type, FunctionSummary::ReturnedToUnknownCaller);
             return;
         }
-        noteJoin(summary->returnType.join(type & TTop), type, FunctionSummary::MergedInReturn);
+        noteJoin(calleesWithWidenedInputs ? summary->returnType.join(type & TTop) : summary->returnType.load(), type, FunctionSummary::MergedInReturn);
     }
 
     Type closureTypeFor(UnlinkedFunctionExecutable* executable)
@@ -1173,9 +1225,12 @@ private:
             dataLogLn("AOT inference: call of `", known->executable->name().impl(), "` @", known->key.module, ":", known->key.start, " in ", m_graph.nameForLog(), " bc#", node->bytecodeIndex.offset(), " passes", out.toString());
         }
         bool widensInputs = false;
+        bool collectsRemarks = Options::aotRemarksPath() || Options::aotTypeCoveragePath();
         unsigned count = std::min<unsigned>(std::max<unsigned>(known->forCall->numParameters(), known->conventionForCall.numberOfParameters + 1), FunctionSummary::maxParameters);
         for (unsigned i = 1; i < count; ++i) {
             Type type = i < argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
+            if (collectsRemarks) [[unlikely]]
+                known->summary->typesPassedByDirectCalls[i].join(type);
             Type before = known->summary->parameterTypes[i].join(type);
             widensInputs |= (before | type) != before;
             if (programFunctions())
@@ -1186,6 +1241,8 @@ private:
             Type before = known->summary->thisType.join(type);
             widensInputs |= (before | type) != before;
         }
+        if (collectsRemarks) [[unlikely]]
+            known->summary->typesPassedByDirectCalls[0].join(TTop);
         Type before = known->summary->parameterTypes[0].join(TTop);
         widensInputs |= before != TTop;
         if (widensInputs && !calleesWithWidenedInputs->contains(known))
@@ -1454,7 +1511,8 @@ private:
 
     bool isUsedOnlyAsReceiverOf(Node* allocation, Node* read, Node* call)
     {
-        if (allocation->block != read->block)
+        auto beforeInlining = [](BasicBlock* block) { return block->splitFrom ? block->splitFrom : block; };
+        if (beforeInlining(allocation->block) != beforeInlining(read->block))
             return false;
         for (Node* user : users().of(allocation)) {
             if (user != read && user != call && user->kind != NodeKind::Guard && !isInsideInlineeOf(user, call))
@@ -2034,10 +2092,9 @@ private:
             return TArray;
         case op_new_array_with_species: {
             Node* array = node->use(node->as<OpNewArrayWithSpecies>().m_array);
-            while (array->isBytecode(op_to_this) || array->isBytecode(op_to_object))
+            while (array->isBytecode(op_to_this) || array->isBytecode(op_to_object) || (array->kind == NodeKind::Narrow && array->graph == node->graph))
                 array = array->uses[0].node;
-            bool isGuarded = node->graph->isInlinedBuiltin && node->graph->readsElementsOrEmpty && array->kind == NodeKind::Narrow && array->graph == node->graph && array->narrowedTo == TArray;
-            if (isGuarded || isUntouchedReceiverOfInlinedCall(node, array)) {
+            if (isUntouchedReceiverOfInlinedCall(node, array)) {
                 m_graph.remark("plain-array-for-original-receiver"_s);
                 return array->type ? TArray : TNone;
             }
@@ -2188,6 +2245,17 @@ Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<
     inference.calleesWithWidenedInputs = calleesWithWidenedInputs;
     inference.run();
     return inference.returnType();
+}
+
+std::optional<bool> isBranchTakenAccordingToTypes(Node* branch)
+{
+    auto tested = TypeInference::valueTestedBy(branch);
+    if (!tested.value || tested.value->isElided || tested.value->wasInferredUnreachable)
+        return std::nullopt;
+    bool mayBeTaken = mayBe(tested.value->type, tested.ifTrue);
+    if (mayBeTaken == mayBe(tested.value->type, tested.ifFalse))
+        return std::nullopt;
+    return mayBeTaken;
 }
 
 } } // namespace JSC::AOT

@@ -225,7 +225,10 @@ void emitEpilogueBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::C
         return;
     AllowMacroScratchRegisterUsage allowScratch(jit);
     jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
-    jit.emitFunctionEpilogue();
+    if (code.frameSize())
+        jit.emitFunctionEpilogue();
+    else
+        jit.emitFunctionEpilogueWithEmptyFrame();
 }
 
 void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Code& code)
@@ -374,7 +377,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         inlineCalls(graph, *program);
     replaceReadsOfConstantObjects(graph);
     scalarReplaceReadOnlyObjects(graph);
+    while (foldBranchesOnKnownValues(graph))
+        scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
+    foldBranchesDecidedByTypes(graph);
     findRarelyExecutedBlocks(graph);
     planMultiValueReturns(graph);
     if (triesUnsplitLoops && Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph))
@@ -608,6 +614,7 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
+    graph.setCanonicalScopes(variableSummaries);
     if (!parseBytecode(graph))
         return false;
     graph.recordKnownFunctionUses(summariesByExecutable, summary);
@@ -648,8 +655,16 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     graph.setSummary(summary);
     graph.setVariableSummaries(variableSummaries, summaryReader);
     graph.setNameForLog(nameForLog);
+    auto noteEscapingUnlessPlainObjects = [&](uint32_t parameters) {
+        if (!summary)
+            return;
+        uint32_t old = summary->escapingParametersUnlessPlainObjects.fetch_or(parameters, std::memory_order_relaxed);
+        if ((old | parameters) != old)
+            summary->returnValueTypesChanged.store(true, std::memory_order_relaxed);
+    };
     if (!parseBytecode(graph)) {
         escapingParameters = std::numeric_limits<uint32_t>::max();
+        noteEscapingUnlessPlainObjects(escapingParameters);
         return TTop;
     }
     replaceReadsOfConstantObjects(graph);
@@ -657,7 +672,13 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     Type result = inferTypes(graph, &calleesRead, &calleesWithWidenedInputs) & TTop;
     graph.recordPropertyEffects();
     recordKnownCallees(graph);
-    escapingParameters = summary ? AOT::escapingParameters(graph, &calleesRead) : std::numeric_limits<uint32_t>::max();
+    if (!summary) {
+        escapingParameters = std::numeric_limits<uint32_t>::max();
+        return result;
+    }
+    EscapingParameters escaping = AOT::escapingParameters(graph, &calleesRead);
+    escapingParameters = escaping.ifPlainObjects;
+    noteEscapingUnlessPlainObjects(escaping.otherwise);
     return result;
 }
 

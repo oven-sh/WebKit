@@ -674,13 +674,18 @@ bool Lowering::tryLowerMisc(Node* node)
             return true;
         }
         if (Node* function = code().currentClosureFunction()) {
+            const FunctionSummary* summary = code().summaryWithCaptures();
             if (node->useCount)
-                setJSValue(node, m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
+                setJSValue(node, summary && summary->takesScopeAsCallee ? lowCell(function) : m_out.loadPtr(lowCell(function), m_heaps.JSCallee_scope));
             return true;
         }
         if (code().scopeIsModuleEnvironment()) {
             if (node->useCount)
                 setJSValue(node, environmentAt(code().moduleEnvironmentDepth()));
+            return true;
+        }
+        if (const FunctionSummary* summary = code().summaryWithCaptures(); summary && summary->takesScopeAsCallee) {
+            setJSValue(node, callee());
             return true;
         }
         setJSValue(node, m_out.loadPtr(callee(), m_heaps.JSCallee_scope));

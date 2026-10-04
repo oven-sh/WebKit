@@ -74,6 +74,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, (Instance*, EncodedJSValue callee));
 JSC_DECLARE_JIT_OPERATION(operationAOTLatin1StringEqualTo, StringImpl*, (Instance*, JSString*));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchString, int32_t, (Instance*, EncodedJSValue, uint32_t tableIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTSwitchChar, int32_t, (Instance*, EncodedJSValue));

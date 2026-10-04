@@ -20,14 +20,28 @@ ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* cal
     FunctionRef function = caller(instance, callFrame);
     if (!function.info().function()->hasInlineFrames) [[likely]]
         return function;
-    return function.locationForReturnAddress(removeCodePtrTag(callFrame->rawReturnPC())).function;
+    return function.locationForReturnAddress(removeCodePtrTag(callFrame->rawReturnPC()), callFrame->callerFrame()).function;
 }
-ALWAYS_INLINE BytecodeIndex callerBytecodeIndex(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC())); }
+ALWAYS_INLINE BytecodeIndex callerBytecodeIndex(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).bytecodeIndexAt(removeCodePtrTag(callFrame->rawReturnPC()), callFrame->callerFrame()); }
+
+ALWAYS_INLINE void countOperationNamed(Instance* instance, const char* name, const char* detail = nullptr)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(*instance->vm).countOperation(name, detail);
+}
+
+ALWAYS_INLINE void countOperationBySlotState(Instance* instance, const char* name, const Slot* slot)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(*instance->vm).countOperationBySlotState(name, slot);
+}
 
 ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
 {
     constexpr uint32_t samplingInterval = 8;
-    if (++instance->uncountedOperations % samplingInterval) [[likely]]
+    instance->operationSamplingState = instance->operationSamplingState * 1664525u + 1013904223u;
+    static_assert(samplingInterval == 1u << 3);
+    if (instance->operationSamplingState >> (32 - 3)) [[likely]]
         return;
     FunctionRef function = caller(instance, callFrame);
     if (!function.instance->dataIfExists(function.index)) [[unlikely]]
@@ -42,6 +56,7 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     ++(instance)->effectEpoch; \
     countOperationFor(instance, callFrame); \
+    countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 
@@ -52,6 +67,7 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     ++(instance)->effectEpoch; \
+    countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
 

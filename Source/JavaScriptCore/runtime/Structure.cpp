@@ -33,6 +33,7 @@
 #include "BuiltinNames.h"
 #include "DumpContext.h"
 #include "JSCInlines.h"
+#include "JSCellButterfly.h"
 #include "PropertyNameArray.h"
 #include "PropertyTable.h"
 #include "WebAssemblyGCStructure.h"
@@ -363,6 +364,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setHasBeenDictionary(previous->hasBeenDictionary());
     setProtectPropertyTableWhileTransitioning(false);
     setInheritorsMayOverrideReadOnlyProperties(previous->inheritorsMayOverrideReadOnlyProperties());
+    setDidConvertFirstObjectToDictionary(previous->didConvertFirstObjectToDictionary());
     setTransitionOffset(vm, invalidOffset);
     setMaxOffset(vm, invalidOffset);
  
@@ -656,6 +658,19 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
     RELEASE_ASSERT_NOT_REACHED();
     return false;
 }
+
+#if ENABLE(AOT)
+bool Structure::shouldConvertFirstObjectToDictionaryForAdd(VM& vm)
+{
+    if (!vm.m_aotProgram || transitionCountEstimate() < s_minTransitionLengthToConvertFirstObjectToDictionary || didConvertFirstObjectToDictionary())
+        return false;
+    JSType type = m_blob.type();
+    if ((type != FinalObjectType && type != JSFunctionType) || hasBeenDictionary() || typedLayoutID() || hasPolyProto() || isCopyOnWrite(indexingMode()))
+        return false;
+    setDidConvertFirstObjectToDictionary(true);
+    return true;
+}
+#endif
 
 Structure* Structure::addPropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, PropertyOffset& offset)
 {
@@ -1405,6 +1420,91 @@ const TypedLayoutTable::Field* TypedLayoutTable::findField(VM& vm, uint16_t type
     return nullptr;
 }
 
+static JSCellButterfly* typedLayoutsOfInheritors(VM& vm, JSObject* prototype)
+{
+    JSValue layouts = prototype->getDirect(vm, vm.propertyNames->builtinNames().typedLayoutsOfInheritorsPrivateName());
+    return layouts ? uncheckedDowncast<JSCellButterfly>(layouts.asCell()) : nullptr;
+}
+
+#if ENABLE(AOT)
+static bool hasInheritorWithLayout(VM& vm, JSObject* prototype, uint16_t typedLayoutID)
+{
+    JSCellButterfly* layouts = typedLayoutsOfInheritors(vm, prototype);
+    for (unsigned i = 0; layouts && i < layouts->length(); ++i) {
+        if (layouts->get(i).asInt32() == typedLayoutID)
+            return true;
+    }
+    return false;
+}
+#endif
+
+bool TypedLayoutTable::tryToInheritFrom(VM& vm, uint16_t typedLayoutID, JSValue prototype)
+{
+#if ENABLE(AOT)
+    if (!typedLayoutID || !hasTypedFields() || usesFieldIDs(typedLayoutID))
+        return true;
+    auto fields = fieldsOf(typedLayoutID);
+    auto* program = AOT::VMProgram::of(vm);
+    if (fields.empty() || !program)
+        return true;
+    Vector<JSObject*, 4> chain;
+    for (JSValue next = prototype; next.isObject();) {
+        JSObject* object = asObject(next);
+        Structure* structure = object->structure();
+        if (object->type() != FinalObjectType && object->type() != ObjectType)
+            return false;
+        if ((object == structure->globalObject()->objectPrototype() && !structure->isStructureExtensible()) || hasInheritorWithLayout(vm, object, typedLayoutID))
+            break;
+        if (structure->hasPolyProto() || object->hasNonReifiedStaticProperties())
+            return false;
+        for (auto& field : fields) {
+            if (isValidOffset(structure->get(vm, PropertyName(program->identifier(field.identifier)))))
+                return false;
+        }
+        chain.append(object);
+        next = structure->storedPrototype();
+    }
+    for (JSObject* object : chain) {
+        JSCellButterfly* known = typedLayoutsOfInheritors(vm, object);
+        unsigned count = known ? known->length() : 0;
+        JSCellButterfly* layouts = JSCellButterfly::create(vm, CopyOnWriteArrayWithInt32, count + 1);
+        for (unsigned i = 0; i < count; ++i)
+            layouts->setIndex(vm, i, known->get(i));
+        layouts->setIndex(vm, count, jsNumber(typedLayoutID));
+        object->putDirect(vm, vm.propertyNames->builtinNames().typedLayoutsOfInheritorsPrivateName(), layouts, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete);
+    }
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(typedLayoutID);
+    UNUSED_PARAM(prototype);
+#endif
+    return true;
+}
+
+bool TypedLayoutTable::tryToChangePrototype(VM& vm, JSObject* object, JSValue prototype)
+{
+    if (!tryToInheritFrom(vm, object->structure()->typedLayoutID(), prototype))
+        return false;
+    JSCellButterfly* layouts = object->mayBePrototype() ? typedLayoutsOfInheritors(vm, object) : nullptr;
+    for (unsigned i = 0; layouts && i < layouts->length(); ++i) {
+        if (!tryToInheritFrom(vm, safeCast<uint16_t>(layouts->get(i).asInt32()), prototype))
+            return false;
+    }
+    return true;
+}
+
+bool TypedLayoutTable::isFieldOfInheritor(VM& vm, JSObject* prototype, UniquedStringImpl* name)
+{
+    if (name->isSymbol())
+        return false;
+    JSCellButterfly* layouts = typedLayoutsOfInheritors(vm, prototype);
+    for (unsigned i = 0; layouts && i < layouts->length(); ++i) {
+        if (findField(vm, safeCast<uint16_t>(layouts->get(i).asInt32()), name))
+            return true;
+    }
+    return false;
+}
+
 void TypedLayoutTable::atomizeIfString(JSValue value)
 {
     if (!value.isString())
@@ -1426,6 +1526,22 @@ bool TypedLayoutTable::accepts(const FieldType& fieldType, JSValue value)
             if (typedLayoutID >= fieldType.first && typedLayoutID <= fieldType.last)
                 return true;
             if (!typedLayoutID && s_fields && value.isObject() && s_convert(value.asCell()->vm(), asObject(value), fieldType.first))
+                return true;
+        }
+        kinds &= ~SoundTypeOtherObject;
+        if (!kinds)
+            return false;
+    }
+    return soundTypeMaskAccepts(kinds, value);
+}
+
+bool TypedLayoutTable::isValueOf(const FieldType& fieldType, JSValue value)
+{
+    unsigned kinds = fieldType.kinds & ~stringsAreAtoms;
+    if (fieldType.first) {
+        if (value.isCell()) {
+            uint16_t typedLayoutID = value.asCell()->structure()->typedLayoutID();
+            if (typedLayoutID >= fieldType.first && typedLayoutID <= fieldType.last)
                 return true;
         }
         kinds &= ~SoundTypeOtherObject;

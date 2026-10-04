@@ -515,6 +515,20 @@ LValue Lowering::isOneOf(LValue layout, uint16_t first, uint16_t last)
     return m_out.belowOrEqual(m_out.sub(layout, m_out.constInt32(first)), m_out.constInt32(last - first));
 }
 
+static void remarkBaseOfUntypedAccess(Graph& graph, const Node* base)
+{
+    Type type = base->type & ~(TOther | TEmpty);
+    ASCIILiteral what = "anything"_s;
+    if (type && isSubtype(type, TFinalObject)) {
+        auto layouts = layoutRangeOf(type);
+        what = layouts.isOne() && layouts.lowest ? "one-layout"_s : layouts.highest - layouts.lowest < 16 ? "few-layouts"_s : "plain-object"_s;
+    } else if (type && isSubtype(type, TAnyObject))
+        what = "object"_s;
+    else if (type && !mayBe(type, TAnyObject))
+        what = "primitive"_s;
+    graph.remark("untyped-access-of"_s, what);
+}
+
 void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
@@ -758,6 +772,7 @@ void Lowering::lowerGetById(Node* node)
         setJSValue(node, m_out.phi(Int64, found, lacking, other));
         return;
     }
+    remarkBaseOfUntypedAccess(m_graph, baseNode);
     LValue base = lowJSValue(baseNode);
     UniquedStringImpl* name = code().codeBlock()->identifier(bytecode.m_property).impl();
     LValue effectEpoch = loadEffectEpoch();
@@ -973,9 +988,17 @@ void Lowering::findPropertyRuns(BasicBlock* block)
         case op_get_scope:
             continue;
         case op_resolve_scope: {
-            ResolveType type = node->as<OpResolveScope>().m_resolveType;
-            if (type == Dynamic || type == UnresolvedProperty || type == UnresolvedPropertyWithVarInjectionChecks)
+            auto bytecode = node->as<OpResolveScope>();
+            ResolveType type = bytecode.m_resolveType;
+            if (type == Dynamic || type == UnresolvedProperty || type == UnresolvedPropertyWithVarInjectionChecks) {
                 end();
+                continue;
+            }
+            if (isStaticClosureVarResolveType(type) || !node->useCount)
+                continue;
+            SetForScope code(m_code, node->graph);
+            if (StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); !variable.isAtStaticDepth() && variable.kind != StaticVariable::Import)
+                endRun();
             continue;
         }
         case op_get_from_scope:
@@ -1031,6 +1054,8 @@ void Lowering::lowerPropertyRun(const PropertyRun& stores)
         auto bytecode = stores[i]->as<OpPutById>();
         words.append(AllocationPlan::encode(numberOf(*stores[i]->graph, bytecode.m_property), bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict(), true));
         m_out.store64(lowJSValue(stores[i]->use(bytecode.m_value)), scratchWord(i));
+        if (i)
+            m_graph.spreadSites.append({ siteOf(first), i, callSiteBitsOf(stores[i]) });
     }
     m_graph.noteSitePlan(slot, WTF::move(words));
     m_graph.remark("property-run"_s, String::number(count));
@@ -1110,6 +1135,8 @@ void Lowering::lowerPutById(Node* node)
         m_out.appendTo(otherwise, afterTypedStore);
         }
     }
+    if (!afterTypedStore)
+        remarkBaseOfUntypedAccess(m_graph, baseNode);
     if (!afterTypedStore && !bytecode.m_flags.isDirect() && mayBe(baseNode->type, TArray) && mayBe(valueNode->type, TInt32) && code().codeBlock()->identifier(bytecode.m_property).impl() == m_graph.vm().propertyNames->length.impl()) {
         LBasicBlock otherwise = m_out.newBlock();
         afterTypedStore = m_out.newBlock();
@@ -1447,11 +1474,29 @@ void Lowering::writePromotedVariable(Node* environment, unsigned offset, LValue 
     m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), environmentVariable(environment, offset), value);
 }
 
+static Node* environmentMadeBy(Graph& maker, const void* scope)
+{
+    for (BasicBlock* block : maker.outermost().m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->graph == &maker && node->isBytecode(op_create_lexical_environment) && maker.scopeIdentity(node) == scope)
+                return node;
+        }
+    }
+    return nullptr;
+}
+
 LValue Lowering::heldCapture(Graph& graph, const void* scope, unsigned offset)
 {
     Graph* holder = &graph;
-    while (!holder->closureFunction && holder->closureScope)
+    while (!holder->closureFunction && holder->closureScope) {
         holder = holder->closureScope->graph;
+        if (Node* environment = environmentMadeBy(*holder, scope)) {
+            m_graph.remark("reads-variable-of-maker"_s);
+            if (environment->isPromoted)
+                return readPromotedVariable(environment, offset);
+            return m_out.load64(lowCell(environment), m_heaps.JSLexicalEnvironment_variables[offset]);
+        }
+    }
     const FunctionSummary* summary = holder->summaryWithCaptures();
     auto index = summary ? summary->indexOfCapture(scope, offset) : std::nullopt;
     RELEASE_ASSERT_WITH_MESSAGE(index, "A variable of a scope that is in no chain is read by a function that does not hold it");
@@ -1629,6 +1674,7 @@ void Lowering::lowerGetFromScope(Node* node)
         unsigned site = allocateSite(resolveNode, numberOf(resolve.m_var), code().resolveScopeExtra(resolve));
         unsigned siteOfGet = allocateSite(node, numberOf(bytecode.m_var), code().getFromScopeExtra(bytecode));
         RELEASE_ASSERT(siteOfGet == site + 1);
+        m_graph.remark("reads-global"_s, StringView(code().codeBlock()->identifier(bytecode.m_var).impl()));
         setJSValue(node, callStub(Stub::GetGlobal, Int64, { { scope, firstStubOperandGPR }, { slotAddress(site), GPRInfo::argumentGPR1 } }, { }));
         return;
     }
@@ -1791,6 +1837,9 @@ bool Lowering::mayCollectOrThrow(Node* node)
         return !node->promotedEnvironment && node->as<OpGetFromScope>().m_getPutInfo.resolveType() != ResolvedClosureVar;
     case op_put_to_scope:
         return !node->promotedEnvironment && !offsetOfVariableStoredInline(node);
+    case op_new_func:
+    case op_new_func_exp:
+        return !Graph::makesNoFunctionObject(node);
     default:
         return true;
     }

@@ -70,6 +70,7 @@ const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to defin
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
+const ASCIILiteral TypedFieldOfInheritorError { "Type check failed: a prototype of typed objects must be an ordinary object without a property named like one of their fields"_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -2196,6 +2197,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
             break; // We're done. Set the prototype.
         nextPrototype = asObject(nextPrototype)->getPrototypeDirect();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::tryToChangePrototype(vm, this, prototype)) [[unlikely]]
+        return typeError(globalObject, scope, shouldThrowIfCantSet, TypedFieldOfInheritorError);
+#endif
     setPrototypeDirect(vm, prototype);
     return true;
 }
@@ -4087,6 +4092,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
             }
             if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
                 return typeError(globalObject, scope, throwException, TypedFieldError);
+#if USE(BUN_JSC_ADDITIONS)
+            if (!isApplied && object->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+                return typeError(globalObject, scope, throwException, TypedFieldOfInheritorError);
+#endif
         }
 
         return true;

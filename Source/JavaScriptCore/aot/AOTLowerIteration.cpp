@@ -187,9 +187,11 @@ void Lowering::lowerIteratorNext(Node* node)
         LBasicBlock rightShape = m_out.newBlock();
         LBasicBlock inBounds = m_out.newBlock();
         LBasicBlock isPresent = m_out.newBlock();
+        LBasicBlock atEnd = m_out.newBlock();
         LBasicBlock otherwise = m_out.newBlock();
         LBasicBlock continuation = m_out.newBlock();
 
+        m_graph.remark("ends-array-iteration-inline"_s);
         m_out.branch(m_out.equal(iterator, fixedPointer(Instance::offsetOfArrayIterationSentinel())), usually(byIndex), rarely(otherwise));
 
         m_out.appendTo(byIndex, indexIsInt32);
@@ -203,16 +205,22 @@ void Lowering::lowerIteratorNext(Node* node)
         m_out.appendTo(rightShape, inBounds);
         static_assert(MAX_STORAGE_VECTOR_LENGTH < static_cast<unsigned>(std::numeric_limits<int32_t>::max()));
         LValue butterfly = m_out.loadPtr(iterable, m_heaps.JSObject_butterfly);
-        m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), usually(inBounds), rarely(otherwise));
+        m_out.branch(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)), unsure(inBounds), unsure(atEnd));
 
         m_out.appendTo(inBounds, isPresent);
         LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
         m_out.branch(m_out.notZero64(element), usually(isPresent), rarely(otherwise));
 
-        m_out.appendTo(isPresent, otherwise);
+        m_out.appendTo(isPresent, atEnd);
         ValueFromBlock inlineDone = m_out.anchor(m_out.constInt64(JSValue::ValueFalse));
         ValueFromBlock inlineValue = m_out.anchor(element);
         ValueFromBlock inlineNext = m_out.anchor(boxInt32(m_out.add(index, m_out.int32One)));
+        m_out.jump(continuation);
+
+        m_out.appendTo(atEnd, otherwise);
+        ValueFromBlock endDone = m_out.anchor(m_out.constInt64(JSValue::ValueTrue));
+        ValueFromBlock endValue = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+        ValueFromBlock endNext = m_out.anchor(m_out.constInt64(JSValue::encode(jsNumber(JSArrayIterator::doneIndex))));
         m_out.jump(continuation);
 
         m_out.appendTo(otherwise, continuation);
@@ -226,9 +234,9 @@ void Lowering::lowerIteratorNext(Node* node)
         m_out.jump(continuation);
 
         m_out.appendTo(continuation);
-        setProj(node, bytecode.m_done, m_out.phi(Int64, inlineDone, stubDone));
-        setProj(node, bytecode.m_value, m_out.phi(Int64, inlineValue, stubValue));
-        setProj(node, bytecode.m_next, m_out.phi(Int64, inlineNext, stubNext));
+        setProj(node, bytecode.m_done, m_out.phi(Int64, inlineDone, endDone, stubDone));
+        setProj(node, bytecode.m_value, m_out.phi(Int64, inlineValue, endValue, stubValue));
+        setProj(node, bytecode.m_next, m_out.phi(Int64, inlineNext, endNext, stubNext));
         return;
     }
 

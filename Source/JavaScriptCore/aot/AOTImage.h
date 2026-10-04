@@ -263,6 +263,7 @@ public:
         uint32_t numSlots;
         bool startsCold;
         bool hasSiteConstants;
+        bool hasNoGeneralBody;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;

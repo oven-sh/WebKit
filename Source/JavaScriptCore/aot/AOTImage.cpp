@@ -54,6 +54,7 @@ uint64_t imageStamp()
     };
     mix(numberOfEntries);
     mix(Instance::offsetOfStates());
+    mix(Instance::offsetOfDataPointers());
     mix(Instance::minStateWithData);
     mix(numberOfStubs);
     mix(numOpcodeIDs);
@@ -1318,6 +1319,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.startsCold = info.startsCold;
         record.isGetByValOnThis = info.isGetByValOnThis;
         record.returnsScopeVariable = !!info.returnedVariable;
+        record.hasNoGeneralBody = info.isOnlyCalledDirectly;
         record.quotes = functionQuotes[index];
 
         ImageKey key = function.key;
@@ -1794,7 +1796,7 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.functionStartsOffset)[function.index];
         auto futureLocation = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(start, function.convention()), function.index,
-            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants };
+            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasNoGeneralBody };
     }
     return std::nullopt;
 }

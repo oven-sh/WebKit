@@ -85,8 +85,10 @@ void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
     reconcileStores(m_storeCacheSecondaryEntries);
     reconcileHas(m_hasCachePrimaryEntries);
     reconcileHas(m_hasCacheSecondaryEntries);
-    for (auto& entry : m_constructionEntries)
-        entry.m_epoch = invalidEpoch;
+    for (auto& entry : m_constructionEntries) {
+        if (entry.m_epoch == m_epoch && (hasDied(entry.m_firstStructureID) || hasDied(entry.m_lastStructureID)))
+            entry.m_epoch = invalidEpoch;
+    }
     m_hasBeenReconciled = true;
 }
 

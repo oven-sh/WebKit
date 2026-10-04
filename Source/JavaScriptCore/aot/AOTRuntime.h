@@ -26,6 +26,7 @@
 #include "RegisterAtOffsetList.h"
 #include "Structure.h"
 #include "StructureID.h"
+#include <wtf/HashMap.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace JSC {
@@ -181,6 +182,7 @@ namespace AOT {
     v(StructureIDBase) \
     v(LookupExceptionHandler) \
     v(ThrowStackOverflowError) \
+    v(ThrowCalledIndirectlyError) \
     v(NativeCallTrampoline) \
     v(InternalFunctionCallTrampoline) \
     v(InternalFunctionConstructTrampoline) \
@@ -217,6 +219,7 @@ namespace AOT {
     v(HostArrayPush) \
     v(HostStringCodePointAt) \
     v(HostStringCharAt) \
+    v(HostStringSlice) \
     v(HostArrayPop) \
     v(HostArrayIsArray) \
     v(HostMapGet) \
@@ -241,6 +244,7 @@ namespace AOT {
     v(NewArrayBufferSlowPath) \
     v(NewArrayWithSpreadSlowPath) \
     v(NewArrayWithSpeciesSlowPath) \
+    v(NewArrayWithSizeSlowPath) \
     v(CreateRestSlowPath) \
     v(CreateLexicalEnvironmentSlowPath) \
     v(NewInternalFieldObjectSlowPath) \
@@ -254,6 +258,7 @@ namespace AOT {
     v(StringSubstringWithEndSlowPath) \
     v(ObjectKeysObjectSlowPath) \
     v(ValueAddSlowPath) \
+    v(StrcatSlowPath) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -281,6 +286,8 @@ struct VirtualCallInfo {
     void* lookupExceptionHandler;
 };
 
+struct Slot;
+
 class RuntimeTable {
     WTF_MAKE_TZONE_ALLOCATED(RuntimeTable);
     WTF_MAKE_NONCOPYABLE(RuntimeTable);
@@ -289,13 +296,21 @@ public:
     ~RuntimeTable();
 
     void** entries() { return m_entries; }
+    void countOperation(const char* name, const char* detail = nullptr) { m_operationCounts.add(std::pair { name, detail }, 0).iterator->value++; }
+    void countOperationBySlotState(const char* name, const Slot*);
+    uint64_t operationCount(StringView nameAndDetail) const;
+    void dumpOperationCounts(PrintStream&) const;
+    void writeOperationCounts() const;
 
 private:
     void* m_entries[numberOfEntries];
     Vector<std::unique_ptr<VirtualCallInfo>> m_callLinkInfos;
+    UncheckedKeyHashMap<std::pair<const char*, const char*>, uint64_t> m_operationCounts;
 };
 
 RuntimeTable& runtimeTable(VM&);
+JS_EXPORT_PRIVATE uint64_t operationCount(VM&, StringView nameAndDetail);
+JS_EXPORT_PRIVATE void writeOperationCounts(VM&);
 
 struct Slot {
     static constexpr unsigned offsetBits = 24;
@@ -307,6 +322,7 @@ struct Slot {
     static_assert(JSFinalObject::maxInlineCapacity + JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) <= directLocationMask);
     static constexpr unsigned attemptsShift = 24;
     static constexpr uint32_t maxAttempts = 15;
+    static constexpr uint32_t maxAttemptsForInheritedProperty = 4;
     static constexpr uint32_t attemptsMask = maxAttempts << attemptsShift;
     static constexpr uint32_t isIndirect = 1u << 28;
     static constexpr uint32_t isGetter = 1u << 29;
@@ -326,6 +342,12 @@ struct Slot {
         structureID = StructureID();
         offset &= attemptsMask;
         pointer = nullptr;
+    }
+
+    void clearAndForgetAttempts()
+    {
+        clear();
+        offset = 0;
     }
 
     StructureID structureID;
@@ -442,7 +464,7 @@ struct Instance {
     static Instance* of(JSFunction*);
     Structure* functionStructure(Structure* realmStructure, FunctionExecutable*, JSScope*);
     Structure* functionStructure(Structure* realmStructure);
-    JSFunction* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*);
+    JS_EXPORT_PRIVATE JSFunction* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*);
     JSFunctionWithCaptures* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*, std::span<const EncodedJSValue> captures);
     Structure* functionStructureWithCaptures(Structure* realmStructure);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
@@ -465,11 +487,13 @@ struct Instance {
     void finalizeUnconditionally(bool newOnly);
     void clearCachesValidatedByMegamorphicCacheEpoch();
     void noteCalleeCacheFilled(Slot*);
+    void noteCalleeCacheAbandoned(Slot*);
 
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
     static constexpr ptrdiff_t offsetOfStates() { return OBJECT_OFFSETOF(Instance, states); }
+    static constexpr ptrdiff_t offsetOfDataPointers() { return offsetOfStates() + maxNumberOfFunctions * sizeof(uint32_t); }
     static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
     static constexpr ptrdiff_t offsetOfProgram() { return OBJECT_OFFSETOF(Instance, program); }
     static constexpr ptrdiff_t offsetOfProgramIdentifiers() { return OBJECT_OFFSETOF(Instance, programIdentifiers); }
@@ -493,6 +517,7 @@ struct Instance {
             ensureData(index);
     }
 
+    static constexpr size_t maxNumberOfFunctions = static_cast<size_t>(1) << 20;
     static constexpr uint32_t maxMisses = 0xffff;
     static constexpr uint32_t isLinkedWithoutData = 1u << 16;
     static constexpr uint32_t minStateWithData = 1u << 17;
@@ -515,9 +540,16 @@ struct Instance {
         uintptr_t distance = std::bit_cast<uintptr_t>(data) - std::bit_cast<uintptr_t>(this);
         RELEASE_ASSERT(!(distance & ((1u << stateWithDataShift) - 1)) && distance >> stateWithDataShift >= minStateWithData && !(distance >> stateWithDataShift >> 32));
         states[index] = static_cast<uint32_t>(distance >> stateWithDataShift);
+        dataPointers()[index] = data;
     }
-    void setNotLinked(uint32_t index) { states[index] = 0; }
+    void setNotLinked(uint32_t index)
+    {
+        states[index] = 0;
+        dataPointers()[index] = sharedData;
+    }
+    Data** dataPointers() { return std::bit_cast<Data**>(std::bit_cast<char*>(this) + offsetOfDataPointers()); }
     void noteTransitionCached(Slot*);
+    void noteCellAdded(JSCell*);
     PolymorphicSlots* makeSiteSlots(Data*, UniquedStringImpl* name);
     void* allocateForData(size_t);
     void freeDataMemory(void*, size_t);
@@ -737,9 +769,8 @@ struct Instance {
     static constexpr unsigned numberOfCachedAddressInfos = 512;
     CachedAddressInfo cachedAddressInfos[numberOfCachedAddressInfos] { };
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
-    uint32_t uncountedOperations { 0 };
-    const void* overriddenReturnAddress { nullptr };
-    uint32_t overridingSite { 0 };
+    uint32_t operationSamplingState { 0 };
+    const CallSiteOverride* callSiteOverrides { nullptr };
     uint32_t states[0];
 };
 
@@ -760,6 +791,7 @@ struct Data {
 
     void finalizeUnconditionally(VM&);
     void finalizeSlot(VM&, Slot&);
+    void retryAbandonedSlots();
 
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(Data, sites); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
@@ -927,6 +959,7 @@ struct ImageFunction {
     uint8_t startsCold : 1;
     uint8_t isGetByValOnThis : 1;
     uint8_t returnsScopeVariable : 1;
+    uint8_t hasNoGeneralBody : 1;
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
 #if CPU(ARM64)

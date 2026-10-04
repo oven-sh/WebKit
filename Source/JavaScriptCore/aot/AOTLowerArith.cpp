@@ -157,7 +157,8 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         return;
     }
     if (!mayBeNumbers) {
-        setJSValue(node, vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b));
+        auto callOperation = [&] { return vmCall(node, Int64, operationFor(opcode), contextOf(operationFor(opcode)), a, b); };
+        setJSValue(node, opcode == op_add && mayBe(left->type | right->type, TString) ? withHelper(Stub::HelperAddStrings, { a, b }, callOperation) : callOperation());
         return;
     }
     if (isCompact()) {
@@ -273,6 +274,9 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
 
     LValue a = lowJSValue(left);
     LValue b = lowJSValue(right);
+    auto asInt32 = [&](Node* operand, LValue boxed) -> LValue {
+        return operand->rep() == Rep::Int32 ? lowInt32(operand) : unboxInt32(boxed);
+    };
     if (bool leftIsInt32 = isSubtype(left->type, TInt32); (leftIsInt32 || isSubtype(right->type, TInt32)) && isSubtype(node->type, TInt32)) {
         m_graph.remark("inline-bit-operation"_s);
         LBasicBlock intCase = m_out.newBlock();
@@ -281,7 +285,7 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
         m_out.branch(isInt32(leftIsInt32 ? b : a), usually(intCase), rarely(slowCase));
 
         m_out.appendTo(intCase);
-        ValueFromBlock fastResult = m_out.anchor(intOp(unboxInt32(a), unboxInt32(b)));
+        ValueFromBlock fastResult = m_out.anchor(intOp(asInt32(left, a), asInt32(right, b)));
         m_out.jump(continuation);
 
         m_out.appendTo(slowCase);
@@ -303,7 +307,7 @@ void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)
     m_out.branch(m_out.bitAnd(isInt32(a), isInt32(b)), usually(intCase), rarely(slowCase));
 
     m_out.appendTo(intCase, slowCase);
-    LValue fast = intOp(unboxInt32(a), unboxInt32(b));
+    LValue fast = intOp(asInt32(left, a), asInt32(right, b));
     ValueFromBlock fastResult = m_out.anchor(boxInt32(fast));
     m_out.jump(continuation);
 
@@ -844,7 +848,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     if (!bitsDecide && isCompact() && !(m_block->isInLoop && !m_block->isGeneric) && (strict || isSubtype(both, TString))) {
         for (auto [literal, other] : { std::pair { right, left }, std::pair { left, right } }) {
             auto said = constantStringOf(literal);
-            if (said && !said->isEmpty() && said->is8Bit() && said->length() <= 8) {
+            if (said && !said->isEmpty() && said->is8Bit() && said->length() <= 16) {
                 auto characters = said->span8();
                 unsigned length = characters.size();
                 auto chunk = [&](unsigned start, unsigned size) {
@@ -868,9 +872,16 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
                 } else
                     bits = chunk(0, 8);
                 m_graph.wideIntegerConstants.add(static_cast<int64_t>(bits));
-                return callStub(stub, Int32, { { lowJSValue(other), firstStubOperandGPR }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | length } });
+                Vector<StubArgument, 8> operands { { lowJSValue(other), firstStubOperandGPR }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } };
+                if (length > 8) {
+                    stub = Stub::IsStringEqualToLiteral9To16;
+                    uint64_t lastBits = chunk(length - 8, 8);
+                    m_graph.wideIntegerConstants.add(static_cast<int64_t>(lastBits));
+                    operands.append(StubArgument { m_out.constInt64(lastBits), GPRInfo::argumentGPR3 });
+                }
+                return callStub(stub, Int32, operands, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | (length > 8 ? length - 1 : length) } });
             }
-            if (said && !said->isEmpty())
+            if (said && said->length() > 16)
                 return callStub(Stub::IsStringEqualToConstant, Int32, { { lowJSValue(other), firstStubOperandGPR } }, { { stubImmediateGPR, programConstantIndex(literal) } });
         }
     }

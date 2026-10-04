@@ -306,6 +306,11 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (target->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+        return false;
+#endif
+
     if (source->hasNonReifiedStaticProperties())
         return false;
 

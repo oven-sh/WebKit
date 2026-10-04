@@ -129,6 +129,7 @@ protected:
     LValue newMapOrSet(Instance::InlineAllocation, LBasicBlock giveUp);
     LValue newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp);
     LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp);
+    LValue newArrayWithSize(LValue length, LBasicBlock giveUp);
     struct StringParts {
         LValue base;
         LValue impl;
@@ -142,6 +143,9 @@ protected:
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
     LValue addStrings(LValue first, LValue second, LBasicBlock giveUp);
     LValue int32ToString(LValue, LBasicBlock giveUp);
+    LValue stringOrInt32ToString(LValue, LBasicBlock giveUp);
+    LValue addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp);
+    LValue concatenate(LValue values, LValue count, LBasicBlock giveUp);
     LValue keysOfObject(LValue, LBasicBlock giveUp);
     void setArrayLength(LValue array, LValue length, LBasicBlock giveUp);
     void addTypedField(LValue, LValue storedValue, LValue slot, LBasicBlock giveUp);

@@ -111,8 +111,10 @@ public:
         static constexpr ptrdiff_t offsetOfEpoch() { return OBJECT_OFFSETOF(StoreEntry, m_epoch); }
         static constexpr ptrdiff_t offsetOfOffset() { return OBJECT_OFFSETOF(StoreEntry, m_offset); }
         static constexpr ptrdiff_t offsetOfReallocating() { return OBJECT_OFFSETOF(StoreEntry, m_reallocating); }
+        static constexpr uint8_t reallocates = 1;
+        static constexpr uint8_t allocatesInitialOutOfLineStorage = 2;
 
-        void init(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t epoch, uint16_t offset, bool reallocating)
+        void init(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t epoch, uint16_t offset, uint8_t reallocating)
         {
             m_uid = uid;
             m_oldStructureID = oldStructureID;
@@ -180,6 +182,13 @@ public:
         entry.m_lastStructureID = last;
         entry.m_site = site;
         entry.m_epoch = m_epoch;
+    }
+    StructureID lastStructureOfConstruction(StructureID first, const void* site) const
+    {
+        auto& entry = m_constructionEntries[constructionHash(first, site) & constructionCacheMask];
+        if (entry.m_firstStructureID != first || entry.m_site != site || entry.m_epoch != m_epoch)
+            return { };
+        return entry.m_lastStructureID;
     }
 
     static constexpr ptrdiff_t offsetOfLoadCachePrimaryEntries() { return OBJECT_OFFSETOF(MegamorphicCache, m_loadCachePrimaryEntries); }
@@ -291,7 +300,7 @@ public:
         m_getterCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
     }
 
-    void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, bool reallocating)
+    void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, uint8_t reallocating)
     {
         if (!noteDependenceOnPrototypes(oldStructureID))
             return;

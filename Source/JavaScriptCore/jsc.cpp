@@ -546,7 +546,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTFunctionsNamed);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTRemarks);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTTypeCoverage);
 static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
 static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
@@ -925,7 +927,9 @@ private:
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
         addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
+        addFunction(vm, "aotFunctionsNamed"_s, functionAOTFunctionsNamed, 1);
         addFunction(vm, "aotRemarks"_s, functionAOTRemarks, 1);
+        addFunction(vm, "aotOperationCount"_s, functionAOTOperationCount, 1);
         addFunction(vm, "aotTypeCoverage"_s, functionAOTTypeCoverage, 1);
         addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
         addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
@@ -3071,6 +3075,23 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, Call
 #endif
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (!Options::useAOTOperationCounters() || !AOT::ProgramData::get())
+        return JSValue::encode(jsNull());
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(jsNumber(static_cast<double>(AOT::operationCount(vm, name))));
+#else
+    UNUSED_PARAM(callFrame);
+    UNUSED_PARAM(scope);
+    return JSValue::encode(jsNull());
+#endif
+}
+
 JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3124,6 +3145,34 @@ JSC_DEFINE_HOST_FUNCTION(functionHasExecutable, (JSGlobalObject*, CallFrame* cal
 #else
     return JSValue::encode(jsBoolean(true));
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTFunctionsNamed, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+#if ENABLE(AOT)
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    const AOT::ProgramData* data = AOT::ProgramData::get();
+    for (uint32_t index = 0; data && index < data->numberOfExecutables; ++index) {
+        AOT::Instance& instance = AOT::Instance::ensure(globalObject);
+        const AOT::ExecutableRow& row = data->executableRow(index);
+        if (name != (row.isShort ? String { instance.program->identifier(row.name) } : instance.program->executable(index)->ecmaName().string()))
+            continue;
+        if (JSFunction* function = instance.tryMakeFunctionWithoutExecutable(index, globalObject)) {
+            result->push(globalObject, function);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        result->push(globalObject, JSFunction::create(vm, globalObject, instance.program->executable(index), globalObject));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+#else
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSValue::encode(result);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))

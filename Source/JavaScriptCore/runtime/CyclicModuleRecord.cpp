@@ -235,8 +235,11 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         if (isPrelinked() && AOT::Image::environmentsSize()) {
             AOT::ImageEnvironment environment = AOT::Image::environmentOf(prelinkedIndex());
             if (environment.distance && environment.size == JSModuleEnvironment::allocationSize(symbolTable, jsModule->importSlotCount())) {
-                if (JSCell** slot = AOT::Instance::ensure(moduleLoader()).environmentSlot(environment); slot && !*slot)
+                AOT::Instance& instance = AOT::Instance::ensure(moduleLoader());
+                if (JSCell** slot = instance.environmentSlot(environment); slot && !*slot) {
                     *slot = env;
+                    instance.noteCellAdded(env);
+                }
             }
         }
 #endif

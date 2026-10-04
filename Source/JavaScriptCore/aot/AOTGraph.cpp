@@ -276,7 +276,7 @@ NewObjectPlan NewObjectPlan::forCreateThis(UnlinkedCodeBlock* codeBlock, unsigne
         case op_type_tag:
             continue;
         case op_check_type:
-            if (aliases.contains(instruction->as<OpCheckType>().m_value))
+            if (!plan.stores.isEmpty() || aliases.contains(instruction->as<OpCheckType>().m_value))
                 return plan;
             continue;
         case op_put_by_id: {
@@ -1051,7 +1051,7 @@ unsigned Graph::dissolvedScopesOutside(unsigned hops) const
         return 0;
     unsigned count = 0;
     for (unsigned i = 0; i < hops; ++i) {
-        if (const void* scope = m_declaredNames->scopeIdentity(i); scope && m_variableSummaries->isDissolved(scope))
+        if (const void* scope = canonicalScope(m_declaredNames->scopeIdentity(i)); scope && m_variableSummaries->isDissolved(scope))
             ++count;
     }
     return count;
@@ -1110,7 +1110,7 @@ unsigned Graph::dissolvedScopesAbove(const Node* scope, unsigned hops)
         if (!parent && m_declaredNames) {
             if (!frame) {
                 for (unsigned index = 0; index < 64; ++index) {
-                    const void* candidate = m_declaredNames->scopeIdentity(index);
+                    const void* candidate = canonicalScope(m_declaredNames->scopeIdentity(index));
                     if (!candidate)
                         break;
                     if (candidate == identity) {
@@ -1121,7 +1121,7 @@ unsigned Graph::dissolvedScopesAbove(const Node* scope, unsigned hops)
             }
             if (frame) {
                 frame = *frame + 1;
-                parent = m_declaredNames->scopeIdentity(*frame);
+                parent = canonicalScope(m_declaredNames->scopeIdentity(*frame));
             }
         }
         identity = parent;
@@ -1137,13 +1137,13 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
     if (depth > 6)
         return nullptr;
     auto fromOutside = [&](unsigned hops) -> const void* {
-        return m_declaredNames ? m_declaredNames->scopeIdentity(hops) : nullptr;
+        return m_declaredNames ? canonicalScope(m_declaredNames->scopeIdentity(hops)) : nullptr;
     };
     auto tableFor = [&](VirtualRegister reg) -> const void* {
         if (!reg.isConstant())
             return nullptr;
         JSValue table = m_codeBlock->getConstant(reg);
-        return table && table.isCell() ? table.asCell() : nullptr;
+        return table && table.isCell() ? canonicalScope(table.asCell()) : nullptr;
     };
     if (scope->kind != NodeKind::Bytecode) {
         Vector<const Node*, 16> worklist { scope };
@@ -1238,7 +1238,7 @@ const void* Graph::scopeIdentity(const Node* scope, unsigned depth)
             if (type == GlobalProperty && m_declaredNames) {
                 auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(scope->as<OpResolveScope>().m_var).impl());
                 if (resolution.kind == DeclaredNamesLink::Resolution::Slot)
-                    return resolution.scope;
+                    return canonicalScope(resolution.scope);
             }
             return nullptr;
         }
@@ -1293,7 +1293,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     case ResolvedLazyClosureVar:
         if (scopeTable.isValid() && scopeTable.isConstant()) {
             if (JSValue table = m_codeBlock->getConstant(scopeTable); table && table.isCell())
-                return { table.asCell(), offset };
+                return { canonicalScope(table.asCell()), offset };
         }
         return { scopeIdentity(node->use(scope)), offset };
     case Dynamic:
@@ -1306,7 +1306,7 @@ Variable Graph::variableAccessedBy(const Node* node)
     if (m_declaredNames) {
         auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
         if (resolution.kind == DeclaredNamesLink::Resolution::Slot)
-            return { resolution.scope, resolution.offset };
+            return { canonicalScope(resolution.scope), resolution.offset };
     }
     return { };
 }
@@ -1621,7 +1621,7 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
                 if (m_declaredNames) {
                     m_declaredNames->forEachScope([&](const void* scope) {
                         dataLogLnIf(Options::logAOTTypeInference(), "AOT inference: direct eval gives up on scope ", RawPointer(scope));
-                        summaries.giveUpOnScope(scope);
+                        summaries.giveUpOnScope(canonicalScope(scope));
                     });
                 } else {
                     dataLogLnIf(Options::logAOTTypeInference(), "AOT inference: direct eval in code that does not know what is declared around it gives up on every scope");
@@ -2225,20 +2225,6 @@ std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
     return typedBaseField(node->use(base), name);
 }
 
-std::optional<TypeTable::FieldType> Graph::fieldTypeReadFromLayout(const Node* read, uint32_t layoutID)
-{
-    if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
-        return std::nullopt;
-    UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
-    if (uint32_t tag = typeTagOf(read)) {
-        if (auto field = TypeTable::shared()->fieldOf(tag, name))
-            return field->fieldType;
-    }
-    if (auto field = TypeTable::shared()->layoutField(layoutID, name))
-        return field->fieldType;
-    return std::nullopt;
-}
-
 std::optional<TypeTable::FieldType> Graph::fieldTypeInLayout(uint32_t layoutID, UniquedStringImpl* name)
 {
     if (!layoutID || !Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
@@ -2312,6 +2298,14 @@ const KnownFunction* Graph::functionMadeBy(const Node* node)
         break;
     }
     return made ? programFunctions()->function(programFunctions()->numberOf(made)) : nullptr;
+}
+
+bool Graph::makesNoFunctionObject(const Node* node)
+{
+    if (!node->isBytecode(op_new_func) && !node->isBytecode(op_new_func_exp))
+        return false;
+    const KnownFunction* made = functionMadeBy(node);
+    return made && made->summary && made->summary->takesScopeAsCallee;
 }
 
 void Graph::noteClassesDefined()
@@ -3007,6 +3001,8 @@ public:
         }
         if (m_needsEveryStore)
             makeSkippedStores();
+        else
+            removeOverwrittenStores();
         fillPhis();
         simplifyPhis();
         for (BasicBlock* block : m_graph.m_rpo) {
@@ -3767,7 +3763,7 @@ private:
     template<typename Handler>
     static bool isCoveredBy(BasicBlock* block, const Handler& handler)
     {
-        return block->bytecodeBegin < handler.end && handler.start <= block->bytecodeEnd;
+        return block->bytecodeBegin < handler.end && (handler.start < block->bytecodeEnd || (block->endsWithGuard && handler.start == block->bytecodeEnd));
     }
 
     void computeLiveness()
@@ -3906,6 +3902,46 @@ private:
             skipped.block->nodes.insert(skipped.index, node);
         }
         m_skippedStores.clear();
+    }
+
+    void removeOverwrittenStores()
+    {
+        if (!m_graph.hasFrameRegisters())
+            return;
+        unsigned numRegisters = m_graph.numRegisters();
+        UncheckedKeyHashSet<Node*> overwritten;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            BitVector readLater = block->readByHandlersAfterBlock;
+            readLater.ensureSize(numRegisters);
+            for (BasicBlock* successor : block->successors) {
+                BitVector operands = successor->liveIn;
+                operands.filter(m_graph.m_arrayOperandRegisters);
+                readLater.merge(operands);
+            }
+            for (unsigned i = block->nodes.size(); i--;) {
+                Node* node = block->nodes[i];
+                if (node->kind == NodeKind::GetStack)
+                    readLater.set(m_graph.registerIndex(node->reg));
+                else if (node->kind == NodeKind::SetStack) {
+                    unsigned index = m_graph.registerIndex(node->reg);
+                    if (!readLater.get(index) && !block->readByBlockHandlers.get(index))
+                        overwritten.add(node);
+                    readLater.clear(index);
+                } else if (Graph::readsOperandsFromFrame(node)) {
+                    auto bytecode = node->as<OpNewArray>();
+                    for (unsigned operand = 0; operand < bytecode.m_argc; ++operand)
+                        readLater.set(m_graph.registerIndex(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(operand))));
+                }
+            }
+        }
+        if (overwritten.isEmpty())
+            return;
+        for (BasicBlock* block : m_graph.m_rpo) {
+            block->nodes.removeAllMatching([&](Node* node) {
+                return overwritten.contains(node);
+            });
+        }
+        m_graph.remark("removes-overwritten-frame-stores"_s);
     }
 
     Node* append(BasicBlock* block, Node* node)

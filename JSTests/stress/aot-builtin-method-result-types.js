@@ -93,12 +93,24 @@ check(clearedMap(), "nothing", "Map.prototype.clear");
 check(iteratesKeys(), "yes1", "Map.prototype.keys");
 check([1, 3, NaN, "1"].map(literalIncludes).join(), "yes,no,yes,no", "Array.prototype.includes of a literal");
 check(literalJoins(1, 2) + literalJoins("", ""), "1-2-", "Array.prototype.join of a literal");
+(function () {
+    const isTakenIn = x => x;
+    function restJoinsAfterInlinedCall(x, ...rest) { return isTakenIn(x) + rest.join(); }
+    function literalJoinsAroundInlinedCalls(x, a, b) { return isTakenIn(x) + [isTakenIn(a), b].join(isTakenIn("-")); }
+    check(restJoinsAfterInlinedCall(keep(1), 2, 3) + restJoinsAfterInlinedCall(keep({ })) + restJoinsAfterInlinedCall(keep(1n)), "12,3[object Object]1", "join of the rest after a call that is taken in");
+    check(literalJoinsAroundInlinedCalls(keep(1), 2, 3), "12-3", "join of a literal around calls that are taken in");
+})();
+for (let name of ["restJoinsAfterInlinedCall", "literalJoinsAroundInlinedCalls"]) {
+    let remarks = aotRemarks(name);
+    if (remarks && remarks.length)
+        check(remarks.includes("inlined-call:isTakenIn") + "," + remarks.includes(typedMethod), "true,true", name);
+}
 for (let f of typed)
     applies(f, typedMethod);
 doesNotApply(isAfterEpoch, comparesWithInt32, "calls:Greater");
 for (let f of [sizeOfMap, sizeOfSet]) {
     applies(f, typedSize);
-    doesNotApply(f, comparesWithInt32, "calls:Greater");
+    doesNotApply(f, "calls:Greater");
 }
 
 Object.defineProperty(Map.prototype, "shadowsItsHas", { get() { this.has = () => "own, by a getter"; return 1; } });

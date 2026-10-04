@@ -273,6 +273,7 @@ struct TypedLayoutTable {
     static JSValue toFieldRepresentation(const Field& field, JSValue value) { return toFieldRepresentation(fieldTypeOf(field), value); }
     JS_EXPORT_PRIVATE static void atomizeIfString(JSValue);
     JS_EXPORT_PRIVATE static bool accepts(const FieldType&, JSValue);
+    static bool isValueOf(const FieldType&, JSValue);
     static StoreCheck checkStore(uint16_t typedLayoutID, unsigned slot, JSValue value) { return checkStore(typedLayoutID, fieldTypeInSlot(typedLayoutID, slot), value); }
     static StoreCheck checkStore(const Field& field, JSValue value) { return checkStore(layoutIDOf(field), fieldTypeOf(field), value); }
     static StoreCheck checkStore(uint16_t typedLayoutID, const FieldType* fieldType, JSValue value)
@@ -286,6 +287,10 @@ struct TypedLayoutTable {
         }
         return isAccepted ? StoreCheck::Allowed : StoreCheck::Rejected;
     }
+
+    JS_EXPORT_PRIVATE static bool tryToInheritFrom(VM&, uint16_t typedLayoutID, JSValue prototype);
+    JS_EXPORT_PRIVATE static bool tryToChangePrototype(VM&, JSObject*, JSValue prototype);
+    JS_EXPORT_PRIVATE static bool isFieldOfInheritor(VM&, JSObject* prototype, UniquedStringImpl*);
 
 private:
     JS_EXPORT_PRIVATE static const uint32_t* s_index;
@@ -369,6 +374,11 @@ public:
             maxTransitionLength = s_maxTransitionLength;
         return transitionCountEstimate() > maxTransitionLength;
     }
+
+#if ENABLE(AOT)
+    static constexpr int s_minTransitionLengthToConvertFirstObjectToDictionary = 8;
+    JS_EXPORT_PRIVATE bool shouldConvertFirstObjectToDictionaryForAdd(VM&);
+#endif
 
     inline bool shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()
     {
@@ -995,6 +1005,7 @@ public:
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
+    DEFINE_BITFIELD(bool, didConvertFirstObjectToDictionary, DidConvertFirstObjectToDictionary, 1, 10);
 #endif
 
     enum class StructureVariant : uint8_t {

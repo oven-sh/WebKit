@@ -99,12 +99,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToString, EncodedJSValue, (Instance* instan
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTToBoolean, size_t, (Instance* instance, EncodedJSValue encodedOperand))
 {
+    countOperationNamed(instance, __func__);
     JSGlobalObject* globalObject = instance->globalObject;
     return JSValue::decode(encodedOperand).toBoolean(globalObject);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTProgramConstant, EncodedJSValue, (Instance* instance, uint32_t number))
 {
+    countOperationNamed(instance, __func__);
     DeferGCForAWhile deferGC(*instance->vm);
     return JSValue::encode(instance->program->constant(number));
 }
@@ -160,6 +162,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (Instance* instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationBySlotState(instance, __func__, cache);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     if (base.isCell()) {
@@ -184,6 +187,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t flagBits))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationBySlotState(instance, __func__, cache);
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
@@ -294,6 +298,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
 JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (Instance* instance, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationBySlotState(instance, __func__, cache);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;
@@ -354,6 +359,7 @@ static void cacheEnvironmentVariable(VM& vm, Data* codeBlock, Slot* cache, JSLex
 JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (Instance* instance, JSObject* scopeObject, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationBySlotState(instance, __func__, cache);
     bool throwIfNotFound = how & Site::throwsIfNotFound;
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
@@ -466,6 +472,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (Instance* instance, JSObject* scopeObject, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationBySlotState(instance, __func__, cache);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
         cache = &unusedSlot;

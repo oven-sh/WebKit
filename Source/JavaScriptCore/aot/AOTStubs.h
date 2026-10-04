@@ -45,6 +45,8 @@ namespace AOT {
     v(SetIgnoringResult, "set", 2, ResultUnused) \
     v(Add, "add", 1, Wanted) \
     v(AddIgnoringResult, "add", 1, ResultUnused) \
+    v(Slice, "slice", 1, Any) \
+    v(SliceWithEnd, "slice", 2, Any) \
 
 enum class StubIntrinsic : uint8_t {
     None,
@@ -76,6 +78,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(NewArrayBuffer, operationAOTNewArrayBuffer) \
     v(NewArrayWithSpread, operationAOTNewArrayWithSpread) \
     v(NewArrayWithSpecies, operationAOTNewArrayWithSpecies) \
+    v(NewArrayWithSize, operationAOTNewArrayWithSize) \
     v(CreateRest, operationAOTCreateRest) \
     v(CreateLexicalEnvironment, operationAOTCreateLexicalEnvironment) \
     v(NewInternalFieldObject, operationAOTNewInternalFieldObject) \
@@ -89,6 +92,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(StringSubstringWithEnd, operationStringSubstringWithEnd) \
     v(ObjectKeysObject, operationObjectKeysObject) \
     v(ValueAdd, operationAOTValueAdd) \
+    v(Strcat, operationAOTStrcat) \
 
 #define FOR_EACH_AOT_HELPER(v) \
     v(HelperNewArray) \
@@ -103,6 +107,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HelperNewSet) \
     v(HelperNewArrayWithSpread) \
     v(HelperNewArrayWithSpecies) \
+    v(HelperNewArrayWithSize) \
     v(HelperStringSlice) \
     v(HelperStringSubstring) \
     v(HelperMakeRope2) \
@@ -111,6 +116,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HelperObjectKeys) \
     v(HelperAddField) \
     v(HelperSetArrayLength) \
+    v(HelperStrcat) \
     v(HelperAddStrings) \
 
 #define FOR_EACH_AOT_STUB(v) \
@@ -146,6 +152,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(IsStringEqualToLiteral2To3) \
     v(IsStringEqualToLiteral4To7) \
     v(IsStringEqualToLiteral8) \
+    v(IsStringEqualToLiteral9To16) \
     v(OperationValue) \
     v(OperationVoid) \
     v(OperationDouble) \
@@ -253,6 +260,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HandleException) \
     v(ThrowStackOverflowAtPrologue) \
     v(ThrowStackOverflow) \
+    v(ThrowCalledIndirectly) \
     v(Catch) \
     v(VirtualCall) \
     v(VirtualConstruct) \
@@ -275,6 +283,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(NewArrayBufferWithFastPath) \
     v(NewArrayWithSpreadWithFastPath) \
     v(NewArrayWithSpeciesWithFastPath) \
+    v(NewArrayWithSizeWithFastPath) \
     v(CreateRestWithFastPath) \
     v(CreateLexicalEnvironmentWithFastPath) \
     v(NewInternalFieldObjectWithFastPath) \
@@ -288,6 +297,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(StringSubstringWithEndWithFastPath) \
     v(ObjectKeysObjectWithFastPath) \
     v(ValueAddWithFastPath) \
+    v(StrcatWithFastPath) \
 
 enum class Stub : uint8_t {
 #define AOT_DEFINE_STUB(name) name,

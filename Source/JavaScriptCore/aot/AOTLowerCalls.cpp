@@ -71,6 +71,10 @@ std::optional<Stub> Lowering::stubForHostCallee(Node* calleeNode, CallMode mode)
 
 LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments, CallMode mode, StubIntrinsic intrinsic, std::optional<Stub> hostCallStub)
 {
+    if (programFunctions() && (node->isBytecode(op_call) || node->isBytecode(op_call_ignore_result) || node->isBytecode(op_tail_call))) {
+        const KnownFunction* known = programFunctions()->function(functionNumberOf(node->use(Graph::callOperands(node->instruction).callee)->type));
+        RELEASE_ASSERT_WITH_MESSAGE(!known || !known->summary || !known->summary->takesScopeAsCallee || known->summary->needsObject.load(std::memory_order_relaxed), "A function without an object is called through the generic path");
+    }
     unsigned count = arguments.size() - 1;
     bool inMemory = count > numberOfArgumentGPRs;
     RELEASE_ASSERT(mode != CallMode::TailCall || m_valueRepresentations.result == Rep::JSValue);
@@ -181,7 +185,10 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
                 m_out.branch(isCell(callee), usually(isCellCase), rarely(isNotInitialized));
                 m_out.appendTo(isCellCase);
             }
-            m_out.branch(isCellOfType(callee, JSFunctionType), usually(isInitialized), rarely(isNotInitialized));
+            if (isSubtype(calleeType & TCell, TFunction))
+                m_out.jump(isInitialized);
+            else
+                m_out.branch(isCellOfType(callee, JSFunctionType), usually(isInitialized), rarely(isNotInitialized));
         }
         m_out.appendTo(isNotInitialized);
         vmCall(node, Void, isConstruct ? Entry::operationAOTThrowNotAConstructor : Entry::operationAOTThrowNotAFunction, m_instance, callee);
@@ -400,6 +407,12 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
         intrinsic = stubIntrinsicFor(calleeNode->graph->codeBlock()->identifier(calleeNode->as<OpGetById>().m_property).impl(), argc, hasResult);
+    if (intrinsic == StubIntrinsic::Slice || intrinsic == StubIntrinsic::SliceWithEnd) {
+        if (mayBe(node->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset()))->type, TString))
+            m_graph.remark("string-slice-through-intrinsic-stub"_s);
+        else
+            intrinsic = StubIntrinsic::None;
+    }
     if (intrinsic != StubIntrinsic::None) {
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         for (unsigned i = 1; i < argc; ++i)

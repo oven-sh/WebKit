@@ -15,6 +15,7 @@ function repeat(f, ...args) {
         result = f(...args);
     return result;
 }
+function callOnce(f, ...args) { return f(...args); }
 function isUncacheableDictionary(object) { return describe(object).includes("UncacheableDictionary"); }
 function compact(object, ...deleted) {
     $vm.toUncacheableDictionary(object);
@@ -98,10 +99,10 @@ if (usesDataStubs) {
     repeat(readFirstOfRegExp, regExp);
     repeat(readAfterOfRegExp, regExp);
     $vm.toUncacheableDictionary(RegExp.prototype);
-    check(readExec(regExp), exec, "a built-in method of a dictionary");
+    check(callOnce(readExec, regExp), exec, "a built-in method of a dictionary");
     check(isUncacheableDictionary(RegExp.prototype), true, "a built-in method stays cached");
-    check(readFirstOfRegExp(regExp), "first", "a constant that cannot move, of a dictionary");
+    check(callOnce(readFirstOfRegExp, regExp), "first", "a constant that cannot move, of a dictionary");
     check(isUncacheableDictionary(RegExp.prototype), true, "a constant that cannot move stays cached");
-    check(readAfterOfRegExp(regExp), "after", "a constant that can move, of a dictionary");
+    check(callOnce(readAfterOfRegExp, regExp), "after", "a constant that can move, of a dictionary");
     check(isUncacheableDictionary(RegExp.prototype), false, "a constant that can move is looked up again");
 }

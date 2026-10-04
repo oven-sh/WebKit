@@ -401,7 +401,7 @@ private:
             if (!isExact) {
                 uint32_t number = programFunctions() ? programFunctions()->numberOf(known->executable) : 0;
                 const KnownFunction* numbered = number ? programFunctions()->function(number) : nullptr;
-                if (!numbered || !numbered->forCall || !calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call || call->guard || call->guarded)
+                if (!numbered || !numbered->forCall || (numbered->summary && numbered->summary->takesScopeAsCallee) || !calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call || call->guard || call->guarded)
                     return false;
                 known = numbered;
                 likelyFunction = number;
@@ -593,6 +593,7 @@ private:
 
         BasicBlock* continuation = m_graph.addBlock();
         continuation->graph = block->graph;
+        continuation->splitFrom = block->splitFrom ? block->splitFrom : block;
         continuation->bytecodeBegin = call->bytecodeIndex.offset() + call->instruction->size();
         continuation->bytecodeEnd = block->bytecodeEnd;
         continuation->isReachable = true;

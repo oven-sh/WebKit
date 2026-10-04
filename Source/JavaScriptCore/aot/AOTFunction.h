@@ -23,6 +23,7 @@ namespace JSC {
 class CallFrame;
 class CodeBlock;
 class FunctionExecutable;
+class JSValue;
 class RegisterAtOffsetList;
 class ScriptExecutable;
 class UnlinkedCodeBlock;
@@ -68,8 +69,8 @@ struct AllocationPlan {
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
     struct Location;
-    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress) const;
-    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress) const;
+    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame) const;
+    JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress, const void* frame) const;
     JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*);
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken);
@@ -161,16 +162,28 @@ JS_EXPORT_PRIVATE ImageInlineFrame inlineFrameOf(const ImageFunction&, unsigned 
 class CallSiteOverride {
     WTF_MAKE_NONCOPYABLE(CallSiteOverride);
 public:
-    CallSiteOverride(Instance&, const void* returnAddress, uint32_t site);
+    CallSiteOverride(Instance&, const void* frame);
     ~CallSiteOverride();
+
+    void setItem(unsigned item) { m_item = item; }
+
+    const CallSiteOverride* previous() const { return m_previous; }
+    const void* frame() const { return m_frame; }
+    unsigned item() const { return m_item; }
+
 private:
     Instance& m_instance;
+    const CallSiteOverride* m_previous;
+    const void* m_frame;
+    unsigned m_item { 0 };
 };
 JS_EXPORT_PRIVATE Instance* instanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE CodeBlock* callerCodeBlock(const CallFrame*);
+void countAwait(VM&, const char* where, JSValue operand);
+void countJobCall(VM&, bool entersStaticCode);
 
 } } // namespace JSC::AOT
 

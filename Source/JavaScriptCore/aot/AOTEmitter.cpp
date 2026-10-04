@@ -181,7 +181,7 @@ Emitter::ArrayValues Emitter::allocateJSArray(LValue publicLength, LValue vector
 
 static LValue vectorLengthFor(FTL::Output& out, LValue count)
 {
-    LValue least = out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN);
+    LValue least = out.select(out.isZero32(count), out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY), out.constInt32(BASE_CONTIGUOUS_VECTOR_LEN));
     return out.bitOr(out.select(out.above(count, least), count, least), out.int32One);
 }
 
@@ -398,8 +398,13 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue spreadMas
 
 LValue Emitter::newArrayLike(LValue length, LValue array, LBasicBlock giveUp)
 {
-    orElse(isInt32(length), giveUp);
     orElse(isOriginalArray(array), giveUp);
+    return newArrayWithSize(length, giveUp);
+}
+
+LValue Emitter::newArrayWithSize(LValue length, LBasicBlock giveUp)
+{
+    orElse(isInt32(length), giveUp);
     LValue count = unboxInt32(length);
     orElse(m_out.below(count, m_out.constInt32(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))), giveUp);
     auto [result, butterfly] = allocateJSArray(m_out.int32Zero, vectorLengthFor(m_out, count), changing32(Instance::offsetOfNewArrayWithContiguousStructureID()), arrayTypeInfoBlob(ArrayWithContiguous), giveUp);
@@ -636,6 +641,75 @@ LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
     return m_out.phi(pointerType(), smallIntResult, intCacheResult);
 }
 
+LValue Emitter::stringOrInt32ToString(LValue value, LBasicBlock giveUp)
+{
+    LBasicBlock cellCase = m_out.newBlock();
+    LBasicBlock notCellCase = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(value), usually(cellCase), rarely(notCellCase));
+
+    m_out.appendTo(cellCase);
+    ValueFromBlock string = m_out.anchor(value);
+    m_out.branch(isCellOfType(value, StringType), usually(continuation), rarely(giveUp));
+
+    m_out.appendTo(notCellCase);
+    orElse(isInt32(value), giveUp);
+    ValueFromBlock converted = m_out.anchor(int32ToString(unboxInt32(value), giveUp));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(pointerType(), string, converted);
+}
+
+LValue Emitter::addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp)
+{
+    orElse(m_out.bitOr(isCell(first), isCell(second)), giveUp);
+    LValue firstString = stringOrInt32ToString(first, giveUp);
+    return makeRope(firstString, stringOrInt32ToString(second, giveUp), nullptr, giveUp);
+}
+
+LValue Emitter::concatenate(LValue values, LValue count, LBasicBlock giveUp)
+{
+    auto at = [&](unsigned i) {
+        return stringOrInt32ToString(m_out.load64(m_out.baseIndex(m_heaps.variables, values, m_out.constIntPtr(i))), giveUp);
+    };
+    orElse(m_out.below(m_out.sub(count, m_out.constInt32(2)), m_out.constInt32(4)), giveUp);
+    LBasicBlock twoCase = m_out.newBlock();
+    LBasicBlock atLeastThreeCase = m_out.newBlock();
+    LBasicBlock atLeastFourCase = m_out.newBlock();
+    LBasicBlock fourCase = m_out.newBlock();
+    LBasicBlock fiveCase = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 4> results;
+    LValue first = at(0);
+    LValue second = at(1);
+    m_out.branch(m_out.equal(count, m_out.constInt32(2)), unsure(twoCase), unsure(atLeastThreeCase));
+
+    m_out.appendTo(twoCase);
+    results.append(m_out.anchor(makeRope(first, second, nullptr, giveUp)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(atLeastThreeCase);
+    LValue firstThree = makeRope(first, second, at(2), giveUp);
+    results.append(m_out.anchor(firstThree));
+    m_out.branch(m_out.equal(count, m_out.constInt32(3)), unsure(continuation), unsure(atLeastFourCase));
+
+    m_out.appendTo(atLeastFourCase);
+    LValue fourth = at(3);
+    m_out.branch(m_out.equal(count, m_out.constInt32(4)), unsure(fourCase), unsure(fiveCase));
+
+    m_out.appendTo(fourCase);
+    results.append(m_out.anchor(makeRope(firstThree, fourth, nullptr, giveUp)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(fiveCase);
+    results.append(m_out.anchor(makeRope(firstThree, fourth, at(4), giveUp)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(continuation);
+    return m_out.phi(pointerType(), results);
+}
+
 LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
 {
     LValue previousOrRareData = m_out.loadPtr(structureOf(object), m_heaps.Structure_previousOrRareData);
@@ -737,6 +811,9 @@ public:
         case Stub::HelperNewArrayWithSpecies:
             result = newArrayLike(arguments[0], arguments[1], giveUp);
             break;
+        case Stub::HelperNewArrayWithSize:
+            result = newArrayWithSize(arguments[0], giveUp);
+            break;
         case Stub::HelperStringSlice:
             result = stringSlice(arguments[0], int32At(1), int32At(2), giveUp);
             break;
@@ -756,7 +833,10 @@ public:
             result = keysOfObject(arguments[0], giveUp);
             break;
         case Stub::HelperAddStrings:
-            result = addStrings(arguments[0], arguments[1], giveUp);
+            result = addStringsOrInt32s(arguments[0], arguments[1], giveUp);
+            break;
+        case Stub::HelperStrcat:
+            result = concatenate(arguments[0], int32At(1), giveUp);
             break;
         case Stub::HelperSetArrayLength:
             setArrayLength(arguments[0], arguments[1], giveUp);

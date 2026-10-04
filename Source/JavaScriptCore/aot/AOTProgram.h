@@ -39,6 +39,9 @@ struct FunctionSummary {
 
     bool isNonEscaping { false };
     bool canHoldCaptures { false };
+    bool takesScopeAsCallee { false };
+    bool objectIsNeededAfterAll { false };
+    mutable std::atomic<bool> needsObject { false };
     mutable bool makesDissolvedScopes { false };
     mutable Vector<std::pair<const void*, unsigned>, 2> captures;
     std::optional<unsigned> indexOfCapture(const void* scope, unsigned offset) const
@@ -87,6 +90,7 @@ struct FunctionSummary {
     bool isReached() const { return !isNonEscaping || escapes.load(std::memory_order_relaxed) || parameterTypes[0].load(); }
     static constexpr unsigned maxParameters = 12;
     std::array<AtomicType, maxParameters> parameterTypes { };
+    std::array<AtomicType, maxParameters> typesPassedByDirectCalls { };
     mutable AtomicType returnType;
     mutable Vector<const FunctionSummary*> knownTailCallees;
     mutable Vector<const FunctionSummary*> knownCallees;
@@ -99,6 +103,7 @@ struct FunctionSummary {
     static constexpr unsigned maxTrackedEscapingParameters = 31;
     static constexpr uint32_t extraArgumentsEscape = 1u << 31;
     mutable std::atomic<uint32_t> escapingParameters { 0 };
+    mutable std::atomic<uint32_t> escapingParametersUnlessPlainObjects { 0 };
     struct PropertyEffects {
         static constexpr unsigned maxStoredNames = 24;
         bool isArbitrary { true };
@@ -131,6 +136,14 @@ public:
     void noteInitialValueIsNeverRead(const void*);
     void noteModuleScope(const void* scope) { m_moduleScopes.add(scope); }
     bool isModuleScope(const void* scope) const { return m_moduleScopes.contains(scope); }
+    void noteSameScope(const void* scope, const void* canonical) { m_canonicalScopes.add(scope, canonical); }
+    const void* canonicalScope(const void* scope) const
+    {
+        if (!scope || m_canonicalScopes.isEmpty())
+            return scope;
+        auto it = m_canonicalScopes.find(scope);
+        return it == m_canonicalScopes.end() ? scope : it->value;
+    }
 
     static constexpr unsigned nobody = std::numeric_limits<unsigned>::max();
     Type read(Variable, UniquedStringImpl* name, unsigned reader);
@@ -226,6 +239,7 @@ private:
     UncheckedKeyHashSet<const void*> m_untrackedScopes;
     std::atomic<bool> m_hasGivenUpOnAllScopes { false };
     UncheckedKeyHashSet<const void*> m_moduleScopes;
+    UncheckedKeyHashMap<const void*, const void*> m_canonicalScopes;
     mutable Lock m_scopesWhoseInitialValueIsNeverReadLock;
     UncheckedKeyHashSet<const void*> m_scopesWhoseInitialValueIsNeverRead;
 };

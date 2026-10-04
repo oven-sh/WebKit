@@ -78,13 +78,14 @@ check(isLoose({ toString() { return "ab"; } }), true, "==, with a conversion");
 function readsProperty(o) { return o.p; }
 readsProperty({ p: 1 });
 let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
-for (let f of usesDataStubs ? [is1, is2, is3, is4, is5, is6, is7, is8, isNot4, isHigh] : [])
+for (let f of usesDataStubs ? [is1, is2, is3, is4, is5, is6, is7, is8, is9, isNot4, isHigh] : [])
     applies(f, "short-literal-comparison");
 if (usesDataStubs) {
     applies(is1, "calls:IsStringEqualToLiteral1");
     applies(is3, "calls:IsStringEqualToLiteral2To3");
     applies(is7, "calls:IsStringEqualToLiteral4To7");
     applies(is8, "calls:IsStringEqualToLiteral8");
+    applies(is9, "calls:IsStringEqualToLiteral9To16");
 }
-for (let f of [is0, is9, isWide, isEither, isLoose])
+for (let f of [is0, isWide, isEither, isLoose])
     doesNotApply(f, "short-literal-comparison");
