@@ -496,8 +496,8 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
     jit.subPtr(TrustedImm32((numberOfGPRs + numberOfFPRs) * 8), sp);
     for (unsigned i = 0; i < numberOfGPRs; i += 2)
         jit.storePair64(static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1), sp, TrustedImm32(i * 8));
-    for (unsigned i = 0; i < numberOfFPRs; ++i)
-        jit.storeDouble(fpr(i), Address(sp, (numberOfGPRs + i) * 8));
+    for (unsigned i = 0; i < numberOfFPRs; i += 2)
+        jit.storePairDouble(fpr(i), fpr(i + 1), Address(sp, (numberOfGPRs + i) * 8));
     loadInstance(jit, T11);
     jit.move(T11, A0);
     jit.loadPtr(Address(T11, Instance::offsetOfRuntimeTable()), T11);
@@ -509,8 +509,8 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
         jit.load64(Address(sp, 8), ARM64Registers::x1);
     for (unsigned i = returnsValue ? 2 : 0; i < numberOfGPRs; i += 2)
         jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
-    for (unsigned i = 0; i < numberOfFPRs; ++i)
-        jit.loadDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i));
+    for (unsigned i = 0; i < numberOfFPRs; i += 2)
+        jit.loadPairDouble(Address(sp, (numberOfGPRs + i) * 8), fpr(i), fpr(i + 1));
     jit.emitFunctionEpilogue();
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
     if (isLeaf) {
@@ -575,6 +575,16 @@ static void preservingRegistersOfCaller(CCallHelpers& jit, bool hasResult, const
 #endif
     for (unsigned i = 0; i < registers.size(); ++i) {
         Address address(CCallHelpers::stackPointerRegister, (i + 1) * sizeof(CPURegister));
+#if CPU(ARM64)
+        if (i + 1 < registers.size() && registers[i].isGPR() == registers[i + 1].isGPR()) {
+            if (registers[i].isGPR())
+                jit.storePair64(registers[i].gpr(), registers[i + 1].gpr(), address);
+            else
+                jit.storePairDouble(registers[i].fpr(), registers[i + 1].fpr(), address);
+            ++i;
+            continue;
+        }
+#endif
         if (registers[i].isGPR())
             jit.storePtr(registers[i].gpr(), address);
         else
@@ -583,6 +593,16 @@ static void preservingRegistersOfCaller(CCallHelpers& jit, bool hasResult, const
     functor(bytes);
     for (unsigned i = 0; i < registers.size(); ++i) {
         Address address(CCallHelpers::stackPointerRegister, (i + 1) * sizeof(CPURegister));
+#if CPU(ARM64)
+        if (i + 1 < registers.size() && registers[i].isGPR() == registers[i + 1].isGPR()) {
+            if (registers[i].isGPR())
+                jit.loadPair64(address, registers[i].gpr(), registers[i + 1].gpr());
+            else
+                jit.loadPairDouble(address, registers[i].fpr(), registers[i + 1].fpr());
+            ++i;
+            continue;
+        }
+#endif
         if (registers[i].isGPR())
             jit.loadPtr(address, registers[i].gpr());
         else
@@ -1164,6 +1184,68 @@ static void callBinaryOperation(CCallHelpers& jit, Entry operation)
     callAndCheckException(jit, T11, Returns::Value);
 }
 
+static void fenceAfterAllocation(CCallHelpers&, GPRReg scratch);
+
+static void makeRopeOfTwoStrings(CCallHelpers& jit, CCallHelpers::JumpList& slow)
+{
+    constexpr GPRReg first = R0;
+    constexpr GPRReg second = A1;
+    constexpr GPRReg flags = T9;
+    constexpr GPRReg length = T10;
+    constexpr GPRReg scratch = T11;
+    constexpr GPRReg rope = T12;
+    constexpr GPRReg allocator = T13;
+    constexpr GPRReg lengthOfSecond = rope;
+    static_assert(noOverlap(first, second, flags, length, scratch, rope, allocator));
+    static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
+    static_assert(JSString::MaxLength == std::numeric_limits<int32_t>::max());
+    static_assert(JSRopeString::offsetOfFiber0() == sizeof(EncodedJSValue) && JSRopeString::offsetOfLength() == 2 * sizeof(EncodedJSValue));
+    auto loadFlagsAndLength = [&](GPRReg string, GPRReg flagsResult, GPRReg lengthResult) {
+        jit.loadPtr(Address(string, JSString::offsetOfValue()), flagsResult);
+        Jump isRope = jit.branchIfRopeStringImpl(flagsResult);
+        jit.load32(Address(flagsResult, StringImpl::lengthMemoryOffset()), lengthResult);
+        jit.load32(Address(flagsResult, StringImpl::flagsOffset()), flagsResult);
+        Jump isLoaded = jit.jump();
+        isRope.link(&jit);
+        jit.load32(Address(string, JSRopeString::offsetOfLength()), lengthResult);
+        isLoaded.link(&jit);
+    };
+
+    slow.append(jit.branchIfNotCell(first));
+    slow.append(jit.branchIfNotCell(second));
+    slow.append(jit.branchIfNotString(first));
+    slow.append(jit.branchIfNotString(second));
+    loadFlagsAndLength(first, flags, length);
+    Jump firstIsEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+    loadFlagsAndLength(second, scratch, lengthOfSecond);
+    Jump secondIsEmpty = jit.branchTest32(CCallHelpers::Zero, lengthOfSecond);
+    jit.and32(scratch, flags);
+    slow.append(jit.branchAdd32(CCallHelpers::Overflow, lengthOfSecond, length));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRopeStringAllocator()), allocator);
+    slow.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    jit.emitAllocateWithNonNullAllocator(rope, JITAllocator::variable(), allocator, scratch, slow, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.load32(Address(instanceGPR, Instance::offsetOfStringStructureID()), scratch);
+    jit.or64(CCallHelpers::TrustedImm64(static_cast<uint64_t>(TypeInfoBlob(NonArray, TypeInfo(StringType, JSString::StructureFlags)).blob()) << 32), scratch);
+    jit.and32(TrustedImm32(JSRopeString::is8BitInPointer), flags);
+    jit.or64(first, flags);
+    jit.or64(TrustedImm32(JSString::isRopeInPointer), flags);
+    jit.storePair64(scratch, flags, rope, TrustedImm32(0));
+    jit.move(second, scratch);
+    jit.lshift64(TrustedImm32(32), scratch);
+    jit.or64(length, scratch);
+    jit.move(second, allocator);
+    jit.urshift64(TrustedImm32(32), allocator);
+    jit.storePair64(scratch, allocator, rope, TrustedImm32(2 * sizeof(EncodedJSValue)));
+    fenceAfterAllocation(jit, scratch);
+    jit.move(rope, R0);
+    jit.ret();
+
+    firstIsEmpty.link(&jit);
+    jit.move(second, R0);
+    secondIsEmpty.link(&jit);
+    jit.ret();
+}
+
 enum class Binary : uint8_t { Add, Sub, Mul, Div, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq };
 
 static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
@@ -1313,6 +1395,11 @@ static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
     }
 
     slow.link(&jit);
+    if (kind == Binary::Add) {
+        CCallHelpers::JumpList notTwoStrings;
+        makeRopeOfTwoStrings(jit, notTwoStrings);
+        notTwoStrings.link(&jit);
+    }
     callBinaryOperation(jit, operation);
 }
 
@@ -5483,6 +5570,166 @@ static void generateValueAddWithFastPath(CCallHelpers& jit) { generateAheadOf(ji
 static void generateStrcatWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::StrcatSlowPath, Stub::HelperStrcat, 2); }
 static void generateObjectKeysObjectWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::ObjectKeysObjectSlowPath, Stub::HelperObjectKeys, 1); }
 
+static void storeValuesAndClear(CCallHelpers& jit, unsigned firstValueArgument, unsigned count, unsigned end, GPRReg base, size_t offset)
+{
+    auto at = [&](unsigned i) { return static_cast<int32_t>(offset + i * sizeof(EncodedJSValue)); };
+#if CPU(ARM64)
+    auto word = [&](unsigned i) { return i < count ? GPRInfo::toArgumentRegister(firstValueArgument + i) : ARM64Registers::zr; };
+    unsigned i = 0;
+    for (; i + 1 < end; i += 2)
+        jit.storePair64(word(i), word(i + 1), base, TrustedImm32(at(i)));
+    if (i < end)
+        jit.store64(word(i), Address(base, at(i)));
+#else
+    for (unsigned i = 0; i < count; ++i)
+        jit.store64(GPRInfo::toArgumentRegister(firstValueArgument + i), Address(base, at(i)));
+    for (unsigned i = count; i < end; ++i)
+        jit.store64(TrustedImm32(0), Address(base, at(i)));
+#endif
+}
+
+static void fenceAfterAllocation(CCallHelpers& jit, GPRReg scratch)
+{
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), scratch);
+    Jump isNotNeeded = jit.branchTest8(CCallHelpers::Zero, Address(scratch, VM::offsetOfHeapMutatorShouldBeFenced()));
+    jit.storeFence();
+    isNotNeeded.link(&jit);
+}
+
+template<typename Functor>
+static void callWithValuesOnStack(CCallHelpers& jit, Entry operation, unsigned firstValueArgument, unsigned count, const Functor& placeLastArgument)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(count * sizeof(EncodedJSValue))), sp);
+    for (unsigned i = 0; i < count; ++i)
+        jit.store64(GPRInfo::toArgumentRegister(firstValueArgument + i), Address(sp, i * sizeof(EncodedJSValue)));
+    placeLastArgument();
+    jit.move(sp, A1);
+    jit.move(TrustedImm32(count), A2);
+    loadInstance(jit, A0);
+    jit.loadPtr(Address(A0, Instance::offsetOfRuntimeTable()), operationGPR);
+    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(operation) * sizeof(void*)), operationGPR);
+    prepareCallOperation(jit, assertionScratchGPR);
+    jit.call(operationGPR, OperationPtrTag);
+    jit.emitFunctionEpilogue();
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.ret();
+    exception.link(&jit);
+    loadInstance(jit, T9);
+    jumpToEntry(jit, T9, Entry::HandleException);
+}
+
+static void generateNewObjectLiteral(CCallHelpers& jit, unsigned count)
+{
+    if (count > maxLiteralPropertiesInRegisters) {
+        jit.breakpoint();
+        return;
+    }
+    constexpr GPRReg cache = A1;
+    constexpr GPRReg object = GPRInfo::returnValueGPR;
+    constexpr GPRReg allocator = T9;
+#if CPU(ARM64)
+    constexpr GPRReg scratch = T10;
+#else
+    constexpr GPRReg scratch = A0;
+#endif
+    static_assert(noOverlap(cache, object, allocator, scratch, A2, A3, A4, A5));
+    static_assert(JSObject::butterflyOffset() == sizeof(EncodedJSValue));
+    unsigned end = WTF::roundUpToMultipleOf<2>(count);
+
+    CCallHelpers::JumpList slowCases;
+    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(cache, OBJECT_OFFSETOF(Slot, structureID))));
+    jit.loadPtr(Address(cache, sizeof(Slot) + OBJECT_OFFSETOF(Slot, pointer)), allocator);
+    jit.emitAllocateWithNonNullAllocator(object, JITAllocator::variable(), allocator, scratch, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.load32(Address(cache, OBJECT_OFFSETOF(Slot, structureID)), scratch);
+    jit.load64(Address(cache, sizeof(Slot)), allocator);
+    jit.or64(allocator, scratch);
+#if CPU(ARM64)
+    jit.storePair64(scratch, ARM64Registers::zr, object, TrustedImm32(0));
+#else
+    jit.store64(scratch, Address(object, 0));
+    jit.store64(TrustedImm32(0), Address(object, JSObject::butterflyOffset()));
+#endif
+    storeValuesAndClear(jit, 2, count, end, object, JSObject::offsetOfInlineStorage());
+    jit.load32(Address(cache, OBJECT_OFFSETOF(Slot, offset)), allocator);
+    jit.and32(TrustedImm32(Slot::offsetMask), allocator);
+    auto clear = jit.label();
+    Jump isCleared = jit.branch32(CCallHelpers::BelowOrEqual, allocator, TrustedImm32(end));
+    jit.sub32(TrustedImm32(1), allocator);
+    jit.store64(TrustedImm32(0), CCallHelpers::BaseIndex(object, allocator, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
+    jit.jump().linkTo(clear, &jit);
+    isCleared.link(&jit);
+    fenceAfterAllocation(jit, scratch);
+    jit.ret();
+
+    slowCases.link(&jit);
+    callWithValuesOnStack(jit, Entry::operationAOTNewObjectLiteral, 2, count, [&] {
+        jit.move(cache, A3);
+    });
+}
+
+static void generateNewArrayLiteral(CCallHelpers& jit, unsigned count, bool areInt32)
+{
+    constexpr GPRReg array = GPRInfo::returnValueGPR;
+    constexpr GPRReg allocator = T9;
+#if CPU(ARM64)
+    constexpr GPRReg scratch = T10;
+    constexpr GPRReg storage = T11;
+#else
+    constexpr GPRReg scratch = A0;
+    constexpr GPRReg storage = A5;
+#endif
+    static_assert(noOverlap(array, allocator, scratch, storage, A1, A2, A3, A4));
+    static_assert(maxArrayElementsInRegisters == 4);
+    RELEASE_ASSERT(count && count <= maxArrayElementsInRegisters);
+    unsigned vectorLength = std::max<unsigned>(count, BASE_CONTIGUOUS_VECTOR_LEN) | 1;
+    size_t storageSize = sizeof(IndexingHeader) + vectorLength * sizeof(EncodedJSValue);
+    IndexingType indexingType = areInt32 ? ArrayWithInt32 : ArrayWithContiguous;
+    Address structureID(instanceGPR, areInt32 ? Instance::offsetOfNewArrayWithInt32StructureID() : Instance::offsetOfNewArrayWithContiguousStructureID());
+
+    CCallHelpers::JumpList slowCases;
+    slowCases.append(jit.branchTest32(CCallHelpers::Zero, structureID));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfAuxiliarySpace()), allocator);
+    jit.loadPtr(Address(allocator, CompleteSubspace::offsetOfAllocatorForSizeStep() + MarkedSpace::sizeClassToIndex(storageSize) * sizeof(Allocator)), allocator);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    jit.emitAllocateWithNonNullAllocator(storage, JITAllocator::variable(), allocator, scratch, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfArrayAllocator()), allocator);
+    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    jit.emitAllocateWithNonNullAllocator(array, JITAllocator::variable(), allocator, scratch, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.store64(CCallHelpers::TrustedImm64(static_cast<uint64_t>(vectorLength) << 32 | count), Address(storage, 0));
+    storeValuesAndClear(jit, 1, count, vectorLength, storage, sizeof(IndexingHeader));
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+    jit.load32(structureID, scratch);
+    jit.or64(CCallHelpers::TrustedImm64(static_cast<uint64_t>(TypeInfoBlob(indexingType, TypeInfo(ArrayType, JSArray::StructureFlags)).blob()) << 32), scratch);
+    jit.storePair64(scratch, storage, array, TrustedImm32(0));
+    fenceAfterAllocation(jit, scratch);
+    jit.ret();
+
+    slowCases.link(&jit);
+    callWithValuesOnStack(jit, Entry::operationAOTNewArray, 1, count, [&] {
+        jit.move(TrustedImm32(indexingType), A3);
+    });
+}
+
+#define AOT_GENERATE_NEW_OBJECT_LITERAL(n) static void generateNewObjectLiteral##n(CCallHelpers& jit) { generateNewObjectLiteral(jit, n); }
+AOT_GENERATE_NEW_OBJECT_LITERAL(1)
+AOT_GENERATE_NEW_OBJECT_LITERAL(2)
+AOT_GENERATE_NEW_OBJECT_LITERAL(3)
+AOT_GENERATE_NEW_OBJECT_LITERAL(4)
+AOT_GENERATE_NEW_OBJECT_LITERAL(5)
+AOT_GENERATE_NEW_OBJECT_LITERAL(6)
+#undef AOT_GENERATE_NEW_OBJECT_LITERAL
+
+#define AOT_GENERATE_NEW_ARRAY_LITERAL(n) \
+static void generateNewArrayLiteral##n(CCallHelpers& jit) { generateNewArrayLiteral(jit, n, false); } \
+static void generateNewInt32ArrayLiteral##n(CCallHelpers& jit) { generateNewArrayLiteral(jit, n, true); }
+AOT_GENERATE_NEW_ARRAY_LITERAL(1)
+AOT_GENERATE_NEW_ARRAY_LITERAL(2)
+AOT_GENERATE_NEW_ARRAY_LITERAL(3)
+AOT_GENERATE_NEW_ARRAY_LITERAL(4)
+#undef AOT_GENERATE_NEW_ARRAY_LITERAL
+
 #define AOT_GENERATE_HELPER(name) static void generate##name(CCallHelpers& jit) { generateHelper(jit, Stub::name); }
 FOR_EACH_AOT_HELPER(AOT_GENERATE_HELPER)
 #undef AOT_GENERATE_HELPER
@@ -5620,6 +5867,65 @@ GPRReg defaultOperandRegister(Stub stub)
 bool preservesOperandRegister(Stub stub)
 {
     return stub == Stub::WriteBarrier;
+}
+
+std::optional<RegisterSet> registersChangedBy(Stub stub)
+{
+    unsigned numberOfTemporaries = 0;
+    switch (stub) {
+    case Stub::LinkFunction:
+        return RegisterSet { };
+    case Stub::ColdOperationVoid:
+    case Stub::LeafColdOperationVoid:
+    case Stub::ColdOperationValue:
+    case Stub::LeafColdOperationValue:
+        numberOfTemporaries = 2;
+        break;
+    case Stub::WriteBarrier:
+    case Stub::ToBoolean:
+    case Stub::Latin1Characters:
+    case Stub::WeakMapGet:
+    case Stub::WeakMapHas:
+    case Stub::WeakSetHas:
+        numberOfTemporaries = 3;
+        break;
+    case Stub::Constant:
+    case Stub::TemplateObject:
+    case Stub::TransientConstant:
+        numberOfTemporaries = isARM64() ? 7 : 3;
+        break;
+    default:
+        return std::nullopt;
+    }
+    RELEASE_ASSERT(numberOfTemporaries <= std::size(stubTemporaryGPRs));
+    RegisterSet result = RegisterSet::macroClobberedGPRs();
+    for (unsigned i = 0; i < numberOfTemporaries; ++i)
+        result.add(stubTemporaryGPRs[i], IgnoreVectors);
+    return result;
+}
+
+void dumpRegistersChangedByStubs(PrintStream& out)
+{
+    for (unsigned i = 0; i < numberOfStubs; ++i) {
+        Stub stub = static_cast<Stub>(i);
+        auto changed = registersChangedBy(stub);
+        if (!changed)
+            continue;
+        bool keepsReturnAddressOfCaller = stub == Stub::Constant || stub == Stub::TemplateObject || stub == Stub::TransientConstant;
+        if (keepsReturnAddressOfCaller)
+            changed->remove(stubTemporaryGPRs[1]);
+        bool hasResult = stub != Stub::LinkFunction && stub != Stub::WriteBarrier && stub != Stub::ColdOperationVoid && stub != Stub::LeafColdOperationVoid;
+        if (hasResult)
+            changed->add(GPRInfo::returnValueGPR, IgnoreVectors);
+        out.print("K\t", nameOf(stub), "\t");
+        changed->forEach([&](Reg reg) {
+            out.print(reg, " ");
+        });
+        out.print("\t");
+        if (!preservesOperandRegister(stub))
+            out.print(defaultOperandRegister(stub));
+        out.println();
+    }
 }
 
 bool operandAllowedInRegister(Stub stub, GPRReg reg)

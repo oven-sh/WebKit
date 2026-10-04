@@ -403,6 +403,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     LBasicBlock afterBuiltin = nullptr;
     bool builtinKeepsReads = false;
     Vector<ValueFromBlock, 2> builtinResults;
+    Rep repOfBuiltinResults = Rep::JSValue;
     if (mode == CallMode::Call && (argc == 2 || argc == 3) && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::copyDataProperties) {
         LValue isCopied = vmCall(node, pointerType(), Entry::operationAOTTryCopyDataProperties, m_instance, arguments[0], arguments[1], argc == 3 ? arguments[2] : m_out.constInt64(JSValue::encode(JSValue())), m_out.constInt32(bytecodeOwner(node)));
         m_graph.remark("copies-data-properties"_s);
@@ -412,7 +413,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         m_out.branch(m_out.notZero64(isCopied), usually(afterBuiltin), rarely(otherwise));
         m_out.appendTo(otherwise);
     } else
-    if (node->builtinCalled && mode != CallMode::Construct && lowerBuiltinCall(node, calleeNode, argc, argv, arguments, hasResult, afterBuiltin, builtinResults)) {
+    if (node->builtinCalled && mode != CallMode::Construct && lowerBuiltinCall(node, calleeNode, argc, argv, arguments, hasResult, afterBuiltin, builtinResults, repOfBuiltinResults)) {
         if (!afterBuiltin)
             return;
         builtinKeepsReads = m_nodeKeepsReads;
@@ -463,13 +464,18 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
     }
     if (afterBuiltin) {
         m_nodeKeepsReads = m_nodeKeepsReads && builtinKeepsReads;
+        if (repOfBuiltinResults != Rep::JSValue) {
+            if (Options::validateAOTInferredTypes()) [[unlikely]]
+                verifyInferredType(node, result);
+            result = convert(result, Rep::JSValue, node->type, repOfBuiltinResults);
+        }
         builtinResults.append(m_out.anchor(result));
         m_out.jump(afterBuiltin);
         m_out.appendTo(afterBuiltin);
-        result = m_out.phi(Int64, builtinResults);
+        result = m_out.phi(repOfBuiltinResults == Rep::JSValue ? Int64 : repOfBuiltinResults == Rep::Double ? Double : Int32, builtinResults);
     }
     if (hasResult)
-        setJSValue(node, result);
+        setResult(node, result, repOfBuiltinResults);
 }
 
 LBasicBlock Lowering::branchIfCalleeIsFunction(Node* calleeNode, LValue callee)

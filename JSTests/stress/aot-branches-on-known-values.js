@@ -93,7 +93,7 @@
     applies("yieldInDeadArm", folds);
     for (let name of ["absentProperty", "escapesOnlyInDeadArm"]) {
         applies(name, forwards, replaces);
-        doesNotApply(name, allocates);
+        doesNotApply(name, allocates, "literal-born-from-registers");
     }
     applies("keepsOneOfTwo", replaces);
 

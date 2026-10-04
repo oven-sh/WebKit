@@ -80,7 +80,7 @@ for (let round = 0; round < 3; ++round) {
 }
 applies(readsBoth, "scalar-replaced-object");
 applies(readsAbsent, "scalar-replaced-object", "absent-property-is-undefined:b");
-doesNotApply(readsBoth, "absent-property-is-undefined", "calls:operationAOTNewObjectLiteral");
-doesNotApply(readsAbsent, "calls:operationAOTNewObjectLiteral", "calls:GetById");
+doesNotApply(readsBoth, "absent-property-is-undefined", "calls:operationAOTNewObjectLiteral", "literal-born-from-registers");
+doesNotApply(readsAbsent, "calls:operationAOTNewObjectLiteral", "literal-born-from-registers", "calls:GetById");
 for (let f of [readsToString, readsProto, readsComputed, escapes, isReturned, isWritten, hasGetter, hasPrototype])
     doesNotApply(f, "scalar-replaced-object", "absent-property-is-undefined");

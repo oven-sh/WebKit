@@ -142,13 +142,15 @@ constexpr DualRailNumbers dualRailDecode(Type type, unsigned firstBit, unsigned 
     }
     return result;
 }
+static constexpr uint32_t maxIntrinsicNumberInTypes = 1023;
+static constexpr uint32_t largestFunctionNumberInTypes = (1u << functionNumberBits) - 1 - maxIntrinsicNumberInTypes;
 inline uint32_t maxFunctionNumberInTypes()
 {
-    constexpr uint32_t largest = (1u << functionNumberBits) - 1;
     uint32_t forTesting = Options::maxAOTFunctionNumberInTypesForTesting();
-    return forTesting ? std::min(forTesting, largest) : largest;
+    return forTesting ? std::min(forTesting, largestFunctionNumberInTypes) : largestFunctionNumberInTypes;
 }
 inline Type functionType(uint32_t number) { return number <= maxFunctionNumberInTypes() ? TFunctionTag | dualRailEncode(number, firstFunctionNumberBit, functionNumberBits) : TFunction; }
+constexpr Type intrinsicFunctionType(uint32_t intrinsic) { return intrinsic && intrinsic <= maxIntrinsicNumberInTypes ? TFunctionTag | dualRailEncode(largestFunctionNumberInTypes + intrinsic, firstFunctionNumberBit, functionNumberBits) : TFunction; }
 constexpr Type objectTypeForLayout(uint32_t layout) { return TFinalObjectTag | dualRailEncode(layout, firstLayoutNumberBit, layoutNumberBits); }
 constexpr Type objectTypeForLayoutRange(uint32_t first, uint32_t last)
 {
@@ -163,7 +165,14 @@ constexpr Type objectTypeForLayoutRange(uint32_t first, uint32_t last)
 constexpr uint32_t functionNumberOf(Type type)
 {
     auto numbers = dualRailDecode(type, firstFunctionNumberBit, functionNumberBits);
-    return (type & TFunctionTag) && numbers.isOne() ? numbers.lowest : 0;
+    return (type & TFunctionTag) && numbers.isOne() && numbers.lowest <= largestFunctionNumberInTypes ? numbers.lowest : 0;
+}
+constexpr uint32_t intrinsicFunctionOf(Type type)
+{
+    if (!(type & TFunctionTag) || type & (TAnyObject & ~TFunction))
+        return 0;
+    auto numbers = dualRailDecode(type, firstFunctionNumberBit, functionNumberBits);
+    return numbers.isOne() && numbers.lowest > largestFunctionNumberInTypes ? numbers.lowest - largestFunctionNumberInTypes : 0;
 }
 constexpr DualRailNumbers layoutRangeOf(Type type) { return dualRailDecode(type, firstLayoutNumberBit, layoutNumberBits); }
 

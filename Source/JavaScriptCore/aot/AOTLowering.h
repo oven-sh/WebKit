@@ -322,7 +322,7 @@ private:
             return false;
         if (!Options::useAOTInlineFastPathsInLoops() || m_block->isGeneric)
             return true;
-        return (!m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly) && !m_graph.callsItself;
+        return !m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly;
     }
     bool prefersCalls() const { return isCompact() || (m_graph.codeBlock()->codeType() != FunctionCode && !m_block->isInLoop); }
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
@@ -466,7 +466,7 @@ private:
     bool receiverMayHaveChangedSince(Node* read, Node* call) const;
     void lowerBuiltinRead(Node*, Node* baseNode);
     bool lowerSizeOfMapOrSet(Node*, Node* baseNode);
-    bool lowerBuiltinCall(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);
+    bool lowerBuiltinCall(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results, Rep& repOfResults);
     UncheckedKeyHashMap<Node*, LValue> m_receiverChecks;
 
     Graph& m_graph;

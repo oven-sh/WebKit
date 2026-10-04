@@ -59,6 +59,8 @@ constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgume
 static constexpr GPRReg stubImmediateGPR = countGPR;
 static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
+static constexpr unsigned maxLiteralPropertiesInRegisters = GPRInfo::numberOfArgumentRegisters - 2;
+static constexpr unsigned maxArrayElementsInRegisters = 4;
 
 enum class Signature : uint8_t {
     Registers,

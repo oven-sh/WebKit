@@ -264,6 +264,17 @@ bool Lowering::tryLowerAllocation(Node* node)
                     words.append(AllocationPlan::encode(numberOf(instructions.at(stores[i])->as<OpPutById>().m_property), true, true, true));
                 m_graph.noteSitePlan(slot, WTF::move(words));
             }
+            if (prefersCalls() && usesDataStubs() && values.size() <= maxLiteralPropertiesInRegisters && !hasSlotsOutside) {
+                Vector<StubArgument, 8> arguments;
+                arguments.append({ slotAddress(slot), GPRInfo::argumentGPR1 });
+                for (unsigned i = 0; i < values.size(); ++i)
+                    arguments.append({ values[i], GPRInfo::toArgumentRegister(2 + i) });
+                m_graph.remark("literal-born-from-registers"_s, String::number(values.size()));
+                LValue object = callStub(newObjectLiteralStub(values.size()), pointerType(), arguments, { }, StubClobbers::CallerSavedRegisters, node);
+                validateNewObject(node, object, layout, layoutSlotNodes, values, fieldTypesAreKnown ? &fieldTypesBySlot : nullptr);
+                setJSValue(node, object);
+                return true;
+            }
             LBasicBlock slowCase = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
             Vector<ValueFromBlock, 2> results;
@@ -379,6 +390,14 @@ bool Lowering::tryLowerAllocation(Node* node)
             VirtualRegister reg(bytecode.m_argv.offset() - static_cast<int>(i));
             Type type = operandsAreInFrame ? m_graph.frameRegisterTypes[m_graph.registerIndex(reg)] : node->use(reg)->type;
             areInt32 &= type && isSubtype(type, TInt32);
+        }
+        if (usesDataStubs() && bytecode.m_argc && bytecode.m_argc <= maxArrayElementsInRegisters && !operandsAreInFrame) {
+            Vector<StubArgument, 8> arguments;
+            for (unsigned i = 0; i < bytecode.m_argc; ++i)
+                arguments.append({ lowJSValue(node->use(VirtualRegister(bytecode.m_argv.offset() - static_cast<int>(i)))), GPRInfo::toArgumentRegister(1 + i) });
+            m_graph.remark("array-born-from-registers"_s, String::number(bytecode.m_argc));
+            setJSValue(node, callStub(newArrayLiteralStub(bytecode.m_argc, areInt32), pointerType(), arguments, { }, StubClobbers::CallerSavedRegisters, node));
+            return true;
         }
         LValue values = operandsAreInFrame ? addressFor(bytecode.m_argv).value() : bytecode.m_argc ? storeToScratch(node, bytecode.m_argv, bytecode.m_argc) : m_out.intPtrZero;
         setJSValue(node, withHelper(areInt32 ? Stub::HelperNewInt32Array : Stub::HelperNewArray, { values, m_out.constInt32(bytecode.m_argc) }, [&] {

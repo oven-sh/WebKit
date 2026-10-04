@@ -14,6 +14,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSMap.h"
+#include "JSPropertyNameEnumerator.h"
 #include "JSSet.h"
 #include "MathCommon.h"
 #include <wtf/FileSystem.h>
@@ -146,7 +147,7 @@ bool Lowering::lowerSizeOfMapOrSet(Node* node, Node* baseNode)
     return true;
 }
 
-bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, unsigned argv, const Arguments& arguments, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results)
+bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, unsigned argv, const Arguments& arguments, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results, Rep& repOfResults)
 {
     Builtin builtin = builtinAtIndex(node->builtinCalled);
     Receiver receiver = static_cast<Receiver>(node->builtinReceiver);
@@ -165,6 +166,9 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             fits = fits ? m_out.bitAnd(fits, condition) : condition;
     };
     bool repeatsReceiverCheck = false;
+    bool checksAlias = receiver == Receiver::None && calleeNode->kind != NodeKind::Intrinsic && !isSubtype(calleeNode->type, TFunction);
+    if (checksAlias)
+        also(m_out.equal(lowJSValue(calleeNode), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[node->builtinCalled])));
     if (receiver != Receiver::None) {
         auto check = m_receiverChecks.find(calleeNode);
         if (check == m_receiverChecks.end())
@@ -240,6 +244,8 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         m_graph.remark("lowered-builtin"_s, pathOf(builtin));
         if (repeatsReceiverCheck)
             m_graph.remark("repeats-receiver-check-at-call"_s, pathOf(builtin));
+        if (checksAlias)
+            m_graph.remark("checks-alias-of-builtin"_s, pathOf(builtin));
         if (!fits && !mayGiveUp)
             return;
         otherwise = m_out.newBlock();
@@ -257,7 +263,8 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             return true;
         }
         Type type = rep == Rep::Int32 ? TInt32 : rep == Rep::Double ? TNumber : rep == Rep::Boolean ? TBoolean : TTop;
-        results.append(m_out.anchor(convert(value, rep, type, Rep::JSValue)));
+        repOfResults = hasResult && rep == node->rep() && rep != Rep::Int64 ? rep : Rep::JSValue;
+        results.append(m_out.anchor(convert(value, rep, type, repOfResults)));
         m_out.jump(afterwards);
         m_out.appendTo(otherwise);
         return true;
@@ -500,22 +507,32 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     case Builtin::ArrayIsArray: {
         if (!count)
             return false;
-        if (isSubtype(typeAt(1), TArray) || !mayBe(typeAt(1), TAnyObject)) {
+        if (isSubtype(typeAt(1), TArray) || !mayBe(typeAt(1), TArray | TOtherObject)) {
             begin();
             return finishBoolean(isSubtype(typeAt(1), TArray) ? m_out.booleanTrue : m_out.booleanFalse);
         }
-        begin(true);
-        LBasicBlock cellCase = m_out.newBlock();
+        bool mayBeProxy = mayBe(typeAt(1), TOtherObject);
+        begin(mayBeProxy);
+        LBasicBlock notArray = m_out.newBlock();
         LBasicBlock settled = m_out.newBlock();
-        ValueFromBlock notCell = m_out.anchor(m_out.booleanFalse);
-        m_out.branch(isCell(arguments[1]), unsure(cellCase), unsure(settled));
-        m_out.appendTo(cellCase);
+        Vector<ValueFromBlock, 3> answers;
+        if (!isSubtype(typeAt(1), TCell)) {
+            LBasicBlock cellCase = m_out.newBlock();
+            answers.append(m_out.anchor(m_out.booleanFalse));
+            m_out.branch(isCell(arguments[1]), unsure(cellCase), unsure(settled));
+            m_out.appendTo(cellCase);
+        }
         LValue type = cellType(arguments[1]);
-        orElse(m_out.notEqual(type, m_out.constInt32(ProxyObjectType)), otherwise);
-        ValueFromBlock cellResult = m_out.anchor(m_out.bitOr(m_out.equal(type, m_out.constInt32(ArrayType)), m_out.equal(type, m_out.constInt32(DerivedArrayType))));
+        static_assert(DerivedArrayType == ArrayType + 1);
+        answers.append(m_out.anchor(m_out.booleanTrue));
+        m_out.branch(m_out.below(m_out.sub(type, m_out.constInt32(ArrayType)), m_out.constInt32(2)), unsure(settled), unsure(notArray));
+        m_out.appendTo(notArray);
+        if (mayBeProxy)
+            orElse(m_out.notEqual(type, m_out.constInt32(ProxyObjectType)), otherwise);
+        answers.append(m_out.anchor(m_out.booleanFalse));
         m_out.jump(settled);
         m_out.appendTo(settled);
-        return finishBoolean(m_out.phi(Int32, notCell, cellResult));
+        return finishBoolean(m_out.phi(Int32, answers));
     }
     case Builtin::ObjectIs: {
         if (count != 2)
@@ -587,6 +604,29 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             return false;
         begin();
         return finishBoolean(isTrueResult(vmCall(node, Int64, Entry::operationAOTHasOwnProperty, m_instance, arguments[1], arguments[2])));
+    case Builtin::ObjectPrototypeHasOwnProperty: {
+        Node* name = count == 1 ? nodeAt(1) : nullptr;
+        Node* next = name && name->kind == NodeKind::Proj ? name->uses[0].node : nullptr;
+        if (!next || !next->isBytecode(op_enumerator_next) || mayBe(typeAt(0), TEmpty))
+            return false;
+        auto bytecode = next->as<OpEnumeratorNext>();
+        if (name->reg != bytecode.m_propertyName || next->use(bytecode.m_base) != nodeAt(0))
+            return false;
+        Node* mode = nullptr;
+        for (Node* candidate : next->block->nodes) {
+            if (candidate->kind == NodeKind::Proj && candidate->uses[0].node == next && candidate->reg == bytecode.m_mode && !candidate->isElided)
+                mode = candidate;
+        }
+        if (!mode)
+            return false;
+        LValue enumerator = lowJSValue(next->use(bytecode.m_enumerator));
+        also(m_out.equal(unboxInt32(lowJSValue(mode)), m_out.constInt32(JSPropertyNameEnumerator::OwnStructureMode)));
+        also(isCellAnd(nodeAt(0), thisValue, [&](LValue cell) {
+            return m_out.equal(m_out.load32(cell, m_heaps.JSCell_structureID), m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_cachedStructureID));
+        }));
+        begin();
+        return finishBoolean(m_out.booleanTrue);
+    }
     case Builtin::DateNow:
         begin();
         return finish(plainCall(Double, Entry::operationDateNow, m_globalObject), Rep::Double);

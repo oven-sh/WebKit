@@ -871,6 +871,7 @@ Vector<uint8_t> ImageBuilder::finish()
             out->println("C\t", at);
         for (auto& [name, offset] : stubs.names)
             out->println("T\t", offset, "\t", name);
+        dumpRegistersChangedByStubs(*out);
         out->println("R\t", functionsEnd);
         if (identifierIndices) {
             out->println("D\t", sizeof(Data), "\t", sizeof(Slot));

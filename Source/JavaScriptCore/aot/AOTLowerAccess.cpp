@@ -1179,7 +1179,7 @@ void Lowering::lowerPutById(Node* node)
             }
             orElse(m_out.testIsZero32(m_out.load32(structureOf(baseStorage), m_heaps.Structure_bitField), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)), otherwise);
             m_out.store64(storedValue, fieldSlot);
-            if (mayBe(valueNode->type, TCell))
+            if (mayBe(field->fieldType.typeOfStored(valueNode->type), TCell))
                 storeBarrier(base);
             m_out.jump(afterTypedStore);
             m_out.appendTo(cellCase);
@@ -1218,7 +1218,7 @@ void Lowering::lowerPutById(Node* node)
         LValue storedValue = toFieldRepresentation(valueNode, value, field->fieldType);
         orElse(m_out.testIsZero32(m_out.load32(structure, m_heaps.Structure_bitField), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)), otherwise);
         m_out.store64(storedValue, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
-        if (mayBe(valueNode->type, TCell))
+        if (mayBe(field->fieldType.typeOfStored(valueNode->type), TCell))
             storeBarrier(base);
         m_out.jump(afterTypedStore);
         m_out.appendTo(otherwise, afterTypedStore);

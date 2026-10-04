@@ -24,6 +24,11 @@ function doesNotApply(f, ...patterns) {
             throw new Error(pattern + " applies to " + f.name + ": " + remarks.join(" "));
     }
 }
+function oneOfApplies(f, ...patterns) {
+    let remarks = remarksOf(f);
+    if (remarks && !remarks.some(remark => patterns.some(pattern => matches(remark, pattern))))
+        throw new Error("none of " + patterns.join(", ") + " applies to " + f.name + ": " + remarks.join(" "));
+}
 function swap(a, b) { [a, b] = [b, a]; return a + "," + b; }
 function rotate(a, b, c) { [a, b, c] = [b, c, a]; return a + "," + b + "," + c; }
 function fewer(a, b) { [a, b] = [1]; return a + "," + b; }
@@ -139,10 +144,10 @@ check(fromCall(0), "0,1", "the result of a call");
 check(nestedLiteral(0), "0,1", "a literal in a literal");
 check(breaks([1, 2, 3]), 2, "leaving a loop early");
 for (let f of [swap, rotate, fewer, defaults, elision, members])
-    doesNotApply(f, "opens-iterator", "advances-iterator", "calls:operationAOTNewArray");
+    doesNotApply(f, "opens-iterator", "advances-iterator", "calls:operationAOTNewArray", "array-born-from-registers");
 for (let f of [result, spreads, takesRest, fromCall, two, three, skip, nested, rest, groups])
     applies(f, "opens-iterator", "advances-iterator");
 for (let f of [result, takesRest])
-    applies(f, "calls:operationAOTNewArray");
+    oneOfApplies(f, "calls:operationAOTNewArray", "array-born-from-registers");
 for (let f of [two, three, skip, nested, rest, result, breaks])
     doesNotApply(f, "calls:IteratorCloseCheck");

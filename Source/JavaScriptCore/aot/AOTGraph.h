@@ -558,7 +558,6 @@ public:
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned knownCalleeIndex(const ImageKey&);
     Vector<ImageKey> knownCallees;
-    bool callsItself { false };
     unsigned numberOfRegisterReturnValues { 0 };
     UncheckedKeyHashMap<Node*, Vector<Node*, 8>> returnValueReads;
     bool makesCalls { false };

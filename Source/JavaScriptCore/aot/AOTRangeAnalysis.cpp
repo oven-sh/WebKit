@@ -275,6 +275,8 @@ private:
         Node* callee = call->use(call->as<OpCall>().m_callee);
         if (callee->kind == NodeKind::Intrinsic)
             return builtinAtIndex(callee->intrinsic);
+        if (uint32_t aliased = intrinsicFunctionOf(callee->type))
+            return builtinAtIndex(aliased);
         if (!callee->isBytecode(op_get_by_id))
             return Builtin::None;
         auto read = callee->as<OpGetById>();

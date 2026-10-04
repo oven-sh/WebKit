@@ -360,6 +360,8 @@ public:
 
     static TestedValue valueTestedByCondition(Node* condition, unsigned depth = 0)
     {
+        if (condition->kind == NodeKind::Intrinsic)
+            return { condition, TAll, TNone };
         if (condition->kind != NodeKind::Bytecode || condition->guard || condition->guarded)
             return { condition, TAll & ~TOther, TMayBeFalsy };
         constexpr Type notObject = TPrimitive | TEmpty;
@@ -384,12 +386,35 @@ public:
                 return { };
             return { condition->use(bytecode.m_operand), type, TAll & ~type };
         }
-        case op_typeof_is_undefined:
-            return { condition->use(condition->as<OpTypeofIsUndefined>().m_operand), TAll, TAll & ~TUndefined };
+        case op_typeof_is_undefined: {
+            Node* operand = condition->use(condition->as<OpTypeofIsUndefined>().m_operand);
+            return { operand, operand->kind == NodeKind::Intrinsic ? TNone : TAll, TAll & ~TUndefined };
+        }
         case op_typeof_is_object:
             return { condition->use(condition->as<OpTypeofIsObject>().m_operand), TAll & ~(notObject & ~TNull), TAll & ~(TNull | neverCallable) };
         case op_typeof_is_function:
             return { condition->use(condition->as<OpTypeofIsFunction>().m_operand), TAll & ~(notObject | neverCallable), TAll & ~TFunction };
+        case op_call: {
+            auto bytecode = condition->as<OpCall>();
+            Node* callee = condition->use(bytecode.m_callee);
+            unsigned called = callee->kind == NodeKind::Intrinsic ? callee->intrinsic : intrinsicFunctionOf(callee->type);
+            if (called && bytecode.m_argc >= 2) {
+                Node* argument = condition->use(VirtualRegister(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset() + 1));
+                switch (builtinAtIndex(called)) {
+                case Builtin::ArrayIsArray:
+                    return { argument, TArray | TOtherObject, TAll & ~TArray };
+                case Builtin::NumberIsInteger:
+                case Builtin::NumberIsSafeInteger:
+                case Builtin::NumberIsFinite:
+                    return { argument, TNumber, TAll & ~TInt32 };
+                case Builtin::NumberIsNaN:
+                    return { argument, TDouble, TAll };
+                default:
+                    break;
+                }
+            }
+            return { condition, TAll & ~TOther, TMayBeFalsy };
+        }
         default:
             return { condition, TAll & ~TOther, TMayBeFalsy };
         }
@@ -418,10 +443,14 @@ public:
             return { terminal->use(terminal->as<OpJundefinedOrNull>().m_value), TOther, TAll & ~TOther };
         case op_jnundefined_or_null:
             return { terminal->use(terminal->as<OpJnundefinedOrNull>().m_value), TAll & ~TOther, TOther };
-        case op_jeq_null:
-            return { terminal->use(terminal->as<OpJeqNull>().m_value), mayEqualNull, TAll & ~TOther };
-        case op_jneq_null:
-            return { terminal->use(terminal->as<OpJneqNull>().m_value), TAll & ~TOther, mayEqualNull };
+        case op_jeq_null: {
+            Node* value = terminal->use(terminal->as<OpJeqNull>().m_value);
+            return { value, value->kind == NodeKind::Intrinsic ? TNone : mayEqualNull, TAll & ~TOther };
+        }
+        case op_jneq_null: {
+            Node* value = terminal->use(terminal->as<OpJneqNull>().m_value);
+            return { value, TAll & ~TOther, value->kind == NodeKind::Intrinsic ? TNone : mayEqualNull };
+        }
         case op_jtrue:
             return valueTestedByCondition(terminal->use(terminal->as<OpJtrue>().m_condition));
         case op_jfalse:
@@ -1335,6 +1364,8 @@ private:
         bool receiverMayBeNullish = false;
         if (callee->kind == NodeKind::Intrinsic)
             number = callee->intrinsic;
+        else if (uint32_t aliased = intrinsicFunctionOf(callee->type))
+            number = aliased;
         else if (callee->isBytecode(op_get_by_id)) {
             auto bytecode = callee->as<OpGetById>();
             Node* receiver = callee->use(bytecode.m_base);
@@ -1954,8 +1985,6 @@ private:
         case op_type_tag:
             if (Options::auditAOTTypedFields()) [[unlikely]]
                 return node->uses[0].node->type;
-            if (node->narrowedTo)
-                return node->uses[0].node->type & node->narrowedTo;
             if (!node->isTrusted)
                 return node->uses[0].node->type;
             if (node->isEdge)

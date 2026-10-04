@@ -364,6 +364,11 @@ private:
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
             return false;
         };
+        auto refuse = [&](ASCIILiteral why) {
+            if (calleeExecutable)
+                m_graph.remark(why, calleeExecutable->ecmaName().string());
+            return false;
+        };
         if (isConstruct) {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
@@ -432,22 +437,24 @@ private:
         if (about && about->summary && about->summary->makesDissolvedScopes && call->block->isInLoop && !m_graph.loopSplittingIsDisabled)
             return false;
         if (call->block->isInLoop && !guardedIntrinsic && !passesCallback && !closureScope && !m_graph.loopSplittingIsDisabled && hasLoop(callee))
-            return false;
+            return refuse("callee-with-loop-is-called-in-loop"_s);
         if (guardedIntrinsic && (!about || !canBeInlinedIntoCaller(callee)))
             return declineToInline(about ? "of what is in its bytecode"_s : "nothing is known about its code"_s);
+        if (about && !canBeInlinedIntoCaller(callee))
+            return refuse("callee-needs-own-frame"_s);
         if (!about || !canBeInlinedIntoCaller(callee) || !(closureScope || guardedIntrinsic ? callee->instructionsSize() <= maximumCandidateBytecodeCostForSingleCallSite : (passesCallback && (!about->summary || about->summary->isReached())) || isProfitable(callee, about->summary, block->isInLoop || likelyFunction || m_graph.isCalledRepeatedly())))
-            return guardedIntrinsic ? declineToInline("it is too big"_s) : false;
+            return guardedIntrinsic ? declineToInline("it is too big"_s) : about ? refuse("callee-is-too-big-to-inline"_s) : false;
         if (m_inlinedBytecodeSize + callee->instructionsSize() > maximumCallerBytecodeCost || m_graph.inlineFrames.size() > PackedSite::maxInlineFrames)
-            return guardedIntrinsic ? declineToInline("the caller has taken over enough"_s) : false;
+            return guardedIntrinsic ? declineToInline("the caller has taken over enough"_s) : refuse("caller-has-inlined-enough"_s);
         unsigned depth = 0;
         for (unsigned frame = caller.inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent)
             ++depth;
         if (depth >= deepest || m_graph.codeBlock() == callee)
-            return guardedIntrinsic ? declineToInline("it is too deep"_s) : false;
+            return guardedIntrinsic ? declineToInline("it is too deep"_s) : refuse(depth >= deepest ? "callee-is-too-deep-to-inline"_s : "call-is-recursive"_s);
         if (!guardedIntrinsic) {
             for (Graph* graph : m_chain(caller)) {
                 if (graph->codeBlock() == callee)
-                    return false;
+                    return refuse("call-is-recursive"_s);
             }
         }
 

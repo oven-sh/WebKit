@@ -163,6 +163,8 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         return;
     }
     if (isCompact()) {
+        if (opcode == op_add && mayBe(left->type, TString) && mayBe(right->type, TString))
+            m_graph.remark("joins-strings-in-stub"_s);
         if (auto stub = stubFor(opcode))
             setJSValue(node, callBinaryStub(node, *stub, Int64, a, b));
         else

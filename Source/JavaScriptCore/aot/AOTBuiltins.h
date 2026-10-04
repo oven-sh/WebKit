@@ -49,7 +49,7 @@ bool isReflectConstruct(unsigned intrinsic);
     v(NumberConstructor, "Number") v(BooleanConstructor, "Boolean") v(StringConstructor, "String") \
     v(ArrayIsArray, "Array.isArray") v(ObjectIs, "Object.is") v(ObjectKeys, "Object.keys") v(ObjectGetOwnPropertyNames, "Object.getOwnPropertyNames") \
     v(ObjectGetOwnPropertySymbols, "Object.getOwnPropertySymbols") v(ObjectGetPrototypeOf, "Object.getPrototypeOf") v(ReflectGetPrototypeOf, "Reflect.getPrototypeOf") \
-    v(ObjectCreate, "Object.create") v(ObjectAssign, "Object.assign") v(ObjectHasOwn, "Object.hasOwn") \
+    v(ObjectCreate, "Object.create") v(ObjectAssign, "Object.assign") v(ObjectHasOwn, "Object.hasOwn") v(ObjectPrototypeHasOwnProperty, "Object.prototype.hasOwnProperty") \
     v(StringFromCharCode, "String.fromCharCode") v(DateNow, "Date.now") \
     v(StringCharCodeAt, "String.prototype.charCodeAt") v(StringCharAt, "String.prototype.charAt") v(StringAt, "String.prototype.at") v(StringCodePointAt, "String.prototype.codePointAt") \
     v(StringValueOf, "String.prototype.valueOf") v(StringToString, "String.prototype.toString") \

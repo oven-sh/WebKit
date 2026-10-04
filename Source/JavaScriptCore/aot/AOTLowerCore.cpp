@@ -599,18 +599,16 @@ PatchpointValue* Lowering::callStub(Stub stub, LType type, const Vector<StubArgu
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     switch (clobbers) {
     case StubClobbers::CallerSavedRegisters:
+        RELEASE_ASSERT(!registersChangedBy(stub));
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
 #if CPU(X86_64)
         patchpoint->clobberLate(registersClobberedByCalls());
 #endif
         break;
-    case StubClobbers::Temporaries: {
-        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        patchpoint->clobber(stubTemporaries(3));
-        break;
-    }
+    case StubClobbers::Temporaries:
     case StubClobbers::Nothing:
+        patchpoint->clobber(*registersChangedBy(stub));
         break;
     }
     if (type == Double)
@@ -654,6 +652,8 @@ LValue Lowering::callHelper(Stub stub, const Vector<LValue, 4>& arguments)
 
 B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry function, LValue first, LValue second, ColdCall what)
 {
+    if (m_out.m_block->frequency() > coldFrequency)
+        m_graph.remark("cold-call-on-usual-path"_s, nameOf(function));
     PatchpointValue* patchpoint = m_out.patchpoint(type);
     if (what == ColdCall::ChangesNothing) {
         patchpoint->effects = Effects();
@@ -671,8 +671,7 @@ B3::PatchpointValue* Lowering::emitColdCall(Node* node, LType type, Entry functi
         patchpoint->append(ConstrainedValue(first, ValueRep::reg(GPRInfo::argumentGPR1)));
     if (second)
         patchpoint->append(ConstrainedValue(second, ValueRep::reg(GPRInfo::argumentGPR2)));
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobber(stubTemporaries(2));
+    patchpoint->clobber(*registersChangedBy(returnsValue ? Stub::ColdOperationValue : Stub::ColdOperationVoid));
     if (!hasStubsForFunctionsWithoutFrame) {
         m_graph.emitsCalls = true;
         patchpoint->clobberLate(RegisterSet { callMarkerGPR });
@@ -769,22 +768,31 @@ unsigned Lowering::sharedSite(Node* node, unsigned identifier, unsigned extra)
 
 void Lowering::storeBarrier(LValue owner)
 {
+    bool isWhereOperationStarts = m_out.m_block == m_blockWhereOperationStarts;
+    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    PatchpointValue* threshold = m_out.patchpoint(Int32);
+    threshold->effects = Effects::none();
+    threshold->effects.reads = HeapRange::top();
+    threshold->effects.writesLocalState = true;
+    threshold->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfVM()), params[0].gpr());
+        jit.load32(CCallHelpers::Address(params[0].gpr(), VM::offsetOfHeapBarrierThreshold()), params[0].gpr());
+    });
+    m_out.branch(m_out.above(m_out.load8ZeroExt32(owner, m_heaps.JSCell_cellState), threshold), usually(continuation), rarely(slowPath));
+    m_out.appendTo(slowPath, continuation);
     if (usesDataStubs()) {
         PatchpointValue* patchpoint = callStub(Stub::WriteBarrier, Void, { { owner, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
         patchpoint->effects = Effects::none();
         patchpoint->effects.controlDependent = true;
         m_heaps.decoratePatchpointRead(&m_heaps.JSCell_cellState, patchpoint);
         m_heaps.decoratePatchpointWrite(&m_heaps.JSCell_cellState, patchpoint);
-        return;
-    }
-    LBasicBlock slowPath = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    LValue threshold = m_out.load32(m_vm, m_heaps.VM_heap_barrierThreshold);
-    m_out.branch(m_out.above(m_out.load8ZeroExt32(owner, m_heaps.JSCell_cellState), threshold), usually(continuation), rarely(slowPath));
-    m_out.appendTo(slowPath, continuation);
-    plainCall(Void, Entry::operationAOTWriteBarrier, m_vm, owner);
+    } else
+        plainCall(Void, Entry::operationAOTWriteBarrier, m_vm, owner);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
+    if (isWhereOperationStarts)
+        m_blockWhereOperationStarts = continuation;
 }
 
 LValue Emitter::numberToDouble(LValue value)
@@ -962,8 +970,7 @@ LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
 {
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     patchpoint->effects = Effects::none();
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobber(stubTemporaries(isARM64() ? 7 : 3));
+    patchpoint->clobber(*registersChangedBy(stub));
     if (!hasStubsForFunctionsWithoutFrame) {
         m_graph.emitsCalls = true;
         patchpoint->clobberLate(RegisterSet { callMarkerGPR });

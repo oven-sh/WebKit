@@ -299,6 +299,20 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ObjectKeysObjectWithFastPath) \
     v(ValueAddWithFastPath) \
     v(StrcatWithFastPath) \
+    v(NewObjectLiteral1) \
+    v(NewObjectLiteral2) \
+    v(NewObjectLiteral3) \
+    v(NewObjectLiteral4) \
+    v(NewObjectLiteral5) \
+    v(NewObjectLiteral6) \
+    v(NewArrayLiteral1) \
+    v(NewArrayLiteral2) \
+    v(NewArrayLiteral3) \
+    v(NewArrayLiteral4) \
+    v(NewInt32ArrayLiteral1) \
+    v(NewInt32ArrayLiteral2) \
+    v(NewInt32ArrayLiteral3) \
+    v(NewInt32ArrayLiteral4) \
 
 enum class Stub : uint8_t {
 #define AOT_DEFINE_STUB(name) name,
@@ -311,6 +325,9 @@ ASCIILiteral nameOf(Stub);
 static constexpr unsigned shortLiteralLengthBits = 4;
 static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits) - 1;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
+static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegisters <= 4);
+static constexpr Stub newObjectLiteralStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectLiteral1) + count - 1); }
+static constexpr Stub newArrayLiteralStub(unsigned count, bool areInt32) { return static_cast<Stub>(static_cast<unsigned>(areInt32 ? Stub::NewInt32ArrayLiteral1 : Stub::NewArrayLiteral1) + count - 1); }
 
 static constexpr bool usesStubs =
 #if CPU(ARM64) || CPU(X86_64)
@@ -390,6 +407,8 @@ bool acceptsOperandInAnyRegister(Stub, std::optional<uint32_t> t9Value);
 GPRReg defaultOperandRegister(Stub);
 bool operandAllowedInRegister(Stub, GPRReg);
 bool preservesOperandRegister(Stub);
+std::optional<RegisterSet> registersChangedBy(Stub);
+void dumpRegistersChangedByStubs(PrintStream&);
 unsigned thunkForOperandRegister(Stub, std::optional<uint32_t> t9Value, GPRReg);
 bool acceptsTwoOperandsInAnyRegisters(Stub);
 bool returnsResultInAnyRegister(Stub, std::optional<uint32_t> t9Value);

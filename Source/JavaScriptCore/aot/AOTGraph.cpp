@@ -154,6 +154,8 @@ void dumpType(PrintStream& out, Type type)
     if (type & TFunctionTag) {
         if (uint32_t function = functionNumberOf(type))
             out.print(bar, "Function#", function);
+        else if (uint32_t intrinsic = intrinsicFunctionOf(type & TFunction))
+            out.print(bar, "Intrinsic#", intrinsic);
         else
             out.print(bar, "Function#?");
         type &= ~TFunction;
@@ -374,9 +376,12 @@ Node* Graph::intrinsic(unsigned number)
     if (!entry.isCell)
         return constant(JSValue::decode(entry.primitive));
     return m_intrinsics.ensure(entry.canonical, [&] {
+        static_assert(ImmutableIntrinsics::maximumCount - 1 <= maxIntrinsicNumberInTypes);
         Node* node = addNode(NodeKind::Intrinsic);
         node->intrinsic = entry.canonical;
         node->type = cellTypeForJSType(entry.type);
+        if (node->type == TFunction)
+            node->type = intrinsicFunctionType(entry.canonical);
         node->range = IntegerRange::unknown();
         return node;
     }).iterator->value;
@@ -938,9 +943,9 @@ void Graph::findBuiltinsCalled()
                 calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             }
             Node* callee = node->use(calleeRegister);
-            if (callee->kind == NodeKind::Intrinsic) {
-                if (builtinAtIndex(callee->intrinsic) != Builtin::None)
-                    node->builtinCalled = callee->intrinsic;
+            if (unsigned called = callee->kind == NodeKind::Intrinsic ? callee->intrinsic : intrinsicFunctionOf(callee->type)) {
+                if (builtinAtIndex(called) != Builtin::None)
+                    node->builtinCalled = called;
                 continue;
             }
             if (!callee->isBytecode(op_get_by_id) || callee->guard || callee->guarded || callee->isElided || callee->isReadOnlyForCall)
@@ -2778,7 +2783,6 @@ void Graph::adoptInlinee(std::unique_ptr<Graph>&& other, InlineFrame frame)
     }
     other->blocks.clear();
     other->m_rpo.clear();
-    callsItself |= other->callsItself;
     makesCalls |= other->makesCalls;
     usesStaticImports |= other->usesStaticImports;
     numberOfIntrinsicReads += other->numberOfIntrinsicReads;
@@ -3351,6 +3355,7 @@ public:
             removeOverwrittenStores();
         fillPhis();
         simplifyPhis();
+        bool isRecursiveKernel = false;
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
                 if (node->kind != NodeKind::Bytecode)
@@ -3359,8 +3364,8 @@ public:
                 case op_call:
                 case op_call_ignore_result:
                 case op_construct:
-                    if (auto* known = m_graph.knownCallee(node); known && (known->forCall == m_codeBlock || known->forConstruct == m_codeBlock))
-                        m_graph.callsItself = true;
+                    if (auto* known = m_graph.knownCallee(node); known && (known->forCall == m_codeBlock || known->forConstruct == m_codeBlock) && m_instructions.size() <= maxBytecodeSizeOfRecursiveKernel)
+                        isRecursiveKernel = true;
                     [[fallthrough]];
                 case op_tail_call:
                 case op_call_direct_eval:
@@ -3383,10 +3388,17 @@ public:
                 }
             }
         }
+        if (isRecursiveKernel) {
+            m_graph.remark("profitable-recursion"_s);
+            for (BasicBlock* block : m_graph.m_rpo)
+                block->isInProfitableLoop = true;
+        }
         return !m_graph.failed();
     }
 
 private:
+    static constexpr unsigned maxBytecodeSizeOfRecursiveKernel = 512;
+
     template<typename Functor>
     void forEachUse(const JSInstruction* instruction, const Functor& functor)
     {
@@ -3736,24 +3748,6 @@ private:
         if (value.isConstant() || !tag || !TypeTable::shared()->isTrusted(tag))
             return { };
         return { TypeTable::shared()->layoutIDOf(tag), value };
-    }
-
-    VirtualRegister arrayAssertedAt(unsigned next)
-    {
-        if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
-            return { };
-        if (next >= m_instructions.size())
-            return { };
-        uint32_t tag = m_graph.typeTagAt(next);
-        if (!tag || !TypeTable::shared()->isArray(tag))
-            return { };
-        const JSInstruction* access = m_instructions.at(next).ptr();
-        VirtualRegister base;
-        if (access->opcodeID() == op_get_by_id)
-            base = access->as<OpGetById>().m_base;
-        else if (access->opcodeID() == op_get_length)
-            base = access->as<OpGetLength>().m_base;
-        return base.isValid() && !base.isConstant() ? base : VirtualRegister();
     }
 
     bool usesTypedAccessWithoutGuard(unsigned offset)
@@ -4395,17 +4389,12 @@ private:
             baseRegister = edge.second;
             isEdge = layoutID;
         }
-        bool isArray = false;
-        if (!layoutID) {
-            baseRegister = arrayAssertedAt(next);
-            isArray = baseRegister.isValid();
-        }
-        if ((!layoutID && !isArray) || !m_graph.isTracked(baseRegister))
+        if (!layoutID || !m_graph.isTracked(baseRegister))
             return;
         Node* base = get(block, baseRegister);
         if (base == m_pendingCreateThis)
             return;
-        bool isTrusted = layoutID && TypeTable::shared()->isTrusted(m_graph.typeTagAt(next)) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isEscapingFunctionThis(base));
+        bool isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(next)) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isEscapingFunctionThis(base));
         if (isEdge && !isTrusted)
             return;
         Node* node = m_graph.addNode(NodeKind::Bytecode);
@@ -4416,12 +4405,10 @@ private:
         node->firstLayout = node->lastLayout = layoutID;
         node->isTrusted = isTrusted;
         node->isEdge = isEdge;
-        if (isArray)
-            node->narrowedTo = TArray;
         node->reg = baseRegister;
         append(block, node);
         for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
-            if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
+            if (block->valuesAtTail[index] == base && !m_graph.m_arrayOperandRegisters.get(index))
                 block->valuesAtTail[index] = node;
         }
     }

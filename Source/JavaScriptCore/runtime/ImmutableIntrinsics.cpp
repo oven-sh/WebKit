@@ -81,6 +81,7 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
         entry.holder = holder;
         entry.canonical = number;
         if (value.isCell()) {
+            RELEASE_ASSERT(!value.asCell()->structure()->typeInfo().masqueradesAsUndefined());
             entry.isCell = true;
             entry.type = value.asCell()->type();
             entry.canonical = numberOfCell.add(value.asCell(), number).iterator->value;

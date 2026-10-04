@@ -760,7 +760,16 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Insta
     Type actual = valueType(JSValue::decode(encodedValue));
     if (actual & TFinalObjectTag)
         actual = (actual & ~TFinalObject) | objectTypeForLayout(JSValue::decode(encodedValue).asCell()->structure()->typedLayoutID());
-    if (actual & TFunctionTag) {
+    uint32_t intrinsic = 0;
+    if ((actual & TFunctionTag) && (type & TAnyFunctionNumber) != TAnyFunctionNumber && ImmutableIntrinsics::shared()) {
+        for (unsigned number = 1; number < ImmutableIntrinsics::shared()->count() && !intrinsic; ++number) {
+            if (instance->intrinsics[number] == encodedValue)
+                intrinsic = ImmutableIntrinsics::shared()->at(number).canonical;
+        }
+    }
+    if (intrinsic && isSubtype(intrinsicFunctionType(intrinsic), type))
+        actual = (actual & ~TFunction) | intrinsicFunctionType(intrinsic);
+    else if (actual & TFunctionTag) {
         if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedValue).asCell()); function && !function->isHostFunction()) {
             Image* image = Image::withCode();
             bool hasWord = function->hasAOTFunctionWord();

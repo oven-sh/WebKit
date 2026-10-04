@@ -755,7 +755,7 @@ bool Lowering::tryLowerMisc(Node* node)
             setJSValue(node, jsValue);
             return true;
         }
-        if (node->narrowedTo || value->hasLayoutInRange(node->firstLayout, node->lastLayout) || (TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->usesFieldIDs(node->firstLayout))) {
+        if (value->hasLayoutInRange(node->firstLayout, node->lastLayout) || (TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->usesFieldIDs(node->firstLayout))) {
             m_aliasTarget = value;
             setResult(node, lowRaw(value), value->rep());
             m_aliasTarget = nullptr;
@@ -786,7 +786,7 @@ bool Lowering::tryLowerMisc(Node* node)
         }
 
         LValue jsValue = lowJSValue(value);
-        LBasicBlock slowPath = m_out.newBlock();
+        LBasicBlock slowPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         emitTypeTests(value, jsValue, mask, continuation, slowPath);
 

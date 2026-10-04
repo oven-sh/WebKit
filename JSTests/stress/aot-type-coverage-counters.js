@@ -34,6 +34,7 @@ function branches(o, which) {
 }
 function testsFlag(o) { return o.flags & 4; }
 function usesThis(a) { "use strict"; return [this, a]; }
+function deletes(o) { return delete o.gone; }
 function loops(o, n) {
     let sum = 0;
     for (let i = 0; i < n; i++)
@@ -50,7 +51,7 @@ function program() {
     return [first, second];
 }
 const [first, second] = program();
-for (const f of [reads, isNeverCalled, branches, testsFlag, usesThis, loops, Point])
+for (const f of [reads, isNeverCalled, branches, testsFlag, usesThis, deletes, loops, Point])
     noInline(f);
 
 if (operationsOf(reads, "op_get_by_id")) {
@@ -82,9 +83,11 @@ if (operationsOf(reads, "op_get_by_id")) {
     check(toThis.timesRun, 5, "an operation with a path to the runtime");
     if (!toThis.outcomes.some(outcome => outcome.startsWith("calls:")))
         check(toThis.calls, 0, "which an object does not take");
-    const [newArray] = operationsOf(usesThis, "op_new_array").filter(operation => operation.timesRun);
-    check(newArray.timesRun, 5, "an operation that always calls the runtime");
-    check(newArray.runtimeCalls >= 5, true, "each time");
+    for (let i = 0; i < 5; i++)
+        deletes({ gone: i, stays: 1 });
+    const [deletion] = operationsOf(deletes, "op_del_by_id").filter(operation => operation.timesRun);
+    check(deletion.timesRun, 5, "an operation that always calls the runtime");
+    check(deletion.runtimeCalls >= 5, true, "each time");
 
     check(loops({ inside: 2 }, 6), 12, "a loop");
     check(operationsOf(loops, "op_get_by_id").reduce((most, read) => Math.max(most, read.timesRun), 0), 6, "an operation in a loop, in whichever copy ran");
