@@ -80,3 +80,32 @@ const afterFirstUse = compilations();
 for (let i = 0; i < 100; ++i)
     check(usesOneExpression("one expression"), true, "a literal");
 check(compilations() - afterFirstUse, 0, "and not when it is used again");
+
+function guests(kind)
+{
+    return isCounting ? aotOperationCount("guest:" + kind) || 0 : 0;
+}
+
+function usesAnotherLiteral(subject)
+{
+    return /anoth(e)r+ literal/.test(subject);
+}
+noInline(usesAnotherLiteral);
+
+function usesPatternMadeAtRunTime(subject, pattern)
+{
+    return new RegExp(pattern).test(subject);
+}
+noInline(usesPatternMadeAtRunTime);
+
+for (const kind of ["RegExp", "RegExp-pattern"]) {
+    const beforeLiteral = guests(kind);
+    check(usesAnotherLiteral("another literal"), true, "a literal");
+    check(guests(kind) - beforeLiteral, 0, "a literal of the program is no guest (" + kind + ")");
+}
+const made = ["RegExp", "RegExp-pattern"].map(guests);
+check(usesPatternMadeAtRunTime("made at run time", "made( at)+ run" + String(" time")), true, "a pattern made at run time");
+if (isCounting) {
+    check(guests("RegExp") - made[0] >= 1, true, "a pattern made at run time is a guest, by who compiled it");
+    check(guests("RegExp-pattern") - made[1], guests("RegExp") - made[0], "and as often by its text");
+}

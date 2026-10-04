@@ -316,13 +316,19 @@ public:
         if (std::exchange(m_lastMegamorphicCacheEpoch, epoch) != epoch)
             countOperation("MegamorphicCache", "epoch-changed");
     }
-    void countFillOfMegamorphicCache(const char* kind, uint16_t epoch, uint32_t structureID, const void* uid)
+    void countFillOfMegamorphicCache(const char* kind, uint16_t epoch, uint64_t structureIDs, const void* uid, const char* outcome)
     {
+        if (outcome) {
+            countOperation(kind, outcome);
+            return;
+        }
         if (std::exchange(m_epochOfFilledPairs, epoch) != epoch)
             m_filledPairs.clear();
-        countOperation(kind, m_filledPairs.add({ kind, uid, structureID }).isNewEntry ? "new-pair" : "pair-again");
+        countOperation(kind, m_filledPairs.add({ kind, uid, structureIDs }).isNewEntry ? "new-pair" : "pair-again");
     }
+    void forgetFilledPairsOfDeadStructures(VM&);
     void noteGuest(const char* kind, StringView group, String&& sample);
+    void noteShape(const char* kind, StringView what, VM&, Structure*);
     uint64_t operationCount(StringView nameAndDetail) const;
     void dumpOperationCounts(PrintStream&) const;
     void writeOperationCounts() const;

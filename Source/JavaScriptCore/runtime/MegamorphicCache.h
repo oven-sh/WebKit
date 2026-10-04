@@ -363,6 +363,15 @@ public:
         return nullptr;
     }
 
+    const StoreEntry* findStore(StructureID structureID, UniquedStringImpl* uid) const
+    {
+        for (auto* entry : { &m_storeCachePrimaryEntries[storeCachePrimaryHash(structureID, uid) & storeCachePrimaryMask], &m_storeCacheSecondaryEntries[storeCacheSecondaryHash(structureID, uid) & storeCacheSecondaryMask] }) {
+            if (entry->m_oldStructureID == structureID && entry->m_uid.get() == uid && entry->m_epoch == m_epoch)
+                return entry;
+        }
+        return nullptr;
+    }
+
     bool bumpEpoch()
     {
         ++m_epoch;

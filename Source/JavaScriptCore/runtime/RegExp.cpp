@@ -30,6 +30,7 @@
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
 #include "SourceCharacters.h"
+#include "VMEntryScope.h"
 #include "YarrJIT.h"
 #include "YarrPattern.h"
 #include "YarrSyntaxChecker.h"
@@ -387,6 +388,10 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
     }
+    if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
+        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
+        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
+    }
 #endif
     bool isInitiallyInterpreted = startsInterpreted(sampleString);
     bool wasInitiallyInterpreted = m_workInInterpreter == workBeforeJIT;
@@ -494,6 +499,10 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
         return;
+    }
+    if (Options::useAOTOperationCounters() && vm->entryScope) [[unlikely]] {
+        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp", { }, m_patternString);
+        AOT::noteGuest(vm->entryScope->globalObject(), "RegExp-pattern", StringView { m_patternString }.left(60), m_patternString);
     }
 #endif
     bool isInitiallyInterpreted = startsInterpreted(sampleString);

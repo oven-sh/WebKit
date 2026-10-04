@@ -218,6 +218,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
 
     PutPropertySlot slot(base, isStrict, putByIdContextOf(instance, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
+    if (Options::useAOTOperationCounters() && cache && oldStructure && (cache->offset & Slot::attemptsMask) == Slot::attemptsMask) [[unlikely]] {
+        auto* entry = vm.megamorphicCache() ? vm.megamorphicCache()->findStore(oldStructure->id(), ident.impl()) : nullptr;
+        countOperationNamed(instance, __func__, !entry ? "abandoned-and-not-in-table" : entry->m_reallocating ? "abandoned-and-entry-reallocates" : "abandoned-and-in-table");
+    }
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
             throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, oldStructure, ident.impl(), value));
@@ -660,6 +664,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance* in
 JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t which))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationAtSite(instance, callFrame, __func__);
     unsigned slot = which >> 16 & 0xff;
     bool allowsUndefined = which >> 24 & 1;
     const TypedLayoutTable::Field& field = TypedLayoutTable::fieldWithID(slot, static_cast<uint16_t>(which));
@@ -667,6 +672,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     JSValue base = JSValue::decode(encodedBase);
     if (base.isObject()) {
         JSObject* object = asObject(base);
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            runtimeTable(vm).noteShape("ReadField", makeString("wants layout "_s, layoutID, " slot "_s, slot, " id "_s, field.id, " name "_s, StringView(instance->program->identifier(field.identifier)), " there "_s, object->structure()->typedLayoutID() ? object->structure()->fieldIDInSlot(slot) : 0, " of"_s), vm, object->structure());
         if (!object->structure()->cannotConvertToTypedLayout() && !object->structure()->typedLayoutID())
             countOperationNamed(instance, __func__, Instance::convertToTypedLayout(vm, object, layoutID) ? "converted" : "conversion-refused");
         else

@@ -363,6 +363,19 @@ void RuntimeTable::dumpOperationCounts(PrintStream& out) const
     });
     for (auto& [operation, detail, count] : sorted)
         out.println(count, "\t", operation, *detail ? ":" : "", detail);
+    UncheckedKeyHashMap<const char*, uint64_t> distinctPairs;
+    for (auto& pair : m_filledPairs)
+        distinctPairs.add(std::get<0>(pair), 0).iterator->value++;
+    for (auto& [kind, count] : distinctPairs)
+        out.println(count, "\t", kind, ":distinct-pairs");
+}
+
+void RuntimeTable::forgetFilledPairsOfDeadStructures(VM& vm)
+{
+    auto isDead = [&](uint32_t structureID) { return structureID && !vm.heap.isMarked(std::bit_cast<StructureID>(structureID).decode()); };
+    m_filledPairs.removeIf([&](auto& pair) {
+        return isDead(static_cast<uint32_t>(std::get<2>(pair))) || isDead(static_cast<uint32_t>(static_cast<uint64_t>(std::get<2>(pair)) >> 32));
+    });
 }
 
 void RuntimeTable::writeOperationCounts() const
@@ -392,6 +405,19 @@ void RuntimeTable::noteGuest(const char* kind, StringView group, String&& sample
     auto& entry = m_guests.add(makeString(StringView::fromLatin1(kind), '\t', group), std::pair<uint64_t, String> { }).iterator->value;
     if (!entry.first++)
         entry.second = WTF::move(sample);
+}
+
+void RuntimeTable::noteShape(const char* kind, StringView what, VM& vm, Structure* structure)
+{
+    StringPrintStream out;
+    out.print(what, " layout ", structure->typedLayoutID(), " capacity ", structure->inlineCapacity(), " ");
+    unsigned count = 0;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        if (count++ < 24)
+            out.print(count > 1 ? "," : "", StringView(entry.key()));
+        return true;
+    });
+    noteGuest(kind, out.toString(), String());
 }
 
 void Instance::collectCalleeCacheMisses()
@@ -2504,6 +2530,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]] {
         AOT::runtimeTable(*vm).countOperation("Heap::collection", newOnly ? "eden" : "full");
+        AOT::runtimeTable(*vm).forgetFilledPairsOfDeadStructures(*vm);
         AOT::writeOperationCounts(*vm);
     }
     for (Slot* cache : collections->calleeCachesFilledSinceLastCollection) {
