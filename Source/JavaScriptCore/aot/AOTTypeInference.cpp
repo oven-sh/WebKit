@@ -646,7 +646,10 @@ public:
             if (!tested.value || tested.value->isElided)
                 continue;
             Type typeTested = tested.value->type;
-            if (tested.value->graph != terminal->graph)
+            const Node* origin = tested.value;
+            while (origin->kind == NodeKind::Narrow)
+                origin = origin->uses[0].node;
+            if (origin->graph != terminal->graph)
                 typeTested &= ~TEmpty;
             for (unsigned i = 0; i < 2; ++i) {
                 Type narrowedTo = i ? tested.ifFalse : tested.ifTrue;

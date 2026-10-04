@@ -28,35 +28,51 @@ const isOn = !!remarksOf("check") && !!options.useAOTGuardsOverWholeFunctions &&
         return object;
     }
     let mayBeEmpty;
-    let kept = 0, keptInOneStep = 0;
+    var isNeverEmpty;
+    let kept = 0, keptInOneStep = 0, keptOfMerged = 0, keptOfMergedVar = 0;
     function keeps(e) { if (e !== undefined && e !== null) kept = e; }
     function keepsInOneStep(e) { if (e != null) keptInOneStep = e; }
+    function keepsMerged(e, other, takesFirst) { let merged = takesFirst ? e : other; if (merged !== undefined) keptOfMerged = merged; }
+    function keepsMergedVar(e, other, takesFirst) { let merged = takesFirst ? e : other; if (merged !== undefined) keptOfMergedVar = merged; }
     function readsThreeAndKeeps(o) { keeps(mayBeEmpty); return o.tag + o.key + o.child; }
     function readsThreeAndKeepsInOneStep(o) { keepsInOneStep(mayBeEmpty); return o.tag + o.key + o.child; }
+    function readsThreeAndKeepsMerged(o, takesFirst) { keepsMerged(mayBeEmpty, second, takesFirst); return o.tag + o.key + o.child; }
+    function readsThreeAndKeepsMergedVar(o, takesFirst) { keepsMergedVar(isNeverEmpty, second, takesFirst); return o.tag + o.key + o.child; }
 
+    let expectedOfMerged = 0;
     for (let i = 0; i < 400; ++i) {
         mayBeEmpty = (i & 3) === 0 ? undefined : (i & 3) === 1 ? null : (i & 3) === 2 ? first : second;
+        isNeverEmpty = (i & 3) === 0 ? undefined : (i & 3) === 1 ? null : (i & 3) === 2 ? first : second;
         let make = i % 10 == 9 ? () => build("child", 2, "key", 1, "tag", i) : () => new Item(i, 1, 2);
         check(readsThreeAndKeeps(make()), i + 3, "three reads behind a test in two steps");
         check(readsThreeAndKeepsInOneStep(make()), i + 3, "three reads behind a test in one step");
         let expected = i < 2 ? 1 : (i & 3) == 2 ? 2 : (i & 3) == 3 ? 3 : 3;
         check(kept === 0 ? 1 : kept(), expected, "what the test in two steps kept");
         check(keptInOneStep === 0 ? 1 : keptInOneStep(), expected, "what the test in one step kept");
+        let takesFirst = i % 7 < 5;
+        check(readsThreeAndKeepsMerged(make(), takesFirst), i + 3, "three reads behind a test of a merged value");
+        check(readsThreeAndKeepsMergedVar(make(), takesFirst), i + 3, "three reads behind a test of a merged value that is never empty");
+        if (!takesFirst || (i & 3))
+            expectedOfMerged = !takesFirst ? 3 : (i & 3) === 1 ? -1 : (i & 3) === 2 ? 2 : 3;
+        check(keptOfMerged === 0 ? 0 : keptOfMerged === null ? -1 : keptOfMerged(), expectedOfMerged, "what the test of a merged value kept");
+        check(keptOfMergedVar === 0 ? 0 : keptOfMergedVar === null ? -1 : keptOfMergedVar(), expectedOfMerged, "what the test of a merged value that is never empty kept");
     }
 
     if (!isOn)
         return;
     const reasons = name => remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join();
     const has = (name, remark) => remarksOf(name).includes(remark);
-    check(has("readsThreeAndKeepsInOneStep", "guards-over-whole-function"), true, "readsThreeAndKeepsInOneStep has guards over the whole function");
-    check(has("readsThreeAndKeepsInOneStep", "contradicts-analysis-without-guards"), false, "readsThreeAndKeepsInOneStep contradicts the analysis");
+    for (const name of ["readsThreeAndKeeps", "readsThreeAndKeepsInOneStep", "readsThreeAndKeepsMergedVar"]) {
+        check(has(name, "guards-over-whole-function"), true, name + " has guards over the whole function");
+        check(has(name, "contradicts-analysis-without-guards"), false, name + " contradicts the analysis");
+    }
     if (!options.useAOTInlining) {
-        check(has("readsThreeAndKeeps", "guards-over-whole-function"), true, "readsThreeAndKeeps has guards over the whole function where nothing is inlined");
-        check(has("readsThreeAndKeeps", "contradicts-analysis-without-guards"), false, "readsThreeAndKeeps contradicts the analysis where nothing is inlined");
+        check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), true, "readsThreeAndKeepsMerged has guards over the whole function where nothing is inlined");
+        check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), false, "readsThreeAndKeepsMerged contradicts the analysis where nothing is inlined");
         return;
     }
-    check(has("readsThreeAndKeeps", "inlined-call:keeps"), true, "keeps is inlined");
-    check(has("readsThreeAndKeeps", "guards-over-whole-function"), false, "readsThreeAndKeeps has guards over the whole function");
-    check(reasons("readsThreeAndKeeps"), "no-guards-over-whole-function:contradicts-analysis-of-store", "why readsThreeAndKeeps has no guards");
-    check(has("readsThreeAndKeeps", "contradicts-analysis-without-guards"), true, "readsThreeAndKeeps contradicts the analysis without guards too (once the inference follows a test in two steps, this needs another shape)");
+    check(has("readsThreeAndKeepsMerged", "inlined-call:keepsMerged"), true, "keepsMerged is inlined");
+    check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), false, "readsThreeAndKeepsMerged has guards over the whole function");
+    check(reasons("readsThreeAndKeepsMerged"), "no-guards-over-whole-function:contradicts-analysis-of-store", "why readsThreeAndKeepsMerged has no guards");
+    check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), true, "readsThreeAndKeepsMerged contradicts the analysis without guards too (once the inference narrows an argument that may be empty behind a merge in an inlined body, this needs another shape)");
 })();
