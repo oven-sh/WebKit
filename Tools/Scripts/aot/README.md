@@ -28,6 +28,7 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | Check that a faster build still does the same work (minutes) | `compare-execution-counts.py`, see below |
 | See what the compiler makes of one function of a large program | `--dumpAOTGraph=1 --aotFunctionToDump=<name>`, or `<start offset>` or `<module>:<start offset>` as in the map file for a function without a name. Also for `dumpAOTB3Graph` and `dumpAOTDisassembly`. |
 | Check that a program compiles to the same image every time (a minute) | `check-reproducible.py <jsc> [file.js ...]` compiles the tests, or the given programs, with one compiler thread and with sixteen and compares the images. Give it a program of several megabytes as well: most of what it found did not show in the tests. |
+| Check that the stubs return the way the processor predicts (a second, ARM64) | `check-paired-returns.py <jsc>` reads the machine code of the stubs and fails on one that computes its return address instead of being called, or that returns with `br`. With `--image` and `--map` it reads an executable without running it. |
 | Find the checks of compiled code that no test covers (an hour) | `drop-guards.py <jsc>` leaves out one guard of the compiler at a time, with `--aotGuardToDropForTesting`, and runs the tests and the fuzzers. What survives lacks a test. |
 | Limit a runaway compile | `capped.py <GB> <seconds> <command...>` |
 

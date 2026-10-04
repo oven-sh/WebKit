@@ -58,9 +58,8 @@ struct LabelAddress {
     CCallHelpers::Label target;
 };
 static Vector<LabelAddress>* s_labelAddresses;
-#else
-static CCallHelpers::Label& callTargetWithList() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 #endif
+static CCallHelpers::Label& callTargetWithList() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 static CCallHelpers::Label& callVarargsReturnAddress() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 static CCallHelpers::Label& returnFromCallWithList() { static NeverDestroyed<CCallHelpers::Label> label; return label; }
 
@@ -517,7 +516,7 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
     if (isLeaf) {
         jit.move(CCallHelpers::linkRegister, scratch);
         jit.popPair(fp, CCallHelpers::linkRegister);
-        jit.farJump(scratch, NoPtrTag);
+        jit.m_assembler.ret(scratch);
     } else
         jit.ret();
     exception.link(&jit);
@@ -3593,10 +3592,8 @@ static void callBoundTarget(CCallHelpers& jit)
 
 static void generateReturnFromCallWithList(CCallHelpers& jit)
 {
-#if CPU(X86_64)
     callTargetWithList() = jit.label();
     jit.call(callTargetGPR, JSEntryPtrTag);
-#endif
     returnFromCallWithList() = jit.label();
     jit.emitFunctionEpilogue();
     jit.ret();
@@ -3771,12 +3768,7 @@ static void generateCallTo(CCallHelpers& jit, CodeSpecializationKind kind, std::
     jit.move(countGPR, argumentGPR(0));
     jit.addPtr(TrustedImm32(outgoingFrameSlot(CallFrameSlot::thisArgument, sizeof(Register)).offset), CCallHelpers::stackPointerRegister, argumentGPR(1));
     jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), callTargetGPR);
-#if CPU(ARM64)
-    loadLabelAddress(jit, returnFromCallWithList(), ARM64Registers::lr);
-    jit.farJump(callTargetGPR, JSEntryPtrTag);
-#else
     jit.jump().linkTo(callTargetWithList(), &jit);
-#endif
 
     slowCase.link(&jit);
     if (countsMisses)
@@ -4066,12 +4058,13 @@ static void generateCallVarargsTo(CCallHelpers& jit, CodeSpecializationKind kind
         if (kind == CodeSpecializationKind::CodeForCall) {
             callVarargsReturnAddress() = jit.label();
 #if CPU(ARM64)
-            loadLabelAddress(jit, returnFromCallWithList(), ARM64Registers::lr);
+            loadLabelAddress(jit, stubLabels()[static_cast<unsigned>(Stub::CallList)], callTargetGPR);
+            jit.jump().linkTo(callTargetWithList(), &jit);
 #else
             loadLabelAddress(jit, returnFromCallWithList(), T11);
             jit.push(T11);
-#endif
             s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::CallList });
+#endif
         } else {
             callStubFromStub(jit, kind == CodeSpecializationKind::CodeForCall ? Stub::CallList : Stub::ConstructList);
             jit.emitFunctionEpilogue();
