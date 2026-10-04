@@ -1,0 +1,68 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#pragma once
+
+#if ENABLE(AOT)
+
+#include <atomic>
+#include <span>
+#include <wtf/HashMap.h>
+#include <wtf/Lock.h>
+#include <wtf/Noncopyable.h>
+#include <wtf/PrintStream.h>
+#include <wtf/TZoneMalloc.h>
+#include <wtf/Vector.h>
+#include <wtf/text/UniquedStringImpl.h>
+
+namespace JSC { namespace AOT {
+
+struct GuessedPlace {
+    uint16_t nameID;
+    uint8_t slot;
+};
+
+class PropertyPlaces {
+    WTF_MAKE_TZONE_ALLOCATED(PropertyPlaces);
+    WTF_MAKE_NONCOPYABLE(PropertyPlaces);
+public:
+    using Names = Vector<UniquedStringImpl*, 8>;
+    enum class Decision : uint8_t { Guessed, NoShape, Disagree, SlotTooHigh, NoNameID };
+    static constexpr unsigned numberOfDecisions = 5;
+
+    PropertyPlaces() = default;
+
+    JS_EXPORT_PRIVATE void note(Names&& namesInSlotOrder);
+    JS_EXPORT_PRIVATE void finalize();
+    void setFirstNameID(uint32_t firstNameID) { m_firstNameID = firstNameID; }
+
+    const Vector<UniquedStringImpl*>& namesInIDOrder() const { return m_namesInIDOrder; }
+    JS_EXPORT_PRIVATE uint16_t nameID(UniquedStringImpl*) const;
+    bool isHeld(UniquedStringImpl* name) const { return m_holders.contains(name); }
+    Decision decide(UniquedStringImpl* name, std::span<UniquedStringImpl* const> namesAccessed, GuessedPlace&) const;
+    void countNameOnlyCalled() const { m_namesOnlyCalled.fetch_add(1, std::memory_order_relaxed); }
+    JS_EXPORT_PRIVATE void dump(PrintStream&) const;
+
+private:
+    struct Holders {
+        Vector<uint32_t> shapes;
+        unsigned indexInIDOrder { 0 };
+    };
+
+    Lock m_lock;
+    Vector<Names> m_shapes;
+    size_t m_numberOfBirths { 0 };
+    UncheckedKeyHashMap<UniquedStringImpl*, Holders> m_holders;
+    Vector<UniquedStringImpl*> m_namesInIDOrder;
+    uint32_t m_firstNameID { 0 };
+    mutable std::atomic<unsigned> m_decisions[numberOfDecisions] { };
+    mutable std::atomic<unsigned> m_namesOnlyCalled { 0 };
+};
+JS_EXPORT_PRIVATE void setPropertyPlaces(PropertyPlaces*);
+PropertyPlaces* propertyPlaces();
+
+} } // namespace JSC::AOT
+
+#endif // ENABLE(AOT)

@@ -11,6 +11,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiler.h"
+#include "AOTPropertyPlaces.h"
 #include "CachedTypes.h"
 #include "CodeBlock.h"
 #include "CodeCache.h"
@@ -1131,6 +1132,30 @@ Vector<uint8_t> ImageBuilder::finish()
         fields.appendVector(slotFieldList);
         header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(slotFieldList.size()));
     }
+    RELEASE_ASSERT(header.largestFieldID == TypeTable::largestFieldID());
+    Vector<ImagePropertyName> propertyNames;
+    Vector<uint32_t> propertyNameFilter;
+    if (Options::useAOTGuessedPlaces()) {
+        RELEASE_ASSERT(identifierIndices);
+        auto names = propertyPlaces()->namesInIDOrder();
+        for (size_t i = 0; i < names.size(); ++i) {
+            size_t id = header.largestFieldID + 1 + i;
+            RELEASE_ASSERT(!names[i]->isSymbol() && identifierIndices->contains(names[i]) && identifierIndices->get(names[i]) < (1u << 24));
+            RELEASE_ASSERT(propertyPlaces()->nameID(names[i]) == (id <= maxPropertyNameIDInImage ? id : 0));
+            if (id <= maxPropertyNameIDInImage)
+                propertyNames.append({ names[i]->existingHash(), id, identifierIndices->get(names[i]) });
+        }
+        if (propertyNames.size() < names.size())
+            dataLogLn("AOT: ", names.size() - propertyNames.size(), " of ", names.size(), " property names are left without an ID");
+        std::ranges::sort(propertyNames, [](auto& a, auto& b) { return a.hash != b.hash ? a.hash < b.hash : a.id < b.id; });
+        propertyNameFilter.fill(0, std::max<size_t>(roundUpToPowerOfTwo(propertyNames.size()), 4) / 4);
+        for (auto& name : propertyNames)
+            propertyNameFilter[name.hash % (propertyNameFilter.size() * 32) / 32] |= 1u << name.hash % 32;
+        header.propertyNameFilterMask = safeCast<uint32_t>(propertyNameFilter.size() * 32 - 1);
+    }
+    header.propertyNamesOffset = place(propertyNames.sizeInBytes());
+    header.numberOfPropertyNames = propertyNames.size();
+    header.propertyNameFilterOffset = place(propertyNameFilter.sizeInBytes());
     Vector<uint16_t> layoutIDsByFieldID;
     for (auto& slotFieldList : slotLayoutIDs)
         layoutIDsByFieldID.appendVector(slotFieldList);
@@ -1254,6 +1279,8 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.codeGranulesOffset, codeGranules.span().data(), codeGranules.sizeInBytes());
     memcpy(base + header.callSitesOffset, callSites.span().data(), callSites.size());
     memcpy(base + header.framesOffset, frames.span().data(), frames.sizeInBytes());
+    memcpy(base + header.propertyNamesOffset, propertyNames.span().data(), propertyNames.sizeInBytes());
+    memcpy(base + header.propertyNameFilterOffset, propertyNameFilter.span().data(), propertyNameFilter.sizeInBytes());
     for (auto& [table, at] : regExpTables) {
         for (auto& regExp : m_regExps) {
             bool copied = false;
@@ -1417,6 +1444,7 @@ struct Registry {
     Vector<Image*, 2> images;
     std::atomic<bool> hasAny { false };
     const ProgramData* programData { nullptr };
+    std::atomic<Image*> withPropertyNames { nullptr };
 };
 
 Registry& registry()
@@ -1453,6 +1481,8 @@ Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
     for (Image* other : all.images)
         RELEASE_ASSERT(!header.codeSize || !other->header().codeSize);
     all.images.append(image);
+    if (header.numberOfPropertyNames)
+        all.withPropertyNames.store(image, std::memory_order_release);
     all.hasAny.store(true, std::memory_order_release);
     if (header.numberOfSlotRanges)
         TypedLayoutTable::setSlotTypes({ image->at<uint32_t>(header.slotRangesOffset), header.numberOfSlotRanges }, image->at<TypedLayoutTable::FieldType>(header.slotTypesOffset));
@@ -1477,6 +1507,27 @@ Image& Image::of(const ImageFunction& function)
             return *image;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+Image* Image::withPropertyNames()
+{
+    return registry().withPropertyNames.load(std::memory_order_acquire);
+}
+
+uint16_t Image::propertyNameID(VM& vm, UniquedStringImpl* name) const
+{
+    if (name->isSymbol())
+        return 0;
+    unsigned hash = name->existingHash();
+    unsigned bit = hash & header().propertyNameFilterMask;
+    if (!(at<uint32_t>(header().propertyNameFilterOffset)[bit / 32] >> bit % 32 & 1))
+        return 0;
+    auto names = propertyNames();
+    for (auto entry = std::ranges::lower_bound(names, hash, { }, [](auto& other) { return other.hash; }); entry != names.end() && entry->hash == hash; ++entry) {
+        if (VMProgram::of(vm)->identifier(static_cast<uint32_t>(entry->identifier)) == name)
+            return static_cast<uint16_t>(entry->id);
+    }
+    return 0;
 }
 
 Image* Image::withShapes()

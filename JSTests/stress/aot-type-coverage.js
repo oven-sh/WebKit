@@ -68,7 +68,7 @@ if (operationsOf(readsTwo, "op_get_by_id")) {
     check(bitAnd.outcomes.some(outcome => outcome.startsWith("rarely-calls:")), true, "a bit operation calls something on its rare path");
     check(bitAnd.outcomes.includes("emits-no-branch"), false, "a bit operation on an operand of unknown type branches");
     check(operationsOf(orsIntegers, "op_bitor").map(or => or.outcomes.includes("emits-no-branch")).join(), "false,false,true", "of three bit operations only the one on two integers emits no branch");
-    check(operationsOf(readsTwo, "op_get_by_id").every(read => read.outcomes.includes("emits-no-branch") === read.outcomes.includes("calls:GetById")), true, "a call of a stub is no branch, an inline cache has one");
+    check(operationsOf(readsTwo, "op_get_by_id").every(read => read.outcomes.some(outcome => outcome.startsWith("guessed-place-read:")) || read.outcomes.includes("emits-no-branch") === read.outcomes.some(outcome => /^calls:(GetById|ReadNameInSlot\d+)$/.test(outcome))), true, "a call of a stub is no branch, an inline cache has one");
     check(operationsOf(Point, "op_put_by_id").filter(write => write.outcomes.includes("absorbed-into-allocation")).some(write => write.outcomes.includes("emits-no-branch")), false, "a store that an allocation absorbs has no code of its own to speak of");
 
     const [add] = operationsOf(adds, "op_add");

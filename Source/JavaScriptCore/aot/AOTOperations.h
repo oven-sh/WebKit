@@ -65,6 +65,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, size_t, (Instance*, JSObjec
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance*, EncodedJSValue, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t which));
+JSC_DECLARE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance*, EncodedJSValue base, uint32_t which, uint32_t identifierIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance*, EncodedJSValue, uint64_t packedFieldType, uint32_t identifierIndex));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance*, EncodedJSValue base, uint64_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance*, JSObject*));

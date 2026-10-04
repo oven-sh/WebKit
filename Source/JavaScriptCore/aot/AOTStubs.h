@@ -232,6 +232,30 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ReadSlotOrUndefined13) \
     v(ReadSlotOrUndefined14) \
     v(ReadSlotOrUndefined15) \
+    v(ReadNameInSlot0) \
+    v(ReadNameInSlot1) \
+    v(ReadNameInSlot2) \
+    v(ReadNameInSlot3) \
+    v(ReadNameInSlot4) \
+    v(ReadNameInSlot5) \
+    v(ReadNameInSlot6) \
+    v(ReadNameInSlot7) \
+    v(ReadNameInSlot8) \
+    v(ReadNameInSlot9) \
+    v(ReadNameInSlot10) \
+    v(ReadNameInSlot11) \
+    v(ReadNameInSlot12) \
+    v(ReadNameInSlot13) \
+    v(ReadNameInSlot14) \
+    v(ReadNameInSlot15) \
+    v(ReadNameInSlot16) \
+    v(ReadNameInSlot17) \
+    v(ReadNameInSlot18) \
+    v(ReadNameInSlot19) \
+    v(ReadNameInSlot20) \
+    v(ReadNameInSlot21) \
+    v(ReadNameInSlot22) \
+    v(ReadNameInSlot23) \
     v(PutById) \
     v(GetPrivateName) \
     v(CheckPrivateBrand) \
@@ -359,7 +383,7 @@ struct KnownShape {
     uint16_t layoutID { 0 };
     uint16_t reserved { 0 };
     uint16_t inlineSlots { 0 };
-    bool hasSlotsOutside() const { return layoutID && reserved > inlineSlots; }
+    bool hasSlotsOutside() const { return layoutID && numberOfSlots() > inlineSlots; }
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
     static constexpr unsigned maxProperties = 4096;

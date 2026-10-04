@@ -132,7 +132,7 @@ function countAtLine(operation, line)
 
 if (isCounting) {
     const sites = [
-        ["operationAOTGetById", lineOfRead, i => readsAtOneSite({ ["read" + i]: 1, property: i })],
+        ["operationAOTGetById", lineOfRead, i => readsAtOneSite(Object.create({ ["read" + i]: 1, property: i }))],
         ["operationAOTPutById", lineOfStore, i => storesAtOneSite({ ["stored" + i]: 1 }, i)],
     ];
     for (const [operation, line, run] of sites) {

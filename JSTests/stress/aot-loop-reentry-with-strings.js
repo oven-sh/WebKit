@@ -19,7 +19,7 @@ function applies(f, ...patterns) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 const one = { one: 1 };
 
 function literalThenNumbers(o) { let k = 1; const a = [k, k, k, k]; let x = "start"; let hits = 0; for (let i = 0; i < 4; i++) { if (x === 1) hits += o.one; x = a[i]; } return hits; }

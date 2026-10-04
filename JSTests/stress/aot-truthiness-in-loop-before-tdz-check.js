@@ -25,7 +25,7 @@ function doesNotApply(f, ...patterns) {
     }
 }
 function readsProperty(o) { return o.property; }
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 function throwsReferenceError(f, what) {
     try {
         f();

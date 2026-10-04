@@ -2629,9 +2629,16 @@ std::optional<KnownShape> Graph::literalShape(const Node* node) const
     if (uint16_t number = newObjectLayoutID(node)) {
         auto layout = TypeTable::shared()->typedLayout(number);
         BitVector taken;
+        unsigned next = layout.capacity;
         for (UniquedStringImpl* name : shape.names) {
             auto* found = layout.fields.findIf([&](auto& entry) { return entry.name == name; }) != notFound ? &layout.fields[layout.fields.findIf([&](auto& entry) { return entry.name == name; })] : nullptr;
-            if (!found || taken.get(found->slot))
+            if (!found) {
+                if (!layout.capacity)
+                    return std::nullopt;
+                shape.slots.append(safeCast<uint16_t>(next++));
+                continue;
+            }
+            if (taken.get(found->slot))
                 return std::nullopt;
             taken.set(found->slot);
             shape.slots.append(found->slot);

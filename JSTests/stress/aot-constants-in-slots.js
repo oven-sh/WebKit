@@ -31,7 +31,7 @@ function doesNotApply(f, ...patterns) {
 
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 
 function narrow() { return "a narrow literal"; }
 function wide() { return "中文 a wide literal"; }

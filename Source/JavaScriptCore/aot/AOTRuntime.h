@@ -86,6 +86,7 @@ namespace AOT {
     v(operationAOTLatin1StringEqualTo) \
     v(operationAOTGetFieldSlow) \
     v(operationAOTReadField) \
+    v(operationAOTCountGuessedPlace) \
     v(operationAOTToFieldValue) \
     v(operationAOTGetLengthSlow) \
     v(operationAOTValidateTypedObject) \
@@ -431,7 +432,7 @@ struct PolymorphicSlots {
     }
     bool addInlineNameSlot(uint16_t nameID, unsigned inlineSlot)
     {
-        ASSERT(inlineSlot < Structure::numberOfSlotsWithFieldIDs && nameID && nameID < Structure::firstReservedPropertyNameID);
+        ASSERT(inlineSlot < Structure::numberOfSlotsWithPropertyNameIDs && nameID && nameID < Structure::firstReservedPropertyNameID);
         if (!numberOfUsedInlineNameSlots) {
             byName = (byName >> nameTableFillValueShift << nameTableFillValueShift) | static_cast<uint64_t>(inlineSlot * 0x01010101u) << inlineNameSlotsShift | nameID;
             numberOfUsedInlineNameSlots = 1;

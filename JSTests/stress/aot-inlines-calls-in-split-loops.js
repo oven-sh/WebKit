@@ -30,7 +30,7 @@ function outcomeOf(f) {
 
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (aotRemarks("readsProperty") || []).includes("calls:GetById");
+const usesDataStubs = (aotRemarks("readsProperty") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 
 function product(x, y) {
     $$t(x, 8);

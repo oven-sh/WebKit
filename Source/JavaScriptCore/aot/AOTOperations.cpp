@@ -730,6 +730,43 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(field, value)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
+{
+    AOT_OPERATION_BEGIN(instance);
+    unsigned slot = which >> 16;
+    uint16_t nameID = static_cast<uint16_t>(which);
+    JSValue base = JSValue::decode(encodedBase);
+    auto outcome = [&]() -> const char* {
+        if (!base.isCell())
+            return "not-a-cell";
+        Structure* structure = base.asCell()->structure();
+        uint16_t there = structure->fieldIDInSlot(slot);
+        if (there == nameID)
+            return "hit";
+        if (!base.isObject())
+            return "not-an-object";
+        if (!structure->recordsPropertyNames())
+            return "typed-layout";
+        if (structure->isDictionary())
+            return "dictionary";
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+        if (!isValidOffset(offset))
+            return "not-an-own-property";
+        if (attributes)
+            return "has-attributes";
+        if (!isInlineOffset(offset))
+            return "out-of-line";
+        if (static_cast<unsigned>(offset) != slot)
+            return "another-slot";
+        if (structure->cannotConvertToTypedLayout())
+            return "records-no-names";
+        return there ? "slot-is-marked-nameless" : "no-id-recorded";
+    };
+    countOperationNamed(instance, __func__, outcome());
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, uint64_t packedFieldType, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);

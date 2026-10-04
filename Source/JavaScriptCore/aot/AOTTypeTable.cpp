@@ -27,6 +27,11 @@ const TypeTable* TypeTable::shared()
     return s_shared;
 }
 
+uint32_t TypeTable::largestFieldID()
+{
+    return Options::useAOTTypedFields() && hasTypedFields() ? s_shared->m_largestFieldID : 0;
+}
+
 void TypeTable::load(VM& vm)
 {
     if (s_shared || !Options::aotTypeTablePath())
@@ -123,6 +128,7 @@ void TypeTable::load(VM& vm)
                     table->m_fieldIDs.add({ number, table->m_names[name[0]].impl() }, static_cast<uint16_t>(++last[slot]));
             }
         }
+        table->m_largestFieldID = std::ranges::max(last);
     }
     RELEASE_ASSERT(table->numberOfLayouts() < std::numeric_limits<uint16_t>::max());
     s_shared = table.release();

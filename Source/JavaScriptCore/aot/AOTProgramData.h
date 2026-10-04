@@ -228,4 +228,7 @@ private:
     std::unique_ptr<Impl> m_impl;
 };
 
+JS_EXPORT_PRIVATE uint16_t propertyNameIDIfKnown(VM&, UniquedStringImpl*);
+void validatePropertyNameIDs(VM&);
+
 } } // namespace JSC::AOT

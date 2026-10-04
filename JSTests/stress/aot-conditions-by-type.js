@@ -29,7 +29,7 @@ const comparesNumbers = "inline-comparison-of-numbers-or-undefined", comparesWit
 const barrierForCell = "write-barrier-only-for-cell";
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 
 function Thing(n) { this.n = n; }
 const masquerader = makeMasquerader();

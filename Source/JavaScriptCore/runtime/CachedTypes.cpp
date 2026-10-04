@@ -36,6 +36,7 @@
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
+#include "AOTPropertyPlaces.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BuiltinExecutables.h"
@@ -6334,7 +6335,16 @@ struct BytecodeLinkEncoder::Impl {
             return { };
         }
         ImmutableIntrinsics::ensureShared(vm);
+        AOT::PropertyPlaces propertyPlaces;
+        if (Options::useAOTGuessedPlaces())
+            AOT::setPropertyPlaces(&propertyPlaces);
+        auto forgetPropertyPlaces = makeScopeExit([&] {
+            if (AOT::propertyPlaces() && Options::verboseAOTCompilation()) [[unlikely]]
+                dataLogLn("AOT: ", propertyPlaces);
+            AOT::setPropertyPlaces(nullptr);
+        });
         AOT::TypeTable::load(vm);
+        propertyPlaces.setFirstNameID(AOT::TypeTable::largestFieldID() + 1);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             return { };
@@ -6646,6 +6656,7 @@ struct BytecodeLinkEncoder::Impl {
                 if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
                     unreadable++;
             });
+            propertyPlaces.finalize();
             if (variableSummaries) {
                 for (unsigned index = 0; index < modules.size(); ++index) {
                     auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());

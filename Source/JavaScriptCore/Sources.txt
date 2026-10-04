@@ -69,6 +69,7 @@ aot/AOTOperationsCalls.cpp
 aot/AOTOperationsObjects.cpp
 aot/AOTProgram.cpp
 aot/AOTProgramData.cpp
+aot/AOTPropertyPlaces.cpp @no-unify
 aot/AOTRangeAnalysis.cpp
 aot/AOTRuntime.cpp
 aot/AOTStubs.cpp

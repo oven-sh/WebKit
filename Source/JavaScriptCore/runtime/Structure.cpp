@@ -446,6 +446,8 @@ Structure* Structure::addPropertiesTransition(VM& vm, Structure* structure, std:
             return nullptr;
     }
     Structure* transition = Structure::create(vm, structure, deferred);
+    if (!structure->m_typedLayoutID)
+        memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -1571,6 +1573,7 @@ void Structure::setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, nu
 {
     m_typedLayoutID = layoutID;
     memcpySpan(std::span { m_fieldIDInSlot }, fieldIDInSlot);
+    zeroSpan(std::span { m_fieldIDInSlot }.subspan(numberOfSlotsWithFieldIDs));
     for (unsigned slot = 0; slot < numberOfSlotsWithFieldIDs; ++slot)
         RELEASE_ASSERT(!m_fieldIDInSlot[slot] || m_fieldIDInSlot[slot] == ambiguousFieldID || slot < m_inlineCapacity);
 }
@@ -1585,7 +1588,7 @@ void Structure::setCannotConvertToTypedLayout()
 void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
 {
     if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID)) {
-        if (static_cast<unsigned>(offset) < numberOfSlotsWithFieldIDs && m_fieldIDInSlot[offset] == noPropertyNameID)
+        if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && m_fieldIDInSlot[offset] == noPropertyNameID)
             m_fieldIDInSlot[offset] = 0;
         return;
     }
@@ -1594,6 +1597,23 @@ void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, u
         return;
     uint16_t& fieldID = m_fieldIDInSlot[field->slot];
     fieldID = !fieldID && !attributes && offset == static_cast<PropertyOffset>(field->slot) ? field->id : ambiguousFieldID;
+}
+
+void Structure::notePropertyNameAdded(VM& vm, UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
+{
+    uint16_t& nameID = m_fieldIDInSlot[offset];
+    if (nameID == ambiguousFieldID)
+        return;
+    nameID = 0;
+#if ENABLE(AOT)
+    if (attributes || isDictionary() || !propertyAccessesAreCacheable() || needImpurePropertyWatchpoint() || typeInfo().overridesGetOwnPropertySlot())
+        return;
+    nameID = AOT::propertyNameIDIfKnown(vm, name);
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(name);
+    UNUSED_PARAM(attributes);
+#endif
 }
 
 void Structure::forgetFieldsInSlots()

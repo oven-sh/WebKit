@@ -72,7 +72,7 @@
     check(escapesInLoop(3, kept) + kept.last.step, 4, "an object that is kept");
     doesNotApply(readsGivenInLoop, replaces, merges);
     doesNotApply(escapesInLoop, replaces, merges);
-    if ((remarksOf(readsProperty) || []).includes("calls:GetById")) {
+    if ((remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark))) {
         applies(readsGivenInLoop, splits);
         applies(readsBothInLoop, splits);
     }

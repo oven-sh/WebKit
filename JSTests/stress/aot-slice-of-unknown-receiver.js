@@ -3,7 +3,7 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (typeof aotRemarks === "function" && aotRemarks("readsProperty") || []).includes("calls:GetById");
+const usesDataStubs = (typeof aotRemarks === "function" && aotRemarks("readsProperty") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 (function () {
     function check(actual, expected, what) {
         if (!Object.is(actual, expected))

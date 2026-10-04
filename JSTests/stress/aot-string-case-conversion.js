@@ -34,7 +34,7 @@ function thrownBy(f, ...args) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 const loweredToLowerCase = "lowered-builtin:String.prototype.toLowerCase", loweredToUpperCase = "lowered-builtin:String.prototype.toUpperCase";
 const lowerStub = "calls:ToLowerCase", upperStub = "calls:ToUpperCase", lowerOperation = "calls:operationToLowerCase", upperOperation = "calls:operationToUpperCase";
 

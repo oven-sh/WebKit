@@ -50,7 +50,7 @@ function noTest(v) { return typeof v; }
 for (const f of [isBase, isPlain, isInstance, noTest])
     noInline(f);
 function readsProperty(o) { return o.property; }
-let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+let usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 if (usesDataStubs) {
     applies(isBase, "cached-instanceof");
     applies(isInstance, "cached-instanceof");

@@ -656,6 +656,7 @@ bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBloc
     graph.noteFieldsComparedWithStrings();
     recordReturnedLiterals(graph);
     graph.noteClassesDefined();
+    graph.noteBirths();
     if (variableSummaries) {
         graph.recordUntrackableVariableAccesses(*variableSummaries);
         graph.recordObjectsInVariables(*variableSummaries);

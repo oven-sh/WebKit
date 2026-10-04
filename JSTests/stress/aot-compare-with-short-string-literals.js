@@ -77,7 +77,7 @@ check(isLoose("ab"), true, "==");
 check(isLoose({ toString() { return "ab"; } }), true, "==, with a conversion");
 function readsProperty(o) { return o.p; }
 readsProperty({ p: 1 });
-let usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+let usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 for (let f of usesDataStubs ? [is1, is2, is3, is4, is5, is6, is7, is8, is9, isNot4, isHigh] : [])
     applies(f, "short-literal-comparison");
 if (usesDataStubs) {

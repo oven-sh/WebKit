@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "AOTProgram.h"
+#include "AOTPropertyPlaces.h"
 #include "AOTStubs.h"
 #include "AOTType.h"
 #include "AOTTypeTable.h"
@@ -486,6 +487,7 @@ public:
     static uint16_t newObjectLayoutID(const Node*);
     static uint32_t classRecordedBy(const Node*);
     void noteClassesDefined();
+    void noteBirths();
     static uint32_t closedMethodReadBy(const Node*);
     static const KnownFunction* functionMadeBy(const Node*);
     static bool makesNoFunctionObject(const Node*);
@@ -670,6 +672,7 @@ public:
     Vector<uint32_t> plans;
     void noteSitePlan(unsigned firstSlot, Vector<uint32_t, 16>&& words);
     std::optional<KnownShape> literalShape(const Node*) const;
+    std::optional<GuessedPlace> guessedPlaceOf(const Node* access) const;
     StubCalls stubCalls;
     IndexReferences indexReferences;
 
@@ -703,6 +706,9 @@ private:
     void findLiteralStores();
     UncheckedKeyHashMap<unsigned, Vector<unsigned, 4>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_literalStores;
     bool m_hasFoundLiteralStores { false };
+    void findNamesAccessed() const;
+    mutable UncheckedKeyHashMap<const Node*, Vector<UniquedStringImpl*, 4>> m_namesAccessedOn;
+    mutable bool m_hasFoundNamesAccessed { false };
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
     Graph* m_outermost { this };

@@ -26,7 +26,7 @@ function doesNotApply(f, ...patterns) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 const loweredIncludes = "lowered-builtin:Array.prototype.includes", loweredIndexOf = "lowered-builtin:Array.prototype.indexOf";
 const includesStub = "calls:ArrayIncludes", indexOfStub = "calls:ArrayIndexOf";
 const includesOperation = "calls:operationArrayIncludesValueInt32OrContiguous", indexOfOperation = "calls:operationArrayIndexOfValueInt32OrContiguous";

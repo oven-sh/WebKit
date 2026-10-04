@@ -212,6 +212,11 @@ private:
     Vector<AvailableField> m_availableFields;
     UncheckedKeyHashMap<BasicBlock*, Vector<AvailableField>> m_availableFieldsAtEndOf;
     bool m_nodePreservesFields { false };
+    Node* m_baseWithKnownStructure { nullptr };
+    LValue m_knownStructure { nullptr };
+    bool m_nodeKeepsKnownStructure { false };
+    LBasicBlock m_blockWhereNodeStarts { nullptr };
+    bool isReadByNameAgain(Node* read, Node* base) const;
     const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);

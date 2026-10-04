@@ -234,6 +234,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
         slots = function.instance->knownShapeSlots(shape);
     unsigned numberOfSlots = count;
     auto slotOf = [&](unsigned property) -> unsigned { return slots.empty() ? property : slots[property]; };
+    if (Structure* structure = shape ? function.instance->knownShapeStructureIfExists(shape) : nullptr; structure && structure->outOfLineCapacity() && structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) {
+        countOperationNamed(instance, __func__, "known-shape-with-storage-outside");
+        JSObject* object = Instance::newObjectOf(vm, structure);
+        for (unsigned i = 0; i < numberOfSlots; ++i) {
+            if (values[i])
+                object->putDirectOffset(vm, TypedLayoutTable::offsetInLayout(structure->typedLayoutID(), i), JSValue::decode(values[i]));
+        }
+        OPERATION_RETURN(scope, object);
+    }
     if (Structure* structure = shape ? function.instance->knownShapeStructureIfExists(shape) : nullptr; structure && !structure->outOfLineCapacity()) {
         unsigned numberOfProperties = slots.empty() ? count : slots.size();
         countOperationNamed(instance, __func__, "known-shape");
@@ -285,8 +294,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
             }
             JSObject* object = JSFinalObject::createWithButterfly(vm, structure, butterfly);
             for (unsigned i = 0; i < count; ++i)
-                object->putDirectOffset(vm, offsetForPropertyNumber(slotOf(i), inlineCapacity), JSValue::decode(values[slotOf(i)]));
-            if (numberOfSlots <= inlineCapacity)
+                object->putDirectOffset(vm, structure->typedLayoutID() ? structure->get(vm, names[i]) : offsetForPropertyNumber(slotOf(i), inlineCapacity), JSValue::decode(values[slotOf(i)]));
+            if (numberOfSlots <= inlineCapacity && !structure->outOfLineCapacity())
                 fillAllocationCache(vm, callerData(instance, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(inlineCapacity), AllocatorForMode::EnsureAllocator), inlineCapacity);
             OPERATION_RETURN(scope, object);
         }

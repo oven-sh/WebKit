@@ -30,7 +30,7 @@ function doesNotApply(name, ...patterns) {
 }
 function readsProperty(o) { return o.property; }
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf("readsProperty") || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf("readsProperty") || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 
 (function () {
     "use strict";

@@ -451,6 +451,8 @@ public:
     JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout);
     bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
     static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
+    static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 24;
+    static_assert(numberOfSlotsWithPropertyNameIDs >= numberOfSlotsWithFieldIDs);
     static constexpr uint16_t ambiguousFieldID = 0xffff;
     uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
     static constexpr uint16_t noPropertyNameID = 0xfffe;
@@ -1209,7 +1211,8 @@ private:
     mutable InlineWatchpointSet m_transitionWatchpointSet;
 
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_fieldIDInSlot[numberOfSlotsWithFieldIDs] { };
+    uint16_t m_fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
+    JS_EXPORT_PRIVATE void notePropertyNameAdded(VM&, UniquedStringImpl*, PropertyOffset, unsigned attributes);
     JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
     JS_EXPORT_PRIVATE void forgetFieldsInSlots();
 #endif

@@ -34,7 +34,7 @@ const ordinary = Function.prototype[Symbol.hasInstance];
 const always = () => true;
 const never = () => false;
 function readsProperty(o) { return o.property; }
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 
 class WritableBase { }
 Object.defineProperty(WritableBase, Symbol.hasInstance, { value: ordinary, writable: true, configurable: true });

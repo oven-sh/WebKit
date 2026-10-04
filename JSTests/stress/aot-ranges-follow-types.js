@@ -165,7 +165,7 @@ applies(stringOrArrayLengthPlusOne, integers);
 function readsProperty(o) { return o.property; }
 noInline(readsProperty);
 readsProperty({ property: 1 });
-const usesDataStubs = (remarksOf(readsProperty) || []).includes("calls:GetById");
+const usesDataStubs = (remarksOf(readsProperty) || []).some(remark => /^calls:(GetById|ReadNameInSlot\d+)$/.test(remark));
 if (usesDataStubs) {
     applies(sumsBytes, "split-loop");
     applies(sumsBytes, integers);

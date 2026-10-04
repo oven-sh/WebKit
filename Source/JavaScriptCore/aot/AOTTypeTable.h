@@ -118,6 +118,7 @@ public:
 
     bool tableHasTypedFields() const { return m_hasTypedFields; }
     static bool hasTypedFields() { return shared() && shared()->tableHasTypedFields(); }
+    static uint32_t largestFieldID();
     static bool typedFieldsAreEnforced() { return hasTypedFields() && !Options::auditAOTTypedFields(); }
     unsigned numberOfTypedLayouts() const { return m_typedLayouts.size() - 1; }
     struct LayoutField {
@@ -211,6 +212,7 @@ private:
     UncheckedKeyHashMap<UniquedStringImpl*, Vector<uint32_t>> m_openLayoutsWithField;
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint16_t> m_fieldIDs;
     bool m_hasTypedFields { false };
+    uint32_t m_largestFieldID { 0 };
     mutable Lock m_fieldsComparedLock;
     mutable UncheckedKeyHashSet<uint64_t> m_fieldsCompared;
     unsigned layoutHeaderWords() const { return m_hasTypedFields ? 3 : 2; }

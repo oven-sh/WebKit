@@ -975,8 +975,11 @@ template<typename T> static void freeTable(T* table, size_t count)
 
 VMProgram* VMProgram::of(VM& vm)
 {
-    if (!vm.m_aotProgram && ProgramData::get()) [[unlikely]]
+    if (!vm.m_aotProgram && ProgramData::get()) [[unlikely]] {
         vm.m_aotProgram = makeUnique<VMProgram>(vm);
+        if (Options::validateAOTInferredTypes())
+            validatePropertyNameIDs(vm);
+    }
     return vm.m_aotProgram.get();
 }
 

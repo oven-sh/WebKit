@@ -96,22 +96,61 @@ static bool abandon(Slot* cache)
 
 static bool tryCacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefore, const Identifier&, const PropertySlot&, Slot* cache);
 
-static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
+static auto& propertyNameIDs(VM& vm)
 {
     auto& table = vm.aotPropertyNameIDs;
-    if (!table.next) {
-        Image* image = Image::withShapes();
-        table.next = (image ? image->header().largestFieldID : 0) + 1;
+    if (!table.next) [[unlikely]] {
+        RELEASE_ASSERT(table.ids.isEmpty());
+        Image* image = Image::withCode();
+        table.next = (image ? image->header().largestFieldID + image->header().numberOfPropertyNames : 0) + 1;
     }
-    auto result = table.ids.add(uid, 0);
-    if (!result.isNewEntry)
-        return result.iterator->value;
-    if (table.next >= Structure::firstReservedPropertyNameID) {
-        table.ids.remove(result.iterator);
+    return table;
+}
+
+static uint16_t knownPropertyNameID(VM& vm, Image* imageWithPropertyNames, UniquedStringImpl* uid)
+{
+    auto& ids = propertyNameIDs(vm).ids;
+    uint16_t id = ids.get(uid);
+    if (!id && imageWithPropertyNames) {
+        id = imageWithPropertyNames->propertyNameID(vm, uid);
+        if (id)
+            ids.add(uid, id);
+    }
+    return id;
+}
+
+uint16_t propertyNameIDIfKnown(VM& vm, UniquedStringImpl* uid)
+{
+    Image* image = Image::withPropertyNames();
+    if (!image)
         return 0;
+    uint16_t id = knownPropertyNameID(vm, image, uid);
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countOperation(__func__, id ? "known" : "unknown");
+    return id;
+}
+
+static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
+{
+    if (uint16_t id = knownPropertyNameID(vm, Image::withPropertyNames(), uid))
+        return id;
+    auto& table = propertyNameIDs(vm);
+    if (table.next >= Structure::firstReservedPropertyNameID)
+        return 0;
+    uint16_t id = static_cast<uint16_t>(table.next++);
+    table.ids.add(uid, id);
+    return id;
+}
+
+void validatePropertyNameIDs(VM& vm)
+{
+    Image* image = Image::withPropertyNames();
+    if (!image)
+        return;
+    for (auto& name : image->propertyNames()) {
+        RELEASE_ASSERT(name.id > image->header().largestFieldID && name.id < propertyNameIDs(vm).next);
+        RELEASE_ASSERT(propertyNameID(vm, VMProgram::of(vm)->identifier(static_cast<uint32_t>(name.identifier))) == name.id);
     }
-    result.iterator->value = static_cast<uint16_t>(table.next++);
-    return result.iterator->value;
 }
 
 static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* structure, const Identifier& ident, const PropertySlot& slot)
@@ -119,7 +158,7 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
     if (!slot.isCacheableValue() || slot.slotBase() != base || slot.attributes())
         return 0;
     PropertyOffset offset = slot.cachedOffset();
-    if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
+    if (!isInlineOffset(offset) || static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithPropertyNameIDs)
         return 0;
     if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout())
         return 0;
@@ -140,22 +179,22 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
     if (structure->cannotConvertToTypedLayout())
         return true;
     bool isFullyFilled = true;
-    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot)
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot)
         isFullyFilled &= !!structure->fieldIDInSlot(slot);
     if (isFullyFilled)
         return true;
-    uint16_t ids[Structure::numberOfSlotsWithFieldIDs];
+    uint16_t ids[Structure::numberOfSlotsWithPropertyNameIDs];
     std::ranges::fill(ids, Structure::noPropertyNameID);
     if (!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            if (static_cast<unsigned>(entry.offset()) < Structure::numberOfSlotsWithFieldIDs && !entry.attributes()) {
+            if (static_cast<unsigned>(entry.offset()) < Structure::numberOfSlotsWithPropertyNameIDs && !entry.attributes()) {
                 if (uint16_t id = propertyNameID(vm, entry.key()))
                     ids[entry.offset()] = id;
             }
             return true;
         });
     }
-    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot) {
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot) {
         if (!structure->fieldIDInSlot(slot))
             structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
     }
@@ -170,7 +209,7 @@ static bool cacheByName(VM& vm, PolymorphicSlots* several, JSCell* base, Structu
             several->didFailToFillNameTable();
         return false;
     }
-    if (!slot.isCacheableValue() || slot.slotBase() != base || static_cast<unsigned>(slot.cachedOffset()) >= Structure::numberOfSlotsWithFieldIDs)
+    if (!slot.isCacheableValue() || slot.slotBase() != base || static_cast<unsigned>(slot.cachedOffset()) >= Structure::numberOfSlotsWithPropertyNameIDs)
         return false;
     uint16_t id = structure->fieldIDInSlot(slot.cachedOffset());
     return id < Structure::firstReservedPropertyNameID && several->addInlineNameSlot(id, slot.cachedOffset());
