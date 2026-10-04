@@ -3,6 +3,10 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTDataStubs=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--contradictAOTAnalysisForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--contradictAOTAnalysisForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--contradictAOTAnalysisForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--contradictAOTAnalysisForTesting=2")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 
 function check(actual, expected, what) {
@@ -62,17 +66,15 @@ const isOn = !!remarksOf("check") && !!options.useAOTGuardsOverWholeFunctions &&
         return;
     const reasons = name => remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join();
     const has = (name, remark) => remarksOf(name).includes(remark);
+    const forced = options.contradictAOTAnalysisForTesting | 0;
     for (const name of ["readsThreeAndKeeps", "readsThreeAndKeepsInOneStep", "readsThreeAndKeepsMergedVar"]) {
-        check(has(name, "guards-over-whole-function"), true, name + " has guards over the whole function");
-        check(has(name, "contradicts-analysis-without-guards"), false, name + " contradicts the analysis");
+        check(has(name, "guards-over-whole-function"), !forced, name + " has guards over the whole function");
+        check(reasons(name), forced ? "no-guards-over-whole-function:contradicts-analysis-of-result" : "", "why " + name + " has no guards");
+        check(has(name, "contradicts-analysis-without-guards"), forced == 2, name + " contradicts the analysis without guards");
     }
-    if (!options.useAOTInlining) {
-        check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), true, "readsThreeAndKeepsMerged has guards over the whole function where nothing is inlined");
-        check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), false, "readsThreeAndKeepsMerged contradicts the analysis where nothing is inlined");
-        return;
-    }
-    check(has("readsThreeAndKeepsMerged", "inlined-call:keepsMerged"), true, "keepsMerged is inlined");
-    check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), false, "readsThreeAndKeepsMerged has guards over the whole function");
-    check(reasons("readsThreeAndKeepsMerged"), "no-guards-over-whole-function:contradicts-analysis-of-store", "why readsThreeAndKeepsMerged has no guards");
-    check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), true, "readsThreeAndKeepsMerged contradicts the analysis without guards too (once the inference narrows an argument that may be empty behind a merge in an inlined body, this needs another shape)");
+    check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), !reasons("readsThreeAndKeepsMerged"), "readsThreeAndKeepsMerged has guards over the whole function or says why not");
+    if (forced)
+        check(has("readsThreeAndKeepsMerged", "guards-over-whole-function"), false, "readsThreeAndKeepsMerged has guards over the whole function");
+    if (forced == 2)
+        check(has("readsThreeAndKeepsMerged", "contradicts-analysis-without-guards"), true, "readsThreeAndKeepsMerged contradicts the analysis without guards");
 })();

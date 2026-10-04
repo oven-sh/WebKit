@@ -1285,6 +1285,8 @@ private:
                 return;
             Type returned = node->use(node->as<OpRet>().m_value)->type & TTop;
             Type recorded = function->returnType.load();
+            if (Options::contradictAOTAnalysisForTesting() > (m_graph.placesToGuard ? 0u : 1u)) [[unlikely]]
+                recorded = TNone;
             if (!isSubtype(returned, recorded))
                 reportContradiction(node, "the result of"_s, "contradicts-analysis-of-result"_s, "return"_s, returned, recorded);
             return;

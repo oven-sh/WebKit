@@ -1,6 +1,8 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--contradictAOTAnalysisForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1", "--contradictAOTAnalysisForTesting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
@@ -53,9 +55,15 @@ const isOn = !!remarksOf("check") && !!options.useAOTGuardsOverWholeFunctions &&
     if (!isOn)
         return;
     const refused = { passesTestedValue: "argument", passesTestedValueBehindGuard: "argument", storesInCodeNeverReached: "store", returnsTestedValue: "result" };
+    const forced = options.contradictAOTAnalysisForTesting | 0;
+    const reasonsOf = name => remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join();
     for (const [name, what] of Object.entries(refused)) {
         check(remarksOf(name).includes("guards-over-whole-function"), false, name + " has guards over the whole function");
-        check(remarksOf(name).filter(remark => remark.startsWith("no-guards-over-whole-function")).join(), "no-guards-over-whole-function:contradicts-analysis-of-" + what, "why " + name + " has no guards");
+        if (!forced)
+            check(reasonsOf(name), "no-guards-over-whole-function:contradicts-analysis-of-" + what, "why " + name + " has no guards");
+        check(remarksOf(name).includes("contradicts-analysis-without-guards"), forced == 2, name + " contradicts the analysis without guards");
     }
-    check(remarksOf("agrees").includes("guards-over-whole-function"), true, "agrees has guards over the whole function");
+    check(remarksOf("agrees").includes("guards-over-whole-function"), !forced, "agrees has guards over the whole function");
+    check(reasonsOf("agrees"), forced ? "no-guards-over-whole-function:contradicts-analysis-of-result" : "", "why agrees has no guards");
+    check(remarksOf("agrees").includes("contradicts-analysis-without-guards"), forced == 2, "agrees contradicts the analysis without guards");
 })();
