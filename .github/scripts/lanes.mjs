@@ -320,7 +320,11 @@ if (command === "build") {
   const build = ({ label, runner, image, package_os, package_cpu, test }) => ({ label, runner, image, package_os, package_cpu, test });
   console.log(`build=${matrix(lanes.filter(lane => !lane.test).map(build))}`);
   console.log(`build_tested=${matrix(lanes.filter(lane => lane.test).map(build))}`);
-  console.log(`test=${matrix(lanes.filter(lane => lane.test).map(lane => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick })))}`);
+  // TEMPORARY, not for merging: every tested lane is tested TEST_REPEATS times over, side by side, against the one build, to
+  // count the tests that fail only some of the time.
+  const TEST_REPEATS = 15;
+  const repeats = Array.from({ length: TEST_REPEATS }, (_, i) => i + 1);
+  console.log(`test=${matrix(lanes.filter(lane => lane.test).flatMap(lane => repeats.map(repeat => ({ label: lane.label, runner: lane.test_runner, quick: lane.test_quick, repeat }))))}`);
   console.log(`labels=${JSON.stringify(labels)}`);
   // Only the toolchain images that are not in the registry yet get an `image` job: normally none.
   const missing = images.filter(({ image }) => {

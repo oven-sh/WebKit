@@ -10,7 +10,7 @@ be sorted into one of three piles:
 2. **The test cannot pass in a mode or build we run.** Skip it in that mode only, with the reason. Section B.
 3. **A known gap or bug in the fork.** Skipped with `TODO(bun)`. Section C. Remove the skip when the gap is closed.
 
-Anything that fits none of these is a regression from the sync: fix the engine, not the test.
+Anything that fits none of these is a regression: fix the engine, not the test.
 
 Rules for an edit to an upstream test:
 
@@ -152,7 +152,13 @@ Rules for an edit to an upstream test:
 
 ---
 
-## E. After a sync: a failing test, step by step
+## E. A failing test, step by step
+
+A failing test on a tested lane stops the release (`.github/workflows/ci.yml`: `release` needs `test`): no
+`autobuild-{sha}` from `main`, no preview from a pull request. That includes a test that fails once in a hundred runs.
+Nothing is run a second time and there is no list of tests that are allowed to fail sometimes: an intermittent failure
+has a cause, in the engine or in the test, and it goes through the same steps as any other. `jsc-failures.log` in the
+run's artifact has what the failing run printed and the command that reproduces it; run that command in a loop.
 
 1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
