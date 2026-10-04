@@ -473,6 +473,7 @@ public:
     virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0;
     virtual UnlinkedFunctionCodeBlock* codeForBuiltin(unsigned) const = 0;
     PropertyPlaces* propertyPlaces { nullptr };
+    mutable std::atomic<unsigned> contradictionsIgnoredBehindUnreachableValue { 0 };
 };
 
 struct ValueRepresentations {

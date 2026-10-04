@@ -1032,6 +1032,7 @@ void saveRegistersAtDefinitions(Graph& graph)
             store->uses.append({ like->as<OpPutToScope>().m_scope, frameThere });
             store->uses.append({ like->as<OpPutToScope>().m_value, definition });
             store->type = like->type;
+            store->isSaveAtDefinition = true;
             size_t index = block->nodes.find(after);
             RELEASE_ASSERT(index != notFound);
             while (index + 1 < block->nodes.size() && block->nodes[index + 1]->kind == NodeKind::Proj)
@@ -1078,13 +1079,14 @@ static bool takesScope(OpcodeID opcode)
     }
 }
 
-void readUnchangedRegistersFromFrame(Graph& graph)
+RegistersUnchangedSinceRestore findRegistersUnchangedSinceRestore(Graph& graph)
 {
+    RegistersUnchangedSinceRestore result;
     if (!isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()))
-        return;
+        return result;
     VirtualRegister frameRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame));
     if (!graph.isTracked(frameRegister))
-        return;
+        return result;
     struct Effect {
         BitVector defined;
         BitVector restored;
@@ -1151,8 +1153,7 @@ void readUnchangedRegistersFromFrame(Graph& graph)
     if (numberOfSaves)
         graph.remark("saves-registers"_s, String::number(numberOfSaves));
 
-    Vector<Node*> restoreOfRegister;
-    restoreOfRegister.fill(nullptr, graph.numRegisters());
+    result.restoreOfRegister.fill(nullptr, graph.numRegisters());
     unsigned numberOfRestores = 0;
     unsigned numberOfRestoresForHandlers = 0;
     auto isRestore = [&](Node* node) {
@@ -1164,7 +1165,7 @@ void readUnchangedRegistersFromFrame(Graph& graph)
                 ++numberOfRestoresForHandlers;
             if (!isRestore(node))
                 continue;
-            restoreOfRegister[graph.registerIndex(node->as<OpGetFromScope>().m_dst)] = node;
+            result.restoreOfRegister[graph.registerIndex(node->as<OpGetFromScope>().m_dst)] = node;
             ++numberOfRestores;
         }
     }
@@ -1173,17 +1174,48 @@ void readUnchangedRegistersFromFrame(Graph& graph)
     if (numberOfRestoresForHandlers)
         graph.remark("restores-registers-for-handlers"_s, String::number(numberOfRestoresForHandlers));
     unsigned frameIndex = graph.registerIndex(frameRegister);
-    unsigned numberOfReadsAdded = 0;
+    result.inBlock.grow(graph.blocks.size());
     for (BasicBlock* block : graph.m_rpo) {
         if (block->isInLoop || frameIndex >= block->valuesAtTail.size())
             continue;
-        Node* frame = block->valuesAtTail[frameIndex];
         const Effect& effect = effects[block->index];
-        if (!frame || effect.defined.get(frameIndex))
+        if (!block->valuesAtTail[frameIndex] || effect.defined.get(frameIndex))
             continue;
         BitVector unchanged = computeUnchangedAtHead(block);
         unchanged.exclude(effect.defined);
-        if (unchanged.isEmpty())
+        result.inBlock[block->index] = WTF::move(unchanged);
+    }
+    return result;
+}
+
+void readUnchangedRegistersFromFrame(Graph& graph, const RegistersUnchangedSinceRestore& unchangedRegisters)
+{
+    if (unchangedRegisters.inBlock.isEmpty())
+        return;
+    auto beforeInlining = [](BasicBlock* block) { return block->splitFrom ? block->splitFrom : block; };
+    auto resolve = [](Node* node) {
+        while (node && node->replacement)
+            node = node->replacement;
+        return node;
+    };
+    Vector<BasicBlock*> lastPartOf;
+    lastPartOf.fill(nullptr, unchangedRegisters.inBlock.size());
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->graph == &graph && beforeInlining(block)->index < lastPartOf.size() && !block->valuesAtTail.isEmpty())
+            lastPartOf[beforeInlining(block)->index] = block;
+    }
+    VirtualRegister frameRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame));
+    unsigned frameIndex = graph.registerIndex(frameRegister);
+    unsigned numberOfReadsAdded = 0;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->graph != &graph || beforeInlining(block)->index >= lastPartOf.size())
+            continue;
+        const BitVector& unchanged = unchangedRegisters.inBlock[beforeInlining(block)->index];
+        BasicBlock* lastPart = lastPartOf[beforeInlining(block)->index];
+        if (unchanged.isEmpty() || !lastPart || frameIndex >= lastPart->valuesAtTail.size())
+            continue;
+        Node* frame = resolve(lastPart->valuesAtTail[frameIndex]);
+        if (!frame || frame->isElided)
             continue;
         UncheckedKeyHashMap<Node*, Node*> reads;
         for (unsigned i = 0; i < block->nodes.size(); ++i) {
@@ -1192,13 +1224,15 @@ void readUnchangedRegistersFromFrame(Graph& graph)
                 continue;
             for (auto& use : node->uses) {
                 Node* value = use.node;
-                if (value->kind != NodeKind::Phi || !value->reg.isLocal() || !graph.isTracked(value->reg))
+                while (value->kind == NodeKind::Narrow && value->narrowedTo && !value->fieldOrigin && !value->speculatedType)
+                    value = value->uses[0].node;
+                if (value->kind != NodeKind::Phi || !value->reg.isLocal() || !graph.isTracked(value->reg) || use.node->wasInferredUnreachable)
                     continue;
                 unsigned index = graph.registerIndex(value->reg);
-                Node* restore = restoreOfRegister[index];
-                if (!restore || !unchanged.get(index) || block->valuesAtTail[index] != value)
+                Node* restore = unchangedRegisters.restoreOfRegister[index];
+                if (!restore || !unchanged.get(index) || resolve(lastPart->valuesAtTail[index]) != value)
                     continue;
-                auto result = reads.add(value, nullptr);
+                auto result = reads.add(use.node, nullptr);
                 if (result.isNewEntry) {
                     Node* read = graph.addNode(NodeKind::Bytecode);
                     read->opcode = op_get_from_scope;
@@ -1206,7 +1240,7 @@ void readUnchangedRegistersFromFrame(Graph& graph)
                     read->bytecodeIndex = restore->bytecodeIndex;
                     read->block = block;
                     read->uses.append({ frameRegister, frame });
-                    read->type = restore->type;
+                    read->type = use.node->type;
                     block->nodes.insert(i++, read);
                     result.iterator->value = read;
                     ++numberOfReadsAdded;

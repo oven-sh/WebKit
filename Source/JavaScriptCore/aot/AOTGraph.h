@@ -253,6 +253,7 @@ struct Node {
     bool isNeverEmpty { false };
     bool accessesLocalEnvironment { false };
     bool isSharedRegExpLiteral { false };
+    bool isSaveAtDefinition { false };
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
     Node* scopeToStartFrom { nullptr };
@@ -432,6 +433,7 @@ public:
     void remarkOnGuessedPlaces() const;
     ASCIILiteral reasonForNoGuards;
     ASCIILiteral contradictionOfAnalysis;
+    unsigned contradictionsIgnoredBehindUnreachableValue { 0 };
     bool mustAgreeWithAnalysis { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;
     bool readsElementsOrEmpty { false };
@@ -770,7 +772,12 @@ void analyzeEscapes(Graph&);
 void shareRegExpLiterals(Graph&);
 void promoteEnvironments(Graph&);
 void saveRegistersAtDefinitions(Graph&);
-void readUnchangedRegistersFromFrame(Graph&);
+struct RegistersUnchangedSinceRestore {
+    Vector<BitVector> inBlock;
+    Vector<Node*> restoreOfRegister;
+};
+RegistersUnchangedSinceRestore findRegistersUnchangedSinceRestore(Graph&);
+void readUnchangedRegistersFromFrame(Graph&, const RegistersUnchangedSinceRestore&);
 void clearDeadFrameSlots(Graph&);
 bool mayPromoteEnvironmentsOf(Graph&);
 void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const FunctionSummary* current);

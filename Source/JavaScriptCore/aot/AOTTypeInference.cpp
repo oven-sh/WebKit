@@ -1192,8 +1192,29 @@ private:
         }
     }
 
+    bool isBehindValueInferredUnreachable(Node* node)
+    {
+        m_graph.computeDominators();
+        for (BasicBlock* block : m_graph.m_rpo) {
+            if (!block->isExecutable || !block->dominates(node->block))
+                continue;
+            for (Node* other : block->nodes) {
+                if (other == node)
+                    break;
+                if (other->kind == NodeKind::Bytecode && !other->isElided && !other->type)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     void reportContradiction(Node* node, ASCIILiteral what, ASCIILiteral reasonForNoGuards, const String& name, Type found, Type recorded)
     {
+        if (isBehindValueInferredUnreachable(node)) {
+            m_graph.remark("ignores-contradiction-behind-unreachable-value"_s);
+            ++m_graph.contradictionsIgnoredBehindUnreachableValue;
+            return;
+        }
         if (m_graph.placesToGuard) {
             if (m_graph.contradictionOfAnalysis.isNull())
                 m_graph.contradictionOfAnalysis = reasonForNoGuards;
@@ -1227,6 +1248,11 @@ private:
             if (!variable || node->as<OpPutToScope>().m_var == UINT_MAX)
                 return;
             if (node->graph->isGeneratorFrame(variable.scope)) {
+                if (node->isSaveAtDefinition) {
+                    if (!isSavedAtDefinition(variable))
+                        m_graph.remark("saves-at-definition-without-suspension"_s);
+                    return;
+                }
                 if (!node->isElided && isSavedAtDefinition(variable))
                     return;
             } else if (node->isElided)

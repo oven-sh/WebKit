@@ -7361,11 +7361,14 @@ struct BytecodeLinkEncoder::Impl {
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
                 dataLogLn("AOT: ", functionObjectsNeededAfterAll, " function objects are needed after all");
+                if (Options::validateAOTInferredTypes() || Options::useAOTGuardsOverWholeFunctions())
+                    dataLogLn("AOT: contradictions of the analysis ignored behind an unreachable value: ", programCode.contradictionsIgnoredBehindUnreachableValue.load(std::memory_order_relaxed));
             }
             RELEASE_ASSERT(declined.isEmpty());
             if (again) {
                 unreachedFunctions = 0;
                 unreachedBytecodeSize = 0;
+                programCode.contradictionsIgnoredBehindUnreachableValue = 0;
                 builder.clear();
                 allRemarks.clear();
                 allCoverage.clear();

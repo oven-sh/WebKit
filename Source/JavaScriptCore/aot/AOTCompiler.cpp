@@ -399,7 +399,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (!parseBytecode(graph))
         return declined();
     saveRegistersAtDefinitions(graph);
-    readUnchangedRegistersFromFrame(graph);
+    RegistersUnchangedSinceRestore unchangedRegisters = findRegistersUnchangedSinceRestore(graph);
     findRarelyExecutedBlocks(graph);
     if (program)
         inlineCalls(graph, *program);
@@ -408,10 +408,13 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     while (foldBranchesOnKnownValues(graph))
         scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
+    if (program)
+        program->contradictionsIgnoredBehindUnreachableValue.fetch_add(graph.contradictionsIgnoredBehindUnreachableValue, std::memory_order_relaxed);
     if (!graph.contradictionOfAnalysis.isNull()) {
         program->propertyPlaces->countGuardsThatContradictAnalysis();
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, true, nullptr, false, graph.contradictionOfAnalysis, true);
     }
+    readUnchangedRegistersFromFrame(graph, unchangedRegisters);
     foldBranchesDecidedByTypes(graph);
     findRarelyExecutedBlocks(graph);
     planMultiValueReturns(graph, program);
