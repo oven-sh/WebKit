@@ -32,6 +32,8 @@ std::optional<Type> constructingIntrinsicResult(unsigned number);
 
 unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name);
 bool isDataPropertyOfFunctionPrototype(const StringImpl& name);
+unsigned intrinsicInheritedByFunction(unsigned function, const StringImpl& name);
+unsigned intrinsicBehindCallOrApplyFunction(bool isApply);
 bool keepsReceiverToItself(unsigned intrinsic);
 bool returnsReceiver(unsigned intrinsic);
 bool isReflectConstruct(unsigned intrinsic);

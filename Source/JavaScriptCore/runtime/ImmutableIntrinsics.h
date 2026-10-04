@@ -54,7 +54,9 @@ public:
         bool isCell { false };
         uint16_t builtinCode { 0 };
         bool isHostFunction { false };
+        bool inheritsFromFunctionPrototype { false };
     };
+    static bool isFunctionToMakeImmutable(const Entry& entry) { return entry.type == JSFunctionType || (entry.type == InternalFunctionType && entry.holder != globalObject); }
 
     JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();
 

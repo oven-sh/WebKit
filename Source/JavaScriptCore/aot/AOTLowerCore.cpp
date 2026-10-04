@@ -423,6 +423,11 @@ LValue Lowering::argumentsPassed()
     return m_out.loadPtr(m_out.address(m_heaps.root, m_listSlot, sizeof(EncodedJSValue)));
 }
 
+LValue Lowering::argumentPassed(unsigned index)
+{
+    return m_out.load64(m_out.address(m_heaps.root, argumentsPassed(), index * sizeof(EncodedJSValue)));
+}
+
 LValue Lowering::argumentPassedOrUndefined(unsigned index)
 {
     LBasicBlock isThere = m_out.newBlock();
@@ -430,7 +435,7 @@ LValue Lowering::argumentPassedOrUndefined(unsigned index)
     ValueFromBlock isNot = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
     m_out.branch(m_out.above(numberOfArgumentsPassed(), m_out.constInt32(index)), usually(isThere), rarely(continuation));
     m_out.appendTo(isThere, continuation);
-    ValueFromBlock is = m_out.anchor(m_out.load64(m_out.address(m_heaps.root, argumentsPassed(), index * sizeof(EncodedJSValue))));
+    ValueFromBlock is = m_out.anchor(argumentPassed(index));
     m_out.jump(continuation);
     m_out.appendTo(continuation);
     return m_out.phi(Int64, isNot, is);
@@ -441,6 +446,16 @@ LValue Lowering::dataHere()
     if (!m_dataOnEntry || !m_block || m_block->isGeneric || m_block->isRarelyExecuted || m_out.m_block->frequency() > coldFrequency)
         return m_data;
     return ownData().data;
+}
+
+LValue Lowering::vmHere()
+{
+    return m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
+}
+
+LValue Lowering::globalObjectHere()
+{
+    return m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
 }
 
 TypedPointer Lowering::slotWord(unsigned slot, unsigned word)
@@ -945,7 +960,7 @@ LValue Lowering::lowRaw(Node* node)
         return lowConstantRegister(*node->graph, node->reg);
     case NodeKind::Intrinsic:
         if (node->intrinsic == ImmutableIntrinsics::globalObject)
-            return m_globalObject;
+            return globalObjectHere();
         return m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[node->intrinsic]);
     default:
         break;
@@ -1209,7 +1224,7 @@ LValue Lowering::toBoolean(Node* node)
             results.append(m_out.anchor(m_out.booleanTrue));
             m_out.branch(m_out.testNonZero32(m_out.load8ZeroExt32(value, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(MasqueradesAsUndefined)), rarely(masquerades), usually(continuation));
             m_out.appendTo(masquerades);
-            results.append(m_out.anchor(m_out.notEqual(m_out.loadPtr(structureOf(value), m_heaps.Structure_realm), m_globalObject)));
+            results.append(m_out.anchor(m_out.notEqual(m_out.loadPtr(structureOf(value), m_heaps.Structure_realm), globalObjectHere())));
             m_out.jump(continuation);
         }
         m_out.appendTo(continuation);
@@ -1542,9 +1557,13 @@ void Lowering::lowerNode(Node* node)
             setJSValue(node, callee());
         else if (!node->reg.toArgument())
             setJSValue(node, registerOnEntry(thisGPR));
-        else if (m_graph.convention().signature == Signature::List)
-            setJSValue(node, argumentPassedOrUndefined(node->reg.toArgument() - 1));
-        else {
+        else if (m_graph.convention().signature == Signature::List) {
+            unsigned index = node->reg.toArgument() - 1;
+            bool isAlwaysPassed = !mayBe(node->type, TUndefined);
+            if (isAlwaysPassed)
+                m_graph.remark("argument-is-always-passed"_s, String::number(index + 1));
+            setJSValue(node, isAlwaysPassed ? argumentPassed(index) : argumentPassedOrUndefined(index));
+        } else {
             unsigned index = node->reg.toArgument() - 1;
             switch (m_valueRepresentations.parameters[index]) {
             case Rep::Int32:

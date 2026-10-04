@@ -27,6 +27,7 @@
 #include "ImmutableIntrinsics.h"
 
 #include "BuiltinExecutables.h"
+#include "FunctionPrototype.h"
 #include "JSCInlines.h"
 #include "JSGlobalObject.h"
 #include <wtf/Lock.h>
@@ -90,11 +91,12 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
                     entry.builtinCode = *index + 1;
             } else if (function)
                 entry.isHostFunction = function->isHostFunction();
+            entry.inheritsFromFunctionPrototype = number && isFunctionToMakeImmutable(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
         } else
             entry.primitive = JSValue::encode(value);
         if (number && !description->m_numbers.add(keyFor(holder, name), number).isNewEntry)
             description->m_numbers.set(keyFor(holder, name), 0);
-        description->m_hash = WTF::pairIntHash(description->m_hash, WTF::pairIntHash(name.hash(), holder << 16 | entry.canonical)) + entry.type + entry.isCell + entry.isHostFunction;
+        description->m_hash = WTF::pairIntHash(description->m_hash, WTF::pairIntHash(name.hash(), holder << 16 | entry.canonical)) + entry.type + entry.isCell + entry.isHostFunction + entry.inheritsFromFunctionPrototype;
         description->m_entries.append(WTF::move(entry));
         values.append(JSValue::encode(value));
     };

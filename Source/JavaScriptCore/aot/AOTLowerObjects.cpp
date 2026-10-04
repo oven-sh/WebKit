@@ -73,7 +73,7 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
 
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
-    m_out.branch(m_out.load8ZeroExt32(m_vm, m_heaps.VM_heap_mutatorShouldBeFenced), rarely(fence), usually(done));
+    m_out.branch(m_out.load8ZeroExt32(vmHere(), m_heaps.VM_heap_mutatorShouldBeFenced), rarely(fence), usually(done));
     m_out.appendTo(fence, done);
     m_out.fence(&m_heaps.root, nullptr);
     m_out.jump(done);
@@ -858,7 +858,7 @@ bool Lowering::tryLowerConversion(Node* node)
 
         m_out.appendTo(constructorIsObject);
         LValue hasInstance = getByIdCached(node, constructor, TAnyObject, Entry::operationAOTGetByIdWellKnown, static_cast<unsigned>(WellKnownIdentifier::HasInstanceSymbol));
-        LValue defaultHasInstance = m_out.load64(m_out.address(m_heaps.root, m_globalObject, JSGlobalObject::offsetOfFunctionProtoHasInstanceSymbolFunction()));
+        LValue defaultHasInstance = m_out.load64(m_out.address(m_heaps.root, globalObjectHere(), JSGlobalObject::offsetOfFunctionProtoHasInstanceSymbolFunction()));
         LValue implementsDefault = m_out.testNonZero32(m_out.load8ZeroExt32(constructor, m_heaps.JSCell_typeInfoFlags), m_out.constInt32(ImplementsDefaultHasInstance));
         m_out.branch(m_out.bitAnd(m_out.equal(hasInstance, defaultHasInstance), implementsDefault), usually(isDefault), rarely(isCustom));
 

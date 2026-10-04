@@ -34,10 +34,18 @@ function callsDirectly(caller, callee) {
 let leaked;
 class Catcher { static [Symbol.hasInstance](value) { leaked = value; return true; } }
 const isSealed = !Object.isExtensible(Function.prototype);
+const builtinsAreFixed = !Reflect.set(Math, "floor", Math.floor);
+let shadowsMethod = false;
 if (!isSealed) {
     Object.defineProperty(Function.prototype, "me", { get() { return this; } });
     Object.defineProperty(Function.prototype, "tag", { set(value) { leaked = this; } });
-    Object.defineProperty(Function.prototype, "propertyIsEnumerable", { get() { leaked = this; return () => false; } });
+    try {
+        Object.defineProperty(Function.prototype, "propertyIsEnumerable", { get() { leaked = this; return () => false; } });
+        shadowsMethod = true;
+    } catch (error) {
+        check(error instanceof TypeError, true, "what shadowing a method of Object.prototype throws");
+    }
+    check(shadowsMethod, !builtinsAreFixed, "whether Function.prototype can shadow a method of Object.prototype");
     Function.prototype[Symbol.toPrimitive] = function () { leaked = this; return 1; };
     Object.defineProperty(Object.getPrototypeOf(async function () { }), "call", { get() { leaked = this; return Function.prototype.call; } });
 }
@@ -141,8 +149,10 @@ function throughShadowedMethod() {
     return sumThroughShadowedMethod(10) + typeof method;
 }
 check(throughShadowedMethod(), "55function", "a method of Object.prototype that Function.prototype shadows");
-if (!isSealed)
+if (shadowsMethod)
     checkSum("sumThroughShadowedMethod");
+else
+    check(leaked, undefined, "what gets out through a method that cannot be shadowed");
 
 function throughPrototype() {
     function sumThroughPrototype(n) { return n <= 0 ? 0 : n + sumThroughPrototype(n - 1); }
@@ -321,4 +331,4 @@ if (hasProxy)
     checkSum("sumThroughProxy");
 if (!isSealed)
     isOpened("sumThroughProxy");
-check(hasProxy, !isSealed, "whether Function.prototype can get another prototype");
+check(hasProxy, !isSealed && !builtinsAreFixed, "whether Function.prototype can get another prototype");

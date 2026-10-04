@@ -451,6 +451,15 @@ public:
             Node* value = terminal->use(terminal->as<OpJneqNull>().m_value);
             return { value, TAll & ~TOther, value->kind == NodeKind::Intrinsic ? TNone : mayEqualNull };
         }
+        case op_jneq_ptr: {
+            auto bytecode = terminal->as<OpJneqPtr>();
+            Node* value = terminal->use(bytecode.m_value);
+            auto pointer = Graph::linkTimeConstantOf(terminal->use(bytecode.m_specialPointer));
+            if (!pointer || (*pointer != LinkTimeConstant::callFunction && *pointer != LinkTimeConstant::applyFunction))
+                return { };
+            bool isThatFunction = isSubtype(value->type, TFunction) && intrinsicFunctionOf(value->type) && intrinsicFunctionOf(value->type) == intrinsicBehindCallOrApplyFunction(*pointer == LinkTimeConstant::applyFunction);
+            return { value, isThatFunction ? TNone : TAll, TAll };
+        }
         case op_jtrue:
             return valueTestedByCondition(terminal->use(terminal->as<OpJtrue>().m_condition));
         case op_jfalse:
@@ -2115,6 +2124,10 @@ private:
             if (readsSizeOfMapOrSet(node)) {
                 m_graph.remark("typed-size-of-map-or-set"_s);
                 return TNumber;
+            }
+            if (uint32_t function = node->guard ? 0 : intrinsicFunctionOf(typeOf(node->as<OpGetById>().m_base))) {
+                if (unsigned member = intrinsicInheritedByFunction(function, *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()))
+                    return intrinsicFunctionType(member);
             }
             return typeOf(node->as<OpGetById>().m_base) ? TAll : TNone;
         case op_new_reg_exp:

@@ -2158,7 +2158,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (this->structure()->isImmutablePrototypeExoticObject()) {
+    if (this->structure()->isImmutablePrototypeExoticObject() || this->structure()->inheritorsMayOverrideReadOnlyProperties()) {
         // This implements https://tc39.github.io/ecma262/#sec-set-immutable-prototype.
         if (this->getPrototype(globalObject) == prototype)
             return true;
@@ -2978,6 +2978,17 @@ void JSObject::makePropertiesImmutable(JSGlobalObject* globalObject)
     setStructure(vm, Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
     if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+
+bool JSObject::inheritsImmutableProperty(VM& vm, PropertyName propertyName)
+{
+    for (JSValue prototype = getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        Structure* structure = asObject(prototype)->structure();
+        unsigned attributes;
+        if (structure->inheritorsMayOverrideReadOnlyProperties() && isValidOffset(structure->get(vm, propertyName, attributes)) && (attributes & PropertyAttribute::DontDelete))
+            return true;
+    }
+    return false;
 }
 
 void JSObject::freeze(VM& vm)
@@ -4081,6 +4092,8 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+        if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
 
         if (object) {
             bool isApplied;

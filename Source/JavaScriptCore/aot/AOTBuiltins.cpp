@@ -142,6 +142,8 @@ struct Tables {
     unsigned symbolPrototype { 0 };
     unsigned bigIntPrototype { 0 };
     unsigned functionPrototype { 0 };
+    unsigned callFunction { 0 };
+    unsigned applyFunction { 0 };
     unsigned receiverPrototypes[16] { };
     Vector<Builtin> builtins;
 };
@@ -192,6 +194,8 @@ const Tables* tables()
         result->symbolPrototype = find("Symbol.prototype"_s);
         result->bigIntPrototype = find("BigInt.prototype"_s);
         result->functionPrototype = find("Function.prototype"_s);
+        result->callFunction = find("Function.prototype.call"_s);
+        result->applyFunction = find("Function.prototype.apply"_s);
         auto prototypeOf = [&](Receiver receiver) -> unsigned& { return result->receiverPrototypes[static_cast<unsigned>(receiver)]; };
         prototypeOf(Receiver::String) = result->stringPrototype;
         prototypeOf(Receiver::Number) = result->numberPrototype;
@@ -253,6 +257,24 @@ unsigned intrinsicFoundOnPrimitive(Type receiver, const StringImpl& name)
     if (!number || !intrinsics->at(number).isCell)
         return 0;
     return intrinsics->at(number).canonical;
+}
+
+unsigned intrinsicInheritedByFunction(unsigned function, const StringImpl& name)
+{
+    const Tables* all = tables();
+    if (!all || !all->functionPrototype)
+        return 0;
+    const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared();
+    if (!intrinsics->at(function).inheritsFromFunctionPrototype)
+        return 0;
+    unsigned member = intrinsics->find(all->functionPrototype, name);
+    return member && intrinsics->at(member).type == JSFunctionType ? intrinsics->at(member).canonical : 0;
+}
+
+unsigned intrinsicBehindCallOrApplyFunction(bool isApply)
+{
+    const Tables* all = tables();
+    return !all ? 0 : isApply ? all->applyFunction : all->callFunction;
 }
 
 bool isDataPropertyOfFunctionPrototype(const StringImpl& name)

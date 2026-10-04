@@ -513,19 +513,25 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         }
         bool mayBeProxy = mayBe(typeAt(1), TOtherObject);
         begin(mayBeProxy);
+        LBasicBlock array = m_out.newBlock();
         LBasicBlock notArray = m_out.newBlock();
         LBasicBlock settled = m_out.newBlock();
         Vector<ValueFromBlock, 3> answers;
         if (!isSubtype(typeAt(1), TCell)) {
             LBasicBlock cellCase = m_out.newBlock();
+            LBasicBlock notCell = m_out.newBlock();
+            m_out.branch(isCell(arguments[1]), unsure(cellCase), unsure(notCell));
+            m_out.appendTo(notCell);
             answers.append(m_out.anchor(m_out.booleanFalse));
-            m_out.branch(isCell(arguments[1]), unsure(cellCase), unsure(settled));
+            m_out.jump(settled);
             m_out.appendTo(cellCase);
         }
         LValue type = cellType(arguments[1]);
         static_assert(DerivedArrayType == ArrayType + 1);
+        m_out.branch(m_out.below(m_out.sub(type, m_out.constInt32(ArrayType)), m_out.constInt32(2)), unsure(array), unsure(notArray));
+        m_out.appendTo(array);
         answers.append(m_out.anchor(m_out.booleanTrue));
-        m_out.branch(m_out.below(m_out.sub(type, m_out.constInt32(ArrayType)), m_out.constInt32(2)), unsure(settled), unsure(notArray));
+        m_out.jump(settled);
         m_out.appendTo(notArray);
         if (mayBeProxy)
             orElse(m_out.notEqual(type, m_out.constInt32(ProxyObjectType)), otherwise);

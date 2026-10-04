@@ -328,6 +328,26 @@ static void findRarelyExecutedBlocks(Graph& graph)
         return false;
     };
     bool changed = false;
+    if (!graph.catchEntrypoints.isEmpty()) {
+        UncheckedKeyHashSet<BasicBlock*> reachedWithoutCatching;
+        Vector<BasicBlock*, 16> worklist;
+        worklist.append(graph.root);
+        while (!worklist.isEmpty()) {
+            BasicBlock* block = worklist.takeLast();
+            if (!reachedWithoutCatching.add(block).isNewEntry)
+                continue;
+            for (BasicBlock* successor : block->successors)
+                worklist.append(successor);
+        }
+        for (BasicBlock* block : graph.m_rpo) {
+            if (block->isRarelyExecuted || reachedWithoutCatching.contains(block))
+                continue;
+            block->isRarelyExecuted = true;
+            changed = true;
+        }
+        if (changed)
+            graph.remark("catches-rarely"_s);
+    }
     for (BasicBlock* block : graph.m_rpo) {
         if (block == graph.root || block->isRarelyExecuted || !doesNotComplete(block))
             continue;

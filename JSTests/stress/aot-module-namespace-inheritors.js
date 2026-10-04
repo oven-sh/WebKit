@@ -58,6 +58,7 @@ check(repeat(() => home.read()), "exported", "a read from super");
 Object.defineProperty(grandparent, "value", { value: "shadowed" });
 check(home.read(), "shadowed", "a read from super, after an object further up got the property");
 
+const builtinsAreFixed = !Reflect.set(Math, "floor", Math.floor);
 function readFromNumber(x) { return x.value; }
 function readLengthOfNumber(x) { return x.length; }
 function readFromBoolean(x) { return x.value; }
@@ -65,6 +66,11 @@ function readFromString(x) { return x.value; }
 function readFromSymbol(x) { return x.value; }
 for (const [read, primitive, prototype] of [[readFromNumber, 5, Number.prototype], [readFromNumber, 1.5, Number.prototype], [readLengthOfNumber, 5, Number.prototype], [readFromBoolean, true, Boolean.prototype], [readFromString, "s", String.prototype], [readFromSymbol, Symbol.iterator, Symbol.prototype]]) {
     const expected = read === readLengthOfNumber ? "exported length" : "exported";
+    if (builtinsAreFixed) {
+        check(Reflect.setPrototypeOf(prototype, self), false, "whether the prototype of a " + typeof primitive + " can inherit from the namespace object");
+        check(repeat(read, primitive), undefined, "a " + typeof primitive + " that cannot inherit from the namespace object");
+        continue;
+    }
     Object.setPrototypeOf(prototype, self);
     const inherited = repeat(read, primitive);
     Object.setPrototypeOf(prototype, Object.prototype);

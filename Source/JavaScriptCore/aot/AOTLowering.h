@@ -175,6 +175,7 @@ private:
     void lowerEntry();
     LValue numberOfArgumentsPassed();
     LValue argumentsPassed();
+    LValue argumentPassed(unsigned index);
     LValue argumentPassedOrUndefined(unsigned index);
     std::optional<TypeTable::Field> fieldAccessedBy(Node*, unsigned identifier);
     LValue layoutOf(LValue cell);
@@ -255,6 +256,8 @@ private:
     TypedPointer slotWord(unsigned slot, unsigned word);
     LValue slotAddress(unsigned slot);
     LValue dataHere();
+    LValue vmHere();
+    LValue globalObjectHere();
     unsigned allocateSlot() { return m_graph.numICSlots++; }
     uint32_t callSiteBitsOf(Node*);
     uint32_t siteOf(Node*);

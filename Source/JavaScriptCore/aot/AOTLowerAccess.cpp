@@ -598,6 +598,27 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (uint32_t function = node->guard || node->guarded ? 0 : intrinsicFunctionOf(baseNode->type)) {
+        if (unsigned member = intrinsicInheritedByFunction(function, *node->graph->codeBlock()->identifier(bytecode.m_property).impl())) {
+            m_graph.remark("reads-member-of-function-prototype"_s, StringView { node->graph->codeBlock()->identifier(bytecode.m_property).impl() });
+            LValue known = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[member]);
+            if (isSubtype(baseNode->type, TFunction)) {
+                setJSValue(node, known);
+                return;
+            }
+            LValue base = lowJSValue(baseNode);
+            LBasicBlock otherwise = newColdBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            ValueFromBlock quick = m_out.anchor(known);
+            m_out.branch(m_out.equal(base, m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[function])), usually(continuation), rarely(otherwise));
+            m_out.appendTo(otherwise);
+            ValueFromBlock found = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(Int64, quick, found));
+            return;
+        }
+    }
     if (node->onlyChecksConstantObject || node->slotInConstantObjectPlusOne) {
         TypeTable::Field field { };
         field.slot = node->slotInConstantObjectPlusOne - 1;
@@ -1808,7 +1829,7 @@ void Lowering::lowerResolveScope(Node* node)
     if (variable.kind == StaticVariable::Unresolved) {
         LValue cached = m_out.loadPtr(slotWord(slot, 1));
         LValue epochPlusOne = highHalf(m_out, m_out.load64(slotWord(slot, 0)));
-        LValue epoch = m_out.load32(m_out.address(m_heaps.root, m_globalObject, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch()));
+        LValue epoch = m_out.load32(m_out.address(m_heaps.root, globalObjectHere(), JSGlobalObject::offsetOfGlobalLexicalBindingEpoch()));
         results.append(m_out.anchor(cached));
         m_out.branch(m_out.equal(epochPlusOne, m_out.add(epoch, m_out.constInt32(1))), usually(continuation), rarely(slowCase));
     } else

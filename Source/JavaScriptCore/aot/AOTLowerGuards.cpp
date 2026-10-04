@@ -1115,7 +1115,7 @@ bool Lowering::guardResolveScope(Node* guard)
     LValue scope = lowCell(guard->use(bytecode.m_scope));
     unsigned slot = sharedSite(guard, numberOf(bytecode.m_var), extra);
     LValue tag = m_out.castToInt32(m_out.lShr(m_out.load64(slotWord(slot, 0)), m_out.constInt32(32)));
-    LValue epoch = m_out.load32(m_globalObject, m_heaps.JSGlobalObject_globalLexicalBindingEpoch);
+    LValue epoch = m_out.load32(globalObjectHere(), m_heaps.JSGlobalObject_globalLexicalBindingEpoch);
 
     LBasicBlock byDepth = m_out.newBlock();
     LBasicBlock walk = m_out.newBlock();

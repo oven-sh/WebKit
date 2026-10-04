@@ -21,7 +21,7 @@ namespace JSC { namespace AOT {
 
 namespace {
 
-constexpr unsigned maximumCandidateBytecodeCost = 18;
+constexpr unsigned maximumCandidateBytecodeCost = 32;
 constexpr unsigned maximumCandidateBytecodeCostInLoop = 60;
 constexpr unsigned maximumCandidateBytecodeCostWithCallback = 300;
 constexpr unsigned maximumCandidateBytecodeCostForSingleCallSite = 1200;

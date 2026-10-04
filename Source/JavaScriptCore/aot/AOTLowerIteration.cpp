@@ -406,7 +406,7 @@ void Lowering::lowerIteratorCloseCheck(Node* node)
     m_out.branch(isMarked, unsure(markedCase), unsure(continuation));
 
     m_out.appendTo(markedCase, materialize);
-    LValue isStillValid = inlineWatchpointSetIsStillValid(m_out.add(m_globalObject, m_out.constIntPtr(JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet())));
+    LValue isStillValid = inlineWatchpointSetIsStillValid(m_out.add(globalObjectHere(), m_out.constIntPtr(JSGlobalObject::offsetOfArrayIteratorProtocolWatchpointSet())));
     results.append(m_out.anchor(iterator));
     m_out.branch(isStillValid, usually(continuation), rarely(materialize));
 

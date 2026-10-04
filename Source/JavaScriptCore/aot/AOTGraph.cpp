@@ -422,8 +422,12 @@ Node* Graph::intrinsicReadBy(const JSInstruction* instruction, Node* base)
         break;
     }
     case op_get_by_id:
-        if (base && base->kind == NodeKind::Intrinsic && base->intrinsic != ImmutableIntrinsics::globalObject)
-            number = intrinsics->find(base->intrinsic, *m_codeBlock->identifier(instruction->as<OpGetById>().m_property).impl());
+        if (base && base->kind == NodeKind::Intrinsic && base->intrinsic != ImmutableIntrinsics::globalObject) {
+            const StringImpl& name = *m_codeBlock->identifier(instruction->as<OpGetById>().m_property).impl();
+            number = intrinsics->find(base->intrinsic, name);
+            if (!number)
+                number = intrinsicInheritedByFunction(base->intrinsic, name);
+        }
         break;
     default:
         break;

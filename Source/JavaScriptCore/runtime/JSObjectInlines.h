@@ -557,6 +557,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if constexpr (mode == PutModePut) {
             if (!isStructureExtensible()) [[unlikely]]
                 return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+                return ReadonlyPropertyWriteError;
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -708,6 +710,8 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
             return NonExtensibleObjectPropertyDefineError;
+        if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+            return ReadonlyPropertyWriteError;
     }
 
 #if ENABLE(AOT)

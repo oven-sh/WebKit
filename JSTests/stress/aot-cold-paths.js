@@ -188,7 +188,7 @@
     check(onlyReturns(-5) + onlyReturns(5), 10, "no throw at all");
 
     if (aotRemarks("throwsWhenNegative")) {
-        const throws = "throws-rarely", neverReturns = "call-never-returns";
+        const throws = "throws-rarely", neverReturns = "call-never-returns", catches = "catches-rarely";
         let applies = (name, ...remarks) => {
             for (let remark of remarks) {
                 if (!aotRemarks(name).includes(remark))
@@ -202,24 +202,24 @@
             }
         };
         applies("throwsWhenNegative", throws);
-        doesNotApply("throwsWhenNegative", neverReturns);
+        doesNotApply("throwsWhenNegative", neverReturns, catches);
         applies("preparesBeforeThrowing", throws);
         applies("throwsInLoop", throws);
-        applies("rethrows", throws);
+        applies("rethrows", catches);
         applies("fails", throws);
         applies("failsSometimes", throws);
         applies("failsThroughAnother", neverReturns);
         applies("failsOnEveryPath", throws, neverReturns);
         applies("callsFails", neverReturns);
-        doesNotApply("callsFails", throws);
+        doesNotApply("callsFails", throws, catches);
         applies("usesResultOfFails", neverReturns);
         applies("callsFailsOnEveryPath", neverReturns);
-        applies("catchesOwnFailure", neverReturns);
-        applies("continuesAfterFailures", neverReturns);
+        applies("catchesOwnFailure", neverReturns, catches);
+        applies("continuesAfterFailures", neverReturns, catches);
         applies("switchesWithFailure", neverReturns);
         doesNotApply("callsFailsSometimes", neverReturns);
         doesNotApply("callsNotes", neverReturns, throws);
-        doesNotApply("onlyReturns", neverReturns, throws);
+        doesNotApply("onlyReturns", neverReturns, throws, catches);
         doesNotApply("notes", neverReturns, throws);
     }
 })();

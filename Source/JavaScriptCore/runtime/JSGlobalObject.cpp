@@ -3515,6 +3515,10 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     }
 
     m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names);
+    for (unsigned number = 1; number < m_immutableIntrinsics.size(); ++number) {
+        if (ImmutableIntrinsics::isFunctionToMakeImmutable(ImmutableIntrinsics::shared()->at(number)))
+            asObject(JSValue::decode(m_immutableIntrinsics[number]))->makePropertiesImmutable(this);
+    }
 }
 
 void JSGlobalObject::installSaneChainWatchpoints()
