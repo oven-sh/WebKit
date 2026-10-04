@@ -3055,8 +3055,12 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, Call
     String name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     Vector<char> buffer;
-    if (!fetchScriptFromLocalFileSystem(String::fromUTF8(path), buffer))
-        return JSValue::encode(jsNull());
+    FILE* file = fopen(path, "rb");
+    bool isRead = file && fillBufferWithContentsOfFile(file, buffer);
+    if (file)
+        fclose(file);
+    if (!isRead)
+        return throwVMError(globalObject, scope, "Could not read the remarks."_s);
     String text = String::fromUTF8(buffer.span());
     JSArray* result = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, { });
@@ -3103,8 +3107,12 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject,
     String name = callFrame->argument(0).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     Vector<char> buffer;
-    if (!fetchScriptFromLocalFileSystem(String::fromUTF8(path), buffer))
-        return JSValue::encode(jsNull());
+    FILE* file = fopen(path, "rb");
+    bool isRead = file && fillBufferWithContentsOfFile(file, buffer);
+    if (file)
+        fclose(file);
+    if (!isRead)
+        return throwVMError(globalObject, scope, "Could not read the type coverage."_s);
     String text = String::fromUTF8(buffer.span());
     JSArray* result = constructEmptyArray(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, { });

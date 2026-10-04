@@ -13,7 +13,7 @@ function check(actual, expected, what)
 
 const isCounting = typeof aotOperationCount === "function" && !!aotRemarks("check") && !!jscOptions().useAOTOperationCounters;
 const operation = "operationAOTTryCopyDataProperties";
-const endings = ["copied", "source-is-nullish", "source-is-not-object", "target-is-not-final-object", "target-is-dictionary", "target-is-not-extensible", "target-has-poly-proto", "target-has-typed-fields",
+const endings = ["copied", "source-is-nullish", "source-has-no-properties", "source-is-not-object", "target-is-not-final-object", "target-is-dictionary", "target-is-not-extensible", "target-has-poly-proto", "target-has-typed-fields",
     "source-is-dictionary", "source-has-indexed-properties", "source-has-no-fast-enumeration", "source-has-unreified-static-properties", "no-plan"];
 
 function counts()
@@ -44,7 +44,7 @@ const cases = [
     ["null", () => ({ x: 1, ...null }), "x", ["source-is-nullish"]],
     ["undefined", () => ({ x: 1, ...undefined }), "x", ["source-is-nullish"]],
     ["a string", () => ({ x: 1, ..."ab" }), "0,1,x", ["source-is-not-object"]],
-    ["a number", () => ({ x: 1, ...5 }), "x", ["source-is-not-object"]],
+    ["a number", () => ({ x: 1, ...5 }), "x", ["source-has-no-properties"]],
     ["an array", () => ({ x: 1, ...[1, 2] }), "0,1,x", ["source-has-indexed-properties"]],
     ["a getter", () => ({ x: 1, ...{ get a() { return 1; } } }), "x,a", ["source-has-no-fast-enumeration"]],
     ["a proxy", () => ({ x: 1, ...new Proxy({ a: 1 }, { }) }), "x,a", ["source-has-no-fast-enumeration"]],

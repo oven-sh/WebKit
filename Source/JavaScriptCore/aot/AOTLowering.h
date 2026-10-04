@@ -41,6 +41,7 @@ private:
     void lowerNode(Node*);
     void lowerBytecode(Node*);
     void lowerTerminalOrFallThrough(BasicBlock*, Node* terminal);
+    void verifyBranchFoldedByTypes(BasicBlock*);
     template<typename Conditional, typename IsUndefinedOrNull, typename EqualsNull>
     void lowerTerminal(BasicBlock*, Node*, const Conditional&, const IsUndefinedOrNull&, const EqualsNull&);
     LValue isUndefinedOrNull(Node*);

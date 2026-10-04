@@ -69,6 +69,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance*, 
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance*, EncodedJSValue base, uint64_t which));
 JSC_DECLARE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance*, JSObject*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Instance*, EncodedJSValue, uint64_t typeLowHalf, uint64_t typeHighHalf, uint32_t which, uint32_t identifierIndexPlusOne, uint64_t scopeWhenCompiled, uint32_t scopeOffset));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTReportBranchFoldedWrongly, void, (Instance*, uint32_t branch, uint32_t tested, uint32_t isTaken));
 JSC_DECLARE_JIT_OPERATION(operationAOTHandleTraps, void, (Instance*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM*));

@@ -227,6 +227,26 @@ bool Lowering::tryLowerAllocation(Node* node)
                 }
                 m_graph.noteSitePlan(slot, WTF::move(words));
                 m_graph.remark("typed-literal-with-other-names"_s, String::number(count));
+                {
+                    auto typedLayout = TypeTable::shared()->typedLayout(layoutID);
+                    Vector<UniquedStringImpl*, 16> names;
+                    BitVector taken;
+                    unsigned notFields = 0;
+                    unsigned sharingSlot = 0;
+                    unsigned twiceOrSymbols = 0;
+                    for (unsigned i = 0; i < count; ++i) {
+                        UniquedStringImpl* name = code().codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl();
+                        size_t index = typedLayout.fields.findIf([&](auto& entry) { return entry.name == name; });
+                        if (names.contains(name) || name->isSymbol())
+                            ++twiceOrSymbols;
+                        else if (index == notFound)
+                            ++notFields;
+                        else if (taken.set(typedLayout.fields[index].slot))
+                            ++sharingSlot;
+                        names.append(name);
+                    }
+                    m_graph.remark("typed-literal-is-no-shape"_s, makeString(notFields, " are no fields, "_s, sharingSlot, " share a slot, "_s, twiceOrSymbols, " are there twice or symbols, of "_s, count, " in "_s, typedLayout.capacity, " slots"_s));
+                }
                 vmCall(node, Void, Entry::operationAOTPutProperties, m_instance, object, scratchAddress(), m_out.constInt32(count), slotAddress(slot));
                 vmCall(node, Void, Entry::operationAOTValidateTypedObject, m_instance, object);
                 setJSValue(node, object);

@@ -2352,14 +2352,14 @@ Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<
     return inference.returnType();
 }
 
-std::optional<bool> isBranchTakenAccordingToTypes(Node* branch)
+std::optional<bool> isBranchTakenAccordingToTypes(Node* branch, bool isTakenIfUndecided)
 {
     auto tested = TypeInference::valueTestedBy(branch);
     if (!tested.value || tested.value->isElided || tested.value->wasInferredUnreachable)
         return std::nullopt;
     bool mayBeTaken = mayBe(tested.value->type, tested.ifTrue);
     if (mayBeTaken == mayBe(tested.value->type, tested.ifFalse))
-        return std::nullopt;
+        return mayBeTaken && isTakenIfUndecided ? std::optional<bool> { true } : std::nullopt;
     return mayBeTaken;
 }
 

@@ -90,6 +90,7 @@ namespace AOT {
     v(operationAOTGetLengthSlow) \
     v(operationAOTValidateTypedObject) \
     v(operationAOTVerifyInferredType) \
+    v(operationAOTReportBranchFoldedWrongly) \
     v(operationAOTHandleTraps) \
     v(operationAOTWriteBarrier) \
     v(operationAOTCatch) \
@@ -609,6 +610,7 @@ struct Instance {
     struct CopiedProperties {
         Structure* last { nullptr };
         Vector<std::pair<PropertyOffset, PropertyOffset>, 8> offsets;
+        Vector<const TypedLayoutTable::Field*> fieldsToCheck;
     };
     const CopiedProperties& copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded);
     static constexpr unsigned maxLearnedInlineCapacity = Structure::numberOfSlotsWithFieldIDs;

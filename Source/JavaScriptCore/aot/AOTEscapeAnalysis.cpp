@@ -2358,12 +2358,22 @@ bool foldBranchesOnKnownValues(Graph& graph)
 void foldBranchesDecidedByTypes(Graph& graph)
 {
     bool hasFoldedBranch = false;
+    bool foldsUndecidedBranches = false;
+    if (Options::aotFunctionWithWrongBranchesForTesting()) [[unlikely]] {
+        const KnownFunction* function = programFunctions() && graph.summary() ? programFunctions()->function(graph.summary()->number) : nullptr;
+        foldsUndecidedBranches = function && function->executable && StringView { function->executable->ecmaName().string() } == StringView::fromLatin1(byteCast<char>(Options::aotFunctionWithWrongBranchesForTesting()));
+    }
     for (BasicBlock* block : graph.m_rpo) {
         if (!endsWithOrdinaryBranch(block) || block->isGeneric || block->successors.size() != 2)
             continue;
-        auto isTaken = isBranchTakenAccordingToTypes(block->terminal());
+        Node* branch = block->terminal();
+        auto isTaken = isBranchTakenAccordingToTypes(branch, foldsUndecidedBranches);
         if (!isTaken || !keepOnlySuccessor(block, block->successors[*isTaken ? 0 : 1]))
             continue;
+        if (Options::validateAOTInferredTypes()) [[unlikely]] {
+            block->branchFoldedByTypes = branch;
+            block->isBranchFoldedByTypesTaken = *isTaken;
+        }
         graph.remark("folds-branch-by-type"_s);
         hasFoldedBranch = true;
     }

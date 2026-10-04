@@ -96,6 +96,61 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue va
     TypedLayoutTable::atomizeIfString(JSValue::decode(value));
 }
 
+static bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation)
+{
+    Structure* targetStructure = target->structure();
+    Structure* sourceStructure = source->structure();
+    if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto()) {
+        countOperationNamed(instance, operation, targetStructure->isDictionary() ? "target-is-dictionary" : !targetStructure->isStructureExtensible() ? "target-is-not-extensible" : "target-has-poly-proto");
+        return false;
+    }
+    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType())) {
+        countOperationNamed(instance, operation, sourceStructure->isDictionary() ? "source-is-dictionary" : hasIndexedProperties(sourceStructure->indexingType()) ? "source-has-indexed-properties" : "source-has-no-fast-enumeration");
+        return false;
+    }
+    if (sourceStructure->typeInfo().hasStaticPropertyTable() && !sourceStructure->staticPropertiesReified()) {
+        countOperationNamed(instance, operation, "source-has-unreified-static-properties");
+        return false;
+    }
+
+    DeferGC deferGC(vm);
+    auto& copied = instance->copiedProperties(targetStructure, sourceStructure, excluded);
+    Structure* last = copied.last;
+    if (!last) {
+        countOperationNamed(instance, operation, "no-plan");
+        return false;
+    }
+    Vector<JSValue, 16> values;
+    for (unsigned i = 0; i < copied.fieldsToCheck.size(); ++i) {
+        auto [from, to] = copied.offsets[i];
+        JSValue value = source->getDirect(from);
+        if (auto* field = copied.fieldsToCheck[i]) {
+            bool isRejected = TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected;
+            if (!isRejected) {
+                value = TypedLayoutTable::toFieldRepresentation(*field, value);
+                isRejected = isInlineOffset(to) && TypedLayoutTable::checkStore(last->typedLayoutID(), to, value) == TypedLayoutTable::StoreCheck::Rejected;
+            }
+            if (isRejected) {
+                countOperationNamed(instance, operation, "value-is-rejected");
+                return false;
+            }
+        }
+        values.append(value);
+    }
+    countOperationNamed(instance, operation, "copied");
+    size_t oldCapacity = targetStructure->outOfLineCapacity();
+    size_t newCapacity = last->outOfLineCapacity();
+    if (oldCapacity != newCapacity) {
+        Butterfly* butterfly = target->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
+        target->nukeStructureAndSetButterfly(vm, targetStructure->id(), butterfly);
+    }
+    for (unsigned i = 0; i < copied.offsets.size(); ++i)
+        target->putDirectOffset(vm, copied.offsets[i].second, values.isEmpty() ? source->getDirect(copied.offsets[i].first) : values[i]);
+    if (last != targetStructure || oldCapacity != newCapacity)
+        target->setStructure(vm, last);
+    return true;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance* instance, EncodedJSValue encodedSource, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -105,18 +160,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance* instance
             if (JSObject* copy = instance->tryCopySlotsForSpread(asObject(source)))
                 OPERATION_RETURN(scope, copy);
         }
+        countOperationNamed(instance, __func__, "untyped");
         OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source));
     }
     if (source.isCell() && source.asCell()->type() == FinalObjectType) {
         Structure* structure = source.asCell()->structure();
         if (structure->typedLayoutID() == layoutID && structure->canPerformFastPropertyEnumerationCommon()) {
-            if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, asObject(source)))
+            if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, asObject(source))) {
+                countOperationNamed(instance, __func__, "same-layout");
                 OPERATION_RETURN(scope, copy);
+            }
         }
         if (Options::verboseAOTCompilation()) [[unlikely]]
             dataLogLn("AOT: a copy that is to be of family ", layoutID, " is of what was born as ", structure->typedLayoutID(), " and is made bit by bit");
     }
-    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, Instance::newObjectOf(vm, instance->emptyStructureForLayout(safeCast<uint16_t>(layoutID)))));
+    JSObject* copy = Instance::newObjectOf(vm, instance->emptyStructureForLayout(safeCast<uint16_t>(layoutID)));
+    if (source.isCell() && source.asCell()->type() == FinalObjectType && tryCopyDataProperties(instance, vm, copy, asObject(source), nullptr, __func__))
+        OPERATION_RETURN(scope, copy);
+    OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, source, copy));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* instance, EncodedJSValue encodedTarget, EncodedJSValue encodedSource, EncodedJSValue encodedExcludedSetIndex, uint32_t whose))
@@ -128,48 +189,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* i
         countOperationNamed(instance, __func__, "source-is-nullish");
         OPERATION_RETURN(scope, true);
     }
+    if (!sourceValue.isCell() || sourceValue.isSymbol() || sourceValue.isHeapBigInt()) {
+        countOperationNamed(instance, __func__, "source-has-no-properties");
+        OPERATION_RETURN(scope, true);
+    }
     if (!sourceValue.isObject() || target->type() != FinalObjectType) {
         countOperationNamed(instance, __func__, !sourceValue.isObject() ? "source-is-not-object" : "target-is-not-final-object");
-        OPERATION_RETURN(scope, false);
-    }
-    JSObject* source = asObject(sourceValue);
-    Structure* targetStructure = target->structure();
-    Structure* sourceStructure = source->structure();
-    if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto() || (targetStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields())) {
-        countOperationNamed(instance, __func__, targetStructure->isDictionary() ? "target-is-dictionary" : !targetStructure->isStructureExtensible() ? "target-is-not-extensible" : targetStructure->hasPolyProto() ? "target-has-poly-proto" : "target-has-typed-fields");
-        OPERATION_RETURN(scope, false);
-    }
-    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType())) {
-        countOperationNamed(instance, __func__, sourceStructure->isDictionary() ? "source-is-dictionary" : hasIndexedProperties(sourceStructure->indexingType()) ? "source-has-indexed-properties" : "source-has-no-fast-enumeration");
-        OPERATION_RETURN(scope, false);
-    }
-    if (sourceStructure->typeInfo().hasStaticPropertyTable() && !sourceStructure->staticPropertiesReified()) {
-        countOperationNamed(instance, __func__, "source-has-unreified-static-properties");
         OPERATION_RETURN(scope, false);
     }
     const IdentifierSet* excluded = nullptr;
     if (JSValue index = JSValue::decode(encodedExcludedSetIndex))
         excluded = &callerBytecodeOwner(instance, callFrame, whose).constantIdentifierSet(index.asUInt32AsAnyInt());
-
-    DeferGC deferGC(vm);
-    auto& copied = instance->copiedProperties(targetStructure, sourceStructure, excluded);
-    Structure* last = copied.last;
-    if (!last) {
-        countOperationNamed(instance, __func__, "no-plan");
-        OPERATION_RETURN(scope, false);
-    }
-    countOperationNamed(instance, __func__, "copied");
-    size_t oldCapacity = targetStructure->outOfLineCapacity();
-    size_t newCapacity = last->outOfLineCapacity();
-    if (oldCapacity != newCapacity) {
-        Butterfly* butterfly = target->allocateMoreOutOfLineStorage(vm, oldCapacity, newCapacity);
-        target->nukeStructureAndSetButterfly(vm, targetStructure->id(), butterfly);
-    }
-    for (auto [from, to] : copied.offsets)
-        target->putDirectOffset(vm, to, source->getDirect(from));
-    if (last != targetStructure || oldCapacity != newCapacity)
-        target->setStructure(vm, last);
-    OPERATION_RETURN(scope, true);
+    OPERATION_RETURN(scope, tryCopyDataProperties(instance, vm, target, asObject(sourceValue), excluded, __func__));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* instance, EncodedJSValue* values, uint32_t count, Slot* cache))

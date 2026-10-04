@@ -222,6 +222,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
         auto* entry = vm.megamorphicCache() ? vm.megamorphicCache()->findStore(oldStructure->id(), ident.impl()) : nullptr;
         countOperationNamed(instance, __func__, !entry ? "abandoned-and-not-in-table" : entry->m_reallocating ? "abandoned-and-entry-reallocates" : "abandoned-and-in-table");
     }
+    if (MegamorphicCache* table = base.isObject() ? vm.megamorphicCache() : nullptr) {
+        if (auto* entry = table->findStore(oldStructure->id(), ident.impl()); entry && entry->m_reallocating == MegamorphicCache::StoreEntry::reallocates) {
+            countOperationNamed(instance, __func__, "grows-storage-by-entry");
+            JSObject* object = asObject(base);
+            Structure* newStructure = entry->m_newStructureID.decode();
+            PropertyOffset offset = entry->m_offset;
+            Butterfly* butterfly = object->allocateMoreOutOfLineStorage(vm, oldStructure->outOfLineCapacity(), newStructure->outOfLineCapacity());
+            object->nukeStructureAndSetButterfly(vm, oldStructure->id(), butterfly);
+            object->putDirectOffset(vm, offset, value);
+            object->setStructure(vm, newStructure);
+            ensureStillAliveHere(oldStructure);
+            ensureStillAliveHere(newStructure);
+            OPERATION_RETURN(scope);
+        }
+    }
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
             throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, oldStructure, ident.impl(), value));
@@ -230,7 +245,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
     else
         base.putInline(globalObject, ident, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (!isDirect || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
+    if (!isDirect || slot.type() == PutPropertySlot::ExistingProperty || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
     if (!isDirect && slot.isCacheableSetter() && base.isObject() && base.asCell()->structure() == oldStructure)
         noteInheritedSetter(globalObject, *instance, asObject(base), ident, slot);
@@ -853,6 +868,26 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Insta
             dataLogLn("    in a block of cells of ", block.handle().cellSize(), " bytes; marked: ", block.isMarked(cell), ", newly allocated: ", block.isNewlyAllocated(cell), ", live: ", block.handle().isLive(cell), ", free-listed: ", block.handle().isFreeListed());
         }
     }
+    JSObject* error = createError(globalObject, "the stack:"_s);
+    JSValue stack = error->get(globalObject, vm.propertyNames->stack);
+    if (!scope.exception() && stack.isString())
+        dataLogLn(asString(stack)->value(globalObject).data);
+    _exit(70);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTReportBranchFoldedWrongly, void, (Instance* instance, uint32_t branch, uint32_t tested, uint32_t isTaken))
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    NativeCallFrameTracer tracer(vm, callFrame);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    dataLog("AOT: branch folded wrongly: ", opcodeNames[branch / 1000000], " at bc#", branch % 1000000, " on ");
+    if (tested >= 1000000)
+        dataLog(opcodeNames[tested / 1000000], " at bc#", tested % 1000000);
+    else
+        dataLog("a node of kind ", tested);
+    dataLogLn(" was inferred to be ", isTaken ? "always" : "never", " taken but is ", isTaken ? "not taken" : "taken");
     JSObject* error = createError(globalObject, "the stack:"_s);
     JSValue stack = error->get(globalObject, vm.propertyNames->stack);
     if (!scope.exception() && stack.isString())

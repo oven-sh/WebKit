@@ -2599,7 +2599,11 @@ static void generatePutById(CCallHelpers& jit)
         loadInfo(jit, T10);
         loadSites(jit, T10, T11);
         jit.load32(CCallHelpers::BaseIndex(T11, T13, CCallHelpers::TimesFour), T12);
-        notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1u << Site::identifierBits)));
+        Jump isNotDirect = jit.branchTest32(CCallHelpers::Zero, T12, TrustedImm32(1u << Site::identifierBits));
+        jit.load32(Address(R0, JSCell::structureIDOffset()), T11);
+        structureWithID(jit, T11);
+        notFound.append(jit.branchTest32(CCallHelpers::NonZero, Address(T11, Structure::bitFieldOffset()), TrustedImm32(Structure::s_hasNonEnumerablePropertiesBits | Structure::s_hasNonConfigurablePropertiesBits)));
+        isNotDirect.link(&jit);
         jit.and32(TrustedImm32((1u << Site::identifierBits) - 1), T12);
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifiers()), T11);
         jit.loadPtr(CCallHelpers::BaseIndex(T11, T12, CCallHelpers::TimesEight), A3);
@@ -2650,6 +2654,12 @@ static void generatePutById(CCallHelpers& jit)
 
         slow.link(&jit);
         shouldBeFilled.link(&jit);
+        loadDataForSlot(jit, A2, T11);
+        slotSite(jit, T11, A2, T13);
+        loadInfo(jit, T11);
+        loadSites(jit, T11, T12);
+        jit.load32(CCallHelpers::BaseIndex(T12, T13, CCallHelpers::TimesFour), T12);
+        notFound.append(jit.branchTest32(CCallHelpers::NonZero, T12, TrustedImm32(1u << Site::identifierBits)));
 
         using InheritedSetter = Instance::InheritedSetter;
         auto inEntry = [&](ptrdiff_t offset) { return Address(T12, Instance::offsetOfInheritedSetters() + offset); };

@@ -331,6 +331,8 @@ struct BasicBlock {
     bool isRarelyExecuted { false };
 
     BasicBlock* splitFrom { nullptr };
+    Node* branchFoldedByTypes { nullptr };
+    bool isBranchFoldedByTypesTaken { false };
     BasicBlock* immediateDominator { nullptr };
     unsigned rpoIndex { 0 };
     unsigned dominatorPreNumber { 0 };
@@ -575,13 +577,14 @@ public:
     bool isCoveringOperation() const { return m_isCoveringOperation; }
     void remark(ASCIILiteral what, StringView detail = { }, bool isOffUsualPath = false)
     {
-        if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]
+        if ((Options::aotRemarksPath() || Options::aotTypeCoveragePath()) && !suppressesRemarks) [[unlikely]]
             addRemark(what, detail, isOffUsualPath);
     }
     void addRemark(ASCIILiteral what, StringView detail, bool isOffUsualPath);
     void beginCoveredOperation(const Node*, const BasicBlock*, bool isElided = false);
     CoveredOperation coveredOperationAt(unsigned bytecodeOffset, uint8_t flags);
     bool m_isCoveringOperation { false };
+    bool suppressesRemarks { false };
     bool alwaysEmitsCalls { false };
     mutable std::optional<bool> hasRemainingCalls;
     IntegersThatLookLikeAddresses wideIntegerConstants;
@@ -747,7 +750,7 @@ void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const F
 void scalarReplaceReadOnlyObjects(Graph&);
 bool foldBranchesOnKnownValues(Graph&);
 void foldBranchesDecidedByTypes(Graph&);
-std::optional<bool> isBranchTakenAccordingToTypes(Node* branch);
+std::optional<bool> isBranchTakenAccordingToTypes(Node* branch, bool isTakenIfUndecided = false);
 void replaceReadsOfConstantObjects(Graph&);
 bool isAbsentFromObjectPrototype(UniquedStringImpl*);
 

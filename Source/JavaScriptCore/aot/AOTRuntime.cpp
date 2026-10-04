@@ -2293,6 +2293,14 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         object->setStructure(vm, converted);
         vm.writeBarrier(object);
     }
+    if (Options::useAOTOperationCounters()) [[unlikely]] {
+        const char* birth = old->knownShape() ? "a-literal-of-known-shape" : "something-else";
+        for (auto& entry : instance.collections->copiedProperties) {
+            if (entry.value.last == old)
+                birth = "a-copy";
+        }
+        AOT::runtimeTable(vm).countOperation("Instance::convertToTypedLayout:born-as", birth);
+    }
     return true;
 }
 
@@ -2411,6 +2419,19 @@ void Instance::learnInlineCapacity(JSFunction* constructor, Structure* structure
         rareData->clear("Objects get properties outside their inline storage");
 }
 
+static const TypedLayoutTable::Field* fieldStoredAt(VM& vm, Structure* structure, UniquedStringImpl* name, PropertyOffset offset)
+{
+    uint16_t layoutID = structure->typedLayoutID();
+    if (!layoutID)
+        return nullptr;
+    if (!TypedLayoutTable::usesFieldIDs(layoutID))
+        return TypedLayoutTable::findField(vm, layoutID, name);
+    if (static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
+        return nullptr;
+    uint16_t id = structure->fieldIDInSlot(offset);
+    return id && id != Structure::ambiguousFieldID ? &TypedLayoutTable::fieldWithID(offset, id) : nullptr;
+}
+
 const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
@@ -2434,21 +2455,38 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
         result.offsets.append({ entry.offset(), invalidOffset });
         return true;
     });
+    bool checksFields = target->typedLayoutID() && TypedLayoutTable::hasTypedFields();
+    auto noteStore = [&](unsigned i, PropertyOffset offset, bool isOverwritten) {
+        if (!checksFields)
+            return;
+        auto* field = fieldStoredAt(*vm, last, names[i], offset);
+        if (!field && isOverwritten && isInlineOffset(offset) && TypedLayoutTable::fieldTypeInSlot(last->typedLayoutID(), offset))
+            last = nullptr;
+        else if (field && source->typedLayoutID() == last->typedLayoutID() && field == fieldStoredAt(*vm, source, names[i], result.offsets[i].first))
+            field = nullptr;
+        result.fieldsToCheck.append(field);
+    };
     for (unsigned i = 0; last && i < names.size(); ++i) {
         unsigned attributes;
-        if (isValidOffset(last->get(*vm, names[i], attributes))) {
+        PropertyOffset offset = last->get(*vm, names[i], attributes);
+        if (isValidOffset(offset)) {
             if (attributes)
                 last = nullptr;
+            else
+                noteStore(i, offset, true);
             continue;
         }
-        PropertyOffset offset;
         Structure* next = Structure::addPropertyTransitionToExistingStructure(last, names[i], 0, offset);
         if (!next) {
             DeferredStructureTransitionWatchpointFire deferred(*vm, last);
             next = Structure::addNewPropertyTransition(*vm, last, names[i], 0, offset, PutPropertySlot::UnknownContext, &deferred);
         }
         last = next->isDictionary() ? nullptr : next;
+        if (last)
+            noteStore(i, offset, false);
     }
+    if (!result.fieldsToCheck.containsIf([](auto* field) { return !!field; }))
+        result.fieldsToCheck.clear();
     for (unsigned i = 0; last && i < names.size(); ++i)
         result.offsets[i].second = last->get(*vm, names[i]);
     result.last = last;
@@ -2597,7 +2635,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
         transitions.removeAllMatching([](Slot* slot) { return !hasTransition(*slot); });
     }
     if (Options::verboseAOTCompilation()) [[unlikely]] {
-        dataLogLn("AOT: instance ", RawPointer(this), " after ", newOnly ? "an eden" : "a full", " collection: ", collections->all.size(), " of ", collections->numberOfFunctions, " functions have slots, in ", collections->usedDataEnd - collections->dataStart, " bytes; ",
+        dataLogLn("AOT: instance ", RawPointer(this), " after ", newOnly ? "an eden" : "a full", " collection: ", collections->all.size(), " of ", collections->numberOfFunctions, " functions have slots, in ", (collections->usedDataEnd - collections->dataStart) << stateWithDataShift, " bytes; ",
             collections->allSiteSlots.size(), " sites with several slots (", collections->allSiteSlots.size() * sizeof(PolymorphicSlots), " bytes); ", collections->transitions.size(), " transitions; structures of literals ", collections->shapes.size(), " + ", collections->knownShapes.size(),
             ", of copies ", collections->copyStructures.size(), ", of layouts ", collections->emptyStructures.size(), " + ", collections->convertedStructures.size(), "; property runs ", collections->propertyRunTargets.size(), "; copied properties ", collections->copiedProperties.size(),
             "; constructors ", collections->constructorsByFirstStructure.size(), " + ", collections->learnedInlineCapacities.size(), "; modules ", collections->topLevelExecutables.size(), "; template objects ", collections->templateObjects.size(),

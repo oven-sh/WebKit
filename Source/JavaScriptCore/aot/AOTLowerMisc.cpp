@@ -43,6 +43,38 @@ void Lowering::lowerTerminalOrFallThrough(BasicBlock* block, Node* node)
     lowerTerminal(block, node, conditional, isUndefinedOrNull, equalsNull);
 }
 
+void Lowering::verifyBranchFoldedByTypes(BasicBlock* block)
+{
+    Node* branch = block->branchFoldedByTypes;
+    for (auto& use : branch->uses) {
+        Node* operand = use.node;
+        bool isConstant = operand->kind == NodeKind::Constant || operand->kind == NodeKind::ConstantCell || operand->kind == NodeKind::Intrinsic;
+        if (operand->isElided || operand->replacement || (!isConstant && !operand->lowered))
+            return;
+    }
+    SetForScope remarks(m_graph.suppressesRemarks, true);
+    SetForScope current(m_node, branch);
+    SetForScope code(m_code, branch->graph);
+    auto placeOf = [](Node* node) {
+        return node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
+    };
+    auto conditional = [&](LValue condition) {
+        LBasicBlock excluded = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        if (block->isBranchFoldedByTypesTaken)
+            m_out.branch(condition, FTL::usually(continuation), FTL::rarely(excluded));
+        else
+            m_out.branch(condition, FTL::rarely(excluded), FTL::usually(continuation));
+        m_out.appendTo(excluded);
+        vmCall(branch, Void, Entry::operationAOTReportBranchFoldedWrongly, m_instance, m_out.constInt32(placeOf(branch)), m_out.constInt32(placeOf(branch->uses[0].node)), m_out.constInt32(block->isBranchFoldedByTypesTaken));
+        m_out.unreachable();
+        m_out.appendTo(continuation);
+    };
+    auto isUndefinedOrNull = [&](Node* value) { return this->isUndefinedOrNull(value); };
+    auto equalsNull = [&](Node* value) { return this->equalsNull(value, true); };
+    lowerTerminal(block, branch, conditional, isUndefinedOrNull, equalsNull);
+}
+
 LValue Lowering::isUndefinedOrNull(Node* value)
 {
     if (isSubtype(value->type, TOther))

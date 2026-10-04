@@ -1530,6 +1530,8 @@ void Lowering::lowerBlock(BasicBlock* block)
         return;
     }
     setCurrentNode(nullptr);
+    if (block->branchFoldedByTypes) [[unlikely]]
+        verifyBranchFoldedByTypes(block);
     bool branches = std::ranges::any_of(block->successors, [&](BasicBlock* successor) { return successor != block->successors[0]; });
     for (BasicBlock* successor : block->successors) {
         if (!branches) {
