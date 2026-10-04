@@ -70,6 +70,7 @@ public:
         m_codeSizeWithGuards.fetch_add(codeSize, std::memory_order_relaxed);
     }
     void countGuardsThatContradictAnalysis() const { m_functionsWhoseGuardsContradictAnalysis.fetch_add(1, std::memory_order_relaxed); }
+    void countContradictionWithoutGuards() const { m_functionsThatContradictAnalysisWithoutGuards.fetch_add(1, std::memory_order_relaxed); }
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
 private:
@@ -127,6 +128,7 @@ private:
     mutable std::atomic<unsigned> m_namesOnlyCalled { 0 };
     mutable std::atomic<unsigned> m_functionsWithGuards { 0 };
     mutable std::atomic<unsigned> m_functionsWhoseGuardsContradictAnalysis { 0 };
+    mutable std::atomic<unsigned> m_functionsThatContradictAnalysisWithoutGuards { 0 };
     mutable std::atomic<unsigned> m_guardsOverWholeFunctions { 0 };
     mutable std::atomic<unsigned> m_bytecodeSizeWithGuards { 0 };
     mutable std::atomic<unsigned> m_codeSizeWithGuards { 0 };

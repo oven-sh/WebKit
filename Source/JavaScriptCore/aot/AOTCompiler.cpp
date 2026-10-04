@@ -368,12 +368,12 @@ static void findRarelyExecutedBlocks(Graph& graph)
     }
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true, const Graph::PlacesToGuard* placesToGuard = nullptr, bool keepsLoopsUnsplit = false, ASCIILiteral reasonForNoGuards = { }, bool mustAgreeWithAnalysis = false)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true, const Graph::PlacesToGuard* placesToGuard = nullptr, bool keepsLoopsUnsplit = false, ASCIILiteral reasonForNoGuards = { }, bool guardsContradictedAnalysis = false)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.loopSplittingIsDisabled = triesUnsplitLoops || keepsLoopsUnsplit;
     graph.placesToGuard = placesToGuard;
-    graph.mustAgreeWithAnalysis = mustAgreeWithAnalysis;
+    graph.guardsContradictedAnalysis = guardsContradictedAnalysis;
     if (!reasonForNoGuards.isNull())
         graph.remark("no-guards-over-whole-function"_s, reasonForNoGuards);
     graph.setCalleeHints(hints);
@@ -421,10 +421,14 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (triesUnsplitLoops) {
         bool splitsLoops = Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph);
         Graph::PlacesToGuard places;
-        if (!mustAgreeWithAnalysis)
+        if (!guardsContradictedAnalysis)
             places = graph.findPlacesToGuard();
         if (splitsLoops || !places.isEmpty())
-            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), mustAgreeWithAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, mustAgreeWithAnalysis);
+            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), guardsContradictedAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, guardsContradictedAnalysis);
+    }
+    if (graph.contradictsAnalysisWithoutGuards) {
+        graph.remark("contradicts-analysis-without-guards"_s);
+        program->propertyPlaces->countContradictionWithoutGuards();
     }
     graph.remarkOnGuessedPlaces();
     inferRanges(graph);

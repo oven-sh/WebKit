@@ -434,7 +434,8 @@ public:
     ASCIILiteral reasonForNoGuards;
     ASCIILiteral contradictionOfAnalysis;
     unsigned contradictionsIgnoredBehindUnreachableValue { 0 };
-    bool mustAgreeWithAnalysis { false };
+    bool guardsContradictedAnalysis { false };
+    bool contradictsAnalysisWithoutGuards { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;
     bool readsElementsOrEmpty { false };
     bool isInlinedBuiltin { false };

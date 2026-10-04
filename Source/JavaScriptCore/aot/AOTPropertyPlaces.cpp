@@ -291,7 +291,7 @@ void PropertyPlaces::dump(PrintStream& out) const
     out.print("; names only called that no shape holds: ", m_namesOnlyCalled.load(std::memory_order_relaxed));
     out.print("; variables with names: ", m_namesOnVariables.size(), ", places guessed with the names on a variable: ", m_guessesByNamesOnVariable.load(std::memory_order_relaxed));
     if (Options::useAOTGuardsOverWholeFunctions())
-        out.print("; functions with guards over the whole function: ", m_functionsWithGuards.load(std::memory_order_relaxed), " with ", m_guardsOverWholeFunctions.load(std::memory_order_relaxed), " guards, ", m_bytecodeSizeWithGuards.load(std::memory_order_relaxed), " bytes of bytecode, ", m_codeSizeWithGuards.load(std::memory_order_relaxed), " bytes of code; functions without them because their graph would contradict the analysis: ", m_functionsWhoseGuardsContradictAnalysis.load(std::memory_order_relaxed));
+        out.print("; functions with guards over the whole function: ", m_functionsWithGuards.load(std::memory_order_relaxed), " with ", m_guardsOverWholeFunctions.load(std::memory_order_relaxed), " guards, ", m_bytecodeSizeWithGuards.load(std::memory_order_relaxed), " bytes of bytecode, ", m_codeSizeWithGuards.load(std::memory_order_relaxed), " bytes of code; functions without them because their graph would contradict the analysis: ", m_functionsWhoseGuardsContradictAnalysis.load(std::memory_order_relaxed), "; still contradict it without guards: ", m_functionsThatContradictAnalysisWithoutGuards.load(std::memory_order_relaxed));
 }
 
 static bool canHavePlace(VM& vm, UniquedStringImpl* name)

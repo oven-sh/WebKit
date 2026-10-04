@@ -240,7 +240,7 @@ public:
                     noteArgumentsOf(node);
                     noteStoresToVariables(node);
                     recordWhetherReturnObjectIsNeededBy(node);
-                } else if (!calleesWithWidenedInputs && (Options::validateAOTInferredTypes() || m_graph.placesToGuard || m_graph.mustAgreeWithAnalysis)) [[unlikely]]
+                } else if (!calleesWithWidenedInputs && (Options::validateAOTInferredTypes() || m_graph.placesToGuard || m_graph.guardsContradictedAnalysis)) [[unlikely]]
                     verifyAgainstSummaries(node);
             }
         }
@@ -1225,9 +1225,11 @@ private:
                 m_graph.contradictionOfAnalysis = reasonForNoGuards;
             return;
         }
+        m_graph.contradictsAnalysisWithoutGuards |= m_graph.guardsContradictedAnalysis;
+        if (!Options::validateAOTInferredTypes())
+            return;
         const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
         dataLogLn("AOT: contradicts the analysis: ", what, " `", name, "` at bc#", node->bytecodeIndex.offset(), node->graph != &m_graph ? " (inlined)" : "", " in `", function && function->executable ? function->executable->ecmaName().string() : String(), "` @", function ? function->key.module : 0, ":", function ? function->key.start : 0, ": ", TypeDump(found), " is not in ", TypeDump(recorded));
-        RELEASE_ASSERT_WITH_MESSAGE(!m_graph.mustAgreeWithAnalysis, "The graph of a function without guards over the whole function contradicts the whole-program analysis");
     }
 
     bool isSavedAtDefinition(Variable slot)
