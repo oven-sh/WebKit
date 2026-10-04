@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
-"""Runs the engine's own tests of ahead-of-time compilation and sound types. About 10 seconds.
+"""Runs the engine's own tests of ahead-of-time compilation and sound types. A few minutes.
 
-    run-tests.py <jsc>
+    run-tests.py <jsc> [--jobs <n>]
 
-The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each runs with the options of its header, three times: as it says; with
-every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`; and without data stubs,
-which is what a CPU other than ARM64 and x86-64 would compile. A `//@ run("name", ...)` in the header is one more run.
+The tests are JSTests/stress/aot-*.js and sound-types-*.js. Each `//@ runDefault(...)` of a header is a run of its own; the runs of
+one test follow each other, since they may write the same files, and different tests run beside each other. The first one
+runs twice more: with every inferred type checked against the value and the B3 and Air validators on, as in the mode `aot-validate`;
+and without data stubs, which is what a CPU other than ARM64 and x86-64 would compile. A `//@ run("name", ...)` in the header is one
+more run, with the options of the first `runDefault` and its own.
 
 A test fails if it prints anything or exits with anything but 0. run-javascriptcore-tests runs all of this and much more, in
 the modes `aot` and `aot-validate` among the rest. This is what is quick enough to run after every change.
 """
 import argparse
+import concurrent.futures
 import glob
 import os
 import re
@@ -22,7 +25,13 @@ STRESS = os.path.realpath(os.path.join(HERE, "..", "..", "..", "JSTests", "stres
 
 def header_of(path):
     with open(path, errors="replace") as file:
-        return [line for line in file.read().split("\n")[:6] if line.startswith("//@ ")]
+        lines = file.read().split("\n")
+    count = next((index for index, line in enumerate(lines) if not line.startswith("//@ ")), len(lines))
+    return lines[:count]
+
+
+def options_in(text):
+    return re.findall(r'"(--?[^"]*)"', text)
 
 
 def run(jsc, options, test):
@@ -40,6 +49,7 @@ def run(jsc, options, test):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("jsc")
+    parser.add_argument("--jobs", type=int, default=4)
     arguments = parser.parse_args()
     jsc = os.path.abspath(arguments.jsc)
 
@@ -47,21 +57,26 @@ def main():
     runs = []
     for test in tests:
         header = header_of(os.path.join(STRESS, test))
-        options = re.findall(r'"(--?[^"]*)"', " ".join(line for line in header if not line.startswith("//@ run(")))
+        common = options_in(" ".join(line for line in header if not line.startswith("//@ run")))
+        lines = [common + options_in(line) for line in header if re.match(r"//@ run[A-Z]", line)] or [common]
+        options = lines[0]
         for line in header:
             if also := re.match(r'//@ run\("([^"]+)"(.*)\)', line):
-                runs.append((test, options + re.findall(r'"(--?[^"]*)"', also.group(2)), also.group(1)))
-        runs.append((test, options, "as it says"))
+                runs.append((test, options + options_in(also.group(2)), also.group(1)))
+        for index, line in enumerate(lines):
+            runs.append((test, line, "as it says" if len(lines) == 1 else f"run {index + 1} of {len(lines)}"))
         if not any("$skipModes << :aot_validate" in line for line in header):
             runs.append((test, options + ["--validateAOTInferredTypes=true", "--validateGraphAtEachPhase=true", "--aotTypeCoveragePath="], "validated"))
         runs.append((test, options + ["--useAOTDataStubs=false"], "without data stubs"))
 
     failures = 0
-    for test, options, label in runs:
-        problem = run(jsc, options, test)
-        if problem:
-            failures += 1
-            print(f"FAIL {test} [{label}] {problem}")
+    runs_of = {test: [entry for entry in runs if entry[0] == test] for test in tests}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=arguments.jobs) as pool:
+        for problems in pool.map(lambda test: [(entry, run(jsc, entry[1], test)) for entry in runs_of[test]], tests):
+            for (test, options, label), problem in problems:
+                if problem:
+                    failures += 1
+                    print(f"FAIL {test} [{label}] {problem}")
     print(f"{len(runs) - failures} pass, {failures} fail")
     return 1 if failures else 0
 

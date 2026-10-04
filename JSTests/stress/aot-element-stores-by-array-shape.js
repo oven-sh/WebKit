@@ -9,6 +9,8 @@ function stores(a, index, value) { a[index] = value; }
 function defines(first, second, third) { return [first, , second, third]; }
 function definesIntegers(i) { return [i | 0, , i | 0, (i + 1) | 0]; }
 function definesIntegerThenDouble(i) { return [i | 0, , i + 0.5]; }
+function definesShort(first, second) { return [first, , second]; }
+function definesShortIntegers(i) { return [i | 0, , (i + 1) | 0]; }
 function makesSized(size) { return new Array(size); }
 function makesEmpty() { return []; }
 
@@ -121,14 +123,25 @@ const kept = [];
 {
     checkOperations(operationsDuring("operationAOTPutByValDirect", () => {
         for (let i = 0; i < rounds; i++)
+            kept[i & 7] = definesShort(i, i + 1);
+    }), 0, 0, "literals of integers with a hole, within the first vector");
+    check(kept[7].join() + " " + (1 in kept[7]) + " " + kept[7].length, "999,,1000 false 3", "a short literal of integers with a hole");
+    check(definesShort("one", 0.5).join(), "one,,0.5", "a short literal that starts with a string");
+    checkOperations(operationsDuring("operationAOTPutByValDirect", () => {
+        for (let i = 0; i < rounds; i++)
+            kept[i & 7] = definesShortIntegers(i);
+    }), 0, 0, "literals of proven integers with a hole, within the first vector");
+    check(kept[7].join() + " " + (1 in kept[7]) + " " + kept[7].length, "999,,1000 false 3", "a short literal of proven integers with a hole");
+    checkOperations(operationsDuring("operationAOTPutByValDirect", () => {
+        for (let i = 0; i < rounds; i++)
             kept[i & 7] = defines(i, i + 1, i + 2);
-    }), 0, 20, "literals of integers with a hole");
+    }), 0, rounds, "literals of integers with a hole, one element past the first vector");
     check(kept[7].join() + " " + (1 in kept[7]), "999,,1000,1001 false", "a literal of integers with a hole");
     check(defines(1, "two", 0.5).join(), "1,,two,0.5", "a literal that starts with an integer");
     checkOperations(operationsDuring("operationAOTPutByValDirect", () => {
         for (let i = 0; i < rounds; i++)
             kept[i & 7] = definesIntegers(i);
-    }), 0, 20, "literals of proven integers with a hole");
+    }), 0, rounds, "literals of proven integers with a hole, one element past the first vector");
     check(kept[7].join() + " " + (1 in kept[7]), "999,,999,1000 false", "a literal of proven integers with a hole");
     check(definesIntegerThenDouble(3).join(), "3,,3.5", "a literal of a proven integer and a double");
 }

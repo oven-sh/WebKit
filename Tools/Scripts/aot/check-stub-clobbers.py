@@ -167,7 +167,13 @@ def follow(entry, stops_at_calls=False):
         if entry in results:
             return results[entry]
         results[entry] = Result(set(CHANGED_BY_CALLS), collections.Counter(), [])
-    changed_at_return, exits, problems = set(), collections.Counter(), []
+    changed_at_return, exits, problems, counted = set(), collections.Counter(), [], set()
+
+    def leaves_by(how, index):
+        if index not in counted:
+            counted.add(index)
+            exits[how] += 1
+
     place = lambda index: '%s+%d' % stub_at(4 * index)
     states, work = {}, [(entry // 4, (frozenset(), 0, frozenset(), None))]
     while work:
@@ -186,7 +192,7 @@ def follow(entry, stops_at_calls=False):
         leaves = word is None or is_br(word) and table_offset_of_br(index) not in entries_for_exceptions or is_b(word) and not 0 <= index + signed(word & 0x3ffffff, 26) < len(words)
         if leaves:
             if not stops_at_calls:
-                exits['tail jump at %s' % place(index)] += 1
+                leaves_by('tail jump at %s' % place(index), index)
                 changed_at_return |= changed | CHANGED_BY_CALLS
             continue
         if is_ret(word):
@@ -197,7 +203,7 @@ def follow(entry, stops_at_calls=False):
         if is_brk(word):
             continue
         if is_br(word):
-            exits['exception'] += 1
+            leaves_by('exception', index)
             continue
         if is_b(word):
             work.append((index + signed(word & 0x3ffffff, 26), state))
@@ -207,10 +213,10 @@ def follow(entry, stops_at_calls=False):
                 continue
             target = index + signed(word & 0x3ffffff, 26) if is_bl(word) else -1
             if 0 <= target < len(words):
-                exits['call of %s' % stub_at(4 * target)[0]] += 1
+                leaves_by('call of %s' % stub_at(4 * target)[0], index)
                 changed = changed | follow(4 * target).changed
             else:
-                exits['call'] += 1
+                leaves_by('call', index)
                 changed = changed | CHANGED_BY_CALLS
             work.append((index + 1, (frozenset(changed), depth, saved, frame)))
             continue
