@@ -128,7 +128,9 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
-    scheduleTimer();
+    // Rescheduling a pending timer would starve the sweeper when collections are less than its delay apart.
+    if (!timeUntilFire())
+        scheduleTimer();
     m_currentDirectory = heap.objectSpace().firstDirectory();
 }
 
