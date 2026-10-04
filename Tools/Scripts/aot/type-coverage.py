@@ -35,6 +35,7 @@ import bisect
 import collections
 import json
 import os
+import re
 import sys
 
 KINDS = {
@@ -70,12 +71,29 @@ IN_GENERIC_COPY, RARELY_EXECUTED, IN_LOOP, INLINED, ELIDED, HAS_TYPE_TAG, NOT_IN
 KNOWN_CALLEE = ("direct-call", "direct-construct", "inlined-call", "inlined-construct", "inlined-closure", "inlined-builtin", "inlined-call-with-callback", "lowered-builtin")
 
 
+def operations_with_fast_path():
+    """Operations whose table entry is a stub that handles the common case and only then calls the C++ function."""
+    header = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "Source", "JavaScriptCore", "aot", "AOTStubs.h")
+    text = open(header).read()
+    names = set()
+    for macro, pattern, prefix in (("FOR_EACH_AOT_OPERATION_WITH_FRONT_END", r"v\((\w+)\)", "operationAOT"), ("FOR_EACH_AOT_OPERATION_BEHIND_HELPER", r"v\(\w+, (\w+)\)", "")):
+        body = re.search(r"#define %s\(v\) \\\n((?:.*\\\n)*)" % macro, text).group(1)
+        names.update(prefix + name for name in re.findall(pattern, body))
+    return names
+
+
+HAS_FAST_PATH = operations_with_fast_path()
+
+
 def level_of(kind, flags, outcomes):
     if flags & (ELIDED | NOT_IN_GRAPH):
         return 2
     always = [o[6:] for o in outcomes if o.startswith("calls:")]
     if kind == "calls" and any(o.split(":")[0] in KNOWN_CALLEE for o in outcomes):
         return 2
+    operations = [name for name in always if name.startswith("operation")]
+    if operations and all(name in HAS_FAST_PATH for name in operations):
+        return 1
     if any(name.startswith(("operation", "Operation", "PlainOperation")) for name in always):
         return 0
     return 1 if always or kind == "calls" else 2

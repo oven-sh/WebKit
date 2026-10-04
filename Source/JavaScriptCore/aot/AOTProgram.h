@@ -54,8 +54,23 @@ struct FunctionSummary {
         PassedToUnknownCallee, PassedAsThis, PassedAsExtraArgument, CalledIndirectly, ReturnedToUnknownCaller,
         MergedInPhi, MergedInFrameRegister, MergedInVariable, MergedInParameter, MergedInReturn, LostThroughAlias,
         StoredInModuleVariable, StoredInUntrackedVariable, StoredToUnknownLocation, StoredInDynamicallyReadVariable, ReadInexactly,
+        PropertyRead, PropertyWritten, PrototypeRead, LeftOfInstanceof, RightOfInstanceof, StoredInProperty, Constructed,
     };
     mutable std::atomic<uint32_t> escapeReason { 0 };
+    struct EscapeCause {
+        uint32_t why { DoesNotEscape };
+        UniquedStringImpl* name { nullptr };
+        friend bool operator==(const EscapeCause&, const EscapeCause&) = default;
+    };
+    static constexpr unsigned maxEscapeCauses = 12;
+    mutable Lock escapeCausesLock;
+    mutable Vector<EscapeCause, 1> escapeCauses WTF_GUARDED_BY_LOCK(escapeCausesLock);
+    void noteEscapeCause(EscapeCause cause) const
+    {
+        Locker locker { escapeCausesLock };
+        if (escapeCauses.size() < maxEscapeCauses && !escapeCauses.contains(cause))
+            escapeCauses.append(cause);
+    }
     template<typename Functor>
     bool markEscaping(uint32_t why, const Functor& wasPassed)
     {
@@ -304,9 +319,12 @@ public:
             functor(function);
     }
     unsigned numberOfNonEscapingMethods() const { return m_nonEscapingMethods.size(); }
+    void noteBuiltinsExtended(Type builtins) { m_builtinsExtended.join(builtins); }
+    bool mayBeExtended(Type builtin) const { return mayBe(m_builtinsExtended.load(), builtin); }
 
 private:
     Lock m_lock;
+    AtomicType m_builtinsExtended;
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint32_t> m_methods;
     UncheckedKeyHashSet<uint32_t> m_nonEscapingMethods;
     UncheckedKeyHashMap<UnlinkedCodeBlock*, uint16_t> m_thisLayoutID;

@@ -23,6 +23,8 @@
 #include "JSMap.h"
 #include "JSSet.h"
 #include "JSCInlines.h"
+#include "JSWeakMap.h"
+#include "JSWeakSet.h"
 #include "JSWebAssemblyInstance.h"
 #include "LinkBuffer.h"
 #include "MaxFrameExtentForSlowPathCall.h"
@@ -860,6 +862,8 @@ static void generateLatin1Characters(CCallHelpers& jit)
     jit.or64(T9, R0);
     jit.urshift64(TrustedImm32(16), T11);
     jit.loadPtr(Address(R0, JSString::offsetOfValue()), R0);
+    jit.load32(Address(R0, StringImpl::flagsOffset()), T9);
+    needsSlowLookup.append(jit.branchTest32(CCallHelpers::Zero, T9, TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(R0, StringImpl::dataOffset()), R0);
     jit.add64(T11, R0);
     jit.jump().linkTo(pack, &jit);
@@ -896,6 +900,7 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
     jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
 
     CCallHelpers::Label compare = jit.label();
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A3, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(A3, StringImpl::dataOffset()), A3);
     CCallHelpers::Label wordLoop = jit.label();
     Jump fewerThanEight = jit.branch32(CCallHelpers::Below, A4, TrustedImm32(8));
@@ -932,6 +937,7 @@ static void generateIsStringEqualTo(CCallHelpers& jit)
     jit.or64(T9, A2);
     jit.urshift64(TrustedImm32(16), T11);
     jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
     jit.add64(T11, A2);
     jit.jump().linkTo(compare, &jit);
@@ -1018,6 +1024,7 @@ static void generateIsStringEqualToConstant(CCallHelpers& jit)
     jit.or64(A1, A2);
     jit.urshift64(TrustedImm32(16), T11);
     jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
     jit.add64(T11, A2);
     jit.jump().linkTo(compare, &jit);
@@ -1090,6 +1097,7 @@ static void generateIsStringEqualToShortLiteral(CCallHelpers& jit, unsigned chun
     jit.or64(T12, A2);
     jit.urshift64(TrustedImm32(16), T11);
     jit.loadPtr(Address(A2, JSString::offsetOfValue()), A2);
+    slow.append(jit.branchTest32(CCallHelpers::Zero, Address(A2, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
     jit.loadPtr(Address(A2, StringImpl::dataOffset()), A2);
     jit.add64(T11, A2);
     jit.jump().linkTo(compare, &jit);
@@ -2704,10 +2712,11 @@ static void generateGetLength(CCallHelpers& jit)
         jit.load32(Address(T12, JSCell::structureIDOffset()), T12);
         generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(T11, proofs + OBJECT_OFFSETOF(Proof, secondPrototypeStructureID))));
         jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedArrayViewPrototype()), T12);
-        jit.load32(Address(T12, JSCell::structureIDOffset()), T12);
-        generic.append(jit.branch32(CCallHelpers::NotEqual, T12, Address(instanceGPR, Instance::offsetOfTypedArrayViewPrototypeStructureID())));
-        jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedArrayLengthLocation()), T12);
-        jit.load64(Address(T12), T12);
+        jit.load32(Address(T12, JSCell::structureIDOffset()), T11);
+        generic.append(jit.branch32(CCallHelpers::NotEqual, T11, Address(instanceGPR, Instance::offsetOfTypedArrayViewPrototypeStructureID())));
+        jit.loadPtr(Address(T12, JSObject::butterflyOffset()), T12);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedArrayLengthOffsetInButterfly()), T11);
+        jit.load64(CCallHelpers::BaseIndex(T12, T11, CCallHelpers::TimesOne), T12);
         generic.append(jit.branch64(CCallHelpers::NotEqual, T12, Address(instanceGPR, Instance::offsetOfTypedArrayLengthAccessor())));
         generic.append(jit.branchTest8(CCallHelpers::NonZero, Address(R0, JSArrayBufferView::offsetOfMode()), TrustedImm32(resizabilityAndAutoLengthMask)));
         jit.load64(Address(R0, JSArrayBufferView::offsetOfLength()), T12);
@@ -4489,6 +4498,197 @@ static void generateMapSet(CCallHelpers& jit) { generateMapOrSetOperation(jit, M
 static void generateSetHas(CCallHelpers& jit) { generateMapOrSetOperation(jit, MapOrSetOperation::SetHas, nullptr); }
 static void generateSetAdd(CCallHelpers& jit) { generateMapOrSetOperation(jit, MapOrSetOperation::SetAdd, nullptr); }
 
+enum class WeakLookup : uint8_t { Get, Has };
+
+template<typename WeakMapOrSet>
+static void generateWeakLookup(CCallHelpers& jit, WeakLookup lookup)
+{
+    using Bucket = typename WeakMapOrSet::BucketType;
+    constexpr GPRReg collection = R0;
+    constexpr GPRReg key = A1;
+    constexpr GPRReg buffer = R0;
+    constexpr GPRReg mask = T9;
+    constexpr GPRReg index = T10;
+    constexpr GPRReg entryKey = T11;
+    constexpr unsigned wordsPerBucket = sizeof(Bucket) / sizeof(EncodedJSValue);
+    static_assert(hasOneBitSet(wordsPerBucket) && wordsPerBucket * sizeof(EncodedJSValue) == sizeof(Bucket));
+    static_assert(noOverlap(key, buffer, mask, index, entryKey));
+
+    Jump isNotCell = jit.branchIfNotCell(key);
+    jit.move(key, index);
+    jit.rapidHashMix64(index, mask, entryKey);
+    jit.load32(Address(collection, WeakMapOrSet::offsetOfCapacity()), mask);
+    jit.loadPtr(Address(collection, WeakMapOrSet::offsetOfBuffer()), buffer);
+    jit.sub32(TrustedImm32(1), mask);
+    if (wordsPerBucket > 1) {
+        jit.lshift64(TrustedImm32(getLSBSet(wordsPerBucket)), mask);
+        jit.lshift64(TrustedImm32(getLSBSet(wordsPerBucket)), index);
+    }
+    CCallHelpers::Label next = jit.label();
+    jit.and64(mask, index);
+    jit.load64(CCallHelpers::BaseIndex(buffer, index, CCallHelpers::TimesEight, Bucket::offsetOfKey()), entryKey);
+    Jump isFound = jit.branch64(CCallHelpers::Equal, entryKey, key);
+    jit.add64(TrustedImm32(wordsPerBucket), index);
+    jit.branchTest64(CCallHelpers::NonZero, entryKey).linkTo(next, &jit);
+
+    isNotCell.link(&jit);
+    if (lookup == WeakLookup::Get)
+        jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), R0);
+    else
+        jit.move(TrustedImm32(0), R0);
+    jit.ret();
+
+    isFound.link(&jit);
+    if constexpr (WeakMapOrSet::isWeakMap()) {
+        if (lookup == WeakLookup::Get) {
+            jit.load64(CCallHelpers::BaseIndex(buffer, index, CCallHelpers::TimesEight, Bucket::offsetOfValue()), R0);
+            jit.ret();
+            return;
+        }
+    }
+    jit.move(TrustedImm32(1), R0);
+    jit.ret();
+}
+
+static void generateWeakMapGet(CCallHelpers& jit) { generateWeakLookup<JSWeakMap>(jit, WeakLookup::Get); }
+static void generateWeakMapHas(CCallHelpers& jit) { generateWeakLookup<JSWeakMap>(jit, WeakLookup::Has); }
+static void generateWeakSetHas(CCallHelpers& jit) { generateWeakLookup<JSWeakSet>(jit, WeakLookup::Has); }
+
+enum class ArraySearch : uint8_t { Includes, IndexOf };
+
+static void generateArraySearch(CCallHelpers& jit, ArraySearch search)
+{
+    constexpr GPRReg butterfly = A1;
+    constexpr GPRReg needle = A2;
+    constexpr GPRReg length = T9;
+    constexpr GPRReg index = T10;
+    constexpr GPRReg element = T11;
+    constexpr GPRReg needleImpl = T12;
+    constexpr GPRReg needleLength = T13;
+    constexpr GPRReg impl = A3;
+    constexpr GPRReg flags = R0;
+    constexpr unsigned maxLengthToCompareOneByOne = 64;
+    static_assert(noOverlap(butterfly, needle, length, index, element, needleImpl, needleLength, impl, flags));
+    CCallHelpers::JumpList needsOperation;
+    CCallHelpers::JumpList isAbsent;
+    CCallHelpers::JumpList isFound;
+
+    jit.load32(Address(butterfly, Butterfly::offsetOfPublicLength()), length);
+    jit.move(TrustedImm32(0), index);
+    isAbsent.append(jit.branchTest32(CCallHelpers::Zero, length));
+    Jump isInt32 = jit.branchIfInt32(needle);
+    needsOperation.append(jit.branchIfNumber(needle));
+    Jump isCell = jit.branchIfCell(needle);
+    static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined);
+    needsOperation.append(jit.branch64(search == ArraySearch::Includes ? CCallHelpers::AboveOrEqual : CCallHelpers::Above, needle, TrustedImm32(JSValue::ValueUndefined)));
+    Jump isComparedByIdentity = jit.jump();
+    isCell.link(&jit);
+    jit.load8(Address(needle, JSCell::typeInfoTypeOffset()), element);
+    Jump isObject = jit.branch32(CCallHelpers::AboveOrEqual, element, TrustedImm32(ObjectType));
+    Jump isString = jit.branch32(CCallHelpers::Equal, element, TrustedImm32(StringType));
+    needsOperation.append(jit.branch32(CCallHelpers::NotEqual, element, TrustedImm32(SymbolType)));
+    isObject.link(&jit);
+    isComparedByIdentity.link(&jit);
+    needsOperation.append(jit.branch32(CCallHelpers::Above, length, TrustedImm32(maxLengthToCompareOneByOne)));
+    CCallHelpers::Label next = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(butterfly, index, CCallHelpers::TimesEight), element);
+    isFound.append(jit.branch64(CCallHelpers::Equal, element, needle));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::NotEqual, index, length).linkTo(next, &jit);
+    isAbsent.append(jit.jump());
+
+    isString.link(&jit);
+    jit.loadPtr(Address(needle, JSString::offsetOfValue()), needleImpl);
+    needsOperation.append(jit.branchIfRopeStringImpl(needleImpl));
+    jit.load32(Address(needleImpl, StringImpl::lengthMemoryOffset()), needleLength);
+    CCallHelpers::Label nextForString = jit.label();
+    CCallHelpers::JumpList differs;
+    jit.load64(CCallHelpers::BaseIndex(butterfly, index, CCallHelpers::TimesEight), element);
+    isFound.append(jit.branch64(CCallHelpers::Equal, element, needle));
+    differs.append(jit.branchTest64(CCallHelpers::Zero, element));
+    differs.append(jit.branchIfNotCell(element));
+    differs.append(jit.branchIfNotType(element, StringType));
+    jit.loadPtr(Address(element, JSString::offsetOfValue()), impl);
+    needsOperation.append(jit.branchIfRopeStringImpl(impl));
+    isFound.append(jit.branchPtr(CCallHelpers::Equal, impl, needleImpl));
+    differs.append(jit.branch32(CCallHelpers::NotEqual, needleLength, Address(impl, StringImpl::lengthMemoryOffset())));
+    jit.load32(Address(impl, StringImpl::flagsOffset()), flags);
+    jit.and32(Address(needleImpl, StringImpl::flagsOffset()), flags);
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, flags, TrustedImm32(StringImpl::flagIsAtom())));
+    differs.link(&jit);
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::NotEqual, index, length).linkTo(nextForString, &jit);
+    isAbsent.append(jit.jump());
+
+    isInt32.link(&jit);
+    CCallHelpers::Label nextForInt32 = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(butterfly, index, CCallHelpers::TimesEight), element);
+    isFound.append(jit.branch64(CCallHelpers::Equal, element, needle));
+    Jump isNotInt32 = jit.branchIfNotInt32(element);
+    CCallHelpers::Label advance = jit.label();
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::NotEqual, index, length).linkTo(nextForInt32, &jit);
+
+    isAbsent.link(&jit);
+    jit.move(TrustedImm32(search == ArraySearch::Includes ? 0 : -1), R0);
+    jit.ret();
+
+    isFound.link(&jit);
+    if (search == ArraySearch::Includes)
+        jit.move(TrustedImm32(1), R0);
+    else
+        jit.move(index, R0);
+    jit.ret();
+
+    isNotInt32.link(&jit);
+    jit.branchIfNotNumber(element).linkTo(advance, &jit);
+
+    needsOperation.link(&jit);
+    jit.move(TrustedImm32(0), A3);
+    jit.move(TrustedImm32(static_cast<unsigned>(search == ArraySearch::Includes ? Entry::operationArrayIncludesValueInt32OrContiguous : Entry::operationArrayIndexOfValueInt32OrContiguous) * sizeof(void*)), T9);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithGlobalObject)], &jit);
+}
+
+static void generateArrayIncludes(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::Includes); }
+static void generateArrayIndexOf(CCallHelpers& jit) { generateArraySearch(jit, ArraySearch::IndexOf); }
+
+static void generateChangeOfCase(CCallHelpers& jit, Entry operation, char firstLetterToChange)
+{
+    constexpr GPRReg string = A1;
+    constexpr GPRReg index = A2;
+    constexpr GPRReg distance = A3;
+    constexpr GPRReg characters = T9;
+    constexpr GPRReg length = T10;
+    constexpr GPRReg character = T11;
+    static_assert(noOverlap(R0, string, index, distance, characters, length, character));
+    CCallHelpers::JumpList needsOperation;
+
+    jit.move(TrustedImm32(0), index);
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), characters);
+    needsOperation.append(jit.branchIfRopeStringImpl(characters));
+    needsOperation.append(jit.branchTest32(CCallHelpers::Zero, Address(characters, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIs8Bit())));
+    jit.load32(Address(characters, StringImpl::lengthMemoryOffset()), length);
+    jit.loadPtr(Address(characters, StringImpl::dataOffset()), characters);
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, length);
+    CCallHelpers::Label next = jit.label();
+    jit.load8(CCallHelpers::BaseIndex(characters, index, CCallHelpers::TimesOne), character);
+    jit.sub32(character, TrustedImm32(firstLetterToChange), distance);
+    needsOperation.append(jit.branch32(CCallHelpers::BelowOrEqual, distance, TrustedImm32('z' - 'a')));
+    needsOperation.append(jit.branchTest32(CCallHelpers::NonZero, character, TrustedImm32(0x80)));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::NotEqual, index, length).linkTo(next, &jit);
+    isEmpty.link(&jit);
+    jit.move(string, R0);
+    jit.ret();
+
+    needsOperation.link(&jit);
+    jit.move(TrustedImm32(static_cast<unsigned>(operation) * sizeof(void*)), T9);
+    jit.jump().linkTo(stubLabels()[static_cast<unsigned>(Stub::OperationValueWithGlobalObject)], &jit);
+}
+
+static void generateToLowerCase(CCallHelpers& jit) { generateChangeOfCase(jit, Entry::operationToLowerCase, 'A'); }
+static void generateToUpperCase(CCallHelpers& jit) { generateChangeOfCase(jit, Entry::operationToUpperCase, 'a'); }
+
 static void generateCallIntrinsic(CCallHelpers& jit, StubIntrinsic intrinsic, CCallHelpers::JumpList& hasAnotherReceiver, CCallHelpers::JumpList& otherwise, CCallHelpers::JumpList& needsHostFunction)
 {
     using namespace IntrinsicRegisters;
@@ -4837,7 +5037,6 @@ static void generateMakeRope2WithFastPath(CCallHelpers& jit) { generateAheadOf(j
 static void generateMakeRope3WithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::MakeRope3SlowPath, Stub::HelperMakeRope3, 3); }
 static void generateStringSliceWithEndWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::StringSliceWithEndSlowPath, Stub::HelperStringSlice, 3); }
 static void generateStringSubstringWithEndWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::StringSubstringWithEndSlowPath, Stub::HelperStringSubstring, 3); }
-static void generateToLowerCaseWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::ToLowerCaseSlowPath, Stub::HelperToLowerCase, 1); }
 static void generateValueAddWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::ValueAddSlowPath, Stub::HelperAddStrings, 2); }
 static void generateObjectKeysObjectWithFastPath(CCallHelpers& jit) { generateAheadOf(jit, Entry::ObjectKeysObjectSlowPath, Stub::HelperObjectKeys, 1); }
 

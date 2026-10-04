@@ -8290,6 +8290,7 @@ protected:
 #if USE(BUN_JSC_ADDITIONS)
 public:
     JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
+    JS_EXPORT_PRIVATE static unsigned featuresOfBuildTarget();
 protected:
 #endif
 

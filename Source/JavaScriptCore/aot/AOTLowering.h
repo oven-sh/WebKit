@@ -72,7 +72,7 @@ private:
     };
     const ArrayView* viewOf(Node* access, Node* base);
     void hoistArrayStorageLoadsAheadOf(BasicBlock*);
-    void loadArrayView(Node* array, const ArrayViewVariables&);
+    void loadArrayView(Node* origin, Node* array, const ArrayViewVariables&);
     void reloadArrayViews();
     LBasicBlock entryBlockFor(BasicBlock* successor);
     Vector<std::tuple<BasicBlock*, Node*, ArrayViewVariables>, 4> m_arrayViews;
@@ -294,7 +294,6 @@ private:
     LValue coldCallForValue(Node*, Entry, LValue first, LValue second = nullptr, ColdCall = ColdCall::HasArbitraryEffects);
     B3::PatchpointValue* emitColdCall(Node*, LType, Entry, LValue first, LValue second, ColdCall);
     LValue callBinaryStub(Node*, Stub, LType, LValue, LValue);
-    static bool mayBeOverridden(ASCIILiteral className, Node* read);
     static RegisterSet stubTemporaries(unsigned count)
     {
         RELEASE_ASSERT(count <= std::size(stubTemporaryGPRs));
@@ -426,6 +425,7 @@ private:
     bool tryLowerPropertyVariant(Node*);
     LValue allocateObjectWithProperties(unsigned slot, const Vector<LValue, 8>& values, LBasicBlock otherwise);
     void lowerGetLength(Node*);
+    LValue lengthOfArray(Node* origin, LValue array);
     void lowerToThis(Node*);
     void throwTDZError(Node*);
     void throwStaticError(Node*);
@@ -455,7 +455,8 @@ private:
     void finishCall(B3::PatchpointValue*, CallMode, Rep result = Rep::JSValue);
     LBasicBlock branchIfCalleeIsFunction(Node* calleeNode, LValue callee);
 
-    LValue isReceiverKind(Node* read, Node* baseNode, LValue base, Receiver);
+    LValue isReceiverKind(Node* baseNode, LValue base, Receiver);
+    bool receiverMayHaveChangedSince(Node* read, Node* call) const;
     void lowerBuiltinRead(Node*, Node* baseNode);
     bool lowerSizeOfMapOrSet(Node*, Node* baseNode);
     bool lowerBuiltinCall(Node*, Node* calleeNode, unsigned argc, unsigned argv, const Arguments&, bool hasResult, LBasicBlock& afterwards, Vector<ValueFromBlock, 2>& results);

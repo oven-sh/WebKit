@@ -636,21 +636,6 @@ LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
     return m_out.phi(pointerType(), smallIntResult, intCacheResult);
 }
 
-LValue Emitter::stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp)
-{
-    orElse(m_out.logicalNot(isRopeString(string)), giveUp);
-    LValue impl = m_out.loadPtr(string, m_heaps.JSString_value);
-    orElse(m_out.testNonZero32(m_out.load32(impl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), giveUp);
-    LValue buffer = m_out.loadPtr(impl, m_heaps.StringImpl_data);
-    forEachUpTo(m_out.load32NonNegative(impl, m_heaps.StringImpl_length), [&](LValue index) {
-        LValue character = m_out.load8ZeroExt32(m_out.baseIndex(m_heaps.characters8, buffer, index));
-        LValue isInvalidAsciiRange = m_out.bitAnd(character, m_out.constInt32(~0x7F));
-        LValue isUpperCase = m_out.belowOrEqual(m_out.sub(character, m_out.constInt32('A')), m_out.constInt32('Z' - 'A'));
-        orElse(m_out.isZero32(m_out.bitOr(isInvalidAsciiRange, isUpperCase)), giveUp);
-    });
-    return string;
-}
-
 LValue Emitter::keysOfObject(LValue object, LBasicBlock giveUp)
 {
     LValue previousOrRareData = m_out.loadPtr(structureOf(object), m_heaps.Structure_previousOrRareData);
@@ -767,9 +752,6 @@ public:
         case Stub::HelperInt32ToString:
             result = int32ToString(int32At(0), giveUp);
             break;
-        case Stub::HelperToLowerCase:
-            result = stringIfAlreadyLowerCase(arguments[0], giveUp);
-            break;
         case Stub::HelperObjectKeys:
             result = keysOfObject(arguments[0], giveUp);
             break;
@@ -795,13 +777,22 @@ public:
 
 } // anonymous namespace
 
+void pinRegisters(Procedure& proc)
+{
+    proc.pinRegister(instanceGPR);
+    proc.pinRegister(GPRInfo::numberTagRegister);
+    proc.pinRegister(GPRInfo::notCellMaskRegister);
+#if CPU(ARM64)
+    if (proc.mutableGPRs().contains(ARM64Registers::x18, IgnoreVectors))
+        proc.pinRegister(ARM64Registers::x18);
+#endif
+}
+
 void generateHelper(CCallHelpers& jit, Stub stub)
 {
     Procedure proc(/* usesSIMD = */ false);
     proc.setPositionIndependent();
-    proc.pinRegister(instanceGPR);
-    proc.pinRegister(GPRInfo::numberTagRegister);
-    proc.pinRegister(GPRInfo::notCellMaskRegister);
+    pinRegisters(proc);
     Helpers helpers(proc);
     helpers.build(stub);
     for (Value* value : proc.values()) {

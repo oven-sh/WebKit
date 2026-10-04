@@ -143,7 +143,6 @@ protected:
     LValue addStrings(LValue first, LValue second, LBasicBlock giveUp);
     LValue int32ToString(LValue, LBasicBlock giveUp);
     LValue keysOfObject(LValue, LBasicBlock giveUp);
-    LValue stringIfAlreadyLowerCase(LValue string, LBasicBlock giveUp);
     void setArrayLength(LValue array, LValue length, LBasicBlock giveUp);
     void addTypedField(LValue, LValue storedValue, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell);
@@ -159,6 +158,7 @@ protected:
     LValue m_notCellMask { nullptr };
 };
 
+void pinRegisters(B3::Procedure&);
 void generateHelper(CCallHelpers&, Stub);
 
 } } // namespace JSC::AOT

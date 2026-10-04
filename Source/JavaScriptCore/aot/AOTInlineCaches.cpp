@@ -224,6 +224,8 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
     if (SharedData::contains(cache))
         return;
     if (auto namespaceSlot = slot.moduleNamespaceSlot()) {
+        if (base != slot.slotBase())
+            return;
         Structure* structure = base.asCell()->structure();
         uint32_t location = JSLexicalEnvironment::offsetOfVariable(ScopeOffset(namespaceSlot->scopeOffset)) / sizeof(EncodedJSValue);
         if (usesDataStubs() && structure == structureBefore && structure != globalObject->moduleNamespaceObjectStructure() && location < (1u << (Slot::offsetBits - 1)) && mayReplace(cache, structure)) {
@@ -366,12 +368,12 @@ static void noteLengthOfTypedArray(JSGlobalObject* globalObject, Instance& insta
     JSObject* secondPrototype = prototype ? prototypeOf(prototype->structure()) : nullptr;
     if (secondPrototype == viewPrototype)
         secondPrototype = prototype;
-    if (!secondPrototype || prototypeOf(secondPrototype->structure()) != viewPrototype)
+    if (!secondPrototype || prototypeOf(secondPrototype->structure()) != viewPrototype || isInlineOffset(slot.cachedOffset()))
         return;
     instance.typedArrayViewPrototype = viewPrototype;
     instance.typedArrayViewPrototypeStructureID = viewPrototype->structureID().bits();
     instance.typedArrayLengthAccessor = slot.getterSetter();
-    instance.typedArrayLengthLocation = viewPrototype->locationForOffset(slot.cachedOffset());
+    instance.typedArrayLengthOffsetInButterfly = offsetInButterfly(slot.cachedOffset()) * static_cast<intptr_t>(sizeof(EncodedJSValue));
     auto& entry = instance.typedArraysWithBuiltinLength[type - FirstTypedArrayType][structure != globalObject->typedArrayStructure(typedArrayType(type), false)];
     entry.structureID = 0;
     entry.prototype = prototype;
@@ -778,6 +780,15 @@ void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, 
     cache[1].offset = structure->typeInfoBlob();
     cache[1].pointer = allocator.localAllocator();
     fill(vm, data, &cache[0], structure, payload | (extra ? Slot::pointerIsCell : 0), extra);
+}
+
+void fillFunctionAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, Allocator allocator, uintptr_t functionWord)
+{
+    if (!allocator || SharedData::contains(cache))
+        return;
+    cache[1].offset = structure->typeInfoBlob();
+    cache[1].pointer = allocator.localAllocator();
+    fill(vm, data, &cache[0], structure, Slot::pointerIsNotCell, std::bit_cast<void*>(functionWord));
 }
 
 } } // namespace JSC::AOT

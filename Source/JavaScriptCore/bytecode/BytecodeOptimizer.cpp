@@ -47,6 +47,8 @@ namespace {
 
 constexpr unsigned noTarget = UINT_MAX;
 
+static_assert(NUMBER_OF_BYTECODE_IDS == 198, "A new opcode has to be considered in allowsOperandSubstitution() and computeImplicitUses(), whose defaults are not the conservative answer");
+
 struct Insn {
     const JSInstruction* instruction { nullptr }; // Points into the original stream. Null for synthesized instructions.
     unsigned oldOffset { 0 };
@@ -2205,6 +2207,11 @@ void BytecodeOptimizerAccess::run()
         }
         if (!changed)
             break;
+    }
+    for (unsigned i = 0; i < m_insns.size(); ++i) {
+        auto& insn = m_insns[i];
+        if (insn.live && insn.kind == Insn::Original && insn.opcode == op_type_tag && (i + 1 == m_insns.size() || !m_insns[i + 1].live || m_insns[i + 1].kind != Insn::Original))
+            insn.live = false;
     }
     // Blocks/liveness may be stale after the last DCE, but emission only needs per-instruction liveness flags
     // and reachability of handler targets, which DCE does not change.

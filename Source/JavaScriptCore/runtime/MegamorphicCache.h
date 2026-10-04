@@ -354,11 +354,13 @@ public:
         return nullptr;
     }
 
-    void bumpEpoch()
+    bool bumpEpoch()
     {
         ++m_epoch;
-        if (m_epoch == invalidEpoch) [[unlikely]]
-            clearEntries();
+        if (m_epoch != invalidEpoch) [[likely]]
+            return false;
+        clearEntries();
+        return true;
     }
 
     JS_EXPORT_PRIVATE void reconcileWeakReferencesAtGCEnd(VM&);

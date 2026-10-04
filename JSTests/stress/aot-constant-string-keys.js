@@ -23,6 +23,15 @@ function writesProto(o, v) { const key = "__proto__"; o[key] = v; }
 function updatesName(o) { const key = "name"; o[key] += "!"; return o[key]; }
 function readsAndWritesName(o) { const key = "name"; o[key] = o[key] + "!"; return o[key]; }
 function readsProperty(o) { return o.name; }
+function increments(o) { const key = "count"; o[key]++; return o[key]; }
+function preincrements(o) { const key = "count"; return ++o[key]; }
+function multiplies(o) { const key = "count"; o[key] *= 2; return o[key]; }
+function assignsIfMissing(o) { const key = "count"; o[key] ??= 5; return o[key]; }
+function assignsIfFalsy(o) { const key = "count"; o[key] ||= 6; return o[key]; }
+function assignsIfTruthy(o) { const key = "count"; o[key] &&= 7; return o[key]; }
+function updatesZero(o) { const key = "0"; o[key] += 1; return o[key]; }
+function updatesFraction(o) { const key = "1.5"; o[key] += 1; return o[key]; }
+function updatesAnyKey(o, key) { o[key] += 1; return o[key]; }
 
 function readsZero(o) { const key = "0"; return o[key]; }
 function readsTwelve(o) { const key = "12"; return o[key]; }
@@ -121,6 +130,43 @@ for (let round = 0; round < 3; round++) {
     check(updatesName({ name: "x" }), "x!", "a compound assignment");
     check(readsAndWritesName({ name: "x" }), "x!", "a read and a write");
     check(readsProperty({ name: "x" }), "x", "a read by name");
+    check(increments({ count: 1 }), 2, "an increment");
+    check(preincrements({ count: 1 }), 2, "an increment whose result is used");
+    check(multiplies({ count: 4 }), 8, "a multiplication");
+    check(increments({}), NaN, "an increment of a missing property");
+    check(assignsIfMissing({}), 5, "an assignment to a missing property");
+    check(assignsIfMissing({ count: 0 }), 0, "no assignment to a property that is there");
+    check(assignsIfFalsy({ count: 0 }), 6, "an assignment to a falsy property");
+    check(assignsIfFalsy({ count: 1 }), 1, "no assignment to a truthy property");
+    check(assignsIfTruthy({ count: 1 }), 7, "an assignment to a truthy property");
+    check(assignsIfTruthy({ count: 0 }), 0, "no assignment to a falsy property");
+    check(nameOfError(() => increments(undefined)), "TypeError", "an increment of a property of undefined");
+    check(nameOfError(() => assignsIfMissing(null)), "TypeError", "an assignment to a property of null");
+    {
+        let order = [];
+        let counted = { get count() { order.push("get"); return 1; }, set count(v) { order.push("set " + v); } };
+        increments(counted);
+        check(order.join(), "get,set 2,get", "an increment calls the getter, then the setter");
+        order = [];
+        assignsIfMissing(counted);
+        check(order.join(), "get,get", "an assignment that does not happen calls no setter");
+        order = [];
+        multiplies(new Proxy({ count: 3 }, {
+            get(target, key) { order.push("get " + typeof key + " " + key); return target[key]; },
+            set(target, key, value) { order.push("set " + typeof key + " " + key + " " + value); target[key] = value; return true; },
+        }));
+        check(order.join(), "get string count,set string count 6,get string count", "what the traps of a proxy see");
+    }
+    check(updatesZero([1]), 2, "a compound assignment to the key \"0\" of an array");
+    check(updatesZero(new Uint8Array([255])), 0, "a compound assignment to the key \"0\" of a typed array");
+    check(updatesFraction({ 1.5: 1 }), 2, "a compound assignment to the key \"1.5\" of an object");
+    check(updatesFraction(new Uint8Array(2)), undefined, "a compound assignment to the key \"1.5\" of a typed array");
+    check(updatesAnyKey({ count: 1 }, "count"), 2, "a compound assignment with a key that is not constant");
+    {
+        let conversions = 0;
+        check(updatesAnyKey({ count: 1 }, { toString() { conversions++; return "count"; } }), 2, "a compound assignment with a key that is an object");
+        check(conversions, 2, "which is converted once for the assignment and once for the read");
+    }
 
     let indexed = ["zero"];
     indexed[12] = "twelve";
@@ -166,15 +212,15 @@ for (let round = 0; round < 3; round++) {
 if (aotRemarks("readsName")) {
     const reads = "get-by-val-with-constant-key", writes = "put-by-val-with-constant-key";
     const usesDataStubs = aotRemarks("readsProperty").includes("calls:GetById");
-    for (let name of usesDataStubs ? ["readsName", "readsLength", "readsProto", "readsToFixed", "updatesName", "readsAndWritesName", "readsLeadingZero"] : []) {
+    for (let name of usesDataStubs ? ["readsName", "readsLength", "readsProto", "readsToFixed", "updatesName", "readsAndWritesName", "readsLeadingZero", "increments", "preincrements", "multiplies", "assignsIfMissing", "assignsIfFalsy", "assignsIfTruthy"] : []) {
         if (!aotRemarks(name).includes(reads))
             throw new Error(reads + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
     }
-    for (let name of usesDataStubs ? ["writesName", "writesNameStrictly", "writesLength", "writesProto", "readsAndWritesName"] : []) {
+    for (let name of usesDataStubs ? ["writesName", "writesNameStrictly", "writesLength", "writesProto", "readsAndWritesName", "updatesName", "increments", "preincrements", "multiplies", "assignsIfMissing", "assignsIfFalsy", "assignsIfTruthy"] : []) {
         if (!aotRemarks(name).includes(writes))
             throw new Error(writes + " does not apply to " + name + ": " + aotRemarks(name).join(" "));
     }
-    for (let name of ["readsZero", "readsTwelve", "readsLargestIndex", "readsBeyondLargestIndex", "readsMinusZero", "readsMinusOne", "readsFraction", "readsNaN", "readsInfinity", "writesZero", "writesFraction", "readsUnusualKey", "readsSymbol", "readsAnyKey", "writesAnyKey", "readsNumber"]) {
+    for (let name of ["readsZero", "readsTwelve", "readsLargestIndex", "readsBeyondLargestIndex", "readsMinusZero", "readsMinusOne", "readsFraction", "readsNaN", "readsInfinity", "writesZero", "writesFraction", "readsUnusualKey", "readsSymbol", "readsAnyKey", "writesAnyKey", "readsNumber", "updatesZero", "updatesFraction", "updatesAnyKey"]) {
         if (aotRemarks(name).includes(reads) || aotRemarks(name).includes(writes))
             throw new Error("a constant key is assumed in " + name);
     }

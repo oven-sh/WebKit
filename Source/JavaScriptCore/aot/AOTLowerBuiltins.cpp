@@ -38,16 +38,8 @@ static ASCIILiteral pathOf(Builtin builtin)
     return ""_s;
 }
 
-bool Lowering::mayBeOverridden(ASCIILiteral className, Node* read)
+LValue Lowering::isReceiverKind(Node* baseNode, LValue base, Receiver receiver)
 {
-    return Graph::methodMayBeOverridden(className, read);
-}
-
-LValue Lowering::isReceiverKind(Node* read, Node* baseNode, LValue base, Receiver receiver)
-{
-    static constexpr ASCIILiteral classNames[] = { ""_s, "String"_s, "Array"_s, "Map"_s, "Set"_s, "WeakMap"_s, "WeakSet"_s, "RegExp"_s, "Date"_s, "Number"_s };
-    if (receiver >= Receiver::Map && receiver <= Receiver::Date && baseNode->type && isSubtype(baseNode->type, typeOf(receiver)) && !mayBeOverridden(classNames[static_cast<unsigned>(receiver)], read))
-        return nullptr;
     switch (receiver) {
     case Receiver::None:
         break;
@@ -59,8 +51,6 @@ LValue Lowering::isReceiverKind(Node* read, Node* baseNode, LValue base, Receive
             return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isCellOfType(cell, StringType); });
     case Receiver::Array:
-        if (read && isSubtype(baseNode->type, TArray) && Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(read)) && (!Graph::hasOverriddenMethodInfo() || !mayBeOverridden("Array"_s, read)))
-            return nullptr;
         return isCellAnd(baseNode, base, [&](LValue cell) { return isOriginalArray(cell); });
     case Receiver::Map:
     case Receiver::Set:
@@ -76,11 +66,26 @@ LValue Lowering::isReceiverKind(Node* read, Node* baseNode, LValue base, Receive
     return nullptr;
 }
 
+bool Lowering::receiverMayHaveChangedSince(Node* read, Node* call) const
+{
+    auto& nodes = m_block->nodes;
+    if (m_nodeIndex >= nodes.size() || nodes[m_nodeIndex] != call)
+        return true;
+    for (unsigned i = m_nodeIndex; i--;) {
+        Node* earlier = nodes[i];
+        if (earlier == read)
+            return false;
+        if (!earlier->isElided && Graph::propertyEffectOf(earlier) != PropertyEffect::None)
+            return true;
+    }
+    return true;
+}
+
 void Lowering::lowerBuiltinRead(Node* node, Node* baseNode)
 {
     unsigned number = std::exchange(node->builtinCalled, 0);
     LValue known = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[number]);
-    LValue isExpectedReceiver = isReceiverKind(node, baseNode, lowJSValue(baseNode), static_cast<Receiver>(node->builtinReceiver));
+    LValue isExpectedReceiver = isReceiverKind(baseNode, lowJSValue(baseNode), static_cast<Receiver>(node->builtinReceiver));
     m_receiverChecks.set(node, isExpectedReceiver);
     if (!isExpectedReceiver)
         setJSValue(node, known);
@@ -125,11 +130,7 @@ bool Lowering::lowerSizeOfMapOrSet(Node* node, Node* baseNode)
         m_out.appendTo(continuation);
         return m_out.phi(Int32, withoutStorage, withStorage);
     };
-    LValue isExpectedReceiver = isReceiverKind(node, baseNode, base, receiver);
-    if (!isExpectedReceiver) {
-        setResult(node, readSize(), Rep::Int32);
-        return true;
-    }
+    LValue isExpectedReceiver = isReceiverKind(baseNode, base, receiver);
     LBasicBlock isExpected = m_out.newBlock();
     LBasicBlock otherwise = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -163,15 +164,20 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         if (condition)
             fits = fits ? m_out.bitAnd(fits, condition) : condition;
     };
+    bool repeatsReceiverCheck = false;
     if (receiver != Receiver::None) {
         auto check = m_receiverChecks.find(calleeNode);
         if (check == m_receiverChecks.end())
             return false;
         also(check->value);
+        if (check->value && (receiver == Receiver::Array || receiver == Receiver::RegExp) && receiverMayHaveChangedSince(calleeNode, node)) {
+            repeatsReceiverCheck = true;
+            also(isReceiverKind(nodeAt(0), arguments[0], receiver));
+        }
     } else if (Receiver required = requiredReceiver(node->builtinCalled); required != Receiver::None) {
         if (!mayBe(typeAt(0), typeOf(required)) || (required == Receiver::Number && !isSubtype(typeAt(0), TNumber)))
             return false;
-        also(isReceiverKind(nullptr, nodeAt(0), arguments[0], required));
+        also(isReceiverKind(nodeAt(0), arguments[0], required));
     }
     auto requireType = [&](unsigned i, Type type, auto&& test) {
         if (i >= argc || !mayBe(typeAt(i), type))
@@ -221,7 +227,7 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     auto mustBeOriginalRegExp = [&](unsigned i) {
         if (i >= argc || !isSubtype(typeAt(i), TRegExp))
             return false;
-        also(isReceiverKind(nullptr, nodeAt(i), arguments[i], Receiver::RegExp));
+        also(isReceiverKind(nodeAt(i), arguments[i], Receiver::RegExp));
         also(isNumber(m_out.load64(arguments[i], m_heaps.RegExpObject_lastIndex)));
         return true;
     };
@@ -232,6 +238,8 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     LBasicBlock otherwise = nullptr;
     auto begin = [&](bool mayGiveUp = false) {
         m_graph.remark("lowered-builtin"_s, pathOf(builtin));
+        if (repeatsReceiverCheck)
+            m_graph.remark("repeats-receiver-check-at-call"_s, pathOf(builtin));
         if (!fits && !mayGiveUp)
             return;
         otherwise = m_out.newBlock();
@@ -673,11 +681,13 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         begin();
         return finishValue(vmCall(node, pointerType(), builtin == Builtin::StringTrim ? Entry::operationStringTrim : builtin == Builtin::StringTrimStart ? Entry::operationStringTrimStart : Entry::operationStringTrimEnd, m_globalObject, thisValue));
     case Builtin::StringToLowerCase:
+    case Builtin::StringToUpperCase: {
+        bool isToLowerCase = builtin == Builtin::StringToLowerCase;
         begin();
-        return finishValue(withHelper(Stub::HelperToLowerCase, { thisValue }, [&] { return vmCall(node, pointerType(), Entry::operationToLowerCase, m_globalObject, thisValue, m_out.int32Zero); }));
-    case Builtin::StringToUpperCase:
-        begin();
-        return finishValue(vmCall(node, pointerType(), Entry::operationToUpperCase, m_globalObject, thisValue, m_out.int32Zero));
+        if (usesDataStubs())
+            return finishValue(callStub(isToLowerCase ? Stub::ToLowerCase : Stub::ToUpperCase, pointerType(), { { thisValue, GPRInfo::argumentGPR1 } }, { }, StubClobbers::CallerSavedRegisters, node));
+        return finishValue(vmCall(node, pointerType(), isToLowerCase ? Entry::operationToLowerCase : Entry::operationToUpperCase, m_globalObject, thisValue, m_out.int32Zero));
+    }
     case Builtin::StringConcat: {
         if (count != 1 || !mustBeString(1))
             return false;
@@ -747,12 +757,18 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
     case Builtin::ArrayIncludes: {
         if (count != 1)
             return false;
+        bool isIndexOf = builtin == Builtin::ArrayIndexOf;
         also(m_out.notZero32(changing32(Instance::offsetOfArraysLackInheritedElements())));
         begin(true);
         LValue butterfly = jsValueArrayButterfly(thisValue);
-        if (builtin == Builtin::ArrayIndexOf)
-            return finish(m_out.castToInt32(vmCall(node, Int64, Entry::operationArrayIndexOfValueInt32OrContiguous, m_globalObject, butterfly, arguments[1], m_out.int32Zero)), Rep::Int32);
-        return finishBoolean(m_out.notZero32(m_out.castToInt32(vmCall(node, Int64, Entry::operationArrayIncludesValueInt32OrContiguous, m_globalObject, butterfly, arguments[1], m_out.int32Zero))));
+        LValue found;
+        if (usesDataStubs() && !isSubtype(typeAt(1), TBigInt | (isIndexOf ? TNone : TUndefined)))
+            found = callStub(isIndexOf ? Stub::ArrayIndexOf : Stub::ArrayIncludes, Int64, { { butterfly, GPRInfo::argumentGPR1 }, { lowJSValuePreferringInt32(nodeAt(1)), GPRInfo::argumentGPR2 } }, { }, StubClobbers::CallerSavedRegisters, node);
+        else
+            found = vmCall(node, Int64, isIndexOf ? Entry::operationArrayIndexOfValueInt32OrContiguous : Entry::operationArrayIncludesValueInt32OrContiguous, m_globalObject, butterfly, arguments[1], m_out.int32Zero);
+        if (isIndexOf)
+            return finish(m_out.castToInt32(found), Rep::Int32);
+        return finishBoolean(m_out.notZero32(m_out.castToInt32(found)));
     }
     case Builtin::ArrayAt: {
         if (count != 1 || !mustBeInt32(1))
@@ -812,8 +828,6 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
             operands.append({ arguments[2], argumentGPR(1) });
         LValue result = callStub(stub, Int64, operands, { }, StubClobbers::CallerSavedRegisters, node);
         m_nodeKeepsReads = true;
-        if (!otherwise && (builtin == Builtin::MapHas || builtin == Builtin::SetHas))
-            return finishBoolean(m_out.equal(result, m_out.constInt64(JSValue::ValueTrue)));
         return finishValue(result);
     }
     case Builtin::MapDelete:
@@ -823,16 +837,24 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         begin();
         return finishBoolean(isTrueResult(vmCall(node, Int64, builtin == Builtin::MapDelete ? Entry::operationAOTMapDelete : Entry::operationAOTSetDelete, m_instance, thisValue, arguments[1])));
     case Builtin::WeakMapGet:
-        if (count != 1)
-            return false;
-        begin();
-        return finishValue(plainCall(Int64, Entry::operationAOTWeakMapGet, thisValue, arguments[1]));
     case Builtin::WeakMapHas:
-    case Builtin::WeakSetHas:
+    case Builtin::WeakSetHas: {
         if (count != 1)
             return false;
+        bool isGet = builtin == Builtin::WeakMapGet;
         begin();
+        if (usesDataStubs()) {
+            PatchpointValue* found = callStub(isGet ? Stub::WeakMapGet : builtin == Builtin::WeakMapHas ? Stub::WeakMapHas : Stub::WeakSetHas, isGet ? Int64 : Int32,
+                { { thisValue, firstStubOperandGPR }, { arguments[1], GPRInfo::argumentGPR1 } }, { }, StubClobbers::Temporaries);
+            found->effects = Effects::none();
+            found->effects.reads = HeapRange::top();
+            found->effects.controlDependent = true;
+            return isGet ? finishValue(found) : finishBoolean(found);
+        }
+        if (isGet)
+            return finishValue(plainCall(Int64, Entry::operationAOTWeakMapGet, thisValue, arguments[1]));
         return finishBoolean(isTrueResult(plainCall(Int64, builtin == Builtin::WeakMapHas ? Entry::operationAOTWeakMapHas : Entry::operationAOTWeakSetHas, thisValue, arguments[1])));
+    }
 
     case Builtin::RegExpTest:
         if (count != 1 || !mustBeString(1))

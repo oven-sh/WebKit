@@ -60,6 +60,7 @@ struct AllocationPlan {
     bool isAssigned(unsigned i) const { return words[i + 1] & 4; }
     bool isDefined(unsigned i) const { return words[i + 1] & 2; }
     bool isStrict(unsigned i) const { return words[i + 1] & 1; }
+    uint16_t thisLayoutID() const { return static_cast<uint16_t>(words[count() + 1]); }
 
     const uint32_t* words { nullptr };
 };
@@ -89,6 +90,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset) const;
     JS_EXPORT_PRIVATE void* catchEntrypointAddress(unsigned bytecodeOffset) const;
+    JS_EXPORT_PRIVATE JSCell* calleeInFrame(const void* frame) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
     JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;

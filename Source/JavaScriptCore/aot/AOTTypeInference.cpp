@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
 #include "ImmutableIntrinsics.h"
@@ -22,6 +23,85 @@ namespace {
 
 constexpr Type TNumberLike = TNumber | TBoolean | TOther;
 constexpr Type TMayBeFalsy = TAll & ~(TSymbol | (TAnyObject & ~(TOtherObject | TFunction)));
+constexpr Type TBuiltinsThatMayBeExtended = TArray | TPromise | TRegExp | TMap | TSet;
+
+Type builtinConstructedBy(const Node* constructor)
+{
+    auto made = constructingIntrinsicResult(constructor->intrinsic);
+    if (!made)
+        return TNone;
+    for (Type builtin : { TArray, TPromise, TRegExp, TMap, TSet }) {
+        if (isSubtype(*made, builtin))
+            return builtin;
+    }
+    return TNone;
+}
+
+Type builtinsBehind(const Node* constructor)
+{
+    if (constructor->kind == NodeKind::Intrinsic)
+        return builtinConstructedBy(constructor);
+    if (constructor->kind != NodeKind::Bytecode)
+        return TBuiltinsThatMayBeExtended;
+    switch (constructor->opcode) {
+    case op_new_func:
+    case op_new_func_exp:
+        return TNone;
+    case op_get_from_scope: {
+        bool isExact = false;
+        return constructor->graph->knownFunctionReadBy(constructor, &isExact) && isExact ? TNone : TBuiltinsThatMayBeExtended;
+    }
+    default:
+        return TBuiltinsThatMayBeExtended;
+    }
+}
+
+Type builtinsExtendedBy(const Node* user)
+{
+    if (user->isBytecode(op_call) || user->isBytecode(op_call_ignore_result) || user->isBytecode(op_tail_call)) {
+        auto operands = Graph::callOperands(user->instruction);
+        Node* callee = user->use(operands.callee);
+        if (operands.argc == 2 && Graph::linkTimeConstantOf(callee) == LinkTimeConstant::setPrototypeDirectOrThrow)
+            return user->use(operands.argument(0))->isBytecode(op_new_func_exp) ? builtinsBehind(user->use(operands.argument(1))) : TNone;
+        if (callee->kind == NodeKind::Intrinsic && isReflectConstruct(callee->intrinsic)) {
+            for (auto& use : user->uses) {
+                if (use.node == callee && use.reg != operands.callee)
+                    return TBuiltinsThatMayBeExtended;
+            }
+            if (operands.argc < 4 || user->use(operands.argument(1)) == user->use(operands.argument(3)))
+                return TNone;
+            return builtinsBehind(user->use(operands.argument(1)));
+        }
+    }
+    if (user->isBytecode(op_construct_varargs)) {
+        auto bytecode = user->as<OpConstructVarargs>();
+        Node* callee = user->use(bytecode.m_callee);
+        if (bytecode.m_thisValue.isValid() && user->use(bytecode.m_thisValue) != callee)
+            return builtinsBehind(callee);
+    }
+    if (user->kind == NodeKind::Guard || user->isBytecode(op_jneq_ptr) || user->isBytecode(op_jeq_ptr))
+        return TNone;
+    for (auto& use : user->uses) {
+        if (use.node->kind == NodeKind::Intrinsic && isReflectConstruct(use.node->intrinsic))
+            return TBuiltinsThatMayBeExtended;
+    }
+    return TNone;
+}
+
+template<typename Functor>
+void forEachBuiltinExtendedIn(Graph& graph, const Functor& functor)
+{
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* phi : block->phis) {
+            if (Type builtins = builtinsExtendedBy(phi))
+                functor(builtins);
+        }
+        for (Node* node : block->nodes) {
+            if (Type builtins = builtinsExtendedBy(node))
+                functor(builtins);
+        }
+    }
+}
 
 class TypeInference {
 public:
@@ -118,8 +198,12 @@ public:
 
     void run()
     {
-        if (!calleesWithWidenedInputs && m_graph.summary() && m_graph.summary()->isNonEscaping)
-            m_graph.remark("function-does-not-escape"_s);
+        remarkOnEscape();
+        if (!calleesWithWidenedInputs && (Options::aotRemarksPath() || Options::aotTypeCoveragePath())) [[unlikely]] {
+            forEachBuiltinExtendedIn(m_graph, [&](Type builtins) {
+                m_graph.remark("extends-builtin"_s, builtins == TBuiltinsThatMayBeExtended ? "unknown"_s : builtins == TArray ? "Array"_s : builtins == TPromise ? "Promise"_s : builtins == TRegExp ? "RegExp"_s : builtins == TMap ? "Map"_s : "Set"_s);
+            });
+        }
         findVariablesThatAreNotEmptyWhenRead();
         iterateToFixpoint();
         constexpr unsigned maxRounds = 4;
@@ -144,6 +228,7 @@ public:
                     m_returnType |= TTop;
                     break;
                 default:
+                    RELEASE_ASSERT(!(traitsOf(node->opcode) & OpcodeTraits::Returns));
                     break;
                 }
                 if (calleesWithWidenedInputs && isReached()) {
@@ -218,6 +303,8 @@ public:
         m_elementTypes.clear();
         m_elementTypesChanged = false;
         m_treatsEmptyArraysAsUntyped = false;
+        m_users.reset();
+        m_aliasesOfObjectsKeptToThemselves.clear();
     }
 
     struct TestedValue {
@@ -499,11 +586,119 @@ public:
 private:
     Vector<const FunctionSummary*> m_knownTailCallees;
 
-    bool markEscaping(Type type, uint32_t why)
+    static String describe(FunctionSummary::EscapeCause cause)
+    {
+        auto withName = [&](ASCIILiteral text) -> String {
+            return cause.name ? makeString(text, ':', StringView(cause.name)) : String(text);
+        };
+        switch (cause.why & 0xff) {
+        case FunctionSummary::ReportedByBundler:
+            return "reported-by-bundler"_s;
+        case FunctionSummary::CreationSiteUnknown:
+            return "creation-site-unknown"_s;
+        case FunctionSummary::ReferencesItself:
+            return "references-itself"_s;
+        case FunctionSummary::ExternalFunction:
+            return "external-function"_s;
+        case FunctionSummary::NotCallable:
+            return "not-callable"_s;
+        case FunctionSummary::FunctionNumberOverflow:
+            return "function-number-overflow"_s;
+        case FunctionSummary::UsedBy:
+            if (unsigned user = cause.why >> 8; user < static_cast<unsigned>(numOpcodeIDs))
+                return makeString("used-by:"_s, opcodeNames[user]);
+            return "used-by-node"_s;
+        case FunctionSummary::PassedToUnknownCallee:
+            return "passed-to-unknown-call"_s;
+        case FunctionSummary::PassedAsThis:
+            return "passed-as-this"_s;
+        case FunctionSummary::PassedAsExtraArgument:
+            return "passed-as-extra-argument"_s;
+        case FunctionSummary::CalledIndirectly:
+            return "called-indirectly"_s;
+        case FunctionSummary::ReturnedToUnknownCaller:
+            return "returned"_s;
+        case FunctionSummary::MergedInPhi:
+            return "merged-in-phi"_s;
+        case FunctionSummary::MergedInFrameRegister:
+            return "merged-in-frame-register"_s;
+        case FunctionSummary::MergedInVariable:
+            return "merged-in-variable"_s;
+        case FunctionSummary::MergedInParameter:
+            return "merged-in-parameter"_s;
+        case FunctionSummary::MergedInReturn:
+            return "merged-in-return"_s;
+        case FunctionSummary::LostThroughAlias:
+            return "lost-through-alias"_s;
+        case FunctionSummary::StoredInModuleVariable:
+            return "stored-in-module-variable"_s;
+        case FunctionSummary::StoredInUntrackedVariable:
+            return "stored-in-untracked-variable"_s;
+        case FunctionSummary::StoredToUnknownLocation:
+            return "stored-to-unknown-location"_s;
+        case FunctionSummary::StoredInDynamicallyReadVariable:
+            return "stored-in-dynamically-read-variable"_s;
+        case FunctionSummary::ReadInexactly:
+            return "read-inexactly"_s;
+        case FunctionSummary::PropertyRead:
+            return withName("property-read"_s);
+        case FunctionSummary::PropertyWritten:
+            return withName("property-written"_s);
+        case FunctionSummary::PrototypeRead:
+            return "prototype"_s;
+        case FunctionSummary::LeftOfInstanceof:
+            return "instanceof"_s;
+        case FunctionSummary::RightOfInstanceof:
+            return "right-of-instanceof"_s;
+        case FunctionSummary::StoredInProperty:
+            return "stored-in-property"_s;
+        case FunctionSummary::Constructed:
+            return "constructed"_s;
+        default:
+            return "unknown"_s;
+        }
+    }
+
+    void remarkOnEscape()
+    {
+        const FunctionSummary* summary = m_graph.summary();
+        if (calleesWithWidenedInputs || !summary)
+            return;
+        if (summary->isNonEscaping) {
+            m_graph.remark("function-does-not-escape"_s);
+            return;
+        }
+        if (!Options::aotRemarksPath() && !Options::aotTypeCoveragePath()) [[likely]]
+            return;
+        Vector<FunctionSummary::EscapeCause, 4> causes;
+        {
+            Locker locker { summary->escapeCausesLock };
+            causes.appendVector(summary->escapeCauses);
+        }
+        uint32_t first = summary->escapeReason.load(std::memory_order_relaxed);
+        if (!causes.containsIf([&](auto& cause) { return cause.why == first; }))
+            causes.append({ first, nullptr });
+        Vector<String, 4> descriptions;
+        bool isOnlyThroughProperties = true;
+        for (auto& cause : causes) {
+            isOnlyThroughProperties &= cause.why == FunctionSummary::PropertyRead || cause.why == FunctionSummary::PropertyWritten;
+            if (String description = describe(cause); !descriptions.contains(description))
+                descriptions.append(WTF::move(description));
+        }
+        std::ranges::sort(descriptions, [](const String& a, const String& b) { return codePointCompareLessThan(a, b); });
+        for (auto& description : descriptions)
+            m_graph.remark("function-escapes"_s, description);
+        if (isOnlyThroughProperties)
+            m_graph.remark("function-escapes-only-through-properties"_s);
+    }
+
+    bool markEscaping(Type type, uint32_t why, UniquedStringImpl* name = nullptr)
     {
         const KnownFunction* function = programFunctions()->function(functionNumberOf(type));
         if (!function || !function->summary)
             return false;
+        if (Options::aotRemarksPath() || Options::aotTypeCoveragePath()) [[unlikely]]
+            function->summary->noteEscapeCause({ why, name });
         Vector<Type, FunctionSummary::maxParameters + 1> wasPassed;
         if (!function->summary->markEscaping(why, [&](Type passed) { wasPassed.append(passed); }))
             return false;
@@ -585,13 +780,20 @@ private:
         }
     }
 
-    bool readRunsNoProgramCode(Type base, const Identifier& property)
+    enum class Access : uint8_t { Read, Write };
+    bool accessRunsNoProgramCode(Type base, const Identifier& property, Access access)
     {
         const KnownFunction* function = programFunctions()->function(functionNumberOf(base));
-        if (!function || !function->executable)
+        if (!function || !function->executable || property.isPrivateName())
             return true;
         const CommonIdentifiers& names = *m_graph.vm().propertyNames;
-        if (property.isPrivateName() || property == names.name || property == names.length)
+        if constexpr (ImmutableIntrinsics::functionPrototypesAreSealed) {
+            if (ImmutableIntrinsics::shared() && !function->executable->isClass())
+                return property != names.prototype && property != names.underscoreProto && property != names.caller && property != names.arguments;
+        }
+        if (access == Access::Write)
+            return false;
+        if (property == names.name || property == names.length)
             return true;
         return inheritsFromFunctionPrototypeOnly(*function) && isDataPropertyOfFunctionPrototype(*property.impl());
     }
@@ -601,7 +803,19 @@ private:
         const KnownFunction* function = programFunctions()->function(functionNumberOf(constructor));
         if (!function || !function->executable)
             return true;
-        return function->executable->parseMode() == SourceParseMode::NormalFunctionMode && !function->executable->isClass();
+        if (function->executable->isClass())
+            return false;
+        if constexpr (ImmutableIntrinsics::functionPrototypesAreSealed) {
+            if (ImmutableIntrinsics::shared())
+                return true;
+        }
+        return function->executable->parseMode() == SourceParseMode::NormalFunctionMode;
+    }
+
+    void noteReadOfProperty(Type base, const Identifier& property)
+    {
+        if (!accessRunsNoProgramCode(base, property, Access::Read))
+            markEscaping(base, property == m_graph.vm().propertyNames->prototype ? FunctionSummary::PrototypeRead : FunctionSummary::PropertyRead, property.impl());
     }
 
     void noteEscapesThrough(Node* user)
@@ -669,25 +883,44 @@ private:
         case op_set_function_name:
             return;
         case op_get_by_id:
-            if (!readRunsNoProgramCode(user->use(user->as<OpGetById>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetById>().m_property)))
-                markOperandsEscaping(user);
-            return;
+            return noteReadOfProperty(user->use(user->as<OpGetById>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetById>().m_property));
         case op_get_by_id_direct:
-            if (!readRunsNoProgramCode(user->use(user->as<OpGetByIdDirect>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetByIdDirect>().m_property)))
-                markOperandsEscaping(user);
-            return;
+            return noteReadOfProperty(user->use(user->as<OpGetByIdDirect>().m_base)->type, user->graph->codeBlock()->identifier(user->as<OpGetByIdDirect>().m_property));
         case op_instanceof: {
             auto bytecode = user->as<OpInstanceof>();
-            if (bytecode.m_constructor != bytecode.m_value && hasInstanceRunsNoProgramCode(user->use(bytecode.m_constructor)->type))
-                return markOperandsEscapingExcept(bytecode.m_constructor);
-            markOperandsEscaping(user);
+            bool constructorIsHarmless = bytecode.m_constructor != bytecode.m_value && hasInstanceRunsNoProgramCode(user->use(bytecode.m_constructor)->type);
+            for (auto& use : user->uses) {
+                if (use.reg == bytecode.m_value)
+                    markEscaping(use.node->type, FunctionSummary::LeftOfInstanceof);
+                else if (use.reg != bytecode.m_constructor)
+                    markEscaping(use.node->type, usedBy(user));
+                else if (!constructorIsHarmless)
+                    markEscaping(use.node->type, FunctionSummary::RightOfInstanceof);
+            }
             return;
         }
-        case op_put_by_id:
-            if (user->as<OpPutById>().m_flags.isDirect() || user->graph->codeBlock()->identifier(user->as<OpPutById>().m_property).isPrivateName())
-                return markOperandsEscapingExcept(user->as<OpPutById>().m_base);
-            markOperandsEscaping(user);
+        case op_put_by_id: {
+            auto bytecode = user->as<OpPutById>();
+            const Identifier& property = user->graph->codeBlock()->identifier(bytecode.m_property);
+            Type base = user->use(bytecode.m_base)->type;
+            if (!bytecode.m_flags.isDirect() && !accessRunsNoProgramCode(base, property, Access::Write))
+                markEscaping(base, FunctionSummary::PropertyWritten, property.impl());
+            markEscaping(user->use(bytecode.m_value)->type, FunctionSummary::StoredInProperty);
             return;
+        }
+        case op_put_by_val:
+            markEscaping(user->use(user->as<OpPutByVal>().m_value)->type, FunctionSummary::StoredInProperty);
+            return markOperandsEscapingExcept(user->as<OpPutByVal>().m_value);
+        case op_put_by_val_direct:
+            markEscaping(user->use(user->as<OpPutByValDirect>().m_value)->type, FunctionSummary::StoredInProperty);
+            return markOperandsEscapingExcept(user->as<OpPutByValDirect>().m_value);
+        case op_construct: {
+            auto bytecode = user->as<OpConstruct>();
+            VirtualRegister newTarget(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset());
+            for (auto& use : user->uses)
+                markEscaping(use.node->type, use.reg == bytecode.m_callee || use.reg == newTarget ? FunctionSummary::Constructed : FunctionSummary::PassedToUnknownCallee);
+            return;
+        }
         case op_get_from_scope: {
             bool isExact = false;
             if (const KnownFunction* known = m_graph.knownFunctionReadBy(user, &isExact); known && !isExact)
@@ -771,6 +1004,11 @@ private:
         };
         switch (node->opcode) {
         case op_put_to_scope:
+            if (node->as<OpPutToScope>().m_var == UINT_MAX) {
+                if (programFunctions())
+                    markEscaping(node->use(node->as<OpPutToScope>().m_value)->type, FunctionSummary::StoredInUntrackedVariable);
+                return;
+            }
             if (Variable variable = m_graph.variableAccessedBy(node)) {
                 Type put = node->use(node->as<OpPutToScope>().m_value)->type;
                 Type before = summaries->join(variable, put);
@@ -802,6 +1040,7 @@ private:
             noteInitialValue(node->as<OpCreateGeneratorFrameEnvironment>().m_initialValue);
             return;
         default:
+            RELEASE_ASSERT(!(traitsOf(node->opcode) & OpcodeTraits::StoresToVariables));
             return;
         }
     }
@@ -832,7 +1071,7 @@ private:
         case op_put_to_scope: {
             VariableSummaries* summaries = m_graph.variableSummaries();
             Variable variable = summaries ? m_graph.variableAccessedBy(node) : Variable { };
-            if (!variable)
+            if (!variable || node->as<OpPutToScope>().m_var == UINT_MAX)
                 return;
             if (node->graph->isGeneratorFrame(variable.scope)) {
                 if (!node->isElided && isSavedAtDefinition(variable))
@@ -995,8 +1234,10 @@ private:
                 return TNone;
             number = intrinsicFoundOnPrimitive(base, *callee->graph->codeBlock()->identifier(bytecode.m_property).impl());
             if (!number && node->use(VirtualRegister(firstArgument)) == receiver) {
-                number = builtinMethodReadFromObject(callee, base);
+                number = builtinMethodReadFromObject(callee, node);
                 isMethodOfObject = true;
+                if (!number && isOnlyTestedAndBooleanUnlessShadowed(node, callee, base))
+                    return TBoolean;
             }
             receiverMayBeNullish = mayBe(receiver->type, TOther);
         }
@@ -1049,6 +1290,10 @@ private:
             m_graph.remark("int32-result-of-builtin-with-int32-arguments"_s);
             return TInt32;
         }
+        case BuiltinSignature::Condition::IfReceiverIsOriginal:
+            if (!isMethodOfObject)
+                return std::nullopt;
+            break;
         }
         return signature->result;
     }
@@ -1078,40 +1323,221 @@ private:
         return numberOfUses == 1;
     }
 
-    static unsigned builtinMethodReadFromObject(Node* read, Type base)
+    bool isOnlyTestedAndBooleanUnlessShadowed(Node* call, Node* read, Type base)
     {
-        Receiver receiver = receiverWithType(base);
-        switch (receiver) {
-        case Receiver::None:
-        case Receiver::String:
-        case Receiver::Number:
-            return 0;
-        case Receiver::Array:
-            if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced() || !TypeTable::shared()->isArray(Graph::typeTagOf(read)))
-                return 0;
-            if (Graph::hasOverriddenMethodInfo() && Graph::methodMayBeOverridden(nameOf(receiver), read))
-                return 0;
-            break;
-        case Receiver::Map:
-        case Receiver::Set:
-        case Receiver::WeakMap:
-        case Receiver::WeakSet:
-        case Receiver::RegExp:
-        case Receiver::Date:
-            if (Graph::methodMayBeOverridden(nameOf(receiver), read))
-                return 0;
-            break;
+        if (!call->isBytecode(op_call) || Graph::closedMethodReadBy(read))
+            return false;
+        Receiver kind = receiverWithType(base);
+        if (kind == Receiver::None || kind == Receiver::String || kind == Receiver::Number)
+            return false;
+        unsigned method = intrinsicFoundOn(kind, *read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+        if (!method)
+            return false;
+        auto signature = intrinsicSignature(method);
+        if (!signature || signature->condition != BuiltinSignature::Condition::Always || signature->result != TBoolean)
+            return false;
+        auto usersOfResult = users().of(call);
+        if (usersOfResult.empty())
+            return false;
+        for (Node* user : usersOfResult) {
+            if (!user->isBytecode(op_jtrue) && !user->isBytecode(op_jfalse) && !user->isBytecode(op_not))
+                return false;
         }
-        return intrinsicFoundOn(receiver, *read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+        m_graph.remark("boolean-result-of-method-that-is-only-tested"_s);
+        return true;
     }
 
-    static bool readsSizeOfMapOrSet(Node* read)
+    static constexpr bool trustsThatArraysAreOriginal = false;
+
+    static Receiver kindAllocatedBy(Node* node)
     {
-        auto bytecode = read->as<OpGetById>();
-        if (read->graph->codeBlock()->identifier(bytecode.m_property).impl() != read->graph->vm().propertyNames->size.impl())
+        if (node->kind != NodeKind::Bytecode)
+            return Receiver::None;
+        switch (node->opcode) {
+        case op_new_array:
+        case op_new_array_buffer:
+        case op_new_array_with_size:
+        case op_new_array_with_spread:
+        case op_create_rest:
+            return Receiver::Array;
+        case op_new_reg_exp:
+            return Receiver::RegExp;
+        case op_construct: {
+            auto bytecode = node->as<OpConstruct>();
+            Node* callee = node->use(bytecode.m_callee);
+            if (callee->kind != NodeKind::Intrinsic || node->use(VirtualRegister(-static_cast<int>(bytecode.m_argv) + CallFrame::thisArgumentOffset())) != callee)
+                return Receiver::None;
+            auto made = constructingIntrinsicResult(callee->intrinsic);
+            return made ? receiverWithType(*made) : Receiver::None;
+        }
+        default:
+            return Receiver::None;
+        }
+    }
+
+    static bool isCall(const Node* node) { return node->isBytecode(op_call) || node->isBytecode(op_call_ignore_result) || node->isBytecode(op_tail_call); }
+
+    static Node* allocationBehind(Node* node)
+    {
+        for (unsigned depth = 0; depth < 8; ++depth) {
+            if (kindAllocatedBy(node) != Receiver::None)
+                return node;
+            if (!node->isBytecode(op_call))
+                return nullptr;
+            auto operands = Graph::callOperands(node->instruction);
+            Node* callee = node->use(operands.callee);
+            if (!callee->isBytecode(op_get_by_id) || callee->use(callee->as<OpGetById>().m_base) != node->use(operands.argument(0)))
+                return nullptr;
+            node = node->use(operands.argument(0));
+        }
+        return nullptr;
+    }
+
+    static unsigned builtinMethodReadFrom(Node* read, Node* object, Receiver kind)
+    {
+        if (!read->isBytecode(op_get_by_id) || read->use(read->as<OpGetById>().m_base) != object)
+            return 0;
+        return intrinsicFoundOn(kind, *read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl());
+    }
+
+    static bool readsSizeFrom(Node* read, Node* object, Receiver kind)
+    {
+        if ((kind != Receiver::Map && kind != Receiver::Set) || !read->isBytecode(op_get_by_id) || read->use(read->as<OpGetById>().m_base) != object)
             return false;
-        Receiver receiver = receiverWithType(read->use(bytecode.m_base)->type & ~(TOther | TEmpty));
-        return (receiver == Receiver::Map || receiver == Receiver::Set) && !Graph::methodMayBeOverridden(nameOf(receiver), read);
+        return read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property) == read->graph->vm().propertyNames->size;
+    }
+
+    static bool onlyTests(const Node* user)
+    {
+        if (user->kind == NodeKind::Guard)
+            return true;
+        if (user->kind != NodeKind::Bytecode)
+            return false;
+        switch (user->opcode) {
+        case op_is_empty:
+        case op_is_undefined_or_null:
+        case op_eq_null:
+        case op_neq_null:
+        case op_not:
+        case op_jtrue:
+        case op_jfalse:
+        case op_jeq_null:
+        case op_jneq_null:
+        case op_jundefined_or_null:
+        case op_jnundefined_or_null:
+        case op_check_tdz:
+        case op_typeof:
+        case op_typeof_is_undefined:
+        case op_typeof_is_object:
+        case op_typeof_is_function:
+        case op_is_object:
+        case op_is_cell_with_type:
+        case op_stricteq:
+        case op_nstricteq:
+        case op_jstricteq:
+        case op_jnstricteq:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    bool isInsideInlineeOf(const Node* user, const Node* call)
+    {
+        uint32_t callSite = CallSiteIndex(call->bytecodeIndex).bits();
+        for (unsigned frame = user->graph->inlineFrame(); frame; frame = m_graph.inlineFrames[frame].parent) {
+            if (m_graph.inlineFrames[frame].parent == call->graph->inlineFrame() && m_graph.inlineFrames[frame].callSite == callSite)
+                return true;
+        }
+        return false;
+    }
+
+    bool isUsedOnlyAsReceiverOf(Node* allocation, Node* read, Node* call)
+    {
+        if (allocation->block != read->block)
+            return false;
+        for (Node* user : users().of(allocation)) {
+            if (user != read && user != call && user->kind != NodeKind::Guard && !isInsideInlineeOf(user, call))
+                return false;
+        }
+        unsigned numberOfUses = 0;
+        for (auto& use : call->uses)
+            numberOfUses += use.node == allocation;
+        return numberOfUses == 1;
+    }
+
+    bool isUntouchedReceiverOfInlinedCall(Node* inside, Node* array)
+    {
+        if (!inside->graph->isInlinedBuiltin || kindAllocatedBy(array) != Receiver::Array)
+            return false;
+        for (Node* user : users().of(array)) {
+            if (!isCall(user) || !isInsideInlineeOf(inside, user))
+                continue;
+            Node* read = user->use(Graph::callOperands(user->instruction).callee);
+            return builtinMethodReadFrom(read, array, Receiver::Array) && isUsedOnlyAsReceiverOf(array, read, user);
+        }
+        return false;
+    }
+
+    const Vector<Node*, 4>& aliasesIfKeptToItself(Node* allocation, Receiver kind)
+    {
+        return m_aliasesOfObjectsKeptToThemselves.ensure(allocation, [&]() -> Vector<Node*, 4> {
+            Vector<Node*, 4> aliases { allocation };
+            for (unsigned i = 0; i < aliases.size(); ++i) {
+                Node* object = aliases[i];
+                for (Node* user : users().of(object)) {
+                    if (onlyTests(user) || builtinMethodReadFrom(user, object, kind) || readsSizeFrom(user, object, kind))
+                        continue;
+                    if (!isCall(user))
+                        return { };
+                    auto operands = Graph::callOperands(user->instruction);
+                    unsigned method = builtinMethodReadFrom(user->use(operands.callee), object, kind);
+                    if (!method || !keepsReceiverToItself(method))
+                        return { };
+                    for (auto& use : user->uses) {
+                        if ((use.node == object) != (use.reg == operands.argument(0)))
+                            return { };
+                    }
+                    if (!returnsReceiver(method) || user->isBytecode(op_call_ignore_result))
+                        continue;
+                    if (user->isBytecode(op_tail_call))
+                        return { };
+                    if (!aliases.contains(user))
+                        aliases.append(user);
+                }
+            }
+            return aliases;
+        }).iterator->value;
+    }
+
+    unsigned builtinMethodReadFromObject(Node* read, Node* call)
+    {
+        Node* receiver = read->use(read->as<OpGetById>().m_base);
+        const StringImpl& name = *read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
+        if (Node* allocation = allocationBehind(receiver)) {
+            Receiver kind = kindAllocatedBy(allocation);
+            unsigned method = intrinsicFoundOn(kind, name);
+            if (method && receiver == allocation && isUsedOnlyAsReceiverOf(allocation, read, call))
+                return method;
+            if (method && kind != Receiver::Array && aliasesIfKeptToItself(allocation, kind).contains(receiver))
+                return method;
+        }
+        if constexpr (trustsThatArraysAreOriginal) {
+            Type base = receiver->type & ~(TOther | TEmpty);
+            if (base && isSubtype(base, TArray) && programClasses() && !programClasses()->mayBeExtended(TArray))
+                return intrinsicFoundOn(Receiver::Array, name);
+        }
+        return 0;
+    }
+
+    bool readsSizeOfMapOrSet(Node* read)
+    {
+        Node* receiver = read->use(read->as<OpGetById>().m_base);
+        Node* allocation = allocationBehind(receiver);
+        if (!allocation)
+            return false;
+        Receiver kind = kindAllocatedBy(allocation);
+        return readsSizeFrom(read, receiver, kind) && aliasesIfKeptToItself(allocation, kind).contains(receiver);
     }
 
     const NodeUsers& users()
@@ -1573,8 +1999,14 @@ private:
         case op_create_generator_frame_environment:
         case op_push_with_scope:
             return TObject;
-        case op_resolve_scope:
-            return node->as<OpResolveScope>().m_resolveType == Dynamic ? TAnyObject : TObject;
+        case op_resolve_scope: {
+            auto bytecode = node->as<OpResolveScope>();
+            if (isStaticClosureVarResolveType(bytecode.m_resolveType))
+                return TObject;
+            auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
+            bool mayPassWithScope = variable.kind == Graph::StaticVariable::Dynamic || (variable.kind == Graph::StaticVariable::Unresolved && !variable.isGlobal && node->graph->codeBlock()->codeType() == FunctionCode);
+            return mayPassWithScope ? TAnyObject : TObject;
+        }
         case op_construct:
             if (Node* callee = node->use(node->as<OpConstruct>().m_callee); callee->kind == NodeKind::Intrinsic) {
                 if (auto result = constructingIntrinsicResult(callee->intrinsic))
@@ -1600,8 +2032,17 @@ private:
         case op_new_array_with_spread:
         case op_create_rest:
             return TArray;
-        case op_new_array_with_species:
+        case op_new_array_with_species: {
+            Node* array = node->use(node->as<OpNewArrayWithSpecies>().m_array);
+            while (array->isBytecode(op_to_this) || array->isBytecode(op_to_object))
+                array = array->uses[0].node;
+            bool isGuarded = node->graph->isInlinedBuiltin && node->graph->readsElementsOrEmpty && array->kind == NodeKind::Narrow && array->graph == node->graph && array->narrowedTo == TArray;
+            if (isGuarded || isUntouchedReceiverOfInlinedCall(node, array)) {
+                m_graph.remark("plain-array-for-original-receiver"_s);
+                return array->type ? TArray : TNone;
+            }
             return TAnyObject;
+        }
         case op_new_func:
             return closureTypeFor(node->graph->codeBlock()->functionDecl(node->as<OpNewFunc>().m_functionDecl));
         case op_new_func_exp:
@@ -1723,11 +2164,22 @@ private:
     Graph& m_graph;
     Type m_returnType { TNone };
     UncheckedKeyHashMap<Node*, Type> m_elementTypes;
+    UncheckedKeyHashMap<Node*, Vector<Node*, 4>> m_aliasesOfObjectsKeptToThemselves;
     bool m_elementTypesChanged { false };
     bool m_treatsEmptyArraysAsUntyped { false };
 };
 
 } // anonymous namespace
+
+void noteBuiltinsExtended(Graph& graph)
+{
+    ProgramClasses* classes = programClasses();
+    if (!classes)
+        return;
+    forEachBuiltinExtendedIn(graph, [&](Type builtins) {
+        classes->noteBuiltinsExtended(builtins);
+    });
+}
 
 Type inferTypes(Graph& graph, Vector<const KnownFunction*>* calleesRead, Vector<const KnownFunction*>* calleesWithWidenedInputs)
 {

@@ -243,7 +243,7 @@ static bool canSkipLoopSplitting(Graph& graph)
             continue;
         hasLoop = true;
         for (Node* node : block->nodes) {
-            if (node->kind != NodeKind::Bytecode || !node->instruction)
+            if (node->kind != NodeKind::Bytecode || !node->instruction || node->isElided)
                 continue;
             switch (node->opcode) {
             case op_get_by_val:
@@ -399,9 +399,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
     B3::Procedure proc(/* usesSIMD = */ false);
     proc.setPositionIndependent();
-    proc.pinRegister(instanceGPR);
-    proc.pinRegister(GPRInfo::numberTagRegister);
-    proc.pinRegister(GPRInfo::notCellMaskRegister);
+    pinRegisters(proc);
 #if CPU(X86_64)
     proc.code().setUnsavedCalleeSaves(RegisterSet { X86Registers::r12 });
 #endif
@@ -510,6 +508,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     };
     info.convention = graph.convention();
     info.frameSizeInBytes = proc.frameSize();
+    if (graph.calleeSlot)
+        info.offsetOfCallee = graph.calleeSlot->offsetFromFP();
     info.numSlots = graph.numICSlots;
     info.sites = WTF::move(graph.sites);
     while (info.sites.size() < info.numSlots)

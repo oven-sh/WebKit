@@ -833,7 +833,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
         m_out.appendTo(hit, slowCase);
         LValue holder = m_out.loadPtr(slotWord(slot, 1));
         LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
-        fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word)));
+        fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word, &m_heaps.root)));
     }
     m_out.jump(continuation);
 
@@ -862,7 +862,7 @@ LValue Lowering::getByIdWithThisCached(Node* node, LValue base, LValue thisValue
     m_out.appendTo(rightStructure, slowCase);
     LValue holder = m_out.loadPtr(slotWord(slot, 1));
     LValue isOnHolder = m_out.bitAnd(m_out.testNonZero64(word, m_out.constInt64(static_cast<int64_t>(Slot::isIndirect) << 32)), m_out.notNull(holder));
-    ValueFromBlock fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word)));
+    ValueFromBlock fastResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(isOnHolder, holder, base), word, &m_heaps.root)));
     m_out.jump(continuation);
 
     m_out.appendTo(slowCase, continuation);
@@ -1209,6 +1209,10 @@ auto Lowering::constantKeyOf(Node* property) -> std::optional<ConstantKey>
     auto* numbers = programIdentifierIndices();
     if (!numbers || !usesDataStubs())
         return std::nullopt;
+    if (property->isBytecode(op_to_property_key))
+        property = property->use(property->as<OpToPropertyKey>().m_src);
+    else if (property->isBytecode(op_to_property_key_or_number))
+        property = property->use(property->as<OpToPropertyKeyOrNumber>().m_src);
     auto key = constantStringOf(property);
     if (!key || !key->impl()->isAtom())
         return std::nullopt;
@@ -1252,7 +1256,7 @@ void Lowering::lowerGetByVal(Node* node)
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(hole));
             m_out.appendTo(hole);
             absent = m_out.anchor(m_out.int64Zero);
-            m_out.branch(m_out.notZero32(changing32(Instance::offsetOfArraysLackInheritedElements())), usually(continuation), rarely(slowCase));
+            m_out.branch(m_out.bitAnd(isOriginalArray(base), m_out.notZero32(changing32(Instance::offsetOfArraysLackInheritedElements()))), usually(continuation), rarely(slowCase));
         } else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
         m_out.appendTo(slowCase);
@@ -1317,7 +1321,7 @@ void Lowering::lowerGetByVal(Node* node)
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(hole));
             m_out.appendTo(hole);
             results.append(m_out.anchor(m_out.int64Zero));
-            m_out.branch(m_out.notZero32(changing32(Instance::offsetOfArraysLackInheritedElements())), usually(continuation), rarely(slowCase));
+            m_out.branch(m_out.bitAnd(isOriginalArray(base), m_out.notZero32(changing32(Instance::offsetOfArraysLackInheritedElements()))), usually(continuation), rarely(slowCase));
         } else
             m_out.branch(m_out.notZero64(element), usually(continuation), rarely(slowCase));
     } else
@@ -1764,7 +1768,7 @@ bool Lowering::mayCollectOrThrow(Node* node)
     case NodeKind::SetStack:
         return false;
     case NodeKind::Narrow:
-        return node->fieldOrigin || node->checksNarrowedType;
+        return !!node->fieldOrigin;
     case NodeKind::ConstantCell:
     case NodeKind::Guard:
         return true;

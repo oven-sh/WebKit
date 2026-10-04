@@ -164,7 +164,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue))
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutProperties, void, (Instance*, EncodedJSValue base, EncodedJSValue* values, uint32_t count, Slot* cache));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
-JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance*, JSObject* callee, uint32_t inlineCapacity));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance*, JSObject* callee, uint32_t layoutIDAndInlineCapacity));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance*, const EncodedJSValue* values, uint32_t count, uint32_t indexingType));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayWithSize, JSObject*, (Instance*, EncodedJSValue size));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewArrayBuffer, JSObject*, (Instance*, JSCell* immutableButterfly));

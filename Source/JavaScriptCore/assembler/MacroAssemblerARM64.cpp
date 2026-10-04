@@ -776,6 +776,30 @@ void MacroAssemblerARM64::useOnlyFeaturesOfBuildTarget()
     s_dotProdCheckState = CPUIDCheckState::Clear;
 #endif
 }
+
+unsigned MacroAssemblerARM64::featuresOfBuildTarget()
+{
+    unsigned features = 0;
+#if HAVE(LSE_INSTRUCTION)
+    features |= 1 << 0;
+#endif
+#if HAVE(FJCVTZS_INSTRUCTION)
+    features |= 1 << 1;
+#endif
+#if HAVE(FLOAT16_INSTRUCTION)
+    features |= 1 << 2;
+#endif
+#if HAVE(FRINT_INSTRUCTION) || OS(MACOS)
+    features |= 1 << 3;
+#endif
+#if HAVE(SHA3_INSTRUCTION)
+    features |= 1 << 4;
+#endif
+#if defined(__ARM_FEATURE_DOTPROD)
+    features |= 1 << 5;
+#endif
+    return features;
+}
 #endif
 
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_lseCheckState = CPUIDCheckState::NotChecked;

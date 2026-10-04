@@ -213,13 +213,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (Instanc
     AOT_OPERATION_BEGIN(instance);
     JSObject* array = JSValue::decode(encodedArray).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    PropertySlot slot(array, PropertySlot::InternalMethodType::Get);
-    double index = JSValue::decode(encodedIndex).asNumber();
-    bool has = index <= MAX_ARRAY_INDEX ? array->getPropertySlot(globalObject, static_cast<unsigned>(index), slot) : array->getPropertySlot(globalObject, Identifier::from(vm, index), slot);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!has)
-        OPERATION_RETURN(scope, encodedJSValue());
-    OPERATION_RETURN(scope, JSValue::encode(index <= MAX_ARRAY_INDEX ? slot.getValue(globalObject, static_cast<unsigned>(index)) : slot.getValue(globalObject, Identifier::from(vm, index))));
+    OPERATION_RETURN(scope, JSValue::encode(array->getIfPropertyExists(globalObject, static_cast<uint64_t>(JSValue::decode(encodedIndex).asNumber()))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
@@ -540,10 +534,30 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckType, void, (Instance* instance, Encod
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase))
+JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypeAheadOfCreateThis, void, (Instance* instance, EncodedJSValue encodedValue, uint32_t mask, JSObject* newTarget))
 {
     AOT_OPERATION_BEGIN(instance);
-    OPERATION_RETURN(scope, JSValue::encode(JSValue::decode(encodedBase).get(globalObject, vm.propertyNames->length)));
+    unsigned tag = soundTypeTag(JSValue::decode(encodedValue));
+    if (soundTypeMaskAccepts(mask, JSValue::decode(encodedValue)))
+        OPERATION_RETURN(scope);
+    if (auto* constructor = dynamicDowncast<JSFunction>(newTarget); !constructor || !constructor->canUseAllocationProfiles()) {
+        JSValue prototype = newTarget->get(globalObject, vm.propertyNames->prototype);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (!prototype.isObject()) {
+            getFunctionRealm(globalObject, newTarget);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+        }
+    }
+    throwTypeError(globalObject, scope, makeString("Type check failed: expected "_s, toString(SoundTypeMaskDump(mask)), ", got "_s, toString(SoundTypeMaskDump(tag))));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, size_t, (Instance* instance, JSObject* array))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue length = array->get(globalObject, vm.propertyNames->length);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    OPERATION_RETURN(scope, length.toLength(globalObject));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance* instance, EncodedJSValue encodedValue, uint32_t layoutID))

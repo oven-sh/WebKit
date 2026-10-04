@@ -478,6 +478,15 @@ ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
     return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
 }
 
+JSCell* StackVisitor::Frame::aotCallee() const
+{
+#if ENABLE(AOT)
+    if (m_aotFunction && !m_aotInlineFrame)
+        return m_frameAOTFunction.calleeInFrame(m_callFrame);
+#endif
+    return nullptr;
+}
+
 bool StackVisitor::Frame::isBuiltinFunction() const
 {
 #if ENABLE(AOT)
@@ -728,6 +737,8 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
     if (callee().isNativeCallee())
         return false;
     if (JSCell* callee = this->callee().asCell())
+        return callee == function;
+    if (JSCell* callee = aotCallee())
         return callee == function;
     auto* jsFunction = dynamicDowncast<JSFunction>(function);
     return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();

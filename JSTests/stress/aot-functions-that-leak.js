@@ -33,11 +33,14 @@ function callsDirectly(caller, callee) {
 
 let leaked;
 class Catcher { static [Symbol.hasInstance](value) { leaked = value; return true; } }
-Object.defineProperty(Function.prototype, "me", { get() { return this; } });
-Object.defineProperty(Function.prototype, "tag", { set(value) { leaked = this; } });
-Object.defineProperty(Function.prototype, "propertyIsEnumerable", { get() { leaked = this; return () => false; } });
-Function.prototype[Symbol.toPrimitive] = function () { leaked = this; return 1; };
-Object.defineProperty(Object.getPrototypeOf(async function () { }), "call", { get() { leaked = this; return Function.prototype.call; } });
+const isSealed = !Object.isExtensible(Function.prototype);
+if (!isSealed) {
+    Object.defineProperty(Function.prototype, "me", { get() { return this; } });
+    Object.defineProperty(Function.prototype, "tag", { set(value) { leaked = this; } });
+    Object.defineProperty(Function.prototype, "propertyIsEnumerable", { get() { leaked = this; return () => false; } });
+    Function.prototype[Symbol.toPrimitive] = function () { leaked = this; return 1; };
+    Object.defineProperty(Object.getPrototypeOf(async function () { }), "call", { get() { leaked = this; return Function.prototype.call; } });
+}
 
 function onlyCalls() {
     function sumOnlyCalled(n) { return n <= 0 ? 0 : n + sumOnlyCalled(n - 1); }
@@ -102,7 +105,8 @@ function throughGetter() {
     return sumThroughGetter(10);
 }
 check(throughGetter(), 55, "a getter of Function.prototype");
-checkSum("sumThroughGetter");
+if (!isSealed)
+    checkSum("sumThroughGetter");
 
 function throughSetter() {
     function sumThroughSetter(n) { return n <= 0 ? 0 : n + sumThroughSetter(n - 1); }
@@ -110,7 +114,8 @@ function throughSetter() {
     return sumThroughSetter(10);
 }
 check(throughSetter(), 55, "a setter of Function.prototype");
-checkSum("sumThroughSetter");
+if (!isSealed)
+    checkSum("sumThroughSetter");
 
 function throughGetterByValue(key) {
     function sumThroughGetterByValue(n) { return n <= 0 ? 0 : n + sumThroughGetterByValue(n - 1); }
@@ -118,7 +123,8 @@ function throughGetterByValue(key) {
     return sumThroughGetterByValue(10);
 }
 check(throughGetterByValue("me"), 55, "a getter found by value");
-checkSum("sumThroughGetterByValue");
+if (!isSealed)
+    checkSum("sumThroughGetterByValue");
 
 function throughSetterByValue(key) {
     function sumThroughSetterByValue(n) { return n <= 0 ? 0 : n + sumThroughSetterByValue(n - 1); }
@@ -126,7 +132,8 @@ function throughSetterByValue(key) {
     return sumThroughSetterByValue(10);
 }
 check(throughSetterByValue("tag"), 55, "a setter found by value");
-checkSum("sumThroughSetterByValue");
+if (!isSealed)
+    checkSum("sumThroughSetterByValue");
 
 function throughShadowedMethod() {
     function sumThroughShadowedMethod(n) { return n <= 0 ? 0 : n + sumThroughShadowedMethod(n - 1); }
@@ -134,7 +141,8 @@ function throughShadowedMethod() {
     return sumThroughShadowedMethod(10) + typeof method;
 }
 check(throughShadowedMethod(), "55function", "a method of Object.prototype that Function.prototype shadows");
-checkSum("sumThroughShadowedMethod");
+if (!isSealed)
+    checkSum("sumThroughShadowedMethod");
 
 function throughPrototype() {
     function sumThroughPrototype(n) { return n <= 0 ? 0 : n + sumThroughPrototype(n - 1); }
@@ -182,15 +190,19 @@ function throughConversion() {
     function sumThroughConversion(n) { return n <= 0 ? 0 : n + sumThroughConversion(n - 1); }
     return sumThroughConversion(10) + (sumThroughConversion + 1);
 }
-check(throughConversion(), 57, "Symbol.toPrimitive");
-checkSum("sumThroughConversion");
+if (!isSealed) {
+    check(throughConversion(), 57, "Symbol.toPrimitive");
+    checkSum("sumThroughConversion");
+}
 
 function throughLooseEquality() {
     function sumThroughLooseEquality(n) { return n <= 0 ? 0 : n + sumThroughLooseEquality(n - 1); }
     return sumThroughLooseEquality(10) + (sumThroughLooseEquality == 1 ? " equal" : " different");
 }
-check(throughLooseEquality(), "55 equal", "loose equality");
-checkSum("sumThroughLooseEquality");
+if (!isSealed) {
+    check(throughLooseEquality(), "55 equal", "loose equality");
+    checkSum("sumThroughLooseEquality");
+}
 
 function isAskedAbout(key) {
     function sumAskedById(n) { return n <= 0 ? 0 : n + sumAskedById(n - 1); }
@@ -199,7 +211,7 @@ function isAskedAbout(key) {
     function sumDeletedByValue(n) { return n <= 0 ? 0 : n + sumDeletedByValue(n - 1); }
     return [sumAskedById(1) + sumAskedByValue(2) + sumDeletedById(3) + sumDeletedByValue(4), "me" in sumAskedById, key in sumAskedByValue, delete sumDeletedById.name, delete sumDeletedByValue[key], sumDeletedById.name].join();
 }
-check(isAskedAbout("length"), "20,true,true,true,true,", "in and delete");
+check(isAskedAbout("length"), "20," + !isSealed + ",true,true,true,", "in and delete");
 isOpened("sumAskedById", "sumAskedByValue", "sumDeletedById", "sumDeletedByValue");
 
 function hasStaticProperty() {
@@ -208,7 +220,10 @@ function hasStaticProperty() {
     return sumWithStaticProperty(10) + sumWithStaticProperty.displayName;
 }
 check(hasStaticProperty(), "55sum", "a property stored on a function");
-isOpened("sumWithStaticProperty");
+if (isSealed)
+    staysClosed("sumWithStaticProperty");
+else
+    isOpened("sumWithStaticProperty");
 
 function asyncThroughGetter() {
     async function kindOfAsync(a) { return typeof a === "number" ? "number" : "other"; }
@@ -218,10 +233,12 @@ function asyncThroughGetter() {
 }
 let settled = [];
 asyncThroughGetter().then(value => settled.push(value));
-leaked("x").then(value => settled.push(value));
+if (!isSealed)
+    leaked("x").then(value => settled.push(value));
 drainMicrotasks();
-check(settled.join(), "number,other", "a getter of the prototype of async functions");
-isOpened("kindOfAsync");
+check(settled.join(), isSealed ? "number" : "number,other", "a getter of the prototype of async functions");
+if (!isSealed)
+    isOpened("kindOfAsync");
 leaked = undefined;
 
 function add1LeftOfInstanceof() {
@@ -237,14 +254,16 @@ function add1ThroughGetter() {
     let s = add1Second(1) + add1Second(2);
     return [s, add1Second.me];
 }
-check(add1ThroughGetter()[0] + add1ThroughGetter()[1]("x"), "5x1", "calls that can be inlined, and a getter");
+if (!isSealed)
+    check(add1ThroughGetter()[0] + add1ThroughGetter()[1]("x"), "5x1", "calls that can be inlined, and a getter");
 function add1ThroughSetter() {
     function add1Third(a) { return a + 1; }
     let s = add1Third(1) + add1Third(2);
     add1Third.tag = 1;
     return s;
 }
-check(add1ThroughSetter() + leaked("x"), "5x1", "calls that can be inlined, and a setter");
+if (!isSealed)
+    check(add1ThroughSetter() + leaked("x"), "5x1", "calls that can be inlined, and a setter");
 function kindThroughPrototype() {
     var kindOf = function (a) { return typeof a === "number" ? "number" : "other"; };
     var direct = kindOf(1);
@@ -273,15 +292,19 @@ function calledByHasInstance() {
     return sum + " " + (readsX instanceof Caller);
 }
 check(calledByHasInstance(), "3 true", "a function that Symbol.hasInstance calls");
-isOpened("add1First", "add1Second", "add1Third", "kindOf", "firstOf", "addBoth", "readsX");
+isOpened("add1First", "kindOf", "firstOf", "addBoth", "readsX");
+if (!isSealed)
+    isOpened("add1Second", "add1Third");
 
-Object.defineProperty(Function.prototype, "prototype", { get() { leaked = this; return Object.prototype; } });
 function arrowRightOfInstanceof(value) {
     const sumArrow = n => n <= 0 ? 0 : n + sumArrow(n - 1);
     return sumArrow(10) + (value instanceof sumArrow ? " is one" : " is none");
 }
-check(arrowRightOfInstanceof({ }), "55 is one", "an arrow function as the right operand of instanceof");
-checkSum("sumArrow");
+if (!isSealed) {
+    Object.defineProperty(Function.prototype, "prototype", { get() { leaked = this; return Object.prototype; } });
+    check(arrowRightOfInstanceof({ }), "55 is one", "an arrow function as the right operand of instanceof");
+    checkSum("sumArrow");
+}
 
 let hasProxy = true;
 try {
@@ -296,4 +319,6 @@ function throughProxy() {
 check(throughProxy(), "55undefined", "a proxy behind Function.prototype");
 if (hasProxy)
     checkSum("sumThroughProxy");
-isOpened("sumThroughProxy");
+if (!isSealed)
+    isOpened("sumThroughProxy");
+check(hasProxy, !isSealed, "whether Function.prototype can get another prototype");

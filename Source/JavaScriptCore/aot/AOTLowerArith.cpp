@@ -677,6 +677,7 @@ Lowering::Latin1Characters Lowering::latin1CharactersOf(LValue string, LBasicBlo
         PatchpointValue* both = callStub(Stub::Latin1Characters, Int64, { { string, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
         both->effects = Effects::none();
         both->effects.reads = HeapRange::top();
+        both->effects.controlDependent = true;
         LValue characters = m_out.bitAnd(both, m_out.constInt64((1ll << 48) - 1));
         LValue length = m_out.castToInt32(m_out.lShr(both, m_out.constInt32(48)));
         LBasicBlock continuation = m_out.newBlock();
@@ -690,6 +691,7 @@ Lowering::Latin1Characters Lowering::latin1CharactersOf(LValue string, LBasicBlo
     LBasicBlock wide = m_out.newBlock();
     LBasicBlock rope = m_out.newBlock();
     LBasicBlock slice = m_out.newBlock();
+    LBasicBlock narrowSlice = m_out.newBlock();
     LBasicBlock isUnresolvedRope = m_out.newBlock();
     LBasicBlock continuation = m_out.newBlock();
     LValue fiber = m_out.loadPtr(string, m_heaps.JSRopeString_fiber0);
@@ -715,7 +717,10 @@ Lowering::Latin1Characters Lowering::latin1CharactersOf(LValue string, LBasicBlo
     LValue baseHighBitsAndOffset = m_out.load64(string, m_heaps.JSRopeString_fiber2);
     LValue base = m_out.bitOr(m_out.lShr(lengthAndBaseLowBits, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(baseHighBitsAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32)));
     LValue offset = m_out.lShr(baseHighBitsAndOffset, m_out.constInt32(16));
-    ValueFromBlock sliceCharacters = m_out.anchor(m_out.add(m_out.loadPtr(m_out.loadPtr(base, m_heaps.JSString_value), m_heaps.StringImpl_data), offset));
+    LValue baseImpl = m_out.loadPtr(base, m_heaps.JSString_value);
+    m_out.branch(m_out.testNonZero32(m_out.load32(baseImpl, m_heaps.StringImpl_hashAndFlags), m_out.constInt32(StringImpl::flagIs8Bit())), usually(narrowSlice), rarely(isUnresolvedRope));
+    m_out.appendTo(narrowSlice);
+    ValueFromBlock sliceCharacters = m_out.anchor(m_out.add(m_out.loadPtr(baseImpl, m_heaps.StringImpl_data), offset));
     ValueFromBlock sliceLength = m_out.anchor(ropeLength);
     m_out.jump(continuation);
     m_out.appendTo(isUnresolvedRope);
@@ -798,8 +803,6 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
     Node* right = node->use(rhs);
     if (Node* read = left->isElided ? left : right->isElided ? right : nullptr) {
         RELEASE_ASSERT(strict && Graph::isArrayIteratorMethodRead(read));
-        if (!mayBeOverridden("Array"_s, read))
-            return m_out.booleanTrue;
         LValue array = lowJSValue(read->use(read->as<OpGetById>().m_base));
         LBasicBlock isNotOriginalArray = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
@@ -864,6 +867,7 @@ LValue Lowering::lowerEquality(Node* node, bool strict, VirtualRegister lhs, Vir
                     bits = chunk(0, 4) | chunk(length - 4, 4) << 32;
                 } else
                     bits = chunk(0, 8);
+                m_graph.wideIntegerConstants.add(static_cast<int64_t>(bits));
                 return callStub(stub, Int32, { { lowJSValue(other), firstStubOperandGPR }, { m_out.constInt64(bits), GPRInfo::argumentGPR1 } }, { { stubImmediateGPR, programConstantIndex(literal) << shortLiteralLengthBits | length } });
             }
             if (said && !said->isEmpty())

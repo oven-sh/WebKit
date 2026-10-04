@@ -60,7 +60,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTFillImportSlot, JSObject*, (Instance*, JSO
 JSC_DECLARE_JIT_OPERATION(operationAOTPutToScope, void, (Instance*, JSObject* scope, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t how));
 JSC_DECLARE_JIT_OPERATION(operationAOTThrow, void, (Instance*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckType, void, (Instance*, EncodedJSValue, uint32_t mask));
-JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, EncodedJSValue, (Instance*, EncodedJSValue));
+JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypeAheadOfCreateThis, void, (Instance*, EncodedJSValue, uint32_t mask, JSObject* newTarget));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetLengthSlow, size_t, (Instance*, JSObject* array));
 JSC_DECLARE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance*, EncodedJSValue, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance*, EncodedJSValue, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t which));

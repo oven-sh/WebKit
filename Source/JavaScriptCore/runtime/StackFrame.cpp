@@ -301,7 +301,8 @@ String StackFrame::functionName(VM& vm) const
                 case FunctionCode:
                     break;
                 }
-            }
+            } else if (jsFrame.aotExecutable && !jsFrame.aotExecutable->isFunctionExecutable())
+                return "module code"_s;
             String name;
             if (jsFrame.callee && jsFrame.callee->isObject())
                 name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();

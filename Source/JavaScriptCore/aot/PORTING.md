@@ -57,9 +57,14 @@ The generators are shared. Of the 98 functions that were written for ARM64, 87 n
 | `T15`, the index of the calling function on a miss (data stubs only) | `x15` | `r10`, which is also `T9` |
 | Survive calls and stubs | `x19`-`x25` | `rbx` |
 | Instance, number tag, not-cell mask | as the JIT tiers | `r13`, `r14`, `r15` |
+| Never used | `x18` | |
 
 `numberOfArgumentGPRs` need not equal `GPRInfo::numberOfArgumentRegisters`. Functions with more parameters use `Signature::List`.
 Callers and callees both derive the convention from bytecode via `conventionOf()`.
+
+`x18` belongs to the platform on Darwin, Windows and Android, and is a temporary that calls clobber on Linux and FreeBSD, where the JIT
+tiers allocate it. `pinRegisters()` takes it away from the allocator on every system, so the stubs that preserve registers need not save
+it, the entry points for an operand in any register need none for it, and compiled code uses the same registers everywhere.
 
 **A data stub takes its first operand where it returns its result** (`firstStubOperandGPR`). The result of one stub is then where the
 next one wants it, so `a.b.c` needs no move between its stubs, and a stub returns what it computed in place. It has to return in the
@@ -198,10 +203,23 @@ on demand for direct `eval`.
 ### 9. CPU features
 
 The JIT tiers ask the CPU they run on what it supports. An image runs elsewhere, so `compileImage()` first calls
-`MacroAssembler::useOnlyFeaturesOfBuildTarget()`, which forgets every feature that the engine itself was not compiled to require. An image
-belongs to one build of the engine, so the two cannot disagree. Built for Nehalem, x86-64 uses up to SSE4.2 and `popcnt`, and no AVX, BMI or
-`lzcnt`. On Linux, ARM64 may lose `fjcvtzs`; `Lowering::doubleToInt32()` then truncates inline and calls only when that saturates, as on
-x86-64.
+`MacroAssembler::useOnlyFeaturesOfBuildTarget()`, which forgets every feature that the engine itself was not compiled to require. So an
+image assumes of the CPU what the engine's own C++ code assumes, which is what the compiler was told (`-march`, `-mcpu`), and nothing that
+either process detects:
+
+| Built for | Compiled code may use |
+| --- | --- |
+| x86-64, Nehalem | up to SSE4.2 and `popcnt`; no AVX, BMI or `lzcnt` |
+| ARM64, macOS (M1) | LSE, `fjcvtzs`, half-precision immediates, `frint32z` |
+| ARM64, ARMv8.0 (Linux, FreeBSD, Windows, Android) | none of these. `Lowering::doubleToInt32()` truncates inline and calls only when that saturates, as on x86-64 |
+
+Nothing checks this when an image is registered: the engine that registers it was compiled for the same CPU, so one that lacks a feature
+cannot be relied on to get that far, and a check at start-up belongs to the embedder, for all of its code. What is checked is that the
+image and the engine agree: `imageStamp()` contains `MacroAssembler::featuresOfBuildTarget()`, the same list as a constant of the build. It
+must not contain anything detected, or an image is refused on a CPU that has more than the one it was built on.
+
+A feature may also be required. Where the CPU cannot round a floating point number, which on x86-64 means before SSE4.1, B3 calls a C
+function by its address, after `compileForImage()` has checked that the code contains none. `compileImage()` refuses to build there.
 
 ### 10. Regular expressions
 
@@ -214,7 +232,7 @@ in after linking, `adr` (or `adrp` and `add` for a table that regular expression
 - A StructureID is converted to an address by adding `Instance::structureIDBase` (`structureWithID()` in `AOTStubs.cpp`). The stub that enters
   compiled code from outside has no instance yet and reads the same value from the VM, found through the callee's `MarkedBlock`.
 - NaNs differ. Arithmetic on x86-64 makes NaNs with the sign bit set, so nothing may compare NaNs by their bits.
-- `imageStamp()` includes the CPU.
+- `imageStamp()` includes the CPU and the features of the build target.
 - Compiled code requires the JIT to be off (`Options::notifyOptionsChanged()`); an image is rejected otherwise.
 
 ## Platform (as opposed to CPU)

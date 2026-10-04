@@ -79,6 +79,7 @@ namespace AOT {
     v(operationAOTPutToScope) \
     v(operationAOTThrow) \
     v(operationAOTCheckType) \
+    v(operationAOTCheckTypeAheadOfCreateThis) \
     v(operationAOTCheckTypedLayout) \
     v(operationAOTCoerceToTypedLayout) \
     v(operationAOTLatin1StringEqualTo) \
@@ -251,7 +252,6 @@ namespace AOT {
     v(MakeRope3SlowPath) \
     v(StringSliceWithEndSlowPath) \
     v(StringSubstringWithEndSlowPath) \
-    v(ToLowerCaseSlowPath) \
     v(ObjectKeysObjectSlowPath) \
     v(ValueAddSlowPath) \
 
@@ -463,6 +463,7 @@ struct Instance {
 
     template<typename Visitor> void visit(Visitor&, bool newOnly);
     void finalizeUnconditionally(bool newOnly);
+    void clearCachesValidatedByMegamorphicCacheEpoch();
     void noteCalleeCacheFilled(Slot*);
 
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
@@ -595,7 +596,7 @@ struct Instance {
     TypedArrayWithBuiltinLength typedArraysWithBuiltinLength[NumberOfTypedArrayTypesExcludingDataView][2] { };
     JSCell* typedArrayViewPrototype { nullptr };
     JSCell* typedArrayLengthAccessor { nullptr };
-    const void* typedArrayLengthLocation { nullptr };
+    intptr_t typedArrayLengthOffsetInButterfly { 0 };
     uint32_t typedArrayViewPrototypeStructureID { 0 };
     bool typedArrayHasBuiltinLength(JSCell* typedArray) const
     {
@@ -604,14 +605,14 @@ struct Instance {
             if (entry.structureID != structureID)
                 continue;
             return entry.prototype->structureID().bits() == entry.prototypeStructureID && entry.secondPrototype->structureID().bits() == entry.secondPrototypeStructureID
-                && typedArrayViewPrototype->structureID().bits() == typedArrayViewPrototypeStructureID && *static_cast<JSCell* const*>(typedArrayLengthLocation) == typedArrayLengthAccessor;
+                && typedArrayViewPrototype->structureID().bits() == typedArrayViewPrototypeStructureID && *std::bit_cast<JSCell* const*>(std::bit_cast<intptr_t>(asObject(typedArrayViewPrototype)->butterfly()) + typedArrayLengthOffsetInButterfly) == typedArrayLengthAccessor;
         }
         return false;
     }
     static constexpr ptrdiff_t offsetOfTypedArraysWithBuiltinLength() { return OBJECT_OFFSETOF(Instance, typedArraysWithBuiltinLength); }
     static constexpr ptrdiff_t offsetOfTypedArrayViewPrototype() { return OBJECT_OFFSETOF(Instance, typedArrayViewPrototype); }
     static constexpr ptrdiff_t offsetOfTypedArrayLengthAccessor() { return OBJECT_OFFSETOF(Instance, typedArrayLengthAccessor); }
-    static constexpr ptrdiff_t offsetOfTypedArrayLengthLocation() { return OBJECT_OFFSETOF(Instance, typedArrayLengthLocation); }
+    static constexpr ptrdiff_t offsetOfTypedArrayLengthOffsetInButterfly() { return OBJECT_OFFSETOF(Instance, typedArrayLengthOffsetInButterfly); }
     static constexpr ptrdiff_t offsetOfTypedArrayViewPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, typedArrayViewPrototypeStructureID); }
     UniquedStringImpl* const* programIdentifiers;
     uint32_t missLimitPerEightSlots;
@@ -865,6 +866,7 @@ struct CompiledFunctionInfo {
     bool isOnlyCalledDirectly { false };
     uint32_t numberOfFunction { 0 };
     unsigned frameSizeInBytes { 0 };
+    ptrdiff_t offsetOfCallee { 0 };
     unsigned numSlots { 0 };
     bool usesStaticImports { false };
     bool startsCold { false };
@@ -896,12 +898,16 @@ struct ImageCatchEntrypoint {
 };
 
 struct ImageFrame {
+    static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
+    static constexpr unsigned maxCalleeStart = (1u << 10) - 1;
+
     uint32_t calleeSaveRegisters;
-    uint16_t calleeSavesStart;
+    uint16_t calleeSavesStart : 6;
+    uint16_t calleeStart : 10;
     uint16_t frameSizeInUnits;
 
     unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
-    uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 16 | frameSizeInUnits; }
+    uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 26 | static_cast<uint64_t>(calleeStart) << 16 | frameSizeInUnits; }
 };
 static_assert(sizeof(ImageFrame) == 8);
 

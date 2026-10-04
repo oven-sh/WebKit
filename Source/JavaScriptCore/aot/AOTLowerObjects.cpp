@@ -310,6 +310,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
                 for (auto& property : plan.properties)
                     words.append(AllocationPlan::encode(numberOf(property.identifier), property.isDefined, property.isStrict, property.isAssigned));
+                words.append(node->graph->thisLayoutID());
                 m_graph.noteSitePlan(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
@@ -354,7 +355,8 @@ bool Lowering::tryLowerAllocation(Node* node)
             setJSValue(node, object);
             return true;
         }
-        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThis, m_instance, lowCell(node->use(bytecode.m_callee)), m_out.constInt32(bytecode.m_inlineCapacity)));
+        RELEASE_ASSERT(bytecode.m_inlineCapacity <= 0xffff);
+        setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThis, m_instance, lowCell(node->use(bytecode.m_callee)), m_out.constInt32(static_cast<uint32_t>(node->graph->thisLayoutID()) << 16 | bytecode.m_inlineCapacity)));
         return true;
     }
     case op_new_array: {
@@ -848,6 +850,26 @@ bool Lowering::tryLowerConversion(Node* node)
     }
 }
 
+LValue Lowering::lengthOfArray(Node* origin, LValue array)
+{
+    LBasicBlock hasArrayMode = m_out.newBlock();
+    LBasicBlock hasStorage = m_out.newBlock();
+    LBasicBlock hasNoStorage = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue indexingType = m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc);
+    m_out.branch(m_out.testNonZero32(indexingType, m_out.constInt32(IsArray)), usually(hasArrayMode), rarely(hasNoStorage));
+    m_out.appendTo(hasArrayMode);
+    m_out.branch(m_out.testNonZero32(indexingType, m_out.constInt32(IndexingShapeMask)), usually(hasStorage), rarely(hasNoStorage));
+    m_out.appendTo(hasStorage);
+    ValueFromBlock stored = m_out.anchor(m_out.zeroExt(m_out.load32(m_out.loadPtr(array, m_heaps.JSObject_butterfly), m_heaps.Butterfly_publicLength), Int64));
+    m_out.jump(continuation);
+    m_out.appendTo(hasNoStorage);
+    ValueFromBlock asked = m_out.anchor(coldCallForValue(origin, Entry::operationAOTGetLengthSlow, array, nullptr, ColdCall::ChangesNothing));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(Int64, stored, asked);
+}
+
 void Lowering::lowerGetLength(Node* node)
 {
     Node* baseNode = node->use(node->as<OpGetLength>().m_base);
@@ -872,16 +894,7 @@ void Lowering::lowerGetLength(Node* node)
             setInt64(node, view->length);
             return;
         }
-        LBasicBlock hasStorage = m_out.newBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
-        ValueFromBlock none = m_out.anchor(m_out.int64Zero);
-        m_out.branch(m_out.notNull(butterfly), usually(hasStorage), rarely(continuation));
-        m_out.appendTo(hasStorage);
-        ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(butterfly, m_heaps.Butterfly_publicLength), Int64));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        setInt64(node, m_out.phi(Int64, none, some));
+        setInt64(node, lengthOfArray(node, base));
         return;
     }
 

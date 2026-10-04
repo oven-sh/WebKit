@@ -119,7 +119,7 @@ public:
     };
     TypedLayout typedLayout(uint32_t number) const;
     bool isUsable(uint32_t layoutID) const;
-    unsigned inlineSlotsOf(uint32_t layoutID) const { return m_words[m_typedLayouts[layoutID]] >> 16 & 0xff; }
+    unsigned inlineSlotsOf(uint32_t layoutID) const { return std::max<unsigned>(m_words[m_typedLayouts[layoutID]] >> 16 & 0xff, m_words[m_typedLayouts[layoutID]] & 0xffff); }
     bool isOpen(uint32_t layoutID) const { return m_words[m_typedLayouts[layoutID]] >> 30 & 1; }
     bool usesFieldIDs(uint32_t layoutID) const { return m_words[m_typedLayouts[layoutID]] >> 29 & 1; }
     uint16_t fieldID(uint32_t layoutID, UniquedStringImpl* name) const { return m_fieldIDs.get({ layoutID, name }); }

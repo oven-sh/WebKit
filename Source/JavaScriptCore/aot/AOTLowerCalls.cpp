@@ -423,6 +423,17 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         mode = CallMode::Call;
     }
     LValue result = emitCall(node, callee, arguments, mode, intrinsic, hostCallStub);
+    if (hasResult && Graph::convertsResultToBoolean(node)) {
+        LBasicBlock isNotBoolean = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock returned = m_out.anchor(result);
+        m_out.branch(isBoolean(result), usually(continuation), rarely(isNotBoolean));
+        m_out.appendTo(isNotBoolean);
+        ValueFromBlock converted = m_out.anchor(boxBoolean(m_out.notZero64(plainCall(Int64, Entry::operationAOTToBoolean, m_instance, result))));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        result = m_out.phi(Int64, returned, converted);
+    }
     if (afterBuiltin) {
         m_nodeKeepsReads = m_nodeKeepsReads && builtinKeepsReads;
         builtinResults.append(m_out.anchor(result));

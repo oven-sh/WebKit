@@ -87,7 +87,6 @@ static constexpr unsigned codeGranuleShift = 10;
     v(MakeRope3, operationMakeRope3) \
     v(StringSliceWithEnd, operationStringSliceWithEnd) \
     v(StringSubstringWithEnd, operationStringSubstringWithEnd) \
-    v(ToLowerCase, operationToLowerCase) \
     v(ObjectKeysObject, operationObjectKeysObject) \
     v(ValueAdd, operationAOTValueAdd) \
 
@@ -109,7 +108,6 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HelperMakeRope2) \
     v(HelperMakeRope3) \
     v(HelperInt32ToString) \
-    v(HelperToLowerCase) \
     v(HelperObjectKeys) \
     v(HelperAddField) \
     v(HelperSetArrayLength) \
@@ -245,6 +243,13 @@ static constexpr unsigned codeGranuleShift = 10;
     v(MapSet) \
     v(SetHas) \
     v(SetAdd) \
+    v(WeakMapGet) \
+    v(WeakMapHas) \
+    v(WeakSetHas) \
+    v(ArrayIncludes) \
+    v(ArrayIndexOf) \
+    v(ToLowerCase) \
+    v(ToUpperCase) \
     v(HandleException) \
     v(ThrowStackOverflowAtPrologue) \
     v(ThrowStackOverflow) \
@@ -281,7 +286,6 @@ static constexpr unsigned codeGranuleShift = 10;
     v(MakeRope3WithFastPath) \
     v(StringSliceWithEndWithFastPath) \
     v(StringSubstringWithEndWithFastPath) \
-    v(ToLowerCaseWithFastPath) \
     v(ObjectKeysObjectWithFastPath) \
     v(ValueAddWithFastPath) \
 

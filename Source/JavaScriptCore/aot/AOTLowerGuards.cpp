@@ -224,6 +224,11 @@ void Lowering::emitGuard(Node* guard)
             exitUnless(isCellAnd(array, lowJSValue(array), [&](LValue cell) { return m_out.belowOrEqual(m_out.sub(cellType(cell), m_out.constInt32(ArrayType)), m_out.int32One); }));
         }
         return;
+    case GuardKind::IsOriginalArrayIntrinsic:
+        m_graph.remark("skips-species-of-original-array"_s);
+        exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
+        exitUnless(isCellAnd(guard->uses[1].node, lowJSValue(guard->uses[1].node), [&](LValue cell) { return isOriginalArray(cell); }));
+        return;
     case GuardKind::IsIntrinsic:
         exitUnless(m_out.equal(lowJSValue(guard->uses[0].node), m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[guard->intrinsic])));
         return;
@@ -416,7 +421,7 @@ void Lowering::guardGetById(Node* guard)
         guard->lowered = m_out.int64Zero;
         return;
     }
-    const AbstractHeap& heap = m_heaps.properties[bytecode.m_property];
+    const AbstractHeap& heap = m_heaps.properties[numberOf(bytecode.m_property)];
     LValue base = lowJSValue(baseNode);
     unsigned slot = propertyGuardSlot(guard);
     LValue word = loadSlotWord(slot, 0);
@@ -440,7 +445,7 @@ void Lowering::guardGetById(Node* guard)
     m_out.appendTo(indirectCase, continuation);
     exitUnless(m_out.logicalNot(hasFlag(m_out, word, Slot::isGetter)));
     LValue holder = loadSlotWord(slot, 1);
-    ValueFromBlock indirectResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(m_out.notNull(holder), holder, base), word, &heap)));
+    ValueFromBlock indirectResult = m_out.anchor(m_out.load64(cachedPropertyAddress(m_out.select(m_out.notNull(holder), holder, base), word, &m_heaps.root)));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -488,7 +493,7 @@ void Lowering::guardPutById(Node* guard)
         exitUnless(m_out.booleanFalse);
         return;
     }
-    const AbstractHeap& heap = m_heaps.properties[bytecode.m_property];
+    const AbstractHeap& heap = m_heaps.properties[numberOf(bytecode.m_property)];
     LValue base = lowJSValue(baseNode);
     LValue value = lowJSValue(valueNode);
     unsigned slot = propertyGuardSlot(guard);
@@ -642,7 +647,7 @@ void Lowering::guardGetByVal(Node* guard)
             exitUnless(m_out.equal(shape, m_out.constInt32(Int32Shape)));
             LValue butterfly = m_out.loadPtr(base, m_heaps.JSObject_butterfly);
             exitUnless(m_out.below(index, m_out.load32(butterfly, m_heaps.Butterfly_publicLength)));
-            LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedInt32Properties, butterfly, m_out.zeroExtPtr(index)));
+            LValue element = m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(index)));
             exitUnless(m_out.notZero64(element));
             guard->lowered = unboxInt32(element);
             return;
@@ -895,7 +900,7 @@ void Lowering::guardPutByVal(Node* guard)
                 exitUnless(isInt32(boxed));
             }
             lengthen();
-            m_out.store64(boxed, m_out.baseIndex(m_heaps.indexedInt32Properties, butterfly, wideIndex));
+            m_out.store64(boxed, m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, wideIndex));
             m_out.jump(continuation);
         }
         m_out.appendTo(notInt32s);
@@ -948,8 +953,9 @@ void Lowering::guardGetLength(Node* guard)
         exitUnless(m_out.equal(m_out.load32(prototype, m_heaps.JSCell_structureID), m_out.load32(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, prototypeStructureID)))));
         LValue secondPrototype = m_out.loadPtr(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, secondPrototype)));
         exitUnless(m_out.equal(m_out.load32(secondPrototype, m_heaps.JSCell_structureID), m_out.load32(m_out.address(m_heaps.root, entry, OBJECT_OFFSETOF(Instance::TypedArrayWithBuiltinLength, secondPrototypeStructureID)))));
-        exitUnless(m_out.equal(m_out.load32(m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayViewPrototype())), m_heaps.JSCell_structureID), m_out.load32(ofInstance(Instance::offsetOfTypedArrayViewPrototypeStructureID()))));
-        exitUnless(m_out.equal(m_out.load64(m_out.address(m_heaps.root, m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayLengthLocation())), 0)), m_out.load64(ofInstance(Instance::offsetOfTypedArrayLengthAccessor()))));
+        LValue viewPrototype = m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayViewPrototype()));
+        exitUnless(m_out.equal(m_out.load32(viewPrototype, m_heaps.JSCell_structureID), m_out.load32(ofInstance(Instance::offsetOfTypedArrayViewPrototypeStructureID()))));
+        exitUnless(m_out.equal(m_out.load64(m_out.address(m_heaps.root, m_out.add(m_out.loadPtr(viewPrototype, m_heaps.JSObject_butterfly), m_out.loadPtr(ofInstance(Instance::offsetOfTypedArrayLengthOffsetInButterfly()))), 0)), m_out.load64(ofInstance(Instance::offsetOfTypedArrayLengthAccessor()))));
     };
     if (isSubtype(baseNode->type, TTypedArray)) {
         exitUnlessOriginalTypedArray(m_out.load8ZeroExt32(base, m_heaps.JSCell_typeInfoType));
@@ -1070,11 +1076,10 @@ bool Lowering::guardResolveScope(Node* guard)
         return false;
     StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, bytecode.m_resolveType);
     if (variable.kind == StaticVariable::Import) {
-        LValue importer = lowCell(guard->use(bytecode.m_scope));
-        for (unsigned i = 0; i < variable.depth; ++i)
-            importer = m_out.loadPtr(importer, m_heaps.JSScope_next);
-        guard->lowered = m_out.load64(importer, m_heaps.JSLexicalEnvironment_variables[variable.import.slotScopeOffset]);
-        exitUnless(m_out.notZero64(guard->lowered));
+        auto distance = m_graph.resolvedEnvironmentDepth(guard);
+        if (!distance)
+            return false;
+        guard->lowered = environmentAt(*distance);
         return true;
     }
     unsigned extra = code().resolveScopeExtra(bytecode);
@@ -1349,7 +1354,7 @@ bool Lowering::guardCall(Node* guard)
             LValue value = lowJSValuePreferringInt32(valueNode);
             if (valueNode->rep() != Rep::Int32)
                 exitUnless(isInt32(value));
-            m_out.store64(value, m_out.baseIndex(m_heaps.indexedInt32Properties, butterfly, utf16Length));
+            m_out.store64(value, m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, utf16Length));
             m_out.jump(stored);
         }
 

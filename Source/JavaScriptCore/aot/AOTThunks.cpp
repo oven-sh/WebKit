@@ -478,6 +478,13 @@ void generateFrontEndCreateThis(CCallHelpers& jit)
     jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
     jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
     slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch1));
+    if (Options::useAOTTypedFields()) {
+        jit.urshift32(argument2, TrustedImm32(16), scratch2);
+        Jump expectsNoLayout = jit.branchTest32(CCallHelpers::Zero, scratch2);
+        jit.load16(Address(scratch0, Structure::offsetOfTypedLayoutID()), scratch3);
+        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch2, scratch3));
+        expectsNoLayout.link(&jit);
+    }
     jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
     jit.emitStoreStructureWithTypeInfo(scratch0, scratch3, scratch1);
     jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));

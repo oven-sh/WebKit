@@ -6205,6 +6205,10 @@ struct BytecodeLinkEncoder::Impl {
     Vector<uint8_t> compileImage()
     {
         MacroAssembler::useOnlyFeaturesOfBuildTarget();
+        if (!MacroAssembler::supportsFloatingPointRounding()) {
+            dataLogLn("AOT: the engine was built for a CPU that cannot round floating point numbers (SSE4.1), for which B3 calls a function by its address");
+            return { };
+        }
         ImmutableIntrinsics::ensureShared(vm);
         AOT::TypeTable::load(vm);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {

@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTCompiler.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeStructs.h"
@@ -194,20 +195,8 @@ public:
         if (!programIdentifierIndices() || !programConstantIndicesFor(callee))
             return false;
         for (const auto& instruction : callee->instructions()) {
-            switch (instruction->opcodeID()) {
-            case op_call_direct_eval:
-            case op_push_with_scope:
-            case op_catch:
-            case op_super_construct:
-            case op_super_construct_varargs:
-            case op_create_direct_arguments:
-            case op_create_scoped_arguments:
-            case op_create_cloned_arguments:
-            case op_create_rest:
+            if (traitsOf(instruction->opcodeID()) & OpcodeTraits::NeedsOwnFrame)
                 return false;
-            default:
-                break;
-            }
         }
         return true;
     }
@@ -367,8 +356,8 @@ private:
         Node* closureFunction = nullptr;
         unsigned guardedIntrinsic = 0;
         uint32_t likelyFunction = 0;
-        bool calleeIsProvenIntrinsic = false;
         bool isArraySpecialization = false;
+        bool skipsSpeciesConstructor = false;
         bool passesCallback = false;
         auto declineToInline = [&](ASCIILiteral why) {
             dataLogLnIf(Options::verboseAOTCompilation(), "AOT: a builtin is not made part of its caller at bc#", call->bytecodeIndex.offset(), ": ", why);
@@ -401,9 +390,9 @@ private:
                 if (UnlinkedFunctionCodeBlock* code = m_program.codeForBuiltin(static_cast<unsigned>(*lean)); code && !readsCallee(code)) {
                     callee = code;
                     isArraySpecialization = true;
+                    skipsSpeciesConstructor = *lean == BuiltinCodeIndex::arrayPrototypeMapKnownArrayForEffectCode || *lean == BuiltinCodeIndex::arrayPrototypeFilterKnownArrayForEffectCode;
                 }
             }
-            calleeIsProvenIntrinsic = Options::useAOTTypedFields() && TypeTable::typedFieldsAreEnforced() && TypeTable::shared()->isArray(Graph::typeTagOf(calleeNode));
         } else {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
@@ -511,16 +500,8 @@ private:
             arraySpecializationReceiver = m_graph.addNode(NodeKind::Narrow);
             arraySpecializationReceiver->narrowedTo = TArray;
             arraySpecializationReceiver->uses.append({ VirtualRegister(), call->use(VirtualRegister(firstArgument)) });
-            if (calleeIsProvenIntrinsic) {
-                arraySpecializationReceiver->checksNarrowedType = true;
-                arraySpecializationReceiver->graph = call->graph;
-                arraySpecializationReceiver->opcode = call->opcode;
-                arraySpecializationReceiver->instruction = call->instruction;
-                arraySpecializationReceiver->bytecodeIndex = call->bytecodeIndex;
-            } else {
-                arraySpecializationReceiver->graph = inlinee.get();
-                arraySpecializationReceiver->block = entry;
-            }
+            arraySpecializationReceiver->graph = inlinee.get();
+            arraySpecializationReceiver->block = entry;
             for (BasicBlock* inlineeBlock : inlinee->m_rpo) {
                 Node* terminal = inlineeBlock->terminal();
                 if (!terminal || !terminal->isBytecode(op_jtrue) || inlineeBlock->successors.size() != 2)
@@ -564,7 +545,7 @@ private:
             node->replacement = !argument && arraySpecializationReceiver ? arraySpecializationReceiver : argument < argc ? call->use(VirtualRegister(firstArgument + static_cast<int>(argument))) : m_graph.constant(jsUndefined());
             return true;
         });
-        if (arraySpecializationReceiver && !calleeIsProvenIntrinsic)
+        if (arraySpecializationReceiver)
             entry->nodes.insert(0, arraySpecializationReceiver);
         for (BasicBlock* inlineeBlock : inlinee->m_rpo) {
             inlineeBlock->nodes.removeAllMatching([&](Node* node) {
@@ -625,10 +606,6 @@ private:
         }
         block->nodes.shrink(index);
         block->bytecodeEnd = call->bytecodeIndex.offset();
-        if (arraySpecializationReceiver && calleeIsProvenIntrinsic) {
-            arraySpecializationReceiver->block = block;
-            block->nodes.append(arraySpecializationReceiver);
-        }
         continuation->successors = std::exchange(block->successors, { });
         for (BasicBlock* successor : continuation->successors) {
             for (auto& predecessor : successor->predecessors) {
@@ -639,10 +616,10 @@ private:
         block->successors.append(entry);
         entry->predecessors.append(block);
         Node* fallbackCall = nullptr;
-        if ((guardedIntrinsic && !calleeIsProvenIntrinsic) || checksCalleeIsInitialized || likelyFunction) {
+        if (guardedIntrinsic || checksCalleeIsInitialized || likelyFunction) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
             guard->graph = block->graph;
-            guard->guardKind = likelyFunction ? GuardKind::IsLikelyFunction : checksCalleeIsInitialized ? GuardKind::KnownCallee : isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
+            guard->guardKind = likelyFunction ? GuardKind::IsLikelyFunction : checksCalleeIsInitialized ? GuardKind::KnownCallee : skipsSpeciesConstructor ? GuardKind::IsOriginalArrayIntrinsic : isArraySpecialization ? GuardKind::IsArrayIntrinsic : GuardKind::IsIntrinsic;
             guard->intrinsic = guardedIntrinsic;
             guard->likelyFunction = likelyFunction;
             guard->opcode = call->opcode;

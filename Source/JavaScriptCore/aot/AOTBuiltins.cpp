@@ -10,6 +10,7 @@
 
 #include "AOTRuntime.h"
 #include "ImmutableIntrinsics.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/text/MakeString.h>
@@ -95,6 +96,8 @@ const Row rows[] = {
     { "Array.prototype.includes"_s, TBoolean }, { "Array.prototype.every"_s, TBoolean }, { "Array.prototype.some"_s, TBoolean },
     { "Array.prototype.indexOf"_s, TNumber }, { "Array.prototype.lastIndexOf"_s, TNumber }, { "Array.prototype.findIndex"_s, TNumber }, { "Array.prototype.findLastIndex"_s, TNumber },
     { "Array.prototype.push"_s, TNumber }, { "Array.prototype.unshift"_s, TNumber }, { "Array.prototype.join"_s, TString },
+    { "Array.prototype.map"_s, TArray, Condition::IfReceiverIsOriginal }, { "Array.prototype.filter"_s, TArray, Condition::IfReceiverIsOriginal },
+    { "Array.prototype.slice"_s, TArray, Condition::IfReceiverIsOriginal }, { "Array.prototype.concat"_s, TArray, Condition::IfReceiverIsOriginal },
     { "RegExp.prototype.test"_s, TBoolean }, { "RegExp.prototype.exec"_s, TArray | TNull },
     { "Date.prototype.getTime"_s, TNumber }, { "Date.prototype.valueOf"_s, TNumber }, { "Date.prototype.getTimezoneOffset"_s, TNumber },
     { "Date.prototype.getFullYear"_s, TNumber }, { "Date.prototype.getMonth"_s, TNumber }, { "Date.prototype.getDate"_s, TNumber }, { "Date.prototype.getDay"_s, TNumber },
@@ -115,9 +118,24 @@ const Row constructors[] = {
     { "String"_s, TStringObject }, { "Number"_s, TObject }, { "Boolean"_s, TObject },
 };
 
+const ASCIILiteral methodsThatKeepTheirReceiverToThemselves[] = {
+    "Map.prototype.get"_s, "Map.prototype.has"_s, "Map.prototype.set"_s, "Map.prototype.delete"_s, "Map.prototype.clear"_s, "Map.prototype.keys"_s, "Map.prototype.values"_s, "Map.prototype.entries"_s,
+    "Set.prototype.has"_s, "Set.prototype.add"_s, "Set.prototype.delete"_s, "Set.prototype.clear"_s, "Set.prototype.values"_s, "Set.prototype.entries"_s,
+    "WeakMap.prototype.get"_s, "WeakMap.prototype.has"_s, "WeakMap.prototype.set"_s, "WeakMap.prototype.delete"_s,
+    "WeakSet.prototype.has"_s, "WeakSet.prototype.add"_s, "WeakSet.prototype.delete"_s,
+    "RegExp.prototype.test"_s, "RegExp.prototype.exec"_s,
+};
+
+const ASCIILiteral methodsThatReturnTheirReceiver[] = {
+    "Map.prototype.set"_s, "Set.prototype.add"_s, "WeakMap.prototype.set"_s, "WeakSet.prototype.add"_s,
+};
+
 struct Tables {
     Vector<const Row*> called;
     Vector<const Row*> constructed;
+    BitVector keepsReceiverToItself;
+    BitVector returnsReceiver;
+    unsigned reflectConstruct { 0 };
     unsigned stringPrototype { 0 };
     unsigned numberPrototype { 0 };
     unsigned booleanPrototype { 0 };
@@ -157,6 +175,17 @@ const Tables* tables()
             if (unsigned number = find(row.path))
                 result->constructed[number] = &row;
         }
+        for (auto& row : rows) {
+            if (StringView(row.path).startsWith("Date.prototype."_s))
+                result->keepsReceiverToItself.set(find(row.path));
+        }
+        for (ASCIILiteral path : methodsThatKeepTheirReceiverToThemselves)
+            result->keepsReceiverToItself.set(find(path));
+        for (ASCIILiteral path : methodsThatReturnTheirReceiver)
+            result->returnsReceiver.set(find(path));
+        result->keepsReceiverToItself.clear(0);
+        result->returnsReceiver.clear(0);
+        result->reflectConstruct = find("Reflect.construct"_s);
         result->stringPrototype = find("String.prototype"_s);
         result->numberPrototype = find("Number.prototype"_s);
         result->booleanPrototype = find("Boolean.prototype"_s);
@@ -232,6 +261,24 @@ bool isDataPropertyOfFunctionPrototype(const StringImpl& name)
     return all && all->functionPrototype && ImmutableIntrinsics::shared()->find(all->functionPrototype, name);
 }
 
+bool keepsReceiverToItself(unsigned intrinsic)
+{
+    const Tables* all = tables();
+    return all && all->keepsReceiverToItself.get(intrinsic);
+}
+
+bool returnsReceiver(unsigned intrinsic)
+{
+    const Tables* all = tables();
+    return all && all->returnsReceiver.get(intrinsic);
+}
+
+bool isReflectConstruct(unsigned intrinsic)
+{
+    const Tables* all = tables();
+    return all && intrinsic && all->reflectConstruct == intrinsic;
+}
+
 Builtin builtinAtIndex(unsigned number)
 {
     const Tables* all = tables();
@@ -265,33 +312,6 @@ Type typeOf(Receiver receiver)
         return TNumber;
     }
     return TNone;
-}
-
-ASCIILiteral nameOf(Receiver receiver)
-{
-    switch (receiver) {
-    case Receiver::None:
-        break;
-    case Receiver::String:
-        return "String"_s;
-    case Receiver::Array:
-        return "Array"_s;
-    case Receiver::Map:
-        return "Map"_s;
-    case Receiver::Set:
-        return "Set"_s;
-    case Receiver::WeakMap:
-        return "WeakMap"_s;
-    case Receiver::WeakSet:
-        return "WeakSet"_s;
-    case Receiver::RegExp:
-        return "RegExp"_s;
-    case Receiver::Date:
-        return "Date"_s;
-    case Receiver::Number:
-        return "Number"_s;
-    }
-    return ""_s;
 }
 
 JSType cellTypeOf(Receiver receiver)

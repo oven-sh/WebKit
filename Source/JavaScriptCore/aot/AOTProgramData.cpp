@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "BuiltinExecutables.h"
@@ -418,6 +419,7 @@ public:
         for (const auto& instruction : codeBlock->instructions()) {
             switch (instruction->opcodeID()) {
             case op_call_direct_eval:
+            case op_resolve_scope_for_hoisting_func_decl_in_eval:
                 own.mayBeAnything = true;
                 break;
             case op_resolve_scope:
@@ -433,6 +435,7 @@ public:
                     own.names.add(codeBlock->identifier(bytecode.m_var).impl());
                 break;
             default:
+                RELEASE_ASSERT(!(traitsOf(instruction->opcodeID()) & OpcodeTraits::LooksUpVariableByName));
                 break;
             }
         }

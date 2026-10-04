@@ -705,9 +705,14 @@ SUPPRESS_ASAN void* returnAddressForFrame(const void* frame, const void* startin
         const Record* previous;
         void* returnAddress;
     };
-    for (auto* record = static_cast<const Record*>(startingFrom); record && record < frame; record = record->previous) {
-        if (record->previous == frame)
+    auto* record = static_cast<const Record*>(startingFrom);
+    while (record && record < frame && !(std::bit_cast<uintptr_t>(record) % sizeof(void*))) {
+        const Record* previous = record->previous;
+        if (previous == frame)
             return removeCodePtrTag(record->returnAddress);
+        if (previous <= record)
+            break;
+        record = previous;
     }
     return nullptr;
 }
@@ -1170,6 +1175,13 @@ void* FunctionRef::catchEntrypointAddress(unsigned bytecodeOffset) const
     return nullptr;
 }
 
+SUPPRESS_ASAN JSCell* FunctionRef::calleeInFrame(const void* frame) const
+{
+    const ImageFunction& function = *info().function();
+    unsigned start = Image::of(function).frameOf(function).calleeStart;
+    return start ? *(static_cast<JSCell* const*>(frame) - start) : nullptr;
+}
+
 const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset) const
 {
     const uint32_t* words = metadata()->find(FunctionMetadata::Handlers);
@@ -1213,8 +1225,8 @@ static std::span<const uint32_t> functionsIn(const FunctionMetadata& metadata, F
 void Data::destroy(Data* data)
 {
     Instance& instance = *data->instance;
-    if (auto* cache = instance.vm->megamorphicCache(); cache && data->hasSitesInMegamorphicCache)
-        cache->bumpEpoch();
+    if (data->hasSitesInMegamorphicCache)
+        instance.vm->invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     RELEASE_ASSERT(instance.dataIfExists(data->code->index()) == data);
     instance.setNotLinked(data->code->index());
     auto belongsToThisData = [&](Slot* slot) { return slot >= data->slots && slot < data->slots + data->numSlots; };
@@ -1518,6 +1530,7 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     }
     visitor.appendUnbarriered(typedArrayViewPrototype);
     visitor.appendUnbarriered(typedArrayLengthAccessor);
+    visitor.appendUnbarriered(typedArrayLengthGetter);
     visitor.appendUnbarriered(collections->token);
     for (ScriptExecutable* executable : collections->topLevelExecutables.values())
         visitor.appendUnbarriered(executable);
@@ -2047,6 +2060,12 @@ void Instance::noteCalleeCacheFilled(Slot* cache)
     collections->calleeCachesFilledSinceLastCollection.append(cache);
 }
 
+void Instance::clearCachesValidatedByMegamorphicCacheEpoch()
+{
+    zeroSpan(std::span { customGetters });
+    zeroSpan(std::span { inheritedSetters });
+}
+
 void Instance::finalizeUnconditionally(bool newOnly)
 {
     for (Slot* cache : collections->calleeCachesFilledSinceLastCollection) {
@@ -2056,8 +2075,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     collections->calleeCachesFilledSinceLastCollection.shrink(0);
     if (std::exchange(collections->hasFieldAdditions, false))
         zeroSpan(std::span { fieldAdditions });
-    zeroSpan(std::span { customGetters });
-    zeroSpan(std::span { inheritedSetters });
+    clearCachesValidatedByMegamorphicCacheEpoch();
     for (PolymorphicSlots* several : collections->allSiteSlots) {
         if (newOnly && !several->owner->hasBeenFilledSinceLastCollection)
             continue;
@@ -2091,6 +2109,9 @@ void Instance::finalizeUnconditionally(bool newOnly)
     collections->copiedProperties.removeIf([&](auto& entry) {
         auto& [target, source, excluded] = entry.key;
         return !vm->heap.isMarked(target) || !vm->heap.isMarked(source) || (entry.value.last && !vm->heap.isMarked(entry.value.last));
+    });
+    collections->rejectedConversions.removeIf([&](auto& entry) {
+        return !vm->heap.isMarked(entry.key.first);
     });
     collections->transitions.appendVector(collections->transitionsSinceLastCollection);
     collections->transitionsSinceLastCollection.shrink(0);

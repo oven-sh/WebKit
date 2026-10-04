@@ -8,6 +8,7 @@
 
 #include "AOTCompiler.h"
 #include "AOTImage.h"
+#include "AOTOpcodeTraits.h"
 
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
 
@@ -64,38 +65,9 @@ static bool errorMayQuoteSource(const Graph& graph, Node* node)
     case op_construct:
         return !calleeIsKnownDeclaration();
     case op_type_tag:
-    case op_get_by_id_with_this:
-    case op_get_by_id_direct:
-    case op_get_by_val_with_this:
-    case op_get_private_name:
-    case op_put_by_val_direct:
-    case op_put_private_name:
-    case op_set_private_brand:
-    case op_check_private_brand:
-    case op_has_private_name:
-    case op_has_private_brand:
-    case op_in_by_id:
-    case op_in_by_val:
-    case op_enumerator_in_by_val:
-    case op_enumerator_get_by_val:
-    case op_enumerator_put_by_val:
-    case op_enumerator_has_own_property:
-    case op_instanceof:
-    case op_call_direct_eval:
-    case op_call_varargs:
-    case op_tail_call_varargs:
-    case op_construct_varargs:
-    case op_super_construct:
-    case op_super_construct_varargs:
-    case op_iterator_open:
-    case op_iterator_next:
-    case op_check_tdz:
-    case op_to_object:
-    case op_get_prototype_of:
-    case op_spread:
         return true;
     default:
-        return false;
+        return traitsOf(node->opcode) & OpcodeTraits::ErrorMayQuoteSource;
     }
 }
 
@@ -122,45 +94,8 @@ void recordAllSitesOf(Graph& graph)
 {
     for (const auto& instruction : graph.codeBlock()->instructions()) {
         graph.callSites.append(instruction.offset());
-        switch (instruction->opcodeID()) {
-        case op_get_by_id:
-        case op_get_length:
-        case op_get_by_val:
-        case op_put_by_id:
-        case op_put_by_val:
-        case op_del_by_id:
-        case op_del_by_val:
-        case op_call:
-        case op_call_ignore_result:
-        case op_tail_call:
-        case op_construct:
-        case op_get_by_id_with_this:
-        case op_get_by_id_direct:
-        case op_get_by_val_with_this:
-        case op_get_private_name:
-        case op_put_by_val_direct:
-        case op_put_private_name:
-        case op_set_private_brand:
-        case op_check_private_brand:
-        case op_has_private_name:
-        case op_has_private_brand:
-        case op_in_by_id:
-        case op_in_by_val:
-        case op_instanceof:
-        case op_call_varargs:
-        case op_tail_call_varargs:
-        case op_construct_varargs:
-        case op_iterator_open:
-        case op_iterator_next:
-        case op_check_tdz:
-        case op_to_object:
-        case op_get_prototype_of:
-        case op_spread:
+        if (traitsOf(instruction->opcodeID()) & OpcodeTraits::ErrorMayQuoteSource)
             graph.quotableSites.append(instruction.offset());
-            break;
-        default:
-            break;
-        }
     }
 }
 
@@ -266,8 +201,11 @@ bool Lowering::run()
     m_vm = m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm);
     m_globalObject = m_out.loadPtr(m_instance, m_heaps.AOTInstance_globalObject);
     m_table = m_out.loadPtr(m_instance, m_heaps.AOTInstance_runtimeTable);
-    if (m_graph.needsFunctionObject())
+    if (m_graph.needsFunctionObject()) {
         m_calleeSlot = m_out.lockedStackSlot(sizeof(EncodedJSValue));
+        if (m_graph.codeBlock()->codeType() == FunctionCode && AOT::needsFunctionObject(m_graph.codeBlock()))
+            m_graph.calleeSlot = m_calleeSlot->as<B3::SlotBaseValue>()->slot();
+    }
     if (m_graph.convention().signature == Signature::List)
         m_listSlot = m_out.lockedStackSlot(2 * sizeof(EncodedJSValue));
     if (unsigned homes = m_graph.numberOfFrameRegisters())
@@ -529,6 +467,9 @@ static bool mayInspectStack(Stub stub)
     case Stub::WriteBarrier:
     case Stub::ToBoolean:
     case Stub::Latin1Characters:
+    case Stub::WeakMapGet:
+    case Stub::WeakMapHas:
+    case Stub::WeakSetHas:
         return false;
     default:
         return true;
@@ -1230,6 +1171,7 @@ LValue Lowering::toBoolean(Node* node)
         PatchpointValue* patchpoint = callStub(Stub::ToBoolean, Int32, { { value, firstStubOperandGPR } }, { }, StubClobbers::Temporaries);
         patchpoint->effects = Effects::none();
         patchpoint->effects.reads = HeapRange::top();
+        patchpoint->effects.controlDependent = true;
         return patchpoint;
     }
 
@@ -1287,26 +1229,18 @@ const Lowering::ArrayView* Lowering::viewOf(Node* access, Node* base)
     return nullptr;
 }
 
-void Lowering::loadArrayView(Node* base, const ArrayViewVariables& variables)
+void Lowering::loadArrayView(Node* origin, Node* base, const ArrayViewVariables& variables)
 {
     auto set = [&](B3::Variable* variable, LValue value) {
         m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
     };
     LValue array = lowCell(base);
-    LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeMask));
+    LValue arrayMode = m_out.bitAnd(m_out.load8ZeroExt32(array, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingTypeMask));
     LValue butterfly = m_out.loadPtr(array, m_heaps.JSObject_butterfly);
-    LBasicBlock hasElements = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    ValueFromBlock none = m_out.anchor(m_out.int64Zero);
-    m_out.branch(m_out.notZero32(shape), usually(hasElements), rarely(continuation));
-    m_out.appendTo(hasElements);
-    ValueFromBlock some = m_out.anchor(m_out.zeroExt(m_out.load32(butterfly, m_heaps.Butterfly_publicLength), Int64));
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-    LValue length = m_out.phi(Int64, none, some);
+    LValue length = lengthOfArray(origin, array);
     set(variables.butterfly, butterfly);
     set(variables.length, length);
-    set(variables.limit, m_out.select(m_out.bitOr(m_out.equal(shape, m_out.constInt32(Int32Shape)), m_out.equal(shape, m_out.constInt32(ContiguousShape))), length, m_out.int64Zero));
+    set(variables.limit, m_out.select(m_out.bitOr(m_out.equal(arrayMode, m_out.constInt32(ArrayWithInt32)), m_out.equal(arrayMode, m_out.constInt32(ArrayWithContiguous))), length, m_out.int64Zero));
 }
 
 void Lowering::reloadArrayViews()
@@ -1315,16 +1249,26 @@ void Lowering::reloadArrayViews()
         if (!header->loopBody.get(m_block->index))
             continue;
         m_graph.remark("reloads-array-view"_s);
-        loadArrayView(array, variables);
+        loadArrayView(m_node, array, variables);
     }
 }
 
 void Lowering::hoistArrayStorageLoadsAheadOf(BasicBlock* header)
 {
     m_out.appendTo(header->loweredAhead);
+    auto firstAccessTo = [&](Node* base) -> Node* {
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (node->viewedAheadOf == header && node->arrayViewed == base)
+                    return node;
+            }
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    };
     for (Node* base : header->arraysViewed) {
         ArrayViewVariables variables { m_proc.addVariable(pointerType()), m_proc.addVariable(Int64), m_proc.addVariable(Int64) };
-        loadArrayView(base, variables);
+        loadArrayView(firstAccessTo(base), base, variables);
         m_arrayViews.append({ header, base, variables });
     }
     m_out.jump(header->lowered);
@@ -1525,21 +1469,8 @@ void Lowering::lowerNode(Node* node)
             setJSValue(node, m_out.phi(Int64, inField, converted));
             return;
         }
-        if (node->narrowedTo) {
-            Node* valueNode = node->uses[0].node;
-            LValue value = lowJSValue(valueNode);
-            if (node->checksNarrowedType && !isSubtype(valueNode->type, node->narrowedTo)) {
-                RELEASE_ASSERT(node->narrowedTo == TArray);
-                LBasicBlock matchCase = m_out.newBlock();
-                LBasicBlock isNot = newColdBlock();
-                emitTypeTests(valueNode, value, MaskArray, matchCase, isNot);
-                m_out.appendTo(isNot);
-                coldCall(node, Entry::operationAOTCheckType, value, m_out.constInt32(MaskArray));
-                m_out.unreachable();
-                m_out.appendTo(matchCase);
-            }
-            setJSValue(node, value);
-        }
+        if (node->narrowedTo)
+            setJSValue(node, lowJSValue(node->uses[0].node));
         return;
     case NodeKind::Argument:
         if (node->reg == VirtualRegister(CallFrameSlot::callee))

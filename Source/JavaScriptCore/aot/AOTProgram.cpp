@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTType.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
@@ -709,20 +710,9 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
     bool takesList = false;
     result.usesThis = codeBlock->isConstructor();
     for (const auto& instruction : codeBlock->instructions()) {
-        switch (instruction->opcodeID()) {
-        case op_create_direct_arguments:
-        case op_create_scoped_arguments:
-        case op_create_cloned_arguments:
-        case op_create_rest:
-        case op_argument_count:
-            takesList = true;
-            break;
-        case op_get_argument:
+        takesList |= !!(traitsOf(instruction->opcodeID()) & OpcodeTraits::ReadsArgumentList);
+        if (instruction->opcodeID() == op_get_argument)
             numberOfParameters = std::max<unsigned>(numberOfParameters, instruction->as<OpGetArgument>().m_index);
-            break;
-        default:
-            break;
-        }
         for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints() && !result.usesThis; ++checkpoint) {
             computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
                 result.usesThis |= reg == virtualRegisterForArgumentIncludingThis(0);
@@ -750,20 +740,13 @@ bool readsCallee(UnlinkedCodeBlock* codeBlock)
     Vector<VirtualRegister, 2> copies;
     bool result = false;
     for (const auto& instruction : codeBlock->instructions()) {
-        switch (instruction->opcodeID()) {
-        case op_create_direct_arguments:
-        case op_create_scoped_arguments:
-        case op_create_cloned_arguments:
-        case op_call_direct_eval:
+        if (traitsOf(instruction->opcodeID()) & OpcodeTraits::ReadsCalleeWithoutOperand)
             return true;
-        case op_mov:
+        if (instruction->opcodeID() == op_mov) {
             if (auto bytecode = instruction->as<OpMov>(); bytecode.m_src == VirtualRegister(CallFrameSlot::callee)) {
                 copies.append(bytecode.m_dst);
                 continue;
             }
-            break;
-        default:
-            break;
         }
         for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
             computeUsesForBytecodeIndexImpl(instruction.ptr(), checkpoint, [&](VirtualRegister reg) {

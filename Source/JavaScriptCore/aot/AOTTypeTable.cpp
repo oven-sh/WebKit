@@ -298,7 +298,7 @@ bool TypeTable::isUsable(uint32_t number) const
     if (!number || number >= m_typedLayouts.size())
         return false;
     auto words = m_words.span().subspan(m_typedLayouts[number]);
-    return (words[0] & 0xffff) <= 255 && (words[0] >> 16 & 0xff) <= std::min<unsigned>(JSFinalObject::maxInlineCapacity, 255) && (words[0] & 0xffff) && words[1] <= 4095;
+    return (words[0] & 0xffff) <= 255 && inlineSlotsOf(number) <= std::min<unsigned>(JSFinalObject::maxInlineCapacity, 255) && (words[0] & 0xffff) && words[1] <= 4095;
 }
 
 TypeTable::TypedLayout TypeTable::typedLayout(uint32_t number) const
@@ -308,7 +308,7 @@ TypeTable::TypedLayout TypeTable::typedLayout(uint32_t number) const
         return result;
     auto words = m_words.span().subspan(m_typedLayouts[number]);
     result.capacity = words[0] & 0xffff;
-    result.inlineSlots = words[0] >> 16 & 0xff;
+    result.inlineSlots = inlineSlotsOf(number);
     result.usesFieldIDs = usesFieldIDs(number);
     for (unsigned i = 0; i < words[1]; ++i) {
         auto name = words.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);

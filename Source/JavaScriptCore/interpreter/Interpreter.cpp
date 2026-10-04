@@ -693,8 +693,14 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 }
                 }
 #if ENABLE(AOT)
-            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && !function.codeBlockIfExists() && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
-                results.append(StackFrame(vm, owner, visitor->callee().asCell(), function.executable(), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
+            } else if (AOT::FunctionRef function = visitor->aotFunction(); function && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
+                JSCell* callee = visitor->aotCallee();
+                if (callee)
+                    uncheckedDowncast<JSFunction>(callee)->executable();
+                if (CodeBlock* codeBlock = function.codeBlockIfExists())
+                    results.append(callee ? StackFrame(vm, owner, callee, codeBlock, visitor->bytecodeIndex()) : StackFrame(vm, owner, codeBlock, visitor->bytecodeIndex()));
+                else
+                    results.append(StackFrame(vm, owner, callee, function.executable(), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())

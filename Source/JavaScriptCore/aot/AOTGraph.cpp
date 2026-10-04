@@ -11,6 +11,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "AOTStubs.h"
 #include "BuiltinNames.h"
@@ -557,7 +558,7 @@ std::optional<uint32_t> Graph::accessedEnvironmentDepth(const Node* node)
         return distance;
     };
     if (type == ResolvedClosureVar || type == ResolvedLazyClosureVar) {
-        if (!m_declaredNames)
+        if (!m_declaredNames || identifier == UINT_MAX)
             return std::nullopt;
         auto resolution = m_declaredNames->resolve(m_codeBlock->identifier(identifier).impl());
         if (resolution.kind != DeclaredNamesLink::Resolution::Slot || !resolution.isInOutermostEnvironment || resolution.offset != offset)
@@ -1533,7 +1534,7 @@ void Graph::recordObjectsInVariables(VariableSummaries& summaries)
         auto bytecode = store->as<OpPutToScope>();
         Node* object = skipAliases(store->use(bytecode.m_value));
         std::unique_ptr<VariableSummaries::ObjectLiteral> literal;
-        if (object->isBytecode(op_new_object)) {
+        if (object->isBytecode(op_new_object) && bytecode.m_var != UINT_MAX) {
             UnlinkedCodeBlock* codeBlock = object->graph->codeBlock();
             auto& instructions = codeBlock->instructions();
             literal = makeUnique<VariableSummaries::ObjectLiteral>();
@@ -1638,43 +1639,51 @@ void Graph::recordUntrackableVariableAccesses(VariableSummaries& summaries)
                     summaries.giveUpOnName(identifier.impl());
                 break;
             default:
+                RELEASE_ASSERT(!(traitsOf(node->opcode) & OpcodeTraits::ReachesVariables));
                 break;
             }
         }
     }
 }
 
-bool Graph::hasOverriddenMethodInfo()
+bool Graph::convertsResultToBoolean(const Node* call)
 {
-    return !!Options::aotOverriddenMethodsPath();
+    if (!call->isBytecode(op_call) || !isSubtype(call->type, TBoolean))
+        return false;
+    Node* callee = call->use(call->as<OpCall>().m_callee);
+    if (!callee->isBytecode(op_get_by_id))
+        return false;
+    switch (receiverWithType(callee->use(callee->as<OpGetById>().m_base)->type & ~(TOther | TEmpty))) {
+    case Receiver::None:
+    case Receiver::String:
+    case Receiver::Number:
+        return false;
+    case Receiver::Array:
+    case Receiver::Map:
+    case Receiver::Set:
+    case Receiver::WeakMap:
+    case Receiver::WeakSet:
+    case Receiver::RegExp:
+    case Receiver::Date:
+        return true;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+    return false;
 }
 
-bool Graph::methodMayBeOverridden(ASCIILiteral className, Node* read)
+bool Graph::mayWriteModuleVariable(const Node* node)
 {
-    static const NeverDestroyed<std::optional<UncheckedKeyHashSet<String>>> all = [] () -> std::optional<UncheckedKeyHashSet<String>> {
-        if (!Options::aotOverriddenMethodsPath())
-            return std::nullopt;
-        String path { Options::aotOverriddenMethodsPath() };
-        auto contents = FileSystem::readEntireFile(path);
-        if (!contents) {
-            dataLogLn("AOT: ", path, " cannot be read");
-            return std::nullopt;
-        }
-        UncheckedKeyHashSet<String> result;
-        for (auto line : String::fromUTF8(contents->span()).split('\n'))
-            result.add(line);
-        return result;
-    }();
-    if (!all.get() || !read || !read->isBytecode(op_get_by_id))
+    auto bytecode = node->as<OpPutToScope>();
+    switch (bytecode.m_getPutInfo.resolveType()) {
+    case GlobalLexicalVar:
+        return false;
+    case ResolvedClosureVar:
+        break;
+    default:
         return true;
-    UniquedStringImpl* name = read->graph->codeBlock()->identifier(read->as<OpGetById>().m_property).impl();
-    StringView text(name);
-    if (name->isSymbol()) {
-        if (!text.startsWith("Symbol."_s))
-            return true;
-        return all.get()->contains(makeString(className, ".@@"_s, text.substring(7))) || all.get()->contains(makeString(className, ".*"_s));
     }
-    return all.get()->contains(makeString(className, '.', text)) || all.get()->contains(makeString(className, ".*"_s));
+    auto* module = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(node->graph->codeBlock());
+    return module && bytecode.m_symbolTableOrScopeDepth.symbolTable().offset() == module->moduleEnvironmentSymbolTableConstantRegisterOffset();
 }
 
 PropertyEffect Graph::propertyEffectOf(const Node* node)
@@ -1776,7 +1785,7 @@ PropertyEffect Graph::propertyEffectOf(const Node* node)
     case op_get_from_scope:
         return isVariable(node->as<OpGetFromScope>().m_getPutInfo.resolveType()) ? PropertyEffect::None : PropertyEffect::OnSlowPathOnly;
     case op_put_to_scope:
-        return isVariable(node->as<OpPutToScope>().m_getPutInfo.resolveType()) ? PropertyEffect::None : PropertyEffect::Arbitrary;
+        return isVariable(node->as<OpPutToScope>().m_getPutInfo.resolveType()) && !mayWriteModuleVariable(node) ? PropertyEffect::None : PropertyEffect::Arbitrary;
     case op_add:
     case op_sub:
     case op_mul:
@@ -2307,6 +2316,7 @@ const KnownFunction* Graph::functionMadeBy(const Node* node)
 
 void Graph::noteClassesDefined()
 {
+    noteBuiltinsExtended(*this);
     ProgramClasses* classes = programClasses();
     const ProgramFunctions* functions = programFunctions();
     if (!classes || !functions || !TypeTable::typedFieldsAreEnforced())
@@ -2913,6 +2923,9 @@ void Node::dump(PrintStream& out) const
         case GuardKind::IsArrayIntrinsic:
             out.print("IsArrayIntrinsic ", intrinsic, " ");
             break;
+        case GuardKind::IsOriginalArrayIntrinsic:
+            out.print("IsOriginalArrayIntrinsic ", intrinsic, " ");
+            break;
         case GuardKind::IsIntrinsic:
             out.print("IsIntrinsic ", intrinsic, " ");
             break;
@@ -3023,6 +3036,7 @@ public:
                     m_graph.makesCalls = true;
                     break;
                 default:
+                    RELEASE_ASSERT(!(traitsOf(node->opcode) & OpcodeTraits::MakesCalls));
                     break;
                 }
             }
@@ -4232,6 +4246,7 @@ private:
             });
             if (opcode == op_check_type) {
                 VirtualRegister reg = instruction->as<OpCheckType>().m_value;
+                node->delayedCreateThis = m_pendingCreateThis;
                 if (m_graph.isTracked(reg)) {
                     node->reg = reg;
                     block->valuesAtTail[m_graph.registerIndex(reg)] = node;

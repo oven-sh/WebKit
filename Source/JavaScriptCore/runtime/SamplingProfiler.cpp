@@ -491,7 +491,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     callFrame = static_cast<CallFrame*>(innermost->frame);
                     framePC = innermost->pc;
                 } else if (callFrame)
-                    framePC = AOT::returnAddressForFrame(callFrame, machineFrame);
+                    framePC = m_jscExecutionThread->stack().contains(machineFrame) ? AOT::returnAddressForFrame(callFrame, machineFrame) : nullptr;
             }
 #endif
 

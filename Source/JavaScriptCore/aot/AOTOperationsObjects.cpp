@@ -128,6 +128,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* i
         OPERATION_RETURN(scope, false);
     if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
         OPERATION_RETURN(scope, false);
+    if (sourceStructure->typeInfo().hasStaticPropertyTable() && !sourceStructure->staticPropertiesReified())
+        OPERATION_RETURN(scope, false);
     const IdentifierSet* excluded = nullptr;
     if (JSValue index = JSValue::decode(encodedExcludedSetIndex))
         excluded = &callerBytecodeOwner(instance, callFrame, whose).constantIdentifierSet(index.asUInt32AsAnyInt());
@@ -240,15 +242,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
     OPERATION_RETURN(scope, object);
 }
 
+static JSObject* ensureTypedLayout(VM& vm, Instance* instance, JSObject* emptyObject, uint16_t layoutID)
+{
+    if (!layoutID || emptyObject->structure()->typedLayoutID() == layoutID) [[likely]]
+        return emptyObject;
+    return Instance::newObjectOf(vm, instance->emptyStructureForLayout(layoutID, asObject(emptyObject->getPrototypeDirect())));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance* instance, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot* cache))
 {
     AOT_OPERATION_BEGIN(instance);
     Vector<NewObjectPlan::Property, 8> properties;
     unsigned inlineCapacityInBytecode;
+    uint16_t plannedLayoutID = 0;
     if (AllocationPlan plan = caller(instance, callFrame).planOf(cache)) {
         for (unsigned i = 0; i < plan.count(); ++i)
             properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i), plan.isAssigned(i) });
         inlineCapacityInBytecode = plan.inlineCapacity();
+        plannedLayoutID = plan.thisLayoutID();
     } else {
         UnlinkedCodeBlock* codeBlock = callerCode(instance, callFrame);
         unsigned offset = callerBytecodeIndex(instance, callFrame).offset();
@@ -283,9 +294,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
             object = constructEmptyObject(functionGlobalObject);
         }
     }
+    if (JSObject* typedObject = ensureTypedLayout(vm, instance, object, plannedLayoutID); typedObject != object) [[unlikely]] {
+        object = typedObject;
+        cacheable = false;
+    }
 
     Structure* first = object->structure();
-    bool matchesPlannedLayout = true;
+    bool matchesPlannedLayout = !TypedLayoutTable::hasTypedFields() || first->typedLayoutID() == plannedLayoutID;
     bool hasTypedLayout = first->typedLayoutID() && TypedLayoutTable::hasTypedFields();
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& ident = identifierAt(instance, callFrame, properties[i].identifier);
@@ -450,9 +465,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallF
     return encodeResult(std::bit_cast<void*>(JSValue::encode(result.isObject() ? result : JSValue(thisObject))), nullptr);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance* instance, JSObject* callee, uint32_t inlineCapacity))
+JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance* instance, JSObject* callee, uint32_t layoutIDAndInlineCapacity))
 {
     AOT_OPERATION_BEGIN(instance);
+    uint16_t layoutID = layoutIDAndInlineCapacity >> 16;
+    unsigned inlineCapacity = layoutIDAndInlineCapacity & 0xffff;
     JSFunction* constructor = dynamicDowncast<JSFunction>(callee);
     if (constructor && constructor->canUseAllocationProfiles()) {
         ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, instance->inlineCapacityFor(constructor, inlineCapacity))->objectAllocationProfile();
@@ -465,16 +482,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance* instance,
             result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
             prototype->didBecomePrototype(vm);
         }
-        OPERATION_RETURN(scope, result);
+        OPERATION_RETURN(scope, ensureTypedLayout(vm, instance, result, layoutID));
     }
 
     JSValue proto = callee->get(globalObject, vm.propertyNames->prototype);
     OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
     if (proto.isObject())
-        OPERATION_RETURN(scope, constructEmptyObject(globalObject, asObject(proto)));
+        OPERATION_RETURN(scope, ensureTypedLayout(vm, instance, constructEmptyObject(globalObject, asObject(proto)), layoutID));
     JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, callee);
     OPERATION_RETURN_IF_EXCEPTION(scope, static_cast<JSObject*>(nullptr));
-    OPERATION_RETURN(scope, constructEmptyObject(functionGlobalObject));
+    OPERATION_RETURN(scope, ensureTypedLayout(vm, instance, constructEmptyObject(functionGlobalObject), layoutID));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
@@ -725,9 +742,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunction, JSObject*, (Instance* instance
     FunctionRef function = callerBytecodeOwner(instance, callFrame, isExpressionAndOwner >> 1);
     if (auto executableIndex = static_cast<FunctionKind>(kind) == FunctionKind::Normal ? function.nestedExecutableIndex(isExpressionAndOwner & 1, index) : std::nullopt) {
         if (JSFunction* result = instance->tryMakeFunctionWithoutExecutable(*executableIndex, environment)) {
-            fillAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), 0, nullptr);
-            if (!SharedData::contains(cache) && cache[0].structureID == result->structureID())
-                cache[0].pointer = std::bit_cast<void*>(*JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
+            fillFunctionAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), subspaceFor<JSFunction>(vm)->allocatorFor(JSFunction::allocationSize(0), AllocatorForMode::EnsureAllocator), *JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
             OPERATION_RETURN(scope, result);
         }
     }
@@ -762,9 +777,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instan
     Allocator allocator = vm.heap.cellSpace.allocatorFor(JSFunctionWithCaptures::allocationSize(count), AllocatorForMode::EnsureAllocator);
     if (auto executableIndex = kind == FunctionKind::Normal ? function.nestedExecutableIndex(isExpressionAndOwner & 1, index) : std::nullopt) {
         if (JSFunctionWithCaptures* result = instance->tryMakeFunctionWithoutExecutable(*executableIndex, environment, values)) {
-            fillAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), allocator);
-            if (!SharedData::contains(cache) && cache[0].structureID == result->structureID())
-                cache[0].pointer = std::bit_cast<void*>(*JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
+            fillFunctionAllocationCache(vm, callerData(instance, callFrame), cache, result->structure(), allocator, *JSFunction::tryEncodeAOTFunctionWord(instance->program->data().executableRow(*executableIndex).entry[0], instance->program->data().executableRow(*executableIndex).index[0]));
             OPERATION_RETURN(scope, result);
         }
     }

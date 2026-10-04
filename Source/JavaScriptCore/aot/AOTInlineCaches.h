@@ -39,6 +39,7 @@ void cachePutById(Instance*, Data*, JSValue base, Structure* oldStructure, const
 
 void fillConstructionCache(VM&, Data*, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator);
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
+void fillFunctionAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uintptr_t functionWord);
 void cacheSiteObject(VM&, Data*, Slot* cache, JSObject*);
 
 } } // namespace JSC::AOT

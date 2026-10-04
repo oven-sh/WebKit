@@ -111,6 +111,7 @@ private:
         bool writesIndexed { false };
         bool changesStructures { false };
         bool writesVariables { false };
+        bool writesModuleVariables { false };
         Vector<unsigned, 8> propertiesWritten;
     };
 
@@ -226,10 +227,6 @@ private:
                 break;
             case op_get_length:
                 if (node->use(node->as<OpGetLength>().m_base)->type && isSubtype(node->use(node->as<OpGetLength>().m_base)->type, TArray | TString))
-                    return true;
-                break;
-            case op_get_by_id:
-                if (Graph::isArrayIteratorMethodRead(node) && !Graph::methodMayBeOverridden("Array"_s, node))
                     return true;
                 break;
             case op_check_type:
@@ -369,6 +366,7 @@ private:
             return node->as<OpGetFromScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
         case op_put_to_scope:
             loop.writesVariables = true;
+            loop.writesModuleVariables |= Graph::mayWriteModuleVariable(node);
             return node->as<OpPutToScope>().m_getPutInfo.resolveType() == ResolvedClosureVar;
         default:
             return false;
@@ -433,7 +431,7 @@ private:
     {
         switch (guard->opcode) {
         case op_get_by_id:
-            return !loop.propertiesWritten.contains(guard->as<OpGetById>().m_property) && !loop.changesStructures;
+            return !loop.propertiesWritten.contains(guard->as<OpGetById>().m_property) && !loop.changesStructures && !loop.writesModuleVariables;
         case op_get_by_val:
         case op_get_length:
             return !loop.writesIndexed;
@@ -468,6 +466,7 @@ private:
     Node* addGuardToPreHeader(Loop& loop, GuardKind kind, Node* like)
     {
         Node* guard = m_graph.addNode(NodeKind::Guard);
+        guard->graph = like->graph;
         guard->guardKind = kind;
         guard->opcode = like->opcode;
         guard->instruction = like->instruction;
@@ -518,7 +517,7 @@ private:
             if (guard->guardKind != GuardKind::Whole)
                 return false;
             if (guard->opcode == op_get_by_id) {
-                if (!applies(guard) || loop.propertiesWritten.contains(guard->as<OpGetById>().m_property))
+                if (!applies(guard) || loop.propertiesWritten.contains(guard->as<OpGetById>().m_property) || loop.writesModuleVariables)
                     return false;
             } else if (guard->opcode == op_get_by_val) {
                 if (loop.writesIndexed)
@@ -529,6 +528,8 @@ private:
                 if (isAliasOf(guard, earlier) && earlier.guard->block->dominates(guard->block)) {
                     if (guard->opcode == op_get_by_val)
                         m_graph.remark("reuses-guarded-element-read"_s);
+                    else if (guard->opcode == op_get_by_id)
+                        m_graph.remark("reuses-guarded-property-read"_s, StringView { guard->graph->codeBlock()->identifier(guard->as<OpGetById>().m_property).impl() });
                     instruction->replacement = earlier.instruction;
                     replacedAny = true;
                     return true;
@@ -608,6 +609,8 @@ private:
             if (!instruction || instruction->guard != guard)
                 continue;
             if (inputsAreInvariant(loop, guard) && isInvariantGuard(loop, guard)) {
+                if (guard->opcode == op_get_by_id)
+                    m_graph.remark("hoists-guarded-property-read"_s, StringView { guard->graph->codeBlock()->identifier(guard->as<OpGetById>().m_property).impl() });
                 Node* hoisted = addGuardToPreHeader(loop, GuardKind::Whole, guard);
                 hoisted->uses = guard->uses;
                 hoisted->guarded = instruction;
@@ -698,6 +701,7 @@ private:
         Vector<Node*, 16> slotChecks;
         auto addSlotCheck = [&](GuardKind kind, Node* site, Node* otherSite) {
             Node* check = m_graph.addNode(NodeKind::Guard);
+            check->graph = site->graph;
             check->guardKind = kind;
             check->opcode = site->opcode;
             check->instruction = site->instruction;

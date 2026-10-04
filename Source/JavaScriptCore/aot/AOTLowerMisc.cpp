@@ -491,12 +491,12 @@ void Lowering::lowerSwitch(Node* node)
             entries.append({ entry.key.get(), entry.value.m_branchOffset });
         std::ranges::sort(entries, [](auto& a, auto& b) { return codePointCompare(StringView { *a.first }, StringView { *b.first }) < 0; });
         Vector<StringCase, 16> all;
-        bool allAreLatin1 = true;
+        bool canCompareInline = true;
         for (auto [string, offset] : entries) {
-            allAreLatin1 &= string->is8Bit();
+            canCompareInline &= string->is8Bit() && string->length() < std::numeric_limits<uint16_t>::max();
             all.append({ string, blockFor(node, offset), nullptr });
         }
-        if (allAreLatin1) {
+        if (canCompareInline) {
             Node* scrutinee = node->use(bytecode.m_scrutinee);
             dispatchOnString(node, scrutinee, lowJSValue(scrutinee), all, blockFor(node, table.m_defaultOffset));
             return;
@@ -753,7 +753,11 @@ bool Lowering::tryLowerMisc(Node* node)
         emitTypeTests(value, jsValue, mask, continuation, slowPath);
 
         m_out.appendTo(slowPath, continuation);
-        coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask), ColdCall::ChangesNothing);
+        if (Node* createThis = node->delayedCreateThis) {
+            m_graph.remark("checks-type-ahead-of-create-this"_s);
+            vmCall(node, Void, Entry::operationAOTCheckTypeAheadOfCreateThis, m_instance, jsValue, m_out.constInt32(mask), lowCell(createThis->use(createThis->as<OpCreateThis>().m_callee)));
+        } else
+            coldCall(node, Entry::operationAOTCheckType, jsValue, m_out.constInt32(mask), ColdCall::ChangesNothing);
         Type admitted = value->type & typeAcceptedByMask(mask);
         Type candidates = value->type & typeProvingMask(mask);
         bool allObjectsPass = isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject);

@@ -2296,6 +2296,8 @@ bool JSObject::putDirectNonIndexAccessor(VM& vm, PropertyName propertyName, Gett
     ASSERT(attributes & PropertyAttribute::Accessor);
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, accessor, attributes, slot).isNull();
+    if (!result) [[unlikely]]
+        return false;
 
     Structure* structure = this->structure();
     if (attributes & PropertyAttribute::ReadOnly)
@@ -4074,14 +4076,17 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
 
         if (object) {
+            bool isApplied;
             if (descriptor.isAccessorDescriptor()) {
                 unsigned attributes = (descriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly;
-                object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
+                isApplied = object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
             } else {
                 ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
                 JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
-                object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
+                isApplied = object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
             }
+            if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
+                return typeError(globalObject, scope, throwException, TypedFieldError);
         }
 
         return true;
@@ -4144,17 +4149,20 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
     // Step 9.
     unsigned attributes = descriptor.attributesOverridingCurrent(current);
+    bool isApplied;
     if (descriptor.isAccessorDescriptor() || (current.isAccessorDescriptor() && !descriptor.isDataDescriptor())) {
         ASSERT(attributes & PropertyAttribute::Accessor);
         JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : (current.getterPresent() ? current.getterObject() : nullptr);
         JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : (current.setterPresent() ? current.setterObject() : nullptr);
         GetterSetter* getterSetter = GetterSetter::create(vm, globalObject, getter, setter);
-        object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
+        isApplied = object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
-        object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
+        isApplied = object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
+    if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
+        return typeError(globalObject, scope, throwException, TypedFieldError);
 
     return true;
 }

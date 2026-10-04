@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTBuiltins.h"
+#include "AOTOpcodeTraits.h"
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
 #include "ImmutableIntrinsics.h"
@@ -114,23 +115,8 @@ static bool doesNotLeakScope(UnlinkedCodeBlock* code)
     if (code->parseMode() != SourceParseMode::NormalFunctionMode && code->parseMode() != SourceParseMode::ArrowFunctionMode && code->parseMode() != SourceParseMode::MethodMode)
         return false;
     for (const auto& instruction : code->instructions()) {
-        switch (instruction->opcodeID()) {
-        case op_new_func:
-        case op_new_func_exp:
-        case op_new_generator_func:
-        case op_new_generator_func_exp:
-        case op_new_async_func:
-        case op_new_async_func_exp:
-        case op_new_async_generator_func:
-        case op_new_async_generator_func_exp:
-        case op_call_direct_eval:
-        case op_push_with_scope:
-        case op_create_scoped_arguments:
-        case op_create_generator_frame_environment:
+        if (traitsOf(instruction->opcodeID()) & OpcodeTraits::LetsScopeOut)
             return false;
-        default:
-            break;
-        }
     }
     return true;
 }
@@ -1521,7 +1507,7 @@ void planMultiValueReturns(Graph& graph)
                     for (auto& use : object->uses) {
                         if (use.reg != NewObjectPlan::registerOf(i))
                             continue;
-                        Node* inField = addValueInField(graph, node, instructions.at(stores[i])->as<OpPutById>().m_property, *fieldType, use.node);
+                        Node* inField = addValueInField(graph, object, instructions.at(stores[i])->as<OpPutById>().m_property, *fieldType, use.node);
                         inField->type = fieldType->typeOfStored(use.node->type);
                         use.node = inField;
                         valuesInFields.append(inField);
@@ -1608,14 +1594,20 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
                 auto onlyRead = users->isOnlyRead(node, names.span(), Graph::newObjectLayoutID(node), NodeUsers::AbsentReads::Allow);
                 if (!onlyRead)
                     continue;
-                for (auto [read, index] : onlyRead->reads) {
-                    read->replacement = node->use(NewObjectPlan::registerOf(index));
-                    read->isElided = true;
-                    auto fieldType = hasTypedFields ? Graph::fieldTypeReadFromLayout(read, layoutID) : std::nullopt;
+                Vector<Node*, 8> valuesRead;
+                valuesRead.fill(nullptr, names.size());
+                for (auto [read, index] : onlyRead->reads)
+                    valuesRead[index] = node->use(NewObjectPlan::registerOf(index));
+                for (unsigned index = 0; index < names.size(); ++index) {
+                    auto fieldType = valuesRead[index] && hasTypedFields ? Graph::fieldTypeInLayout(layoutID, names[index]) : std::nullopt;
                     if (!fieldType)
                         continue;
-                    read->replacement = addValueInField(graph, read, read->as<OpGetById>().m_property, *fieldType, read->replacement);
-                    valuesInFields.append(read->replacement);
+                    valuesRead[index] = addValueInField(graph, node, instructions.at(stores[index])->as<OpPutById>().m_property, *fieldType, valuesRead[index]);
+                    valuesInFields.append(valuesRead[index]);
+                }
+                for (auto [read, index] : onlyRead->reads) {
+                    read->replacement = valuesRead[index];
+                    read->isElided = true;
                 }
                 graph.remark("scalar-replaced-object"_s);
                 for (Node* read : onlyRead->absentReads) {
@@ -1638,7 +1630,7 @@ void scalarReplaceReadOnlyObjects(Graph& graph)
             Vector<Node*, 2> replacedPhis;
             for (unsigned phiIndex = 0, numberOfPhis = block->phis.size(); phiIndex < numberOfPhis; ++phiIndex) {
                 Node* phi = block->phis[phiIndex];
-                if (phi->isElided || phi->replacement || phi->uses.size() < 2 || phi->uses.size() != block->predecessors.size() || replacedPhis.contains(phi))
+                if (phi->isElided || phi->replacement || phi->uses.size() < 2 || phi->uses.size() != block->predecessors.size() || replacedPhis.contains(phi) || !phi->uses[0].node->isBytecode(op_new_object))
                     continue;
                 if (!users)
                     users.emplace(graph);

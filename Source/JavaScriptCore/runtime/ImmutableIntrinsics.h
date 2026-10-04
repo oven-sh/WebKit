@@ -43,6 +43,7 @@ class ImmutableIntrinsics {
 public:
     static constexpr unsigned maximumCount = 1024;
     static constexpr unsigned globalObject = 0;
+    static constexpr bool functionPrototypesAreSealed = false;
 
     struct Entry {
         String name;

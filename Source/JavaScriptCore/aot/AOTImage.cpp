@@ -66,9 +66,9 @@ uint64_t imageStamp()
     mix(CodeBlock::offsetOfJITData());
     mix(JSGlobalObject::offsetOfGlobalLexicalBindingEpoch());
 #if CPU(ARM64)
-    mix(1 | MacroAssemblerARM64::supportsDoubleToInt32ConversionUsingJavaScriptSemantics() << 8);
+    mix(1 | MacroAssembler::featuresOfBuildTarget() << 8);
 #elif CPU(X86_64)
-    mix(2);
+    mix(2 | MacroAssembler::featuresOfBuildTarget() << 8);
 #endif
     mix(usesDataStubs());
     return stamp;
@@ -1166,7 +1166,7 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& function : m_functions) {
             auto& info = function.code.info;
             RELEASE_ASSERT(!(info.frameSizeInBytes % stackAlignmentBytes()));
-            ImageFrame frame { 0, 0, safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes()) };
+            ImageFrame frame { 0, 0, 0, safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes()) };
             uint64_t calleeSaveRegisters = 0;
             for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
                 const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
@@ -1175,8 +1175,13 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             if (info.calleeSaveRegisters.registerCount()) {
                 ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
+                RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
+                frame.calleeSavesStart = static_cast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
+            }
+            if (ptrdiff_t offset = info.offsetOfCallee) {
                 RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
-                frame.calleeSavesStart = safeCast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
+                if (ptrdiff_t start = -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)); start <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeStart))
+                    frame.calleeStart = static_cast<uint16_t>(start);
             }
             frame.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
             functionFrame.append(numbers.ensure(frame.bits(), [&] {

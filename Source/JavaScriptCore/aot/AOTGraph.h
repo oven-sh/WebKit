@@ -85,6 +85,7 @@ enum class GuardKind : uint8_t {
     TypedArrayStorage,
     Uint8ArrayStorageIfAny,
     IsArrayIntrinsic,
+    IsOriginalArrayIntrinsic,
     IsIntrinsic,
     IsLikelyFunction,
 };
@@ -198,7 +199,6 @@ struct Node {
     Node* guarded { nullptr };
     Node* target { nullptr };
     Node* iteratorMethodRead { nullptr };
-    bool checksNarrowedType { false };
     Type narrowedTo { TNone };
     Node* fieldOrigin { nullptr };
     unsigned fieldIdentifier { 0 };
@@ -250,6 +250,7 @@ struct Node {
     Node* site { nullptr };
     Node* otherSite { nullptr };
     unsigned numberOfLiteralProperties { 0 };
+    Node* delayedCreateThis { nullptr };
     uint8_t numberOfReturnValues { 0 };
     uint8_t returnValueIndex { 0 };
     BasicBlock* viewedAheadOf { nullptr };
@@ -494,13 +495,13 @@ public:
     void elideUnpassedCalleeReads();
     void elideArrayIteratorMethodReads();
     static bool isArrayIteratorMethodRead(const Node*);
-    static bool hasOverriddenMethodInfo();
-    static bool methodMayBeOverridden(ASCIILiteral className, Node* read);
     static bool isAnyArrayIteratorMethod(const Node*);
     void findBuiltinsCalled();
+    static bool convertsResultToBoolean(const Node* call);
     void recordKnownFunctionUses(const FunctionSummaryMap&, const FunctionSummary* currentSummary);
     void recordObjectsInVariables(VariableSummaries&);
     Node* constantCellOf(UnlinkedCodeBlock*, VirtualRegister);
+    static bool mayWriteModuleVariable(const Node*);
     static PropertyEffect propertyEffectOf(const Node*);
     const FunctionSummary::PropertyEffects* propertyEffectsOfCall(const Node*) const;
     void recordPropertyEffects() const;
@@ -562,6 +563,7 @@ public:
     bool alwaysEmitsCalls { false };
     mutable std::optional<bool> hasRemainingCalls;
     IntegersThatLookLikeAddresses wideIntegerConstants;
+    B3::Air::StackSlot* calleeSlot { nullptr };
 
     void fail(ASCIILiteral reason, OpcodeID = op_nop);
     bool failed() const { return !m_failureReason.isNull(); }
@@ -704,6 +706,7 @@ private:
 
 bool parseBytecode(Graph&);
 Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesRead = nullptr, Vector<const KnownFunction*>* calleesWithWidenedInputs = nullptr);
+void noteBuiltinsExtended(Graph&);
 void inferRanges(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);

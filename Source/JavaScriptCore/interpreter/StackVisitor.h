@@ -96,6 +96,7 @@ public:
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
         CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
         bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
+        JS_EXPORT_PRIVATE JSCell* aotCallee() const;
         bool isTailDeleted() const { return m_isTailDeleted; }
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const;

@@ -1,4 +1,8 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useAOTDataStubs=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useConcurrentGC=1", "--collectContinuously=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--useConcurrentGC=1", "--slowPathAllocsBetweenGCs=20")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -9,7 +13,9 @@ function fillsFreedCells(n) {
     for (let i = 0; i < 2000; i++)
         litter.push({ n: -1 - n }, [-1 - n], { n: -1 - n, m: -2 - n }, "litter " + i);
 }
+function overwritesStack(depth) { return depth ? overwritesStack(depth - 1) + 1 : 0; }
 function collectsAndFills(n) {
+    overwritesStack(100);
     edenGC();
     fillsFreedCells(n);
 }

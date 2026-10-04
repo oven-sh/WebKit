@@ -12,7 +12,7 @@
 #include "CodeBlockInlines.h"
 #include "JSCellInlines.h"
 #include "ObjectPropertyConditionSet.h"
-#include "StructureInlinesLight.h"
+#include "StructureInlines.h"
 
 namespace JSC { namespace AOT {
 
@@ -68,14 +68,29 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
     data->slotEpoch++;
 }
 
-static bool isPermanentlyValid(const ObjectPropertyCondition& condition)
+static bool hasPermanentOffset(VM& vm, Structure* structure, PropertyOffset offset)
+{
+    unsigned propertyNumber = 0;
+    bool result = false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        if (entry.offset() == offset) {
+            result = offset == offsetForPropertyNumber(propertyNumber, structure->inlineCapacity());
+            return false;
+        }
+        propertyNumber++;
+        return entry.attributes() & PropertyAttribute::DontDelete || PropertyName(entry.key()).isPrivateName();
+    });
+    return result;
+}
+
+static bool isPermanentlyValid(VM& vm, const ObjectPropertyCondition& condition)
 {
     Structure* structure = condition.object()->structure();
     if (!structure->inheritorsMayOverrideReadOnlyProperties())
         return false;
     switch (condition.kind()) {
     case PropertyCondition::Presence:
-        return condition.attributes() & PropertyAttribute::DontDelete && condition.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue);
+        return condition.attributes() & PropertyAttribute::DontDelete && condition.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) && hasPermanentOffset(vm, structure, condition.offset());
     case PropertyCondition::Absence:
     case PropertyCondition::AbsenceOfSetEffect:
         return !structure->isStructureExtensible() && structure->typeInfo().isImmutablePrototypeExoticObject();
@@ -88,27 +103,25 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
 {
     if (!conditions.isValid() || SharedData::contains(slot))
         return false;
-    unsigned watchedCount = 0;
+    Vector<ObjectPropertyCondition, 4> watchedConditions;
     for (const ObjectPropertyCondition& condition : conditions) {
-        if (isPermanentlyValid(condition))
+        if (isPermanentlyValid(vm, condition))
             continue;
         if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
             return false;
-        watchedCount++;
+        watchedConditions.append(condition);
     }
 
-    if (!watchedCount) {
+    if (watchedConditions.isEmpty()) {
         stopWatching(data, slot);
         return true;
     }
 
     if (!data->watchpoints)
         data->watchpoints = new SlotWatchpointMap;
-    FixedVector<SlotWatchpoint> watchpoints(watchedCount);
+    FixedVector<SlotWatchpoint> watchpoints(watchedConditions.size());
     unsigned i = 0;
-    for (const ObjectPropertyCondition& condition : conditions) {
-        if (isPermanentlyValid(condition))
-            continue;
+    for (const ObjectPropertyCondition& condition : watchedConditions) {
         auto& watchpoint = watchpoints[i++];
         watchpoint.initialize(data, condition, slot);
         watchpoint.install(vm);

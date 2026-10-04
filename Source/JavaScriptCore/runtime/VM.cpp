@@ -2369,8 +2369,13 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
-    if (auto* megamorphicCache = this->megamorphicCache())
-        megamorphicCache->bumpEpoch();
+    auto* megamorphicCache = this->megamorphicCache();
+    if (!megamorphicCache || !megamorphicCache->bumpEpoch()) [[likely]]
+        return;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->clearCachesValidatedByMegamorphicCacheEpoch();
+#endif
 }
 
 VM::DrainMicrotaskDelayScope::DrainMicrotaskDelayScope(VM& vm)

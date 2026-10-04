@@ -3505,6 +3505,14 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     Structure* oldStructure = objectPrototype->structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
     objectPrototype->setStructure(vm, Structure::preventExtensionsTransition(vm, oldStructure, &deferred));
+    if constexpr (ImmutableIntrinsics::functionPrototypesAreSealed) {
+        for (JSObject* prototype : { static_cast<JSObject*>(functionPrototype()), static_cast<JSObject*>(asyncFunctionPrototype()), static_cast<JSObject*>(generatorFunctionPrototype()), static_cast<JSObject*>(asyncGeneratorFunctionPrototype()) }) {
+            prototype->makePropertiesImmutable(this);
+            Structure* extensibleStructure = prototype->structure();
+            DeferredStructureTransitionWatchpointFire deferredForPrototype(vm, extensibleStructure);
+            prototype->setStructure(vm, Structure::preventExtensionsTransition(vm, extensibleStructure, &deferredForPrototype));
+        }
+    }
 
     m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names);
 }
