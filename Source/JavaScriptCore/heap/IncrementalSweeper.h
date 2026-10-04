@@ -52,6 +52,7 @@ private:
     
     BlockDirectory* m_currentDirectory;
     bool m_lastOpportunisticTaskDidFinishSweeping { false };
+    bool m_isSweepingAfterFullCollection { false };
 };
 
 } // namespace JSC

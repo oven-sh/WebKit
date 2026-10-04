@@ -89,6 +89,7 @@ void IncrementalSweeper::doSweep(VM& vm, ApproximateTime deadline, SweepTrigger 
     if (trigger == SweepTrigger::OpportunisticTask)
         m_lastOpportunisticTaskDidFinishSweeping = true;
 
+    m_isSweepingAfterFullCollection = false;
     cancelTimer();
 }
 
@@ -128,13 +129,19 @@ bool IncrementalSweeper::sweepNextBlock(VM& vm, SweepTrigger trigger)
 
 void IncrementalSweeper::startSweeping(JSC::Heap& heap)
 {
-    scheduleTimer();
+    // What a full collection leaves in the size classes that nothing is allocated from right now only goes away when
+    // it is swept here. Eden collections that are less than the delay of the timer apart do not push that back.
+    if (heap.collectionScope() == CollectionScope::Full)
+        m_isSweepingAfterFullCollection = true;
+    if (!m_isSweepingAfterFullCollection || !timeUntilFire())
+        scheduleTimer();
     m_currentDirectory = heap.objectSpace().firstDirectory();
 }
 
 void IncrementalSweeper::stopSweeping()
 {
     m_currentDirectory = nullptr;
+    m_isSweepingAfterFullCollection = false;
     cancelTimer();
 }
 
