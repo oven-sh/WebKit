@@ -550,6 +550,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionAOTFunctionsNamed);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTRemarks);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTTypeCoverage);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTSetFamily);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTFamilyOf);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTHasDepartedFamily);
 static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
 static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
@@ -931,6 +934,9 @@ private:
         addFunction(vm, "aotRemarks"_s, functionAOTRemarks, 1);
         addFunction(vm, "aotOperationCount"_s, functionAOTOperationCount, 1);
         addFunction(vm, "aotTypeCoverage"_s, functionAOTTypeCoverage, 1);
+        addFunction(vm, "aotSetFamily"_s, functionAOTSetFamily, 2);
+        addFunction(vm, "aotFamilyOf"_s, functionAOTFamilyOf, 1);
+        addFunction(vm, "aotHasDepartedFamily"_s, functionAOTHasDepartedFamily, 1);
         addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
         addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
@@ -3068,7 +3074,8 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, Call
         size_t tab = line.find('\t');
         if (tab == notFound || line.left(tab) != name)
             continue;
-        result->push(globalObject, jsString(vm, line.substring(tab + 1).toString()));
+        auto remark = line.substring(tab + 1);
+        result->push(globalObject, jsString(vm, remark.left(remark.find('\t')).toString()));
         RETURN_IF_EXCEPTION(scope, { });
     }
     return JSValue::encode(result);
@@ -3094,6 +3101,55 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObjec
     UNUSED_PARAM(scope);
     return JSValue::encode(jsNull());
 #endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTSetFamily, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(AOT)
+    VM& vm = globalObject->vm();
+    JSObject* object = callFrame->argument(0).getObject();
+    uint32_t family = callFrame->argument(1).isUInt32() ? callFrame->argument(1).asUInt32() : 0;
+    if (!object || !family || family > UINT16_MAX || object->structure()->isDictionary())
+        return JSValue::encode(jsBoolean(false));
+    Structure* structure = object->structure();
+    Vector<UniquedStringImpl*, 16> namesInSlots;
+    namesInSlots.fill(nullptr, structure->inlineCapacity());
+    bool areAllInline = true;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        areAllInline &= isInlineOffset(entry.offset());
+        if (areAllInline)
+            namesInSlots[entry.offset()] = entry.key();
+        return true;
+    });
+    return JSValue::encode(jsBoolean(areAllInline && structure->holdsFamily(vm, namesInSlots.span()) && structure->setFamily(vm, static_cast<uint16_t>(family))));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsNull());
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTFamilyOf, (JSGlobalObject*, CallFrame* callFrame))
+{
+#if ENABLE(AOT)
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsNumber(object ? object->structure()->family() : 0));
+#else
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsNull());
+#endif
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionAOTHasDepartedFamily, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+#if ENABLE(AOT)
+    if (JSValue family = callFrame->argument(0); AOT::ProgramData::get() && family.isUInt32() && AOT::Instance::hasByteForFamily(family.asUInt32()))
+        return JSValue::encode(jsBoolean(AOT::Instance::ensure(globalObject).departedFamilies[family.asUInt32()]));
+#else
+    UNUSED_PARAM(globalObject);
+    UNUSED_PARAM(callFrame);
+#endif
+    return JSValue::encode(jsNull());
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))

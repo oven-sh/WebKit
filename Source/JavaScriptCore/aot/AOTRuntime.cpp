@@ -288,6 +288,15 @@ void RuntimeTable::countOperationAtSite(const char* name, uint32_t function, uns
     countOperation(name, byteCast<char>(detail.data()));
 }
 
+void RuntimeTable::countForFamily(const char* name, const char* nameByFamily, uint16_t family, const char* detail)
+{
+    countOperation(name, detail);
+    CString& detailByFamily = m_detailsByFamily.add(std::pair { detail, static_cast<unsigned>(family) }, CString()).iterator->value;
+    if (detailByFamily.isNull())
+        detailByFamily = toUTF8CString(static_cast<unsigned>(family), ":", detail);
+    countOperation(nameByFamily, byteCast<char>(detailByFamily.data()));
+}
+
 void RuntimeTable::countAllocatedBytes(const char* kind, const Subspace* subspace, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes)
 {
     const char* name = "Heap::didAllocate";
@@ -572,6 +581,7 @@ struct Instance::Collections {
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
 static_assert(!Instance::offsetOfSharedData());
+static_assert(Instance::offsetOfDepartedFamily(Instance::numberOfFamiliesWithByte) <= 4096);
 static_assert(!(Instance::offsetOfOwnData() % sizeof(Data*)) && Instance::offsetOfOwnData() / sizeof(Data*) + Instance::maxNumberOfOwnData <= Instance::dataNumberMask + 1);
 
 static_assert(!(sizeof(Data) % sizeof(uint64_t)) && OBJECT_OFFSETOF(Data, slots) == sizeof(Data));
@@ -591,6 +601,24 @@ Data* SharedData::get()
 JSCell* ownerOf(Instance* instance) { return instance->loader(); }
 JSCell* tokenOf(Instance* instance) { return instance->collections->token; }
 
+void noteDepartureFromFamily(VM& vm, uint16_t family, const char* road)
+{
+    Instance::noteDepartedFamily(vm, family);
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countForFamily("Family::departed", "Family::departed-from", family, road);
+}
+
+bool hasNotedDepartureFromFamily(VM& vm, uint16_t family)
+{
+    if (!Instance::hasByteForFamily(family))
+        return true;
+    for (Instance* instance : vm.m_aotInstances) {
+        if (!instance->departedFamilies[family])
+            return false;
+    }
+    return true;
+}
+
 void didClearLoaderOf(Instance* instance)
 {
     if (instance->globalObject->aotInstance() != instance)
@@ -598,6 +626,14 @@ void didClearLoaderOf(Instance* instance)
 }
 
 bool Instance::loaderWasCleared() const { return collections->loaderWasCleared; }
+
+void Instance::noteDepartedFamily(VM& vm, uint16_t family)
+{
+    if (!hasByteForFamily(family))
+        return;
+    for (Instance* instance : vm.m_aotInstances)
+        instance->departedFamilies[family] = 1;
+}
 
 void Instance::destroyUnneededInstances(VM& vm)
 {
@@ -689,6 +725,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->missLimitPerEightSlots = 8;
     instance->remainingMissBudget = 4;
     instance->structureIDBase = JSC::structureIDBase();
+    instance->familyBase = instance->structureIDBase + Structure::offsetOfFamily();
     instance->fieldIDAtDirectLocationBase = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * sizeof(uint16_t);
     for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot)
         instance->fieldIDInSlotBases[slot] = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t);
@@ -765,6 +802,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     }
     instance->collections->token = Symbol::create(vm);
     loader->setAOTInstance(instance);
+    if (!vm.m_aotInstances.isEmpty())
+        memcpySpan(std::span { instance->departedFamilies }, std::span { vm.m_aotInstances[0]->departedFamilies });
     vm.m_aotInstances.append(instance);
     return *instance;
 }
@@ -2024,6 +2063,22 @@ const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* struct
     return collections->propertyRunTargets.add({ structure, run }, WTF::move(target)).iterator->value;
 }
 
+void Instance::giveFamily(VM& vm, Structure* structure, uint16_t family, std::span<UniquedStringImpl* const> namesInSlots, const char* birth)
+{
+    bool hadFamily = structure->family();
+    const char* refusal = structure->holdsFamily(vm, namesInSlots) ? structure->reasonToRefuseFamily(family) : "names-are-not-in-their-slots";
+    if (!refusal) {
+        bool isGiven = structure->setFamily(vm, family);
+        RELEASE_ASSERT(isGiven);
+    }
+    if (!Options::useAOTOperationCounters()) [[likely]]
+        return;
+    if (refusal)
+        AOT::runtimeTable(vm).countForFamily("Family::refused", "Family::refused-to", family, refusal);
+    else if (!hadFamily)
+        AOT::runtimeTable(vm).countForFamily("Family::given", "Family::given-to", family, birth);
+}
+
 Structure* Instance::knownShapeStructureIfExists(uint32_t shape)
 {
     if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
@@ -2058,6 +2113,8 @@ Structure* Instance::knownShapeStructure(uint32_t shape, std::span<UniquedString
         result->setTypedLayoutID(description.layoutID, fieldIDInSlot);
     } else if (TypedLayoutTable::hasTypedFields() && description.layoutID)
         result->setTypedLayoutID(description.layoutID);
+    if (description.family)
+        giveFamily(*vm, result, description.family, names, "literal");
     collections->knownShapes.add(shape, result);
     noteCellAdded(result);
     return result;
@@ -2274,6 +2331,8 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
     }
     if (!converted)
         return no("it has indexed elements, or no structure could be created"_s);
+    if (old->family()) [[unlikely]]
+        noteDepartureFromFamily(vm, old->family(), "typed-layout");
     {
         DeferGC deferGC(vm);
         unsigned oldOutside = old->outOfLineCapacity();
@@ -2547,6 +2606,7 @@ void Instance::noteFieldAddition(Structure* before, unsigned slot, Structure* af
     FieldAddition& entry = fieldAdditions[fieldAdditionIndex(before->id().bits(), slot)];
     entry.structureID = before->id().bits();
     entry.slot = slot;
+    before->assertHandsFamilyOnTo(*afterwards);
     entry.structureIDAfterAddition = afterwards->id().bits();
     collections->hasFieldAdditions = true;
 }

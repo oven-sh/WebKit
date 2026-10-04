@@ -500,7 +500,7 @@ private:
         bool replacedAny = false;
 
         auto isAliasOf = [&](Node* guard, const Known& earlier) {
-            if (guard->opcode != earlier.guard->opcode)
+            if (guard->opcode != earlier.guard->opcode || guard->checksName() != earlier.guard->checksName())
                 return false;
             if (guard->opcode == op_get_by_id) {
                 return guard->as<OpGetById>().m_property == earlier.guard->as<OpGetById>().m_property
@@ -602,7 +602,7 @@ private:
             }
 
             Node* guard = block->terminal();
-            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || !executesOnEveryIteration(loop, block))
+            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || guard->checksName() || !executesOnEveryIteration(loop, block))
                 continue;
             BasicBlock* next = block->successors[0];
             Node* instruction = next->nodes.isEmpty() ? nullptr : next->nodes[0];
@@ -684,7 +684,7 @@ private:
         Vector<std::pair<Node*, Vector<Node*, 4>>, 8> groups;
         for (BasicBlock* block : loop.blocks) {
             Node* guard = block->terminal();
-            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || (guard->opcode != op_get_by_id && guard->opcode != op_put_by_id))
+            if (!guard || guard->kind != NodeKind::Guard || guard->guardKind != GuardKind::Whole || guard->checksName() || (guard->opcode != op_get_by_id && guard->opcode != op_put_by_id))
                 continue;
             Node* base = baseOf(guard);
             bool found = false;

@@ -330,10 +330,7 @@ doesNotApply(withHandler, "has-handler");
 doesNotApply(generator, "is-generator-or-async");
 doesNotApply(asynchronous, "is-generator-or-async");
 doesNotApply(Constructed, "is-constructor");
-if (keepsLoopsWhole)
-    applies(loopWithoutCalls);
-else
-    doesNotApply(loopWithoutCalls, "has-loop-without-calls");
+doesNotApply(loopWithoutCalls, keepsLoopsWhole ? "has-loop-without-places" : "has-loop-without-calls");
 doesNotApply(noPlaces, "too-few-places");
 
 (function () {

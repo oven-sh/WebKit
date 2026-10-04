@@ -256,8 +256,6 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ReadNameInSlot21) \
     v(ReadNameInSlot22) \
     v(ReadNameInSlot23) \
-    v(ReadNameInAnySlot) \
-    v(ReadNameInAnySlotOfCell) \
     v(PutById) \
     v(WriteNameInSlot0) \
     v(WriteNameInSlot1) \
@@ -409,6 +407,7 @@ struct KnownShape {
     uint16_t layoutID { 0 };
     uint16_t reserved { 0 };
     uint16_t inlineSlots { 0 };
+    uint16_t family { 0 };
     bool hasSlotsOutside() const { return layoutID && numberOfSlots() > inlineSlots; }
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 

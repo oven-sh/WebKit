@@ -1,6 +1,7 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTLoopSplitting=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
@@ -102,9 +103,18 @@ function setBornSecond(born, value) { born.bornSecond = value; }
 for (let f of [Item, makeItem, setFlags, setFlagsStrictly, setChild, setTagAndSibling, setSelf, setFlagsOfAll, setChildOfAll, bump, setNeverBorn, bornHere, defines, Named, setToString, Born, setBornSecond])
     globalThis[f.name + "Kept"] = f;
 
-applies(stubRemark, setFlags, setFlagsStrictly, setChild, setTagAndSibling, setSelf, bump, setToString, setBornSecond);
-applies(null, setFlagsOfAll, setChildOfAll);
-doesNotApply(Born, setNeverBorn, bornHere, defines);
+applies(stubRemark, setFlags, setFlagsStrictly, setChild, setTagAndSibling, setSelf, bump, setBornSecond);
+applies(null, setChildOfAll);
+if (remarksOf(setFlagsOfAll) && guesses) {
+    check(has(setFlagsOfAll, "split-loop"), isOn("useAOTLoopSplitting", true), "the loop of setFlagsOfAll is split");
+    if (has(setFlagsOfAll, "split-loop")) {
+        doesNotApply(setFlagsOfAll);
+        if (!has(setFlagsOfAll, "store-fills-cache-of-split-loop:flags"))
+            wrongRemarks.push("setFlagsOfAll lacks store-fills-cache-of-split-loop:flags among " + remarksOf(setFlagsOfAll).join(" "));
+    } else
+        applies(null, setFlagsOfAll);
+}
+doesNotApply(Born, setNeverBorn, bornHere, defines, setToString);
 
 for (let round = 0; round < 40; ++round) {
     let item = makeItem(1, "k");

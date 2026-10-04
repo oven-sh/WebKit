@@ -89,6 +89,8 @@ namespace AOT {
     v(operationAOTCountGuessedPlace) \
     v(operationAOTToFieldValue) \
     v(operationAOTCountGuessedStore) \
+    v(operationAOTCountFamilyGuard) \
+    v(operationAOTCountBirthInFamily) \
     v(operationAOTCountReadByName) \
     v(operationAOTCountStoreByName) \
     v(operationAOTGetLengthSlow) \
@@ -305,6 +307,7 @@ public:
     void countOperation(const char* name, const char* detail = nullptr, uint64_t count = 1) { m_operationCounts.add(std::pair { name, detail }, 0).iterator->value += count; }
     void countOperationBySlotState(const char* name, const Slot*);
     void countOperationAtSite(const char* name, uint32_t function, unsigned bytecodeOffset, unsigned line, unsigned column);
+    void countForFamily(const char* name, const char* nameByFamily, uint16_t family, const char* detail);
     void countAllocatedBytes(const char* kind, const Subspace*, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes);
     bool shouldWriteOperationCountsAfterAllocating(size_t bytes)
     {
@@ -346,6 +349,7 @@ private:
     UncheckedKeyHashMap<CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
     size_t m_bytesAllocatedSinceLastWrite { 0 };
     UncheckedKeyHashMap<uint64_t, CString> m_detailsOfSites;
+    UncheckedKeyHashMap<std::pair<const char*, unsigned>, CString> m_detailsByFamily;
     uint16_t m_lastMegamorphicCacheEpoch { 0 };
     uint16_t m_epochOfFilledPairs { 0 };
     UncheckedKeyHashSet<std::tuple<const char*, const void*, size_t>> m_filledPairs;
@@ -604,6 +608,7 @@ struct Instance {
 
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>);
 
+    static void giveFamily(VM&, Structure*, uint16_t family, std::span<UniquedStringImpl* const> namesInSlots, const char* birth);
     Structure* knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names);
     Structure* knownShapeStructureIfExists(uint32_t shape);
     struct PropertyRunTarget {
@@ -635,6 +640,11 @@ struct Instance {
     JSObject* tryCopySlotsForSpread(JSObject* source);
     std::span<const uint16_t> knownShapeSlots(uint32_t shape) const;
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
+    static constexpr ptrdiff_t offsetOfFamilyBase() { return OBJECT_OFFSETOF(Instance, familyBase); }
+    static constexpr unsigned numberOfFamiliesWithByte = 2048;
+    static constexpr bool hasByteForFamily(unsigned family) { return family && family < numberOfFamiliesWithByte; }
+    static constexpr ptrdiff_t offsetOfDepartedFamily(unsigned family) { return OBJECT_OFFSETOF(Instance, departedFamilies) + family; }
+    JS_EXPORT_PRIVATE static void noteDepartedFamily(VM&, uint16_t family);
     static constexpr ptrdiff_t offsetOfFieldIDAtDirectLocationBase() { return OBJECT_OFFSETOF(Instance, fieldIDAtDirectLocationBase); }
     static constexpr ptrdiff_t offsetOfFieldIDInSlotBase(unsigned slot) { return OBJECT_OFFSETOF(Instance, fieldIDInSlotBases) + slot * sizeof(uintptr_t); }
     void inspectObjectPrototype();
@@ -697,6 +707,7 @@ struct Instance {
     uint32_t missLimitPerEightSlots;
     uint32_t remainingMissBudget;
     uintptr_t structureIDBase;
+    uintptr_t familyBase;
     uintptr_t fieldIDAtDirectLocationBase;
     uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithPropertyNameIDs];
     const uint32_t* dispatch;
@@ -722,6 +733,7 @@ struct Instance {
     JSCell* boundFunctionExecutable { nullptr };
     uint8_t* selectorsOnObjectPrototype;
     uint32_t objectPrototypeStructureID;
+    uint8_t departedFamilies[numberOfFamiliesWithByte] { };
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     static constexpr unsigned numberOfReceivers = 16;

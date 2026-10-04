@@ -39,7 +39,7 @@ realm (`createGlobalObject().load()`), on another thread (`$.agent.start()`), or
 | --- | --- |
 | Where in my program did the compiler fail to specialize, how much, and why? | Type coverage, below |
 | What did this line compile to? | `type-coverage.py <file> --explain <source file>:<line>` |
-| Which optimizations applied to this function? | `--aotRemarksPath=<file>`: function name, tab, remark. In the shell, `aotRemarks(name)`. The tests assert on these, both that an optimization applies and that it does not. |
+| Which optimizations applied to this function? | `--aotRemarksPath=<file>`: function name, tab, remark, tab, `module:start:kind`. In the shell, `aotRemarks(name)`. The tests assert on these, both that an optimization applies and that it does not. |
 | What did whole-program inference conclude, and from what? | `--logAOTTypeInference=1` (lines start with `AOT inference:`) |
 | What exactly happened in this function? | `--dumpAOTGraph=1`, `--dumpAOTB3Graph=1`, `--dumpAOTDisassembly=1`; add `--numberOfAOTCompilerThreads=1` to keep the output in order |
 | Where does the build time go? | `--verboseAOTCompilation=1` |

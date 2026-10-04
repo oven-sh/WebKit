@@ -802,6 +802,27 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance* in
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(&fieldType, value)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTCountFamilyGuard, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which))
+{
+    AOT_OPERATION_BEGIN(instance);
+    uint16_t family = static_cast<uint16_t>(which);
+    JSValue base = JSValue::decode(encodedBase);
+    auto outcome = [&]() -> const char* {
+        if (which >> 16)
+            return instance->departedFamilies[family] ? "exits-departed" : "passes";
+        if (!base.isCell())
+            return "exits-not-a-cell";
+        uint16_t there = base.asCell()->structure()->family();
+        return there == family ? "passes" : there ? "exits-with-another-number" : "exits-without-number";
+    }();
+    runtimeTable(vm).countForFamily("Family::guard", "Family::guard-of", family, outcome);
+    if (outcome[0] == 'e') {
+        countOperationNamed(instance, "exit-into-generic-copy", outcome);
+        countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
+    }
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedStore, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);

@@ -644,6 +644,7 @@ void cachePrivateNameTransition(VM& vm, Data* data, Slot* cache, JSObject* base,
     WTF::storeStoreFence();
     transition.offset = Slot::isIndirect;
     transition.pointer = nullptr;
+    oldStructure->assertHandsFamilyOnTo(*newStructure);
     transition.newStructureID = newStructure->id();
     WTF::storeStoreFence();
     transition.structureID = oldStructure->id();
@@ -693,6 +694,8 @@ static bool tryCachePutById(JSGlobalObject* globalObject, Data* data, JSValue ba
         uint32_t fieldType = slot.type() == PutPropertySlot::ExistingTypedField || slot.type() == PutPropertySlot::NewTypedField ? slot.fieldType() : 0;
         cache->offset = *location | attempts | (structureAfterwards ? Slot::isIndirect : 0) | (fieldType ? Slot::hasFieldType : 0);
         cache->pointer = nullptr;
+        if (structureAfterwards)
+            oldStructure->assertHandsFamilyOnTo(*structureAfterwards);
         cache->newStructureID = structureAfterwards ? structureAfterwards->id() : StructureID();
         cache->fieldType = fieldType;
         WTF::storeStoreFence();
@@ -835,6 +838,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
             && oldStructure->typeInfo().type() == FinalObjectType && !hasIndexedProperties(oldStructure->indexingType());
         reallocating = allocatesInitialStorage ? MegamorphicCache::StoreEntry::allocatesInitialOutOfLineStorage : MegamorphicCache::StoreEntry::reallocates;
     }
+    oldStructure->assertHandsFamilyOnTo(*newStructure);
     cache.initAsTransition(oldStructure->id(), newStructure->id(), uid, slot.cachedOffset(), reallocating);
     if (Options::useAOTOperationCounters()) [[unlikely]]
         countFill(vm, "MegamorphicCache::transition", cache, oldStructure->id(), uid, cache.findStore(oldStructure->id(), uid) ? nullptr : "refused", newStructure->id());
@@ -850,6 +854,7 @@ void fillConstructionCache(VM& vm, Data* data, Slot* cache, JSFunction* callee, 
     WTF::storeStoreFence();
     transition.offset = 0;
     transition.pointer = nullptr;
+    first->assertHandsFamilyOnTo(*last);
     transition.newStructureID = last->id();
     WTF::storeStoreFence();
     transition.structureID = first->id();

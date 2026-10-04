@@ -93,6 +93,8 @@ protected:
     LValue structureOf(LValue cell);
     LValue structureWithID(LValue structureID);
     LValue fieldIDInSlot(LValue structureID, unsigned slot);
+    LValue familyOfStructureWithID(LValue structureID);
+    LValue departedFamily(unsigned family);
     LValue entry(Entry);
 
     void orElse(LValue condition, LBasicBlock otherwise);

@@ -7122,6 +7122,7 @@ struct BytecodeLinkEncoder::Impl {
         Lock declinedLock;
         struct FunctionRemarks {
             AOT::ImageKey key;
+            unsigned module;
             String name;
             Vector<String> remarks;
         };
@@ -7209,7 +7210,7 @@ struct BytecodeLinkEncoder::Impl {
                         code.info.constantIndices = *numbers;
                     if (Options::aotRemarksPath()) [[unlikely]] {
                         Locker locker { declinedLock };
-                        allRemarks.append({ jobs[index].key, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
+                        allRemarks.append({ jobs[index].key, jobs[index].module, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
                     }
                     if (Options::aotTypeCoveragePath()) [[unlikely]] {
                         Locker locker { declinedLock };
@@ -7380,9 +7381,10 @@ struct BytecodeLinkEncoder::Impl {
             });
             if (auto file = FilePrintStream::open(byteCast<char>(Options::aotRemarksPath()), "wb")) {
                 for (auto& function : allRemarks) {
-                    file->print(function.name, "\tcompiled\n");
+                    String key = makeString(function.module, ':', function.key.start, ':', function.key.kind);
+                    file->print(function.name, "\tcompiled\t", key, "\n");
                     for (auto& remark : function.remarks)
-                        file->print(function.name, "\t", remark, "\n");
+                        file->print(function.name, "\t", remark, "\t", key, "\n");
                 }
             }
         }

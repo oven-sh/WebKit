@@ -61,15 +61,25 @@ LValue Emitter::changing32(ptrdiff_t offset)
 
 LValue Emitter::fixedStructureAddress(ptrdiff_t offset)
 {
-    LValue result = fixedPointer(offset);
-    if (Options::useAOTImmutableStructureAddresses())
-        static_cast<B3::MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
-    return result;
+    if (Options::useAOTStructureAddressesReloadedAfterCalls())
+        return m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
+    return fixedPointer(offset);
 }
 
 LValue Emitter::structureWithID(LValue structureID)
 {
     return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedStructureAddress(Instance::offsetOfStructureIDBase()));
+}
+
+LValue Emitter::familyOfStructureWithID(LValue structureID)
+{
+    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedStructureAddress(Instance::offsetOfFamilyBase()), m_out.zeroExtPtr(structureID))));
+}
+
+LValue Emitter::departedFamily(unsigned family)
+{
+    RELEASE_ASSERT(Instance::hasByteForFamily(family));
+    return m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfDepartedFamily(family)));
 }
 
 LValue Emitter::fieldIDInSlot(LValue structureID, unsigned slot)

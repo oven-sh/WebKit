@@ -131,6 +131,8 @@ struct ImageShape {
     uint16_t reserved;
     uint16_t inlineSlots;
     uint16_t hasIds;
+    uint16_t family;
+    uint16_t unused;
 };
 
 struct ImageSelector {

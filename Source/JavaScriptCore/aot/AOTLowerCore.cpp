@@ -207,6 +207,8 @@ bool Lowering::run()
     if (m_graph.startsCold) {
         m_data = own.data;
         m_dataOnEntry = m_data;
+        if (m_graph.placesToGuard)
+            m_graph.remark("generic-copy-takes-data-afresh"_s);
         if (std::ranges::any_of(m_graph.m_rpo, [](BasicBlock* block) { return block->isLoopHeader; })) {
             m_dataInLoops = m_proc.addVariable(pointerType());
             m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops, m_data);
@@ -238,6 +240,7 @@ bool Lowering::run()
         m_data = m_out.phi(pointerType(), had, made);
     }
 
+    chooseChecksOfGuards();
     unsigned scratchWords = 0;
     for (BasicBlock* block : m_graph.m_rpo)
         findPropertyRuns(block);
@@ -1420,7 +1423,9 @@ void Lowering::lowerBlock(BasicBlock* block)
     findReadsAvailableAtHeadOf(block);
     if (m_dataOnEntry) {
         m_data = m_dataOnEntry;
-        if (block->isInLoop && m_dataInLoops) {
+        if (block->isGeneric && m_graph.placesToGuard)
+            m_data = ownData().data;
+        else if (block->isInLoop && m_dataInLoops) {
             if (block->isLoopHeader) {
                 m_out.m_block->appendNew<B3::VariableValue>(m_proc, B3::Set, m_out.origin(), m_dataInLoops, ownData().data);
             }

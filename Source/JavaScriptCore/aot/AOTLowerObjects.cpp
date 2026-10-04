@@ -81,6 +81,12 @@ LValue Lowering::allocateObjectWithProperties(unsigned slot, const Vector<LValue
     return object;
 }
 
+void Lowering::countBirthInFamily(Node* node, LValue object, uint16_t family, unsigned slot)
+{
+    if (family && (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes())) [[unlikely]]
+        vmCall(node, Void, Entry::operationAOTCountBirthInFamily, m_instance, object, m_out.constInt32(family), slotAddress(slot));
+}
+
 void Lowering::validateNewObject(Node* node, LValue object, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown)
 {
     if (!Options::useAOTTypedFields() || !layout || !TypeTable::shared())
@@ -256,6 +262,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             Vector<TypeTable::FieldType, 8> fieldTypesBySlot;
             bool fieldTypesAreKnown = false;
             bool hasSlotsOutside = thisShape && thisShape->hasSlotsOutside();
+            uint16_t family = 0;
             if (auto shape = WTF::move(thisShape)) {
                 if (!shape->slots.isEmpty()) {
                     Vector<LValue, 8> inSlots;
@@ -273,6 +280,8 @@ bool Lowering::tryLowerAllocation(Node* node)
                     layoutSlotNodes = WTF::move(nodesInSlots);
                 }
                 layout = TypeTable::hasTypedFields() ? shape->layoutID : shape->number;
+                family = m_graph.familyGivenAt(node, shape->names.span());
+                shape->family = family;
                 m_graph.noteSiteShape(slot, WTF::move(*shape));
             }
             {
@@ -292,6 +301,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 m_graph.remark("literal-born-from-registers"_s, String::number(values.size()));
                 LValue object = callStub(newObjectLiteralStub(values.size()), pointerType(), arguments, { }, StubClobbers::CallerSavedRegisters, node);
                 validateNewObject(node, object, layout, layoutSlotNodes, values, fieldTypesAreKnown ? &fieldTypesBySlot : nullptr);
+                countBirthInFamily(node, object, family, slot);
                 setJSValue(node, object);
                 return true;
             }
@@ -311,6 +321,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             m_out.appendTo(continuation);
             LValue object = m_out.phi(pointerType(), results);
             validateNewObject(node, object, layout, layoutSlotNodes, values, fieldTypesAreKnown ? &fieldTypesBySlot : nullptr);
+            countBirthInFamily(node, object, family, slot);
             setJSValue(node, object);
             return true;
         }
@@ -332,12 +343,15 @@ bool Lowering::tryLowerAllocation(Node* node)
             }
             LValue callee = lowCell(node->use(bytecode.m_callee));
             unsigned slot = allocateSlots(3);
+            uint16_t family = 0;
             {
                 NewObjectPlan plan = NewObjectPlan::forCreateThis(code().codeBlock(), node->bytecodeIndex.offset());
                 RELEASE_ASSERT(plan.properties.size() == count);
                 KnownShape shape;
                 for (auto& property : plan.properties)
                     shape.names.append(code().codeBlock()->identifier(property.identifier).impl());
+                if (!node->graph->thisLayoutID())
+                    family = m_graph.familyGivenAt(node, shape.names.span());
                 if (uint32_t tag = node->graph->typeTagAt(plan.stores[0].offset); tag && TypeTable::shared()) {
                     if (auto layout = TypeTable::shared()->layoutOf(tag); layout && layout->properties.size() == count) {
                         bool matchesSourceOrder = true;
@@ -353,7 +367,7 @@ bool Lowering::tryLowerAllocation(Node* node)
                 Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, count) };
                 for (auto& property : plan.properties)
                     words.append(AllocationPlan::encode(numberOf(property.identifier), property.isDefined, property.isStrict, property.isAssigned));
-                words.append(node->graph->thisLayoutID());
+                words.append(static_cast<uint32_t>(family) << 16 | node->graph->thisLayoutID());
                 m_graph.noteSitePlan(slot, WTF::move(words));
             }
             LBasicBlock slowCase = m_out.newBlock();
@@ -395,6 +409,7 @@ bool Lowering::tryLowerAllocation(Node* node)
             LValue object = m_out.phi(pointerType(), fastResult, slowResult);
             if (!node->graph->thisLayoutID())
                 validateNewObject(node, object, layout, layoutSlotNodes, values);
+            countBirthInFamily(node, object, family, slot);
             setJSValue(node, object);
             return true;
         }

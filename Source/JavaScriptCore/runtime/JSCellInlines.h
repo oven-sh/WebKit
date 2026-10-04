@@ -249,6 +249,10 @@ ALWAYS_INLINE void JSCell::setStructure(VM& vm, Structure* structure)
     ASSERT(!this->structure()
         || this->structure()->transitionWatchpointSetHasBeenInvalidated()
         || structure->id().decode() == structure);
+#if ASSERT_ENABLED && ENABLE(AOT)
+    if (uint16_t family = m_structureID ? m_structureID.decode()->family() : 0; family && family != structure->family())
+        ASSERT_WITH_MESSAGE(AOT::hasNotedDepartureFromFamily(vm, family), "An object leaves family %u for %u by a road that does not set the family's byte", family, structure->family());
+#endif
     m_structureID = structure->id();
     m_flags = TypeInfo::mergeInlineTypeFlags(structure->typeInfo().inlineTypeFlags(), m_flags);
     m_type = structure->typeInfo().type();

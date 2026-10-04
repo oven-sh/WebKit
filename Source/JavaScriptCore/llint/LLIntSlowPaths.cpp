@@ -1243,6 +1243,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_by_id)
                         ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
+#if USE(BUN_JSC_ADDITIONS)
+                        oldStructure->assertHandsFamilyOnTo(*newStructure);
+#endif
                         metadata.m_newStructureID = newStructure->id();
                         if (chain)
                             metadata.m_structureChain.set(vm, codeBlock, chain);
@@ -1550,6 +1553,9 @@ LLINT_SLOW_PATH_DECL(slow_path_put_private_name)
                         ConcurrentJSLocker locker(codeBlock->m_lock);
                         metadata.m_oldStructureID = oldStructure->id();
                         metadata.m_offset = slot.cachedOffset();
+#if USE(BUN_JSC_ADDITIONS)
+                        oldStructure->assertHandsFamilyOnTo(*newStructure);
+#endif
                         metadata.m_newStructureID = newStructure->id();
                         metadata.m_property.set(vm, codeBlock, subscript.asCell());
                         vm.writeBarrier(codeBlock);
@@ -1609,6 +1615,9 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
 
         if (!newStructure->isDictionary()) {
             metadata.m_oldStructureID = oldStructure->id();
+#if USE(BUN_JSC_ADDITIONS)
+            oldStructure->assertHandsFamilyOnTo(*newStructure);
+#endif
             metadata.m_newStructureID = newStructure->id();
             metadata.m_brand.set(vm, codeBlock, brand.asCell());
         }

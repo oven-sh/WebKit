@@ -64,6 +64,7 @@ struct AllocationPlan {
     bool isDefined(unsigned i) const { return words[i + 1] & 2; }
     bool isStrict(unsigned i) const { return words[i + 1] & 1; }
     uint16_t thisLayoutID() const { return static_cast<uint16_t>(words[count() + 1]); }
+    uint16_t thisFamily() const { return static_cast<uint16_t>(words[count() + 1] >> 16); }
 
     const uint32_t* words { nullptr };
 };

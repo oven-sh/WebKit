@@ -379,7 +379,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     graph.setSummary(summary);
     graph.setVariableSummaries(variableSummaries);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
-    graph.startsCold = !placesToGuard && mayStartCold(unlinkedCodeBlock);
+    graph.startsCold = mayStartCold(unlinkedCodeBlock) && (!placesToGuard || 2 * unlinkedCodeBlock->instructions().size() <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots));
     graph.isGetByValOnThis = isGetByValOnThis(unlinkedCodeBlock);
     graph.mayReturnScopeVariable = mayReturnScopeVariable(unlinkedCodeBlock);
     if (graph.isGetByValOnThis)

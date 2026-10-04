@@ -91,6 +91,13 @@ enum class GuardKind : uint8_t {
     IsLikelyFunction,
 };
 
+enum class GuardCheck : uint8_t {
+    Name,
+    Family,
+    Byte,
+    None,
+};
+
 struct NewObjectPlan {
     struct Property {
         unsigned identifier;
@@ -235,6 +242,8 @@ struct Node {
     bool structureIsChecked { false };
     bool slotIsDirect { false };
     GuessedPlace checkedPlace { };
+    GuardCheck check { GuardCheck::Name };
+    bool checkedValueIsCell { false };
     bool calleeIsChecked { false };
     bool wasInferredUnreachable { false };
     bool isElided { false };
@@ -680,6 +689,8 @@ public:
     void noteSitePlan(unsigned firstSlot, Vector<uint32_t, 16>&& words);
     std::optional<KnownShape> literalShape(const Node*) const;
     std::optional<GuessedPlace> guessedPlaceOf(const Node* access) const;
+    uint16_t familyBornAt(const Node* birth) const;
+    uint16_t familyGivenAt(const Node* birth, std::span<UniquedStringImpl* const> namesGivenAtOnce) const;
     StubCalls stubCalls;
     IndexReferences indexReferences;
 
@@ -715,7 +726,7 @@ private:
     UncheckedKeyHashMap<unsigned, Vector<unsigned, 4>, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_literalStores;
     bool m_hasFoundLiteralStores { false };
     void findNamesAccessed() const;
-    mutable UncheckedKeyHashMap<const Node*, Vector<UniquedStringImpl*, 4>> m_namesAccessedOn;
+    mutable UncheckedKeyHashMap<const Node*, PropertyPlaces::NamesAccessed> m_namesAccessedOn;
     mutable bool m_hasFoundNamesAccessed { false };
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };

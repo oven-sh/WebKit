@@ -60,6 +60,8 @@ struct Instance;
 JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
 JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
 JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
+JS_EXPORT_PRIVATE void noteDepartureFromFamily(VM&, uint16_t family, const char* road);
+JS_EXPORT_PRIVATE bool hasNotedDepartureFromFamily(VM&, uint16_t family);
 }
 #endif
 
@@ -447,6 +449,12 @@ public:
     uint16_t knownShape() const { return m_knownShape; }
     JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
     static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
+    uint16_t family() const { return m_family; }
+    JS_EXPORT_PRIVATE bool setFamily(VM&, uint16_t);
+    const char* reasonToRefuseFamily(uint16_t) const;
+    JS_EXPORT_PRIVATE bool holdsFamily(VM&, std::span<UniquedStringImpl* const> namesInSlots);
+    void assertHandsFamilyOnTo(const Structure& next) const { RELEASE_ASSERT(!m_family || m_family == next.m_family, m_family, next.m_family); }
+    static constexpr ptrdiff_t offsetOfFamily() { return OBJECT_OFFSETOF(Structure, m_family); }
     uint16_t typedLayoutID() const { return m_typedLayoutID; }
     JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout);
     bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
@@ -1186,6 +1194,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     uint16_t m_knownShape { 0 };
     uint16_t m_typedLayoutID { 0 };
+    uint16_t m_family { 0 };
 #endif
 
     uint32_t m_propertyHash;

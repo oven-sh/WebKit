@@ -475,6 +475,7 @@ Vector<uint8_t> ImageBuilder::finish()
         uint16_t layoutID { 0 };
         uint16_t reserved { 0 };
         uint16_t inlineSlots { 0 };
+        uint16_t family { 0 };
         int32_t locationOf(unsigned i) const
         {
             unsigned at = slots.isEmpty() ? i : slots[i];
@@ -538,6 +539,10 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             Vector<uint32_t, 16> words { known.inlineCapacity };
             words.appendVector(shape.names);
+            if (known.family) {
+                shape.family = known.family;
+                words.append(0xfffe0000u | known.family);
+            }
             if (known.layoutID) {
                 shape.slots = known.slots;
                 shape.layoutID = known.layoutID;
@@ -618,7 +623,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint16_t> shapeSlots;
     size_t numberOfShapeProperties = 0;
     for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(shapeSlots.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0 });
+        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(shapeSlots.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0, shape.family, 0 });
         shapeSlots.appendVector(shape.slots);
         if (shape.layoutID && !shape.slots.isEmpty() && Options::useAOTTypedFields() && TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(shape.layoutID) && TypeTable::shared()->usesFieldIDs(shape.layoutID)) {
             imageShapes.last().hasIds = 1;
@@ -635,8 +640,10 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint16_t> fieldLayoutIDs;
     BitVector identifierIsEncoded;
     for (auto& function : m_functions) {
-        for (uint32_t number : function.code.info.identifierIndices)
+        for (uint32_t number : function.code.info.identifierIndices) {
+            RELEASE_ASSERT(number);
             identifierIsEncoded.set(number);
+        }
     }
     auto isEncoded = [&](UniquedStringImpl* name) {
         return identifierIndices && identifierIsEncoded.get(identifierIndices->get(name));

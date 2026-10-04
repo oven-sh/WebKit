@@ -450,6 +450,7 @@ Structure* Structure::addPropertiesTransition(VM& vm, Structure* structure, std:
     }
     Structure* transition = Structure::create(vm, structure, deferred);
     transition->copyPropertyNameIDsFrom(*structure);
+    transition->m_family = structure->m_family;
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -733,6 +734,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 #if USE(BUN_JSC_ADDITIONS)
     memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
     transition->setRecordsEveryKnownPropertyName(structure->recordsEveryKnownPropertyName());
+    transition->m_family = structure->m_family;
 #endif
 
     offset = transition->add(vm, propertyName, attributes);
@@ -755,6 +757,10 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 
 Structure* Structure::removePropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, PropertyOffset& offset, DeferredStructureTransitionWatchpointFire* deferred)
 {
+#if ENABLE(AOT)
+    if (structure->m_family) [[unlikely]]
+        AOT::noteDepartureFromFamily(vm, structure->m_family, "deletion");
+#endif
     Structure* newStructure = removePropertyTransitionFromExistingStructure(structure, propertyName, offset);
     if (newStructure)
         return newStructure;
@@ -853,6 +859,10 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JSValue prototype, DeferredStructureTransitionWatchpointFire& deferred)
 {
     ASSERT(isValidPrototype(prototype));
+#if ENABLE(AOT)
+    if (structure->m_family) [[unlikely]]
+        AOT::noteDepartureFromFamily(vm, structure->m_family, "change-of-prototype");
+#endif
 
     DeferGC deferGC(vm);
     JSObject* key = prototype.isNull() ? nullptr : asObject(prototype);
@@ -937,6 +947,10 @@ Structure* Structure::attributeChangeTransitionToExistingStructureConcurrently(S
 
 Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, DeferredStructureTransitionWatchpointFire* deferred)
 {
+#if ENABLE(AOT)
+    if (structure->m_family) [[unlikely]]
+        AOT::noteDepartureFromFamily(vm, structure->m_family, "attributes");
+#endif
     if (structure->isUncacheableDictionary()) {
         structure->attributeChangeWithoutTransition(vm, propertyName, attributes, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
         structure->checkOffsetConsistency();
@@ -997,6 +1011,10 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
 Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, DictionaryKind kind, DeferredStructureTransitionWatchpointFire* deferred)
 {
     ASSERT(!structure->isUncacheableDictionary());
+#if ENABLE(AOT)
+    if (structure->m_family) [[unlikely]]
+        AOT::noteDepartureFromFamily(vm, structure->m_family, "dictionary");
+#endif
     DeferGC deferGC(vm);
     
     Structure* transition = Structure::create(vm, structure, deferred);
@@ -1063,6 +1081,31 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
 
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
+#if ENABLE(AOT)
+    if (structure->m_family) [[unlikely]] {
+        const char* road = "indexed-storage";
+        switch (transitionKind) {
+        case TransitionKind::PreventExtensions:
+            road = "prevent-extensions";
+            break;
+        case TransitionKind::Seal:
+            road = "seal";
+            break;
+        case TransitionKind::Freeze:
+            road = "freeze";
+            break;
+        case TransitionKind::BecomePrototype:
+            road = "prototype-of-another";
+            break;
+        case TransitionKind::MakePropertiesImmutable:
+            road = "immutable-properties";
+            break;
+        default:
+            break;
+        }
+        AOT::noteDepartureFromFamily(vm, structure->m_family, road);
+    }
+#endif
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
     if (!structure->isDictionary()) {
@@ -1293,7 +1336,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (m_knownShape || hasPropertyNameIDInSlot(offset))) {
+    if (result.isNewEntry && (m_knownShape || m_family || hasPropertyNameIDInSlot(offset))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1569,6 +1612,7 @@ bool TypedLayoutTable::isValueOf(const FieldType& fieldType, JSValue value)
 
 void Structure::setTypedLayoutID(uint16_t layoutID)
 {
+    RELEASE_ASSERT(!m_family);
     m_typedLayoutID = layoutID;
     setRecordsEveryKnownPropertyName(false);
     zeroSpan(std::span { m_fieldIDInSlot });
@@ -1582,6 +1626,7 @@ void Structure::setTypedLayoutID(uint16_t layoutID)
 
 void Structure::setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs> fieldIDInSlot)
 {
+    RELEASE_ASSERT(!m_family);
     m_typedLayoutID = layoutID;
     setRecordsEveryKnownPropertyName(false);
     memcpySpan(std::span { m_fieldIDInSlot }, fieldIDInSlot);
@@ -1653,6 +1698,50 @@ void Structure::forgetFieldsInSlots()
         return;
     for (uint16_t& fieldID : m_fieldIDInSlot)
         fieldID = ambiguousFieldID;
+}
+
+const char* Structure::reasonToRefuseFamily(uint16_t family) const
+{
+    if (m_family)
+        return m_family == family ? nullptr : "has-another-family";
+    if (typeInfo().type() != FinalObjectType)
+        return "is-not-final-object";
+    if (isDictionary())
+        return "is-dictionary";
+    if (mayBePrototype())
+        return "may-be-prototype";
+    if (isWatchingReplacement())
+        return "is-watching-replacement";
+    if (hasPolyProto())
+        return "has-poly-proto";
+    if (m_typedLayoutID && TypedLayoutTable::hasTypedFields())
+        return "has-typed-layout";
+    if (transitionWatchpointSetHasBeenInvalidated())
+        return "has-had-child";
+    return nullptr;
+}
+
+bool Structure::setFamily(VM&, uint16_t family)
+{
+    ASSERT(family);
+    if (reasonToRefuseFamily(family))
+        return false;
+    m_family = family;
+    return true;
+}
+
+bool Structure::holdsFamily(VM& vm, std::span<UniquedStringImpl* const> namesInSlots)
+{
+    if (typeInfo().type() != FinalObjectType || isDictionary() || namesInSlots.size() > m_inlineCapacity)
+        return false;
+    for (unsigned slot = 0; slot < namesInSlots.size(); ++slot) {
+        if (!namesInSlots[slot])
+            continue;
+        unsigned attributes;
+        if (get(vm, namesInSlots[slot], attributes) != static_cast<PropertyOffset>(slot) || attributes)
+            return false;
+    }
+    return true;
 }
 
 void Structure::setKnownShape(VM& vm, uint16_t shape)
@@ -2251,6 +2340,10 @@ Structure* Structure::setBrandTransition(VM& vm, Structure* structure, Symbol* b
 
     Structure* transition = BrandedStructure::create(vm, structure, &brand->uid(), deferred);
     transition->setTransitionKind(TransitionKind::SetBrand);
+#if USE(BUN_JSC_ADDITIONS)
+    transition->m_family = structure->m_family;
+    transition->copyPropertyNameIDsFrom(*structure);
+#endif
 
     transition->m_cachedPrototypeChain.setMayBeNull(vm, transition, structure->m_cachedPrototypeChain.get());
     transition->m_blob.setIndexingModeIncludingHistory(structure->indexingModeIncludingHistory());

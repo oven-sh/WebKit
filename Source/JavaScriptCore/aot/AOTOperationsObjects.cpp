@@ -371,11 +371,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     Vector<NewObjectPlan::Property, 8> properties;
     unsigned inlineCapacityInBytecode;
     uint16_t plannedLayoutID = 0;
+    uint16_t family = 0;
     if (AllocationPlan plan = caller(instance, callFrame).planOf(cache)) {
         for (unsigned i = 0; i < plan.count(); ++i)
             properties.append({ plan.identifier(i), plan.isDefined(i), plan.isStrict(i), plan.isAssigned(i) });
         inlineCapacityInBytecode = plan.inlineCapacity();
         plannedLayoutID = plan.thisLayoutID();
+        family = plan.thisFamily();
     } else {
         UnlinkedCodeBlock* codeBlock = callerCode(instance, callFrame);
         unsigned offset = callerBytecodeIndex(instance, callFrame).offset();
@@ -445,12 +447,19 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
     if (matchesPlannedLayout && !last->isDictionary() && count <= last->inlineCapacity()) {
         if (uint32_t shape = caller(instance, callFrame).siteConstantOf(cache))
             last->setKnownShape(vm, safeCast<uint16_t>(shape));
+        if (family) {
+            Vector<UniquedStringImpl*, 16> names;
+            for (unsigned i = 0; i < count; ++i)
+                names.append(identifierAt(instance, callFrame, properties[i].identifier).impl());
+            Instance::giveFamily(vm, last, family, names.span(), "construction");
+        }
     }
     if (!cacheable || last->isDictionary() || count > last->inlineCapacity() || object->butterfly() || first->mayBePrototype() || last->mayBePrototype())
         OPERATION_RETURN(scope, object);
 
     if (cache->pointer && cache->pointer != constructor && !SharedData::contains(cache)) {
         if (first->propertyAccessesAreCacheable() && canUseMegamorphicPutFastPath(first)) {
+            first->assertHandsFamilyOnTo(*last);
             vm.ensureMegamorphicCache().initAsConstruction(first->id(), last->id(), cache);
             callerData(instance, callFrame)->hasSitesInMegamorphicCache = true;
         }
@@ -483,6 +492,22 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Insta
         OPERATION_RETURN(scope, object);
     fillConstructionCache(vm, callerData(instance, callFrame), cache, constructor, first, last, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(last->inlineCapacity()), AllocatorForMode::EnsureAllocator));
     OPERATION_RETURN(scope, object);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCountBirthInFamily, void, (Instance* instance, JSObject* object, uint32_t family, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    Structure* structure = object->structure();
+    if (AllocationPlan plan = caller(instance, callFrame).planOf(cache); plan && structure->family() == family && Options::validateAOTInferredTypes()) {
+        DeferGCForAWhile deferGC(vm);
+        Vector<UniquedStringImpl*, 16> names;
+        for (unsigned i = 0; i < plan.count(); ++i)
+            names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
+        RELEASE_ASSERT(structure->holdsFamily(vm, names.span()), family);
+    }
+    if (Options::useAOTOperationCounters())
+        runtimeTable(vm).countForFamily("Family::born", "Family::born-in", safeCast<uint16_t>(family), structure->family() == family ? "with-number" : structure->family() ? "with-another-number" : "without-number");
+    OPERATION_RETURN(scope);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue* values, uint32_t count, Slot* cache))

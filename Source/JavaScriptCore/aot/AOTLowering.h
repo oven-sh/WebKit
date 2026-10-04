@@ -232,6 +232,7 @@ private:
         UniquedStringImpl* name;
         LValue value;
         LValue effectEpoch;
+        bool isBehindNameCheck { false };
         friend bool operator==(const AvailableRead&, const AvailableRead&) = default;
     };
     static constexpr unsigned maxAvailableReads = 16;
@@ -250,7 +251,8 @@ private:
     void publishAvailableReads(BasicBlock*);
     void forgetReadsChangedInLoop(BasicBlock* header);
     LValue loadEffectEpoch();
-    void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch);
+    void recordAvailableRead(Node* base, UniquedStringImpl* name, LValue value, LValue effectEpoch, bool isBehindNameCheck = false);
+    std::optional<AvailableRead> availableRead(Node* base, UniquedStringImpl* name);
     void forgetReadsChangedBy(Node*);
     static std::optional<String> constantStringOf(Node*);
     static bool isAtomIfString(Node*, unsigned depth = 0);
@@ -260,6 +262,7 @@ private:
     static bool isEscapingFunctionThis(Node*);
     LValue isStringEqualTo(Node* comparison, Node* valueNode, LValue, const String&, Node* literalString);
     LValue isStringEqualToAtom(Node* valueNode, LValue, LValue literalString);
+    void countBirthInFamily(Node*, LValue object, uint16_t family, unsigned slot);
     void validateNewObject(Node*, LValue, uint32_t layout, const Vector<Node*, 8>& inSlots, const Vector<LValue, 8>& values, const Vector<TypeTable::FieldType, 8>* fieldTypesIfKnown = nullptr);
     LValue isOneOf(LValue layout, uint16_t first, uint16_t last);
     struct OwnData {
@@ -341,6 +344,7 @@ private:
             return true;
         return !m_block->isInProfitableLoop || m_block->isInBuiltinLoopOnly;
     }
+    bool isInGenericCopyOfSplitLoop() const { return m_block->isGeneric && !m_block->graph->placesToGuard; }
     bool prefersCalls() const { return isCompact() || (m_graph.codeBlock()->codeType() != FunctionCode && !m_block->isInLoop); }
     LValue compareWithLiteral(LValue characters, std::span<const Latin1Character> written);
     struct Latin1Characters {
@@ -368,6 +372,8 @@ private:
     UncheckedKeyHashMap<BasicBlock*, unsigned> m_chainsByFirstBlock;
     UncheckedKeyHashSet<BasicBlock*> m_blocksInsideChains;
     void findComparisonChains();
+    void chooseChecksOfGuards();
+    bool preservesLayouts(Node*);
     void lowerComparisonChain(BasicBlock*, const ComparisonChain&);
     bool isFusedWithGetFromScope(Node*);
     LValue scopeToResolveFrom(Node* resolve);

@@ -3355,7 +3355,7 @@ public:
                 return false;
             computeReversePostOrder();
             for (BasicBlock* block : m_graph.m_rpo)
-                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && m_inProfitableLoop.get(block->bytecodeBegin);
+                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && (m_inProfitableLoop.get(block->bytecodeBegin) || (m_graph.placesToGuard && Options::useAOTInlineFastPathsInFunctionsWithGuards()));
         }
         computeLiveness();
         chooseFrameRegisters();
