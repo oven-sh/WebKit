@@ -58,6 +58,11 @@ public:
                 continue;
             for (Node* phi : block->phis)
                 phi->range = compute(phi);
+            for (Node* node : block->nodes) {
+                Range onFirstEntry = std::exchange(node->range, compute(node));
+                if (node->range != onFirstEntry)
+                    m_graph.remark("entry-range-covers-reentry"_s);
+            }
         }
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* phi : block->phis)
