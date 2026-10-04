@@ -180,6 +180,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
     countOperationAtSite(instance, callFrame, __func__);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
+    noteNamedAccess(instance, __func__, base, { }, ident.impl());
     if (Options::useAOTOperationCounters()) [[unlikely]] {
         countOperationNamed(instance, __func__, !base.isObject() ? "base-is-not-object" : vm.megamorphicCache() && vm.megamorphicCache()->findLoad(base.asCell()->structureID(), ident.impl()) ? "value-is-in-megamorphic-cache" : "value-is-not-in-megamorphic-cache");
         if (vm.megamorphicCache())
@@ -266,6 +267,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instan
     AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
+    noteNamedAccess(instance, __func__, base, property);
 
     if (base.isObject() && property.isString()) [[likely]] {
         auto existingAtomString = asString(property)->toExistingAtomString(globalObject);
@@ -310,6 +312,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
     JSValue value = JSValue::decode(encodedValue);
+    noteNamedAccess(instance, __func__, base, property);
 
     if (std::optional<uint32_t> index = property.tryGetAsUint32Index()) {
         uint32_t i = *index;
@@ -733,9 +736,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
 JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
 {
     AOT_OPERATION_BEGIN(instance);
-    unsigned slot = which >> 16;
+    unsigned slot = which >> 16 & 0xff;
     uint16_t nameID = static_cast<uint16_t>(which);
     JSValue base = JSValue::decode(encodedBase);
+    if (which >> 31 && base.isCell()) {
+        Structure* structure = base.asCell()->structure();
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+        for (unsigned other = 0; other < Structure::numberOfSlotsWithPropertyNameIDs; ++other)
+            RELEASE_ASSERT(structure->fieldIDInSlot(other) != nameID || (base.isObject() && static_cast<unsigned>(offset) == other && !attributes));
+    }
     auto outcome = [&]() -> const char* {
         if (!base.isCell())
             return "not-a-cell";
@@ -751,8 +761,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instanc
             return "dictionary";
         unsigned attributes = 0;
         PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+        if (structure->recordsEveryKnownPropertyName())
+            RELEASE_ASSERT(!isValidOffset(offset) || (static_cast<unsigned>(offset) < Structure::numberOfSlotsWithPropertyNameIDs && !attributes && structure->fieldIDInSlot(offset) == nameID));
         if (!isValidOffset(offset))
-            return "not-an-own-property";
+            return structure->recordsEveryKnownPropertyName() ? "absent-and-every-name-is-recorded" : "not-an-own-property";
         if (attributes)
             return "has-attributes";
         if (!isInlineOffset(offset))
@@ -763,7 +775,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instanc
             return "records-no-names";
         return there ? "slot-is-marked-nameless" : "no-id-recorded";
     };
-    countOperationNamed(instance, __func__, outcome());
+    if ((which >> 30 & 1) && (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)) {
+        countOperationNamed(instance, __func__, "exit-into-generic-copy");
+        countOperationNamed(instance, "exit-into-generic-copy", outcome());
+        countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
+    }
+    const char* result = outcome();
+    countOperationNamed(instance, __func__, result);
+    if (Options::useAOTOperationCounters() && !strcmp(result, "no-id-recorded")) [[unlikely]] {
+        Structure* structure = base.asCell()->structure();
+        runtimeTable(vm).noteShape("GuessedPlace", makeString("no-id-recorded name "_s, StringView(identifierAt(instance, callFrame, identifierIndex).impl()), " slot "_s, slot, " typed layout "_s, structure->typedLayoutID(), " known shape "_s, structure->knownShape(), " transition kind "_s, static_cast<unsigned>(structure->transitionKind()),
+            structure->mayBePrototype() ? " may-be-prototype"_s : ""_s, structure->didPreventExtensions() ? " not-extensible"_s : ""_s, structure->hasBeenFlattenedBefore() ? " flattened"_s : ""_s, structure->hasBeenDictionary() ? " has-been-dictionary"_s : ""_s, " of"_s), vm, structure);
+    }
     OPERATION_RETURN(scope);
 }
 
@@ -779,10 +802,215 @@ JSC_DEFINE_JIT_OPERATION(operationAOTToFieldValue, EncodedJSValue, (Instance* in
     OPERATION_RETURN(scope, JSValue::encode(TypedLayoutTable::toFieldRepresentation(&fieldType, value)));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedStore, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t which, uint32_t identifierIndex))
+{
+    AOT_OPERATION_BEGIN(instance);
+    unsigned slot = which >> 16 & 0xff;
+    uint16_t nameID = static_cast<uint16_t>(which);
+    bool validates = which >> 31;
+    JSValue base = JSValue::decode(encodedBase);
+    auto outcome = [&]() -> const char* {
+        if (!base.isCell())
+            return "not-a-cell";
+        Structure* structure = base.asCell()->structure();
+        uint16_t there = structure->fieldIDInSlot(slot);
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+        if (there == nameID) {
+            if (validates) {
+                RELEASE_ASSERT(base.isObject() && static_cast<unsigned>(offset) == slot && !attributes);
+                RELEASE_ASSERT(!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype());
+                RELEASE_ASSERT(!structure->typedLayoutID() || !TypedLayoutTable::hasTypedFields());
+                WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(offset);
+                RELEASE_ASSERT(!replacements || !replacements->isStillValid());
+            }
+            return "hit";
+        }
+        if (!base.isObject())
+            return "not-an-object";
+        if (structure->typedLayoutID() && TypedLayoutTable::hasTypedFields())
+            return "typed-layout";
+        if (structure->isDictionary())
+            return "dictionary";
+        if (!isValidOffset(offset))
+            return "not-an-own-property";
+        if (attributes)
+            return "has-attributes";
+        if (!isInlineOffset(offset))
+            return "out-of-line";
+        if (static_cast<unsigned>(offset) != slot)
+            return "another-slot";
+        if (structure->mayBePrototype())
+            return "may-be-prototype";
+        if (structure->cannotConvertToTypedLayout())
+            return "records-no-names";
+        return there ? "slot-is-marked-nameless" : "no-id-recorded";
+    };
+    if ((which >> 30 & 1) && (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)) {
+        countOperationNamed(instance, __func__, "exit-into-generic-copy");
+        countOperationNamed(instance, "exit-into-generic-copy", outcome());
+        countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
+    }
+    countOperationNamed(instance, __func__, outcome());
+    OPERATION_RETURN(scope);
+}
+
+static const char* howReadByNameWillBeServed(VM& vm, JSValue base, UniquedStringImpl* name, const Slot* cache)
+{
+    StructureID structureID = base.isCell() ? base.asCell()->structureID() : StructureID();
+    bool isInTable = structureID && vm.megamorphicCache() && vm.megamorphicCache()->findLoad(structureID, name);
+    auto hasNameInSlot = [&](uint16_t id, unsigned slot) {
+        return id && id < Structure::firstReservedPropertyNameID && slot < Structure::numberOfSlotsWithPropertyNameIDs && base.isCell() && base.asCell()->structure()->fieldIDInSlot(slot) == id;
+    };
+    if (SharedData::contains(cache))
+        return isInTable ? "site-has-nobodys-slot-and-table-hits" : "site-has-nobodys-slot-and-table-misses";
+    if (cache->isPolymorphic()) {
+        auto* several = static_cast<const PolymorphicSlots*>(cache->pointer);
+        unsigned used = 0;
+        bool hits = false;
+        for (const Slot& slot : several->slots) {
+            used += !!slot.structureID;
+            hits |= structureID && slot.structureID == structureID;
+        }
+        bool hitsByName = false;
+        for (unsigned i = 0; i < several->numberOfUsedInlineNameSlots; ++i)
+            hitsByName |= hasNameInSlot(static_cast<uint16_t>(several->byName), several->byName >> (PolymorphicSlots::inlineNameSlotsShift + i * 8) & 0xff);
+        static_assert(PolymorphicSlots::numberOfSlots == 4);
+        static constexpr const char* services[PolymorphicSlots::numberOfSlots + 1][4] = {
+            { "polymorphic-site-of-0-hits-by-name", "polymorphic-site-of-0-hits", "polymorphic-site-of-0-misses-and-table-hits", "polymorphic-site-of-0-misses-and-table-misses" },
+            { "polymorphic-site-of-1-hits-by-name", "polymorphic-site-of-1-hits", "polymorphic-site-of-1-misses-and-table-hits", "polymorphic-site-of-1-misses-and-table-misses" },
+            { "polymorphic-site-of-2-hits-by-name", "polymorphic-site-of-2-hits", "polymorphic-site-of-2-misses-and-table-hits", "polymorphic-site-of-2-misses-and-table-misses" },
+            { "polymorphic-site-of-3-hits-by-name", "polymorphic-site-of-3-hits", "polymorphic-site-of-3-misses-and-table-hits", "polymorphic-site-of-3-misses-and-table-misses" },
+            { "polymorphic-site-of-4-hits-by-name", "polymorphic-site-of-4-hits", "polymorphic-site-of-4-misses-and-table-hits", "polymorphic-site-of-4-misses-and-table-misses" },
+        };
+        return services[used][hitsByName ? 0 : hits ? 1 : isInTable ? 2 : 3];
+    }
+    if (structureID && cache->structureID == structureID)
+        return cache->offset & Slot::flagsMask ? "site-hits-indirectly" : "site-hits";
+    constexpr unsigned wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
+    if (!(cache->offset & (Slot::flagsMask | Slot::attemptsMask)) && hasNameInSlot(static_cast<uint16_t>(cache->offset >> Slot::nameIDShift), (cache->offset & Slot::directLocationMask) - wordsBeforeInlineStorage))
+        return "site-hits-by-name";
+    if (cache->structureID)
+        return isInTable ? "site-holds-another-structure-and-table-hits" : "site-holds-another-structure-and-table-misses";
+    if ((cache->offset & Slot::attemptsMask) == Slot::attemptsMask)
+        return isInTable ? "site-is-abandoned-and-table-hits" : "site-is-abandoned-and-table-misses";
+    return isInTable ? "site-is-empty-and-table-hits" : "site-is-empty-and-table-misses";
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCountReadByName, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    UniquedStringImpl* name = identifierAt(instance, callFrame, identifierIndex).impl();
+    NamedAccess access = classifyNamedAccess(vm, base, { }, name);
+    const char* outcome = base.isObject() && asObject(base)->type() == FinalObjectType ? access.place : access.receiver;
+    const char* service = howReadByNameWillBeServed(vm, base, name, cache);
+    auto& table = runtimeTable(vm);
+    for (const char* detail : { access.receiver, access.place, service })
+        table.countOperation(__func__, detail);
+    table.countOperation(outcome, service);
+    OPERATION_RETURN(scope);
+}
+
+#define AOT_SERVICES_OF_STORE_WITH_TABLE(state, site) \
+    "store-site-" state "-and-table-misses" site, "store-site-" state "-and-table-hits" site, "store-site-" state "-and-table-hits-and-reallocates" site, "store-site-" state "-and-table-hits-and-allocates-storage" site
+#define AOT_SERVICES_OF_STORE(site) { \
+    "store-site-hits" site, "store-site-hits-with-transition" site, "store-site-hits-typed-field" site, \
+    AOT_SERVICES_OF_STORE_WITH_TABLE("has-nobodys-slot", site), AOT_SERVICES_OF_STORE_WITH_TABLE("holds-another-structure", site), \
+    AOT_SERVICES_OF_STORE_WITH_TABLE("is-abandoned", site), AOT_SERVICES_OF_STORE_WITH_TABLE("is-empty", site) }
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCountStoreByName, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifierIndex, Slot* cache, uint32_t kindOfSite))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    UniquedStringImpl* name = identifierAt(instance, callFrame, identifierIndex).impl();
+    bool isDirect = kindOfSite & 1;
+    bool isStrict = kindOfSite & 2;
+    unsigned site = isDirect ? 0 : kindOfSite & 4 ? 1 : kindOfSite & 8 ? 2 : kindOfSite & 16 ? 3 : 4;
+    static constexpr const char* sites[] = { "direct-store", "store-behind-another-path", "store-to-object-born-here", "keyed-store-with-constant-key", "store-without-guess" };
+    static constexpr const char* services[][19] = { AOT_SERVICES_OF_STORE("-at-direct-store"), AOT_SERVICES_OF_STORE("-behind-another-path"), AOT_SERVICES_OF_STORE("-to-object-born-here"), AOT_SERVICES_OF_STORE("-with-constant-key"), AOT_SERVICES_OF_STORE("-without-guess") };
+    auto outcomeOfStore = [&]() -> const char* {
+        if (!base.isObject())
+            return "store-to-no-object";
+        if (asObject(base)->type() != FinalObjectType)
+            return "store-to-object-that-is-not-final";
+        Structure* structure = asObject(base)->structure();
+        if (structure->isDictionary())
+            return "store-to-dictionary";
+        constexpr unsigned accessor = PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue;
+        unsigned attributes = 0;
+        PropertyOffset offset = structure->get(vm, name, attributes);
+        if (offset != invalidOffset) {
+            if (isDirect && attributes)
+                return "store-redefines-property-with-attributes";
+            if (attributes & accessor)
+                return "store-calls-own-setter";
+            if (attributes & PropertyAttribute::ReadOnly)
+                return isStrict ? "store-is-refused-by-own-read-only-property-and-throws" : "store-is-refused-by-own-read-only-property";
+            if (!isInlineOffset(offset))
+                return "store-replaces-out-of-line";
+            if (static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithPropertyNameIDs)
+                return "store-replaces-beyond-named-slots";
+            uint16_t id = structure->fieldIDInSlot(offset);
+            return id && id < Structure::firstReservedPropertyNameID && structure->recordsPropertyNames() ? "store-replaces-in-slot-with-id" : "store-replaces-in-slot-without-id";
+        }
+        for (JSValue next = isDirect ? JSValue() : asObject(base)->getPrototypeDirect(); next && next.isObject(); next = asObject(next)->getPrototypeDirect()) {
+            Structure* holderStructure = asObject(next)->structure();
+            if (asObject(next)->type() == ProxyObjectType || holderStructure->typeInfo().overridesGetOwnPropertySlot() || (holderStructure->typeInfo().hasStaticPropertyTable() && !holderStructure->staticPropertiesReified()))
+                return "store-may-meet-prototype-that-cannot-be-asked";
+            if (holderStructure->get(vm, name, attributes) == invalidOffset)
+                continue;
+            if (attributes & accessor)
+                return "store-calls-inherited-setter";
+            if (attributes & PropertyAttribute::ReadOnly)
+                return isStrict ? "store-is-refused-by-inherited-read-only-property-and-throws" : "store-is-refused-by-inherited-read-only-property";
+            break;
+        }
+        if (!structure->isStructureExtensible())
+            return isStrict ? "store-to-object-that-is-not-extensible-and-throws" : "store-to-object-that-is-not-extensible";
+        if (structure->inlineSize() < structure->inlineCapacity() && !structure->outOfLineSize())
+            return "store-adds-inline";
+        return structure->outOfLineSize() < structure->outOfLineCapacity() ? "store-adds-out-of-line" : "store-adds-out-of-line-and-grows-storage";
+    };
+    auto serviceOfStore = [&]() -> unsigned {
+        StructureID structureID = base.isCell() ? base.asCell()->structureID() : StructureID();
+        if (!SharedData::contains(cache) && structureID && cache->structureID == structureID)
+            return cache->offset & Slot::hasFieldType ? 2 : cache->offset & Slot::isIndirect ? 1 : 0;
+        auto* entry = structureID && vm.megamorphicCache() ? vm.megamorphicCache()->findStore(structureID, name) : nullptr;
+        unsigned table = !entry ? 0 : entry->m_reallocating == MegamorphicCache::StoreEntry::reallocates ? 2 : entry->m_reallocating == MegamorphicCache::StoreEntry::allocatesInitialOutOfLineStorage ? 3 : 1;
+        unsigned state = SharedData::contains(cache) ? 0 : cache->structureID ? 1 : (cache->offset & Slot::attemptsMask) == Slot::attemptsMask ? 2 : 3;
+        return 3 + state * 4 + table;
+    };
+    const char* outcome = outcomeOfStore();
+    const char* service = services[site][serviceOfStore()];
+    auto& table = runtimeTable(vm);
+    for (const char* detail : { sites[site], outcome, service })
+        table.countOperation(__func__, detail);
+    table.countOperation(outcome, service);
+    if (base.isCell()) {
+        Structure* structure = base.asCell()->structure();
+        if (structure->typedLayoutID())
+            table.countOperation(__func__, "structure-has-typed-layout");
+        if (structure->mayBePrototype())
+            table.countOperation(__func__, "structure-may-be-prototype");
+        if (structure->isWatchingReplacement())
+            table.countOperation(__func__, "structure-watches-replacements");
+    }
+    OPERATION_RETURN(scope);
+}
+
+#undef AOT_SERVICES_OF_STORE
+#undef AOT_SERVICES_OF_STORE_WITH_TABLE
+
 JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* instance, JSObject* object))
 {
     AOT_OPERATION_BEGIN(instance);
     uint16_t layoutID = object->structure()->typedLayoutID();
+    auto reject = [&](const String& message) {
+        for (unsigned slot = 0; slot < std::min<unsigned>(object->structure()->inlineCapacity(), TypedLayoutTable::inlineSlots(layoutID)); ++slot)
+            object->locationForOffset(static_cast<PropertyOffset>(slot))->clear();
+        throwTypeError(globalObject, scope, message);
+    };
     if (TypedLayoutTable::usesFieldIDs(layoutID)) {
         UniquedStringImpl* rejected = nullptr;
         JSValue rejectedValue;
@@ -794,7 +1022,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* insta
             return !rejected;
         });
         if (rejected)
-            throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, object->structure(), rejected, rejectedValue));
+            reject(TypedLayoutTable::describeRejectedStore(vm, object->structure(), rejected, rejectedValue));
         OPERATION_RETURN(scope);
     }
     for (unsigned slot = 0; slot < TypedLayoutTable::numberOfSlots(layoutID); ++slot) {
@@ -806,10 +1034,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTValidateTypedObject, void, (Instance* insta
                     name = entry.key();
                 return !name;
             });
-            if (name)
-                throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, object->structure(), name, value));
-            else
-                throwTypeError(globalObject, scope, TypedFieldError);
+            reject(name ? TypedLayoutTable::describeRejectedStore(vm, object->structure(), name, value) : String { TypedFieldError });
             OPERATION_RETURN(scope);
         }
     }

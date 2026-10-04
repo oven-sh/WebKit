@@ -102,7 +102,7 @@ static auto& propertyNameIDs(VM& vm)
     if (!table.next) [[unlikely]] {
         RELEASE_ASSERT(table.ids.isEmpty());
         Image* image = Image::withCode();
-        table.next = (image ? image->header().largestFieldID + image->header().numberOfPropertyNames : 0) + 1;
+        table.next = (image ? image->header().largestPropertyNameID : 0) + 1;
     }
     return table;
 }
@@ -117,6 +117,11 @@ static uint16_t knownPropertyNameID(VM& vm, Image* imageWithPropertyNames, Uniqu
             ids.add(uid, id);
     }
     return id;
+}
+
+bool hasListOfPropertyNames()
+{
+    return Image::withPropertyNames();
 }
 
 uint16_t propertyNameIDIfKnown(VM& vm, UniquedStringImpl* uid)
@@ -162,12 +167,16 @@ static uint16_t recordPropertyNameInStructure(VM& vm, JSCell* base, Structure* s
         return 0;
     if (structure->isDictionary() || !structure->recordsPropertyNames() || structure->cannotConvertToTypedLayout())
         return 0;
+    if (structure->mayBePrototype() || (structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()))
+        return 0;
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
         return 0;
     uint16_t id = propertyNameID(vm, ident.impl());
     if (!id)
         return 0;
     RELEASE_ASSERT(!structure->fieldIDInSlot(offset) || structure->fieldIDInSlot(offset) == Structure::noPropertyNameID || structure->fieldIDInSlot(offset) == id);
+    if (structure->isWatchingReplacement())
+        structure->firePropertyReplacementWatchpointSet(vm, offset, "Code stores to it without asking");
     structure->setPropertyNameIDInInlineSlot(offset, id);
     return id;
 }
@@ -185,7 +194,8 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
         return true;
     uint16_t ids[Structure::numberOfSlotsWithPropertyNameIDs];
     std::ranges::fill(ids, Structure::noPropertyNameID);
-    if (!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
+    bool hasTypedFields = structure->typedLayoutID() && TypedLayoutTable::hasTypedFields();
+    if (!structure->isDictionary() && !structure->mayBePrototype() && !hasTypedFields && structure->propertyAccessesAreCacheable() && !structure->needImpurePropertyWatchpoint() && !structure->typeInfo().overridesGetOwnPropertySlot()) {
         structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             if (static_cast<unsigned>(entry.offset()) < Structure::numberOfSlotsWithPropertyNameIDs && !entry.attributes()) {
                 if (uint16_t id = propertyNameID(vm, entry.key()))
@@ -195,8 +205,11 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
         });
     }
     for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot) {
-        if (!structure->fieldIDInSlot(slot))
-            structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
+        if (structure->fieldIDInSlot(slot))
+            continue;
+        if (ids[slot] != Structure::noPropertyNameID && structure->isWatchingReplacement())
+            structure->firePropertyReplacementWatchpointSet(vm, static_cast<PropertyOffset>(slot), "Code stores to it without asking");
+        structure->setPropertyNameIDInInlineSlot(slot, ids[slot]);
     }
     return true;
 }

@@ -1794,12 +1794,14 @@ PropertyEffect Graph::propertyEffectOf(const Node* node)
     case NodeKind::Narrow:
         return PropertyEffect::None;
     case NodeKind::Guard:
+        if (node->checksName())
+            return node->opcode == op_put_by_id ? PropertyEffect::StoresNamedProperty : PropertyEffect::None;
         return PropertyEffect::Arbitrary;
     case NodeKind::Bytecode:
         break;
     }
     if (node->guard)
-        return PropertyEffect::Arbitrary;
+        return node->guard->checksName() ? PropertyEffect::None : PropertyEffect::Arbitrary;
     auto isVariable = [](ResolveType type) {
         return type == ClosureVar || type == ResolvedClosureVar || type == LazyClosureVar || type == ResolvedLazyClosureVar || type == ModuleVar || type == GlobalLexicalVar;
     };
@@ -3345,13 +3347,15 @@ public:
         if (!findBlocks())
             return false;
         computeReversePostOrder();
-        if (chooseGuards()) {
+        if (chooseGuards() || chooseGuardsOverWholeFunction()) {
             m_graph.blocks.clear();
             m_graph.m_rpo.clear();
             m_graph.catchEntrypoints.clear();
             if (!findBlocks())
                 return false;
             computeReversePostOrder();
+            for (BasicBlock* block : m_graph.m_rpo)
+                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && m_inProfitableLoop.get(block->bytecodeBegin);
         }
         computeLiveness();
         chooseFrameRegisters();
@@ -3898,6 +3902,28 @@ private:
             }
         }
         return found;
+    }
+
+    bool chooseGuardsOverWholeFunction()
+    {
+        if (!m_graph.placesToGuard)
+            return false;
+        unsigned size = m_instructions.size();
+        m_inLoop.ensureSize(size + 1);
+        m_guards.ensureSize(size + 1);
+        m_loopHeaders.ensureSize(size + 1);
+        m_loopHeaders.clearAll();
+        for (const auto& instruction : m_instructions)
+            m_inLoop.set(instruction.offset());
+        for (unsigned offset : m_graph.placesToGuard->keys())
+            m_guards.set(offset);
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (unsigned offset = block->bytecodeBegin; block->isInProfitableLoop && offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
+                m_inProfitableLoop.set(offset);
+        }
+        m_hasGuards = true;
+        m_graph.remark("guards-over-whole-function"_s);
+        return true;
     }
 
     bool findBlocks()
@@ -4747,6 +4773,8 @@ private:
             guard->opcode = instruction->opcodeID();
             guard->instruction = instruction;
             guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
+            if (m_graph.placesToGuard)
+                guard->checkedPlace = m_graph.placesToGuard->get(block->bytecodeEnd);
             forEachUse(instruction, [&](VirtualRegister reg) {
                 guard->uses.append({ reg, get(block, reg) });
             });
@@ -4874,6 +4902,7 @@ private:
     bool m_hasGuards { false };
     BitVector m_leaders;
     BitVector m_inLoop;
+    BitVector m_inProfitableLoop;
     BitVector m_guards;
     BitVector m_loopHeaders;
     struct PendingLiteral {

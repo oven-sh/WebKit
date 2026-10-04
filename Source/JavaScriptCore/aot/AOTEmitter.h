@@ -92,12 +92,14 @@ protected:
     LValue registerOnEntry(Reg);
     LValue structureOf(LValue cell);
     LValue structureWithID(LValue structureID);
+    LValue fieldIDInSlot(LValue structureID, unsigned slot);
     LValue entry(Entry);
 
     void orElse(LValue condition, LBasicBlock otherwise);
     template<typename Functor> void forEachUpTo(LValue count, const Functor&);
 
     LValue fixedPointer(ptrdiff_t offset);
+    LValue fixedStructureAddress(ptrdiff_t offset);
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
 

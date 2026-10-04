@@ -88,6 +88,9 @@ namespace AOT {
     v(operationAOTReadField) \
     v(operationAOTCountGuessedPlace) \
     v(operationAOTToFieldValue) \
+    v(operationAOTCountGuessedStore) \
+    v(operationAOTCountReadByName) \
+    v(operationAOTCountStoreByName) \
     v(operationAOTGetLengthSlow) \
     v(operationAOTValidateTypedObject) \
     v(operationAOTVerifyInferredType) \
@@ -632,6 +635,8 @@ struct Instance {
     JSObject* tryCopySlotsForSpread(JSObject* source);
     std::span<const uint16_t> knownShapeSlots(uint32_t shape) const;
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
+    static constexpr ptrdiff_t offsetOfFieldIDAtDirectLocationBase() { return OBJECT_OFFSETOF(Instance, fieldIDAtDirectLocationBase); }
+    static constexpr ptrdiff_t offsetOfFieldIDInSlotBase(unsigned slot) { return OBJECT_OFFSETOF(Instance, fieldIDInSlotBases) + slot * sizeof(uintptr_t); }
     void inspectObjectPrototype();
     static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
     static constexpr ptrdiff_t offsetOfLinkTimeConstants() { return OBJECT_OFFSETOF(Instance, linkTimeConstants); }
@@ -692,6 +697,8 @@ struct Instance {
     uint32_t missLimitPerEightSlots;
     uint32_t remainingMissBudget;
     uintptr_t structureIDBase;
+    uintptr_t fieldIDAtDirectLocationBase;
+    uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithPropertyNameIDs];
     const uint32_t* dispatch;
     const uint32_t* selectorRows;
     JSObject* objectPrototype;

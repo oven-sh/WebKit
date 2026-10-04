@@ -62,6 +62,7 @@ struct ImageHeader {
     uint32_t fieldsOffset;
     uint32_t layoutIDsByFieldIDOffset;
     uint32_t largestFieldID;
+    uint32_t largestPropertyNameID;
     uint32_t propertyNamesOffset;
     uint32_t numberOfPropertyNames;
     uint32_t propertyNameFilterOffset;
@@ -100,7 +101,7 @@ struct ImageHeader {
     uint32_t stubOffsets[numberOfStubs];
 };
 
-static constexpr uint32_t maxPropertyNameIDInImage = 0x7fff;
+static constexpr uint32_t maxPropertyNameIDInImage = 0xefff;
 
 struct ImagePropertyName {
     uint64_t hash : 24;
@@ -182,6 +183,7 @@ public:
         m_numberOfProgramIdentifiers = number;
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
+    void setPropertyPlaces(const PropertyPlaces* places) { m_propertyPlaces = places; }
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
@@ -207,6 +209,7 @@ private:
     };
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
+    const PropertyPlaces* m_propertyPlaces { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<RegExpCode> m_regExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };

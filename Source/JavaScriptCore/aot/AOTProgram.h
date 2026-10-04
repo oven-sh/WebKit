@@ -28,6 +28,8 @@ class VM;
 
 namespace AOT {
 
+class PropertyPlaces;
+
 struct FunctionSummary {
     WTF_MAKE_STRUCT_TZONE_ALLOCATED(FunctionSummary);
 
@@ -470,6 +472,7 @@ public:
     };
     virtual std::optional<About> about(UnlinkedCodeBlock*) const = 0;
     virtual UnlinkedFunctionCodeBlock* codeForBuiltin(unsigned) const = 0;
+    PropertyPlaces* propertyPlaces { nullptr };
 };
 
 struct ValueRepresentations {

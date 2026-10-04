@@ -271,6 +271,9 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     setProtectPropertyTableWhileTransitioning(false);
     setTransitionOffset(vm, invalidOffset);
     setMaxOffset(vm, invalidOffset);
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    setRecordsEveryKnownPropertyName(typeInfo.type() == FinalObjectType && AOT::hasListOfPropertyNames());
+#endif
  
     ASSERT(inlineCapacity <= JSFinalObject::maxInlineCapacity);
     ASSERT(static_cast<PropertyOffset>(inlineCapacity) < firstOutOfLineOffset);
@@ -446,8 +449,7 @@ Structure* Structure::addPropertiesTransition(VM& vm, Structure* structure, std:
             return nullptr;
     }
     Structure* transition = Structure::create(vm, structure, deferred);
-    if (!structure->m_typedLayoutID)
-        memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
+    transition->copyPropertyNameIDsFrom(*structure);
     PropertyTable* table = structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
@@ -730,6 +732,7 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->setMaxOffset(vm, structure->maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
     memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
+    transition->setRecordsEveryKnownPropertyName(structure->recordsEveryKnownPropertyName());
 #endif
 
     offset = transition->add(vm, propertyName, attributes);
@@ -873,6 +876,9 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
     transition->m_prototype.set(vm, transition, prototype);
     transition->setTransitionKind(TransitionKind::ChangePrototype);
     transition->setMaxOffset(vm, structure->maxOffset());
+#if USE(BUN_JSC_ADDITIONS)
+    transition->copyPropertyNameIDsFrom(*structure);
+#endif
     checkOffset(transition->transitionOffset(), transition->inlineCapacity());
     if (shouldChain) {
         GCSafeConcurrentJSLocker locker(structure->m_lock, vm);
@@ -1114,6 +1120,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
         transition->setMaxOffset(vm, structure->maxOffset());
         checkOffset(transition->maxOffset(), transition->inlineCapacity());
+#if USE(BUN_JSC_ADDITIONS)
+        if (transitionKind != TransitionKind::BecomePrototype)
+            transition->copyPropertyNameIDsFrom(*structure);
+#endif
     }
     
     if (transitionKind == TransitionKind::MakePropertiesImmutable)
@@ -1283,7 +1293,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && m_knownShape) {
+    if (result.isNewEntry && (m_knownShape || hasPropertyNameIDInSlot(offset))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1560,6 +1570,7 @@ bool TypedLayoutTable::isValueOf(const FieldType& fieldType, JSValue value)
 void Structure::setTypedLayoutID(uint16_t layoutID)
 {
     m_typedLayoutID = layoutID;
+    setRecordsEveryKnownPropertyName(false);
     zeroSpan(std::span { m_fieldIDInSlot });
     if (!TypedLayoutTable::usesFieldIDs(layoutID))
         return;
@@ -1572,6 +1583,7 @@ void Structure::setTypedLayoutID(uint16_t layoutID)
 void Structure::setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs> fieldIDInSlot)
 {
     m_typedLayoutID = layoutID;
+    setRecordsEveryKnownPropertyName(false);
     memcpySpan(std::span { m_fieldIDInSlot }, fieldIDInSlot);
     zeroSpan(std::span { m_fieldIDInSlot }.subspan(numberOfSlotsWithFieldIDs));
     for (unsigned slot = 0; slot < numberOfSlotsWithFieldIDs; ++slot)
@@ -1581,6 +1593,7 @@ void Structure::setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, nu
 void Structure::setCannotConvertToTypedLayout()
 {
     RELEASE_ASSERT(!m_typedLayoutID);
+    setRecordsEveryKnownPropertyName(false);
     for (uint16_t& fieldID : m_fieldIDInSlot)
         fieldID = ambiguousFieldID;
 }
@@ -1588,10 +1601,16 @@ void Structure::setCannotConvertToTypedLayout()
 void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
 {
     if (!TypedLayoutTable::usesFieldIDs(m_typedLayoutID)) {
+        if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && !TypedLayoutTable::hasTypedFields()) {
+            notePropertyNameAdded(vm(), name, offset, attributes);
+            return;
+        }
+        setRecordsEveryKnownPropertyName(false);
         if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && m_fieldIDInSlot[offset] == noPropertyNameID)
             m_fieldIDInSlot[offset] = 0;
         return;
     }
+    setRecordsEveryKnownPropertyName(false);
     auto* field = TypedLayoutTable::findField(vm(), m_typedLayoutID, name);
     if (!field || field->slot >= numberOfSlotsWithFieldIDs)
         return;
@@ -1602,18 +1621,30 @@ void Structure::noteFieldAdded(UniquedStringImpl* name, PropertyOffset offset, u
 void Structure::notePropertyNameAdded(VM& vm, UniquedStringImpl* name, PropertyOffset offset, unsigned attributes)
 {
     uint16_t& nameID = m_fieldIDInSlot[offset];
-    if (nameID == ambiguousFieldID)
-        return;
-    nameID = 0;
+    bool isRecorded = false;
+    if (nameID != ambiguousFieldID) {
+        nameID = 0;
 #if ENABLE(AOT)
-    if (attributes || isDictionary() || !propertyAccessesAreCacheable() || needImpurePropertyWatchpoint() || typeInfo().overridesGetOwnPropertySlot())
-        return;
-    nameID = AOT::propertyNameIDIfKnown(vm, name);
+        if (!attributes && !isDictionary() && !mayBePrototype() && propertyAccessesAreCacheable() && !needImpurePropertyWatchpoint() && !typeInfo().overridesGetOwnPropertySlot()) {
+            nameID = AOT::propertyNameIDIfKnown(vm, name);
+            isRecorded = true;
+        }
 #else
-    UNUSED_PARAM(vm);
-    UNUSED_PARAM(name);
-    UNUSED_PARAM(attributes);
+        UNUSED_PARAM(vm);
+        UNUSED_PARAM(name);
+        UNUSED_PARAM(attributes);
 #endif
+    }
+    if (!isRecorded)
+        setRecordsEveryKnownPropertyName(false);
+}
+
+void Structure::copyPropertyNameIDsFrom(const Structure& other)
+{
+    if (other.isDictionary() || other.cannotConvertToTypedLayout() || (other.m_typedLayoutID && TypedLayoutTable::hasTypedFields()))
+        return;
+    memcpySpan(std::span { m_fieldIDInSlot }, std::span { other.m_fieldIDInSlot });
+    setRecordsEveryKnownPropertyName(other.recordsEveryKnownPropertyName());
 }
 
 void Structure::forgetFieldsInSlots()

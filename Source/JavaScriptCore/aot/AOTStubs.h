@@ -256,7 +256,33 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ReadNameInSlot21) \
     v(ReadNameInSlot22) \
     v(ReadNameInSlot23) \
+    v(ReadNameInAnySlot) \
+    v(ReadNameInAnySlotOfCell) \
     v(PutById) \
+    v(WriteNameInSlot0) \
+    v(WriteNameInSlot1) \
+    v(WriteNameInSlot2) \
+    v(WriteNameInSlot3) \
+    v(WriteNameInSlot4) \
+    v(WriteNameInSlot5) \
+    v(WriteNameInSlot6) \
+    v(WriteNameInSlot7) \
+    v(WriteNameInSlot8) \
+    v(WriteNameInSlot9) \
+    v(WriteNameInSlot10) \
+    v(WriteNameInSlot11) \
+    v(WriteNameInSlot12) \
+    v(WriteNameInSlot13) \
+    v(WriteNameInSlot14) \
+    v(WriteNameInSlot15) \
+    v(WriteNameInSlot16) \
+    v(WriteNameInSlot17) \
+    v(WriteNameInSlot18) \
+    v(WriteNameInSlot19) \
+    v(WriteNameInSlot20) \
+    v(WriteNameInSlot21) \
+    v(WriteNameInSlot22) \
+    v(WriteNameInSlot23) \
     v(GetPrivateName) \
     v(CheckPrivateBrand) \
     v(PutPrivateName) \
@@ -339,7 +365,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(NewInt32ArrayLiteral3) \
     v(NewInt32ArrayLiteral4) \
 
-enum class Stub : uint8_t {
+enum class Stub : uint16_t {
 #define AOT_DEFINE_STUB(name) name,
     FOR_EACH_AOT_STUB(AOT_DEFINE_STUB)
 #undef AOT_DEFINE_STUB

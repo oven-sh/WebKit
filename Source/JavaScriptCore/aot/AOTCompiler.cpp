@@ -368,15 +368,18 @@ static void findRarelyExecutedBlocks(Graph& graph)
     }
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true)
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true, const Graph::PlacesToGuard* placesToGuard = nullptr, bool keepsLoopsUnsplit = false, ASCIILiteral reasonForNoGuards = { })
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
-    graph.loopSplittingIsDisabled = triesUnsplitLoops;
+    graph.loopSplittingIsDisabled = triesUnsplitLoops || keepsLoopsUnsplit;
+    graph.placesToGuard = placesToGuard;
+    if (!reasonForNoGuards.isNull())
+        graph.remark("no-guards-over-whole-function"_s, reasonForNoGuards);
     graph.setCalleeHints(hints);
     graph.setSummary(summary);
     graph.setVariableSummaries(variableSummaries);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
-    graph.startsCold = mayStartCold(unlinkedCodeBlock);
+    graph.startsCold = !placesToGuard && mayStartCold(unlinkedCodeBlock);
     graph.isGetByValOnThis = isGetByValOnThis(unlinkedCodeBlock);
     graph.mayReturnScopeVariable = mayReturnScopeVariable(unlinkedCodeBlock);
     if (graph.isGetByValOnThis)
@@ -388,6 +391,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     };
 
     if (program) {
+        graph.setPropertyPlaces(program->propertyPlaces);
         if (auto about = program->about(unlinkedCodeBlock))
             graph.firstTypeCoverageCounter = about->firstTypeCoverageCounter;
     }
@@ -406,8 +410,12 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     foldBranchesDecidedByTypes(graph);
     findRarelyExecutedBlocks(graph);
     planMultiValueReturns(graph, program);
-    if (triesUnsplitLoops && Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph))
-        return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
+    if (triesUnsplitLoops) {
+        bool splitsLoops = Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph);
+        Graph::PlacesToGuard places = graph.findPlacesToGuard();
+        if (splitsLoops || !places.isEmpty())
+            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), graph.reasonForNoGuards);
+    }
     inferRanges(graph);
     optimizeLoops(graph);
     graph.elideUnpassedCalleeReads();
@@ -614,6 +622,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             dropBreakpointAtEnd();
     }
 #endif
+    if (placesToGuard)
+        program->propertyPlaces->countGuardsOverWholeFunction(placesToGuard->size(), unlinkedCodeBlock->instructions().size(), info.codeSize);
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     result.info = WTF::move(info);
     result.remarks = WTF::move(graph.remarks);
@@ -644,10 +654,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
 
 #endif // CPU(ARM64) || CPU(X86_64)
 
-bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries)
+bool recordKnownFunctionUsesForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummaryMap& summariesByExecutable, const FunctionSummary* summary, VariableSummaries* variableSummaries, PropertyPlaces* propertyPlaces)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.setCalleeHints(hints);
+    graph.setPropertyPlaces(propertyPlaces);
     graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
     graph.setCanonicalScopes(variableSummaries);
     if (!parseBytecode(graph))

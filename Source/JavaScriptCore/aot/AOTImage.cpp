@@ -633,6 +633,14 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<TypedLayoutTable::Field> fieldRecords;
     Vector<TypedLayoutTable::FieldType> fieldTypes;
     Vector<uint16_t> fieldLayoutIDs;
+    BitVector identifierIsEncoded;
+    for (auto& function : m_functions) {
+        for (uint32_t number : function.code.info.identifierIndices)
+            identifierIsEncoded.set(number);
+    }
+    auto isEncoded = [&](UniquedStringImpl* name) {
+        return identifierIndices && identifierIsEncoded.get(identifierIndices->get(name));
+    };
     Vector<uint32_t> slotFields[Structure::numberOfSlotsWithFieldIDs];
     Vector<uint16_t> slotLayoutIDs[Structure::numberOfSlotsWithFieldIDs];
     Vector<uint8_t> inlineSlotCounts;
@@ -657,7 +665,7 @@ Vector<uint8_t> ImageBuilder::finish()
             }
             Vector<const TypeTable::LayoutField*, 16> inOrder;
             for (auto& name : layout.fields) {
-                if (identifierIndices->contains(name.name))
+                if (isEncoded(name.name))
                     inOrder.append(&name);
             }
             std::ranges::stable_sort(inOrder, [](auto* a, auto* b) { return a->name->existingHash() < b->name->existingHash(); });
@@ -1133,20 +1141,27 @@ Vector<uint8_t> ImageBuilder::finish()
         header.largestFieldID = std::max(header.largestFieldID, safeCast<uint32_t>(slotFieldList.size()));
     }
     RELEASE_ASSERT(header.largestFieldID == TypeTable::largestFieldID());
+    header.largestPropertyNameID = header.largestFieldID;
     Vector<ImagePropertyName> propertyNames;
     Vector<uint32_t> propertyNameFilter;
-    if (Options::useAOTGuessedPlaces()) {
+    if (m_propertyPlaces) {
         RELEASE_ASSERT(identifierIndices);
-        auto names = propertyPlaces()->namesInIDOrder();
+        auto& names = m_propertyPlaces->namesInIDOrder();
+        size_t numberOfNamesWithoutID = 0;
         for (size_t i = 0; i < names.size(); ++i) {
             size_t id = header.largestFieldID + 1 + i;
-            RELEASE_ASSERT(!names[i]->isSymbol() && identifierIndices->contains(names[i]) && identifierIndices->get(names[i]) < (1u << 24));
-            RELEASE_ASSERT(propertyPlaces()->nameID(names[i]) == (id <= maxPropertyNameIDInImage ? id : 0));
-            if (id <= maxPropertyNameIDInImage)
+            RELEASE_ASSERT(!names[i]->isSymbol() && identifierIndices->get(names[i]) < (1u << 24));
+            RELEASE_ASSERT(m_propertyPlaces->nameID(names[i]) == (id <= maxPropertyNameIDInImage ? id : 0));
+            if (id > maxPropertyNameIDInImage) {
+                ++numberOfNamesWithoutID;
+                continue;
+            }
+            header.largestPropertyNameID = safeCast<uint32_t>(id);
+            if (isEncoded(names[i]))
                 propertyNames.append({ names[i]->existingHash(), id, identifierIndices->get(names[i]) });
         }
-        if (propertyNames.size() < names.size())
-            dataLogLn("AOT: ", names.size() - propertyNames.size(), " of ", names.size(), " property names are left without an ID");
+        if (numberOfNamesWithoutID)
+            dataLogLn("AOT: ", numberOfNamesWithoutID, " of ", names.size(), " property names are left without an ID");
         std::ranges::sort(propertyNames, [](auto& a, auto& b) { return a.hash != b.hash ? a.hash < b.hash : a.id < b.id; });
         propertyNameFilter.fill(0, std::max<size_t>(roundUpToPowerOfTwo(propertyNames.size()), 4) / 4);
         for (auto& name : propertyNames)

@@ -59,9 +59,22 @@ LValue Emitter::changing32(ptrdiff_t offset)
     return m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
 }
 
+LValue Emitter::fixedStructureAddress(ptrdiff_t offset)
+{
+    LValue result = fixedPointer(offset);
+    if (Options::useAOTImmutableStructureAddresses())
+        static_cast<B3::MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
+    return result;
+}
+
 LValue Emitter::structureWithID(LValue structureID)
 {
-    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
+    return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedStructureAddress(Instance::offsetOfStructureIDBase()));
+}
+
+LValue Emitter::fieldIDInSlot(LValue structureID, unsigned slot)
+{
+    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedStructureAddress(Instance::offsetOfFieldIDInSlotBase(slot)), m_out.zeroExtPtr(structureID))));
 }
 
 template<typename Functor>

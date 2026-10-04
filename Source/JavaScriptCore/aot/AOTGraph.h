@@ -234,6 +234,7 @@ struct Node {
     uint8_t builtinReceiver { 0 };
     bool structureIsChecked { false };
     bool slotIsDirect { false };
+    GuessedPlace checkedPlace { };
     bool calleeIsChecked { false };
     bool wasInferredUnreachable { false };
     bool isElided { false };
@@ -268,6 +269,7 @@ struct Node {
     bool isHandled { false };
 
     bool isBytecode(OpcodeID id) const { return kind == NodeKind::Bytecode && opcode == id; }
+    bool checksName() const { return kind == NodeKind::Guard && checkedPlace.nameID; }
     bool isConstant() const { return kind == NodeKind::Constant; }
     bool isInt32Constant() const { return isConstant() && constant.isInt32(); }
     bool isNumberConstant() const { return isConstant() && constant.isNumber(); }
@@ -416,6 +418,10 @@ public:
     UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
     bool isInTailPosition { true };
     bool loopSplittingIsDisabled { false };
+    using PlacesToGuard = UncheckedKeyHashMap<unsigned, GuessedPlace>;
+    const PlacesToGuard* placesToGuard { nullptr };
+    PlacesToGuard findPlacesToGuard();
+    ASCIILiteral reasonForNoGuards;
     Vector<UnlinkedFunctionExecutable*> functionsCreated;
     bool readsElementsOrEmpty { false };
     bool isInlinedBuiltin { false };
@@ -532,6 +538,7 @@ public:
     static bool isScopeAtDepth(const Node* scope, unsigned hops);
     bool isScopeUsedAsImplicitThis(const Node*);
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
+    void setPropertyPlaces(PropertyPlaces* places) { m_propertyPlaces = places; }
     void setSummary(const FunctionSummary* summary) { m_summary = summary; }
     const FunctionSummary* summary() const { return m_summary; }
     bool isCalledRepeatedly() const { return m_summary && m_summary->ofFunction().isCalledRepeatedly.load(std::memory_order_relaxed); }
@@ -681,6 +688,7 @@ private:
     UnlinkedCodeBlock* m_codeBlock;
     ScopeChain m_scopeChain;
     const CalleeHints* m_hints { nullptr };
+    PropertyPlaces* m_propertyPlaces { nullptr };
     const FunctionSummary* m_summary { nullptr };
     VariableSummaries* m_variableSummaries { nullptr };
     const VariableSummaries* m_canonicalScopes { nullptr };

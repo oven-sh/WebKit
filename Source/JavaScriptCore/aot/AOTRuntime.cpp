@@ -689,6 +689,9 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->missLimitPerEightSlots = 8;
     instance->remainingMissBudget = 4;
     instance->structureIDBase = JSC::structureIDBase();
+    instance->fieldIDAtDirectLocationBase = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * sizeof(uint16_t);
+    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot)
+        instance->fieldIDInSlotBases[slot] = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t);
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
         auto receiverStructureID = [&](Receiver receiver) -> uint32_t& { return instance->receiverStructureIDs[static_cast<unsigned>(receiver)]; };
@@ -2053,7 +2056,7 @@ Structure* Instance::knownShapeStructure(uint32_t shape, std::span<UniquedString
                 fieldIDInSlot[slots[i]] = ids[i];
         }
         result->setTypedLayoutID(description.layoutID, fieldIDInSlot);
-    } else if (TypedLayoutTable::hasTypedFields())
+    } else if (TypedLayoutTable::hasTypedFields() && description.layoutID)
         result->setTypedLayoutID(description.layoutID);
     collections->knownShapes.add(shape, result);
     noteCellAdded(result);

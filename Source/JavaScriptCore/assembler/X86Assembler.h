@@ -2929,6 +2929,32 @@ public:
         m_formatter.twoByteOp(OP2_PACKSSWB_VdqWdq, (RegisterID)xmm1, (RegisterID)xmm2);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void pcmpeqw_rr(XMMRegisterID vn, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/pcmpeqb:pcmpeqw:pcmpeqd
+        // 66 0F 75 /r PCMPEQW xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PCMPEQW_VdqWdq, (RegisterID)vd, (RegisterID)vn);
+    }
+
+    void pmovmskb_rr(XMMRegisterID vn, RegisterID rd)
+    {
+        // https://www.felixcloutier.com/x86/pmovmskb
+        // 66 0F D7 /r PMOVMSKB reg, xmm
+        m_formatter.prefix(PRE_SSE_66);
+        m_formatter.twoByteOp(OP2_PMOVMSKB_GdqpUdq, rd, (RegisterID)vn);
+    }
+
+    void movdqu_mr(int offset, RegisterID base, XMMRegisterID vd)
+    {
+        // https://www.felixcloutier.com/x86/movdqu:vmovdqu8:vmovdqu16:vmovdqu32:vmovdqu64
+        // F3 0F 6F /r MOVDQU xmm1, xmm2/m128
+        m_formatter.prefix(PRE_SSE_F3);
+        m_formatter.twoByteOp(OP2_MOVDQA_VdqWdq, (RegisterID)vd, base, offset);
+    }
+#endif
+
     void packuswb_rr(XMMRegisterID upper, XMMRegisterID dest)
     {
         // https://www.felixcloutier.com/x86/packuswb

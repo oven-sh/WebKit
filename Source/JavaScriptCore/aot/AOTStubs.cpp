@@ -206,6 +206,14 @@ static void structureWithID(CCallHelpers& jit, GPRReg idAndResult)
     jit.add64(Address(instanceGPR, Instance::offsetOfStructureIDBase()), idAndResult);
 }
 
+static void loadFieldIDInSlot(CCallHelpers& jit, GPRReg cell, unsigned slot, GPRReg structureID, GPRReg result)
+{
+    ASSERT(noOverlap(cell, structureID, result));
+    jit.load32(Address(cell, JSCell::structureIDOffset()), structureID);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfFieldIDInSlotBase(slot)), result);
+    jit.load16(CCallHelpers::BaseIndex(result, structureID, CCallHelpers::TimesOne), result);
+}
+
 static void loadSites(CCallHelpers& jit, GPRReg info, GPRReg result)
 {
     jit.load32(Address(info, FunctionInfo::offsetOfSites()), result);
@@ -2101,6 +2109,7 @@ struct GetByIdContinuations {
     CCallHelpers::Label isIndirect;
     CCallHelpers::Label hasDifferentStructure;
     CCallHelpers::Label hasDifferentStructureAndIsIndirect;
+    CCallHelpers::Label nameIsElsewhere;
     CCallHelpers::Label isNotNamed;
     CCallHelpers::Label miss;
 };
@@ -2110,18 +2119,73 @@ static GetByIdContinuations& getByIdContinuations(Entry operation)
     return continuations.get()[operation == Entry::operationAOTGetByIdWellKnown];
 }
 
-static void readByName(CCallHelpers& jit, GPRReg base, CCallHelpers::JumpList& isIndirect, CCallHelpers::JumpList& isNotNamed)
+static void findSlotNamed(CCallHelpers& jit, GPRReg base, GPRReg ids, ptrdiff_t offsetOfIDs, GPRReg nameID, GPRReg slotAddress, CCallHelpers::JumpList& isInNoSlot)
+{
+    static_assert(Structure::numberOfSlotsWithPropertyNameIDs == 24);
+    ASSERT(noOverlap(base, ids, nameID, slotAddress));
+    constexpr FPRReg first = FPRInfo::fpRegT0;
+    constexpr FPRReg second = FPRInfo::fpRegT1;
+    constexpr FPRReg third = FPRInfo::fpRegT2;
+    constexpr FPRReg wanted = FPRInfo::fpRegT3;
+    jit.vectorSplatInt16(nameID, wanted);
+#if CPU(ARM64)
+    constexpr SIMDInfo halfwords { SIMDLane::i16x8, SIMDSignMode::None };
+    constexpr SIMDInfo bytes { SIMDLane::i8x16, SIMDSignMode::None };
+    jit.loadVector(Address(ids, offsetOfIDs), first);
+    jit.loadVector(Address(ids, offsetOfIDs + 16), second);
+    jit.compareIntegerVector(CCallHelpers::Equal, halfwords, first, wanted, first);
+    jit.compareIntegerVector(CCallHelpers::Equal, halfwords, second, wanted, second);
+    jit.vectorUnzipEven(bytes, first, second, first);
+    jit.vectorShrnInt8(first, 4, first);
+    jit.moveDoubleTo64(first, slotAddress);
+    Jump isInFirstSixteen = jit.branchTest64(CCallHelpers::NonZero, slotAddress);
+    jit.loadVector(Address(ids, offsetOfIDs + 32), third);
+    jit.compareIntegerVector(CCallHelpers::Equal, halfwords, third, wanted, third);
+    jit.vectorShrnInt8(third, 4, third);
+    jit.moveDoubleTo64(third, slotAddress);
+    isInNoSlot.append(jit.branchTest64(CCallHelpers::Zero, slotAddress));
+    jit.countTrailingZeros64WithoutNullCheck(slotAddress, slotAddress);
+    jit.add64(base, slotAddress);
+    jit.add64(TrustedImm32(16 * sizeof(EncodedJSValue)), slotAddress);
+    Jump isReady = jit.jump();
+    isInFirstSixteen.link(&jit);
+    jit.countTrailingZeros64WithoutNullCheck(slotAddress, slotAddress);
+    jit.addLeftShift64(base, slotAddress, TrustedImm32(1), slotAddress);
+    isReady.link(&jit);
+#else
+    jit.m_assembler.movdqu_mr(offsetOfIDs, ids, first);
+    jit.m_assembler.movdqu_mr(offsetOfIDs + 16, ids, second);
+    jit.m_assembler.pcmpeqw_rr(wanted, first);
+    jit.m_assembler.pcmpeqw_rr(wanted, second);
+    jit.m_assembler.packsswb_rr(second, first);
+    jit.m_assembler.pmovmskb_rr(first, slotAddress);
+    Jump isInFirstSixteen = jit.branchTest32(CCallHelpers::NonZero, slotAddress);
+    jit.m_assembler.movdqu_mr(offsetOfIDs + 32, ids, third);
+    jit.m_assembler.pcmpeqw_rr(wanted, third);
+    jit.m_assembler.packsswb_rr(third, third);
+    jit.m_assembler.pmovmskb_rr(third, slotAddress);
+    isInNoSlot.append(jit.branchTest32(CCallHelpers::Zero, slotAddress));
+    jit.m_assembler.bsf_rr(slotAddress, slotAddress);
+    jit.add32(TrustedImm32(16), slotAddress);
+    Jump isReady = jit.jump();
+    isInFirstSixteen.link(&jit);
+    jit.m_assembler.bsf_rr(slotAddress, slotAddress);
+    isReady.link(&jit);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(base, slotAddress, CCallHelpers::TimesEight), slotAddress);
+#endif
+}
+
+static void readByName(CCallHelpers& jit, GPRReg base, CCallHelpers::JumpList& isIndirect, CCallHelpers::JumpList& isNotNamed, CCallHelpers::JumpList& nameIsElsewhere)
 {
     ASSERT(base != T9 && base != T11 && base != T12 && base != T13 && base != T14);
     isIndirect.append(branchIfSlotHas<Slot::isIndirect>(jit, T11));
     jit.urshift64(T11, TrustedImm32(32 + Slot::nameIDShift), T13);
     isNotNamed.append(jit.branchTest64(CCallHelpers::Zero, T13));
     loadDirectLocation(jit, A1, T11, T14);
-    jit.zeroExtend32ToWord(T12, T9);
-    structureWithID(jit, T9);
-    constexpr ptrdiff_t wordsBeforeInlineStorage = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue);
-    jit.load16(CCallHelpers::BaseIndex(T9, T14, CCallHelpers::TimesTwo, Structure::offsetOfFieldIDInSlot() - wordsBeforeInlineStorage * sizeof(uint16_t)), T9);
-    isNotNamed.append(jit.branch32(CCallHelpers::NotEqual, T9, T13));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfFieldIDAtDirectLocationBase()), T9);
+    jit.add64(T12, T9);
+    jit.load16(CCallHelpers::BaseIndex(T9, T14, CCallHelpers::TimesTwo), T9);
+    nameIsElsewhere.append(jit.branch32(CCallHelpers::NotEqual, T9, T13));
     jit.load64(CCallHelpers::BaseIndex(base, T14, CCallHelpers::TimesEight), R0);
     jit.ret();
 }
@@ -2146,10 +2210,17 @@ static void generateGetByIdFrom(CCallHelpers& jit, Entry operation, GPRReg base)
     if (operation == Entry::operationAOTGetById) {
         CCallHelpers::JumpList isAlsoIndirect;
         CCallHelpers::JumpList isNotNamed;
-        readByName(jit, base, isAlsoIndirect, isNotNamed);
+        CCallHelpers::JumpList nameIsElsewhere;
+        readByName(jit, base, isAlsoIndirect, isNotNamed, nameIsElsewhere);
         isAlsoIndirect.link(&jit);
         jit.move(base, R0);
         jit.jump().linkTo(continuations.hasDifferentStructureAndIsIndirect, &jit);
+        if (Options::useAOTSearchOfPropertyNameIDsInGetById()) {
+            nameIsElsewhere.link(&jit);
+            jit.move(base, R0);
+            jit.jump().linkTo(continuations.nameIsElsewhere, &jit);
+        } else
+            isNotNamed.append(nameIsElsewhere);
         isNotNamed.link(&jit);
         jit.move(base, R0);
         jit.jump().linkTo(continuations.isNotNamed, &jit);
@@ -2263,15 +2334,41 @@ static void generateReadNameInSlot(CCallHelpers& jit, unsigned slot, GPRReg base
     }
     CCallHelpers::JumpList miss;
     miss.append(jit.branchIfNotCell(base));
-    jit.load32(Address(base, JSCell::structureIDOffset()), T13);
-    structureWithID(jit, T13);
-    jit.load16(Address(T13, Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t)), T11);
-    miss.append(jit.branch32(CCallHelpers::NotEqual, T11, A2));
+    loadFieldIDInSlot(jit, base, slot, T13, T11);
+    Jump nameIsElsewhere = jit.branch32(CCallHelpers::NotEqual, T11, A2);
     jit.load64(Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)), R0);
     jit.ret();
 
+    if (Options::useAOTSearchOfPropertyNameIDs()) {
+        nameIsElsewhere.link(&jit);
+        jit.move(base, R0);
+        s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ReadNameInAnySlotOfCell });
+    } else
+        miss.append(nameIsElsewhere);
     miss.link(&jit);
     jit.move(base, R0);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::GetById });
+}
+
+static void generateReadNameInAnySlotOfCell(CCallHelpers& jit)
+{
+    CCallHelpers::JumpList isInNoSlot;
+    structureWithID(jit, T13);
+    findSlotNamed(jit, R0, T13, Structure::offsetOfFieldIDInSlot(), A2, T11, isInNoSlot);
+    jit.load64(Address(T11, JSObject::offsetOfInlineStorage()), R0);
+    jit.ret();
+
+    isInNoSlot.link(&jit);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::GetById });
+}
+
+static void generateReadNameInAnySlot(CCallHelpers& jit)
+{
+    Jump isNotCell = jit.branchIfNotCell(R0);
+    jit.load32(Address(R0, JSCell::structureIDOffset()), T13);
+    generateReadNameInAnySlotOfCell(jit);
+
+    isNotCell.link(&jit);
     s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::GetById });
 }
 #define AOT_READ_NAME_IN_SLOT(n) \
@@ -2353,7 +2450,18 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         {
             CCallHelpers::JumpList isAlsoIndirect;
             CCallHelpers::JumpList isNotNamed;
-            readByName(jit, R0, isAlsoIndirect, isNotNamed);
+            CCallHelpers::JumpList nameIsElsewhere;
+            readByName(jit, R0, isAlsoIndirect, isNotNamed, nameIsElsewhere);
+            nameIsElsewhere.link(&jit);
+            getByIdContinuations(operation).nameIsElsewhere = jit.label();
+            if (Options::useAOTSearchOfPropertyNameIDsInGetById()) {
+                isNotNamed.append(jit.branchTest32(CCallHelpers::Zero, T13, TrustedImm32(0xffff)));
+                jit.zeroExtend32ToWord(T12, T9);
+                structureWithID(jit, T9);
+                findSlotNamed(jit, R0, T9, Structure::offsetOfFieldIDInSlot(), T13, T14, isNotNamed);
+                jit.load64(Address(T14, JSObject::offsetOfInlineStorage()), R0);
+                jit.ret();
+            }
             isNotNamed.link(&jit);
             getByIdContinuations(operation).isNotNamed = jit.label();
             missAndUpdateCache.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(static_cast<int64_t>(~(static_cast<uint64_t>(Slot::attemptsMask) << 32)))));
@@ -2379,15 +2487,21 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         jit.addPtr(TrustedImm32(Structure::offsetOfFieldIDInSlot()), table);
         jit.and32(TrustedImm32(0xffff), byName, nameID);
         Jump lacksInlineNameSlots = jit.branch32(CCallHelpers::Equal, nameID, TrustedImm32(Structure::firstReservedPropertyNameID));
-        loadInlineNameSlot(0, inlineSlot);
-        for (unsigned i = 1; i < PolymorphicSlots::numberOfInlineSlotsByName; ++i) {
-            loadInlineNameSlot(i, A3);
-            jit.load16(CCallHelpers::BaseIndex(table, A3, CCallHelpers::TimesTwo), nameIDThere);
-            jit.moveConditionally32(CCallHelpers::Equal, nameIDThere, nameID, A3, inlineSlot, inlineSlot);
+        CCallHelpers::JumpList isNotInInlineNameSlots;
+        if (Options::useAOTSearchOfPropertyNameIDsInGetById()) {
+            findSlotNamed(jit, R0, table, 0, nameID, inlineSlot, isNotInInlineNameSlots);
+            jit.load64(Address(inlineSlot, JSObject::offsetOfInlineStorage()), R0);
+        } else {
+            loadInlineNameSlot(0, inlineSlot);
+            for (unsigned i = 1; i < PolymorphicSlots::numberOfInlineSlotsByName; ++i) {
+                loadInlineNameSlot(i, A3);
+                jit.load16(CCallHelpers::BaseIndex(table, A3, CCallHelpers::TimesTwo), nameIDThere);
+                jit.moveConditionally32(CCallHelpers::Equal, nameIDThere, nameID, A3, inlineSlot, inlineSlot);
+            }
+            jit.load16(CCallHelpers::BaseIndex(table, inlineSlot, CCallHelpers::TimesTwo), nameIDThere);
+            isNotInInlineNameSlots.append(jit.branch32(CCallHelpers::NotEqual, nameIDThere, nameID));
+            jit.load64(CCallHelpers::BaseIndex(R0, inlineSlot, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()), R0);
         }
-        jit.load16(CCallHelpers::BaseIndex(table, inlineSlot, CCallHelpers::TimesTwo), nameIDThere);
-        Jump isNotInInlineNameSlots = jit.branch32(CCallHelpers::NotEqual, nameIDThere, nameID);
-        jit.load64(CCallHelpers::BaseIndex(R0, inlineSlot, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()), R0);
         jit.ret();
         isNotInInlineNameSlots.link(&jit);
         lacksInlineNameSlots.link(&jit);
@@ -2522,6 +2636,71 @@ static void generateGetByIdWith(CCallHelpers& jit, Entry operation)
         missAtSite(jit, Entry::RawGetById, 1, Returns::Value);
     }
 }
+
+static constexpr unsigned numberOfStubsThatWriteNameInSlot = 24;
+static std::optional<unsigned> slotWhoseNameIsWrittenBy(Stub stub)
+{
+    unsigned number = static_cast<unsigned>(stub);
+    if (number >= static_cast<unsigned>(Stub::WriteNameInSlot0) && number < static_cast<unsigned>(Stub::WriteNameInSlot0) + numberOfStubsThatWriteNameInSlot)
+        return number - static_cast<unsigned>(Stub::WriteNameInSlot0);
+    return std::nullopt;
+}
+
+static void generateWriteNameInSlot(CCallHelpers& jit, unsigned slot, GPRReg base = R0)
+{
+    ASSERT(base != A2 && base != A3 && base != T11 && base != T13);
+    if (slot >= Structure::numberOfSlotsWithPropertyNameIDs) {
+        jit.breakpoint();
+        return;
+    }
+    CCallHelpers::JumpList miss;
+    miss.append(jit.branchIfNotCell(base));
+    loadFieldIDInSlot(jit, base, slot, T13, T11);
+    miss.append(jit.branch32(CCallHelpers::NotEqual, T11, A3));
+    jit.store64(A1, Address(base, JSObject::offsetOfInlineStorage() + slot * sizeof(EncodedJSValue)));
+    Jump valueIsNotCell = jit.branchIfNotCell(A1);
+    jit.load8(Address(base, JSCell::cellStateOffset()), T11);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), T13);
+    Jump needsBarrier = jit.branch32(CCallHelpers::BelowOrEqual, T11, Address(T13, VM::offsetOfHeapBarrierThreshold()));
+    valueIsNotCell.link(&jit);
+    jit.ret();
+
+    needsBarrier.link(&jit);
+    jit.move(base, R0);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::WriteBarrier });
+
+    miss.link(&jit);
+    jit.move(base, R0);
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::PutById });
+}
+#define AOT_WRITE_NAME_IN_SLOT(n) \
+static void generateWriteNameInSlot##n(CCallHelpers& jit) { generateWriteNameInSlot(jit, n); }
+AOT_WRITE_NAME_IN_SLOT(0)
+AOT_WRITE_NAME_IN_SLOT(1)
+AOT_WRITE_NAME_IN_SLOT(2)
+AOT_WRITE_NAME_IN_SLOT(3)
+AOT_WRITE_NAME_IN_SLOT(4)
+AOT_WRITE_NAME_IN_SLOT(5)
+AOT_WRITE_NAME_IN_SLOT(6)
+AOT_WRITE_NAME_IN_SLOT(7)
+AOT_WRITE_NAME_IN_SLOT(8)
+AOT_WRITE_NAME_IN_SLOT(9)
+AOT_WRITE_NAME_IN_SLOT(10)
+AOT_WRITE_NAME_IN_SLOT(11)
+AOT_WRITE_NAME_IN_SLOT(12)
+AOT_WRITE_NAME_IN_SLOT(13)
+AOT_WRITE_NAME_IN_SLOT(14)
+AOT_WRITE_NAME_IN_SLOT(15)
+AOT_WRITE_NAME_IN_SLOT(16)
+AOT_WRITE_NAME_IN_SLOT(17)
+AOT_WRITE_NAME_IN_SLOT(18)
+AOT_WRITE_NAME_IN_SLOT(19)
+AOT_WRITE_NAME_IN_SLOT(20)
+AOT_WRITE_NAME_IN_SLOT(21)
+AOT_WRITE_NAME_IN_SLOT(22)
+AOT_WRITE_NAME_IN_SLOT(23)
+#undef AOT_WRITE_NAME_IN_SLOT
+static_assert(static_cast<unsigned>(Stub::WriteNameInSlot23) - static_cast<unsigned>(Stub::WriteNameInSlot0) + 1 == numberOfStubsThatWriteNameInSlot);
 
 static void generatePutById(CCallHelpers& jit)
 {
@@ -5880,7 +6059,10 @@ static constexpr unsigned firstPrologueThunk = firstCallThunk + std::size(functi
 static constexpr unsigned firstIntrinsicThunk = firstPrologueThunk + maxFrameSizeWithThunk / frameSizeUnit;
 static constexpr Stub stubsWithAnyRegisterOperand[] = { Stub::WriteBarrier, Stub::ToBoolean, Stub::GetById, Stub::GetByIdWellKnown,
     Stub::PutById, Stub::GetByVal, Stub::GetByValAtIndex, Stub::PutByVal, Stub::PutByValAtIndex, Stub::PutByValDirect, Stub::GetFromScope, Stub::GetGlobal, Stub::ResolveScope,
-    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField,
+    Stub::StrictEqual, Stub::LooseEqual, Stub::IsStringEqualTo, Stub::GetLength, Stub::HelperAddField, Stub::ReadNameInAnySlot,
+    Stub::WriteNameInSlot0, Stub::WriteNameInSlot1, Stub::WriteNameInSlot2, Stub::WriteNameInSlot3, Stub::WriteNameInSlot4, Stub::WriteNameInSlot5, Stub::WriteNameInSlot6, Stub::WriteNameInSlot7,
+    Stub::WriteNameInSlot8, Stub::WriteNameInSlot9, Stub::WriteNameInSlot10, Stub::WriteNameInSlot11, Stub::WriteNameInSlot12, Stub::WriteNameInSlot13, Stub::WriteNameInSlot14, Stub::WriteNameInSlot15,
+    Stub::WriteNameInSlot16, Stub::WriteNameInSlot17, Stub::WriteNameInSlot18, Stub::WriteNameInSlot19, Stub::WriteNameInSlot20, Stub::WriteNameInSlot21, Stub::WriteNameInSlot22, Stub::WriteNameInSlot23,
     Stub::ReadSlot0, Stub::ReadSlot1, Stub::ReadSlot2, Stub::ReadSlot3, Stub::ReadSlot4, Stub::ReadSlot5, Stub::ReadSlot6, Stub::ReadSlot7,
     Stub::ReadSlot8, Stub::ReadSlot9, Stub::ReadSlot10, Stub::ReadSlot11, Stub::ReadSlot12, Stub::ReadSlot13, Stub::ReadSlot14, Stub::ReadSlot15,
     Stub::ReadSlotOrUndefined0, Stub::ReadSlotOrUndefined1, Stub::ReadSlotOrUndefined2, Stub::ReadSlotOrUndefined3, Stub::ReadSlotOrUndefined4, Stub::ReadSlotOrUndefined5, Stub::ReadSlotOrUndefined6, Stub::ReadSlotOrUndefined7,
@@ -6053,6 +6235,8 @@ bool operandAllowedInRegister(Stub stub, GPRReg reg)
     case Stub::GetByIdWellKnown:
         return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15;
     default:
+        if (auto slot = slotWhoseNameIsWrittenBy(stub))
+            return *slot < Structure::numberOfSlotsWithPropertyNameIDs && ((number < 9 && reg != GPRInfo::argumentGPR2 && reg != GPRInfo::argumentGPR3) || number > 15);
         if (slotReadBy(stub))
             return (number < 9 && reg != GPRInfo::argumentGPR1) || number > 15;
         if (auto slot = slotWhoseNameIsReadBy(stub))
@@ -6257,6 +6441,10 @@ const StubBlob& stubBlob()
                         generateGetByIdFrom(jit, Entry::operationAOTGetByIdWellKnown, reg);
                         break;
                     default:
+                        if (auto slot = slotWhoseNameIsWrittenBy(stub)) {
+                            generateWriteNameInSlot(jit, *slot, reg);
+                            break;
+                        }
                         if (auto read = slotReadBy(stub)) {
                             generateReadSlot(jit, read->first, read->second, reg);
                             break;

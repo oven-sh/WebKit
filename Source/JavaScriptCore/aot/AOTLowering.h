@@ -212,11 +212,18 @@ private:
     Vector<AvailableField> m_availableFields;
     UncheckedKeyHashMap<BasicBlock*, Vector<AvailableField>> m_availableFieldsAtEndOf;
     bool m_nodePreservesFields { false };
-    Node* m_baseWithKnownStructure { nullptr };
-    LValue m_knownStructure { nullptr };
-    bool m_nodeKeepsKnownStructure { false };
+    struct KnownStructure {
+        Node* base;
+        LValue baseValue;
+        Type baseType;
+        LValue structureID;
+    };
+    static constexpr unsigned maxKnownStructures = 4;
+    Vector<KnownStructure, maxKnownStructures> m_knownStructures;
+    UncheckedKeyHashMap<BasicBlock*, Vector<KnownStructure>> m_knownStructuresAtEndOf;
+    bool m_nodeKeepsKnownStructures { false };
     LBasicBlock m_blockWhereNodeStarts { nullptr };
-    bool isReadByNameAgain(Node* read, Node* base) const;
+    bool keepsStructures(Node*);
     const AvailableField* availableField(Node* base, const TypeTable::Field&) const;
     void recordAvailableField(Node* base, const TypeTable::Field&, LValue, Rep, LValue asJSValue, bool isWritten);
     static bool preservesFields(Node*);
@@ -418,6 +425,7 @@ private:
     LBasicBlock newColdBlock();
     LValue trapBits();
     void exitUnless(LValue condition);
+    void exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, Entry counter, unsigned identifier);
     void exitUnlessType(LValue jsValue, Type from, Type wanted);
     void guardReentry(BasicBlock*);
     void guardGetById(Node*);

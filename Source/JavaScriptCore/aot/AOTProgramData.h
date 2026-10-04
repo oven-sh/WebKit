@@ -229,6 +229,7 @@ private:
 };
 
 JS_EXPORT_PRIVATE uint16_t propertyNameIDIfKnown(VM&, UniquedStringImpl*);
+JS_EXPORT_PRIVATE bool hasListOfPropertyNames();
 void validatePropertyNameIDs(VM&);
 
 } } // namespace JSC::AOT

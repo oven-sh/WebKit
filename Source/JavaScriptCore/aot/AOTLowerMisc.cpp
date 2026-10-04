@@ -49,9 +49,12 @@ void Lowering::verifyBranchFoldedByTypes(BasicBlock* block)
     for (auto& use : branch->uses) {
         Node* operand = use.node;
         bool isConstant = operand->kind == NodeKind::Constant || operand->kind == NodeKind::ConstantCell || operand->kind == NodeKind::Intrinsic;
-        if (operand->isElided || operand->replacement || (!isConstant && !operand->lowered))
+        if (operand->isElided || operand->replacement || (!isConstant && !operand->lowered)) {
+            m_graph.remark("cannot-verify-folded-branch"_s);
             return;
+        }
     }
+    m_graph.remark("verifies-folded-branch"_s);
     SetForScope remarks(m_graph.suppressesRemarks, true);
     SetForScope current(m_node, branch);
     SetForScope code(m_code, branch->graph);

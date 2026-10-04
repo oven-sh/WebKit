@@ -157,10 +157,15 @@ void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 void loadAtomName(CCallHelpers& jit, GPRReg value, GPRReg result, JumpList& slowCases)
 {
     slowCases.append(jit.branchIfNotCell(value));
+    Jump isSymbol = jit.branchIfSymbol(value);
     slowCases.append(jit.branchIfNotString(value));
     jit.loadPtr(Address(value, JSString::offsetOfValue()), result);
     slowCases.append(jit.branchIfRopeStringImpl(result));
     slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(result, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
+    Jump isReady = jit.jump();
+    isSymbol.link(&jit);
+    jit.loadPtr(Address(value, Symbol::offsetOfSymbolImpl()), result);
+    isReady.link(&jit);
 }
 
 void emitMegamorphicLoad(CCallHelpers& jit, GPRReg base, GPRReg uid, JumpList& slowCases)

@@ -942,6 +942,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewFunctionWithCaptures, JSObject*, (Instan
 JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance* instance, JSObject* object, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN(instance);
+    noteNamedAccess(instance, __func__, object, JSValue::decode(encodedKey));
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     HasOwnPropertyCache& cache = vm.ensureHasOwnPropertyCache();
@@ -1507,6 +1508,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInById, size_t, (Instance* instance, Encode
         throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
         OPERATION_RETURN(scope, false);
     }
+    noteNamedAccess(instance, __func__, base, { }, identifierAt(instance, callFrame, identifierIndex).impl());
     OPERATION_RETURN(scope, hasPropertyAndCache(globalObject, asObject(base), identifierAt(instance, callFrame, identifierIndex).impl()));
 }
 
@@ -1515,6 +1517,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTInByVal, size_t, (Instance* instance, Encod
     AOT_OPERATION_BEGIN(instance);
     JSValue base = JSValue::decode(encodedBase);
     JSValue property = JSValue::decode(encodedProperty);
+    noteNamedAccess(instance, __func__, base, property);
     if (base.isObject()) {
         UniquedStringImpl* uid = nullptr;
         if (property.isSymbol())

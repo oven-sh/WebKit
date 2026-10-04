@@ -6336,12 +6336,10 @@ struct BytecodeLinkEncoder::Impl {
         }
         ImmutableIntrinsics::ensureShared(vm);
         AOT::PropertyPlaces propertyPlaces;
-        if (Options::useAOTGuessedPlaces())
-            AOT::setPropertyPlaces(&propertyPlaces);
-        auto forgetPropertyPlaces = makeScopeExit([&] {
-            if (AOT::propertyPlaces() && Options::verboseAOTCompilation()) [[unlikely]]
+        AOT::PropertyPlaces* propertyPlacesIfUsed = Options::useAOTGuessedPlaces() ? &propertyPlaces : nullptr;
+        auto dumpPropertyPlaces = makeScopeExit([&] {
+            if (propertyPlacesIfUsed && Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", propertyPlaces);
-            AOT::setPropertyPlaces(nullptr);
         });
         AOT::TypeTable::load(vm);
         propertyPlaces.setFirstNameID(AOT::TypeTable::largestFieldID() + 1);
@@ -6653,7 +6651,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries))
+                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, propertyPlacesIfUsed))
                     unreadable++;
             });
             propertyPlaces.finalize();
@@ -7118,6 +7116,7 @@ struct BytecodeLinkEncoder::Impl {
 
         endPhase("type inference"_s);
         AOT::ImageBuilder builder;
+        builder.setPropertyPlaces(propertyPlacesIfUsed);
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
         std::atomic<size_t> next { 0 };
         Lock declinedLock;
@@ -7153,6 +7152,7 @@ struct BytecodeLinkEncoder::Impl {
             dataLogLn("AOT: ", functionsWithoutStackCheck, " functions rely on the stack check of a caller");
         LinkedProgramCode programCode;
         programCode.builtins = &engineBuiltins;
+        programCode.propertyPlaces = propertyPlacesIfUsed;
         uint32_t numberOfTypeCoverageCounters = 0;
         for (auto& job : jobs) {
             if (job.isGeneralBody)

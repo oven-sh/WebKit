@@ -1403,11 +1403,13 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_out.unreachable();
         return;
     }
-    m_baseWithKnownStructure = nullptr;
+    m_knownStructures.shrink(0);
     m_availableFields.shrink(0);
     if (block->predecessors.size() == 1 && !block->isCatchEntrypoint && block != m_graph.root) {
         if (auto available = m_availableFieldsAtEndOf.find(block->predecessors[0]); available != m_availableFieldsAtEndOf.end())
             m_availableFields = available->value;
+        if (auto known = m_knownStructuresAtEndOf.find(block->predecessors[0]); known != m_knownStructuresAtEndOf.end() && !block->isGeneric && !block->isReentry)
+            m_knownStructures = known->value;
     }
     m_out.setFrequency(block->isGeneric || block->isRarelyExecuted ? coldFrequency : 1);
     if (block->loweredAhead)
@@ -1479,7 +1481,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             }
             setCurrentNode(stores[0]);
             lowerPropertyRun(stores);
-            m_baseWithKnownStructure = nullptr;
+            m_knownStructures.shrink(0);
             m_availableFields.shrink(0);
             m_availableReads.shrink(0);
             m_newCells.shrink(0);
@@ -1495,7 +1497,7 @@ void Lowering::lowerBlock(BasicBlock* block)
             }
         }
         m_nodePreservesFields = false;
-        m_nodeKeepsKnownStructure = false;
+        m_nodeKeepsKnownStructures = false;
         m_blockWhereNodeStarts = m_out.m_block;
         if (!m_newCells.isEmpty() && (mayCollectOrThrow(node) || Graph::makesNoFunctionObject(node)))
             m_newCells.shrink(0);
@@ -1512,17 +1514,21 @@ void Lowering::lowerBlock(BasicBlock* block)
             m_newCells.append(node);
         if (!m_nodePreservesFields && !m_availableFields.isEmpty() && !preservesFields(node))
             m_availableFields.shrink(0);
-        if (!m_nodeKeepsKnownStructure && (node->kind == NodeKind::Bytecode || node->kind == NodeKind::Guard))
-            m_baseWithKnownStructure = nullptr;
+        if (!m_nodeKeepsKnownStructures && !m_knownStructures.isEmpty() && !keepsStructures(node))
+            m_knownStructures.shrink(0);
         forgetReadsChangedBy(node);
     }
     if (terminal && !preservesFields(terminal))
         m_availableFields.shrink(0);
+    if (terminal && !keepsStructures(terminal))
+        m_knownStructures.shrink(0);
     if (terminal)
         forgetReadsChangedBy(terminal);
     publishAvailableReads(block);
     if (!m_availableFields.isEmpty())
         m_availableFieldsAtEndOf.set(block, m_availableFields);
+    if (!m_knownStructures.isEmpty())
+        m_knownStructuresAtEndOf.set(block, Vector<KnownStructure>(m_knownStructures));
     if (terminal && terminal->kind == NodeKind::Guard) {
         setCurrentNode(terminal);
         lowerGuard(block, terminal);

@@ -1,7 +1,11 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--useAOTImmutableStructureAddresses=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--validateGraphAtEachPhase=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTSearchOfPropertyNameIDs=1", "--useAOTSearchOfPropertyNameIDsInGetById=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTSearchOfPropertyNameIDs=1", "--useAOTSearchOfPropertyNameIDsInGetById=1", "--useAOTInlineGuessedPlacesEverywhere=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTSearchOfPropertyNameIDs=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
@@ -66,6 +70,15 @@ function firstAndSecond(x) { return x.first + ":" + x.second; }
 function tagAlone(x) { return x.tag; }
 function four(tag, key, child, flags) { return tag + ":" + child + "|" + key + ":" + flags; }
 function allFour(x) { return four(x.tag, x.key, x.child, x.flags); }
+function interleaved(x, y) { return four(x.tag, y.tag, x.key, y.key); }
+function acrossBranches(x) {
+    let tag = x.tag;
+    if (tag === null)
+        return "none";
+    if (typeof tag === "string")
+        return tag + "/" + x.key;
+    return four(tag, x.key, x.child, x.flags);
+}
 function readsTagTwice(x) { return four(x.tag, x.key, x.tag, x.flags) + "|" + x.child; }
 function readsTagTwiceInLoop(x, count) {
     let result = "";
@@ -84,12 +97,14 @@ function Wide() {
 function makeWide() { return keep(new Wide); }
 function edgesOfWide(x) { return [x.w0, x.w15, x.w16, x.w23, x.w24, x.w29].join(); }
 
-for (let f of [makeItem, makePair, build, makeReversed, makeTagSecond, tagAndChild, keyAndFlags, firstAndSecond, tagAlone, four, allFour, readsTagTwice, readsTagTwiceInLoop, neverBorn, makeWide, edgesOfWide, keep])
+for (let f of [makeItem, makePair, build, makeReversed, makeTagSecond, tagAndChild, keyAndFlags, firstAndSecond, tagAlone, four, allFour, readsTagTwice, readsTagTwiceInLoop, interleaved, acrossBranches, neverBorn, makeWide, edgesOfWide, keep])
     noInline(f);
 
-applies(tagAndChild, keyAndFlags, firstAndSecond, allFour, edgesOfWide);
-if (remarksOf(allFour) && remarksOf(allFour).some(remark => remark.startsWith("guessed-place-read:")) && !remarksOf(allFour).includes("reuses-structure-of-base"))
-    throw new Error("reads of one value in a row do not share its Structure: " + remarksOf(allFour).join(" "));
+applies(tagAndChild, keyAndFlags, firstAndSecond, allFour, interleaved, acrossBranches, edgesOfWide);
+for (let f of [allFour, interleaved, acrossBranches]) {
+    if (remarksOf(f) && remarksOf(f).some(remark => remark.startsWith("guessed-place-read:")) && !remarksOf(f).includes("reuses-structure-of-base"))
+        throw new Error("the reads of one value in " + f.name + " do not share its Structure: " + remarksOf(f).join(" "));
+}
 doesNotApply(tagAlone, neverBorn);
 
 const cases = {
@@ -272,6 +287,35 @@ for (let round = 0; round < 4; ++round) {
     throwsTypeError(() => tagAndChild(undefined), "undefined");
     throwsTypeError(() => tagAndChild(null), "null");
     throwsTypeError(() => allFour(undefined), "undefined, read in a row");
+    {
+        let x = makeItem(1, "k"), y = makeItem(2, "l");
+        check(interleaved(x, y), "1:k|2:l", "two values read in turn");
+        check(interleaved(x, x), "1:k|1:k", "one value as both");
+        check(interleaved(5, y), "undefined:undefined|2:l", "a number and an object read in turn");
+        check(interleaved(x, "s"), "1:k|undefined:undefined", "an object and a string read in turn");
+        throwsTypeError(() => interleaved(x, null), "an object and null read in turn");
+        let changer = makeItem(3, "m");
+        Object.defineProperty(changer, "tag", {
+            get() {
+                delete x.key;
+                x.late = 0;
+                x.key = "moved";
+                return "got";
+            },
+            configurable: true,
+        });
+        for (let again = 0; again < 3; ++again)
+            check(interleaved(x, changer), "1:moved|got:m", "the read of one value moves a property of the other");
+        let remover = makeItem(4, "n");
+        Object.defineProperty(remover, "tag", { get() { delete y.key; return "got"; }, configurable: true });
+        for (let again = 0; again < 3; ++again)
+            check(interleaved(y, remover), "2:undefined|got:n", "the read of one value deletes a property of the other");
+        check(acrossBranches(makeItem(1, "k")), "1:null|k:0", "reads on both sides of two branches");
+        check(acrossBranches(makeItem("s", "k")), "s/k", "reads on both sides of one branch");
+        check(acrossBranches(makeItem(null, "k")), "none", "a read in front of a branch");
+        check(acrossBranches(makeReversed("c", 7)), "7:c|undefined:undefined", "reads on both sides of two branches, other slots");
+        check(acrossBranches(8), "undefined:undefined|undefined:undefined", "reads of a number on both sides of two branches");
+    }
     for (let [value, tag, key, child, flags] of [[makeItem(1, "k"), 1, "k", null, 0], [makeReversed("c", 7), 7, undefined, "c", undefined], [5, undefined, undefined, undefined, undefined], ["s", undefined, undefined, undefined, undefined]]) {
         check(readsTagTwice(value), tag + ":" + tag + "|" + key + ":" + flags + "|" + child, "a property read twice between others");
         check(readsTagTwiceInLoop(value, 3), (tag + ":" + key + "|" + tag + ":" + flags + ";").repeat(3), "a property read twice in a loop, then others");
@@ -296,9 +340,9 @@ delete String.prototype.child;
 
 if (typeof aotOperationCount === "function" && remarksOf(tagAndChild) && jscOptions().useAOTOperationCounters && isGuessed(tagAndChild)) {
     const count = detail => aotOperationCount("operationAOTCountGuessedPlace" + (detail ? ":" + detail : "")) || 0;
-    const details = ["hit", "not-a-cell", "not-an-object", "typed-layout", "dictionary", "not-an-own-property", "has-attributes", "out-of-line", "another-slot", "records-no-names", "slot-is-marked-nameless", "no-id-recorded"];
+    const details = ["hit", "not-a-cell", "not-an-object", "typed-layout", "dictionary", "not-an-own-property", "absent-and-every-name-is-recorded", "has-attributes", "out-of-line", "another-slot", "records-no-names", "slot-is-marked-nameless", "no-id-recorded"];
     check(details.reduce((sum, detail) => sum + count(detail), 0), count(), "every guessed read has one outcome");
-    for (let detail of ["hit", "not-a-cell", "not-an-object", "dictionary", "not-an-own-property", "has-attributes", "another-slot"])
+    for (let detail of ["hit", "not-a-cell", "not-an-object", "dictionary", "not-an-own-property", "absent-and-every-name-is-recorded", "has-attributes", "another-slot"])
         check(count(detail) > 0, true, "some guessed read ends as " + detail);
     const before = [count(), count("hit")];
     const usual = makeItem(1, "k");

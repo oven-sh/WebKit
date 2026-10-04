@@ -322,12 +322,12 @@ bool Lowering::preservesFields(Node* node)
     case NodeKind::Narrow:
         return true;
     case NodeKind::Guard:
-        return false;
+        return node->checksName() && node->opcode == op_get_by_id;
     case NodeKind::Bytecode:
         break;
     }
     if (node->guard)
-        return false;
+        return node->guard->checksName() && node->opcode == op_get_by_id;
     auto operandsCannotBeObjects = [&] {
         for (auto& use : node->uses) {
             if (!use.node->type || mayBe(use.node->type, TAnyObject))
@@ -762,7 +762,7 @@ void Lowering::lowerGetById(Node* node)
                 m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
                 m_out.appendTo(cellCase);
             }
-            LValue currentFieldID = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structureOf(base), Structure::offsetOfFieldIDInSlot() + field->slot * sizeof(uint16_t)));
+            LValue currentFieldID = fieldIDInSlot(m_out.load32(base, m_heaps.JSCell_structureID), field->slot);
             m_out.branch(m_out.equal(currentFieldID, m_out.constInt32(field->id)), usually(isThere), rarely(otherwise));
             m_out.appendTo(isThere);
             ValueFromBlock found = m_out.anchor(m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue))));
@@ -920,21 +920,21 @@ void Lowering::lowerGetById(Node* node)
     setJSValue(node, value);
 }
 
-bool Lowering::isReadByNameAgain(Node* read, Node* base) const
+bool Lowering::keepsStructures(Node* node)
 {
-    auto& nodes = m_block->nodes;
-    if (m_nodeIndex >= nodes.size() || nodes[m_nodeIndex] != read)
-        return false;
-    for (unsigned i = m_nodeIndex + 1; i < nodes.size(); ++i) {
-        Node* node = nodes[i];
-        if (node->isElided)
-            continue;
-        if (node->isBytecode(op_get_by_id))
-            return skipAliases(node->use(node->as<OpGetById>().m_base)) == base;
-        if (node->kind == NodeKind::Bytecode || node->kind == NodeKind::Guard)
+    if (node->kind == NodeKind::Bytecode) {
+        switch (node->opcode) {
+        case op_type_tag:
+        case op_check_type:
+        case op_to_this:
+        case op_loop_hint:
+        case op_get_from_scope:
             return false;
+        default:
+            break;
+        }
     }
-    return false;
+    return preservesFields(node);
 }
 
 LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry operation, unsigned functionIdentifier)
@@ -956,32 +956,47 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     std::optional<GuessedPlace> place;
     if (stub == Stub::GetById && node->isBytecode(op_get_by_id) && node->as<OpGetById>().m_property == functionIdentifier)
         place = m_graph.guessedPlaceOf(node);
+    if (place && place->numberOfShapes < 2 && !Options::useAOTStubsForGuessedPlacesOfOneShape() && isCompact() && !Options::useAOTInlineGuessedPlacesEverywhere() && !Options::validateAOTInferredTypes()) {
+        m_graph.remark("leaves-place-of-one-shape-to-cached-read"_s, code().codeBlock()->identifier(functionIdentifier).string());
+        place = std::nullopt;
+    }
+    if (!place && stub == Stub::GetById && Options::useAOTOperationCounters()) [[unlikely]]
+        vmCall(node, Void, Entry::operationAOTCountReadByName, m_instance, base, m_out.constInt32(identifier), slotAddress(slot));
     if (place) {
         bool isOnEveryPathOfNode = m_out.m_block == m_blockWhereNodeStarts;
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            vmCall(node, Void, Entry::operationAOTCountGuessedPlace, m_instance, base, m_out.constInt32(place->slot << 16 | place->nameID), m_out.constInt32(identifier));
-        if (isCompact() && !Options::useAOTInlineGuessedPlacesEverywhere() && !Options::validateAOTInferredTypes()) {
+        if (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes()) [[unlikely]]
+            vmCall(node, Void, Entry::operationAOTCountGuessedPlace, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place->slot) << 16 | place->nameID | (Options::validateAOTInferredTypes() ? 1u << 31 : 0))), m_out.constInt32(identifier));
+        if (((isCompact() && !Options::useAOTInlineGuessedPlacesEverywhere()) || m_out.m_block->frequency() <= coldFrequency) && !Options::validateAOTInferredTypes()) {
             m_graph.remark("guessed-place-read-through-stub"_s, code().codeBlock()->identifier(functionIdentifier).string());
             return callStub(static_cast<Stub>(static_cast<unsigned>(Stub::ReadNameInSlot0) + place->slot), Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { { GPRInfo::argumentGPR2, place->nameID } });
         }
         m_graph.remark("guessed-place-read"_s, code().codeBlock()->identifier(functionIdentifier).string());
         Node* baseNode = skipAliases(node->use(node->as<OpGetById>().m_base));
-        bool isReadAgain = isOnEveryPathOfNode && isReadByNameAgain(node, baseNode);
-        LValue structure = m_baseWithKnownStructure == baseNode ? m_knownStructure : nullptr;
-        if (structure)
-            m_graph.remark("reuses-structure-of-base"_s);
+        size_t known = m_knownStructures.findIf([&](auto& other) { return other.base == baseNode; });
+        LValue structureID = known != notFound ? m_knownStructures[known].structureID : nullptr;
+        if (isOnEveryPathOfNode && m_nodeIndex < m_block->nodes.size() && m_block->nodes[m_nodeIndex] == node)
+            m_nodeKeepsKnownStructures = true;
+        else
+            m_knownStructures.shrink(0);
         LBasicBlock isThere = m_out.newBlock();
         LBasicBlock otherwise = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        if (!structure) {
+        if (structureID)
+            m_graph.remark("reuses-structure-of-base"_s);
+        else {
             if (!isSubtype(baseType, TCell)) {
                 LBasicBlock cellCase = m_out.newBlock();
                 m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
                 m_out.appendTo(cellCase);
             }
-            structure = structureOf(base);
+            structureID = m_out.load32(base, m_heaps.JSCell_structureID);
+            if (m_nodeKeepsKnownStructures) {
+                if (m_knownStructures.size() == maxKnownStructures)
+                    m_knownStructures.removeAt(0);
+                m_knownStructures.append({ baseNode, base, baseType, structureID });
+            }
         }
-        LValue nameIDThere = m_out.load16ZeroExt32(m_out.address(m_heaps.root, structure, Structure::offsetOfFieldIDInSlot() + place->slot * sizeof(uint16_t)));
+        LValue nameIDThere = fieldIDInSlot(structureID, place->slot);
         m_out.branch(m_out.equal(nameIDThere, m_out.constInt32(place->nameID)), usually(isThere), rarely(otherwise));
         m_out.appendTo(isThere);
         LValue value = m_out.load64(m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + place->slot * sizeof(EncodedJSValue)));
@@ -993,35 +1008,23 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
             trap();
             m_out.appendTo(agrees);
         }
-        Vector<ValueFromBlock, 3> values;
-        Vector<ValueFromBlock, 3> structures;
-        values.append(m_out.anchor(value));
-        if (isReadAgain)
-            structures.append(m_out.anchor(structure));
+        ValueFromBlock found = m_out.anchor(value);
+        Vector<ValueFromBlock, maxKnownStructures> structuresKept;
+        for (auto& other : m_knownStructures)
+            structuresKept.append(m_out.anchor(other.structureID));
         m_out.jump(continuation);
         m_out.appendTo(otherwise);
-        LValue valueOtherwise = throughStub();
-        if (isReadAgain && !isSubtype(baseType, TCell)) {
-            LBasicBlock isStillCell = newColdBlock();
-            LBasicBlock isNoCell = newColdBlock();
-            m_out.branch(isCell(base), unsure(isStillCell), unsure(isNoCell));
-            m_out.appendTo(isNoCell);
-            values.append(m_out.anchor(valueOtherwise));
-            structures.append(m_out.anchor(structureWithID(fixed32(Instance::offsetOfStringStructureID()))));
-            m_out.jump(continuation);
-            m_out.appendTo(isStillCell);
-        }
-        values.append(m_out.anchor(valueOtherwise));
-        if (isReadAgain)
-            structures.append(m_out.anchor(structureOf(base)));
+        ValueFromBlock foundOtherwise = m_out.anchor(Options::useAOTSearchOfPropertyNameIDs()
+            ? callStub(Stub::ReadNameInAnySlot, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { { GPRInfo::argumentGPR2, place->nameID } })
+            : throughStub());
+        Vector<ValueFromBlock, maxKnownStructures> structuresReadAgain;
+        for (auto& other : m_knownStructures)
+            structuresReadAgain.append(m_out.anchor(m_out.load32(isSubtype(other.baseType, TCell) ? other.baseValue : m_out.select(isCell(other.baseValue), other.baseValue, globalObjectHere()), m_heaps.JSCell_structureID)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        if (isReadAgain) {
-            m_baseWithKnownStructure = baseNode;
-            m_knownStructure = m_out.phi(pointerType(), structures);
-            m_nodeKeepsKnownStructure = true;
-        }
-        return m_out.phi(Int64, values);
+        for (unsigned i = 0; i < m_knownStructures.size(); ++i)
+            m_knownStructures[i].structureID = m_out.phi(Int32, structuresKept[i], structuresReadAgain[i]);
+        return m_out.phi(Int64, found, foundOtherwise);
     }
     if (stub && isCompact())
         return throughStub();
@@ -1393,13 +1396,49 @@ void Lowering::lowerPutById(Node* node)
             m_out.appendTo(afterTypedStore);
         }
     });
-    if (isCompact() && Site::fits(numberOf(bytecode.m_property), flags)) {
+    std::optional<GuessedPlace> place;
+    if (Node* born = skipAliases(baseNode); usesDataStubs() && !afterTypedStore && !bytecode.m_flags.isDirect() && !born->isBytecode(op_create_this) && !born->isBytecode(op_new_object))
+        place = m_graph.guessedPlaceOf(node);
+    bool usesSharedSite = isCompact() && Site::fits(numberOf(bytecode.m_property), flags);
+    bool checksNameInStub = place && usesSharedSite && !Options::useAOTInlineGuessedPlacesEverywhere() && !Options::validateAOTInferredTypes();
+    if (place && (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes())) [[unlikely]]
+        vmCall(node, Void, Entry::operationAOTCountGuessedStore, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place->slot) << 16 | place->nameID | (Options::validateAOTInferredTypes() ? 1u << 31 : 0))), m_out.constInt32(numberOf(bytecode.m_property)));
+    if (place && !checksNameInStub) {
+        m_graph.remark("guessed-place-store"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+        LBasicBlock otherwise = newColdBlock();
+        afterTypedStore = m_out.newBlock();
+        if (!isSubtype(baseNode->type, TCell)) {
+            LBasicBlock isCellCase = m_out.newBlock();
+            m_out.branch(isCell(base), usually(isCellCase), rarely(otherwise));
+            m_out.appendTo(isCellCase);
+        }
+        orElse(m_out.equal(fieldIDInSlot(m_out.load32(base, m_heaps.JSCell_structureID), place->slot), m_out.constInt32(place->nameID)), otherwise);
+        m_out.store64(value, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + place->slot * sizeof(EncodedJSValue)));
+        if (mayBe(valueNode->type, TCell))
+            storeBarrier(base);
+        m_out.jump(afterTypedStore);
+        m_out.appendTo(otherwise, afterTypedStore);
+    }
+    auto countStoreByName = [&](unsigned slot) {
+        if (place || !Options::useAOTOperationCounters()) [[likely]]
+            return;
+        Node* born = skipAliases(baseNode);
+        uint32_t kindOfSite = flags | (afterTypedStore ? 4 : 0) | (born->isBytecode(op_create_this) || born->isBytecode(op_new_object) ? 8 : 0);
+        vmCall(node, Void, Entry::operationAOTCountStoreByName, m_instance, base, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(slot), m_out.constInt32(kindOfSite));
+    };
+    if (usesSharedSite) {
         unsigned slot = sharedSite(node, numberOf(bytecode.m_property), flags);
         m_graph.noteSiteSelector(slot, code().codeBlock()->identifier(bytecode.m_property).impl());
-        callStub(Stub::PutById, Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
+        countStoreByName(slot);
+        if (checksNameInStub) {
+            m_graph.remark("guessed-place-store-through-stub"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+            callStub(static_cast<Stub>(static_cast<unsigned>(Stub::WriteNameInSlot0) + place->slot), Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { { GPRInfo::argumentGPR3, place->nameID } });
+        } else
+            callStub(Stub::PutById, Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
         return;
     }
     unsigned slot = allocateSlot();
+    countStoreByName(slot);
 
     LBasicBlock cellCase = m_out.newBlock();
     LBasicBlock hit = m_out.newBlock();
@@ -1736,6 +1775,8 @@ void Lowering::lowerPutByVal(Node* node)
             m_graph.remark("put-by-val-with-constant-key"_s);
             unsigned slot = sharedSite(node, key->identifier, flags);
             m_graph.noteSiteSelector(slot, key->name);
+            if (Options::useAOTOperationCounters()) [[unlikely]]
+                vmCall(node, Void, Entry::operationAOTCountStoreByName, m_instance, base, m_out.constInt32(key->identifier), slotAddress(slot), m_out.constInt32(flags | 16));
             callStub(Stub::PutById, Void, { { base, firstStubOperandGPR }, { value, GPRInfo::argumentGPR1 }, { slotAddress(slot), GPRInfo::argumentGPR2 } }, { });
             return;
         }

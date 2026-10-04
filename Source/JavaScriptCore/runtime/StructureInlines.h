@@ -295,6 +295,8 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
         noteFieldAdded(rep, newOffset, attributes);
     else if (static_cast<unsigned>(newOffset) < numberOfSlotsWithPropertyNameIDs)
         notePropertyNameAdded(vm, rep, newOffset, attributes);
+    else
+        setRecordsEveryKnownPropertyName(false);
 #endif
     
     func(locker, newOffset, newMaxOffset);
@@ -485,6 +487,8 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
         noteFieldAdded(rep, newOffset, newAttributes);
     else if (static_cast<unsigned>(newOffset) < numberOfSlotsWithPropertyNameIDs)
         notePropertyNameAdded(vm, rep, newOffset, newAttributes);
+    else
+        setRecordsEveryKnownPropertyName(false);
 #endif
 
     func(locker, newOffset, newMaxOffset);
