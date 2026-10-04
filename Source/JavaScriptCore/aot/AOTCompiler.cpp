@@ -531,6 +531,10 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.isOnlyCalledDirectly = summary && summary->isNonEscaping;
     if (program) {
         auto noteKeysOf = [&](UnlinkedFunctionExecutable* executable, Vector<ImageKey>& keys) {
+            if (const ProgramFunctions* functions = programFunctions()) {
+                if (const KnownFunction* known = functions->function(functions->numberOf(executable)))
+                    executable = known->executable;
+            }
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (UnlinkedFunctionCodeBlock* code = executable->codeBlockIfExists(kind)) {
                     if (auto about = program->about(code))
