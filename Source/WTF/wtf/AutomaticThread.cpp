@@ -54,6 +54,16 @@ AutomaticThreadCondition::~AutomaticThreadCondition() = default;
 
 void AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
 {
+#if USE(MIMALLOC)
+    // A thread that is releasing its free memory only sees the notification when it is done with that.
+    for (auto& thread : m_threads) {
+        if (thread->isWaiting(locker) && !thread->m_isReleasingFreeMemory) {
+            thread->notify(locker);
+            return;
+        }
+    }
+#endif
+
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker)) {
             thread->notify(locker);
@@ -251,21 +261,27 @@ void AutomaticThread::start(const AbstractLocker&)
                         // waiting state through the release, and polls again only if a notify
                         // arrived meanwhile (notify() clears m_isWaiting, which is checked under the
                         // lock, so a notify during the release is not lost).
+                        Seconds timeout = m_timeout;
                         if (!didReleaseFreeMemory && m_timeout > idleReleaseDelay) {
                             m_waitCondition.waitFor(*m_lock, idleReleaseDelay);
                             if (!m_isWaiting)
                                 continue;
                             didReleaseFreeMemory = true;
+                            m_isReleasingFreeMemory = true;
                             {
                                 DropLockForScope dropLock { locker };
                                 releaseFastMallocFreeMemoryForIdleThread();
                             }
+                            m_isReleasingFreeMemory = false;
                             if (!m_isWaiting)
                                 continue;
+                            timeout -= idleReleaseDelay;
                         }
+#else
+                        Seconds timeout = m_timeout;
 #endif
                         bool awokenByNotify =
-                            m_waitCondition.waitFor(*m_lock, m_timeout);
+                            m_waitCondition.waitFor(*m_lock, timeout);
                         if (verbose && !awokenByNotify && !m_isWaiting)
                             dataLog(RawPointer(this), ": waitFor timed out, but notified via m_isWaiting flag!\n");
                         if (m_isWaiting && shouldSleep(locker)) {
