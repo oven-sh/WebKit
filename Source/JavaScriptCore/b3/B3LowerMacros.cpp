@@ -1142,6 +1142,89 @@ private:
         before->updatePredecessorsAfter();
     }
 
+    void appendJumpThroughTableInCode(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, unsigned end, BasicBlock* before, Value* index, size_t tableSize)
+    {
+        auto addressLabel = Box<CCallHelpers::Label>::create();
+        PatchpointValue* tableAddress = before->appendNew<PatchpointValue>(m_proc, pointerType(), m_origin, cloningForbidden(Patchpoint));
+        tableAddress->effects = Effects::none();
+        tableAddress->setGenerator(
+            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                *addressLabel = jit.label();
+                GPRReg result = params[0].gpr();
+#if CPU(ARM64)
+                jit.m_assembler.adr(result, 0);
+#elif CPU(X86_64)
+                auto& buffer = jit.m_assembler.buffer();
+                buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(result) >> 3) << 2));
+                buffer.putByte(static_cast<int8_t>(0x8d));
+                buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(result) & 7) << 3 | 5));
+                buffer.putInt(0);
+#else
+                UNUSED_PARAM(result);
+                RELEASE_ASSERT_NOT_REACHED();
+#endif
+            });
+        Value* shifted = before->appendNew<Value>(m_proc, Shl, m_origin, index, before->appendIntConstant(m_proc, m_origin, Int32, getLSBSet(sizeof(int32_t))));
+        MemoryValue* offset = before->appendNew<MemoryValue>(m_proc, Load, Int32, m_origin, before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, shifted, tableAddress));
+        offset->setControlDependent(false);
+        offset->setReadsMutability(B3::Mutability::Immutable);
+        Value* target = before->appendNew<Value>(m_proc, Add, pointerType(), m_origin, tableAddress, before->appendNew<Value>(m_proc, SExt32, m_origin, offset));
+        PatchpointValue* patchpoint = before->appendNew<PatchpointValue>(m_proc, Void, m_origin, cloningForbidden(Patchpoint));
+        patchpoint->effects = Effects();
+        patchpoint->effects.terminal = true;
+        patchpoint->appendSomeRegister(target);
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+
+        before->clearSuccessors();
+        int64_t firstValue = cases[start].caseValue();
+        BitVector handledIndices;
+        for (unsigned i = start; i < end; ++i) {
+            before->appendSuccessor(cases[i].target());
+            handledIndices.set(cases[i].caseValue() - firstValue);
+        }
+        before->appendSuccessor(fallThrough);
+
+        patchpoint->setGenerator(
+            [=](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                jit.farJump(params[0].gpr(), NoPtrTag);
+                CCallHelpers::Label tableLabel = jit.label();
+                jit.emitNops(tableSize * sizeof(int32_t));
+                Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+                jit.addLinkTask(
+                    [=](LinkBuffer& linkBuffer) {
+                        auto locationOf = [&](CCallHelpers::Label label) {
+                            return static_cast<uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr());
+                        };
+                        uint8_t* table = locationOf(tableLabel);
+                        auto setEntry = [&](size_t entry, CCallHelpers::Label label) {
+                            int32_t distance = safeCast<int32_t>(locationOf(label) - table);
+                            memcpy(table + entry * sizeof(int32_t), &distance, sizeof(int32_t));
+                        };
+                        for (size_t entry = 0; entry < tableSize; ++entry)
+                            setEntry(entry, *labels.last());
+                        unsigned labelIndex = 0;
+                        for (size_t entry : handledIndices)
+                            setEntry(entry, *labels[labelIndex++]);
+                        uint8_t* instruction = locationOf(*addressLabel);
+#if CPU(ARM64)
+                        uint32_t distance = safeCast<uint32_t>(table - instruction);
+                        RELEASE_ASSERT(distance < (1u << 20));
+                        uint32_t adr;
+                        memcpy(&adr, instruction, sizeof(adr));
+                        adr |= (distance & 3) << 29 | (distance >> 2) << 5;
+                        memcpy(instruction, &adr, sizeof(adr));
+#elif CPU(X86_64)
+                        constexpr ptrdiff_t instructionSize = 7;
+                        int32_t displacement = safeCast<int32_t>(table - instruction - instructionSize);
+                        memcpy(instruction + instructionSize - sizeof(displacement), &displacement, sizeof(displacement));
+#else
+                        UNUSED_PARAM(instruction);
+#endif
+                    });
+            });
+    }
+
     void recursivelyBuildSwitch(
         const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart,
         unsigned end, BasicBlock* before)
@@ -1157,7 +1240,7 @@ private:
         // better than a binary switch.
         const unsigned minCasesForTable = 7;
         const unsigned densityLimit = 4;
-        if (end - start >= minCasesForTable && !m_proc.positionIndependent()) {
+        if (end - start >= minCasesForTable && (!m_proc.positionIndependent() || isARM64() || isX86_64())) {
             CheckedInt64 firstValue = cases[start].caseValue();
             CheckedInt64 lastValue = cases[end - 1].caseValue();
             CheckedInt64 range = lastValue - firstValue + 1;
@@ -1169,6 +1252,11 @@ private:
 
                 if (index->type() != pointerType() && index->type() == Int32)
                     index = before->appendNew<Value>(m_proc, ZExt32, m_origin, index);
+
+                if (m_proc.positionIndependent()) {
+                    appendJumpThroughTableInCode(cases, fallThrough, start, end, before, index, tableSize);
+                    return;
+                }
 
                 using JumpTableCodePtr = CodePtr<JSSwitchPtrTag>;
                 JumpTableCodePtr* jumpTable = static_cast<JumpTableCodePtr*>(m_proc.addDataSection(sizeof(JumpTableCodePtr) * tableSize));

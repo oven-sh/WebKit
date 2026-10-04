@@ -942,7 +942,7 @@ private:
         Value* ptr, HeapRange range, const Filter& filter, const Replace& replace)
     {
         // FIXME: Currently we observed some performance regression in this case.
-        MemoryMatches matches = findMemoryValue(ptr, range, filter /* , m_value->as<MemoryValue>()->readsMutability() */);
+        MemoryMatches matches = findMemoryValue(ptr, range, filter, m_proc.positionIndependent() ? m_value->as<MemoryValue>()->readsMutability() : Mutability::Mutable);
         if (replaceMemoryValue(matches, replace))
             return;
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
@@ -1032,6 +1032,8 @@ private:
         worklist.pushAll(m_block->predecessors());
 
         MemoryMatches matches;
+        constexpr unsigned maxBlocksWithWritesToSearch = 64;
+        unsigned blocksWithWritesSearched = 0;
 
         while (BasicBlock* block = worklist.pop()) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Looking at ", *block);
@@ -1046,7 +1048,7 @@ private:
                 continue;
             }
 
-            if (readsMutability != Mutability::Immutable && data.writes.overlaps(range)) {
+            if (data.writes.overlaps(range) && (readsMutability != Mutability::Immutable || ++blocksWithWritesSearched > maxBlocksWithWritesToSearch)) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
                 return { };
             }
