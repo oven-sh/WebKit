@@ -252,16 +252,21 @@ GCAwareJITStubRoutineWithExceptionHandler::~GCAwareJITStubRoutineWithExceptionHa
 #endif
 }
 
-void GCAwareJITStubRoutineWithExceptionHandler::observeZeroRefCountImpl()
+// Not when the ref count reaches zero: the inline cache can drop this routine (a reset at the end of a collection, a
+// repatch) from inside the call this code makes, and an exception thrown out of that call finds its way to the
+// CodeBlock's catch block through this handler. The collector calls this when it deletes the routine, which it does
+// once the code is no longer on the stack. Not from deleteFromGC(): ~JITStubRoutineSet calls that after the CodeBlocks
+// are gone.
+void GCAwareJITStubRoutineWithExceptionHandler::removeExceptionHandler()
 {
 #if ENABLE(DFG_JIT)
-    if (m_codeBlockWithExceptionHandler) {
-        m_codeBlockWithExceptionHandler->removeExceptionHandlerForCallSite(m_exceptionHandlerCallSiteIndex);
-        m_codeBlockWithExceptionHandler = nullptr;
-    }
+    // A dead owner is the CodeBlock with the handler, and it takes its handlers with it.
+    if (m_ownerIsDead || !m_codeBlockWithExceptionHandler)
+        return;
+    ASSERT(m_codeBlockWithExceptionHandler == m_owner);
+    m_codeBlockWithExceptionHandler->removeExceptionHandlerForCallSite(m_exceptionHandlerCallSiteIndex);
+    m_codeBlockWithExceptionHandler = nullptr;
 #endif
-
-    Base::observeZeroRefCountImpl();
 }
 
 
