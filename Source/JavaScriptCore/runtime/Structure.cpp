@@ -660,14 +660,19 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
 }
 
 #if ENABLE(AOT)
-bool Structure::shouldConvertFirstObjectToDictionaryForAdd(VM& vm)
+bool Structure::mayConvertFirstObjectToDictionaryForAdd(VM& vm)
 {
     if (!vm.m_aotProgram || transitionCountEstimate() < s_minTransitionLengthToConvertFirstObjectToDictionary || didConvertFirstObjectToDictionary())
         return false;
     JSType type = m_blob.type();
     if ((type != FinalObjectType && type != JSFunctionType) || hasBeenDictionary() || typedLayoutID() || hasPolyProto() || isCopyOnWrite(indexingMode()))
         return false;
-    if (type == FinalObjectType && storedPrototypeObject() != realm()->objectPrototype())
+    return type != FinalObjectType || storedPrototypeObject() == realm()->objectPrototype();
+}
+
+bool Structure::shouldConvertFirstObjectToDictionaryForAdd(VM& vm)
+{
+    if (!mayConvertFirstObjectToDictionaryForAdd(vm))
         return false;
     setDidConvertFirstObjectToDictionary(true);
     return true;

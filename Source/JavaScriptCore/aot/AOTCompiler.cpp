@@ -716,14 +716,19 @@ static void appendFacts(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const Call
     out.print("F\t", summary ? summary->ofFunction().number : 0, "\t", about->key.module, "\t", about->key.start, "\t", about->key.kind, "\t", unlinkedCodeBlock->numParameters(), "\t", static_cast<unsigned>(unlinkedCodeBlock->codeType()), "\t", static_cast<unsigned>(unlinkedCodeBlock->parseMode()), "\t", unlinkedCodeBlock->isConstructor() ? "construct" : "call", "\n");
     graph.dumpFacts(out);
     auto text = out.toUTF8CString();
+    appendToFacts(byteCast<char>(text.span()));
+}
+#endif
+
+void appendToFacts(std::span<const char> text)
+{
     static Lock lock;
     Locker locker { lock };
     auto file = FileSystem::openFile(String::fromUTF8(byteCast<char>(Options::aotFactsPath())), FileSystem::FileOpenMode::ReadWrite);
     if (!file || !file.seek(0, FileSystem::FileSeekOrigin::End))
         return;
-    file.write(byteCast<uint8_t>(text.span()));
+    file.write(byteCast<uint8_t>(text));
 }
-#endif
 
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program)
 {

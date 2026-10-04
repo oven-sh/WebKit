@@ -16,6 +16,7 @@
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "NativeExecutable.h"
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT {
 
@@ -174,8 +175,31 @@ void Lowering::checkStructure(Node* baseNode, LValue base, LValue word)
     exitUnless(m_out.equal(m_out.load32(base, m_heaps.JSCell_structureID), m_out.castToInt32(word)));
 }
 
+static uint32_t counterOfExits(Node* guard)
+{
+    uint32_t counter = (guard->graph->firstTypeCoverageCounter + guard->bytecodeIndex.offset()) * CoveredOperation::countersPerOperation;
+    uint32_t kind = static_cast<uint32_t>(guard->guardKind);
+    if (guard->instruction && kind < (guard->instruction->size() - 1) * CoveredOperation::countersPerOperation)
+        return counter + CoveredOperation::countersPerOperation + kind;
+    return counter + (guard->guardKind == GuardKind::Reentry ? CoveredOperation::runtimeCallsCounter : CoveredOperation::stubCallsCounter);
+}
+
 void Lowering::emitGuard(Node* guard)
 {
+    LBasicBlock uncountedExit = m_exit;
+    if (uncountedExit && Options::useAOTTypeCoverageCounters()) [[unlikely]]
+        m_exit = newColdBlock();
+    auto countExits = makeScopeExit([&] {
+        if (m_exit == uncountedExit)
+            return;
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.jump(continuation);
+        m_out.appendTo(m_exit);
+        incrementTypeCoverageCounter(counterOfExits(guard));
+        m_out.jump(uncountedExit);
+        m_out.appendTo(continuation);
+        m_exit = uncountedExit;
+    });
     switch (guard->guardKind) {
     case GuardKind::Whole:
         break;

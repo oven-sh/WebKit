@@ -507,6 +507,8 @@ struct Instance {
     static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID);
     Structure* emptyStructureForLayout(uint16_t layoutID);
     Structure* emptyStructureForLayout(uint16_t layoutID, JSObject* prototype);
+    void noteConstructorOfLayout(uint16_t layoutID, JSFunction*);
+    String nameOfClassWithLayout(uint16_t layoutID);
     static JSObject* newObjectOf(VM&, Structure*);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
 

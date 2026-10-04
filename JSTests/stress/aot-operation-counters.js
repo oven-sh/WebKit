@@ -116,3 +116,32 @@ if (isCounting) {
         byState += count("operationAOTGetById:" + state);
     shouldBe(byState, count("operationAOTGetById"), "each arrival of an operation with a slot has one slot state");
 }
+
+const lineOfRead = new Error().line; function readsAtOneSite(o) { return o.property; }
+const lineOfStore = new Error().line; function storesAtOneSite(o, value) { o.property = value; }
+
+function countAtLine(operation, line)
+{
+    let sum = 0;
+    for (let column = 0; column < 120; ++column) {
+        for (let offset = 0; offset < 64; ++offset)
+            sum += count(operation + ":at:" + line + ":" + column + ":bc" + offset);
+    }
+    return sum;
+}
+
+if (isCounting) {
+    const sites = [
+        ["operationAOTGetById", lineOfRead, i => readsAtOneSite({ ["read" + i]: 1, property: i })],
+        ["operationAOTPutById", lineOfStore, i => storesAtOneSite({ ["stored" + i]: 1 }, i)],
+    ];
+    for (const [operation, line, run] of sites) {
+        const before = count(operation);
+        const beforeAtLine = countAtLine(operation, line);
+        for (let i = 0; i < 50; ++i)
+            run(i);
+        const arrivals = count(operation) - before;
+        shouldBe(arrivals >= 50, true, operation + " arrives for each new shape");
+        shouldBe(countAtLine(operation, line) - beforeAtLine, arrivals, "each arrival of " + operation + " is counted at its site");
+    }
+}

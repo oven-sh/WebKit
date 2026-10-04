@@ -13,6 +13,7 @@
     function listsKeys(object) { return Object.keys(object); }
     function Pair(first, second) { this.first = first; this.second = second; }
     function storesItself(object) { object.self = object; return object; }
+    function isText(value) { return typeof value === "string"; }
 
     const point = makesPoint(1, 2);
     if (readsX(point) !== 1 || storesZ(point, 3).z !== 3 || storesQuotedKey(point, 4)["quoted key"] !== 4 || storesByKey(point, "w", 5).w !== 5)
@@ -26,6 +27,9 @@
     const loop = storesItself({ });
     if (loop.self !== loop)
         throw new Error("wrong loop");
+
+    if (!isText("a") || isText(1) || isText({ }))
+        throw new Error("wrong test");
 
     if (!aotRemarks("makesPoint"))
         return;
@@ -42,7 +46,7 @@
     }
 
     for (const line of facts.split("\n")) {
-        if (line && !/^(F(\t[^\t]*){8}|B(\t[^\t]*){4}|N(\t[^\t]*){5})$/.test(line))
+        if (line && !/^(M(\t[^\t]*){2}|[DERW](\t[^\t]*){3}|F(\t[^\t]*){8}|B(\t[^\t]*){4}|N(\t[^\t]*){5})$/.test(line))
             throw new Error("a line of the facts is broken: " + line);
     }
 
@@ -63,6 +67,7 @@
     has(/^N\t\d+\top_construct\t\d+\t callee=\d+/m);
     has(/^N\t\d+\tIntrinsic\t\t \S*\.keys\t$/m);
     has(/^N\t\d+\top_ret\t\d+\t\t \S+:\d+$/m);
+    has(/^N\t\d+\top_is_cell_with_type\t\d+\t type=primitive\t \S+:\d+$/m);
 
     const read = /^N\t\d+\top_get_from_scope\t\d+\t name=total variable=(\d+:\d+)\t/m.exec(facts);
     const written = /^N\t\d+\top_put_to_scope\t\d+\t name=total variable=(\d+:\d+)\t/m.exec(facts);
@@ -71,5 +76,7 @@
 
     hasNot(/ name=z direct/);
     hasNot(/ name=neverMentioned/);
+    hasNot(/^N\t\d+\top_is_number\t\d+\t type=/m);
+    hasNot(/^M\t\d+\t\S* /m);
     hasNot(/^N\t\d+\top_put_by_val\t\d+\t name=/m);
 })();

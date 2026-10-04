@@ -177,6 +177,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
 {
     AOT_OPERATION_BEGIN(instance);
     countOperationBySlotState(instance, __func__, cache);
+    countOperationAtSite(instance, callFrame, __func__);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     if (Options::useAOTOperationCounters()) [[unlikely]] {
@@ -606,7 +607,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance* instance
         TypedLayoutTable::reportViolation(TypedLayoutTable::s_lastConversionFailure, safeCast<uint16_t>(layoutID), value);
         OPERATION_RETURN(scope);
     }
-    throwTypeError(globalObject, scope, makeString("Type check failed: the object does not have the layout of its declared type, and cannot be converted to it: "_s, TypedLayoutTable::s_lastConversionFailure));
+    String className = instance->nameOfClassWithLayout(safeCast<uint16_t>(layoutID));
+    throwTypeError(globalObject, scope, makeString("Type check failed: the object does not have the layout of its declared type"_s, className.isEmpty() ? ""_s : ", the class "_s, className, ", and cannot be converted to it: "_s, TypedLayoutTable::s_lastConversionFailure));
     OPERATION_RETURN(scope);
 }
 

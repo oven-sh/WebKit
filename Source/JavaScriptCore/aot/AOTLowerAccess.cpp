@@ -1203,6 +1203,25 @@ void Lowering::lowerPutById(Node* node)
         m_out.jump(afterTypedStore);
         m_out.appendTo(otherwise, afterTypedStore);
         }
+    } else if (field && Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->isInObject() && (!isCompact() || (m_block->isInLoop && !m_block->isGeneric))) {
+        m_graph.remark("typed-field-write"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+        LBasicBlock otherwise = newColdBlock();
+        afterTypedStore = m_out.newBlock();
+        if (!isSubtype(baseNode->type, TCell)) {
+            LBasicBlock cellCase = m_out.newBlock();
+            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+            m_out.appendTo(cellCase);
+        }
+        LValue structure = structureOf(base);
+        orElse(m_out.equal(m_out.load16ZeroExt32(m_out.address(m_heaps.root, structure, Structure::offsetOfFieldIDInSlot() + field->slot * sizeof(uint16_t))), m_out.constInt32(field->id)), otherwise);
+        branchUnlessAccepted(valueNode, value, field->fieldType, otherwise);
+        LValue storedValue = toFieldRepresentation(valueNode, value, field->fieldType);
+        orElse(m_out.testIsZero32(m_out.load32(structure, m_heaps.Structure_bitField), m_out.constInt32(Structure::s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits)), otherwise);
+        m_out.store64(storedValue, m_out.address(m_heaps.properties.atAnyNumber(), base, JSObject::offsetOfInlineStorage() + field->slot * sizeof(EncodedJSValue)));
+        if (mayBe(valueNode->type, TCell))
+            storeBarrier(base);
+        m_out.jump(afterTypedStore);
+        m_out.appendTo(otherwise, afterTypedStore);
     }
     if (!afterTypedStore)
         remarkBaseOfUntypedAccess(m_graph, baseNode);

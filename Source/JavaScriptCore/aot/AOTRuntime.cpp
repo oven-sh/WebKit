@@ -510,6 +510,7 @@ struct Instance::Collections {
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, LayoutConversionPlan> conversionPlans;
     UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> rejectedConversions;
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
+    UncheckedKeyHashMap<uint32_t, JSFunction*> constructorsOfLayouts;
     JSModuleLoader* loader { nullptr };
     Vector<std::pair<Structure*, Structure*>, 12> functionStructures;
     Vector<std::pair<Structure*, Structure*>, 6> functionStructuresWithCaptures;
@@ -1900,6 +1901,8 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     }
     for (Structure* structure : collections->emptyStructures.values())
         visitor.appendUnbarriered(structure);
+    for (JSFunction* constructor : collections->constructorsOfLayouts.values())
+        visitor.appendUnbarriered(constructor);
     for (auto& [from, to] : collections->convertedStructures) {
         visitor.appendUnbarriered(from.first);
         if (to)
@@ -2051,6 +2054,22 @@ Structure* Instance::emptyStructureForLayout(uint16_t layoutID, JSObject* protot
     RELEASE_ASSERT(result);
     result->setTypedLayoutID(layoutID);
     return result;
+}
+
+void Instance::noteConstructorOfLayout(uint16_t layoutID, JSFunction* constructor)
+{
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.noteConstructorOfLayout(layoutID, constructor);
+    if (collections->constructorsOfLayouts.add(layoutID, constructor).isNewEntry)
+        noteCellAdded(constructor);
+}
+
+String Instance::nameOfClassWithLayout(uint16_t layoutID)
+{
+    if (Instance& ofRealm = ensure(globalObject); &ofRealm != this)
+        return ofRealm.nameOfClassWithLayout(layoutID);
+    JSFunction* constructor = collections->constructorsOfLayouts.get(layoutID);
+    return constructor ? constructor->name(*vm) : String();
 }
 
 JSObject* Instance::newObjectOf(VM& vm, Structure* structure)

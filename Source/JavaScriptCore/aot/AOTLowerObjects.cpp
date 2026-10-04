@@ -218,11 +218,17 @@ bool Lowering::tryLowerAllocation(Node* node)
                 auto& instructions = code().codeBlock()->instructions();
                 auto& stores = code().literalStores(node->bytecodeIndex.offset());
                 RELEASE_ASSERT(stores.size() >= count);
+                unsigned slot = allocateSlots(2);
+                Vector<uint32_t, 16> words { AllocationPlan::encode(0, count) };
                 for (unsigned i = 0; i < count; ++i) {
                     auto store = instructions.at(stores[i])->as<OpPutById>();
-                    uint32_t flags = (store.m_flags.isDirect() ? 1 : 0) | (store.m_flags.ecmaMode().isStrict() ? 2 : 0);
-                    vmCall(node, Void, Entry::operationAOTPutById, m_instance, object, values[i], m_out.constInt32(numberOf(store.m_property)), slotAddress(allocateSlot()), m_out.constInt32(flags));
+                    words.append(AllocationPlan::encode(numberOf(store.m_property), store.m_flags.isDirect(), store.m_flags.ecmaMode().isStrict(), true));
+                    m_out.store64(values[i], scratchWord(i));
                 }
+                m_graph.noteSitePlan(slot, WTF::move(words));
+                m_graph.remark("typed-literal-with-other-names"_s, String::number(count));
+                vmCall(node, Void, Entry::operationAOTPutProperties, m_instance, object, scratchAddress(), m_out.constInt32(count), slotAddress(slot));
+                vmCall(node, Void, Entry::operationAOTValidateTypedObject, m_instance, object);
                 setJSValue(node, object);
                 return true;
             }

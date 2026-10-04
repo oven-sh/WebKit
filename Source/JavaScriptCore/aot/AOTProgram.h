@@ -523,6 +523,13 @@ public:
                 functor(entry.value.function);
         }
     }
+    template<typename Functor> void forEachDeclaration(const Functor& functor) const
+    {
+        for (auto& entry : m_variables) {
+            if (entry.value.isDescribed && entry.value.function.isDeclaration)
+                functor(entry.key, entry.value.function);
+        }
+    }
 
 private:
     struct Variable {

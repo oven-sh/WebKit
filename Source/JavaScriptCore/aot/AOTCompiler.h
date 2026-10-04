@@ -26,6 +26,7 @@ struct CompiledCode;
 JS_EXPORT_PRIVATE bool recordKnownFunctionUsesForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FunctionSummaryMap&, const FunctionSummary*, VariableSummaries*);
 JS_EXPORT_PRIVATE Type inferReturnTypeForImage(VM&, UnlinkedCodeBlock*, const CalleeHints*, const ModuleLinkage*, const FunctionSummary*, VariableSummaries*, unsigned summaryReader, Vector<const KnownFunction*>& calleesRead, Vector<const KnownFunction*>& calleesWithWidenedInputs, uint32_t& escapingParameters, const String& nameForLog = String());
 JS_EXPORT_PRIVATE bool compileForImage(VM&, UnlinkedCodeBlock*, CompiledCode&, const CalleeHints* = nullptr, const ModuleLinkage* = nullptr, const FunctionSummary* = nullptr, VariableSummaries* = nullptr, const ProgramCode* = nullptr);
+void appendToFacts(std::span<const char>);
 bool mayBeAbsorbed(UnlinkedCodeBlock*, const FunctionSummary*);
 void recordAllSitesOf(Graph&);
 

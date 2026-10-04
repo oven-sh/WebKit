@@ -380,6 +380,7 @@ public:
 
 #if ENABLE(AOT)
     static constexpr int s_minTransitionLengthToConvertFirstObjectToDictionary = 8;
+    JS_EXPORT_PRIVATE bool mayConvertFirstObjectToDictionaryForAdd(VM&);
     JS_EXPORT_PRIVATE bool shouldConvertFirstObjectToDictionaryForAdd(VM&);
 #endif
 

@@ -6170,6 +6170,72 @@ struct BytecodeLinkEncoder::Impl {
             for (unsigned i = 0; i < module.starExportCount; ++i)
                 everyExportEscapes(requested(graphStarExports[module.firstStarExport + i]));
         }
+        if (Options::aotFactsPath()) [[unlikely]] {
+            StringPrintStream out;
+            auto printEscaped = [&](StringView text) {
+                for (char16_t character : text.codeUnits()) {
+                    if (character > ' ' && character != '\\' && character < 0x7f)
+                        out.print(static_cast<char>(character));
+                    else
+                        out.printf("\\u%04x", character);
+                }
+            };
+            auto keyOf = [&](uint32_t graphModule) -> uint32_t {
+                return graphModule < linked.size() && linked[graphModule].codeBlock ? modules[linked[graphModule].index].entryOffset + 1 : 0;
+            };
+            auto printVariable = [&](uint32_t graphModule, uint32_t sid) {
+                Identifier name = nameOf(sid);
+                if (keyOf(graphModule) && !name.isNull()) {
+                    SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(name.impl());
+                    if (!entry.isNull() && entry.varOffset().isScope()) {
+                        out.print("variable=", reinterpret_cast<uintptr_t>(linked[graphModule].symbolTable), ":", entry.scopeOffset().offset());
+                        return;
+                    }
+                }
+                out.print("unknown");
+            };
+            for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
+                uint32_t key = keyOf(graphModule);
+                if (!key)
+                    continue;
+                auto& module = graphModules[graphModule];
+                auto requested = [&](uint32_t request) {
+                    return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
+                };
+                for (unsigned i = 0; i < module.requestCount; ++i) {
+                    out.print("R\t", key, "\t");
+                    printEscaped(nameOf(graphRequests[module.firstRequest + i].specifierSid).string());
+                    out.print("\t", keyOf(graphRequests[module.firstRequest + i].moduleIndex), "\n");
+                }
+                for (unsigned slot = 0; slot < module.importCount; ++slot) {
+                    auto& import = graphImports[module.firstImport + slot];
+                    if (!import.isNamespace())
+                        continue;
+                    out.print("W\t", key, "\t");
+                    printVariable(graphModule, import.localSid);
+                    out.print("\tnamespace=", keyOf(requested(import.request())), "\n");
+                }
+                for (unsigned i = 0; i < module.exportCount; ++i) {
+                    auto& entry = graphExports[module.firstExport + i];
+                    out.print("E\t", key, "\t");
+                    printEscaped(nameOf(entry.exportSid).string());
+                    out.print("\t");
+                    if (entry.isNamespaceReexport())
+                        out.print("namespace=", keyOf(requested(entry.request())));
+                    else if (entry.kind() == Graph::ExportKind::Local)
+                        printVariable(graphModule, entry.localOrImportSid);
+                    else if (entry.resolution() == Graph::ResolutionKind::Binding)
+                        printVariable(entry.resolvedModule, entry.resolvedLocalSid);
+                    else
+                        out.print("unknown");
+                    out.print("\n");
+                }
+                for (unsigned i = 0; i < module.starExportCount; ++i)
+                    out.print("E\t", key, "\t*\tnamespace=", keyOf(requested(graphStarExports[module.firstStarExport + i])), "\n");
+            }
+            auto text = out.toUTF8CString();
+            AOT::appendToFacts(byteCast<char>(text.span()));
+        }
         return result;
     }
     Vector<AOT::Variable> linkVariablesWrittenNatively;
@@ -6518,6 +6584,30 @@ struct BytecodeLinkEncoder::Impl {
             for (auto& job : jobs)
                 codeBlocks.append({ job.module, job.key.start, job.key.kind, job.codeBlock });
             AOT::TypeTable::loadSiteTypes(codeBlocks.span());
+        }
+        if (Options::aotFactsPath()) [[unlikely]] {
+            StringPrintStream out;
+            for (unsigned module = 0; module < modules.size(); ++module) {
+                if (!isProgramModule(module))
+                    continue;
+                SourceProvider& provider = *modules[module].source.provider();
+                out.print("M\t", modules[module].entryOffset + 1, "\t");
+                String name = provider.sourceURL().isEmpty() ? provider.sourceOrigin().url().string() : provider.sourceURL();
+                for (char16_t character : StringView(name).codeUnits()) {
+                    if (character > ' ' && character != '\\' && character < 0x7f)
+                        out.print(static_cast<char>(character));
+                    else
+                        out.printf("\\u%04x", character);
+                }
+                out.print("\n");
+                if (!hints[module])
+                    continue;
+                hints[module]->forEachDeclaration([&](unsigned offset, const AOT::KnownFunction& function) {
+                    out.print("D\t", modules[module].entryOffset + 1, "\tvariable=", reinterpret_cast<uintptr_t>(hints[module]->variableScope()), ":", offset, "\tfunction=0:", function.key.module, ":", function.key.start, ":", function.key.kind, "\n");
+                });
+            }
+            auto text = out.toUTF8CString();
+            AOT::appendToFacts(byteCast<char>(text.span()));
         }
         MonotonicTime phaseStart = MonotonicTime::now();
         auto endPhase = [&](ASCIILiteral name) {

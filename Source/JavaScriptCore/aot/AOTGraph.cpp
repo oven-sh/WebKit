@@ -3136,6 +3136,9 @@ void Graph::dumpFacts(PrintStream& out)
         case op_create_rest:
             out.print(" index=", node->as<OpCreateRest>().m_numParametersToSkip);
             return;
+        case op_is_cell_with_type:
+            out.print(" type=", node->as<OpIsCellWithType>().m_type >= ObjectType ? "object" : "primitive");
+            return;
         case op_new_array:
             if (readsOperandsFromFrame(node))
                 out.print(" argv=", node->as<OpNewArray>().m_argv, " argc=", node->as<OpNewArray>().m_argc);

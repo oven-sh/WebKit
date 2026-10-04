@@ -176,6 +176,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useAOTInlining, true, Normal, "Inline a call whose callee is known exactly, if the callee is small or this is its only call site."_s) \
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
     v(Bool, validateAOTTypesOfPhis, false, Normal, "For testing the AOT compiler. With validateAOTInferredTypes: the type of a phi is checked too, at the head of its block."_s) \
+    v(OptionString, aotFunctionWithWrongTypesForTesting, nullptr, Normal, "For testing validateAOTInferredTypes. When compiling: in the functions of this name every value that is checked is taken to be unreachable, so that the first of them to be computed fails the check."_s) \
     v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
     \
     v(Unsigned, repatchCountForCoolDown, 8, Normal, nullptr) \

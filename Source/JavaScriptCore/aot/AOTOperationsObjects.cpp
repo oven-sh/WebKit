@@ -263,11 +263,12 @@ static void installTypedLayoutInAllocationProfile(VM& vm, Instance* instance, Ca
 {
     if (!layoutID) [[likely]]
         return;
+    if (callerBytecodeOwner(instance, callFrame).executableIfExists() != constructor->executable())
+        return;
+    instance->noteConstructorOfLayout(layoutID, constructor);
     FunctionRareData* rareData = constructor->rareData();
     Structure* usual = rareData->objectAllocationStructure();
     if (usual->typedLayoutID() || usual->hasPolyProto()) [[likely]]
-        return;
-    if (callerBytecodeOwner(instance, callFrame).executableIfExists() != constructor->executable())
         return;
     JSObject* prototype = usual->storedPrototypeObject();
     if (!TypedLayoutTable::tryToInheritFrom(vm, layoutID, prototype))
@@ -441,7 +442,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
     if (base.isCell() && base.asCell()->type() == FinalObjectType) {
         JSObject* object = asObject(base);
         Structure* structure = object->structure();
-        if (!structure->isDictionary() && structure->isStructureExtensible() && !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) && !structure->hasPolyProto() && !structure->mayBePrototype()) {
+        bool becomesDictionary = structure->transitionCountEstimate() > Structure::s_maxTransitionLength || (!plan.isDefined(0) && structure->mayConvertFirstObjectToDictionaryForAdd(vm));
+        if (!becomesDictionary && !structure->isDictionary() && structure->isStructureExtensible() && !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) && !structure->hasPolyProto() && !structure->mayBePrototype()) {
             auto& target = instance->propertyRunTarget(structure, plan.words, [&](Vector<UniquedStringImpl*, 16>& names) {
                 for (unsigned i = 0; i < count; ++i)
                     names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
@@ -482,7 +484,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
         where.setItem(i);
         const Identifier& ident = identifierAt(instance, callFrame, plan.identifier(i));
         PutPropertySlot slot(base, plan.isStrict(i), putByIdContextOf(instance, callFrame));
-        if (plan.isDefined(i))
+        if (Structure* structure = plan.isDefined(i) ? asObject(base)->structure() : nullptr; structure && structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) {
+            JSValue value = JSValue::decode(values[i]);
+            if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
+                throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, structure, ident.impl(), value));
+        } else if (plan.isDefined(i))
             CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, JSValue::decode(values[i]), slot);
         else
             base.putInline(globalObject, ident, JSValue::decode(values[i]), slot);

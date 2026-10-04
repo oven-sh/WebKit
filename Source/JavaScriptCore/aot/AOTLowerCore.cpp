@@ -1046,6 +1046,11 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     Type expected = node->wasInferredUnreachable ? TNone : node->type;
     if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
         expected = (expected & ~TFunction) | TOtherObject;
+    if (Options::aotFunctionWithWrongTypesForTesting()) [[unlikely]] {
+        const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
+        if (function && function->executable && StringView { function->executable->ecmaName().string() } == StringView::fromLatin1(byteCast<char>(Options::aotFunctionWithWrongTypesForTesting())))
+            expected = TNone;
+    }
     unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
     if (node->kind == NodeKind::Argument)
         which += 100 * node->reg.toArgument();
