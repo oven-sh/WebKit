@@ -360,7 +360,7 @@ public:
 
     static TestedValue valueTestedByCondition(Node* condition, unsigned depth = 0)
     {
-        if (condition->kind == NodeKind::Intrinsic)
+        if (condition->kind == NodeKind::Intrinsic && isSubtype(condition->type, TAnyObject))
             return { condition, TAll, TNone };
         if (condition->kind != NodeKind::Bytecode || condition->guard || condition->guarded)
             return { condition, TAll & ~TOther, TMayBeFalsy };
@@ -2125,13 +2125,17 @@ private:
                 m_graph.remark("typed-size-of-map-or-set"_s);
                 return TNumber;
             }
-            if (Type primitive = node->guard ? TNone : typeOf(node->as<OpGetById>().m_base) & ~(TOther | TEmpty)) {
-                if (unsigned method = intrinsicFoundOnPrimitive(primitive, *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); method && ImmutableIntrinsics::shared()->at(method).type == JSFunctionType)
+            if (!node->guard) {
+                Type base = typeOf(node->as<OpGetById>().m_base) & ~(TOther | TEmpty);
+                if (!base)
+                    return TNone;
+                const StringImpl& name = *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl();
+                if (unsigned method = intrinsicFoundOnPrimitive(base, name); method && ImmutableIntrinsics::shared()->at(method).type == JSFunctionType)
                     return intrinsicFunctionType(method);
-            }
-            if (uint32_t function = node->guard ? 0 : intrinsicFunctionOf(typeOf(node->as<OpGetById>().m_base))) {
-                if (unsigned member = intrinsicInheritedByFunction(function, *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()))
-                    return intrinsicFunctionType(member);
+                if (uint32_t function = isSubtype(base, TFunction) ? intrinsicFunctionOf(base) : 0) {
+                    if (unsigned member = intrinsicInheritedByFunction(function, name))
+                        return intrinsicFunctionType(member);
+                }
             }
             return typeOf(node->as<OpGetById>().m_base) ? TAll : TNone;
         case op_new_reg_exp:
