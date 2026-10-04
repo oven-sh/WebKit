@@ -645,9 +645,14 @@ public:
             TestedValue tested = valueTestedBy(terminal);
             if (!tested.value || tested.value->isElided)
                 continue;
+            Type typeTested = tested.value->type;
+            if (tested.value->graph != terminal->graph)
+                typeTested &= ~TEmpty;
             for (unsigned i = 0; i < 2; ++i) {
                 Type narrowedTo = i ? tested.ifFalse : tested.ifTrue;
-                if (!mayBe(tested.value->type, narrowedTo) || !isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo))
+                if (!mayBe(tested.value->type, narrowedTo))
+                    continue;
+                if (!isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo) && !isWorthNarrowing(typeTested, typeTested & narrowedTo))
                     continue;
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
