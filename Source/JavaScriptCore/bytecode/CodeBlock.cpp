@@ -1358,7 +1358,7 @@ Vector<unsigned> CodeBlock::setConstantRegisters(const FixedVector<WriteBarrier<
     // symbolTableCache a dead table.
     size_t moduleEnvironmentSymbolTableIndex = notFound;
 #if USE(BUN_JSC_ADDITIONS)
-    if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()))
+    if (auto* unlinkedModuleProgramCodeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(m_unlinkedCode.get()); unlinkedModuleProgramCodeBlock && count)
         moduleEnvironmentSymbolTableIndex = VirtualRegister(unlinkedModuleProgramCodeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset()).toConstantIndex();
 #endif
     // An activation of a generator, an async function or a module body can outlive this code: while it is suspended its

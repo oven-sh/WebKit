@@ -460,7 +460,11 @@ void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, 
     };
     bool mayBeNoCell = !isSubtype(baseNode->type, TCell);
     auto requireName = [&](bool mustHold) {
-        require(m_out.equal(fieldIDInSlot(m_out.load32(base, m_heaps.JSCell_structureID), place.slot), m_out.constInt32(place.nameID)), mustHold);
+        LValue nameIDThere = fieldIDInSlot(m_out.load32(base, m_heaps.JSCell_structureID), place.slot);
+        LValue isThere = m_out.equal(nameIDThere, m_out.constInt32(place.nameID));
+        if (mustHold && place.family)
+            isThere = m_out.bitOr(isThere, m_out.equal(nameIDThere, m_out.constInt32(Structure::ambiguousFieldID)));
+        require(isThere, mustHold);
     };
     auto requireFamily = [&](bool mustHold) {
         require(m_out.equal(familyOfStructureWithID(m_out.load32(base, m_heaps.JSCell_structureID)), m_out.constInt32(place.family)), mustHold);

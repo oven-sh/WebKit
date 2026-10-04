@@ -109,14 +109,11 @@ static auto& propertyNameIDs(VM& vm)
 
 static uint16_t knownPropertyNameID(VM& vm, Image* imageWithPropertyNames, UniquedStringImpl* uid)
 {
-    auto& ids = propertyNameIDs(vm).ids;
-    uint16_t id = ids.get(uid);
-    if (!id && imageWithPropertyNames) {
-        id = imageWithPropertyNames->propertyNameID(vm, uid);
-        if (id)
-            ids.add(uid, id);
+    if (imageWithPropertyNames) {
+        if (uint16_t id = imageWithPropertyNames->propertyNameID(vm, uid))
+            return id;
     }
-    return id;
+    return propertyNameIDs(vm).ids.get(uid);
 }
 
 bool hasListOfPropertyNames()
@@ -152,7 +149,9 @@ void validatePropertyNameIDs(VM& vm)
     Image* image = Image::withPropertyNames();
     if (!image)
         return;
-    for (auto& name : image->propertyNames()) {
+    for (auto& name : image->propertyNameTable()) {
+        if (!name.id)
+            continue;
         RELEASE_ASSERT(name.id > image->header().largestFieldID && name.id < propertyNameIDs(vm).next);
         RELEASE_ASSERT(propertyNameID(vm, VMProgram::of(vm)->identifier(static_cast<uint32_t>(name.identifier))) == name.id);
     }

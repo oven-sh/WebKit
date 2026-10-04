@@ -500,6 +500,9 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
+#if ASSERT_ENABLED
+    uint16_t m_aotFamilyWhoseDepartureWasNoted { 0 };
+#endif
     uintptr_t m_structureIDBase { 0 };
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
     Vector<AOT::Instance*> m_aotInstancesToDestroy;

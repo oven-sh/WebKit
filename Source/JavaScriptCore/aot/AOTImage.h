@@ -63,10 +63,8 @@ struct ImageHeader {
     uint32_t layoutIDsByFieldIDOffset;
     uint32_t largestFieldID;
     uint32_t largestPropertyNameID;
-    uint32_t propertyNamesOffset;
-    uint32_t numberOfPropertyNames;
-    uint32_t propertyNameFilterOffset;
-    uint32_t propertyNameFilterMask;
+    uint32_t propertyNameTableOffset;
+    uint32_t propertyNameTableSize;
     uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes;
     uint32_t numberOfTypeCoverageCounters;
@@ -250,7 +248,7 @@ public:
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
     uint32_t selectorNamed(VM&, const StringImpl&) const;
-    std::span<const ImagePropertyName> propertyNames() const { return { at<ImagePropertyName>(header().propertyNamesOffset), header().numberOfPropertyNames }; }
+    std::span<const ImagePropertyName> propertyNameTable() const { return { at<ImagePropertyName>(header().propertyNameTableOffset), header().propertyNameTableSize }; }
     uint16_t propertyNameID(VM&, UniquedStringImpl*) const;
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().functionStartsOffset)[function.index]; }

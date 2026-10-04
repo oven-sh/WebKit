@@ -603,6 +603,9 @@ JSCell* tokenOf(Instance* instance) { return instance->collections->token; }
 
 void noteDepartureFromFamily(VM& vm, uint16_t family, const char* road)
 {
+#if ASSERT_ENABLED
+    vm.m_aotFamilyWhoseDepartureWasNoted = family;
+#endif
     Instance::noteDepartedFamily(vm, family);
     if (Options::useAOTOperationCounters()) [[unlikely]]
         runtimeTable(vm).countForFamily("Family::departed", "Family::departed-from", family, road);
@@ -610,6 +613,10 @@ void noteDepartureFromFamily(VM& vm, uint16_t family, const char* road)
 
 bool hasNotedDepartureFromFamily(VM& vm, uint16_t family)
 {
+#if ASSERT_ENABLED
+    if (std::exchange(vm.m_aotFamilyWhoseDepartureWasNoted, 0) != family)
+        return false;
+#endif
     if (!Instance::hasByteForFamily(family))
         return true;
     for (Instance* instance : vm.m_aotInstances) {
