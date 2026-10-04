@@ -335,6 +335,8 @@ public:
         }
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
         info.set(executableIndex == invalidExecutableIndex ? 0 : executableIndex + 1, kind, FunctionCode);
+        info.calleeStart = function.calleeStart;
+        info.hasInlineFrames = function.hasInlineFrames;
         info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveInlineConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
         fillMetadata(function.index, codeBlock, executable, lineStarts);
     }
@@ -368,6 +370,14 @@ public:
             }
             if (!code[0] && !code[1])
                 return;
+            std::optional<ImageView::Function> typedBody;
+            if (code[0]) {
+                ImageKey key;
+                key.module = moduleID;
+                key.start = functionKey->start;
+                key.kind = static_cast<uint32_t>(functionKey->kind) << 1 | ImageKey::typedBody;
+                typedBody = m_image.find(key);
+            }
             uint32_t existing = invalidExecutableIndex;
             for (auto& function : code) {
                 if (function && m_infos[function->index].indexPlusOne())
@@ -394,10 +404,13 @@ public:
             m_executables.append({ executable, moduleIndex });
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]) {
+                    RELEASE_ASSERT(!function->hasNoGeneralBody || m_image.stubCodeOffset(Stub::ThrowCalledIndirectly));
                     executable->setAOTCode(kind, function->hasNoGeneralBody ? m_image.stubCodeOffset(Stub::ThrowCalledIndirectly) : function->entry, function->index);
                     fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, executableIndex, kind, lineStarts);
                 }
             }
+            if (typedBody)
+                fillInfo(*typedBody, unlinked->codeBlockIfExists(CodeSpecializationKind::CodeForCall), executable, executableIndex, CodeSpecializationKind::CodeForCall, lineStarts);
             if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction())
                 executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, m_image.stubCodeOffset(Stub::ConstructViaCall), FunctionExecutable::aotConstructViaCallIndex);
             m_unlinkedFunctionExecutable.add(unlinked, executableIndex);
@@ -1329,7 +1342,7 @@ static void verifyTypedFields(VM& vm)
         unsigned numberOfSlots = std::min<unsigned>(structure->inlineCapacity(), std::min<unsigned>(TypedLayoutTable::inlineSlots(layoutID), usesFieldIDs ? Structure::numberOfSlotsWithFieldIDs : TypedLayoutTable::numberOfSlots(layoutID)));
         for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
             JSValue value = asObject(cell)->getDirect(static_cast<PropertyOffset>(slot));
-            if (!value)
+            if (!value || (!usesFieldIDs && value.isUndefined()))
                 continue;
             const TypedLayoutTable::FieldType* fieldType = nullptr;
             if (!usesFieldIDs)

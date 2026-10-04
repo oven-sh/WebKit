@@ -3160,7 +3160,7 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTFunctionsNamed, (JSGlobalObject* globalObjec
     for (uint32_t index = 0; data && index < data->numberOfExecutables; ++index) {
         AOT::Instance& instance = AOT::Instance::ensure(globalObject);
         const AOT::ExecutableRow& row = data->executableRow(index);
-        if (name != (row.isShort ? String { instance.program->identifier(row.name) } : instance.program->executable(index)->ecmaName().string()))
+        if (row.isShort ? !row.name || name != String { instance.program->identifier(row.name) } : name != instance.program->unlinkedFunction(row.unlinkedFunction, false)->ecmaName().string())
             continue;
         if (JSFunction* function = instance.tryMakeFunctionWithoutExecutable(index, globalObject)) {
             result->push(globalObject, function);

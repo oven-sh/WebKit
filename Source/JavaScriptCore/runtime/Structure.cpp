@@ -667,6 +667,8 @@ bool Structure::shouldConvertFirstObjectToDictionaryForAdd(VM& vm)
     JSType type = m_blob.type();
     if ((type != FinalObjectType && type != JSFunctionType) || hasBeenDictionary() || typedLayoutID() || hasPolyProto() || isCopyOnWrite(indexingMode()))
         return false;
+    if (type == FinalObjectType && storedPrototypeObject() != realm()->objectPrototype())
+        return false;
     setDidConvertFirstObjectToDictionary(true);
     return true;
 }
@@ -1393,23 +1395,20 @@ const TypedLayoutTable::Field* TypedLayoutTable::findField(VM& vm, uint16_t type
     if (names.size() > 8) {
         if (name->isSymbol())
             return nullptr;
-        unsigned hash = name->existingHash();
+        uint16_t prefix = nameHashPrefix(name->existingHash());
+        const FieldType* types = s_fieldType + (names.data() - s_fields);
         size_t low = 0;
         size_t high = names.size();
         while (low < high) {
             size_t middle = low + (high - low) / 2;
-            if (identifier(names[middle].identifier)->existingHash() < hash)
+            if (types[middle].nameHashPrefix < prefix)
                 low = middle + 1;
             else
                 high = middle;
         }
-        names = names.subspan(low);
-        for (auto& entry : names) {
-            UniquedStringImpl* candidate = identifier(entry.identifier);
-            if (candidate == name)
-                return &entry;
-            if (candidate->existingHash() != hash)
-                return nullptr;
+        for (; low < names.size() && types[low].nameHashPrefix == prefix; ++low) {
+            if (identifier(names[low].identifier) == name)
+                return &names[low];
         }
         return nullptr;
     }
@@ -1606,9 +1605,8 @@ void Structure::setKnownShape(VM& vm, uint16_t shape)
         return;
     RELEASE_ASSERT(!m_knownShape);
     m_knownShape = shape;
-    if (recordsPropertyNames() && TypedLayoutTable::usesFieldIDs(shape))
-        zeroSpan(std::span { m_fieldIDInSlot });
-    m_typedLayoutID = shape;
+    if (!TypedLayoutTable::hasTypedFields())
+        m_typedLayoutID = shape;
     if (!isWatchingReplacement())
         return;
     Vector<PropertyOffset, 8> offsets;

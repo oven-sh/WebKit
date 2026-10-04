@@ -131,6 +131,7 @@ struct Slot;
     v(operationAOTHasOwnProperty) \
     v(operationAOTEnsureData) \
     v(operationAOTCountMissOfCalleeCache) \
+    v(operationAOTNoteCallee) \
     v(operationAOTCallDirectEval) \
 
 enum class WellKnownIdentifier : uint32_t {
@@ -271,6 +272,7 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance*
 JSC_DECLARE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance*, JSObject*, EncodedJSValue));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTCountMissOfCalleeCache, void, (Instance*, const void* returnAddress));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteCallee, void, (Instance*, Slot* cache, EncodedJSValue callee));
 JSC_DECLARE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (Instance*, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope*, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures));
 
 } } // namespace JSC::AOT

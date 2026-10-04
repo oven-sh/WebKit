@@ -38,6 +38,11 @@ struct FunctionSummary {
     mutable Vector<FunctionSummary*> directCallees WTF_GUARDED_BY_LOCK(directCalleesLock);
 
     bool isNonEscaping { false };
+    bool mayHaveGeneralBody { false };
+    bool hasOnlyKnownCallers { false };
+    mutable std::atomic<bool> hasUnknownCallers { false };
+    const FunctionSummary* function { nullptr };
+    const FunctionSummary& ofFunction() const { return function ? *function : *this; }
     bool canHoldCaptures { false };
     bool takesScopeAsCallee { false };
     bool objectIsNeededAfterAll { false };
@@ -59,6 +64,25 @@ struct FunctionSummary {
         StoredInModuleVariable, StoredInUntrackedVariable, StoredToUnknownLocation, StoredInDynamicallyReadVariable, ReadInexactly,
         PropertyRead, PropertyWritten, PrototypeRead, LeftOfInstanceof, RightOfInstanceof, StoredInProperty, Constructed,
     };
+    static constexpr bool keepsKnownCallSitesExact(uint32_t why)
+    {
+        switch (why & 0xff) {
+        case ReferencesItself:
+        case NotCallable:
+        case FunctionNumberOverflow:
+        case CalledIndirectly:
+        case MergedInPhi:
+        case MergedInFrameRegister:
+        case MergedInVariable:
+        case MergedInParameter:
+        case MergedInReturn:
+        case LostThroughAlias:
+        case ReadInexactly:
+            return false;
+        default:
+            return true;
+        }
+    }
     mutable std::atomic<uint32_t> escapeReason { 0 };
     struct EscapeCause {
         uint32_t why { DoesNotEscape };
@@ -77,9 +101,11 @@ struct FunctionSummary {
     template<typename Functor>
     bool markEscaping(uint32_t why, const Functor& wasPassed)
     {
-        if (escapes.exchange(true, std::memory_order_relaxed))
-            return false;
-        escapeReason.store(why, std::memory_order_relaxed);
+        bool isFirst = !escapes.exchange(true, std::memory_order_relaxed);
+        if (isFirst)
+            escapeReason.store(why, std::memory_order_relaxed);
+        if ((mayHaveGeneralBody && keepsKnownCallSitesExact(why)) || hasUnknownCallers.exchange(true, std::memory_order_relaxed))
+            return isFirst;
         for (auto& type : parameterTypes)
             wasPassed(type.join(TTop));
         wasPassed(thisType.join(TTop));
@@ -87,7 +113,12 @@ struct FunctionSummary {
     }
     bool markEscaping(uint32_t why) { return markEscaping(why, [](Type) { }); }
     AtomicType thisType;
-    bool isReached() const { return !isNonEscaping || escapes.load(std::memory_order_relaxed) || parameterTypes[0].load(); }
+    bool isReached() const
+    {
+        if (function)
+            return function->escapes.load(std::memory_order_relaxed);
+        return !hasOnlyKnownCallers || hasUnknownCallers.load(std::memory_order_relaxed) || parameterTypes[0].load();
+    }
     static constexpr unsigned maxParameters = 12;
     std::array<AtomicType, maxParameters> parameterTypes { };
     std::array<AtomicType, maxParameters> typesPassedByDirectCalls { };
@@ -248,7 +279,7 @@ struct KnownFunction {
     UnlinkedFunctionExecutable* executable { nullptr };
     UnlinkedFunctionCodeBlock* forCall { nullptr };
     UnlinkedFunctionCodeBlock* forConstruct { nullptr };
-    ImageKey key;
+    mutable ImageKey key;
     Convention conventionForCall;
     Convention conventionForConstruct;
     bool isExact { false };
@@ -281,13 +312,16 @@ struct KnownFunction {
 
     ImageKey keyFor(bool isConstruct) const
     {
-        ImageKey result = key;
-        result.kind |= isConstruct;
+        if (!isConstruct)
+            return key;
+        ImageKey result = key.ofPublicBody();
+        result.kind |= 1;
         return result;
     }
 };
 
 bool readsCallee(UnlinkedCodeBlock*);
+JS_EXPORT_PRIVATE bool mayHaveGeneralBody(const KnownFunction&);
 JS_EXPORT_PRIVATE bool mayReferenceItself(UnlinkedCodeBlock*);
 
 class ProgramFunctions {
@@ -307,13 +341,38 @@ public:
     const KnownFunction* function(uint32_t number) const { return number && number <= m_functions.size() ? m_functions[number - 1].get() : nullptr; }
     unsigned size() const { return m_functions.size(); }
 
+    void setBuiltin(unsigned codeIndex, uint32_t number)
+    {
+        while (m_builtins.size() <= codeIndex)
+            m_builtins.append(0);
+        m_builtins[codeIndex] = number;
+    }
+    const KnownFunction* builtin(unsigned codeIndex) const { return codeIndex < m_builtins.size() ? function(m_builtins[codeIndex]) : nullptr; }
+
 private:
     Vector<std::unique_ptr<KnownFunction>> m_functions;
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t> m_numbers;
+    Vector<uint32_t> m_builtins;
 };
 JS_EXPORT_PRIVATE void setProgramFunctions(const ProgramFunctions*);
 const ProgramFunctions* programFunctions();
 JS_EXPORT_PRIVATE unsigned findFunctionsWithoutStackCheck(const ProgramFunctions&);
+
+class CallTargets {
+    WTF_MAKE_TZONE_ALLOCATED(CallTargets);
+    WTF_MAKE_NONCOPYABLE(CallTargets);
+public:
+    CallTargets() = default;
+
+    bool add(UnlinkedCodeBlock* codeBlock, unsigned offset, uint32_t function) { return m_onlyTargets.add({ codeBlock, offset }, function).isNewEntry; }
+    uint32_t onlyTargetAt(UnlinkedCodeBlock* codeBlock, unsigned offset) const { return m_onlyTargets.get({ codeBlock, offset }); }
+
+private:
+    UncheckedKeyHashMap<std::pair<UnlinkedCodeBlock*, unsigned>, uint32_t> m_onlyTargets;
+};
+JS_EXPORT_PRIVATE void setCallTargets(const CallTargets*);
+const CallTargets* callTargets();
+JS_EXPORT_PRIVATE bool calleeIsNamedLikeCallIntrinsic(UnlinkedCodeBlock*, unsigned offsetOfCall);
 
 class ProgramClasses {
     WTF_MAKE_TZONE_ALLOCATED(ProgramClasses);

@@ -8,8 +8,11 @@
 
 #if ENABLE(AOT)
 
+#include "AOTProgram.h"
 #include "JSCInlines.h"
 #include "Options.h"
+#include "UnlinkedCodeBlock.h"
+#include <map>
 #include <wtf/FileSystem.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -79,6 +82,27 @@ void TypeTable::load(VM& vm)
         at += word() * 4;
     }
     RELEASE_ASSERT(at == bytes.size());
+    for (uint32_t type = 1; type < table->m_types.size(); ++type) {
+        if (uint16_t layoutID = table->instanceLayoutIDFor(type))
+            table->m_instanceLayouts.set(layoutID);
+    }
+    table->m_slotsFilledAtBirth.fill(0, table->m_typedLayouts.size());
+    BitVector layoutsWithShape;
+    for (uint32_t type = 1; type < table->m_types.size(); ++type) {
+        uint16_t layoutID = table->layoutIDOf(type);
+        if (!layoutID || table->isOpen(layoutID))
+            continue;
+        auto words = table->record(type);
+        uint64_t filled = 0;
+        for (unsigned i = 0; i < words[2]; ++i) {
+            auto field = words.subspan(3 + i * fieldWords, fieldWords);
+            unsigned slot = field[1] & 0xffff;
+            if (slot < 64 && !(field[1] >> 16 & (1 | 4 | 8)) && field[2] == layoutID && field[3] == layoutID)
+                filled |= 1ull << slot;
+        }
+        table->m_slotsFilledAtBirth[layoutID] = layoutsWithShape.get(layoutID) ? table->m_slotsFilledAtBirth[layoutID] & filled : filled;
+        layoutsWithShape.set(layoutID);
+    }
     for (uint32_t number = 1; number < table->m_typedLayouts.size(); ++number) {
         if (!table->isUsable(number) || !table->isOpen(number))
             continue;
@@ -102,6 +126,86 @@ void TypeTable::load(VM& vm)
     }
     RELEASE_ASSERT(table->numberOfLayouts() < std::numeric_limits<uint16_t>::max());
     s_shared = table.release();
+}
+
+void TypeTable::loadSiteTypes(std::span<const CodeBlockKey> codeBlocks)
+{
+    if (!s_shared || !Options::aotSiteTypesPath())
+        return;
+    size_t at = 0;
+    auto refuseUnless = [&](bool condition, ASCIILiteral why) {
+        if (condition) [[likely]]
+            return;
+        dataLogLn("AOT: the file of aotSiteTypesPath is refused at byte ", at, ": ", why);
+        CRASH();
+    };
+    auto contents = FileSystem::readEntireFile(String { Options::aotSiteTypesPath() });
+    refuseUnless(!!contents, "it cannot be read"_s);
+    std::map<std::tuple<uint32_t, uint32_t, uint32_t>, UnlinkedCodeBlock*> codeBlockOfKey;
+    for (auto& key : codeBlocks)
+        codeBlockOfKey.emplace(std::tuple { key.module, key.start, key.kind }, key.codeBlock);
+    auto bytes = contents->span();
+    auto number = [&] {
+        refuseUnless(at < bytes.size() && isASCIIDigit(bytes[at]), "a number is expected"_s);
+        uint64_t result = 0;
+        for (; at < bytes.size() && isASCIIDigit(bytes[at]); ++at)
+            result = result * 10 + (bytes[at] - '0');
+        return safeCast<uint32_t>(result);
+    };
+    auto skip = [&](char character) {
+        refuseUnless(at < bytes.size() && bytes[at] == character, "a line is five fields separated by tabs and ends with a newline"_s);
+        ++at;
+    };
+    UncheckedKeyHashMap<UnlinkedCodeBlock*, uint32_t> layoutOfThis;
+    unsigned sites = 0;
+    unsigned sitesInUnknownCode = 0;
+    while (at < bytes.size()) {
+        uint32_t module = number();
+        skip('\t');
+        uint32_t start = number();
+        skip('\t');
+        uint32_t kind = number();
+        skip('\t');
+        std::optional<uint32_t> offset;
+        if (at < bytes.size() && bytes[at] == 't') {
+            for (char character : { 't', 'h', 'i', 's' })
+                skip(character);
+        } else
+            offset = number();
+        skip('\t');
+        uint32_t type = number();
+        skip('\n');
+        auto it = codeBlockOfKey.find({ module, start, kind });
+        if (it == codeBlockOfKey.end()) {
+            ++sitesInUnknownCode;
+            continue;
+        }
+        ++sites;
+        if (offset) {
+            s_shared->m_siteTypes.add(it->second, SiteTypes { }).iterator->value.append({ *offset, type });
+            continue;
+        }
+        refuseUnless(kind & 1, "the layout of this can only be given for construct code"_s);
+        refuseUnless(layoutOfThis.add(it->second, type).iterator->value == type, "one function gets two layouts for this"_s);
+        if (ProgramClasses* classes = programClasses())
+            classes->noteThisIn(it->second, safeCast<uint16_t>(type));
+    }
+    for (auto& [codeBlock, siteTypes] : s_shared->m_siteTypes) {
+        std::ranges::sort(siteTypes);
+        for (size_t i = 1; i < siteTypes.size(); ++i)
+            refuseUnless(siteTypes[i - 1].first != siteTypes[i].first, "one site has two lines"_s);
+        size_t next = 0;
+        for (const auto& instruction : codeBlock->instructions()) {
+            if (next == siteTypes.size() || siteTypes[next].first != instruction.offset())
+                continue;
+            OpcodeID opcode = instruction->opcodeID();
+            refuseUnless(opcode == op_new_object || opcode == op_get_by_id || opcode == op_put_by_id || opcode == op_get_length, "an offset is that of an instruction that takes no type: was the file made for another build of the program?"_s);
+            ++next;
+        }
+        refuseUnless(next == siteTypes.size(), "an offset is not the start of an instruction: was the file made for another build of the program?"_s);
+    }
+    if (Options::verboseAOTCompilation())
+        dataLogLn("AOT: ", sites, " sites have a type from outside; ", sitesInUnknownCode, " more are in code that is not compiled");
 }
 
 void TypeTable::noteComparedWithString(const Field& field) const
@@ -310,6 +414,7 @@ TypeTable::TypedLayout TypeTable::typedLayout(uint32_t number) const
     result.capacity = words[0] & 0xffff;
     result.inlineSlots = inlineSlotsOf(number);
     result.usesFieldIDs = usesFieldIDs(number);
+    result.isInstanceLayout = isInstanceLayout(number);
     for (unsigned i = 0; i < words[1]; ++i) {
         auto name = words.subspan(2 + i * layoutPropertyWords, layoutPropertyWords);
         result.fields.append({ m_names[name[0]].impl(), static_cast<uint16_t>(name[1]), !!(name[1] >> 16), FieldType::from(name[2], name[3]), m_fieldIDs.get({ number, m_names[name[0]].impl() }) });

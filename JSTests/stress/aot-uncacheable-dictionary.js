@@ -23,6 +23,22 @@ for (const f of [readP95, readP5, readAdded])
     noInline(f);
 
 {
+    const firstOfItsShape = makeDictionary();
+    check(isDictionary(firstOfItsShape), true, "the first object of a long shape is a dictionary");
+    check(describe(firstOfItsShape).includes("UncacheableDictionary"), !isAOTCompiled(readP95), "deleting from the first object of a long shape");
+    repeat(() => check(readP95(firstOfItsShape), 95, "a property of the first object of a long shape"));
+    repeat(() => check(readP5(firstOfItsShape), undefined, "a deleted property of the first object of a long shape"));
+    if (isAOTCompiled(readP95))
+        check(isDictionary(firstOfItsShape), false, "reading flattens the first object of a long shape");
+    const names = [];
+    for (let i = 50; i < 100; i++) {
+        check(firstOfItsShape["p" + i], i, "every property of the first object of a long shape");
+        names.push("p" + i);
+    }
+    check(Object.keys(firstOfItsShape).join(), names.join(), "the order in the first object of a long shape");
+}
+
+{
     const object = makeDictionary();
     check(describe(object).includes("UncacheableDictionary"), true, "deleting makes an uncacheable dictionary");
     repeat(() => check(readP95(object), 95, "a property of a dictionary"));

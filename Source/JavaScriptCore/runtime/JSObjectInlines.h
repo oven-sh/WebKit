@@ -459,10 +459,10 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
 #if USE(BUN_JSC_ADDITIONS)
     if (error.characters() == TypedFieldError.characters() && !error.isNull()) [[unlikely]]
-        return typeError(globalObject, scope, slot.isStrictMode(), TypedLayoutTable::describeRejectedStore(vm, structure(), propertyName.uid(), value));
+        return typeError(globalObject, scope, true, TypedLayoutTable::describeRejectedStore(vm, structure(), propertyName.uid(), value));
 #endif
     if (!error.isNull())
-        return typeError(globalObject, scope, slot.isStrictMode(), error);
+        return typeError(globalObject, scope, slot.isStrictMode() || error.characters() == TypedFieldOfInheritorError.characters(), error);
     return true;
 }
 
@@ -514,8 +514,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     return TypedFieldError;
                 TypedLayoutTable::reportViolation("a field is made something other than a plain property"_s, typedLayoutID, this);
             }
-            if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected)
-                return TypedFieldError;
+            if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected) {
+                bool definesAbsentField = mode == PutModeDefineOwnProperty && !newAttributes && value.isUndefined() && this->structure()->get(vm, propertyName) == invalidOffset;
+                if (!definesAbsentField)
+                    return TypedFieldError;
+            }
             isTypedField = true;
             value = TypedLayoutTable::toFieldRepresentation(*field, value);
             if (auto* fieldType = TypedLayoutTable::fieldTypeOf(*field))

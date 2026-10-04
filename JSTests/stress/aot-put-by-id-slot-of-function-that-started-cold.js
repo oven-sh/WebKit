@@ -48,7 +48,7 @@ const warmUp = 40;
             replaces(o, i);
             check(o.x, i, "a property that is replaced");
         }
-    }), 1, 2, "the first stores of a function that starts cold");
+    }), 2, 3, "the first stores of a function that starts cold");
     checkOperations(operationsDuring(() => {
         for (let i = 0; i < 1000; i++)
             replaces(o, i);

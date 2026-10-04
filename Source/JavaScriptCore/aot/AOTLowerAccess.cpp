@@ -10,9 +10,11 @@
 
 #include "B3PatchpointValue.h"
 #include "BytecodeStructs.h"
+#include "JSArrayBufferView.h"
 #include "JSCInlines.h"
 #include "JSLexicalEnvironment.h"
 #include "SymbolTable.h"
+#include "TypedArrayType.h"
 #include "UnlinkedCodeBlock.h"
 
 namespace JSC { namespace AOT {
@@ -432,7 +434,11 @@ void Lowering::checkTypedLayout(Node* originNode, Node* valueNode, LValue value,
         m_out.branch(isCell(value), usually(cellCase), rarely(isNot));
         m_out.appendTo(cellCase);
     }
-    m_out.branch(m_out.equal(loadTypedLayoutID(value), m_out.constInt32(layoutID)), usually(is), rarely(isNot));
+    if (valueNode->hasLayoutInRangeIfCell(layoutID, layoutID)) {
+        m_graph.remark("layout-known-if-cell"_s);
+        m_out.jump(is);
+    } else
+        m_out.branch(m_out.equal(loadTypedLayoutID(value), m_out.constInt32(layoutID)), usually(is), rarely(isNot));
     m_out.appendTo(isNot);
     coldCall(originNode, Entry::operationAOTCheckTypedLayout, value, m_out.constInt32(layoutID));
     m_out.jump(is);
@@ -515,8 +521,10 @@ LValue Lowering::isOneOf(LValue layout, uint16_t first, uint16_t last)
     return m_out.belowOrEqual(m_out.sub(layout, m_out.constInt32(first)), m_out.constInt32(last - first));
 }
 
-static void remarkBaseOfUntypedAccess(Graph& graph, const Node* base)
+static void remarkBaseOfUntypedAccess(Graph& graph, Node* base)
 {
+    Node* producer = skipAliases(base);
+    graph.remark("untyped-access-from"_s, producer->kind == NodeKind::Bytecode ? ASCIILiteral::fromLiteralUnsafe(opcodeNames[producer->opcode]) : producer->kind == NodeKind::Argument ? "argument"_s : producer->kind == NodeKind::Phi ? "phi"_s : producer->kind == NodeKind::Proj ? "projection"_s : producer->kind == NodeKind::GetStack ? "stack"_s : "constant"_s);
     Type type = base->type & ~(TOther | TEmpty);
     ASCIILiteral what = "anything"_s;
     if (type && isSubtype(type, TFinalObject)) {
@@ -527,6 +535,63 @@ static void remarkBaseOfUntypedAccess(Graph& graph, const Node* base)
     else if (type && !mayBe(type, TAnyObject))
         what = "primitive"_s;
     graph.remark("untyped-access-of"_s, what);
+}
+
+void Lowering::throwUnlessMadeFromFunction(Node* origin, LValue value, uint32_t function, bool trapsWhenValidating)
+{
+    unsigned slot = allocateSlot();
+    LBasicBlock isOther = newColdBlock();
+    LBasicBlock isNot = newColdBlock();
+    LBasicBlock is = m_out.newBlock();
+    m_out.branch(m_out.equal(value, m_out.load64(slotWord(slot, 1))), usually(is), rarely(isOther));
+    m_out.appendTo(isOther);
+    m_out.branch(m_out.notZero64(vmCall(origin, Int64, Entry::operationAOTIsMadeFromFunction, m_instance, value, m_out.constInt32(function), slotAddress(slot))), usually(is), rarely(isNot));
+    m_out.appendTo(isNot);
+    if (trapsWhenValidating && Options::validateAOTInferredTypes())
+        trap();
+    else {
+        vmCall(origin, Void, Entry::operationAOTThrowNotAFunction, m_instance, value);
+        m_out.unreachable();
+    }
+    m_out.appendTo(is);
+}
+
+void Lowering::lowerReadOfClosedMethod(Node* read, Node* receiver, uint32_t function)
+{
+    unsigned identifier = read->as<OpGetById>().m_property;
+    UniquedStringImpl* name = read->graph->codeBlock()->identifier(identifier).impl();
+    uint16_t layoutID = TypeTable::shared()->instanceLayoutIDFor(TypeTable::shared()->methodClassReadBy(Graph::typeTagOf(read), name));
+    LValue base = nullptr;
+    LBasicBlock hasLayout = nullptr;
+    if (read->isReadOnlyForCall && layoutID && !TypeTable::shared()->usesFieldIDs(layoutID)) {
+        if (receiver->hasLayoutInRange(layoutID, layoutID)) {
+            m_graph.remark("receiver-of-closed-method-has-its-layout"_s, StringView { name });
+            return;
+        }
+        m_graph.remark("tests-layout-of-receiver-of-closed-method"_s, StringView { name });
+        base = lowJSValue(receiver);
+        LBasicBlock otherwise = newColdBlock();
+        hasLayout = m_out.newBlock();
+        if (!isSubtype(receiver->type, TCell)) {
+            LBasicBlock cellCase = m_out.newBlock();
+            m_out.branch(isCell(base), usually(cellCase), rarely(otherwise));
+            m_out.appendTo(cellCase);
+        }
+        m_out.branch(m_out.equal(loadTypedLayoutID(base), m_out.constInt32(layoutID)), usually(hasLayout), rarely(otherwise));
+        m_out.appendTo(otherwise);
+    } else {
+        m_graph.remark("tests-identity-of-closed-method"_s, StringView { name });
+        remarkBaseOfUntypedAccess(m_graph, receiver);
+        base = lowJSValue(receiver);
+    }
+    LValue value = getByIdCached(read, base, receiver->type, Entry::operationAOTGetById, identifier);
+    throwUnlessMadeFromFunction(read, value, function, false);
+    if (!hasLayout) {
+        setJSValue(read, value);
+        return;
+    }
+    m_out.jump(hasLayout);
+    m_out.appendTo(hasLayout);
 }
 
 void Lowering::lowerGetById(Node* node)
@@ -568,17 +633,8 @@ void Lowering::lowerGetById(Node* node)
         setJSValue(node, m_out.phi(Int64, results));
         return;
     }
-    if (node->isReadOnlyForCall) {
-        if (!isSubtype(baseNode->type, TCell)) {
-            LValue base = lowJSValue(baseNode);
-            LBasicBlock isNone = newColdBlock();
-            LBasicBlock isSomething = m_out.newBlock();
-            m_out.branch(isCell(base), usually(isSomething), rarely(isNone));
-            m_out.appendTo(isNone);
-            coldCall(node, Entry::operationAOTCheckType, base, m_out.constInt32(MaskOtherObject), ColdCall::ChangesNothing);
-            m_out.unreachable();
-            m_out.appendTo(isSomething);
-        }
+    if (uint32_t function = Graph::closedMethodReadBy(node)) {
+        lowerReadOfClosedMethod(node, baseNode, function);
         return;
     }
     if (node->builtinCalled) {
@@ -611,6 +667,10 @@ void Lowering::lowerGetById(Node* node)
     }
     if (auto field = !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt) {
         m_graph.remark("typed-field-read"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+        if (field->mayBeEmpty && !field->isOptional && !field->id && field->first == field->last && !node->graph->codeBlock()->isConstructor() && TypeTable::shared()->isFilledAtBirth(field->first, field->slot)) {
+            m_graph.remark("field-is-filled-at-birth"_s, code().codeBlock()->identifier(bytecode.m_property).string());
+            field->mayBeEmpty = false;
+        }
         LValue base = lowJSValue(baseNode);
         if (Options::useAOTTypedFields() && TypeTable::hasTypedFields() && field->id) {
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
@@ -683,6 +743,15 @@ void Lowering::lowerGetById(Node* node)
             }
             LValue valueInSlot = m_out.load64(fieldAddress(baseStorage, *field));
             bool allowsUndefined = field->isOptional || !field->fieldType.isConstrained() || (field->fieldType.kinds & MaskUndefined);
+            auto isFilled = [&](LValue inSlot) -> LValue {
+                if (allowsUndefined)
+                    return m_out.notZero64(inSlot);
+                LValue undefined = m_out.constInt64(JSValue::encode(jsUndefined()));
+                static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined);
+                if (field->fieldType.kinds & (MaskNull | MaskBoolean))
+                    return m_out.bitAnd(m_out.notZero64(inSlot), m_out.notEqual(inSlot, undefined));
+                return m_out.above(inSlot, undefined);
+            };
             if (mayBePlaceholder) {
                 RELEASE_ASSERT(field->isInObject());
                 LBasicBlock slowCase = newColdBlock();
@@ -696,9 +765,9 @@ void Lowering::lowerGetById(Node* node)
                     results.append(m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined()))));
                     m_out.branch(m_out.equal(baseStorage, base), usually(continuation), rarely(slowCase));
                 } else
-                    m_out.branch(m_out.notZero64(valueInSlot), usually(continuation), rarely(slowCase));
+                    m_out.branch(isFilled(valueInSlot), usually(continuation), rarely(slowCase));
                 m_out.appendTo(slowCase);
-                uint64_t which = static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(allowsUndefined) << 56 | 1ull << 63;
+                uint64_t which =static_cast<uint64_t>(numberOf(bytecode.m_property)) | static_cast<uint64_t>(field->first) << 32 | static_cast<uint64_t>(field->slot) << 48 | static_cast<uint64_t>(allowsUndefined) << 56 | 1ull << 63;
                 results.append(m_out.anchor(coldCallForValue(node, Entry::operationAOTGetFieldSlow, base, m_out.constInt64(which))));
                 m_out.jump(continuation);
                 m_out.appendTo(continuation);
@@ -710,7 +779,7 @@ void Lowering::lowerGetById(Node* node)
             else if (field->mayBeEmpty) {
                 LBasicBlock isMissing = newColdBlock();
                 LBasicBlock isThere = m_out.newBlock();
-                m_out.branch(m_out.notZero64(valueInSlot), usually(isThere), rarely(isMissing));
+                m_out.branch(isFilled(valueInSlot), usually(isThere), rarely(isMissing));
                 m_out.appendTo(isMissing);
                 coldCall(node, Entry::operationAOTCheckType, m_out.constInt64(JSValue::encode(jsUndefined())), m_out.constInt32(field->fieldType.kinds));
                 m_out.unreachable();
@@ -994,7 +1063,7 @@ void Lowering::findPropertyRuns(BasicBlock* block)
                 end();
                 continue;
             }
-            if (isStaticClosureVarResolveType(type) || !node->useCount)
+            if (isStaticClosureVarResolveType(type))
                 continue;
             SetForScope code(m_code, node->graph);
             if (StaticVariable variable = resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type); !variable.isAtStaticDepth() && variable.kind != StaticVariable::Import)
@@ -1252,6 +1321,49 @@ auto Lowering::constantKeyOf(Node* property) -> std::optional<ConstantKey>
     return ConstantKey { identifier, name };
 }
 
+static std::optional<JSType> typedArrayUnlessUndefinedOrNull(Node* base)
+{
+    auto type = typedArrayTypeOf(base->type & ~TOther);
+    if (!type || *type == Uint8ClampedArrayType || *type == Float16ArrayType || *type == BigInt64ArrayType || *type == BigUint64ArrayType)
+        return std::nullopt;
+    return type;
+}
+
+TypedPointer Lowering::typedArrayElement(Node* baseNode, Node* propertyNode, JSType type, LBasicBlock outOfBounds, LBasicBlock slowCase)
+{
+    LValue base = lowJSValue(baseNode);
+    bool isKnownToBeCell = isSubtype(baseNode->type, TCell);
+    LBasicBlock isNotOfType = Options::validateAOTInferredTypes() ? newColdBlock() : nullptr;
+    if (!isKnownToBeCell || isNotOfType) {
+        LBasicBlock cellCase = m_out.newBlock();
+        m_out.branch(isCell(base), usually(cellCase), rarely(isKnownToBeCell ? isNotOfType : slowCase));
+        m_out.appendTo(cellCase);
+    }
+    if (isNotOfType) [[unlikely]] {
+        LBasicBlock isOfType = m_out.newBlock();
+        m_out.branch(m_out.equal(cellType(base), m_out.constInt32(type)), usually(isOfType), rarely(isNotOfType));
+        m_out.appendTo(isNotOfType);
+        trap();
+        m_out.appendTo(isOfType);
+    }
+    LValue index;
+    if (propertyNode->isInteger())
+        index = lowInt64(propertyNode);
+    else {
+        LBasicBlock indexReady = m_out.newBlock();
+        LValue narrow = lowIndex(propertyNode, indexReady, slowCase);
+        m_out.appendTo(indexReady);
+        index = m_out.signExt32To64(narrow);
+    }
+    LBasicBlock hasLengthOfItsOwn = m_out.newBlock();
+    LBasicBlock inBounds = m_out.newBlock();
+    m_out.branch(m_out.testIsZero32(m_out.load8ZeroExt32(base, m_heaps.JSArrayBufferView_mode), m_out.constInt32(isResizableOrGrowableSharedMode)), usually(hasLengthOfItsOwn), rarely(slowCase));
+    m_out.appendTo(hasLengthOfItsOwn);
+    m_out.branch(m_out.below(index, m_out.loadPtr(base, m_heaps.JSArrayBufferView_length)), usually(inBounds), rarely(outOfBounds));
+    m_out.appendTo(inBounds);
+    return TypedPointer(m_heaps.TypedArrayProperties, m_out.add(m_out.loadPtr(base, m_heaps.JSArrayBufferView_vector), m_out.shl(index, m_out.constInt32(logElementSize(type)))));
+}
+
 void Lowering::lowerGetByVal(Node* node)
 {
     auto bytecode = node->as<OpGetByVal>();
@@ -1265,6 +1377,28 @@ void Lowering::lowerGetByVal(Node* node)
         unsigned slot = sharedSite(node, key->identifier);
         m_graph.noteSiteSelector(slot, key->name);
         setJSValue(node, callStub(Stub::GetById, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { }));
+        return;
+    }
+
+    if (auto type = typedArrayUnlessUndefinedOrNull(baseNode); type && !allowsEmpty && mayBe(propertyNode->type, TNumber)) {
+        m_graph.remark("get-by-val-on-typed-array"_s);
+        LBasicBlock outOfBounds = newColdBlock();
+        LBasicBlock slowCase = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        LValue element = loadTypedArrayElement(*type, typedArrayElement(baseNode, propertyNode, *type, outOfBounds, slowCase));
+        Rep rep = element->type() == Double ? Rep::Double : element->type() == Int64 ? Rep::Int64 : Rep::Int32;
+        ValueFromBlock fast = m_out.anchor(convert(element, rep, TNumber, Rep::JSValue));
+        m_out.jump(continuation);
+        m_out.appendTo(outOfBounds);
+        ValueFromBlock absent = m_out.anchor(m_out.constInt64(JSValue::encode(jsUndefined())));
+        m_out.jump(continuation);
+        m_out.appendTo(slowCase);
+        LValue slowResult = coldCallForValue(node, Entry::operationAOTGetByVal, base, lowJSValue(propertyNode));
+        reloadArrayViews();
+        ValueFromBlock slow = m_out.anchor(slowResult);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, fast, absent, slow));
         return;
     }
 
@@ -1378,6 +1512,43 @@ void Lowering::lowerPutByVal(Node* node)
     Node* baseNode = node->use(bytecode.m_base);
     Node* propertyNode = node->use(bytecode.m_property);
     Node* valueNode = node->use(bytecode.m_value);
+
+    if (auto type = typedArrayUnlessUndefinedOrNull(baseNode); type && mayBe(propertyNode->type, TNumber) && mayBe(valueNode->type, TNumber)) {
+        m_graph.remark("put-by-val-on-typed-array"_s);
+        LBasicBlock slowCase = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        bool isFloat = *type == Float32ArrayType || *type == Float64ArrayType;
+        LValue number;
+        if (isSubtype(valueNode->type, TNumber))
+            number = isFloat ? lowDouble(valueNode) : toInt32ForBitOp(valueNode);
+        else {
+            LValue boxed = lowJSValue(valueNode);
+            LBasicBlock numberCase = m_out.newBlock();
+            m_out.branch(isNumber(boxed), usually(numberCase), rarely(slowCase));
+            m_out.appendTo(numberCase);
+            if (isFloat)
+                number = numberToDouble(boxed);
+            else {
+                LBasicBlock doubleCase = m_out.newBlock();
+                LBasicBlock converted = m_out.newBlock();
+                ValueFromBlock fromInt32 = m_out.anchor(unboxInt32(boxed));
+                m_out.branch(isInt32(boxed), usually(converted), unsure(doubleCase));
+                m_out.appendTo(doubleCase);
+                ValueFromBlock fromDouble = m_out.anchor(doubleToInt32(unboxDouble(boxed)));
+                m_out.jump(converted);
+                m_out.appendTo(converted);
+                number = m_out.phi(Int32, fromInt32, fromDouble);
+            }
+        }
+        storeTypedArrayElement(*type, number, typedArrayElement(baseNode, propertyNode, *type, continuation, slowCase));
+        m_out.jump(continuation);
+        m_out.appendTo(slowCase);
+        vmCall(node, Void, Entry::operationAOTPutByVal, m_instance, lowJSValue(baseNode), lowJSValue(propertyNode), lowJSValue(valueNode), m_out.constInt32(bytecode.m_ecmaMode.isStrict()));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return;
+    }
+
     LValue base = lowJSValue(baseNode);
     LValue value = lowJSValue(valueNode);
 

@@ -578,41 +578,64 @@ TypedPointer Lowering::typedArrayElement(Node* guard, Node* baseNode, Node* prop
     return TypedPointer(m_heaps.TypedArrayProperties, m_out.add(vector, m_out.shl(index, m_out.constInt32(logSize))));
 }
 
+LValue Lowering::loadTypedArrayElement(JSType type, TypedPointer pointer)
+{
+    switch (type) {
+    case Int8ArrayType:
+        return m_out.load8SignExt32(pointer);
+    case Uint8ArrayType:
+        return m_out.load8ZeroExt32(pointer);
+    case Int16ArrayType:
+        return m_out.load16SignExt32(pointer);
+    case Uint16ArrayType:
+        return m_out.load16ZeroExt32(pointer);
+    case Int32ArrayType:
+        return m_out.load32(pointer);
+    case Uint32ArrayType:
+        return m_out.zeroExt(m_out.load32(pointer), Int64);
+    case Float32ArrayType:
+        return m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(pointer)));
+    case Float64ArrayType:
+        return m_out.purifyNaN(m_out.loadDouble(pointer));
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        return nullptr;
+    }
+}
+
+void Lowering::storeTypedArrayElement(JSType type, LValue number, TypedPointer pointer)
+{
+    switch (type) {
+    case Int8ArrayType:
+    case Uint8ArrayType:
+        m_out.store32As8(number, pointer);
+        return;
+    case Int16ArrayType:
+    case Uint16ArrayType:
+        m_out.store32As16(number, pointer);
+        return;
+    case Int32ArrayType:
+    case Uint32ArrayType:
+        m_out.store32(number, pointer);
+        return;
+    case Float32ArrayType:
+        m_out.storeFloat(m_out.doubleToFloat(number), pointer);
+        return;
+    case Float64ArrayType:
+        m_out.storeDouble(number, pointer);
+        return;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
 void Lowering::guardGetByVal(Node* guard)
 {
     auto bytecode = guard->as<OpGetByVal>();
     Node* baseNode = guard->use(bytecode.m_base);
     Node* propertyNode = guard->use(bytecode.m_property);
     if (auto type = Graph::typedArrayAccessed(guard)) {
-        TypedPointer pointer = typedArrayElement(guard, baseNode, propertyNode, *type);
-        switch (*type) {
-        case Int8ArrayType:
-            guard->lowered = m_out.load8SignExt32(pointer);
-            break;
-        case Uint8ArrayType:
-            guard->lowered = m_out.load8ZeroExt32(pointer);
-            break;
-        case Int16ArrayType:
-            guard->lowered = m_out.load16SignExt32(pointer);
-            break;
-        case Uint16ArrayType:
-            guard->lowered = m_out.load16ZeroExt32(pointer);
-            break;
-        case Int32ArrayType:
-            guard->lowered = m_out.load32(pointer);
-            break;
-        case Uint32ArrayType:
-            guard->lowered = m_out.zeroExt(m_out.load32(pointer), Int64);
-            break;
-        case Float32ArrayType:
-            guard->lowered = m_out.purifyNaN(m_out.floatToDouble(m_out.loadFloat(pointer)));
-            break;
-        case Float64ArrayType:
-            guard->lowered = m_out.purifyNaN(m_out.loadDouble(pointer));
-            break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+        guard->lowered = loadTypedArrayElement(*type, typedArrayElement(guard, baseNode, propertyNode, *type));
         return;
     }
     if (!mayBe(baseNode->type, TAnyObject) || !mayBe(propertyNode->type, TNumber)) {
@@ -801,28 +824,7 @@ void Lowering::guardPutByVal(Node* guard)
         return unboxInt32(value);
     };
     auto storeToTypedArray = [&](JSType type, TypedPointer pointer) {
-        switch (type) {
-        case Int8ArrayType:
-        case Uint8ArrayType:
-            m_out.store32As8(valueAsInt32(), pointer);
-            break;
-        case Int16ArrayType:
-        case Uint16ArrayType:
-            m_out.store32As16(valueAsInt32(), pointer);
-            break;
-        case Int32ArrayType:
-        case Uint32ArrayType:
-            m_out.store32(valueAsInt32(), pointer);
-            break;
-        case Float32ArrayType:
-            m_out.storeFloat(m_out.doubleToFloat(valueAsDouble()), pointer);
-            break;
-        case Float64ArrayType:
-            m_out.storeDouble(valueAsDouble(), pointer);
-            break;
-        default:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
+        storeTypedArrayElement(type, type == Float32ArrayType || type == Float64ArrayType ? valueAsDouble() : valueAsInt32(), pointer);
     };
     if (auto type = Graph::typedArrayAccessed(guard)) {
         if (!valueMayBeNumber) {

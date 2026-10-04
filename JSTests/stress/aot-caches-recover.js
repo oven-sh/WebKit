@@ -75,7 +75,7 @@ function atLeast(actual, limit, what)
     atLeast(arrivals("operationAOTCreateThisWithProperties", () => shouldBe(manyTimes(400), 40000, "first points")), 1, "the first constructions fill the cache");
     for (let collection = 0; collection < 4; ++collection) {
         gc();
-        atMost(arrivals("operationAOTCreateThisWithProperties", () => shouldBe(manyTimes(100), 10000, "points after a collection")), 300, "constructions after collection " + collection);
+        atMost(arrivals("operationAOTCreateThisWithProperties", () => shouldBe(manyTimes(100), 10000, "points after a collection")), 60, "constructions after collection " + collection);
     }
     atLeast(counts ? aotOperationCount("operationAOTCreateThisWithProperties:valid-cache") : null, 4, "an empty free list leaves the cache as it is");
     atMost(counts ? aotOperationCount("operationAOTCreateThisWithProperties:valid-cache-after-replay") : null, 0, "a valid cache is used without replaying the plan");
@@ -113,7 +113,7 @@ function atLeast(actual, limit, what)
         atMost(arrivals("operationAOTCreateThisWithProperties", () => {
             for (let i = 0; i < 300; ++i)
                 shouldBe(makesAll(10), 195, "objects of three classes after a collection");
-        }), 300, "constructions by three classes after collection " + collection);
+        }), 60, "constructions by three classes after collection " + collection);
     }
     atLeast(counts ? aotOperationCount("operationAOTCreateThisWithProperties:valid-megamorphic-entry") : null, 1, "an empty free list leaves the entries of the other classes as they are");
 })();
@@ -131,7 +131,7 @@ function atLeast(actual, limit, what)
         for (let i = 0; i < count; ++i) {
             kept[i & 3] = new Starved(i);
             for (let k = 0; k < others; ++k) {
-                if (Object.hasOwn(object, "property"))
+                if (delete object.absent)
                     found++;
             }
         }
@@ -143,9 +143,9 @@ function atLeast(actual, limit, what)
         alternates(0, 0);
     for (const others of [1, 3, 7]) {
         const name = "a constructor that alternates with " + others + " other operations";
-        atMost(arrivals("operationAOTCreateThisWithProperties", () => shouldBe(alternates(10000, others), 10000 * others, name)), 1000, name);
+        atMost(arrivals("operationAOTCreateThisWithProperties", () => shouldBe(alternates(10000, others), 10000 * others, name)), 100, name);
     }
-    atLeast(arrivals("operationAOTHasOwnProperty", () => alternates(100, 1)), 100, "an operation without a fast path is counted every time");
+    atLeast(arrivals("operationAOTDelById", () => alternates(100, 1)), 100, "an operation without a fast path is counted every time");
 })();
 
 (function () {
@@ -163,23 +163,58 @@ function atLeast(actual, limit, what)
         let sum = 0;
         for (let i = 0; i < 1000; ++i)
             sum += callsIt(adders[1], box);
-        shouldBe(sum, 2000, "one callee after many");
+        return sum;
     }
 
-    let sum = 0;
-    atLeast(arrivals("operationAOTCacheCallee", () => {
-        for (let i = 0; i < 200; ++i)
+    function callsMany(count)
+    {
+        let sum = 0;
+        for (let i = 0; i < count; ++i)
             sum += callsIt(adders[i], box);
-    }), 2, "a call site tries to remember its callee");
+        return sum;
+    }
+
+    let seen = 0;
+    function triesSinceLastAsked()
+    {
+        if (!counts)
+            return null;
+        const before = seen;
+        seen = aotOperationCount("operationAOTCacheCallee");
+        return seen - before;
+    }
+
+    function exactly(expected, what)
+    {
+        const tries = triesSinceLastAsked();
+        if (tries !== null)
+            shouldBe(tries, expected, what);
+    }
+
+    triesSinceLastAsked();
+    let sum = callsMany(200);
+    const firstTries = triesSinceLastAsked();
     shouldBe(sum, 200 + 199 * 100, "many callees");
-    atMost(arrivals("operationAOTCacheCallee", callsFixed), 2, "a call site that saw many callees stops trying");
+    atLeast(firstTries, 2, "a call site tries to remember its callee");
+    atMost(firstTries, 8, "a call site that sees many callees stops trying");
+    triesSinceLastAsked();
+    sum = callsFixed();
+    exactly(0, "a call site that stopped trying does not try before a collection");
+    shouldBe(sum, 2000, "one callee after many");
     for (let collection = 0; collection < 3; ++collection) {
         gc();
-        const tries = arrivals("operationAOTCacheCallee", callsFixed);
-        atLeast(tries, 1, "a call site tries again after collection " + collection);
-        atMost(tries, 2, "a call site remembers its one callee after collection " + collection);
-        for (let i = 0; i < 20; ++i)
-            shouldBe(callsIt(adders[i], box), i + 1, "many callees again");
+        triesSinceLastAsked();
+        sum = callsFixed();
+        exactly(1, "a call site tries once after collection " + collection);
+        shouldBe(sum, 2000, "one callee after a collection");
+        triesSinceLastAsked();
+        sum = callsFixed();
+        exactly(0, "a call site remembers its one callee after collection " + collection);
+        shouldBe(sum, 2000, "one callee that is remembered");
+        triesSinceLastAsked();
+        sum = callsMany(20);
+        exactly(1, "a call site that sees many callees again stops at once after collection " + collection);
+        shouldBe(sum, 20 + 19 * 10, "many callees again");
     }
 })();
 

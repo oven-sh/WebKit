@@ -213,8 +213,9 @@ struct TypedLayoutTable {
         uint16_t kinds;
         uint16_t first;
         uint16_t last;
-        uint16_t unused;
+        uint16_t nameHashPrefix;
     };
+    static uint16_t nameHashPrefix(unsigned hash) { return hash >> 8; }
     static constexpr unsigned stringsAreAtoms = 1u << 15;
     static constexpr unsigned maxAtomizedStringLength = 40;
     enum class StoreCheck : uint8_t { Unconstrained, Allowed, Rejected };
@@ -257,10 +258,12 @@ struct TypedLayoutTable {
         uint32_t word = s_index[typedLayoutID];
         if (slot >= (word & 0xff))
             return nullptr;
-        const FieldType& fieldType = s_slotType[(word >> 8) + slot];
+        const FieldType& fieldType = s_slotType[((word & ~isInstanceLayoutBit) >> 8) + slot];
         return fieldType.kinds ? &fieldType : nullptr;
     }
     static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
+    static constexpr uint32_t isInstanceLayoutBit = 1u << 31;
+    static bool isInstanceLayout(uint16_t typedLayoutID) { return typedLayoutID < s_count && (s_index[typedLayoutID] & isInstanceLayoutBit); }
     static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
     {
         if (value.isInt32())

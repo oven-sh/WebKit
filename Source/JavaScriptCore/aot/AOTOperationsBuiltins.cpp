@@ -76,6 +76,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMathAtan2, double, (double y, doub
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTRandom, double, (Instance* instance))
 {
+    countOperationNamed(instance, __func__);
     JSGlobalObject* globalObject = instance->globalObject;
     return globalObject->weakRandomNumber();
 }
@@ -176,6 +177,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTArraySlice, JSArray*, (Instance* instance, 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDateField, EncodedJSValue, (VM* vm, DateInstance* date, uint32_t which))
 {
+    countOperationNamed(*vm, __func__);
     auto time = which & dateFieldIsUTC ? date->gregorianDateTimeUTC(vm->dateCache) : date->gregorianDateTime(vm->dateCache);
     if (!time)
         return JSValue::encode(jsNaN());

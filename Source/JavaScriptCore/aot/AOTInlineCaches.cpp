@@ -165,6 +165,7 @@ static bool fillPropertyNameTable(VM& vm, Structure* structure)
 static bool cacheByName(VM& vm, PolymorphicSlots* several, JSCell* base, Structure* structure, const PropertySlot& slot)
 {
     if (!fillPropertyNameTable(vm, structure)) {
+        countOperationNamed(several->owner->instance, __func__, several->fillsNameTables() ? "structure-records-no-names" : "site-no-longer-fills-name-tables");
         if (several->fillsNameTables())
             several->didFailToFillNameTable();
         return false;

@@ -191,7 +191,7 @@ void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* 
     }
 
     m_space.m_preciseAllocations[oldIndexInSpace] = allocation;
-    vm.heap.didAllocate(difference);
+    vm.heap.didAllocatePreciseAllocation(difference, *this);
     m_space.m_capacity += difference;
 
     m_preciseAllocations.append(allocation);

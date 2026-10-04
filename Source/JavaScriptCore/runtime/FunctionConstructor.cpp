@@ -21,6 +21,7 @@
 #include "config.h"
 #include "FunctionConstructor.h"
 
+#include "AOTFunction.h"
 #include "ExceptionHelpers.h"
 #include "FunctionPrototype.h"
 #include "GlobalObjectMethodTable.h"
@@ -218,6 +219,10 @@ JSObject* constructFunctionSkippingEvalEnabledCheck(JSGlobalObject* globalObject
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::noteGuest(globalObject, "Function", { }, program);
+#endif
 
     JSObject* exception = nullptr;
     FunctionExecutable* function = FunctionExecutable::fromGlobalCode(functionName, globalObject, WTF::move(program), sourceOrigin, taintedOrigin, sourceURL, position, lexicallyScopedFeatures, exception, overrideLineNumber, functionConstructorParametersEndPosition, functionConstructionMode);

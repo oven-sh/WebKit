@@ -568,6 +568,9 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
+    void didAllocateInBlock(size_t, const BlockDirectory&);
+    void didAllocatePreciseAllocation(size_t, const Subspace&);
+    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* ownerOfExtraMemory);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     

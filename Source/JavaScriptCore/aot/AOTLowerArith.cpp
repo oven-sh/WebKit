@@ -237,11 +237,22 @@ LValue Lowering::toInt32ForBitOp(Node* operand)
     RELEASE_ASSERT(isSubtype(operand->type, TNumber | TBoolean));
     LValue value = lowRaw(operand);
     LValue result = unboxBoolean(value);
-    if (mayBe(operand->type, TDouble))
-        result = m_out.select(isNumber(value), doubleToInt32(unboxDouble(value)), result);
     if (mayBe(operand->type, TInt32))
         result = m_out.select(isInt32(value), unboxInt32(value), result);
-    return result;
+    if (!mayBe(operand->type, TDouble))
+        return result;
+
+    m_graph.remark("double-to-int32-behind-branch"_s);
+    LBasicBlock doubleCase = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    ValueFromBlock withoutConversion = m_out.anchor(result);
+    LValue isDouble = mayBe(operand->type, TInt32) ? m_out.bitAnd(isNumber(value), isNotInt32(value)) : isNumber(value);
+    m_out.branch(isDouble, unsure(doubleCase), unsure(continuation));
+    m_out.appendTo(doubleCase);
+    ValueFromBlock converted = m_out.anchor(doubleToInt32(unboxDouble(value)));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return m_out.phi(Int32, withoutConversion, converted);
 }
 
 void Lowering::lowerBitOp(Node* node, VirtualRegister lhs, VirtualRegister rhs)

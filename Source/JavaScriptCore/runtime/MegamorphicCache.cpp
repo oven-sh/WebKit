@@ -94,8 +94,25 @@ void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
 
 void MegamorphicCache::age(CollectionScope collectionScope)
 {
-    if (std::exchange(m_hasBeenReconciled, false) && collectionScope == CollectionScope::Eden)
+    if (std::exchange(m_hasBeenReconciled, false)) {
+        if (collectionScope == CollectionScope::Full) {
+            auto releaseNamesOfInvalidEntries = [&](auto& entries) {
+                for (auto& entry : entries) {
+                    if (entry.m_epoch != m_epoch)
+                        entry.m_uid = nullptr;
+                }
+            };
+            releaseNamesOfInvalidEntries(m_loadCachePrimaryEntries);
+            releaseNamesOfInvalidEntries(m_loadCacheSecondaryEntries);
+            releaseNamesOfInvalidEntries(m_storeCachePrimaryEntries);
+            releaseNamesOfInvalidEntries(m_storeCacheSecondaryEntries);
+            releaseNamesOfInvalidEntries(m_hasCachePrimaryEntries);
+            releaseNamesOfInvalidEntries(m_hasCacheSecondaryEntries);
+            releaseNamesOfInvalidEntries(m_getterCachePrimaryEntries);
+            releaseNamesOfInvalidEntries(m_getterCacheSecondaryEntries);
+        }
         return;
+    }
     ++m_epoch;
     if (collectionScope == CollectionScope::Full || m_epoch == invalidEpoch) {
         for (auto& entry : m_loadCachePrimaryEntries) {

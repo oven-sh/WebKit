@@ -132,7 +132,8 @@ public:
         if (summary && !summary->isReached())
             return false;
         unsigned size = callee->instructionsSize();
-        if (summary && summary->isNonEscaping && summary->directCalls.load(std::memory_order_relaxed) == 1)
+        unsigned directCalls = summary ? summary->directCalls.load(std::memory_order_relaxed) : 0;
+        if (summary && summary->hasOnlyKnownCallers && directCalls == 1)
             return size <= maximumCandidateBytecodeCostForSingleCallSite;
         return size <= (isCalledInLoop ? maximumCandidateBytecodeCostInLoop : maximumCandidateBytecodeCost);
     }
@@ -366,7 +367,7 @@ private:
         if (isConstruct) {
             bool isExact = false;
             const KnownFunction* known = caller.knownCallee(call, &isExact);
-            if (!known || !isExact || !known->forConstruct || !calleeNode->isBytecode(op_get_from_scope) || m_graph.codeBlock()->codeType() != FunctionCode)
+            if (!known || !isExact || !known->forConstruct || !calleeNode->isBytecode(op_get_from_scope) || m_graph.codeBlock()->codeType() != FunctionCode || caller.calleeKnownByFact(call))
                 return false;
             if (resolve(call->use(VirtualRegister(-static_cast<int>(argv) + CallFrame::thisArgumentOffset()))) != calleeNode)
                 return false;
@@ -398,7 +399,11 @@ private:
             const KnownFunction* known = caller.knownCallee(call, &isExact);
             if (!known || !known->forCall)
                 return false;
-            if (!isExact) {
+            if (caller.calleeKnownByFact(call) == known) {
+                if (!Options::useAOTInliningOfCalleesKnownByFact() || call->opcode == op_tail_call || call->guard || call->guarded || (known->summary && known->summary->takesScopeAsCallee))
+                    return false;
+                likelyFunction = programFunctions()->numberOf(known->executable);
+            } else if (!isExact) {
                 uint32_t number = programFunctions() ? programFunctions()->numberOf(known->executable) : 0;
                 const KnownFunction* numbered = number ? programFunctions()->function(number) : nullptr;
                 if (!numbered || !numbered->forCall || (numbered->summary && numbered->summary->takesScopeAsCallee) || !calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call || call->guard || call->guarded)
@@ -616,6 +621,8 @@ private:
         }
         block->successors.append(entry);
         entry->predecessors.append(block);
+        if (calleeExecutable && Options::aotTypeCoveragePath()) [[unlikely]]
+            m_graph.inlinedCalls.add(entry, Graph::InlinedCall { call, isConstruct ? "inlined-construct"_s : closureScope ? "inlined-closure"_s : "inlined-call"_s, calleeExecutable->ecmaName().string() });
         Node* fallbackCall = nullptr;
         if (guardedIntrinsic || checksCalleeIsInitialized || likelyFunction) {
             Node* guard = m_graph.addNode(NodeKind::Guard);
@@ -779,6 +786,29 @@ void inlineCalls(Graph& graph, const ProgramCode& program)
     if (!Options::useAOTInlining() || !PackedSite::fits(CallSiteIndex(BytecodeIndex(graph.codeBlock()->instructionsSize())).bits()))
         return;
     Inliner(graph, program).run();
+}
+
+Node* adoptLiteralReturnedBy(Graph& graph, const ProgramCode& program, UnlinkedFunctionCodeBlock* callee, unsigned inlineFrame)
+{
+    auto about = program.about(callee);
+    RELEASE_ASSERT(about);
+    auto parsed = makeUniqueWithoutFastMallocCheck<Graph>(graph.vm(), callee, unknownScopeChain());
+    parsed->firstTypeCoverageCounter = about->firstTypeCoverageCounter;
+    parsed->setCalleeHints(about->hints);
+    parsed->setVariableSummaries(graph.variableSummaries());
+    parsed->setLinkage(about->linkage, declaredNamesFor(callee));
+    RELEASE_ASSERT(parseBytecode(*parsed));
+    Node* literal = nullptr;
+    for (BasicBlock* block : parsed->m_rpo) {
+        Node* terminal = block->terminal();
+        if (!terminal || !terminal->isBytecode(op_ret))
+            continue;
+        literal = terminal->use(terminal->as<OpRet>().m_value);
+        break;
+    }
+    RELEASE_ASSERT(literal && literal->isBytecode(op_new_object) && literal->graph == parsed.get());
+    graph.adoptNodesOf(WTF::move(parsed), inlineFrame);
+    return literal;
 }
 
 bool mayBeAbsorbed(UnlinkedCodeBlock* codeBlock, const FunctionSummary* summary)

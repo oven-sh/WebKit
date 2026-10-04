@@ -12,6 +12,7 @@
 #include "AOTOpcodeTraits.h"
 #include "AOTTypeTable.h"
 #include "BytecodeStructs.h"
+#include "BytecodeUseDef.h"
 #include "ImmutableIntrinsics.h"
 #include "JSCInlines.h"
 #include "JSGenerator.h"
@@ -1050,6 +1051,174 @@ void saveRegistersAtDefinitions(Graph& graph)
         graph.remark("does-not-save-restored-value"_s, String::number(numberOfRestoredValuesNotSaved));
 }
 
+static bool takesScope(OpcodeID opcode)
+{
+    switch (opcode) {
+    case op_resolve_scope:
+    case op_resolve_scope_for_hoisting_func_decl_in_eval:
+    case op_get_from_scope:
+    case op_put_to_scope:
+    case op_get_parent_scope:
+    case op_push_with_scope:
+    case op_create_lexical_environment:
+    case op_create_generator_frame_environment:
+    case op_create_scoped_arguments:
+    case op_call_direct_eval:
+    case op_new_func:
+    case op_new_func_exp:
+    case op_new_generator_func:
+    case op_new_generator_func_exp:
+    case op_new_async_func:
+    case op_new_async_func_exp:
+    case op_new_async_generator_func:
+    case op_new_async_generator_func_exp:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void readUnchangedRegistersFromFrame(Graph& graph)
+{
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()))
+        return;
+    VirtualRegister frameRegister = virtualRegisterForArgumentIncludingThis(static_cast<int>(JSGenerator::Argument::Frame));
+    if (!graph.isTracked(frameRegister))
+        return;
+    struct Effect {
+        BitVector defined;
+        BitVector restored;
+    };
+    Vector<Effect> effects(graph.blocks.size());
+    const auto& instructions = graph.codeBlock()->instructions();
+    unsigned numVars = graph.codeBlock()->numVars();
+    for (BasicBlock* block : graph.m_rpo) {
+        Effect& effect = effects[block->index];
+        for (unsigned offset = block->bytecodeBegin; offset < block->bytecodeEnd; offset += instructions.at(offset)->size()) {
+            const JSInstruction* instruction = instructions.at(offset).ptr();
+            bool isRestore = instruction->opcodeID() == op_get_from_scope && instruction->as<OpGetFromScope>().m_scope == frameRegister;
+            for (unsigned checkpoint = instruction->numberOfCheckpoints(); checkpoint--;) {
+                computeDefsForBytecodeIndexImpl(numVars, instruction, static_cast<Checkpoint>(checkpoint), [&](VirtualRegister reg) {
+                    if (!graph.isTracked(reg))
+                        return;
+                    unsigned index = graph.registerIndex(reg);
+                    effect.defined.set(index);
+                    effect.restored.set(index, isRestore);
+                });
+            }
+        }
+    }
+
+    BitVector everyRegister(graph.numRegisters());
+    for (unsigned index = 0; index < graph.numRegisters(); ++index)
+        everyRegister.set(index);
+    Vector<BitVector> unchangedAtTail(graph.blocks.size());
+    for (BasicBlock* block : graph.m_rpo)
+        unchangedAtTail[block->index] = everyRegister;
+    auto computeUnchangedAtHead = [&](BasicBlock* block) {
+        BitVector unchanged;
+        if (block != graph.root && !block->isCatchEntrypoint && !block->predecessors.isEmpty()) {
+            unchanged = unchangedAtTail[block->predecessors[0]->index];
+            for (unsigned i = 1; i < block->predecessors.size(); ++i)
+                unchanged.filter(unchangedAtTail[block->predecessors[i]->index]);
+        }
+        return unchanged;
+    };
+    auto computeUnchangedAtTail = [&](BasicBlock* block) {
+        BitVector unchanged = computeUnchangedAtHead(block);
+        unchanged.exclude(effects[block->index].defined);
+        unchanged.merge(effects[block->index].restored);
+        return unchanged;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (BasicBlock* block : graph.m_rpo) {
+            BitVector unchanged = computeUnchangedAtTail(block);
+            if (unchanged == unchangedAtTail[block->index])
+                continue;
+            unchangedAtTail[block->index] = WTF::move(unchanged);
+            changed = true;
+        }
+    }
+
+    unsigned numberOfSaves = 0;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->nodes.isEmpty() || !block->terminal()->isBytecode(op_ret))
+            continue;
+        for (Node* node : block->nodes)
+            numberOfSaves += node->graph == &graph && node->isBytecode(op_put_to_scope) && node->as<OpPutToScope>().m_scope == frameRegister;
+    }
+    if (numberOfSaves)
+        graph.remark("saves-registers"_s, String::number(numberOfSaves));
+
+    Vector<Node*> restoreOfRegister;
+    restoreOfRegister.fill(nullptr, graph.numRegisters());
+    unsigned numberOfRestores = 0;
+    unsigned numberOfRestoresForHandlers = 0;
+    auto isRestore = [&](Node* node) {
+        return node->graph == &graph && !node->isElided && node->isBytecode(op_get_from_scope) && node->as<OpGetFromScope>().m_scope == frameRegister && graph.isTracked(node->as<OpGetFromScope>().m_dst);
+    };
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind == NodeKind::SetStack && isRestore(node->uses[0].node))
+                ++numberOfRestoresForHandlers;
+            if (!isRestore(node))
+                continue;
+            restoreOfRegister[graph.registerIndex(node->as<OpGetFromScope>().m_dst)] = node;
+            ++numberOfRestores;
+        }
+    }
+    if (numberOfRestores)
+        graph.remark("restores-registers"_s, String::number(numberOfRestores));
+    if (numberOfRestoresForHandlers)
+        graph.remark("restores-registers-for-handlers"_s, String::number(numberOfRestoresForHandlers));
+    unsigned frameIndex = graph.registerIndex(frameRegister);
+    unsigned numberOfReadsAdded = 0;
+    for (BasicBlock* block : graph.m_rpo) {
+        if (block->isInLoop || frameIndex >= block->valuesAtTail.size())
+            continue;
+        Node* frame = block->valuesAtTail[frameIndex];
+        const Effect& effect = effects[block->index];
+        if (!frame || effect.defined.get(frameIndex))
+            continue;
+        BitVector unchanged = computeUnchangedAtHead(block);
+        unchanged.exclude(effect.defined);
+        if (unchanged.isEmpty())
+            continue;
+        UncheckedKeyHashMap<Node*, Node*> reads;
+        for (unsigned i = 0; i < block->nodes.size(); ++i) {
+            Node* node = block->nodes[i];
+            if (node->graph != &graph || node->kind != NodeKind::Bytecode || node->isElided || node->guard || node->guarded || takesScope(node->opcode))
+                continue;
+            for (auto& use : node->uses) {
+                Node* value = use.node;
+                if (value->kind != NodeKind::Phi || !value->reg.isLocal() || !graph.isTracked(value->reg))
+                    continue;
+                unsigned index = graph.registerIndex(value->reg);
+                Node* restore = restoreOfRegister[index];
+                if (!restore || !unchanged.get(index) || block->valuesAtTail[index] != value)
+                    continue;
+                auto result = reads.add(value, nullptr);
+                if (result.isNewEntry) {
+                    Node* read = graph.addNode(NodeKind::Bytecode);
+                    read->opcode = op_get_from_scope;
+                    read->instruction = restore->instruction;
+                    read->bytecodeIndex = restore->bytecodeIndex;
+                    read->block = block;
+                    read->uses.append({ frameRegister, frame });
+                    read->type = restore->type;
+                    block->nodes.insert(i++, read);
+                    result.iterator->value = read;
+                    ++numberOfReadsAdded;
+                }
+                use.node = result.iterator->value;
+            }
+        }
+    }
+    if (numberOfReadsAdded)
+        graph.remark("reads-unchanged-register-from-frame"_s, String::number(numberOfReadsAdded));
+}
+
 void clearDeadFrameSlots(Graph& graph)
 {
     if (!isGeneratorOrAsyncFunctionBodyParseMode(graph.codeBlock()->parseMode()))
@@ -1424,6 +1593,8 @@ std::optional<NodeUsers::OnlyRead> NodeUsers::isOnlyRead(Node* object, std::span
             case op_type_tag:
                 if (!user->firstLayout || !TypeTable::shared() || (user->firstLayout != layoutID && !user->isTrusted && !TypeTable::shared()->usesFieldIDs(user->firstLayout)))
                     return std::nullopt;
+                if (user->isEdge && user->firstLayout != layoutID)
+                    return std::nullopt;
                 result.aliasingUsers.append(user);
                 break;
             case op_get_by_id: {
@@ -1507,6 +1678,7 @@ void recordReturnedLiterals(Graph& graph)
         return;
     std::optional<NodeUsers> users;
     std::optional<MultiValueReturnTable::Names> names;
+    std::optional<std::pair<uint32_t, unsigned>> typeTagAndInlineCapacity;
     for (BasicBlock* block : graph.m_rpo) {
         for (Node* node : block->nodes) {
             if (node->kind != NodeKind::Bytecode)
@@ -1518,6 +1690,10 @@ void recordReturnedLiterals(Graph& graph)
             Node* object = node->use(node->as<OpRet>().m_value);
             if (!object->isBytecode(op_new_object) || !object->numberOfLiteralProperties || object->numberOfLiteralProperties > FunctionSummary::maxReturnValues)
                 return;
+            std::pair<uint32_t, unsigned> thisTypeTagAndInlineCapacity { Graph::typeTagOf(object), object->as<OpNewObject>().m_inlineCapacity };
+            if (typeTagAndInlineCapacity && *typeTagAndInlineCapacity != thisTypeTagAndInlineCapacity)
+                return;
+            typeTagAndInlineCapacity = thisTypeTagAndInlineCapacity;
             if (Graph::newObjectLayoutID(object) && TypeTable::hasTypedFields()) {
                 if (Options::auditAOTTypedFields())
                     return;
@@ -1541,10 +1717,93 @@ void recordReturnedLiterals(Graph& graph)
         all->note(code, WTF::move(*names));
 }
 
-void planMultiValueReturns(Graph& graph)
+void planMultiValueReturns(Graph& graph, const ProgramCode* program)
 {
     if (!multiValueReturnTable())
         return;
+    std::optional<NodeUsers> users;
+    Vector<std::pair<Node*, Vector<Node*, 9>>, 4> nodesToInsertAfterCalls;
+    for (BasicBlock* block : graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (!node->isBytecode(op_call) || node->isElided)
+                continue;
+            bool isExact = false;
+            const KnownFunction* known = graph.knownCallee(node, &isExact);
+            if (!known || !isExact || !known->forCall)
+                continue;
+            auto* names = registerReturnValuesOf(known->forCall, known->summary);
+            if (!names)
+                continue;
+            if (!users)
+                users.emplace(graph);
+            auto onlyRead = users->isOnlyRead(node, names->span(), 0);
+            node->numberOfReturnValues = names->size();
+            auto& reads = graph.returnValueReads.add(node, Vector<Node*, 8> { }).iterator->value;
+            if (!onlyRead) {
+                RELEASE_ASSERT(program);
+                graph.remark("materializes-returned-object"_s, known->executable ? known->executable->ecmaName().string() : String());
+                Node* object = adoptLiteralReturnedBy(graph, *program, known->forCall, node->graph->inlineFrame());
+                RELEASE_ASSERT(object->numberOfLiteralProperties == names->size());
+                object->block = block;
+                object->type = node->type;
+                object->callSiteOrigin = node;
+                object->uses.shrink(0);
+                Vector<Node*, 9> added;
+                for (unsigned i = 0; i < names->size(); ++i) {
+                    Node* value = graph.addNode(NodeKind::Proj);
+                    value->graph = node->graph;
+                    value->bytecodeIndex = node->bytecodeIndex;
+                    value->block = block;
+                    value->type = known->summary->returnValueTypes[i].load();
+                    value->returnValueIndex = i;
+                    value->uses.append({ VirtualRegister(), node });
+                    object->uses.append({ NewObjectPlan::registerOf(i), value });
+                    reads.append(value);
+                    added.append(value);
+                }
+                added.append(object);
+                for (Node* user : users->of(node)) {
+                    for (auto& use : user->uses) {
+                        if (use.node == node)
+                            use.node = object;
+                    }
+                }
+                for (BasicBlock* other : graph.m_rpo) {
+                    for (Node*& value : other->valuesAtTail) {
+                        if (value == node)
+                            value = object;
+                    }
+                }
+                nodesToInsertAfterCalls.append({ node, WTF::move(added) });
+                continue;
+            }
+            graph.remark("reads-returned-object-from-registers"_s, known->executable ? known->executable->ecmaName().string() : String());
+            for (auto [read, index] : onlyRead->reads) {
+                read->kind = NodeKind::Proj;
+                read->uses.shrink(0);
+                read->uses.append({ VirtualRegister(), node });
+                read->returnValueIndex = index;
+                reads.append(read);
+            }
+            for (Node* test : onlyRead->tests) {
+                for (auto& use : test->uses) {
+                    if (onlyRead->aliasingUsers.contains(use.node))
+                        use.node = graph.constant(jsBoolean(true));
+                }
+            }
+            for (Node* alias : onlyRead->aliasingUsers) {
+                if (alias != node)
+                    alias->isElided = true;
+            }
+        }
+    }
+    for (auto& [call, added] : nodesToInsertAfterCalls) {
+        auto& nodes = call->block->nodes;
+        size_t at = nodes.find(call);
+        RELEASE_ASSERT(at != notFound);
+        for (unsigned i = 0; i < added.size(); ++i)
+            nodes.insert(at + 1 + i, added[i]);
+    }
     if (auto* names = registerReturnValuesOf(graph.codeBlock(), graph.summary())) {
         Vector<Node*, 8> valuesInFields;
         for (BasicBlock* block : graph.m_rpo) {
@@ -1573,44 +1832,6 @@ void planMultiValueReturns(Graph& graph)
         }
         insertBeforeOrigins(valuesInFields);
         graph.numberOfRegisterReturnValues = names->size();
-    }
-    std::optional<NodeUsers> users;
-    for (BasicBlock* block : graph.m_rpo) {
-        for (Node* node : block->nodes) {
-            if (!node->isBytecode(op_call) || node->isElided)
-                continue;
-            bool isExact = false;
-            const KnownFunction* known = graph.knownCallee(node, &isExact);
-            if (!known || !isExact || !known->forCall)
-                continue;
-            auto* names = registerReturnValuesOf(known->forCall, known->summary);
-            if (!names)
-                continue;
-            if (!users)
-                users.emplace(graph);
-            auto onlyRead = users->isOnlyRead(node, names->span(), 0);
-            RELEASE_ASSERT(onlyRead);
-            graph.remark("reads-returned-object-from-registers"_s, known->executable ? known->executable->ecmaName().string() : String());
-            node->numberOfReturnValues = names->size();
-            auto& reads = graph.returnValueReads.add(node, Vector<Node*, 8> { }).iterator->value;
-            for (auto [read, index] : onlyRead->reads) {
-                read->kind = NodeKind::Proj;
-                read->uses.shrink(0);
-                read->uses.append({ VirtualRegister(), node });
-                read->returnValueIndex = index;
-                reads.append(read);
-            }
-            for (Node* test : onlyRead->tests) {
-                for (auto& use : test->uses) {
-                    if (onlyRead->aliasingUsers.contains(use.node))
-                        use.node = graph.constant(jsBoolean(true));
-                }
-            }
-            for (Node* alias : onlyRead->aliasingUsers) {
-                if (alias != node)
-                    alias->isElided = true;
-            }
-        }
     }
 }
 

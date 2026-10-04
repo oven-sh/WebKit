@@ -133,7 +133,7 @@ void* LocalAllocator::allocateSlowCase(JSC::Heap& heap, size_t cellSize, GCDefer
     doTestCollectionsIfNeeded(heap, deferralContext);
 
     ASSERT(!m_directory->markedSpace().isIterating());
-    heap.didAllocate(m_freeList.originalSize());
+    heap.didAllocateInBlock(m_freeList.originalSize(), *m_directory);
     
     didConsumeFreeList();
 

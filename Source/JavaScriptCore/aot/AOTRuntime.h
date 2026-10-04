@@ -296,8 +296,16 @@ public:
     ~RuntimeTable();
 
     void** entries() { return m_entries; }
-    void countOperation(const char* name, const char* detail = nullptr) { m_operationCounts.add(std::pair { name, detail }, 0).iterator->value++; }
+    void countOperation(const char* name, const char* detail = nullptr, uint64_t count = 1) { m_operationCounts.add(std::pair { name, detail }, 0).iterator->value += count; }
     void countOperationBySlotState(const char* name, const Slot*);
+    void countOperationAtSite(const char* name, uint32_t function, unsigned bytecodeOffset, unsigned line, unsigned column);
+    void countAllocatedBytes(const char* kind, const Subspace*, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes);
+    void countChangeOfMegamorphicCacheEpoch(uint16_t epoch)
+    {
+        if (std::exchange(m_lastMegamorphicCacheEpoch, epoch) != epoch)
+            countOperation("MegamorphicCache", "epoch-changed");
+    }
+    void noteGuest(const char* kind, StringView group, String&& sample);
     uint64_t operationCount(StringView nameAndDetail) const;
     void dumpOperationCounts(PrintStream&) const;
     void writeOperationCounts() const;
@@ -306,9 +314,15 @@ private:
     void* m_entries[numberOfEntries];
     Vector<std::unique_ptr<VirtualCallInfo>> m_callLinkInfos;
     UncheckedKeyHashMap<std::pair<const char*, const char*>, uint64_t> m_operationCounts;
+    UncheckedKeyHashMap<std::tuple<const char*, const void*, size_t>, CString> m_detailsOfAllocatedBytes;
+    UncheckedKeyHashMap<CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
+    UncheckedKeyHashMap<uint64_t, CString> m_detailsOfSites;
+    uint16_t m_lastMegamorphicCacheEpoch { 0 };
+    UncheckedKeyHashMap<String, std::pair<uint64_t, String>> m_guests;
 };
 
 RuntimeTable& runtimeTable(VM&);
+void countAllocatedBytes(VM&, const char* kind, const Subspace*, size_t cellSize, const JSCell* owner, size_t bytes);
 JS_EXPORT_PRIVATE uint64_t operationCount(VM&, StringView nameAndDetail);
 JS_EXPORT_PRIVATE void writeOperationCounts(VM&);
 
@@ -454,7 +468,9 @@ struct FunctionInfo {
     uint32_t sites;
     uint32_t indexAndFlags;
     uint16_t flags;
-    uint16_t unused[3];
+    uint16_t calleeStart;
+    bool hasInlineFrames;
+    uint8_t unused[3];
 };
 static_assert(sizeof(FunctionInfo) == 16);
 
@@ -488,12 +504,15 @@ struct Instance {
     void clearCachesValidatedByMegamorphicCacheEpoch();
     void noteCalleeCacheFilled(Slot*);
     void noteCalleeCacheAbandoned(Slot*);
+    static constexpr uint32_t isNotCompiledFunction = std::numeric_limits<uint32_t>::max();
+    void noteCalleeSeen(Slot* cache, uint32_t function);
+    unsigned dumpCalleesSeen(PrintStream&) const;
 
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
     static constexpr ptrdiff_t offsetOfGlobalObject() { return OBJECT_OFFSETOF(Instance, globalObject); }
     static constexpr ptrdiff_t offsetOfStates() { return OBJECT_OFFSETOF(Instance, states); }
-    static constexpr ptrdiff_t offsetOfDataPointers() { return offsetOfStates() + maxNumberOfFunctions * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfOwnData() { return OBJECT_OFFSETOF(Instance, ownData); }
     static constexpr ptrdiff_t offsetOfInfos() { return OBJECT_OFFSETOF(Instance, infos); }
     static constexpr ptrdiff_t offsetOfProgram() { return OBJECT_OFFSETOF(Instance, program); }
     static constexpr ptrdiff_t offsetOfProgramIdentifiers() { return OBJECT_OFFSETOF(Instance, programIdentifiers); }
@@ -508,46 +527,37 @@ struct Instance {
     void countMisses(uint32_t index, uint32_t count)
     {
         uint32_t state = states[index];
-        ASSERT(state < minStateWithData);
-        uint32_t before = state & maxMisses;
+        ASSERT(!(state & dataNumberMask));
+        uint32_t before = state >> missesShift & maxMisses;
         uint32_t after = std::min<uint32_t>(before + count, maxMisses);
-        states[index] = (state & ~maxMisses) | after;
-        uint32_t limit = static_cast<uint16_t>(cacheMissLimitFor(infos[index].flags >> FunctionInfo::numberOfFlagBits));
+        states[index] = (state & ~(maxMisses << missesShift)) | after << missesShift;
+        uint32_t limit = std::min(cacheMissLimitFor(infos[index].flags >> FunctionInfo::numberOfFlagBits), maxMisses);
         if (before < limit && after >= limit)
-            ensureData(index);
+            ensureDataIfThereIsRoom(index);
     }
 
-    static constexpr size_t maxNumberOfFunctions = static_cast<size_t>(1) << 20;
-    static constexpr uint32_t maxMisses = 0xffff;
-    static constexpr uint32_t isLinkedWithoutData = 1u << 16;
+    static constexpr uint32_t dataNumberMask = 0xffff;
+    static constexpr unsigned missesShift = 16;
+    static constexpr uint32_t maxMisses = (1u << 14) - 1;
+    static constexpr uint32_t isLinkedWithoutData = 1u << 30;
+    static constexpr unsigned maxNumberOfOwnData = 56 * 1024;
     static constexpr uint32_t minStateWithData = 1u << 17;
     static constexpr unsigned stateWithDataShift = 4;
     bool isLinked(uint32_t index) const { return states[index] >= isLinkedWithoutData; }
     Data* dataIfExists(uint32_t index) const
     {
-        uint32_t state = states[index];
-        if (state < minStateWithData)
-            return nullptr;
-        return std::bit_cast<Data*>(std::bit_cast<uintptr_t>(this) + (static_cast<uintptr_t>(state) << stateWithDataShift));
+        uint32_t number = states[index] & dataNumberMask;
+        return number ? std::bit_cast<Data* const*>(this)[number] : nullptr;
     }
     void setLinkedWithoutData(uint32_t index)
     {
         ASSERT(states[index] < isLinkedWithoutData);
         states[index] |= isLinkedWithoutData;
     }
-    void setData(uint32_t index, Data* data)
-    {
-        uintptr_t distance = std::bit_cast<uintptr_t>(data) - std::bit_cast<uintptr_t>(this);
-        RELEASE_ASSERT(!(distance & ((1u << stateWithDataShift) - 1)) && distance >> stateWithDataShift >= minStateWithData && !(distance >> stateWithDataShift >> 32));
-        states[index] = static_cast<uint32_t>(distance >> stateWithDataShift);
-        dataPointers()[index] = data;
-    }
-    void setNotLinked(uint32_t index)
-    {
-        states[index] = 0;
-        dataPointers()[index] = sharedData;
-    }
-    Data** dataPointers() { return std::bit_cast<Data**>(std::bit_cast<char*>(this) + offsetOfDataPointers()); }
+    bool hasRoomForData() const;
+    JS_EXPORT_PRIVATE void ensureDataIfThereIsRoom(uint32_t index);
+    void setData(uint32_t index, Data*);
+    void setNotLinked(uint32_t index);
     void noteTransitionCached(Slot*);
     void noteCellAdded(JSCell*);
     PolymorphicSlots* makeSiteSlots(Data*, UniquedStringImpl* name);
@@ -562,6 +572,7 @@ struct Instance {
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>);
 
     Structure* knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names);
+    Structure* knownShapeStructureIfExists(uint32_t shape);
     struct PropertyRunTarget {
         Structure* last { nullptr };
         Vector<StructureID, 4> prototypeStructures;
@@ -599,7 +610,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfDispatch() { return OBJECT_OFFSETOF(Instance, dispatch); }
     static constexpr ptrdiff_t offsetOfSelectorRows() { return OBJECT_OFFSETOF(Instance, selectorRows); }
 
-    void** runtimeTable;
+    Data* sharedData;
     JSGlobalObject* globalObject;
     VM* vm;
     struct Collections;
@@ -609,7 +620,7 @@ struct Instance {
     VMProgram* program;
     const ProgramData* programData;
     const uint32_t* stringConstantRecords;
-    Data* sharedData;
+    void** runtimeTable;
     const uint32_t* functionMetadataOffsets;
     const uint8_t* code;
     const uint32_t* codeGranules;
@@ -663,8 +674,14 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfEffectEpoch() { return OBJECT_OFFSETOF(Instance, effectEpoch); }
     uint32_t* typeCoverageCounters { nullptr };
     static constexpr ptrdiff_t offsetOfTypeCoverageCounters() { return OBJECT_OFFSETOF(Instance, typeCoverageCounters); }
+    enum class CalleeCacheMiss : unsigned { SameCode, OtherCode, OtherKindOfCallee, CacheInSharedData };
+    static constexpr unsigned numberOfKindsOfCalleeCacheMiss = 4;
+    uint64_t calleeCacheMisses[numberOfKindsOfCalleeCacheMiss] { };
+    static constexpr ptrdiff_t offsetOfCalleeCacheMisses(CalleeCacheMiss kind) { return OBJECT_OFFSETOF(Instance, calleeCacheMisses) + static_cast<unsigned>(kind) * sizeof(uint64_t); }
+    void collectCalleeCacheMisses();
     static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
     static constexpr ptrdiff_t offsetOfBoundFunctionStructureID() { return OBJECT_OFFSETOF(Instance, boundFunctionStructureID); }
+    JSCell* boundFunctionExecutable { nullptr };
     uint8_t* selectorsOnObjectPrototype;
     uint32_t objectPrototypeStructureID;
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
@@ -771,6 +788,7 @@ struct Instance {
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
     uint32_t operationSamplingState { 0 };
     const CallSiteOverride* callSiteOverrides { nullptr };
+    Data* ownData[maxNumberOfOwnData];
     uint32_t states[0];
 };
 

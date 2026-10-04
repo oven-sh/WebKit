@@ -88,6 +88,20 @@
     const instances = [];
     for (let i = 0; i < 50; ++i)
         instances.push(new Wide(i));
+    shouldBe(isDictionary(instances[0]), false, "the first instance of a class with many fields");
+    shouldBe(structureOf(instances[0]), structureOf(instances[1]), "the first and the second instance of a class share their structure");
+
+    function WideFunction(x) {
+        this.g0 = x; this.g1 = x; this.g2 = x; this.g3 = x; this.g4 = x;
+        this.g5 = x; this.g6 = x; this.g7 = x; this.g8 = x; this.g9 = x;
+    }
+    const firstOfFunction = new WideFunction(1);
+    const secondOfFunction = new WideFunction(2);
+    shouldBe(isDictionary(firstOfFunction), false, "the first instance of a function with many fields");
+    shouldBe(structureOf(firstOfFunction), structureOf(secondOfFunction), "the first and the second instance of a function share their structure");
+    shouldBe(Object.keys(firstOfFunction).join(), namesOf("g", 10), "order of fields of the first instance");
+    shouldBe(isDictionary(fill({}, "c", 10)), compiled, "a plain object with as many properties still leaves no transitions");
+
     for (let i = 0; i < 50; ++i) {
         shouldBe(instances[i].sum(), 2 * i, "fields of an instance");
         shouldBe(Object.keys(instances[i]).join(), namesOf("f", 12), "order of fields");

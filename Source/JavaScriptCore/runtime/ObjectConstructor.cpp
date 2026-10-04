@@ -327,7 +327,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
 #if USE(BUN_JSC_ADDITIONS)
-    if (targetCanPerformFastPut && targetObject->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+    if (targetCanPerformFastPut && (targetObject->structure()->mayBePrototype() || targetObject->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields()) [[unlikely]]
         targetCanPerformFastPut = false;
 #endif
     unsigned argsCount = callFrame->argumentCount();

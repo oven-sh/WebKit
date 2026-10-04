@@ -144,6 +144,7 @@
     function optionalParameter(a, options) { try { } catch { } let sum = a; if (options !== undefined) { for (let name in options) sum += effect(options[name]); } return sum; }
     function undefinedOrNumber(x) { try { } catch { } if (x !== undefined) return effect(x); return 0; }
     function objectOrNull(o) { try { } catch { } if (!o) return effect(0); return 1; }
+    function functionIsComparedWithNull(f) { try { } catch { } if (f == null) return effect(0); return 1; }
     function numberMayBeZero(n) { try { } catch { } if (!n) return effect(n); return 1; }
     log = [];
     check(undefinedOnly(undefined) + undefinedOnly(), 0, "only undefined is passed");
@@ -156,13 +157,14 @@
     check(log.length, 0, "no dead arm ran");
     check(undefinedOrNumber(undefined) + undefinedOrNumber(3), 3, "undefined or a number");
     check(objectOrNull({ }) + objectOrNull(null), 1, "an object or null");
+    check(functionIsComparedWithNull(() => 1), 1, "a function is not told from one that masquerades as undefined");
     check(numberMayBeZero(0) + numberMayBeZero(2), 1, "a number may be zero");
     check(log.join(), "3,0,0", "the live arms ran");
     for (let name of ["undefinedOnly", "nullOnly", "objectOnly", "objectIsNotNull", "numberIsNoString", "testedTwice", "optionalParameter"]) {
         applies(name, foldsByType);
         doesNotApply(name, callsEffect);
     }
-    for (let name of ["undefinedOrNumber", "objectOrNull", "numberMayBeZero"]) {
+    for (let name of ["undefinedOrNumber", "objectOrNull", "functionIsComparedWithNull", "numberMayBeZero"]) {
         doesNotApply(name, foldsByType);
         applies(name, callsEffect);
     }

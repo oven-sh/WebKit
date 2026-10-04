@@ -1473,8 +1473,15 @@ inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& 
     if (!first || first->m_expr->isSpreadExpression())
         return std::nullopt;
     ArgumentListNode* second = first->m_next;
-    if (!second || second->m_next || !second->m_expr->isNumber() || !static_cast<NumberNode*>(second->m_expr)->isIntegerNode())
+    if (!second || !second->m_expr->isNumber() || !static_cast<NumberNode*>(second->m_expr)->isIntegerNode())
         return std::nullopt;
+    if (ArgumentListNode* third = second->m_next) {
+        if (third->m_next || !third->m_expr->isNumber() || !static_cast<NumberNode*>(third->m_expr)->isIntegerNode())
+            return std::nullopt;
+        double type = static_cast<NumberNode*>(third->m_expr)->value();
+        if (!(type >= 0 && type <= std::numeric_limits<uint32_t>::max()))
+            return std::nullopt;
+    }
     double mask = static_cast<NumberNode*>(second->m_expr)->value();
     if (!(mask >= 1 && mask < SoundTypeMaskEnd) || mask != static_cast<unsigned>(mask) || !isValidSoundTypeMask(static_cast<unsigned>(mask)))
         return std::nullopt;
@@ -1515,8 +1522,12 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
             return new (m_parserArena) EvalFunctionCallNode(location, args, divot, divotStart, divotEnd);
         }
         if (!isOptionalCall) {
-            if (auto mask = soundTypeCheckMask(identifier, args))
-                return new (m_parserArena) SoundTypeCheckNode(location, args->m_listNode->m_expr, *mask, divot, divotStart, divotEnd);
+            if (auto mask = soundTypeCheckMask(identifier, args)) {
+                auto* check = new (m_parserArena) SoundTypeCheckNode(location, args->m_listNode->m_expr, *mask, divot, divotStart, divotEnd);
+                if (ArgumentListNode* type = args->m_listNode->m_next->m_next)
+                    check->setTypeTag(static_cast<uint32_t>(static_cast<NumberNode*>(type->m_expr)->value()));
+                return check;
+            }
         }
         return new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
     }

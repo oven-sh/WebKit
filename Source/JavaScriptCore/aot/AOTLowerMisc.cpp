@@ -102,7 +102,7 @@ void Lowering::lowerTerminal(BasicBlock* block, Node* node, const Conditional& c
         m_out.jump(m_returnBlock);
         return;
     case op_unreachable:
-        m_out.unreachable();
+        trap();
         return;
     case op_throw:
         vmCall(node, Void, Entry::operationAOTThrow, m_instance, lowJSValue(node->use(node->as<OpThrow>().m_value)));
@@ -722,6 +722,39 @@ bool Lowering::tryLowerMisc(Node* node)
     }
     case op_type_tag: {
         Node* value = node->uses[0].node;
+        if (node->isEdge) {
+            Type type = value->type ? value->type : TAll;
+            bool isKnown = !mayBe(type, TAnyObject) || value->hasLayoutInRange(node->firstLayout, node->lastLayout) || value->hasLayoutInRangeIfCell(node->firstLayout, node->lastLayout);
+            m_graph.remark(isKnown ? "edge-known"_s : "edge-check"_s, String::number(node->firstLayout));
+            if (isKnown) {
+                m_aliasTarget = value;
+                setResult(node, lowRaw(value), value->rep());
+                m_aliasTarget = nullptr;
+                return true;
+            }
+            LValue jsValue = lowJSValue(value);
+            LBasicBlock hasOtherLayout = newColdBlock();
+            LBasicBlock done = m_out.newBlock();
+            if (!isSubtype(type, TCell)) {
+                LBasicBlock cellCase = m_out.newBlock();
+                m_out.branch(isCell(jsValue), unsure(cellCase), unsure(done));
+                m_out.appendTo(cellCase);
+            }
+            LValue hasLayout = m_out.equal(loadTypedLayoutID(jsValue), m_out.constInt32(node->firstLayout));
+            if (mayBe(type, TCell & ~TAnyObject)) {
+                LBasicBlock differs = m_out.newBlock();
+                m_out.branch(hasLayout, unsure(done), unsure(differs));
+                m_out.appendTo(differs);
+                m_out.branch(isObjectCell(jsValue), rarely(hasOtherLayout), usually(done));
+            } else
+                m_out.branch(hasLayout, usually(done), rarely(hasOtherLayout));
+            m_out.appendTo(hasOtherLayout);
+            coldCall(node, Entry::operationAOTCheckTypedLayout, jsValue, m_out.constInt32(node->firstLayout));
+            m_out.jump(done);
+            m_out.appendTo(done);
+            setJSValue(node, jsValue);
+            return true;
+        }
         if (node->narrowedTo || value->hasLayoutInRange(node->firstLayout, node->lastLayout) || (TypeTable::hasTypedFields() && TypeTable::shared()->isUsable(node->firstLayout) && TypeTable::shared()->usesFieldIDs(node->firstLayout))) {
             m_aliasTarget = value;
             setResult(node, lowRaw(value), value->rep());
@@ -767,7 +800,7 @@ bool Lowering::tryLowerMisc(Node* node)
         Type candidates = value->type & typeProvingMask(mask);
         bool allObjectsPass = isSubtype(TAnyObject & value->type, candidates) && mayBe(candidates, TAnyObject);
         if (isSubtype(admitted, allObjectsPass ? TPrimitive | TAnyObject : TPrimitive) && isSubtype(admitted, candidates))
-            m_out.unreachable();
+            trap();
         else
             m_out.jump(continuation);
 

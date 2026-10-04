@@ -21,6 +21,12 @@ function fresh(before, value) {
     o.p = value;
     return o;
 }
+function freshWithOneNewStructure(value) {
+    const o = { };
+    o.p = value;
+    o["u" + unique++] = 0;
+    return o;
+}
 function structureID(o) { return /StructureID: (\d+)/.exec(describe(o))[1]; }
 
 read({ p: 1 });
@@ -28,10 +34,10 @@ write({ p: 1 }, 1);
 fullGC();
 fullGC();
 
-let reused = 0;
+let reused = [0, 0];
 for (let round = 0; round < 40; round++) {
     let id = (function () {
-        const o = fresh(40, round);
+        const o = fresh(round & 1 ? 40 : 5, round);
         for (let i = 0; i < 3; i++) {
             shouldBe(read(o), round);
             write(o, round);
@@ -40,10 +46,10 @@ for (let round = 0; round < 40; round++) {
     })();
     edenGC();
     for (let i = 0; i < 4000; i++) {
-        const o = fresh(0, i);
+        const o = freshWithOneNewStructure(i);
         if (structureID(o) !== id)
             continue;
-        reused++;
+        reused[round & 1]++;
         shouldBe(read(o), i);
         write(o, i + 1);
         shouldBe(o.p, i + 1);
@@ -51,5 +57,5 @@ for (let round = 0; round < 40; round++) {
     }
 }
 let usesDataStubs = (aotRemarks("read") || []).includes("calls:GetById");
-if (!reused && usesDataStubs)
+if ((!reused[0] || !reused[1]) && usesDataStubs)
     throw new Error("this did not test anything");

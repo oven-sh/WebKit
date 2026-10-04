@@ -51,6 +51,23 @@ function knowsNoCallee(name) {
     check(new Differs()(1), 2, "the function stored by the construction");
     check(knowsNoCallee("runsPick"), true, "different functions stored by the two are not known");
 
+    function MakesEither() {
+        return new.target ? function madeByConstruction(x) { return x + 1; } : function madeByCall(x) { return x + 2; };
+    }
+    check(new MakesEither()(1), 2, "a function that only the construction makes");
+    check(MakesEither()(1), 3, "a function that only the call makes");
+
+    function MakesWhenConstructed() {
+        if (!new.target)
+            return null;
+        var factor = 2;
+        return function madeWhenConstructed(x) {
+            return [x].map(function nestedInMadeWhenConstructed(y) { return y * factor; })[0];
+        };
+    }
+    check(new MakesWhenConstructed()(4), 8, "a function, and one nested in it, that the call never makes");
+    check(MakesWhenConstructed(), null, "the call makes nothing");
+
     function KeepsEither() {
         var kept = new.target ? "text" : 1;
         return function readsKept() { return kept + 1; };

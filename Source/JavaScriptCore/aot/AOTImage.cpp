@@ -54,7 +54,7 @@ uint64_t imageStamp()
     };
     mix(numberOfEntries);
     mix(Instance::offsetOfStates());
-    mix(Instance::offsetOfDataPointers());
+    mix(Instance::offsetOfOwnData());
     mix(Instance::minStateWithData);
     mix(numberOfStubs);
     mix(numOpcodeIDs);
@@ -639,8 +639,8 @@ Vector<uint8_t> ImageBuilder::finish()
         RELEASE_ASSERT(identifierIndices);
         for (uint32_t number = 0; number <= TypeTable::shared()->numberOfTypedLayouts(); ++number) {
             auto layout = TypeTable::shared()->typedLayout(number);
-            RELEASE_ASSERT(slotTypes.size() < (1u << 24) && fieldRecords.size() < (1u << 20));
-            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | layout.capacity);
+            RELEASE_ASSERT(slotTypes.size() < (1u << 23) && fieldRecords.size() < (1u << 20));
+            slotRanges.append(static_cast<uint32_t>(slotTypes.size()) << 8 | layout.capacity | (layout.isInstanceLayout ? TypedLayoutTable::isInstanceLayoutBit : 0));
             size_t start = slotTypes.size();
             for (unsigned slot = 0; slot < layout.capacity; ++slot)
                 slotTypes.append({ 0, 0, 0, 0 });
@@ -664,7 +664,7 @@ Vector<uint8_t> ImageBuilder::finish()
                 if (name->id)
                     slotFields[name->slot][name->id - 1] = safeCast<uint32_t>(fieldRecords.size());
                 fieldRecords.append({ identifierIndices->get(name->name), safeCast<uint8_t>(name->slot), name->mayBeAbsent, name->id });
-                fieldTypes.append({ name->fieldType.packedKinds(), name->fieldType.first, name->fieldType.last, 0 });
+                fieldTypes.append({ name->fieldType.packedKinds(), name->fieldType.first, name->fieldType.last, TypedLayoutTable::nameHashPrefix(name->name->existingHash()) });
                 fieldLayoutIDs.append(safeCast<uint16_t>(number));
             }
             RELEASE_ASSERT(fieldRecords.size() - firstLayoutField < (1u << 12));
@@ -879,6 +879,8 @@ Vector<uint8_t> ImageBuilder::finish()
             for (unsigned index = 0; index < m_functions.size(); ++index) {
                 auto& sites = m_functions[index].code.info.sites;
                 for (unsigned slot = 0; slot < sites.size(); ++slot) {
+                    if (slot + 1 < sites.size() && sites[slot + 1].identifierAndExtra == Site::isCalleeCache)
+                        continue;
                     if (uint32_t identifier = sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1))
                         out->println("S\t", index, "\t", slot, "\t", identifier);
                 }
@@ -1796,7 +1798,8 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.functionStartsOffset)[function.index];
         auto futureLocation = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(start, function.convention()), function.index,
-            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasNoGeneralBody };
+            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasNoGeneralBody, !!function.hasInlineFrames,
+            static_cast<uint16_t>(reinterpret_cast<const ImageFrame*>(m_data.data() + header.framesOffset)[function.frame].calleeStart) };
     }
     return std::nullopt;
 }

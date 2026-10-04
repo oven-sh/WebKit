@@ -97,8 +97,8 @@ if (aotRemarks("destructures")) {
     };
     expect("destructures", "sunk-iterator-method-read", true);
     expect("destructures", "reads-iterator-method-of-array-inline", false);
-    expect("joins", "sunk-iterator-method-read", false);
-    expect("joins", "reads-iterator-method-of-array-inline", true);
+    expect("joins", "sunk-iterator-method-read", true);
+    expect("joins", "reads-iterator-method-of-array-inline", false);
     expect("destructuresInTry", "sunk-iterator-method-read", true);
     for (let name of ["overString", "overNewMap"]) {
         expect(name, "sunk-iterator-method-read", false);

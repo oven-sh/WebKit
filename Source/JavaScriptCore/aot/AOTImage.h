@@ -264,6 +264,8 @@ public:
         bool startsCold;
         bool hasSiteConstants;
         bool hasNoGeneralBody;
+        bool hasInlineFrames;
+        uint16_t calleeStart;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;

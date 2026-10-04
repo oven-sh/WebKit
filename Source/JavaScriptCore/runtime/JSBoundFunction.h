@@ -27,6 +27,7 @@
 
 #include "JSFunction.h"
 #include "JSString.h"
+#include "SourceTaintedOrigin.h"
 
 namespace JSC {
 
@@ -48,6 +49,9 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, const SourceCode&);
+#if USE(BUN_JSC_ADDITIONS)
+    static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, SourceTaintedOrigin);
+#endif
     static JSBoundFunction* createRaw(VM&, JSGlobalObject*, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode&);
     
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
@@ -125,7 +129,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
-    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, const SourceCode&);
+    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, SourceTaintedOrigin);
 
     JSString* nameSlow(VM&);
     double NODELETE lengthSlow(VM&);

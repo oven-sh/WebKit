@@ -327,6 +327,7 @@ struct Site {
     static constexpr unsigned resolvesInGlobalScopes = (1u << extraBits) - 1;
     static constexpr unsigned throwsIfNotFound = 1;
     static constexpr unsigned isImport = 2;
+    static constexpr uint32_t isCalleeCache = 0xfff00000;
 
     uint32_t identifierAndExtra { 0 };
 };
@@ -352,6 +353,13 @@ struct ImageKey {
     uint32_t kind { 0 };
     uint32_t record { 0 };
 
+    static constexpr uint32_t typedBody = 1u << 16;
+    ImageKey ofPublicBody() const
+    {
+        ImageKey result = *this;
+        result.kind &= ~typedBody;
+        return result;
+    }
     bool sameFunction(const ImageKey& other) const { return module == other.module && start == other.start && kind == other.kind; }
     unsigned hash() const
     {
@@ -402,6 +410,7 @@ struct IndexReference {
 class IndexReferences {
 public:
     void load(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
+    void load16(CCallHelpers&, GPRReg base, GPRReg dest, uint32_t addend, uint32_t scale);
     Vector<IndexReference> link(LinkBuffer&);
     static void fill(uint8_t* code, const IndexReference&, uint32_t index);
 

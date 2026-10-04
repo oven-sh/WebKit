@@ -254,7 +254,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             continue;
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block))
+        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block) && block->size() >= 2 && block->at(block->size() - 2).kind.opcode == Patch)
             continue;
 #endif
 

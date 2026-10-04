@@ -18,7 +18,7 @@ ALWAYS_INLINE FunctionRef caller(Instance* instance, CallFrame* callFrame) { ret
 ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame)
 {
     FunctionRef function = caller(instance, callFrame);
-    if (!function.info().function()->hasInlineFrames) [[likely]]
+    if (!function.info().hasInlineFrames) [[likely]]
         return function;
     return function.locationForReturnAddress(removeCodePtrTag(callFrame->rawReturnPC()), callFrame->callerFrame()).function;
 }
@@ -30,10 +30,26 @@ ALWAYS_INLINE void countOperationNamed(Instance* instance, const char* name, con
         runtimeTable(*instance->vm).countOperation(name, detail);
 }
 
+ALWAYS_INLINE void countOperationNamed(VM& vm, const char* name)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countOperation(name);
+}
+
 ALWAYS_INLINE void countOperationBySlotState(Instance* instance, const char* name, const Slot* slot)
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
         runtimeTable(*instance->vm).countOperationBySlotState(name, slot);
+}
+
+ALWAYS_INLINE void countOperationAtSite(Instance* instance, CallFrame* callFrame, const char* name)
+{
+    if (!Options::useAOTOperationCounters()) [[likely]]
+        return;
+    FunctionRef function = callerBytecodeOwner(instance, callFrame);
+    BytecodeIndex bytecodeIndex = callerBytecodeIndex(instance, callFrame);
+    LineColumn position = function.lineColumnFor(bytecodeIndex);
+    runtimeTable(*instance->vm).countOperationAtSite(name, function.index, bytecodeIndex.offset(), position.line, position.column);
 }
 
 ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)

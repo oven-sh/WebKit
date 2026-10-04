@@ -214,7 +214,7 @@ struct Node {
             if (node->firstLayout >= first && node->lastLayout <= last)
                 return true;
         }
-        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::auditAOTTypedFields() && isTrusted)
+        if (isBytecode(op_type_tag) && firstLayout >= first && lastLayout <= last && !Options::auditAOTTypedFields() && isTrusted && !isEdge)
             return true;
         return type && isSubtype(type, TCell) && hasLayoutInRangeIfCell(first, last);
     }
@@ -238,6 +238,7 @@ struct Node {
     bool isElided { false };
     bool isReadOnlyForCall { false };
     bool isTrusted { false };
+    bool isEdge { false };
     bool isPromoted { false };
     bool isNeverEmpty { false };
     bool accessesLocalEnvironment { false };
@@ -250,6 +251,7 @@ struct Node {
     Escape escape { Escape::NotAnalyzed };
     Node* site { nullptr };
     Node* otherSite { nullptr };
+    Node* callSiteOrigin { nullptr };
     unsigned numberOfLiteralProperties { 0 };
     Node* delayedCreateThis { nullptr };
     uint8_t numberOfReturnValues { 0 };
@@ -317,6 +319,7 @@ struct BasicBlock {
     unsigned bytecodeEnd { 0 };
     bool isCatchEntrypoint { false };
     bool isReachable { false };
+    bool isExecutable { false };
     bool isLoopHeader { false };
     bool isInLoop { false };
     bool isInProfitableLoop { false };
@@ -385,6 +388,7 @@ public:
     };
     Vector<InlineFrame> inlineFrames;
     void adoptInlinee(std::unique_ptr<Graph>&&, InlineFrame);
+    void adoptNodesOf(std::unique_ptr<Graph>&&, unsigned inlineFrame);
     void computeBlockOrder();
     void computeDominators();
     void sinkIteratorMethodReads();
@@ -399,7 +403,11 @@ public:
         return function;
     }
     const FunctionSummary* summaryOfInlinedFunction { nullptr };
-    const FunctionSummary* summaryWithCaptures() const { return summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary; }
+    const FunctionSummary* summaryWithCaptures() const
+    {
+        const FunctionSummary* summary = summaryOfInlinedFunction ? summaryOfInlinedFunction : m_summary;
+        return summary ? &summary->ofFunction() : nullptr;
+    }
     unsigned dissolvedScopesOutside(unsigned hops) const;
     unsigned dissolvedScopesAbove(const Node* scope, unsigned hops);
     UncheckedKeyHashMap<Node*, Vector<std::pair<Node*, unsigned>, 4>> capturesOfClosures;
@@ -468,6 +476,7 @@ public:
     };
     static CallOperands callOperands(const JSInstruction*);
     uint32_t typeTagAt(unsigned bytecodeOffset) const { return m_typeTags.get(bytecodeOffset); }
+    bool isTypedFromOutside(unsigned bytecodeOffset) const { return m_sitesTypedFromOutside.get(bytecodeOffset); }
     static std::optional<TypeTable::Field> typedFieldAccessedBy(const Node*);
     static std::optional<TypeTable::FieldType> fieldTypeInLayout(uint32_t layoutID, UniquedStringImpl* name);
     static bool isEscapingFunctionThis(const Node*);
@@ -487,6 +496,9 @@ public:
     static bool isLocallyAllocatedArray(const Node* node) { return (node->isBytecode(op_new_array) && !readsOperandsFromFrame(node)) || node->isBytecode(op_new_array_with_size); }
     const KnownFunction* knownCallee(const Node*, bool* isExact = nullptr) const;
     const KnownFunction* knownCalleeIgnoringSummaries(const Node*, bool* isExact) const;
+    const KnownFunction* knownCalleeWithoutFacts(const Node*, bool* isExact) const;
+    const KnownFunction* calleeKnownByFact(const Node*) const;
+    static bool argumentsFitTypedBody(const Node* call, const KnownFunction&);
     bool calleeIsExact(const Node*) const;
     const KnownFunction* likelyFunctionInModuleVariable(unsigned identifier, unsigned scopeOffset) const;
     const KnownFunction* knownFunctionReadBy(const Node* getFromScope, bool* isExact = nullptr) const;
@@ -518,7 +530,7 @@ public:
     void setCalleeHints(const CalleeHints* hints) { m_hints = hints; }
     void setSummary(const FunctionSummary* summary) { m_summary = summary; }
     const FunctionSummary* summary() const { return m_summary; }
-    bool isCalledRepeatedly() const { return m_summary && m_summary->isCalledRepeatedly.load(std::memory_order_relaxed); }
+    bool isCalledRepeatedly() const { return m_summary && m_summary->ofFunction().isCalledRepeatedly.load(std::memory_order_relaxed); }
     void setVariableSummaries(VariableSummaries* summaries, unsigned reader = VariableSummaries::nobody)
     {
         m_variableSummaries = summaries;
@@ -537,7 +549,7 @@ public:
     void recordUntrackableVariableAccesses(VariableSummaries&);
     Type argumentTypeOnEntry(unsigned indexIncludingThis) const
     {
-        if (!m_summary || !m_summary->isNonEscaping || indexIncludingThis >= FunctionSummary::maxParameters)
+        if (!m_summary || !m_summary->hasOnlyKnownCallers || indexIncludingThis >= FunctionSummary::maxParameters)
             return TTop;
         if (!indexIncludingThis)
             return m_summary->thisType.load();
@@ -554,6 +566,12 @@ public:
     UncheckedKeyHashSet<B3::Value*> patchpointsTakingData;
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
+    struct InlinedCall {
+        Node* call { nullptr };
+        ASCIILiteral what;
+        String name;
+    };
+    UncheckedKeyHashMap<BasicBlock*, InlinedCall> inlinedCalls;
     uint32_t firstTypeCoverageCounter { 0 };
     bool isCoveringOperation() const { return m_isCoveringOperation; }
     void remark(ASCIILiteral what, StringView detail = { }, bool isOffUsualPath = false)
@@ -576,6 +594,7 @@ public:
     OpcodeID failureOpcode() const { return m_failureOpcode; }
 
     void dump(PrintStream&) const;
+    void dumpFacts(PrintStream&);
 
     Vector<BasicBlock*> blocksInReversePostOrder() const { return m_rpo; }
 
@@ -671,6 +690,7 @@ private:
     const DeclaredNamesLink* m_declaredNames { nullptr };
     BitVector m_namesAssignedTo;
     UncheckedKeyHashMap<unsigned, uint32_t, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_typeTags;
+    BitVector m_sitesTypedFromOutside;
     unsigned m_numArguments;
     unsigned m_numLocals;
     Convention m_convention;
@@ -721,6 +741,7 @@ void analyzeEscapes(Graph&);
 void shareRegExpLiterals(Graph&);
 void promoteEnvironments(Graph&);
 void saveRegistersAtDefinitions(Graph&);
+void readUnchangedRegistersFromFrame(Graph&);
 void clearDeadFrameSlots(Graph&);
 bool mayPromoteEnvironmentsOf(Graph&);
 void recordScopes(Graph&, VariableSummaries&, const FunctionSummaryMap&, const FunctionSummary* current);
@@ -733,7 +754,8 @@ bool isAbsentFromObjectPrototype(UniquedStringImpl*);
 
 inline UnlinkedCodeBlock* Node::codeBlockOfConstant() const { return ownerOfConstant ? ownerOfConstant : graph->codeBlock(); }
 void recordReturnedLiterals(Graph&);
-void planMultiValueReturns(Graph&);
+void planMultiValueReturns(Graph&, const ProgramCode*);
+Node* adoptLiteralReturnedBy(Graph&, const ProgramCode&, UnlinkedFunctionCodeBlock* callee, unsigned inlineFrame);
 struct EscapingParameters {
     uint32_t ifPlainObjects { 0 };
     uint32_t otherwise { 0 };

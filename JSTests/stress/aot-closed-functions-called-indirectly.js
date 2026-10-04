@@ -1,5 +1,5 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1", "--useAOTDataStubs=0")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));

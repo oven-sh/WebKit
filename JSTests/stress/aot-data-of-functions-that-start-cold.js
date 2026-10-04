@@ -3,13 +3,14 @@ function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
 }
+function double(x) { return x * 2; }
 function reads(o) { return o.value; }
 function readsThree(o) { return o.first + o.second + o.third; }
-function calls(f, x) { return f(x); }
-function readsInLoop(o, n) {
+function readsAndCalls(o, f, x) { const result = f(x); return result + o.value; }
+function readsAndCallsInLoop(o, f, n) {
     let sum = 0;
     for (let i = 0; i < n; ++i)
-        sum += o.value;
+        sum += f(o.value);
     return sum;
 }
 function readsAfterRecursion(o, depth) {
@@ -17,67 +18,79 @@ function readsAfterRecursion(o, depth) {
         return readsAfterRecursion(o, depth - 1) + o.value;
     return o.value;
 }
-function double(x) { return x * 2; }
 
 const countsOperations = typeof aotOperationCount === "function" && aotOperationCount("operationAOTGetById") !== null && isAOTCompiled(reads) && (aotRemarks("reads") || []).includes("calls:GetById");
-function operationsDuring(names, f) {
-    if (!countsOperations) {
-        f();
-        return -1;
-    }
-    const count = () => names.reduce((sum, name) => sum + aotOperationCount(name), 0);
-    const before = count();
-    f();
-    return count() - before;
+function read() {
+    if (!countsOperations)
+        return [0, 0];
+    return [aotOperationCount("operationAOTGetById"), aotOperationCount("operationAOTCacheCallee")];
 }
-function checkOperations(actual, atMost, what) {
-    if (actual > atMost)
-        throw new Error(what + ": " + actual + " calls of the operations, not at most " + atMost);
+// A callee cache can only be filled in a function's own data, and only by C++: a fill proves that the function has left the shared data.
+function checkWindow(before, readsAtMost, fillsAtLeast, fillsAtMost, what) {
+    if (!countsOperations)
+        return 0;
+    const after = read();
+    if (after[0] - before[0] > readsAtMost)
+        throw new Error(what + ": " + (after[0] - before[0]) + " reads reached C++, not at most " + readsAtMost);
+    const fills = after[1] - before[1];
+    if (fills < fillsAtLeast || fills > fillsAtMost)
+        throw new Error(what + ": " + fills + " callee caches filled, not " + fillsAtLeast + " to " + fillsAtMost);
+    return fills;
 }
-const readOperations = ["operationAOTGetById"];
-const callOperations = ["operationAOTCacheCallee", "operationAOTCacheHostCallee"];
-const warmUp = 200;
+for (let i = 0; i < 50; ++i) {
+    try {
+        checkWindow(read(), 0, 0, 0, "the helpers, which have caches of their own to fill");
+    } catch { }
+    check(i, i, "a helper");
+}
+checkWindow(read(), 0, 0, 0, "the helpers, once they have filled their own caches");
 
-{
-    const o = { unrelated: 0, value: 3 };
-    checkOperations(operationsDuring(readOperations, () => {
-        for (let i = 0; i < warmUp; ++i)
-            check(reads(o), 3, "a read in a function that starts cold");
-    }), warmUp / 4, "the first reads");
-    checkOperations(operationsDuring(readOperations, () => {
-        for (let i = 0; i < 2000; ++i)
-            check(reads(o), 3, "a read in a function that has its own caches");
-    }), 0, "later reads");
-}
-{
-    const o = { first: 1, other: 0, second: 2, third: 4 };
-    for (let i = 0; i < warmUp; ++i)
-        check(readsThree(o), 7, "three reads in a function that starts cold");
-    checkOperations(operationsDuring(readOperations, () => {
-        for (let i = 0; i < 2000; ++i)
-            check(readsThree(o), 7, "three reads in a function that has its own caches");
-    }), 0, "later reads of three properties");
-}
-{
-    for (let i = 0; i < warmUp; ++i)
-        check(calls(double, i), i * 2, "a call in a function that starts cold");
-    checkOperations(operationsDuring(callOperations, () => {
-        for (let i = 0; i < 2000; ++i)
-            check(calls(double, i), i * 2, "a call in a function that has its own caches");
-    }), 0, "later calls");
-}
-{
-    const o = { inLoop: 0, value: 2 };
-    checkOperations(operationsDuring(readOperations, () => {
-        check(readsInLoop(o, 5000), 10000, "reads in the loop of a function that is entered once");
-    }), warmUp, "a loop in the first activation of a function");
-}
-{
-    const o = { recursive: 0, value: 1 };
-    checkOperations(operationsDuring(readOperations, () => {
-        check(readsAfterRecursion(o, 400), 401, "reads in activations that began before the function had its own caches");
-    }), 401, "activations that began cold");
-    checkOperations(operationsDuring(readOperations, () => {
-        check(readsAfterRecursion(o, 400), 401, "reads in activations that began afterwards");
-    }), 0, "activations that began afterwards");
-}
+// Only code at the top level, whose own calls have no caches, runs between two readings: a helper that is new to a window would fill its caches there.
+const warmUp = 200;
+let o = { unrelated: 0, value: 3 };
+let before = read();
+for (let i = 0; i < warmUp; ++i)
+    check(reads(o), 3, "a read in a function that starts cold");
+checkWindow(before, warmUp / 4, 0, 0, "the first reads");
+before = read();
+for (let i = 0; i < 2000; ++i)
+    check(reads(o), 3, "a read in a function that has its own caches");
+checkWindow(before, 0, 0, 0, "later reads");
+
+o = { first: 1, other: 0, second: 2, third: 4 };
+before = read();
+for (let i = 0; i < warmUp; ++i)
+    check(readsThree(o), 7, "three reads in a function that starts cold");
+checkWindow(before, warmUp / 4, 0, 0, "the first reads of three properties");
+before = read();
+for (let i = 0; i < 2000; ++i)
+    check(readsThree(o), 7, "three reads in a function that has its own caches");
+checkWindow(before, 0, 0, 0, "later reads of three properties");
+
+o = { withCall: 0, value: 5 };
+before = read();
+for (let i = 0; i < warmUp; ++i)
+    check(readsAndCalls(o, double, i), i * 2 + 5, "a read and a call in a function that starts cold");
+checkWindow(before, warmUp / 4, 1, 1, "the first reads and calls");
+before = read();
+for (let i = 0; i < 2000; ++i)
+    check(readsAndCalls(o, double, i), i * 2 + 5, "a read and a call in a function that has its own caches");
+checkWindow(before, 0, 0, 0, "later reads and calls");
+
+o = { inLoop: 0, value: 2 };
+before = read();
+check(readsAndCallsInLoop(o, double, 5000), 20000, "reads and calls in the loop of a function that is entered once");
+checkWindow(before, warmUp / 4, 1, 1, "a loop in the first activation of a function");
+
+o = { recursive: 0, value: 1 };
+before = read();
+check(readsAfterRecursion(o, 400), 401, "reads in activations that began before the function had its own caches");
+let fills = checkWindow(before, 401, 0, 1, "activations that began cold");
+before = read();
+check(readsAfterRecursion(o, 400), 401, "reads in activations that began afterwards");
+fills += checkWindow(before, 1, 0, 1, "activations that began afterwards");
+if (countsOperations)
+    check(fills, 1, "the callee cache of a recursive function is filled once");
+before = read();
+check(readsAfterRecursion(o, 400), 401, "reads in still later activations");
+checkWindow(before, 0, 0, 0, "still later activations");

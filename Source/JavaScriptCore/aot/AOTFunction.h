@@ -23,6 +23,8 @@ namespace JSC {
 class CallFrame;
 class CodeBlock;
 class FunctionExecutable;
+class JSFunction;
+class JSGlobalObject;
 class JSValue;
 class RegisterAtOffsetList;
 class ScriptExecutable;
@@ -182,8 +184,10 @@ JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE CodeBlock* callerCodeBlock(const CallFrame*);
+JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&, bool entersStaticCode);
+void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);
 
 } } // namespace JSC::AOT
 

@@ -494,6 +494,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         throwException(globalObject, scope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
         return JSValue::encode(jsUndefined());
     }
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::noteGuest(globalObject, "eval", { }, programSource);
+#endif
 
     if (SourceProfiler::g_profilerHook) [[unlikely]] {
         SourceOrigin sourceOrigin = callFrame->callerSourceOrigin(vm);
@@ -824,6 +828,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     auto* specifier = callFrame->uncheckedArgument(0).toString(globalObject);
     if (scope.exception()) [[unlikely]]
         return rejectWithCaughtException();
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::noteGuest(globalObject, "import", { }, specifier->tryGetValue().data);
+#endif
 
     // We always specify parameters as undefined. Once dynamic import() starts accepting fetching parameters,
     // we should retrieve this from the arguments.
@@ -964,9 +972,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         // excludedSet is no longer used.
         ensureStillAliveHere(unlinkedCodeBlock);
 
-        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
-            target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
-        else {
+        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]] {
+            if (!target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size()) && target->structure()->typedLayoutID()) [[unlikely]]
+                return throwVMTypeError(globalObject, scope, TypedFieldError);
+        } else {
             for (size_t i = 0; i < properties.size(); ++i)
                 target->putDirect(vm, properties[i], values.at(i));
         }
@@ -997,8 +1006,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
             value = source->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, { });
 
-        target->putDirectMayBeIndex(globalObject, propertyName, value);
+        bool isApplied = target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
+        if (!isApplied && target->structure()->typedLayoutID()) [[unlikely]]
+            return throwVMTypeError(globalObject, scope, TypedFieldError);
     }
     ensureStillAliveHere(unlinkedCodeBlock);
     return JSValue::encode(target);
@@ -1065,7 +1076,10 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
         });
         RETURN_IF_EXCEPTION(scope, { });
 
-        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+        if (!target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size()) && target->structure()->typedLayoutID()) [[unlikely]] {
+            throwTypeError(globalObject, scope, TypedFieldError);
+            return nullptr;
+        }
 
         return target;
     }
@@ -1090,8 +1104,12 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
             value = source->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, { });
 
-        target->putDirectMayBeIndex(globalObject, propertyName, value);
+        bool isApplied = target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
+        if (!isApplied && target->structure()->typedLayoutID()) [[unlikely]] {
+            throwTypeError(globalObject, scope, TypedFieldError);
+            return nullptr;
+        }
     }
     return target;
 }

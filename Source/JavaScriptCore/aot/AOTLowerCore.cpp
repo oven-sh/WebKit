@@ -73,6 +73,8 @@ static bool errorMayQuoteSource(const Graph& graph, Node* node)
 
 uint32_t Lowering::callSiteBitsOf(Node* node)
 {
+    if (node->callSiteOrigin)
+        node = node->callSiteOrigin;
     if (node->graph->isOutermost()) {
         if (node->kind != NodeKind::Narrow && errorMayQuoteSource(m_graph, node))
             m_graph.quotableSites.append(node->bytecodeIndex.offset());
@@ -83,6 +85,8 @@ uint32_t Lowering::callSiteBitsOf(Node* node)
 
 uint32_t Lowering::siteOf(Node* node)
 {
+    if (node->callSiteOrigin)
+        node = node->callSiteOrigin;
     uint32_t bits = CallSiteIndex(node->bytecodeIndex).bits();
     if (m_graph.inlineFrames.isEmpty())
         return bits;
@@ -239,11 +243,14 @@ bool Lowering::run()
         findPropertyRuns(block);
     for (auto& run : m_propertyRuns)
         scratchWords = std::max<unsigned>(scratchWords, run.size());
+    m_graph.returnValueReads.clear();
     for (BasicBlock* block : m_graph.m_rpo) {
         for (Node* node : block->nodes) {
             scratchWords = std::max(scratchWords, scratchWordsFor(node));
             for (auto& use : node->uses)
                 use.node->useCount++;
+            if (node->kind == NodeKind::Proj && !node->isElided)
+                m_graph.returnValueReads.add(node->uses[0].node, Vector<Node*, 8> { }).iterator->value.append(node);
         }
         for (Node* phi : block->phis) {
             for (auto& use : phi->uses)
@@ -344,6 +351,15 @@ void Lowering::coverCall(StringView name, uint32_t whichCounter)
         incrementTypeCoverageCounter(m_graph.coverage.last().counter + whichCounter);
 }
 
+void Lowering::trap()
+{
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
+    patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams&) {
+        jit.breakpoint();
+    });
+    m_out.unreachable();
+}
+
 void Lowering::unsupported(Node* node)
 {
     m_graph.fail("no lowering"_s, node->opcode);
@@ -370,8 +386,14 @@ LValue Lowering::wordByIndex(LValue base, uint32_t addend, uint32_t scale, bool 
 
 Lowering::OwnData Lowering::ownData()
 {
-    LValue data = wordByIndex(nullptr, Instance::offsetOfDataPointers(), sizeof(Data*), true);
-    return { m_out.notEqual(data, m_out.loadPtr(m_instance, m_heaps.AOTInstance_sharedData)), data };
+    PatchpointValue* number = m_out.patchpoint(pointerType());
+    number->effects = Effects::none();
+    number->effects.reads = HeapRange::top();
+    number->setGenerator([indexReferences = &m_graph.indexReferences](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        indexReferences->load16(jit, instanceGPR, params[0].gpr(), Instance::offsetOfStates(), sizeof(uint32_t));
+    });
+    LValue data = m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(m_instance, m_out.shl(number, m_out.constInt32(3)))));
+    return { m_out.notZero64(number), data };
 }
 
 LValue Emitter::registerOnEntry(Reg reg)
@@ -1326,6 +1348,15 @@ void Lowering::lowerBlock(BasicBlock* block)
         m_exit = newColdBlock();
     if (block == m_graph.root)
         lowerEntry();
+    if (Options::aotTypeCoveragePath()) [[unlikely]] {
+        if (auto inlined = m_graph.inlinedCalls.find(block); inlined != m_graph.inlinedCalls.end()) {
+            coverOperation(inlined->value.call, inlined->value.call->block);
+            m_graph.remark(inlined->value.what, inlined->value.name);
+            if (Options::useAOTTypeCoverageCounters() && m_graph.isCoveringOperation())
+                incrementTypeCoverageCounter(m_graph.coverage.last().counter + 1);
+            m_graph.beginCoveredOperation(nullptr, block);
+        }
+    }
 
     Node* terminal = block->terminal();
     if (terminal && terminal->kind != NodeKind::Guard && !(terminal->kind == NodeKind::Bytecode && (isBranch(terminal->opcode) || isTerminal(terminal->opcode) || isThrow(terminal->opcode))))
@@ -1379,6 +1410,8 @@ void Lowering::lowerBlock(BasicBlock* block)
         lowerNode(node);
         if (m_graph.failed())
             return;
+        if (Options::aotTypeCoveragePath() && m_out.m_block == m_blockWhereOperationStarts) [[unlikely]]
+            m_graph.remark("emits-no-branch"_s);
         if (node->isBytecode(op_put_to_scope))
             m_newCells.removeAll(node->use(node->as<OpPutToScope>().m_value));
         else if (node->kind == NodeKind::SetStack)

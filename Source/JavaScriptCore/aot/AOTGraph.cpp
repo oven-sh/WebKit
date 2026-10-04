@@ -207,6 +207,14 @@ Graph::Graph(VM& vm, UnlinkedCodeBlock* codeBlock, const ScopeChain& scopeChain)
                 m_typeTags.set(offset + instruction->size(), instruction->as<OpTypeTag>().m_tag);
         }
     }
+    if (const TypeTable* table = TypeTable::shared()) {
+        if (auto* siteTypes = table->siteTypesIn(codeBlock)) {
+            for (auto [offset, type] : *siteTypes) {
+                if (m_typeTags.add(offset, type).isNewEntry)
+                    m_sitesTypedFromOutside.set(offset);
+            }
+        }
+    }
 }
 
 Graph::~Graph() = default;
@@ -274,6 +282,8 @@ NewObjectPlan NewObjectPlan::forCreateThis(UnlinkedCodeBlock* codeBlock, unsigne
             continue;
         }
         case op_type_tag:
+            if (unsigned next = offset + instruction->size(); next < instructions.size() && instructions.at(next)->opcodeID() == op_check_type)
+                return plan;
             continue;
         case op_check_type:
             if (!plan.stores.isEmpty() || aliases.contains(instruction->as<OpCheckType>().m_value))
@@ -450,6 +460,28 @@ Graph::CallOperands Graph::callOperands(const JSInstruction* instruction)
     }
     auto bytecode = instruction->as<OpCallIgnoreResult>();
     return { bytecode.m_callee, bytecode.m_argc, bytecode.m_argv };
+}
+
+bool calleeIsNamedLikeCallIntrinsic(UnlinkedCodeBlock* codeBlock, unsigned offsetOfCall)
+{
+    auto call = codeBlock->instructions().at(offsetOfCall);
+    if (call->opcodeID() != op_call && call->opcodeID() != op_call_ignore_result)
+        return false;
+    Graph::CallOperands operands = Graph::callOperands(call.ptr());
+    UniquedStringImpl* name = nullptr;
+    for (const auto& instruction : codeBlock->instructions()) {
+        if (instruction.offset() >= offsetOfCall)
+            break;
+        bool writesCallee = false;
+        for (unsigned checkpoint = 0; checkpoint < instruction->numberOfCheckpoints(); ++checkpoint) {
+            computeDefsForBytecodeIndexImpl(codeBlock->numVars(), instruction.ptr(), checkpoint, [&](VirtualRegister reg) {
+                writesCallee |= reg == operands.callee;
+            });
+        }
+        if (writesCallee)
+            name = instruction->opcodeID() == op_get_by_id ? codeBlock->identifier(instruction->as<OpGetById>().m_property).impl() : nullptr;
+    }
+    return name && callIntrinsicFor(name, operands.argc) != CallIntrinsic::None;
 }
 
 std::optional<LinkTimeConstant> Graph::linkTimeConstantOf(const Node* node)
@@ -640,10 +672,60 @@ bool Graph::calleeIsExact(const Node* node) const
     return knownCallee(node, &isExact) && isExact;
 }
 
+const KnownFunction* Graph::calleeKnownByFact(const Node* node) const
+{
+    if (node->graph != this)
+        return node->graph->calleeKnownByFact(node);
+    if (!callTargets() || !programFunctions() || node->kind != NodeKind::Bytecode) [[likely]]
+        return nullptr;
+    if (node->opcode != op_call && node->opcode != op_call_ignore_result && node->opcode != op_tail_call && node->opcode != op_construct)
+        return nullptr;
+    bool isProvenOtherwise = false;
+    if (knownCalleeWithoutFacts(node, &isProvenOtherwise) && isProvenOtherwise)
+        return nullptr;
+    if (callIntrinsic(node) != CallIntrinsic::None)
+        return nullptr;
+    const KnownFunction* function = programFunctions()->function(callTargets()->onlyTargetAt(m_codeBlock, node->bytecodeIndex.offset()));
+    if (!function || !function->forCall)
+        return nullptr;
+    if (node->opcode == op_construct && (!function->forConstruct || function->executable->isBuiltinDefaultClassConstructor()))
+        return nullptr;
+    if (node->opcode == op_tail_call && function->conventionForCall.signature == Signature::List)
+        return nullptr;
+    return function;
+}
+
+bool Graph::argumentsFitTypedBody(const Node* call, const KnownFunction& function)
+{
+    if (!(function.key.kind & ImageKey::typedBody) || call->kind != NodeKind::Bytecode || call->opcode == op_construct)
+        return true;
+    CallOperands operands = callOperands(call->instruction);
+    unsigned count = std::min<unsigned>(std::max<unsigned>(function.forCall->numParameters(), function.conventionForCall.numberOfParameters + 1), FunctionSummary::maxParameters);
+    for (unsigned i = 1; i < count; ++i) {
+        Type passed = i < operands.argc ? call->use(operands.argument(i))->type & TTop : TUndefined;
+        if (!isSubtype(passed, function.summary->parameterTypes[i].load()))
+            return false;
+    }
+    return isSubtype(call->use(operands.argument(0))->type & TTop, function.summary->thisType.load());
+}
+
 const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
 {
     if (node->graph != this)
         return node->graph->knownCallee(node, isExact);
+    bool proven = true;
+    const KnownFunction* known = calleeKnownByFact(node);
+    if (!known)
+        known = knownCalleeWithoutFacts(node, &proven);
+    if (isExact)
+        *isExact = known && proven && argumentsFitTypedBody(node, *known);
+    return known;
+}
+
+const KnownFunction* Graph::knownCalleeWithoutFacts(const Node* node, bool* isExact) const
+{
+    if (node->graph != this)
+        return node->graph->knownCalleeWithoutFacts(node, isExact);
     bool proven = false;
     const KnownFunction* known = knownCalleeIgnoringSummaries(node, &proven);
     if ((!known || !proven) && programFunctions() && (node->opcode == op_call || node->opcode == op_call_ignore_result || node->opcode == op_tail_call)) {
@@ -2197,7 +2279,7 @@ bool Graph::isEscapingFunctionThis(const Node* node)
     if (node->kind != NodeKind::Argument || node->reg != virtualRegisterForArgumentIncludingThis(0))
         return false;
     const FunctionSummary* summary = node->graph->summary();
-    return !summary || !summary->isNonEscaping;
+    return !summary || !summary->hasOnlyKnownCallers;
 }
 
 std::optional<TypeTable::Field> Graph::typedFieldAccessedBy(const Node* node)
@@ -2315,6 +2397,14 @@ void Graph::noteClassesDefined()
     const ProgramFunctions* functions = programFunctions();
     if (!classes || !functions || !TypeTable::typedFieldsAreEnforced())
         return;
+    if (m_codeBlock->isConstructor() && m_codeBlock->constructorKind() == ConstructorKind::None) {
+        for (const auto& instruction : m_codeBlock->instructions()) {
+            if (instruction->opcodeID() != op_put_by_id || instruction->as<OpPutById>().m_base != m_codeBlock->thisRegister())
+                continue;
+            if (uint32_t tag = typeTagAt(instruction.offset()); tag && TypeTable::shared()->isClass(tag))
+                classes->noteThisIn(m_codeBlock, TypeTable::shared()->instanceLayoutIDFor(tag));
+        }
+    }
     for (BasicBlock* block : m_rpo) {
         for (Node* note : block->nodes) {
             uint32_t classType = classRecordedBy(note);
@@ -2693,6 +2783,19 @@ void Graph::adoptInlinee(std::unique_ptr<Graph>&& other, InlineFrame frame)
     m_inlinees.append(WTF::move(other));
 }
 
+void Graph::adoptNodesOf(std::unique_ptr<Graph>&& other, unsigned inlineFrame)
+{
+    RELEASE_ASSERT(isOutermost() && other->isOutermost() && other->m_inlinees.isEmpty());
+    other->m_inlineFrame = inlineFrame;
+    other->m_outermost = this;
+    for (auto& node : other->m_nodes)
+        node.index += m_nodes.size() + m_numberOfInlinedNodes;
+    m_numberOfInlinedNodes += other->m_nodes.size();
+    other->blocks.clear();
+    other->m_rpo.clear();
+    m_inlinees.append(WTF::move(other));
+}
+
 void Graph::computeBlockOrder()
 {
     for (auto& block : blocks)
@@ -2965,6 +3068,244 @@ void Graph::dump(PrintStream& out) const
         for (auto* successor : block->successors)
             out.print(" #", successor->index);
         out.print("\n");
+    }
+}
+
+void Graph::dumpFacts(PrintStream& out)
+{
+    auto printEscaped = [&](StringView text) {
+        for (char16_t character : text.codeUnits()) {
+            if (character > ' ' && character != '\\' && character < 0x7f)
+                out.print(static_cast<char>(character));
+            else
+                out.printf("\\u%04x", character);
+        }
+    };
+    auto printName = [&](unsigned identifier) {
+        const UniquedStringImpl* name = m_codeBlock->identifier(identifier).impl();
+        out.print(" name=", name->isSymbol() ? "@" : "");
+        printEscaped(StringView { name });
+    };
+    auto printFunction = [&](ASCIILiteral label, const KnownFunction* function) {
+        if (function && programFunctions())
+            out.print(" ", label, "=", programFunctions()->numberOf(function->executable), ":", function->key.module, ":", function->key.start, ":", function->key.kind);
+    };
+    auto printIntrinsic = [&](unsigned number) {
+        Vector<unsigned, 4> path;
+        for (number = ImmutableIntrinsics::shared()->at(number).canonical; number != ImmutableIntrinsics::globalObject && path.size() < 8; number = ImmutableIntrinsics::shared()->at(number).holder)
+            path.append(number);
+        if (path.isEmpty())
+            out.print("globalThis");
+        for (unsigned i = path.size(); i--;)
+            out.print(ImmutableIntrinsics::shared()->at(path[i]).name, i ? "." : "");
+    };
+    auto printFactsAbout = [&](Node* node) {
+        if (!node->instruction)
+            return;
+        switch (node->opcode) {
+        case op_get_by_id:
+            return printName(node->as<OpGetById>().m_property);
+        case op_get_by_id_direct:
+            return printName(node->as<OpGetByIdDirect>().m_property);
+        case op_get_by_id_with_this:
+            return printName(node->as<OpGetByIdWithThis>().m_property);
+        case op_del_by_id:
+            return printName(node->as<OpDelById>().m_property);
+        case op_in_by_id:
+            return printName(node->as<OpInById>().m_property);
+        case op_put_getter_by_id:
+            return printName(node->as<OpPutGetterById>().m_property);
+        case op_put_setter_by_id:
+            return printName(node->as<OpPutSetterById>().m_property);
+        case op_put_getter_setter_by_id:
+            return printName(node->as<OpPutGetterSetterById>().m_property);
+        case op_put_by_id:
+            printName(node->as<OpPutById>().m_property);
+            if (node->as<OpPutById>().m_flags.isDirect())
+                out.print(" direct");
+            return;
+        case op_get_internal_field:
+            out.print(" index=", node->as<OpGetInternalField>().m_index);
+            return;
+        case op_put_internal_field:
+            out.print(" index=", node->as<OpPutInternalField>().m_index);
+            return;
+        case op_get_argument:
+            out.print(" index=", node->as<OpGetArgument>().m_index);
+            return;
+        case op_create_rest:
+            out.print(" index=", node->as<OpCreateRest>().m_numParametersToSkip);
+            return;
+        case op_new_array:
+            if (readsOperandsFromFrame(node))
+                out.print(" argv=", node->as<OpNewArray>().m_argv, " argc=", node->as<OpNewArray>().m_argc);
+            return;
+        case op_get_from_scope:
+        case op_put_to_scope: {
+            unsigned identifier = node->opcode == op_get_from_scope ? node->as<OpGetFromScope>().m_var : node->as<OpPutToScope>().m_var;
+            if (identifier == UINT_MAX)
+                return;
+            printName(identifier);
+            if (Variable variable = variableAccessedBy(node))
+                out.print(" variable=", reinterpret_cast<uintptr_t>(variable.scope), ":", variable.offset);
+            return;
+        }
+        case op_create_lexical_environment:
+            out.print(" scope=", reinterpret_cast<uintptr_t>(scopeIdentity(node)));
+            return;
+        case op_new_object: {
+            if (!node->numberOfLiteralProperties)
+                return;
+            auto& stores = literalStores(node->bytecodeIndex.offset());
+            for (unsigned i = 0; i < node->numberOfLiteralProperties; ++i) {
+                printName(m_codeBlock->instructions().at(stores[i])->as<OpPutById>().m_property);
+                out.print(" store=", stores[i]);
+            }
+            return;
+        }
+        case op_create_this: {
+            if (!node->numberOfLiteralProperties)
+                return;
+            auto plan = NewObjectPlan::forCreateThis(m_codeBlock, node->bytecodeIndex.offset());
+            for (auto& property : plan.properties)
+                printName(property.identifier);
+            for (auto& store : plan.stores)
+                out.print(" store=", store.offset, ":", store.property);
+            return;
+        }
+        case op_new_func:
+        case op_new_func_exp:
+        case op_new_generator_func:
+        case op_new_generator_func_exp:
+        case op_new_async_func:
+        case op_new_async_func_exp:
+        case op_new_async_generator_func:
+        case op_new_async_generator_func_exp:
+            return printFunction("function"_s, functionMadeBy(node));
+        case op_call:
+        case op_call_ignore_result:
+        case op_tail_call:
+        case op_construct: {
+            bool isExact = false;
+            printFunction("callee"_s, knownCallee(node, &isExact));
+            if (isExact)
+                out.print(" exact");
+            return;
+        }
+        case op_catch:
+            out.print(" exception=", node->as<OpCatch>().m_exception, " thrown=", node->as<OpCatch>().m_thrownValue);
+            return;
+        case op_iterator_open:
+            out.print(" iterator=", node->as<OpIteratorOpen>().m_iterator, " next=", node->as<OpIteratorOpen>().m_next);
+            return;
+        case op_iterator_next:
+            out.print(" done=", node->as<OpIteratorNext>().m_done, " value=", node->as<OpIteratorNext>().m_value);
+            return;
+        case op_enumerator_next:
+            out.print(" propertyName=", node->as<OpEnumeratorNext>().m_propertyName);
+            return;
+        default:
+            return;
+        }
+    };
+    auto print = [&](Node* node) {
+        out.print("N\t", node->index, "\t");
+        switch (node->kind) {
+        case NodeKind::Bytecode:
+            out.print(opcodeNames[node->opcode], "\t", node->bytecodeIndex.offset(), "\t");
+            printFactsAbout(node);
+            break;
+        case NodeKind::Constant:
+            out.print("Constant\t\t ", node->constant);
+            break;
+        case NodeKind::ConstantCell:
+            out.print("ConstantCell\t\t");
+            if (node->reg.isConstant()) {
+                JSValue constant = node->codeBlockOfConstant()->getConstant(node->reg);
+                if (const StringImpl* string = constant && constant.isString() ? asString(constant)->tryGetValueImpl() : nullptr) {
+                    out.print(" string=");
+                    printEscaped(StringView { string });
+                }
+            }
+            break;
+        case NodeKind::Intrinsic:
+            out.print("Intrinsic\t\t ");
+            printIntrinsic(node->intrinsic);
+            break;
+        case NodeKind::LinkTimeConstant:
+            out.print("LinkTimeConstant\t\t ", static_cast<LinkTimeConstant>(node->intrinsic));
+            break;
+        case NodeKind::Argument:
+            out.print("Argument\t\t ", node->reg);
+            break;
+        case NodeKind::Phi:
+            out.print("Phi\t\t ", node->reg);
+            break;
+        case NodeKind::Proj:
+            out.print("Proj\t\t ", node->reg);
+            break;
+        case NodeKind::GetStack:
+            out.print("GetStack\t\t ", node->reg);
+            break;
+        case NodeKind::SetStack:
+            out.print("SetStack\t\t ", node->reg);
+            break;
+        case NodeKind::Narrow:
+            out.print("Narrow\t\t");
+            break;
+        case NodeKind::Guard:
+            out.print("Guard\t\t");
+            break;
+        }
+        out.print("\t");
+        Vector<VirtualRegister, 8> operands;
+        if (node->kind == NodeKind::Bytecode && node->instruction && node->instruction->numberOfCheckpoints() == 1) {
+            computeUsesForBytecodeIndexImpl(node->instruction, 0, [&](VirtualRegister reg) {
+                operands.append(reg);
+            });
+        }
+        if (operands.size() <= node->uses.size())
+            operands.shrink(0);
+        for (VirtualRegister reg : operands) {
+            for (auto& use : node->uses) {
+                if (use.reg == reg && use.node)
+                    out.print(" ", use.reg, ":", use.node->index);
+            }
+        }
+        for (auto& use : node->uses) {
+            if (operands.isEmpty() && use.node)
+                out.print(" ", use.reg, ":", use.node->index);
+        }
+        out.print("\n");
+    };
+    BitVector isInBlockOrPrinted;
+    for (BasicBlock* block : m_rpo) {
+        for (Node* phi : block->phis)
+            isInBlockOrPrinted.set(phi->index);
+        for (Node* node : block->nodes)
+            isInBlockOrPrinted.set(node->index);
+    }
+    auto printAfterOperands = [&](Node* node) {
+        for (auto& use : node->uses) {
+            if (!use.node || isInBlockOrPrinted.get(use.node->index))
+                continue;
+            isInBlockOrPrinted.set(use.node->index);
+            print(use.node);
+        }
+        print(node);
+    };
+    for (BasicBlock* block : m_rpo) {
+        out.print("B\t", block->index, "\t", block->isCatchEntrypoint ? " catch" : "", block->isLoopHeader ? " loop" : "", "\t");
+        for (BasicBlock* predecessor : block->predecessors)
+            out.print(" ", predecessor->index);
+        out.print("\t");
+        for (BasicBlock* successor : block->successors)
+            out.print(" ", successor->index);
+        out.print("\n");
+        for (Node* phi : block->phis)
+            printAfterOperands(phi);
+        for (Node* node : block->nodes)
+            printAfterOperands(node);
     }
 }
 
@@ -3362,15 +3703,14 @@ private:
         unsigned next = offset + instruction->size();
         if (next >= end || m_instructions.at(next)->opcodeID() != op_type_tag)
             return false;
-        auto [layoutID, base] = layoutCheckedAt(next);
+        auto [layoutID, base] = layoutCheckedAt(next + m_instructions.at(next)->size());
         return layoutID && base == instruction->as<OpCheckType>().m_value && m_graph.isTracked(base);
     }
 
-    std::pair<uint16_t, VirtualRegister> layoutCheckedAt(unsigned offset)
+    std::pair<uint16_t, VirtualRegister> layoutCheckedAt(unsigned next)
     {
         if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
             return { };
-        unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size() || !usesTypedAccessWithoutGuard(next))
             return { };
         const JSInstruction* access = m_instructions.at(next).ptr();
@@ -3380,11 +3720,23 @@ private:
         return { TypeTable::shared()->layoutIDOf(m_graph.typeTagAt(next)), base };
     }
 
-    VirtualRegister arrayAssertedAt(unsigned offset)
+    std::pair<uint16_t, VirtualRegister> edgeAt(unsigned next)
+    {
+        if (!Options::useAOTTypedFields() || !TypeTable::hasTypedFields())
+            return { };
+        if (next >= m_instructions.size() || m_instructions.at(next)->opcodeID() != op_check_type)
+            return { };
+        VirtualRegister value = m_instructions.at(next)->as<OpCheckType>().m_value;
+        uint32_t tag = m_graph.typeTagAt(next);
+        if (value.isConstant() || !tag || !TypeTable::shared()->isTrusted(tag))
+            return { };
+        return { TypeTable::shared()->layoutIDOf(tag), value };
+    }
+
+    VirtualRegister arrayAssertedAt(unsigned next)
     {
         if (!Options::useAOTTypedFields() || !TypeTable::typedFieldsAreEnforced())
             return { };
-        unsigned next = offset + m_instructions.at(offset)->size();
         if (next >= m_instructions.size())
             return { };
         uint32_t tag = m_graph.typeTagAt(next);
@@ -4028,6 +4380,47 @@ private:
         block->valuesAtTail[m_graph.registerIndex(reg)] = value;
     }
 
+    void assertTypeOfBase(BasicBlock* block, const JSInstruction* instruction, unsigned next)
+    {
+        auto [layoutID, baseRegister] = layoutCheckedAt(next);
+        bool isEdge = false;
+        if (!layoutID) {
+            auto edge = edgeAt(next);
+            layoutID = edge.first;
+            baseRegister = edge.second;
+            isEdge = layoutID;
+        }
+        bool isArray = false;
+        if (!layoutID) {
+            baseRegister = arrayAssertedAt(next);
+            isArray = baseRegister.isValid();
+        }
+        if ((!layoutID && !isArray) || !m_graph.isTracked(baseRegister))
+            return;
+        Node* base = get(block, baseRegister);
+        if (base == m_pendingCreateThis)
+            return;
+        bool isTrusted = layoutID && TypeTable::shared()->isTrusted(m_graph.typeTagAt(next)) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isEscapingFunctionThis(base));
+        if (isEdge && !isTrusted)
+            return;
+        Node* node = m_graph.addNode(NodeKind::Bytecode);
+        node->opcode = op_type_tag;
+        node->instruction = instruction;
+        node->bytecodeIndex = BytecodeIndex(next);
+        node->uses.append({ baseRegister, base });
+        node->firstLayout = node->lastLayout = layoutID;
+        node->isTrusted = isTrusted;
+        node->isEdge = isEdge;
+        if (isArray)
+            node->narrowedTo = TArray;
+        node->reg = baseRegister;
+        append(block, node);
+        for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
+            if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
+                block->valuesAtTail[index] = node;
+        }
+    }
+
     void parseBlock(BasicBlock* block)
     {
         unsigned numRegisters = m_graph.numRegisters();
@@ -4072,35 +4465,11 @@ private:
             const JSInstruction* instruction = m_instructions.at(offset).ptr();
             OpcodeID opcode = instruction->opcodeID();
             if (opcode == op_type_tag) {
-                auto [layoutID, baseRegister] = layoutCheckedAt(offset);
-                bool isArray = false;
-                if (!layoutID) {
-                    baseRegister = arrayAssertedAt(offset);
-                    isArray = baseRegister.isValid();
-                }
-                if ((!layoutID && !isArray) || !m_graph.isTracked(baseRegister))
-                    continue;
-                Node* base = get(block, baseRegister);
-                if (base == m_pendingCreateThis)
-                    continue;
-                Node* node = m_graph.addNode(NodeKind::Bytecode);
-                node->opcode = opcode;
-                node->instruction = instruction;
-                node->bytecodeIndex = BytecodeIndex(offset + instruction->size());
-                node->uses.append({ baseRegister, base });
-                node->firstLayout = node->lastLayout = layoutID;
-                if (layoutID)
-                    node->isTrusted = TypeTable::shared()->isTrusted(m_graph.typeTagAt(offset + instruction->size())) && !(TypeTable::shared()->isOpen(layoutID) && Graph::isEscapingFunctionThis(base));
-                if (isArray)
-                    node->narrowedTo = TArray;
-                node->reg = baseRegister;
-                append(block, node);
-                for (unsigned index = 0; index < block->valuesAtTail.size(); ++index) {
-                    if (block->valuesAtTail[index] == base && !m_graph.m_frameRegisters.get(index))
-                        block->valuesAtTail[index] = node;
-                }
+                assertTypeOfBase(block, instruction, offset + instruction->size());
                 continue;
             }
+            if (m_graph.isTypedFromOutside(offset))
+                assertTypeOfBase(block, instruction, offset);
             if (isCheckSubsumedByAssertion(offset, block->bytecodeEnd))
                 continue;
             if (opcode == op_put_by_id && !m_pendingLiterals.isEmpty() && m_pendingLiterals.last().stores[m_pendingLiterals.last().next] == offset) {

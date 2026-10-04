@@ -25,6 +25,7 @@
 #include "JSModuleRecord.h"
 #include "MathCommon.h"
 #include "MegamorphicCache.h"
+#include "NumberPrototype.h"
 #include "PutByIdFlags.h"
 #include "StructureChain.h"
 #include "VMTrapsInlines.h"
@@ -38,7 +39,18 @@ namespace JSC { namespace AOT {
         OPERATION_RETURN(scope, JSValue::encode(function(globalObject, JSValue::decode(encodedLeft), JSValue::decode(encodedRight)))); \
     }
 
-AOT_BINARY_OPERATION(operationAOTValueAdd, jsAdd)
+JSC_DEFINE_JIT_OPERATION(operationAOTValueAdd, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue left = JSValue::decode(encodedLeft);
+    JSValue right = JSValue::decode(encodedRight);
+    if (left.isString() && right.isInt32())
+        OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, asString(left), int32ToString(vm, right.asInt32(), 10))));
+    if (left.isInt32() && right.isString())
+        OPERATION_RETURN(scope, JSValue::encode(jsString(globalObject, int32ToString(vm, left.asInt32(), 10), asString(right))));
+    OPERATION_RETURN(scope, JSValue::encode(jsAdd(globalObject, left, right)));
+}
+
 AOT_BINARY_OPERATION(operationAOTValueSub, jsSub)
 AOT_BINARY_OPERATION(operationAOTValueMul, jsMul)
 AOT_BINARY_OPERATION(operationAOTValueDiv, jsDiv)
@@ -113,12 +125,14 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTProgramConstant, EncodedJSValue, (
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTemplateObject, EncodedJSValue, (Instance* instance, uint32_t number))
 {
+    countOperationNamed(instance, __func__);
     DeferGCForAWhile deferGC(*instance->vm);
     return JSValue::encode(instance->templateObjectFor(number));
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCreateTransientConstant, EncodedJSValue, (Instance* instance, uint32_t number))
 {
+    countOperationNamed(instance, __func__);
     DeferGCForAWhile deferGC(*instance->vm);
     return JSValue::encode(instance->program->createTransientConstant(number));
 }
@@ -165,9 +179,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
     countOperationBySlotState(instance, __func__, cache);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
+    if (Options::useAOTOperationCounters()) [[unlikely]] {
+        countOperationNamed(instance, __func__, !base.isObject() ? "base-is-not-object" : vm.megamorphicCache() && vm.megamorphicCache()->findLoad(base.asCell()->structureID(), ident.impl()) ? "value-is-in-megamorphic-cache" : "value-is-not-in-megamorphic-cache");
+        if (vm.megamorphicCache())
+            runtimeTable(vm).countChangeOfMegamorphicCacheEpoch(vm.megamorphicCache()->epoch());
+    }
     if (base.isCell()) {
         auto& known = instance->customGetterFor(base.asCell()->structureID().bits(), ident.impl());
         if (known.uid == ident.impl() && known.structureID == base.asCell()->structureID().bits() && vm.megamorphicCache() && known.epoch == vm.megamorphicCache()->epoch()) {
+            countOperationNamed(instance, __func__, "known-custom-getter");
             auto getter = GetValueFunc(std::bit_cast<GetValueFunc::Ptr>(known.getter));
             OPERATION_RETURN(scope, getter(known.holder->globalObject(), known.passesHolder ? JSValue::encode(known.holder) : encodedBase, ident));
         }
@@ -188,6 +208,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
 {
     AOT_OPERATION_BEGIN(instance);
     countOperationBySlotState(instance, __func__, cache);
+    countOperationAtSite(instance, callFrame, __func__);
     JSValue base = JSValue::decode(encodedBase);
     JSValue value = JSValue::decode(encodedValue);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
@@ -570,6 +591,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetLengthSlow, size_t, (Instance* instance,
 JSC_DEFINE_JIT_OPERATION(operationAOTCheckTypedLayout, void, (Instance* instance, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationAtSite(instance, callFrame, __func__);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull()) {
         if (!TypedLayoutTable::isAuditing())
@@ -593,6 +615,7 @@ alignas(16) static const EncodedJSValue s_emptyTypedObject[2 + 256] = { };
 JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue, uint32_t layoutID))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationAtSite(instance, callFrame, __func__);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isObject() && (asObject(value)->structure()->typedLayoutID() == layoutID || Instance::convertToTypedLayout(vm, asObject(value), safeCast<uint16_t>(layoutID))))
         OPERATION_RETURN(scope, encodedValue);
@@ -604,6 +627,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCoerceToTypedLayout, EncodedJSValue, (Insta
 JSC_DEFINE_JIT_OPERATION(operationAOTGetFieldSlow, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint64_t which))
 {
     AOT_OPERATION_BEGIN(instance);
+    countOperationAtSite(instance, callFrame, __func__);
     uint16_t layoutID = static_cast<uint16_t>(which >> 32);
     unsigned slot = which >> 48 & 0xff;
     bool allowsUndefined = which >> 56 & 1;
@@ -824,6 +848,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTHandleTraps, void, (Instance* instance))
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM* vmPointer, JSCell* cell))
 {
+    countOperationNamed(*vmPointer, __func__);
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
@@ -832,6 +857,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM* vmPointer
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCatch, Exception*, (VM* vmPointer))
 {
+    countOperationNamed(*vmPointer, __func__);
     VM& vm = *vmPointer;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);

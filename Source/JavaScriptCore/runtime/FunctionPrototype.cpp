@@ -21,6 +21,7 @@
 #include "config.h"
 #include "FunctionPrototype.h"
 
+#include "AOTFunction.h"
 #include "BuiltinNames.h"
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
@@ -191,9 +192,14 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
             name = jsEmptyString(vm);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    SourceTaintedOrigin taintedness = vm.mightBeExecutingTaintedCode() ? sourceTaintedOriginFromStack(vm, callFrame).first : SourceTaintedOrigin::Untainted;
+    RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, taintedness)));
+#else
     auto [taintedness, url] = sourceTaintedOriginFromStack(vm, callFrame);
     SourceCode source = makeSource("[bound function]"_s, SourceOrigin(url), taintedness);
     RELEASE_AND_RETURN(scope, JSValue::encode(JSBoundFunction::create(vm, globalObject, target, boundThis, boundArgs, length, name, source)));
+#endif
 }
 
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#isallowedreceiverfunctionforcallerandargumentsfunc-expectedrealm (except step 3)
@@ -201,6 +207,10 @@ static ALWAYS_INLINE bool NODELETE isAllowedReceiverFunctionForCallerAndArgument
 {
     if (function->isHostOrBuiltinFunction())
         return false;
+#if ENABLE(AOT)
+    if (AOT::hasCompiledCode(function->vm(), function))
+        return false;
+#endif
 
     FunctionExecutable* executable = function->jsExecutable();
     if (executable->implementationVisibility() != ImplementationVisibility::Public)

@@ -248,7 +248,7 @@ void MarkedSpace::registerPreciseAllocation(PreciseAllocation* allocation, bool 
     if (isNewAllocation) {
         // Existing code's ordering is calling `didAllocate` and increasing capacity.
         size_t size = allocation->cellSize();
-        heap().didAllocate(size);
+        heap().didAllocatePreciseAllocation(size, *allocation->subspace());
         m_capacity += size;
     }
 }

@@ -151,22 +151,28 @@
     doesNotApply("three", "calls:HelperStrcat");
     doesNotApply("addToText", "calls:HelperAddStrings");
 
-    function reaches(name, callback) {
+    function reaches(name, callback, first = 0, mask = 63) {
         let before = aotOperationCount(name);
         for (let i = 0; i < 1000; ++i)
-            callback(i & 63);
+            callback(first + (i & mask));
         return aotOperationCount(name) - before;
     }
     if (typeof aotOperationCount === "function" && (remarksOf("three") || []).includes("calls:OperationValueWithInstance") && reaches("operationAOTStrcat", i => six("text", i, "more", i)) === 1000) {
-        for (let i = 0; i < 64; ++i)
-            add("", i);
-        check(reaches("operationAOTValueAdd", i => add("text", "more")) < 10, true, "text + text stays out of C++");
-        check(reaches("operationAOTValueAdd", i => add("text", i)) < 10, true, "text + Int32 stays out of C++");
-        check(reaches("operationAOTValueAdd", i => add(i, "text")) < 10, true, "Int32 + text stays out of C++");
-        check(reaches("operationAOTValueAdd", i => addToText(i)) < 10, true, "literal + Int32 stays out of C++");
-        check(reaches("operationAOTStrcat", i => three("text", "more")) < 10, true, "three texts stay out of C++");
-        check(reaches("operationAOTStrcat", i => five("text", i, "more")) < 10, true, "five with an Int32 stay out of C++");
-        check(reaches("operationAOTValueAdd", i => add("text", 0.5)), 1000, "text + double is added in C++");
+        const refills = 10;
+        for (let round = 0; round < 2; ++round) {
+            gc();
+            check(reaches("operationAOTValueAdd", i => add("text", i), 0, 7) < refills, true, "text + digit stays out of C++ after a collection");
+            check(reaches("operationAOTValueAdd", i => add(i, "text"), 0, 7) < refills, true, "digit + text stays out of C++");
+            check(reaches("operationAOTValueAdd", i => addToText(i), 0, 7) < refills, true, "literal + digit stays out of C++");
+            check(reaches("operationAOTValueAdd", i => add("text", "more")) < refills, true, "text + text stays out of C++");
+            check(reaches("operationAOTValueAdd", i => add("text", i), 10) < 64 + refills, true, "each number is converted in C++ once");
+            check(reaches("operationAOTValueAdd", i => add("text", i), 10) < refills, true, "text + Int32 stays out of C++");
+            check(reaches("operationAOTValueAdd", i => add(i, "text"), 10) < refills, true, "Int32 + text stays out of C++");
+            check(reaches("operationAOTValueAdd", i => addToText(i), 10) < refills, true, "literal + Int32 stays out of C++");
+            check(reaches("operationAOTStrcat", i => three("text", "more")) < refills, true, "three texts stay out of C++");
+            check(reaches("operationAOTStrcat", i => five("text", i, "more"), 10) < refills, true, "five with an Int32 stay out of C++");
+        }
+        check(reaches("operationAOTValueAdd", i => add("text", i + 0.5)), 1000, "text + double is added in C++");
         check(reaches("operationAOTValueAdd", i => add("text", null)), 1000, "text + null is added in C++");
     }
 })();

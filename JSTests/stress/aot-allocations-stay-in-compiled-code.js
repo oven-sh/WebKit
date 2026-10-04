@@ -104,7 +104,7 @@ const counts = usesDataStubs && typeof aotOperationCount === "function" && aotOp
             for (let i = 0; i < 100; ++i)
                 shouldBe(make(100), expected, make.name);
             const arrivals = counts ? arrivalsOf(operations) - before : 0;
-            if (arrivals > 500)
+            if (arrivals > 150)
                 throw new Error(make.name + " reached " + operations.join(" or ") + " " + arrivals + " times in 10000 allocations after " + collection + " collections");
         }
     }

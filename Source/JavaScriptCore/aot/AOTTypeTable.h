@@ -10,6 +10,7 @@
 #include "AOTType.h"
 #include "Identifier.h"
 #include "Structure.h"
+#include <wtf/BitVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
@@ -18,6 +19,7 @@
 
 namespace JSC {
 
+class UnlinkedCodeBlock;
 class VM;
 
 namespace AOT {
@@ -30,6 +32,20 @@ public:
 
     JS_EXPORT_PRIVATE static void load(VM&);
     static const TypeTable* shared();
+
+    struct CodeBlockKey {
+        uint32_t module;
+        uint32_t start;
+        uint32_t kind;
+        UnlinkedCodeBlock* codeBlock;
+    };
+    JS_EXPORT_PRIVATE static void loadSiteTypes(std::span<const CodeBlockKey>);
+    using SiteTypes = Vector<std::pair<uint32_t, uint32_t>>;
+    const SiteTypes* siteTypesIn(UnlinkedCodeBlock* codeBlock) const
+    {
+        auto it = m_siteTypes.find(codeBlock);
+        return it == m_siteTypes.end() ? nullptr : &it->value;
+    }
 
     struct Field;
     void noteComparedWithString(const Field&) const;
@@ -115,10 +131,13 @@ public:
         unsigned capacity { 0 };
         unsigned inlineSlots { 0 };
         bool usesFieldIDs { false };
+        bool isInstanceLayout { false };
         Vector<LayoutField, 8> fields;
     };
     TypedLayout typedLayout(uint32_t number) const;
     bool isUsable(uint32_t layoutID) const;
+    bool isInstanceLayout(uint32_t layoutID) const { return m_instanceLayouts.get(layoutID); }
+    bool isFilledAtBirth(uint32_t layoutID, unsigned slot) const { return slot < 64 && layoutID < m_slotsFilledAtBirth.size() && (m_slotsFilledAtBirth[layoutID] >> slot & 1); }
     unsigned inlineSlotsOf(uint32_t layoutID) const { return std::max<unsigned>(m_words[m_typedLayouts[layoutID]] >> 16 & 0xff, m_words[m_typedLayouts[layoutID]] & 0xffff); }
     bool isOpen(uint32_t layoutID) const { return m_words[m_typedLayouts[layoutID]] >> 30 & 1; }
     bool usesFieldIDs(uint32_t layoutID) const { return m_words[m_typedLayouts[layoutID]] >> 29 & 1; }
@@ -187,6 +206,8 @@ private:
     Vector<uint32_t> m_words;
     Vector<uint32_t> m_layouts;
     Vector<uint32_t> m_typedLayouts;
+    BitVector m_instanceLayouts;
+    Vector<uint64_t> m_slotsFilledAtBirth;
     UncheckedKeyHashMap<UniquedStringImpl*, Vector<uint32_t>> m_openLayoutsWithField;
     UncheckedKeyHashMap<std::pair<uint32_t, UniquedStringImpl*>, uint16_t> m_fieldIDs;
     bool m_hasTypedFields { false };
@@ -194,6 +215,7 @@ private:
     mutable UncheckedKeyHashSet<uint64_t> m_fieldsCompared;
     unsigned layoutHeaderWords() const { return m_hasTypedFields ? 3 : 2; }
     Vector<uint32_t> m_types;
+    UncheckedKeyHashMap<UnlinkedCodeBlock*, SiteTypes> m_siteTypes;
 };
 
 } } // namespace JSC::AOT

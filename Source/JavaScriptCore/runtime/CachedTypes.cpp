@@ -5848,6 +5848,64 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
 #if USE(BUN_JSC_ADDITIONS)
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeLinkEncoder);
 
+using CallTargetKey = std::tuple<uint32_t, uint32_t, uint32_t>;
+
+template<typename Functor>
+static void forEachCallTargetFact(const Functor& functor)
+{
+    auto contents = FileSystem::readEntireFile(String { Options::aotCallTargetsPath() });
+    RELEASE_ASSERT_WITH_MESSAGE(contents, "The file of call targets cannot be read");
+    String text = String::fromUTF8(contents->span());
+    unsigned lineNumber = 0;
+    auto require = [&](bool condition, ASCIILiteral what) {
+        if (condition) [[likely]]
+            return;
+        dataLogLn("AOT: the file of call targets, line ", lineNumber, ": ", what);
+        RELEASE_ASSERT_NOT_REACHED();
+    };
+    auto number = [&](StringView field) {
+        require(!field.isEmpty() && field.length() <= 10, "a field is not a number"_s);
+        uint64_t value = 0;
+        for (unsigned i = 0; i < field.length(); ++i) {
+            require(isASCIIDigit(field[i]), "a field is not a number"_s);
+            value = value * 10 + (field[i] - '0');
+        }
+        require(value <= std::numeric_limits<uint32_t>::max(), "a field is not a number"_s);
+        return static_cast<uint32_t>(value);
+    };
+    std::tuple<CallTargetKey, uint32_t> previousSite;
+    for (StringView line : StringView { text }.splitAllowingEmptyEntries('\n')) {
+        ++lineNumber;
+        if (line.isEmpty())
+            continue;
+        Vector<StringView, 8> fields;
+        for (StringView field : line.splitAllowingEmptyEntries('\t'))
+            fields.append(field);
+        if (lineNumber == 1) {
+            require(fields.size() == 2 && fields[0] == "V"_s && fields[1] == "1"_s, "the file does not start with V 1"_s);
+            continue;
+        }
+        require(fields.size() == 7 && fields[0] == "T"_s, "not a T line of seven fields"_s);
+        CallTargetKey site { number(fields[1]), number(fields[2]), number(fields[3]) };
+        uint32_t offset = number(fields[4]);
+        require(lineNumber == 2 || previousSite < std::tuple { site, offset }, "the sites are not in order, or one is there twice"_s);
+        previousSite = { site, offset };
+        Vector<CallTargetKey, 4> targets;
+        for (StringView target : fields[6].splitAllowingEmptyEntries(',')) {
+            Vector<StringView, 3> parts;
+            for (StringView part : target.splitAllowingEmptyEntries(':'))
+                parts.append(part);
+            require(parts.size() == 3, "a target is not module:start:kind"_s);
+            targets.append(CallTargetKey { number(parts[0]), number(parts[1]), number(parts[2]) });
+            require(!(std::get<2>(targets.last()) & 1), "a target names construct code"_s);
+            require(targets.size() == 1 || targets[targets.size() - 2] < targets.last(), "the targets are not in order, or one is there twice"_s);
+        }
+        require(!targets.isEmpty() && targets.size() <= 4, "not one to four targets"_s);
+        require(functor(site, offset, fields[5], targets.span()), "it does not fit this program: no such code block, another instruction at that offset, or no such function"_s);
+    }
+    require(lineNumber, "the file is empty"_s);
+}
+
 struct BytecodeLinkEncoder::Impl {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
 
@@ -6222,6 +6280,9 @@ struct BytecodeLinkEncoder::Impl {
             unsigned module;
             UnlinkedFunctionExecutable* executable { nullptr };
             unsigned sourceStart { 0 };
+            const AOT::FunctionSummary* summary { nullptr };
+            bool isGeneralBody { false };
+            bool isOmitted { false };
         };
         Vector<Job> jobs;
         constexpr uint64_t isNotHot = 1ull << 63;
@@ -6345,7 +6406,7 @@ struct BytecodeLinkEncoder::Impl {
                 auto scopesForConstruct = scopesOf(function.forConstruct);
                 bool areSameScopes = scopesForCall.size() == scopesForConstruct.size();
                 for (unsigned i = 0; areSameScopes && i < scopesForCall.size(); ++i)
-                    areSameScopes = scopesForConstruct[i]->isCloneOfScopePartOf(*scopesForCall[i]);
+                    areSameScopes = scopesForConstruct[i]->hasSameScopePartAs(*scopesForCall[i]);
                 if (areSameScopes) {
                     for (unsigned i = 0; i < scopesForCall.size(); ++i)
                         variableSummaries->noteSameScope(scopesForConstruct[i], scopesForCall[i]);
@@ -6405,11 +6466,59 @@ struct BytecodeLinkEncoder::Impl {
             if (function.forCall)
                 summariesByCodeBlock.add(function.forCall, summary);
         }
+        for (unsigned index = 0; index < engineBuiltins.size(); ++index) {
+            if (engineBuiltins[index])
+                programFunctions.setBuiltin(index, programFunctions.numberOf(engineBuiltins[index]));
+        }
         AOT::setProgramFunctions(&programFunctions);
         auto forgetProgramFunctions = makeScopeExit([] { AOT::setProgramFunctions(nullptr); });
+        AOT::CallTargets callTargets;
+        if (Options::aotCallTargetsPath()) [[unlikely]] {
+            std::map<CallTargetKey, UnlinkedCodeBlock*> codeBlockOfKey;
+            for (auto& job : jobs)
+                codeBlockOfKey.try_emplace({ job.key.module, job.key.start, job.key.kind }, job.codeBlock);
+            std::array<unsigned, 5> sitesWithTargets { };
+            forEachCallTargetFact([&](CallTargetKey site, uint32_t offset, StringView what, std::span<const CallTargetKey> targets) {
+                auto code = codeBlockOfKey.find(site);
+                if (code == codeBlockOfKey.end())
+                    return false;
+                OpcodeID opcode = op_nop;
+                for (const auto& instruction : code->second->instructions()) {
+                    if (instruction.offset() < offset)
+                        continue;
+                    if (instruction.offset() == offset)
+                        opcode = instruction->opcodeID();
+                    break;
+                }
+                if ((opcode != op_call && opcode != op_call_ignore_result && opcode != op_tail_call && opcode != op_construct) || what != StringView { opcodeNames[opcode] })
+                    return false;
+                uint32_t number = 0;
+                for (auto [module, start, kind] : targets) {
+                    auto function = numberOfKey.find({ module, start, kind >> 1 & 0xff });
+                    if (function == numberOfKey.end())
+                        return false;
+                    number = function->second;
+                }
+                if (AOT::calleeIsNamedLikeCallIntrinsic(code->second, offset)) {
+                    sitesWithTargets[0]++;
+                    return true;
+                }
+                sitesWithTargets[targets.size()]++;
+                return targets.size() > 1 || callTargets.add(code->second, offset, number);
+            });
+            AOT::setCallTargets(&callTargets);
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: call sites with 1, 2, 3, 4 targets by the file: ", sitesWithTargets[1], ", ", sitesWithTargets[2], ", ", sitesWithTargets[3], ", ", sitesWithTargets[4], "; ", sitesWithTargets[0], " more are left out, their callees are named like built-ins that are compiled in place");
+        }
+        auto forgetCallTargets = makeScopeExit([] { AOT::setCallTargets(nullptr); });
         AOT::ProgramClasses programClasses;
         AOT::setProgramClasses(&programClasses);
         auto forgetProgramClasses = makeScopeExit([] { AOT::setProgramClasses(nullptr); });
+        if (Options::aotSiteTypesPath()) [[unlikely]] {
+            Vector<AOT::TypeTable::CodeBlockKey> codeBlocks;
+            for (auto& job : jobs)
+                codeBlocks.append({ job.module, job.key.start, job.key.kind, job.codeBlock });
+            AOT::TypeTable::loadSiteTypes(codeBlocks.span());
+        }
         MonotonicTime phaseStart = MonotonicTime::now();
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
@@ -6505,6 +6614,10 @@ struct BytecodeLinkEncoder::Impl {
             }
             AOT::TypeTable::finalizeAtomizedFields();
             RELEASE_ASSERT(!unreadable.load());
+            for (uint32_t number = 1; number <= std::min<uint32_t>(programFunctions.size(), AOT::maxFunctionNumberInTypes()); ++number) {
+                const AOT::KnownFunction& function = *programFunctions.function(number);
+                function.summary->mayHaveGeneralBody = isProgramModule(moduleForFunctionNumber(number)) && AOT::mayHaveGeneralBody(function);
+            }
             programClasses.forEachNonEscapingMethod([&](uint32_t number) {
                 const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
@@ -6574,6 +6687,7 @@ struct BytecodeLinkEncoder::Impl {
             for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
                 const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.summary->isNonEscaping = !!function.forCall;
+                function.summary->hasOnlyKnownCallers = !!function.forCall;
                 if (!function.forCall)
                     function.summary->markEscaping(AOT::FunctionSummary::NotCallable);
                 else if (number > AOT::maxFunctionNumberInTypes())
@@ -6597,9 +6711,28 @@ struct BytecodeLinkEncoder::Impl {
                 Vector<const AOT::KnownFunction*> calleesWithWidenedInputs;
                 bool changed { false };
             };
+            constexpr unsigned noUnit = std::numeric_limits<unsigned>::max();
+            unsigned numberOfCodeBlocks = jobs.size();
+            Vector<unsigned> generalUnitOf;
+            generalUnitOf.fill(noUnit, numberOfCodeBlocks);
+            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
+                jobs[i].summary = summariesByCodeBlock.get(jobs[i].codeBlock);
+                if (!jobs[i].summary || !jobs[i].summary->mayHaveGeneralBody)
+                    continue;
+                functionSummaries.append(makeUnique<AOT::FunctionSummary>());
+                AOT::FunctionSummary& general = *functionSummaries.last();
+                general.function = jobs[i].summary;
+                general.number = jobs[i].summary->number;
+                general.markEscaping(AOT::FunctionSummary::ExternalFunction);
+                Job job = jobs[i];
+                job.summary = &general;
+                job.isGeneralBody = true;
+                generalUnitOf[i] = jobs.size();
+                jobs.append(job);
+            }
             Vector<AnalysisUnit> units(jobs.size());
             UncheckedKeyHashMap<UnlinkedCodeBlock*, unsigned> codeSummary;
-            for (unsigned i = 0; i < jobs.size(); ++i)
+            for (unsigned i = 0; i < numberOfCodeBlocks; ++i)
                 codeSummary.add(jobs[i].codeBlock, i);
             UncheckedKeyHashMap<const AOT::KnownFunction*, unsigned> summaryIndex;
             for (unsigned module = 0; module < hints.size(); ++module) {
@@ -6627,6 +6760,8 @@ struct BytecodeLinkEncoder::Impl {
                 units[it->value].functions.append(function);
                 units[it->value].summary = function->summary;
             }
+            for (unsigned i = numberOfCodeBlocks; i < jobs.size(); ++i)
+                units[i].summary = jobs[i].summary;
             Vector<unsigned> worklist;
             for (unsigned i = 0; i < units.size(); ++i)
                 worklist.append(i);
@@ -6684,6 +6819,10 @@ struct BytecodeLinkEncoder::Impl {
                     AnalysisUnit& unit = units[index];
                     unit.callees.shrink(0);
                     unit.calleesWithWidenedInputs.shrink(0);
+                    if (unit.summary && (unit.summary->function || unit.summary->mayHaveGeneralBody) && !unit.summary->isReached()) {
+                        unit.changed = false;
+                        return;
+                    }
                     uint32_t escaping = 0;
                     AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, index, unit.callees, unit.calleesWithWidenedInputs, escaping);
                     unit.changed = false;
@@ -6708,8 +6847,11 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 for (unsigned index : worklist) {
                     for (auto* callee : units[index].calleesWithWidenedInputs) {
-                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end())
+                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end()) {
                             next.add(it->value);
+                            if (unsigned general = generalUnitOf[it->value]; general != noUnit)
+                                next.add(general);
+                        }
                     }
                     if (!std::exchange(units[index].changed, false))
                         continue;
@@ -6738,12 +6880,47 @@ struct BytecodeLinkEncoder::Impl {
             unsigned withCode = 0;
             unsigned closed = 0;
             unsigned isNeverCalled = 0;
+            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
+                if (generalUnitOf[i] == noUnit)
+                    continue;
+                const AOT::FunctionSummary& function = *jobs[i].summary;
+                if (!function.escapes.load() || function.hasUnknownCallers.load())
+                    continue;
+                bool knowsArguments = programFunctions.function(function.number)->conventionForCall.usesThis && function.thisType.load() != AOT::TTop;
+                for (unsigned parameter = 1; parameter < std::min<unsigned>(jobs[i].codeBlock->numParameters(), AOT::FunctionSummary::maxParameters); ++parameter)
+                    knowsArguments |= function.parameterTypes[parameter].load() != AOT::TTop;
+                if (!function.parameterTypes[0].load()) {
+                    const AOT::FunctionSummary& general = *jobs[generalUnitOf[i]].summary;
+                    function.returnType.join(general.returnType.load());
+                    function.escapingParameters.fetch_or(general.escapingParameters.load());
+                    function.escapingParametersUnlessPlainObjects.fetch_or(general.escapingParametersUnlessPlainObjects.load());
+                    for (auto* known : units[i].functions)
+                        known->returnType.join(general.returnType.load());
+                } else if (knowsArguments)
+                    continue;
+                function.hasUnknownCallers.store(true);
+            }
             for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
                 const AOT::KnownFunction& function = *programFunctions.function(number);
                 function.summary->isNonEscaping = function.forCall && !function.summary->escapes.load();
+                function.summary->hasOnlyKnownCallers = function.forCall && !function.summary->hasUnknownCallers.load();
                 withCode += !!function.forCall;
                 closed += function.summary->isNonEscaping;
                 isNeverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
+            }
+            unsigned functionsWithTwoBodies = 0;
+            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
+                unsigned general = generalUnitOf[i];
+                if (general == noUnit)
+                    continue;
+                if (!jobs[i].summary->escapes.load() || !jobs[i].summary->hasOnlyKnownCallers) {
+                    jobs[general].isOmitted = true;
+                    continue;
+                }
+                jobs[i].key.kind |= AOT::ImageKey::typedBody;
+                for (auto* function : units[i].functions)
+                    function->key.kind |= AOT::ImageKey::typedBody;
+                ++functionsWithTwoBodies;
             }
             if (variableSummaries) {
                 for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
@@ -6808,13 +6985,15 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", isNeverCalled, " of those have no call site");
+                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", isNeverCalled, " of those have no call site; ", functionsWithTwoBodies, " that escape have a body for their known callers");
             if (Options::logAOTTypeInference()) [[unlikely]] {
                 auto jobName = [&](unsigned index) {
                     auto* executable = jobs[index].executable;
                     return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
                 };
                 for (unsigned index = 0; index < units.size(); ++index) {
+                    if (jobs[index].isOmitted)
+                        continue;
                     if (Options::aotFunctionToDump()) {
                         StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
                         auto* executable = jobs[index].executable;
@@ -6875,7 +7054,9 @@ struct BytecodeLinkEncoder::Impl {
         programCode.builtins = &engineBuiltins;
         uint32_t numberOfTypeCoverageCounters = 0;
         for (auto& job : jobs) {
-            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), summariesByCodeBlock.get(job.codeBlock), job.key, numberOfTypeCoverageCounters });
+            if (job.isGeneralBody)
+                continue;
+            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), job.summary, job.key.ofPublicBody(), numberOfTypeCoverageCounters });
             if (Options::useAOTTypeCoverageCounters() && Options::aotTypeCoveragePath()) [[unlikely]]
                 numberOfTypeCoverageCounters += job.codeBlock->instructionsSize();
         }
@@ -6884,7 +7065,9 @@ struct BytecodeLinkEncoder::Impl {
         std::atomic<uint64_t> unreachedBytecodeSize { 0 };
         auto work = [&] {
             for (size_t index = next++; index < jobs.size(); index = next++) {
-                if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(jobs[index].codeBlock); summary && !summary->isReached()) {
+                if (jobs[index].isOmitted)
+                    continue;
+                if (const AOT::FunctionSummary* summary = jobs[index].summary; summary && !summary->isReached()) {
                     unreachedFunctions++;
                     unreachedBytecodeSize += jobs[index].codeBlock->instructionsSize();
                     if (Options::verboseAOTCompilation()) [[unlikely]]
@@ -6897,9 +7080,9 @@ struct BytecodeLinkEncoder::Impl {
                     auto* executable = jobs[index].executable;
                     code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
                 }
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &programCode)) {
+                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode)) {
                     {
-                        auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                        auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
                         bool isTopLevel = !(jobs[index].rank & 2);
                         bool startIsKnown = isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor;
                         AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, jobs[index].sourceStart);
@@ -6908,7 +7091,7 @@ struct BytecodeLinkEncoder::Impl {
                         auto* executable = jobs[index].executable;
                         dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
                     }
-                    auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1);
+                    auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
                     bool isTopLevel = !(jobs[index].rank & 2);
                     bool isInProgram = isProgramModule(jobs[index].module);
                     if (isInProgram && (isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor))
@@ -6947,6 +7130,8 @@ struct BytecodeLinkEncoder::Impl {
         {
             uint64_t totalCount = 0;
             for (auto& job : jobs) {
+                if (job.isGeneralBody)
+                    continue;
                 for (auto& identifier : job.codeBlock->identifiers()) {
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
                     ++totalCount;
@@ -6976,6 +7161,8 @@ struct BytecodeLinkEncoder::Impl {
             uint32_t next = 0;
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> templates;
             for (auto& job : jobs) {
+                if (job.isGeneralBody)
+                    continue;
                 Vector<uint32_t> numbers;
                 auto& representations = job.codeBlock->constantsSourceCodeRepresentation();
                 for (auto& constant : job.codeBlock->constantRegisters()) {
@@ -7166,11 +7353,11 @@ struct BytecodeLinkEncoder::Impl {
                 std::array<uint64_t, numOpcodeIDs> instructions { };
                 std::array<uint64_t, numOpcodeIDs> instructionsWithoutPosition { };
                 for (auto& job : jobs) {
-                    if (!isProgramModule(job.module) || declined.contains(job.codeBlock))
+                    if (job.isGeneralBody || !isProgramModule(job.module) || declined.contains(job.codeBlock))
                         continue;
-                    if (const AOT::FunctionSummary* summary = summariesByCodeBlock.get(job.codeBlock); summary && !summary->isReached())
+                    if (job.summary && !job.summary->isReached())
                         continue;
-                    auto functionKind = static_cast<OrderFunctionKind>(job.key.kind >> 1);
+                    auto functionKind = static_cast<OrderFunctionKind>(job.key.kind >> 1 & 0xff);
                     bool hasPosition = job.codeBlock->codeType() != FunctionCode || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody;
                     for (const auto& instruction : job.codeBlock->instructions())
                         (hasPosition ? instructions : instructionsWithoutPosition)[instruction->opcodeID()]++;

@@ -2406,7 +2406,9 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
             if (auto* field = TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
                 if (!TypedLayoutTable::isAuditing()) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
                     slot.setNonconfigurable();
+                    throwTypeError(globalObject, scope, TypedFieldError);
                     return false;
                 }
                 TypedLayoutTable::reportViolation("a field that has to be there is deleted"_s, typedLayoutID, thisObject);
@@ -4373,7 +4375,7 @@ TransitionKind JSObject::suggestedArrayStorageTransition() const
     return TransitionKind::AllocateArrayStorage;
 }
 
-void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
+bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
 {
     unsigned i = 0;
     Structure* structure = this->structure();
@@ -4434,10 +4436,12 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     }
 
+    bool areAllApplied = true;
     for (; i < size; ++i) {
         PutPropertySlot putPropertySlot(this, true);
-        putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
+        areAllApplied &= putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
     }
+    return areAllApplied;
 }
 
 ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)

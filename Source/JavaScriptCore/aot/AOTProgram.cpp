@@ -350,6 +350,7 @@ Type VariableSummaries::read(Variable variable, UniquedStringImpl* name, unsigne
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramFunctions);
+WTF_MAKE_TZONE_ALLOCATED_IMPL(CallTargets);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ProgramClasses);
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MultiValueReturnTable);
@@ -366,7 +367,7 @@ void MultiValueReturnTable::note(UnlinkedCodeBlock* code, Names&& names)
 
 const MultiValueReturnTable::Names* registerReturnValuesOf(UnlinkedCodeBlock* code, const FunctionSummary* summary)
 {
-    if (!s_multiValueReturnTable || !summary || !summary->isNonEscaping || summary->escapes.load(std::memory_order_relaxed) || summary->needsReturnObject.load(std::memory_order_relaxed))
+    if (!s_multiValueReturnTable || !summary || !summary->hasOnlyKnownCallers || summary->hasUnknownCallers.load(std::memory_order_relaxed) || summary->needsReturnObject.load(std::memory_order_relaxed))
         return nullptr;
     return s_multiValueReturnTable->returnValueNamesOf(code);
 }
@@ -429,6 +430,10 @@ static const ProgramFunctions* s_programFunctions;
 void setProgramFunctions(const ProgramFunctions* functions) { s_programFunctions = functions; }
 const ProgramFunctions* programFunctions() { return s_programFunctions; }
 
+static const CallTargets* s_callTargets;
+void setCallTargets(const CallTargets* targets) { s_callTargets = targets; }
+const CallTargets* callTargets() { return s_callTargets; }
+
 unsigned findFunctionsWithoutStackCheck(const ProgramFunctions& functions)
 {
     constexpr unsigned maxFramesWithoutStackCheck = 16;
@@ -437,7 +442,7 @@ unsigned findFunctionsWithoutStackCheck(const ProgramFunctions& functions)
     for (uint32_t number = 1; number < end; ++number) {
         const KnownFunction& function = *functions.function(number);
         function.summary->needsStackCheck = true;
-        if (!function.forCall || !function.summary->isNonEscaping)
+        if (!function.forCall || !function.summary->hasOnlyKnownCallers || function.summary->escapes.load(std::memory_order_relaxed))
             continue;
         SourceParseMode mode = function.forCall->parseMode();
         if (mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode || mode == SourceParseMode::MethodMode)
@@ -677,7 +682,7 @@ std::optional<unsigned> intrinsicForLinkTimeConstant(JSValue constant)
 ValueRepresentations valueRepresentations(const FunctionSummary* summary, Convention convention)
 {
     ValueRepresentations result;
-    if (!summary || !summary->isNonEscaping || convention.signature != Signature::Registers || Options::validateAOTInferredTypes())
+    if (!summary || !summary->hasOnlyKnownCallers || convention.signature != Signature::Registers || Options::validateAOTInferredTypes())
         return result;
     auto repFor = [](Type type) {
         Rep rep = type ? repForType(type) : Rep::JSValue;
@@ -723,6 +728,22 @@ Convention conventionOf(UnlinkedCodeBlock* codeBlock)
     result.signature = takesList ? Signature::List : Signature::Registers;
     result.numberOfParameters = takesList ? 0 : numberOfParameters;
     return result;
+}
+
+bool mayHaveGeneralBody(const KnownFunction& function)
+{
+    constexpr unsigned maximumBytecodeSize = 0;
+    UnlinkedFunctionCodeBlock* codeBlock = function.forCall;
+    if (!codeBlock || function.conventionForCall.signature != Signature::Registers || codeBlock->instructionsSize() > maximumBytecodeSize)
+        return false;
+    SourceParseMode mode = codeBlock->parseMode();
+    if (mode != SourceParseMode::NormalFunctionMode && mode != SourceParseMode::ArrowFunctionMode && mode != SourceParseMode::MethodMode)
+        return false;
+    for (const auto& instruction : codeBlock->instructions()) {
+        if ((traitsOf(instruction->opcodeID()) & OpcodeTraits::LetsScopeOut) || instruction->opcodeID() == op_create_lexical_environment)
+            return false;
+    }
+    return true;
 }
 
 bool needsFunctionObject(UnlinkedCodeBlock* codeBlock)

@@ -94,7 +94,14 @@ LValue Lowering::emitCall(Node* node, LValue callee, const Arguments& arguments,
         m_graph.remark(mode == CallMode::Construct ? "direct-host-construct"_s : "direct-host-call"_s);
     }
     m_nodeKeepsReads = intrinsic != StubIntrinsic::None && mode == CallMode::Call;
-    LValue cache = isCached ? slotAddress(allocateSlots(CalleeCache::numberOfSlots)) : nullptr;
+    unsigned firstSlot = isCached ? allocateSlots(CalleeCache::numberOfSlots) : 0;
+    LValue cache = isCached ? slotAddress(firstSlot) : nullptr;
+    if (isCached && (Options::useAOTOperationCounters() || Options::useAOTTypeCoverageCounters())) [[unlikely]] {
+        while (m_graph.sites.size() < firstSlot + CalleeCache::numberOfSlots)
+            m_graph.sites.append(Site { });
+        m_graph.sites[firstSlot].identifierAndExtra = siteOf(node);
+        m_graph.sites[firstSlot + 1].identifierAndExtra = Site::isCalleeCache;
+    }
 
     PatchpointValue* patchpoint = m_out.patchpoint(mode == CallMode::TailCall ? Void : Int64);
     patchpoint->append(ConstrainedValue(callee, ValueRep::reg(calleeGPR)));
@@ -162,7 +169,10 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
     }
     m_graph.remark(isConstruct ? "direct-construct"_s : "direct-call"_s, known->executable ? known->executable->ecmaName().string() : String());
     Convention convention = isConstruct ? known->conventionForConstruct : known->conventionForCall;
-    unsigned index = m_graph.knownCalleeIndex(known->keyFor(isConstruct));
+    ImageKey key = known->keyFor(isConstruct);
+    if (key.kind & ImageKey::typedBody)
+        m_graph.remark("calls-typed-body"_s, known->executable ? known->executable->ecmaName().string() : String());
+    unsigned index = m_graph.knownCalleeIndex(key);
     bool passesCallee = !m_graph.passesNoFunctionObject(node);
     bool takesList = convention.signature == Signature::List;
     if (takesList && node->isBytecode(op_tail_call))
@@ -172,8 +182,12 @@ bool Lowering::lowerCallToKnownFunction(Node* node, VirtualRegister calleeRegist
         mode = CallMode::Call;
 
     bool calleeIsInitialized = known->isDeclaration || node->use(calleeRegister)->isReadOnlyForCall;
-    LValue callee = passesCallee || !calleeIsInitialized ? lowJSValue(node->use(calleeRegister)) : nullptr;
-    if (!calleeIsInitialized) {
+    bool isKnownByFact = m_graph.calleeKnownByFact(node) == known;
+    LValue callee = passesCallee || !calleeIsInitialized || isKnownByFact ? lowJSValue(node->use(calleeRegister)) : nullptr;
+    if (isKnownByFact) {
+        m_graph.remark("tests-identity-of-callee-known-by-fact"_s, known->executable ? known->executable->ecmaName().string() : String());
+        throwUnlessMadeFromFunction(node, callee, programFunctions()->numberOf(known->executable), true);
+    } else if (!calleeIsInitialized) {
         LBasicBlock isNotInitialized = newColdBlock();
         LBasicBlock isInitialized = m_out.newBlock();
         Type calleeType = node->use(calleeRegister)->type;

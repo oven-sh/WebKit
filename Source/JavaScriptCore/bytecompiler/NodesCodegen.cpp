@@ -2994,6 +2994,7 @@ RegisterID* SoundTypeCheckNode::emitBytecode(BytecodeGenerator& generator, Regis
     bool canEvaluateIntoDst = dst && dst != generator.ignoredResult() && dst->isTemporary();
     RefPtr<RegisterID> value = generator.emitNode(canEvaluateIntoDst ? dst : nullptr, m_expr);
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
+    generator.emitTypeTag(typeTag());
     generator.emitCheckType(value.get(), m_mask);
     return generator.move(dst, value.get());
 }

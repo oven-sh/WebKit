@@ -42,7 +42,8 @@ shouldThrowTypeCheck(() => $$t(1n, 1022 & ~64), "Type check failed: expected boo
 
 shouldThrow(() => $$t(1), ReferenceError);
 shouldThrow(() => $$t(), ReferenceError);
-shouldThrow(() => $$t(1, 8, 0), ReferenceError);
+shouldBe($$t(1, 8, 0), 1);
+shouldThrow(() => $$t(1, 8, 0, 0), ReferenceError);
 shouldThrow(() => $$t(1, 0), ReferenceError);
 shouldThrow(() => $$t(1, 1023), ReferenceError);
 shouldThrow(() => $$t(1, 1024), ReferenceError);
@@ -73,12 +74,13 @@ shouldThrow(() => $$tt(1, 8), ReferenceError);
 
     shouldBe($$t("a", 16), "a");
     shouldThrowTypeCheck(() => $$t("a", 8), "Type check failed: expected number, got string");
+    shouldThrowTypeCheck(() => $$t("a", 8, 1), "Type check failed: expected number, got string");
     shouldBe(calls.length, 0);
 
     let mask = 8;
     shouldBe($$t("a", mask), "called");
     shouldBe($$t("a"), "called");
-    shouldBe($$t("a", 8, 1), "called");
+    shouldBe($$t("a", 8, 1, 0), "called");
     shouldBe($$t("a", 0), "called");
     shouldBe($$t("a", 1023), "called");
     shouldBe($$t(..."a", 8), "called");
@@ -89,7 +91,7 @@ shouldThrow(() => $$tt(1, 8), ReferenceError);
     shouldBe($$t.call(null, "a", 8), "called");
     shouldBe((0, $$t)("a", 8), "called");
     shouldBe(JSON.stringify(calls), JSON.stringify([
-        ["a", 8], ["a"], ["a", 8, 1], ["a", 0], ["a", 1023], ["a", 8], ["a", 8], ["new", "a", 8], ["a", 8], ["a", 8], ["a", 8], ["a", 8],
+        ["a", 8], ["a"], ["a", 8, 1, 0], ["a", 0], ["a", 1023], ["a", 8], ["a", 8], ["new", "a", 8], ["a", 8], ["a", 8], ["a", 8], ["a", 8],
     ]));
 })();
 

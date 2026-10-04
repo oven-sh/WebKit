@@ -169,6 +169,10 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
 
     auto programStr = programString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::noteGuest(globalObject, "direct-eval", { }, programStr.data);
+#endif
     auto cacheKey = DirectEvalCodeCache::CacheLookupKey(programStr.data.impl(), bytecodeIndex);
     DirectEvalExecutable* eval = callerBaselineCodeBlock->directEvalCodeCache().get(cacheKey);
     if (!eval) {
@@ -483,6 +487,44 @@ bool Interpreter::isOpcode(Opcode opcode)
 }
 #endif // ASSERT_ENABLED
 
+void Interpreter::appendAsyncStackFrame(VM& vm, JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* currentGenerator)
+{
+    auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
+        BytecodeIndex bytecodeIndex(0);
+        JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
+        if (stateValue.isInt32()) {
+            int32_t state = stateValue.asInt32();
+            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
+            if (state > 0 && numberOfJumpTables > 0) {
+                size_t lastTableIndex = numberOfJumpTables - 1;
+                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
+                int32_t offset = jumpTable.offsetForValue(state);
+                if (offset)
+                    bytecodeIndex = BytecodeIndex(offset);
+            }
+        }
+        return bytecodeIndex;
+    };
+
+    JSValue nextValue = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Next)).get();
+    JSFunction* asyncFunction = dynamicDowncast<JSFunction>(nextValue);
+    if (asyncFunction && !asyncFunction->isHostOrPrivateBuiltinFunction()) {
+        if (FunctionExecutable* executable = asyncFunction->jsExecutable()) {
+            // If a CodeBlock doesn't already exist, the stack trace will only show the filename and won't show line column
+            if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
+                BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
+                results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
+#if ENABLE(AOT)
+            } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(&AOT::instanceOf(asyncFunction->scope())))) {
+                JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
+                results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(function.instance), function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
+#endif
+            } else
+                results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
+        }
+    }
+}
+
 void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
@@ -543,42 +585,9 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
         return nullptr;
     };
 
-    auto computeBytecodeIndex = [&](CodeBlock* codeBlock, JSAsyncFunctionGenerator* generator) -> BytecodeIndex {
-        BytecodeIndex bytecodeIndex(0);
-        JSValue stateValue = generator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-        if (stateValue.isInt32()) {
-            int32_t state = stateValue.asInt32();
-            size_t numberOfJumpTables = codeBlock->numberOfUnlinkedSwitchJumpTables();
-            if (state > 0 && numberOfJumpTables > 0) {
-                size_t lastTableIndex = numberOfJumpTables - 1;
-                const UnlinkedSimpleJumpTable& jumpTable = codeBlock->unlinkedSwitchJumpTable(lastTableIndex);
-                int32_t offset = jumpTable.offsetForValue(state);
-                if (offset)
-                    bytecodeIndex = BytecodeIndex(offset);
-            }
-        }
-        return bytecodeIndex;
-    };
-
     JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);
     while (currentGenerator && results.size() < maxStackSize) {
-        JSValue nextValue = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Next)).get();
-        JSFunction* asyncFunction = dynamicDowncast<JSFunction>(nextValue);
-        if (asyncFunction && !asyncFunction->isHostOrPrivateBuiltinFunction()) {
-            if (FunctionExecutable* executable = asyncFunction->jsExecutable()) {
-                // If a CodeBlock doesn't already exist, the stack trace will only show the filename and won't show line column
-                if (CodeBlock* codeBlock = executable->codeBlockForCall()) {
-                    BytecodeIndex bytecodeIndex = computeBytecodeIndex(codeBlock, currentGenerator);
-                    results.append(StackFrame(vm, owner, asyncFunction, codeBlock, bytecodeIndex, /* isAsyncFrame */ true));
-#if ENABLE(AOT)
-                } else if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(&AOT::instanceOf(asyncFunction->scope())))) {
-                    JSValue state = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::State)).get();
-                    results.append(StackFrame(vm, owner, asyncFunction, executable, CodeSpecializationKind::CodeForCall, AOT::tokenOf(function.instance), function.resumePointOf(state.isInt32() ? state.asInt32() : 0), /* isAsyncFrame */ true));
-#endif
-                } else
-                    results.append(StackFrame(vm, owner, asyncFunction, /* isAsyncFrame */ true));
-            }
-        }
+        appendAsyncStackFrame(vm, owner, results, currentGenerator);
         currentGenerator = getParentGenerator(currentGenerator);
     }
 }

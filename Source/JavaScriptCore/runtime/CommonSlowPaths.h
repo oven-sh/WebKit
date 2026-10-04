@@ -164,6 +164,11 @@ static ALWAYS_INLINE bool canPutDirectFast(VM& vm, Structure* structure, Propert
     if (!structure->isStructureExtensible())
         return false;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+        return false;
+#endif
+
     unsigned currentAttributes = 0;
     structure->get(vm, propertyName, currentAttributes);
     if (currentAttributes & PropertyAttribute::DontDelete)

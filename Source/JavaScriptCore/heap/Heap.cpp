@@ -698,7 +698,7 @@ void Heap::reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(const JSCell*
 
 void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext, const JSCell* cell, size_t size)
 {
-    didAllocate(size);
+    didAllocate(size, "extra", nullptr, 0, cell);
     if (cell) {
         if (isWithinThreshold(cell->cellState(), barrierThreshold())) [[unlikely]]
             reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(cell, size);
@@ -787,7 +787,7 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
         collectIfNecessaryOrDefer();
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
-        didAllocate(size - std::min(size, bytesAlreadyReported));
+        didAllocate(size - std::min(size, bytesAlreadyReported), "buffer", nullptr, 0, cell);
     }
 }
 
@@ -3285,9 +3285,34 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
         m_edenActivityCallback->setEnabled(enable);
 }
 
-constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+    didAllocate(bytes, "other", nullptr, 0, nullptr);
+}
+
+void Heap::didAllocateInBlock(size_t bytes, const BlockDirectory& directory)
+{
+    didAllocate(bytes, "block", directory.subspace(), directory.cellSize(), nullptr);
+}
+
+void Heap::didAllocatePreciseAllocation(size_t bytes, const Subspace& subspace)
+{
+    didAllocate(bytes, "precise", &subspace, 0, nullptr);
+}
+
+constexpr size_t oversizedAllocationThreshold = 64 * KB;
+void Heap::didAllocate(size_t bytes, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* ownerOfExtraMemory)
+{
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::countAllocatedBytes(vm(), kind, subspace, cellSize, ownerOfExtraMemory, bytes);
+#else
+    UNUSED_PARAM(kind);
+    UNUSED_PARAM(subspace);
+    UNUSED_PARAM(cellSize);
+    UNUSED_PARAM(ownerOfExtraMemory);
+#endif
+
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversidedAllocationThisCycle = bytes;

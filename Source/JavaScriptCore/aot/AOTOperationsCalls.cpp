@@ -343,6 +343,7 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* instance, void* addressInFunction))
 {
+    countOperationNamed(instance, __func__);
     VM& vm = *instance->vm;
     DeferGCForAWhile deferGC(vm);
     DeferTraps deferTraps(vm);
@@ -350,8 +351,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     RELEASE_ASSERT(!instance->isLinked(index));
     CodeSpecializationKind kind = instance->infos[index].kind();
     FunctionExecutable* executable = instance->program->executableForFunction(index);
-    RELEASE_ASSERT(executable->aotIndexFor(kind) == index);
     const ImageFunction* function = instance->infos[index].function();
+    RELEASE_ASSERT(executable->aotIndexFor(kind) == index || function->hasNoGeneralBody);
     Ref<JITCode> code = jitCodeForImageFunction({ &Image::of(*function), function }, kind);
     code->setInstance(*instance);
     RELEASE_ASSERT(Data::create(*instance, executable, nullptr, code.get()));
@@ -359,6 +360,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
 {
+    countOperationNamed(data->instance, __func__);
     if (!data->hasBeenFilledSinceLastCollection)
         data->noteFilled();
 }
@@ -387,6 +389,19 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* inst
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance* instance, Slot* cache, EncodedJSValue encodedCallee, void* callHostFunction, void* callInternalFunction))
 {
     countOperationNamed(instance, __func__);
+    if (Options::useAOTOperationCounters() && Options::aotTypeCoverageCountsPath()) [[unlikely]] {
+        VM& vm = *instance->vm;
+        JSValue noted = JSValue::decode(encodedCallee);
+        String name = "no cell"_s;
+        if (auto* function = dynamicDowncast<JSFunction>(noted))
+            name = function->isHostFunction() ? function->nameWithoutGC(vm) : makeString("in JavaScript: "_s, function->nameWithoutGC(vm));
+        else if (auto* function = dynamicDowncast<InternalFunction>(noted))
+            name = function->name();
+        else if (noted.isCell())
+            name = String { noted.asCell()->classInfo()->className };
+        runtimeTable(vm).noteGuest("host-callee", name, { });
+        return;
+    }
     Slot& target = cache[1];
     if (target.offset >= CalleeCache::maxAttempts * CalleeCache::attempt) {
         cache[0].clear();
@@ -418,7 +433,8 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheHostCallee, void, (Instance* 
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* instance, uint32_t index))
 {
-    instance->ensureData(index);
+    countOperationNamed(instance, __func__);
+    instance->ensureDataIfThereIsRoom(index);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountMissOfCalleeCache, void, (Instance* instance, const void* returnAddress))
@@ -430,8 +446,24 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCountMissOfCalleeCache, void, (Ins
     instance->countMisses(caller.index, 1);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteCallee, void, (Instance* instance, Slot* cache, EncodedJSValue encodedCallee))
+{
+    countOperationNamed(instance, __func__);
+    if (SharedData::contains(cache))
+        return;
+    uint32_t index = Instance::isNotCompiledFunction;
+    if (auto* function = dynamicDowncast<JSFunction>(JSValue::decode(encodedCallee))) {
+        if (function->hasAOTFunctionWord())
+            index = function->aotFunctionIndex();
+        else if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->aotEntryFor(CodeSpecializationKind::CodeForCall))
+            index = executable->aotIndexFor(CodeSpecializationKind::CodeForCall);
+    }
+    instance->noteCalleeSeen(cache, index);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))
 {
+    countOperationNamed(instance, __func__);
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
@@ -442,6 +474,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (In
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, (Instance* instance, EncodedJSValue callee))
 {
+    countOperationNamed(instance, __func__);
     JSGlobalObject* globalObject = instance->globalObject;
     VM& vm = *instance->vm;
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);

@@ -494,7 +494,7 @@ public:
     bool putOwnDataProperty(VM&, PropertyName, JSValue, PutPropertySlot&);
     bool putOwnDataPropertyMayBeIndex(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
 
-    void putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
+    bool putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
 private:
     void validatePutOwnDataProperty(VM&, PropertyName, JSValue);
 public:

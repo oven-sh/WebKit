@@ -738,6 +738,7 @@ public:
     // true if cloneScopePart() of `original` would describe the same scope, so environments made by the new code can go
     // on using this clone and keep notifying the watchpoints that code compiled against the old environments holds.
     bool isCloneOfScopePartOf(SymbolTable& original);
+    bool hasSameScopePartAs(SymbolTable&);
     // It is `original`'s clone from then on.
     void adoptOriginal(VM&, SymbolTable& original);
     SymbolTable* clonedFrom() const { return m_clonedFrom.get(); }

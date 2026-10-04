@@ -359,7 +359,7 @@ bool RegExp::startsInterpreted(std::optional<StringView> subject) const
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
-    
+
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;

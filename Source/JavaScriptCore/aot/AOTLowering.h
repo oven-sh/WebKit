@@ -183,6 +183,9 @@ private:
     LValue toFieldRepresentation(Node* valueNode, LValue, TypeTable::FieldType);
     Node* m_aliasTarget { nullptr };
     void checkTypedLayout(Node* originNode, Node* valueNode, LValue, uint16_t layoutID);
+    void trap();
+    void throwUnlessMadeFromFunction(Node* origin, LValue, uint32_t function, bool trapsWhenValidating);
+    void lowerReadOfClosedMethod(Node* read, Node* receiver, uint32_t function);
     struct FieldStorage {
         LValue pointer;
         bool mayBePlaceholder;
@@ -411,6 +414,9 @@ private:
     void guardGetByVal(Node*);
     void guardPutByVal(Node*);
     TypedPointer typedArrayElement(Node* guard, Node* base, Node* property, JSType);
+    TypedPointer typedArrayElement(Node* base, Node* property, JSType, LBasicBlock outOfBounds, LBasicBlock slowCase);
+    LValue loadTypedArrayElement(JSType, TypedPointer);
+    void storeTypedArrayElement(JSType, LValue, TypedPointer);
     void guardGetLength(Node*);
     void guardCheckType(Node*);
     bool guardResolveScope(Node*);

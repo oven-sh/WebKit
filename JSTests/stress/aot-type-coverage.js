@@ -38,8 +38,9 @@ function program() {
     return caller;
 }
 function Point(x, y) { this.x = x; this.y = y; }
+function orsIntegers(a, b) { return (a | 0) | (b | 0); }
 const caller = program();
-for (const f of [readsTwo, writesOne, testsFlag, adds, readsNothing, usesThis, readsOddNames, loops])
+for (const f of [readsTwo, writesOne, testsFlag, adds, readsNothing, usesThis, readsOddNames, loops, orsIntegers])
     noInline(f);
 
 check(readsTwo({ first: 1, second: 2 }), 3, "two reads");
@@ -48,6 +49,7 @@ check(adds(1, 2), 3, "a sum");
 check(loops({ before: 1, inside: 2 }), 21, "a loop");
 check(caller({ inner: 1, outer: 2 }), 3, "an inlined call");
 check(new Point(1, 2).y, 2, "a constructor");
+check(orsIntegers(1, 2.5), 3, "two conversions and a bit operation");
 
 if (operationsOf(readsTwo, "op_get_by_id")) {
     check(describe(operationsOf(readsTwo, "op_get_by_id")), "21:32 first,21:42 second", "the reads of readsTwo");
@@ -64,6 +66,10 @@ if (operationsOf(readsTwo, "op_get_by_id")) {
     check(bitAnd.outcomes.includes("inline-bit-operation"), true, "a bit operation is inline");
     check(bitAnd.outcomes.some(outcome => outcome.startsWith("calls:")), false, "a bit operation calls nothing on its usual path");
     check(bitAnd.outcomes.some(outcome => outcome.startsWith("rarely-calls:")), true, "a bit operation calls something on its rare path");
+    check(bitAnd.outcomes.includes("emits-no-branch"), false, "a bit operation on an operand of unknown type branches");
+    check(operationsOf(orsIntegers, "op_bitor").map(or => or.outcomes.includes("emits-no-branch")).join(), "false,false,true", "of three bit operations only the one on two integers emits no branch");
+    check(operationsOf(readsTwo, "op_get_by_id").every(read => read.outcomes.includes("emits-no-branch") === read.outcomes.includes("calls:GetById")), true, "a call of a stub is no branch, an inline cache has one");
+    check(operationsOf(Point, "op_put_by_id").filter(write => write.outcomes.includes("absorbed-into-allocation")).some(write => write.outcomes.includes("emits-no-branch")), false, "a store that an allocation absorbs has no code of its own to speak of");
 
     const [add] = operationsOf(adds, "op_add");
     check(add.outcomes.includes("inline-bit-operation"), false, "a sum is not a bit operation");

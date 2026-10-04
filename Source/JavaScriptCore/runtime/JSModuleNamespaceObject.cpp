@@ -468,6 +468,12 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     }
 
     auto* record = resolution.moduleRecord;
+#if ENABLE(AOT)
+    if (vm.m_aotProgram && record->isPrelinked()) [[unlikely]] {
+        throwTypeError(globalObject, scope, "Cannot replace an export of a module that was compiled ahead of time"_s);
+        return false;
+    }
+#endif
     auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 

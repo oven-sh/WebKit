@@ -28,6 +28,8 @@
 #include "JSModuleEnvironment.h"
 #include "JSWithScope.h"
 #include "LinkBuffer.h"
+#include <wtf/FileHandle.h>
+#include <wtf/FileSystem.h>
 #include <wtf/Lock.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/text/StringHash.h>
@@ -372,6 +374,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     if (!parseBytecode(graph))
         return declined();
     saveRegistersAtDefinitions(graph);
+    readUnchangedRegistersFromFrame(graph);
     findRarelyExecutedBlocks(graph);
     if (program)
         inlineCalls(graph, *program);
@@ -382,7 +385,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     inferTypes(graph);
     foldBranchesDecidedByTypes(graph);
     findRarelyExecutedBlocks(graph);
-    planMultiValueReturns(graph);
+    planMultiValueReturns(graph, program);
     if (triesUnsplitLoops && Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph))
         return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false);
     inferRanges(graph);
@@ -523,12 +526,12 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     info.knownCallees = WTF::move(graph.knownCallees);
     info.siteConstants = WTF::move(graph.siteConstants);
     info.plans = WTF::move(graph.plans);
-    if (program && mayBeAbsorbed(unlinkedCodeBlock, summary))
+    if (program && ((summary && summary->function) || mayBeAbsorbed(unlinkedCodeBlock, summary ? &summary->ofFunction() : nullptr)))
         recordAllSitesOf(graph);
     info.quotableSites = WTF::move(graph.quotableSites);
     std::ranges::sort(info.quotableSites);
     info.quotableSites.shrink(std::ranges::unique(info.quotableSites).begin() - info.quotableSites.begin());
-    info.isOnlyCalledDirectly = summary && summary->isNonEscaping;
+    info.isOnlyCalledDirectly = summary && summary->hasOnlyKnownCallers;
     if (program) {
         auto noteKeysOf = [&](UnlinkedFunctionExecutable* executable, Vector<ImageKey>& keys) {
             if (const ProgramFunctions* functions = programFunctions()) {
@@ -686,9 +689,39 @@ Type inferReturnTypeForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const
     return result;
 }
 
+#if CPU(ARM64) || CPU(X86_64)
+static void appendFacts(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode& program)
+{
+    auto about = program.about(unlinkedCodeBlock);
+    if (!about)
+        return;
+    Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
+    graph.loopSplittingIsDisabled = true;
+    graph.setCalleeHints(hints);
+    graph.setSummary(summary);
+    graph.setVariableSummaries(variableSummaries);
+    graph.setLinkage(linkage, declaredNamesFor(unlinkedCodeBlock));
+    if (!parseBytecode(graph))
+        return;
+    saveRegistersAtDefinitions(graph);
+    StringPrintStream out;
+    out.print("F\t", summary ? summary->ofFunction().number : 0, "\t", about->key.module, "\t", about->key.start, "\t", about->key.kind, "\t", unlinkedCodeBlock->numParameters(), "\t", static_cast<unsigned>(unlinkedCodeBlock->codeType()), "\t", static_cast<unsigned>(unlinkedCodeBlock->parseMode()), "\t", unlinkedCodeBlock->isConstructor() ? "construct" : "call", "\n");
+    graph.dumpFacts(out);
+    auto text = out.toUTF8CString();
+    static Lock lock;
+    Locker locker { lock };
+    auto file = FileSystem::openFile(String::fromUTF8(byteCast<char>(Options::aotFactsPath())), FileSystem::FileOpenMode::ReadWrite);
+    if (!file || !file.seek(0, FileSystem::FileSeekOrigin::End))
+        return;
+    file.write(byteCast<uint8_t>(text.span()));
+}
+#endif
+
 bool compileForImage(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, CompiledCode& result, const CalleeHints* hints, const ModuleLinkage* linkage, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program)
 {
 #if CPU(ARM64) || CPU(X86_64)
+    if (Options::aotFactsPath() && program) [[unlikely]]
+        appendFacts(vm, unlinkedCodeBlock, hints, linkage, summary, variableSummaries, *program);
     ASCIILiteral reason;
     OpcodeID reasonOpcode = op_nop;
     bool ok = compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program);

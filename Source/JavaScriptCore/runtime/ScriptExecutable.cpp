@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include "AOTCompiler.h"
+#include "AOTFunction.h"
 #include "AOTImage.h"
 #include "CompilerHooks.h"
 #include "CodeBlock.h"
@@ -489,6 +490,13 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
     if (Options::validateBytecode() && !installedUnlinkedBaselineCode)
         codeBlock->validate();
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters() && !installedUnlinkedBaselineCode) [[unlikely]] {
+        static constexpr const char* kinds[] = { "ran-global", "ran-eval", "ran-function", "ran-module" };
+        String name = codeBlock->codeType() == FunctionCode ? uncheckedDowncast<FunctionExecutable>(this)->ecmaName().string() : String();
+        AOT::noteGuest(codeBlock->globalObject(), kinds[codeBlock->codeType()], !sourceURL().isEmpty() ? StringView { sourceURL() } : name.isEmpty() ? StringView { "(no URL)"_s } : StringView { name }, source().view());
+    }
+#endif
 
 #if ENABLE(JIT)
     if (RefPtr<BaselineJITCode> baselineRef = installedUnlinkedBaselineCode ? nullptr : codeBlock->unlinkedCodeBlock()->m_unlinkedBaselineCode) {

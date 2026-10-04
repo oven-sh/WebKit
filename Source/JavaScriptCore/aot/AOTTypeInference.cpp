@@ -215,6 +215,11 @@ public:
             for (Node* node : block->nodes) {
                 if (node->kind != NodeKind::Bytecode)
                     continue;
+                if (!block->isExecutable) {
+                    if (calleesWithWidenedInputs && isReached())
+                        recordWhetherReturnObjectIsNeededBy(node);
+                    continue;
+                }
                 switch (node->opcode) {
                 case op_ret:
                     m_returnType |= node->use(node->as<OpRet>().m_value)->type;
@@ -243,6 +248,8 @@ public:
             m_graph.summary()->knownTailCallees = WTF::move(m_knownTailCallees);
         if (programFunctions() && isReached()) {
             for (BasicBlock* block : m_graph.m_rpo) {
+                if (!block->isExecutable)
+                    continue;
                 for (Node* phi : block->phis)
                     noteEscapesThrough(phi);
                 for (Node* node : block->nodes)
@@ -263,16 +270,52 @@ public:
         }
     }
 
+    static bool mayGoTo(const BasicBlock* from, unsigned successorIndex)
+    {
+        if (from->isGeneric || from->endsWithGuard || from->isReentry || from->isPreHeader || from->successors.size() != 2 || from->successors[0] == from->successors[1])
+            return true;
+        Node* terminal = from->terminal();
+        if (!terminal || terminal->kind != NodeKind::Bytecode || terminal->guard || terminal->guarded)
+            return true;
+        TestedValue tested = valueTestedBy(terminal);
+        if (!tested.value || tested.value->isElided)
+            return true;
+        return mayBe(tested.value->type, successorIndex ? tested.ifFalse : tested.ifTrue);
+    }
+
+    static bool mayComeFrom(const BasicBlock* to, const BasicBlock* from)
+    {
+        if (!from->isExecutable)
+            return false;
+        for (unsigned i = 0; i < from->successors.size(); ++i) {
+            if (from->successors[i] == to && mayGoTo(from, i))
+                return true;
+        }
+        return false;
+    }
+
     void iterateToFixpoint()
     {
+        m_graph.root->isExecutable = true;
+        for (BasicBlock* entrypoint : m_graph.catchEntrypoints)
+            entrypoint->isExecutable = true;
         bool changed = true;
         while (changed) {
             changed = false;
             for (BasicBlock* block : m_graph.m_rpo) {
+                if (!block->isExecutable)
+                    continue;
                 for (Node* phi : block->phis)
                     changed |= update(phi);
                 for (Node* node : block->nodes)
                     changed |= update(node);
+                for (unsigned i = 0; i < block->successors.size(); ++i) {
+                    BasicBlock* successor = block->successors[i];
+                    if (successor->isExecutable || !mayGoTo(block, i))
+                        continue;
+                    successor->isExecutable = true;
+                    changed = true;
+                }
             }
             changed |= std::exchange(m_elementTypesChanged, false);
             if (!changed && !std::exchange(m_treatsEmptyArraysAsUntyped, true))
@@ -283,6 +326,7 @@ public:
     void forgetTypes()
     {
         for (BasicBlock* block : m_graph.m_rpo) {
+            block->isExecutable = false;
             for (Node* phi : block->phis)
                 phi->type = TNone;
             for (Node* node : block->nodes) {
@@ -353,6 +397,7 @@ public:
 
     static TestedValue valueTestedBy(Node* terminal)
     {
+        constexpr Type mayEqualNull = TOther | TOtherObject | TFunction;
         auto comparedWithConstant = [&](VirtualRegister left, VirtualRegister right) -> TestedValue {
             Node* operands[2] = { terminal->use(left), terminal->use(right) };
             for (unsigned i = 0; i < 2; ++i) {
@@ -374,9 +419,9 @@ public:
         case op_jnundefined_or_null:
             return { terminal->use(terminal->as<OpJnundefinedOrNull>().m_value), TAll & ~TOther, TOther };
         case op_jeq_null:
-            return { terminal->use(terminal->as<OpJeqNull>().m_value), TAll, TAll & ~TOther };
+            return { terminal->use(terminal->as<OpJeqNull>().m_value), mayEqualNull, TAll & ~TOther };
         case op_jneq_null:
-            return { terminal->use(terminal->as<OpJneqNull>().m_value), TAll & ~TOther, TAll };
+            return { terminal->use(terminal->as<OpJneqNull>().m_value), TAll & ~TOther, mayEqualNull };
         case op_jtrue:
             return valueTestedByCondition(terminal->use(terminal->as<OpJtrue>().m_condition));
         case op_jfalse:
@@ -536,7 +581,7 @@ public:
         bool changed = false;
         Vector<BasicBlock*> blocks = m_graph.m_rpo;
         for (BasicBlock* block : blocks) {
-            if (block->isGeneric || block->isReentry || block->isPreHeader)
+            if (block->isGeneric || block->isReentry || block->isPreHeader || !block->isExecutable)
                 continue;
             for (unsigned index = 0; index < block->nodes.size(); ++index) {
                 Node* check = block->nodes[index];
@@ -554,7 +599,7 @@ public:
             }
         }
         for (BasicBlock* block : blocks) {
-            if (block->isGeneric || block->endsWithGuard || block->isReentry || block->isPreHeader || block->successors.size() != 2 || block->successors[0] == block->successors[1])
+            if (block->isGeneric || block->endsWithGuard || block->isReentry || block->isPreHeader || !block->isExecutable || block->successors.size() != 2 || block->successors[0] == block->successors[1])
                 continue;
             Node* terminal = block->terminal();
             if (!terminal || terminal->kind != NodeKind::Bytecode || terminal->guard || terminal->guarded)
@@ -564,7 +609,7 @@ public:
                 continue;
             for (unsigned i = 0; i < 2; ++i) {
                 Type narrowedTo = i ? tested.ifFalse : tested.ifTrue;
-                if (!isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo))
+                if (!mayBe(tested.value->type, narrowedTo) || !isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo))
                     continue;
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
@@ -663,15 +708,22 @@ private:
 
     void remarkOnEscape()
     {
-        const FunctionSummary* summary = m_graph.summary();
-        if (calleesWithWidenedInputs || !summary)
+        const FunctionSummary* body = m_graph.summary();
+        if (calleesWithWidenedInputs || !body)
             return;
+        const FunctionSummary* summary = &body->ofFunction();
         if (summary->isNonEscaping) {
             m_graph.remark("function-does-not-escape"_s);
             if (summary->takesScopeAsCallee)
                 m_graph.remark("function-has-no-object"_s);
             else if (summary->objectIsNeededAfterAll)
                 m_graph.remark("function-object-is-needed-after-all"_s);
+            return;
+        }
+        if (body->function)
+            m_graph.remark("is-general-body"_s);
+        else if (body->hasOnlyKnownCallers) {
+            m_graph.remark("is-typed-body"_s);
             return;
         }
         if (!Options::aotRemarksPath() && !Options::aotTypeCoveragePath()) [[likely]]
@@ -782,7 +834,7 @@ private:
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         bool isExact = false;
         const KnownFunction* known = m_graph.knownCallee(node, &isExact);
-        unsigned followed = known && isExact && known->forCall && known->summary && known->summary->isNonEscaping ? std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxParameters) : 0;
+        unsigned followed = known && isExact && known->forCall && known->summary && known->summary->hasOnlyKnownCallers ? std::min<unsigned>(known->forCall->numParameters(), FunctionSummary::maxParameters) : 0;
         for (auto& use : node->uses) {
             if (use.reg == calleeRegister && use.reg.offset() != firstArgument) {
                 if (!followed)
@@ -1027,7 +1079,7 @@ private:
     void recordReturnedValues(Type type)
     {
         const FunctionSummary* summary = m_graph.summary();
-        if (!summary || !summary->isNonEscaping || summary->escapes.load(std::memory_order_relaxed)) {
+        if (!summary || !summary->hasOnlyKnownCallers || summary->hasUnknownCallers.load(std::memory_order_relaxed)) {
             markEscaping(type, FunctionSummary::ReturnedToUnknownCaller);
             return;
         }
@@ -1142,7 +1194,7 @@ private:
         }
         case op_ret: {
             const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
-            if (node->isElided || !function || !m_graph.summary()->isReached() || function->forCall != m_graph.codeBlock() || node->graph != &m_graph)
+            if (node->isElided || !function || m_graph.summary()->function || !m_graph.summary()->isReached() || function->forCall != m_graph.codeBlock() || node->graph != &m_graph)
                 return;
             if (node->use(node->as<OpRet>().m_value)->wasInferredUnreachable)
                 return;
@@ -1158,7 +1210,7 @@ private:
             auto operands = Graph::callOperands(node->instruction);
             bool isExact = false;
             const KnownFunction* known = node->isElided ? nullptr : m_graph.knownCallee(node, &isExact);
-            if (!known || !isExact || !known->forCall || !known->summary || !known->summary->isNonEscaping || !known->summary->isReached())
+            if (!known || !isExact || !known->forCall || !known->summary || !known->summary->hasOnlyKnownCallers || !known->summary->isReached())
                 return;
             int firstArgument = -static_cast<int>(operands.argv) + CallFrame::thisArgumentOffset();
             if (node->use(operands.callee)->wasInferredUnreachable || !mayBe(node->use(operands.callee)->type, TAnyObject))
@@ -1208,7 +1260,7 @@ private:
         }
         bool isExact = false;
         const KnownFunction* known = m_graph.knownCallee(node, &isExact);
-        if (!known || !isExact || !known->forCall || !known->summary || !known->summary->isNonEscaping)
+        if (!known || !isExact || !known->forCall || !known->summary || !known->summary->hasOnlyKnownCallers)
             return;
         int firstArgument = -static_cast<int>(argv) + CallFrame::thisArgumentOffset();
         for (unsigned i = 0; i < argc; ++i) {
@@ -1382,7 +1434,7 @@ private:
 
     bool isOnlyTestedAndBooleanUnlessShadowed(Node* call, Node* read, Type base)
     {
-        if (!call->isBytecode(op_call) || Graph::closedMethodReadBy(read))
+        if (!call->isBytecode(op_call) || Graph::closedMethodReadBy(read) || m_graph.calleeKnownByFact(call))
             return false;
         Receiver kind = receiverWithType(base);
         if (kind == Receiver::None || kind == Receiver::String || kind == Receiver::Number)
@@ -1627,14 +1679,13 @@ private:
 
     void recordWhetherReturnObjectIsNeededBy(Node* node)
     {
-        if (!multiValueReturnTable() || (node->opcode != op_call && node->opcode != op_tail_call))
+        if (!multiValueReturnTable() || node->opcode != op_tail_call)
             return;
         bool isExact = false;
         const KnownFunction* known = m_graph.knownCallee(node, &isExact);
         if (!known || !isExact || !known->forCall || !known->summary)
             return;
-        auto* names = multiValueReturnTable()->returnValueNamesOf(known->forCall);
-        if (!names || (node->opcode == op_call && users().isOnlyRead(node, names->span(), 0)))
+        if (!multiValueReturnTable()->returnValueNamesOf(known->forCall))
             return;
         if (known->summary->needsReturnObject.exchange(true, std::memory_order_relaxed))
             return;
@@ -1743,8 +1794,10 @@ private:
             return node->type;
         case NodeKind::Phi: {
             Type type = TNone;
-            for (auto& use : node->uses)
-                type |= use.node->type;
+            for (unsigned i = 0; i < node->uses.size(); ++i) {
+                if (mayComeFrom(node->block, node->block->predecessors[i]))
+                    type |= node->uses[i].node->type;
+            }
             return type;
         }
         case NodeKind::GetStack:
@@ -1905,6 +1958,8 @@ private:
                 return node->uses[0].node->type & node->narrowedTo;
             if (!node->isTrusted)
                 return node->uses[0].node->type;
+            if (node->isEdge)
+                return node->uses[0].node->type & (~TAnyObject | objectTypeForLayout(node->firstLayout));
             return node->uses[0].node->type & objectTypeForLayout(node->firstLayout);
         case op_urshift:
             return TInt32;

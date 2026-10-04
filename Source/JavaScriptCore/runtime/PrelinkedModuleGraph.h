@@ -87,6 +87,7 @@ public:
             HasTLA = 1 << 2,
             HasStarExports = 1 << 3,
             AllRequestsInGraph = 1 << 4, // every request resolves to another module of this graph
+            IsEntryPoint = 1 << 5,
         };
         uint32_t keySid;
         uint32_t flags;
