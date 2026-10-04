@@ -192,6 +192,14 @@ inline void SlotVisitor::reportExternalMemoryVisited(size_t size)
 }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+inline void SlotVisitor::reportTypedArrayVectorBytesVisited(size_t size)
+{
+    if (m_isFirstVisit)
+        m_typedArrayVectorBytes += size;
+}
+#endif
+
 template<typename Func>
 IterationStatus SlotVisitor::forEachMarkStack(const Func& func)
 {

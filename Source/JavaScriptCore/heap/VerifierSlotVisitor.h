@@ -92,6 +92,9 @@ public:
 #if ENABLE(RESOURCE_USAGE)
     void reportExternalMemoryVisited(size_t) final { }
 #endif
+#if USE(BUN_JSC_ADDITIONS)
+    void reportTypedArrayVectorBytesVisited(size_t) final { }
+#endif
 
     bool mutatorIsStopped() const final;
 
