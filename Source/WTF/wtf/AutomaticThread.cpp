@@ -27,6 +27,7 @@
 #include <wtf/AutomaticThread.h>
 
 #include <wtf/DataLog.h>
+#include <wtf/FastMalloc.h>
 #include <wtf/PageBlock.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/Threading.h>
@@ -36,6 +37,11 @@ namespace WTF {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(AutomaticThread);
 
 static constexpr bool verbose = false;
+
+#if USE(MIMALLOC)
+// How long a thread waits for more work before it releases its allocator's free memory.
+static constexpr Seconds idleReleaseDelay = 100_ms;
+#endif
 
 Ref<AutomaticThreadCondition> AutomaticThreadCondition::create()
 {
@@ -48,6 +54,16 @@ AutomaticThreadCondition::~AutomaticThreadCondition() = default;
 
 void AutomaticThreadCondition::notifyOne(const AbstractLocker& locker)
 {
+#if USE(MIMALLOC)
+    // A thread that is releasing its free memory only sees the notification when it is done with that.
+    for (auto& thread : m_threads) {
+        if (thread->isWaiting(locker) && !thread->m_isReleasingFreeMemory) {
+            thread->notify(locker);
+            return;
+        }
+    }
+#endif
+
     for (auto& thread : m_threads) {
         if (thread->isWaiting(locker)) {
             thread->notify(locker);
@@ -215,6 +231,11 @@ void AutomaticThread::start(const AbstractLocker&)
                 stopImpl(locker);
             };
             
+#if USE(MIMALLOC)
+            // Whether this thread released its allocator's free memory since it last worked.
+            bool didReleaseFreeMemory = false;
+#endif
+
             for (;;) {
                 {
                     Locker locker { *m_lock };
@@ -228,8 +249,39 @@ void AutomaticThread::start(const AbstractLocker&)
 
                         // Shut the thread down after a timeout.
                         m_isWaiting = true;
+#if USE(MIMALLOC)
+                        // Only the owning thread can return the memory its thread-local heap holds.
+                        // A compiler thread frees tens of MB of temporaries after a large compile,
+                        // and without this they stay resident until the thread times out and exits.
+                        // Wait a little first, so that a thread which is notified again right away
+                        // (the usual case between tasks) does not pay for the release.
+                        //
+                        // poll() runs once per notify: JITWorklistThread counts a thread as active
+                        // from the notify until its poll() returns Wait. So the thread stays in the
+                        // waiting state through the release, and polls again only if a notify
+                        // arrived meanwhile (notify() clears m_isWaiting, which is checked under the
+                        // lock, so a notify during the release is not lost).
+                        Seconds timeout = m_timeout;
+                        if (!didReleaseFreeMemory && m_timeout > idleReleaseDelay) {
+                            m_waitCondition.waitFor(*m_lock, idleReleaseDelay);
+                            if (!m_isWaiting)
+                                continue;
+                            didReleaseFreeMemory = true;
+                            m_isReleasingFreeMemory = true;
+                            {
+                                DropLockForScope dropLock { locker };
+                                releaseFastMallocFreeMemoryForIdleThread();
+                            }
+                            m_isReleasingFreeMemory = false;
+                            if (!m_isWaiting)
+                                continue;
+                            timeout -= idleReleaseDelay;
+                        }
+#else
+                        Seconds timeout = m_timeout;
+#endif
                         bool awokenByNotify =
-                            m_waitCondition.waitFor(*m_lock, m_timeout);
+                            m_waitCondition.waitFor(*m_lock, timeout);
                         if (verbose && !awokenByNotify && !m_isWaiting)
                             dataLog(RawPointer(this), ": waitFor timed out, but notified via m_isWaiting flag!\n");
                         if (m_isWaiting && shouldSleep(locker)) {
@@ -244,6 +296,9 @@ void AutomaticThread::start(const AbstractLocker&)
                     }
                 }
                 
+#if USE(MIMALLOC)
+                didReleaseFreeMemory = false;
+#endif
                 WorkResult result = work();
                 if (result == WorkResult::Stop) {
                     Locker locker { *m_lock };
