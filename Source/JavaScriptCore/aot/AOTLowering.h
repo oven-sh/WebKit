@@ -374,6 +374,7 @@ private:
     void findComparisonChains();
     void chooseChecksOfGuards();
     bool preservesLayouts(Node*);
+    bool preservesVariables(Node*);
     void lowerComparisonChain(BasicBlock*, const ComparisonChain&);
     bool isFusedWithGetFromScope(Node*);
     LValue scopeToResolveFrom(Node* resolve);
@@ -511,6 +512,7 @@ private:
     Vector<Vector<ValueFromBlock, 4>, 8> m_registerReturnValues;
     Vector<Rep, 8> m_returnValueReps;
     LBasicBlock m_exit { nullptr };
+    bool m_exitIsValidOnlyAfterFailure { false };
     Vector<std::pair<BasicBlock*, LBasicBlock>, 2> m_edges;
     LBasicBlock m_afterSlotChecks { nullptr };
     LValue m_slotEpoch { nullptr };

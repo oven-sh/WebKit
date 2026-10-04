@@ -36,7 +36,7 @@ for (let i = 0; i < 100; i++) {
 }
 {
     let closed = 0;
-    let iterable = { [Symbol.iterator]() { return { return() { closed++; return { }; }, next() { return { done: false, value: 1 }; } }; } };
+    let iterable = { [Symbol.iterator]() { return { return() { closed++; return { }; }, next() { return { done: false, value: 1 }; }, besideNext: 1 }; } };
     check(closesIterator(iterable), 1, "an iterator of the program");
     check(closed, 1, "the iterator is closed once");
 }
@@ -70,6 +70,8 @@ if (aotRemarks("readsReturn") && aotRemarks("readsReturn").some(remark => remark
     };
     applies("readsReturn", "guessed-place:return");
     applies("readsReturnAlone", "guessed-place:return");
+    doesNotApply("readsReturnAlone", "no-guess:disagree");
+    doesNotApply("readsReturnAlone", "no-guess:same-names-born-in-another-module");
     doesNotApply("closesIterator", "guessed-place:return");
     doesNotApply("closesIterator", "no-guess:disagree");
     for (let name of ["constructor", "hasOwnProperty", "isPrototypeOf", "propertyIsEnumerable", "toLocaleString", "toString", "valueOf", "__defineGetter__", "__defineSetter__", "__lookupGetter__", "__lookupSetter__"])

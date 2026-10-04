@@ -1,0 +1,58 @@
+//@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuessedPlaces=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+function check(actual, expected, what) {
+    if (!Object.is(actual, expected))
+        throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
+}
+
+function makesResult(i) { return { done: false, value: i }; }
+function readsValueOfResult(o) { return o.value; }
+function writesValueOfResult(o, v) { o.value = v; }
+
+function makesWithMethod(i) { return { method: i, value: 1, besideMethod: 2 }; }
+function readsMethod(o) { return o.method; }
+
+async function* yieldsOnce(i) { yield i; }
+
+let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("operationAOTCountGuessedPlace:" + detail) || 0;
+let before = countOf("another-slot");
+for (let i = 0; i < 100; i++) {
+    check(readsValueOfResult(makesResult(i)), i, "an object of the program");
+    check(readsValueOfResult([i][Symbol.iterator]().next()), i, "the same names in the order of the engine");
+    let o = makesResult(i);
+    writesValueOfResult(o, i + 1);
+    check(o.value, i + 1, "a store to an object of the program");
+    check(o.done, false, "the store leaves the neighbour alone");
+    o = [i][Symbol.iterator]().next();
+    writesValueOfResult(o, i + 1);
+    check(o.value, i + 1, "a store to the same names in the order of the engine");
+    check(o.done, false, "that store leaves the neighbour alone");
+    check(readsMethod(makesWithMethod(i)), i, "an object of the program with one name more than any of the engine's");
+}
+check(countOf("another-slot") - before, 0, "no guessed read finds the name in another slot");
+let fromGenerator;
+yieldsOnce(7).next().then(result => { fromGenerator = readsValueOfResult(result); });
+drainMicrotasks();
+check(fromGenerator, 7, "a result that code of the engine written in JavaScript made");
+
+if (aotRemarks("readsMethod") && aotRemarks("readsMethod").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"))) {
+    let has = (name, remark) => aotRemarks(name).includes(remark);
+    let applies = (name, remark) => {
+        if (!has(name, remark))
+            throw new Error(remark + " does not apply to " + name + ": " + aotRemarks(name).join(" | "));
+    };
+    let doesNotApply = (name, remark) => {
+        if (has(name, remark))
+            throw new Error(remark + " applies to " + name + ": " + aotRemarks(name).join(" | "));
+    };
+    for (let name of ["readsValueOfResult", "writesValueOfResult"]) {
+        applies(name, "no-guess:same-names-born-in-another-module");
+        doesNotApply(name, "guessed-place:value");
+        doesNotApply(name, "guards-over-whole-function");
+    }
+    applies("readsMethod", "guessed-place:method");
+    doesNotApply("readsMethod", "no-guess:same-names-born-in-another-module");
+}

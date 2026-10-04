@@ -968,7 +968,7 @@ LValue Lowering::getByIdCached(Node* node, LValue base, Type baseType, Entry ope
     if (stub == Stub::GetById && node->isBytecode(op_get_by_id) && node->as<OpGetById>().m_property == functionIdentifier) {
         if (isInGenericCopyOfSplitLoop())
             m_graph.remark("read-fills-cache-of-split-loop"_s, code().codeBlock()->identifier(functionIdentifier).string());
-        else
+        else if (Options::useAOTPropertyNameIDs())
             place = m_graph.guessedPlaceOf(node);
     }
     if (place && place->numberOfShapes < 2 && !Options::useAOTStubsForGuessedPlacesOfOneShape() && isCompact() && !Options::useAOTInlineGuessedPlacesEverywhere() && !Options::validateAOTInferredTypes()) {
@@ -1422,7 +1422,7 @@ void Lowering::lowerPutById(Node* node)
     if (Node* born = skipAliases(baseNode); usesDataStubs() && !afterTypedStore && !bytecode.m_flags.isDirect() && !born->isBytecode(op_create_this) && !born->isBytecode(op_new_object)) {
         if (isInGenericCopyOfSplitLoop())
             m_graph.remark("store-fills-cache-of-split-loop"_s, code().codeBlock()->identifier(bytecode.m_property).string());
-        else
+        else if (Options::useAOTPropertyNameIDs())
             place = m_graph.guessedPlaceOf(node);
     }
     bool usesSharedSite = isCompact() && Site::fits(numberOf(bytecode.m_property), flags);

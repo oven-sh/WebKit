@@ -48,8 +48,8 @@ public:
         unsigned numberOfSites { 0 };
         VariableKey variableReadFrom { nullptr, 0 };
     };
-    enum class Decision : uint8_t { Guessed, NoShape, Disagree, SlotTooHigh, NoNameID };
-    static constexpr unsigned numberOfDecisions = 5;
+    enum class Decision : uint8_t { Guessed, NoShape, Disagree, SlotTooHigh, NoNameID, SameNamesBornInAnotherModule };
+    static constexpr unsigned numberOfDecisions = 6;
 
     PropertyPlaces() = default;
 
@@ -76,6 +76,7 @@ public:
         m_bytecodeSizeWithGuards.fetch_add(bytecodeSize, std::memory_order_relaxed);
         m_codeSizeWithGuards.fetch_add(codeSize, std::memory_order_relaxed);
     }
+    void countGuardsThatContradictAnalysis() const { m_functionsWhoseGuardsContradictAnalysis.fetch_add(1, std::memory_order_relaxed); }
     JS_EXPORT_PRIVATE void dump(PrintStream&) const;
 
 private:
@@ -119,8 +120,8 @@ private:
     static constexpr unsigned maxNumberOfFamilies = std::numeric_limits<uint16_t>::max();
     bool appendNamesOfInstances(UnlinkedCodeBlock* constructor, Names&, bool& areAll, unsigned numberOfDescendants = 0) const;
     void note(Birth&&);
-    Vector<uint32_t, 8> shapesWithAllOf(const CalleeHints* module, const NamesAccessed&, const NamesOnVariable*) const;
-    Vector<uint32_t, 8> candidateShapes(const CalleeHints* module, const NamesAccessed&, bool& usesNamesOnVariable) const;
+    Vector<uint32_t, 8> shapesWithAllOf(const CalleeHints* module, const NamesAccessed&, const NamesOnVariable*, Vector<uint32_t, 8>* bornInOtherModules) const;
+    Vector<uint32_t, 8> candidateShapes(const CalleeHints* module, const NamesAccessed&, bool& usesNamesOnVariable, Vector<uint32_t, 8>* bornInOtherModules = nullptr) const;
 
     Lock m_lock;
     Vector<Birth> m_births;
@@ -139,6 +140,7 @@ private:
     mutable std::atomic<unsigned> m_decisions[numberOfDecisions] { };
     mutable std::atomic<unsigned> m_namesOnlyCalled { 0 };
     mutable std::atomic<unsigned> m_functionsWithGuards { 0 };
+    mutable std::atomic<unsigned> m_functionsWhoseGuardsContradictAnalysis { 0 };
     mutable std::atomic<unsigned> m_guardsOverWholeFunctions { 0 };
     mutable std::atomic<unsigned> m_bytecodeSizeWithGuards { 0 };
     mutable std::atomic<unsigned> m_codeSizeWithGuards { 0 };

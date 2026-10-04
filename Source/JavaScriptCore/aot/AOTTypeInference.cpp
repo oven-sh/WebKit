@@ -240,7 +240,7 @@ public:
                     noteArgumentsOf(node);
                     noteStoresToVariables(node);
                     recordWhetherReturnObjectIsNeededBy(node);
-                } else if (!calleesWithWidenedInputs && Options::validateAOTInferredTypes()) [[unlikely]]
+                } else if (!calleesWithWidenedInputs && (Options::validateAOTInferredTypes() || m_graph.placesToGuard || m_graph.mustAgreeWithAnalysis)) [[unlikely]]
                     verifyAgainstSummaries(node);
             }
         }
@@ -807,6 +807,11 @@ private:
         const KnownFunction* function = programFunctions()->function(functionNumberOf(type));
         if (!function || !function->summary)
             return;
+        if (m_graph.placesToGuard && function->summary->takesScopeAsCallee && !function->summary->needsObject.load(std::memory_order_relaxed)) {
+            if (m_graph.contradictionOfAnalysis.isNull())
+                m_graph.contradictionOfAnalysis = "contradicts-analysis-of-function-object"_s;
+            return;
+        }
         bool wasKnown = function->summary->needsObject.exchange(true, std::memory_order_relaxed);
         if (!wasKnown && function->summary->takesScopeAsCallee && Options::validateAOTInferredTypes()) [[unlikely]]
             dataLogLn("AOT: contradicts the analysis: the function object of `", function->executable ? function->executable->ecmaName().string() : String(), "` @", function->key.module, ":", function->key.start, " is needed after all");
@@ -1187,10 +1192,16 @@ private:
         }
     }
 
-    void reportContradiction(Node* node, ASCIILiteral what, const String& name, Type found, Type recorded)
+    void reportContradiction(Node* node, ASCIILiteral what, ASCIILiteral reasonForNoGuards, const String& name, Type found, Type recorded)
     {
+        if (m_graph.placesToGuard) {
+            if (m_graph.contradictionOfAnalysis.isNull())
+                m_graph.contradictionOfAnalysis = reasonForNoGuards;
+            return;
+        }
         const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
         dataLogLn("AOT: contradicts the analysis: ", what, " `", name, "` at bc#", node->bytecodeIndex.offset(), node->graph != &m_graph ? " (inlined)" : "", " in `", function && function->executable ? function->executable->ecmaName().string() : String(), "` @", function ? function->key.module : 0, ":", function ? function->key.start : 0, ": ", TypeDump(found), " is not in ", TypeDump(recorded));
+        RELEASE_ASSERT_WITH_MESSAGE(!m_graph.mustAgreeWithAnalysis, "The graph of a function without guards over the whole function contradicts the whole-program analysis");
     }
 
     bool isSavedAtDefinition(Variable slot)
@@ -1227,7 +1238,7 @@ private:
             Type put = value->type & TTop;
             Type recorded = summaries->read(variable, name, VariableSummaries::nobody);
             if (!isSubtype(put, recorded))
-                reportContradiction(node, "the store to"_s, String(name), put, recorded);
+                reportContradiction(node, "the store to"_s, "contradicts-analysis-of-store"_s, String(name), put, recorded);
             return;
         }
         case op_ret: {
@@ -1239,7 +1250,7 @@ private:
             Type returned = node->use(node->as<OpRet>().m_value)->type & TTop;
             Type recorded = function->returnType.load();
             if (!isSubtype(returned, recorded))
-                reportContradiction(node, "the result of"_s, "return"_s, returned, recorded);
+                reportContradiction(node, "the result of"_s, "contradicts-analysis-of-result"_s, "return"_s, returned, recorded);
             return;
         }
         case op_call:
@@ -1263,12 +1274,12 @@ private:
                 Type passed = i < operands.argc ? node->use(VirtualRegister(firstArgument + i))->type & TTop : TUndefined;
                 Type recorded = known->summary->parameterTypes[i].load();
                 if (!isSubtype(passed, recorded))
-                    reportContradiction(node, "an argument of"_s, makeString(known->executable ? known->executable->ecmaName().string() : String(), " #"_s, i), passed, recorded);
+                    reportContradiction(node, "an argument of"_s, "contradicts-analysis-of-argument"_s, makeString(known->executable ? known->executable->ecmaName().string() : String(), " #"_s, i), passed, recorded);
             }
             Type passed = node->use(VirtualRegister(firstArgument))->type & TTop;
             Type recorded = known->summary->thisType.load();
             if (!isSubtype(passed, recorded))
-                reportContradiction(node, "this of"_s, known->executable ? known->executable->ecmaName().string() : String(), passed, recorded);
+                reportContradiction(node, "this of"_s, "contradicts-analysis-of-this"_s, known->executable ? known->executable->ecmaName().string() : String(), passed, recorded);
             return;
         }
         default:

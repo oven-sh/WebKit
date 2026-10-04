@@ -743,6 +743,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instanc
         Structure* structure = base.asCell()->structure();
         unsigned attributes = 0;
         PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
+        if (which >> 29 & 1) {
+            RELEASE_ASSERT(base.isObject() && static_cast<unsigned>(offset) == slot && !attributes);
+            OPERATION_RETURN(scope);
+        }
         for (unsigned other = 0; other < Structure::numberOfSlotsWithPropertyNameIDs; ++other)
             RELEASE_ASSERT(structure->fieldIDInSlot(other) != nameID || (base.isObject() && static_cast<unsigned>(offset) == other && !attributes));
     }
@@ -782,6 +786,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedPlace, void, (Instance* instanc
     }
     const char* result = outcome();
     countOperationNamed(instance, __func__, result);
+    if (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)
+        countOperationAtSite(instance, callFrame, result);
     if (Options::useAOTOperationCounters() && !strcmp(result, "no-id-recorded")) [[unlikely]] {
         Structure* structure = base.asCell()->structure();
         runtimeTable(vm).noteShape("GuessedPlace", makeString("no-id-recorded name "_s, StringView(identifierAt(instance, callFrame, identifierIndex).impl()), " slot "_s, slot, " typed layout "_s, structure->typedLayoutID(), " known shape "_s, structure->knownShape(), " transition kind "_s, static_cast<unsigned>(structure->transitionKind()),
@@ -837,7 +843,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedStore, void, (Instance* instanc
         uint16_t there = structure->fieldIDInSlot(slot);
         unsigned attributes = 0;
         PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-        if (there == nameID) {
+        if (there == nameID || (which >> 29 & 1)) {
             if (validates) {
                 RELEASE_ASSERT(base.isObject() && static_cast<unsigned>(offset) == slot && !attributes);
                 RELEASE_ASSERT(!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype());
@@ -873,6 +879,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCountGuessedStore, void, (Instance* instanc
         countOperationAtSite(instance, callFrame, "exit-into-generic-copy");
     }
     countOperationNamed(instance, __func__, outcome());
+    if (!base.isCell() || base.asCell()->structure()->fieldIDInSlot(slot) != nameID)
+        countOperationAtSite(instance, callFrame, outcome());
     OPERATION_RETURN(scope);
 }
 

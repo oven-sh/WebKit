@@ -3370,6 +3370,7 @@ public:
             removeOverwrittenStores();
         fillPhis();
         simplifyPhis();
+        passUndefinedAsImplicitThis();
         bool isRecursiveKernel = false;
         for (BasicBlock* block : m_graph.m_rpo) {
             for (Node* node : block->nodes) {
@@ -4653,13 +4654,6 @@ private:
                     node->uses.append({ reg, get(block, reg) });
                 });
             }
-            if (opcode == op_call || opcode == op_call_ignore_result || opcode == op_tail_call) {
-                VirtualRegister thisRegister = Graph::callOperands(instruction).argument(0);
-                for (auto& use : node->uses) {
-                    if (use.reg == thisRegister && m_graph.isScopeUsedAsImplicitThis(use.node))
-                        use.node = m_graph.constant(jsUndefined());
-                }
-            }
             append(block, node);
             if (comesAfterGuard && block->predecessors[0]->terminal()->guardKind != GuardKind::Nothing) {
                 node->guard = block->predecessors[0]->terminal();
@@ -4891,6 +4885,37 @@ private:
             for (auto& value : block->valuesAtTail) {
                 if (value)
                     value = resolve(value);
+            }
+        }
+    }
+
+    void passUndefinedAsImplicitThis()
+    {
+        Vector<const Node*, 8> phisSeen;
+        auto isImplicitThis = [&](auto& self, const Node* value) -> bool {
+            if (value->kind != NodeKind::Phi)
+                return value == m_graph.constant(jsUndefined()) || m_graph.isScopeUsedAsImplicitThis(value);
+            if (phisSeen.contains(value))
+                return true;
+            phisSeen.append(value);
+            for (auto& use : value->uses) {
+                if (!self(self, use.node))
+                    return false;
+            }
+            return true;
+        };
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* node : block->nodes) {
+                if (!node->isBytecode(op_call) && !node->isBytecode(op_call_ignore_result) && !node->isBytecode(op_tail_call))
+                    continue;
+                VirtualRegister thisRegister = Graph::callOperands(node->instruction).argument(0);
+                for (auto& use : node->uses) {
+                    if (use.reg != thisRegister)
+                        continue;
+                    phisSeen.shrink(0);
+                    if (isImplicitThis(isImplicitThis, use.node))
+                        use.node = m_graph.constant(jsUndefined());
+                }
             }
         }
     }

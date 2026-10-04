@@ -32,6 +32,16 @@ struct CheckedFamily {
     bool isStale;
 };
 
+struct VariableRead {
+    bool operator==(const VariableRead&) const = default;
+    bool isOfSameVariableAs(const VariableRead& other) const { return scope == other.scope && hops == other.hops && offset == other.offset; }
+
+    const Node* scope;
+    unsigned hops;
+    unsigned offset;
+    const Node* representative;
+};
+
 struct CheckedValues {
     const CheckedFamily* find(const Node* value, uint16_t family) const
     {
@@ -61,7 +71,7 @@ struct CheckedValues {
 
     bool holdsTheSameAs(const CheckedValues& other) const
     {
-        if (names.size() != other.names.size() || families.size() != other.families.size() || cells.size() != other.cells.size())
+        if (names.size() != other.names.size() || families.size() != other.families.size() || cells.size() != other.cells.size() || variables != other.variables)
             return false;
         for (auto& name : names) {
             if (!other.names.contains(name))
@@ -98,6 +108,7 @@ struct CheckedValues {
     Vector<CheckedName> names;
     Vector<CheckedFamily> families;
     Vector<const Node*> cells;
+    Vector<VariableRead> variables;
 };
 
 } // anonymous namespace
@@ -278,13 +289,53 @@ bool Lowering::preservesLayouts(Node* node)
     }
 }
 
+bool Lowering::preservesVariables(Node* node)
+{
+    return !node->isBytecode(op_put_to_scope) && preservesLayouts(node);
+}
+
+static std::optional<VariableRead> variableReadBy(Node* node)
+{
+    if (!node->isBytecode(op_get_from_scope))
+        return std::nullopt;
+    if (node->promotedEnvironment)
+        return VariableRead { node->promotedEnvironment, 0, node->offsetInEnvironment, node };
+    auto bytecode = node->as<OpGetFromScope>();
+    ResolveType type = bytecode.m_getPutInfo.resolveType();
+    unsigned offset = bytecode.m_offset;
+    if (type != ResolvedClosureVar && type != ResolvedLazyClosureVar) {
+        auto variable = node->graph->resolveStatically(bytecode.m_var, bytecode.m_localScopeDepth, type);
+        if (variable.kind != Graph::StaticVariable::Closure)
+            return std::nullopt;
+        offset = variable.offset.offset();
+    }
+    const Node* scope = node->use(bytecode.m_scope);
+    unsigned hops = 0;
+    if (scope->isBytecode(op_resolve_scope)) {
+        auto resolve = scope->as<OpResolveScope>();
+        if (isStaticClosureVarResolveType(resolve.m_resolveType))
+            hops = resolve.m_localScopeDepth + staticClosureVarHops(resolve.m_resolveType);
+        else {
+            auto variable = scope->graph->resolveStatically(resolve.m_var, resolve.m_localScopeDepth, resolve.m_resolveType);
+            if (!variable.isAtStaticDepth())
+                return std::nullopt;
+            hops = variable.depth;
+        }
+        scope = scope->use(resolve.m_scope);
+    }
+    return VariableRead { scope, hops, offset, node };
+}
+
 void Lowering::chooseChecksOfGuards()
 {
     if (!m_graph.placesToGuard)
         return;
     UncheckedKeyHashMap<BasicBlock*, CheckedValues> checkedAtTail;
+    UncheckedKeyHashMap<const Node*, const Node*> representatives;
     auto checkedAtHead = [&](BasicBlock* block) {
         CheckedValues checked;
+        if (block->isCatchEntrypoint)
+            return checked;
         bool isFirst = true;
         for (BasicBlock* predecessor : block->predecessors) {
             if (predecessor->isGeneric)
@@ -297,6 +348,8 @@ void Lowering::chooseChecksOfGuards()
             else
                 checked.intersectWith(atTail->value);
         }
+        if (block->predecessors.size() != 1)
+            checked.variables.shrink(0);
         return checked;
     };
     auto walk = [&](BasicBlock* block, CheckedValues& checked, bool chooses) {
@@ -306,10 +359,23 @@ void Lowering::chooseChecksOfGuards()
             if (!node->checksName() || node->guardKind != GuardKind::Whole) {
                 if (!preservesLayouts(node))
                     checked.noteEffect();
+                if (!preservesVariables(node))
+                    checked.variables.shrink(0);
+                else if (auto read = variableReadBy(node)) {
+                    size_t index = checked.variables.findIf([&](const VariableRead& other) {
+                        return other.isOfSameVariableAs(*read);
+                    });
+                    if (index == notFound)
+                        checked.variables.append(*read);
+                    else
+                        representatives.set(node, checked.variables[index].representative);
+                }
                 continue;
             }
             bool isRead = node->opcode == op_get_by_id;
             const Node* value = valueBehindAliases(node->use(isRead ? node->as<OpGetById>().m_base : node->as<OpPutById>().m_base));
+            if (auto representative = representatives.find(value); representative != representatives.end())
+                value = representative->value;
             bool isKnownCell = checked.cells.contains(value);
             if (!isKnownCell)
                 checked.cells.append(value);

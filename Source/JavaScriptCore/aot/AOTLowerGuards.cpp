@@ -279,10 +279,13 @@ void Lowering::emitGuard(Node* guard)
             if (!known->isDeclaration) {
                 Node* calleeNode = guard->uses[0].node;
                 LValue callee = lowJSValue(calleeNode);
+                Node* lastOfExit = guard->block->successors.last()->terminal();
+                m_exitIsValidOnlyAfterFailure = lastOfExit && lastOfExit->isBytecode(op_unreachable);
                 if (isSubtype(calleeNode->type & TCell, TFunction))
                     exitUnless(isCell(callee));
                 else
                     exitUnless(isCellAnd(calleeNode, callee, [&](LValue cell) { return isCellOfType(cell, JSFunctionType); }));
+                m_exitIsValidOnlyAfterFailure = false;
             }
             return;
         }
@@ -428,6 +431,15 @@ void Lowering::lowerGuarded(Node* node)
 
 void Lowering::exitUnless(LValue condition)
 {
+    if (unsigned period = Options::failEveryNthAOTGuardForTesting(); period && !m_exitIsValidOnlyAfterFailure) [[unlikely]] {
+        TypedPointer executed = m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfGuardChecksExecutedForTesting());
+        LValue count = m_out.add(m_out.load32(executed), m_out.int32One);
+        LValue fails = m_out.aboveOrEqual(count, m_out.constInt32(period));
+        m_out.store32(m_out.select(fails, m_out.int32Zero, count), executed);
+        LBasicBlock stays = m_out.newBlock();
+        m_out.branch(fails, rarely(m_exit), usually(stays));
+        m_out.appendTo(stays);
+    }
     LBasicBlock next = m_out.newBlock();
     m_out.branch(condition, usually(next), rarely(m_exit));
     m_out.appendTo(next);
@@ -442,7 +454,7 @@ static LValue directLocation(FTL::Output& out, LValue base, LValue word)
 void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, Entry counter, unsigned identifier)
 {
     GuessedPlace place = guard->checkedPlace;
-    if (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes()) [[unlikely]]
+    if (place.nameID && (Options::useAOTOperationCounters() || Options::validateAOTInferredTypes())) [[unlikely]]
         vmCall(guard->guarded ? guard->guarded : guard, Void, counter, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place.slot) << 16 | place.nameID | (guard->check == GuardCheck::Name ? 1u << 30 : 0) | (Options::validateAOTInferredTypes() ? 1u << 31 : 0))), m_out.constInt32(identifier));
     if (Options::useAOTOperationCounters() && (guard->check == GuardCheck::Family || guard->check == GuardCheck::Byte)) [[unlikely]]
         vmCall(guard->guarded ? guard->guarded : guard, Void, Entry::operationAOTCountFamilyGuard, m_instance, base, m_out.constInt32(place.family | (guard->check == GuardCheck::Byte ? 1 << 16 : 0)));
@@ -485,6 +497,8 @@ void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, 
         require(m_out.isZero32(departedFamily(place.family)), false);
         break;
     case GuardCheck::None:
+        if (Options::failEveryNthAOTGuardForTesting()) [[unlikely]]
+            exitUnless(m_out.booleanTrue);
         break;
     }
     if (!Options::validateAOTInferredTypes())
@@ -493,7 +507,10 @@ void Lowering::exitUnlessNameIsInSlot(Node* guard, Node* baseNode, LValue base, 
         require(isCell(base), true);
     if (place.family)
         requireFamily(true);
-    requireName(true);
+    if (place.nameID)
+        requireName(true);
+    else
+        vmCall(guard->guarded ? guard->guarded : guard, Void, counter, m_instance, base, m_out.constInt32(static_cast<int32_t>(static_cast<uint32_t>(place.slot) << 16 | 1u << 29 | 1u << 31)), m_out.constInt32(identifier));
 }
 
 void Lowering::guardGetById(Node* guard)

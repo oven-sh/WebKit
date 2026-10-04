@@ -6342,7 +6342,7 @@ struct BytecodeLinkEncoder::Impl {
                 dataLogLn("AOT: ", propertyPlaces);
         });
         AOT::TypeTable::load(vm);
-        propertyPlaces.setFirstNameID(AOT::TypeTable::largestFieldID() + 1);
+        propertyPlaces.setFirstNameID(Options::useAOTPropertyNameIDs() ? AOT::TypeTable::largestFieldID() + 1 : 0);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             return { };

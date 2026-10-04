@@ -475,24 +475,12 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     PropertyTable* table = result->ensurePropertyTable(vm);
     BitVector taken;
     unsigned numberOfSlots = reserved;
-    for (uint16_t slot : slots)
+    for (uint16_t slot : slots) {
+        RELEASE_ASSERT(!taken.get(slot));
+        taken.set(slot);
         numberOfSlots = std::max<unsigned>(numberOfSlots, slot + 1);
-    for (unsigned i = 0; i < names.size(); ++i) {
-        RELEASE_ASSERT(!taken.get(slots[i]));
-        if (JSC::isValidOffset(result->get(vm, names[i])))
-            return nullptr;
-        taken.set(slots[i]);
-        if ((slots[i] != i || numberOfSlots > inlineSlots) && !TypedLayoutTable::hasTypedFields())
-            result->setIsQuickPropertyAccessAllowedForEnumeration(false);
-        table->addDeletedOffset(offsetOf(slots[i]));
-        result->addPropertyWithoutTransition(vm, names[i], attributes.empty() ? 0 : attributes[i], [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
-            RELEASE_ASSERT(offset == offsetOf(slots[i]));
-            if (newMaxOffset > result->maxOffset())
-                result->setMaxOffset(vm, newMaxOffset);
-        });
-        RELEASE_ASSERT(result->propertyTableOrNull() == table);
     }
-    if (numberOfSlots && offsetOf(numberOfSlots - 1) > result->maxOffset())
+    if (numberOfSlots)
         result->setMaxOffset(vm, offsetOf(numberOfSlots - 1));
     for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
         if (!taken.get(slot))
@@ -501,6 +489,18 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     if (numberOfSlots > inlineSlots) {
         for (unsigned offset = inlineSlots; offset < empty->inlineCapacity(); ++offset)
             table->addDeletedOffset(offset);
+    }
+    for (size_t i = slots.size(); i--;)
+        table->addDeletedOffset(offsetOf(slots[i]));
+    for (unsigned i = 0; i < names.size(); ++i) {
+        if (JSC::isValidOffset(result->get(vm, names[i])))
+            return nullptr;
+        if ((slots[i] != i || numberOfSlots > inlineSlots) && !TypedLayoutTable::hasTypedFields())
+            result->setIsQuickPropertyAccessAllowedForEnumeration(false);
+        result->addPropertyWithoutTransition(vm, names[i], attributes.empty() ? 0 : attributes[i], [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
+            RELEASE_ASSERT(offset == offsetOf(slots[i]) && newMaxOffset == result->maxOffset());
+        });
+        RELEASE_ASSERT(result->propertyTableOrNull() == table);
     }
     if (names.empty()) {
         ConcurrentJSLocker locker(result->m_lock);

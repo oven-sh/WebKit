@@ -2072,6 +2072,7 @@ const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* struct
 
 void Instance::giveFamily(VM& vm, Structure* structure, uint16_t family, std::span<UniquedStringImpl* const> namesInSlots, const char* birth)
 {
+    RELEASE_ASSERT(!namesInSlots.empty(), family);
     bool hadFamily = structure->family();
     const char* refusal = structure->holdsFamily(vm, namesInSlots) ? structure->reasonToRefuseFamily(family) : "names-are-not-in-their-slots";
     if (!refusal) {

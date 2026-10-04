@@ -368,11 +368,12 @@ static void findRarelyExecutedBlocks(Graph& graph)
     }
 }
 
-static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true, const Graph::PlacesToGuard* placesToGuard = nullptr, bool keepsLoopsUnsplit = false, ASCIILiteral reasonForNoGuards = { })
+static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHints* hints, const ModuleLinkage* linkage, CompiledCode& result, ASCIILiteral& reason, OpcodeID& reasonOpcode, const FunctionSummary* summary, VariableSummaries* variableSummaries, const ProgramCode* program, bool triesUnsplitLoops = true, const Graph::PlacesToGuard* placesToGuard = nullptr, bool keepsLoopsUnsplit = false, ASCIILiteral reasonForNoGuards = { }, bool mustAgreeWithAnalysis = false)
 {
     Graph graph(vm, unlinkedCodeBlock, unknownScopeChain());
     graph.loopSplittingIsDisabled = triesUnsplitLoops || keepsLoopsUnsplit;
     graph.placesToGuard = placesToGuard;
+    graph.mustAgreeWithAnalysis = mustAgreeWithAnalysis;
     if (!reasonForNoGuards.isNull())
         graph.remark("no-guards-over-whole-function"_s, reasonForNoGuards);
     graph.setCalleeHints(hints);
@@ -407,14 +408,20 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     while (foldBranchesOnKnownValues(graph))
         scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
+    if (!graph.contradictionOfAnalysis.isNull()) {
+        program->propertyPlaces->countGuardsThatContradictAnalysis();
+        return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, true, nullptr, false, graph.contradictionOfAnalysis, true);
+    }
     foldBranchesDecidedByTypes(graph);
     findRarelyExecutedBlocks(graph);
     planMultiValueReturns(graph, program);
     if (triesUnsplitLoops) {
         bool splitsLoops = Options::useAOTLoopSplitting() && !canSkipLoopSplitting(graph);
-        Graph::PlacesToGuard places = graph.findPlacesToGuard();
+        Graph::PlacesToGuard places;
+        if (!mustAgreeWithAnalysis)
+            places = graph.findPlacesToGuard();
         if (splitsLoops || !places.isEmpty())
-            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), graph.reasonForNoGuards);
+            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), mustAgreeWithAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, mustAgreeWithAnalysis);
     }
     inferRanges(graph);
     optimizeLoops(graph);

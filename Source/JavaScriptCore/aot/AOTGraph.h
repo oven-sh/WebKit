@@ -278,7 +278,7 @@ struct Node {
     bool isHandled { false };
 
     bool isBytecode(OpcodeID id) const { return kind == NodeKind::Bytecode && opcode == id; }
-    bool checksName() const { return kind == NodeKind::Guard && checkedPlace.nameID; }
+    bool checksName() const { return kind == NodeKind::Guard && (checkedPlace.nameID || checkedPlace.family); }
     bool isConstant() const { return kind == NodeKind::Constant; }
     bool isInt32Constant() const { return isConstant() && constant.isInt32(); }
     bool isNumberConstant() const { return isConstant() && constant.isNumber(); }
@@ -431,6 +431,8 @@ public:
     const PlacesToGuard* placesToGuard { nullptr };
     PlacesToGuard findPlacesToGuard();
     ASCIILiteral reasonForNoGuards;
+    ASCIILiteral contradictionOfAnalysis;
+    bool mustAgreeWithAnalysis { false };
     Vector<UnlinkedFunctionExecutable*> functionsCreated;
     bool readsElementsOrEmpty { false };
     bool isInlinedBuiltin { false };

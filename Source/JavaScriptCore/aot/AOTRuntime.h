@@ -734,6 +734,8 @@ struct Instance {
     uint8_t* selectorsOnObjectPrototype;
     uint32_t objectPrototypeStructureID;
     uint8_t departedFamilies[numberOfFamiliesWithByte] { };
+    uint32_t guardChecksExecutedForTesting { 0 };
+    static constexpr ptrdiff_t offsetOfGuardChecksExecutedForTesting() { return OBJECT_OFFSETOF(Instance, guardChecksExecutedForTesting); }
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     static constexpr unsigned numberOfReceivers = 16;
