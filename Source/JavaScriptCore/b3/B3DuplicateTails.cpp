@@ -79,7 +79,7 @@ public:
 
             bool canCopyBlock = true;
             for (Value* value : *block) {
-                if (value->kind().isCloningForbidden()) {
+                if (value->kind().isCloningForbidden() || (m_proc.positionIndependent() && (value->opcode() == Patchpoint || value->opcode() == CCall))) {
                     canCopyBlock = false;
                     break;
                 }
@@ -141,6 +141,7 @@ public:
                 block->append(clone);
             }
             block->successors() = tail->successors();
+            m_proc.didDuplicateTail();
         }
 
         m_proc.resetReachability();

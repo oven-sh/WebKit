@@ -261,6 +261,8 @@ public:
 
     void setPositionIndependent(bool value = true) { m_positionIndependent = value; }
     bool positionIndependent() const { return m_positionIndependent; }
+    void didDuplicateTail() { ++m_numberOfDuplicatedTails; }
+    unsigned numberOfDuplicatedTails() const { return m_numberOfDuplicatedTails; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
     // you turn it off then you cannot use StackmapGenerationParams::usedRegisters() or
@@ -362,6 +364,7 @@ private:
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_positionIndependent { false };
+    unsigned m_numberOfDuplicatedTails { 0 };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };

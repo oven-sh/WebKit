@@ -102,8 +102,7 @@ void generateToAir(Procedure& procedure)
             inferSwitches(procedure);
 
         if (Options::useB3TailDup())
-            if (!procedure.positionIndependent())
-                duplicateTails(procedure);
+            duplicateTails(procedure);
         fixSSA(procedure);
         foldPathConstants(procedure);
         if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())

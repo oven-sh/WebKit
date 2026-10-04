@@ -467,6 +467,8 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
             if (block->last().kind.opcode == B3::Air::Patch && block->numSuccessors())
                 graph.remark("jump-table"_s);
         }
+        if (proc.numberOfDuplicatedTails())
+            graph.remark("duplicated-tails"_s);
     }
     usePinnedRegistersDirectly(proc.code());
 #if CPU(X86_64)
