@@ -286,7 +286,9 @@ NewObjectPlan NewObjectPlan::forCreateThis(UnlinkedCodeBlock* codeBlock, unsigne
                 return plan;
             continue;
         case op_check_type:
-            if (!plan.stores.isEmpty() || aliases.contains(instruction->as<OpCheckType>().m_value))
+            if (aliases.contains(instruction->as<OpCheckType>().m_value) || codeBlock->handlerForBytecodeIndex(BytecodeIndex(offset)) != handler)
+                return plan;
+            if (plan.properties.containsIf([](auto& property) { return !property.isDefined; }))
                 return plan;
             continue;
         case op_put_by_id: {
@@ -4635,7 +4637,7 @@ private:
                 }
             }
             append(block, node);
-            if (offset == block->bytecodeBegin && !block->isGeneric && block->predecessors.size() == 1 && block->predecessors[0]->endsWithGuard && !block->predecessors[0]->isPreHeader) {
+            if (comesAfterGuard && block->predecessors[0]->terminal()->guardKind != GuardKind::Nothing) {
                 node->guard = block->predecessors[0]->terminal();
                 node->guard->guarded = node;
             }
@@ -4737,7 +4739,8 @@ private:
                 append(block, guard);
                 return;
             }
-            if (intrinsicReadBy(block, instruction).first) {
+            bool callsFunctionInVariable = instruction->opcodeID() == op_call && get(block, instruction->as<OpCall>().m_callee)->isBytecode(op_get_from_scope);
+            if (intrinsicReadBy(block, instruction).first || callsFunctionInVariable) {
                 guard->guardKind = GuardKind::Nothing;
                 guard->bytecodeIndex = BytecodeIndex(block->bytecodeEnd);
                 append(block, guard);

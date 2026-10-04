@@ -1165,12 +1165,12 @@ static void callBinaryOperation(CCallHelpers& jit, Entry operation)
     callAndCheckException(jit, T11, Returns::Value);
 }
 
-enum class Binary : uint8_t { Add, Sub, Mul, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq };
+enum class Binary : uint8_t { Add, Sub, Mul, Div, BitAnd, BitOr, BitXor, LShift, RShift, URShift, Mod, Less, LessEq, Greater, GreaterEq };
 
 static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
 {
     bool isComparison = kind >= Binary::Less;
-    bool hasDoubleCase = isComparison || kind <= Binary::Mul;
+    bool hasDoubleCase = isComparison || kind <= Binary::Div;
     constexpr FPRReg left = FPRInfo::fpRegT0;
     constexpr FPRReg right = FPRInfo::fpRegT1;
     CCallHelpers::JumpList notBothInt32;
@@ -1199,6 +1199,8 @@ static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
         slow.append(jit.branchMul32(CCallHelpers::Overflow, R0, A1, T11));
         slow.append(jit.branchTest32(CCallHelpers::Zero, T11));
         boxInt32AndReturn();
+        break;
+    case Binary::Div:
         break;
     case Binary::BitAnd:
         jit.and32(R0, A1, T11);
@@ -1282,6 +1284,9 @@ static void generateBinary(CCallHelpers& jit, Binary kind, Entry operation)
         case Binary::Mul:
             jit.mulDouble(left, right, left);
             break;
+        case Binary::Div:
+            jit.divDouble(left, right, left);
+            break;
         case Binary::Less:
             compareDoublesAndReturn(CCallHelpers::DoubleLessThanAndOrdered);
             break;
@@ -1316,6 +1321,7 @@ static void generateAdd(CCallHelpers& jit) { generateBinary(jit, Binary::Add, En
 static void generateMod(CCallHelpers& jit) { generateBinary(jit, Binary::Mod, Entry::operationAOTValueMod); }
 static void generateSub(CCallHelpers& jit) { generateBinary(jit, Binary::Sub, Entry::operationAOTValueSub); }
 static void generateMul(CCallHelpers& jit) { generateBinary(jit, Binary::Mul, Entry::operationAOTValueMul); }
+static void generateDiv(CCallHelpers& jit) { generateBinary(jit, Binary::Div, Entry::operationAOTValueDiv); }
 static void generateBitAnd(CCallHelpers& jit) { generateBinary(jit, Binary::BitAnd, Entry::operationAOTValueBitAnd); }
 static void generateBitOr(CCallHelpers& jit) { generateBinary(jit, Binary::BitOr, Entry::operationAOTValueBitOr); }
 static void generateBitXor(CCallHelpers& jit) { generateBinary(jit, Binary::BitXor, Entry::operationAOTValueBitXor); }

@@ -1258,6 +1258,7 @@ bool Lowering::guardCall(Node* guard)
     CallIntrinsic intrinsic = m_graph.callIntrinsic(guard);
     if (intrinsic == CallIntrinsic::None)
         return false;
+    m_graph.remark("guarded-intrinsic-call"_s);
     auto operands = Graph::callOperands(guard->instruction);
     if (!guard->calleeIsChecked && guard->use(operands.callee)->kind != NodeKind::Intrinsic)
         checkCallee(guard);

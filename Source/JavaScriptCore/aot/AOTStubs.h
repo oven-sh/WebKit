@@ -180,6 +180,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(Mod) \
     v(Sub) \
     v(Mul) \
+    v(Div) \
     v(BitAnd) \
     v(BitOr) \
     v(BitXor) \

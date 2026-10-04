@@ -22,6 +22,7 @@ static std::optional<Stub> stubFor(OpcodeID opcode)
     case op_add: return Stub::Add;
     case op_sub: return Stub::Sub;
     case op_mul: return Stub::Mul;
+    case op_div: return Stub::Div;
     case op_mod: return Stub::Mod;
     case op_bitand: return Stub::BitAnd;
     case op_bitor: return Stub::BitOr;
