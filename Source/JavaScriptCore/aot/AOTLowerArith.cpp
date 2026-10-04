@@ -124,15 +124,29 @@ void Lowering::lowerBinaryArith(Node* node, VirtualRegister lhs, VirtualRegister
         orElse(m_out.bitAnd(m_out.greaterThanOrEqual(a, m_out.int32Zero), m_out.greaterThan(b, m_out.int32Zero)), otherwise);
         return m_out.sub(a, m_out.mul(m_out.div(a, b), b));
     };
-    if (opcode == op_mod && left->rep() == Rep::Int32 && right->rep() == Rep::Int32) {
+    if (opcode == op_mod && left->type && right->type && isSubtype(left->type | right->type, TNumber)) {
+        m_graph.remark("integer-remainder-of-numbers"_s);
         LBasicBlock otherwise = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        LValue a = lowInt32(left);
-        LValue b = lowInt32(right);
-        ValueFromBlock quick = m_out.anchor(m_out.intToDouble(int32Remainder(a, b, otherwise)));
+        bool isWide = left->rep() == Rep::Int64 || right->rep() == Rep::Int64;
+        auto asInteger = [&](Node* operand) -> LValue {
+            if (operand->isInteger())
+                return isWide ? lowInt64(operand) : lowInt32(operand);
+            LValue number = lowDouble(operand);
+            LValue integer = m_out.doubleToInt32(number);
+            orElse(m_out.equal(m_out.bitCast(m_out.intToDouble(integer), Int64), m_out.bitCast(number, Int64)), otherwise);
+            return isWide ? m_out.signExt32To64(integer) : integer;
+        };
+        LValue a = asInteger(left);
+        LValue b = asInteger(right);
+        LValue zero = isWide ? m_out.int64Zero : m_out.int32Zero;
+        orElse(m_out.greaterThan(b, zero), otherwise);
+        LValue remainder = m_out.sub(a, m_out.mul(m_out.div(a, b), b));
+        orElse(m_out.bitOr(m_out.notEqual(remainder, zero), m_out.greaterThanOrEqual(a, zero)), otherwise);
+        ValueFromBlock quick = m_out.anchor(m_out.intToDouble(remainder));
         m_out.jump(continuation);
         m_out.appendTo(otherwise);
-        ValueFromBlock slow = m_out.anchor(doubleOp(m_out.intToDouble(a), m_out.intToDouble(b)));
+        ValueFromBlock slow = m_out.anchor(doubleOp(lowDouble(left), lowDouble(right)));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         setDouble(node, m_out.phi(Double, quick, slow));

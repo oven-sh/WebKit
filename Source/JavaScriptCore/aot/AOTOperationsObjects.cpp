@@ -23,6 +23,7 @@
 #include "Error.h"
 #include "ExceptionHelpers.h"
 #include "GetterSetter.h"
+#include "HasOwnPropertyCache.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncFunctionGenerator.h"
 #include "JSAsyncGenerator.h"
@@ -123,19 +124,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* i
     AOT_OPERATION_BEGIN(instance);
     JSObject* target = asObject(JSValue::decode(encodedTarget));
     JSValue sourceValue = JSValue::decode(encodedSource);
-    if (sourceValue.isUndefinedOrNull())
+    if (sourceValue.isUndefinedOrNull()) {
+        countOperationNamed(instance, __func__, "source-is-nullish");
         OPERATION_RETURN(scope, true);
-    if (!sourceValue.isObject() || target->type() != FinalObjectType)
+    }
+    if (!sourceValue.isObject() || target->type() != FinalObjectType) {
+        countOperationNamed(instance, __func__, !sourceValue.isObject() ? "source-is-not-object" : "target-is-not-final-object");
         OPERATION_RETURN(scope, false);
+    }
     JSObject* source = asObject(sourceValue);
     Structure* targetStructure = target->structure();
     Structure* sourceStructure = source->structure();
-    if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto() || (targetStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()))
+    if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto() || (targetStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields())) {
+        countOperationNamed(instance, __func__, targetStructure->isDictionary() ? "target-is-dictionary" : !targetStructure->isStructureExtensible() ? "target-is-not-extensible" : targetStructure->hasPolyProto() ? "target-has-poly-proto" : "target-has-typed-fields");
         OPERATION_RETURN(scope, false);
-    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType()))
+    }
+    if (sourceStructure->isDictionary() || !sourceStructure->canPerformFastPropertyEnumerationCommon() || hasIndexedProperties(sourceStructure->indexingType())) {
+        countOperationNamed(instance, __func__, sourceStructure->isDictionary() ? "source-is-dictionary" : hasIndexedProperties(sourceStructure->indexingType()) ? "source-has-indexed-properties" : "source-has-no-fast-enumeration");
         OPERATION_RETURN(scope, false);
-    if (sourceStructure->typeInfo().hasStaticPropertyTable() && !sourceStructure->staticPropertiesReified())
+    }
+    if (sourceStructure->typeInfo().hasStaticPropertyTable() && !sourceStructure->staticPropertiesReified()) {
+        countOperationNamed(instance, __func__, "source-has-unreified-static-properties");
         OPERATION_RETURN(scope, false);
+    }
     const IdentifierSet* excluded = nullptr;
     if (JSValue index = JSValue::decode(encodedExcludedSetIndex))
         excluded = &callerBytecodeOwner(instance, callFrame, whose).constantIdentifierSet(index.asUInt32AsAnyInt());
@@ -143,8 +154,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance* i
     DeferGC deferGC(vm);
     auto& copied = instance->copiedProperties(targetStructure, sourceStructure, excluded);
     Structure* last = copied.last;
-    if (!last)
+    if (!last) {
+        countOperationNamed(instance, __func__, "no-plan");
         OPERATION_RETURN(scope, false);
+    }
+    countOperationNamed(instance, __func__, "copied");
     size_t oldCapacity = targetStructure->outOfLineCapacity();
     size_t newCapacity = last->outOfLineCapacity();
     if (oldCapacity != newCapacity) {
@@ -479,6 +493,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
     }
 
     countOperationNamed(instance, __func__, "one-by-one");
+    Structure* oldStructure = base.isObject() ? asObject(base)->structure() : nullptr;
+    bool mayOnlyOverwrite = oldStructure && !oldStructure->isDictionary() && !SharedData::contains(cache);
     CallSiteOverride where(*instance, callFrame->callerFrame());
     for (unsigned i = 0; i < count; ++i) {
         where.setItem(i);
@@ -494,6 +510,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
             base.putInline(globalObject, ident, JSValue::decode(values[i]), slot);
         OPERATION_RETURN_IF_EXCEPTION(scope);
     }
+    if (mayOnlyOverwrite && asObject(base)->structure() == oldStructure)
+        cache[1].pointer = cache;
     OPERATION_RETURN(scope);
 }
 
@@ -886,7 +904,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTHasOwnProperty, size_t, (Instance* instance
     AOT_OPERATION_BEGIN(instance);
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
-    OPERATION_RETURN(scope, object->hasOwnProperty(globalObject, name));
+    HasOwnPropertyCache& cache = vm.ensureHasOwnPropertyCache();
+    if (std::optional<bool> cached = cache.get(object->structure(), name)) {
+        countOperationNamed(instance, __func__, "cached");
+        OPERATION_RETURN(scope, *cached);
+    }
+    PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
+    bool result = object->hasOwnProperty(globalObject, name, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    cache.tryAdd(slot, object, name, result);
+    OPERATION_RETURN(scope, result);
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetFunctionName, void, (Instance* instance, JSObject* function, EncodedJSValue name))

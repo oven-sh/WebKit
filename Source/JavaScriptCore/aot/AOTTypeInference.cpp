@@ -1373,7 +1373,7 @@ private:
         bool receiverMayBeNullish = false;
         if (callee->kind == NodeKind::Intrinsic)
             number = callee->intrinsic;
-        else if (uint32_t aliased = intrinsicFunctionOf(callee->type))
+        else if (uint32_t aliased = callee->isBytecode(op_get_by_id) ? 0 : intrinsicFunctionOf(callee->type))
             number = aliased;
         else if (callee->isBytecode(op_get_by_id)) {
             auto bytecode = callee->as<OpGetById>();
@@ -2124,6 +2124,10 @@ private:
             if (readsSizeOfMapOrSet(node)) {
                 m_graph.remark("typed-size-of-map-or-set"_s);
                 return TNumber;
+            }
+            if (Type primitive = node->guard ? TNone : typeOf(node->as<OpGetById>().m_base) & ~(TOther | TEmpty)) {
+                if (unsigned method = intrinsicFoundOnPrimitive(primitive, *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()); method && ImmutableIntrinsics::shared()->at(method).type == JSFunctionType)
+                    return intrinsicFunctionType(method);
             }
             if (uint32_t function = node->guard ? 0 : intrinsicFunctionOf(typeOf(node->as<OpGetById>().m_base))) {
                 if (unsigned member = intrinsicInheritedByFunction(function, *node->graph->codeBlock()->identifier(node->as<OpGetById>().m_property).impl()))

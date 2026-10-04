@@ -147,6 +147,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(Constant) \
     v(TemplateObject) \
     v(TransientConstant) \
+    v(ConstantFromSlot) \
     v(IsStringEqualToConstant) \
     v(IsStringEqualToLiteral1) \
     v(IsStringEqualToLiteral2To3) \

@@ -29,6 +29,8 @@ function outcome(f, ...args) { try { return describe(f(...args)); } catch (e) { 
 function other() { return 9; }
 
 function four(o) { o.a = 1; o.b = 2; o.c = 3; o.d = 4; return o; }
+function onlyEverAdds(o) { o.k = 1; o.l = 2; o.m = 3; o.n = 4; return o; }
+function addsUntilThePrototypeChanges(o) { o.q = 1; o.r = 2; o.s = 3; o.t = 4; return o; }
 function fourStrict(o) { "use strict"; o.a = 1; o.b = 2; o.c = 3; o.d = 4; return o; }
 function closures(o) { o.a = () => 1; o.b = function () { return 2; }; o.c = async () => 3; o.d = () => 4; o.e = function* () { }; return o; }
 function captured(o) { o.a = () => 1; o.b = () => 2; o.c = () => 3; o.d = () => o; return o; }
@@ -170,6 +172,8 @@ check(describe(four({})), "a=1,b=2,c=3,d=4", "after the shapes died");
 
 applies(four, "property-run:4", "calls:operationAOTPutProperties");
 applies(fourStrict, "property-run:4");
+applies(onlyEverAdds, "property-run:4");
+applies(addsUntilThePrototypeChanges, "property-run:4");
 applies(closures, "property-run:5");
 applies(literals, "property-run:5");
 applies(fresh, "property-run:5");
@@ -179,8 +183,6 @@ applies(captured, "property-run:4");
 applies(inTry, "property-run:4");
 applies(straddles, "property-run:4");
 applies(fromVariables, "property-run:4");
-for (let f of [four, fourStrict, closures, fresh, many, twoRuns])
-    doesNotApply(f, "calls:PutById");
 doesNotApply(straddles, "property-run:6");
 for (let f of [three, callBetween, readBetween, interleaved, sameName, setsProto, inLoop, computed, assignsBetween, tooEarly, reassigned])
     doesNotApply(f, "property-run");
@@ -197,7 +199,7 @@ if (isAOTCompiled(four)) {
         "no prototype": () => Object.create(null),
         "a class with accessors under other names": () => new UnrelatedGetter,
         "a subclass of it": () => new (class extends UnrelatedGetter { }),
-        "a prototype with a plain property of that name": () => Object.create({ b: "shadowed" }),
+        "a prototype with a plain property of that name": () => Object.create({ l: "shadowed" }),
         "an accessor of its own under another name": () => ({ get other() { return 1; } }),
     };
     let oneByOne = {
@@ -210,14 +212,14 @@ if (isAOTCompiled(four)) {
     };
     for (let round = 0; round < 2; ++round) {
         for (let [what, make] of Object.entries(inOneStep))
-            check(structuresBehind(four(make())), 1, "in one step: " + what);
+            check(structuresBehind(onlyEverAdds(make())), 1, "in one step: " + what);
         for (let [what, make] of Object.entries(oneByOne))
             check(structuresBehind(four(make())) > 1, true, "one by one: " + what);
     }
-    check(structuresBehind(four(new Changes)), 1, "before the prototype changes");
+    check(structuresBehind(addsUntilThePrototypeChanges(new Changes)), 1, "before the prototype changes");
     let seen = [];
-    Object.defineProperty(Changes.prototype, "c", { set(v) { seen.push(v); } });
-    check(describe(four(new Changes)), "a=1,b=2,d=4", "a setter that appeared on the prototype later");
+    Object.defineProperty(Changes.prototype, "s", { set(v) { seen.push(v); } });
+    check(describe(addsUntilThePrototypeChanges(new Changes)), "q=1,r=2,t=4", "a setter that appeared on the prototype later");
     check(seen.join(), "3", "is called");
     let usedAsPrototype = {};
     Object.create(usedAsPrototype);

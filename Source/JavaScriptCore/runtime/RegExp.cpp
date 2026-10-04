@@ -25,6 +25,7 @@
 #include "CompilerHooks.h"
 
 #include "AOTImage.h"
+#include "AOTRuntime.h"
 #include "Lexer.h"
 #include "RegExpCache.h"
 #include "RegExpInlines.h"
@@ -360,6 +361,10 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 {
     Locker locker { cellLock() };
 
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
+        vm->m_aotRuntimeTable->countOperation("RegExp::compile");
+#endif
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -464,6 +469,10 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 {
     Locker locker { cellLock() };
 
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
+        vm->m_aotRuntimeTable->countOperation("RegExp::compile");
+#endif
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::MatchOnly);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;

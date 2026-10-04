@@ -154,6 +154,7 @@ private:
     LValue lowConstantRegister(VirtualRegister reg) { return lowConstantRegister(code(), reg); }
     LValue lowConstantRegister(Graph&, VirtualRegister);
     LValue constantThroughStub(uint32_t number, Stub);
+    LValue programConstant(uint32_t number);
     bool isInRunOnceCode() const { return m_graph.codeBlock()->codeType() == ModuleCode && !m_block->isInLoop; }
     uint32_t programConstantIndex(Node*);
     Graph& code() { return m_code ? *m_code : m_graph; }
@@ -495,6 +496,7 @@ private:
     LValue m_slotEpoch { nullptr };
     unsigned m_slotCheckSlot { 0 };
     UncheckedKeyHashMap<uint64_t, unsigned, WTF::IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_sharedSites;
+    UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_constantSlots;
     BasicBlock* m_block { nullptr };
     Vector<PropertyRun> m_propertyRuns;
     UncheckedKeyHashMap<Node*, unsigned> m_propertyRunOfStore;

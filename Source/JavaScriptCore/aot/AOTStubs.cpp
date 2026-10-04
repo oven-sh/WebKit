@@ -3502,6 +3502,41 @@ static void generateTransientConstant(CCallHelpers& jit)
     });
 }
 
+static void generateConstantFromSlot(CCallHelpers& jit)
+{
+    constexpr GPRReg slot = T11;
+    jit.load64(Address(slot, OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::returnValueGPR);
+    Jump isNotThere = jit.branchTest64(CCallHelpers::Zero, GPRInfo::returnValueGPR);
+    jit.ret();
+
+    isNotThere.link(&jit);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), GPRInfo::returnValueGPR);
+#if CPU(X86_64)
+    jit.move(slot, CCallHelpers::s_scratchRegister);
+    jit.sub64(GPRInfo::returnValueGPR, CCallHelpers::s_scratchRegister);
+    Jump hasOwnData = jit.branch64(CCallHelpers::AboveOrEqual, CCallHelpers::s_scratchRegister, TrustedImm32(SharedData::size));
+#else
+    jit.subPtr(slot, GPRInfo::returnValueGPR, CCallHelpers::memoryTempRegister);
+    Jump hasOwnData = jit.branchPtr(CCallHelpers::AboveOrEqual, CCallHelpers::memoryTempRegister, CCallHelpers::TrustedImmPtr(SharedData::size));
+#endif
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::Constant });
+
+    hasOwnData.link(&jit);
+#if CPU(ARM64)
+    jit.pushPair(slot, CCallHelpers::linkRegister);
+#else
+    jit.push(slot);
+#endif
+    callStubFromStub(jit, Stub::Constant);
+#if CPU(ARM64)
+    jit.popPair(slot, CCallHelpers::linkRegister);
+#else
+    jit.pop(slot);
+#endif
+    jit.store64(GPRInfo::returnValueGPR, Address(slot, OBJECT_OFFSETOF(Slot, pointer)));
+    jit.ret();
+}
+
 static void generateVirtualCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
 static void generateVirtualConstruct(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForConstruct, [] { }); }
 static void generateVirtualTailCall(CCallHelpers& jit) { dispatchCall(jit, CodeSpecializationKind::CodeForCall, [] { }); }
@@ -5892,6 +5927,7 @@ std::optional<RegisterSet> registersChangedBy(Stub stub)
     case Stub::Constant:
     case Stub::TemplateObject:
     case Stub::TransientConstant:
+    case Stub::ConstantFromSlot:
         numberOfTemporaries = isARM64() ? 7 : 3;
         break;
     default:
@@ -5911,7 +5947,7 @@ void dumpRegistersChangedByStubs(PrintStream& out)
         auto changed = registersChangedBy(stub);
         if (!changed)
             continue;
-        bool keepsReturnAddressOfCaller = stub == Stub::Constant || stub == Stub::TemplateObject || stub == Stub::TransientConstant;
+        bool keepsReturnAddressOfCaller = stub == Stub::Constant || stub == Stub::TemplateObject || stub == Stub::TransientConstant || stub == Stub::ConstantFromSlot;
         if (keepsReturnAddressOfCaller)
             changed->remove(stubTemporaryGPRs[1]);
         bool hasResult = stub != Stub::LinkFunction && stub != Stub::WriteBarrier && stub != Stub::ColdOperationVoid && stub != Stub::LeafColdOperationVoid;

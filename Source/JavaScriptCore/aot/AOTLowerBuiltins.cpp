@@ -693,13 +693,49 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         LValue returned = atStart ? searchInString(Entry::operationStringStartsWith, Entry::operationStringStartsWithWithIndex) : searchInString(Entry::operationStringEndsWith, Entry::operationStringEndsWithWithEndPosition);
         return returned && finishBoolean(isTrueResult(returned));
     }
-    case Builtin::StringIndexOf: {
-        LValue returned = searchInString(Entry::operationStringIndexOf, Entry::operationStringIndexOfWithIndex);
-        return returned && finish(m_out.castToInt32(returned), Rep::Int32);
-    }
+    case Builtin::StringIndexOf:
     case Builtin::StringIncludes: {
-        LValue returned = searchInString(Entry::operationStringIndexOf, Entry::operationStringIndexOfWithIndex);
-        return returned && finishBoolean(m_out.greaterThanOrEqual(m_out.castToInt32(returned), m_out.int32Zero));
+        LValue found = nullptr;
+        if (auto written = count == 1 ? constantStringOf(nodeAt(1)) : std::nullopt; written && written->length() == 1 && isLatin1((*written)[0])) {
+            begin();
+            m_graph.remark("searches-for-one-character-inline"_s);
+            constexpr unsigned maxLengthToSearchInline = 32;
+            LValue character = m_out.constInt32((*written)[0]);
+            LBasicBlock needsSlowPath = newColdBlock();
+            LBasicBlock isShort = m_out.newBlock();
+            LBasicBlock loop = m_out.newBlock();
+            LBasicBlock body = m_out.newBlock();
+            LBasicBlock next = m_out.newBlock();
+            LBasicBlock settled = m_out.newBlock();
+            Vector<ValueFromBlock, 2> lengthsOtherwise;
+            Vector<ValueFromBlock, 3> answers;
+            auto [characters, length] = latin1CharactersOf(thisValue, needsSlowPath, lengthsOtherwise);
+            lengthsOtherwise.append(m_out.anchor(length));
+            m_out.branch(m_out.belowOrEqual(length, m_out.constInt32(maxLengthToSearchInline)), usually(isShort), rarely(needsSlowPath));
+            m_out.appendTo(isShort);
+            ValueFromBlock start = m_out.anchor(m_out.int32Zero);
+            m_out.jump(loop);
+            m_out.appendTo(loop);
+            LValue index = m_out.phi(Int32, start);
+            answers.append(m_out.anchor(m_out.constInt32(-1)));
+            m_out.branch(m_out.below(index, length), unsure(body), unsure(settled));
+            m_out.appendTo(body);
+            answers.append(m_out.anchor(index));
+            m_out.branch(m_out.equal(m_out.load8ZeroExt32(m_out.address(m_heaps.characters8.atAnyIndex(), m_out.add(characters, m_out.zeroExtPtr(index)), 0)), character), unsure(settled), unsure(next));
+            m_out.appendTo(next);
+            m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.int32One)));
+            m_out.jump(loop);
+            m_out.appendTo(needsSlowPath);
+            m_out.phi(Int32, lengthsOtherwise);
+            answers.append(m_out.anchor(m_out.castToInt32(vmCall(node, Int64, Entry::operationStringIndexOfWithOneChar, m_globalObject, thisValue, character))));
+            m_out.jump(settled);
+            m_out.appendTo(settled);
+            found = m_out.phi(Int32, answers);
+        } else if (LValue returned = searchInString(Entry::operationStringIndexOf, Entry::operationStringIndexOfWithIndex))
+            found = m_out.castToInt32(returned);
+        if (!found)
+            return false;
+        return builtin == Builtin::StringIndexOf ? finish(found, Rep::Int32) : finishBoolean(m_out.greaterThanOrEqual(found, m_out.int32Zero));
     }
     case Builtin::StringLastIndexOf: {
         LValue returned = searchInString(Entry::operationStringLastIndexOf, std::nullopt);
@@ -778,8 +814,30 @@ bool Lowering::lowerBuiltinCall(Node* node, Node* calleeNode, unsigned argc, uns
         return finishValue(vmCall(node, Int64, builtin == Builtin::StringMatch ? Entry::operationStringMatchRegExp : Entry::operationStringSearchRegExp, m_globalObject, thisValue, arguments[1]));
 
     case Builtin::ArrayPush:
-        if (count < 2)
+        if (!count)
             return false;
+        if (count == 1) {
+            if (node->opcode == op_tail_call)
+                return false;
+            Node* valueNode = nodeAt(1);
+            begin(true);
+            m_graph.remark("pushes-inline"_s);
+            LValue shape = m_out.bitAnd(m_out.load8ZeroExt32(thisValue, m_heaps.JSCell_indexingTypeAndMisc), m_out.constInt32(IndexingShapeAndWritabilityMask));
+            LValue takesValue = m_out.equal(shape, m_out.constInt32(ContiguousShape));
+            if (isSubtype(valueNode->type, TInt32))
+                takesValue = m_out.bitOr(takesValue, m_out.equal(shape, m_out.constInt32(Int32Shape)));
+            orElse(takesValue, otherwise);
+            LValue butterfly = m_out.loadPtr(thisValue, m_heaps.JSObject_butterfly);
+            LValue length = m_out.load32(butterfly, m_heaps.Butterfly_publicLength);
+            orElse(m_out.below(length, m_out.load32(butterfly, m_heaps.Butterfly_vectorLength)), otherwise);
+            m_out.store64(arguments[1], m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly, m_out.zeroExtPtr(length)));
+            LValue newLength = m_out.add(length, m_out.int32One);
+            m_out.store32(newLength, butterfly, m_heaps.Butterfly_publicLength);
+            if (mayBe(valueNode->type, TCell))
+                storeBarrier(thisValue);
+            m_nodeKeepsReads = true;
+            return finish(newLength, Rep::Int32);
+        }
         begin();
         return finishValue(vmCall(node, Int64, Entry::operationAOTArrayPushMultiple, m_instance, thisValue, storeArgumentsToScratch(arguments), m_out.constInt32(count)));
     case Builtin::ArrayShift:

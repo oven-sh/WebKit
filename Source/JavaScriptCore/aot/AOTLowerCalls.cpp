@@ -59,6 +59,8 @@ std::optional<Stub> Lowering::stubForHostCallee(Node* calleeNode, CallMode mode)
         number = calleeNode->intrinsic;
     else if (auto check = m_receiverChecks.find(calleeNode); check != m_receiverChecks.end() && !check->value)
         number = calleeNode->builtinCalled;
+    else if (isSubtype(calleeNode->type, TFunction))
+        number = intrinsicFunctionOf(calleeNode->type);
     if (!number)
         return std::nullopt;
     const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
@@ -417,7 +419,6 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
         if (!afterBuiltin)
             return;
         builtinKeepsReads = m_nodeKeepsReads;
-        mode = CallMode::Call;
     }
     StubIntrinsic intrinsic = StubIntrinsic::None;
     if (mode != CallMode::Construct && calleeNode->isBytecode(op_get_by_id))
@@ -434,7 +435,7 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
             arguments[i] = lowJSValuePreferringInt32(node->use(VirtualRegister(firstArgument + static_cast<int>(i))));
     }
     std::optional<Stub> hostCallStub = stubForHostCallee(calleeNode, mode);
-    if (mode == CallMode::TailCall && hostCallStub == Stub::CallInternalFunction)
+    if (mode == CallMode::TailCall && (hostCallStub == Stub::CallInternalFunction || (hostCallStub && afterBuiltin)))
         mode = CallMode::Call;
     if (mode == CallMode::TailCall && hostCallStub) {
         if (emitCall(node, callee, arguments, mode, intrinsic, hostCallStub))

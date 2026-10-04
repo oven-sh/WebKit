@@ -551,6 +551,8 @@ void JSFunction::reifyLength(VM& vm)
     double length = originalLength(vm);
     JSValue initialValue = jsNumber(length);
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+    if (structure()->inheritorsMayOverrideReadOnlyProperties())
+        initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
     putDirect(vm, identifier, initialValue, initialAttributes);
@@ -578,6 +580,8 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     ASSERT(!hasReifiedName());
     ASSERT(!isHostFunction());
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+    if (structure()->inheritorsMayOverrideReadOnlyProperties())
+        initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& propID = vm.propertyNames->name;
 
     if (jsExecutable()->isGetter())
@@ -705,6 +709,8 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         FunctionRareData* rareData = this->ensureRareData(vm);
         JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        if (structure()->inheritorsMayOverrideReadOnlyProperties())
+            initialAttributes |= PropertyAttribute::DontDelete;
         rareData->setHasReifiedName();
         putDirect(vm, nameIdent, name, initialAttributes);
     }

@@ -111,6 +111,7 @@ namespace AOT {
     v(operationStringEndsWith) \
     v(operationStringEndsWithWithEndPosition) \
     v(operationStringIndexOf) \
+    v(operationStringIndexOfWithOneChar) \
     v(operationStringIndexOfWithIndex) \
     v(operationStringLastIndexOf) \
     v(operationStringSlice) \
@@ -315,6 +316,12 @@ public:
         if (std::exchange(m_lastMegamorphicCacheEpoch, epoch) != epoch)
             countOperation("MegamorphicCache", "epoch-changed");
     }
+    void countFillOfMegamorphicCache(const char* kind, uint16_t epoch, uint32_t structureID, const void* uid)
+    {
+        if (std::exchange(m_epochOfFilledPairs, epoch) != epoch)
+            m_filledPairs.clear();
+        countOperation(kind, m_filledPairs.add({ kind, uid, structureID }).isNewEntry ? "new-pair" : "pair-again");
+    }
     void noteGuest(const char* kind, StringView group, String&& sample);
     uint64_t operationCount(StringView nameAndDetail) const;
     void dumpOperationCounts(PrintStream&) const;
@@ -329,6 +336,8 @@ private:
     size_t m_bytesAllocatedSinceLastWrite { 0 };
     UncheckedKeyHashMap<uint64_t, CString> m_detailsOfSites;
     uint16_t m_lastMegamorphicCacheEpoch { 0 };
+    uint16_t m_epochOfFilledPairs { 0 };
+    UncheckedKeyHashSet<std::tuple<const char*, const void*, size_t>> m_filledPairs;
     UncheckedKeyHashMap<String, std::pair<uint64_t, String>> m_guests;
 };
 

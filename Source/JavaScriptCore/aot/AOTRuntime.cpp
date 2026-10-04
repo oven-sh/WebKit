@@ -40,6 +40,7 @@
 #include "CallLinkInfo.h"
 #include "CodeBlock.h"
 #include "DFGOperations.h"
+#include "HeapAnalyzer.h"
 #include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSCInlines.h"
@@ -90,6 +91,17 @@ void JSFunctionWithCaptures::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 }
 
 DEFINE_VISIT_CHILDREN(JSFunctionWithCaptures);
+
+void JSFunctionWithCaptures::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSFunctionWithCaptures>(cell);
+    Base::analyzeHeap(cell, analyzer);
+    for (unsigned i = 0; i < thisObject->count(); ++i) {
+        JSValue value = thisObject->captures()[i].get();
+        if (value && value.isCell())
+            analyzer.analyzeIndexEdge(thisObject, value.asCell(), i);
+    }
+}
 
 } // namespace JSC
 
@@ -2087,8 +2099,10 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
 {
     Structure* old = object->structure();
     unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
-    auto no = [](ASCIILiteral why) {
+    auto no = [&](ASCIILiteral why) {
         TypedLayoutTable::s_lastConversionFailure = why;
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::runtimeTable(vm).countOperation("Instance::convertToTypedLayout", why.characters());
         return false;
     };
     if (object->type() != FinalObjectType)

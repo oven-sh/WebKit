@@ -58,6 +58,19 @@ refuses("deleting a built-in property", () => delete Math.ceil);
 refuses("redefining a built-in property", () => Object.defineProperty(Math, "ceil", { value: mine }));
 refuses("redefining the name of a built-in function", () => Object.defineProperty(Math.floor, "name", { value: "other" }));
 refuses("deleting the length of a built-in function", () => delete Math.floor.length);
+for (const [path, untouched] of [["Math.hypot", Math.hypot], ["Array.prototype.forEach", Array.prototype.forEach], ["Array.prototype.flatMap", Array.prototype.flatMap], ["String.prototype.padEnd", String.prototype.padEnd], ["Object.entries", Object.entries], ["Promise.prototype.finally", Promise.prototype.finally]]) {
+    refuses("deleting the name of " + path + " before anything read it", () => delete untouched.name);
+    refuses("redefining the length of " + path + " before anything read it", () => Object.defineProperty(untouched, "length", { value: 99 }));
+    refuses("writing the name of " + path, () => { untouched.name = "other"; });
+    for (const key of ["name", "length"]) {
+        const descriptor = Object.getOwnPropertyDescriptor(untouched, key);
+        check([descriptor.writable, descriptor.enumerable, descriptor.configurable].join(), "false,false," + !isImmutable, "the attributes of the " + key + " of " + path);
+    }
+    check(untouched.name, path.slice(path.lastIndexOf(".") + 1), "the name of " + path);
+    check(Reflect.ownKeys(untouched).sort().join(), "length,name", "the own keys of " + path);
+    refuses("call on " + path, () => { untouched.call = mine; });
+    allows("a new name on " + path, () => { untouched.added = 1; return untouched.added; }, 1);
+}
 
 refuses("call on a built-in function", () => { Math.floor.call = mine; });
 refuses("apply on a built-in function", () => { Math.floor.apply = mine; });

@@ -3516,8 +3516,19 @@ void JSGlobalObject::makeIntrinsicsImmutable()
 
     m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names);
     for (unsigned number = 1; number < m_immutableIntrinsics.size(); ++number) {
-        if (ImmutableIntrinsics::isFunctionToMakeImmutable(ImmutableIntrinsics::shared()->at(number)))
-            asObject(JSValue::decode(m_immutableIntrinsics[number]))->makePropertiesImmutable(this);
+        const ImmutableIntrinsics::Entry& entry = ImmutableIntrinsics::shared()->at(number);
+        if (!ImmutableIntrinsics::isFunctionToMakeImmutable(entry))
+            continue;
+        JSObject* function = asObject(JSValue::decode(m_immutableIntrinsics[number]));
+        Structure* structureOfFunction = function->structure();
+        if (entry.type != JSFunctionType || structureOfFunction->isDictionary()) {
+            function->makePropertiesImmutable(this);
+            continue;
+        }
+        if (structureOfFunction->inheritorsMayOverrideReadOnlyProperties())
+            continue;
+        DeferredStructureTransitionWatchpointFire deferredForFunction(vm, structureOfFunction);
+        function->setStructure(vm, Structure::makePropertiesImmutableTransition(vm, structureOfFunction, &deferredForFunction));
     }
 }
 

@@ -686,6 +686,12 @@ static bool canUseMegamorphicCacheForPut(VM& vm, UniquedStringImpl* uid)
     return canUseMegamorphicPutById(vm, uid);
 }
 
+static ALWAYS_INLINE void countFill(VM& vm, const char* kind, MegamorphicCache& cache, StructureID structureID, UniquedStringImpl* uid)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countFillOfMegamorphicCache(kind, cache.epoch(), structureID.bits(), uid);
+}
+
 JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue base, const Identifier& ident, PropertySlot& slot)
 {
     VM& vm = globalObject->vm();
@@ -718,6 +724,7 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
         cacheable &= structure->propertyAccessesAreCacheable();
         if (hasProperty) {
             if (cacheable && slot.cachedOffset() <= MegamorphicCache::maxOffset && (slot.slotBase() == baseObject || !baseObject->structure()->isDictionary())) {
+                countFill(vm, "MegamorphicCache::load", cache, baseObject->structureID(), uid);
                 if (slot.isCacheableValue())
                     cache.initAsHit(baseObject->structureID(), uid, slot.slotBase(), slot.cachedOffset(), slot.slotBase() == baseObject);
                 else if (usesDataStubs() && slot.isCacheableGetter())
@@ -730,8 +737,10 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
         cacheable &= structure->hasMonoProto();
         JSValue prototype = object->getPrototypeDirect();
         if (!prototype.isObject()) {
-            if (cacheable && !baseObject->structure()->isDictionary())
+            if (cacheable && !baseObject->structure()->isDictionary()) {
+                countFill(vm, "MegamorphicCache::absent", cache, baseObject->structureID(), uid);
                 cache.initAsMiss(baseObject->structureID(), uid);
+            }
             return jsUndefined();
         }
         object = asObject(prototype);
@@ -752,6 +761,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
     if (slot.type() == PutPropertySlot::ExistingProperty) {
         if (oldStructure == newStructure) {
             oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+            countFill(vm, "MegamorphicCache::replace", cache, oldStructure->id(), uid);
             cache.initAsReplace(oldStructure->id(), uid, slot.cachedOffset());
         }
         return;
@@ -765,6 +775,7 @@ void fillMegamorphicCacheAfterPut(JSGlobalObject* globalObject, JSValue base, St
             && oldStructure->typeInfo().type() == FinalObjectType && !hasIndexedProperties(oldStructure->indexingType());
         reallocating = allocatesInitialStorage ? MegamorphicCache::StoreEntry::allocatesInitialOutOfLineStorage : MegamorphicCache::StoreEntry::reallocates;
     }
+    countFill(vm, "MegamorphicCache::transition", cache, oldStructure->id(), uid);
     cache.initAsTransition(oldStructure->id(), newStructure->id(), uid, slot.cachedOffset(), reallocating);
 }
 

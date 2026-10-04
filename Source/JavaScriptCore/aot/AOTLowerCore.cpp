@@ -503,6 +503,7 @@ static bool mayInspectStack(Stub stub)
     case Stub::Prologue:
     case Stub::LinkFunction:
     case Stub::Constant:
+    case Stub::ConstantFromSlot:
     case Stub::PlainOperation:
     case Stub::PlainOperationWithGlobalObject:
     case Stub::PlainOperationWithInstance:
@@ -956,7 +957,7 @@ LValue Lowering::lowRaw(Node* node)
         break;
     case NodeKind::ConstantCell:
         if (node->ownerOfConstant)
-            return constantThroughStub(programConstantIndex(node), Stub::Constant);
+            return programConstant(programConstantIndex(node));
         return lowConstantRegister(*node->graph, node->reg);
     case NodeKind::Intrinsic:
         if (node->intrinsic == ImmutableIntrinsics::globalObject)
@@ -978,7 +979,7 @@ LValue Lowering::lowConstantRegister(Graph& graph, VirtualRegister reg)
         return constantThroughStub(number, Stub::TemplateObject);
     if (isInRunOnceCode() && &graph == &m_graph)
         return constantThroughStub(number, Stub::TransientConstant);
-    return constantThroughStub(number, Stub::Constant);
+    return programConstant(number);
 }
 
 LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
@@ -1005,6 +1006,52 @@ LValue Lowering::constantThroughStub(uint32_t number, Stub stub)
         if (isLeaf)
             jit.move(stubTemporaryGPRs[1], CCallHelpers::linkRegister);
 #endif
+    });
+    return patchpoint;
+}
+
+LValue Lowering::programConstant(uint32_t number)
+{
+    if (!usesDataStubs())
+        return constantThroughStub(number, Stub::Constant);
+    unsigned slot = m_constantSlots.ensure(number, [&] {
+        return allocateSlot();
+    }).iterator->value;
+    bool readsInline = !isCompact();
+    m_graph.remark(readsInline ? "constant-read-inline"_s : "constant-from-slot"_s);
+    LValue dataOfFunction = dataHere();
+    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    patchpoint->effects = Effects::none();
+    patchpoint->append(ConstrainedValue(dataOfFunction, ValueRep::SomeLateRegister));
+    m_graph.patchpointsTakingData.add(patchpoint);
+    patchpoint->clobber(*registersChangedBy(Stub::ConstantFromSlot));
+    if (!hasStubsForFunctionsWithoutFrame) {
+        m_graph.emitsCalls = true;
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    }
+    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    patchpoint->setGenerator([graph = &m_graph, number, slot, readsInline](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg data = params[1].gpr();
+        int32_t offset = static_cast<int32_t>(Data::offsetOfSlots() + slot * sizeof(Slot));
+        CCallHelpers::Jump isThere;
+        if (readsInline) {
+            jit.load64(CCallHelpers::Address(data, offset + OBJECT_OFFSETOF(Slot, pointer)), GPRInfo::returnValueGPR);
+            isThere = jit.branchTest64(CCallHelpers::NonZero, GPRInfo::returnValueGPR);
+        }
+        jit.addPtr(CCallHelpers::TrustedImm32(offset), data, stubTemporaryGPRs[2]);
+#if CPU(ARM64)
+        bool isLeaf = hasNoFrame(*graph, params.proc().code());
+        if (isLeaf)
+            jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
+        graph->stubCalls.call(jit, Stub::ConstantFromSlot, number, CallSite { });
+#if CPU(ARM64)
+        if (isLeaf)
+            jit.move(stubTemporaryGPRs[1], CCallHelpers::linkRegister);
+#endif
+        if (readsInline)
+            isThere.link(&jit);
     });
     return patchpoint;
 }

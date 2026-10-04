@@ -668,7 +668,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     if (base.isObject()) {
         JSObject* object = asObject(base);
         if (!object->structure()->cannotConvertToTypedLayout() && !object->structure()->typedLayoutID())
-            Instance::convertToTypedLayout(vm, object, layoutID);
+            countOperationNamed(instance, __func__, Instance::convertToTypedLayout(vm, object, layoutID) ? "converted" : "conversion-refused");
+        else
+            countOperationNamed(instance, __func__, object->structure()->typedLayoutID() ? "has-a-layout" : "cannot-be-converted");
         Structure* structure = object->structure();
         if (structure->typedLayoutID() == layoutID) {
             uint16_t there = structure->fieldIDInSlot(slot);
@@ -683,9 +685,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadField, EncodedJSValue, (Instance* insta
     JSValue value;
     MegamorphicCache* cache = vm.megamorphicCache();
     if (auto* known = cache && base.isObject() ? cache->findLoad(asObject(base)->structureID(), uid) : nullptr) {
+        countOperationNamed(instance, __func__, "value-is-in-megamorphic-cache");
         JSCell* holder = known->m_holder == JSCell::seenMultipleCalleeObjects() ? base.asCell() : known->m_holder;
         value = holder ? asObject(holder)->getDirect(known->m_offset) : jsUndefined();
     } else {
+        countOperationNamed(instance, __func__, "value-is-not-in-megamorphic-cache");
         PropertySlot propertySlot(base, PropertySlot::InternalMethodType::Get);
         value = getByIdAndFillMegamorphicCache(globalObject, base, Identifier::fromUid(vm, uid), propertySlot);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());

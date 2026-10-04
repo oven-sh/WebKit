@@ -63,6 +63,8 @@ void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
         return;
     }
 
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countOperation("SlotWatchpoint", "cleared-slot");
     Data* data = m_owner;
     m_slot->clear();
     data->slotEpoch++;

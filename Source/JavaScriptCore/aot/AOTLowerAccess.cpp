@@ -598,6 +598,35 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (ImmutableIntrinsics::shared() && baseNode->type && !node->guard && !node->guarded && !node->builtinCalled && !node->isElided && !node->isReadOnlyForCall) {
+        UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
+        unsigned method = mayBe(baseNode->type, TEmpty) ? 0 : intrinsicFoundOnPrimitive(baseNode->type & ~TOther, *name);
+        bool isOfNumbersOnly = !method && mayBe(baseNode->type, TNumber) && isAbsentFromObjectPrototype(name);
+        if (isOfNumbersOnly)
+            method = intrinsicFoundOnPrimitive(TNumber, *name);
+        if (method && ImmutableIntrinsics::shared()->at(method).type == JSFunctionType) {
+            m_graph.remark(isOfNumbersOnly ? "reads-method-of-number-behind-test"_s : "reads-method-of-primitive"_s, StringView { name });
+            LValue known = m_out.load64(m_instance, m_heaps.AOTInstance_intrinsics[method]);
+            if (!isOfNumbersOnly && !mayBe(baseNode->type, TOther)) {
+                setJSValue(node, known);
+                return;
+            }
+            LValue base = lowJSValue(baseNode);
+            LBasicBlock otherwise = isOfNumbersOnly ? m_out.newBlock() : newColdBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            ValueFromBlock quick = m_out.anchor(known);
+            if (isOfNumbersOnly)
+                m_out.branch(isNumber(base), unsure(continuation), unsure(otherwise));
+            else
+                m_out.branch(isUndefinedOrNull(baseNode), rarely(otherwise), usually(continuation));
+            m_out.appendTo(otherwise);
+            ValueFromBlock found = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(Int64, quick, found));
+            return;
+        }
+    }
     if (uint32_t function = node->guard || node->guarded ? 0 : intrinsicFunctionOf(baseNode->type)) {
         if (unsigned member = intrinsicInheritedByFunction(function, *node->graph->codeBlock()->identifier(bytecode.m_property).impl())) {
             m_graph.remark("reads-member-of-function-prototype"_s, StringView { node->graph->codeBlock()->identifier(bytecode.m_property).impl() });
@@ -1139,6 +1168,19 @@ void Lowering::lowerPropertyRun(const PropertyRun& stores)
     unsigned count = stores.size();
     unsigned slot = allocateSlots(2);
     LValue base = lowJSValue(first->use(first->as<OpPutById>().m_base));
+    LBasicBlock together = m_out.newBlock();
+    LBasicBlock separately = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.notZero64(m_out.load64(slotWord(slot + 1, 1))), unsure(separately), unsure(together));
+    m_out.appendTo(separately);
+    for (Node* store : stores) {
+        SetForScope currentNode(m_node, store);
+        SetForScope currentCode(m_code, store->graph);
+        lowerPutById(store);
+        forgetReadsChangedBy(store);
+    }
+    m_out.jump(continuation);
+    m_out.appendTo(together);
     Vector<uint32_t, 16> words { AllocationPlan::encode(0, count) };
     for (unsigned i = 0; i < count; ++i) {
         auto bytecode = stores[i]->as<OpPutById>();
@@ -1150,6 +1192,8 @@ void Lowering::lowerPropertyRun(const PropertyRun& stores)
     m_graph.noteSitePlan(slot, WTF::move(words));
     m_graph.remark("property-run"_s, String::number(count));
     vmCall(first, Void, Entry::operationAOTPutProperties, m_instance, base, scratchAddress(), m_out.constInt32(count), slotAddress(slot));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 void Lowering::lowerPutById(Node* node)

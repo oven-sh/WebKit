@@ -51,6 +51,7 @@ public:
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
+    static void analyzeHeap(JSCell*, HeapAnalyzer&);
 
 private:
     JSFunctionWithCaptures(VM& vm, FunctionExecutable* executable, JSScope* scope, Structure* structure, unsigned count)

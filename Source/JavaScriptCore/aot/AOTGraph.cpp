@@ -947,7 +947,7 @@ void Graph::findBuiltinsCalled()
                 calleeRegister = bytecode.m_callee, argv = bytecode.m_argv;
             }
             Node* callee = node->use(calleeRegister);
-            if (unsigned called = callee->kind == NodeKind::Intrinsic ? callee->intrinsic : intrinsicFunctionOf(callee->type)) {
+            if (unsigned called = callee->kind == NodeKind::Intrinsic ? callee->intrinsic : callee->isBytecode(op_get_by_id) ? 0 : intrinsicFunctionOf(callee->type)) {
                 if (builtinAtIndex(called) != Builtin::None)
                     node->builtinCalled = called;
                 continue;
