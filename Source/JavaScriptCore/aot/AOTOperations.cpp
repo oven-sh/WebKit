@@ -1019,8 +1019,12 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTVerifyInferredType, size_t, (Insta
     dataLog("AOT: inferred type violation: ");
     if (which >= 1000000)
         dataLog(opcodeNames[which / 1000000], " at bc#", which % 1000000);
-    else if (which % 100 == static_cast<unsigned>(NodeKind::Argument))
-        dataLog("argument ", which / 100);
+    else if (which % 100 == static_cast<unsigned>(NodeKind::Argument)) {
+        if (VirtualRegister reg { static_cast<int>(which / 100) }; reg.isHeader())
+            dataLog("the callee");
+        else
+            dataLog("argument ", reg.toArgument());
+    }
     else
         dataLog("a node of kind ", which);
     if (identifierIndexPlusOne)

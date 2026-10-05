@@ -1127,7 +1127,7 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     }
     unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
     if (node->kind == NodeKind::Argument)
-        which += 100 * node->reg.toArgument();
+        which += 100 * node->reg.offset();
     unsigned identifierPlusOne = 0;
     const Node* origin = node;
     for (unsigned depth = 0; depth < 4; ++depth) {
@@ -1147,7 +1147,7 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     Node* place = node;
     for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
         place = m_block->nodes[i];
-    if (node->kind == NodeKind::Argument && node->reg.isArgument()) {
+    if (node->kind == NodeKind::Argument && !node->reg.isHeader()) {
         BasicBlock* block = m_block;
         for (unsigned hops = 0; place->kind != NodeKind::Bytecode && block->successors.size() == 1 && hops < 8; ++hops) {
             block = block->successors[0];
