@@ -186,6 +186,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, validateAOTInferredTypes, false, Normal, "For testing the AOT compiler. Compiled code checks every value whose type was inferred rather than checked, and crashes if the type is wrong."_s) \
     v(Bool, validateAOTTypesOfPhis, false, Normal, "For testing the AOT compiler. With validateAOTInferredTypes: the type of a phi is checked too, at the head of its block."_s) \
     v(OptionString, aotFunctionWithWrongTypesForTesting, nullptr, Normal, "For testing validateAOTInferredTypes. When compiling: in the functions of this name every value that is checked is taken to be unreachable, so that the first of them to be computed fails the check."_s) \
+    v(Unsigned, numberOfAOTValuesWithCorrectTypesForTesting, 0, Normal, "For testing validateAOTInferredTypes. When compiling with aotFunctionWithWrongTypesForTesting: this many of the values checked in such a function, in the order they are compiled, keep their types."_s) \
     v(OptionString, aotFunctionWithWrongBranchesForTesting, nullptr, Normal, "For testing validateAOTInferredTypes. When compiling: in the functions of this name a branch on a tested value that may go either way is folded as if it were always taken, so that the first of them not to be taken fails the check."_s) \
     v(Bool, logAOTTypeInference, false, Normal, "After whole-program type inference, logs the result for each function and variable and what contributed to it. Lines start with \"AOT inference:\"."_s) \
     \

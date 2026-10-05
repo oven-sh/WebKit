@@ -508,6 +508,7 @@ private:
     Vector<PropertyRun> m_propertyRuns;
     UncheckedKeyHashMap<Node*, unsigned> m_propertyRunOfStore;
     unsigned m_nodeIndex { 0 };
+    unsigned m_numberOfValuesVerified { 0 };
     Node* m_node { nullptr };
     Vector<Node*, 2> m_newCells;
     Graph* m_code { nullptr };

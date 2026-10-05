@@ -1120,10 +1120,10 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     Type expected = node->wasInferredUnreachable ? TNone : node->type;
     if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
         expected = (expected & ~TFunction) | TOtherObject;
+    bool hasWrongTypesForTesting = false;
     if (Options::aotFunctionWithWrongTypesForTesting()) [[unlikely]] {
         const KnownFunction* function = programFunctions() && m_graph.summary() ? programFunctions()->function(m_graph.summary()->number) : nullptr;
-        if (function && function->executable && StringView { function->executable->ecmaName().string() } == StringView::fromLatin1(byteCast<char>(Options::aotFunctionWithWrongTypesForTesting())))
-            expected = TNone;
+        hasWrongTypesForTesting = function && function->executable && StringView { function->executable->ecmaName().string() } == StringView::fromLatin1(byteCast<char>(Options::aotFunctionWithWrongTypesForTesting()));
     }
     unsigned which = node->kind == NodeKind::Bytecode ? static_cast<unsigned>(node->opcode) * 1000000 + node->bytecodeIndex.offset() : static_cast<unsigned>(node->kind);
     if (node->kind == NodeKind::Argument)
@@ -1147,19 +1147,27 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     Node* place = node;
     for (unsigned i = m_nodeIndex; place->kind != NodeKind::Bytecode && i < m_block->nodes.size(); ++i)
         place = m_block->nodes[i];
-    if (node->kind == NodeKind::Argument && !node->reg.isHeader()) {
-        BasicBlock* block = m_block;
-        for (unsigned hops = 0; place->kind != NodeKind::Bytecode && block->successors.size() == 1 && hops < 8; ++hops) {
-            block = block->successors[0];
-            for (unsigned i = 0; place->kind != NodeKind::Bytecode && i < block->nodes.size(); ++i)
-                place = block->nodes[i];
-        }
-        m_graph.remark(place->kind == NodeKind::Bytecode ? "verifies-argument"_s : "cannot-verify-argument"_s, String::number(node->reg.toArgument()));
+    bool isAfterLastBytecode = place->kind != NodeKind::Bytecode;
+    bool isOwnPlace = isAfterLastBytecode && node->kind == NodeKind::Narrow && node->bytecodeIndex;
+    if (isOwnPlace)
+        place = node;
+    BasicBlock* block = m_block;
+    for (unsigned hops = 0; !isOwnPlace && place->kind != NodeKind::Bytecode && block->successors.size() == 1 && hops < 8; ++hops) {
+        block = block->successors[0];
+        for (unsigned i = 0; place->kind != NodeKind::Bytecode && i < block->nodes.size(); ++i)
+            place = block->nodes[i];
     }
+    bool hasPlace = isOwnPlace || place->kind == NodeKind::Bytecode;
+    if (node->kind == NodeKind::Argument && !node->reg.isHeader())
+        m_graph.remark(hasPlace ? "verifies-argument"_s : "cannot-verify-argument"_s, String::number(node->reg.toArgument()));
+    else if (isAfterLastBytecode)
+        m_graph.remark(hasPlace ? "verifies-value-after-bytecode"_s : "cannot-verify-value"_s, makeString(static_cast<unsigned>(node->kind), ":bc#"_s, m_block->bytecodeBegin, ":@"_s, node->index));
+    if (hasWrongTypesForTesting && hasPlace && m_numberOfValuesVerified++ >= Options::numberOfAOTValuesWithCorrectTypesForTesting())
+        expected = TNone;
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected));
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(expected >> 64));
     m_graph.wideIntegerConstants.add(static_cast<int64_t>(std::bit_cast<uintptr_t>(variable.scope)));
-    if (place->kind == NodeKind::Bytecode) {
+    if (hasPlace) {
         vmCall(place, Void, Entry::operationAOTVerifyInferredType, m_instance, value, m_out.constInt64(static_cast<int64_t>(expected)), m_out.constInt64(static_cast<int64_t>(expected >> 64)), m_out.constInt32(which), m_out.constInt32(identifierPlusOne),
             m_out.constInt64(std::bit_cast<uintptr_t>(variable.scope)), m_out.constInt32(variable.offset));
     }
