@@ -206,8 +206,7 @@ public:
         }
         findVariablesThatAreNotEmptyWhenRead();
         iterateToFixpoint();
-        constexpr unsigned maxRounds = 4;
-        for (unsigned round = 0; round < maxRounds && narrowTestedValues(); ++round) {
+        while (narrowTestedValues()) {
             forgetTypes();
             iterateToFixpoint();
         }
@@ -491,6 +490,7 @@ public:
                 narrow = m_graph.addNode(NodeKind::Narrow);
                 narrow->graph = from->graph;
                 narrow->narrowedTo = narrowedTo;
+                narrow->type = value->type & narrowedTo;
                 narrow->bytecodeIndex = from->terminal()->bytecodeIndex;
                 narrow->uses.append({ VirtualRegister(), value });
             }
@@ -578,6 +578,7 @@ public:
                 narrow = m_graph.addNode(NodeKind::Narrow);
                 narrow->graph = check->graph;
                 narrow->narrowedTo = TAll & ~TEmpty;
+                narrow->type = value->type & ~TEmpty;
                 narrow->bytecodeIndex = check->bytecodeIndex;
                 narrow->uses.append({ VirtualRegister(), value });
             }
