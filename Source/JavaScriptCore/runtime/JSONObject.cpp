@@ -2163,11 +2163,15 @@ NEVER_INLINE JSValue Walker::walk(JSValue unfiltered)
                 else {
                     unsigned attributes;
                     PropertyOffset offset = object->getDirectOffset(vm, prop, attributes);
-                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None)) [[likely]] {
+                    bool hasTypedLayout = false;
+#if USE(BUN_JSC_ADDITIONS)
+                    hasTypedLayout = object->structure()->typedLayoutID();
+#endif
+                    if (offset != invalidOffset && attributes == static_cast<unsigned>(PropertyAttribute::None) && !hasTypedLayout) [[likely]] {
                         object->putDirectOffset(vm, offset, filteredValue);
                         object->structure()->didReplaceProperty(offset);
                     } else {
-                        bool shouldThrow = false;
+                        bool shouldThrow = hasTypedLayout;
                         object->createDataProperty(m_globalObject, prop, filteredValue, shouldThrow);
                     }
                 }
