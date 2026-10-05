@@ -77,7 +77,7 @@ struct CheckedValues {
     {
         families.removeAllMatching([](CheckedFamily& checked) {
             checked.isStale = true;
-            return !Instance::hasByteForFamily(checked.family);
+            return !Instance::hasByteForFamily(checked.family) || (Options::numberOfAOTFamiliesWithByteForTesting() && checked.family >= Options::numberOfAOTFamiliesWithByteForTesting());
         });
     }
 

@@ -1,9 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTLoopSplitting=0")
 //@ runDefault
 
@@ -80,3 +78,8 @@ const theGlobal = this;
         check(sum, 6, "the sum in throughWith");
     }
 })();
+
+if (typeof aotRemarks === "function" && aotRemarks("check") && jscOptions().useAOTDataStubs) {
+    for (const name of ["amongArguments", "behindGuards", "behindHandler", "behindJoin", "betweenGuards", "ignoresResult", "inTailPosition", "throughWith"])
+        check(aotRemarks(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
+}

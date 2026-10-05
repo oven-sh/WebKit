@@ -424,7 +424,7 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
         if (!guardsContradictedAnalysis)
             places = graph.findPlacesToGuard();
         if (splitsLoops || !places.isEmpty())
-            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops || (!places.isEmpty() && Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting()), guardsContradictedAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, guardsContradictedAnalysis);
+            return compile(vm, unlinkedCodeBlock, hints, linkage, result, reason, reasonOpcode, summary, variableSummaries, program, false, places.isEmpty() ? nullptr : &places, !splitsLoops, guardsContradictedAnalysis ? reasonForNoGuards : graph.reasonForNoGuards, guardsContradictedAnalysis);
     }
     if (graph.contradictsAnalysisWithoutGuards) {
         graph.remark("contradicts-analysis-without-guards"_s);

@@ -6,9 +6,9 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -266,4 +266,11 @@ for (let round = 0; round < 40; ++round) {
         for (let i = 0; i < old.length; ++i)
             check(old[i].child.number + old[i].child.text + old[i].child.round, i + "young " + i + round, "a young object stored into an old one survives");
     }
+}
+
+if (typeof aotRemarks === "function" && aotRemarks("check") && jscOptions().useAOTDataStubs) {
+    for (const name of ["bump"])
+        check(aotRemarks(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
+    for (const name of jscOptions().useAOTGuardsAtEveryGuessedPlaceForTesting ? ["setChild", "setFlags", "setFlagsStrictly", "setSelf", "setTagAndSibling", "setBornSecond"] : [])
+        check(aotRemarks(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
 }

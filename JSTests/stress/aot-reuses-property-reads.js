@@ -55,9 +55,7 @@ for (const f of all)
 
 applies(readsTwice, "reuses-property-read:a");
 applies(readsTwiceAndStores, "reuses-property-read:a");
-const options = jscOptions();
-const isOff = name => name in options && !options[name];
-const hasGuards = !!options.useAOTDataStubs && !isOff("useAOTGuardsOverWholeFunctions") && !isOff("useAOTFamilies");
+const hasGuards = !!jscOptions().useAOTDataStubs;
 applies(testsFlags, hasGuards ? "guards-over-whole-function" : "reuses-property-read:flags");
 doesNotApply(testsFlags, hasGuards ? "reuses-property-read:flags" : "guards-over-whole-function");
 applies(comparesKind, "reuses-property-read:kind");

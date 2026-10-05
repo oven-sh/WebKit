@@ -1,7 +1,5 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -10,8 +8,7 @@ function check(actual, expected, what) {
 }
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs && !!options.useAOTLoopSplitting;
-const keepsLoopsWhole = isOn && !!options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting;
+const isOn = !!remarksOf(check) && !!options.useAOTDataStubs && !!options.useAOTLoopSplitting;
 function expectRemark(f, remark) {
     if (isOn)
         check(remarksOf(f).includes(remark), true, f.name + " has " + remark + " among " + remarksOf(f).filter(other => other.includes("guards-over")).join(" "));
@@ -77,7 +74,14 @@ function skipsOddElements(x, y, z, array) {
     }
     return total;
 }
-for (let f of [sumsArrayOnly, sumsArrayAndFlags, sumsInTwoLoops, sumsInNestedLoops, skipsOddElements])
+function sumsWithCalls(x, y, z, array) {
+    let total = x.tag + y.key;
+    for (let i = 0; i < array.length; ++i)
+        total += keep(array)[i] + z.flags;
+    return total;
+}
+noInline(keep);
+for (let f of [sumsArrayOnly, sumsArrayAndFlags, sumsInTwoLoops, sumsInNestedLoops, skipsOddElements, sumsWithCalls])
     noInline(f);
 
 let array = [1, 2, 3, 4];
@@ -88,18 +92,18 @@ for (let i = 0; i < 200; ++i) {
     check(sumsInTwoLoops(x, y, z, array), i + 11 + 20 + 4 * 23, "sumsInTwoLoops");
     check(sumsInNestedLoops(x, y, z, array), i + 11 + 4 * 23 + 40, "sumsInNestedLoops");
     check(skipsOddElements(x, y, z, array), i + 11 + 6 + 2 * 23, "skipsOddElements");
+    check(sumsWithCalls(x, y, z, array), i + 11 + 10 + 4 * 23, "sumsWithCalls");
+    kept.length = 0;
 }
-if (keepsLoopsWhole) {
-    isRefused(sumsArrayOnly, "has-loop-without-places");
-    applies(sumsArrayAndFlags);
-    isRefused(sumsInTwoLoops, "has-loop-without-places");
-    isRefused(sumsInNestedLoops, "has-loop-without-places");
-    applies(skipsOddElements);
-} else {
-    for (let f of [sumsArrayOnly, sumsArrayAndFlags, sumsInTwoLoops, sumsInNestedLoops, skipsOddElements])
-        isRefused(f, "has-loop-without-calls");
+for (let f of [sumsArrayOnly, sumsArrayAndFlags, sumsInTwoLoops, sumsInNestedLoops, skipsOddElements]) {
+    isRefused(f, "has-loop-without-calls");
+    expectRemark(f, "split-loop");
 }
+applies(sumsWithCalls);
+if (isOn)
+    check(remarksOf(sumsWithCalls).includes("split-loop"), false, "the loop of sumsWithCalls is split");
 
 let odd = build(["other", 0], ["flags", 100]);
 check(sumsArrayAndFlags(makeItem(0), makeItem(10), odd, array), 0 + 11 + 10 + 400, "a receiver that fails inside the loop");
 check(skipsOddElements(makeItem(0), makeItem(10), odd, array), 0 + 11 + 6 + 200, "a receiver that fails behind the continue");
+check(sumsWithCalls(makeItem(0), makeItem(10), odd, array), 0 + 11 + 10 + 400, "a receiver that fails inside a loop with calls");

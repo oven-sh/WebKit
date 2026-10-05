@@ -1,9 +1,6 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTLoopSplitting=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault
@@ -38,6 +35,23 @@ function Fiber(tag) {
     this.sibling = null;
     this.return = null;
     this.flags = 0;
+}
+function FiberInAnotherOrder(tag) {
+    this.flags = 0;
+    this.return = null;
+    this.sibling = null;
+    this.child = null;
+    this.pendingProps = null;
+    this.memoizedState = null;
+    this.memoizedProps = null;
+    this.alternate = null;
+    this.key = null;
+    this.tag = tag;
+}
+function Link(weight, next) {
+    this.weight = weight;
+    this.extent = 1;
+    this.next = next;
 }
 const inAnotherOrder = ["flags", "return", "sibling", "child", "pendingProps", "memoizedState", "memoizedProps", "alternate", "tag"];
 function makeOther(tag) {
@@ -106,22 +120,37 @@ function walksAndCalls(first, which) {
     }
     return sum;
 }
+function sumsLinks(first) {
+    let sum = 0;
+    for (let link = first; link !== null; link = link.next)
+        sum += link.weight + link.extent;
+    return sum;
+}
+function sumsLinksAndCalls(first, which) {
+    let sum = 0;
+    for (let link = first; link !== null; link = link.next)
+        sum += link.weight + link.extent + visitors[which & 1](link);
+    return sum;
+}
 function readsWithoutLoop(node) {
     node.memoizedProps = node.tag;
     return node.pendingProps + node.flags + node.memoizedProps;
 }
-for (const f of [walks, sumsSiblings, walksAndCalls, readsWithoutLoop, makeOther, set, build])
+for (const f of [walks, sumsSiblings, walksAndCalls, sumsLinks, sumsLinksAndCalls, readsWithoutLoop, makeOther, set, build])
     noInline(f);
 
 const root = build(4, 4, null, tag => new Fiber(tag));
 const numberOfNodes = 341;
 const row = root.child;
+const links = new Link(1, new Link(2, new Link(3, null)));
 const warmUp = () => {
     for (let i = 0; i < 30; ++i) {
         check(walks(root), numberOfNodes, "nodes seen");
         check(sumsSiblings(row), 16, "sum over siblings");
         check(walksAndCalls(row, i), i & 1 ? 24 : 20, "sum with calls");
         check(readsWithoutLoop(row), 3 + 1 + 3, "reads outside a loop");
+        check(sumsLinks(links), 9, "sum over links");
+        check(sumsLinksAndCalls(links, i), i & 1 ? 15 : 12, "sum over links with calls");
     }
 };
 warmUp();
@@ -134,7 +163,7 @@ const during = f => {
 const isSplit = f => isCompiled && remarksOf(f).includes("split-loop");
 const hasTwin = f => isCompiled && remarksOf(f).includes("guards-over-whole-function");
 const rounds = 50;
-for (const [f, operand, result, accessesARound] of [[walks, root, numberOfNodes, 8 * numberOfNodes], [sumsSiblings, row, 16, 12]]) {
+for (const [f, operand, result, accessesARound] of [[walks, root, numberOfNodes, 8 * numberOfNodes], [sumsSiblings, row, 16, 12], [sumsLinks, links, 9, 9]]) {
     const outside = during(() => {
         for (let i = 0; i < rounds; ++i)
             check(f(operand), result, f.name);
@@ -144,10 +173,10 @@ for (const [f, operand, result, accessesARound] of [[walks, root, numberOfNodes,
     if (isSplit(f)) {
         if (outside > 4 * rounds)
             throw new Error(f.name + " does not run in the fast copy of its loop: " + outside + " reads and stores of " + rounds + " rounds were made outside it");
-    } else if (!hasTwin(f) && outside < rounds * accessesARound)
+    } else if (outside < rounds * accessesARound)
         throw new Error(f.name + " is not split, yet only " + outside + " reads and stores of " + rounds + " rounds were counted");
 }
-if (isCounting && !hasTwin(walksAndCalls) && !hasTwin(readsWithoutLoop)) {
+if (isCounting) {
     const outside = during(() => {
         for (let i = 0; i < rounds; ++i) {
             walksAndCalls(row, i);
@@ -161,6 +190,7 @@ if (isCounting && !hasTwin(walksAndCalls) && !hasTwin(readsWithoutLoop)) {
 {
     const mixed = build(4, 4, null, tag => tag & 1 ? new Fiber(tag) : makeOther(tag));
     const other = build(4, 4, null, makeOther);
+    const third = build(4, 4, null, tag => new FiberInAnotherOrder(tag));
     const withAlternates = build(3, 3, null, tag => set(new Fiber(tag), "alternate", set(new Fiber(-tag), "memoizedProps", "props " + tag)));
     const grown = build(3, 3, null, tag => set(new Fiber(tag), "extra", tag));
     const logged = [];
@@ -171,6 +201,7 @@ if (isCounting && !hasTwin(walksAndCalls) && !hasTwin(readsWithoutLoop)) {
     for (let i = 0; i < 40; ++i) {
         check(walks(mixed), numberOfNodes, "fibers of two kinds");
         check(walks(other), numberOfNodes, "fibers of the other kind");
+        check(walks(third), numberOfNodes, "fibers of the third kind");
         check(walks(root), numberOfNodes, "fibers of the first kind again");
         check(walks(withAlternates), 40, "fibers with alternates");
         check(withAlternates[inAnotherOrder[3]][inAnotherOrder[6]], "props 2", "what was copied from an alternate");
@@ -187,10 +218,16 @@ if (isCounting && !hasTwin(walksAndCalls) && !hasTwin(readsWithoutLoop)) {
 }
 
 if (isCompiled) {
-    for (const f of [walks, sumsSiblings]) {
-        if (!hasTwin(f) || !options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting)
-            check(isSplit(f), splitsLoops, "the loop of " + f.name + " is split");
-    }
-    for (const f of [walksAndCalls, readsWithoutLoop])
+    for (const f of [walks, sumsSiblings, walksAndCalls, sumsLinks, readsWithoutLoop])
+        check(hasTwin(f), false, f.name + " has guards over the whole function");
+    for (const f of [walks, sumsSiblings, sumsLinks])
+        check(isSplit(f), splitsLoops, "the loop of " + f.name + " is split");
+    for (const f of [walksAndCalls, sumsLinksAndCalls, readsWithoutLoop])
         check(isSplit(f), false, f.name + " has a loop to split");
+    check(remarksOf(sumsLinks).includes("no-guards-over-whole-function:has-loop-without-calls"), !!options.useAOTDataStubs, "sumsLinks is refused guards for its loop");
+    check(hasTwin(sumsLinksAndCalls), splitsLoops, "sumsLinksAndCalls has guards over the whole function");
+    for (const f of [sumsLinks, sumsLinksAndCalls]) {
+        for (const name of ["weight", "extent", "next"])
+            check(remarksOf(f).some(remark => remark.startsWith("guessed-family:") && remark.endsWith(":" + name)), true, "links have a family that gives " + name + " in " + f.name);
+    }
 }

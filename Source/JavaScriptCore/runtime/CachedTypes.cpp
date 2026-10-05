@@ -6336,9 +6336,8 @@ struct BytecodeLinkEncoder::Impl {
         }
         ImmutableIntrinsics::ensureShared(vm);
         AOT::PropertyPlaces propertyPlaces;
-        AOT::PropertyPlaces* propertyPlacesIfUsed = Options::useAOTFamilies() ? &propertyPlaces : nullptr;
         auto dumpPropertyPlaces = makeScopeExit([&] {
-            if (propertyPlacesIfUsed && Options::verboseAOTCompilation()) [[unlikely]]
+            if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", propertyPlaces);
         });
         AOT::TypeTable::load(vm);
@@ -6650,7 +6649,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             std::atomic<unsigned> unreadable { 0 };
             inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, propertyPlacesIfUsed))
+                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &propertyPlaces))
                     unreadable++;
             });
             propertyPlaces.finalize();
@@ -7151,7 +7150,7 @@ struct BytecodeLinkEncoder::Impl {
             dataLogLn("AOT: ", functionsWithoutStackCheck, " functions rely on the stack check of a caller");
         LinkedProgramCode programCode;
         programCode.builtins = &engineBuiltins;
-        programCode.propertyPlaces = propertyPlacesIfUsed;
+        programCode.propertyPlaces = &propertyPlaces;
         uint32_t numberOfTypeCoverageCounters = 0;
         for (auto& job : jobs) {
             if (job.isGeneralBody)
@@ -7361,8 +7360,7 @@ struct BytecodeLinkEncoder::Impl {
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
                 dataLogLn("AOT: ", functionObjectsNeededAfterAll, " function objects are needed after all");
-                if (Options::validateAOTInferredTypes() || Options::useAOTGuardsOverWholeFunctions())
-                    dataLogLn("AOT: contradictions of the analysis ignored behind an unreachable value: ", programCode.contradictionsIgnoredBehindUnreachableValue.load(std::memory_order_relaxed));
+                dataLogLn("AOT: contradictions of the analysis ignored behind an unreachable value: ", programCode.contradictionsIgnoredBehindUnreachableValue.load(std::memory_order_relaxed));
             }
             RELEASE_ASSERT(declined.isEmpty());
             if (again) {

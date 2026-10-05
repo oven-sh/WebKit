@@ -1,9 +1,5 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault
 
@@ -15,8 +11,8 @@ const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) ||
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const count = name => typeof aotOperationCount === "function" && aotOperationCount(name) || 0;
 const isCompiled = !!remarksOf(check) && !!options.useAOTDataStubs;
-const guesses = isCompiled && !!options.useAOTFamilies;
-const hasGuards = guesses && !!options.useAOTGuardsOverWholeFunctions;
+const guesses = isCompiled;
+const hasGuards = guesses;
 
 const kept = [];
 function keep(o) { kept.push(o); if (kept.length > 64) kept.length = 0; return o; }

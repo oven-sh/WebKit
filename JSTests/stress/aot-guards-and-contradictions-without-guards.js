@@ -1,13 +1,11 @@
 //@ runDefault
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTDataStubs=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--contradictAOTAnalysisForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--contradictAOTAnalysisForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--contradictAOTAnalysisForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--contradictAOTAnalysisForTesting=2")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--contradictAOTAnalysisForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--contradictAOTAnalysisForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--contradictAOTAnalysisForTesting=1")
 
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
@@ -15,7 +13,7 @@ function check(actual, expected, what) {
 }
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const isOn = !!remarksOf("check") && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
+const isOn = !!remarksOf("check") && !!options.useAOTDataStubs;
 
 (function () {
     function first() { return 2; }

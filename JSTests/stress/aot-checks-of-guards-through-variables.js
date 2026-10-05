@@ -1,8 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useDollarVM=1")
 //@ runDefault("--useDollarVM=1")
 
 function check(actual, expected, what) {
@@ -12,7 +11,7 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
+const isOn = isCompiled && !!options.useAOTDataStubs;
 
 const guardRemarksOf = f => remarksOf(f).filter(remark => remark.includes("guard")).join(" ");
 const namesIn = (f, prefix) => [...new Set(remarksOf(f).filter(remark => remark.startsWith(prefix + ":")).map(remark => remark.slice(prefix.length + 1)))].sort().join(",");

@@ -3354,8 +3354,6 @@ public:
             if (!findBlocks())
                 return false;
             computeReversePostOrder();
-            for (BasicBlock* block : m_graph.m_rpo)
-                block->isInProfitableLoop = !block->isGeneric && block != m_graph.root && m_inProfitableLoop.get(block->bytecodeBegin);
         }
         computeLiveness();
         chooseFrameRegisters();
@@ -3918,10 +3916,6 @@ private:
             m_inLoop.set(instruction.offset());
         for (unsigned offset : m_graph.placesToGuard->keys())
             m_guards.set(offset);
-        for (BasicBlock* block : m_graph.m_rpo) {
-            for (unsigned offset = block->bytecodeBegin; block->isInProfitableLoop && offset < block->bytecodeEnd; offset += m_instructions.at(offset)->size())
-                m_inProfitableLoop.set(offset);
-        }
         m_hasGuards = true;
         m_graph.remark("guards-over-whole-function"_s);
         return true;
@@ -4927,7 +4921,6 @@ private:
     bool m_hasGuards { false };
     BitVector m_leaders;
     BitVector m_inLoop;
-    BitVector m_inProfitableLoop;
     BitVector m_guards;
     BitVector m_loopHeaders;
     struct PendingLiteral {

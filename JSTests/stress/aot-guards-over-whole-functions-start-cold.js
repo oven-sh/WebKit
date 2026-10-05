@@ -1,9 +1,8 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -13,7 +12,7 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
+const isOn = isCompiled && !!options.useAOTDataStubs;
 function takesDataAfresh(f, hasGuards, expected) {
     if (!isCompiled)
         return;

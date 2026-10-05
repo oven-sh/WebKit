@@ -1,10 +1,9 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=3")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -14,7 +13,7 @@ function check(actual, expected, what) {
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
 const isCompiled = !!remarksOf("check");
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs && !options.useAOTInlining;
+const isOn = isCompiled && !!options.useAOTDataStubs && !options.useAOTInlining;
 
 (function makesConstantObject() {
     "use strict";

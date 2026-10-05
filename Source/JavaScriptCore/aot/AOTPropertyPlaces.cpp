@@ -290,8 +290,7 @@ void PropertyPlaces::dump(PrintStream& out) const
     out.print("; not guessed: no shape ", count(Decision::NoShape), ", shapes disagree ", count(Decision::Disagree), ", slot too high ", count(Decision::SlotTooHigh), ", no family ", count(Decision::NoFamily), ", same names born in another module ", count(Decision::SameNamesBornInAnotherModule));
     out.print("; names only called that no shape holds: ", m_namesOnlyCalled.load(std::memory_order_relaxed));
     out.print("; variables with names: ", m_namesOnVariables.size(), ", places guessed with the names on a variable: ", m_guessesByNamesOnVariable.load(std::memory_order_relaxed));
-    if (Options::useAOTGuardsOverWholeFunctions())
-        out.print("; functions with guards over the whole function: ", m_functionsWithGuards.load(std::memory_order_relaxed), " with ", m_guardsOverWholeFunctions.load(std::memory_order_relaxed), " guards, ", m_bytecodeSizeWithGuards.load(std::memory_order_relaxed), " bytes of bytecode, ", m_codeSizeWithGuards.load(std::memory_order_relaxed), " bytes of code; functions without them because their graph would contradict the analysis: ", m_functionsWhoseGuardsContradictAnalysis.load(std::memory_order_relaxed), "; still contradict it without guards: ", m_functionsThatContradictAnalysisWithoutGuards.load(std::memory_order_relaxed));
+    out.print("; functions with guards over the whole function: ", m_functionsWithGuards.load(std::memory_order_relaxed), " with ", m_guardsOverWholeFunctions.load(std::memory_order_relaxed), " guards, ", m_bytecodeSizeWithGuards.load(std::memory_order_relaxed), " bytes of bytecode, ", m_codeSizeWithGuards.load(std::memory_order_relaxed), " bytes of code; functions without them because their graph would contradict the analysis: ", m_functionsWhoseGuardsContradictAnalysis.load(std::memory_order_relaxed), "; still contradict it without guards: ", m_functionsThatContradictAnalysisWithoutGuards.load(std::memory_order_relaxed));
 }
 
 static bool canHavePlace(VM& vm, UniquedStringImpl* name)
@@ -690,8 +689,11 @@ uint16_t Graph::familyGivenAt(const Node* birth, std::span<UniquedStringImpl* co
 Graph::PlacesToGuard Graph::findPlacesToGuard()
 {
     PlacesToGuard places;
-    if (!Options::useAOTGuardsOverWholeFunctions() || !m_propertyPlaces || !usesDataStubs())
+    if (!m_propertyPlaces || !usesDataStubs())
         return places;
+    static constexpr unsigned maximumBytecodeSize = 4096;
+    static constexpr unsigned minimumNumberOfPlacesPerThousandBytes = 10;
+    unsigned minimumNumberOfPlaces = Options::useAOTGuardsAtEveryGuessedPlaceForTesting() ? 1 : 3;
     auto refuse = [&](ASCIILiteral reason) {
         remark("no-guards-over-whole-function"_s, reason);
         reasonForNoGuards = reason;
@@ -711,15 +713,13 @@ Graph::PlacesToGuard Graph::findPlacesToGuard()
     default:
         return refuse("is-generator-or-async"_s);
     }
-    if (m_codeBlock->numberOfExceptionHandlers() && !Options::useAOTGuardsOverWholeFunctionsWithHandlers())
-        return refuse("has-handler"_s);
-    if (m_codeBlock->instructions().size() > Options::maximumAOTBytecodeSizeForGuardsOverWholeFunction())
+    if (m_codeBlock->instructions().size() > maximumBytecodeSize)
         return refuse("too-large"_s);
     if (numberOfRegisterReturnValues)
         return refuse("returns-values-in-registers"_s);
     UncheckedKeyHashSet<const Node*> readsOfCallees;
     for (BasicBlock* block : m_rpo) {
-        if (block->graph == this && !Options::useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting() && (block->isInProfitableLoop || (block->isInLoop && !Options::useAOTLoopSplitting())))
+        if (block->graph == this && (block->isInProfitableLoop || (block->isInLoop && !Options::useAOTLoopSplitting())))
             return refuse("has-loop-without-calls"_s);
         for (Node* node : block->nodes) {
             if (node->graph == this && node->isElided && node->isBytecode(op_new_object))
@@ -794,34 +794,10 @@ Graph::PlacesToGuard Graph::findPlacesToGuard()
             }
         }
     }
-    if (places.size() < Options::minimumAOTGuardsOverWholeFunction())
-        return refuse(places.size() + placesInFrontOfEnvironments < Options::minimumAOTGuardsOverWholeFunction() ? "too-few-places"_s : "makes-environment-behind-guard"_s);
-    if (static_cast<uint64_t>(places.size()) * 1000 < static_cast<uint64_t>(Options::minimumAOTGuardsPerThousandBytesOverWholeFunction()) * m_codeBlock->instructions().size())
+    if (places.size() < minimumNumberOfPlaces)
+        return refuse(places.size() + placesInFrontOfEnvironments < minimumNumberOfPlaces ? "too-few-places"_s : "makes-environment-behind-guard"_s);
+    if (!Options::useAOTGuardsAtEveryGuessedPlaceForTesting() && places.size() * 1000 < minimumNumberOfPlacesPerThousandBytes * m_codeBlock->instructions().size())
         return refuse("too-few-places-for-its-size"_s);
-    Vector<std::pair<unsigned, unsigned>, 4> loopsWithoutCalls;
-    for (const auto& instruction : m_codeBlock->instructions()) {
-        if (!isBranch(instruction->opcodeID()))
-            continue;
-        extractStoredJumpTargetsForInstruction(m_codeBlock, instruction, [&](int32_t relativeOffset) {
-            if (relativeOffset >= 0)
-                return;
-            unsigned header = instruction.offset() + relativeOffset;
-            if (!blockForOffset[header] || !blockForOffset[header]->isInProfitableLoop)
-                return;
-            size_t index = loopsWithoutCalls.findIf([&](auto& loop) { return loop.first == header; });
-            if (index == notFound)
-                loopsWithoutCalls.append({ header, instruction.offset() });
-            else
-                loopsWithoutCalls[index].second = instruction.offset();
-        });
-    }
-    for (auto [header, last] : loopsWithoutCalls) {
-        bool holdsPlace = false;
-        for (unsigned offset : places.keys())
-            holdsPlace |= offset >= header && offset <= last;
-        if (!holdsPlace)
-            return refuse("has-loop-without-places"_s);
-    }
     return places;
 }
 

@@ -1,8 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=20", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsPerThousandBytesOverWholeFunction=1000")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -11,10 +9,8 @@ function check(actual, expected, what) {
 }
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
-const isOn = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
-if (isOn)
-    check("minimumAOTGuardsPerThousandBytesOverWholeFunction" in options, true, "the option exists");
-const density = options.minimumAOTGuardsPerThousandBytesOverWholeFunction;
+const isOn = !!remarksOf(check) && !!options.useAOTDataStubs;
+const isEager = !!options.useAOTGuardsAtEveryGuessedPlaceForTesting;
 function hasGuards(f, expected) {
     if (!isOn)
         return;
@@ -59,5 +55,5 @@ for (let i = 0; i < 200; ++i) {
     check(dense(x, y, z), i + 33, "dense");
     check(sparse(x, y, z, i), reference(i + 33, i), "sparse");
 }
-hasGuards(dense, density < 1000);
-hasGuards(sparse, !density);
+hasGuards(dense, true);
+hasGuards(sparse, isEager);

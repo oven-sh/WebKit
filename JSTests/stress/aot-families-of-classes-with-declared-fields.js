@@ -1,9 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--failEveryNthAOTGuardForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--numberOfAOTCompilerThreads=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--numberOfAOTCompilerThreads=1")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -12,7 +10,7 @@ function check(actual, expected, what) {
 }
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const remarksOf = name => typeof aotRemarks === "function" && aotRemarks(name) || null;
-const hasFamilies = !!remarksOf("check") && !!options.useAOTFamilies && !!options.useAOTDataStubs;
+const hasFamilies = !!remarksOf("check") && !!options.useAOTDataStubs;
 
 (function () {
     const classes = [];
@@ -42,8 +40,7 @@ const hasFamilies = !!remarksOf("check") && !!options.useAOTFamilies && !!option
         check(remarksOf("Declares" + i).some(remark => remark.startsWith("born-in-family:")), true, "an instance of Declares" + i + " is born in a family");
         for (const name of ["first", "second", "third"])
             check(remarksOf("sum" + i).includes("guessed-place:" + name + i), true, "sum" + i + " has a guessed place for " + name + i);
-        if (options.useAOTGuardsOverWholeFunctions)
-            check(remarksOf("sum" + i).includes("guards-over-whole-function"), true, "sum" + i + " has guards over the whole function");
+        check(remarksOf("sum" + i).includes("guards-over-whole-function"), true, "sum" + i + " has guards over the whole function");
     }
     check(remarksOf("Initializes").some(remark => remark.startsWith("born-in-family:")), false, "an instance of Initializes is born in a family");
     check(remarksOf("sumOfInitialized").includes("no-guess:no-family"), true, "sumOfInitialized has places without a family");

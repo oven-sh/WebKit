@@ -1,12 +1,8 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useDollarVM=1")
 //@ runDefault("--useDollarVM=1")
 
 function check(actual, expected, what) {
@@ -17,12 +13,9 @@ const nameOf = f => typeof f === "string" ? f : f.name;
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(nameOf(f)) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-if (isCompiled)
-    check("useAOTGuardsOverWholeFunctions" in options, true, "the option exists");
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
+const isOn = isCompiled && !!options.useAOTDataStubs;
 const isCounting = isOn && !!options.useAOTOperationCounters;
-const keepsLoopsWhole = isOn && !!options.useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting;
-const minimum = options.minimumAOTGuardsOverWholeFunction;
+const isEager = !!options.useAOTGuardsAtEveryGuessedPlaceForTesting;
 const hasGuards = f => remarksOf(f).includes("guards-over-whole-function");
 function applies(...functions) {
     for (let f of functions) {
@@ -319,19 +312,16 @@ for (let round = 0; round < 30; ++round) {
     check(loopWithoutCalls(x, y, z, 4), "tag1key2child36", "a loop without calls");
     check(noPlaces(x, y, z), NaN, "no places");
 }
-if (minimum > 2)
+if (!isEager)
     doesNotApply(twoPlaces, "too-few-places");
 else
     applies(twoPlaces);
 doesNotApply(tooLarge, "too-large");
-if ("useAOTGuardsOverWholeFunctionsWithHandlers" in options && !options.useAOTGuardsOverWholeFunctionsWithHandlers)
-    doesNotApply(withHandler, "has-handler");
-else
-    applies(withHandler);
+applies(withHandler);
 doesNotApply(generator, "is-generator-or-async");
 doesNotApply(asynchronous, "is-generator-or-async");
 doesNotApply(Constructed, "is-constructor");
-doesNotApply(loopWithoutCalls, keepsLoopsWhole ? "has-loop-without-places" : "has-loop-without-calls");
+doesNotApply(loopWithoutCalls, "has-loop-without-calls");
 doesNotApply(noPlaces, "too-few-places");
 
 (function () {
@@ -386,7 +376,7 @@ for (let oddAt = 0; oddAt < 3; ++oddAt) {
 }
 if (isCompiled && remarksOf(readsOwnLiteral).includes("scalar-replaced-object"))
     doesNotApply(readsOwnLiteral, "does-not-allocate-object");
-if (minimum > 2)
+if (!isEager)
     doesNotApply(loopWithCallAndTwoPlaces, "too-few-places");
 else
     applies(loopWithCallAndTwoPlaces);
@@ -467,7 +457,7 @@ guards(makesEnvironment, "family-guards-read:tag", "family-guards-read:key", "fa
 lacksGuards(makesEnvironment, "family-guards-read:flags");
 guards(environmentInEachIteration, "family-guards-read:key", "family-guards-read:child", "family-guards-read:flags");
 lacksGuards(environmentInEachIteration, "family-guards-read:tag", "family-guards-read:sibling");
-if (minimum > 2)
+if (!isEager)
     doesNotApply(makesEnvironmentLate, "makes-environment-behind-guard");
 else
     applies(makesEnvironmentLate);
@@ -524,8 +514,6 @@ for (let kind of nodesThatFail) {
         log = [];
         check(overList(list.head), expected, "a list, " + what);
         check(log.join(), list.expectedLog.join(), "a list, " + what + ": the log");
-        if (isCounting && keepsLoopsWhole)
-            check(exits() - before, 1, "a list, " + what + ": it does not come back");
 
         let array = ["a0", "a1", "a2", "a3", "a4", "a5"];
         let changes = kind !== nodesThatFail[0];
@@ -542,8 +530,6 @@ for (let kind of nodesThatFail) {
         log = [];
         check(overListAndArray(list.head, array), expected, "a list and an array, " + what);
         check(log.join(), list.expectedLog.join(), "a list and an array, " + what + ": the log");
-        if (isCounting && keepsLoopsWhole)
-            check(exits() - before, 1, "a list and an array, " + what + ": it does not come back");
     }
 }
 function withFlags(item, flags) { item.flags = flags; return item; }
@@ -589,15 +575,9 @@ for (let kind of elementsThatFail) {
         log = [];
         check(untilUnflagged(items, array, makeItem(1), makeItem(2)), expected, what);
         check(log.join(), made.log.join(), what + ": the log");
-        if (isCounting && keepsLoopsWhole)
-            check(exits() - before, 1, what + ": it does not come back");
     }
 }
-if (keepsLoopsWhole) {
-    applies(untilUnflagged);
-    guards(untilUnflagged, "family-guards-read:tag", "family-guards-read:key", "family-guards-read:flags");
-} else
-    doesNotApply(untilUnflagged, "has-loop-without-calls");
+doesNotApply(untilUnflagged, "has-loop-without-calls");
 (function () {
     function countsUntilUnflagged(items, array, wanted, y, z) {
         let prefix = y.tag + z.key;
@@ -641,20 +621,9 @@ if (keepsLoopsWhole) {
             log = [];
             check(countsUntilUnflagged(items, array, "a4", makeItem(1), makeItem(2)), "tag1key2" + found + last, what);
             check(log.join(), made.log.join(), what + ": the log");
-            if (isCounting && keepsLoopsWhole)
-                check(exits() - before, 1, what + ": it does not come back");
         }
     }
 })();
-if (keepsLoopsWhole) {
-    applies("countsUntilUnflagged");
-    guards("countsUntilUnflagged", "family-guards-read:tag", "family-guards-read:key", "family-guards-read:flags", "array-view");
-} else
-    doesNotApply("countsUntilUnflagged", "has-loop-without-calls");
-if (keepsLoopsWhole) {
-    applies(overList, overListAndArray);
-    guards(overList, "family-guards-read:flags", "family-guards-read:tag", "family-guards-read:sibling");
-} else {
-    doesNotApply(overList, "has-loop-without-calls");
-    doesNotApply(overListAndArray, "has-loop-without-calls");
-}
+doesNotApply("countsUntilUnflagged", "has-loop-without-calls");
+doesNotApply(overList, "has-loop-without-calls");
+doesNotApply(overListAndArray, "has-loop-without-calls");

@@ -6,9 +6,9 @@
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTDataStubs=0")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--verifyGC=1", "--scribbleFreeCells=1", "--useZombieMode=1", "--slowPathAllocsBetweenGCs=50")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsAtEveryGuessedPlaceForTesting=1", "--useAOTInlining=0", "--failEveryNthAOTGuardForTesting=2")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -313,3 +313,10 @@ check(tagAndChild(5), "of numbers:undefined", "a number, inherited");
 check(tagAndChild("string"), "undefined:of strings", "a string, inherited");
 delete Number.prototype.tag;
 delete String.prototype.child;
+
+if (typeof aotRemarks === "function" && aotRemarks("check") && jscOptions().useAOTDataStubs) {
+    for (const name of ["acrossBranches", "allFour", "edgesOfWide", "interleaved", "readsTagTwice"])
+        check(aotRemarks(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
+    for (const name of jscOptions().useAOTGuardsAtEveryGuessedPlaceForTesting ? ["firstAndSecond", "keyAndFlags", "tagAndChild"] : [])
+        check(aotRemarks(name).includes("guards-over-whole-function"), true, name + " has guards over the whole function");
+}

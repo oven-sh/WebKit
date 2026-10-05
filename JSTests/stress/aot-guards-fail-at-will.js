@@ -1,12 +1,11 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1", "--failEveryNthAOTGuardForTesting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=2")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--failEveryNthAOTGuardForTesting=7")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1", "--failEveryNthAOTGuardForTesting=3")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--failEveryNthAOTGuardForTesting=5")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1", "--failEveryNthAOTGuardForTesting=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=2")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=3")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=7")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1", "--failEveryNthAOTGuardForTesting=3")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=5")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--failEveryNthAOTGuardForTesting=11")
 //@ runDefault
 
@@ -17,7 +16,7 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const count = name => typeof aotOperationCount === "function" && aotOperationCount(name) || 0;
-const hasTwins = !!remarksOf(check) && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTFamilies && !!options.useAOTDataStubs;
+const hasTwins = !!remarksOf(check) && !!options.useAOTDataStubs;
 if (remarksOf(check))
     check("failEveryNthAOTGuardForTesting" in options, true, "the option exists");
 const period = options.failEveryNthAOTGuardForTesting || 0;

@@ -468,8 +468,6 @@ if (isCompiled) {
                 throw new Error("guards over the whole of " + guarded.name + " without data stubs");
             continue;
         }
-        if (remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))
-            throw new Error(guarded.name + " is refused for its handler: " + about(guarded));
         const mayBeRefusedFor = guarded === capturesWhatItCatches ? ["makes-environment-behind-guard", "too-few-places"] : guarded === catchesInLoop ? ["has-loop-without-calls"] : [];
         if (!hasGuards(guarded) && !mayBeRefusedFor.some(reason => remarksOf(guarded).includes("no-guards-over-whole-function:" + reason)))
             throw new Error("no guards over the whole of " + guarded.name + ": " + about(guarded));

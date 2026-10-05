@@ -1,8 +1,7 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useDollarVM=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1", "--useDollarVM=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useDollarVM=1")
 //@ runDefault("--useDollarVM=1")
 
 function check(actual, expected, what) {
@@ -20,7 +19,8 @@ function thrownBy(f) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const isOn = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
+const isOn = isCompiled && !!options.useAOTDataStubs;
+const isCounting = isOn && !!options.useAOTOperationCounters && !options.failEveryNthAOTGuardForTesting;
 
 const guardRemarksOf = f => remarksOf(f).filter(remark => remark.includes("guard")).join(" ");
 const namesIn = (f, prefix) => [...new Set(remarksOf(f).filter(remark => remark.startsWith(prefix + ":")).map(remark => remark.slice(prefix.length + 1)))].sort().join(",");
@@ -246,7 +246,7 @@ for (let i = 0; i < 200; ++i) {
     if (i == 100 && isOn) {
         check(aotFamilyOf(a) > 0, true, "an item has a family");
         check(aotHasDepartedFamily(aotFamilyOf(a)), false, "a member has left the family before any could");
-        if (options.useAOTOperationCounters) {
+        if (isCounting) {
             check(aotOperationCount("Family::guard:passes") > 1000, true, "guards on the family and its byte pass");
             check(aotOperationCount("Family::guard:exits-departed") || 0, 0, "guards that left because a member had left, before any had");
         }
@@ -319,7 +319,7 @@ check(readsMergedValue(makeItem("m"), variants.otherOrder(), false), "tagmT|T|K|
 
 if (isOn) {
     check(aotHasDepartedFamily(aotFamilyOf(makeItem("last"))), true, "a member has left the family");
-    if (options.useAOTOperationCounters)
+    if (isCounting)
         check(aotOperationCount("Family::guard:exits-departed") > 100, true, "guards leave because a member has left");
 }
 
