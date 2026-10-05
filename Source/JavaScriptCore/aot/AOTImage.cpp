@@ -890,8 +890,12 @@ Vector<uint8_t> ImageBuilder::finish()
         out->println("R\t", functionsEnd);
         if (identifierIndices) {
             out->println("D\t", sizeof(Data), "\t", sizeof(Slot));
+            Vector<std::pair<uint32_t, const StringImpl*>> identifiers;
             for (auto& entry : *identifierIndices)
-                out->println("I\t", entry.value, "\t", static_cast<const StringImpl*>(entry.key));
+                identifiers.append({ entry.value, entry.key });
+            std::ranges::sort(identifiers);
+            for (auto& [number, identifier] : identifiers)
+                out->println("I\t", number, "\t", identifier);
             for (unsigned index = 0; index < m_functions.size(); ++index) {
                 auto& sites = m_functions[index].code.info.sites;
                 for (unsigned slot = 0; slot < sites.size(); ++slot) {
