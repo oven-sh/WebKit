@@ -70,6 +70,7 @@
 #include <wtf/MallocSpan.h>
 #include <wtf/Packed.h>
 #include <wtf/StdLibExtras.h>
+#include <wtf/WeakRandom.h>
 #include <wtf/text/AtomStringImpl.h>
 #include <wtf/text/AtomStringTable.h>
 
@@ -6911,6 +6912,12 @@ struct BytecodeLinkEncoder::Impl {
             while (!worklist.isEmpty()) {
                 ++rounds;
                 inferences += worklist.size();
+                if (unsigned seed = Options::seedOfAOTInferenceOrderForTesting()) [[unlikely]] {
+                    std::ranges::sort(worklist);
+                    WeakRandom random(seed + rounds);
+                    for (unsigned i = worklist.size(); i > 1; --i)
+                        std::swap(worklist[i - 1], worklist[random.getUint32(i)]);
+                }
                 inParallel(worklist.size(), [&](size_t at) {
                     unsigned index = worklist[at];
                     AnalysisUnit& unit = units[index];
