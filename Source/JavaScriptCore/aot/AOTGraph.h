@@ -440,7 +440,7 @@ public:
     bool readsElementsOrEmpty { false };
     bool isInlinedBuiltin { false };
     bool wasCalledInLoop { false };
-    unsigned numberOfNodes() const { return m_nodes.size(); }
+    unsigned numberOfNodes() const { return m_nodes.size() + m_numberOfInlinedNodes; }
     Node* lastNode() { return &m_nodes.last(); }
     const ScopeChain& scopeChain() const { return m_scopeChain; }
 

@@ -206,7 +206,8 @@ public:
         }
         findVariablesThatAreNotEmptyWhenRead();
         iterateToFixpoint();
-        while (narrowTestedValues()) {
+        for (size_t rounds = 0, maxRounds = 2 * m_graph.blocks.size() + m_graph.numberOfNodes(); narrowTestedValues(); ++rounds) {
+            RELEASE_ASSERT(rounds < maxRounds);
             forgetTypes();
             iterateToFixpoint();
         }
@@ -629,6 +630,8 @@ public:
                 Node* value = check->uses[0].node;
                 if (value->isElided || !isWorthNarrowing(value->type, value->type & ~TEmpty))
                     continue;
+                if (!m_checksTried.add(check->index))
+                    continue;
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
                 if (narrowAfterCheck(block, index, value)) {
@@ -661,6 +664,10 @@ public:
                     return isWorthNarrowing(type, narrowed) || (narrowed != type && isWorthNarrowing(narrowed | (TAll & ~narrowedTo), narrowed));
                 };
                 if (!isWorthNarrowingFrom(tested.value->type) && !isWorthNarrowingFrom(typeTested))
+                    continue;
+                if (m_typesTriedOnEdges.isEmpty())
+                    m_typesTriedOnEdges.fill(TNone, 2 * m_graph.blocks.size());
+                if (std::exchange(m_typesTriedOnEdges[2 * block->index + i], narrowedTo) == narrowedTo)
                     continue;
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
@@ -2383,6 +2390,8 @@ private:
     UncheckedKeyHashMap<Node*, Vector<Node*, 4>> m_aliasesOfObjectsKeptToThemselves;
     bool m_elementTypesChanged { false };
     bool m_treatsEmptyArraysAsUntyped { false };
+    Vector<Type> m_typesTriedOnEdges;
+    BitVector m_checksTried;
 };
 
 } // anonymous namespace
