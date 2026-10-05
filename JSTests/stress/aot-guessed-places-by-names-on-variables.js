@@ -1,9 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -30,9 +27,10 @@ function makesReaders() {
     function readsQueueOfEither() { return either.hookQueue; }
     function readsKeyOfEither() { return either.nodeKey; }
     function readsStateOfEither() { return either.sharedState; }
-    return [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither];
+    function readsAndWritesStateOfEither() { either.sharedState = either.sharedState + 1; return either.sharedState; }
+    return [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither, readsAndWritesStateOfEither];
 }
-let [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither] = makesReaders();
+let [setsHook, setsNode, setsEither, readsStateOfHook, readsQueueOfHook, readsNextOfHook, writesStateOfHook, readsStateOfNode, readsKeyOfNode, readsThreeOfHook, readsQueueOfEither, readsKeyOfEither, readsStateOfEither, readsAndWritesStateOfEither] = makesReaders();
 
 let countOf = detail => typeof aotOperationCount === "function" && aotOperationCount("Family::guard:" + detail) || 0;
 let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell") + countOf("exits-departed");
@@ -51,6 +49,7 @@ for (let i = 0; i < 100; i++) {
     check(readsStateOfParameter(makesHook(i)) + readsStateOfParameter(makesNode(i)), 2 * i, "the same name on a parameter");
     setsEither(i & 1 ? makesHook(i) : makesNode(i));
     check(readsStateOfEither(), i, "a variable that holds both shapes in turn");
+    check(readsAndWritesStateOfEither(), i + 1, "reads and a store on that variable");
     check(readsQueueOfEither(), i & 1 ? i + 1 : undefined, "a name of the first shape on that variable");
     check(readsKeyOfEither(), i & 1 ? undefined : i + 2, "a name of the second shape on that variable");
 }
@@ -65,8 +64,8 @@ for (let i = 0; i < 100; i++) {
         readsKeyOfNode();
         readsThreeOfHook();
     }
-    if (countOf("passes") > before[0]) {
-        check(countOf("passes") - before[0] >= (jscOptions().minimumAOTGuardsOverWholeFunction == 1 ? 600 : 200), true, "the guards pass what the variables usually hold");
+    if (jscOptions().useAOTOperationCounters && jscOptions().useAOTDataStubs) {
+        check(countOf("passes") - before[0] >= 200, true, "the guards pass what the variables usually hold");
         check(exits() - before[1], 0, "no guard fails on what the variables usually hold");
     }
 }
@@ -86,9 +85,7 @@ for (let i = 0; i < 100; i++) {
     check(readsStateOfHook(), i + 1, "a getter read alone");
 }
 
-if (aotRemarks("readsQueueOfHook") && !jscOptions().useAOTFamilies)
-    check(aotRemarks("readsQueueOfHook").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess")), false, "something is guessed without families");
-if (aotRemarks("readsQueueOfHook") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
+if (aotRemarks("readsQueueOfHook") && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -116,13 +113,14 @@ if (aotRemarks("readsQueueOfHook") && jscOptions().useAOTFamilies && jscOptions(
     doesNotApply("readsQueueOfEither", "no-guess:no-shape");
     applies("readsStateOfEither", "no-guess:disagree");
     doesNotApply("readsStateOfEither", "guessed-place:sharedState");
-    if (jscOptions().useAOTGuardsOverWholeFunctions) {
-        applies("readsThreeOfHook", "guards-over-whole-function");
-        applies("readsThreeOfHook", "family-guards-read:sharedState");
-        doesNotApply("readsStateOfEither", "guards-over-whole-function");
-        doesNotApply("readsStateOfParameter", "guards-over-whole-function");
-        doesNotApply("readsThreeOfHook", "no-guards-over-whole-function:too-few-places");
-        if (jscOptions().useAOTOperationCounters)
-            check(exits() >= 300, true, "a guard fails whenever the variable holds something else");
-    }
+    applies("readsThreeOfHook", "guards-over-whole-function");
+    for (let name of ["sharedState", "hookQueue", "hookNext"])
+        applies("readsThreeOfHook", "family-guards-read:" + name);
+    doesNotApply("readsThreeOfHook", "no-guards-over-whole-function:too-few-places");
+    applies("readsAndWritesStateOfEither", "no-guess:disagree");
+    doesNotApply("readsAndWritesStateOfEither", "guessed-place:sharedState");
+    doesNotApply("readsAndWritesStateOfEither", "guards-over-whole-function");
+    applies("readsAndWritesStateOfEither", "no-guards-over-whole-function:too-few-places");
+    if (jscOptions().useAOTOperationCounters)
+        check(exits() >= 300, true, "a guard fails whenever the variable holds something else");
 }

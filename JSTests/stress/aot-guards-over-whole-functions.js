@@ -324,7 +324,10 @@ if (minimum > 2)
 else
     applies(twoPlaces);
 doesNotApply(tooLarge, "too-large");
-doesNotApply(withHandler, "has-handler");
+if ("useAOTGuardsOverWholeFunctionsWithHandlers" in options && !options.useAOTGuardsOverWholeFunctionsWithHandlers)
+    doesNotApply(withHandler, "has-handler");
+else
+    applies(withHandler);
 doesNotApply(generator, "is-generator-or-async");
 doesNotApply(asynchronous, "is-generator-or-async");
 doesNotApply(Constructed, "is-constructor");

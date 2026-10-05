@@ -1,7 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -68,9 +67,7 @@ for (let i = 0; i < 100; i++) {
     check(readsDerived(new Base(i)), NaN, "its parent");
     check(readsReturn(makesWithReturn(i)), 2 * i, "a field named return");
 }
-if (aotRemarks("readsNode") && !jscOptions().useAOTFamilies)
-    check(aotRemarks("readsNode").some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess")), false, "something is guessed without families");
-if (aotRemarks("readsNode") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
+if (aotRemarks("readsNode") && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))

@@ -1,8 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -12,16 +10,21 @@ function makesPoint(x, y) { return { pointX: x, pointY: y, pointZ: x + y }; }
 function readsThirdOfPoint(o) { return o.pointZ; }
 function readsTwoOfPoint(o) { return o.pointX * 100 + o.pointY; }
 function writesSecondOfPoint(o, v) { o.pointY = v; return o.pointY; }
+function readsAllOfPoint(o) { return o.pointX * 10000 + o.pointY * 100 + o.pointZ; }
+function writesAllOfPoint(o, v) { o.pointZ = v; o.pointY = v + 1; o.pointX = v + 2; }
 
 function makesFirstOrder(a, b) { return { swappedA: a, swappedB: b }; }
 function makesSecondOrder(a, b) { return { swappedB: b, swappedA: a }; }
 function readsSwapped(o) { return o.swappedA * 10 + o.swappedB; }
+function readsAndWritesSwapped(o) { o.swappedA = o.swappedB; return o.swappedA; }
 
 function makesShort(v) { return { sharedName: v, onlyInShort: 1 }; }
 function makesLong(v) { return { onlyInLong: 2, sharedName: v }; }
 function readsSharedAlone(o) { return o.sharedName; }
 function readsSharedWithShort(o) { return o.sharedName + o.onlyInShort; }
 function readsSharedWithLong(o) { return o.sharedName + o.onlyInLong; }
+function readsAndWritesShort(o) { o.onlyInShort = o.sharedName; return o.onlyInShort; }
+function readsAndWritesLong(o) { o.onlyInLong = o.sharedName; return o.onlyInLong; }
 
 function readsNameNobodyIsBornWith(o) { return o.pointX + (o.neverGivenAtBirth === undefined ? 0 : 1); }
 
@@ -35,6 +38,7 @@ function helper() { return 2; }
 Counter.prototype.advance = function () { this.count += this.step; return this.count; };
 function readsFourthOfCounter(o) { return o.label; }
 function readsAndCallsCounter(o) { return o.advance() + o.limit; }
+function readsThreeOfCounter(o) { return o.step + o.limit + o.label; }
 
 class Holder {
     first = 1;
@@ -56,6 +60,7 @@ function readsBuiltSecond(o) { return o.builtSecond; }
 
 function makesWithConditionalValue(v) { return { chosenA: v, chosenB: v > 2 ? 1 : 2, chosenC: 3 }; }
 function readsChosenC(o) { return o.chosenC; }
+function readsAllChosen(o) { return o.chosenA * 100 + o.chosenB * 10 + o.chosenC; }
 
 function manyNames() {
     return {
@@ -65,6 +70,8 @@ function manyNames() {
 }
 function readsLastSlotWithName(o) { return o.n23; }
 function readsFirstSlotWithoutName(o) { return o.n24; }
+function readsLastThreeSlotsWithNames(o) { return o.n21 * 10000 + o.n22 * 100 + o.n23; }
+function readsFirstSlotsWithoutNames(o) { return o.n24 + o.n25 + o.n24; }
 
 function makesComputedFirst(i) { return { ["computed" + i]: 1, behindComputed: i }; }
 function readsBehindComputed(o) { return o.behindComputed; }
@@ -204,26 +211,33 @@ for (let i = 0; i < 200; i++) {
     let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell");
     let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++) {
-        check(readsThirdOfPoint(makesPoint(i, 1)), i + 1, "the third property of an object as it was born");
-        check(readsTwoOfPoint(makesPoint(i, 2)), i * 100 + 2, "two properties of an object as it was born");
-        check(writesSecondOfPoint(makesPoint(i, 2), i), i, "a store to an object as it was born");
-        check(readsSharedWithShort(makesShort(i)) + readsSharedWithLong(makesLong(i)), 2 * i + 3, "one name in two slots, told apart by another name");
-        check(readsChosenC(makesWithConditionalValue(i)), 3, "behind a conditional value, as it was born");
-        check(readsLastSlotWithName(manyNames()), 23, "the last slot that may be guessed");
-        check(readsThirdInPlain(makesPlainThree(i)), i, "a name that another literal has behind a spread");
+        check(readsAllOfPoint(makesPoint(i % 50, 1)), (i % 50) * 10000 + 100 + i % 50 + 1, "every property of an object as it was born");
+        let point = makesPoint(i, 2);
+        writesAllOfPoint(point, i);
+        check([point.pointX, point.pointY, point.pointZ].join(), [i + 2, i + 1, i].join(), "stores to every property of an object as it was born");
+        check(readsAndWritesShort(makesShort(i)) + readsAndWritesLong(makesLong(i)), 2 * i, "one name in two slots, told apart by another name");
+        check(readsAllChosen(makesWithConditionalValue(i % 9)), (i % 9) * 100 + (i % 9 > 2 ? 10 : 20) + 3, "around a conditional value");
+        check(readsLastThreeSlotsWithNames(manyNames()), 212223, "the last slots that may be guessed");
+        check(readsFirstSlotsWithoutNames(manyNames()), 73, "the first slots that may not be guessed");
+        check(readsAndWritesSwapped(makesFirstOrder(i, 1)) + readsAndWritesSwapped(makesSecondOrder(i, 2)), 3, "stores to two orders");
+        check(readsThreeOfCounter(new Counter(i)), 2 + (i > 5 ? 100 : 10) + "c", "three stores of a constructor behind a call");
         check(readsBehindComputed(makesComputedFirst(i)), i, "behind a computed key");
         check(readsAroundComputed(makesComputedInTheMiddle(i)), i + 1, "around a computed key");
         check(readsBehindIndexKeys(makesWithIndexKeys(i)), 2 * i, "behind index keys");
+        check(readsThirdInPlain(makesPlainThree(i)), i, "a name that another literal has behind a spread");
     }
-    if (countOf("passes") > before[0]) {
-        check(countOf("passes") - before[0] >= 800, true, "the guards pass objects as they were born");
+    if (jscOptions().useAOTOperationCounters && jscOptions().useAOTDataStubs) {
+        check(countOf("passes") - before[0] >= 600, true, "the guards pass objects as they were born");
         check(exits() - before[1], 0, "no guard fails on an object as it was born");
         before = exits();
         for (let i = 0; i < 100; i++) {
-            check(readsThirdOfPoint(inAnotherOrder(i, 3)), i + 3, "the same names in other slots, counted");
-            check(readsThirdOfPoint(i), undefined, "a number, counted");
+            check(readsAllOfPoint(inAnotherOrder(i % 50, 3)), (i % 50) * 10000 + 300 + i % 50 + 3, "the same names in other slots, counted");
+            check(readsAllOfPoint(i), NaN, "a number, counted");
+            let point = inAnotherOrder(i, 3);
+            writesAllOfPoint(point, i);
+            check([point.pointX, point.pointY, point.pointZ].join(), [i + 2, i + 1, i].join(), "stores to the same names in other slots, counted");
         }
-        check(exits() - before, 200, "a guard fails on everything else");
+        check(exits() - before, 300, "a guard fails on everything else");
     }
 }
 let deleted = makesPoint(1, 2);
@@ -232,10 +246,7 @@ check(readsThirdOfPoint(deleted), 3, "after a deletion");
 let frozen = Object.freeze(makesPoint(1, 2));
 check(writesSecondOfPoint(frozen, 9), 2, "a store to a frozen object");
 
-let saysSomethingOfGuesses = name => aotRemarks(name).some(remark => remark.startsWith("guessed-place") || remark.startsWith("no-guess"));
-if (aotRemarks("readsThirdOfPoint") && !jscOptions().useAOTFamilies)
-    check(saysSomethingOfGuesses("readsThirdOfPoint") || saysSomethingOfGuesses("readsSwapped"), false, "something is guessed without families");
-if (aotRemarks("readsThirdOfPoint") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
+if (aotRemarks("readsThirdOfPoint") && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -292,11 +303,26 @@ if (aotRemarks("readsThirdOfPoint") && jscOptions().useAOTFamilies && jscOptions
         isNotGuessed(name, "no-shape", ...properties);
         doesNotApply(name, "no-guess:no-family");
     }
-    if (jscOptions().useAOTGuardsOverWholeFunctions) {
-        applies("readsThirdOfPoint", "family-guards-read:pointZ");
-        applies("writesSecondOfPoint", "family-guards-store:pointY");
-        applies("readsLastSlotWithName", "family-guards-read:n23");
-        for (let name of ["readsSwapped", "readsSharedAlone", "readsFirstSlotWithoutName", "readsFourthOfCounter", "readsBehindComputed", "readsMiddleStore", "readsBehindSpread"])
-            doesNotApply(name, "guards-over-whole-function");
+    isGuessed("readsAllOfPoint", "pointX", "pointY", "pointZ");
+    isGuessed("writesAllOfPoint", "pointX", "pointY", "pointZ");
+    isGuessed("readsAndWritesShort", "sharedName", "onlyInShort");
+    isGuessed("readsAndWritesLong", "sharedName", "onlyInLong");
+    isGuessed("readsAllChosen", "chosenA", "chosenB", "chosenC");
+    isGuessed("readsLastThreeSlotsWithNames", "n21", "n22", "n23");
+    for (let [name, ...guards] of [
+        ["readsAllOfPoint", "read:pointX", "read:pointY", "read:pointZ"], ["writesAllOfPoint", "store:pointX", "store:pointY", "store:pointZ"],
+        ["readsAndWritesShort", "read:sharedName", "store:onlyInShort", "read:onlyInShort"], ["readsAndWritesLong", "read:sharedName", "store:onlyInLong", "read:onlyInLong"],
+        ["readsAllChosen", "read:chosenA", "read:chosenB", "read:chosenC"], ["readsLastThreeSlotsWithNames", "read:n21", "read:n22", "read:n23"],
+    ]) {
+        applies(name, "guards-over-whole-function");
+        for (let guard of guards)
+            applies(name, "family-guards-" + guard);
+    }
+    isNotGuessed("readsAndWritesSwapped", "disagree", "swappedA", "swappedB");
+    isNotGuessed("readsFirstSlotsWithoutNames", "slot-too-high", "n24", "n25");
+    hasShapeWithoutFamily("readsThreeOfCounter", "step", "limit", "label");
+    for (let name of ["readsAndWritesSwapped", "readsFirstSlotsWithoutNames", "readsThreeOfCounter", "readsFieldsOfHolder", "readsAllOfLeaf", "readsTwoOfPoint"]) {
+        doesNotApply(name, "guards-over-whole-function");
+        applies(name, "no-guards-over-whole-function:too-few-places");
     }
 }

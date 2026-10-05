@@ -1,12 +1,8 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--minimumAOTGuardsOverWholeFunction=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTOperationCounters=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTGuardsOverWholeFunctionsInsteadOfLoopSplitting=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useAOTInlining=0")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctionsWithHandlers=1", "--useMiniVMModeWithoutJIT=0", "--slowPathAllocsBetweenGCs=31")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTGuardsOverWholeFunctions=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--validateAOTInferredTypes=1", "--validateGraphAtEachPhase=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useMiniVMModeWithoutJIT=0", "--slowPathAllocsBetweenGCs=31")
 //@ runDefault
 
 function check(actual, expected, what) {
@@ -16,9 +12,8 @@ function check(actual, expected, what) {
 const remarksOf = f => typeof aotRemarks === "function" && aotRemarks(f.name) || null;
 const options = typeof jscOptions === "function" ? jscOptions() : { };
 const isCompiled = !!remarksOf(check);
-const hasTwins = isCompiled && !!options.useAOTGuardsOverWholeFunctions && !!options.useAOTDataStubs && !!options.useAOTFamilies;
-const isOn = hasTwins && !!options.useAOTGuardsOverWholeFunctionsWithHandlers;
-const isCounting = isOn && !!options.useAOTOperationCounters;
+const hasTwins = isCompiled && !!options.useAOTDataStubs;
+const isCounting = hasTwins && !!options.useAOTOperationCounters;
 const count = name => isCounting && aotOperationCount(name) || 0;
 const exitsBecause = why => count("exit-into-generic-copy:exits-" + why);
 const exits = () => exitsBecause("with-another-number") + exitsBecause("without-number") + exitsBecause("not-a-cell") + exitsBecause("departed");
@@ -271,13 +266,13 @@ function catchesInLoopByKey(items, when) {
 function keepsManyRegisters(a, b, c, when) {
     let r0 = 0, r1 = "one", r2 = 2.5, r3 = null, r4 = undefined, r5 = true, r6 = a, r7 = [when], r8 = { when }, r9 = -0;
     try {
-        r0 = 10; r1 = a.tag;
+        r0 = 10; r1 = a.tag + a.key;
         throwIf(when, 1);
-        r2 = 3.5; r3 = b.key; r4 = b;
+        r2 = 3.5; r3 = b.key + b.child; r4 = b;
         throwIf(when, 2);
-        r5 = false; r6 = c.child; r7 = [r0, r2];
+        r5 = false; r6 = c.child + c.flags; r7 = [r0, r2];
         throwIf(when, 3);
-        r8 = c.sibling; r9 = r0 / 4;
+        r8 = c.sibling + c.tag; r9 = r0 / 4;
         throwIf(when, 4);
     } catch (error) {
         return [describe(error), r0, r1, r2, String(r3), r4 === b ? "b" : String(r4), r5, r6 === a ? "a" : r6, r7.join("+"), typeof r8 === "object" ? "when " + r8.when : r8, Object.is(r9, -0) ? "-0" : r9].join();
@@ -287,13 +282,13 @@ function keepsManyRegisters(a, b, c, when) {
 function keepsManyRegistersByKey(a, b, c, when) {
     let r0 = 0, r1 = "one", r2 = 2.5, r3 = null, r4 = undefined, r5 = true, r6 = a, r7 = [when], r8 = { when }, r9 = -0;
     try {
-        r0 = 10; r1 = a[name(0)];
+        r0 = 10; r1 = a[name(0)] + a[name(1)];
         throwIf(when, 1);
-        r2 = 3.5; r3 = b[name(1)]; r4 = b;
+        r2 = 3.5; r3 = b[name(1)] + b[name(2)]; r4 = b;
         throwIf(when, 2);
-        r5 = false; r6 = c[name(2)]; r7 = [r0, r2];
+        r5 = false; r6 = c[name(2)] + c[name(4)]; r7 = [r0, r2];
         throwIf(when, 3);
-        r8 = c[name(3)]; r9 = r0 / 4;
+        r8 = c[name(3)] + c[name(0)]; r9 = r0 / 4;
         throwIf(when, 4);
     } catch (error) {
         return [describe(error), r0, r1, r2, String(r3), r4 === b ? "b" : String(r4), r5, r6 === a ? "a" : r6, r7.join("+"), typeof r8 === "object" ? "when " + r8.when : r8, Object.is(r9, -0) ? "-0" : r9].join();
@@ -470,12 +465,7 @@ if (isCompiled) {
             throw new Error("guards over the whole of " + byKey.name);
         if (!hasTwins) {
             if (hasGuards(guarded))
-                throw new Error("guards over the whole of " + guarded.name + " though the option is off");
-            continue;
-        }
-        if (!isOn) {
-            if (hasGuards(guarded) || !remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))
-                throw new Error(guarded.name + " has a handler and must be refused for it: " + about(guarded));
+                throw new Error("guards over the whole of " + guarded.name + " without data stubs");
             continue;
         }
         if (remarksOf(guarded).includes("no-guards-over-whole-function:has-handler"))

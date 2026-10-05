@@ -1,7 +1,6 @@
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1")
 //@ runDefault("--compileMainScriptAheadOfTime=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
-//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTFamilies=1", "--useAOTGuardsOverWholeFunctions=1", "--minimumAOTGuardsOverWholeFunction=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--validateGraphAtEachPhase=1", "--validateAOTInferredTypes=1")
+//@ runDefault("--compileMainScriptAheadOfTime=1", "--useAOTInlining=0", "--useAOTOperationCounters=1")
 function check(actual, expected, what) {
     if (!Object.is(actual, expected))
         throw new Error(what + ": " + String(actual) + " instead of " + String(expected));
@@ -19,12 +18,13 @@ function closesIterator(list) {
 }
 
 function makesWithNamesOfObjectPrototype(i) {
-    return { constructor: 1, hasOwnProperty: 2, isPrototypeOf: 3, propertyIsEnumerable: 4, toLocaleString: 5, toString: 6, valueOf: 7, __defineGetter__: 8, __defineSetter__: 9, __lookupGetter__: 10, __lookupSetter__: 11, behindEleven: i };
+    return { constructor: 1, hasOwnProperty: 2, isPrototypeOf: 3, propertyIsEnumerable: 4, toLocaleString: 5, toString: 6, valueOf: 7, __defineGetter__: 8, __defineSetter__: 9, __lookupGetter__: 10, __lookupSetter__: 11, behindEleven: i, behindTwelve: i + 1, behindThirteen: i + 2 };
 }
 function readsNamesOfObjectPrototype(o) {
     return o.constructor + o.hasOwnProperty + o.isPrototypeOf + o.propertyIsEnumerable + o.toLocaleString + o.toString + o.valueOf + o.__defineGetter__ + o.__defineSetter__ + o.__lookupGetter__ + o.__lookupSetter__;
 }
 function readsBehindEleven(o) { return o.behindEleven; }
+function readsAllBehindEleven(o) { return [o.behindEleven, o.behindTwelve, o.behindThirteen].join(); }
 
 for (let i = 0; i < 100; i++) {
     check(readsReturn(makesWithReturn(i)), 2 * i, "a field named return");
@@ -45,15 +45,15 @@ for (let i = 0; i < 100; i++) {
     let exits = () => countOf("exits-with-another-number") + countOf("exits-without-number") + countOf("exits-not-a-cell") + countOf("exits-departed");
     let before = [countOf("passes"), exits()];
     for (let i = 0; i < 100; i++)
-        check(readsBehindEleven(makesWithNamesOfObjectPrototype(i)), i, "a property behind names that get no place, counted");
-    if (countOf("passes") > before[0]) {
+        check(readsAllBehindEleven(makesWithNamesOfObjectPrototype(i)), [i, i + 1, i + 2].join(), "the properties behind names that get no place");
+    if (jscOptions().useAOTOperationCounters && jscOptions().useAOTDataStubs) {
         check(countOf("passes") - before[0] >= 100, true, "the guard passes objects with names that get no place");
         check(exits() - before[1], 0, "the guard fails on an object with names that get no place");
     }
     let parsed = JSON.parse('{"valueOf":1,"toString":2}');
     check(parsed.valueOf + parsed.toString, 3, "parsed properties with the names of Object.prototype");
 }
-if (aotRemarks("readsReturn") && jscOptions().useAOTFamilies && jscOptions().useAOTDataStubs) {
+if (aotRemarks("readsReturn") && jscOptions().useAOTDataStubs) {
     let has = (name, remark) => aotRemarks(name).includes(remark);
     let applies = (name, remark) => {
         if (!has(name, remark))
@@ -74,4 +74,8 @@ if (aotRemarks("readsReturn") && jscOptions().useAOTFamilies && jscOptions().use
         doesNotApply("readsNamesOfObjectPrototype", "guessed-place:" + name);
     applies("readsNamesOfObjectPrototype", "no-guess:no-shape");
     applies("readsBehindEleven", "guessed-place:behindEleven");
+    applies("readsAllBehindEleven", "guards-over-whole-function");
+    for (let name of ["behindEleven", "behindTwelve", "behindThirteen"])
+        applies("readsAllBehindEleven", "family-guards-read:" + name);
+    doesNotApply("readsNamesOfObjectPrototype", "guards-over-whole-function");
 }
