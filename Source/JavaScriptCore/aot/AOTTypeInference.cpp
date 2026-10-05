@@ -655,7 +655,11 @@ public:
                 Type narrowedTo = i ? tested.ifFalse : tested.ifTrue;
                 if (!mayBe(tested.value->type, narrowedTo))
                     continue;
-                if (!isWorthNarrowing(tested.value->type, tested.value->type & narrowedTo) && !isWorthNarrowing(typeTested, typeTested & narrowedTo))
+                auto isWorthNarrowingFrom = [&](Type type) {
+                    Type narrowed = type & narrowedTo;
+                    return isWorthNarrowing(type, narrowed) || (narrowed != type && isWorthNarrowing(narrowed | (TAll & ~narrowedTo), narrowed));
+                };
+                if (!isWorthNarrowingFrom(tested.value->type) && !isWorthNarrowingFrom(typeTested))
                     continue;
                 if (!std::exchange(hasDominators, true))
                     m_graph.computeDominators();
