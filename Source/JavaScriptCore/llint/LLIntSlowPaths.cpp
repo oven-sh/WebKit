@@ -2605,7 +2605,7 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
     if (!buffer)
         LLINT_END();
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+        profile.sample(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
     LLINT_END();

@@ -3254,7 +3254,7 @@ JSC_DEFINE_JIT_OPERATION(operationTryOSREnterAtCatchAndValueProfile, UGPRPair, (
     if (!buffer)
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+        profile.sample(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
     OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));

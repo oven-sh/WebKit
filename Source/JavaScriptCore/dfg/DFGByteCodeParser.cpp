@@ -10207,18 +10207,16 @@ void ByteCodeParser::parseBlock(unsigned limit)
                 NEXT_OPCODE(op_catch); // This catch has yet to execute. Note: this load can be racy with the main thread.
             }
 
-            // We're now committed to compiling this as an entrypoint.
-            m_currentBlock->isCatchEntrypoint = true;
-            m_graph.m_roots.append(m_currentBlock);
-
             Vector<SpeculatedType> argumentPredictions(m_numArguments);
             Vector<SpeculatedType> localPredictions;
             UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> seenArguments;
+            bool everyOperandIsSampled = true;
 
             {
                 buffer->forEach([&](ValueProfileAndVirtualRegister& profile) {
                     VirtualRegister operand(profile.m_operand);
                     SpeculatedType prediction = profile.computeUpdatedPrediction();
+                    everyOperandIsSampled &= prediction != SpecNone;
                     if (operand.isLocal())
                         localPredictions.append(prediction);
                     else {
@@ -10235,6 +10233,16 @@ void ByteCodeParser::parseBlock(unsigned limit)
                         RELEASE_ASSERT(seenArguments.contains(argument));
                 }
             }
+
+            if (!everyOperandIsSampled) {
+                // Options::useLazyCatchLiveness() creates the buffer apart from an execution of the catch. Later phases
+                // take SpecNone for code that never ran and convert such a value without a check.
+                NEXT_OPCODE(op_catch);
+            }
+
+            // We're now committed to compiling this as an entrypoint.
+            m_currentBlock->isCatchEntrypoint = true;
+            m_graph.m_roots.append(m_currentBlock);
 
             // We're not allowed to exit here since we would not properly recover values.
             // We first need to bootstrap the catch entrypoint state.
