@@ -187,7 +187,7 @@ static uint32_t counterOfExits(Node* guard)
 void Lowering::emitGuard(Node* guard)
 {
     LBasicBlock uncountedExit = m_exit;
-    if (uncountedExit && Options::useAOTTypeCoverageCounters()) [[unlikely]]
+    if (uncountedExit && Options::useAOTTypeCoverageCounters() && Options::aotTypeCoveragePath()) [[unlikely]]
         m_exit = newColdBlock();
     auto countExits = makeScopeExit([&] {
         if (m_exit == uncountedExit)
