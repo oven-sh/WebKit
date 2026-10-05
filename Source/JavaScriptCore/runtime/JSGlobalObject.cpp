@@ -2559,6 +2559,12 @@ template void JSGlobalObject::createGlobalFunctionBinding<BindingCreationContext
 
 void JSGlobalObject::addSymbolTableEntry(const Identifier& ident)
 {
+    // The entry is an own property that the Structure does not record. Inline caches and DFG code hold
+    // "this is not an own property" against a Structure only while it is not a dictionary, so leave such
+    // a Structure first. This allocates and fires watchpoints: it cannot run under the symbol table's lock.
+    if (!structure()->isDictionary())
+        convertToDictionary(vm());
+
     ConcurrentJSLocker locker(symbolTable()->m_lock);
     ASSERT(!symbolTable()->contains(locker, ident.impl()));
 
@@ -3309,6 +3315,9 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
 
 void JSGlobalObject::addStaticGlobals(std::span<GlobalPropertyInfo> globals)
 {
+    // See addSymbolTableEntry(). This runs while the global object is created: init() has made it a dictionary.
+    ASSERT(structure()->isDictionary());
+
     ScopeOffset startOffset = addVariables(globals.size(), jsUndefined());
 
     for (auto [i, global] : indexedRange(globals)) {
