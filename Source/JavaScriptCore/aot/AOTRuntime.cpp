@@ -2203,6 +2203,10 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         return no("it is not a plain object"_s);
     if (old->typedLayoutID())
         return no("it already has the layout of another type"_s);
+    if (old->hasStableFields())
+        return no("its fields may not move"_s);
+    if (TypedLayoutTable::isGivenOnlyAtBirth(layoutID))
+        return no("the layout is given only at birth"_s);
     if (!capacity)
         return no("the type has no layout"_s);
     unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);

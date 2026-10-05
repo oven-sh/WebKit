@@ -266,6 +266,8 @@ struct TypedLayoutTable {
     static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
     static constexpr uint32_t isInstanceLayoutBit = 1u << 31;
     static bool isInstanceLayout(uint16_t typedLayoutID) { return typedLayoutID < s_count && (s_index[typedLayoutID] & isInstanceLayoutBit); }
+    static bool isGivenOnlyAtBirth(uint16_t typedLayoutID) { return s_isGivenOnlyAtBirth[typedLayoutID / 64].load(std::memory_order_relaxed) & (1ull << (typedLayoutID % 64)); }
+    static void setIsGivenOnlyAtBirth(uint16_t typedLayoutID) { s_isGivenOnlyAtBirth[typedLayoutID / 64].fetch_or(1ull << (typedLayoutID % 64), std::memory_order_relaxed); }
     static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
     {
         if (value.isInt32())
@@ -311,6 +313,7 @@ private:
     JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
     static ConvertFunction s_convert;
     JS_EXPORT_PRIVATE static bool s_isAuditing;
+    JS_EXPORT_PRIVATE static std::atomic<uint64_t> s_isGivenOnlyAtBirth[(std::numeric_limits<uint16_t>::max() + 1) / 64];
 };
 #endif
 
@@ -440,6 +443,11 @@ public:
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
     JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
+    JS_EXPORT_PRIVATE static Structure* createWithStableFields(VM&, JSGlobalObject*, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID = 0);
+    JS_EXPORT_PRIVATE static Structure* createWithImmutableShape(VM&, JSGlobalObject*, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID = 0);
+    JS_EXPORT_PRIVATE void makeFieldsStable();
+    unsigned numberOfStableFields() const { return m_numberOfStableFields; }
+    bool isStableField(PropertyOffset offset) const { return static_cast<unsigned>(offset) < m_numberOfStableFields; }
     void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
     {
         setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
@@ -1020,6 +1028,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
     DEFINE_BITFIELD(bool, didConvertFirstObjectToDictionary, DidConvertFirstObjectToDictionary, 1, 10);
+    DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
+    DEFINE_BITFIELD(bool, hasStableFields, HasStableFields, 1, 12);
 #endif
 
     enum class StructureVariant : uint8_t {
@@ -1196,6 +1206,9 @@ private:
 #endif
 
     uint32_t m_propertyHash;
+#if USE(BUN_JSC_ADDITIONS)
+    uint8_t m_numberOfStableFields { 0 };
+#endif
     SeenProperties m_seenProperties;
 
     WriteBarrier<JSGlobalObject> m_realm;

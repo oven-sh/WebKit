@@ -100,6 +100,8 @@ static bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, 
 {
     Structure* targetStructure = target->structure();
     Structure* sourceStructure = source->structure();
+    if (targetStructure->hasImmutableShape())
+        return false;
     if (targetStructure->isDictionary() || !targetStructure->isStructureExtensible() || targetStructure->hasPolyProto()) {
         countOperationNamed(instance, operation, targetStructure->isDictionary() ? "target-is-dictionary" : !targetStructure->isStructureExtensible() ? "target-is-not-extensible" : "target-has-poly-proto");
         return false;
@@ -522,7 +524,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutProperties, void, (Instance* instance, E
         JSObject* object = asObject(base);
         Structure* structure = object->structure();
         bool becomesDictionary = structure->transitionCountEstimate() > Structure::s_maxTransitionLength || (!plan.isDefined(0) && structure->mayConvertFirstObjectToDictionaryForAdd(vm));
-        if (!becomesDictionary && !structure->isDictionary() && structure->isStructureExtensible() && !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) && !structure->hasPolyProto() && !structure->mayBePrototype()) {
+        if (!becomesDictionary && !structure->isDictionary() && structure->isStructureExtensible() && !structure->hasImmutableShape() && !(structure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) && !structure->hasPolyProto() && !structure->mayBePrototype()) {
             auto& target = instance->propertyRunTarget(structure, plan.words, [&](Vector<UniquedStringImpl*, 16>& names) {
                 for (unsigned i = 0; i < count; ++i)
                     names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
@@ -1727,7 +1729,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDefineDataPropertyOnSingleton, void, (Insta
     AOT_OPERATION_BEGIN(instance);
     auto key = JSValue::decode(property).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (Structure* structure = base->structure(); base->type() == FinalObjectType && !structure->isDictionary() && !structure->hasBeenFlattenedBefore())
+    if (Structure* structure = base->structure(); base->type() == FinalObjectType && !structure->isDictionary() && !structure->hasBeenFlattenedBefore() && !structure->hasImmutableShape())
         base->convertToDictionary(vm);
     PropertyDescriptor descriptor = toPropertyDescriptor(JSValue::decode(value), jsUndefined(), jsUndefined(), DefinePropertyAttributes(attributes));
     base->methodTable()->defineOwnProperty(base, globalObject, key, descriptor, true);

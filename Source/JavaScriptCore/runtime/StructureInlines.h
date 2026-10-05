@@ -405,6 +405,9 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
 template<typename Func>
 inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasImmutableShape());
+#endif
     return add<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
@@ -412,7 +415,7 @@ inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyNa
 template<typename Func>
 inline void Structure::movePropertyOutOfLineWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
 {
-    RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_typedLayoutID);
+    RELEASE_ASSERT(isUncacheableDictionary() && isPinnedPropertyTable() && m_typedLayoutID && !hasStableFields());
     PropertyTable* table = ensurePropertyTable(vm);
     GCSafeConcurrentJSLocker locker(m_lock, vm);
     checkConsistency();
@@ -429,6 +432,9 @@ inline void Structure::movePropertyOutOfLineWithoutTransition(VM& vm, PropertyNa
 template<typename Func>
 inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasStableFields() || (!hasImmutableShape() && !isStableField(get(vm, propertyName))));
+#endif
     ASSERT(isUncacheableDictionary());
     ASSERT(isPinnedPropertyTable());
     ASSERT(propertyTableOrNull());
@@ -498,12 +504,18 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
 template<typename Func>
 inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasStableFields() || (!hasImmutableShape() && (!(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || !isStableField(get(vm, propertyName)))));
+#endif
     return attributeChange<ShouldPin::Yes>(vm, propertyName, attributes, func);
 }
 
 ALWAYS_INLINE void Structure::setPrototypeWithoutTransition(VM& vm, JSValue prototype)
 {
     ASSERT(isValidPrototype(prototype));
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!hasImmutableShape());
+#endif
     m_prototype.set(vm, this, prototype);
 }
 

@@ -461,8 +461,13 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     if (error.characters() == TypedFieldError.characters() && !error.isNull()) [[unlikely]]
         return typeError(globalObject, scope, true, TypedLayoutTable::describeRejectedStore(vm, structure(), propertyName.uid(), value));
 #endif
-    if (!error.isNull())
+    if (!error.isNull()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (error.characters() == ImmutableShapeError.characters())
+            RELEASE_AND_RETURN(scope, false);
+#endif
         return typeError(globalObject, scope, slot.isStrictMode() || error.characters() == TypedFieldOfInheritorError.characters(), error);
+    }
     return true;
 }
 
@@ -525,7 +530,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
         }
     } else if constexpr (mode == PutModeDefineOwnProperty) {
-        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID) [[unlikely]]
+        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID && !this->structure()->hasStableFields()) [[unlikely]]
             evictTypedField(vm, propertyName);
     }
     if (this->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
@@ -548,6 +553,13 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (auto* fieldType = TypedLayoutTable::fieldTypeOf(field))
             packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
         return false;
+    };
+    auto refusesAttributes = [&](Structure* candidateStructure, PropertyOffset where, unsigned currentAttributes) {
+        if (mode != PutModeDefineOwnProperty || (newAttributes == currentAttributes && !(newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) [[likely]]
+            return false;
+        if (!candidateStructure->hasStableFields()) [[likely]]
+            return false;
+        return candidateStructure->hasImmutableShape() || (candidateStructure->isStableField(where) && (newAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue));
     };
 #endif
     StructureID structureID = this->structureID();
@@ -586,9 +598,13 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
             bool slotIsTyped = false;
 #if USE(BUN_JSC_ADDITIONS)
+            if (refusesAttributes(structure, offset, attributes)) [[unlikely]]
+                return throwImmutableShapeError(vm);
             if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
                 auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
                 if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                    if (structure->hasStableFields())
+                        return TypedFieldError;
                     evictTypedField(vm, propertyName);
                     return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
                 }
@@ -671,11 +687,15 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         bool slotIsTyped = false;
 #if USE(BUN_JSC_ADDITIONS)
+        if (refusesAttributes(structure, offset, currentAttributes)) [[unlikely]]
+            return throwImmutableShapeError(vm);
         if (isRejectedAtOffset(structure, offset)) [[unlikely]]
             return TypedFieldError;
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
             auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
             if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                if (structure->hasStableFields())
+                    return TypedFieldError;
                 evictTypedField(vm, propertyName);
                 return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
             }
@@ -706,6 +726,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         return { };
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]]
+        return throwImmutableShapeError(vm);
+#endif
 
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
@@ -1139,6 +1164,13 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return;
+    }
+#endif
 
     scope.release();
 

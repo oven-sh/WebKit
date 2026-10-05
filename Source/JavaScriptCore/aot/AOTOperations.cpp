@@ -740,7 +740,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTVerifyGuardedRead, void, (Instance* instanc
     RELEASE_ASSERT(base.isObject());
     unsigned attributes = 0;
     PropertyOffset offset = base.asCell()->structure()->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !attributes);
+    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue));
+    RELEASE_ASSERT(!attributes || base.asCell()->structure()->isStableField(offset));
     OPERATION_RETURN(scope);
 }
 
@@ -785,8 +786,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTVerifyGuardedStore, void, (Instance* instan
     Structure* structure = base.asCell()->structure();
     unsigned attributes = 0;
     PropertyOffset offset = structure->get(vm, identifierAt(instance, callFrame, identifierIndex), attributes);
-    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !attributes);
-    RELEASE_ASSERT(!structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype());
+    RELEASE_ASSERT(static_cast<unsigned>(offset) == slot && !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue));
+    RELEASE_ASSERT(structure->isStableField(offset) || (!attributes && !structure->isDictionary() && structure->propertyAccessesAreCacheable() && !structure->mayBePrototype()));
     RELEASE_ASSERT(!structure->typedLayoutID() || !TypedLayoutTable::hasTypedFields());
     WatchpointSet* replacements = structure->propertyReplacementWatchpointSet(offset);
     RELEASE_ASSERT(!replacements || !replacements->isStillValid());

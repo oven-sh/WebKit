@@ -327,7 +327,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
 #if USE(BUN_JSC_ADDITIONS)
-    if (targetCanPerformFastPut && (targetObject->structure()->mayBePrototype() || targetObject->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+    if (targetCanPerformFastPut && (targetObject->structure()->hasImmutableShape() || ((targetObject->structure()->mayBePrototype() || targetObject->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields()))) [[unlikely]]
         targetCanPerformFastPut = false;
 #endif
     unsigned argsCount = callFrame->argumentCount();
@@ -1161,6 +1161,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
         object->seal(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 
@@ -1194,6 +1195,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
         object->freeze(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 

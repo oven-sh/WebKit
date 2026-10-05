@@ -71,6 +71,7 @@ const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
 const ASCIILiteral TypedFieldOfInheritorError { "Type check failed: a prototype of typed objects must be an ordinary object without a property named like one of their fields"_s };
+const ASCIILiteral ImmutableShapeError { "Attempting to change the shape of an object whose shape is immutable."_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -1901,7 +1902,7 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousJSValues();
         return createInitialInt32(vm, 0);
         
@@ -1939,7 +1940,7 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousDoubles();
         return createInitialDouble(vm, 0);
         
@@ -1978,7 +1979,7 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousJSValues();
         return createInitialContiguous(vm, 0);
         
@@ -2004,7 +2005,7 @@ ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
 {
     ASSERT(inherits(info()));
 
-    if (structure()->hijacksIndexingHeader())
+    if (structure()->hijacksIndexingHeader() || structure()->hasImmutableShape())
         return nullptr;
 
     ensureWritable(vm);
@@ -2121,6 +2122,13 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        if (getPrototypeDirect() != prototype)
+            throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     if (prototype.isObject())
         asObject(prototype)->didBecomePrototype(vm);
     else if (!prototype.isNull()) [[unlikely]] // Conservative hardening.
@@ -2172,6 +2180,13 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 
     if (this->getPrototypeDirect() == prototype)
         return true;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return false;
+    }
+#endif
 
     bool isExtensible = this->isExtensible(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -2270,6 +2285,8 @@ bool JSObject::putDirectCustomAccessor(VM& vm, PropertyName propertyName, JSValu
 
     PutPropertySlot slot(this);
     bool result = putDirectInternal<PutModeDefineOwnProperty>(vm, propertyName, value, attributes, slot).isNull();
+    if (!result) [[unlikely]]
+        return false;
 
     ASSERT(slot.type() == PutPropertySlot::NewProperty);
 
@@ -2398,6 +2415,13 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 
     bool propertyIsPresent = isValidOffset(structure->get(vm, propertyName, attributes));
     if (propertyIsPresent) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (structure->hasStableFields() && (structure->hasImmutableShape() || structure->isStableField(structure->get(vm, propertyName)))) [[unlikely]] {
+            slot.setNonconfigurable();
+            thisObject->throwImmutableShapeError(vm);
+            return false;
+        }
+#endif
         if (attributes & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
             slot.setNonconfigurable();
             return false;
@@ -2954,6 +2978,12 @@ void JSObject::seal(VM& vm)
 {
     if (isSealed(vm))
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     {
@@ -2995,6 +3025,12 @@ void JSObject::freeze(VM& vm)
 {
     if (isFrozen(vm))
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasStableFields()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     {
@@ -3030,6 +3066,13 @@ bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
         // that way in the specification. We are just doing an optimization here.
         return true;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (object->structure()->hasImmutableShape()) [[unlikely]] {
+        object->throwImmutableShapeError(vm);
+        return false;
+    }
+#endif
 
     object->enterDictionaryIndexingMode(vm);
     {
@@ -3158,6 +3201,13 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     ASSERT(index <= MAX_ARRAY_INDEX);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return false;
+    }
+#endif
 
     if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
         return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
@@ -3516,6 +3566,17 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES: {
+#if USE(BUN_JSC_ADDITIONS)
+        if (structure()->hasImmutableShape()) [[unlikely]] {
+            bool putResult = false;
+            bool isIntercepted = attemptToInterceptPutByIndexOnHole(globalObject, i, value, shouldThrow, putResult);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isIntercepted)
+                return putResult;
+            throwTypeError(globalObject, scope, ImmutableShapeError);
+            return false;
+        }
+#endif
         if (indexingShouldBeSparse()) {
             if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
                 return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
@@ -3672,6 +3733,13 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
     // i should be a valid array index that is outside of the current vector.
     ASSERT(i <= MAX_ARRAY_INDEX);
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return false;
+    }
+#endif
+
     if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor))
         notifyPresenceOfIndexedAccessors(vm);
     
@@ -4105,6 +4173,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
                 JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
                 isApplied = object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
             }
+            RETURN_IF_EXCEPTION(scope, false);
             if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
                 return typeError(globalObject, scope, throwException, TypedFieldError);
 #if USE(BUN_JSC_ADDITIONS)
@@ -4185,6 +4254,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
         isApplied = object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
+    RETURN_IF_EXCEPTION(scope, false);
     if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
         return typeError(globalObject, scope, throwException, TypedFieldError);
 
@@ -4219,6 +4289,16 @@ bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject,
     
     return object->defineOwnNonIndexProperty(globalObject, propertyName, descriptor, throwException);
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+ASCIILiteral JSObject::throwImmutableShapeError(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!scope.exception()) [[likely]]
+        throwTypeError(realm(), scope, ImmutableShapeError);
+    return ImmutableShapeError;
+}
+#endif
 
 void JSObject::convertToDictionary(VM& vm)
 {
@@ -4392,7 +4472,7 @@ bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
+    if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->hasImmutableShape() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);
 

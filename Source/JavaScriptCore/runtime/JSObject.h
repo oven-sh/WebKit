@@ -78,6 +78,7 @@ extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldOfInheritorError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutableShapeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError;
@@ -575,6 +576,9 @@ public:
     JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE ASCIILiteral throwImmutableShapeError(VM&);
+#endif
 
     void flattenDictionaryObject(VM& vm)
     {

@@ -553,6 +553,12 @@ static JSC_DECLARE_HOST_FUNCTION(functionAOTTypeCoverage);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTSetFamily);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTFamilyOf);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTHasDepartedFamily);
+static JSC_DECLARE_HOST_FUNCTION(functionObjectWithStableFields);
+static JSC_DECLARE_HOST_FUNCTION(functionObjectWithImmutableShape);
+static JSC_DECLARE_HOST_FUNCTION(functionMakeFieldsStable);
+static JSC_DECLARE_HOST_FUNCTION(functionHasStableFields);
+static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableShape);
+static JSC_DECLARE_HOST_FUNCTION(functionSetLayoutIsGivenOnlyAtBirth);
 static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
 static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
@@ -937,6 +943,12 @@ private:
         addFunction(vm, "aotSetFamily"_s, functionAOTSetFamily, 2);
         addFunction(vm, "aotFamilyOf"_s, functionAOTFamilyOf, 1);
         addFunction(vm, "aotHasDepartedFamily"_s, functionAOTHasDepartedFamily, 1);
+        addFunction(vm, "objectWithStableFields"_s, functionObjectWithStableFields, 2);
+        addFunction(vm, "objectWithImmutableShape"_s, functionObjectWithImmutableShape, 2);
+        addFunction(vm, "makeFieldsStable"_s, functionMakeFieldsStable, 1);
+        addFunction(vm, "hasStableFields"_s, functionHasStableFields, 1);
+        addFunction(vm, "hasImmutableShape"_s, functionHasImmutableShape, 1);
+        addFunction(vm, "setLayoutIsGivenOnlyAtBirth"_s, functionSetLayoutIsGivenOnlyAtBirth, 1);
         addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
         addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
@@ -3150,6 +3162,78 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTHasDepartedFamily, (JSGlobalObject* globalOb
     UNUSED_PARAM(callFrame);
 #endif
     return JSValue::encode(jsNull());
+}
+
+static EncodedJSValue copyWithShape(JSGlobalObject* globalObject, CallFrame* callFrame, Structure* (*createStructure)(VM&, JSGlobalObject*, JSValue, std::span<UniquedStringImpl* const>, uint16_t))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* source = callFrame->argument(0).getObject();
+    JSValue prototype = callFrame->argumentCount() > 1 ? callFrame->uncheckedArgument(1) : JSValue(globalObject->objectPrototype());
+    if (!source || (!prototype.isObject() && !prototype.isNull()))
+        return throwVMTypeError(globalObject, scope, "Expected an object, and an object or null as its prototype"_s);
+    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    source->methodTable()->getOwnPropertyNames(source, globalObject, properties, DontEnumPropertiesMode::Exclude);
+    RETURN_IF_EXCEPTION(scope, { });
+    Vector<UniquedStringImpl*, 16> names;
+    MarkedArgumentBuffer values;
+    for (auto& property : properties) {
+        if (parseIndex(property))
+            return throwVMTypeError(globalObject, scope, "An index is not the name of a field"_s);
+        names.append(property.impl());
+        values.append(source->get(globalObject, property));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    Structure* structure = createStructure(vm, globalObject, prototype, names.span(), 0);
+    if (!structure)
+        return throwVMTypeError(globalObject, scope, "Too many fields"_s);
+    JSObject* result = JSFinalObject::create(vm, structure);
+    for (unsigned slot = 0; slot < names.size(); ++slot)
+        result->putDirectOffset(vm, slot, values.at(slot));
+    return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionObjectWithStableFields, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return copyWithShape(globalObject, callFrame, Structure::createWithStableFields);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionObjectWithImmutableShape, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    return copyWithShape(globalObject, callFrame, Structure::createWithImmutableShape);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionMakeFieldsStable, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object || object->type() != FinalObjectType)
+        return JSValue::encode(jsBoolean(false));
+    Structure* structure = object->structure();
+    if (structure->isDictionary() || structure->hasStableFields() || (structure->maxOffset() != invalidOffset && !isInlineOffset(structure->maxOffset())))
+        return JSValue::encode(jsBoolean(false));
+    structure->makeFieldsStable();
+    return JSValue::encode(jsBoolean(true));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasStableFields, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->hasStableFields()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionHasImmutableShape, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && object->structure()->hasImmutableShape()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetLayoutIsGivenOnlyAtBirth, (JSGlobalObject*, CallFrame* callFrame))
+{
+    JSValue layoutID = callFrame->argument(0);
+    if (!layoutID.isUInt32() || layoutID.asUInt32() > std::numeric_limits<uint16_t>::max())
+        return JSValue::encode(jsBoolean(false));
+    TypedLayoutTable::setIsGivenOnlyAtBirth(layoutID.asUInt32());
+    return JSValue::encode(jsBoolean(true));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))

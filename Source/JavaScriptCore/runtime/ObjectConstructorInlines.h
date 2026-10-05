@@ -149,6 +149,11 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetStructure->hasStableFields() || sourceStructure->hasStableFields())
+        return false;
+#endif
+
     if (targetStructure->seenProperties().bits()) {
         dataLogLnIf(verbose, "target already has properties");
         return false;
@@ -239,6 +244,11 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (sourceStructure->hasStableFields())
+        return nullptr;
+#endif
+
     // If the sourceStructure is frozen, we retrieve the last one before freezing.
     if (sourceStructure->transitionKind() == TransitionKind::Freeze) {
         dataLogLnIf(verbose, "source was frozen. Let's look into the previous structure");
@@ -307,7 +317,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     values.clear();
 
 #if USE(BUN_JSC_ADDITIONS)
-    if ((target->structure()->mayBePrototype() || target->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+    if (target->structure()->hasImmutableShape() || ((target->structure()->mayBePrototype() || target->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields())) [[unlikely]]
         return false;
 #endif
 

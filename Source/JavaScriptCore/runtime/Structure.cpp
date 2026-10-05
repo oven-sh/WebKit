@@ -339,6 +339,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     , m_typedLayoutID(previous->m_typedLayoutID)
 #endif
     , m_propertyHash(previous->m_propertyHash)
+#if USE(BUN_JSC_ADDITIONS)
+    , m_numberOfStableFields(previous->m_numberOfStableFields)
+#endif
     , m_seenProperties(previous->m_seenProperties)
     , m_prototype(previous->m_prototype.get(), WriteBarrierEarlyInit)
     , m_classInfo(previous->m_classInfo)
@@ -365,6 +368,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setProtectPropertyTableWhileTransitioning(false);
     setInheritorsMayOverrideReadOnlyProperties(previous->inheritorsMayOverrideReadOnlyProperties());
     setDidConvertFirstObjectToDictionary(previous->didConvertFirstObjectToDictionary());
+    setHasStableFields(previous->hasStableFields());
+    if (previous->hasStableFields())
+        m_family = previous->m_family;
     setTransitionOffset(vm, invalidOffset);
     setMaxOffset(vm, invalidOffset);
  
@@ -373,6 +379,9 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     m_outOfLineTypeFlags = typeInfo.outOfLineTypeFlags();
 
     ASSERT(!previous->typeInfo().structureIsImmortal());
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!previous->hasImmutableShape());
+#endif
     setPreviousID(vm, previous);
 #if USE(BUN_JSC_ADDITIONS)
     if (m_typedLayoutID) [[unlikely]]
@@ -505,6 +514,40 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     }
     result->setDidTransition(!names.empty());
     result->checkOffsetConsistency();
+    return result;
+}
+
+Structure* Structure::createWithStableFields(VM& vm, JSGlobalObject* globalObject, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID)
+{
+    if (namesInSlotOrder.size() > JSFinalObject::maxInlineCapacity)
+        return nullptr;
+    unsigned numberOfSlots = namesInSlotOrder.size();
+    Vector<uint16_t, 16> slots;
+    for (unsigned slot = 0; slot < numberOfSlots; ++slot)
+        slots.append(slot);
+    Structure* result = createWithProperties(vm, JSFinalObject::createStructure(vm, globalObject, prototype, numberOfSlots), namesInSlotOrder, slots.span(), numberOfSlots, numberOfSlots);
+    if (!result)
+        return nullptr;
+    if (typedLayoutID)
+        result->setTypedLayoutID(typedLayoutID);
+    result->makeFieldsStable();
+    return result;
+}
+
+void Structure::makeFieldsStable()
+{
+    RELEASE_ASSERT(!isDictionary() && !hasStableFields() && (maxOffset() == invalidOffset || isInlineOffset(maxOffset())));
+    m_numberOfStableFields = maxOffset() + 1;
+    setHasStableFields(true);
+}
+
+Structure* Structure::createWithImmutableShape(VM& vm, JSGlobalObject* globalObject, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID)
+{
+    Structure* result = createWithStableFields(vm, globalObject, prototype, namesInSlotOrder, typedLayoutID);
+    if (!result)
+        return nullptr;
+    result->setMayBePrototype(true);
+    result->setHasImmutableShape(true);
     return result;
 }
 
@@ -754,8 +797,11 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
 Structure* Structure::removePropertyTransition(VM& vm, Structure* structure, PropertyName propertyName, PropertyOffset& offset, DeferredStructureTransitionWatchpointFire* deferred)
 {
 #if ENABLE(AOT)
-    if (structure->m_family) [[unlikely]]
+    if (structure->m_family && !structure->hasStableFields()) [[unlikely]]
         AOT::noteDepartureFromFamily(vm, structure->m_family, "deletion");
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!structure->hasStableFields() || !structure->isStableField(structure->get(vm, propertyName)));
 #endif
     Structure* newStructure = removePropertyTransitionFromExistingStructure(structure, propertyName, offset);
     if (newStructure)
@@ -856,7 +902,7 @@ Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JS
 {
     ASSERT(isValidPrototype(prototype));
 #if ENABLE(AOT)
-    if (structure->m_family) [[unlikely]]
+    if (structure->m_family && !structure->hasStableFields()) [[unlikely]]
         AOT::noteDepartureFromFamily(vm, structure->m_family, "change-of-prototype");
 #endif
 
@@ -944,8 +990,11 @@ Structure* Structure::attributeChangeTransitionToExistingStructureConcurrently(S
 Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, PropertyName propertyName, unsigned attributes, DeferredStructureTransitionWatchpointFire* deferred)
 {
 #if ENABLE(AOT)
-    if (structure->m_family) [[unlikely]]
+    if (structure->m_family && !structure->hasStableFields()) [[unlikely]]
         AOT::noteDepartureFromFamily(vm, structure->m_family, "attributes");
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!structure->hasStableFields() || !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || !structure->isStableField(structure->get(vm, propertyName)));
 #endif
     if (structure->isUncacheableDictionary()) {
         structure->attributeChangeWithoutTransition(vm, propertyName, attributes, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
@@ -1008,7 +1057,7 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
 {
     ASSERT(!structure->isUncacheableDictionary());
 #if ENABLE(AOT)
-    if (structure->m_family) [[unlikely]]
+    if (structure->m_family && !structure->hasStableFields()) [[unlikely]]
         AOT::noteDepartureFromFamily(vm, structure->m_family, "dictionary");
 #endif
     DeferGC deferGC(vm);
@@ -1078,7 +1127,7 @@ PropertyTable* Structure::takePropertyTableOrCloneIfPinned(VM& vm)
 Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, TransitionKind transitionKind, DeferredStructureTransitionWatchpointFire* deferred)
 {
 #if ENABLE(AOT)
-    if (structure->m_family) [[unlikely]] {
+    if (structure->m_family && !structure->hasStableFields()) [[unlikely]] {
         const char* road = "indexed-storage";
         switch (transitionKind) {
         case TransitionKind::PreventExtensions:
@@ -1101,6 +1150,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         }
         AOT::noteDepartureFromFamily(vm, structure->m_family, road);
     }
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    RELEASE_ASSERT(!structure->hasStableFields() || (transitionKind != TransitionKind::Freeze && transitionKind != TransitionKind::MakePropertiesImmutable));
 #endif
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
@@ -1224,7 +1276,7 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
     PropertyTable* table = nullptr;
     size_t beforeOutOfLineCapacity = this->outOfLineCapacity();
     size_t afterOutOfLineCapacity = beforeOutOfLineCapacity;
-    bool movesProperties = isUncacheableDictionary() && !typedLayoutID();
+    bool movesProperties = isUncacheableDictionary() && !typedLayoutID() && !hasStableFields();
     if (movesProperties) {
         table = propertyTableOrNull();
         ASSERT(table);
@@ -1359,6 +1411,7 @@ const uint16_t* TypedLayoutTable::s_layoutIDByFieldID;
 const uint8_t* TypedLayoutTable::s_inlineSlots;
 TypedLayoutTable::ConvertFunction TypedLayoutTable::s_convert;
 bool TypedLayoutTable::s_isAuditing;
+std::atomic<uint64_t> TypedLayoutTable::s_isGivenOnlyAtBirth[(std::numeric_limits<uint16_t>::max() + 1) / 64];
 ASCIILiteral TypedLayoutTable::s_lastConversionFailure;
 
 void TypedLayoutTable::setSlotTypes(std::span<const uint32_t> index, const FieldType* fieldType)
