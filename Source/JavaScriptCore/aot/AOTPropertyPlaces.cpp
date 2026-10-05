@@ -582,6 +582,8 @@ void Graph::noteBirths()
         bool isDerived = constructor->constructorKind() == ConstructorKind::Extends;
         if (isDerived ? !definition.parentConstructor : !definition.fieldInitializer)
             continue;
+        if (!isDerived && namesStoredOnThis(m_vm, constructor, nullptr))
+            continue;
         std::optional<NamesStoredOnThis> fromFieldInitializer;
         if (definition.fieldInitializer) {
             fromFieldInitializer = namesStoredOnThis(m_vm, definition.fieldInitializer, nullptr);
