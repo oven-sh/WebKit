@@ -93,9 +93,16 @@ static Vector<std::pair<size_t, String>> getRegularExpressionMatchesByLines(cons
         size_t nextStart = endings[lineNumber];
         auto line = StringView(text).substring(start, nextStart - start);
 
+        int position;
         int matchLength;
-        if (regex.match(line, 0, &matchLength) != -1)
+        switch (regex.match(line, 0, position, matchLength)) {
+        case MatchStatus::Match:
             result.append({ lineNumber, line.toString() });
+            break;
+        case MatchStatus::NoMatch:
+        case MatchStatus::Abandoned: // The search protocol has no error for it: the line is left out.
+            break;
+        }
 
         start = nextStart;
     }
@@ -147,7 +154,16 @@ bool searcherMatchesText(const Searcher& searcher, const String& text)
             return string == text;
         },
         [&] (const RegularExpression& regex) {
-            return regex.match(text) != -1;
+            int position;
+            int matchLength;
+            switch (regex.match(text, 0, position, matchLength)) {
+            case MatchStatus::Match:
+                return true;
+            case MatchStatus::NoMatch:
+            case MatchStatus::Abandoned: // No caller can report it: the text does not match.
+                return false;
+            }
+            RELEASE_ASSERT_NOT_REACHED();
         });
 }
 
@@ -182,7 +198,8 @@ int countRegularExpressionMatches(const RegularExpression& regex, const String& 
     int position;
     unsigned start = 0;
     int matchLength;
-    while ((position = regex.match(content, start, &matchLength)) != -1) {
+    // An abandoned search ends the count the way a miss does: the matches before it are counted.
+    while (regex.match(content, start, position, matchLength) == MatchStatus::Match) {
         if (start >= content.length())
             break;
         if (matchLength > 0)
@@ -218,8 +235,8 @@ static String findMagicComment(const String& content, ASCIILiteral patternString
 
     ASSERT(pattern.m_numSubpatterns == 1);
     std::array<unsigned, 4> matches;
-    unsigned result = interpret(bytecodePattern.get(), content, 0, matches.data());
-    if (result == offsetNoMatch)
+    // Abandoned or not, a search with no match found has no comment to return.
+    if (interpret(bytecodePattern.get(), content, 0, matches.data()) != JSRegExpResult::Match)
         return String();
 
     ASSERT(matches[2] > 0 && matches[3] >= matches[2]);
