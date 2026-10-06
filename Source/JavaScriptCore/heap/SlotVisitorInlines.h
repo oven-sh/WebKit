@@ -26,6 +26,7 @@
 #pragma once
 
 #include "AbstractSlotVisitorInlines.h"
+#include "Collector.h"
 #include "HeapCellInlines.h"
 #include "MarkedBlock.h"
 #include "PreciseAllocation.h"
@@ -161,7 +162,8 @@ ALWAYS_INLINE void SlotVisitor::appendValuesHidden(const WriteBarrierBase<Unknow
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(const void* p) const
 {
-    return heap()->isMarked(p);
+    HeapCell* cell = std::bit_cast<HeapCell*>(p);
+    return cell->cellContainer().isMarked(markingVersion(), cell);
 }
 
 ALWAYS_INLINE bool SlotVisitor::isMarked(MarkedBlock& container, HeapCell* cell) const
@@ -188,12 +190,12 @@ inline void SlotVisitor::reportExtraMemoryVisited(size_t size)
 inline void SlotVisitor::reportExternalMemoryVisited(size_t size)
 {
     if (m_isFirstVisit)
-        heap()->reportExternalMemoryVisited(size);
+        m_collector.heap().reportExternalMemoryVisited(size);
 }
 #endif
 
 template<typename Func>
-IterationStatus SlotVisitor::forEachMarkStack(const Func& func)
+IterationStatus SlotVisitor::forEachMarkStack(NOESCAPE const Func& func)
 {
     if (func(m_collectorStack) == IterationStatus::Done)
         return IterationStatus::Done;

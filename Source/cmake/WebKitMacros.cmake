@@ -49,11 +49,11 @@ endfunction()
 # do not want to touch.
 function(webkit_scope_target_interface_definitions _target)
     if (NOT TARGET ${_target})
-        return()
+        return ()
     endif ()
     get_target_property(_interface_defs ${_target} INTERFACE_COMPILE_DEFINITIONS)
     if (NOT _interface_defs)
-        return()
+        return ()
     endif ()
     _webkit_definitions_for_swift(_defs ${_interface_defs})
     set_property(TARGET ${_target} PROPERTY INTERFACE_COMPILE_DEFINITIONS ${_defs})
@@ -88,11 +88,11 @@ endfunction()
 # ourselves and so cannot filter on the way in.
 function(webkit_scope_target_interface_options _target)
     if (NOT TARGET ${_target})
-        return()
+        return ()
     endif ()
     get_target_property(_interface_opts ${_target} INTERFACE_COMPILE_OPTIONS)
     if (NOT _interface_opts)
-        return()
+        return ()
     endif ()
     WEBKIT_SCOPE_OPTIONS_TO_NON_SWIFT(_scoped_opts ${_interface_opts})
     set_property(TARGET ${_target} PROPERTY INTERFACE_COMPILE_OPTIONS ${_scoped_opts})
@@ -251,6 +251,15 @@ macro(WEBKIT_ADD_SOURCE_DEPENDENCIES _source _deps)
     unset(_tmp)
 endmacro()
 
+# Wrapper around enable_language(). Enabling a C-family language resets
+# CMAKE_PCH_PROLOGUE to "#pragma clang system_header", which would hide
+# warnings in prefix headers. A macro, because enable_language() must be
+# called at file scope.
+macro(WEBKIT_ENABLE_LANGUAGE)
+    enable_language(${ARGN})
+    set(CMAKE_PCH_PROLOGUE "")
+endmacro()
+
 # Wrapper around target_precompile_headers().
 #
 # Swift sources are unaffected: with CMP0157 NEW (set in the top-level
@@ -287,7 +296,7 @@ endfunction()
 
 function(_WEBKIT_ADD_PCH_OBJECT _target)
     if (NOT (COMPILER_IS_CLANG AND APPLE))
-        return()
+        return ()
     endif ()
     cmake_parse_arguments(PARSE_ARGV 1 _PO "PREFIX_NO_CODEGEN" "" "PREFIX_LANGUAGES")
     set(_stub_flags "-fpch-debuginfo;-Xclang;-building-pch-with-obj")
@@ -313,7 +322,7 @@ endfunction()
 
 function(_WEBKIT_PCH_STUB_NO_TIMESTAMP _target)
     if (NOT COMPILER_IS_CLANG)
-        return()
+        return ()
     endif ()
     get_target_property(_pch_bin_dir ${_target} BINARY_DIR)
     foreach (_lang ${ARGN})
@@ -692,6 +701,48 @@ macro(_WEBKIT_LIBRARY_LINK_FRAMEWORK _target)
     endif ()
 endmacro()
 
+# Produce a .dSYM bundle and strips debugging symbols for a Mach-O target after
+# linking. Needs to be called before code signing.
+function(_WEBKIT_ADD_DSYM _target)
+    if (NOT GENERATE_DSYM OR NOT APPLE)
+        return ()
+    endif ()
+    get_target_property(_skip_dsym ${_target} SKIP_DSYM)
+    if (_skip_dsym)
+        return ()
+    endif ()
+    # Skip targets that will be linked into other targets (i.e. static and
+    # object libraries).
+    get_target_property(_target_type ${_target} TYPE)
+    if (NOT _target_type MATCHES "^(EXECUTABLE|SHARED_LIBRARY|MODULE_LIBRARY)$")
+        return ()
+    endif ()
+
+    # Produce the dSYM in the build directory, next to whichever binary it's
+    # based on.
+    get_target_property(_is_framework ${_target} FRAMEWORK)
+    get_target_property(_is_loadable_bundle ${_target} BUNDLE)
+    if (_target_type STREQUAL "EXECUTABLE")
+        get_target_property(_is_app_bundle ${_target} MACOSX_BUNDLE)
+    endif ()
+    if (_is_framework OR _is_app_bundle OR _is_loadable_bundle)
+        set(_dsym "${CMAKE_BINARY_DIR}/$<TARGET_BUNDLE_DIR_NAME:${_target}>.dSYM")
+    else ()
+        set(_dsym "${CMAKE_BINARY_DIR}/$<TARGET_FILE_NAME:${_target}>.dSYM")
+    endif ()
+
+    add_custom_command(
+        TARGET ${_target} POST_BUILD
+        # Ninja doesn't track the dSYM bundle, and it can accumulate stale
+        # metadata, so always remove it before rebuilding.
+        COMMAND ${CMAKE_COMMAND} -E rm -rf ${_dsym}
+        COMMAND ${DSYMUTIL_EXECUTABLE} --out ${_dsym} $<TARGET_FILE:${_target}>
+        # Remove debugging symbol table from the main binary.
+        COMMAND ${CMAKE_STRIP} -S $<TARGET_FILE:${_target}>
+        VERBATIM
+        COMMENT "Generating dSYM for ${_target}")
+endfunction()
+
 function(_WEBKIT_ADD_CODE_SIGN _target)
     # Bun cross-compiles the macOS JSC from a Linux Docker image where codesign
     # is unavailable and /bin/sh is dash (no `set -o pipefail`). Skip signing
@@ -701,9 +752,12 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
     endif ()
     get_target_property(_skip_codesign ${_target} SKIP_CODESIGN)
     if (_skip_codesign)
-        return()
+        return ()
     endif ()
-    set(_identity ${WEBKIT_CODE_SIGN_IDENTITY})
+    get_target_property(_identity ${_target} CODE_SIGN_IDENTITY)
+    if (NOT _identity)
+        set(_identity ${WEBKIT_CODE_SIGN_IDENTITY})
+    endif ()
     if (NOT _identity)
         set(_identity "-")
     endif ()
@@ -726,9 +780,22 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
         set(_extra_flags "")
     endif ()
     get_target_property(_entitlements_path ${_target} CODE_SIGN_ENTITLEMENTS)
+    set(_entitlements "")
     if (_entitlements_path)
         set(_entitlements --entitlements ${_entitlements_path})
         list(APPEND _arg_DEPENDS ${_entitlements_path})
+    endif ()
+
+    # Info.plist changes break the signature.
+    get_target_property(_info_plist ${_target} MACOSX_FRAMEWORK_INFO_PLIST)
+    if (_info_plist)
+        if (WEBKIT_SDK_IS_MACOS)
+            list(APPEND _arg_DEPENDS
+                "$<TARGET_BUNDLE_CONTENT_DIR:${_target}>/Resources/Info.plist")
+        else ()
+            list(APPEND _arg_DEPENDS
+                "$<TARGET_BUNDLE_CONTENT_DIR:${_target}>/Info.plist")
+        endif ()
     endif ()
 
     get_target_property(_target_type ${_target} TYPE)
@@ -762,7 +829,7 @@ function(_WEBKIT_ADD_CODE_SIGN _target)
         # target builds, so this target only needs to depend on it.
         add_custom_target(${_target}_CodeSign ALL)
         add_dependencies(${_target}_CodeSign ${_target})
-        return()
+        return ()
     endif ()
 
     set(_stamp "${CMAKE_CURRENT_BINARY_DIR}/${_target}-codesign.stamp")
@@ -842,6 +909,7 @@ macro(WEBKIT_FRAMEWORK _target)
         target_compile_options(${_target} BEFORE PUBLIC -F${CMAKE_BINARY_DIR})
         install(TARGETS ${_target} FRAMEWORK DESTINATION ${LIB_INSTALL_DIR})
         _WEBKIT_CREATE_FRAMEWORK_BUNDLE_STRUCTURE(${_target})
+        _WEBKIT_ADD_DSYM(${_target})
         _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
     endif ()
 
@@ -863,7 +931,8 @@ macro(WEBKIT_LIBRARY _target)
         set_target_properties(${_target} PROPERTIES OUTPUT_NAME ${${_target}_OUTPUT_NAME})
     endif ()
 
-    if (APPLE AND ${${_target}_LIBRARY_TYPE} MATCHES SHARED)
+    if (APPLE AND ${${_target}_LIBRARY_TYPE} MATCHES "SHARED|MODULE")
+        _WEBKIT_ADD_DSYM(${_target})
         _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
     endif ()
 
@@ -880,6 +949,7 @@ macro(WEBKIT_EXECUTABLE _target)
     endif ()
 
     if (APPLE)
+        _WEBKIT_ADD_DSYM(${_target})
         _WEBKIT_ADD_CODE_SIGN(${_target} DEPENDS ${${_target}_CODE_SIGN_INPUTS})
     endif ()
 endmacro()
@@ -1122,10 +1192,11 @@ function(_webkit_platform_args_clang_prefix _outvar _depfile _mt_target _wtf_inc
     set(${_outvar} ${_cmd} PARENT_SCOPE)
 endfunction()
 
-# Build-time command deriving the generators' --defines-file (the truthy feature
-# names) by preprocessing wtf/Platform.h, like Xcode's FEATURE_AND_PLATFORM_DEFINES.
-function(webkit_generate_platform_feature_defines_file _out_path_var)
-    set(_defines_file "${CMAKE_BINARY_DIR}/DerivedSources/platform-feature-defines.txt")
+# Build-time command deriving WEBKIT_PLATFORM_FEATURE_DEFINES_FILE, the generators'
+# --defines-file (the truthy feature names), by preprocessing wtf/Platform.h, like
+# Xcode's FEATURE_AND_PLATFORM_DEFINES. Generators in any directory may depend on it.
+function(webkit_generate_platform_feature_defines_file)
+    set(_defines_file "${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}")
     set(_depfile "${CMAKE_BINARY_DIR}/DerivedSources/platform-feature-defines.d")
     _webkit_platform_args_empty_input(_empty_input)
     _webkit_platform_args_clang_prefix(_clang_cmd
@@ -1170,7 +1241,8 @@ function(webkit_generate_platform_feature_defines_file _out_path_var)
         COMMENT "Deriving generator feature defines from wtf/Platform.h"
         VERBATIM
     )
-    set(${_out_path_var} "${_defines_file}" PARENT_SCOPE)
+    # A custom command's rule only exists if a target in its directory uses it.
+    add_custom_target(PlatformFeatureDefines DEPENDS "${_defines_file}")
 endfunction()
 
 function(_WEBKIT_COMPUTE_SWIFT_SHARED_CLANG_FLAGS _outvar)

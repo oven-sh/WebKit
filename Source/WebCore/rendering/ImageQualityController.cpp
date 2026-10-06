@@ -121,33 +121,38 @@ std::optional<InterpolationQuality> ImageQualityController::interpolationQuality
     return std::nullopt;
 }
 
-InterpolationQuality ImageQualityController::chooseInterpolationQualityForSVG(GraphicsContext& context, const RenderElement& renderElement, Image& image)
+InterpolationQuality ImageQualityController::chooseInterpolationQuality(GraphicsContext& context, const RenderElement& renderer, Image& image, const void* layer, const LayoutSize& size)
 {
     // If the image is not a bitmap image, then none of this is relevant and we just paint at high quality.
-    if (!(image.isBitmapImage() || image.isPDFDocumentImage()) || context.paintingDisabled())
+    if (!(image.isBitmapImage() || image.isPDFDocumentImage()))
         return InterpolationQuality::Default;
-
-    if (auto styleInterpolation = interpolationQualityFromStyle(renderElement.style()))
-        return *styleInterpolation;
-
-    return InterpolationQuality::Default;
-}
-
-InterpolationQuality ImageQualityController::chooseInterpolationQuality(GraphicsContext& context, RenderBoxModelObject* object, Image& image, const void* layer, const LayoutSize& size)
-{
-    // If the image is not a bitmap image, then none of this is relevant and we just paint at high quality.
-    if (!(image.isBitmapImage() || image.isPDFDocumentImage()) || context.paintingDisabled())
-        return InterpolationQuality::Default;
-
-    if (std::optional<InterpolationQuality> styleInterpolation = interpolationQualityFromStyle(object->style()))
-        return styleInterpolation.value();
 
     // Make sure to use the unzoomed image size, since if a full page zoom is in effect, the image
     // is actually being scaled.
-    IntSize imageSize(image.width(), image.height());
+    return chooseInterpolationQualityForBitmapOfSize(context, renderer, IntSize(image.width(), image.height()), layer, size);
+}
+
+InterpolationQuality ImageQualityController::chooseInterpolationQualityForBitmapOfSize(GraphicsContext& context, const RenderElement& renderer, const IntSize& imageSize, const void* layer, const LayoutSize& size)
+{
+    if (CheckedPtr boxModelObject = dynamicDowncast<RenderBoxModelObject>(renderer))
+        return boxModelObject->view().imageQualityController().chooseInterpolationQualityForBitmapOfSize(context, const_cast<RenderBoxModelObject&>(*boxModelObject), imageSize, layer, size);
+
+    if (context.paintingDisabled())
+        return InterpolationQuality::Default;
+
+    return interpolationQualityFromStyle(renderer.style()).value_or(InterpolationQuality::Default);
+}
+
+InterpolationQuality ImageQualityController::chooseInterpolationQualityForBitmapOfSize(GraphicsContext& context, RenderBoxModelObject& object, const IntSize& imageSize, const void* layer, const LayoutSize& size)
+{
+    if (context.paintingDisabled())
+        return InterpolationQuality::Default;
+
+    if (std::optional<InterpolationQuality> styleInterpolation = interpolationQualityFromStyle(object.style()))
+        return styleInterpolation.value();
 
     // Look ourselves up in the hashtables.
-    auto i = m_objectLayerSizeMap.find(object);
+    auto i = m_objectLayerSizeMap.find(&object);
     auto* innerMap = i != m_objectLayerSizeMap.end() ? &i->value : 0;
     std::optional<LayoutSize> oldSize;
     if (innerMap) {
@@ -157,10 +162,10 @@ InterpolationQuality ImageQualityController::chooseInterpolationQuality(Graphics
     }
 
     // If the containing FrameView is being resized, paint at low quality until resizing is finished.
-    if (RefPtr frame = object->document().frame()) {
+    if (RefPtr frame = object.document().frame()) {
         bool frameViewIsCurrentlyInLiveResize = frame->view() && frame->view()->inLiveResize();
         if (frameViewIsCurrentlyInLiveResize) {
-            set(object, innerMap, layer, size);
+            set(&object, innerMap, layer, size);
             restartTimer();
             m_liveResizeOptimizationIsActive = true;
             return InterpolationQuality::Low;
@@ -175,20 +180,20 @@ InterpolationQuality ImageQualityController::chooseInterpolationQuality(Graphics
 
     if (size == imageSize && !contextIsScaled(context)) {
         // There is no scale in effect. If we had a scale in effect before, we can just remove this object from the list.
-        removeLayer(object, innerMap, layer);
+        removeLayer(&object, innerMap, layer);
         return InterpolationQuality::Default;
     }
 
     // There is no need to hash scaled images that always use low quality mode when the page demands it. This is the iChat case.
     if (m_renderView->page().inLowQualityImageInterpolationMode()) {
-        double totalPixels = static_cast<double>(image.width()) * static_cast<double>(image.height());
+        double totalPixels = static_cast<double>(imageSize.width()) * static_cast<double>(imageSize.height());
         if (totalPixels > cInterpolationCutoff)
             return InterpolationQuality::Low;
     }
 
     auto saveEntryIfNewOrSizeChanged = [&]() {
         if (!oldSize || oldSize.value() != size)
-            set(object, innerMap, layer, size);
+            set(&object, innerMap, layer, size);
     };
 
     // If an animated resize is active, paint in low quality and kick the timer ahead.
@@ -209,7 +214,7 @@ InterpolationQuality ImageQualityController::chooseInterpolationQuality(Graphics
 
     // If the timer is no longer active, draw at high quality and don't set the timer.
     if (!m_timer.isActive()) {
-        removeLayer(object, innerMap, layer);
+        removeLayer(&object, innerMap, layer);
         return InterpolationQuality::Default;
     }
 

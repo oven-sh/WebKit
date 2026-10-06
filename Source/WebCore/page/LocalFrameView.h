@@ -153,12 +153,12 @@ public:
     WEBCORE_EXPORT void setCustomFixedPositionLayoutRect(const IntRect&);
     bool updateFixedPositionLayoutRect();
 
-    WEBCORE_EXPORT void setCustomSizeForResizeEvent(IntSize);
-
     WEBCORE_EXPORT void setScrollVelocity(const VelocityData&);
 #else
     bool useCustomFixedPositionLayoutRect() const { return false; }
 #endif
+
+    WEBCORE_EXPORT void setCustomSizeForResizeEvent(IntSize);
 
     void willRecalcStyle();
     void styleAndRenderTreeDidChange() override;
@@ -169,6 +169,7 @@ public:
 
     WEBCORE_EXPORT GraphicsLayer* graphicsLayerForPlatformWidget(PlatformWidget);
     WEBCORE_EXPORT GraphicsLayer* graphicsLayerForPageScale();
+    WEBCORE_EXPORT GraphicsLayer* graphicsLayerForRenderViewBacking() const;
     WEBCORE_EXPORT GraphicsLayer* graphicsLayerForScrolledContents();
     WEBCORE_EXPORT GraphicsLayer* clipLayer() const;
 #if HAVE(RUBBER_BANDING)
@@ -395,6 +396,10 @@ public:
     static FloatRect insetClipLayerRect(const FloatPoint& scrollPosition, const FloatSize& totalContentsSize, const FloatBoxExtent& obscuredContentInsets, const FloatSize& sizeForVisibleContent);
     WEBCORE_EXPORT static FloatPoint positionForRootContentLayer(const FloatPoint& scrollPosition, const FloatPoint& scrollOrigin, const FloatBoxExtent& obscuredContentInsets, float headerHeight);
     WEBCORE_EXPORT FloatPoint positionForRootContentLayer() const;
+
+    // The page scale is a transform on the scrolled-contents layer when the UI process owns it, so the content
+    // root's non-content offset has to be compensated for here.
+    WEBCORE_EXPORT static FloatPoint scrolledContentsLayerPositionForDelegatedPageScale(const FloatPoint& scrollPosition, float delegatedPageScaleFactor, const FloatPoint& rootContentsLayerPosition);
 
     WEBCORE_EXPORT static float yPositionForHeaderLayer(const FloatPoint& scrollPosition, float topInset);
     WEBCORE_EXPORT static float yPositionForFooterLayer(const FloatPoint& scrollPosition, float topInset, float totalContentsHeight, float footerHeight);
@@ -886,6 +891,7 @@ private:
     void scrollToFocusedElementInternal();
 
     void delegatedScrollingModeDidChange() final;
+    void scrollbarModesDidChange() final;
 
     void unobscuredContentSizeChanged() final;
     
@@ -997,6 +1003,7 @@ private:
 
     // ScrollableArea.
     float pageScaleFactor() const override;
+    IntSize snapportSize() const final;
     void didStartScrollAnimation() final;
 
     static MonotonicTime sCurrentPaintTimeStamp; // used for detecting decoded resource thrash in the cache
@@ -1012,7 +1019,7 @@ private:
     LocalFrameViewLayoutContext m_layoutContext;
 
     HashSet<SingleThreadWeakRef<Widget>> m_widgetsInRenderTree;
-    std::unique_ptr<ListHashSet<SingleThreadWeakRef<RenderEmbeddedObject>>> m_embeddedObjectsToUpdate;
+    const std::unique_ptr<ListHashSet<SingleThreadWeakRef<RenderEmbeddedObject>>> m_embeddedObjectsToUpdate;
     std::unique_ptr<SingleThreadWeakKeyHashSet<RenderElement>> m_slowRepaintObjects;
 
     HashMap<ScrollingNodeID, WeakPtr<ScrollableArea>> m_scrollingNodeIDToPluginScrollableAreaMap;
@@ -1074,8 +1081,9 @@ private:
     bool m_useCustomFixedPositionLayoutRect { false };
 
     IntRect m_customFixedPositionLayoutRect;
-    std::optional<IntSize> m_customSizeForResizeEvent;
 #endif
+
+    std::optional<IntSize> m_customSizeForResizeEvent;
 
     std::optional<OverrideViewportSize> m_defaultViewportSizeOverride;
     std::optional<OverrideViewportSize> m_smallViewportSizeOverride;
@@ -1092,10 +1100,10 @@ private:
 
     IntSize m_scrollGeometryContentSize;
 
-    std::unique_ptr<ScrollableAreaSet> m_scrollableAreas;
-    std::unique_ptr<ScrollableAreaSet> m_scrollableAreasForAnimatedScroll;
-    std::unique_ptr<ScrollableAreaSet> m_anchoringScrollableAreas;
-    std::unique_ptr<SingleThreadWeakHashSet<RenderLayerModelObject>> m_viewportConstrainedObjects;
+    const std::unique_ptr<ScrollableAreaSet> m_scrollableAreas;
+    const std::unique_ptr<ScrollableAreaSet> m_scrollableAreasForAnimatedScroll;
+    const std::unique_ptr<ScrollableAreaSet> m_anchoringScrollableAreas;
+    const std::unique_ptr<SingleThreadWeakHashSet<RenderLayerModelObject>> m_viewportConstrainedObjects;
     mutable std::optional<bool> m_hasAnchorPositionedViewportConstrainedObjects;
 
     OptionSet<LayoutMilestone> m_milestonesPendingPaint;
@@ -1111,7 +1119,7 @@ private:
     SelectionRevealMode m_selectionRevealModeForFocusedElement { SelectionRevealMode::DoNotReveal };
     ScrollableAreaSet m_scrollableAreasWithScrollAnchoringControllersNeedingUpdate;
 
-    std::unique_ptr<ScrollAnchoringController> m_scrollAnchoringController;
+    const std::unique_ptr<ScrollAnchoringController> m_scrollAnchoringController;
 
     std::optional<UserScrollType> m_lastUserScrollType;
     bool m_wasEverScrolledExplicitlyByUser { false };

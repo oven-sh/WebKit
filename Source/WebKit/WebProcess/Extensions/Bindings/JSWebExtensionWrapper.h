@@ -89,7 +89,7 @@ private:
     JSObjectRef m_callbackFunction = nullptr;
     JSObjectRef m_rejectFunction = nullptr;
     JSRetainPtr<JSGlobalContextRef> m_globalContext;
-    RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
+    const RefPtr<WebExtensionAPIRuntimeBase> m_runtime;
 };
 
 enum class NullStringPolicy : uint8_t {
@@ -116,7 +116,7 @@ enum class ValuePolicy : bool {
 RefPtr<WebFrame> toWebFrame(JSContextRef);
 RefPtr<WebPage> toWebPage(JSContextRef);
 
-inline JSRetainPtr<JSStringRef> toJSString(const String& string)
+inline RefPtr<OpaqueJSString> toJSString(const String& string)
 {
     return createJSString(string);
 }

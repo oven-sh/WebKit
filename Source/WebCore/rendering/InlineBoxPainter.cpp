@@ -200,7 +200,7 @@ void InlineBoxPainter::paintMask()
 
     paintFillLayers(Color(), renderer().style().maskLayers(), renderer().style().usedZoomForLength(), paintRect, compositeOp);
 
-    bool hasBoxImage = maskBorderSource && maskBorderSource->canRender(&renderer(), renderer().style().usedZoom());
+    bool hasBoxImage = maskBorderSource && maskBorderSource->canRender(&renderer());
     if (!hasBoxImage || !maskBorderSource->isLoaded(&renderer())) {
         if (pushTransparencyLayer)
             m_paintInfo.context().endTransparencyLayer();
@@ -263,7 +263,7 @@ void InlineBoxPainter::paintDecorations()
 
     auto& borderImage = renderer().style().borderImage();
     auto borderImageSource = borderImage.source().tryStyleImage();
-    bool hasBorderImage = borderImageSource && borderImageSource->canRender(&renderer(), style.usedZoom());
+    bool hasBorderImage = borderImageSource && borderImageSource->canRender(&renderer());
     if (hasBorderImage && !borderImageSource->isLoaded(&renderer()))
         return; // Don't paint anything while we wait for the image to load.
 
@@ -292,7 +292,7 @@ template<typename Layers> void InlineBoxPainter::paintFillLayers(const Color& co
 template<typename Layer> void InlineBoxPainter::paintFillLayer(const Color& color, const FillLayerToPaint<Layer>& fillLayer, const LayoutRect& rect, CompositeOperator op)
 {
     RefPtr image = fillLayer.layer.image().tryStyleImage();
-    bool hasFillImage = image && image->canRender(&renderer(), renderer().style().usedZoom());
+    bool hasFillImage = image && image->canRender(&renderer());
     bool hasFillImageOrBorderRadius = hasFillImage || renderer().style().border().hasBorderRadius();
 
     BackgroundPainter backgroundPainter { renderer(), m_paintInfo };

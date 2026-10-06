@@ -34,6 +34,7 @@
 
 namespace JSC {
 
+class Collector;
 class GCThreadSharedData;
 class HeapCell;
 class HeapAnalyzer;
@@ -42,7 +43,11 @@ class MarkingConstraintSolver;
 
 typedef uint32_t HeapVersion;
 
-class SlotVisitor final : public AbstractSlotVisitor {
+// Visitors should not share cachelines: each marking thread writes its own visitor for every
+// cell it visits. 128 satisfies 64-byte lines too.
+static constexpr size_t slotVisitorAlignment = 128;
+
+class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisitor {
     WTF_MAKE_NONCOPYABLE(SlotVisitor);
     WTF_MAKE_TZONE_ALLOCATED(SlotVisitor);
 
@@ -86,7 +91,7 @@ public:
 #endif
     };
 
-    SlotVisitor(Heap&, ASCIICString codeName);
+    SlotVisitor(Collector&, ASCIICString codeName);
     ~SlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -125,7 +130,7 @@ public:
     bool isMarked(MarkedBlock&, HeapCell*) const final;
     bool isMarked(PreciseAllocation&, HeapCell*) const final;
 
-    void NODELETE didStartMarking();
+    void NODELETE didStartMarking(CollectionScope, HeapVersion markingVersion, HeapAnalyzer*);
     void NODELETE reset();
     void clearMarkStacks();
 
@@ -218,7 +223,7 @@ private:
     bool didReachTermination(const AbstractLocker&);
 
     template<typename Func>
-    IterationStatus forEachMarkStack(const Func&);
+    IterationStatus forEachMarkStack(NOESCAPE const Func&);
 
     MarkStackArray& NODELETE correspondingGlobalStack(MarkStackArray&);
 
@@ -228,16 +233,13 @@ private:
     size_t m_nonCellVisitCount { 0 }; // Used for incremental draining, ignored otherwise.
     CheckedSize m_extraMemorySize { 0 };
 
-    HeapAnalyzer* m_heapAnalyzer { nullptr };
     JSCell* m_currentCell { nullptr };
     bool m_isFirstVisit { false };
     bool m_mutatorIsStopped { false };
     bool m_canOptimizeForStoppedMutator { false };
     bool m_isInParallelMode { false };
     Lock m_rightToRun;
-    
-    // Put padding here to mitigate false sharing between multiple SlotVisitors.
-    char padding[64];
+
 #if ASSERT_ENABLED
     bool m_isCheckingForDefaultMarkViolation { false };
 #endif

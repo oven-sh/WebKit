@@ -163,7 +163,7 @@ BoxRange<BoxIterator> boxesFor(const RenderSVGText& svgText)
 BoxIterator lastBoxFor(const RenderSVGText& svgText)
 {
     if (CheckedPtr lineLayout = svgText.inlineLayout())
-        return { BoxIterator { *lineLayout->lastRootInlineBox() } };
+        return lineLayout->lastBox();
 
     return { BoxIterator { BoxLegacyPath { svgText.legacyRootBox() } } };
 }

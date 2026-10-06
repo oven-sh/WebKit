@@ -301,6 +301,7 @@ public:
     static Structure* toUncacheableDictionaryTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -320,13 +321,13 @@ public:
     // the lock. The callback is not called if there is no change being made, like if you call
     // removePropertyWithoutTransition() and the property is not found.
     template<typename Func>
-    PropertyOffset addPropertyWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset addPropertyWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     template<typename Func>
-    PropertyOffset removePropertyWithoutTransition(VM&, PropertyName, const Func&);
+    PropertyOffset removePropertyWithoutTransition(VM&, PropertyName, NOESCAPE const Func&);
     template<typename Func>
-    PropertyOffset attributeChangeWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset attributeChangeWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     template<typename Func>
-    auto addOrReplacePropertyWithoutTransition(VM&, PropertyName, unsigned attributes, const Func&) -> decltype(auto);
+    auto addOrReplacePropertyWithoutTransition(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&) -> decltype(auto);
     void setPrototypeWithoutTransition(VM&, JSValue prototype);
         
     bool isDictionary() const { return dictionaryKind() != NoneDictionaryKind; }
@@ -374,6 +375,12 @@ public:
     bool hasNonReifiedStaticProperties() const
     {
         return typeInfo().hasStaticPropertyTable() && !staticPropertiesReified();
+    }
+
+    // What sends a put off the fast path when the object is its receiver. One test, as both are bits of m_bitField.
+    bool hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() const
+    {
+        return m_bitField & (s_hasReadOnlyOrGetterSetterPropertiesExcludingProtoBits | s_hasImmutablePropertiesBits);
     }
 
     bool isNonExtensibleOrHasNonConfigurableProperties() const
@@ -596,10 +603,10 @@ public:
     // call. So, you have to assume the worst. Also, the functor returns true if it wishes for you
     // to continue or false if it's done.
     template<typename Functor>
-    void forEachPropertyConcurrently(const Functor&);
+    void forEachPropertyConcurrently(NOESCAPE const Functor&);
 
     template<typename Functor>
-    void forEachProperty(VM&, const Functor&);
+    void forEachProperty(VM&, NOESCAPE const Functor&);
 
     IGNORE_RETURN_TYPE_WARNINGS_BEGIN
     inline PropertyOffset get(VM&, Concurrency, UniquedStringImpl* uid, unsigned& attributes); // Defined in StructureInlines.h
@@ -836,6 +843,7 @@ public:
     DEFINE_BITFIELD(bool, hasNonEnumerableProperties, HasNonEnumerableProperties, 1, 6);
     DEFINE_BITFIELD(bool, hasSpecialProperties, HasSpecialProperties, 1, 7);
     DEFINE_BITFIELD(DefinitelyNonThenableState, definitelyNonThenableState, DefinitelyNonThenableState, 2, 8); // This flag can be flipped on the main thread at any timing.
+    DEFINE_BITFIELD(bool, hasImmutableProperties, HasImmutableProperties, 1, 10); // Set by TransitionKind::MakePropertiesImmutable and inherited by every later transition. See JSObject::makePropertiesImmutable().
     DEFINE_BITFIELD(TransitionKind, transitionKind, TransitionKind, 5, 13);
     DEFINE_BITFIELD(bool, isWatchingReplacement, IsWatchingReplacement, 1, 18); // This flag can be fliped on the main thread at any timing.
     DEFINE_BITFIELD(bool, mayBePrototype, MayBePrototype, 1, 19);
@@ -866,6 +874,7 @@ public:
     {
         return flags == (flags & (
             s_didPreventExtensionsBits
+            | s_hasImmutablePropertiesBits
             | s_isQuickPropertyAccessAllowedForEnumerationBits
             | s_hasNonEnumerablePropertiesBits
             | s_hasSpecialPropertiesBits
@@ -921,13 +930,13 @@ private:
 
     enum class ShouldPin : bool { No, Yes };
     template<ShouldPin, typename Func>
-    PropertyOffset add(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset add(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     PropertyOffset add(VM&, PropertyName, unsigned attributes);
     template<ShouldPin, typename Func>
-    PropertyOffset remove(VM&, PropertyName, const Func&);
+    PropertyOffset remove(VM&, PropertyName, NOESCAPE const Func&);
     PropertyOffset remove(VM&, PropertyName);
     template<ShouldPin, typename Func>
-    PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes, const Func&);
+    PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes, NOESCAPE const Func&);
     PropertyOffset attributeChange(VM&, PropertyName, unsigned attributes);
 
 #if ASSERT_ENABLED
@@ -992,7 +1001,7 @@ private:
     JS_EXPORT_PRIVATE void allocateRareData(VM&);
 
     template<typename DetailsFunc>
-    void checkOffsetConsistency(PropertyTable*, const DetailsFunc&) const;
+    void checkOffsetConsistency(PropertyTable*, NOESCAPE const DetailsFunc&) const;
     void checkOffsetConsistency() const;
 
     void startWatchingInternalProperties(VM&);

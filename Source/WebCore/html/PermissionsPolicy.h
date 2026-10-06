@@ -73,6 +73,7 @@ public:
         StorageAccess,
         LocalNetwork,
         LoopbackNetwork,
+        CrossOriginIsolated,
         Invalid
     };
     enum class ShouldReportViolation : bool { No, Yes };

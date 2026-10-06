@@ -152,6 +152,10 @@ public:
     bool mayHaveLayerInSubtree() const { return m_mayHaveLayerInSubtree; }
     void setMayHaveLayerInSubtreeIncludingAncestors();
 
+    // Never cleared, so it may be a false positive - just like the mayHaveLayerInSubtree() logic.
+    bool mayHaveNonScalingStrokeInSubtree() const { return m_mayHaveNonScalingStrokeInSubtree; }
+    void setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
+
     virtual void dirtyLineFromChangedChild() { }
 
     void setChildNeedsLayout(MarkingBehavior = MarkingBehavior::MarkContainingBlockChain);
@@ -241,8 +245,8 @@ public:
     void setVisibleInViewportState(VisibleInViewportState);
     virtual void visibleInViewportStateChanged();
 
-    bool didContibuteToVisuallyNonEmptyPixelCount() const { return m_didContributeToVisuallyNonEmptyPixelCount; }
-    void setDidContibuteToVisuallyNonEmptyPixelCount() { m_didContributeToVisuallyNonEmptyPixelCount = true; }
+    bool didContributeToVisuallyNonEmptyPixelCount() const { return m_didContributeToVisuallyNonEmptyPixelCount; }
+    void setDidContributeToVisuallyNonEmptyPixelCount() { m_didContributeToVisuallyNonEmptyPixelCount = true; }
 
     bool scrollAnchoringSuppressionStyleChanged() const { return m_scrollAnchoringSuppressionStyleChanged; }
     void setScrollAnchoringSuppressionStyleChanged(bool b) { m_scrollAnchoringSuppressionStyleChanged = b; }
@@ -264,6 +268,9 @@ public:
     WEBCORE_EXPORT void resetTextAutosizing();
 
     WEBCORE_EXPORT ImageOrientation imageOrientation() const;
+
+    virtual std::optional<FloatSize> usedImageSize() const { return std::nullopt; }
+    inline std::optional<FloatSize> usedZoomedImageSize() const; // Defined in RenderElementInlines.h
 
     void removeFromRenderFragmentedFlow();
     virtual void resetEnclosingFragmentedFlowAndChildInfoIncludingDescendants(RenderFragmentedFlow*);
@@ -479,7 +486,8 @@ private:
     unsigned m_didContributeToVisuallyNonEmptyPixelCount : 1 { false };
     unsigned m_scrollAnchoringSuppressionStyleChanged : 1 { false };
     unsigned m_isInPendingSVGTransformAttributeUpdates : 1 { false };
-    // 11 bits free.
+    unsigned m_mayHaveNonScalingStrokeInSubtree : 1 { false };
+    // 10 bits free.
 
     Style::ComputedStyle m_style;
 };

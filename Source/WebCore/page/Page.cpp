@@ -63,6 +63,7 @@
 #include "DebugOverlayRegions.h"
 #include "DebugPageOverlays.h"
 #include "DeviceOrientationAndMotionAccessController.h"
+#include "DevicePosture.h"
 #include "DiagnosticLoggingClient.h"
 #include "DiagnosticLoggingKeys.h"
 #include "DisplayRefreshMonitorManager.h"
@@ -133,6 +134,7 @@
 #include "NavigationScheduler.h"
 #include "Navigator.h"
 #include "NavigatorAudioSession.h"
+#include "NavigatorDevicePosture.h"
 #include "NavigatorGamepad.h"
 #include "NavigatorMediaSession.h"
 #include "OpportunisticTaskScheduler.h"
@@ -163,6 +165,7 @@
 #include "RenderDescendantIterator.h"
 #include "RenderElementInlines.h"
 #include "RenderImage.h"
+#include "RenderLayer.h"
 #include "RenderLayerCompositor.h"
 #include "RenderObjectInlines.h"
 #include "RenderTheme.h"
@@ -713,11 +716,12 @@ void Page::setOverrideViewportArguments(const std::optional<ViewportArguments>& 
 ScrollingCoordinator* Page::scrollingCoordinator()
 {
     if (!m_scrollingCoordinator && m_settings->scrollingCoordinatorEnabled()) {
-        m_scrollingCoordinator = chrome().client().createScrollingCoordinator(*this);
-        if (!m_scrollingCoordinator)
-            m_scrollingCoordinator = ScrollingCoordinator::create(this);
+        RefPtr scrollingCoordinator = chrome().client().createScrollingCoordinator(*this);
+        if (!scrollingCoordinator)
+            scrollingCoordinator = ScrollingCoordinator::create(this);
+        lazyInitialize(m_scrollingCoordinator, scrollingCoordinator.releaseNonNull());
 
-        protect(m_scrollingCoordinator)->windowScreenDidChange(m_displayID, m_displayNominalFramesPerSecond);
+        m_scrollingCoordinator->windowScreenDidChange(m_displayID, m_displayNominalFramesPerSecond);
     }
 
     return m_scrollingCoordinator;
@@ -1205,10 +1209,7 @@ bool Page::showAllPlugins() const
 
 inline std::optional<std::pair<WeakRef<MediaCanStartListener>, WeakRef<Document, WeakPtrImplWithEventTargetData>>>  Page::takeAnyMediaCanStartListener()
 {
-    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame);
-        if (!localFrame)
-            continue;
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(mainFrame())) {
         RefPtr document = localFrame->document();
         if (!document)
             continue;
@@ -1575,7 +1576,7 @@ void Page::setEditableRegionEnabled(bool enabled)
     if (!frameView)
         return;
     if (CheckedPtr renderView = frameView->renderView())
-        renderView->compositor().invalidateEventRegionForAllLayers();
+        protect(renderView->compositor())->invalidateEventRegionForAllLayers();
 }
 
 #endif
@@ -1591,20 +1592,7 @@ bool Page::shouldBuildEditableRegion() const
 
 Vector<Ref<Element>> Page::editableElementsInRect(const FloatRect& searchRectInRootViewCoordinates) const
 {
-    RefPtr localMainFrame = this->localMainFrame();
-    RefPtr frameView = localMainFrame ? localMainFrame->view() : nullptr;
-    if (!frameView)
-        return { };
-
-    RefPtr document = localMainFrame->document();
-    if (!document)
-        return { };
-
     constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::CollectMultipleElements, HitTestRequest::Type::DisallowUserAgentShadowContent, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
-    LayoutRect searchRectInMainFrameCoordinates = frameView->rootViewToContents(roundedIntRect(searchRectInRootViewCoordinates));
-    HitTestResult hitTestResult { searchRectInMainFrameCoordinates };
-    if (!document->hitTest(hitType, hitTestResult))
-        return { };
 
     auto rootEditableElement = [](Node& node) -> Element* {
         if (RefPtr element = dynamicDowncast<HTMLTextFormControlElement>(node)) {
@@ -1616,11 +1604,27 @@ Vector<Ref<Element>> Page::editableElementsInRect(const FloatRect& searchRectInR
     };
 
     OrderedHashSet<Ref<Element>> rootEditableElements;
-    auto& nodeSet = hitTestResult.listBasedTestResult();
-    for (auto& node : nodeSet) {
-        if (RefPtr editableElement = rootEditableElement(node)) {
-            ASSERT(searchRectInRootViewCoordinates.inclusivelyIntersects(editableElement->boundingBoxInRootViewCoordinates()));
-            rootEditableElements.add(editableElement.releaseNonNull());
+    for (auto& weakRootFrame : m_rootFrames) {
+        Ref rootFrame = weakRootFrame.get();
+        RefPtr frameView = rootFrame->view();
+        if (!frameView)
+            continue;
+
+        RefPtr document = rootFrame->document();
+        if (!document)
+            continue;
+
+        LayoutRect searchRectInContentsCoordinates { roundedIntRect(frameView->rootViewToContentsAcrossIsolatedFrames(searchRectInRootViewCoordinates)) };
+        HitTestResult hitTestResult { searchRectInContentsCoordinates };
+        if (!document->hitTest(hitType, hitTestResult))
+            continue;
+
+        auto& nodeSet = hitTestResult.listBasedTestResult();
+        for (auto& node : nodeSet) {
+            if (RefPtr editableElement = rootEditableElement(node)) {
+                ASSERT(searchRectInRootViewCoordinates.inclusivelyIntersects(editableElement->boundingBoxInMainFrameViewCoordinates()));
+                rootEditableElements.add(editableElement.releaseNonNull());
+            }
         }
     }
 
@@ -1631,7 +1635,7 @@ Vector<Ref<Element>> Page::editableElementsInRect(const FloatRect& searchRectInR
     // even if it's empty. So, we special case it here.
     RefPtr focusedOrMainFrame = focusController().focusedOrMainFrame();
     if (RefPtr focusedElement = focusedOrMainFrame ? focusedOrMainFrame->document()->focusedElement() : nullptr) {
-        if (searchRectInRootViewCoordinates.inclusivelyIntersects(focusedElement->boundingBoxInRootViewCoordinates())) {
+        if (searchRectInRootViewCoordinates.inclusivelyIntersects(focusedElement->boundingBoxInMainFrameViewCoordinates())) {
             if (RefPtr editableElement = rootEditableElement(*focusedElement))
                 rootEditableElements.add(editableElement.releaseNonNull());
         }
@@ -1682,10 +1686,8 @@ void Page::setDefersLoading(bool defers)
     }
 
     m_defersLoading = defers;
-    for (RefPtr frame = mainFrame(); frame; frame = frame->tree().traverseNext()) {
-        if (RefPtr localFrame = dynamicDowncast<LocalFrame>(*frame))
-            localFrame->loader().setDefersLoading(defers);
-    }
+    for (Ref localFrame : inclusiveDescendantFrames<LocalFrame>(mainFrame()))
+        localFrame->loader().setDefersLoading(defers);
 }
 
 void Page::clearUndoRedoOperations()
@@ -1741,8 +1743,8 @@ void Page::setZoomedOutPageScaleFactor(float scale)
     if (m_zoomedOutPageScaleFactor == scale)
         return;
     m_zoomedOutPageScaleFactor = scale;
-    if (RefPtr localMainFrame = this->localMainFrame())
-        localMainFrame->deviceOrPageScaleFactorChanged();
+    for (auto& rootFrame : m_rootFrames)
+        rootFrame->deviceOrPageScaleFactorChanged();
 }
 
 void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStableState)
@@ -1751,8 +1753,13 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
     RefPtr mainDocument = localTopDocument();
     RefPtr mainFrameView = mainDocument ? mainDocument->view() : nullptr;
 
+    bool scaleIsChanging = scale != m_pageScaleFactor;
+
     if (scale == m_pageScaleFactor) {
-        if (mainFrameView && mainFrameView->scrollPosition() != origin && !delegatesScaling())
+        // The scroll below still needs to reach the scrolling tree when scaling is delegated, so we can't skip
+        // the update just because the scale is unchanged. Match the condition the scroll is actually applied
+        // under, so ports that never apply `origin` here don't lay out for a scroll that won't happen.
+        if (mainFrameView && mainFrameView->scrollPosition() != origin && mainFrameView->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView)
             mainDocument->updateLayoutIgnorePendingStylesheets({ WebCore::LayoutOptions::UpdateCompositingLayers });
     } else {
         m_pageScaleFactor = scale;
@@ -1765,8 +1772,6 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
 
             if (!delegatesScaling()) {
                 view->setNeedsLayoutAfterViewConfigurationChange();
-                view->setNeedsCompositingGeometryUpdate();
-                view->setDescendantsNeedUpdateBackingAndHierarchyTraversal();
 
                 if (RefPtr doc = rootFrame->document())
                     doc->resolveStyle(Document::ResolveStyleType::Rebuild);
@@ -1776,6 +1781,9 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
             }
 
             rootFrame->deviceOrPageScaleFactorChanged();
+
+            view->setNeedsCompositingGeometryUpdate();
+            view->setDescendantsNeedUpdateBackingAndHierarchyTraversal();
 
             if (view->fixedElementsLayoutRelativeToFrame())
                 view->setViewportConstrainedObjectsNeedLayout();
@@ -1788,8 +1796,21 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
         }
     }
 
+    if (delegatesScaling() && inStableState && m_pageScaleFactorViewsWereSizedFor != m_pageScaleFactor) {
+        m_pageScaleFactorViewsWereSizedFor = m_pageScaleFactor;
+        for (auto& rootFrame : m_rootFrames) {
+            RefPtr view = rootFrame->view();
+            if (view && view->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView)
+                view->availableContentSizeChanged(ScrollableArea::AvailableSizeChangeReason::AreaSizeChanged);
+        }
+    }
+
     if (mainFrameView && mainFrameView->scrollPosition() != origin) {
-        if (mainFrameView->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView)
+        // The UI process owns the scroll position while the scale is moving, so pushing `origin` back queues a
+        // stale value that arrives frames later and jitters the view. Callers passing the current scale just
+        // want to scroll, so they still need the push.
+        bool uiProcessOwnsScrollPositionForThisChange = delegatesScaling() && scaleIsChanging;
+        if (mainFrameView->delegatedScrollingMode() != DelegatedScrollingMode::DelegatedToNativeScrollView && !uiProcessOwnsScrollPositionForThisChange)
             mainFrameView->setScrollPosition(origin);
     }
 
@@ -1802,11 +1823,40 @@ void Page::setPageScaleFactor(float scale, const IntPoint& origin, bool inStable
 #else
     UNUSED_PARAM(inStableState);
 #endif
+
+#if ENABLE(ACCESSIBILITY_LOCAL_FRAME)
+    // The UI process derives the content-to-screen scale it hands to VoiceOver by round-tripping a unit rect
+    // through contentsToRootView(). Element rects stay in unzoomed contents coordinates when scaling is
+    // delegated, so the scale is the only thing that changes and nothing else would prompt an update.
+    if (scaleIsChanging && AXObjectCache::accessibilityEnabled())
+        chrome().client().scheduleAccessibilityFrameGeometryUpdate();
+#endif
 }
 
-void NODELETE Page::setDelegatesScaling(bool delegatesScaling)
+void Page::setDelegatesScaling(bool delegatesScaling)
 {
+    if (m_delegatesScaling == delegatesScaling)
+        return;
+
     m_delegatesScaling = delegatesScaling;
+
+    // This is set at didCommitLoad, by which point the layers may already exist, so re-evaluate which one
+    // carries the page scale and force a compositing update.
+    for (auto& rootFrame : m_rootFrames) {
+        ASSERT(rootFrame->isRootFrame());
+        RefPtr view = rootFrame->view();
+        if (!view)
+            continue;
+
+        if (CheckedPtr renderView = view->renderView()) {
+            CheckedRef compositor = renderView->compositor();
+            compositor->updateRootContentsLayerAppliesPageScale();
+            // RenderLayer is UniquelyOwned, so it isn't CheckedPtr-capable.
+            if (auto* layer = renderView->layer())
+                layer->setNeedsCompositingConfigurationUpdate();
+            compositor->scheduleCompositingLayerUpdate();
+        }
+    }
 }
 
 void Page::setViewScaleFactor(float scale)
@@ -1829,8 +1879,8 @@ void Page::setDeviceScaleFactor(float scaleFactor)
 
     m_deviceScaleFactor = scaleFactor;
     setNeedsRecalcStyleInAllFrames();
-    if (RefPtr localMainFrame = this->localMainFrame())
-        localMainFrame->deviceOrPageScaleFactorChanged();
+    for (auto& rootFrame : m_rootFrames)
+        rootFrame->deviceOrPageScaleFactorChanged();
     BackForwardCache::singleton().markPagesForDeviceOrPageScaleChanged(*this);
 
     pageOverlayController().didChangeDeviceScaleFactor();
@@ -1881,6 +1931,10 @@ void Page::windowScreenDidChange(PlatformDisplayID displayID, std::optional<Fram
     forEachDocument([&] (Document& document) {
         document.windowScreenDidChange(displayID);
     });
+
+#if HAVE(SUPPORT_HDR_DISPLAY)
+    updateDisplayEDRHeadroom();
+#endif
 
     updateScreenSupportedContentsFormats();
 
@@ -2277,12 +2331,10 @@ void Page::syncLocalFrameInfoToRemote()
         if (!frameView)
             return;
 
-        frame.loader().client().broadcastFrameViewportInfoToOtherProcesses({
-            frameView->layoutViewportRect(),
-            frameView->scrollPosition()
-        });
-
+        auto layoutViewportRect = frameView->layoutViewportRect();
+        bool hasOnScreenRemoteDescendant = false;
         HashMap<FrameIdentifier, Ref<RemoteFrameLayoutInfo>> childrenFrameLayoutInfo;
+
         auto windowClipRectInContentCoordinates = [&frameView, rect = std::optional<LayoutRect> { }]() mutable {
             if (!rect)
                 rect = LayoutRect { frameView->windowToContents(frameView->windowClipRect()) };
@@ -2311,6 +2363,15 @@ void Page::syncLocalFrameInfoToRemote()
             };
 
             auto visibleRectInParent = frameView->visibleRectOfChild(*child.get());
+
+            if (visibleRectInParent) {
+                auto onScreenRectInParent = *visibleRectInParent;
+
+                // Use edgeInclusiveIntersect instead of intersects with layoutViewportRect to match
+                // how IntersectionObserver performs intersections.
+                if (onScreenRectInParent.edgeInclusiveIntersect(layoutViewportRect))
+                    hasOnScreenRemoteDescendant = true;
+            }
 
             auto onScreenRectInChildView = [&] {
                 if (!visibleRectInParent)
@@ -2354,6 +2415,11 @@ void Page::syncLocalFrameInfoToRemote()
                 frameView->appearanceOfOwnerElementOfChildFrame(*child)
             ));
         }
+
+        frame.loader().client().broadcastFrameViewportInfoToOtherProcessesIfNeeded({
+            layoutViewportRect,
+            frameView->scrollPosition()
+        }, hasOnScreenRemoteDescendant);
 
         if (childrenFrameLayoutInfo.isEmpty()) {
             ASSERT(!frame.tree().containsRemoteFrame());
@@ -3091,6 +3157,23 @@ void Page::userAgentChanged()
             if (RefPtr navigator = window->optionalNavigator())
                 navigator->userAgentChanged();
         }
+    });
+}
+
+void Page::devicePostureTypeChanged()
+{
+    forEachDocument([] (Document& document) {
+        if (RefPtr window = document.window()) {
+            if (RefPtr navigator = window->optionalNavigator()) {
+                Ref devicePosture = NavigatorDevicePosture::devicePosture(*navigator);
+                devicePosture->typeChanged();
+            }
+        }
+
+        document.styleScope().didChangeStyleSheetEnvironment();
+        document.styleScope().evaluateMediaQueriesForAppearanceChange();
+        document.updateElementsAffectedByMediaQueries();
+        document.scheduleRenderingUpdate(RenderingUpdateStep::MediaQueryEvaluation);
     });
 }
 
@@ -3853,6 +3936,14 @@ void Page::clearSampledPageTopColor()
         chrome().client().sampledPageTopColorChanged();
 }
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+void Page::invalidateColorsSampledFromPaintedContent()
+{
+    clearSampledPageTopColor();
+    chrome().client().setNeedsFixedContainerEdgesUpdate();
+}
+#endif
+
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
 void NODELETE Page::setAppUsesCustomAccentColor(bool appUsesCustomAccentColor)
 {
@@ -4271,18 +4362,17 @@ void Page::removePlaybackTargetPickerClient(PlaybackTargetClientContextIdentifie
     chrome().client().removePlaybackTargetPickerClient(contextId);
 }
 
-void Page::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, FrameIdentifier frameID, const WebCore::IntPoint& location, bool isVideo, RouteSharingPolicy routeSharingPolicy, const String& routingContextUID)
+void Page::showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier contextId, const WebCore::IntPoint& positionInMainFrameView, bool isVideo, RouteSharingPolicy routeSharingPolicy, const String& routingContextUID)
 {
 #if PLATFORM(IOS_FAMILY)
     // FIXME: refactor iOS implementation.
     UNUSED_PARAM(contextId);
-    UNUSED_PARAM(frameID);
-    UNUSED_PARAM(location);
+    UNUSED_PARAM(positionInMainFrameView);
     chrome().client().showPlaybackTargetPicker(isVideo, routeSharingPolicy, routingContextUID);
 #else
     UNUSED_PARAM(routeSharingPolicy);
     UNUSED_PARAM(routingContextUID);
-    chrome().client().showPlaybackTargetPicker(contextId, frameID, location, isVideo);
+    chrome().client().showPlaybackTargetPicker(contextId, positionInMainFrameView, isVideo);
 #endif
 }
 
@@ -4715,7 +4805,7 @@ void Page::didChangeMainDocument(Document* newDocument)
 RenderingUpdateScheduler& Page::renderingUpdateScheduler()
 {
     if (!m_renderingUpdateScheduler)
-        m_renderingUpdateScheduler = RenderingUpdateScheduler::create(*this);
+        lazyInitialize(m_renderingUpdateScheduler, RenderingUpdateScheduler::create(*this));
     return *m_renderingUpdateScheduler;
 }
 
@@ -4748,14 +4838,14 @@ void Page::forEachDocument(NOESCAPE const Function<void(Document&)>& functor) co
 DeviceOrientationAndMotionAccessController& Page::deviceOrientationAndMotionAccessController()
 {
     if (!m_deviceOrientationAndMotionAccessController)
-        m_deviceOrientationAndMotionAccessController = makeUnique<DeviceOrientationAndMotionAccessController>(*this);
+        lazyInitialize(m_deviceOrientationAndMotionAccessController, makeUnique<DeviceOrientationAndMotionAccessController>(*this));
     return *m_deviceOrientationAndMotionAccessController;
 }
 
 void Page::clearDeviceOrientationAndMotionPermissions()
 {
     if (m_deviceOrientationAndMotionAccessController)
-        protect(m_deviceOrientationAndMotionAccessController)->clearPermissions();
+        m_deviceOrientationAndMotionAccessController->clearPermissions();
 }
 #endif
 
@@ -5452,9 +5542,10 @@ void Page::forceRepaintAllFrames()
 #if ENABLE(ACCESSIBILITY_ANIMATION_CONTROL)
 void Page::updatePlayStateForAllAnimations()
 {
-    RefPtr localMainFrame = this->localMainFrame();
-    if (RefPtr view = localMainFrame ? localMainFrame->view() : nullptr)
-        view->updatePlayStateForAllAnimationsIncludingSubframes();
+    for (auto& rootFrame : m_rootFrames) {
+        if (RefPtr view = rootFrame->view())
+            view->updatePlayStateForAllAnimationsIncludingSubframes();
+    }
 }
 
 void Page::addIndividuallyPlayingAnimationElement(HTMLImageElement& element)
@@ -5728,6 +5819,22 @@ void NODELETE Page::setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgrad
 std::optional<std::pair<uint16_t, uint16_t>> Page::portsForUpgradingInsecureSchemeForTesting() const
 {
     return m_portsForUpgradingInsecureSchemeForTesting;
+}
+
+void Page::setQuirksSubframeURLForTesting(URL&& url)
+{
+    if (m_quirksSubframeURLForTesting == url)
+        return;
+
+    m_quirksSubframeURLForTesting = WTF::move(url);
+
+    forEachDocument([](Document& document) {
+        if (document.isTopDocument())
+            return;
+
+        document.quirks().determineRelevantQuirks();
+        document.scheduleFullStyleRebuild();
+    });
 }
 
 #if USE(ATSPI)
@@ -6177,12 +6284,13 @@ RefPtr<MediaSessionManagerInterface> Page::mediaSessionManager()
             };
         }
 
-        m_mediaSessionManager = m_mediaSessionManagerFactory.value()(*m_identifier);
-        if (!m_mediaSessionManager)
+        RefPtr mediaSessionManager = m_mediaSessionManagerFactory.value()(*m_identifier);
+        if (!mediaSessionManager)
             return nullptr;
+        lazyInitialize(m_mediaSessionManager, mediaSessionManager.releaseNonNull());
 
 #if USE(AUDIO_SESSION)
-        Ref { *m_mediaSessionManager }->setShouldDeactivateAudioSession(true);
+        m_mediaSessionManager->setShouldDeactivateAudioSession(true);
 #endif
 
         PlatformMediaEngineConfigurationFactory::setMediaSessionManagerProvider([](PageIdentifier identifier) {

@@ -45,6 +45,7 @@
 #include <WebCore/NotImplemented.h>
 #include <wpe/wpe-platform.h>
 #include <wtf/FileSystem.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
@@ -119,6 +120,8 @@ RefPtr<WebPageProxy> WebInspectorUIProxy::platformCreateFrontendPage()
     preferences->setDeveloperExtrasEnabled(true);
     preferences->setLogsPageMessagesToSystemConsoleEnabled(true);
 #endif
+    // The Find banner and Search sidebar use the legacy results=N attribute for recent searches.
+    preferences->setSearchInputResultsAttributeEnabled(true);
     preferences->setAllowTopNavigationToDataURLs(true);
     preferences->setJavaScriptRuntimeFlags({ });
     preferences->setAcceleratedCompositingEnabled(true);
@@ -223,8 +226,8 @@ void WebInspectorUIProxy::platformInspectedURLChanged(const String& url)
     if (!m_inspectorWindow)
         return;
 
-    GUniquePtr<char> title(g_strdup_printf("Web Inspector — %s", url.utf8().legacyCStringPointer()));
-    wpe_toplevel_set_title(m_inspectorWindow.get(), title.get());
+    auto title = makeString(u8"Web Inspector — "_span, url).utf8();
+    wpe_toplevel_set_title(m_inspectorWindow.get(), title.legacyCStringPointer());
 }
 
 void WebInspectorUIProxy::platformShowCertificate(const WebCore::CertificateInfo&)
@@ -234,17 +237,17 @@ void WebInspectorUIProxy::platformShowCertificate(const WebCore::CertificateInfo
 
 static String computeContentHash(const String& content, bool base64Encoded)
 {
-    GUniquePtr<char> digest;
+    GMallocString digest;
     if (base64Encoded) {
         auto decoded = base64Decode(content);
         if (decoded)
-            digest.reset(g_compute_checksum_for_data(G_CHECKSUM_SHA256, decoded->span().data(), decoded->size()));
+            digest = GMallocString::unsafeAdoptFromUTF8(g_compute_checksum_for_data(G_CHECKSUM_SHA256, decoded->span().data(), decoded->size()));
     } else {
         auto utf8 = content.utf8();
-        digest.reset(g_compute_checksum_for_string(G_CHECKSUM_SHA256, utf8.legacyCStringPointer(), utf8.length()));
+        digest = GMallocString::unsafeAdoptFromUTF8(g_compute_checksum_for_string(G_CHECKSUM_SHA256, utf8.legacyCStringPointer(), utf8.length()));
     }
 
-    return String::fromUTF8(digest.get());
+    return String::fromUTF8(digest.span());
 }
 
 void WebInspectorUIProxy::platformSave(Vector<WebCore::InspectorFrontendClient::SaveData>&& saveDatas, bool forceSaveAs)

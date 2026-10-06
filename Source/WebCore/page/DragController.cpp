@@ -108,6 +108,7 @@
 #include "WebContentReader.h"
 #include "markup.h"
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <wtf/Scope.h>
 #include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/MakeString.h>
@@ -477,7 +478,7 @@ DragHandlingMethod DragController::tryDocumentDrag(LocalFrame& frame, const Drag
         }
         
         if (!m_fileInputElementUnderMouse)
-            m_page->dragCaretController().setCaretPosition(protect(m_documentUnderMouse)->frame()->visiblePositionForPoint(point));
+            m_page->dragCaretController().setCaretPosition(protect(protect(m_documentUnderMouse)->frame())->visiblePositionForPoint(point));
         else
             clearDragCaret();
 
@@ -547,7 +548,7 @@ std::optional<DragOperation> DragController::operationForLoad(const DragData& dr
 static bool setSelectionToDragCaret(LocalFrame* frame, VisibleSelection& dragCaret, const IntPoint& point)
 {
     Ref protectedFrame { *frame };
-    frame->selection().setSelection(dragCaret);
+    protect(frame->selection())->setSelection(dragCaret);
     if (frame->selection().selection().isNone()) {
         dragCaret = frame->visiblePositionForPoint(point);
         protect(frame->selection())->setSelection(dragCaret);
@@ -559,7 +560,7 @@ bool DragController::dispatchTextInputEventFor(LocalFrame* innerFrame, const Dra
 {
     ASSERT(m_page->dragCaretController().hasCaret());
     String text = m_page->dragCaretController().isContentRichlyEditable() ? emptyString() : dragData.asPlainText();
-    auto target = innerFrame->editor().findEventTargetFrom(m_page->dragCaretController().caretPosition());
+    auto target = protect(innerFrame->editor())->findEventTargetFrom(m_page->dragCaretController().caretPosition());
     // FIXME: What guarantees target is not null?
     Ref event = TextEvent::createForDrop(protect(protect(innerFrame)->windowProxy()).ptr(), WTF::move(text));
     target->dispatchEvent(event);
@@ -630,7 +631,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
 
     ResourceCacheValidationSuppressor validationSuppressor(protect(range->start.document())->cachedResourceLoader());
     Ref editor = innerFrame->editor();
-    bool isMove = dragIsMove(innerFrame->selection(), dragData);
+    bool isMove = dragIsMove(protect(innerFrame->selection()), dragData);
     if (isMove || dragCaret.isContentRichlyEditable()) {
         bool chosePlainText = false;
         RefPtr fragment = documentFragmentFromDragData(dragData, *innerFrame, *range, true, chosePlainText);
@@ -639,7 +640,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
 
         client().willPerformDragDestinationAction(DragDestinationAction::Edit, dragData);
 
-        if (editor->client() && editor->client()->performTwoStepDrop(*fragment, *range, isMove))
+        if (CheckedPtr client = editor->client(); client && client->performTwoStepDrop(*fragment, *range, isMove))
             return true;
 
         if (isMove) {
@@ -665,7 +666,7 @@ bool DragController::concludeEditDrag(const DragData& dragData)
 
         client().willPerformDragDestinationAction(DragDestinationAction::Edit, dragData);
         Ref fragment = createFragmentFromText(*range, text);
-        if (editor->client() && editor->client()->performTwoStepDrop(fragment.get(), *range, isMove))
+        if (CheckedPtr client = editor->client(); client && client->performTwoStepDrop(fragment.get(), *range, isMove))
             return true;
 
         if (setSelectionToDragCaret(innerFrame.get(), dragCaret, point))
@@ -782,7 +783,7 @@ static bool imageElementIsDraggable(const HTMLImageElement& image, const LocalFr
         return false;
 
     RefPtr cachedImage = renderImage->cachedImage();
-    return cachedImage && !cachedImage->errorOccurred() && cachedImage->imageForRenderer(renderImage.get());
+    return cachedImage && !cachedImage->errorOccurred() && cachedImage->image();
 }
 
 #if ENABLE(MODEL_ELEMENT)
@@ -808,7 +809,7 @@ static RefPtr<HTMLAttachmentElement> enclosingAttachmentElement(Element& element
 
 RefPtr<Element> DragController::draggableElement(const LocalFrame* sourceFrame, Element* startElement, const IntPoint& dragOrigin, DragState& state) const
 {
-    state.type = sourceFrame->selection().contains(dragOrigin) ? DragSourceAction::Selection : OptionSet<DragSourceAction>({ });
+    state.type = protect(sourceFrame->selection())->contains(dragOrigin) ? DragSourceAction::Selection : OptionSet<DragSourceAction>({ });
     if (!startElement)
         return nullptr;
 
@@ -889,9 +890,6 @@ static CachedImage* getCachedImage(Element& element)
 static Image* getImage(Element& element)
 {
     RefPtr cachedImage = getCachedImage(element);
-    // Don't use cachedImage->imageForRenderer() here as that may return BitmapImages for cached SVG Images.
-    // Users of getImage() want access to the SVGImage, in order to figure out the filename extensions,
-    // which would be empty when asking the cached BitmapImages.
     return (cachedImage && !cachedImage->errorOccurred()) ?
         cachedImage->image() : nullptr;
 }
@@ -922,7 +920,7 @@ static IntPoint NODELETE dragLocForDHTMLDrag(const IntPoint& mouseDraggedPoint, 
 
 static FloatPoint dragImageAnchorPointForSelectionDrag(LocalFrame& frame, const IntPoint& mouseDraggedPoint)
 {
-    IntRect draggingRect = enclosingIntRect(frame.selection().selectionBounds());
+    IntRect draggingRect = enclosingIntRect(protect(frame.selection())->selectionBounds());
 
     float x = (mouseDraggedPoint.x() - draggingRect.x()) / (float)draggingRect.width();
     float y = (mouseDraggedPoint.y() - draggingRect.y()) / (float)draggingRect.height();
@@ -932,7 +930,7 @@ static FloatPoint dragImageAnchorPointForSelectionDrag(LocalFrame& frame, const 
 
 static IntPoint dragLocForSelectionDrag(LocalFrame& src)
 {
-    IntRect draggingRect = enclosingIntRect(src.selection().selectionBounds());
+    IntRect draggingRect = enclosingIntRect(protect(src.selection())->selectionBounds());
     int xpos = draggingRect.maxX();
     xpos = draggingRect.x() < xpos ? draggingRect.x() : xpos;
     int ypos = draggingRect.maxY();
@@ -1239,6 +1237,30 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         auto previousSelection = src.selection().selection();
         selectElement(element);
 
+        auto restoreSelectionChanges = WTF::makeScopeExit([editor = protect(src.editor()), selection = protect(src.selection()), element, &previousSelection] {
+            if (!element->isContentRichlyEditable())
+                selection->setSelection(previousSelection);
+            editor->setIgnoreSelectionChanges(false);
+        });
+
+        // We create the drag image first, because clients can run script that mutates the DOM (and changes the selection).
+        if (!dragImage) {
+            CheckedPtr attachmentRenderer = dynamicDowncast<RenderAttachment>(attachment->renderer());
+            if (attachmentRenderer)
+                attachmentRenderer->setShouldDrawBorder(false);
+            auto [dragImageRef, textIndicator] = createDragImageForSelection(src);
+            dragImage = DragImage { dissolveDragImageToFraction(dragImageRef, DragImageAlpha) };
+            if (attachmentRenderer)
+                attachmentRenderer->setShouldDrawBorder(true);
+            if (textIndicator && textIndicator->contentImage())
+                dragImage.setTextIndicator(textIndicator);
+            dragLoc = dragLocForSelectionDrag(src);
+            m_dragOffset = IntPoint { dragOrigin - dragLoc };
+        }
+
+        if (!dragImage)
+            return false;
+
         PromisedAttachmentInfo promisedAttachment;
         if (hasData == HasNonDefaultPasteboardData::No) {
             Ref editor = src.editor();
@@ -1255,23 +1277,7 @@ bool DragController::startDrag(LocalFrame& src, const DragState& state, OptionSe
         
         client().willPerformDragSourceAction(DragSourceAction::Attachment, dragOrigin, dataTransfer);
         
-        if (!dragImage) {
-            CheckedPtr attachmentRenderer = dynamicDowncast<RenderAttachment>(attachment->renderer());
-            if (attachmentRenderer)
-                attachmentRenderer->setShouldDrawBorder(false);
-            auto [dragImageRef, textIndicator] = createDragImageForSelection(src);
-            dragImage = DragImage { dissolveDragImageToFraction(dragImageRef, DragImageAlpha) };
-            if (attachmentRenderer)
-                attachmentRenderer->setShouldDrawBorder(true);
-            if (textIndicator && textIndicator->contentImage())
-                dragImage.setTextIndicator(textIndicator);
-            dragLoc = dragLocForSelectionDrag(src);
-            m_dragOffset = IntPoint(dragOrigin.x() - dragLoc.x(), dragOrigin.y() - dragLoc.y());
-        }
         doSystemDrag(WTF::move(dragImage), dragLoc, dragOrigin, src, state, WTF::move(promisedAttachment), rootFrameID);
-        if (!element->isContentRichlyEditable())
-            protect(src.selection())->setSelection(previousSelection);
-        protect(src.editor())->setIgnoreSelectionChanges(false);
         return true;
     }
 #endif
@@ -1411,11 +1417,11 @@ void DragController::doSystemDrag(DragImage image, const IntPoint& dragLoc, cons
     ASSERT(state.type.hasExactlyOneBitSet());
     item.sourceAction = state.type.toSingleValue();
     item.promisedAttachmentInfo = WTF::move(promisedAttachmentInfo);
-    item.containsSelection = frame.selection().contains(eventPos);
+    item.containsSelection = protect(frame.selection())->contains(eventPos);
     item.rootFrameID = rootFrameID;
 
-    auto eventPositionInRootViewCoordinates = frameView->contentsToRootView(eventPos);
-    auto dragLocationInRootViewCoordinates = frameView->contentsToRootView(dragLoc);
+    auto eventPositionInRootViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { eventPos }));
+    auto dragLocationInRootViewCoordinates = roundedIntPoint(frameView->contentsToMainFrameView(FloatPoint { dragLoc }));
     item.eventPositionInContentCoordinates = mainFrameView->rootViewToContents(eventPositionInRootViewCoordinates);
     item.eventPositionInRootViewCoordinates = eventPositionInRootViewCoordinates;
     item.dragLocationInContentCoordinates = mainFrameView->rootViewToContents(dragLocationInRootViewCoordinates);

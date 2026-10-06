@@ -700,6 +700,8 @@ public:
     virtual bool isChecked() const = 0;
     virtual bool isEnabled() const = 0;
     virtual bool isSelected() const = 0;
+    // The glyph of a selected option's visible ::checkmark (e.g. in a base-appearance select's picker), or the empty string.
+    virtual String selectedOptionCheckmark() const = 0;
     virtual bool isFocused() const = 0;
     virtual bool isIndeterminate() const = 0;
     virtual bool isLoaded() const = 0;
@@ -830,8 +832,9 @@ public:
     String popupValueString() const;
     virtual bool supportsHasPopup() const = 0;
     virtual bool pressedIsPresent() const = 0;
-    virtual String explicitInvalidStatus() const = 0;
-    String invalidStatus() const;
+    // Assembled from aria-invalid, HTML constraint validation and any error message detected beside the
+    // field. Prefer this over explicitInvalidStatus() for determining an object's computed / final invalid state.
+    virtual String invalidStatusIncludingInferred() const = 0;
     virtual bool supportsExpanded() const = 0;
     virtual bool supportsChecked() const = 0;
     virtual AccessibilitySortDirection sortDirection() const = 0;
@@ -1162,7 +1165,7 @@ public:
     // parentObject() call per hop instead of re-fetching via nextSiblingIncludingIgnored() /
     // nextInPreOrder().
     template<typename Visitor>
-    void traverseDescendantsIncludingIgnored(Visitor&&, bool updateChildrenIfNeeded = true);
+    void traverseDescendantsIncludingIgnored(NOESCAPE const Visitor&, bool updateChildrenIfNeeded = true);
 
 #if ENABLE(INCLUDE_IGNORED_IN_CORE_AX_TREE)
     bool onlyAddsUnignoredChildren() const { return isTableColumn() || role() == AccessibilityRole::TableHeaderContainer; }
@@ -1547,7 +1550,7 @@ inline Vector<AXID> axIDs(const AXCoreObject::AccessibilityChildrenVector& objec
 }
 
 template<typename Visitor>
-void AXCoreObject::traverseDescendantsIncludingIgnored(Visitor&& visitor, bool updateChildrenIfNeeded)
+void AXCoreObject::traverseDescendantsIncludingIgnored(NOESCAPE const Visitor& visitor, bool updateChildrenIfNeeded)
 {
     const auto& children = childrenIncludingIgnored(updateChildrenIfNeeded);
     if (children.isEmpty())
@@ -1706,7 +1709,7 @@ namespace Accessibility {
 constexpr unsigned maxDescendantTraversalIterations = 100000;
 
 template<typename T, typename MatchFunctionT, typename StopFunctionT>
-T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
+T* crossFrameFindAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches, NOESCAPE const StopFunctionT& shouldStop)
 {
     RefPtr<T> current;
     if (includeSelf)
@@ -1725,7 +1728,7 @@ T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunction
 }
 
 template<typename T, typename MatchFunctionT, typename StopFunctionT>
-T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches, const StopFunctionT& shouldStop)
+T* findAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches, NOESCAPE const StopFunctionT& shouldStop)
 {
     RefPtr<T> current;
     if (includeSelf)
@@ -1744,7 +1747,7 @@ T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches
 }
 
 template<typename T, typename MatchFunctionT>
-T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
+T* findAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches)
 {
     return findAncestor(object, includeSelf, matches, [] (const auto&) {
         return false;
@@ -1752,7 +1755,7 @@ T* findAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches
 }
 
 template<typename T, typename MatchFunctionT>
-T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunctionT& matches)
+T* crossFrameFindAncestor(const T& object, bool includeSelf, NOESCAPE const MatchFunctionT& matches)
 {
     return crossFrameFindAncestor(object, includeSelf, matches, [] (const auto&) {
         return false;
@@ -1760,7 +1763,7 @@ T* crossFrameFindAncestor(const T& object, bool includeSelf, const MatchFunction
 }
 
 template<typename T, typename F>
-T* clickableSelfOrAncestor(const T& startObject, const F& shouldStop)
+T* clickableSelfOrAncestor(const T& startObject, NOESCAPE const F& shouldStop)
 {
     RefPtr<T> ancestor = findAncestor<T>(startObject, true, [](const auto& ancestor) {
         return ancestor.hasClickHandler();
@@ -1787,7 +1790,7 @@ T* findRelatedObjectInAncestry(const T& object, AXRelation relation, const T& de
 }
 
 template<typename T, typename F>
-AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, const F& matches)
+AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, NOESCAPE const F& matches)
 {
     if (includeSelf && matches(object) && !object.isIgnored())
         return &object;
@@ -1825,7 +1828,7 @@ AXCoreObject* findUnignoredDescendant(T& object, bool includeSelf, const F& matc
 }
 
 template<typename T, typename F>
-T* findUnignoredChild(T& object, F&& matches)
+T* findUnignoredChild(T& object, NOESCAPE const F& matches)
 {
     for (auto child : object.unignoredChildren()) {
         if (matches(child))
@@ -1835,7 +1838,7 @@ T* findUnignoredChild(T& object, F&& matches)
 }
 
 template<typename T, typename F>
-void enumerateAncestors(const T& object, bool includeSelf, const F& lambda)
+void enumerateAncestors(const T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
@@ -1845,7 +1848,7 @@ void enumerateAncestors(const T& object, bool includeSelf, const F& lambda)
 }
 
 template<typename T, typename F>
-void enumerateDescendantsIncludingIgnored(T& object, bool includeSelf, const F& lambda)
+void enumerateDescendantsIncludingIgnored(T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
@@ -1877,13 +1880,15 @@ void enumerateDescendantsIncludingIgnored(T& object, bool includeSelf, const F& 
 }
 
 template<typename T, typename F>
-void enumerateUnignoredDescendants(T& object, bool includeSelf, const F& lambda)
+void enumerateUnignoredDescendants(T& object, bool includeSelf, NOESCAPE const F& lambda)
 {
     if (includeSelf)
         lambda(object);
 
+    // Children go onto the stack last to first, so that they come off it in document order.
     Vector<Ref<AXCoreObject>> stack;
-    for (const auto& child : object.unignoredChildren())
+    const auto& children = object.unignoredChildren();
+    for (const auto& child : children | std::views::reverse)
         stack.append(child);
 
     unsigned iterationCount = 0;
@@ -1903,7 +1908,8 @@ void enumerateUnignoredDescendants(T& object, bool includeSelf, const F& lambda)
             break;
 #endif
         lambda(current.get());
-        for (const auto& child : current->unignoredChildren())
+        const auto& currentChildren = current->unignoredChildren();
+        for (const auto& child : currentChildren | std::views::reverse)
             stack.append(child);
     }
 }

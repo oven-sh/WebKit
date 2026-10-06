@@ -1,7 +1,3 @@
-[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
-[ macOS ] html/HTMLMediaElement.cpp
-[ Mac ] page/mac/ServicesOverlayController.mm
-[ iOS ] platform/audio/ios/AudioSessionIOS.mm
 rendering/RenderCounter.cpp
 rendering/RenderLayer.cpp
 rendering/RenderLayerBackingSVGAdditions.cpp
@@ -16,4 +12,3 @@ style/computed/StyleComputedStyleBase+SettersInlines.h
 style/computed/StyleComputedStyleBase.cpp
 style/computed/StyleComputedStyleProperties+SettersCustomInlines.h
 style/values/primitives/StyleLengthResolution.cpp
-[ macOS ] testing/Internals.cpp

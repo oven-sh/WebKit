@@ -65,12 +65,19 @@
 #include "StyleEnvironmentMap.h"
 #include "StylePortalTransform.h"
 #include "StylePositionAnchor.h"
+#include "TypedElementDescendantIteratorInlines.h"
 #include "VisibilityChangeClient.h"
 #include <JavaScriptCore/ConsoleTypes.h>
 #include <ranges>
 #include <wtf/RefCounted.h>
 #include <wtf/Vector.h>
 #include <wtf/text/MakeString.h>
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+#include "Chrome.h"
+#include "ChromeClient.h"
+#include "ElementVolumetricScene.h"
+#endif
 
 namespace WebCore {
 
@@ -256,6 +263,11 @@ SpatialPortalController::~SpatialPortalController()
 
 void SpatialPortalController::prepareForRemoval()
 {
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (RefPtr element = m_portalElement.get())
+        ElementVolumetricScene::exitVolumetricScene(*element);
+#endif
+
     m_portalAction = PortalActionKind::None;
     updateGestureHandling();
 
@@ -275,6 +287,20 @@ HTMLModelElement* SpatialPortalController::hostedModelElement(NodeIdentifier nod
     return it->value.element.get();
 }
 
+Vector<Ref<HTMLModelElement>> SpatialPortalController::hostedModelsInTreeOrder() const
+{
+    RefPtr portalElement = m_portalElement.get();
+    if (!portalElement)
+        return { };
+
+    Vector<Ref<HTMLModelElement>> models;
+    for (Ref model : descendantsOfType<HTMLModelElement>(*portalElement)) {
+        if (hostedModelElement(model->nodeIdentifier()) == model.ptr())
+            models.append(WTF::move(model));
+    }
+    return models;
+}
+
 void SpatialPortalController::unregisterChildModel(HTMLModelElement& model)
 {
     auto nodeID = model.nodeIdentifier();
@@ -290,6 +316,10 @@ void SpatialPortalController::unregisterChildModel(HTMLModelElement& model)
     scheduleAnchorUpdate();
 
     if (m_hostedModels.isEmpty()) {
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+        if (RefPtr element = m_portalElement.get())
+            ElementVolumetricScene::exitVolumetricScene(*element);
+#endif
         deleteModelPlayer();
         stopObservingPortalVisibility();
         reconfigurePortalLayer();
@@ -424,7 +454,11 @@ void SpatialPortalController::viewportIntersectionChanged(bool isIntersecting)
         return;
 
     m_isIntersectingViewport = isIntersecting;
+    portalVisibilityChanged();
+}
 
+void SpatialPortalController::portalVisibilityChanged()
+{
     if (RefPtr player = m_modelPlayer)
         player->visibilityStateDidChange();
 
@@ -436,6 +470,11 @@ void SpatialPortalController::viewportIntersectionChanged(bool isIntersecting)
 
 void SpatialPortalController::documentVisibilityChanged()
 {
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (RefPtr element = m_portalElement.get())
+        ElementVolumetricScene::documentVisibilityDidChange(*element);
+#endif
+
     if (RefPtr player = m_modelPlayer)
         player->visibilityStateDidChange();
 }
@@ -445,6 +484,16 @@ void SpatialPortalController::childVisibilityStateChanged(HTMLModelElement& chil
     if (isPortalVisible())
         loadChildModelIfReady(child);
 }
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+RefPtr<ModelPlayer> SpatialPortalController::liveModelPlayer() const
+{
+    RefPtr modelPlayer = m_modelPlayer;
+    if (!modelPlayer || modelPlayer->isPlaceholder())
+        return nullptr;
+    return modelPlayer;
+}
+#endif
 
 ModelPlayer* SpatialPortalController::ensureModelPlayer()
 {
@@ -476,6 +525,11 @@ ModelPlayer* SpatialPortalController::ensureModelPlayer()
 
 #if ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
     pushEnvironmentMapToPlayer(*m_modelPlayer);
+#endif
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == ModelPresentationMode::Volumetric)
+        page->chrome().client().reconnectVolumetricSceneForElement(*element);
 #endif
 
     return m_modelPlayer.get();
@@ -588,7 +642,7 @@ void SpatialPortalController::startEnvironmentMapLoad()
         return;
 
     if (!m_environmentMapLoader)
-        m_environmentMapLoader = EnvironmentMapLoader::create();
+        lazyInitialize(m_environmentMapLoader, EnvironmentMapLoader::create());
 
     RefPtr loader = m_environmentMapLoader;
     loader->load(*element, m_environmentMapURL, [weakThis = WeakPtr { *this }, url = m_environmentMapURL](RefPtr<SharedBuffer>&& data) {
@@ -642,6 +696,26 @@ String SpatialPortalController::effectiveEnvironmentMapForTesting() const
 
 #endif // ENABLE(MODEL_ELEMENT_ENVIRONMENT_MAP)
 
+#if ENABLE(MODEL_PROCESS)
+void SpatialPortalController::sceneGraphAsTextForTesting(std::optional<NodeIdentifier> rootNode, const ModelSceneGraphAsTextOptions& options, CompletionHandler<void(String&&)>&& completionHandler)
+{
+    RefPtr player = m_modelPlayer;
+    if (!player) {
+        completionHandler({ });
+        return;
+    }
+
+    updateAnchors();
+
+    Vector<std::pair<NodeIdentifier, String>> modelLabels;
+    unsigned treeOrderPosition = 0;
+    for (Ref model : hostedModelsInTreeOrder())
+        modelLabels.append({ model->nodeIdentifier(), model->dumpLabelForTesting(++treeOrderPosition) });
+
+    player->sceneGraphAsTextForTesting(rootNode, WTF::move(modelLabels), options, WTF::move(completionHandler));
+}
+#endif
+
 void SpatialPortalController::updateGestureHandling()
 {
     bool shouldHandleGesture = m_portalAction != PortalActionKind::None;
@@ -653,7 +727,7 @@ void SpatialPortalController::updateGestureHandling()
 #if ENABLE(TOUCH_EVENTS)
     if (RefPtr element = m_portalElement.get()) {
         if (!m_eventListener)
-            m_eventListener = SpatialPortalEventListener::create();
+            lazyInitialize(m_eventListener, SpatialPortalEventListener::create());
 
         if (shouldHandleGesture) {
             element->addEventListener(eventNames().touchstartEvent, *m_eventListener, { });
@@ -692,6 +766,11 @@ CheckedPtr<SpatialPortalController> SpatialPortalController::interactiveControll
 
     if (!controller || !controller->supportsInteraction())
         return nullptr;
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (controller->presentationMode() == ModelPresentationMode::Volumetric)
+        return nullptr;
+#endif
 
     return controller;
 }
@@ -837,8 +916,8 @@ void SpatialPortalController::configureGraphicsLayer(GraphicsLayer& graphicsLaye
 #if ENABLE(MODEL_ELEMENT_PORTAL)
         .hasPortal = true, // N/A
 #endif
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-        .detachedForImmersive = false, // N/A
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+        .presentationMode = m_presentationMode,
 #endif
     });
 }
@@ -911,21 +990,17 @@ HTMLModelElement* SpatialPortalController::anchorModelForChild(NodeIdentifier no
     return hostedModelElement(*it->value.anchorNode);
 }
 
-auto SpatialPortalController::collectAnchorNames() const -> AnchorsByName
+auto SpatialPortalController::collectAnchorNames(const Vector<Ref<HTMLModelElement>>& modelsInTreeOrder) -> AnchorsByName
 {
     AnchorsByName anchorsByName;
 
-    for (auto& [candidateID, hostedModel] : m_hostedModels) {
-        RefPtr candidate = hostedModel.element.get();
-        if (!candidate)
-            continue;
-
+    for (Ref candidate : modelsInTreeOrder) {
         CheckedPtr candidateStyle = candidate->computedStyle();
         if (!candidateStyle)
             continue;
 
         for (auto& scopedName : candidateStyle->anchorNamesOutOfLine())
-            anchorsByName.add(Style::ResolvedScopedName::createFromScopedName(*candidate, scopedName), candidateID);
+            anchorsByName.add(Style::ResolvedScopedName::createFromScopedName(candidate, scopedName), Vector<NodeIdentifier> { }).iterator->value.append(candidate->nodeIdentifier());
     }
 
     return anchorsByName;
@@ -934,10 +1009,15 @@ auto SpatialPortalController::collectAnchorNames() const -> AnchorsByName
 std::optional<NodeIdentifier> SpatialPortalController::anchorNodeForName(const HTMLModelElement& model, const Style::ScopedName& anchorName, const AnchorsByName& anchorsByName)
 {
     auto it = anchorsByName.find(Style::ResolvedScopedName::createFromScopedName(model, anchorName));
-    if (it == anchorsByName.end() || it->value == model.nodeIdentifier())
+    if (it == anchorsByName.end())
         return std::nullopt;
 
-    return it->value;
+    for (auto candidateID : it->value | std::views::reverse) {
+        if (candidateID != model.nodeIdentifier())
+            return candidateID;
+    }
+
+    return std::nullopt;
 }
 
 bool SpatialPortalController::anchorChainReaches(NodeIdentifier startNode, NodeIdentifier targetNode, const AnchorsByName& anchorsByName) const
@@ -1024,26 +1104,19 @@ void SpatialPortalController::updateAnchors()
     if (!m_modelPlayer || m_hostedModels.isEmpty())
         return;
 
-    auto anchorsByName = collectAnchorNames();
+    auto models = hostedModelsInTreeOrder();
+    auto anchorsByName = collectAnchorNames(models);
 
-    // Sorted so that any console warning the pass emits is ordered by registration, not by hash order.
-    auto nodeIDs = copyToVector(m_hostedModels.keys());
-    std::ranges::sort(nodeIDs);
-
-    for (auto nodeID : nodeIDs) {
-        auto it = m_hostedModels.find(nodeID);
+    for (Ref model : models) {
+        auto it = m_hostedModels.find(model->nodeIdentifier());
         if (it == m_hostedModels.end())
             continue;
 
-        RefPtr element = it->value.element.get();
-        if (!element)
-            continue;
-
-        CheckedPtr style = element->computedStyle();
+        CheckedPtr style = model->computedStyle();
         if (!style)
             continue;
 
-        updateAnchorForChild(*element, it->value, *style, anchorsByName);
+        updateAnchorForChild(model, it->value, *style, anchorsByName);
     }
 }
 
@@ -1136,8 +1209,30 @@ RefPtr<GraphicsLayer> SpatialPortalController::portalGraphicsLayer() const
 bool SpatialPortalController::isPortalVisible() const
 {
     RefPtr element = m_portalElement.get();
-    return element && !element->document().hidden() && m_isIntersectingViewport;
+    if (!element)
+        return false;
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    // The portal's inline box is blank while its content is presented elsewhere, so scrolling it away must not
+    // unload what that scene is showing.
+    if (m_presentationMode != ModelPresentationMode::Inline)
+        return true;
+#endif
+    return !element->document().hidden() && m_isIntersectingViewport;
 }
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void SpatialPortalController::setPresentationMode(ModelPresentationMode mode)
+{
+    if (m_presentationMode == mode)
+        return;
+
+    m_presentationMode = mode;
+    reconfigurePortalLayer();
+    portalVisibilityChanged();
+}
+
+#endif
 
 } // namespace WebCore
 

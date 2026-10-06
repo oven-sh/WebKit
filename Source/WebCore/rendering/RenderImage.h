@@ -81,11 +81,15 @@ public:
     bool shouldRespectZeroIntrinsicWidth() const final;
     bool shouldRespectZeroIntrinsicHeight() const final;
 
-    String accessibilityDescription() const { return imageResource().image()->accessibilityDescription(); }
+    String accessibilityDescription() const;
 
 #if ENABLE(MULTI_REPRESENTATION_HEIC)
     bool isMultiRepresentationHEIC() const;
 #endif
+
+    WEBCORE_EXPORT std::optional<FloatSize> usedImageSize() const final;
+
+    WEBCORE_EXPORT static FloatSize imageSizeAsRendered(const CachedImage&, const RenderElement*, float multiplier = 1.0f, CachedImage::SizeType = CachedImage::UsedSize, float density = 1.0f);
 
     FloatSize preferredAspectRatioAsSize() const final;
 
@@ -137,11 +141,11 @@ private:
     void repaintOrMarkForLayout(ImageSizeChangeType, const IntRect* = nullptr);
     void updateIntrinsicSizeIfNeeded(const LayoutSize&);
     // Update the size of the image to be rendered. Object-fit may cause this to be different from the CSS box's content rect.
-    void updateInnerContentRect();
+    IntSize imageContainerSize() const;
 
     void paintAreaElementFocusRing(PaintInfo&, const LayoutPoint& paintOffset);
 
-    bool isDimensionlessSVG() const;
+    bool hasNaturalAspectRatio() const;
 
     bool hasShadowContent() const { return m_hasShadowControls || m_hasImageOverlay; }
 
@@ -149,7 +153,7 @@ private:
 
     // Text to display as long as the image isn't available.
     String m_altText;
-    std::unique_ptr<RenderImageResource> m_imageResource;
+    const std::unique_ptr<RenderImageResource> m_imageResource;
     bool m_needsToSetSizeForAltText { false };
     bool m_isGeneratedContent { false };
     bool m_hasShadowControls { false };

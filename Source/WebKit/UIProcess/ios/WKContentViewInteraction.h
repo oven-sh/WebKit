@@ -400,6 +400,10 @@ struct ImageAnalysisContextMenuActionData {
     RetainPtr<_UILookupGestureRecognizer> _lookupGestureRecognizer;
 #endif
 
+#if HAVE(UI_HINGE_INTERACTION)
+    RetainPtr<UIHingeInteraction> _hingeInteraction;
+#endif
+
 #if HAVE(UIKIT_WITH_MOUSE_SUPPORT)
     RetainPtr<WKMouseInteraction> _mouseInteraction;
     WebCore::MouseEventPolicy _mouseEventPolicy;
@@ -923,7 +927,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)_didPerformDragOperation:(BOOL)handled;
 - (void)_didHandleDragStartRequest:(BOOL)started;
 - (void)_didHandleAdditionalDragItemsRequest:(BOOL)added;
-- (void)_startDrag:(RetainPtr<CGImageRef>)image item:(const WebCore::DragItem&)item nodeID:(std::optional<WebCore::NodeIdentifier>)nodeID;
+- (void)_startDrag:(RetainPtr<CGImageRef>)image item:(const WebCore::DragItem&)item nodeID:(std::optional<WebCore::NodeIdentifier>)nodeID frameID:(std::optional<WebCore::FrameIdentifier>)frameID;
 - (void)_willReceiveEditDragSnapshot;
 - (void)_didReceiveEditDragSnapshot:(RefPtr<WebCore::TextIndicator>&&)textIndicator;
 - (void)_didChangeDragCaretRect:(CGRect)previousRect currentRect:(CGRect)rect;
@@ -1071,6 +1075,7 @@ FOR_EACH_PRIVATE_WKCONTENTVIEW_ACTION(DECLARE_WKCONTENTVIEW_ACTION_FOR_WEB_VIEW)
 - (void)selectWordBackwardForTesting;
 - (void)_simulateElementAction:(_WKElementActionType)actionType atLocation:(CGPoint)location;
 - (void)_simulateLongPressActionAtLocation:(CGPoint)location;
+- (void)_simulateDoubleClickAtLocation:(CGPoint)location;
 - (void)_simulateTextEntered:(NSString *)text;
 - (void)selectFormAccessoryPickerRow:(NSInteger)rowIndex;
 - (BOOL)selectFormAccessoryHasCheckedItemAtRow:(long)rowIndex;

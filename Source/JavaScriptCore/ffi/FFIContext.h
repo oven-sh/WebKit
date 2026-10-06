@@ -147,8 +147,8 @@ public:
     StringArena& stringArena() { return m_arena; }
     StringArena& arena() { return m_arena; }
 
-    const CString* cachedUTF8(StringImpl&);
-    const CString& cacheUTF8(StringImpl&, CString&&);
+    const UTF8CString* cachedUTF8(StringImpl&);
+    const UTF8CString& cacheUTF8(StringImpl&, UTF8CString&&);
 
     static constexpr unsigned utf8CacheCapacity = 64;
 
@@ -165,7 +165,7 @@ private:
     JS_EXPORT_PRIVATE static ThreadsafeDispatchFunction s_threadsafeDispatch;
     struct UTF8CacheEntry {
         RefPtr<StringImpl> key;
-        CString utf8;
+        UTF8CString utf8;
         uint64_t lastUse { 0 };
     };
 

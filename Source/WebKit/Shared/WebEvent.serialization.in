@@ -233,6 +233,7 @@ using WebCore::PointerID = uint32_t;
     float gestureScale;
     float gestureRotation;
     WebKit::WebEventPhase phase;
+    WebKit::WebEventInputSource inputSource;
 };
 
 [RefCounted] class WebKit::WebGestureEvent {

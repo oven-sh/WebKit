@@ -335,9 +335,6 @@ public:
     void NODELETE setPrivateClickMeasurementEnabled(bool);
     bool NODELETE privateClickMeasurementEnabled() const;
     void setPrivateClickMeasurementDebugMode(PAL::SessionID, bool);
-    void setLocalNetworkAccessPermissionForTesting(PAL::SessionID, WebCore::ClientOrigin&&, WebCore::IPAddressSpace, WebCore::PermissionState, CompletionHandler<void()>&&);
-    void removeLocalNetworkAccessPermissions(PAL::SessionID, WebCore::SecurityOriginData&&, CompletionHandler<void()>&&);
-    void clearLocalNetworkAccessPermissionsForTesting(PAL::SessionID, CompletionHandler<void()>&&);
 
 #if HAVE(ENHANCED_SECURITY_LINKS)
     void setIsEnhancedSecurityLinksEnabled(bool);
@@ -641,6 +638,7 @@ private:
 
 #if ENABLE(CONTENT_EXTENSIONS)
     void resetResourceMonitorThrottlerForTesting(PAL::SessionID, CompletionHandler<void()>&&);
+    void setTrackingPreventionContentRuleList(std::optional<WebCompiledContentRuleListData>&&);
 #endif
 
     struct TaskIdentifierType;
@@ -689,12 +687,12 @@ private:
 #endif
 
 #if USE(RUNNINGBOARD)
-    Ref<WebSQLiteDatabaseTracker> m_webSQLiteDatabaseTracker;
+    const Ref<WebSQLiteDatabaseTracker> m_webSQLiteDatabaseTracker;
     RefPtr<ProcessAssertion> m_holdingLockedFileAssertion;
 #endif
     
 #if ENABLE(WEB_RTC)
-    RefPtr<RTCDataChannelRemoteManagerProxy> m_rtcDataChannelProxy;
+    const RefPtr<RTCDataChannelRemoteManagerProxy> m_rtcDataChannelProxy;
 #endif
 
     OptionSet<NetworkCache::CacheOption> m_cacheOptions;

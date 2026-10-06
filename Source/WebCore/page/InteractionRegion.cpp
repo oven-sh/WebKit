@@ -29,6 +29,7 @@
 
 #include "AXObjectCache.h"
 #include "AccessibilityObject.h"
+#include "BitmapImage.h"
 #include "BorderShape.h"
 #include "ContainerNodeInlines.h"
 #include "Document.h"
@@ -316,7 +317,7 @@ static bool isGuardContainer(const Element& element)
         return false;
 
     CheckedRef renderer = *element.renderer();
-    return hasTransparentContainerStyle(renderer->style());
+    return hasTransparentContainerStyle(protect(renderer->style()));
 }
 
 static FloatSize boundingSize(const RenderObject& renderer, const std::optional<AffineTransform>& transform)
@@ -339,14 +340,15 @@ static bool cachedImageIsPhoto(const CachedImage& cachedImage)
     if (cachedImage.errorOccurred())
         return false;
 
-    RefPtr image = cachedImage.image();
-    if (!image || !image->isBitmapImage())
+    RefPtr bitmapImage = dynamicDowncast<BitmapImage>(cachedImage.image());
+    if (!bitmapImage)
         return false;
 
-    if (image->nativeImage() && image->nativeImage()->hasAlpha())
+    RefPtr nativeImage = bitmapImage->nativeImage();
+    if (!nativeImage)
         return false;
 
-    return true;
+    return !nativeImage->hasAlpha();
 }
 
 static RefPtr<Image> findIconImage(const RenderObject& renderer)
@@ -355,12 +357,22 @@ static RefPtr<Image> findIconImage(const RenderObject& renderer)
         if (!renderImage->cachedImage() || renderImage->cachedImage()->errorOccurred())
             return nullptr;
 
-        RefPtr image = protect(*renderImage->cachedImage())->imageForRenderer(renderImage);
+        RefPtr image = protect(*renderImage->cachedImage())->image();
         if (!image)
             return nullptr;
 
-        if (image->isSVGImageForContainer()
-            || (image->isBitmapImage() && image->nativeImage() && image->nativeImage()->hasAlpha()))
+        if (image->isSVGImage())
+            return image;
+
+        RefPtr bitmapImage = dynamicDowncast<BitmapImage>(*image);
+        if (!bitmapImage)
+            return nullptr;
+
+        RefPtr nativeImage = bitmapImage->nativeImage();
+        if (!nativeImage)
+            return nullptr;
+
+        if (nativeImage->hasAlpha())
             return image;
     }
 
@@ -567,7 +579,8 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
         auto size = boundingSize(regionRenderer, transform);
         auto generateAndCachePath = [&] {
             LayoutRect imageRect(FloatPoint(), size);
-            Ref shape = LayoutShape::createRasterShape(iconImage.get(), 0, imageRect, imageRect, WritingMode(), 0);
+            auto iconSize = iconImage ? iconImage->size() : FloatSize { };
+            Ref shape = LayoutShape::createRasterShape(iconImage.get(), 0, imageRect, imageRect, WritingMode(), 0, ConcreteObjectSize::fixed(iconSize), iconSize);
             LayoutShape::DisplayPaths paths;
             shape->buildDisplayPaths(paths);
             auto path = paths.shape;
@@ -608,7 +621,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
 
         clipPath = path;
     } else if ((regionRendererBox = dynamicDowncast<RenderBox>(regionRenderer))) {
-        auto borderShape = BorderShape::shapeForBorderRect(regionRendererBox->style(), regionRendererBox->borderBoxRect());
+        auto borderShape = BorderShape::shapeForBorderRect(protect(regionRendererBox->style()), regionRendererBox->borderBoxRect());
         auto borderRadii = borderShape.radii();
         auto minRadius = borderRadii.minimumRadius();
         auto maxRadius = borderRadii.maximumRadius();
@@ -677,7 +690,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
                 if (!clipOffset.isZero())
                     adjustedPath.translate(clipOffset);
 
-                RetainPtr intersectingPath = adoptCF(CGPathCreateCopyByIntersectingPath(adjustedPath.platformPath(), clipPath->platformPath(), false));
+                RetainPtr intersectingPath = adoptCF(CGPathCreateCopyByIntersectingPath(protect(adjustedPath.platformPath()), protect(clipPath->platformPath()), false));
                 clipPath = { PathCG::create(adoptCF(CGPathCreateMutableCopy(intersectingPath.get()))) };
 
                 // No need for continuous corners if we're already going to clip.

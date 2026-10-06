@@ -119,6 +119,7 @@ public:
     GCGLint maxCubeMapTextureSize() final;
     GCGLint maxRenderbufferSize() final;
     std::array<GCGLint, 2> maxViewportDims() final;
+    std::array<GCGLint, 2> maxDrawingBufferSize() final;
     GCGLint maxSamples() final;
     GCGLint maxTransformFeedbackSeparateAttribs() final;
     GCGLint maxUniformBufferBindings() final;
@@ -300,6 +301,7 @@ public:
     void bindExternalImage(GCGLenum target, GCGLExternalImage) override;
     GCGLExternalSync createExternalSync(ExternalSyncSource&&) override;
     void deleteExternalSync(GCGLExternalSync) final;
+    void framebufferDiscard(GCGLenum target, std::span<const GCGLenum> attachments) final;
 #endif
     void multiDrawArraysANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei> firstsAndCounts) final;
     void multiDrawArraysInstancedANGLE(GCGLenum mode, GCGLSpanTuple<const GCGLint, const GCGLsizei, const GCGLsizei> firstsCountsAndInstanceCounts) final;
@@ -384,13 +386,6 @@ protected:
     // the shared state.
     virtual bool platformInitialize();
 
-    // Take into account the user's requested context creation attributes,
-    // in particular stencil and antialias, and determine which could or
-    // could not be honored based on the capabilities of the OpenGL
-    // implementation.
-    void validateDepthStencil(ASCIILiteral packedDepthStencilExtension);
-    void validateAttributes();
-
     bool getBufferSubDataImpl(GCGLenum target, GCGLintptr offset, std::span<uint8_t> data);
     std::optional<IntSize> readPixelsImpl(IntRect, GCGLenum format, GCGLenum type, std::span<uint8_t> data);
 
@@ -401,10 +396,7 @@ protected:
     virtual RefPtr<PixelBuffer> readCompositedResults() = 0;
     RefPtr<PixelBuffer> readPixelsForPaintResults();
 
-    bool reshapeFBOs(const IntSize&);
     void prepareTexture();
-    void resolveMultisamplingIfNecessary(const IntRect& = IntRect());
-    void attachDepthAndStencilBufferIfNeeded(GCGLuint internalDepthStencilFormat, int width, int height);
 #if PLATFORM(COCOA)
     static bool makeCurrent(GCGLDisplay, GCGLContext);
 #endif
@@ -428,19 +420,11 @@ protected:
     HashSet<UTF8CString> m_extensions;
     GCGLuint m_texture { 0 };
     GCGLuint m_fbo { 0 };
-    GCGLuint m_depthStencilBuffer { 0 };
-    GCGLuint m_internalColorFormat { 0 };
-    GCGLuint m_internalDepthStencilFormat { 0 };
-    GCGLuint m_multisampleFBO { 0 };
-    GCGLuint m_multisampleDepthStencilBuffer { 0 };
-    GCGLuint m_multisampleColorBuffer { 0 };
-    // For preserveDrawingBuffer:true without multisampling.
-    GCGLuint m_preserveDrawingBufferTexture { 0 };
-    // Attaches m_texture when m_preserveDrawingBufferTexture is non-zero.
-    GCGLuint m_preserveDrawingBufferFBO { 0 };
     GCGLErrorCodeSet m_errors;
     bool m_isForWebGL2 { false };
     bool m_failNextStatusCheck { false };
+    bool m_failNextDrawingBufferAllocation { false };
+    bool m_failNextRenderbufferAllocation { false };
     GraphicsContextGLState m_state;
 
     GCGLDisplay m_displayObj { nullptr };

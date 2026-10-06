@@ -801,18 +801,18 @@ ExceptionOr<void> Node::normalize()
     return { };
 }
 
-Ref<Node> Node::cloneNode(bool deep) const
+Ref<Node> Node::cloneNode(CloneSubtree subtree) const
 {
     ASSERT(!isShadowRoot());
     RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*this, treeScope());
-    return cloneNodeInternal(protect(document()), deep ? CloningOperation::Everything : CloningOperation::SelfOnly, registry.get());
+    return cloneNodeInternal(protect(document()), subtree == CloneSubtree::Yes ? CloningOperation::Everything : CloningOperation::SelfOnly, registry.get());
 }
 
-ExceptionOr<Ref<Node>> Node::cloneNodeForBindings(bool deep) const
+ExceptionOr<Ref<Node>> Node::cloneNodeForBindings(bool subtree) const
 {
     if (isShadowRoot()) [[unlikely]]
         return Exception { ExceptionCode::NotSupportedError };
-    return cloneNode(deep);
+    return cloneNode(subtree ? CloneSubtree::Yes : CloneSubtree::No);
 }
 
 const AtomString& Node::prefix() const
@@ -1518,8 +1518,10 @@ void Node::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemo
     }
 }
 
-void Node::movingSteps(IsSubtreeRoot, ContainerNode&)
+void Node::movingSteps(MovingType, ContainerNode&)
 {
+    setEventTargetFlag(EventTargetFlag::IsInShadowTree, treeScope().rootNode().isShadowRoot());
+
     invalidateStyle(Style::Validity::SubtreeInvalid, Style::InvalidationMode::InsertedIntoAncestor);
 }
 
@@ -2904,7 +2906,7 @@ bool Node::willRespondToMouseClickEventsWithEditability(Editability editability)
         return true;
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(IOS_TOUCH_EVENTS)
-    if (document().quirks().shouldAllowNativeTapsOnMediaElements(this))
+    if (document().quirks().shouldAllowNativeTapsOnMediaElements(*this))
         return true;
 #endif
 
@@ -2928,15 +2930,13 @@ void Node::removedLastRef()
         return;
     }
 
-    // This paragraph runs before Node destruction as a workaround for the fact
-    // that detachAllProperties() can transitively call virtual functions on our
-    // derived SVG class.
+    // This runs before Node destruction because detachAllProperties() accesses
+    // properties that are members of our derived SVG class.
 
     // Properties may outlive an SVGElement, but no commit will be carried out
     // unless a property has attached to a new owner.
 
-    // FIXME: Make the registry automatically weak, or manually clear it in
-    // subclass destructors, so we can remove this workaround.
+    // FIXME: Detach properties in subclass destructors so we can remove this workaround.
     if (auto* svgElement = dynamicDowncast<SVGElement>(*this))
         svgElement->detachAllProperties();
 

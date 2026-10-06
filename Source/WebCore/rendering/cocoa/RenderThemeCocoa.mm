@@ -1324,7 +1324,7 @@ String RenderThemeCocoa::mediaControlsFormattedStringForDuration(const double du
 
     BEGIN_BLOCK_OBJC_EXCEPTIONS
     if (!m_durationFormatter) {
-        m_durationFormatter = adoptNS([NSDateComponentsFormatter new]);
+        lazyInitialize(m_durationFormatter, adoptNS([NSDateComponentsFormatter new]));
         m_durationFormatter.get().unitsStyle = NSDateComponentsFormatterUnitsStyleFull;
         m_durationFormatter.get().allowedUnits = NSCalendarUnitHour | NSCalendarUnitMinute | NSCalendarUnitSecond;
         m_durationFormatter.get().formattingContext = NSFormattingContextStandalone;
@@ -4081,7 +4081,7 @@ bool RenderThemeCocoa::paintSliderTrackForVectorBasedControls(const RenderElemen
         float height = trackClip.height();
         float newHeight = height * valueRatio;
         if (needsAdditionalLength)
-            newHeight += tickLength * additionalLength;
+            newHeight += additionalLength;
 
         if (box.writingMode().isHorizontal() || box.writingMode().isInlineFlipped())
             trackClip.setY(trackClip.y() + height - newHeight);

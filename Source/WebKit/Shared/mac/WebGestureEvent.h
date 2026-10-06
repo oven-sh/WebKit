@@ -48,6 +48,7 @@ struct WebGestureEventData {
     float gestureScale { 0 };
     float gestureRotation { 0 };
     WebEventPhase phase { WebEventPhase::None };
+    WebEventInputSource inputSource { WebEventInputSource::UserDriven };
 };
 
 struct WebGestureEventInit {
@@ -69,6 +70,7 @@ public:
     float gestureScale() const { return m_data.gestureScale; }
     float gestureRotation() const { return m_data.gestureRotation; }
     Phase phase() const { return m_data.phase; }
+    WebEventInputSource inputSource() const { return m_data.inputSource; }
 
     const WebGestureEventData& gestureData() const LIFETIME_BOUND { return m_data; }
 

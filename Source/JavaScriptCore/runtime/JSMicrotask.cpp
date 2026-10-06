@@ -1804,7 +1804,11 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
     asyncModuleExecutionResume(module->realm(), vm, module, resolution, status);
 }
 
-void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, std::span<const JSValue, maxMicrotaskArguments> arguments, MicrotaskCallCache* microtaskCallCache)
+#if USE(BUN_JSC_ADDITIONS)
+void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, JSValue argument3, MicrotaskCallCache* microtaskCallCache)
+#else
+void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotask task, uint8_t payload, JSValue argument0, JSValue argument1, JSValue argument2, MicrotaskCallCache* microtaskCallCache)
+#endif
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -1815,14 +1819,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveThenableJobFast: {
-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
-        auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
+        auto* promise = uncheckedDowncast<JSPromise>(argument0);
+        auto* promiseToResolve = uncheckedDowncast<JSPromise>(argument1);
 
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
             RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
 
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument2);
 #endif
 
         scope.release();
@@ -1831,16 +1835,16 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotaskFast: {
-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
-        JSValue context = arguments[1];
+        auto* promise = uncheckedDowncast<JSPromise>(argument0);
+        JSValue context = argument1;
         auto task = static_cast<InternalMicrotask>(payload);
 
 #if USE(BUN_JSC_ADDITIONS)
-        // arguments[2] is the async context captured for `task`, if any.
+        // argument2 is the async context captured for `task`, if any.
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context, arguments[2]));
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context, argument2));
 
-        promise->performPromiseThenWithInternalMicrotask(vm, task, nullptr, context, arguments[2]);
+        promise->performPromiseThenWithInternalMicrotask(vm, task, nullptr, context, argument2);
 #else
         if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
             RELEASE_AND_RETURN(scope, promiseResolveThenableJobWithInternalMicrotaskFastSlow(globalObject, promise, task, context));
@@ -1851,11 +1855,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveThenableJob: {
-        JSValue promise = arguments[0];
-        JSValue then = arguments[1];
-        JSPromise* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[2]);
+        JSValue promise = argument0;
+        JSValue then = argument1;
+        JSPromise* promiseToResolve = uncheckedDowncast<JSPromise>(argument2);
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
 
         auto [resolve, reject] = promiseToResolve->createResolvingFunctions(vm, globalObject);
@@ -1866,14 +1870,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::PromiseResolveThenableJobWithInternalMicrotask: {
         auto task = static_cast<InternalMicrotask>(payload);
-        JSValue promise = arguments[0];
-        JSValue then = arguments[1];
-        JSValue context = arguments[2];
+        JSValue promise = argument0;
+        JSValue then = argument1;
+        JSValue context = argument2;
 
 #if USE(BUN_JSC_ADDITIONS)
-        // arguments[3] is the async context captured for `task`, if any.
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
-        auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context, arguments[3]);
+        // argument3 is the async context captured for `task`, if any.
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+        auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context, argument3);
 #else
         auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, task, context);
 #endif
@@ -1883,12 +1887,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
-        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, argument0, argument1, static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseFulfillWithoutHandlerJob: {
-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
-        JSValue resolution = arguments[1];
+        auto* promise = uncheckedDowncast<JSPromise>(argument0);
+        JSValue resolution = argument1;
 #if USE(BUN_JSC_ADDITIONS)
         // hostLoadImportedModule may have force-settled this promise inline
         // while a synchronous loadModule was active; the queued pipeFrom job
@@ -1913,33 +1917,33 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseRaceResolveJob: {
-        auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
-        RELEASE_AND_RETURN(scope, promiseRaceResolveJob(promise->realm(), vm, promise, arguments[1], static_cast<JSPromise::Status>(payload)));
+        auto* promise = uncheckedDowncast<JSPromise>(argument0);
+        RELEASE_AND_RETURN(scope, promiseRaceResolveJob(promise->realm(), vm, promise, argument1, static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseAllResolveJob: {
-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
+        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
-        RELEASE_AND_RETURN(scope, promiseAllResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseAllResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseAllSettledResolveJob: {
-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
+        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
-        RELEASE_AND_RETURN(scope, promiseAllSettledResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseAllSettledResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseAnyResolveJob: {
-        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(arguments[0]);
+        auto* globalContext = uncheckedDowncast<JSPromiseCombinatorsGlobalContext>(argument0);
         auto* resultPromise = uncheckedDowncast<JSPromise>(globalContext->promise());
-        RELEASE_AND_RETURN(scope, promiseAnyResolveJob(resultPromise->realm(), vm, globalContext, arguments[1], static_cast<uint64_t>(arguments[2].asAnyInt()), static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, promiseAnyResolveJob(resultPromise->realm(), vm, globalContext, argument1, static_cast<uint64_t>(argument2.asAnyInt()), static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::PromiseReactionJob: {
-        JSValue promiseOrCapability = arguments[0];
-        JSValue handler = arguments[1];
+        JSValue promiseOrCapability = argument0;
+        JSValue handler = argument1;
 #if USE(BUN_JSC_ADDITIONS)
-        // arguments[3] is the async context captured by performPromiseThen when the
+        // argument3 is the async context captured by performPromiseThen when the
         // payload says so; otherwise it is performPromiseThenWithContext's handler
         // context, possibly paired with an async context in an InternalFieldTuple
         // [userContext, asyncContext]. The scope stays active through
@@ -1948,11 +1952,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         JSValue userContext;
         JSValue asyncContext;
         if (payload & promiseReactionJobAsyncContextFlag)
-            asyncContext = arguments[3];
+            asyncContext = argument3;
         else {
             // performPromiseThenWithContext pairs a cell handler context into a
             // tuple whether or not an async context was captured.
-            userContext = arguments[3];
+            userContext = argument3;
             asyncContext = AsyncContextSwapScope::unwrapContextTuple(userContext);
         }
         AsyncContextSwapScope asyncContextScope(vm, globalObject, asyncContext);
@@ -1967,11 +1971,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
             // When userContext is defined (not empty, undefined, or null), pass 2 arguments and use userContext as the cell context
             // When userContext is empty/undefined/null, pass 1 argument only
             if (userContext.isEmpty() || userContext.isUndefinedOrNull())
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
+                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
             else
-                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, arguments[2], userContext);
+                result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(userContext), "handler is not a function"_s, microtaskCallCache, argument2, userContext);
 #else
-            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, arguments[2]);
+            result = callMicrotask(globalObject, handler, jsUndefined(), dynamicCastToCell(handler), "handler is not a function"_s, microtaskCallCache, argument2);
 #endif
             if (catchScope.exception()) {
                 if (promiseOrCapability.isUndefinedOrNull()) {
@@ -2029,18 +2033,18 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::InvokeFunctionJob: {
-        JSValue handler = arguments[0];
+        JSValue handler = argument0;
         scope.release();
         callMicrotask(globalObject, handler, jsUndefined(), nullptr, "handler is not a function"_s, microtaskCallCache);
         return;
     }
 
     case InternalMicrotask::AsyncFunctionResume: {
-        JSValue resolution = arguments[1];
-        JSValue contextArg = arguments[2];
+        JSValue resolution = argument1;
+        JSValue contextArg = argument2;
 
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(contextArg);
         JSGlobalObject* generatorGlobalObject = generator->realm();
@@ -2053,84 +2057,84 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:
     case InternalMicrotask::AsyncFromSyncIteratorDone: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* iterator = uncheckedDowncast<JSAsyncFromSyncIterator>(contextArg);
-        RELEASE_AND_RETURN(scope, asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, arguments[1], static_cast<JSPromise::Status>(payload), task == InternalMicrotask::AsyncFromSyncIteratorDone, microtaskCallCache));
+        RELEASE_AND_RETURN(scope, asyncFromSyncIteratorContinueOrDone(iterator->realm(), vm, iterator, argument1, static_cast<JSPromise::Status>(payload), task == InternalMicrotask::AsyncFromSyncIteratorDone, microtaskCallCache));
     }
 
     case InternalMicrotask::AsyncGeneratorYieldAwaited: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
-        asyncGeneratorYieldAwaited(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        asyncGeneratorYieldAwaited(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
         return;
     }
 
     case InternalMicrotask::AsyncGeneratorBodyCallNormal: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
-        asyncGeneratorBodyCallNormal(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        asyncGeneratorBodyCallNormal(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
         return;
     }
 
     case InternalMicrotask::AsyncGeneratorBodyCallReturn: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
-        asyncGeneratorBodyCallReturn(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        asyncGeneratorBodyCallReturn(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
         return;
     }
 
     case InternalMicrotask::AsyncGeneratorAwaitReturn: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* generator = uncheckedDowncast<JSAsyncGenerator>(contextArg);
         scope.release();
-        asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, arguments[1], static_cast<JSPromise::Status>(payload));
+        asyncGeneratorAwaitReturnContinuation(generator->realm(), generator, argument1, static_cast<JSPromise::Status>(payload));
         return;
     }
 
     case InternalMicrotask::AsyncGeneratorDriverResume: {
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        asyncGeneratorDriverResume(vm, contextArg, arguments[1], static_cast<JSPromise::Status>(payload), microtaskCallCache);
+        asyncGeneratorDriverResume(vm, contextArg, argument1, static_cast<JSPromise::Status>(payload), microtaskCallCache);
         return;
     }
 
     case InternalMicrotask::PromiseFinallyReactionJob: {
         // Phase 1: Original promise settled
-        // arguments[0] = unused (we get resultPromise from context)
-        // arguments[1] = value/reason from original promise
-        // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=onFinally)
-        // arguments[3] = captured async context (USE(BUN_JSC_ADDITIONS))
+        // argument0 = unused (we get resultPromise from context)
+        // argument1 = value/reason from original promise
+        // argument2 = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=onFinally)
+        // argument3 = captured async context (USE(BUN_JSC_ADDITIONS))
         // payload = Fulfilled/Rejected status
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* resultPromise = uncheckedDowncast<JSPromise>(uncheckedDowncast<JSSlimPromiseReaction>(contextArg)->promise());
         scope.release();
         promiseFinallyReactionJob(resultPromise->realm(), vm,
             resultPromise,
-            arguments[1],
+            argument1,
             uncheckedDowncast<JSSlimPromiseReaction>(contextArg),
             static_cast<JSPromise::Status>(payload),
             microtaskCallCache);
@@ -2139,15 +2143,15 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::PromiseFinallyAwaitJob: {
         // Phase 2: onFinally's result settled
-        // arguments[0] = unused (we get resultPromise from context)
-        // arguments[1] = settled value from onFinally's result
-        // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=originalValue, perCellBit=wasFulfilled)
+        // argument0 = unused (we get resultPromise from context)
+        // argument1 = settled value from onFinally's result
+        // argument2 = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=originalValue, perCellBit=wasFulfilled)
         // payload = status of onFinally's result
-        auto* context = uncheckedDowncast<JSSlimPromiseReaction>(arguments[2]);
+        auto* context = uncheckedDowncast<JSSlimPromiseReaction>(argument2);
         auto* resultPromise = uncheckedDowncast<JSPromise>(context->promise());
         scope.release();
         promiseFinallyAwaitJob(resultPromise->realm(), vm,
-            arguments[1],
+            argument1,
             context,
             static_cast<JSPromise::Status>(payload));
         return;
@@ -2156,11 +2160,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #if USE(BUN_JSC_ADDITIONS)
     case InternalMicrotask::BunPerformMicrotaskJob: {
         // Inlined performMicrotask logic (no longer dispatched through a JS trampoline).
-        // arguments[0] = job function (callable)
-        // arguments[1] = async context to set
-        // arguments[2] = extra arg 0 (optional)
-        // arguments[3] = extra arg 1 (optional)
-        JSValue job = arguments[0];
+        // argument0 = job function (callable)
+        // argument1 = async context to set
+        // argument2 = extra arg 0 (optional)
+        // argument3 = extra arg 1 (optional)
+        JSValue job = argument0;
         if (job.isEmpty() || job.isUndefinedOrNull())
             return;
 
@@ -2168,17 +2172,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         if (callData.type == CallData::Type::None)
             return;
 
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[1]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument1);
 
         {
             auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
             // Call job with extra arguments using optimized callMicrotask path
             auto* jobCell = dynamicCastToCell(job);
-            if (!arguments[3].isEmpty())
-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2], arguments[3]);
-            else if (!arguments[2].isEmpty())
-                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, arguments[2]);
+            if (!argument3.isEmpty())
+                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, argument2, argument3);
+            else if (!argument2.isEmpty())
+                callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache, argument2);
             else
                 callMicrotask(globalObject, job, jsUndefined(), jobCell, "performMicrotask is not a function"_s, microtaskCallCache);
 
@@ -2203,14 +2207,14 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 
     case InternalMicrotask::BunInvokeJobWithArguments: {
         // Simple job invocation with arguments:
-        // arguments[0]: job function
-        // arguments[1-4]: arguments (optional)
-        JSValue job = arguments[0];
+        // argument0: job function
+        // argument1 to argument3: arguments (optional)
+        JSValue job = argument0;
         MarkedArgumentBuffer args;
         // Add non-empty arguments only
-        for (size_t i = 1; i < maxMicrotaskArguments; ++i) {
-            if (!arguments[i].isEmpty())
-                args.append(arguments[i]);
+        for (JSValue argument : { argument1, argument2, argument3 }) {
+            if (!argument.isEmpty())
+                args.append(argument);
         }
         ASSERT(!args.hasOverflowed());
         scope.release();
@@ -2220,131 +2224,131 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
-        auto* module = uncheckedDowncast<JSModuleRecord>(arguments[2]);
-        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, arguments[1], static_cast<JSPromise::Status>(payload)));
+        auto* module = uncheckedDowncast<JSModuleRecord>(argument2);
+        RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, argument1, static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::AsyncModuleExecutionResume: {
         // resolveWithInternalMicrotaskForAsyncAwait wraps the module together
         // with Bun's async context in an InternalFieldTuple when an async
         // context is active at await time.
-        JSValue contextArg = arguments[2];
+        JSValue contextArg = argument2;
 #if USE(BUN_JSC_ADDITIONS)
-        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         auto* module = uncheckedDowncast<JSModuleRecord>(contextArg);
-        RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, arguments[1], static_cast<JSPromise::Status>(payload)));
+        RELEASE_AND_RETURN(scope, asyncModuleExecutionResume(module->realm(), vm, module, argument1, static_cast<JSPromise::Status>(payload)));
     }
 
     case InternalMicrotask::ModuleRegistryFetchSettled: {
-        moduleRegistryFetchSettled(globalObject, vm, scope, arguments, payload);
+        moduleRegistryFetchSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleRegistryModuleSettled: {
-        moduleRegistryModuleSettled(globalObject, vm, arguments, payload);
+        moduleRegistryModuleSettled(globalObject, vm, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleGraphLoadingError: {
-        moduleGraphLoadingError(globalObject, vm, scope, arguments, payload);
+        moduleGraphLoadingError(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadStep: {
-        moduleLoadStep(globalObject, vm, scope, arguments, payload);
+        moduleLoadStep(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadTopSettled: {
-        moduleLoadTopSettled(globalObject, vm, scope, arguments, payload);
+        moduleLoadTopSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadTopRejected: {
-        moduleLoadTopRejected(globalObject, vm, arguments, payload);
+        moduleLoadTopRejected(globalObject, vm, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadSpecifierTransform: {
-        moduleLoadSpecifierTransform(globalObject, vm, scope, arguments, payload);
+        moduleLoadSpecifierTransform(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadCombinedLoadSettled: {
-        moduleLoadCombinedLoadSettled(globalObject, vm, scope, arguments, payload);
+        moduleLoadCombinedLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadCombinedStateSettled: {
-        moduleLoadCombinedStateSettled(globalObject, vm, scope, arguments, payload);
+        moduleLoadCombinedStateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadLinkEvaluateSettled: {
-        moduleLoadLinkEvaluateSettled(globalObject, vm, scope, arguments, payload);
+        moduleLoadLinkEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadReturnRecord: {
-        moduleLoadReturnRecord(globalObject, vm, scope, arguments, payload);
+        moduleLoadReturnRecord(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ModuleLoadReturnModuleKey: {
         // loadAndEvaluateModule: extract module key from AbstractModuleRecord
-        // arguments[0] = resultPromise
-        // arguments[1] = resolution (AbstractModuleRecord*) or error
-        auto* resultPromise = uncheckedDowncast<JSPromise>(arguments[0]);
+        // argument0 = resultPromise
+        // argument1 = resolution (AbstractModuleRecord*) or error
+        auto* resultPromise = uncheckedDowncast<JSPromise>(argument0);
         auto status = static_cast<JSPromise::Status>(payload);
         scope.release();
         if (status == JSPromise::Status::Fulfilled) {
-            auto* module = downcast<AbstractModuleRecord>(arguments[1]);
+            auto* module = downcast<AbstractModuleRecord>(argument1);
             resultPromise->fulfillPromise(vm, identifierToJSValue(vm, module->moduleKey()));
         } else
-            resultPromise->rejectPromise(vm, arguments[1]);
+            resultPromise->rejectPromise(vm, argument1);
         return;
     }
 
     case InternalMicrotask::ModuleLoadStoreError: {
-        moduleLoadStoreError(globalObject, arguments, payload);
+        moduleLoadStoreError(globalObject, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::DynamicImportLoadSettled: {
-        dynamicImportLoadSettled(globalObject, vm, scope, arguments, payload, /* deferred */ false);
+        dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ false);
         return;
     }
 
     case InternalMicrotask::DynamicImportDeferLoadSettled: {
-        dynamicImportLoadSettled(globalObject, vm, scope, arguments, payload, /* deferred */ true);
+        dynamicImportLoadSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload, /* deferred */ true);
         return;
     }
 
     case InternalMicrotask::DynamicImportEvaluateSettled: {
-        dynamicImportEvaluateSettled(globalObject, vm, scope, arguments, payload);
+        dynamicImportEvaluateSettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::DynamicImportDeferDependencySettled: {
-        dynamicImportDeferDependencySettled(globalObject, vm, scope, arguments, payload);
+        dynamicImportDeferDependencySettled(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
     case InternalMicrotask::ImportModuleNamespace: {
-        importModuleNamespace(globalObject, vm, scope, arguments, payload);
+        importModuleNamespace(globalObject, vm, scope, std::array<JSValue, maxMicrotaskArguments> { argument0, argument1, argument2 }, payload);
         return;
     }
 
 #if ENABLE(WEBASSEMBLY)
     case InternalMicrotask::WebAssemblyCompileStreaming:
         scope.release();
-        webAssemblyCompileStreaming(globalObject, vm, arguments[1], uncheckedDowncast<JSWebAssemblyStreamingContext>(arguments[2].asCell()), static_cast<JSPromise::Status>(payload));
+        webAssemblyCompileStreaming(globalObject, vm, argument1, uncheckedDowncast<JSWebAssemblyStreamingContext>(argument2.asCell()), static_cast<JSPromise::Status>(payload));
         return;
 
     case InternalMicrotask::WebAssemblyInstantiateStreaming:
         scope.release();
-        webAssemblyInstantiateStreaming(globalObject, vm, arguments[1], uncheckedDowncast<JSWebAssemblyStreamingContext>(arguments[2].asCell()), static_cast<JSPromise::Status>(payload));
+        webAssemblyInstantiateStreaming(globalObject, vm, argument1, uncheckedDowncast<JSWebAssemblyStreamingContext>(argument2.asCell()), static_cast<JSPromise::Status>(payload));
         return;
 #endif
 

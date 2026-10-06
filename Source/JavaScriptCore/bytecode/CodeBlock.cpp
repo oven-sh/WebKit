@@ -559,8 +559,8 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         static_assert(OpcodeIDWidthBySize<JSOpcodeTraits, OpcodeSize::Wide32>::opcodeIDSize == 1);
         // op_iterator_close_check stands in front of every IteratorClose sequence of a for-of or an array pattern and costs next to nothing
         // in any tier. It is not counted: tier-up thresholds and inlining budgets scale with this number, and making every such function
-        // look 6 bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon runs 4.2% more
-        // instructions (5946 M -> 6196 M with compiler threads off, 6 runs each, spread 1%: one more large FTL compilation); not counted, 5940 M.
+        // look bigger than it did shifts what gets compiled when, for no reason. Counted, JetStream2's Babylon ran 4.2% more instructions
+        // with the fork's version of this opcode (one more large FTL compilation).
         if (opcodeID != op_iterator_close_check)
             bytecodeCost += opcodeLengths[opcodeID] + 1;
         switch (opcodeID) {
@@ -602,6 +602,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
         LINK(OpCreateGenerator)
 
         LINK(OpJneqPtr)
+        LINK(OpIteratorCloseCheck)
 
         LINK(OpCatch)
         LINK(OpProfileControlFlow)
@@ -3760,7 +3761,7 @@ void CodeBlock::tallyFrequentExitSites()
     case JITType::FTLJIT: {
         auto* jitCode = m_jitCode->ftl();
         for (auto& stub : jitCode->m_osrExitStubs)
-            jitCode->m_osrExit[stub.exitIndex].considerAddingAsFrequentExitSite(profiledBlock);
+            jitCode->osrExit(stub.exitIndex).considerAddingAsFrequentExitSite(profiledBlock);
         break;
     }
 #endif

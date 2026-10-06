@@ -69,7 +69,7 @@ public:
     bool isClosed() const { return m_closed; }
 
     JSObject* callable() const { return m_callable.get(); }
-    const char* setReturnCString(const CString&);
+    const char* setReturnCString(const UTF8CString&);
     FFI::Signature& signature() const { return m_signature.get(); }
     bool isThreadsafe() const { return m_threadsafe; }
     void* embedderContext() const { return m_embedderContext; }

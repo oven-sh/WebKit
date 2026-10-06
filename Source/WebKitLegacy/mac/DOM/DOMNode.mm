@@ -35,6 +35,7 @@
 #import "ObjCEventListener.h"
 #import <WebCore/DOMImplementation.h>
 #import <WebCore/ElementInlines.h>
+#import <WebCore/Event.h>
 #import <WebCore/JSExecState.h>
 #import <WebCore/NodeList.h>
 #import <WebCore/SVGTests.h>
@@ -46,7 +47,7 @@
 static inline WebCore::Node& rawUnwrap(DOMNode& wrapper)
 {
     ASSERT(wrapper._internal);
-    return reinterpret_cast<WebCore::Node&>(*wrapper._internal);
+    return *reinterpret_cast<WebCore::Node*>(wrapper._internal);
 }
 
 static inline Ref<WebCore::Node> unwrap(DOMNode& wrapper)

@@ -32,12 +32,12 @@ namespace WebCore {
 
 PolicyContainer PolicyContainer::isolatedCopy() const &
 {
-    return { contentSecurityPolicyResponseHeaders.isolatedCopy(), crossOriginEmbedderPolicy.isolatedCopy(), crossOriginOpenerPolicy.isolatedCopy(), referrerPolicy, ipAddressSpace };
+    return { contentSecurityPolicyResponseHeaders.isolatedCopy(), crossOriginEmbedderPolicy.isolatedCopy(), crossOriginOpenerPolicy.isolatedCopy(), documentIsolationPolicy, referrerPolicy, ipAddressSpace };
 }
 
 PolicyContainer PolicyContainer::isolatedCopy() &&
 {
-    return { WTF::move(contentSecurityPolicyResponseHeaders).isolatedCopy(), WTF::move(crossOriginEmbedderPolicy).isolatedCopy(), WTF::move(crossOriginOpenerPolicy).isolatedCopy(), referrerPolicy, ipAddressSpace };
+    return { WTF::move(contentSecurityPolicyResponseHeaders).isolatedCopy(), WTF::move(crossOriginEmbedderPolicy).isolatedCopy(), WTF::move(crossOriginOpenerPolicy).isolatedCopy(), documentIsolationPolicy, referrerPolicy, ipAddressSpace };
 }
 
 void addPolicyContainerHeaders(ResourceResponse& response, const PolicyContainer& policyContainer)
@@ -45,6 +45,8 @@ void addPolicyContainerHeaders(ResourceResponse& response, const PolicyContainer
     policyContainer.contentSecurityPolicyResponseHeaders.addPolicyHeadersTo(response);
     policyContainer.crossOriginOpenerPolicy.addPolicyHeadersTo(response);
     policyContainer.crossOriginEmbedderPolicy.addPolicyHeadersTo(response);
+    if (policyContainer.documentIsolationPolicy == DocumentIsolationPolicy::IsolateAndRequireCORP)
+        response.setHTTPHeaderField(HTTPHeaderName::DocumentIsolationPolicy, "isolate-and-require-corp"_s);
     response.setHTTPHeaderField(HTTPHeaderName::ReferrerPolicy, referrerPolicyToString(policyContainer.referrerPolicy));
 }
 

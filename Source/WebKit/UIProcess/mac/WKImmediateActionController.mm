@@ -180,7 +180,9 @@
     if (!_page->mainFrame())
         return;
 
-    protect(_page)->performImmediateActionHitTestAtLocation(_page->mainFrame()->frameID(), [immediateActionRecognizer locationInView:retainPtr(immediateActionRecognizer.view).get()]);
+    protect(_page)->performImmediateActionHitTestAtLocation(_page->mainFrame()->frameID(), [immediateActionRecognizer locationInView:retainPtr(immediateActionRecognizer.view).get()], [weakSelf = WeakObjCPtr { self }] (const WebKit::WebHitTestResultData& hitTestResult, bool contentPreventsDefault, API::Object* userData) {
+        [weakSelf.get() didPerformImmediateActionHitTest:hitTestResult contentPreventsDefault:contentPreventsDefault userData:userData];
+    });
 }
 
 - (void)immediateActionRecognizerWillBeginAnimation:(NSImmediateActionGestureRecognizer *)immediateActionRecognizer
@@ -197,10 +199,17 @@
     // FIXME: We need to be able to cancel this if the gesture recognizer is cancelled.
     // FIXME: Connection can be null if the process is closed; we should clean up better in that case.
     if (_state == WebKit::ImmediateActionState::Pending) {
-        Ref connection = mainFrameProcess->connection();
-        bool receivedReply = connection->waitForAndDispatchImmediately<Messages::WebPageProxy::DidPerformImmediateActionHitTest>(_page->webPageIDInMainFrameProcess(), 500_ms) == IPC::Error::NoError;
-        if (!receivedReply)
-            _state = WebKit::ImmediateActionState::TimedOut;
+        // The hit test may be handed to a cross-origin iframe's process, so keep waiting on whichever process
+        // has it until there's a result.
+        auto deadline = MonotonicTime::now() + 500_ms;
+        while (_state == WebKit::ImmediateActionState::Pending) {
+            auto reply = protect(_page)->takeOutstandingImmediateActionHitTestReply();
+            auto timeout = deadline - MonotonicTime::now();
+            if (!reply || timeout <= 0_s || protect(reply->second)->waitForAsyncReplyAndDispatchImmediately<Messages::WebPage::PerformImmediateActionHitTestAtLocation>(reply->first, timeout) != IPC::Error::NoError) {
+                _state = WebKit::ImmediateActionState::TimedOut;
+                break;
+            }
+        }
     }
 
     if (_state != WebKit::ImmediateActionState::Ready) {

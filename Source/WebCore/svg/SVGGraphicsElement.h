@@ -88,7 +88,7 @@ public:
     SVGAnimatedTransformList& transformAnimated() { return m_transform; }
 
 protected:
-    SVGGraphicsElement(const QualifiedName&, Document&, UniqueRef<SVGPropertyRegistry>&&, OptionSet<TypeFlag> = { });
+    SVGGraphicsElement(const QualifiedName&, Document&, const SVGPropertyRegistry&, OptionSet<TypeFlag> = { });
 
     void attributeChanged(const QualifiedName&, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason) override;
     void svgAttributeChanged(const QualifiedName&) override;
@@ -103,7 +103,7 @@ private:
     static AffineTransform computeCTM(SVGElement*, CTMScope, StyleUpdateStrategy);
 
     // Used by <animateMotion>
-    std::unique_ptr<AffineTransform> m_supplementalTransform;
+    const std::unique_ptr<AffineTransform> m_supplementalTransform;
 
     mutable std::optional<AffineTransform> m_cachedConcatenatedTransform;
 

@@ -58,6 +58,7 @@
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
 #import <wtf/BlockPtr.h>
 #import <wtf/Deque.h>
+#import <wtf/HashSet.h>
 #import <wtf/MathExtras.h>
 #import <wtf/NakedPtr.h>
 #import <wtf/NeverDestroyed.h>
@@ -144,8 +145,8 @@ private:
         return m_entity;
     }
 
-    Ref<Model> m_model;
-    RetainPtr<WKRKEntity> m_entity;
+    const Ref<Model> m_model;
+    const RetainPtr<WKRKEntity> m_entity;
 };
 
 class RKModelLoaderUSD final : public WebCore::REModelLoader, public CanMakeWeakPtr<RKModelLoaderUSD> {
@@ -331,7 +332,7 @@ ModelProcessModelPlayerProxy::ModelProcessModelPlayerProxy(ModelProcessModelPlay
     , m_unloadModelTimer(RunLoop::mainSingleton(), "ModelProcessModelPlayerProxy::UnloadModelTimer"_s, this, &ModelProcessModelPlayerProxy::unloadModelTimerFired)
 {
     RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayerProxy initialized id=%" PRIu64, this, identifier.toUInt64());
-    m_objCAdapter = adoptNS([[WKModelProcessModelPlayerProxyObjCAdapter alloc] initWithModelProcessModelPlayerProxy:*this]);
+    lazyInitialize(m_objCAdapter, adoptNS([[WKModelProcessModelPlayerProxyObjCAdapter alloc] initWithModelProcessModelPlayerProxy:*this]));
     ++gObjectCountForTesting;
 }
 
@@ -456,11 +457,7 @@ void ModelProcessModelPlayerProxy::reloadModel(WebCore::NodeIdentifier nodeID, R
     }
     tracked.animationStateToRestore = WTF::move(animationStateToRestore);
 
-    bool isForImmersive = false;
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    isForImmersive = m_immersivePresentation;
-#endif
-    load(nodeID, model, layoutSize, isForImmersive);
+    load(nodeID, model, layoutSize, isImmersive());
 }
 
 void ModelProcessModelPlayerProxy::modelVisibilityDidChange(bool isVisible)
@@ -533,11 +530,12 @@ static RESRT computeSRT(CALayer *layer, simd_float3 originalBoundingBoxExtents, 
 
         srt.scale = simd_make_float3(minScale, minScale, minScale);
         srt.rotation = currentModelRotation;
+        simd_float3 rotatedCenter = simd_act(srt.rotation, boundingBoxCenter);
 
         if (isPortal)
-            srt.translation = simd_make_float3(-boundingBoxCenter.x, -boundingBoxCenter.y, -boundingBoxCenter.z - boundingBoxExtents.z / 2.0f);
+            srt.translation = simd_make_float3(-rotatedCenter.x, -rotatedCenter.y, -rotatedCenter.z - boundingBoxExtents.z / 2.0f);
         else
-            srt.translation = simd_make_float3(-boundingBoxCenter.x, -boundingBoxCenter.y, -boundingBoxCenter.z + boundingBoxExtents.z / 2.0f);
+            srt.translation = simd_make_float3(-rotatedCenter.x, -rotatedCenter.y, -rotatedCenter.z + boundingBoxExtents.z / 2.0f);
     } else {
         float boundingSphereDiameter = boundingRadius * 2.0f;
         float layerBoundingEdge = simd_reduce_min(boundsOfLayerInMeters);
@@ -548,11 +546,12 @@ static RESRT computeSRT(CALayer *layer, simd_float3 originalBoundingBoxExtents, 
         srt.scale = simd_make_float3(minScale, minScale, minScale);
         srt.rotation = currentModelRotation;
         boundingBoxCenter = srt.scale * originalBoundingBoxCenter;
+        simd_float3 rotatedCenter = simd_act(srt.rotation, boundingBoxCenter);
 
         if (isPortal)
-            srt.translation = simd_make_float3(-boundingBoxCenter.x, -boundingBoxCenter.y, -boundingBoxCenter.z - boundingSphereDiameter * minScale / 2.0f);
+            srt.translation = simd_make_float3(-rotatedCenter.x, -rotatedCenter.y, -rotatedCenter.z - boundingSphereDiameter * minScale / 2.0f);
         else
-            srt.translation = simd_make_float3(-boundingBoxCenter.x, -boundingBoxCenter.y, -boundingBoxCenter.z + boundingSphereDiameter * minScale / 2.0f);
+            srt.translation = simd_make_float3(-rotatedCenter.x, -rotatedCenter.y, -rotatedCenter.z + boundingSphereDiameter * minScale / 2.0f);
     }
 
     return srt;
@@ -592,10 +591,8 @@ static CGFloat effectivePointsPerMeter(CALayer *caLayer)
 
 RESRT ModelProcessModelPlayerProxy::modelStandardizedTransformSRT(RESRT originalSRT) const
 {
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    if (m_immersivePresentation)
+    if (isImmersive())
         return originalSRT;
-#endif
 
     originalSRT.scale *= defaultScaleFactor;
     originalSRT.translation *= defaultScaleFactor;
@@ -605,10 +602,8 @@ RESRT ModelProcessModelPlayerProxy::modelStandardizedTransformSRT(RESRT original
 
 RESRT ModelProcessModelPlayerProxy::modelLocalizedTransformSRT(RESRT originalSRT) const
 {
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    if (m_immersivePresentation)
+    if (isImmersive())
         return originalSRT;
-#endif
 
     originalSRT.scale /= defaultScaleFactor;
     originalSRT.translation /= defaultScaleFactor;
@@ -669,11 +664,8 @@ simd_float4x4 ModelProcessModelPlayerProxy::contentTransformMatrix() const
 }
 #endif
 
-void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
+std::optional<ModelProcessModelPlayerProxy::MergedBounds> ModelProcessModelPlayerProxy::computeMergedBounds() const
 {
-    if (m_trackedModels.isEmpty() || !m_layer)
-        return;
-
 #if ENABLE(SPATIAL_PORTAL)
     auto beforeAutoMatrix = static_cast<simd_float4x4>(m_portalTransform.transformBeforeAuto);
     float beforeAutoScale = maximumScale(beforeAutoMatrix);
@@ -684,7 +676,7 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
     simd_float3 maxBound = simd_make_float3(0, 0, 0);
     bool hasBounds = false;
 
-    for (UniqueRef<TrackedModel>& tracked : m_trackedModels.values()) {
+    for (const UniqueRef<TrackedModel>& tracked : m_trackedModels.values()) {
         if (!tracked->entity)
             continue;
 
@@ -704,25 +696,16 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
     }
 
     if (!hasBounds)
-        return;
+        return std::nullopt;
 
-    simd_float3 boundingBoxExtents = maxBound - minBound;
-    simd_float3 boundingBoxCenter = (maxBound + minBound) / 2;
-
-    simd_quatf currentModelRotation = setDefaultRotation ? simd_quaternion(0, simd_make_float3(1, 0, 0)) : m_transformSRT.rotation;
-
-#if ENABLE(SPATIAL_PORTAL)
-    if (!m_portalTransform.fitsContent) {
-        m_transformSRT = computeUnfittedSRT(boundingBoxExtents, boundingBoxCenter, currentModelRotation);
-        notifyModelPlayerOfTransformChange();
-        return;
-    }
-#endif
+    MergedBounds bounds;
+    bounds.extents = maxBound - minBound;
+    bounds.center = (maxBound + minBound) / 2;
+    bounds.boundingRadius = 0;
 
     // Each model's bounding sphere has to be reached from the merged centre, not from its own, so
     // an off-centre sibling widens the radius by its distance rather than being swallowed by it.
-    float boundingRadius = 0;
-    for (UniqueRef<TrackedModel>& tracked : m_trackedModels.values()) {
+    for (const UniqueRef<TrackedModel>& tracked : m_trackedModels.values()) {
         if (!tracked->entity)
             continue;
 
@@ -733,14 +716,37 @@ void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
 #else
         simd_float3 entityCenter = tracked->originalBoundingBoxCenter;
 #endif
-        boundingRadius = std::max(boundingRadius, simd_length(entityCenter - boundingBoxCenter) + entityRadius);
+        bounds.boundingRadius = std::max(bounds.boundingRadius, simd_length(entityCenter - bounds.center) + entityRadius);
     }
 
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
-    RESRT newSRT = computeSRT(m_layer.get(), boundingBoxExtents, boundingBoxCenter, boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), effectiveStageModeOperation(), currentModelRotation, m_immersivePresentation);
-#else
-    RESRT newSRT = computeSRT(m_layer.get(), boundingBoxExtents, boundingBoxCenter, boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), effectiveStageModeOperation(), currentModelRotation, false);
+    return bounds;
+}
+
+void ModelProcessModelPlayerProxy::computeTransform(bool setDefaultRotation)
+{
+    if (m_trackedModels.isEmpty() || !m_layer)
+        return;
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric)
+        return;
 #endif
+
+    auto bounds = computeMergedBounds();
+    if (!bounds)
+        return;
+
+    simd_quatf currentModelRotation = setDefaultRotation ? simd_quaternion(0, simd_make_float3(1, 0, 0)) : m_transformSRT.rotation;
+
+#if ENABLE(SPATIAL_PORTAL)
+    if (!m_portalTransform.fitsContent) {
+        m_transformSRT = computeUnfittedSRT(bounds->extents, bounds->center, currentModelRotation);
+        notifyModelPlayerOfTransformChange();
+        return;
+    }
+#endif
+
+    RESRT newSRT = computeSRT(m_layer.get(), bounds->extents, bounds->center, bounds->boundingRadius, m_hasPortal, effectivePointsPerMeter(m_layer.get()), effectiveStageModeOperation(), currentModelRotation, isImmersive());
     m_transformSRT = newSRT;
 
     notifyModelPlayerOfTransformChange();
@@ -830,7 +836,7 @@ void ModelProcessModelPlayerProxy::updateAnchorParenting()
                 if (REEntityRef placement = REEntityFindInHierarchyByName(desiredParent, placementName.legacyCStringPointer()))
                     desiredParent = placement;
                 else
-                    RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::updateAnchorParenting: the anchor's asset has no entity named '%s', anchoring to its root instead. nodeID=%" PRIu64, this, placementName.legacyCStringPointer(), nodeID.toUInt64());
+                    RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::updateAnchorParenting: the anchor's asset has no entity named '%s', anchoring to its root instead. nodeID=%" PRIu64, this, placementName, nodeID.toUInt64());
             }
         }
 
@@ -1033,10 +1039,6 @@ void ModelProcessModelPlayerProxy::didFinishLoading(WebCore::REModelLoader& load
         m_modelRKEntity = loadedEntity;
     }
 
-#if HAVE(CORE_RE)
-    [m_stageModeInteractionDriver setContainerTransformInPortal];
-#endif // HAVE(CORE_RE)
-
     auto entityTransformToRestore = std::exchange(m_entityTransformToRestore, std::nullopt);
 #if ENABLE(SPATIAL_PORTAL)
     // FIXME: ModelProcessModelPlayer::m_entityTransform is a single value shared by every child,
@@ -1060,10 +1062,19 @@ void ModelProcessModelPlayerProxy::didFinishLoading(WebCore::REModelLoader& load
 
 #if HAVE(CORE_RE)
     applyStageModeOperationToDriver();
+    [m_stageModeInteractionDriver setContainerTransformInPortal];
 #endif // HAVE(CORE_RE)
 
     updateOpacity();
     setUpLoadedEntity(nodeID, loadedEntity.get());
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric) {
+        setGroundingShadowsEnabled(true);
+        applyVolumetricPresentationTransform();
+    }
+    updateLightingForPresentationMode();
+#endif
 
     if (isReportingModel) {
         applyEnvironmentMapDataAndRelease([weakThis = WeakPtr { *this }] () mutable {
@@ -1139,7 +1150,7 @@ public:
 private:
     explicit SimpleREModel(RetainPtr<WKRKEntity>&& entity)
         : m_entity(WTF::move(entity)) { }
-    RetainPtr<WKRKEntity> m_entity;
+    const RetainPtr<WKRKEntity> m_entity;
 };
 #endif
 
@@ -1348,12 +1359,10 @@ void ModelProcessModelPlayerProxy::sizeDidChange(WebCore::LayoutSize layoutSize)
 {
     RELEASE_LOG_INFO(ModelElement, "%p - ModelProcessModelPlayerProxy::sizeDidChange w=%lf h=%lf id=%" PRIu64, this, layoutSize.width().toDouble(), layoutSize.height().toDouble(), m_id.toUInt64());
 
-#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
     m_layoutSize = layoutSize;
 
-    if (m_immersivePresentation)
+    if (!isPresentedInline())
         return;
-#endif
 
     auto width = layoutSize.width().toDouble();
     auto height = layoutSize.height().toDouble();
@@ -1393,6 +1402,14 @@ void ModelProcessModelPlayerProxy::setEntityTransform(WebCore::NodeIdentifier no
     RESRT newSRT = REMakeSRTFromMatrix(transform);
     m_transformSRT = modelLocalizedTransformSRT(newSRT);
     m_entityTransformSetByScript = true;
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric) {
+        applyVolumetricPresentationTransform();
+        return;
+    }
+#endif
+
     updateTransform();
 }
 
@@ -1769,18 +1786,27 @@ WebCore::StageModeOperation ModelProcessModelPlayerProxy::effectiveStageModeOper
 
 void ModelProcessModelPlayerProxy::updateForCurrentStageMode()
 {
-    if (effectiveStageModeOperation() != WebCore::StageModeOperation::None) {
-        computeTransform(false);
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric) {
 #if HAVE(CORE_RE)
-        [m_containerEntityWrapper recenterEntityAtTransform:WKEntityTransform({ m_transformSRT.scale, m_transformSRT.rotation, m_transformSRT.translation })];
-#else
-        [m_modelRKEntity recenterEntityAtTransform:WKEntityTransform({ m_transformSRT.scale * reportingModelScale(), m_transformSRT.rotation, m_transformSRT.translation })];
+        applyStageModeOperationToDriver();
 #endif
-        updateTransformSRT();
+        applyVolumetricPresentationTransform();
+        return;
+    }
+#endif
+
+    bool isOrbiting = effectiveStageModeOperation() != WebCore::StageModeOperation::None;
+    if (isOrbiting) {
+        computeTransform(false);
+        updateTransform();
     }
 
 #if HAVE(CORE_RE)
     applyStageModeOperationToDriver();
+
+    if (isOrbiting && m_stageModeInteractionDriver)
+        [m_stageModeInteractionDriver setContainerTransformInPortal];
 #endif
 }
 
@@ -1909,6 +1935,331 @@ void ModelProcessModelPlayerProxy::removeIBL()
     [entity removeIBL];
 }
 
+#if HAVE(CORE_RE)
+static double roundedForSceneGraph(float value)
+{
+    double rounded = std::round(value * 10000.0) / 10000.0;
+    return rounded ? rounded : 0;
+}
+
+static String sceneGraphNumbers(std::initializer_list<float> values)
+{
+    return makeString(interleave(values, [](float value) {
+        return FormattedNumber::fixedPrecision(roundedForSceneGraph(value), 10);
+    }, ' '));
+}
+
+static void dumpSceneGraphTransform(TextStream& ts, REEntityRef entity)
+{
+    auto transformComponent = REEntityGetComponentByClass(entity, RETransformComponentGetComponentType());
+    if (!transformComponent)
+        return;
+
+    auto srt = RETransformComponentGetLocalSRT(transformComponent);
+
+    auto scale = sceneGraphNumbers({ srt.scale.x, srt.scale.y, srt.scale.z });
+    if (scale != "1 1 1"_s)
+        ts << indent << "(scale "_s << scale << ")\n"_s;
+
+    auto quaternion = srt.rotation.vector;
+    for (float component : { quaternion.w, quaternion.x, quaternion.y, quaternion.z }) {
+        double rounded = roundedForSceneGraph(component);
+        if (!rounded)
+            continue;
+        if (rounded < 0)
+            quaternion = -quaternion;
+        break;
+    }
+    auto rotation = sceneGraphNumbers({ quaternion.x, quaternion.y, quaternion.z, quaternion.w });
+    if (rotation != "0 0 0 1"_s)
+        ts << indent << "(rotation "_s << rotation << ")\n"_s;
+
+    auto translation = sceneGraphNumbers({ srt.translation.x, srt.translation.y, srt.translation.z });
+    if (translation != "0 0 0"_s)
+        ts << indent << "(translation "_s << translation << ")\n"_s;
+}
+
+static bool collectEntitiesWithWebKitDescendants(REEntityRef entity, HashSet<REEntityRef>& entities)
+{
+    bool found = spanHasPrefix(unsafeSpan(REEntityGetName(entity)), "WebKit:"_span);
+    for (size_t i = 0; i < REEntityGetChildCount(entity); ++i) {
+        REEntityRef child = REEntityGetChild(entity, i);
+        if (child && collectEntitiesWithWebKitDescendants(child, entities))
+            found = true;
+    }
+    if (found)
+        entities.add(entity);
+    return found;
+}
+
+static void dumpSceneGraphEntity(TextStream& ts, REEntityRef entity, const WebCore::ModelSceneGraphAsTextOptions& options, const HashSet<REEntityRef>& entitiesWithWebKitDescendants, const Vector<std::pair<REEntityRef, String>>& labels)
+{
+    auto labelIndex = [&](REEntityRef candidate) {
+        return labels.findIf([&](auto& label) {
+            return label.first == candidate;
+        });
+    };
+
+    ts << indent << "(entity"_s;
+    auto name = String::fromUTF8(REEntityGetName(entity));
+    if (!name.isEmpty())
+        ts << ' ' << name;
+    ts << '\n';
+
+    {
+        TextStream::IndentScope indentScope(ts);
+
+        auto index = labelIndex(entity);
+        if (index != notFound)
+            ts << indent << "(element "_s << labels[index].second << ")\n"_s;
+
+        dumpSceneGraphTransform(ts, entity);
+
+        if (REEntityGetComponentByClass(entity, REImageBasedLightReceiverComponentGetComponentType()))
+            ts << indent << "(image-based light receiver)\n"_s;
+
+        Vector<REEntityRef> children;
+        for (size_t i = 0; i < REEntityGetChildCount(entity); ++i) {
+            REEntityRef child = REEntityGetChild(entity, i);
+            if (child && (options.includeAssetEntities || entitiesWithWebKitDescendants.contains(child)))
+                children.append(child);
+        }
+
+        std::ranges::stable_sort(children, { }, labelIndex);
+
+        if (!children.isEmpty()) {
+            ts << indent << "(children "_s << children.size() << '\n';
+            for (auto child : children) {
+                TextStream::IndentScope childIndentScope(ts);
+                dumpSceneGraphEntity(ts, child, options, entitiesWithWebKitDescendants, labels);
+            }
+            ts << indent << ")\n"_s;
+        }
+    }
+
+    ts << indent << ")\n"_s;
+}
+#endif // HAVE(CORE_RE)
+
+void ModelProcessModelPlayerProxy::sceneGraphAsTextForTesting(std::optional<WebCore::NodeIdentifier> rootNode, Vector<std::pair<WebCore::NodeIdentifier, String>>&& modelLabels, const WebCore::ModelSceneGraphAsTextOptions& options, CompletionHandler<void(String&&)>&& completionHandler)
+{
+#if HAVE(CORE_RE)
+    [m_layer layoutIfNeeded];
+
+    REEntityRef rootEntity = rootNode ? [entityForNode(*rootNode) coreEntity] : m_containerEntity.get();
+    if (!rootEntity) {
+        completionHandler({ });
+        return;
+    }
+
+    Vector<std::pair<REEntityRef, String>> labels;
+    for (auto& [nodeID, label] : modelLabels) {
+        RetainPtr entity = entityForNode(nodeID);
+        if (entity)
+            labels.append({ [entity coreEntity], WTF::move(label) });
+    }
+
+    HashSet<REEntityRef> entitiesWithWebKitDescendants;
+    if (!options.includeAssetEntities)
+        collectEntitiesWithWebKitDescendants(rootEntity, entitiesWithWebKitDescendants);
+
+    TextStream ts;
+    dumpSceneGraphEntity(ts, rootEntity, options, entitiesWithWebKitDescendants, labels);
+    completionHandler(ts.release());
+#else
+    UNUSED_PARAM(rootNode);
+    UNUSED_PARAM(modelLabels);
+    UNUSED_PARAM(options);
+    completionHandler({ });
+#endif
+}
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayerProxy::updateLightingForPresentationMode()
+{
+    bool receivesIBL = m_presentationMode != WebCore::ModelPresentationMode::Volumetric;
+    RetainPtr entity = environmentMapTargetEntity();
+    [entity setIBLReceiverEnabled:receivesIBL];
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    [entity setProvidesEnvironmentLighting:m_presentationMode == WebCore::ModelPresentationMode::Immersive];
+#endif
+}
+
+#endif
+
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayerProxy::setPresentationMode(WebCore::ModelPresentationMode mode)
+{
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    auto previousMode = m_presentationMode;
+#endif
+    m_presentationMode = mode;
+
+    switch (mode) {
+    case WebCore::ModelPresentationMode::Inline:
+        [m_layer setFrame:CGRectMake(0, 0, m_layoutSize.width().toDouble(), m_layoutSize.height().toDouble())];
+        break;
+#if ENABLE(MODEL_ELEMENT_IMMERSIVE)
+    case WebCore::ModelPresentationMode::Immersive:
+        [m_layer setFrame:CGRectZero];
+        break;
+#endif
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    case WebCore::ModelPresentationMode::Volumetric:
+        [m_layer setFrame:CGRectZero];
+        break;
+#endif
+    }
+
+    m_entityTransformToRestore = std::nullopt;
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    // Teardown destroys the volume's input surface without an end event.
+    if (previousMode == WebCore::ModelPresentationMode::Volumetric && isPresentedInline())
+        endStageModeInteraction();
+#endif
+
+    applyPresentationTransform();
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    updateLightingForPresentationMode();
+#endif
+}
+
+#endif // ENABLE(MODEL_ELEMENT_IMMERSIVE) || ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayerProxy::applyPresentationTransform()
+{
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric) {
+        applyVolumetricPresentationTransform();
+        return;
+    }
+#endif
+
+    computeTransform(false);
+    updateTransform();
+
+#if HAVE(CORE_RE)
+    if (m_stageModeInteractionDriver)
+        [m_stageModeInteractionDriver setContainerTransformInPortal];
+#endif
+}
+
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+// MARK: - Connected volumetric scene
+
+static bool isFinite(simd_float3 vector)
+{
+    return std::isfinite(vector.x) && std::isfinite(vector.y) && std::isfinite(vector.z);
+}
+
+// The volume reports no depth, so the content is fitted to a sphere inscribed in the smaller in-plane extent. That
+// clears any depth at least as large as that extent, and keeps the fit rotation-invariant; fitting the bounding box
+// per axis instead would re-scale the content as the user orbits it.
+std::optional<RESRT> ModelProcessModelPlayerProxy::computeVolumetricFitSRT(WebCore::FloatSize volumeSizeInMeters, const MergedBounds& bounds, simd_quatf currentModelRotation)
+{
+    if (!std::isfinite(volumeSizeInMeters.width()) || !std::isfinite(volumeSizeInMeters.height()))
+        return std::nullopt;
+
+    float volumeMinExtent = std::min(volumeSizeInMeters.width(), volumeSizeInMeters.height());
+
+    // A scene has no extent until it lays out, and fitting to that placeholder makes the content jump once the real
+    // extent arrives
+    if (volumeMinExtent <= 0)
+        return std::nullopt;
+
+    if (!std::isfinite(bounds.boundingRadius) || !isFinite(bounds.extents) || !isFinite(bounds.center))
+        return std::nullopt;
+
+    float scale = bounds.boundingRadius > 0 ? volumeMinExtent / (2 * bounds.boundingRadius) : 1;
+
+    // The rotated bounding box rests on the floor rather than the sphere
+    simd_float3x3 rotation = simd_matrix3x3(currentModelRotation);
+    simd_float3 verticalRow = simd_make_float3(rotation.columns[0].y, rotation.columns[1].y, rotation.columns[2].y);
+    float halfHeight = scale * simd_dot(simd_abs(verticalRow), bounds.extents) / 2;
+    simd_float3 center = simd_act(currentModelRotation, bounds.center * scale);
+
+    RESRT srt;
+    srt.scale = simd_make_float3(scale, scale, scale);
+    srt.rotation = currentModelRotation;
+    srt.translation = simd_make_float3(-center.x, halfHeight - volumeSizeInMeters.height() / 2 - center.y, -center.z);
+
+    return srt;
+}
+
+void ModelProcessModelPlayerProxy::applyVolumetricPresentationTransform()
+{
+    auto bounds = computeMergedBounds();
+    if (!bounds)
+        return;
+
+    auto fitSRT = computeVolumetricFitSRT(m_volumeSizeInMeters, *bounds, m_transformSRT.rotation);
+
+    if (!fitSRT)
+        return;
+
+    m_transformSRT = *fitSRT;
+    notifyModelPlayerOfTransformChange();
+    updateTransform();
+
+#if HAVE(CORE_RE)
+    if (m_stageModeInteractionDriver)
+        [m_stageModeInteractionDriver setContainerTransformInPortal];
+#endif
+}
+
+void ModelProcessModelPlayerProxy::setGroundingShadowsEnabled(bool enabled)
+{
+#if HAVE(CORE_RE)
+    if (m_containerEntityWrapper) {
+        [m_containerEntityWrapper setGroundingShadowsEnabled:enabled];
+        return;
+    }
+#endif
+    [m_modelRKEntity setGroundingShadowsEnabled:enabled];
+}
+
+void ModelProcessModelPlayerProxy::enterVolumetricPresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&& completion)
+{
+    // WebCore rejects this per element; this is the backstop for the shared-player case it cannot see.
+    if (isImmersive()) {
+        RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::enterVolumetricPresentation: content is already presented immersively id=%" PRIu64, this, m_id.toUInt64());
+        return completion(std::nullopt);
+    }
+
+    if (!m_layerHostingContext) {
+        RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::enterVolumetricPresentation: no hosting context id=%" PRIu64, this, m_id.toUInt64());
+        return completion(std::nullopt);
+    }
+
+    // Also runs on reload for an already-presented element; the UI process rebinds rather than opening a second scene.
+    setPresentationMode(WebCore::ModelPresentationMode::Volumetric);
+    setGroundingShadowsEnabled(true);
+
+    completion(layerHostingContextIdentifier());
+}
+
+void ModelProcessModelPlayerProxy::exitVolumetricPresentation()
+{
+    setGroundingShadowsEnabled(false);
+    m_volumeSizeInMeters = { };
+
+    setPresentationMode(WebCore::ModelPresentationMode::Inline);
+}
+
+void ModelProcessModelPlayerProxy::updateVolumetricPresentationSize(const WebCore::FloatSize& volumeSizeInMeters)
+{
+    m_volumeSizeInMeters = volumeSizeInMeters;
+
+    if (m_presentationMode == WebCore::ModelPresentationMode::Volumetric)
+        applyVolumetricPresentationTransform();
+}
+
+#endif // ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
 #if ENABLE(MODEL_ELEMENT_IMMERSIVE)
 
 void ModelProcessModelPlayerProxy::teardownEntity()
@@ -1964,8 +2315,18 @@ void ModelProcessModelPlayerProxy::captureStateForReload()
 void ModelProcessModelPlayerProxy::ensureImmersivePresentation(CompletionHandler<void(std::optional<WebCore::LayerHostingContextIdentifier>)>&& completion)
 {
     // FIXME: Add immersive presentation for spatial portal
-    if (m_trackedModels.size() > 1) {
+    // A portal hosting exactly one model would slip through the size check.
+    bool isPortal = m_trackedModels.size() > 1;
+#if ENABLE(SPATIAL_PORTAL)
+    isPortal |= m_isSpatialPortal;
+#endif
+    if (isPortal) {
         RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::ensureImmersivePresentation: unsupported for %u hosted models id=%" PRIu64, this, m_trackedModels.size(), m_id.toUInt64());
+        return completion(std::nullopt);
+    }
+
+    if (!isPresentedInline()) {
+        RELEASE_LOG_ERROR(ModelElement, "%p - ModelProcessModelPlayerProxy::ensureImmersivePresentation: content is already presented outside the page id=%" PRIu64, this, m_id.toUInt64());
         return completion(std::nullopt);
     }
 
@@ -1975,7 +2336,7 @@ void ModelProcessModelPlayerProxy::ensureImmersivePresentation(CompletionHandler
     if (m_modelRKEntity && !atTargetLimit)
         captureStateForReload();
 
-    setImmersivePresentation(true);
+    setPresentationMode(WebCore::ModelPresentationMode::Immersive);
 
     if (m_nodeID && m_currentModel && !m_trackedModels.isEmpty() && !atTargetLimit) {
         RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayerProxy::ensureImmersivePresentation: reloading at %dMB id=%" PRIu64, this, targetLimit, m_id.toUInt64());
@@ -1991,7 +2352,7 @@ void ModelProcessModelPlayerProxy::ensureImmersivePresentation(CompletionHandler
         if (loaded)
             completion(protectedThis->layerHostingContextIdentifier().value());
         else {
-            protectedThis->setImmersivePresentation(false);
+            protectedThis->setPresentationMode(WebCore::ModelPresentationMode::Inline);
             completion(std::nullopt);
         }
     });
@@ -2005,7 +2366,7 @@ void ModelProcessModelPlayerProxy::exitImmersivePresentation(CompletionHandler<v
     if (m_modelRKEntity && !atTargetLimit)
         captureStateForReload();
 
-    setImmersivePresentation(false);
+    setPresentationMode(WebCore::ModelPresentationMode::Inline);
 
     if (m_nodeID && m_currentModel && !m_trackedModels.isEmpty() && !atTargetLimit) {
         RELEASE_LOG(ModelElement, "%p - ModelProcessModelPlayerProxy::exitImmersivePresentation: reloading at %dMB id=%" PRIu64, this, targetLimit, m_id.toUInt64());
@@ -2018,22 +2379,6 @@ void ModelProcessModelPlayerProxy::exitImmersivePresentation(CompletionHandler<v
     }
 
     completion();
-}
-
-void ModelProcessModelPlayerProxy::setImmersivePresentation(bool immersivePresentation)
-{
-    if (immersivePresentation)
-        [m_layer setFrame:CGRectMake(0, 0, 0, 0)];
-    else {
-        auto width = m_layoutSize.width().toDouble();
-        auto height = m_layoutSize.height().toDouble();
-        [m_layer setFrame:CGRectMake(0, 0, width, height)];
-    }
-
-    m_immersivePresentation = immersivePresentation;
-    m_entityTransformToRestore = std::nullopt;
-    computeTransform(false);
-    updateTransform();
 }
 
 void ModelProcessModelPlayerProxy::ensureModelLoaded(CompletionHandler<void(bool)>&& completion)

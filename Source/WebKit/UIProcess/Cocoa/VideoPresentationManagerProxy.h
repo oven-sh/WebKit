@@ -150,7 +150,7 @@ private:
 #endif
 
     WeakPtr<VideoPresentationManagerProxy> m_manager;
-    Ref<PlaybackSessionModelContext> m_playbackSessionModel;
+    const Ref<PlaybackSessionModelContext> m_playbackSessionModel;
     PlaybackSessionContextIdentifier m_contextId;
 
     WeakHashSet<WebCore::VideoPresentationModelClient> m_clients;
@@ -190,6 +190,7 @@ public:
     bool isVisible() const;
 
     void setMockVideoPresentationModeEnabled(bool enabled) { m_mockVideoPresentationModeEnabled = enabled; }
+    WebCore::FloatRect lastSetupFullscreenRectForTesting() const { return m_lastSetupFullscreenRectForTesting; }
 
     void requestRouteSharingPolicyAndContextUID(PlaybackSessionContextIdentifier, CompletionHandler<void(WebCore::RouteSharingPolicy, String)>&&);
 
@@ -199,7 +200,7 @@ public:
     using VideoInPictureInPictureDidChangeObserver = WTF::Observer<void(bool)>;
     void addVideoInPictureInPictureDidChangeObserver(const VideoInPictureInPictureDidChangeObserver&);
 
-    void forEachSession(Function<void(VideoPresentationModelContext&, WebCore::PlatformVideoPresentationInterface&)>&&);
+    void forEachSession(NOESCAPE const Function<void(VideoPresentationModelContext&, WebCore::PlatformVideoPresentationInterface&)>&);
 
 #if PLATFORM(IOS_FAMILY)
     RefPtr<WebCore::PlatformVideoPresentationInterface> returningToStandbyInterface() const;
@@ -326,6 +327,7 @@ private:
 
     bool m_mockVideoPresentationModeEnabled { false };
     WebCore::FloatSize m_mockPictureInPictureWindowSize { DefaultMockPictureInPictureWindowWidth, DefaultMockPictureInPictureWindowHeight };
+    WebCore::FloatRect m_lastSetupFullscreenRectForTesting;
 
     WeakPtr<WebPageProxy> m_page;
     const Ref<PlaybackSessionManagerProxy> m_playbackSessionManagerProxy;

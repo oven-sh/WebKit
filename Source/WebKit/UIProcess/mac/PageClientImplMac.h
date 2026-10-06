@@ -208,6 +208,11 @@ private:
 
     void scrollingNodeScrollViewDidScroll(WebCore::ScrollingNodeID) override;
 
+#if ENABLE(UI_SIDE_COMPOSITING)
+    WebCore::FloatRect documentRect() const override;
+    double minimumZoomScale() const override;
+#endif
+
 #if HAVE(NSREFRESHCONTROLLER)
     void topScrollStretchDidChange(CGFloat) override;
 #endif
@@ -248,6 +253,8 @@ private:
     void willBeginViewGesture() final;
     void didEndViewGesture() final;
 
+    bool everMagnifiedDuringCurrentGesture() const final;
+
     void requestDOMPasteAccess(WebCore::DOMPasteAccessCategory, WebCore::DOMPasteRequiresInteraction, WebCore::FrameIdentifier, const WebCore::IntRect&, const String&, CompletionHandler<void(WebCore::DOMPasteAccessResponse)>&&) final;
 
     void makeViewBlank(bool) final;
@@ -263,7 +270,6 @@ private:
     void didSameDocumentNavigationForMainFrame(SameDocumentNavigationType) override;
     void handleControlledElementIDResponse(const String&) override;
 
-    void didPerformImmediateActionHitTest(const WebHitTestResultData&, bool contentPreventsDefault, API::Object*) override;
     NSObject *immediateActionAnimationControllerForHitTestResult(RefPtr<API::HitTestResult>, uint64_t, RefPtr<API::Object>) override;
 
     void videoControlsManagerDidChange() override;
@@ -303,6 +309,7 @@ private:
     bool windowIsFrontWindowUnderMouse(const NativeWebMouseEvent&) override;
 
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
+    void pageScaleFactorDidChange() override;
     void didUpdateTransientZoomStateForScrollPocket(std::optional<TransientZoomState>) override;
 #endif
     std::optional<float> computeAutomaticTopObscuredInset() override;

@@ -162,6 +162,10 @@ using namespace WebCore;
 #define NSAccessibilityHighlightedSearchKey @"AXHighlightedSearchKey"
 #endif
 
+#ifndef NSAccessibilityFormFieldWithErrorSearchKey
+#define NSAccessibilityFormFieldWithErrorSearchKey @"AXFormFieldWithErrorSearchKey"
+#endif
+
 #ifndef NSAccessibilityKeyboardFocusableSearchKey
 #define NSAccessibilityKeyboardFocusableSearchKey @"AXKeyboardFocusableSearchKey"
 #endif
@@ -445,7 +449,7 @@ NSArray *makeNSArray(const WebCore::AXCoreObject::AccessibilityChildrenVector& c
     if (extendedDescription.length()) {
         accessibilityCustomContent = adoptNS([[NSMutableArray alloc] init]);
         Class customContentClass = PAL::getAXCustomContentClassSingleton();
-        AXCustomContent *contentItem = [customContentClass customContentWithLabel:WEB_UI_STRING("description", "description detail").createNSString().get() value:extendedDescription.createNSString().get()];
+        RetainPtr contentItem = [customContentClass customContentWithLabel:WEB_UI_STRING("description", "description detail").createNSString().get() value:extendedDescription.createNSString().get()];
         // Set this to high, so that it's always spoken.
         [contentItem setImportance:AXCustomContentImportanceHigh];
         [accessibilityCustomContent addObject:contentItem];
@@ -841,9 +845,9 @@ static NSArray *arrayRemovingNonSupportedTypes(NSArray *array)
     for (NSUInteger i = 0; i < [mutableArray count];) {
         id value = [mutableArray objectAtIndex:i];
         if ([value isKindOfClass:[NSDictionary class]])
-            [mutableArray replaceObjectAtIndex:i withObject:dictionaryRemovingNonSupportedTypes(value)];
+            [mutableArray replaceObjectAtIndex:i withObject:protect(dictionaryRemovingNonSupportedTypes(value))];
         else if ([value isKindOfClass:[NSArray class]])
-            [mutableArray replaceObjectAtIndex:i withObject:arrayRemovingNonSupportedTypes(value)];
+            [mutableArray replaceObjectAtIndex:i withObject:protect(arrayRemovingNonSupportedTypes(value))];
         else if (!isValueTypeSupported(value)) {
             [mutableArray removeObjectAtIndex:i];
             continue;
@@ -862,9 +866,9 @@ static NSDictionary *dictionaryRemovingNonSupportedTypes(NSDictionary *dictionar
     for (NSString *key in dictionary) {
         id value = [dictionary objectForKey:key];
         if ([value isKindOfClass:[NSDictionary class]])
-            [mutableDictionary setObject:dictionaryRemovingNonSupportedTypes(value) forKey:key];
+            [mutableDictionary setObject:protect(dictionaryRemovingNonSupportedTypes(value)) forKey:key];
         else if ([value isKindOfClass:[NSArray class]])
-            [mutableDictionary setObject:arrayRemovingNonSupportedTypes(value) forKey:key];
+            [mutableDictionary setObject:protect(arrayRemovingNonSupportedTypes(value)) forKey:key];
         else if (!isValueTypeSupported(value))
             [mutableDictionary removeObjectForKey:key];
     }
@@ -875,8 +879,8 @@ static NSDictionary *dictionaryRemovingNonSupportedTypes(NSDictionary *dictionar
 {
     if (accessibilityShouldRepostNotifications) {
         AX_ASSERT(notificationName);
-        userInfo = dictionaryRemovingNonSupportedTypes(userInfo);
-        NSDictionary *info = [NSDictionary dictionaryWithObjectsAndKeys:notificationName, @"notificationName", userInfo, @"userInfo", nil];
+        RetainPtr supportedUserInfo = dictionaryRemovingNonSupportedTypes(userInfo);
+        NSDictionary *info = [NSDictionary dictionaryWithObjectsAndKeys:notificationName, @"notificationName", supportedUserInfo.get(), @"userInfo", nil];
         [[NSNotificationCenter defaultCenter] postNotificationName:NSAccessibilityDRTNotificationNotification object:self userInfo:info];
     }
 }
@@ -929,6 +933,7 @@ static AccessibilitySearchKeyMap* createAccessibilitySearchKeyMap()
         SearchKeyEntry { NSAccessibilityHeadingSameLevelSearchKey, AccessibilitySearchKey::HeadingSameLevel },
         SearchKeyEntry { NSAccessibilityHeadingSearchKey, AccessibilitySearchKey::Heading },
         SearchKeyEntry { NSAccessibilityHighlightedSearchKey, AccessibilitySearchKey::Highlighted },
+        SearchKeyEntry { NSAccessibilityFormFieldWithErrorSearchKey, AccessibilitySearchKey::FormFieldWithError },
         SearchKeyEntry { NSAccessibilityKeyboardFocusableSearchKey, AccessibilitySearchKey::KeyboardFocusable },
         SearchKeyEntry { NSAccessibilityItalicFontSearchKey, AccessibilitySearchKey::ItalicFont },
         SearchKeyEntry { NSAccessibilityLandmarkSearchKey, AccessibilitySearchKey::Landmark },

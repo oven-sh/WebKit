@@ -361,6 +361,11 @@ static double toDouble(std::span<const CharacterType> characters)
     if (characters.empty())
         return 0.0;
 
+    // Only these characters can start a StrNumericLiteral once white space is skipped.
+    auto first = characters.front();
+    if (!isASCIIDigit(first) && first != '.' && first != '+' && first != '-' && first != 'I')
+        return PNaN;
+
     double number;
     if (characters.front() == '0' && characters.size() > 2) {
         if ((characters[1] | 0x20) == 'x' && isASCIIHexDigit(characters[2]))
@@ -526,6 +531,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
     JSValue value = callFrame->argument(0);
     JSValue radixValue = callFrame->argument(1);
 
@@ -538,10 +546,13 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncParseInt, (JSGlobalObject* globalObject, Call
         }
     }
 
-    // If ToString throws, we shouldn't call ToInt32.
-    return toStringView(globalObject, value, [&] (StringView view) {
-        return JSValue::encode(jsNumber(parseInt(view, radixValue.toInt32(globalObject))));
-    });
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    int32_t radix = radixValue.toInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(parseIntString(globalObject, string, radix))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(globalFuncParseFloat, (JSGlobalObject* globalObject, CallFrame* callFrame))

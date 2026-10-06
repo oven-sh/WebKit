@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2024 Apple Inc. All rights reserved.
+ * Copyright (C) 2006-2026 Apple Inc. All rights reserved.
  * Copyright (C) 2014 Google Inc. All rights reserved.
  * Copyright (C) 2012 Nokia Corporation and/or its subsidiary(-ies)
  *
@@ -131,6 +131,8 @@ HitTestResult::HitTestResult(const HitTestResult& other)
     }
 }
 
+HitTestResult::HitTestResult(HitTestResult&&) = default;
+
 HitTestResult::~HitTestResult() = default;
 
 HitTestResult& HitTestResult::operator=(const HitTestResult& other)
@@ -149,10 +151,13 @@ HitTestResult& HitTestResult::operator=(const HitTestResult& other)
     if (other.m_listBasedTestResult) {
         m_listBasedTestResult = makeUnique<NodeSet>();
         appendToNodeSet(*other.m_listBasedTestResult, *m_listBasedTestResult);
-    }
+    } else
+        m_listBasedTestResult = nullptr;
 
     return *this;
 }
+
+HitTestResult& HitTestResult::operator=(HitTestResult&&) = default;
 
 static Node* NODELETE moveOutOfUserAgentShadowTree(Node& node)
 {
@@ -438,7 +443,7 @@ Image* HitTestResult::image() const
 
     if (auto* image = dynamicDowncast<RenderImage>(imageNode->renderer())) {
         if (image->cachedImage() && !image->cachedImage()->errorOccurred())
-            return protect(image->cachedImage())->imageForRenderer(image);
+            return protect(image->cachedImage())->image();
     }
 
     return nullptr;

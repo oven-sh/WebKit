@@ -210,7 +210,6 @@ void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
     // WebXR must always clear for the rAF of the session. Currently we assume content does not do redundant initial clear,
     // as the spec says the buffer always starts cleared.
     ScopedDisableRasterizerDiscard disableRasterizerDiscard { m_context };
-    ScopedEnableBackbuffer enableBackBuffer { m_context };
     ScopedDisableScissorTest disableScissorTest { m_context };
     ScopedClearColorAndMask zeroClear { m_context, 0.f, 0.f, 0.f, 0.f, true, true, true, true, };
     ScopedClearDepthAndMask zeroDepth { m_context, 1.0f, true, m_attributes.depth };
@@ -221,6 +220,7 @@ void WebXROpaqueFramebuffer::startFrame(PlatformXR::FrameData::LayerData& data)
     if (m_attributes.stencil)
         clearMask |= GL::STENCIL_BUFFER_BIT;
     gl->bindFramebuffer(GL::FRAMEBUFFER, m_drawFramebuffer->object());
+    ScopedEnableDrawBuffer0 enableDrawBuffer0 { m_context, m_drawFramebuffer.get() };
     gl->clear(clearMask);
 }
 
@@ -292,12 +292,10 @@ void WebXROpaqueFramebuffer::releaseAllDisplayAttachments()
 
 void WebXROpaqueFramebuffer::resolveMSAAFramebuffer(GraphicsContextGL& gl)
 {
-#if PLATFORM(VISION) && !PLATFORM(IOS_FAMILY_SIMULATOR)
-    // End of rendering. Discard the MSAA buffers to avoid writing them back to
-    // memory since we only need the resolved versions.
-    Vector<GCGLenum, 3> discardAttachments = { GL::COLOR_ATTACHMENT0, GL::DEPTH_ATTACHMENT, GL::STENCIL_ATTACHMENT };
-    gl.framebufferDiscard(GL::FRAMEBUFFER, discardAttachments);
-#else
+    // Depth and stencil are listed unconditionally because discarding is only a hint, so attachments that are not present are ignored.
+    static constexpr std::array<GCGLenum, 3> discardAttachments { GL::COLOR_ATTACHMENT0, GL::DEPTH_ATTACHMENT, GL::STENCIL_ATTACHMENT };
+
+#if !PLATFORM(VISION) || PLATFORM(IOS_FAMILY_SIMULATOR)
     IntSize size = m_framebufferSize; // Physical Space
     PlatformGLObject readFBO = m_drawFramebuffer->object();
     PlatformGLObject drawFBO = m_resolvedFBO ? m_resolvedFBO : m_displayFBO;
@@ -313,7 +311,12 @@ void WebXROpaqueFramebuffer::resolveMSAAFramebuffer(GraphicsContextGL& gl)
     gl.bindFramebuffer(GL::DRAW_FRAMEBUFFER, drawFBO);
     ASSERT(gl.checkFramebufferStatus(GL::DRAW_FRAMEBUFFER) == GL::FRAMEBUFFER_COMPLETE);
     gl.blitFramebuffer(0, 0, size.width(), size.height(), 0, 0, size.width(), size.height(), buffers, GL::NEAREST);
+
+    // The blit above left the framebuffer pointing at the resolve target, prepare it for the framebufferDiscard() call.
+    gl.bindFramebuffer(GL::FRAMEBUFFER, readFBO);
 #endif
+    // End of rendering. Discard the MSAA buffers to avoid writing them back to memory since we only need the resolved versions.
+    gl.framebufferDiscard(GL::FRAMEBUFFER, discardAttachments);
 }
 
 void WebXROpaqueFramebuffer::blitShared(GraphicsContextGL& gl)

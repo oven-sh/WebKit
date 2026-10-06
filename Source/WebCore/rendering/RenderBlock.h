@@ -290,6 +290,8 @@ protected:
 
     std::pair<LayoutUnit, LayoutUnit> computeIntrinsicLogicalWidths() const override;
     void computeIntrinsicLogicalWidthContributions() override;
+    std::optional<LayoutUnit> fixedLogicalWidthContribution(const Style::PreferredSize&) const;
+    std::pair<LayoutUnit, LayoutUnit> logicalWidthContributionsForSize(const Style::PreferredSize&, LayoutUnit minContentLogicalWidth, LayoutUnit maxContentLogicalWidth) const;
     
     std::optional<LayoutUnit> firstLineBaseline() const override;
     std::optional<LayoutUnit> lastLineBaseline() const override;
@@ -337,6 +339,10 @@ protected:
 
     LayoutSize intrinsicSize() const override;
 
+    // Hit-tests a fieldset's legend, which is excluded from normal layout and placed in the border,
+    // so it is positioned against the unscrolled offset rather than the scrolled content.
+    bool hitTestExcludedChildrenInBorder(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
+
 private:
     // FIXME-BLOCKFLOW: Remove virtualizaion when all callers have moved to RenderBlockFlow
     virtual LayoutUnit logicalRightFloatOffsetForLine(LayoutUnit, LayoutUnit fixedOffset, LayoutUnit) const { return fixedOffset; };
@@ -364,7 +370,6 @@ private:
     virtual bool hitTestFloats(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&) { return false; }
     virtual bool hitTestChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& adjustedLocation, HitTestAction);
     virtual bool hitTestInlineChildren(const HitTestRequest&, HitTestResult&, const HitTestLocation&, const LayoutPoint&, HitTestAction) { return false; }
-    bool hitTestExcludedChildrenInBorder(const HitTestRequest&, HitTestResult&, const HitTestLocation& locationInContainer, const LayoutPoint& accumulatedOffset, HitTestAction);
 
     std::pair<LayoutUnit, LayoutUnit> computeBlockIntrinsicLogicalWidths() const;
     

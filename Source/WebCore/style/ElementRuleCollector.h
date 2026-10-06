@@ -73,6 +73,7 @@ public:
     void clearMatchedRules();
 
     EnumSet<PseudoElementType> matchedPseudoElements() const { return m_matchedPseudoElements; }
+    PseudoElementBoxGeneration pseudoElementBoxGeneration() const { return m_pseudoElementBoxGeneration; }
     const Relations& styleRelations() const LIFETIME_BOUND { return m_styleRelations; }
 
     void addAuthorKeyframeRules(const StyleRuleKeyframe&);
@@ -120,10 +121,10 @@ private:
     const Element& element() const { return m_element.get(); }
 
     const Ref<const Element> m_element;
-    Ref<const RuleSet> m_authorStyle;
-    RefPtr<const RuleSet> m_userStyle;
-    RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
-    RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
+    const Ref<const RuleSet> m_authorStyle;
+    const RefPtr<const RuleSet> m_userStyle;
+    const RefPtr<const RuleSet> m_userAgentMediaQueryStyle;
+    const RefPtr<const RuleSet> m_dynamicViewTransitionsStyle;
     SelectorMatchingState* m_selectorMatchingState;
 
     bool m_shouldIncludeEmptyRules { false };
@@ -139,6 +140,7 @@ private:
     Ref<MatchResult> m_result;
     Relations m_styleRelations;
     EnumSet<PseudoElementType> m_matchedPseudoElements;
+    PseudoElementBoxGeneration m_pseudoElementBoxGeneration { PseudoElementBoxGeneration::NotForBeforeOrAfter };
 };
 
 ALWAYS_INLINE void ElementRuleCollector::collectMatchingRulesForList(const RuleSet::RuleDataVector* rules, const MatchRequest& matchRequest)

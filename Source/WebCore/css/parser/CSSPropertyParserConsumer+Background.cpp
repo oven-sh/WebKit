@@ -60,16 +60,6 @@
 namespace WebCore {
 namespace CSSPropertyParserHelpers {
 
-template<typename ElementType> static void NODELETE complete4Sides(std::array<ElementType, 4>& sides)
-{
-    if (!sides[1])
-        sides[1] = sides[0];
-    if (!sides[2])
-        sides[2] = sides[0];
-    if (!sides[3])
-        sides[3] = sides[1];
-}
-
 // MARK: - Border Radius
 
 enum class SupportWebKitBorderRadiusQuirk : bool { No, Yes };
@@ -148,6 +138,46 @@ std::optional<CSS::BorderRadius> consumeUnresolvedWebKitBorderRadius(CSSParserTo
 
     // Includes the legacy syntax quirk where `-webkit-border-radius: l1 l2` is equivalent to border-radius: `l1 / l2`.
     return consumeBorderRadius<SupportWebKitBorderRadiusQuirk::Yes>(range, state);
+}
+
+std::optional<CSS::BorderRadiusSide> consumeUnresolvedBorderRadiusSide(CSSParserTokenRange& range, CSS::PropertyParserState& state)
+{
+    // <'border-top-radius'> = <length-percentage [0,∞]>{1,2} [ / <length-percentage [0,∞]>{1,2} ]?
+    // https://drafts.csswg.org/css-borders-4/#corner-sizing-side-shorthands
+
+    using LengthPercentage = CSS::LengthPercentage<CSS::Nonnegative>;
+
+    auto first = MetaConsumer<LengthPercentage>::consume(range, state);
+    if (!first)
+        return { };
+    auto second = MetaConsumer<LengthPercentage>::consume(range, state);
+    if (!second)
+        second = first;
+
+    if (range.atEnd()) {
+        return CSS::BorderRadiusSide {
+            .horizontal = { *first, *second },
+            .vertical = { *first, *second }
+        };
+    }
+
+    if (!consumeSlashIncludingWhitespace(range))
+        return { };
+
+    auto verticalFirst = MetaConsumer<LengthPercentage>::consume(range, state);
+    if (!verticalFirst)
+        return { };
+    auto verticalSecond = MetaConsumer<LengthPercentage>::consume(range, state);
+    if (!verticalSecond)
+        verticalSecond = verticalFirst;
+
+    if (!range.atEnd())
+        return { };
+
+    return CSS::BorderRadiusSide {
+        .horizontal = { *first, *second },
+        .vertical = { *verticalFirst, *verticalSecond }
+    };
 }
 
 // MARK: - Border Image

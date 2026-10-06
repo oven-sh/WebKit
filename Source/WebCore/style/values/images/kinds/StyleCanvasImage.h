@@ -66,9 +66,16 @@ private:
     Ref<DeprecatedCSSOMValue> computedStyleDeprecatedCSSOMValue(CSSValuePool&, const Style::ComputedStyle&, CSSStyleDeclaration&) const final;
     bool isPending() const final;
     void load(CachedResourceLoader&, const ResourceLoaderOptions&) final;
-    RefPtr<WebCore::Image> image(const RenderElement*, const FloatSize&, const GraphicsContext& destinationContext, bool isForFirstLine) const final;
+    ImageDrawResult draw(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawAsPattern(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawTiled(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions, bool isForFirstLine) const final;
+    ImageDrawResult drawNinePiece(GraphicsContext&, const RenderElement&, ConcreteObjectSize, const NinePieceGeometry&, ImagePaintingOptions) const final;
     bool knownToBeOpaque(const RenderElement&) const final;
+    bool canDraw(const RenderElement&) const final;
+    bool canDrawAtSize(const RenderElement&, const FloatSize&) const final;
+    InterpolationQuality interpolationQualityForImageDraw(GraphicsContext&, const RenderElement&, const void* layer, const LayoutSize&) const final;
     FloatSize fixedSize(const RenderElement&) const final;
+    NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const final;
     void didAddClient(RenderElement&) final;
     void didRemoveClient(RenderElement&) final;
 
@@ -79,6 +86,7 @@ private:
     void canvasDestroyed(CanvasBase&) final;
 
     HTMLCanvasElement* element(Document&) const;
+    RefPtr<WebCore::Image> resolvedImage(const RenderElement&) const;
 
     // The name of the canvas.
     CustomIdent m_name;

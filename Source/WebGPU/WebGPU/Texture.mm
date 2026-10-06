@@ -36,7 +36,7 @@
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
-namespace WebGPU {
+namespace WebGPU::Metal {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Texture);
 
@@ -2940,7 +2940,7 @@ Ref<Texture> Device::createTexture(const WGPUTextureDescriptor& descriptor)
 
     // https://gpuweb.github.io/gpuweb/#dom-gpudevice-createtexture
 
-    Vector viewFormats(descriptor.viewFormatsSpan());
+    Vector viewFormats(viewFormatsSpan(descriptor));
 
     if (NSString *error = errorValidatingTextureCreation(descriptor, viewFormats)) {
         generateAValidationError(error);
@@ -3390,6 +3390,8 @@ void Texture::recreateIfNeeded()
     // the frame that last used this backing left behind, so forget having cleared it and let the
     // next use initialize it again.
     setPreviouslyCleared(0, 0, false);
+    // The cost recorded against this backing belongs to the frame that is over, not the one starting now.
+    resetGPUFrameCost();
 }
 
 void Texture::makeCanvasBacking()
@@ -3656,8 +3658,8 @@ void Texture::destroy()
         m_texture = protect(m_device)->placeholderTexture(format());
     m_destroyed = true;
     if (!m_canvasBacking) {
-        for (auto& view : m_textureViews) {
-            if (view.get())
+        for (auto& weakView : m_textureViews) {
+            if (RefPtr view = weakView.get())
                 view->destroy();
         }
     }
@@ -3740,14 +3742,14 @@ WGPUExtent3D Texture::physicalTextureExtent(WGPUTextureDimension dimension, WGPU
     }
 }
 
-static WGPUExtent3D imageCopyTextureSubresourceSize(const WGPUImageCopyTexture& imageCopyTexture)
+static WGPUExtent3D imageCopyTextureSubresourceSize(const WGPUTexelCopyTextureInfo& imageCopyTexture)
 {
     // https://gpuweb.github.io/gpuweb/#imagecopytexture-subresource-size
 
     return protect(fromAPI(imageCopyTexture.texture))->physicalMiplevelSpecificTextureExtent(imageCopyTexture.mipLevel);
 }
 
-NSString* Texture::errorValidatingImageCopyTexture(const WGPUImageCopyTexture& imageCopyTexture, const WGPUExtent3D& copySize)
+NSString* Texture::errorValidatingImageCopyTexture(const WGPUTexelCopyTextureInfo& imageCopyTexture, const WGPUExtent3D& copySize)
 {
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-validating-gpuimagecopytexture
 
@@ -4047,7 +4049,7 @@ bool Texture::isValidDepthStencilCopyDestination(WGPUTextureFormat format, WGPUT
     }
 }
 
-NSString* Texture::errorValidatingTextureCopyRange(const WGPUImageCopyTexture& imageCopyTexture, const WGPUExtent3D& copySize)
+NSString* Texture::errorValidatingTextureCopyRange(const WGPUTexelCopyTextureInfo& imageCopyTexture, const WGPUExtent3D& copySize)
 {
     // https://gpuweb.github.io/gpuweb/#validating-texture-copy-range
 
@@ -4080,7 +4082,7 @@ NSString* Texture::errorValidatingTextureCopyRange(const WGPUImageCopyTexture& i
     return nil;
 }
 
-NSString* Texture::errorValidatingLinearTextureData(const WGPUTextureDataLayout& layout, uint64_t byteSize, WGPUTextureFormat format, WGPUExtent3D copyExtent)
+NSString* Texture::errorValidatingLinearTextureData(const WGPUTexelCopyBufferLayout& layout, uint64_t byteSize, WGPUTextureFormat format, WGPUExtent3D copyExtent)
 {
 #define ERROR_STRING(...) ([NSString stringWithFormat:@"GPUTexture.validateLinearTextureData: %@", __VA_ARGS__])
     // https://gpuweb.github.io/gpuweb/#abstract-opdef-validating-linear-texture-data
@@ -4213,76 +4215,76 @@ void Texture::updateCompletionEvent(const std::pair<id<MTLSharedEvent>, uint64_t
     m_sharedEventSignalValue = completionEvent.second;
 }
 
-} // namespace WebGPU
+} // namespace WebGPU::Metal
 
 #pragma mark WGPU Stubs
 
 void NODELETE wgpuTextureAddRef(WGPUTexture texture)
 {
-    WebGPU::fromAPI(texture).ref();
+    WebGPU::Metal::fromAPI(texture).ref();
 }
 
 void wgpuTextureRelease(WGPUTexture texture)
 {
-    WebGPU::fromAPI(texture).deref();
+    WebGPU::Metal::fromAPI(texture).deref();
 }
 
 WGPUTextureView wgpuTextureCreateView(WGPUTexture texture, const WGPUTextureViewDescriptor* descriptor)
 {
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(texture))->createView(*descriptor));
+    return WebGPU::Metal::releaseToAPI(protect(WebGPU::Metal::fromAPI(texture))->createView(*descriptor));
 }
 
 void wgpuTextureDestroy(WGPUTexture texture)
 {
-    protect(WebGPU::fromAPI(texture))->destroy();
+    protect(WebGPU::Metal::fromAPI(texture))->destroy();
 }
 
 void wgpuTextureUndestroy(WGPUTexture texture)
 {
-    protect(WebGPU::fromAPI(texture))->recreateIfNeeded();
+    protect(WebGPU::Metal::fromAPI(texture))->recreateIfNeeded();
 }
 
 void wgpuTextureSetLabel(WGPUTexture texture, WGPUStringView label)
 {
-    protect(WebGPU::fromAPI(texture))->setLabel(WebGPU::fromAPI(label));
+    protect(WebGPU::Metal::fromAPI(texture))->setLabel(WebGPU::Metal::fromAPI(label));
 }
 
 uint32_t wgpuTextureGetDepthOrArrayLayers(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->depthOrArrayLayers();
+    return protect(WebGPU::Metal::fromAPI(texture))->depthOrArrayLayers();
 }
 
 WGPUTextureDimension wgpuTextureGetDimension(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->dimension();
+    return protect(WebGPU::Metal::fromAPI(texture))->dimension();
 }
 
 WGPUTextureFormat wgpuTextureGetFormat(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->format();
+    return protect(WebGPU::Metal::fromAPI(texture))->format();
 }
 
 uint32_t wgpuTextureGetHeight(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->height();
+    return protect(WebGPU::Metal::fromAPI(texture))->height();
 }
 
 uint32_t wgpuTextureGetWidth(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->width();
+    return protect(WebGPU::Metal::fromAPI(texture))->width();
 }
 
 uint32_t wgpuTextureGetMipLevelCount(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->mipLevelCount();
+    return protect(WebGPU::Metal::fromAPI(texture))->mipLevelCount();
 }
 
 uint32_t wgpuTextureGetSampleCount(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->sampleCount();
+    return protect(WebGPU::Metal::fromAPI(texture))->sampleCount();
 }
 
 WGPUTextureUsage wgpuTextureGetUsage(WGPUTexture texture)
 {
-    return protect(WebGPU::fromAPI(texture))->usage();
+    return protect(WebGPU::Metal::fromAPI(texture))->usage();
 }

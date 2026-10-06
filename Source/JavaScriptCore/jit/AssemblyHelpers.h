@@ -802,20 +802,15 @@ public:
         return notAtomCases;
     }
 
-    JumpList branchIfInlineWatchpointSetIsStillValid(Address set, GPRReg scratchGPR)
-    {
-        JumpList result;
-        loadPtr(set.withOffset(InlineWatchpointSet::offsetOfData()), scratchGPR);
-        auto isThinInvalidated = branchPtr(Equal, scratchGPR, TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated)));
-        result.append(branchTestPtr(NonZero, scratchGPR, TrustedImm32(InlineWatchpointSet::IsThinFlag)));
-        result.append(branch8(NotEqual, Address(scratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
-        isThinInvalidated.link(this);
-        return result;
-    }
-
     JumpList branchIfInlineWatchpointSetIsStillValid(GPRReg setThenScratchGPR)
     {
-        return branchIfInlineWatchpointSetIsStillValid(Address(setThenScratchGPR), setThenScratchGPR);
+        JumpList result;
+        loadPtr(Address(setThenScratchGPR, InlineWatchpointSet::offsetOfData()), setThenScratchGPR);
+        auto isThinInvalidated = branchPtr(Equal, setThenScratchGPR, TrustedImmPtr(InlineWatchpointSet::encodeState(IsInvalidated)));
+        result.append(branchTestPtr(NonZero, setThenScratchGPR, TrustedImm32(InlineWatchpointSet::IsThinFlag)));
+        result.append(branch8(NotEqual, Address(setThenScratchGPR, WatchpointSet::offsetOfState()), TrustedImm32(IsInvalidated)));
+        isThinInvalidated.link(this);
+        return result;
     }
 
     JumpList branchIfInlineWatchpointSetIsStillValid(InlineWatchpointSet& set, GPRReg scratchGPR)
@@ -1084,17 +1079,25 @@ public:
 
     Jump isStrictInt52(GPRReg valueGPR, GPRReg scratchGPR)
     {
-        // This moves the checking range (fail if N >= (1 << (52 - 1)) or N < -(1 << (52 - 1))) by subtracting a value.
-        // So, valid value region starts with -1 and lower. In unsigned form, which means,
-        // 0x00000000000000000 to 0x000fffffffffffff. So, by ignoring 52 bits, we can extract 0x000 part, and we can check whether it is zero.
+#if CPU(ARM64)
+        extractSignedBitfield64(valueGPR, TrustedImm32(0), TrustedImm32(JSValue::numberOfInt52Bits), scratchGPR);
+        return branch64(Equal, scratchGPR, valueGPR);
+#else
+        // Adding 2^51 maps the Int52 range onto [0, 2^52), so the value is in range iff the top 12 bits are then zero.
         add64(TrustedImm64(0x0008000000000000ULL), valueGPR, scratchGPR);
         return branchTest64(Zero, scratchGPR, TrustedImm64(0xFFF0000000000000ULL));
+#endif
     }
 
     Jump isNotStrictInt52(GPRReg valueGPR, GPRReg scratchGPR)
     {
+#if CPU(ARM64)
+        extractSignedBitfield64(valueGPR, TrustedImm32(0), TrustedImm32(JSValue::numberOfInt52Bits), scratchGPR);
+        return branch64(NotEqual, scratchGPR, valueGPR);
+#else
         add64(TrustedImm64(0x0008000000000000ULL), valueGPR, scratchGPR);
         return branchTest64(NonZero, scratchGPR, TrustedImm64(0xFFF0000000000000ULL));
+#endif
     }
 
     // Here are possible arrangements of source, target, scratch:
@@ -1400,8 +1403,8 @@ public:
     // case. It is passed the unlinked jump to the slow case.
     template<typename Functor, typename SlowPathFunctor>
     void emitTypeOf(
-        GPRReg valueGPR, GPRReg tempGPR, const Functor& functor,
-        const SlowPathFunctor& slowPathFunctor)
+        GPRReg valueGPR, GPRReg tempGPR, NOESCAPE const Functor& functor,
+        NOESCAPE const SlowPathFunctor& slowPathFunctor)
     {
         // Implements the following branching structure:
         //

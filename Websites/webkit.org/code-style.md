@@ -1029,7 +1029,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 
 ```cpp
 [this] { return m_member; }
-[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] mutable { return doWork(WTF::move(m_object)); }
+[this] -> const String& { return m_member; }
 ```
 
 ###### Wrong:
@@ -1037,6 +1038,8 @@ for (Vector<RefPtr<FrameView> >::iterator it = frameViews.begin(); it != end; ++
 ```cpp
 [this]() { return m_member; }
 []() { return static_cast<unsigned>(-1); }
+[this]() mutable { return doWork(WTF::move(m_object)); }
+[this] () -> const String& { return m_member; }
 ```
 
 [](#function-return-arrow) Only use the arrow for function return types if it allows you to omit redundant information.

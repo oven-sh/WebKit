@@ -48,8 +48,7 @@ namespace WebKit {
 
 static inline JSValueRef makeErrorValue(JSGlobalContextRef contextRef, const String& errorMessage)
 {
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG auto argument = JSValueMakeString(contextRef, toJSString(errorMessage).get());
+    auto argument = JSValueMakeString(contextRef, toJSString(errorMessage).get());
     return JSObjectMakeError(contextRef, 1, &argument, 0);
 }
 
@@ -72,13 +71,12 @@ JSValueRef WebExtensionAPIRuntimeBase::reportError(String errorMessage, JSGlobal
 
     if (!m_lastErrorAccessed) {
         // Log the error to the console if it wasn't checked in the callback.
-        JSRetainPtr consoleString = toJSString("console"_s);
-        JSRetainPtr errorString = toJSString("error"_s);
+        RefPtr consoleString = toJSString("console"_s);
+        RefPtr errorString = toJSString("error"_s);
         JSObjectRef globalObject = JSContextGetGlobalObject(contextRef);
-        // This is a safer cpp false positive (rdar://163760990).
-        SUPPRESS_UNCOUNTED_ARG JSObjectRef consoleObject = JSValueToObject(contextRef, JSObjectGetProperty(contextRef, globalObject, consoleString.get(), nullptr), nullptr);
+        JSObjectRef consoleObject = JSValueToObject(contextRef, JSObjectGetProperty(contextRef, globalObject, consoleString.get(), nullptr), nullptr);
         if (consoleObject) {
-            SUPPRESS_UNCOUNTED_ARG JSValueRef consoleErrorFunction = JSObjectGetProperty(contextRef, consoleObject, errorString.get(), nullptr);
+            JSValueRef consoleErrorFunction = JSObjectGetProperty(contextRef, consoleObject, errorString.get(), nullptr);
 
             callObjectWithArguments<1>(consoleErrorFunction, contextRef, { makeErrorValue(contextRef, errorMessage) });
 
@@ -182,8 +180,7 @@ void WebExtensionAPIRuntime::getPlatformInfo(Ref<WebExtensionCallbackHandler>&& 
 #endif
 
     auto globalContext = callback->globalContext();
-    // This is a safer cpp false positive (rdar://163760990).
-    SUPPRESS_UNCOUNTED_ARG callback->call(fromObject(callback->globalContext(), {
+    callback->call(fromObject(callback->globalContext(), {
         { "os"_s, Protected(globalContext, JSValueMakeString(globalContext, toJSString(osValue).get())) },
         { "arch"_s, Protected(globalContext, JSValueMakeString(globalContext, toJSString(archValue).get())) }
     }));
@@ -521,7 +518,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onMessage()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onMessage
 
     if (!m_onMessage)
-        m_onMessage = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnMessage);
+        lazyInitialize(m_onMessage, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnMessage));
 
     return *m_onMessage;
 }
@@ -531,7 +528,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onConnect()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onConnect
 
     if (!m_onConnect)
-        m_onConnect = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnConnect);
+        lazyInitialize(m_onConnect, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnConnect));
 
     return *m_onConnect;
 }
@@ -541,7 +538,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onInstalled()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onInstalled
 
     if (!m_onInstalled)
-        m_onInstalled = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnInstalled);
+        lazyInitialize(m_onInstalled, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnInstalled));
 
     return *m_onInstalled;
 }
@@ -551,7 +548,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onStartup()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onStartup
 
     if (!m_onStartup)
-        m_onStartup = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnStartup);
+        lazyInitialize(m_onStartup, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnStartup));
 
     return *m_onStartup;
 }
@@ -561,7 +558,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onConnectExternal()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onConnectExternal
 
     if (!m_onConnectExternal)
-        m_onConnectExternal = WebExtensionAPIEvent::create(*this,  WebExtensionEventListenerType::RuntimeOnConnectExternal);
+        lazyInitialize(m_onConnectExternal, WebExtensionAPIEvent::create(*this,  WebExtensionEventListenerType::RuntimeOnConnectExternal));
 
     return *m_onConnectExternal;
 }
@@ -571,7 +568,7 @@ WebExtensionAPIEvent& WebExtensionAPIRuntime::onMessageExternal()
     // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/runtime/onMessageExternal
 
     if (!m_onMessageExternal)
-        m_onMessageExternal = WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnMessageExternal);
+        lazyInitialize(m_onMessageExternal, WebExtensionAPIEvent::create(*this, WebExtensionEventListenerType::RuntimeOnMessageExternal));
 
     return *m_onMessageExternal;
 }

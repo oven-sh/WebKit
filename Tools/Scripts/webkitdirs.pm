@@ -79,8 +79,10 @@ BEGIN {
        &availableXcodeSDKs
        &baseProductDir
        &buildCMakeProjectOrExit
+       &buildCMakeTarget
        &buildSystem
        &buildVisualStudioProject
+       &buildWithExistingCMakeTree
        &buildXCodeProject
        &buildXcodeScheme
        &builtDylibPathForName
@@ -93,6 +95,7 @@ BEGIN {
        &checkForArgumentAndRemoveFromArrayRefGettingValue
        &checkRequiredSystemConfig
        &cmakeArgsFromFeatures
+       &cmakeBuildHasTarget
        &configuration
        &configuredXcodeWorkspace
        &coverageIsEnabled
@@ -1307,6 +1310,21 @@ sub determineConfigurationProductDir
 sub setConfigurationProductDir($)
 {
     ($configurationProductDir) = @_;
+}
+
+# The architectures a universal build is producing, or the empty list for an
+# ordinary single-architecture build.
+sub universalArchitectures()
+{
+    return () unless isAppleCocoaWebKit() && isCMakeBuild();
+    my @architectures = split(' ', architecture());
+    return @architectures > 1 ? @architectures : ();
+}
+
+sub perArchitectureProductDir($$)
+{
+    my ($baseProductDirectory, $arch) = @_;
+    return "$baseProductDirectory-$arch";
 }
 
 # The configuration recorded by the last build, or by set-webkit-configuration,
@@ -2886,6 +2904,20 @@ sub shouldRemoveCMakeCache(@)
     # are probably arguments specifying build targets. Changing those should
     # not trigger a reconfiguration of the build.
     my (@buildArgs) = grep(/^-/, sort(@_, @originalArgv));
+
+    # Remove arguments which control settings persisted by
+    # set-webkit-configuration.
+    my %configurationArgument = map { $_ => 1 } qw(--debug --release --profile --profiling --testing
+                                                   --release-and-assert --ra --cmake --xcode);
+    if (isAppleCocoaWebKit() && isCMakeBuild()) {
+        # cmakeCocoaConfigurationName() names the directory after a sanitizer and
+        # after a forced optimization level as well.
+        $configurationArgument{"--asan"} = 1;
+        $configurationArgument{"--tsan"} = 1;
+        @buildArgs = grep { !/^--force-opt(?:imization-level)?(?:=|$)/ } @buildArgs;
+    }
+    @buildArgs = grep { !$configurationArgument{$_} } @buildArgs;
+
     push @buildArgs, parse_line('\s+', 0, $ENV{'BUILD_WEBKIT_ARGS'}) if ($ENV{'BUILD_WEBKIT_ARGS'});
 
     # We check this first, because we always want to create this file for a fresh build.
@@ -2960,7 +2992,7 @@ sub shouldRemoveCMakeCache(@)
     return 0;
 }
 
-sub removeCMakeCache(@)
+sub removeCMakeCacheIfNeeded(@)
 {
     my (@buildArgs) = @_;
     if (shouldRemoveCMakeCache(@buildArgs)) {
@@ -2970,6 +3002,26 @@ sub removeCMakeCache(@)
             unlink($cmakeCache);
         }
     }
+}
+
+sub removeCMakeCache(@)
+{
+    my (@buildArgs) = @_;
+
+    # For universal builds, check each slice's cache instead of the merged
+    # product directory's.
+    my @architectures = universalArchitectures();
+    if (!@architectures) {
+        removeCMakeCacheIfNeeded(@buildArgs);
+        return;
+    }
+
+    my $mergedProductDir = productDir();
+    for my $arch (@architectures) {
+        setConfigurationProductDir(perArchitectureProductDir($mergedProductDir, $arch));
+        removeCMakeCacheIfNeeded(@buildArgs);
+    }
+    setConfigurationProductDir($mergedProductDir);
 }
 
 sub canUseNinja(@)
@@ -3053,6 +3105,7 @@ sub generateBuildSystemFromCMakeProject
     push @args, "-DENABLE_SANITIZERS=thread" if tsanIsEnabled();
     push @args, "-DENABLE_SANITIZERS=undefined" if ubsanIsEnabled();
     push @args, "-DENABLE_SANITIZERS=fuzzer" if libFuzzerIsEnabled();
+    push @args, "-DGENERATE_DSYM=ON" if generateDsym();
 
     push @args, "-DLTO_MODE=$ltoMode" if ltoMode();
 
@@ -3223,12 +3276,74 @@ sub cleanCMakeGeneratedProject()
     return 0;
 }
 
+# Builds one target of an already-configured CMake tree, for the build-* helper
+# scripts that otherwise drive Xcode on Cocoa ports.
+sub buildCMakeTarget($$@)
+{
+    my ($target, $clean, @args) = @_;
+    die "--clean is not supported for a single CMake target; use build-webkit --clean.\n" if $clean;
+
+    # Callers such as webkitpy pass Xcode build settings (e.g. ARCHS=arm64e), which Ninja would read as targets.
+    my @makeArgs = grep { !/^\w+=/ } @args;
+    return buildCMakeGeneratedProject(join(" ", $target, @makeArgs));
+}
+
+# The build-* helper scripts keep building with Xcode on Cocoa unless --cmake was passed or a configured CMake tree already exists.
+sub buildWithExistingCMakeTree()
+{
+    return 0 unless isAppleCocoaWebKit() && isCMakeBuild();
+    # productDir() consumes --asan and --tsan from @ARGV, so resolve it before returning; otherwise they reach Ninja.
+    my $buildNinja = File::Spec->catfile(productDir(), "build.ninja");
+    return 1 if (passedBuildSystem() // "") eq "CMake";
+    return -f $buildNinja;
+}
+
+# Finds ninja the same way canUseNinja() does: the Xcode toolchain copy on Cocoa, then PATH.
+sub ninjaExecutable()
+{
+    if (isAppleCocoaWebKit()) {
+        my $devnull = File::Spec->devnull();
+        chomp(my $ninja = `xcrun -find ninja 2>$devnull`);
+        return $ninja if $ninja && exitStatus($?) == 0;
+    }
+    return "ninja" if commandExists("ninja");
+    return "ninja-build" if commandExists("ninja-build");
+    return undef;
+}
+
+sub cmakeBuildHasTarget($)
+{
+    my ($target) = @_;
+    my $buildPath = productDir();
+    return 0 unless -f File::Spec->catfile($buildPath, "build.ninja");
+    my $ninja = ninjaExecutable();
+    die "Could not find ninja to query the CMake build in $buildPath.\n" unless $ninja;
+    my $devnull = File::Spec->devnull();
+    return exitStatus(system("\"$ninja\" -C \"$buildPath\" -t query \"$target\" >$devnull 2>&1")) == 0;
+}
+
 sub buildCMakeProjectOrExit($$$@)
 {
     my ($clean, $prefixPath, $makeArgs, @cmakeArgs) = @_;
     my $returnCode;
 
-    exit(exitStatus(cleanCMakeGeneratedProject())) if $clean;
+    if ($clean) {
+        # A universal build has no build system in productDir() itself, only
+        # merged products, so clean each slice's tree instead.
+        my @architectures = universalArchitectures();
+        if (@architectures) {
+            my $mergedProductDir = productDir();
+            for my $arch (@architectures) {
+                setConfigurationProductDir(perArchitectureProductDir($mergedProductDir, $arch));
+                $returnCode = exitStatus(cleanCMakeGeneratedProject());
+                exit($returnCode) if $returnCode;
+            }
+            rmtree($mergedProductDir, 0, 1);
+            setConfigurationProductDir($mergedProductDir);
+            exit 0;
+        }
+        exit(exitStatus(cleanCMakeGeneratedProject()));
+    }
 
     determineDefaultCompiler(@cmakeArgs);
     my @wrapper = wrapperPrefixIfNeeded();
@@ -3243,11 +3358,59 @@ sub buildCMakeProjectOrExit($$$@)
         }
     }
 
+    my @universalArchitectures = universalArchitectures();
+    if (@universalArchitectures) {
+        return buildUniversalCMakeProject($prefixPath, $makeArgs, \@universalArchitectures, @cmakeArgs);
+    }
+
     $returnCode = exitStatus(generateBuildSystemFromCMakeProject($prefixPath, @cmakeArgs));
     exit($returnCode) if $returnCode;
     exit 0 if isGenerateProjectOnly();
 
     $returnCode = exitStatus(buildCMakeGeneratedProject($makeArgs));
+    exit($returnCode) if $returnCode;
+    return 0;
+}
+
+# Build each architecture in its own tree and lipo the products together.
+# The trees are independent, so the workload could easily be distributed to
+# separate machines. This mode matches Xcode's native universal build semantics.
+sub buildUniversalCMakeProject($$$@)
+{
+    my ($prefixPath, $makeArgs, $architecturesRef, @cmakeArgs) = @_;
+    my @architectures = @{$architecturesRef};
+    my $returnCode;
+
+    # Building mutates the $productDir global while each slice is building,
+    # then restores it to the original value and merges into that directory.
+    my $mergedProductDir = productDir();
+
+    for my $arch (@architectures) {
+        print "\n=== Building $arch ===\n";
+        # generateBuildSystemFromCMakeProject() and buildCMakeGeneratedProject()
+        # both work from productDir(), so point it at this slice's tree.
+        setConfigurationProductDir(perArchitectureProductDir($mergedProductDir, $arch));
+
+        $returnCode = exitStatus(generateBuildSystemFromCMakeProject($prefixPath,
+            "-DCMAKE_OSX_ARCHITECTURES=$arch", @cmakeArgs));
+        exit($returnCode) if $returnCode;
+        next if isGenerateProjectOnly();
+
+        $returnCode = exitStatus(buildCMakeGeneratedProject($makeArgs));
+        exit($returnCode) if $returnCode;
+    }
+
+    setConfigurationProductDir($mergedProductDir);
+    exit 0 if isGenerateProjectOnly();
+
+    print "\n=== Merging " . join(" ", @architectures) . " ===\n";
+    my @slices = map { perArchitectureProductDir($mergedProductDir, $_) } @architectures;
+    my @mergeCommand = (File::Spec->catfile(sourceDir(), "Tools", "Scripts", "merge-universal-build"),
+        "--output", $mergedProductDir);
+    # Products built against an internal SDK are signed with a real identity;
+    # everything else takes merge-universal-build's ad-hoc default.
+    push @mergeCommand, "--identity", "Safari Engineering" if xcodeSDK() =~ /\.internal$/;
+    $returnCode = exitStatus(system(@mergeCommand, @slices));
     exit($returnCode) if $returnCode;
     return 0;
 }
@@ -3699,10 +3862,16 @@ sub relaunchIOSSimulator($)
     shutDownIOSSimulatorDevice($simulatedDevice);
 
     chomp(my $developerDirectory = $ENV{DEVELOPER_DIR} || `xcode-select --print-path`);
-    my $iosSimulatorPath = File::Spec->catfile($developerDirectory, "Applications", "Simulator.app");
-    # Simulator.app needs to be running before the simulator is booted to have it visible.
-    system("open", "-a", $iosSimulatorPath, "--args", "-CurrentDeviceUDID", $simulatedDevice->{UDID}) == 0 or die "Failed to open $iosSimulatorPath: $!";
-    system("xcrun", "simctl", "boot", $simulatedDevice->{UDID}) == 0 or die "Failed to boot simulator $simulatedDevice->{UDID}: $!";
+    my $deviceHubPath = File::Spec->catfile($developerDirectory, "..", "Applications", "DeviceHub.app");
+    if (-d $deviceHubPath) {
+        exitStatus(system("xcrun", "simctl", "boot", $simulatedDevice->{UDID})) == 0 or die "Failed to boot simulator $simulatedDevice->{UDID}";
+        exitStatus(system("open", "-a", $deviceHubPath, "devices://device/open?id=$simulatedDevice->{UDID}")) == 0 or die "Failed to open $deviceHubPath";
+    } else {
+        my $iosSimulatorPath = File::Spec->catfile($developerDirectory, "Applications", "Simulator.app");
+        # Simulator.app needs to be running before the simulator is booted to have it visible.
+        exitStatus(system("open", "-a", $iosSimulatorPath, "--args", "-CurrentDeviceUDID", $simulatedDevice->{UDID})) == 0 or die "Failed to open $iosSimulatorPath";
+        exitStatus(system("xcrun", "simctl", "boot", $simulatedDevice->{UDID})) == 0 or die "Failed to boot simulator $simulatedDevice->{UDID}";
+    }
 
     waitUntilIOSSimulatorDeviceIsInState($simulatedDevice->{UDID}, SIMULATOR_DEVICE_STATE_BOOTED);
     waitUntilProcessNotRunning("com.apple.datamigrator");

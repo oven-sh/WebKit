@@ -37,6 +37,7 @@
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/ProcessIdentifier.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/SubstituteData.h>
@@ -133,7 +134,6 @@ public:
 
     bool wasUserInitiated() const { return m_lastNavigationAction && !!m_lastNavigationAction->userGestureTokenIdentifier; }
     bool NODELETE isRequestFromClientOrUserInput() const;
-    bool isFromAPIClientRequest() const { return m_requestIsFromClientInput; }
     void NODELETE markRequestAsFromClientInput();
     void markAsFromLoadData() { m_isFromLoadData = true; }
     bool isFromLoadData() const { return m_isFromLoadData; }
@@ -189,6 +189,9 @@ public:
 
     void setOriginatorAdvancedPrivacyProtections(OptionSet<WebCore::AdvancedPrivacyProtections> advancedPrivacyProtections) { m_originatorAdvancedPrivacyProtections = advancedPrivacyProtections; }
     std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> originatorAdvancedPrivacyProtections() const { return m_originatorAdvancedPrivacyProtections; }
+
+    void setUnpartitionedStorageSite(std::optional<WebCore::RegistrableDomain>&& site) { m_unpartitionedStorageSite = WTF::move(site); }
+    const std::optional<WebCore::RegistrableDomain>& unpartitionedStorageSite() const LIFETIME_BOUND { return m_unpartitionedStorageSite; }
     void setSafeBrowsingCheckOngoing(size_t, bool);
     bool NODELETE safeBrowsingCheckOngoing(size_t);
     bool NODELETE safeBrowsingCheckOngoing();
@@ -231,10 +234,10 @@ private:
     Vector<WTF::URL> m_redirectChain;
 
     const RefPtr<WebKit::WebBackForwardListFrameItem> m_targetFrameItem;
-    RefPtr<WebKit::WebBackForwardListItem> m_fromItem;
-    RefPtr<WebKit::WebBackForwardListItem> m_reloadItem;
+    const RefPtr<WebKit::WebBackForwardListItem> m_fromItem;
+    const RefPtr<WebKit::WebBackForwardListItem> m_reloadItem;
     std::optional<WebCore::FrameLoadType> m_backForwardFrameLoadType;
-    std::unique_ptr<SubstituteData> m_substituteData;
+    const std::unique_ptr<SubstituteData> m_substituteData;
     std::optional<WebKit::NavigationActionData> m_lastNavigationAction;
     std::optional<WebKit::FrameInfoData> m_originatingFrameInfo;
     WebCore::SecurityOriginData m_destinationFrameSecurityOrigin;
@@ -251,6 +254,7 @@ private:
     bool m_hasCrossOriginRedirect : 1 { false };
     RefPtr<API::WebsitePolicies> m_websitePolicies;
     std::optional<OptionSet<WebCore::AdvancedPrivacyProtections>> m_originatorAdvancedPrivacyProtections;
+    std::optional<WebCore::RegistrableDomain> m_unpartitionedStorageSite;
     MonotonicTime m_requestStart { MonotonicTime::now() };
     RefPtr<WebKit::BrowsingWarning> m_safeBrowsingWarning;
     ListHashSet<size_t> m_ongoingSafeBrowsingChecks;

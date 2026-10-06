@@ -551,6 +551,7 @@ set(WebKit_SERIALIZATION_IN_FILES
     Shared/UserContentControllerParameters.serialization.in
     Shared/UserData.serialization.in
     Shared/VisibleContentRectUpdateInfo.serialization.in
+    Shared/VolumetricSceneContentContext.serialization.in
     Shared/WTFArgumentCoders.serialization.in
     Shared/WebBackForwardListCounts.serialization.in
     Shared/WebContextMenuItemData.serialization.in
@@ -836,17 +837,21 @@ if (NOT USE_HEADER_MAPS AND NOT USE_FRAMEWORK_BUNDLES)
     )
     set(WebKit_INTERFACE_DEPENDENCIES "")
 endif ()
-set(WebKit_INTERFACE_LINK_DEPENDS
-    $<TARGET_FILE:NetworkProcess>
-    $<TARGET_FILE:WebProcess>
-)
+if (NOT USE_EXTENSIONKIT)
+    # ExtensionKit processes (on iOS) are separate targets, and not part of the
+    # WebKit.framework bundle.
+    set(WebKit_INTERFACE_LINK_DEPENDS
+        $<TARGET_FILE:NetworkProcess>
+        $<TARGET_FILE:WebProcess>
+    )
 
-WEBKIT_EXECUTABLE_DECLARE(WebProcess)
-WEBKIT_EXECUTABLE_DECLARE(NetworkProcess)
+    WEBKIT_EXECUTABLE_DECLARE(WebProcess)
+    WEBKIT_EXECUTABLE_DECLARE(NetworkProcess)
 
-if (ENABLE_GPU_PROCESS)
-    WEBKIT_EXECUTABLE_DECLARE(GPUProcess)
-    list(APPEND WebKit_INTERFACE_LINK_DEPENDS $<TARGET_FILE:GPUProcess>)
+    if (ENABLE_GPU_PROCESS)
+        WEBKIT_EXECUTABLE_DECLARE(GPUProcess)
+        list(APPEND WebKit_INTERFACE_LINK_DEPENDS $<TARGET_FILE:GPUProcess>)
+    endif ()
 endif ()
 
 set(WebKit_GENERATED_SERIALIZERS_SUFFIX cpp)
@@ -974,7 +979,7 @@ if (SWIFT_REQUIRED)
         ${WebKit_DERIVED_SOURCES_DIR}/UIProcess/WebBackForwardListMessageReceiver.cpp
         ${WebKit_DERIVED_SOURCES_DIR}/Shared/IPCTesterReceiverMessageReceiver.cpp
     )
-    if (NOT WIN32)
+    if (NOT WIN32 AND NOT PORT STREQUAL "WPE")
         list(APPEND WebKit_SWIFT_INTEROP_SOURCES UIProcess/ViewGestureController.cpp)
     endif ()
     if (APPLE)
@@ -1234,6 +1239,9 @@ foreach (_rel IN LISTS _serializers_outputs)
     list(APPEND _serializers_absolute_outputs ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
     list(APPEND _serializers_copy_commands COMMAND ${CMAKE_COMMAND} -E copy_if_different ${_serializers_stage_dir}/${_rel} ${WebKit_DERIVED_SOURCES_DIR}/${_rel})
 endforeach ()
+set(_serializers_input_files_rsp ${WebKit_DERIVED_SOURCES_DIR}/GeneratedSerializersInputFiles.rsp)
+string(JOIN "\n" _serializers_input_files_rsp_content ${WebKit_SERIALIZATION_DEPENDENCIES})
+file(GENERATE OUTPUT ${_serializers_input_files_rsp} CONTENT "${_serializers_input_files_rsp_content}\n")
 add_custom_command(
     OUTPUT
         ${_serializers_absolute_outputs}
@@ -1241,8 +1249,9 @@ add_custom_command(
     DEPENDS
         ${WEBKIT_DIR}/Scripts/webkit/opaque_ipc_types.py
         ${WebKit_SERIALIZATION_DEPENDENCIES}
+        ${_serializers_input_files_rsp}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${_serializers_stage_dir}
-    COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WebKit_GENERATED_SERIALIZERS_SUFFIX} --split-by-directory ${WebKit_SERIALIZATION_DEPENDENCIES} --output-dir ${_serializers_stage_dir}
+    COMMAND ${PYTHON_EXECUTABLE} ${WEBKIT_DIR}/Scripts/generate-serializers.py ${WebKit_GENERATED_SERIALIZERS_SUFFIX} --split-by-directory @${_serializers_input_files_rsp} --output-dir ${_serializers_stage_dir}
     ${_serializers_copy_commands}
     WORKING_DIRECTORY ${WebKit_DERIVED_SOURCES_DIR}
     VERBATIM
@@ -1317,11 +1326,16 @@ set(WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS
     ${WEBKIT_DIR}/UIProcess/Automation/protocol/BidiStorage.json
 )
 
+set(_platform_defines_file_arg)
+if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
+    set(_platform_defines_file_arg --defines-file ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE})
+endif ()
+
 add_custom_command(
     OUTPUT ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
     MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
-    DEPENDS ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" > ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
+    DEPENDS ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${_platform_defines_file_arg} ${WebKit_WEBDRIVER_BIDI_PROTOCOL_GENERATOR_INPUTS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" > ${WebKit_DERIVED_SOURCES_DIR}/CombinedWebDriverBidiDomains.json
     VERBATIM)
 
 add_custom_command(
@@ -1545,26 +1559,36 @@ if (WebKit_ARC_SOURCES)
     target_sources(WebKit PRIVATE $<TARGET_OBJECTS:WebKitARC>)
 endif ()
 
-list(APPEND WebProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-WEBKIT_EXECUTABLE(WebProcess)
-WEBKIT_REUSE_PREFIX_HEADER(WebProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+if (WEBKIT_SDK_IS_MACOS OR WEBKIT_SDK_IS_IOS_FAMILY)
+    # Must run before the WEBKIT_EXECUTABLE() calls below, which read the code
+    # signing properties it sets on each service.
+    WEBKIT_DEFINE_AUXILIARY_PROCESSES()
+endif ()
 
-list(APPEND NetworkProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-WEBKIT_EXECUTABLE(NetworkProcess)
-WEBKIT_REUSE_PREFIX_HEADER(NetworkProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+if (NOT USE_EXTENSIONKIT)
+    list(APPEND WebProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+    WEBKIT_EXECUTABLE(WebProcess)
+    WEBKIT_REUSE_PREFIX_HEADER(WebProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
 
-if (ENABLE_GPU_PROCESS)
-    list(APPEND GPUProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
-    WEBKIT_EXECUTABLE(GPUProcess)
-    WEBKIT_REUSE_PREFIX_HEADER(GPUProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+    list(APPEND NetworkProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+    WEBKIT_EXECUTABLE(NetworkProcess)
+    WEBKIT_REUSE_PREFIX_HEADER(NetworkProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+
+    if (ENABLE_GPU_PROCESS)
+        list(APPEND GPUProcess_PRIVATE_INCLUDE_DIRECTORIES $<TARGET_PROPERTY:WebKit,INCLUDE_DIRECTORIES>)
+        WEBKIT_EXECUTABLE(GPUProcess)
+        WEBKIT_REUSE_PREFIX_HEADER(GPUProcess WebKit WebKitPrefix.h PREFIX_LANGUAGES CXX)
+    endif ()
 endif ()
 
 if (COMPILER_IS_GCC_OR_CLANG)
     WEBKIT_ADD_TARGET_CXX_FLAGS(WebKit -Wno-unused-parameter)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(WebProcess -Wno-unused-parameter)
-    WEBKIT_ADD_TARGET_CXX_FLAGS(NetworkProcess -Wno-unused-parameter)
-    if (ENABLE_GPU_PROCESS)
-        WEBKIT_ADD_TARGET_CXX_FLAGS(GPUProcess -Wno-unused-parameter)
+    if (NOT USE_EXTENSIONKIT)
+        WEBKIT_ADD_TARGET_CXX_FLAGS(WebProcess -Wno-unused-parameter)
+        WEBKIT_ADD_TARGET_CXX_FLAGS(NetworkProcess -Wno-unused-parameter)
+        if (ENABLE_GPU_PROCESS)
+            WEBKIT_ADD_TARGET_CXX_FLAGS(GPUProcess -Wno-unused-parameter)
+        endif ()
     endif ()
 endif ()
 
@@ -1574,24 +1598,7 @@ if (APPLE)
         PROPERTY LINK_LIBRARY_OVERRIDE_WebKitLegacy REEXPORT_FRAMEWORK)
 endif ()
 
-if (WEBKIT_SDK_IS_MACOS OR WEBKIT_SDK_IS_IOS_FAMILY)
-    WEBKIT_DEFINE_XPC_SERVICES()
-    # XPC services have a link dependency on WebKit, but for codesigning we
-    # need the reverse. The service bundles all sign, and then WebKit.framework
-    # can sign.
-    if (WEBKIT_SDK_IS_MACOS)
-        # FIXME: iOS build does not use the shared codesigning macros for
-        # extension processes.
-        add_dependencies(WebKit_CodeSign
-            WebProcess_CodeSign
-            WebProcessEnhancedSecurity_CodeSign
-            WebProcessCaptivePortal_CodeSign
-            WebProcessDevelopment_CodeSign
-            NetworkProcess_CodeSign
-            GPUProcess_CodeSign
-        )
-    endif ()
-else ()
+if (NOT APPLE)
     if (NOT ANDROID)
         WEBKIT_POPULATE_LIBRARY_VERSION(WEBKIT)
         set_target_properties(WebKit PROPERTIES VERSION ${WEBKIT_VERSION} SOVERSION ${WEBKIT_VERSION_MAJOR})

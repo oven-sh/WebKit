@@ -209,7 +209,7 @@ private:
 
         // On-screen overlay state, only used when drawsFPS is set.
         int displayedFPS { -1 };
-        CString fpsString;
+        ASCIICString fpsString;
         float backgroundWidth { 0 };
         float backgroundHeight { 0 };
         float textBaseline { 0 };
@@ -228,7 +228,7 @@ private:
     } m_damage;
 #endif
 
-    std::unique_ptr<WebCore::RunLoopObserver> m_didCompositeRunLoopObserver;
+    const std::unique_ptr<WebCore::RunLoopObserver> m_didCompositeRunLoopObserver;
 };
 
 } // namespace WebKit

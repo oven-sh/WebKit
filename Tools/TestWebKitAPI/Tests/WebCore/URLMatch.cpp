@@ -155,11 +155,25 @@ TEST(URLMatchTest, PathStartsWithIsAnchored)
     auto match = URLMatch::host("docs.google.com"_s).when(pathStartsWith("/spreadsheets/"_s));
 
     EXPECT_TRUE(matchesURL(match, "https://docs.google.com/spreadsheets/d/abc/edit"_s));
-    EXPECT_TRUE(matchesURL(match, "https://docs.google.com/SpreadSheets/d/abc"_s));
+    EXPECT_FALSE(matchesURL(match, "https://docs.google.com/SpreadSheets/d/abc"_s));
 
     EXPECT_FALSE(matchesURL(match, "https://docs.google.com/"_s));
     EXPECT_FALSE(matchesURL(match, "https://docs.google.com/spreadsheets"_s));
     EXPECT_FALSE(matchesURL(match, "https://docs.google.com/a/spreadsheets/d/abc"_s));
+}
+
+TEST(URLMatchTest, PathStartsWithComponentRespectsComponentBoundaries)
+{
+    auto match = URLMatch::anyTopLevelDomain("google"_s).when(pathStartsWithComponent("maps"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://www.google.com/maps"_s));
+    EXPECT_TRUE(matchesURL(match, "https://www.google.com/maps/"_s));
+    EXPECT_TRUE(matchesURL(match, "https://www.google.com/maps/@37.33,-122.01,15z"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://www.google.com/"_s));
+    EXPECT_FALSE(matchesURL(match, "https://www.google.com/Maps?q=cupertino"_s));
+    EXPECT_FALSE(matchesURL(match, "https://www.google.com/mapsearch"_s));
+    EXPECT_FALSE(matchesURL(match, "https://www.google.com/a/maps/"_s));
 }
 
 TEST(URLMatchTest, PathIsMatchesTheWholePath)
@@ -190,18 +204,6 @@ TEST(URLMatchTest, LastPathComponentIsMatchesOnlyTheFinalSegment)
     EXPECT_FALSE(matchesURL(match, "https://ceac.state.gov/"_s));
 }
 
-TEST(URLMatchTest, LastPathComponentStartsWithIgnoresEarlierSegments)
-{
-    auto match = URLMatch::anyURL().when(lastPathComponentStartsWith("pushdownload."_s));
-
-    EXPECT_TRUE(matchesURL(match, "https://webex.com/pushdownload.js"_s));
-    EXPECT_TRUE(matchesURL(match, "https://webex.com/static/pushdownload.1a2b3c.js"_s));
-
-    EXPECT_FALSE(matchesURL(match, "https://webex.com/pushdownload/main.js"_s));
-    EXPECT_FALSE(matchesURL(match, "https://webex.com/vendor-pushdownload.js"_s));
-    EXPECT_FALSE(matchesURL(match, "https://webex.com/"_s));
-}
-
 TEST(URLMatchTest, LastPathComponentEndsWithIgnoresTheQuery)
 {
     auto match = URLMatch::host("player.anyclip.com"_s).when(lastPathComponentEndsWith("lre.js"_s));
@@ -215,17 +217,27 @@ TEST(URLMatchTest, LastPathComponentEndsWithIgnoresTheQuery)
     EXPECT_FALSE(matchesURL(match, "https://cdn.anyclip.com/lre.js"_s));
 }
 
-TEST(URLMatchTest, PathOrFragmentContainsSearchesBoth)
+TEST(URLMatchTest, FragmentContainsSearchesOnlyTheFragment)
 {
-    auto match = URLMatch::domain("icloud.com"_s).when(pathOrFragmentContains("mail"_s));
+    auto match = URLMatch::domain("icloud.com"_s).when(fragmentContains("mail"_s));
 
-    EXPECT_TRUE(matchesURL(match, "https://www.icloud.com/mail/"_s));
     EXPECT_TRUE(matchesURL(match, "https://www.icloud.com/#mail"_s));
+    EXPECT_TRUE(matchesURL(match, "https://www.icloud.com/apps/#mail/inbox"_s));
 
     EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/"_s));
-    EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/notes/"_s));
-
+    EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/mail/"_s));
     EXPECT_FALSE(matchesURL(match, "https://www.icloud.com/?app=mail"_s));
+    EXPECT_FALSE(matchesURL(match, "https://www.example.com/#mail"_s));
+}
+
+TEST(URLMatchTest, FragmentContainsStacksWithAPathRefinement)
+{
+    auto match = URLMatch::host("example.com"_s).when(pathStartsWith("/app/"_s), fragmentContains("settings"_s));
+
+    EXPECT_TRUE(matchesURL(match, "https://example.com/app/#settings"_s));
+
+    EXPECT_FALSE(matchesURL(match, "https://example.com/app/"_s));
+    EXPECT_FALSE(matchesURL(match, "https://example.com/other/#settings"_s));
 }
 
 TEST(URLMatchTest, QueryContainsSearchesOnlyTheQuery)
@@ -262,6 +274,7 @@ TEST(URLMatchTest, EnvironmentIsANDedWithTheSiteMatch)
     EXPECT_FALSE(WebCore::evaluateURLEnvironment(URLEnvironment::SmallScreen));
     EXPECT_FALSE(WebCore::evaluateURLEnvironment(URLEnvironment::TubularApp));
     EXPECT_FALSE(WebCore::evaluateURLEnvironment(URLEnvironment::LensApp));
+    EXPECT_FALSE(WebCore::evaluateURLEnvironment(URLEnvironment::SafariWebApp));
 
     EXPECT_FALSE(matchesURL(smallScreenOnly, "https://www.youtube.com/"_s));
 #endif

@@ -1318,7 +1318,7 @@ void SpeculativeJIT::dump(const char* label)
             dataLogF(":fpr%d\n", info.fpr());
         else if (info.registerFormat() != DataFormatNone) {
             ASSERT(info.gpr() != InvalidGPRReg);
-            dataLogF(":%s\n", GPRInfo::debugName(info.gpr()).characters());
+            SAFE_DATALOGF(":%s\n", GPRInfo::debugName(info.gpr()));
         } else
             dataLogF("\n");
     }
@@ -2579,7 +2579,7 @@ void SpeculativeJIT::compileGetCharCodeAt(Node* node)
     strictInt32Result(scratchReg, m_currentNode);
 }
 
-void SpeculativeJIT::compileGetByValOnString(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValOnString(Node* node, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     ASSERT(node->op() == GetByVal || node->op() == EnumeratorGetByVal || node->op() == StringCharAt || node->op() == StringAt);
 
@@ -3262,7 +3262,7 @@ void SpeculativeJIT::setIntTypedArrayLoadResult(Node* node, GPRReg resultGPR, Ty
     doubleResult(resultFPR, node);
 }
 
-void SpeculativeJIT::compileGetByValOnIntTypedArray(Node* node, TypedArrayType type, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValOnIntTypedArray(Node* node, TypedArrayType type, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     ASSERT(isInt(type));
     
@@ -3534,7 +3534,7 @@ void SpeculativeJIT::compilePutByValForIntTypedArray(Node* node, TypedArrayType 
     noResult(node);
 }
 
-void SpeculativeJIT::compileGetByValOnFloatTypedArray(Node* node, TypedArrayType type, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValOnFloatTypedArray(Node* node, TypedArrayType type, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     ASSERT(isFloat(type));
     
@@ -3663,7 +3663,7 @@ void SpeculativeJIT::compilePutByValForFloatTypedArray(Node* node, TypedArrayTyp
     noResult(node);
 }
 
-void SpeculativeJIT::compileGetByValForObjectWithString(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValForObjectWithString(Node* node, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     SpeculateCellOperand arg1(this, m_graph.varArgChild(node, 0));
     SpeculateCellOperand arg2(this, m_graph.varArgChild(node, 1));
@@ -3679,7 +3679,7 @@ void SpeculativeJIT::compileGetByValForObjectWithString(Node* node, const Scoped
     jsValueResult(resultGPR, node);
 }
 
-void SpeculativeJIT::compileGetByValForObjectWithSymbol(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValForObjectWithSymbol(Node* node, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     SpeculateCellOperand arg1(this, m_graph.varArgChild(node, 0));
     SpeculateCellOperand arg2(this, m_graph.varArgChild(node, 1));
@@ -3713,7 +3713,7 @@ void SpeculativeJIT::compileGetPrivateName(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
     }
 }
 
@@ -3831,7 +3831,7 @@ void SpeculativeJIT::compileParseInt(Node* node)
         }
 
         default:
-            DFG_CRASH(m_graph, node, "Bad use kind");
+            DFG_CRASH(m_graph, node, "Bad use kind"_s);
             return;
         }
     }
@@ -3877,7 +3877,7 @@ void SpeculativeJIT::compileParseInt(Node* node)
     // Int32Use is converted to Identity.
 
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         return;
     }
 }
@@ -6602,7 +6602,7 @@ void SpeculativeJIT::compileArithMinMax(Node* node)
     }
 
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -7341,6 +7341,7 @@ void SpeculativeJIT::compileStringEquality(
     JumpList trueCase;
     JumpList falseCase;
     JumpList slowCase;
+    JumpList ropeCase;
 
     trueCase.append(fastTrue);
     falseCase.append(fastFalse);
@@ -7349,7 +7350,7 @@ void SpeculativeJIT::compileStringEquality(
         if (atom)
             return;
         loadPtr(Address(jsStringGPR, JSString::offsetOfValue()), implGPR);
-        slowCase.append(branchIfRopeStringImpl(implGPR));
+        ropeCase.append(branchIfRopeStringImpl(implGPR));
     };
 
     auto resolveDataPtr = [&](bool atom, const String& constStr, GPRReg implGPR) {
@@ -7455,6 +7456,7 @@ void SpeculativeJIT::compileStringEquality(
     Jump done = jump();
 
     falseCase.link(this);
+    Label falseResult = label();
     moveFalseTo(leftTempGPR);
 
     done.link(this);
@@ -7462,7 +7464,22 @@ void SpeculativeJIT::compileStringEquality(
     Vector<SilentRegisterSavePlan> savePlans;
     silentSpillAllRegistersImpl(false, savePlans, leftTempGPR);
     Label doneOperationCall = label();
-    addSlowPathGeneratorLambda([=, this, savePlans = WTF::move(savePlans), slowCase = WTF::move(slowCase)]() mutable {
+    addSlowPathGeneratorLambda([=, this, savePlans = WTF::move(savePlans), slowCase = WTF::move(slowCase), ropeCase = WTF::move(ropeCase)]() mutable {
+        auto loadLength = [&](GPRReg jsStringGPR, GPRReg resultGPR) {
+            loadPtr(Address(jsStringGPR, JSString::offsetOfValue()), resultGPR);
+            Jump isRope = branchIfRopeStringImpl(resultGPR);
+            load32(Address(resultGPR, StringImpl::lengthMemoryOffset()), resultGPR);
+            Jump lengthLoaded = jump();
+            isRope.link(this);
+            load32(Address(jsStringGPR, JSRopeString::offsetOfLength()), resultGPR);
+            lengthLoaded.link(this);
+        };
+
+        ropeCase.link(this);
+        loadLength(leftGPR, leftTempGPR);
+        loadLength(rightGPR, rightTempGPR);
+        branch32(NotEqual, leftTempGPR, rightTempGPR).linkTo(falseResult, this);
+
         slowCase.link(this);
         silentSpill(savePlans);
         setupArguments<decltype(operationCompareStringEq)>(LinkableConstant::globalObject(*this, node), leftGPR, rightGPR);
@@ -7912,7 +7929,7 @@ void SpeculativeJIT::compileGetTypedArrayByteOffset(Node* node)
     strictInt32Result(resultGPR, node);
 }
 
-void SpeculativeJIT::compileGetByValOnDirectArguments(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValOnDirectArguments(Node* node, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
     SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
@@ -7954,7 +7971,7 @@ void SpeculativeJIT::compileGetByValOnDirectArguments(Node* node, const ScopedLa
     jsValueResult(resultGPR, node);
 }
 
-void SpeculativeJIT::compileGetByValOnScopedArguments(Node* node, const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
+void SpeculativeJIT::compileGetByValOnScopedArguments(Node* node, NOESCAPE const ScopedLambda<std::tuple<GPRReg, DataFormat>(DataFormat preferredFormat, bool needsFlush)>& prefix)
 {
     SpeculateCellOperand base(this, m_graph.varArgChild(node, 0));
     SpeculateStrictInt32Operand property(this, m_graph.varArgChild(node, 1));
@@ -8503,7 +8520,7 @@ void SpeculativeJIT::compileLoadVarargs(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 
@@ -10387,7 +10404,7 @@ void SpeculativeJIT::compileArrayPush(Node* node)
     }
 
     case Array::ForceExit:
-        DFG_CRASH(m_graph, node, "Bad array mode type");
+        DFG_CRASH(m_graph, node, "Bad array mode type"_s);
         break;
 
     default:
@@ -10573,7 +10590,9 @@ void SpeculativeJIT::emitStructureCheck(Node* node, GPRReg cellGPR, GPRReg tempG
         
         JumpList done;
         
-        for (size_t i = 0; i < node->structureSet().size() - 1; ++i) {
+        // Structure sets usually list structures in the order they were observed. Objects tend to
+        // transition away from older structures, so test the most recently observed ones first.
+        for (size_t i = node->structureSet().size(); --i;) {
             done.append(
                 branchWeakStructure(Equal, structureGPR, node->structureSet()[i]));
         }
@@ -10581,7 +10600,7 @@ void SpeculativeJIT::emitStructureCheck(Node* node, GPRReg cellGPR, GPRReg tempG
         speculationCheck(
             BadCache, JSValueSource(cellGPR), nullptr,
             branchWeakStructure(
-                NotEqual, structureGPR, node->structureSet().last()));
+                NotEqual, structureGPR, node->structureSet()[0]));
         
         done.link(this);
     }
@@ -10643,7 +10662,7 @@ void SpeculativeJIT::compileCheckStructure(Node* node)
     }
 
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         return;
     }
 }
@@ -13063,7 +13082,7 @@ void SpeculativeJIT::emitSwitch(Node* node)
         return;
     }
     case SwitchCell: {
-        DFG_CRASH(m_graph, node, "Bad switch kind");
+        DFG_CRASH(m_graph, node, "Bad switch kind"_s);
         return;
     } }
     RELEASE_ASSERT_NOT_REACHED();
@@ -13646,7 +13665,7 @@ void SpeculativeJIT::compileStringReplace(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad UseKind");
+        DFG_CRASH(m_graph, node, "Bad UseKind"_s);
         break;
     }
 }
@@ -15694,7 +15713,7 @@ void SpeculativeJIT::compileObjectAssign(Node* node)
         return;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         return;
     }
 }
@@ -15782,7 +15801,7 @@ void SpeculativeJIT::compileObjectToString(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad UseKind");
+        DFG_CRASH(m_graph, node, "Bad UseKind"_s);
         break;
     }
 }
@@ -15996,7 +16015,7 @@ void SpeculativeJIT::compileNewInternalFieldObject(Node* node)
         compileNewInternalFieldObjectImpl<JSAsyncGenerator>(node, operationNewAsyncGenerator);
         break;
     default:
-        DFG_CRASH(m_graph, node, "Bad structure");
+        DFG_CRASH(m_graph, node, "Bad structure"_s);
     }
 }
 
@@ -16682,7 +16701,7 @@ void SpeculativeJIT::compileAllocateNewArrayWithSize(Node* node, GPRReg resultGP
     compileAllocateNewArrayWithSize(node, resultGPR, sizeGPR, m_graph.registerStructure(globalObject->arrayStructureForIndexingTypeDuringAllocation(indexingType)), shouldConvertLargeSizeToArrayStorage);
 }
 
-void SpeculativeJIT::compileHasIndexedProperty(Node* node, S_JITOperation_GCZ slowPathOperation, const ScopedLambda<std::tuple<GPRReg, GPRReg>()>& prefix, bool preserveIndexReg)
+void SpeculativeJIT::compileHasIndexedProperty(Node* node, S_JITOperation_GCZ slowPathOperation, NOESCAPE const ScopedLambda<std::tuple<GPRReg, GPRReg>()>& prefix, bool preserveIndexReg)
 {
     auto baseEdge = m_graph.varArgChild(node, 0);
     SpeculateCellOperand base(this, baseEdge);
@@ -17043,8 +17062,72 @@ void SpeculativeJIT::genericJSValuePeepholeBranch(Node* node, Node* branchNode, 
     m_currentNode = branchNode;
 }
 
+bool SpeculativeJIT::tryCompileHeapBigIntCompareWithZero(Node* node, RelationalCondition condition)
+{
+    Edge valueEdge = node->child1();
+    Edge zeroEdge = node->child2();
+    if (!zeroEdge->isHeapBigIntZeroConstant(m_graph)) {
+        if (!valueEdge->isHeapBigIntZeroConstant(m_graph))
+            return false;
+        std::swap(valueEdge, zeroEdge);
+        condition = commute(condition);
+    }
+
+    SpeculateCellOperand value(this, valueEdge);
+    SpeculateCellOperand zero(this, zeroEdge);
+    GPRTemporary result(this);
+    GPRTemporary scratch(this);
+
+    GPRReg valueGPR = value.gpr();
+    GPRReg zeroGPR = zero.gpr();
+    GPRReg resultGPR = result.gpr();
+    GPRReg scratchGPR = scratch.gpr();
+
+    speculateHeapBigInt(valueEdge, valueGPR);
+    speculateHeapBigInt(zeroEdge, zeroGPR);
+
+    auto isNegative = [&](ResultCondition resultCondition, GPRReg dest) {
+        test8(resultCondition, Address(valueGPR, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeInfoPerCellBit), dest);
+    };
+
+    // Only one Zero HeapBigInt instance exists per VM. Thus you can use pointer comparison.
+    auto isZero = [&](RelationalCondition relationalCondition, GPRReg dest) {
+        comparePtr(relationalCondition, valueGPR, zero.gpr(), dest);
+    };
+
+    switch (condition) {
+    case LessThan:
+        isNegative(NonZero, resultGPR);
+        break;
+    case GreaterThanOrEqual:
+        isNegative(Zero, resultGPR);
+        break;
+    case Equal:
+        isZero(Equal, resultGPR);
+        break;
+    case LessThanOrEqual:
+        isNegative(NonZero, resultGPR);
+        isZero(Equal, scratchGPR);
+        or32(scratchGPR, resultGPR);
+        break;
+    case GreaterThan:
+        isNegative(Zero, resultGPR);
+        isZero(NotEqual, scratchGPR);
+        and32(scratchGPR, resultGPR);
+        break;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    unblessedBooleanResult(resultGPR, node);
+    return true;
+}
+
 void SpeculativeJIT::compileHeapBigIntEquality(Node* node)
 {
+    if (tryCompileHeapBigIntCompareWithZero(node, Equal))
+        return;
+
     SpeculateCellOperand left(this, node->child1());
     SpeculateCellOperand right(this, node->child2());
     GPRTemporary result(this, Reuse, left);
@@ -17077,6 +17160,9 @@ void SpeculativeJIT::compileHeapBigIntEquality(Node* node)
 
 void SpeculativeJIT::compileHeapBigIntCompare(Node* node, RelationalCondition condition)
 {
+    if (tryCompileHeapBigIntCompareWithZero(node, condition))
+        return;
+
     SpeculateCellOperand left(this, node->child1());
     SpeculateCellOperand right(this, node->child2());
     GPRReg leftGPR = left.gpr();
@@ -17896,7 +17982,7 @@ void SpeculativeJIT::compileGlobalIsNaN(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -17937,7 +18023,7 @@ void SpeculativeJIT::compileNumberIsNaN(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -17967,7 +18053,7 @@ void SpeculativeJIT::compileGlobalIsFinite(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -18011,7 +18097,7 @@ void SpeculativeJIT::compileNumberIsFinite(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -18074,7 +18160,7 @@ void SpeculativeJIT::compileNumberIsSafeInteger(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -18116,7 +18202,7 @@ void SpeculativeJIT::compileToIntegerOrInfinity(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -18180,7 +18266,7 @@ void SpeculativeJIT::compileToLength(Node* node)
         break;
     }
     default:
-        DFG_CRASH(m_graph, node, "Bad use kind");
+        DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
 }
@@ -18397,7 +18483,7 @@ unsigned SpeculativeJIT::appendOSRExit(OSRExit&& exit, bool isExceptionHandler)
             if (m_currentNode) {
                 switch (mayExit(m_graph, m_currentNode)) {
                 case DoesNotExit:
-                    DFG_CRASH(m_graph, m_currentNode, "Generating OSR exit while node says DoesNotExit");
+                    DFG_CRASH(m_graph, m_currentNode, "Generating OSR exit while node says DoesNotExit"_s);
                     break;
                 case ExitsForExceptions:
                     DFG_ASSERT(m_graph, m_currentNode, isExceptionHandler);

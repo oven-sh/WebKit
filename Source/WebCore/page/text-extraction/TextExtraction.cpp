@@ -340,7 +340,7 @@ struct TraversalContext {
         return enclosingBlockNumberMap.get(*enclosingBlocks.last());
     }
 
-    void NODELETE popEnclosingBlock()
+    void popEnclosingBlock()
     {
         enclosingBlocks.removeLast();
     }
@@ -845,7 +845,7 @@ static inline Variant<SkipExtraction, ItemData, URL, Editable> extractItemData(N
     if (RefPtr iframe = dynamicDowncast<HTMLIFrameElement>(element)) {
         if (RefPtr contentFrame = iframe->contentFrame()) {
             if (RefPtr frameOrigin = contentFrame->frameDocumentSecurityOrigin()) {
-                bool isSameOriginAsParent = frameOrigin->isSameOriginAs(protect(element->document())->securityOrigin());
+                bool isSameOriginAsParent = frameOrigin->isSameOriginAs(protect(protect(element->document())->securityOrigin()));
                 auto originString = frameOrigin->toString();
                 String shortenedOrigin;
                 if (!isSameOriginAsParent && !originString.isEmpty())
@@ -1633,7 +1633,7 @@ static void collapseRedundantFormWrappersRecursive(Item& item)
     }
 }
 
-static Node* NODELETE nodeFromJSHandle(JSHandleIdentifier identifier)
+static Node* nodeFromJSHandle(JSHandleIdentifier identifier)
 {
     auto* object = WebKitJSHandle::objectForIdentifier(identifier);
     if (!object)

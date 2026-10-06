@@ -30,7 +30,9 @@
 
 #include "CSSNamedImageValue.h"
 #include "DeprecatedCSSOMValue.h"
-#include "NamedImageGeneratedImage.h"
+#include "GraphicsContext.h"
+#include "ImageBuffer.h"
+#include "Theme.h"
 
 namespace WebCore {
 namespace Style {
@@ -73,15 +75,32 @@ void NamedImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-RefPtr<WebCore::Image> NamedImage::image(const RenderElement* renderer, const FloatSize& size, const GraphicsContext&, bool) const
+ImageDrawResult NamedImage::draw(GraphicsContext& context, const RenderElement&, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool) const
 {
-    if (!renderer)
-        return &WebCore::Image::nullImage();
-
+    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
     if (size.isEmpty())
-        return nullptr;
+        return ImageDrawResult::DidNothing;
 
-    return NamedImageGeneratedImage::create(m_name.value, size);
+    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+        Theme::singleton().drawNamedImage(m_name.value, context, destination.size());
+        return ImageDrawResult::DidDraw;
+    });
+}
+
+ImageDrawResult NamedImage::drawAsPattern(GraphicsContext& context, const RenderElement&, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool) const
+{
+    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    if (size.isEmpty() || context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
+
+    RefPtr imageBuffer = context.createAlignedImageBuffer(size);
+    if (!imageBuffer)
+        return ImageDrawResult::DidNothing;
+
+    Theme::singleton().drawNamedImage(m_name.value, imageBuffer->context(), size);
+    context.drawPattern(*imageBuffer, destination, tile, patternTransform, phase, spacing, options);
+
+    return ImageDrawResult::DidDraw;
 }
 
 bool NamedImage::knownToBeOpaque(const RenderElement&) const

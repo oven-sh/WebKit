@@ -47,7 +47,6 @@ enum class FrameType : bool { Local, Remote };
 struct FrameInfoData {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(FrameInfoData);
 
-    bool isMainFrame { false };
     FrameType frameType { FrameType::Local };
     WebCore::ResourceRequest request;
     WebCore::SecurityOriginData securityOrigin;
@@ -55,7 +54,6 @@ struct FrameInfoData {
     String frameName;
     WebCore::FrameIdentifier frameID;
     Markable<WebPageProxyIdentifier> webPageProxyID;
-    Markable<WebCore::FrameIdentifier> parentFrameID;
     Markable<WebCore::ScriptExecutionContextIdentifier> documentID;
     ProcessID processID;
     bool isFocused { false };

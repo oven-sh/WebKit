@@ -192,7 +192,7 @@ public:
     // FIXME: Note that WebCoreOrPlatformInset may return either WebCore obscured insets or platform content insets.
     enum class InsetType : bool { WebCoreInset, WebCoreOrPlatformInset };
     virtual FloatBoxExtent obscuredContentInsets(InsetType = InsetType::WebCoreInset) const { return 0; }
-    IntRect frameRectShrunkByInset() const;
+    WEBCORE_EXPORT IntRect frameRectShrunkByInset() const;
 
     virtual CornerRadii scrollbarAvoidanceCornerRadii() const;
 
@@ -342,6 +342,9 @@ public:
     FloatRect viewToContents(FloatRect) const;
     FloatRect contentsToView(FloatRect) const;
 
+    // The part of the view-to-contents translation that is not scaled by visibleContentScaleFactor().
+    IntSize viewToContentsInsetOffset() const;
+
     IntPoint contentsToContainingViewContents(const IntPoint&) const;
     IntRect contentsToContainingViewContents(IntRect) const;
 
@@ -439,6 +442,7 @@ protected:
     void availableContentSizeChanged(AvailableSizeChangeReason) override;
     virtual void addedOrRemovedScrollbar() = 0;
     virtual void delegatedScrollingModeDidChange() = 0;
+    virtual void scrollbarModesDidChange() { }
 
     // These functions are used to create/destroy scrollbars.
     // They return true if the scrollbar was added or removed.
@@ -480,10 +484,12 @@ private:
     PlatformScrollView* NODELETE scrollView() const;
 #endif
 
-private:
+protected:
     // Size available for view contents, excluding content insets. Not affected by zooming.
+    // unobscuredContentRect() is this size divided by visibleContentScaleFactor().
     IntSize sizeForUnobscuredContent(VisibleContentRectIncludesScrollbars = VisibleContentRectIncludesScrollbars::No) const;
 
+private:
     IntRect visibleContentRectInternal(VisibleContentRectIncludesScrollbars, VisibleContentRectBehavior) const final;
     WEBCORE_EXPORT IntRect unobscuredContentRectInternal(VisibleContentRectIncludesScrollbars = VisibleContentRectIncludesScrollbars::No) const;
 

@@ -22,6 +22,7 @@
 #include "WebKitTestServer.h"
 #include "WebViewTest.h"
 #include <glib/gstdio.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GSpanExtras.h>
 
@@ -282,7 +283,7 @@ static void testWebViewEphemeral(WebViewTest* test, gconstpointer)
 #endif
 
     g_signal_connect(webView.get(), "load-changed", G_CALLBACK(ephemeralViewloadChanged), test);
-    webkit_web_view_load_uri(webView.get(), gServer->getURIForPath("/").data());
+    webkit_web_view_load_uri(webView.get(), gServer->getURIForPath("/").legacyCStringPointer());
     g_main_loop_run(test->m_mainLoop);
 
     // Disk cache delays the storing of initial resources for 1 second to avoid
@@ -300,7 +301,7 @@ static void testWebViewEphemeral(WebViewTest* test, gconstpointer)
 
 static void testWebViewCustomCharset(WebViewTest* test, gconstpointer)
 {
-    test->loadURI(gServer->getURIForPath("/").data());
+    test->loadURI(gServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     g_assert_null(webkit_web_view_get_custom_charset(test->webView()));
     webkit_web_view_set_custom_charset(test->webView(), "utf8");
@@ -1791,7 +1792,7 @@ static void testWebViewNotification(NotificationWebViewTest* test, gconstpointer
     test->initialize();
 
     // Notifications don't work with local or special schemes.
-    test->loadURI(gServer->getURIForPath("/").data());
+    test->loadURI(gServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     g_assert_false(test->hasPermission());
 
@@ -1849,7 +1850,7 @@ static void testWebViewNotificationInitialPermissionAllowed(NotificationWebViewT
     g_signal_connect(test->m_webContext.get(), "initialize-notification-permissions", G_CALLBACK(setInitialNotificationPermissionsAllowedCallback), test);
     test->initialize();
 
-    test->loadURI(gServer->getURIForPath("/").data());
+    test->loadURI(gServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     g_assert_true(test->hasPermission());
 
@@ -1862,7 +1863,7 @@ static void testWebViewNotificationInitialPermissionDisallowed(NotificationWebVi
     g_signal_connect(test->m_webContext.get(), "initialize-notification-permissions", G_CALLBACK(setInitialNotificationPermissionsDisallowedCallback), test);
     test->initialize();
 
-    test->loadURI(gServer->getURIForPath("/").data());
+    test->loadURI(gServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     g_assert_false(test->hasPermission());
 }
@@ -1878,8 +1879,8 @@ static void testWebViewIsPlayingAudio(IsPlayingAudioWebViewTest* test, gconstpoi
     g_assert_false(webkit_web_view_is_playing_audio(test->webView()));
     g_assert_false(webkit_web_view_get_is_muted(test->webView()));
 
-    GUniquePtr<char> resourcePath(g_build_filename(Test::getResourcesDir(Test::WebKit2Resources).data(), "file-with-video.html", nullptr));
-    GUniquePtr<char> resourceURL(g_filename_to_uri(resourcePath.get(), nullptr, nullptr));
+    auto resourcePath = gBuildFilename(Test::getResourcesDir(Test::WebKit2Resources), "file-with-video.html");
+    GUniquePtr<char> resourceURL(g_filename_to_uri(resourcePath.utf8(), nullptr, nullptr));
     webkit_web_view_load_uri(test->webView(), resourceURL.get());
     test->waitUntilLoadFinished();
     g_assert_false(webkit_web_view_is_playing_audio(test->webView()));
@@ -2069,7 +2070,7 @@ static void testWebViewOffscreenWindow(WebViewTest* test, gconstpointer)
 {
     GtkWidget* window = gtk_offscreen_window_new();
     gtk_container_add(GTK_CONTAINER(window), GTK_WIDGET(test->webView()));
-    test->loadURI(gServer->getURIForPath("/").data());
+    test->loadURI(gServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     gtk_widget_show_all(window);
     gtk_widget_destroy(window);
@@ -2083,7 +2084,7 @@ public:
 
     static void titleChangedCallback(WebKitWebView* view, GParamSpec*, WebViewTitleTest* test)
     {
-        test->m_webViewTitles.append(webkit_web_view_get_title(view));
+        test->m_webViewTitles.append(UTF8CString::unsafeFromUTF8(webkit_web_view_get_title(view)));
     }
 
     WebViewTitleTest()
@@ -2091,7 +2092,7 @@ public:
         g_signal_connect(m_webView.get(), "notify::title", G_CALLBACK(titleChangedCallback), this);
     }
 
-    Vector<CString> m_webViewTitles;
+    Vector<UTF8CString> m_webViewTitles;
 };
 
 static void testWebViewTitleChange(WebViewTitleTest* test, gconstpointer)
@@ -2101,26 +2102,26 @@ static void testWebViewTitleChange(WebViewTitleTest* test, gconstpointer)
     test->loadHtml("<head><title>Page Title</title></head>", nullptr);
     test->waitUntilTitleChanged();
     g_assert_cmpint(test->m_webViewTitles.size(), ==, 1);
-    g_assert_cmpstr(test->m_webViewTitles[0].data(), ==, "Page Title");
+    ASSERT_CMP_CSTRING(test->m_webViewTitles[0], ==, "Page Title");
 
     test->loadHtml("<head><title>Another Page Title</title></head>", nullptr);
     test->waitUntilTitleChanged();
     g_assert_cmpint(test->m_webViewTitles.size(), ==, 2);
-    g_assert_cmpstr(test->m_webViewTitles[1].data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_webViewTitles[1], ==, "");
     test->waitUntilTitleChanged();
     g_assert_cmpint(test->m_webViewTitles.size(), ==, 3);
     /* Page title should be immediately unset when loading a new page. */
-    g_assert_cmpstr(test->m_webViewTitles[2].data(), ==, "Another Page Title");
+    ASSERT_CMP_CSTRING(test->m_webViewTitles[2], ==, "Another Page Title");
 
     test->loadHtml("<p>This page has no title!</p>", nullptr);
     test->waitUntilLoadFinished();
     g_assert_cmpint(test->m_webViewTitles.size(), ==, 4);
-    g_assert_cmpstr(test->m_webViewTitles[3].data(), ==, "");
+    ASSERT_CMP_CSTRING(test->m_webViewTitles[3], ==, "");
 
     test->loadHtml("<script>document.title = 'one'; document.title = 'two'; document.title = 'three';</script>", nullptr);
     test->waitUntilTitleChanged();
     g_assert_cmpint(test->m_webViewTitles.size(), ==, 5);
-    g_assert_cmpstr(test->m_webViewTitles[4].data(), ==, "three");
+    ASSERT_CMP_CSTRING(test->m_webViewTitles[4], ==, "three");
 }
 
 #if PLATFORM(WPE)
@@ -2130,7 +2131,7 @@ public:
 
     static void titleChangedCallback(WebKitWebView* view, GParamSpec*, WebViewTitleTest* test)
     {
-        test->m_webViewTitles.append(webkit_web_view_get_title(view));
+        test->m_webViewTitles.append(UTF8CString::unsafeFromUTF8(webkit_web_view_get_title(view)));
     }
 
     FrameDisplayedTest()
@@ -2384,6 +2385,13 @@ static void testWebViewWebExtensionMode(WebViewTest* test, gconstpointer)
 
     // Create a new web view with an extension mode that blocks the unsafe-inline keyword.
     auto webView = test->createWebView("web-extension-mode", WEBKIT_WEB_EXTENSION_MODE_MANIFESTV3, nullptr);
+
+    // The extension CSP mode only applies to schemes that bypass CSP, so opt in to applying it to about:blank.
+    g_autoptr(WebKitFeatureList) featureList = webkit_settings_get_development_features();
+    WebKitFeature* feature = webkit_feature_list_find(featureList, "ContentSecurityPolicyExtensionModeAppliesToAllSchemesForTesting");
+    g_assert_nonnull(feature);
+    webkit_settings_set_feature_enabled(webkit_web_view_get_settings(webView.get()), feature, TRUE);
+
     test->loadHtml(html, nullptr, webView.get());
     test->waitUntilLoadFinished(webView.get());
     value = test->runJavaScriptAndWaitUntilFinished("document.title == 'unset';", &error.outPtr(), webView.get());

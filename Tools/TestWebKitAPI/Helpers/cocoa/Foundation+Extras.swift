@@ -158,6 +158,49 @@ public struct Future: Sendable, ~Copyable {
     }
 }
 
+/// An error thrown when a condition doesn't become true before a timeout.
+public struct ConditionTimedOut: Error, CustomStringConvertible {
+    /// A description of the condition that was being waited for.
+    public let condition: String
+
+    /// How long the condition was waited for.
+    public let timeout: Duration
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public var description: String {
+        "Timed out after \(timeout) waiting for \(condition)"
+    }
+}
+
+/// Waits until a condition becomes true, checking it periodically.
+///
+/// ```swift
+/// try await waitForCondition("the safe browsing warning to appear") {
+///     webView._safeBrowsingWarning != nil
+/// }
+/// ```
+///
+/// - Parameters:
+///   - description: A description of the condition, used when it times out.
+///   - timeout: How long to wait for the condition before giving up.
+///   - condition: A closure that returns whether the condition is true.
+/// - Throws: ``ConditionTimedOut`` if the condition isn't true before the timeout, or any error thrown by `condition`.
+@MainActor
+public func waitForCondition(
+    _ description: String,
+    timeout: Duration = .seconds(5),
+    _ condition: () async throws -> Bool
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+
+    while !(try await condition()) {
+        guard ContinuousClock.now < deadline else {
+            throw ConditionTimedOut(condition: description, timeout: timeout)
+        }
+        try await Task.sleep(for: .milliseconds(10))
+    }
+}
+
 /// Temporarily installs a block-based implementation for an Objective-C instance method.
 ///
 /// Runs `body` while the swap is in effect, then restores the original implementation

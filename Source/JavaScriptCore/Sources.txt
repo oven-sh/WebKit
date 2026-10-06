@@ -520,6 +520,7 @@ heap/CellAttributes.cpp
 heap/CellContainer.cpp
 heap/CodeBlockSet.cpp
 heap/CollectionScope.cpp
+heap/Collector.cpp
 heap/CollectorPhase.cpp
 heap/CompleteSubspace.cpp
 heap/ConservativeRoots.cpp
@@ -950,6 +951,7 @@ runtime/JSModuleLoader.cpp
 runtime/JSModuleNamespaceObject.cpp
 runtime/JSModuleRecord.cpp
 runtime/JSNativeStdFunction.cpp
+runtime/JSONCache.cpp
 runtime/JSONObject.cpp
 runtime/JSObject.cpp
 runtime/JSOrderedHashTable.cpp

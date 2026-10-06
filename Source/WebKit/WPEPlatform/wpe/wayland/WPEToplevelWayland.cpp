@@ -40,6 +40,7 @@
 #include <wtf/Vector.h>
 #include <wtf/glib/Application.h>
 #include <wtf/glib/GRefPtr.h>
+#include <wtf/glib/GUniquePtr.h>
 #include <wtf/glib/GWeakPtr.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
@@ -133,21 +134,21 @@ struct DMABufFeedback {
     }
 
 #if USE(LIBDRM)
-    static CString drmDeviceForUsage(const dev_t* device, bool isScanout)
+    static UTF8CString drmDeviceForUsage(const dev_t* device, bool isScanout)
     {
         drmDevicePtr drmDevice;
         if (drmGetDeviceFromDevId(*device, 0, &drmDevice))
             return { };
 
-        CString returnValue;
+        UTF8CString returnValue;
         if (isScanout) {
             if (drmDevice->available_nodes & (1 << DRM_NODE_PRIMARY))
-                returnValue = drmDevice->nodes[DRM_NODE_PRIMARY];
+                returnValue = UTF8CString::unsafeFromUTF8(drmDevice->nodes[DRM_NODE_PRIMARY]);
         } else {
             if (drmDevice->available_nodes & (1 << DRM_NODE_RENDER))
-                returnValue = drmDevice->nodes[DRM_NODE_RENDER];
+                returnValue = UTF8CString::unsafeFromUTF8(drmDevice->nodes[DRM_NODE_RENDER]);
             else if (drmDevice->available_nodes & (1 << DRM_NODE_PRIMARY))
-                returnValue = drmDevice->nodes[DRM_NODE_PRIMARY];
+                returnValue = UTF8CString::unsafeFromUTF8(drmDevice->nodes[DRM_NODE_PRIMARY]);
         }
 
         drmFreeDevice(&drmDevice);
@@ -565,7 +566,7 @@ static void wpeToplevelWaylandConstructed(GObject *object)
             xdg_toplevel_add_listener(priv->xdgToplevel, &xdgToplevelListener, object);
             const char* title = defaultTitle();
             xdg_toplevel_set_title(priv->xdgToplevel, title ? title : "");
-            xdg_toplevel_set_app_id(priv->xdgToplevel, WTF::applicationID().data());
+            xdg_toplevel_set_app_id(priv->xdgToplevel, WTF::applicationID().legacyCStringPointer());
 #if USE(XDG_DECORATION_UNSTABLE_V1)
             if (auto* xdgDecorationManager = wpeDisplayWaylandGetXDGDecorationManager(display)) {
                 // Even when asking for server-side decorations, the compositor may prefer

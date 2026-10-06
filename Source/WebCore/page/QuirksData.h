@@ -40,11 +40,6 @@ public:
         return m_behaviorFlags.get(static_cast<size_t>(id));
     }
 
-    inline bool isSite(QuirkSite site) const
-    {
-        return m_sites.get(static_cast<size_t>(site));
-    }
-
     inline bool hasBehaviors() const
     {
         return !m_behaviorFlags.isEmpty();
@@ -62,9 +57,15 @@ public:
             | WTF::rangeTo<decltype(m_behaviors)>();
     }
 
-    inline void addSite(QuirkSite site)
+    inline bool behaviorAppliesToURL(QuirkBehaviorID id, const URL& url) const
     {
-        m_sites.set(static_cast<size_t>(site));
+        if (!isBehaviorEnabled(id))
+            return false;
+
+        URLMatchContext context { url };
+        return std::ranges::any_of(m_behaviors, [&](const auto& behavior) {
+            return behavior.id == id && behavior.secondaryURLConditionMatches(context);
+        });
     }
 
     inline void setEnabled(const QuirkBehavior& behavior, bool state)
@@ -78,7 +79,8 @@ public:
     inline void addBehavior(const QuirkBehavior& behavior)
     {
         m_behaviorFlags.set(static_cast<size_t>(behavior.id), true);
-        m_behaviors.append(behavior);
+        if (!m_behaviors.contains(behavior))
+            m_behaviors.append(behavior);
     }
 
     inline void removeBehaviorsMatching(QuirkBehaviorID id)
@@ -89,15 +91,12 @@ public:
 
     void merge(const QuirksData& other)
     {
-        auto& [otherBehaviorFlags, otherSites, otherBehaviors] = other;
-        m_behaviorFlags.merge(otherBehaviorFlags);
-        m_sites.merge(otherSites);
-        m_behaviors.appendVector(otherBehaviors);
+        for (auto& behavior : other.m_behaviors)
+            addBehavior(behavior);
     }
 
 private:
     QuirkBitSet m_behaviorFlags;
-    QuirkSiteBitSet m_sites;
     Vector<QuirkBehavior> m_behaviors;
 };
 

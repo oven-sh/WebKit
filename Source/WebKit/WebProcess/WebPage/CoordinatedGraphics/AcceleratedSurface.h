@@ -335,7 +335,7 @@ private:
     private:
         bool supportsExplicitSync() const override { return true; }
 
-        Ref<WebCore::BitmapTexture> m_texture;
+        const Ref<WebCore::BitmapTexture> m_texture;
     };
 #endif // PLATFORM(GTK) || ENABLE(WPE_PLATFORM)
 
@@ -386,7 +386,7 @@ private:
         void releaseUnusedBuffers();
 
 #if ENABLE(DAMAGE_TRACKING)
-        template<typename Functor> void forEachTarget(Functor&& functor)
+        template<typename Functor> void forEachTarget(NOESCAPE const Functor& functor)
         {
             for (auto& target : m_freeTargets)
                 functor(*target);

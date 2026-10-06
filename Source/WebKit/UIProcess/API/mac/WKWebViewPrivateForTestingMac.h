@@ -49,11 +49,17 @@
 - (void)_insertText:(id)string replacementRange:(NSRange)replacementRange;
 - (NSRect)_candidateRect;
 
+@property (nonatomic, readonly) NSRect _caretRectForTesting;
+@property (nonatomic, readonly) NSArray<NSValue *> *_selectionRectsForTesting;
+
 - (NSSet<NSView *> *)_pdfHUDs;
 
 - (void)_retrieveAccessibilityTreeData:(void (^)(NSData *, NSError *))completionHandler;
 
 - (void)_setSelectedColorForColorPicker:(NSColor *)color;
+
+// The looked-up text and highlight rect, in root view coordinates. Pass nil to clear.
+- (void)_setDidPerformDictionaryLookupHandlerForTesting:(void (^)(NSString *text, CGRect textBoundingRect))handler;
 
 @property (nonatomic, readonly) BOOL _secureEventInputEnabledForTesting;
 @property (nonatomic, readonly) NSRect _windowRelativeBoundsForCustomSwipeViewsForTesting;

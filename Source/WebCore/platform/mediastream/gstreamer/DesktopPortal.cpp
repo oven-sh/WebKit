@@ -30,6 +30,7 @@
 #include <wtf/Scope.h>
 #include <wtf/UUID.h>
 #include <wtf/WeakRandomNumber.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GUniquePtr.h>
 
@@ -110,7 +111,7 @@ GRefPtr<GVariant> DesktopPortal::getProperty(ASCIILiteral name)
     return nullptr;
 }
 
-void DesktopPortal::waitResponseSignal(CStringView objectPath, ResponseCallback&& callback)
+void DesktopPortal::waitResponseSignal(UTF8CStringView objectPath, ResponseCallback&& callback)
 {
     RELEASE_ASSERT(!m_currentResponseCallback);
     m_currentResponseCallback = WTF::move(callback);
@@ -151,7 +152,7 @@ void DesktopPortalCamera::accessCamera(Function<void(std::optional<int>)>&& call
     auto token = makeString("WebKit"_s, weakRandomNumber<uint32_t>());
     GVariantBuilder options;
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&options, "{sv}", "handle_token", g_variant_new_string(token.utf8().legacyCStringPointer()));
+    g_variant_builder_add(&options, "{sv}", "handle_token", gVariantNewString(token.utf8()));
 
     auto connection = g_dbus_proxy_get_connection(m_proxy.get());
     auto connectionString = StringView::fromLatin1(g_dbus_connection_get_unique_name(connection));
@@ -229,7 +230,7 @@ std::optional<DesktopPortalScreenCast::ScreencastSession> DesktopPortalScreenCas
     GUniqueOutPtr<char> objectPathChars;
     g_variant_get(result.get(), "(o)", &objectPathChars.outPtr());
     auto objectPath = GMallocString::unsafeAdoptFromUTF8(WTF::move(objectPathChars));
-    waitResponseSignal(toCStringView(objectPath));
+    waitResponseSignal(toUTF8CStringView(objectPath));
 
     auto sessionPath = makeStringByReplacingAll(objectPath.span(), "/request/"_s, "/session/"_s);
     sessionPath = makeStringByReplacingAll(sessionPath, token, sessionToken);
@@ -260,7 +261,7 @@ GRefPtr<GVariant> DesktopPortalScreenCast::ScreencastSession::selectSources(GVar
 
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(m_proxy.get(), "SelectSources",
-        g_variant_new("(oa{sv})", m_path.ascii().data(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
+        gVariantNew("(oa{sv})", m_path.ascii(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error) {
         gst_printerrln("SelectSources error: %s", error->message);
         return nullptr;
@@ -278,7 +279,7 @@ GRefPtr<GVariant> DesktopPortalScreenCast::ScreencastSession::start()
 
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_sync(m_proxy.get(), "Start",
-        g_variant_new("(osa{sv})", m_path.ascii().data(), "", &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
+        gVariantNew("(osa{sv})", m_path.ascii(), "", &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &error.outPtr()));
     if (error) {
         gst_printerrln("Start error: %s", error->message);
         return nullptr;
@@ -293,7 +294,7 @@ std::optional<PipeWireNodeData> DesktopPortalScreenCast::ScreencastSession::open
     g_variant_builder_init(&options, G_VARIANT_TYPE_VARDICT);
     GUniqueOutPtr<GError> error;
     GRefPtr result = adoptGRef(g_dbus_proxy_call_with_unix_fd_list_sync(m_proxy.get(), "OpenPipeWireRemote",
-        g_variant_new("(oa{sv})", m_path.ascii().data(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &fdList.outPtr(), nullptr, &error.outPtr()));
+        gVariantNew("(oa{sv})", m_path.ascii(), &options), G_DBUS_CALL_FLAGS_NONE, s_dbusCallTimeout.millisecondsAs<int>(), nullptr, &fdList.outPtr(), nullptr, &error.outPtr()));
     if (error) {
         gst_printerrln("Unable to open pipewire remote. Error: %s", error->message);
         return { };

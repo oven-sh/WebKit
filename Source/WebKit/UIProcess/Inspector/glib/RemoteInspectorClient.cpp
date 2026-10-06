@@ -37,6 +37,7 @@
 #include <gio/gio.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/Base64.h>
 #include <wtf/text/MakeString.h>
@@ -65,7 +66,7 @@ public:
 
     void initialize(Inspector::DebuggableType debuggableType)
     {
-        m_proxy = RemoteWebInspectorUIProxy::create();
+        lazyInitialize(m_proxy, RemoteWebInspectorUIProxy::create());
         m_proxy->setClient(this);
         // FIXME <https://webkit.org/b/205536>: this should infer more useful data about the debug target.
         Ref<API::DebuggableInfo> debuggableInfo = API::DebuggableInfo::create(DebuggableInfoData::empty());
@@ -79,7 +80,7 @@ public:
             m_proxy->show();
     }
 
-    void setTargetName(const CString& name)
+    void setTargetName(const UTF8CString& name)
     {
 #if PLATFORM(GTK)
         if (m_proxy)
@@ -113,7 +114,7 @@ public:
     }
 
 private:
-    RefPtr<RemoteWebInspectorUIProxy> m_proxy;
+    const RefPtr<RemoteWebInspectorUIProxy> m_proxy;
     RemoteInspectorClient& m_inspectorClient;
     uint64_t m_connectionID;
     uint64_t m_targetID;
@@ -124,13 +125,13 @@ WTF_MAKE_TZONE_ALLOCATED_IMPL(RemoteInspectorClient);
 const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers()
 {
     static NeverDestroyed<const SocketConnection::MessageHandlers> messageHandlers = SocketConnection::MessageHandlers({
-    { "DidClose", std::pair<CString, SocketConnection::MessageCallback> { { },
+    { "DidClose"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { { },
         [](SocketConnection&, GVariant*, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             client.connectionDidClose();
         }}
     },
-    { "DidSetupInspectorClient", std::pair<CString, SocketConnection::MessageCallback> { "(ay)",
+    { "DidSetupInspectorClient"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(ay)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             GRefPtr<GVariant> backendCommandsVariant;
@@ -138,7 +139,7 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             client.setBackendCommands(g_variant_get_bytestring(backendCommandsVariant.get()));
         }}
     },
-    { "SetTargetList", std::pair<CString, SocketConnection::MessageCallback> { "(ta(tsssb))",
+    { "SetTargetList"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(ta(tsssb))"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             guint64 connectionID;
@@ -154,12 +155,12 @@ const SocketConnection::MessageHandlers& RemoteInspectorClient::messageHandlers(
             gboolean hasLocalDebugger;
             while (g_variant_iter_loop(iter.get(), "(t&s&s&sb)", &targetID, &type, &name, &url, &hasLocalDebugger)) {
                 if (!g_strcmp0(type, "JavaScript") || !g_strcmp0(type, "ServiceWorker") || !g_strcmp0(type, "WebPage"))
-                    targetList.append({ targetID, UTF8CString { byteCast<char8_t>(type) }, UTF8CString { byteCast<char8_t>(name) }, UTF8CString { byteCast<char8_t>(url) } });
+                    targetList.append({ targetID, UTF8CString::unsafeFromUTF8(type), UTF8CString::unsafeFromUTF8(name), UTF8CString::unsafeFromUTF8(url) });
             }
             client.setTargetList(connectionID, WTF::move(targetList));
         }}
     },
-    { "SendMessageToFrontend", std::pair<CString, SocketConnection::MessageCallback> { "(tts)",
+    { "SendMessageToFrontend"_s, std::pair<ASCIICString, SocketConnection::MessageCallback> { "(tts)"_s,
         [](SocketConnection&, GVariant* parameters, gpointer userData) {
             auto& client = *static_cast<RemoteInspectorClient*>(userData);
             guint64 connectionID, targetID;
@@ -204,7 +205,7 @@ RemoteInspectorClient::~RemoteInspectorClient()
 void RemoteInspectorClient::setupConnection(Ref<SocketConnection>&& connection)
 {
     m_socketConnection = WTF::move(connection);
-    m_socketConnection->sendMessage("SetupInspectorClient", g_variant_new("(@ay)", g_variant_new_bytestring(Inspector::backendCommandsHash().data())));
+    m_socketConnection->sendMessage("SetupInspectorClient"_s, g_variant_new("(@ay)", g_variant_new_bytestring(Inspector::backendCommandsHash().data())));
 }
 
 void RemoteInspectorClient::setBackendCommands(const char* backendCommands)
@@ -246,20 +247,20 @@ void RemoteInspectorClient::inspect(uint64_t connectionID, uint64_t targetID, co
         return;
     }
 
-    m_socketConnection->sendMessage("Setup", g_variant_new("(tt)", connectionID, targetID));
+    m_socketConnection->sendMessage("Setup"_s, g_variant_new("(tt)", connectionID, targetID));
     if (inspectorType == InspectorType::UI)
         addResult.iterator->value->initialize(debuggableType(targetType));
 }
 
 void RemoteInspectorClient::sendMessageToBackend(uint64_t connectionID, uint64_t targetID, const String& message)
 {
-    m_socketConnection->sendMessage("SendMessageToBackend", g_variant_new("(tts)", connectionID, targetID, message.utf8().legacyCStringPointer()));
+    m_socketConnection->sendMessage("SendMessageToBackend"_s, gVariantNew("(tts)", connectionID, targetID, message.utf8()));
 }
 
 void RemoteInspectorClient::closeFromFrontend(uint64_t connectionID, uint64_t targetID)
 {
     ASSERT(m_inspectorProxyMap.contains(std::make_pair(connectionID, targetID)));
-    m_socketConnection->sendMessage("FrontendDidClose", g_variant_new("(tt)", connectionID, targetID));
+    m_socketConnection->sendMessage("FrontendDidClose"_s, g_variant_new("(tt)", connectionID, targetID));
     m_inspectorProxyMap.remove(std::make_pair(connectionID, targetID));
 }
 

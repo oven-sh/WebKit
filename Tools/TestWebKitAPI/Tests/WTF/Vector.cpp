@@ -25,12 +25,14 @@
 
 #include "config.h"
 
+#include "Helpers/Counters.h"
 #include "MoveOnly.h"
 #include <ranges>
 #include <wtf/CrossThreadCopier.h>
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Variant.h>
 #include <wtf/Vector.h>
 #include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
@@ -386,6 +388,76 @@ TEST(WTF_Vector, AppendList)
     EXPECT_EQ(vector[3], 4U);
     EXPECT_EQ(vector[4], 5U);
     EXPECT_EQ(vector[5], 6U);
+}
+
+TEST(WTF_Vector, AppendDefaultConstructedTemporaryMovesFromIt)
+{
+    Vector<CopyMoveCounter> vector;
+    CopyMoveCounter::TestingScope scope;
+    vector.append(CopyMoveCounter { });
+    EXPECT_EQ(1U, vector.size());
+    EXPECT_EQ(1U, CopyMoveCounter::constructionCount);
+    EXPECT_EQ(0U, CopyMoveCounter::copyCount);
+    EXPECT_EQ(1U, CopyMoveCounter::moveCount);
+}
+
+TEST(WTF_Vector, ConstructAndAppendConstructsInPlace)
+{
+    for (bool reserveCapacity : { false, true }) {
+        Vector<CopyMoveCounter> vector;
+        if (reserveCapacity)
+            vector.reserveInitialCapacity(1);
+        CopyMoveCounter::TestingScope scope;
+        vector.constructAndAppend();
+        EXPECT_EQ(1U, vector.size());
+        EXPECT_EQ(1U, CopyMoveCounter::constructionCount);
+        EXPECT_EQ(0U, CopyMoveCounter::copyCount);
+        EXPECT_EQ(0U, CopyMoveCounter::moveCount);
+    }
+}
+
+TEST(WTF_Vector, AppendEmptyBracesAppendsOneValueInitializedElement)
+{
+    Vector<int> ints { 1 };
+    ints.append({ });
+    EXPECT_EQ(2U, ints.size());
+    EXPECT_EQ(0, ints[1]);
+
+    Vector<Vector<int>> vectors;
+    vectors.append({ });
+    EXPECT_EQ(1U, vectors.size());
+    EXPECT_TRUE(vectors[0].isEmpty());
+
+    Vector<CopyMoveCounter> counters;
+    CopyMoveCounter::TestingScope scope;
+    counters.append({ });
+    EXPECT_EQ(1U, counters.size());
+    EXPECT_EQ(1U, CopyMoveCounter::constructionCount);
+    EXPECT_EQ(1U, CopyMoveCounter::moveCount);
+}
+
+TEST(WTF_Vector, ConstructAndAppendVariantAlternativeInPlace)
+{
+    using CounterVariant = Variant<int, CopyMoveCounter>;
+    for (bool reserveCapacity : { false, true }) {
+        Vector<CounterVariant> vector;
+        if (reserveCapacity)
+            vector.reserveInitialCapacity(2);
+        CopyMoveCounter::TestingScope scope;
+        vector.constructAndAppend(WTF::InPlaceType<CopyMoveCounter>);
+        vector.append(WTF::InPlaceType<CopyMoveCounter>);
+        EXPECT_EQ(2U, vector.size());
+        EXPECT_TRUE(std::holds_alternative<CopyMoveCounter>(vector[0]));
+        EXPECT_TRUE(std::holds_alternative<CopyMoveCounter>(vector[1]));
+        EXPECT_EQ(2U, CopyMoveCounter::constructionCount);
+        EXPECT_EQ(0U, CopyMoveCounter::copyCount);
+        EXPECT_EQ(0U, CopyMoveCounter::moveCount);
+    }
+
+    // Without an in-place type, the first alternative is constructed.
+    Vector<CounterVariant> vector;
+    vector.constructAndAppend();
+    EXPECT_TRUE(std::holds_alternative<int>(vector[0]));
 }
 
 TEST(WTF_Vector, AppendContainerWithMapping)
@@ -902,24 +974,24 @@ TEST(WTF_Vector, RemoveAll)
     EXPECT_TRUE(v == Vector<int>({3, 2, 4, 2, 2, 2, 4, 4, 3}));
 
     // Using a non memcpy-able type.
-    static_assert(!VectorTraits<CString>::canMoveWithMemcpy, "Should use a non memcpy-able type");
-    Vector<CString> vExpected;
-    Vector<CString> v2;
+    static_assert(!VectorTraits<ASCIICString>::canMoveWithMemcpy, "Should use a non memcpy-able type");
+    Vector<ASCIICString> vExpected;
+    Vector<ASCIICString> v2;
     EXPECT_TRUE(v2.isEmpty());
     EXPECT_FALSE(v2.removeAll("1"_s));
     EXPECT_TRUE(v2.isEmpty());
 
-    v2.fill("1", 10);
+    v2.fill("1"_s, 10);
     EXPECT_EQ(10U, v2.size());
     EXPECT_EQ(10U, v2.removeAll("1"_s));
     EXPECT_TRUE(v2.isEmpty());
 
-    v2.fill("2", 10);
+    v2.fill("2"_s, 10);
     EXPECT_EQ(10U, v2.size());
     EXPECT_EQ(0U, v2.removeAll("1"_s));
     EXPECT_EQ(10U, v2.size());
 
-    v2 = {"1", "2", "1", "2", "1", "2", "2", "1", "1", "1"};
+    v2 = { "1"_s, "2"_s, "1"_s, "2"_s, "1"_s, "2"_s, "2"_s, "1"_s, "1"_s, "1"_s };
     EXPECT_EQ(10U, v2.size());
     EXPECT_EQ(6U, v2.removeAll("1"_s));
     EXPECT_EQ(4U, v2.size());
@@ -927,29 +999,29 @@ TEST(WTF_Vector, RemoveAll)
     EXPECT_EQ(4U, v2.removeAll("2"_s));
     EXPECT_TRUE(v2.isEmpty());
 
-    v2 = {"3", "1", "2", "1", "2", "1", "2", "2", "1", "1", "1", "3"};
+    v2 = { "3"_s, "1"_s, "2"_s, "1"_s, "2"_s, "1"_s, "2"_s, "2"_s, "1"_s, "1"_s, "1"_s, "3"_s };
     EXPECT_EQ(12U, v2.size());
     EXPECT_EQ(6U, v2.removeAll("1"_s));
     EXPECT_EQ(6U, v2.size());
     EXPECT_TRUE(v2.find("1"_s) == notFound);
-    vExpected = {"3", "2", "2", "2", "2", "3"};
+    vExpected = { "3"_s, "2"_s, "2"_s, "2"_s, "2"_s, "3"_s };
     EXPECT_TRUE(v2 == vExpected);
 
     EXPECT_EQ(4U, v2.removeAll("2"_s));
     EXPECT_EQ(2U, v2.size());
     EXPECT_TRUE(v2.find("2"_s) == notFound);
-    vExpected = {"3", "3"};
+    vExpected = { "3"_s, "3"_s };
     EXPECT_TRUE(v2 == vExpected);
 
     EXPECT_EQ(2U, v2.removeAll("3"_s));
     EXPECT_TRUE(v2.isEmpty());
 
-    v2 = {"1", "1", "1", "3", "2", "4", "2", "2", "2", "4", "4", "3"};
+    v2 = { "1"_s, "1"_s, "1"_s, "3"_s, "2"_s, "4"_s, "2"_s, "2"_s, "2"_s, "4"_s, "4"_s, "3"_s };
     EXPECT_EQ(12U, v2.size());
     EXPECT_EQ(3U, v2.removeAll("1"_s));
     EXPECT_EQ(9U, v2.size());
     EXPECT_TRUE(v2.find("1"_s) == notFound);
-    vExpected = {"3", "2", "4", "2", "2", "2", "4", "4", "3"};
+    vExpected = { "3"_s, "2"_s, "4"_s, "2"_s, "2"_s, "2"_s, "4"_s, "4"_s, "3"_s };
     EXPECT_TRUE(v2 == vExpected);
 }
 

@@ -215,6 +215,7 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
         document->setCookieURL(ownerDocument->cookieURL());
         document->setSecurityOriginPolicy(ownerDocument->securityOriginPolicy());
         document->setCrossOriginEmbedderPolicy(ownerDocument->crossOriginEmbedderPolicy());
+        document->setDocumentIsolationPolicy(ownerDocument->documentIsolationPolicy());
         document->setIPAddressSpace(ownerDocument->ipAddressSpace());
 
         document->setContentSecurityPolicy(makeUnique<ContentSecurityPolicy>(URL { url }, document));
@@ -251,7 +252,7 @@ bool DocumentWriter::begin(const URL& urlReference, bool dispatch, Document* own
     }
 
     if (existingDocument && existingDocument->contentSecurityPolicy() && document->contentSecurityPolicy())
-        document->contentSecurityPolicy()->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
+        protect(document->contentSecurityPolicy())->setInsecureNavigationRequestsToUpgrade(existingDocument->contentSecurityPolicy()->takeNavigationRequestsToUpgrade());
 
     frameLoader->didBeginDocument(dispatch, previousWindow);
 

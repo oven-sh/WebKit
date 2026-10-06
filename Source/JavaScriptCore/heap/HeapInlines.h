@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "Collector.h"
 #include "GCDeferralContext.h"
 #include "Heap.h"
 #include "HeapCellInlines.h"
@@ -140,7 +141,7 @@ template<typename Functor> inline void Heap::forEachCodeBlockIgnoringJITPlans(co
     forEachCodeBlockIgnoringJITPlansImpl(codeBlockSetLocker, func);
 }
 
-template<typename Functor> inline void Heap::forEachProtectedCell(const Functor& functor)
+template<typename Functor> inline void Heap::forEachProtectedCell(NOESCAPE const Functor& functor)
 {
     for (auto& pair : m_protectedValues)
         functor(pair.key);
@@ -224,13 +225,14 @@ inline void Heap::stopIfNecessary()
         stopIfNecessarySlow();
 }
 
-template<typename Func>
-void Heap::forEachSlotVisitor(const Func& func)
+inline SlotVisitor& Heap::collectorSlotVisitor()
 {
-    func(*m_collectorSlotVisitor);
-    func(*m_mutatorSlotVisitor);
-    for (auto& visitor : m_parallelSlotVisitors)
-        func(*visitor);
+    return m_collector->collectorSlotVisitor();
+}
+
+inline bool Heap::isInPhase(CollectorPhase phase) const
+{
+    return m_collector->m_currentPhase == phase;
 }
 
 namespace GCClient {

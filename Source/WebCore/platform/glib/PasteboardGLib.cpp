@@ -186,10 +186,8 @@ void Pasteboard::write(const PasteboardImage& pasteboardImage)
         m_selectionData->setImage(pasteboardImage.image.get());
     } else {
         SelectionData data;
-        if (!pasteboardImage.url.url.isEmpty()) {
-            data.setURL(pasteboardImage.url.url, pasteboardImage.url.title);
+        if (!pasteboardImage.url.markup.isEmpty())
             data.setMarkup(pasteboardImage.url.markup);
-        }
         data.setImage(pasteboardImage.image.get());
         platformStrategies()->pasteboardStrategy()->writeToClipboard(m_name, WTF::move(data));
     }
@@ -484,8 +482,13 @@ String Pasteboard::readStringInCustomData(const String& type)
 
 Pasteboard::FileContentState Pasteboard::fileContentState()
 {
-    if (m_selectionData)
-        return m_selectionData->filenames().isEmpty() ? FileContentState::NoFileOrImageData : FileContentState::MayContainFilePaths;
+    if (m_selectionData) {
+        if (!m_selectionData->filenames().isEmpty())
+            return FileContentState::MayContainFilePaths;
+        if (m_selectionData->hasImage())
+            return FileContentState::InMemoryImage;
+        return FileContentState::NoFileOrImageData;
+    }
 
     auto types = platformStrategies()->pasteboardStrategy()->types(m_name);
     if (types.contains("text/uri-list"_s)) {
@@ -497,7 +500,7 @@ Pasteboard::FileContentState Pasteboard::fileContentState()
     auto result = types.findIf([](const String& type) {
         return MIMETypeRegistry::isSupportedImageMIMEType(type);
     });
-    return result == notFound ? FileContentState::NoFileOrImageData : FileContentState::MayContainFilePaths;
+    return result == notFound ? FileContentState::NoFileOrImageData : FileContentState::InMemoryImage;
 }
 
 void Pasteboard::writeMarkup(const String&)

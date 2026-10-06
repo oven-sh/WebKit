@@ -1253,7 +1253,7 @@ sub GeneratePut
     if (!$namedSetterOperation && !$indexedSetterOperation) {
        AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
-       push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
+       push(@$outputArray, "    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
        push(@$outputArray, "            return JSObject::put(thisObject, lexicalGlobalObject, propertyName, value, putPropertySlot);\n");
        push(@$outputArray, "    }\n\n");
@@ -1362,7 +1362,7 @@ sub GeneratePutByIndex
     if (!$namedSetterOperation && !$indexedSetterOperation) {
        AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
-       push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
+       push(@$outputArray, "    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
        push(@$outputArray, "            return JSObject::putByIndex(cell, lexicalGlobalObject, index, value, shouldThrow);\n");
        push(@$outputArray, "    }\n\n");
@@ -1652,7 +1652,7 @@ sub GenerateDeleteProperty
     if (!$namedDeleterOperation) {
        AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
-       push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
+       push(@$outputArray, "    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
        push(@$outputArray, "            return JSObject::deleteProperty(cell, lexicalGlobalObject, propertyName, slot);\n");
        push(@$outputArray, "    }\n\n");
@@ -1703,7 +1703,7 @@ sub GenerateDeletePropertyByIndex
     if (!$namedDeleterOperation) {
        AddToImplIncludes("DocumentQuirks.h");
        push(@$outputArray, "\n    // Temporary quirk for ungap/\@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.\n");
-       push(@$outputArray, "    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
+       push(@$outputArray, "    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {\n");
        push(@$outputArray, "        if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]\n");
        push(@$outputArray, "            return JSObject::deletePropertyByIndex(cell, lexicalGlobalObject, index);\n");
        push(@$outputArray, "    }\n\n");
@@ -3430,10 +3430,10 @@ sub GenerateHeader
     }
 
     if ($interface->extendedAttributes->{GenerateForEachEventHandlerContentAttribute}) {
-        push(@headerContent, "    static void forEachEventHandlerContentAttribute(const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
+        push(@headerContent, "    static void forEachEventHandlerContentAttribute(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
     }
     if ($interface->extendedAttributes->{GenerateForEachWindowEventHandlerContentAttribute}) {
-        push(@headerContent, "    static void forEachWindowEventHandlerContentAttribute(const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
+        push(@headerContent, "    static void forEachWindowEventHandlerContentAttribute(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>&);\n\n");
     }
 
     my $numCustomOperations = 0;
@@ -5709,10 +5709,16 @@ sub GenerateImplementation
         my $vtableRefGnu = GetGnuVTableRefForInterface($interface);
         my $vtableRefWin = GetWinVTableRefForInterface($interface);
 
+        my $hasChildInterfaces = 0;
+        unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
+            $codeGenerator->ForEachChildInterface($interface, sub { $hasChildInterfaces = 1; });
+        }
+
         # We use a templated verifyVTable function here to force the type
         # being checked to be a dependent type so we can rely on `if constexpr`
-        # not causing errors when evaluated.
-        push(@implContent, <<END) if $vtableNameGnu;
+        # not causing errors when evaluated. It is only called when there are
+        # no child interfaces, so only emit it in that case.
+        push(@implContent, <<END) if $vtableNameGnu and not $hasChildInterfaces;
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
@@ -5753,11 +5759,9 @@ END
         } else {
             push(@implContent, "    UNUSED_PARAM(lexicalGlobalObject);\n");
         }
-        my $hasChildInterfaces = 0;
         unless ($interface->extendedAttributes->{IgnoreSubclassesWhenGeneratingToJSObject}) {
             $codeGenerator->ForEachChildInterface($interface, sub {
                 my $childInterface = shift;
-                $hasChildInterfaces = 1;
                 my $childImplType = GetImplClassName($childInterface);
                 my $conditional = $childInterface->extendedAttributes->{Conditional};
                 if ($conditional) {
@@ -5856,7 +5860,7 @@ sub GenerateForEachEventHandlerContentAttribute
 {
     my ($outputArray, $interface, $className, $functionName, $eventHandlerExtendedAttributeName) = @_;
     AddToImplIncludes("HTMLNames.h");
-    push(@$outputArray, "void ${className}::${functionName}(const Function<void(const AtomString& attributeName, const AtomString& eventName)>& function)\n");
+    push(@$outputArray, "void ${className}::${functionName}(NOESCAPE const Function<void(const AtomString& attributeName, const AtomString& eventName)>& function)\n");
     push(@$outputArray, "{\n");
     push(@$outputArray, "    static constexpr std::array table {\n");
     foreach my $attribute (@{$interface->attributes}) {
@@ -6406,7 +6410,7 @@ sub GenerateOperationTrampolineDefinition
 
     push(@$outputArray, "JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))\n");
     push(@$outputArray, "{\n");
-    push(@$outputArray, "    return ${idlOperationType}<${className}>::${callFunctionName}<" . join(", ", @callFunctionTemplateArguments) . ">(*lexicalGlobalObject, *callFrame, \"" . $operation->name . "\");\n");
+    push(@$outputArray, "    return ${idlOperationType}<${className}>::${callFunctionName}<" . join(", ", @callFunctionTemplateArguments) . ">(*lexicalGlobalObject, *callFrame, \"" . $operation->name . "\"_s);\n");
     push(@$outputArray, "}\n\n");
 }
 
@@ -6716,7 +6720,7 @@ sub GenerateDefaultToJSONOperationDefinition
     my $interfaceName = $interface->type->name;
     push(@$outputArray, "JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))\n");
     push(@$outputArray, "{\n");
-    push(@$outputArray, "    return IDLOperation<JS${interfaceName}>::call<${functionName}Body>(*lexicalGlobalObject, *callFrame, \"toJSON\");\n");
+    push(@$outputArray, "    return IDLOperation<JS${interfaceName}>::call<${functionName}Body>(*lexicalGlobalObject, *callFrame, \"toJSON\"_s);\n");
     push(@$outputArray, "}\n");
     push(@$outputArray, "\n");
 }
@@ -7455,8 +7459,18 @@ sub GenerateCallbackImplementationOperationBody
 
         push(@$contentRef, "    auto throwScope = DECLARE_THROW_SCOPE(vm);\n");
         push(@$contentRef, "    auto returnValue = ${nativeValue};\n");
-        push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]]\n");
-        push(@$contentRef, "        return CallbackResultType::ExceptionThrown;\n");
+        if ($codeGenerator->IsPromiseType($operation->type)) {
+            push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]] {\n");
+            push(@$contentRef, "        auto exceptionValue = throwScope.exception()->value();\n");
+            push(@$contentRef, "        TRY_CLEAR_EXCEPTION(throwScope, CallbackResultType::ExceptionThrown);\n");
+            push(@$contentRef, "        auto* jsPromise = JSC::JSPromise::create(vm, globalObject.promiseStructure());\n");
+            push(@$contentRef, "        jsPromise->rejectAsHandled(vm, exceptionValue);\n");
+            push(@$contentRef, "        return { DOMPromise::create(globalObject, *jsPromise) };\n");
+            push(@$contentRef, "    }\n");
+        } else {
+            push(@$contentRef, "    if (returnValue.hasException(throwScope)) [[unlikely]]\n");
+            push(@$contentRef, "        return CallbackResultType::ExceptionThrown;\n");
+        }
         push(@$contentRef, "    return { returnValue.releaseReturnValue() };\n");
     }
 
@@ -7847,7 +7861,7 @@ END
         push(@implContent,  <<END);
 JSC_DEFINE_HOST_FUNCTION(${functionName}, (JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
-    return IDLOperation<${className}>::call<${functionName}Caller>(*lexicalGlobalObject, *callFrame, "${propertyName}");
+    return IDLOperation<${className}>::call<${functionName}Caller>(*lexicalGlobalObject, *callFrame, "${propertyName}"_s);
 }
 
 END
@@ -7933,6 +7947,20 @@ sub IsAnnotatedType
     return 1 if $type->extendedAttributes->{AtomString};
     return 1 if $type->extendedAttributes->{RequiresExistingAtomString};
     return 1 if $type->extendedAttributes->{AllowShared};
+}
+
+# https://webidl.spec.whatwg.org/#idl-annotated-types
+sub AssertValidTypeExtendedAttributes
+{
+    my ($type) = @_;
+
+    die "[Clamp] and [EnforceRange] cannot both be used on the same type.\n" if $type->extendedAttributes->{Clamp} && $type->extendedAttributes->{EnforceRange};
+
+    foreach my $extendedAttributeName (sort keys %{$type->extendedAttributes}) {
+        next if $codeGenerator->IsTypeAllowedForExtendedAttribute($type, $extendedAttributeName);
+        my $typesAllowed = join(" and ", @{$codeGenerator->GetTypesAllowedForExtendedAttribute($extendedAttributeName)});
+        die "[${extendedAttributeName}] can only be used on ${typesAllowed}, not on '" . GetTypeNameForDisplayInException($type) . ($type->isNullable ? "?" : "") . "'.\n";
+    }
 }
 
 sub GetAnnotatedIDLType
@@ -8042,6 +8070,8 @@ sub GetBaseIDLType
 sub GetIDLTypeExcludingNullability
 {
     my ($interface, $type) = @_;
+
+    AssertValidTypeExtendedAttributes($type);
 
     my $baseIDLType = GetBaseIDLType($interface, $type);
     $baseIDLType = GetAnnotatedIDLType($type) . "<" . $baseIDLType . ">" if IsAnnotatedType($type);
@@ -8896,6 +8926,7 @@ sub GenerateConstructorDefinition
             my $implType = GetImplClassName($interface);
 
             AddToImplIncludes("JSDOMConvertInterface.h");
+            AddToImplIncludes("<JavaScriptCore/StructureCreateInlines.h>");
 
             my @constructionConversionArguments = ();
             push(@constructionConversionArguments, "*lexicalGlobalObject");

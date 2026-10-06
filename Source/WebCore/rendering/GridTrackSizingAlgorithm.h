@@ -277,7 +277,7 @@ private:
     // For subgrids, it accumulates margin/border/padding into each spanned track and recurses into children.
     // For leaf items, it invokes |handleLeafItem(gridItem, gridItemSpan)|.
     template<typename LeafItemHandler>
-    void traverseSubgridTreeForIntrinsicSizing(LeafItemHandler&&);
+    void traverseSubgridTreeForIntrinsicSizing(NOESCAPE const LeafItemHandler&);
 
     void aggregateGridItemsForIntrinsicSizing(Vector<GridItemWithSpan>& itemsSortedByIncreasingSpan, Vector<GridItemWithSpan>& itemsCrossingFlexibleTracks, RenderGridLayoutState&);
 
@@ -383,6 +383,7 @@ protected:
     LayoutUnit logicalHeightForGridItem(RenderBox&, RenderGridLayoutState&) const;
     bool updateOverridingContainingBlockContentSizeForGridItem(RenderBox&, Style::GridTrackSizingDirection, std::optional<LayoutUnit> = std::nullopt) const;
     bool isComputingColumnIntrinsicWidthForNonOrthogonalItem(const RenderBox&) const;
+    bool shouldTreatGridAreaBlockSizeAsIndefinite(const RenderBox&) const;
 
     // GridTrackSizingAlgorithm accessors for subclasses.
     LayoutUnit computeTrackBasedSize() const { return m_algorithm.computeTrackBasedSize(); }

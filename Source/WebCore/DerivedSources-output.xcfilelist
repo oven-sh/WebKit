@@ -2,6 +2,7 @@
 $(BUILD_PRODUCTS_DIR)/DerivedSources/WebCore/JSNVShaderNoperspectiveInterpolation.cpp
 $(BUILD_PRODUCTS_DIR)/DerivedSources/WebCore/JSNVShaderNoperspectiveInterpolation.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/.js-bindings-stamp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/.quirk-behaviors-stamp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/AttributeName.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/AttributeName.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/AudioWorkletGlobalScopeConstructors.idl
@@ -907,6 +908,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDeviceOrientationEvent.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDeviceOrientationEvent.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDeviceOrientationOrMotionPermissionState.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDeviceOrientationOrMotionPermissionState.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDevicePosture.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDevicePosture.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDevicePostureType.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDevicePostureType.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDigitalCredential.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDigitalCredential.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSDigitalCredentialGetRequest.cpp
@@ -1037,6 +1042,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+PointerLock.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+PointerLock.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+Typedom.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+Typedom.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+VolumetricScene.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement+VolumetricScene.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElement.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSElementCSSInlineStyle+Typedom.cpp
@@ -1707,6 +1714,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHashChangeEvent.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHashChangeEvent.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHdrMetadataType.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHdrMetadataType.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHevcEncoderConfig.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHevcEncoderConfig.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHighlight.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHighlight.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSHighlightRegistry.cpp
@@ -2092,6 +2101,8 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Contacts.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Contacts.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Credentials.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Credentials.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+DevicePosture.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+DevicePosture.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+EME.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+EME.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/JSNavigator+Gamepad.cpp
@@ -3719,6 +3730,10 @@ $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/InspectorNativeFunctionParameters.j
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/NodeName.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/NodeName.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/PaintWorkletGlobalScopeConstructors.idl
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorDefinitions.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirkBehaviorID.h
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirksAccessors.cpp
+$(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/QuirksAccessors.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableByteStreamControllerBuiltins.cpp
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableByteStreamControllerBuiltins.h
 $(BUILT_PRODUCTS_DIR)/DerivedSources/WebCore/ReadableStreamBuiltins.cpp

@@ -497,7 +497,7 @@ static void copyWebVTTNodeToDOMTree(ContainerNode& webVTTNode, Node& parent)
         if (RefPtr element = dynamicDowncast<WebVTTElement>(*node))
             clonedNode = element->createEquivalentHTMLElement(protect(parent.document()).get());
         else
-            clonedNode = node->cloneNode(false);
+            clonedNode = node->cloneNode(CloneSubtree::No);
         parent.appendChild(*clonedNode);
         if (RefPtr containerNode = dynamicDowncast<ContainerNode>(*node))
             copyWebVTTNodeToDOMTree(*containerNode, *clonedNode);

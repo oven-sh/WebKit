@@ -578,7 +578,6 @@ fast/canvas/canvas-blend-image.html [ Failure ]
 fast/canvas/canvas-blend-solid.html [ Failure ]
 fast/canvas/canvas-imageSmoothingQuality.html [ Failure ]
 fast/canvas/toDataURL-supportedTypes.html [ Failure ]
-fast/canvas/webgl/premultiplyalpha-test.html [ Failure ]
 
 # security/
 # Require EventSender support
@@ -750,8 +749,6 @@ webkit.org/b/230277 imported/w3c/web-platform-tests/css/css-transforms/perspecti
 
 webkit.org/b/279023 imported/w3c/web-platform-tests/css/css-transforms/composited-under-rotateY-180deg-perspective.html [ ImageOnlyFailure ]
 
-webkit.org/b/244474 fast/canvas/webgl/oes-texture-float-linear.html [ Failure ]
-
 webgl/1.0.x/conformance/extensions/oes-texture-float-with-video.html [ Timeout ]
 webgl/1.0.x/conformance/extensions/oes-texture-half-float-with-video.html [ Timeout ]
 webgl/2.0.y/conformance2/textures/video [ Skip ]
@@ -797,8 +794,6 @@ webkit.org/b/261024 [ Release ] js/cached-window-properties.html [ Pass Timeout 
 css3/background/background-repeat-space-content.html [ ImageOnlyFailure ]
 
 webkit.org/b/146731 fast/backgrounds/hidpi-background-image-contain-cover-scale-needs-more-precision.html [ ImageOnlyFailure ]
-
-imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
 
 imported/w3c/web-platform-tests/content-security-policy/inside-worker/dedicatedworker-worker-src.html [ Timeout Pass ]
 
@@ -1109,8 +1104,6 @@ webkit.org/b/309636 [ arm64 ] webgl/tex-2d-video-no-change-wrap.html [ Pass Fail
 webkit.org/b/312150 [ arm64 ] imported/w3c/web-platform-tests/encoding/textdecoder-mistakes.any.html [ Failure ]
 webkit.org/b/312150 [ arm64 ] imported/w3c/web-platform-tests/encoding/textdecoder-mistakes.any.worker.html [ Failure ]
 
-[ arm64 ] imported/w3c/web-platform-tests/content-security-policy/frame-ancestors/frame-ancestors-none-block.html [ Failure Pass ]
-
 webkit.org/b/309575 imported/w3c/web-platform-tests/uievents/textInput/enter-textarea-contenteditable.html [ Pass Failure ]
 
 imported/w3c/web-platform-tests/screen-wake-lock/chrome-bug-1348019.https.html [ Skip ]
@@ -1308,3 +1301,9 @@ webkit.org/b/324979 imported/w3c/web-platform-tests/web-locks/mode-shared.https.
 
 webkit.org/b/324374 webgl/1.0.x/conformance/textures/misc/texture-size-limit.html [ Failure ]
 webkit.org/b/324374 webgl/2.0.y/conformance/textures/misc/texture-size-limit.html [ Failure ]
+
+webkit.org/b/325930 [ x86_64 Release ] imported/w3c/web-platform-tests/IndexedDB/transaction-inflight-worker-terminate.window.html [ Crash Pass ]
+
+webkit.org/b/325931 [ Release ] media/media-source/media-source-hidden-play-before-data.html [ Pass Timeout ]
+
+webkit.org/b/325939 [ arm64 ] platform/glib/damage/animations-blur.html [ Failure Pass ]

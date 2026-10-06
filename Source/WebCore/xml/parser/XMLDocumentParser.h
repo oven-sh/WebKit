@@ -48,7 +48,7 @@ class Text;
 
 class XMLParserContext : public RefCounted<XMLParserContext> {
 public:
-    static RefPtr<XMLParserContext> createMemoryParser(xmlSAXHandlerPtr, void* userData, const CString& chunk);
+    static RefPtr<XMLParserContext> createMemoryParser(xmlSAXHandlerPtr, void* userData, const UTF8CString& chunk);
     static Ref<XMLParserContext> createStringParser(xmlSAXHandlerPtr, void* userData);
     XMLParserContext() = delete;
     ~XMLParserContext();
@@ -144,7 +144,7 @@ public:
     void entityDecl(const xmlChar* name, int type, const xmlChar* publicId, const xmlChar* systemId, xmlChar* content);
 
 private:
-    void initializeParserContext(const CString& chunk = CString());
+    void initializeParserContext(const UTF8CString& chunk = UTF8CString());
     void flushDeferredEntityDeclarations();
     uint64_t computeTransitiveEntityReferenceCount(const AtomString& name, const HashMap<AtomString, String>& entityContents, HashSet<AtomString>& visiting);
 
@@ -197,7 +197,7 @@ private:
     bool m_deferredEntityDeclarationsFlushed { false };
     HashMap<AtomString, uint64_t> m_entityTransitiveReferenceCounts;
 
-    std::unique_ptr<XMLErrors> m_xmlErrors;
+    const std::unique_ptr<XMLErrors> m_xmlErrors;
 
     RefPtr<PendingScript> m_pendingScript;
     RefPtr<PendingScript> m_scriptWaitingForStylesheets;

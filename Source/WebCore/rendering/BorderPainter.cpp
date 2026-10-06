@@ -47,11 +47,17 @@
 #include "RenderObjectDocument.h"
 #include "RenderSVGModelObject.h"
 #include "RenderTheme.h"
+#include "StyleBorderImageSizing.h"
 #include "StyleComputedStyle+GettersInlines.h"
+#include "StyleMaskBorderSizing.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 #include <numeric>
 
 namespace WebCore {
+
+template<typename> struct NinePieceImageSizingKind;
+template<> struct NinePieceImageSizingKind<Style::BorderImage> { using type = Style::BorderImageSizing; };
+template<> struct NinePieceImageSizingKind<Style::MaskBorder> { using type = Style::MaskBorderSizing; };
 
 static bool NODELETE borderStyleFillsBorderArea(BorderStyle style)
 {
@@ -218,7 +224,7 @@ void BorderPainter::paintBorder(const LayoutRect& rect, const Style::ComputedSty
         if (!protect(image->value)->isLoaded(m_renderer.ptr()))
             return false;
 
-        if (!protect(image->value)->canRender(m_renderer.ptr(), style.usedZoom()))
+        if (!protect(image->value)->canRender(m_renderer.ptr()))
             return false;
 
         auto rectWithOutsets = rect;
@@ -433,7 +439,7 @@ bool BorderPainter::paintNinePieceImageImpl(const LayoutRect& rect, const Style:
     if (!image->isLoaded(m_renderer.ptr()))
         return true; // Never paint a nine-piece image incrementally, but don't paint the fallback borders either.
 
-    if (!image->canRender(m_renderer.ptr(), style.usedZoom()))
+    if (!image->canRender(m_renderer.ptr()))
         return false;
 
     CheckedPtr modelObject = dynamicDowncast<RenderBoxModelObject>(m_renderer);
@@ -455,12 +461,12 @@ bool BorderPainter::paintNinePieceImageImpl(const LayoutRect& rect, const Style:
     rectWithOutsets.expand(style.imageOutsets(ninePieceImage, deviceScaleFactor));
     LayoutRect destination = LayoutRect(snapRectToDevicePixels(rectWithOutsets, deviceScaleFactor));
 
-    auto source = modelObject->calculateImageIntrinsicDimensions(image.get(), destination.size(), RenderBoxModelObject::ScaleByUsedZoom::No);
+    using Sizing = typename NinePieceImageSizingKind<T>::type;
 
-    // If both values are ‘auto’ then the intrinsic width and/or height of the image should be used, if any.
-    image->setContainerContextForRenderer(m_renderer, source, style.usedZoom());
+    auto source = modelObject->calculateImageIntrinsicDimensions(*image, Sizing { destination.size() }, RenderBoxModelObject::ScaleByUsedZoom::No);
+    image->setContainerSizeForRenderer(m_renderer, source);
 
-    NinePieceImagePainter::paint(ninePieceImage, m_paintInfo.context(), m_renderer.ptr(), style, destination, source, deviceScaleFactor, options);
+    NinePieceImagePainter::paint(ninePieceImage, m_paintInfo.context(), m_renderer, style, destination, source, deviceScaleFactor, options);
     return true;
 }
 

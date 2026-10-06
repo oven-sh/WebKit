@@ -364,8 +364,9 @@ Ref<Inspector::Protocol::BidiBrowsingContext::Info> BidiBrowsingContextAgent::ge
     // https://w3c.github.io/webdriver-bidi/#original-opener
 
     if (includeParentID == IncludeParentID::Yes) {
-        if (tree.info.parentFrameID)
-            info->setParent(getBrowsingContextID(tree.info.parentFrameID.value()));
+        RefPtr frame = WebFrameProxy::webFrame(tree.info.frameID);
+        if (RefPtr parent = frame ? frame->parentFrame() : nullptr)
+            info->setParent(getBrowsingContextID(parent->frameID()));
         else
             info->setParentIsNull();
     }
@@ -394,14 +395,12 @@ void BidiBrowsingContextAgent::getNextTree(Vector<Ref<WebPageProxy>>&& pagesToPr
     }
 
     Ref webPageProxy = pagesToProcess.takeLast();
-    webPageProxy->getAllFrameTrees([weakThis = WeakPtr { *this }, pagesToProcess = WTF::move(pagesToProcess), resultsObject = WTF::move(resultsObject), callback = WTF::move(callback), maxDepth, protectedPage = Ref { webPageProxy }](Vector<WebKit::FrameTreeNodeData>&& trees) mutable {
+    webPageProxy->getAllFrames([weakThis = WeakPtr { *this }, pagesToProcess = WTF::move(pagesToProcess), resultsObject = WTF::move(resultsObject), callback = WTF::move(callback), maxDepth, protectedPage = Ref { webPageProxy }](std::optional<WebKit::FrameTreeNodeData>&& tree) mutable {
         RefPtr protectedThis = weakThis.get();
         if (!protectedThis)
             return;
-        for (auto& tree : trees) {
-            auto infoTree = protectedThis->getNavigableInfo(tree, maxDepth, IncludeParentID::Yes);
-            resultsObject->addItem(WTF::move(infoTree));
-        }
+        if (tree)
+            resultsObject->addItem(protectedThis->getNavigableInfo(*tree, maxDepth, IncludeParentID::Yes));
         protectedThis->getNextTree(WTF::move(pagesToProcess), WTF::move(resultsObject), maxDepth, WTF::move(callback));
     });
 }

@@ -237,7 +237,7 @@ MediaControlTextTrackContainerElement* MediaControlsHost::ensureTextTrackContain
 {
     if (!m_textTrackContainer) {
         Ref mediaElement = m_mediaElement.get();
-        m_textTrackContainer = MediaControlTextTrackContainerElement::create(protect(mediaElement->document()).get(), mediaElement);
+        lazyInitialize(m_textTrackContainer, MediaControlTextTrackContainerElement::create(protect(mediaElement->document()).get(), mediaElement));
     }
 
     return m_textTrackContainer.get();
@@ -402,6 +402,12 @@ std::optional<int32_t> MediaControlsHost::spatialVideoHorizontalFieldOfView() co
         return std::nullopt;
 
     return metadata->horizontalFieldOfView;
+}
+
+void MediaControlsHost::spatialCameraDidMove(double yaw, double pitch, double fieldOfView)
+{
+    if (RefPtr videoElement = dynamicDowncast<HTMLVideoElement>(m_mediaElement.get()))
+        videoElement->spatialCameraDidMove(yaw, pitch, fieldOfView);
 }
 
 bool MediaControlsHost::isAVExperienceControllerFullscreenEnabled() const

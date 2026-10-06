@@ -693,6 +693,37 @@ class TailCallToImportTestCase:
         self.session.cmd("br del -f", patterns=["All breakpoints removed."])
 
 
+class HostFrameCallStackTestCase:
+    test_file = "resources/wasm/host-frame-call-stack.js"
+    extra_jsc_options = ["--verboseWasmDebugger=1"]
+
+    def execute(self):
+        # JSON.stringify is C++ and calls the export as toJSON: the general shape, no JSPI needed.
+        self.session.cmd("b 0x4000000000000037", patterns=["address = 0x4000000000000037"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000037"])
+        self.session.cmd("bt", patterns=["frame #0: 0x4000000000000037", "frame #1: 0xc000000000000000"])
+
+        # Still alive and answering, which is the regression.
+        self.session.cmd("process plugin packet send qWasmCallStack:1", patterns=["response: 37"])
+
+
+class JSPICallStackTestCase:
+    test_file = "resources/wasm/jspi-call-stack.js"
+    extra_jsc_options = ["--useJSPI=1", "--verboseWasmDebugger=1"]
+
+    def execute(self):
+        # The reported case; here the host function is WebAssembly.promising.
+        self.session.cmd("b 0x4000000000000037", patterns=["address = 0x4000000000000037"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x4000000000000037"])
+        self.session.cmd("bt", patterns=["frame #0: 0x4000000000000037", "frame #1: 0xc000000000000000"])
+        self.session.cmd("process plugin packet send qWasmCallStack:1", patterns=["response: 37"])
+
+        # After the suspension resumes, since JSPI relocates stacks.
+        self.session.cmd("b 0x400000000000003b", patterns=["address = 0x400000000000003b"])
+        self.session.cmd("c", patterns=["stop reason = breakpoint", "0x400000000000003b"])
+        self.session.cmd("dis", patterns=["->  0x400000000000003b: i32.const 30"])
+
+
 class CrossInstanceTailCallImportTestCase:
     test_file = "resources/wasm/cross-instance-tail-call-import.js"
 
@@ -2722,6 +2753,31 @@ class SwiftWasmFatalErrorTestCase:
         self.session.cmd("bt", patterns=["main.swift:4"])
 
 
+class MemoryRegionInfoTestCase:
+    test_file = "resources/c-wasm/add/main.js"
+
+    def execute(self):
+        # Start is the window base, not the queried address.
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:10", patterns=["response: start:0;size:1010000;permissions:rw;"])
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:4000000000000010", patterns=["response: start:4000000000000000;", "type:module;"])
+
+        # Never an error: one latches qMemoryRegionInfo off for the whole session.
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:c000000000000000", patterns=["response: start:c000000000000000;size:4000000000000000;"])
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:8000000000000000", patterns=["response: start:8000000000000000;size:8000000000000000;"])
+
+        # INVALID_END is the last byte, so a region ending there is one short. The module gap walk
+        # and the Invalid branch size it separately, so assert both.
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:40000000000014e0", patterns=["response: start:40000000000014e0;size:bfffffffffffeb20;"])
+        self.session.cmd("process plugin packet send qMemoryRegionInfo:ffffffffffffffff", patterns=["response: start:ffffffffffffffff;size:1;"])
+
+        # With any of the above erroring, this enumerates nothing.
+        self.session.cmd("memory region --all", patterns=[
+            "[0x0000000000000000-0x0000000001010000) rw- wasm_memory_0",
+            "[0x4000000000000000-0x40000000000014e0) r-x wasm_module_0",
+            "[0x40000000000014e0-0xffffffffffffffff) ---",
+        ])
+
+
 ALL_TESTS = [
     CWasmTestCase,
     SwiftWasmTestCase,
@@ -2764,6 +2820,8 @@ ALL_TESTS = [
     OperandStackDepthReturnCallTestCase,
     CrossInstanceTailCallTestCase,
     OperandStackDepthImportMultiResultTestCase,
+    HostFrameCallStackTestCase,
+    JSPICallStackTestCase,
     CrossInstanceTailCallImportTestCase,
     TailCallToImportTestCase,
     OperandStackDepthCallRefTestCase,
@@ -2798,6 +2856,7 @@ ALL_TESTS = [
     StreamingModuleSourceURLTestCase,
     StreamingModuleLoadTestCase,
     SwiftWasmFatalErrorTestCase,
+    MemoryRegionInfoTestCase,
 ]
 
 # Tests that are runnable by name but excluded from a default sweep, because they need something the

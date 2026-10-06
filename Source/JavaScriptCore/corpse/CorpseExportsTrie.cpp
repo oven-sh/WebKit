@@ -38,8 +38,7 @@ namespace Corpse {
 constexpr uint64_t knownExportFlagBits = EXPORT_SYMBOL_FLAGS_KIND_MASK
     | EXPORT_SYMBOL_FLAGS_WEAK_DEFINITION
     | EXPORT_SYMBOL_FLAGS_REEXPORT
-    | EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER
-    | EXPORT_SYMBOL_FLAGS_STATIC_RESOLVER;
+    | EXPORT_SYMBOL_FLAGS_STUB_AND_RESOLVER;
 
 std::expected<ExportsTrie::Export, ExportsTrie::Failure> ExportsTrie::lookUp(std::span<const uint8_t> trie, std::string_view name)
 {

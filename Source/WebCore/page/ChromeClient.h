@@ -26,6 +26,7 @@
 #include <WebCore/CornerRadii.h>
 #include <WebCore/DatabaseDetails.h>
 #include <WebCore/DeviceOrientationOrMotionPermissionState.h>
+#include <WebCore/DevicePostureType.h>
 #include <WebCore/DisabledAdaptations.h>
 #include <WebCore/DocumentStorageAccess.h>
 #include <WebCore/ExceptionData.h>
@@ -39,6 +40,10 @@
 #include <WebCore/InputMode.h>
 #include <WebCore/LayerHostingContextIdentifier.h>
 #include <WebCore/MediaControlsContextMenuItem.h>
+#if ENABLE(OFFSCREEN_CANVAS)
+#include <WebCore/PlaceholderRenderingContextSource.h>
+#endif
+#include <WebCore/PlatformLayerIdentifier.h>
 #include <WebCore/PlaybackTargetClientContextIdentifier.h>
 #include <WebCore/PointerCharacteristics.h>
 #include <WebCore/SyntheticClickResult.h>
@@ -317,6 +322,13 @@ public:
     virtual void setHasModelElement(bool) { }
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    virtual void enterVolumetricSceneForElement(Element&, CompletionHandler<void(bool)>&& completion) { completion(false); }
+    virtual void exitVolumetricSceneForElement(Element&) { }
+    // The element reloaded its content, which mints a new hosting context; rebind the existing scene to it.
+    virtual void reconnectVolumetricSceneForElement(Element&) { }
+#endif
+
     virtual PlatformPageClient platformPageClient() const = 0;
 
     virtual void setCursor(const Cursor&) = 0;
@@ -420,6 +432,8 @@ public:
     virtual IntDegrees deviceOrientation() const = 0;
 #endif
 
+    virtual DevicePostureType devicePostureType() const { return DevicePostureType::Continuous; }
+
     virtual RefPtr<ColorChooser> createColorChooser(ColorChooserClient&, const Color&) = 0;
 
     virtual RefPtr<DataListSuggestionPicker> createDataListSuggestionPicker(DataListSuggestionsClient&) = 0;
@@ -471,6 +485,12 @@ public:
     virtual RefPtr<ImageBuffer> createImageBuffer(const FloatSize&, RenderingMode, RenderingPurpose, float, const ColorSpace&, ImageBufferFormat) const { return nullptr; }
     WEBCORE_EXPORT virtual RefPtr<WebCore::ImageBuffer> sinkIntoImageBuffer(std::unique_ptr<WebCore::SerializedImageBuffer>);
     virtual RefPtr<WebCore::ImageBuffer> createImageBufferFromTransferHandle(const ImageBufferTransferHandle&) { return nullptr; }
+
+#if ENABLE(OFFSCREEN_CANVAS)
+    virtual RefPtr<PlaceholderRenderingContextSource> createPlaceholderRenderingContextSource(const RemotePlaceholderRenderingContextIdentifier&) { return nullptr; }
+    // nullopt means frames from another process can no longer be applied to a layer directly.
+    virtual void offscreenCanvasPlaceholderLayerChanged(PlaceholderRenderingContextIdentifier, std::optional<PlatformLayerIdentifier>) { }
+#endif
 
 #if ENABLE(WEBGL)
     WEBCORE_EXPORT virtual RefPtr<GraphicsContextGL> createGraphicsContextGL(const GraphicsContextGLAttributes&) const;
@@ -685,7 +705,7 @@ public:
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     virtual void addPlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier) { }
     virtual void removePlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier) { }
-    virtual void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, FrameIdentifier, const IntPoint&, bool /*isVideo*/) { }
+    virtual void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, const IntPoint& /*positionInMainFrameView*/, bool /*isVideo*/) { }
     virtual void playbackTargetPickerClientStateDidChange(PlaybackTargetClientContextIdentifier, MediaProducerMediaStateFlags) { }
     virtual void setMockMediaPlaybackTargetPickerEnabled(bool)  { }
     virtual void setMockMediaPlaybackTargetPickerState(const String&, MediaPlaybackTargetMockState) { }

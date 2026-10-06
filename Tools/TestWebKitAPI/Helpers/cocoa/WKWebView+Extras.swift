@@ -70,6 +70,15 @@ extension WKWebView {
         try await _test_waitForDidFinishNavigation()
     }
 
+    /// Loads a request, trusting any server certificate, and waits until the navigation finishes.
+    ///
+    /// - Parameter request: The request to load.
+    /// - Throws: The navigation error if the provisional load fails.
+    public func loadAndWaitIgnoringSSLErrors(_ request: URLRequest) async throws {
+        load(request)
+        try await _test_waitForDidFinishNavigationWhileIgnoringSSLErrors()
+    }
+
     /// Loads a page from the test resources bundle and waits until the navigation finishes.
     ///
     /// - Parameter pageName: The name of the HTML resource, without its extension.
@@ -92,16 +101,18 @@ extension WKWebView {
     ///
     /// - Parameters:
     ///   - type: The type the function body is expected to return.
+    ///   - frame: The frame to call the function body in, or `nil` for the main frame.
     ///   - functionBody: A closure producing the JavaScript function body to call.
     /// - Returns: The value the function body returned.
     /// - Throws: ``UnexpectedJavaScriptResult`` if the function body returned a value of a
     ///   different type, or any error raised while running it.
     public func callJavaScript<Result>(
         returning type: Result.Type,
+        in frame: WKFrameInfo? = nil,
         _ functionBody: () -> String
     ) async throws -> Result {
         let script = functionBody()
-        let result = try await __callAsyncJavaScript(script, arguments: [:], inFrame: nil, in: .page)
+        let result = try await __callAsyncJavaScript(script, arguments: [:], inFrame: frame, in: .page)
 
         guard let value = result as? Result else {
             throw UnexpectedJavaScriptResult(
@@ -116,10 +127,12 @@ extension WKWebView {
 
     /// Calls a JavaScript function body for its side effects, discarding anything it returns.
     ///
-    /// - Parameter functionBody: A closure producing the JavaScript function body to call.
+    /// - Parameters:
+    ///   - frame: The frame to call the function body in, or `nil` for the main frame.
+    ///   - functionBody: A closure producing the JavaScript function body to call.
     /// - Throws: Any error raised while running the function body.
-    public func callJavaScript(_ functionBody: () -> String) async throws {
-        _ = try await __callAsyncJavaScript(functionBody(), arguments: [:], inFrame: nil, in: .page)
+    public func callJavaScript(in frame: WKFrameInfo? = nil, _ functionBody: () -> String) async throws {
+        _ = try await __callAsyncJavaScript(functionBody(), arguments: [:], inFrame: frame, in: .page)
     }
 
     /// Creates a handle for the first element matching a selector.
@@ -168,6 +181,32 @@ extension WKWebView {
             _do(afterNextPresentationUpdate: {
                 continuation.resume()
             })
+        }
+    }
+}
+
+extension TestNavigationDelegate {
+    /// Waits for a content rule list to perform an action on a load.
+    ///
+    /// - Parameter body: Work that causes the action, such as loading a page with a resource a rule blocks.
+    public func nextContentRuleListAction(triggeredBy body: () -> Void) async {
+        let previousCallback = contentRuleListPerformedAction
+        defer { contentRuleListPerformedAction = previousCallback }
+
+        await withCheckedContinuation { continuation in
+            var resumed = false
+
+            // One load can perform several actions before this call resumes and restores the callback.
+            contentRuleListPerformedAction = { _, _, _, _ in
+                guard !resumed else {
+                    return
+                }
+
+                resumed = true
+                continuation.resume()
+            }
+
+            body()
         }
     }
 }

@@ -22,6 +22,7 @@
 #include "WebViewTest.h"
 #include <gio/gunixfdlist.h>
 #include <wtf/URL.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 
 static GUniquePtr<char> scriptDialogResult;
@@ -550,7 +551,7 @@ public:
         if (m_expectedViewMessageNames.isEmpty())
             return false;
 
-        if (m_expectedViewMessageNames.contains(webkit_user_message_get_name(message))) {
+        if (m_expectedViewMessageNames.contains(UTF8CString::unsafeFromUTF8(webkit_user_message_get_name(message)))) {
             m_receivedViewMessages.append(message);
             if (m_receivedViewMessages.size() == m_expectedViewMessageNames.size())
                 quitMainLoop();
@@ -565,7 +566,7 @@ public:
         if (m_expectedContextMessageNames.isEmpty())
             return false;
 
-        if (m_expectedContextMessageNames.contains(webkit_user_message_get_name(message))) {
+        if (m_expectedContextMessageNames.contains(UTF8CString::unsafeFromUTF8(webkit_user_message_get_name(message)))) {
             m_receivedContextMessages.append(message);
             if (m_receivedContextMessages.size() == m_expectedContextMessageNames.size())
                 quitMainLoop();
@@ -575,7 +576,7 @@ public:
         return false;
     }
 
-    const Vector<GRefPtr<WebKitUserMessage>>& waitUntilViewMessagesReceived(Vector<CString>&& messageNames)
+    const Vector<GRefPtr<WebKitUserMessage>>& waitUntilViewMessagesReceived(Vector<UTF8CString>&& messageNames)
     {
         m_expectedViewMessageNames = WTF::move(messageNames);
         m_receivedViewMessages = { };
@@ -586,10 +587,10 @@ public:
 
     WebKitUserMessage* waitUntilViewMessageReceived(const char* messageName)
     {
-        return waitUntilViewMessagesReceived({ messageName }).first().get();
+        return waitUntilViewMessagesReceived({ UTF8CString::unsafeFromUTF8(messageName) }).first().get();
     }
 
-    const Vector<GRefPtr<WebKitUserMessage>>& waitUntilContextMessagesReceived(Vector<CString>&& messageNames)
+    const Vector<GRefPtr<WebKitUserMessage>>& waitUntilContextMessagesReceived(Vector<UTF8CString>&& messageNames)
     {
         m_expectedContextMessageNames = WTF::move(messageNames);
         m_receivedContextMessages = { };
@@ -600,13 +601,13 @@ public:
 
     WebKitUserMessage* waitUntilContextMessageReceived(const char* messageName)
     {
-        return waitUntilContextMessagesReceived({ messageName }).first().get();
+        return waitUntilContextMessagesReceived({ UTF8CString::unsafeFromUTF8(messageName) }).first().get();
     }
 
-    Vector<CString> m_expectedViewMessageNames;
+    Vector<UTF8CString> m_expectedViewMessageNames;
     Vector<GRefPtr<WebKitUserMessage>> m_receivedViewMessages;
 
-    Vector<CString> m_expectedContextMessageNames;
+    Vector<UTF8CString> m_expectedContextMessageNames;
     Vector<GRefPtr<WebKitUserMessage>> m_receivedContextMessages;
 
     GUniqueOutPtr<GError> m_receivedError;
@@ -687,8 +688,8 @@ static void testWebProcessExtensionUserMessages(UserMessageTest* test, gconstpoi
     g_assert_cmpstr(parameter, ==, "NULL");
 
     // Message with file descriptors.
-    GUniquePtr<char> filename(g_build_filename(Test::getResourcesDir().data(), "simple.json", nullptr));
-    reply = test->sendMessage(webkit_user_message_new("Test.OpenFile", g_variant_new("s", filename.get())));
+    auto filename = gBuildFilename(Test::getResourcesDir(), "simple.json");
+    reply = test->sendMessage(webkit_user_message_new("Test.OpenFile", gVariantNew("s", filename)));
     g_assert_true(WEBKIT_IS_USER_MESSAGE(reply));
     parameters = webkit_user_message_get_parameters(reply);
     g_assert_nonnull(parameters);
@@ -709,7 +710,7 @@ static void testWebProcessExtensionUserMessages(UserMessageTest* test, gconstpoi
     close(fd);
     GUniqueOutPtr<char> fileContents;
     gsize fileContentsLength;
-    g_assert_true(g_file_get_contents(filename.get(), &fileContents.outPtr(), &fileContentsLength, nullptr));
+    g_assert_true(g_file_get_contents(filename.utf8(), &fileContents.outPtr(), &fileContentsLength, nullptr));
     g_assert_cmpmem(fdContents.get(), fdContentsLength, fileContents.get(), fileContentsLength);
 
     // Unhandled message.
@@ -762,13 +763,13 @@ static void testWebProcessExtensionUserMessages(UserMessageTest* test, gconstpoi
     test->sendMessageToAllExtensions(webkit_user_message_new("Test.RequestPing", nullptr));
 
     // We should received two ping requests.
-    auto messages = test->waitUntilContextMessagesReceived({ "Ping", "Ping" });
+    auto messages = test->waitUntilContextMessagesReceived({ "Ping"_s, "Ping"_s });
     g_assert_cmpuint(messages.size(), ==, 2);
 
     for (auto& message : messages)
         webkit_user_message_send_reply(message.get(), webkit_user_message_new("Pong", nullptr));
 
-    messages = test->waitUntilContextMessagesReceived({ "Test.FinishedPingRequest", "Test.FinishedPingRequest" });
+    messages = test->waitUntilContextMessagesReceived({ "Test.FinishedPingRequest"_s, "Test.FinishedPingRequest"_s });
     g_assert_cmpuint(messages.size(), ==, 2);
 }
 
@@ -776,7 +777,7 @@ static void testWebProcessExtensionWindowObjectCleared(UserMessageTest* test, gc
 {
     test->loadHtml("<html><header></header><body></body></html>", 0);
 
-    auto messages = test->waitUntilViewMessagesReceived({ "WindowObjectCleared", "WindowObjectClearedIsolatedWorld" });
+    auto messages = test->waitUntilViewMessagesReceived({ "WindowObjectCleared"_s, "WindowObjectClearedIsolatedWorld"_s });
     g_assert_cmpuint(messages.size(), ==, 2);
 
     GUniqueOutPtr<GError> error;

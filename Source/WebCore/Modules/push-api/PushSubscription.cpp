@@ -104,13 +104,13 @@ ExceptionOr<RefPtr<JSC::ArrayBuffer>> PushSubscription::getKey(PushEncryptionKey
 
 void PushSubscription::unsubscribe(ScriptExecutionContext& scriptExecutionContext, DOMPromiseDeferred<IDLBoolean>&& promise)
 {
-    scriptExecutionContext.eventLoop().queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, pushSubscriptionIdentifier = m_data.identifier, promise = WTF::move(promise)]() mutable {
+    protect(scriptExecutionContext.eventLoop())->queueTask(TaskSource::Networking, [this, protectedThis = Ref { *this }, pushSubscriptionIdentifier = m_data.identifier, promise = WTF::move(promise)]() mutable {
         if (!m_pushSubscriptionOwner) {
             promise.resolve(false);
             return;
         }
 
-        protect(m_pushSubscriptionOwner)->unsubscribeFromPushService(pushSubscriptionIdentifier, WTF::move(promise));
+        m_pushSubscriptionOwner->unsubscribeFromPushService(pushSubscriptionIdentifier, WTF::move(promise));
     });
 }
 

@@ -488,7 +488,6 @@ static ALWAYS_INLINE BytecodeIndex NODELETE tryGetBytecodeIndex(unsigned llintPC
 
 void SamplingProfiler::processUnverifiedStackTraces()
 {
-    // This function needs to be called from the JSC execution thread.
     RELEASE_ASSERT(m_lock.isLocked());
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
@@ -1221,7 +1220,7 @@ void SamplingProfiler::reportDataToOptionFile()
         StringPrintStream pathOut;
         pathOut.print(path, "/");
         pathOut.print("JSCSampilingProfile-", reinterpret_cast<uintptr_t>(this), ".txt");
-        auto out = FilePrintStream::open(pathOut.toUTF8CString().legacyCStringPointer(), "w");
+        auto out = FilePrintStream::open(pathOut.toUTF8CString(), "w"_s);
         reportTopFunctions(*out);
         reportTopBytecodes(*out);
     }

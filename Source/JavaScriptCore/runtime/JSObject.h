@@ -74,6 +74,7 @@ struct HashTableValue;
 
 JS_EXPORT_PRIVATE Exception* throwTypeError(JSGlobalObject*, ThrowScope&, const String&);
 extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutablePropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
@@ -175,7 +176,7 @@ public:
 
     enum class SortMode { Default, Ascending };
     template<SortMode mode = SortMode::Default, typename Functor>
-    void forEachOwnIndexedProperty(JSGlobalObject*, const Functor&);
+    void forEachOwnIndexedProperty(JSGlobalObject*, NOESCAPE const Functor&);
 
 private:
     static bool getOwnPropertySlotImpl(JSObject*, JSGlobalObject*, PropertyName, PropertySlot&);
@@ -523,6 +524,14 @@ public:
 
     JS_EXPORT_PRIVATE void seal(VM&);
     JS_EXPORT_PRIVATE void freeze(VM&);
+    // Makes this object non-extensible and stops its own properties and its prototype from changing: from now on a put with it
+    // as the receiver, a define or a delete that would change one of its own properties, and a change of its prototype all fail.
+    // Unlike freeze(), property attributes are left as they are, so an inherited property still reads as writable and assignment
+    // on an object that inherits from this one works as before.
+    // Returns false, and changes nothing, for a class with write hooks of its own that do not check for this: ProxyObject, typed
+    // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that overrides a write hook.
+    JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&);
+    JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
     JS_EXPORT_PRIVATE static bool NODELETE isExtensible(JSObject*, JSGlobalObject*);
@@ -563,7 +572,7 @@ public:
     // in-place.
     inline void nukeStructureAndSetButterfly(VM&, StructureID oldStructureID, Butterfly*); // Defined in JSObjectInlines.h
 
-    void setStructure(VM&, Structure*);
+    inline void setStructure(VM&, Structure*); // Defined in StructureCreateInlines.h
 
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
@@ -633,6 +642,9 @@ public:
     }
 
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
+    // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
+    // changing (JSObject::makePropertiesImmutable()), and stay there.
+    [[nodiscard]] bool tryMakeWritable(VM&); // Defined in JSObjectInlines.h
 
     static constexpr size_t offsetOfInlineStorage();
 
@@ -810,7 +822,7 @@ private:
 
     JS_EXPORT_PRIVATE NEVER_INLINE ASCIILiteral putDirectToDictionaryWithoutExtensibility(VM&, PropertyName, JSValue, PutPropertySlot&);
     JS_EXPORT_PRIVATE void fillGetterPropertySlot(VM&, PropertySlot&, JSCell*, unsigned, PropertyOffset);
-    void fillCustomGetterPropertySlot(PropertySlot&, CustomGetterSetter*, unsigned, Structure*, PropertyOffset);
+    void fillCustomGetterPropertySlot(PropertySlot&, CustomGetterSetter*, unsigned, PropertyOffset);
 
     JS_EXPORT_PRIVATE bool getOwnStaticPropertySlot(VM&, PropertyName, PropertySlot&);
         
@@ -1068,13 +1080,6 @@ inline bool JSObject::isWithScope() const
     return type() == WithScopeType;
 }
 
-inline void JSObject::setStructure(VM& vm, Structure* structure)
-{
-    ASSERT(structure);
-    ASSERT(!butterfly() == !(structure->outOfLineCapacity() || structure->hasIndexingHeader(this)));
-    JSCell::setStructure(vm, structure);
-}
-
 inline JSObject* asObject(JSCell* cell)
 {
     ASSERT(cell);
@@ -1154,7 +1159,7 @@ ALWAYS_INLINE bool JSObject::getOwnNonIndexPropertySlot(VM& vm, Structure* struc
             return true;
         case CustomGetterSetterType:
             ASSERT(attributes & PropertyAttribute::CustomAccessorOrValue);
-            fillCustomGetterPropertySlot(slot, uncheckedDowncast<CustomGetterSetter>(cell), attributes, structure, offset);
+            fillCustomGetterPropertySlot(slot, uncheckedDowncast<CustomGetterSetter>(cell), attributes, offset);
             return true;
         default:
             break;
@@ -1165,22 +1170,16 @@ ALWAYS_INLINE bool JSObject::getOwnNonIndexPropertySlot(VM& vm, Structure* struc
     return true;
 }
 
-ALWAYS_INLINE void JSObject::fillCustomGetterPropertySlot(PropertySlot& slot, CustomGetterSetter* customGetterSetter, unsigned attributes, Structure* structure, PropertyOffset offset)
+ALWAYS_INLINE void JSObject::fillCustomGetterPropertySlot(PropertySlot& slot, CustomGetterSetter* customGetterSetter, unsigned attributes, PropertyOffset offset)
 {
     ASSERT(attributes & PropertyAttribute::CustomAccessorOrValue);
     if (customGetterSetter->inherits<DOMAttributeGetterSetter>()) {
         auto* domAttribute = uncheckedDowncast<DOMAttributeGetterSetter>(customGetterSetter);
-        if (structure->isUncacheableDictionary())
-            slot.setCustom(this, attributes, domAttribute->getter(), domAttribute->setter(), domAttribute->domAttribute());
-        else
-            slot.setCacheableCustom(this, attributes, domAttribute->getter(), domAttribute->setter(), domAttribute->domAttribute(), offset);
+        slot.setCacheableCustom(this, attributes, domAttribute->getter(), domAttribute->setter(), domAttribute->domAttribute(), offset);
         return;
     }
 
-    if (structure->isUncacheableDictionary())
-        slot.setCustom(this, attributes, customGetterSetter->getter(), customGetterSetter->setter());
-    else
-        slot.setCacheableCustom(this, attributes, customGetterSetter->getter(), customGetterSetter->setter(), offset);
+    slot.setCacheableCustom(this, attributes, customGetterSetter->getter(), customGetterSetter->setter(), offset);
 }
 
 // It may seem crazy to inline a function this large, especially a virtual function,

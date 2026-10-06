@@ -39,13 +39,16 @@
 #import "PositionInformationForWebPage.h"
 #import "PrintInfo.h"
 #import "RemoteLayerTreeCommitBundle.h"
+#import "RemoteLayerTreeDrawingArea.h"
 #import "RemoteLayerTreeTransaction.h"
 #import "RemoteRenderingBackendProxy.h"
+#import "RemoteScrollingCoordinator.h"
 #import "RemoteSnapshotRecorderProxy.h"
 #import "SharedBufferReference.h"
 #import "TextAnimationController.h"
 #import "UserMediaCaptureManager.h"
 #import "ViewGestureGeometryCollector.h"
+#import "VisibleContentRectUpdateInfo.h"
 #import "WKAccessibilityWebPageObjectBase.h"
 #import "WebEventConversion.h"
 #import "WebFrame.h"
@@ -382,7 +385,7 @@ DictionaryPopupInfo WebPage::dictionaryPopupInfoForRange(LocalFrame& frame, cons
 
     DictionaryPopupInfo dictionaryPopupInfo;
 
-    IntRect rangeRect = protect(frame.view())->contentsToWindow(quads[0].enclosingBoundingBox());
+    IntRect rangeRect = protect(frame.view())->contentsToMainFrameView(quads[0].enclosingBoundingBox());
 
     const CheckedPtr style = range.startContainer().renderStyle();
     float scaledAscent = style ? style->metricsOfPrimaryFont().intAscent() * pageScaleFactor() : 0;
@@ -470,8 +473,10 @@ void WebPage::insertDictatedTextAsync(const String& text, const EditingRange& re
 void WebPage::addDictationAlternative(const String& text, DictationContext context, CompletionHandler<void(bool)>&& completion)
 {
     RefPtr frame = corePage()->focusController().focusedOrMainFrame();
-    if (!frame)
+    if (!frame) {
+        completion(false);
         return;
+    }
 
     RefPtr document = frame->document();
     if (!document) {
@@ -509,8 +514,10 @@ void WebPage::addDictationAlternative(const String& text, DictationContext conte
 void WebPage::dictationAlternativesAtSelection(CompletionHandler<void(Vector<DictationContext>&&)>&& completion)
 {
     RefPtr frame = corePage()->focusController().focusedOrMainFrame();
-    if (!frame)
+    if (!frame) {
+        completion({ });
         return;
+    }
 
     RefPtr document = frame->document();
     if (!document) {
@@ -925,10 +932,10 @@ static bool selectionIsTransparentOrFullyClipped(const VisibleSelection& selecti
     return startRenderer == endRenderer || rendererIsTransparentOrFullyClipped(*endRenderer);
 }
 
-static void convertContentToRootView(const LocalFrameView& view, Vector<SelectionGeometry>& geometries)
+static void convertContentToMainFrameView(const LocalFrameView& view, Vector<SelectionGeometry>& geometries)
 {
     for (auto& geometry : geometries)
-        geometry.setQuad(view.contentsToRootView(geometry.quad()));
+        geometry.setQuad(view.contentsToMainFrameView(geometry.quad()));
 }
 
 void WebPage::getPlatformEditorStateCommon(LocalFrame& frame, EditorState& result) const
@@ -1030,17 +1037,17 @@ void WebPage::getPlatformEditorStateCommon(LocalFrame& frame, EditorState& resul
     bool endNodeIsInsideFixedPosition = false;
 
     if (selection.isCaret()) {
-        visualData.caretRectAtStart = view->contentsToRootView(WTF::protect(frame.selection())->absoluteCaretBounds(&startNodeIsInsideFixedPosition));
+        visualData.caretRectAtStart = view->contentsToMainFrameView(WTF::protect(frame.selection())->absoluteCaretBounds(&startNodeIsInsideFixedPosition));
         endNodeIsInsideFixedPosition = startNodeIsInsideFixedPosition;
         visualData.caretRectAtEnd = visualData.caretRectAtStart;
     } else if (selection.isRange()) {
-        visualData.caretRectAtStart = view->contentsToRootView(VisiblePosition(selection.start()).absoluteCaretBounds(&startNodeIsInsideFixedPosition));
-        visualData.caretRectAtEnd = view->contentsToRootView(VisiblePosition(selection.end()).absoluteCaretBounds(&endNodeIsInsideFixedPosition));
+        visualData.caretRectAtStart = view->contentsToMainFrameView(VisiblePosition(selection.start()).absoluteCaretBounds(&startNodeIsInsideFixedPosition));
+        visualData.caretRectAtEnd = view->contentsToMainFrameView(VisiblePosition(selection.end()).absoluteCaretBounds(&endNodeIsInsideFixedPosition));
 
         auto selectedRange = selection.toNormalizedRange();
         if (selectedRange) {
             auto [selectionGeometries, intersectingLayerIDs] = RenderObject::collectSelectionGeometries(*selectedRange);
-            convertContentToRootView(view, selectionGeometries);
+            convertContentToMainFrameView(view, selectionGeometries);
 
             visualData.selectionGeometries = WTF::move(selectionGeometries);
             visualData.intersectingLayerIDs = WTF::move(intersectingLayerIDs);
@@ -2013,6 +2020,8 @@ void WebPage::drawPrintContextPagesToGraphicsContext(GraphicsContext& context, c
 
 void WebPage::drawPrintingRectToSnapshot(RemoteSnapshotIdentifier snapshotIdentifier, WebCore::FrameIdentifier frameID, const PrintInfo& printInfo, const WebCore::IntRect& rect, const WebCore::IntSize& imageSize, CompletionHandler<void(bool)>&& completionHandler)
 {
+    completionHandler = failRemoteSnapshotIfRootFails(snapshotIdentifier, WTF::move(completionHandler));
+
     RefPtr frame = WebProcess::singleton().webFrame(frameID);
     if (!frame) {
         completionHandler(false);
@@ -2033,47 +2042,38 @@ void WebPage::drawPrintingRectToSnapshot(RemoteSnapshotIdentifier snapshotIdenti
     ASSERT(coreFrame->document()->printing());
     PrintContextAccessScope scope { *this };
 
-    Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
-    m_remoteSnapshotState = {
-        .identifier = snapshotIdentifier,
-        .recorder = remoteRenderingBackend->createSnapshotRecorder(rect, snapshotIdentifier),
-        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler)] (bool success) mutable {
-            completionHandler(success);
-        })
-    };
-    GraphicsContext& context = m_remoteSnapshotState->recorder.get();
+    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::DisplayList, rect, imageSize, MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
+        float printingScale = static_cast<float>(imageSize.width()) / rect.width();
+        context.scale(printingScale);
 
-    float printingScale = static_cast<float>(imageSize.width()) / rect.width();
-    context.scale(printingScale);
-
-    Ref { *m_printContext }->spoolRect(context, rect);
-
-    remoteRenderingBackend->sinkSnapshotRecorderIntoSnapshotFrame(WTF::move(m_remoteSnapshotState->recorder), frameID, Ref { m_remoteSnapshotState->callback }->chain());
-    m_remoteSnapshotState = std::nullopt;
+        Ref { *m_printContext }->spoolRect(context, rect);
+    });
 }
 
-void WebPage::drawPrintingPagesToSnapshot(RemoteSnapshotIdentifier snapshotIdentifier, FrameIdentifier frameID, const PrintInfo& printInfo, uint32_t first, uint32_t count, CompletionHandler<void(std::optional<WebCore::FloatSize>)>&& completionHandler)
+void WebPage::drawPrintingPagesToSnapshot(RemoteSnapshotIdentifier snapshotIdentifier, FrameIdentifier frameID, const PrintInfo& printInfo, uint32_t first, uint32_t count, CompletionHandler<void(bool)>&& completionHandler)
 {
+    completionHandler = failRemoteSnapshotIfRootFails(snapshotIdentifier, WTF::move(completionHandler));
+
     RefPtr frame = WebProcess::singleton().webFrame(frameID);
     if (!frame) {
-        completionHandler({ });
+        completionHandler(false);
         return;
     }
 
     RefPtr coreFrame = frame->coreLocalFrame();
     if (!coreFrame) {
-        completionHandler({ });
+        completionHandler(false);
         return;
     }
 
     if (pdfDocumentForPrintingFrame(coreFrame.get())) {
         // Can't do this remotely.
-        completionHandler({ });
+        completionHandler(false);
         return;
     }
 
     if (!m_printContext) {
-        completionHandler({ });
+        completionHandler(false);
         return;
     }
 
@@ -2082,21 +2082,9 @@ void WebPage::drawPrintingPagesToSnapshot(RemoteSnapshotIdentifier snapshotIdent
 
     FloatRect mediaBox = (m_printContext && m_printContext->pageCount()) ? m_printContext->pageRect(0) : FloatRect { 0, 0, printInfo.availablePaperWidth, printInfo.availablePaperHeight };
 
-    Ref remoteRenderingBackend = ensureRemoteRenderingBackendProxy();
-    m_remoteSnapshotState = {
-        .identifier = snapshotIdentifier,
-        .recorder = remoteRenderingBackend->createSnapshotRecorder(mediaBox, snapshotIdentifier),
-        .callback = MainRunLoopSuccessCallbackAggregator::create([completionHandler = WTF::move(completionHandler), snapshotSize = mediaBox.size()] (bool success) mutable {
-            completionHandler(success ? std::optional<FloatSize>(snapshotSize) : std::nullopt);
-        })
-    };
-
-    GraphicsContext& context = m_remoteSnapshotState->recorder.get();
-
-    drawPrintContextPagesToGraphicsContext(context, mediaBox, first, count);
-
-    remoteRenderingBackend->sinkSnapshotRecorderIntoSnapshotFrame(WTF::move(m_remoteSnapshotState->recorder), frameID, Ref { m_remoteSnapshotState->callback }->chain());
-    m_remoteSnapshotState = std::nullopt;
+    recordRemoteSnapshot(snapshotIdentifier, frameID, RemoteSnapshotRole::Root, RenderingMode::PDFDocument, mediaBox, mediaBox.size(), MainRunLoopSuccessCallbackAggregator::create(WTF::move(completionHandler)), [&](GraphicsContext& context) {
+        drawPrintContextPagesToGraphicsContext(context, mediaBox, first, count);
+    });
 }
 
 void WebPage::handleAlternativeTextUIResult(const String& result)
@@ -2246,16 +2234,24 @@ void WebPage::getSelectedRangeAsync(CompletionHandler<void(const EditingRange& s
 
 void WebPage::characterIndexForPointAsync(const WebCore::IntPoint& point, CompletionHandler<void(uint64_t)>&& completionHandler)
 {
-    RefPtr localMainFrame = this->localMainFrame();
-    if (!localMainFrame)
-        return;
-    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
-    auto result = localMainFrame->eventHandler().hitTestResultAtPoint(point, hitType);
-    RefPtr frame = result.innerNonSharedNode() ? result.innerNodeFrame() : corePage()->focusController().focusedOrMainFrame();
+    RefPtr frame = corePage()->focusController().focusedOrMainFrame();
     if (!frame)
-        return completionHandler({ });
-    auto range = frame->rangeForPoint(result.roundedPointInInnerNodeFrame());
-    auto editingRange = EditingRange::fromRange(*frame, range);
+        return completionHandler(notFound);
+
+    RefPtr view = frame->view();
+    if (!view)
+        return completionHandler(notFound);
+
+    // The point arrives in the main frame's root view; map it into this frame. Like the main-frame-only
+    // code this replaces, it is then treated as a contents point, which ignores scroll offset.
+    auto pointInFrame = roundedIntPoint(view->convertFromRootViewAcrossIsolatedFrames(FloatPoint { point }));
+    constexpr OptionSet<HitTestRequest::Type> hitType { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::Active, HitTestRequest::Type::DisallowUserAgentShadowContent,  HitTestRequest::Type::AllowChildFrameContent };
+    auto result = frame->eventHandler().hitTestResultAtPoint(pointInFrame, hitType);
+    RefPtr targetFrame = result.innerNonSharedNode() ? result.innerNodeFrame() : frame.get();
+    if (!targetFrame)
+        return completionHandler(notFound);
+    auto range = targetFrame->rangeForPoint(result.roundedPointInInnerNodeFrame());
+    auto editingRange = EditingRange::fromRange(*targetFrame, range);
     completionHandler(editingRange.location);
 }
 
@@ -2361,9 +2357,9 @@ void WebPage::insertTextPlaceholder(const IntSize& size, CompletionHandler<void(
 
 void WebPage::removeTextPlaceholder(const ElementContext& placeholder, CompletionHandler<void()>&& completionHandler)
 {
-    if (auto element = elementForContext(placeholder)) {
+    if (RefPtr element = dynamicDowncast<TextPlaceholderElement>(elementForContext(placeholder))) {
         if (RefPtr frame = element->document().frame())
-            protect(frame->editor())->removeTextPlaceholder(downcast<TextPlaceholderElement>(*element));
+            protect(frame->editor())->removeTextPlaceholder(*element);
     }
     completionHandler();
 }
@@ -2741,6 +2737,19 @@ IntRect WebPage::rootViewInteractionBounds(const Node& node)
     return view->contentsToRootView(absoluteInteractionBounds(node));
 }
 
+IntRect WebPage::mainFrameViewInteractionBounds(const Node& node)
+{
+    RefPtr frame = node.document().frame();
+    if (!frame)
+        return { };
+
+    RefPtr view = frame->view();
+    if (!view)
+        return { };
+
+    return view->contentsToMainFrameView(absoluteInteractionBounds(node));
+}
+
 IntRect WebPage::absoluteInteractionBounds(const Node& node)
 {
     RefPtr frame = node.document().frame();
@@ -2903,21 +2912,28 @@ RefPtr<HTMLAnchorElement> WebPage::containingLinkAnchorElement(Element& element)
     return nullptr;
 }
 
-void WebPage::selectPositionAtPoint(WebCore::IntPoint point, bool isInteractingWithFocusedElement, CompletionHandler<void()>&& completionHandler)
+void WebPage::selectPositionAtPoint(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint point, bool isInteractingWithFocusedElement, CompletionHandler<void(std::optional<WebCore::RemoteUserInputEventData>)>&& completionHandler)
 {
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
 
-    updateFocusBeforeSelectingTextAtLocation(std::nullopt, point);
+    RefPtr localRootFrame = this->localRootFrame(frameID);
 
-    RefPtr frame = m_page->focusController().focusedOrMainFrame();
+    if (auto remoteUserInputEventData = remoteUserInputEventDataForSelectionGesture(localRootFrame.get(), point)) {
+        completionHandler(WTF::move(remoteUserInputEventData));
+        return;
+    }
+
+    updateFocusBeforeSelectingTextAtLocation(frameID, point);
+
+    RefPtr<WebCore::LocalFrame> frame = frameID ? localRootFrame : RefPtr { m_page->focusController().focusedOrMainFrame() };
     if (!frame)
-        return completionHandler();
+        return completionHandler(std::nullopt);
 
     VisiblePosition position = visiblePositionInFocusedNodeForPoint(*frame, point, isInteractingWithFocusedElement);
 
     if (position.isNotNull())
         WTF::protect(frame->selection())->setSelectedRange(makeSimpleRange(position), position.affinity(), WebCore::FrameSelection::ShouldCloseTyping::Yes, UserTriggered::Yes);
-    completionHandler();
+    completionHandler(std::nullopt);
 }
 
 std::optional<SimpleRange> WebPage::rangeForGranularityAtPoint(LocalFrame& frame, const WebCore::IntPoint& point, WebCore::TextGranularity granularity, bool isInteractingWithFocusedElement)
@@ -3170,7 +3186,7 @@ void WebPage::startAutoscrollAtPosition(const WebCore::FloatPoint& positionInWin
     if (!renderer)
         return completionHandler(false);
 
-    completionHandler(frame->eventHandler().startSelectionAutoscroll(renderer.get(), positionInWindow));
+    completionHandler(frame->eventHandler().startSelectionAutoscroll(renderer.get(), mainFrameCoordinatesToRootView(roundedIntPoint(positionInWindow))));
 }
 
 void WebPage::cancelAutoscroll()
@@ -3233,13 +3249,20 @@ static IntPoint globalPositionForSyntheticMouseEvent(LocalFrame& localRootFrame,
 
 static void dispatchSyntheticMouseMove(LocalFrame& localFrame, const WebCore::FloatPoint& location, OptionSet<WebEventModifier> modifiers, WebCore::PointerID pointerId, WebCore::MouseEventInputSource inputSource)
 {
+    auto movementDelta = [&] -> WebCore::DoublePoint {
+        if (inputSource != WebCore::MouseEventInputSource::Automation)
+            return { };
+        auto lastKnownPosition = localFrame.eventHandler().lastKnownMousePosition();
+        return WebCore::DoublePoint(location - lastKnownPosition);
+    }();
     auto mouseEvent = PlatformMouseEvent(
         roundedIntPoint(location), globalPositionForSyntheticMouseEvent(localFrame, location),
         MouseButton::None, PlatformEvent::Type::MouseMoved, 0,
         platform(modifiers), MonotonicTime::now(),
         WebCore::ForceAtClick, WebCore::SyntheticClickType::OneFingerTap,
         inputSource,
-        pointerId
+        pointerId,
+        movementDelta
     );
     localFrame.eventHandler().dispatchSyntheticMouseMove(mouseEvent);
 }
@@ -3302,7 +3325,8 @@ void WebPage::handleSyntheticClick(std::optional<WebCore::FrameIdentifier> frame
         return;
     }
     contentChangeObserver->stopContentObservation();
-    callOnMainRunLoop([protectedThis = Ref { *this }, targetNode = Ref<Node>(nodeRespondingToClick), location, modifiers, observedContentChange, pointerId, frameID] {
+    dispatchDeferredSyntheticClickIfNeeded();
+    m_deferredSyntheticClick = [protectedThis = Ref { *this }, targetNode = Ref<Node>(nodeRespondingToClick), location, modifiers, observedContentChange, pointerId, frameID] {
         if (protectedThis->m_isClosed || !protectedThis->corePage())
             return;
 
@@ -3317,7 +3341,17 @@ void WebPage::handleSyntheticClick(std::optional<WebCore::FrameIdentifier> frame
         }
         LOG(ContentObservation, "handleSyntheticClick: calling completeSyntheticClick -> click.");
         protectedThis->completeSyntheticClick(frameID, targetNode, location, modifiers, WebCore::SyntheticClickType::OneFingerTap, pointerId);
+    };
+    callOnMainRunLoop([protectedThis = Ref { *this }, generation = ++m_deferredSyntheticClickGeneration] {
+        if (generation == protectedThis->m_deferredSyntheticClickGeneration)
+            protectedThis->dispatchDeferredSyntheticClickIfNeeded();
     });
+}
+
+void WebPage::dispatchDeferredSyntheticClickIfNeeded()
+{
+    if (auto dispatch = std::exchange(m_deferredSyntheticClick, { }))
+        dispatch();
 }
 
 Awaitable<std::optional<WebCore::RemoteUserInputEventData>> WebPage::potentialTapAtPosition(std::optional<WebCore::FrameIdentifier> frameID, WebKit::TapIdentifier requestID, WebCore::FloatPoint positionInRootView, bool shouldRequestMagnificationInformation, WebKit::WebEventInputSource inputSource)
@@ -3397,7 +3431,7 @@ Awaitable<std::optional<WebCore::RemoteUserInputEventData>> WebPage::potentialTa
     co_return std::nullopt;
 }
 
-Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(std::optional<WebCore::FrameIdentifier> frameID, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId, WebCore::PointerID pointerId)
+Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(std::optional<WebCore::FrameIdentifier> frameID, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId, WebCore::PointerID pointerId, CompletesDoubleClick completesDoubleClick)
 {
     RefPtr frameOwner = dynamicDowncast<HTMLFrameOwnerElement>(m_potentialTapNode.get());
     RefPtr remoteFrame = frameOwner ? dynamicDowncast<RemoteFrame>(frameOwner->contentFrame()) : nullptr;
@@ -3473,10 +3507,20 @@ Awaitable<std::optional<WebCore::FrameIdentifier>> WebPage::commitPotentialTap(s
         co_return std::nullopt;
     }
 
-    if (m_potentialTapNode == nodeRespondingToClick)
-        handleSyntheticClick(frameID, *nodeRespondingToClick, adjustedPoint, modifiers, pointerId);
-    else
+    auto respondsToDoubleClick = [&] {
+        FloatPoint adjustedDoubleClickPoint;
+        return localRootFrame->nodeRespondingToDoubleClickEvent(m_potentialTapLocation, adjustedDoubleClickPoint) || localRootFrame->windowWithDoubleClickEventListener();
+    };
+
+    bool syntheticClickMayBeHandledAsDoubleClick = m_potentialTapInputSource == WebCore::MouseEventInputSource::Automation;
+
+    if (m_potentialTapNode != nodeRespondingToClick)
         commitPotentialTapFailed();
+    else if (completesDoubleClick == CompletesDoubleClick::Yes && syntheticClickMayBeHandledAsDoubleClick && respondsToDoubleClick()) {
+        dispatchDeferredSyntheticClickIfNeeded();
+        completeSyntheticClick(frameID, *nodeRespondingToClick, adjustedPoint, modifiers, WebCore::SyntheticClickType::OneFingerTap, pointerId, 2);
+    } else
+        handleSyntheticClick(frameID, *nodeRespondingToClick, adjustedPoint, modifiers, pointerId);
 #endif // ENABLE(TWO_PHASE_CLICKS)
 
     m_potentialTapNode = nullptr;
@@ -3509,6 +3553,10 @@ void WebPage::cancelPotentialTap()
         ContentChangeObserver::didCancelPotentialTap(*localMainFrame);
 #endif
     cancelPotentialTapInFrame(m_mainFrame);
+
+#if ENABLE(FOCUS_ADJUSTMENT_IN_SYNTHETIC_CLICK)
+    dispatchDeferredSyntheticClickIfNeeded();
+#endif
 }
 
 void WebPage::didHandleTapAsHover()
@@ -3523,16 +3571,12 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
     if (!node)
         return;
 
-    RefPtr localMainFrame = m_page->localMainFrame();
-    if (!localMainFrame)
-        return;
+    if (RefPtr localMainFrame = m_page->localMainFrame()) {
+        if (m_page->isEditable() && node == protect(localMainFrame->document())->body())
+            return;
 
-    if (m_page->isEditable() && node == protect(localMainFrame->document())->body())
-        return;
-
-    if (RefPtr element = dynamicDowncast<Element>(*node)) {
-        ASSERT(m_page);
-        localMainFrame->loader().prefetchDNSIfNeeded(element->absoluteLinkURL());
+        if (RefPtr element = dynamicDowncast<Element>(*node))
+            localMainFrame->loader().prefetchDNSIfNeeded(element->absoluteLinkURL());
     }
 
     RefPtr updatedNode = node;
@@ -3568,7 +3612,7 @@ void WebPage::sendTapHighlightForNodeIfNecessary(WebKit::TapIdentifier requestID
         if (!updatedNode->document().frame()->isMainFrame()) {
             RefPtr view = updatedNode->document().frame()->view();
             for (auto& quad : quads)
-                quad = view->contentsToRootView(quad);
+                quad = view->contentsToMainFrameView(quad);
         }
 
         LayoutRoundedRect::Radii borderRadii;
@@ -3652,7 +3696,7 @@ void WebPage::commitPotentialTapFailed()
     send(Messages::WebPageProxy::DidNotHandleTapAsClick(roundedIntPoint(m_potentialTapLocation)));
 }
 
-void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> frameID, Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebEventModifier> modifiers, SyntheticClickType syntheticClickType, WebCore::PointerID pointerId)
+void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> frameID, Node& nodeRespondingToClick, const WebCore::FloatPoint& location, OptionSet<WebEventModifier> modifiers, SyntheticClickType syntheticClickType, WebCore::PointerID pointerId, int clickCount)
 {
     SetForScope completeSyntheticClickScope { m_completingSyntheticClick, true };
     IntPoint roundedAdjustedPoint = roundedIntPoint(location);
@@ -3683,7 +3727,7 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
     auto platformModifiers = platform(modifiers);
     auto globalPoint = globalPositionForSyntheticMouseEvent(*localRootFrame, location);
 
-    auto pressEvent = PlatformMouseEvent { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, 1, platformModifiers, MonotonicTime::now(), WebCore::ForceAtClick, syntheticClickType, m_potentialTapInputSource, pointerId };
+    auto pressEvent = PlatformMouseEvent { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, clickCount, platformModifiers, MonotonicTime::now(), WebCore::ForceAtClick, syntheticClickType, m_potentialTapInputSource, pointerId };
 
     // FIXME: <https://webkit.org/b/314881> For input sources where pointer events may not have already been
     // dispatched upstream by other compat paths, the pointer events that are dispatched in response to this
@@ -3702,7 +3746,7 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
         clearSelectionAfterTapIfNeeded();
 #endif
 
-    auto releaseEvent = PlatformMouseEvent { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 1, platformModifiers, MonotonicTime::now(), 0.0, syntheticClickType, m_potentialTapInputSource, pointerId };
+    auto releaseEvent = PlatformMouseEvent { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, clickCount, platformModifiers, MonotonicTime::now(), 0.0, syntheticClickType, m_potentialTapInputSource, pointerId };
     bool handledRelease = localRootFrame->eventHandler().handleMouseReleaseEvent(releaseEvent).wasHandled();
     if (m_isClosed)
         return;
@@ -3753,16 +3797,29 @@ void WebPage::completeSyntheticClick(std::optional<WebCore::FrameIdentifier> fra
 #endif
 }
 
-void WebPage::handleDoubleTapForDoubleClickAtPoint(const IntPoint& point, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId, WebEventInputSource inputSource, WebMouseEventSyntheticClickType webSyntheticClickType)
+Awaitable<std::optional<WebCore::RemoteUserInputEventData>> WebPage::handleDoubleTapForDoubleClickAtPoint(std::optional<WebCore::FrameIdentifier> frameID, WebCore::IntPoint point, OptionSet<WebEventModifier> modifiers, TransactionID lastLayerTreeTransactionId, WebEventInputSource inputSource, WebMouseEventSyntheticClickType webSyntheticClickType)
 {
-    FloatPoint adjustedPoint;
-    RefPtr localMainFrame = protect(*m_page)->localMainFrame();
-    RefPtr nodeRespondingToDoubleClick = localMainFrame ? localMainFrame->nodeRespondingToDoubleClickEvent(point, adjustedPoint) : nullptr;
+    if (frameID && !WebProcess::singleton().webFrame(*frameID))
+        co_return std::nullopt;
 
-    RefPtr windowListeningToDoubleClickEvents = localMainFrame ? localMainFrame->windowWithDoubleClickEventListener() : nullptr;
+    RefPtr localRoot = localRootFrame(frameID);
+    RefPtr localRootView = localRoot ? localRoot->view() : nullptr;
+    if (!localRootView)
+        co_return std::nullopt;
+
+    if (localRoot->tree().hasRemoteFrameDescendant()) {
+        static constexpr OptionSet hitTestRequestTypes { HitTestRequest::Type::ReadOnly, HitTestRequest::Type::AllowFrameScrollbars, HitTestRequest::Type::AllowVisibleChildFrameContentOnly };
+        auto hitTestResult = localRoot->eventHandler().hitTestResultAtPoint(localRootView->rootViewToContents(point), hitTestRequestTypes);
+        if (auto remoteUserInputEventData = remoteUserInputEventDataForHitTestResult(hitTestResult, *localRootView, point))
+            co_return remoteUserInputEventData;
+    }
+
+    FloatPoint adjustedPoint;
+    RefPtr nodeRespondingToDoubleClick = localRoot->nodeRespondingToDoubleClickEvent(point, adjustedPoint);
+    RefPtr windowListeningToDoubleClickEvents = localRoot->windowWithDoubleClickEventListener();
 
     if (!nodeRespondingToDoubleClick && !windowListeningToDoubleClickEvents)
-        return;
+        co_return std::nullopt;
 
     RefPtr<LocalFrame> frameRespondingToDoubleClick;
     if (nodeRespondingToDoubleClick)
@@ -3773,14 +3830,14 @@ void WebPage::handleDoubleTapForDoubleClickAtPoint(const IntPoint& point, Option
     }
 
     if (!frameRespondingToDoubleClick)
-        return;
+        co_return std::nullopt;
 
     auto firstTransactionID = WebFrame::fromCoreFrame(*frameRespondingToDoubleClick)->firstLayerTreeTransactionIDAfterDidCommitLoad();
-    // FIXME: We should probably guard the comparison with a processIdentifier() equality
-    // check (as commitPotentialTap() does) so that a cross-process transaction ID doesn't
-    // yield a meaningless comparison.
-    if (!firstTransactionID || lastLayerTreeTransactionId.lessThanSameProcess(*firstTransactionID))
-        return;
+    if (!firstTransactionID)
+        co_return std::nullopt;
+    if (lastLayerTreeTransactionId.processIdentifier() == firstTransactionID->processIdentifier()
+        && lastLayerTreeTransactionId.lessThanSameProcess(*firstTransactionID))
+        co_return std::nullopt;
 
     SetForScope userIsInteractingChange { m_userIsInteracting, true };
 
@@ -3788,19 +3845,408 @@ void WebPage::handleDoubleTapForDoubleClickAtPoint(const IntPoint& point, Option
     auto platformInputSource = platform(inputSource);
     auto syntheticClickType = coreSyntheticClickType(webSyntheticClickType);
     auto roundedAdjustedPoint = roundedIntPoint(adjustedPoint);
+    auto globalPoint = globalPositionForSyntheticMouseEvent(*localRoot, adjustedPoint);
 
     bool becomesPointerEvents = platformInputSource == WebCore::MouseEventInputSource::Automation;
-    auto pressEvent = PlatformMouseEvent { roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, 2, platformModifiers, MonotonicTime::now(), becomesPointerEvents ? WebCore::ForceAtClick : 0.0, syntheticClickType, platformInputSource };
+    auto pressEvent = PlatformMouseEvent { roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MousePressed, 2, platformModifiers, MonotonicTime::now(), becomesPointerEvents ? WebCore::ForceAtClick : 0.0, syntheticClickType, platformInputSource };
     if (becomesPointerEvents)
         pressEvent.setButtons(1);
 
     frameRespondingToDoubleClick->eventHandler().handleMousePressEvent(pressEvent);
     if (m_isClosed)
-        return;
-    frameRespondingToDoubleClick->eventHandler().handleMouseReleaseEvent(PlatformMouseEvent(roundedAdjustedPoint, roundedAdjustedPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 2, platformModifiers, MonotonicTime::now(), 0, syntheticClickType, platformInputSource));
+        co_return std::nullopt;
+    frameRespondingToDoubleClick->eventHandler().handleMouseReleaseEvent(PlatformMouseEvent(roundedAdjustedPoint, globalPoint, MouseButton::Left, PlatformEvent::Type::MouseReleased, 2, platformModifiers, MonotonicTime::now(), 0, syntheticClickType, platformInputSource));
+
+    co_return std::nullopt;
 }
 
 #endif // ENABLE(TWO_PHASE_CLICKS)
+
+#if ENABLE(UI_SIDE_COMPOSITING)
+
+void WebPage::platformDidScalePage()
+{
+    // UI_SIDE_COMPOSITING is compiled in on macOS, but the drawing area is only a RemoteLayerTreeDrawingArea when
+    // it's also enabled at runtime. There are no layer tree transactions otherwise.
+    // This is NODELETE, so hold the drawing area with a raw pointer; nothing here can drop its last reference.
+    auto* remoteLayerTreeDrawingArea = dynamicDowncast<RemoteLayerTreeDrawingArea>(m_drawingArea.get());
+    if (!remoteLayerTreeDrawingArea)
+        return;
+
+    m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage = { { remoteLayerTreeDrawingArea->lastCommittedTransactionID(), m_lastTransactionPageScaleFactor } };
+}
+
+static inline FloatRect adjustExposedRectForNewScale(const FloatRect& exposedRect, double exposedRectScale, double newScale)
+{
+    if (exposedRectScale == newScale)
+        return exposedRect;
+
+    float horizontalChange = exposedRect.width() * exposedRectScale / newScale - exposedRect.width();
+    float verticalChange = exposedRect.height() * exposedRectScale / newScale - exposedRect.height();
+
+    auto adjustedRect = exposedRect;
+    adjustedRect.inflate({ horizontalChange / 2, verticalChange / 2 });
+    return adjustedRect;
+}
+
+// Bounds for clamping a scale from the UI process. iOS takes these from the meta viewport; macOS has no viewport,
+// so they match ViewGestureController's magnification limits.
+double WebPage::minimumPageScaleFactorForUIProcessScale() const
+{
+#if ENABLE(META_VIEWPORT)
+    return m_viewportConfiguration.minimumScale();
+#else
+    return 1;
+#endif
+}
+
+double WebPage::maximumPageScaleFactorForUIProcessScale() const
+{
+#if ENABLE(META_VIEWPORT)
+    return m_viewportConfiguration.maximumScale();
+#else
+    return 3;
+#endif
+}
+
+static inline void adjustVelocityDataForBoundedScale(VelocityData& velocityData, double exposedRectScale, double minimumScale, double maximumScale)
+{
+    if (velocityData.scaleChangeRate) {
+        velocityData.horizontalVelocity = 0;
+        velocityData.verticalVelocity = 0;
+    }
+
+    if (exposedRectScale >= maximumScale || exposedRectScale <= minimumScale || scalesAreEssentiallyEqual(exposedRectScale, minimumScale) || scalesAreEssentiallyEqual(exposedRectScale, maximumScale))
+        velocityData.scaleChangeRate = 0;
+}
+
+std::optional<float> WebPage::scaleFromUIProcess(const VisibleContentRectUpdateInfo& visibleContentRectUpdateInfo) const
+{
+    auto transactionIDForLastScaleFromUIProcess = visibleContentRectUpdateInfo.lastLayerTreeTransactionID();
+    if (m_internals->lastTransactionIDWithScaleChange && m_internals->lastTransactionIDWithScaleChange->greaterThanSameProcess(transactionIDForLastScaleFromUIProcess))
+        return std::nullopt;
+
+    float scaleFromUIProcess = visibleContentRectUpdateInfo.scale();
+    float currentScale = m_page->pageScaleFactor();
+
+    double scaleNoiseThreshold = 0.005;
+    if (!m_isInStableState && std::abs(scaleFromUIProcess - currentScale) < scaleNoiseThreshold) {
+        // Tiny changes of scale during interactive zoom cause content to jump by one pixel, creating
+        // visual noise. We filter those useless updates.
+        scaleFromUIProcess = currentScale;
+    }
+
+    scaleFromUIProcess = std::min<float>(maximumPageScaleFactorForUIProcessScale(), std::max<float>(minimumPageScaleFactorForUIProcessScale(), scaleFromUIProcess));
+    if (scalesAreEssentiallyEqual(currentScale, scaleFromUIProcess)) {
+        // The epsilon filter is what we want mid-gesture, but not at the hand-off, where dropping the final
+        // scale would leave the visual transform and the tile rasterization permanently disagreeing.
+#if PLATFORM(MAC)
+        bool mustReconcileForDelegatedScaling = m_isInStableState && m_page->delegatesScaling() && currentScale != scaleFromUIProcess;
+#else
+        bool mustReconcileForDelegatedScaling = false;
+#endif
+        if (!mustReconcileForDelegatedScaling)
+            return std::nullopt;
+    }
+
+    return scaleFromUIProcess;
+}
+
+static bool selectionIsInsideFixedPositionContainer(LocalFrame& frame)
+{
+    auto& selection = frame.selection().selection();
+    if (selection.isNone())
+        return false;
+
+    bool isInsideFixedPosition = false;
+    if (selection.isCaret()) {
+        protect(frame.selection())->absoluteCaretBounds(&isInsideFixedPosition);
+        return isInsideFixedPosition;
+    }
+
+    selection.visibleStart().absoluteCaretBounds(&isInsideFixedPosition);
+    if (isInsideFixedPosition)
+        return true;
+
+    selection.visibleEnd().absoluteCaretBounds(&isInsideFixedPosition);
+    return isInsideFixedPosition;
+}
+
+void WebPage::updateVisibleContentRects(const VisibleContentRectUpdateInfo& visibleContentRectUpdateInfo, MonotonicTime oldestTimestamp)
+{
+    LOG_WITH_STREAM(VisibleRects, stream << "\nWebPage " << m_identifier << " updateVisibleContentRects " << visibleContentRectUpdateInfo);
+
+    // Skip any VisibleContentRectUpdate that have been queued before DidCommitLoad suppresses the updates in the UIProcess.
+    if (m_mainFrame->firstLayerTreeTransactionIDAfterDidCommitLoad() && visibleContentRectUpdateInfo.lastLayerTreeTransactionID().lessThanSameProcess(*m_mainFrame->firstLayerTreeTransactionIDAfterDidCommitLoad()) && !visibleContentRectUpdateInfo.isFirstUpdateForNewViewSize())
+        return;
+
+    m_hasReceivedVisibleContentRectsAfterDidCommitLoad = true;
+    m_isInStableState = visibleContentRectUpdateInfo.inStableState();
+
+    auto scaleFromUIProcess = this->scaleFromUIProcess(visibleContentRectUpdateInfo);
+
+    // Skip progressively redrawing tiles if pinch-zooming while the system is under memory pressure.
+    if (scaleFromUIProcess && !m_isInStableState && MemoryPressureHandler::singleton().isUnderMemoryPressure())
+        return;
+
+    if (m_isInStableState)
+        m_hasStablePageScaleFactor = true;
+    else {
+        if (!m_oldestNonStableUpdateVisibleContentRectsTimestamp)
+            m_oldestNonStableUpdateVisibleContentRectsTimestamp = oldestTimestamp;
+    }
+
+    float scaleToUse = scaleFromUIProcess.value_or(m_page->pageScaleFactor());
+    FloatRect exposedContentRect = visibleContentRectUpdateInfo.exposedContentRect();
+    FloatRect adjustedExposedContentRect = adjustExposedRectForNewScale(exposedContentRect, visibleContentRectUpdateInfo.scale(), scaleToUse);
+    protect(m_drawingArea)->setExposedContentRect(adjustedExposedContentRect);
+    RefPtr localMainFrame = protect(m_page)->localMainFrame();
+    if (!localMainFrame)
+        return;
+    RefPtr frameView = *localMainFrame->view();
+
+    if (RefPtr scrollingCoordinator = this->scrollingCoordinator()) {
+        Ref remoteScrollingCoordinator = downcast<RemoteScrollingCoordinator>(*scrollingCoordinator);
+        if (auto mainFrameScrollingNodeID = frameView->scrollingNodeID()) {
+            if (visibleContentRectUpdateInfo.viewStability().contains(ViewStabilityFlag::ScrollViewRubberBanding))
+                remoteScrollingCoordinator->addNodeWithActiveRubberBanding(*mainFrameScrollingNodeID);
+            else
+                remoteScrollingCoordinator->removeNodeWithActiveRubberBanding(*mainFrameScrollingNodeID);
+        }
+    }
+
+    auto layoutViewportRect = visibleContentRectUpdateInfo.layoutViewportRect();
+    auto unobscuredContentRect = visibleContentRectUpdateInfo.unobscuredContentRect();
+    auto scrollPosition = roundedIntPoint(unobscuredContentRect.location());
+
+    // Computation of layoutViewportRect is done in LayoutUnits which loses some precision, so test with an epsilon.
+    // FIXME (302123): The loss of precision when converting floating point values to LayoutUnit does not, by itself, explain
+    // the differences between the `layoutViewportRect` and `unobscuredContentRect`'s locations. While scrolling on iOS,
+    // the absolute differences can sometimes exceed 3px, which is well over this fractional error threshold.
+    // For now, we maintain behavior shipped in iOS 26 by snapping to the unobscured content rect location as long as
+    // the difference is fairly small (~45 px).
+    static constexpr auto maxEpsilon = 45.0;
+    static constexpr auto epsilonRatio = 1.0 / (2 * kFixedPointDenominator);
+    auto unobscuredContentRectLocation = unobscuredContentRect.location();
+    auto epsilonX = std::min(maxEpsilon, epsilonRatio * std::abs(unobscuredContentRectLocation.x()));
+    auto epsilonY = std::min(maxEpsilon, epsilonRatio * std::abs(unobscuredContentRectLocation.y()));
+    auto layoutViewportRectLocation = layoutViewportRect.location();
+    if (std::abs(unobscuredContentRectLocation.x() - layoutViewportRectLocation.x()) <= epsilonX && std::abs(unobscuredContentRectLocation.y() - layoutViewportRectLocation.y()) <= epsilonY)
+        layoutViewportRect.setLocation(scrollPosition);
+
+    bool pageHasBeenScaledSinceLastLayerTreeCommitThatChangedPageScale = ([&] {
+        if (!m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage)
+            return false;
+
+        if (scalesAreEssentiallyEqual(scaleToUse, m_page->pageScaleFactor()))
+            return false;
+
+        auto [transactionIdBeforeScalingPage, scaleBeforeScalingPage] = *m_internals->lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
+        if (!scalesAreEssentiallyEqual(scaleBeforeScalingPage, scaleToUse))
+            return false;
+
+        return transactionIdBeforeScalingPage.greaterThanOrEqualSameProcess( visibleContentRectUpdateInfo.lastLayerTreeTransactionID());
+    })();
+
+    if (!pageHasBeenScaledSinceLastLayerTreeCommitThatChangedPageScale) {
+        bool shouldSetCorePageScale = [this, protectedThis = Ref { *this }] {
+#if ENABLE(PDF_PLUGIN)
+            RefPtr pluginView = mainFramePlugIn();
+            if (!pluginView)
+                return true;
+            return !pluginView->pluginHandlesPageScaleFactor();
+#else
+            UNUSED_PARAM(this);
+            return true;
+#endif
+        }();
+
+        auto setCorePageScaleFactor = [this, protectedThis = Ref { *this }](float scale, const auto& origin, bool inStableState) {
+            m_page->setPageScaleFactor(scale, origin, inStableState);
+#if ENABLE(PDF_PLUGIN)
+            if (RefPtr pluginView = mainFramePlugIn())
+                pluginView->mainFramePageScaleFactorDidChange();
+#endif
+        };
+
+        bool hasSetPageScale = false;
+        if (scaleFromUIProcess) {
+            m_scaleWasSetByUIProcess = true;
+            m_hasStablePageScaleFactor = m_isInStableState;
+
+            m_internals->dynamicSizeUpdateHistory.clear();
+
+            if (shouldSetCorePageScale)
+                setCorePageScaleFactor(scaleFromUIProcess.value(), scrollPosition, m_isInStableState);
+
+            hasSetPageScale = true;
+            send(Messages::WebPageProxy::DidSetPageScaleFactor(scaleFromUIProcess.value()));
+        }
+
+        if (!hasSetPageScale && m_isInStableState && shouldSetCorePageScale)
+            setCorePageScaleFactor(scaleToUse, scrollPosition, true);
+    }
+
+    if (scrollPosition != frameView->scrollPosition())
+        m_internals->dynamicSizeUpdateHistory.clear();
+
+#if ENABLE(META_VIEWPORT)
+    if (m_viewportConfiguration.setCanIgnoreScalingConstraints(visibleContentRectUpdateInfo.allowShrinkToFit()))
+        viewportConfigurationChanged();
+
+    double minimumEffectiveDeviceWidthWhenIgnoringScalingConstraints = ([&] {
+        RefPtr document = localMainFrame->document();
+        if (!document)
+            return 0;
+
+        if (!document->quirks().shouldLayOutAtMinimumWindowWidthWhenIgnoringScalingConstraints())
+            return 0;
+
+        // This value is chosen to be close to the minimum width of a Safari window on macOS.
+        return 500;
+    })();
+
+    if (m_viewportConfiguration.setMinimumEffectiveDeviceWidthWhenIgnoringScalingConstraints(minimumEffectiveDeviceWidthWhenIgnoringScalingConstraints))
+        viewportConfigurationChanged();
+#endif // ENABLE(META_VIEWPORT)
+
+    frameView->clearObscuredInsetsAdjustmentsIfNeeded();
+
+    // FIXME: unobscuredContentSize has two incompatible callers. Scroll limits want the zoomed size, while layout
+    // and scrollbars want the unzoomed view size. We pass the zoomed size to keep scrolling correct and fix up
+    // the callers that need the other one.
+    auto unobscuredContentSize = unobscuredContentRect.size();
+#if ENABLE(META_VIEWPORT)
+    if (m_viewportConfiguration.viewportArguments().interactiveWidgetValue == InteractiveWidgetValue::ResizesContent)
+        unobscuredContentSize = visibleContentRectUpdateInfo.unobscuredContentRectRespectingInputViewBounds().size();
+#endif
+    frameView->setUnobscuredContentSize(unobscuredContentSize);
+    Ref page = *m_page;
+    page->setContentInsets(visibleContentRectUpdateInfo.contentInsets());
+    page->setUnobscuredSafeAreaInsets(visibleContentRectUpdateInfo.unobscuredSafeAreaInsets());
+#if PLATFORM(IOS_FAMILY)
+    // Page::obscuredInsets() is the iOS counterpart of obscuredContentInsets, which macOS sets from
+    // WebPage::setObscuredContentInsets(). Setting both would give the layout viewport two sources.
+    page->setObscuredInsets(visibleContentRectUpdateInfo.obscuredInsets());
+    page->setEnclosedInScrollableAncestorView(visibleContentRectUpdateInfo.enclosedInScrollableAncestorView());
+#endif
+
+    VelocityData scrollVelocity = visibleContentRectUpdateInfo.scrollVelocity();
+    adjustVelocityDataForBoundedScale(scrollVelocity, visibleContentRectUpdateInfo.scale(), minimumPageScaleFactorForUIProcessScale(), maximumPageScaleFactorForUIProcessScale());
+#if PLATFORM(IOS_FAMILY)
+    frameView->setScrollVelocity(scrollVelocity);
+#else
+    // FIXME: macOS should give the tiled backing scroll and zoom velocity too, so tile coverage can get ahead of
+    // the gesture. The UI process sends zero velocity for unified zoom today.
+    UNUSED_VARIABLE(scrollVelocity);
+#endif
+
+    // The visual viewport override is how the zoomed rect from the tree gets to WebCore. Without it the web
+    // process computes its own from an unscaled view size.
+    bool visualViewportChanged = unobscuredContentRect != visibleContentRectUpdateInfo.unobscuredContentRectRespectingInputViewBounds();
+#if PLATFORM(MAC)
+    // Page::delegatesScaling() is true on iOS too, but there the override has to come from
+    // unobscuredContentRectRespectingInputViewBounds() so the keyboard is accounted for.
+    if (m_page->delegatesScaling()) {
+        // Use the scale this update carries; pageScaleFactor() may not have it yet, and a stale value leaves the
+        // override installed at the wrong size.
+        if (scalesAreEssentiallyEqual(scaleToUse, 1))
+            frameView->setVisualViewportOverrideRect(std::nullopt);
+        else
+            frameView->setVisualViewportOverrideRect(LayoutRect(unobscuredContentRect));
+        visualViewportChanged = true;
+    } else
+#endif
+    if (visualViewportChanged)
+        frameView->setVisualViewportOverrideRect(LayoutRect(visibleContentRectUpdateInfo.unobscuredContentRectRespectingInputViewBounds()));
+    else if (m_isInStableState) {
+        frameView->setVisualViewportOverrideRect(std::nullopt);
+        visualViewportChanged = true;
+    }
+
+    bool isChangingObscuredInsetsInteractively = visibleContentRectUpdateInfo.viewStability().contains(ViewStabilityFlag::ChangingObscuredInsetsInteractively);
+    bool shouldPerformLayout = m_isInStableState && !isChangingObscuredInsetsInteractively;
+
+    LOG_WITH_STREAM(VisibleRects, stream << "WebPage::updateVisibleContentRects - setLayoutViewportOverrideRect " << layoutViewportRect);
+
+#if PLATFORM(MAC)
+    // Clear the override at unity instead of refreshing it. The UI process stops sending layout viewport updates
+    // there, so one left behind would stay stuck where the un-zoom ended and cull content away as the page scrolls.
+    if (m_page->delegatesScaling() && scalesAreEssentiallyEqual(visibleContentRectUpdateInfo.scale(), 1))
+        frameView->setLayoutViewportOverrideRect(std::nullopt, shouldPerformLayout ? LocalFrameView::TriggerLayoutOrNot::Yes : LocalFrameView::TriggerLayoutOrNot::No);
+    else
+#endif
+    frameView->setLayoutViewportOverrideRect(LayoutRect(layoutViewportRect), shouldPerformLayout ? LocalFrameView::TriggerLayoutOrNot::Yes : LocalFrameView::TriggerLayoutOrNot::No);
+
+    if (m_isInStableState) {
+        if (selectionIsInsideFixedPositionContainer(*localMainFrame)) {
+            // Ensure that the next layer tree commit contains up-to-date caret/selection rects.
+            frameView->frame().selection().setCaretRectNeedsUpdate();
+            scheduleFullEditorStateUpdate();
+        }
+    }
+
+    if (visualViewportChanged)
+        frameView->layoutOrVisualViewportChanged();
+
+    // Size this from the scroll-view rect, which is in view coordinates and doesn't change as we zoom. Otherwise
+    // the page sees a resize on every frame of an interactive zoom, and can relayout mid-gesture.
+    if (!isChangingObscuredInsetsInteractively)
+        frameView->setCustomSizeForResizeEvent(expandedIntSize(visibleContentRectUpdateInfo.unobscuredRectInScrollViewCoordinates().size()));
+
+    if (RefPtr scrollingCoordinator = this->scrollingCoordinator()) {
+#if PLATFORM(MAC)
+        // The UI process owns the scroll position mid-gesture, so echoing it back starts a round trip whose reply
+        // lands a few frames later and clobbers the newer value in the tree. iOS does need these unstable
+        // updates, which is how momentum scrolling and rubber-banding get to the scrolling tree.
+        if (m_page->delegatesScaling() && !m_isInStableState)
+            return;
+#endif
+
+        auto viewportStability = ViewportRectStability::Stable;
+        auto layerAction = ScrollingLayerPositionAction::Sync;
+
+        if (isChangingObscuredInsetsInteractively) {
+            viewportStability = ViewportRectStability::ChangingObscuredInsetsInteractively;
+            layerAction = ScrollingLayerPositionAction::SetApproximate;
+        } else if (!m_isInStableState) {
+            viewportStability = ViewportRectStability::Unstable;
+            layerAction = ScrollingLayerPositionAction::SetApproximate;
+        }
+
+        auto mainFrameScrollingNodeID = frameView->scrollingNodeID();
+        if (!mainFrameScrollingNodeID) {
+            ASSERT_NOT_REACHED();
+            return;
+        }
+
+        auto scrollUpdate = ScrollUpdate {
+            .nodeID = *mainFrameScrollingNodeID,
+            .scrollPosition = scrollPosition,
+            .data = ScrollUpdateData {
+                .updateType = ScrollUpdateType::PositionUpdate,
+                .updateLayerPositionAction = layerAction,
+                .layoutViewportOriginOrOverrideRect = visibleContentRectUpdateInfo.layoutViewportRect()
+            }
+        };
+
+        // We don't actually know that these are user scrolls; we get here for all kinds of state changes.
+        scrollingCoordinator->applyScrollUpdate(WTF::move(scrollUpdate), ScrollType::User, viewportStability);
+
+        if (visibleContentRectUpdateInfo.needsScrollend() && frameView->scrollingNodeID()) {
+            auto scrollUpdate = ScrollUpdate {
+                .nodeID = *frameView->scrollingNodeID(),
+                .scrollPosition = { },
+                .data = ScrollUpdateData {
+                    .updateType = ScrollUpdateType::WheelEventScrollDidEnd,
+                }
+            };
+            scrollingCoordinator->applyScrollUpdate(WTF::move(scrollUpdate), ScrollType::User);
+        }
+    }
+}
+
+#endif // ENABLE(UI_SIDE_COMPOSITING)
 
 } // namespace WebKit
 

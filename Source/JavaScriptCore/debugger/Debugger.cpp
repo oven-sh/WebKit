@@ -602,13 +602,13 @@ static std::pair<int, int> inspectorPositionForOffset(SourceProvider& provider, 
     return { static_cast<int>(lineColumn.line), static_cast<int>(lineColumn.column) };
 }
 
-void Debugger::forEachBreakpointLocation(SourceID sourceID, SourceProvider* sourceProvider, int startLine, int startColumn, int endLine, int endColumn, Function<void(int, int)>&& callback)
+void Debugger::forEachBreakpointLocation(SourceID sourceID, SourceProvider* sourceProvider, int startLine, int startColumn, int endLine, int endColumn, NOESCAPE const Function<void(int, int)>& callback)
 {
     auto start = offsetForInspectorPosition(*sourceProvider, startLine, startColumn);
     auto end = offsetForInspectorPosition(*sourceProvider, endLine, endColumn);
 
     auto& parseData = debuggerParseData(sourceID, sourceProvider);
-    parseData.pausePositions.forEachBreakpointLocation(start, end, *sourceProvider, [&, callback = WTF::move(callback)] (JSTextPosition resolvedPosition) {
+    parseData.pausePositions.forEachBreakpointLocation(start, end, *sourceProvider, [&] (JSTextPosition resolvedPosition) {
         auto [line, column] = inspectorPositionForOffset(*sourceProvider, resolvedPosition);
         callback(line, column);
     });
@@ -917,7 +917,7 @@ bool Debugger::cancelPauseForSpecialBreakpoint(Breakpoint& breakpoint)
 
 void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
 {
-    if (m_isPaused)
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
     if (!m_vm.topCallFrame)
@@ -1031,6 +1031,9 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         return;
 
     if (m_suppressAllPauses)
+        return;
+
+    if (isPauseBlockedByAnotherDebugger())
         return;
 
     SourceID sourceID = DebuggerCallFrame::sourceIDForCallFrame(m_currentCallFrame);
@@ -1480,7 +1483,7 @@ void Debugger::resetAsyncPauseState()
 
 void Debugger::didReachDebuggerStatement(CallFrame* callFrame)
 {
-    if (m_isPaused)
+    if (m_isPaused || isPauseBlockedByAnotherDebugger())
         return;
 
     if (!m_pauseOnDebuggerStatementsBreakpoint)

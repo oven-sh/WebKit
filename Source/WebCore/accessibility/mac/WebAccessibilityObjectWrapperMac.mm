@@ -92,6 +92,7 @@
 #import <wtf/cocoa/VectorCocoa.h>
 #import <wtf/text/MakeString.h>
 #import <wtf/text/WTFString.h>
+#import <wtf/unicode/CharacterNames.h>
 
 #if ENABLE(MODEL_ELEMENT_ACCESSIBILITY)
 #import "ModelPlayerAccessibilityChildren.h"
@@ -213,7 +214,7 @@ static inline NSInteger gmtToLocalTimeOffset(DateComponentsType type)
             return nil;
 
         RefPtr widget = backingObject->widgetForAttachmentView();
-        return widget ? NSAccessibilityUnignoredDescendant(widget->platformWidget()) : nil;
+        return widget ? NSAccessibilityUnignoredDescendant(protect(widget->platformWidget())) : nil;
     }, Accessibility::PluginTimeout);
 
     return result.value ? (*result.value).autorelease() : nil;
@@ -656,6 +657,10 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         // Tree items normally do not support value, but should if they are checkable.
         [additional addObject:NSAccessibilityValueAttribute];
     }
+
+    // Menu items that are controls get controlAttrs instead of menuItemAttrs, so add the menu item mark they would otherwise lose.
+    if (backingObject->isMenuItem() && backingObject->isControl())
+        [additional addObject:(NSString *)kAXMenuItemMarkCharAttribute];
 
     return additional;
 }
@@ -1525,7 +1530,7 @@ static id handlePopupValueAttribute(WebAccessibilityObjectWrapper*, AXCoreObject
 
 static id handleInvalidAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    return backingObject.invalidStatus().createNSString().autorelease();
+    return backingObject.invalidStatusIncludingInferred().createNSString().autorelease();
 }
 
 static id handleHasPopupAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
@@ -1740,8 +1745,13 @@ static id handleDateTimeComponentsAttribute(WebAccessibilityObjectWrapper*, AXCo
 
 static id handleMenuItemMarkCharAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    const unichar ch = 0x2713;
-    return (backingObject.isChecked()) ? [NSString stringWithCharacters:&ch length:1] : nil;
+    if (backingObject.isChecked())
+        return String(span(checkMarkCharacter)).createNSString().autorelease();
+
+    // AppKit marks the selected item of a pop-up button's menu with a checkmark. Do the same for the selected
+    // option of a base-appearance select (exposed as a menu item), but only with the checkmark the page shows.
+    String checkmark = backingObject.selectedOptionCheckmark();
+    return checkmark.isEmpty() ? nil : checkmark.createNSString().autorelease();
 }
 
 static id handleMinValueAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
@@ -2249,7 +2259,7 @@ static id handleBrailleRoleDescriptionAttribute(WebAccessibilityObjectWrapper*, 
 
 static id handleErrorMessageElementsAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject)
 {
-    if (backingObject.invalidStatus() == "false"_s)
+    if (backingObject.invalidStatusIncludingInferred() == "false"_s)
         return nil;
     return makeNSArray(backingObject.errorMessageObjects());
 }
@@ -3652,6 +3662,17 @@ struct ParameterizedAttributeHandlerEntry {
 static id handleUIElementsForSearchPredicateAttribute(WebAccessibilityObjectWrapper*, AXCoreObject& backingObject, const ParameterizedAttributeContext& context)
 {
     auto criteria = accessibilitySearchCriteriaForSearchPredicate(backingObject, context.dictionary);
+
+    // * Important site-isolation workaround for older OS versions *
+    //
+    // Due to a bug in AppKit in older OS versions, a client can't pass an element in another process
+    // as the start element, so VoiceOver passes its nearest ancestor in this process instead. For an element
+    // inside an out-of-process frame, that's the frame's host. If the host is also the element being
+    // searched, the frame is its only content, and returning it would return the element the client
+    // started from, leaving it stuck there. Return nothing so the client moves on to the host's container.
+    if (criteria.startObject == &backingObject && backingObject.hasRemoteFrameChild())
+        return @[];
+
     RetainPtr<NSArray> widgetChildren;
     if (isMatchingPlugin(backingObject, criteria)) {
         if (RetainPtr renderChildren = renderWidgetChildren(backingObject)) {
@@ -3839,7 +3860,7 @@ static id handleRangesForSearchPredicateAttribute(WebAccessibilityObjectWrapper*
 
         RetainPtr result = adoptNS([[NSMutableDictionary alloc] initWithObjectsAndKeys:
             protect(object->wrapper()).get(), NSAccessibilitySearchResultElementKey,
-            textMarkerRange->platformData().bridgingAutorelease(), NSAccessibilitySearchResultRangeKey,
+            (__bridge id)textMarkerRange->platformData().get(), NSAccessibilitySearchResultRangeKey,
             nil]);
         return [[[NSArray alloc] initWithObjects:result.get(), nil] autorelease];
     }
@@ -4538,7 +4559,7 @@ ALLOW_DEPRECATED_DECLARATIONS_BEGIN
         // Tree items object returns a different set of children than those that are in children()
         // because an AXOutline (the mac role is becomes) has some odd stipulations.
         if (backingObject->isTree() || backingObject->isTreeItem() || backingObject->isRemoteFrame())
-            return children(*backingObject).count;
+            return [protect(children(*backingObject)) count];
 
         // FIXME: this is duplicating the logic in children(AXCoreObject&) so it should be reworked.
         size_t childrenSize = backingObject->crossFrameUnignoredChildrenCount();
@@ -4634,7 +4655,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
     for (auto& actionData : actionsData) {
         auto treeID = actionData.treeID;
         auto targetID = actionData.targetID;
-        auto action = adoptNS([[NSAccessibilityCustomAction alloc] initWithName:actionData.name.createNSString().autorelease() handler:^BOOL {
+        RetainPtr action = adoptNS([[NSAccessibilityCustomAction alloc] initWithName:actionData.name.createNSString() handler:^BOOL {
             return Accessibility::performCustomActionPress(treeID, targetID);
         }]);
         [actions addObject:action.get()];

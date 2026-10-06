@@ -618,6 +618,8 @@ const ArrayStorageShape        = constexpr ArrayStorageShape
 const SlowPutArrayStorageShape = constexpr SlowPutArrayStorageShape
 const CopyOnWrite              = constexpr CopyOnWrite
 const ArrayWithUndecided       = constexpr ArrayWithUndecided
+const ArrayWithInt32           = constexpr ArrayWithInt32
+const ArrayWithContiguous      = constexpr ArrayWithContiguous
 
 # Type constants.
 const StructureType = constexpr StructureType
@@ -1306,33 +1308,29 @@ macro arrayProfile(offset, cell, metadata, scratch)
     storei scratch, offset + ArrayProfile::m_lastSeenStructureID[metadata]
 end
 
-# Note that index is already sign-extended to be a register width.
-macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, slowPath)
-    # First lets check if we even have a typed array. This lets us do some boilerplate up front.
+# Index must already be sign-extended to register width. On success, t2 holds the array type minus
+# FirstTypedArrayType, vector holds the caged data pointer, and base is clobbered.
+macro loadTypedArrayVector(base, index, typeLimit, setLargeTypedArray, vector, slowPath)
     loadb JSCell::m_type[base], t2
     subi FirstTypedArrayType, t2
-    biaeq t2, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, slowPath
-    
-    # Sweet, now we know that we have a typed array. Do some basic things now.
+    biaeq t2, typeLimit, slowPath
 
     btbnz JSArrayBufferView::m_mode[base], (constexpr isResizableOrGrowableSharedMode), slowPath
     if LARGE_TYPED_ARRAYS
         bqaeq index, JSArrayBufferView::m_length[base], slowPath
         bqbeq index, SmallTypedArrayMaxLength, .smallTypedArray
-        setLargeTypedArray(t3)
+        setLargeTypedArray(vector)
 .smallTypedArray:
     else
         biaeq index, JSArrayBufferView::m_length[base], slowPath
     end
 
-    loadp JSArrayBufferView::m_vector[base], t3
-    # length and scratch are intentionally undefined on this branch because they are not used on other platforms.
-    if ARM64E
-        const length = t6
-        const scratch = t7
-        loadq JSArrayBufferView::m_length[base], length
-    end
-    cagedPrimitive(t3, length, base, scratch)
+    loadp JSArrayBufferView::m_vector[base], vector
+    cagedPrimitive(vector, base)
+end
+
+macro getByValTypedArray(base, index, finishIntGetByVal, finishDoubleGetByVal, setLargeTypedArray, slowPath)
+    loadTypedArrayVector(base, index, NumberOfTypedArrayTypesExcludingBigIntArraysAndDataView, setLargeTypedArray, t3, slowPath)
 
     # Now bisect through the various types:
     #    Int8ArrayType,
@@ -1421,7 +1419,6 @@ macro skipIfIsRememberedOrInEden(cell, slowPath)
 .done:
 end
 
-# setData is the address of an InlineWatchpointSet's m_data.
 macro branchIfInlineWatchpointSetIsStillValid(setData, scratch, stillValid)
     loadp setData, scratch
     bpeq scratch, InlineWatchpointSetThinInvalidated, .invalidated

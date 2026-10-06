@@ -85,6 +85,7 @@
 #include "JSMicrotask.h"
 #include "JSMicrotaskDispatcher.h"
 #include "JSModuleLoaderInlines.h"
+#include "JSONCacheInlines.h"
 #include "JSPromise.h"
 #include "JSPromiseCombinatorsContextInlines.h"
 #include "JSPromiseCombinatorsGlobalContext.h"
@@ -279,6 +280,7 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
 #endif
     , m_regExpCache(makeUnique<RegExpCache>())
     , m_compactVariableMap(adoptRef(*new CompactTDZEnvironmentMap))
+    , m_jsonCache(makeUniqueRef<JSONCache>())
     , m_syncResumeCallCache(makeUniqueRef<MicrotaskCallCache>())
     , m_codeCache(makeUnique<CodeCache>())
     , m_intlCache(makeUnique<IntlCache>())
@@ -427,13 +429,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         m_fastArrayValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastArrayKeysSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastArrayEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
-        m_fastArrayUnboxedSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
+        m_fastArraySentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapKeysSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastMapEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastSetValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastSetEntriesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
-        m_fastStringValuesSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
+        m_fastStringSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
         m_fastAsyncGeneratorSentinel.setWithoutWriteBarrier(JSSentinel::create(*this, sentinelStructure));
     }
 
@@ -497,7 +499,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             int token;
             notify_register_dispatch(key, &token, mainDispatchQueueSingleton(), ^(int) {
                 dataLogLn("<BYTECODE.STAT><", pid, "> Dumping");
-                if (!m_perBytecodeProfiler->save(pathOutString->legacyCStringPointer()))
+                if (!m_perBytecodeProfiler->save(pathOutString.get()))
                     dataLogLn("<BYTECODE.STAT><", pid, "> Failed to dump to ", pathOutString.get(), ". Do you need to add a sandbox extension? ((allow file-write* (subpath \"/private/tmp/\")) in WebProcess.sb.in");
                 else
                     dataLogLn("<BYTECODE.STAT><", pid, "> Dumped to ", pathOutString.get());
@@ -507,7 +509,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
         if (Options::dumpProfilerDataAtExit()) [[unlikely]]
-            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString->legacyCStringPointer());
+            m_perBytecodeProfiler->registerToSaveAtExit(pathOutString.get());
     }
 
     // Initialize this last, as a free way of asserting that VM initialization itself
@@ -679,7 +681,7 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
-    heap.lastChanceToFinalize();
+    heap.shutDown();
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();
@@ -1590,7 +1592,7 @@ void VM::addImpureProperty(UniquedStringImpl* propertyName)
 }
 
 template<typename Func>
-static bool enableProfilerWithRespectToCount(unsigned& counter, const Func& doEnableWork)
+static bool enableProfilerWithRespectToCount(unsigned& counter, NOESCAPE const Func& doEnableWork)
 {
     bool needsToRecompile = false;
     if (!counter) {
@@ -1603,7 +1605,7 @@ static bool enableProfilerWithRespectToCount(unsigned& counter, const Func& doEn
 }
 
 template<typename Func>
-static bool disableProfilerWithRespectToCount(unsigned& counter, const Func& doDisableWork)
+static bool disableProfilerWithRespectToCount(unsigned& counter, NOESCAPE const Func& doDisableWork)
 {
     RELEASE_ASSERT(counter > 0);
     bool needsToRecompile = false;
@@ -2147,6 +2149,7 @@ void VM::beginMarking()
 void VM::reconcileWeakReferencesAtGCEnd()
 {
     m_syncResumeCallCache->reconcileWeakReferencesAtGCEnd(*this);
+    m_jsonCache->reconcileTransitionsAtGCEnd();
 }
 
 void VM::clearMicrotaskCallCaches()
@@ -2175,6 +2178,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     }
 #endif
     numericStrings.visitAggregate(visitor);
+    m_jsonCache->visitAggregate(visitor);
     m_builtinExecutables->visitAggregate(visitor);
     m_regExpCache->visitAggregate(visitor);
 
@@ -2243,13 +2247,13 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(m_fastArrayValuesSentinel);
     visitor.append(m_fastArrayKeysSentinel);
     visitor.append(m_fastArrayEntriesSentinel);
-    visitor.append(m_fastArrayUnboxedSentinel);
+    visitor.append(m_fastArraySentinel);
     visitor.append(m_fastMapKeysSentinel);
     visitor.append(m_fastMapValuesSentinel);
     visitor.append(m_fastMapEntriesSentinel);
     visitor.append(m_fastSetValuesSentinel);
     visitor.append(m_fastSetEntriesSentinel);
-    visitor.append(m_fastStringValuesSentinel);
+    visitor.append(m_fastStringSentinel);
     visitor.append(m_fastAsyncGeneratorSentinel);
     visitor.append(m_cachedSortScratch);
     visitor.append(m_sortScratchSentinel);

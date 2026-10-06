@@ -27,8 +27,9 @@
 #include "FileMonitor.h"
 
 #include <wtf/FileSystem.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GUniquePtr.h>
-#include <wtf/text/CStringView.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WebCore {
 
@@ -40,13 +41,13 @@ FileMonitor::FileMonitor(const String& path, Ref<WorkQueue>&& handlerQueue, Func
         return;
 
     Function<void ()> createPlatformMonitor = [&] {
-        GRefPtr file = adoptGRef(g_file_new_for_path(FileSystem::fileSystemRepresentation(path).legacyCStringPointer()));
+        GRefPtr file = gFileNewForPath(FileSystem::fileSystemRepresentation(path));
         GUniqueOutPtr<GError> error;
         m_platformMonitor = adoptGRef(g_file_monitor(file.get(), G_FILE_MONITOR_NONE, nullptr, &error.outPtr()));
         if (m_platformMonitor)
             g_signal_connect(m_platformMonitor.get(), "changed", G_CALLBACK(fileChangedCallback), this);
         else
-            SAFE_WTFLOGALWAYS("Failed to create a monitor for path %s: %s", path.utf8(), CStringView::unsafeFromUTF8(error->message));
+            SAFE_WTFLOGALWAYS("Failed to create a monitor for path %s: %s", path.utf8(), UTF8CStringView::unsafeFromUTF8(error->message));
     };
 
     // The monitor can be created in the work queue thread.

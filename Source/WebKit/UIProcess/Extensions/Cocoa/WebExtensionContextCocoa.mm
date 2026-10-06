@@ -127,7 +127,7 @@ static NSString * const sessionStorageAllowedInContentScriptsKey = @"SessionStor
 static NSString * const storageAccessLevelsKey = @"StorageAccessLevels";
 
 // Update this value when any changes are made to the WebExtensionEventListenerType enum.
-static constexpr NSInteger currentBackgroundContentListenerStateVersion = 4;
+static constexpr NSInteger currentBackgroundContentListenerStateVersion = 5;
 
 // Update this value when any changes are made to the rule translation logic in _WKWebExtensionDeclarativeNetRequestRule.
 static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 7;
@@ -198,6 +198,15 @@ static constexpr NSInteger currentDeclarativeNetRequestRuleTranslatorVersion = 7
     extensionContext->webViewWebContentProcessDidTerminate(webView);
 }
 
+- (void)webViewDidClose:(WKWebView *)webView
+{
+    RefPtr extensionContext = _webExtensionContext.get();
+    if (!extensionContext)
+        return;
+
+    extensionContext->webViewDidClose(webView);
+}
+
 #if PLATFORM(MAC)
 - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *URLs))completionHandler
 {
@@ -222,8 +231,8 @@ WebExtensionContext::WebExtensionContext(Ref<WebExtension>&& extension)
 {
     m_extension = extension.ptr();
     m_baseURL = URL { makeString("webkit-extension://"_s, uniqueIdentifier(), '/') };
-    m_delegate = [[_WKWebExtensionContextDelegate alloc] initWithWebExtensionContext:*this];
-    m_tabDelegateToIdentifierMap = [NSMapTable weakToStrongObjectsMapTable];
+    lazyInitialize(m_delegate, adoptNS([[_WKWebExtensionContextDelegate alloc] initWithWebExtensionContext:*this]));
+    lazyInitialize(m_tabDelegateToIdentifierMap, retainPtr([NSMapTable weakToStrongObjectsMapTable]));
 }
 
 void WebExtensionContext::recordError(Ref<API::Error> error)
@@ -2270,7 +2279,10 @@ void WebExtensionContext::addItemsToContextMenu(WebPageProxy& page, const Contex
         return;
 
     auto& frameInfo = hitTestData.frameInfo.value();
-    contextParameters.frameIdentifier = toWebExtensionFrameIdentifier(frameInfo);
+    RefPtr frame = WebFrameProxy::webFrame(frameInfo.frameID);
+    bool isMainFrame = frame && frame->isMainFrame();
+
+    contextParameters.frameIdentifier = isMainFrame ? WebExtensionFrameConstants::MainFrameIdentifier : toWebExtensionFrameIdentifier(std::optional(frameInfo.frameID));
     contextParameters.frameURL = frameInfo.request.url();
 
     RefPtr tab = getTab(page.identifier());
@@ -2279,7 +2291,7 @@ void WebExtensionContext::addItemsToContextMenu(WebPageProxy& page, const Contex
 
     // Don't show context menu items unless the extension has permission, or can be granted permission
     // with an activeTab user gesture if the user interacts with one of the menu items.
-    if (!hasPermission(frameInfo.request.url(), tab.get()) && (!tab || !frameInfo.isMainFrame || !hasPermission(WebExtensionPermission::activeTab())))
+    if (!hasPermission(frameInfo.request.url(), tab.get()) && (!tab || !isMainFrame || !hasPermission(WebExtensionPermission::activeTab())))
         return;
 
     if (!hitTestData.absoluteImageURL.isEmpty()) {
@@ -2327,7 +2339,7 @@ void WebExtensionContext::addItemsToContextMenu(WebPageProxy& page, const Contex
 
     // The Page and Frame contexts only apply if there are no other contexts.
     if (contextParameters.types.isEmpty())
-        contextParameters.types.add(frameInfo.isMainFrame ? WebExtensionMenuItemContextType::Page : WebExtensionMenuItemContextType::Frame);
+        contextParameters.types.add(isMainFrame ? WebExtensionMenuItemContextType::Page : WebExtensionMenuItemContextType::Frame);
 
     if (auto *menuItem = singleMenuItemOrExtensionItemWithSubmenu(contextParameters))
         [menu addItem:menuItem];
@@ -2537,7 +2549,7 @@ void WebExtensionContext::addExtensionTabPage(WebPageProxy& page, WebExtensionTa
     });
 }
 
-void WebExtensionContext::enumerateExtensionPages(NOESCAPE Function<void(WebPageProxy&, bool&)>&& action)
+void WebExtensionContext::enumerateExtensionPages(NOESCAPE const Function<void(WebPageProxy&, bool&)>& action)
 {
     if (!isLoaded())
         return;
@@ -3074,6 +3086,16 @@ void WebExtensionContext::webViewWebContentProcessDidTerminate(WKWebView *webVie
     ASSERT_NOT_REACHED();
 }
 
+void WebExtensionContext::webViewDidClose(WKWebView *webView)
+{
+#if ENABLE(WK_WEB_EXTENSIONS_OFFSCREEN)
+    if (isOffscreenWebView(webView)) {
+        unloadOffscreenWebView();
+        return;
+    }
+#endif
+}
+
 #if PLATFORM(MAC)
 void WebExtensionContext::runOpenPanel(WKWebView *, WKOpenPanelParameters *parameters, void (^completionHandler)(NSArray *URLs))
 {
@@ -3093,7 +3115,7 @@ void WebExtensionContext::runOpenPanel(WKWebView *, WKOpenPanelParameters *param
 #endif // PLATFORM(MAC)
 
 #if ENABLE(INSPECTOR_EXTENSIONS)
-WebExtensionContext::InspectorTabVector WebExtensionContext::openInspectors(Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>&& predicate) const
+WebExtensionContext::InspectorTabVector WebExtensionContext::openInspectors(NOESCAPE const Function<bool(WebExtensionTab&, WebInspectorUIProxy&)>& predicate) const
 {
     ASSERT(isLoaded());
 

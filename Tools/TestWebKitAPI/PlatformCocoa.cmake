@@ -9,30 +9,40 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
 )
 
-# Mirror Xcode's "Embed Testing.framework" phase
+# Mirror Xcode's "Embed Testing.framework" phase. ditto merges into whatever is already there;
+# use a stamp to record a rewrite in case of $_testing_platform_id change
 set(_testing_staged)
+set(_testing_stamp_dir "${CMAKE_BINARY_DIR}/DerivedSources/TestWebKitAPI")
+string(MD5 _testing_platform_id "${_platform_dir}")
 foreach (_fw Testing _Testing_AppKit _Testing_CoreGraphics _Testing_CoreImage
         _Testing_CoreTransferable _Testing_Foundation _Testing_UIKit)
     set(_src "${_platform_dir}/Developer/Library/Frameworks/${_fw}.framework")
     set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/${_fw}.framework")
+    set(_stamp "${_testing_stamp_dir}/staged-${_fw}-${_testing_platform_id}.stamp")
 
     if (EXISTS "${_src}")
-        add_custom_command(OUTPUT "${_dst}"
+        add_custom_command(OUTPUT "${_stamp}"
             COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+            COMMAND ${CMAKE_COMMAND} -E make_directory "${_testing_stamp_dir}"
+            COMMAND ${CMAKE_COMMAND} -E rm -rf "${_dst}"
             COMMAND ditto "${_src}" "${_dst}"
+            COMMAND ${CMAKE_COMMAND} -E touch "${_stamp}"
             COMMENT "Staging ${_fw}.framework"
             VERBATIM
         )
-        list(APPEND _testing_staged "${_dst}")
+        list(APPEND _testing_staged "${_stamp}")
     endif ()
 endforeach ()
-if (EXISTS "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib")
-    add_custom_command(OUTPUT "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib"
-        COMMAND ditto "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib"
-            "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib"
+set(_src "${_platform_dir}/Developer/usr/lib/lib_TestingInterop.dylib")
+set(_dst "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib")
+if (EXISTS "${_src}")
+    add_custom_command(OUTPUT "${_dst}"
+        DEPENDS "${_src}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${_src}" "${_dst}"
         VERBATIM
     )
-    list(APPEND _testing_staged "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/lib_TestingInterop.dylib")
+    list(APPEND _testing_staged "${_dst}")
 endif ()
 add_custom_target(TestWebKitAPIStageTesting DEPENDS ${_testing_staged})
 
@@ -124,6 +134,7 @@ list(APPEND TestWTF_SOURCES
     Tests/WTF/cf/VectorCF.cpp
 
     Tests/WTF/cocoa/BlockPtr.mm
+    Tests/WTF/cocoa/CStringCocoa.mm
     Tests/WTF/cocoa/ContextualizedNSString.mm
     Tests/WTF/cocoa/LoggerCocoa.mm
     Tests/WTF/cocoa/RetainPtr.mm
@@ -146,6 +157,7 @@ list(APPEND TestWTF_SOURCES
     Tests/WTF/darwin/TypeCastsOSObjectCF.cpp
     Tests/WTF/darwin/TypeCastsOSObjectCocoa.mm
     Tests/WTF/darwin/TypeCastsOSObjectCocoaARC.mm
+    Tests/WTF/darwin/WeakLinking.cpp
 )
 
 # The shared prefix header is precompiled without ARC, so these can't reuse it.
@@ -169,6 +181,11 @@ list(APPEND TestWTF_LIBRARIES
 # Tests/WTF/{cf,cocoa,darwin} include headers from Tests/WTF by name.
 list(APPEND TestWTF_PRIVATE_INCLUDE_DIRECTORIES
     ${TESTWEBKITAPI_DIR}/Tests/WTF
+)
+
+# Includes handwritten .tbd stubs needed by WeakLinking.cpp.
+list(APPEND TestWTF_LIBRARIES
+    -L${TESTWEBKITAPI_DIR}/Tests/WTF/darwin
 )
 
 # TestJavaScriptCore
@@ -239,6 +256,7 @@ list(APPEND TestWebKitLegacy_SOURCES
     Tests/WebKitLegacy/mac/CustomProtocolsInvalidScheme.mm
     Tests/WebKitLegacy/mac/CustomProtocolsTest.mm
     Tests/WebKitLegacy/mac/DeallocWebViewInEventListener.mm
+    Tests/WebKitLegacy/mac/DeallocWebViewProviders.mm
     Tests/WebKitLegacy/mac/DownloadThread.mm
     Tests/WebKitLegacy/mac/EarlyKVOCrash.mm
     Tests/WebKitLegacy/mac/EmbeddedPrintPagination.mm
@@ -260,17 +278,6 @@ set(TestWebKit_DERIVED_SOURCES_DIR "${CMAKE_BINARY_DIR}/DerivedSources/TestWebKi
 list(APPEND TestWebKit_UNIFIED_SOURCE_LIST_FILES
     "SourcesCocoa.txt"
     "SourcesMac.txt"
-)
-
-# Test files that reference ObjC classes from Swift-only helpers or private
-# frameworks unavailable in the CMake build
-set(TestWebKit_UNIFIED_SOURCE_EXCLUDES
-    "DrawingToPDF\\.mm"
-    "PDFSnapshot\\.mm"
-    "SOAuthorizationTests\\.mm"
-    "UnifiedPDFTests\\.mm"
-    "WKWebViewPrintFormatter\\.mm"
-    "WritingTools\\.mm"
 )
 
 # Files compiled outside unified sources (Xcode membershipExceptions).
@@ -383,9 +390,13 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WKPage/mac/DeferredViewInWindowStateChange.mm
     Tests/WebKit/WKPage/mac/WKThumbnailView.mm
 
+    Tests/WebKit/WKWebView/AdvancedPrivacyProtections.mm
+    Tests/WebKit/WKWebView/AllowInlinePlaybackInDesktopClassBrowsing.mm
     Tests/WebKit/WKWebView/AnimationControl.mm
+    Tests/WebKit/WKWebView/DictationStreamingOpacity.mm
     Tests/WebKit/WKWebView/FullscreenLifecycle.mm
     Tests/WebKit/WKWebView/GetUserMediaNavigation.mm
+    Tests/WebKit/WKWebView/GetUserMediaReprompt.mm
     Tests/WebKit/WKWebView/InjectedBundleHitTest.mm
     Tests/WebKit/WKWebView/InstanceMethodSwizzler.mm
     Tests/WebKit/WKWebView/MSEIsTypeSupportedCaching.mm
@@ -393,6 +404,7 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WKWebView/MediaStreamingActivitySuspended.mm
     Tests/WebKit/WKWebView/NoHistoryItemScrollToFragment.mm
     Tests/WebKit/WKWebView/NowPlayingMetadataObserver.mm
+    Tests/WebKit/WKWebView/NowPlayingSession.mm
     Tests/WebKit/WKWebView/OrthogonalFlowAvailableSize.mm
     Tests/WebKit/WKWebView/ParentalControlsContentFilteringTests.mm
     Tests/WebKit/WKWebView/SmartLists.mm
@@ -403,9 +415,12 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WKWebView/WKWebViewSpatialTrackingLabels.mm
     Tests/WebKit/WKWebView/WebRTC.mm
 
+    Tests/WebKit/WKWebView/ios/FullscreenTouchSecheuristicTests.cpp
+
     Tests/WebKit/WKWebView/mac/AttributedSubstringForProposedRange.mm
     Tests/WebKit/WKWebView/mac/GrammarMarkerPrecedence.mm
     Tests/WebKit/WKWebView/mac/NSRefreshControllerTests.mm
+    Tests/WebKit/WKWebView/mac/PasteboardFileTypeBlocklist.mm
     Tests/WebKit/WKWebView/mac/RunningBoardManagement.mm
     Tests/WebKit/WKWebView/mac/WordBoundaryTypingAttributes.mm
 
@@ -445,6 +460,7 @@ list(APPEND TestWebKit_PRIVATE_INCLUDE_DIRECTORIES
 )
 
 list(APPEND TestWebKit_LIBRARIES
+    "-framework AuthKit"
     "-framework AuthenticationServices"
     "-framework HID"
     "-framework LocalAuthentication"
@@ -456,6 +472,11 @@ list(APPEND TestWebKit_LIBRARIES
     WebCoreTestSupport
     WebKitLegacy
     ${CARBON_LIBRARY}
+)
+
+target_link_options(TestWebKit PRIVATE
+    "LINKER:-weak_framework,WritingTools"
+    "LINKER:-weak_framework,WritingToolsUI"
 )
 
 set_source_files_properties(
@@ -581,6 +602,23 @@ if (ENABLE_WEBGPU)
         ${CARBON_LIBRARY}
         "-framework Metal"
     )
+
+    # Resources used by MetalCompilationTests and TypeCheckingTests.
+    # FIXME: Globbing is hazardous for incremental builds, tracking a
+    # workaround in rdar://188725492.
+    file(GLOB TestWGSL_SHADERS "${TESTWEBKITAPI_DIR}/Tests/WGSL/shaders/*.wgsl")
+    add_custom_command(OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/copied-wgsl-shaders.stamp"
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${TESTWEBKITAPI_DIR}/Tests/WGSL/shaders"
+            "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}/shaders"
+        COMMAND ${CMAKE_COMMAND} -E touch "${CMAKE_CURRENT_BINARY_DIR}/copied-wgsl-shaders.stamp"
+        DEPENDS ${TestWGSL_SHADERS}
+        COMMENT "Copying WGSL test shaders")
+    set_property(DIRECTORY ${CMAKE_CURRENT_BINARY_DIR} PROPERTY
+        ADDITIONAL_CLEAN_FILES "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}/shaders")
+    add_custom_target(TestWGSLShaders
+        DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/copied-wgsl-shaders.stamp")
+    add_dependencies(TestWGSL TestWGSLShaders)
 endif ()
 
 # Common framework header directories needed by config.h (<wtf/Platform.h>, <WebKit/WebKit2_C.h>, etc.)
@@ -654,6 +692,7 @@ add_library(TestWebKitAPILibrary OBJECT
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/JavaScriptTypes.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/PDFTestHelpers.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/SafeBrowsingTestUtilities.swift
+    ${TESTWEBKITAPI_DIR}/Helpers/cocoa/SiteIsolationTestUtilities.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/StdLibExtras.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/SwiftUI+Extras.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/TestCocoaImageUtilities.swift
@@ -663,13 +702,18 @@ add_library(TestWebKitAPILibrary OBJECT
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WebPage+JavaScriptExpression.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WebPageConfiguration+Extras.swift
     ${TESTWEBKITAPI_DIR}/Helpers/cocoa/WKWebView+Extras.swift
+
+    ${TESTWEBKITAPI_DIR}/InjectedBundle/cocoa/WebProcessPlugIn/WebProcessPlugInWithInternals.mm
 )
 WEBKIT_TEST_SWIFT_HELPER_LIBRARY(TestWebKitAPILibrary TestWebKit)
 # The helpers import the WebKit framework built here for its @_spi declarations.
-# WebKit_StageSwiftModuleMac is deliberately kept out of WebKit_DEPENDENCIES, so
+# WebKit_StageSwiftModule is deliberately kept out of WebKit_DEPENDENCIES, so
 # without naming it the Swift importer can run before the swiftmodule is staged
 # and fall back to the SDK's copy, which does not have them.
-add_dependencies(TestWebKitAPILibrary WebKit WebKit_StageSwiftModuleMac)
+add_dependencies(TestWebKitAPILibrary WebKit WebKit_StageSwiftModule)
+# WebProcessPlugInWithInternals.mm includes <WebCoreTestSupport/WebCoreTestSupport.h>. An OBJECT
+# library doesn't inherit TestWebKit's link libraries, so it needs its own header dependency.
+target_link_libraries(TestWebKitAPILibrary PRIVATE WebKit::WebCoreTestSupport)
 target_include_directories(TestWebKitAPILibrary PRIVATE
     ${TestWebKit_PRIVATE_INCLUDE_DIRECTORIES}
 )
@@ -678,18 +722,45 @@ webkit_target_add_swift_options(TestWebKitAPILibrary
 )
 
 list(APPEND TestWebKit_SOURCES
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/AppKitGesturesTestsSupport.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/BasicAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/DoubleClickGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/EmbeddedAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/InactiveWindowAppKitGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/RefreshControlGesturesTests.swift"
+    "Tests/WebKit/WebPage/AppKit Gesture Tests/SiteIsolationAppKitGesturesTests.swift"
+
     Tests/WebKit/WKWebView/CodingTests.swift
+    Tests/WebKit/WKWebView/HTTP2Server.swift
+    Tests/WebKit/WKWebView/HTTP3Server.swift
     Tests/WebKit/WKWebView/TextExtractionTests.swift
     Tests/WebKit/WKWebView/TextFragments.swift
+    Tests/WebKit/WKWebView/TextManipulation.swift
     Tests/WebKit/WKWebView/TextPlaceholderTests.swift
     Tests/WebKit/WKWebView/TextSize.swift
     Tests/WebKit/WKWebView/TextWidth.swift
     Tests/WebKit/WKWebView/TimeZoneOverride.swift
+    Tests/WebKit/WKWebView/WKBackForwardListTests.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIAction.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIAlarms.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPICommands.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPICookies.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIDOM.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIDeclarativeNetRequest.swift
     Tests/WebKit/WKWebView/WKWebExtensionAPIEvent.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIExtension.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPINamespace.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIOffscreen.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIPermissions.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPITest.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIWebNavigation.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIWebRequest.swift
+    Tests/WebKit/WKWebView/WKWebExtensionAPIWindows.swift
+    Tests/WebKit/WKWebView/WKWebExtensionContext.swift
+    Tests/WebKit/WKWebView/WKWebExtensionController.swift
+    Tests/WebKit/WKWebView/WKWebExtensionControllerConfiguration.swift
+    Tests/WebKit/WKWebView/WKWebExtensionDataRecord.swift
+    Tests/WebKit/WKWebView/WKWebExtensionMatchPattern.swift
     Tests/WebKit/WKWebView/WKWebExtensionTab.swift
     Tests/WebKit/WKWebView/WKWebExtensionWindow.swift
     Tests/WebKit/WKWebView/WKWebViewSwiftOverlayTests.swift
@@ -704,10 +775,17 @@ list(APPEND TestWebKit_SOURCES
     Tests/WebKit/WebPage/SimulateClickOverTextTests.swift
     Tests/WebKit/WebPage/URLSchemeHandlerTests.swift
     Tests/WebKit/WebPage/UserContentControllerTests.swift
+    Tests/WebKit/WebPage/WebPageMouseEventsTests.swift
     Tests/WebKit/WebPage/WebPageNavigationTests.swift
+    Tests/WebKit/WebPage/WebPageScrollbarTests.swift
+    Tests/WebKit/WebPage/WebPageTests.swift
+    Tests/WebKit/WebPage/WebPageTransferableTests.swift
+    Tests/WebKit/WebPage/WebViewTests.swift
 )
 
-# FIXME: Support WebKitAdditions and tests which need the _WebKit_SwiftUI cross-import overlay linked.
+# Tests importing both WebKit and SwiftUI load the _WebKit_SwiftUI cross-import
+# overlay; ensure it builds first.
+list(APPEND TestWebKit_FRAMEWORKS _WebKit_SwiftUI)
 
 # TestWebKitAPIBase needs framework headers for config.h includes.
 target_include_directories(TestWebKitAPIBase PRIVATE ${_testapi_framework_headers})
@@ -789,7 +867,6 @@ add_library(TestWebKitAPIWebProcessPlugIn MODULE
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BasicProposedCredentialPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleCSSStyleDeclarationHandlePlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleEditingDelegatePlugIn.mm
-    ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleFormDelegatePlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleParametersPlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleRangeHandlePlugIn.mm
     ${TESTWEBKITAPI_DIR}/Tests/WebKit/WKWebView/BundleRetainPagePlugIn.mm
@@ -885,6 +962,8 @@ target_link_libraries(TestWebKitAPIWebProcessPlugIn PRIVATE
     "-framework Foundation"
 )
 
+_WEBKIT_ADD_DSYM(TestWebKitAPIWebProcessPlugIn)
+
 # TestWebKit loads this bundle via NSBundle lookup at runtime, so it must be
 # built and staged next to the TestWebKitAPI executable.
 add_dependencies(TestWebKit TestWebKitAPIWebProcessPlugIn)
@@ -898,8 +977,44 @@ add_dependencies(TestWebKit TestWebKitAPIWebProcessPlugIn)
 # URLForResource:withExtension:@"", which requires web-extension/, *.appex/,
 # and *.mlmodelc/ to retain their layout.
 set(_resources_bundle_dir "${TESTWEBKITAPI_RUNTIME_OUTPUT_DIRECTORY}/TestWebKitAPIResources.bundle")
-set(_resources_dst_files)
+if (WEBKIT_SDK_IS_MACOS)
+    set(_resources_info_plist "${_resources_bundle_dir}/Contents/Info.plist")
+    set(_resources_dir "${_resources_bundle_dir}/Contents/Resources")
+else ()
+    set(_resources_info_plist ${_resources_bundle_dir})
+    set(_resources_dir ${_resources_bundle_dir})
+endif ()
 
+file(CONFIGURE OUTPUT ${_resources_info_plist} CONTENT [[
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleIdentifier</key>
+    <string>com.apple.WebKit.TestWebKitAPIResources</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>TestWebKitAPIResources</string>
+    <key>CFBundlePackageType</key>
+    <string>BNDL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>@WEBKIT_PLATFORM_NAME@</string>
+    </array>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>@CMAKE_OSX_DEPLOYMENT_TARGET@</string>
+</dict>
+</plist>
+]] @ONLY)
+
+set(_resources_dst_files)
 function(_testwebkitapi_stage_resources source_root skip_pattern)
     file(GLOB_RECURSE _entries RELATIVE "${source_root}" "${source_root}/*")
     foreach (_rel IN LISTS _entries)
@@ -907,9 +1022,9 @@ function(_testwebkitapi_stage_resources source_root skip_pattern)
             continue ()
         endif ()
         set(_src "${source_root}/${_rel}")
-        set(_dst "${_resources_bundle_dir}/${_rel}")
+        set(_dst "${_resources_dir}/${_rel}")
         set(_walk "${_dst}")
-        while (NOT _walk STREQUAL "${_resources_bundle_dir}" AND NOT _walk STREQUAL "/")
+        while (NOT _walk STREQUAL "${_resources_dir}" AND NOT _walk STREQUAL "/")
             get_filename_component(_walk "${_walk}" DIRECTORY)
             if (IS_SYMLINK "${_walk}")
                 file(REMOVE "${_walk}")
@@ -1043,7 +1158,7 @@ set_target_properties(TestWebKit PROPERTIES
 
 set(_twkapi_bundle_id "org.webkit.TestWebKitAPI")
 
-if (WEBKIT_SDK_TARGET_OS STREQUAL "ios")
+if (USE_EXTENSIONKIT)
     add_dependencies(TestWebKit WebContentExtension NetworkingExtension)
     if (ENABLE_GPU_PROCESS)
         add_dependencies(TestWebKit GPUExtension)

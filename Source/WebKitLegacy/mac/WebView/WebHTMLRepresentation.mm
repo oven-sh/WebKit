@@ -79,13 +79,13 @@ using JSC::Yarr::RegularExpression;
 
 @interface WebHTMLRepresentationPrivate : NSObject {
 @public
-    WebDataSource *dataSource;
+    __weak WebDataSource *dataSource;
     
     BOOL hasSentResponseToPlugin;
     BOOL includedInWebKitStatistics;
 
     id <WebPluginManualLoader> manualLoader;
-    NSView *pluginView;
+    __weak NSView *pluginView;
 }
 @end
 
@@ -141,7 +141,8 @@ using JSC::Yarr::RegularExpression;
     if (_private && _private->includedInWebKitStatistics)
         --WebHTMLRepresentationCount;
 
-    [_private release];
+    // Retaining the member just to release it would be pointless.
+    SUPPRESS_UNRETAINED_ARG [_private release];
 
     [super dealloc];
 }
@@ -164,11 +165,13 @@ using JSC::Yarr::RegularExpression;
 
 - (BOOL)_isDisplayingWebArchive
 {
-    return [[_private->dataSource _responseMIMEType] _webkit_isCaseInsensitiveEqualToString:@"application/x-webarchive"];
+    return [[protect(_private->dataSource) _responseMIMEType] _webkit_isCaseInsensitiveEqualToString:@"application/x-webarchive"];
 }
 
 - (void)receivedData:(NSData *)data withDataSource:(WebDataSource *)dataSource
 {
+    RetainPtr pluginView = _private->pluginView;
+    RetainPtr manualLoader = _private->manualLoader;
     auto protectedSelf = retainPtr(self);
     WebFrame *webFrame = [dataSource webFrame];
     if (!webFrame)
@@ -184,18 +187,18 @@ using JSC::Yarr::RegularExpression;
 
     if (_private->pluginView) {
         if (!_private->hasSentResponseToPlugin) {
-            [_private->manualLoader pluginView:_private->pluginView receivedResponse:[dataSource response]];
+            [manualLoader pluginView:pluginView receivedResponse:[dataSource response]];
             _private->hasSentResponseToPlugin = YES;
         }
         
-        [_private->manualLoader pluginView:_private->pluginView receivedData:data];
+        [manualLoader pluginView:pluginView receivedData:data];
     }
 }
 
 - (void)receivedError:(NSError *)error withDataSource:(WebDataSource *)dataSource
 {
     if (_private->pluginView) {
-        [_private->manualLoader pluginView:_private->pluginView receivedError:error];
+        [protect(_private->manualLoader) pluginView:protect(_private->pluginView) receivedError:error];
     }
 }
 
@@ -204,7 +207,7 @@ using JSC::Yarr::RegularExpression;
     WebFrame* webFrame = [dataSource webFrame];
 
     if (_private->pluginView) {
-        [_private->manualLoader pluginViewFinishedLoading:_private->pluginView];
+        [protect(_private->manualLoader) pluginViewFinishedLoading:protect(_private->pluginView)];
         return;
     }
 
@@ -217,22 +220,23 @@ using JSC::Yarr::RegularExpression;
 
 - (BOOL)canProvideDocumentSource
 {
-    return [[_private->dataSource webFrame] _canProvideDocumentSource];
+    return [[protect(_private->dataSource) webFrame] _canProvideDocumentSource];
 }
 
 - (BOOL)canSaveAsWebArchive
 {
-    return [[_private->dataSource webFrame] _canSaveAsWebArchive];
+    return [[protect(_private->dataSource) webFrame] _canSaveAsWebArchive];
 }
 
 - (NSString *)documentSource
 {
+    RetainPtr dataSource = _private->dataSource;
     if ([self _isDisplayingWebArchive]) {            
-        RefPtr parsedArchiveData = [_private->dataSource _documentLoader]->parsedArchiveData();
+        RefPtr parsedArchiveData = [dataSource _documentLoader]->parsedArchiveData();
         return adoptNS([[NSString alloc] initWithData:parsedArchiveData ? parsedArchiveData->createNSData().get() : nil encoding:NSUTF8StringEncoding]).autorelease();
     }
 
-    RefPtr coreFrame = core([_private->dataSource webFrame]);
+    RefPtr coreFrame = core([dataSource webFrame]);
     if (!coreFrame)
         return nil;
     RefPtr document = coreFrame->document();
@@ -241,7 +245,7 @@ using JSC::Yarr::RegularExpression;
     RefPtr decoder = document->decoder();
     if (!decoder)
         return nil;
-    NSData *data = [_private->dataSource data];
+    NSData *data = [dataSource data];
     if (!data)
         return nil;
     return decoder->encoding().decode(span(data)).createNSString().autorelease();
@@ -249,12 +253,12 @@ using JSC::Yarr::RegularExpression;
 
 - (NSString *)title
 {
-    return nsStringNilIfEmpty([_private->dataSource _documentLoader]->title().string).autorelease();
+    return nsStringNilIfEmpty([protect(_private->dataSource) _documentLoader]->title().string).autorelease();
 }
 
 - (DOMDocument *)DOMDocument
 {
-    return [[_private->dataSource webFrame] DOMDocument];
+    return [[protect(_private->dataSource) webFrame] DOMDocument];
 }
 
 #if PLATFORM(MAC)
@@ -276,8 +280,7 @@ using JSC::Yarr::RegularExpression;
 
 static RefPtr<WebCore::HTMLFormElement> formElementFromDOMElement(DOMElement *element)
 {
-    RefPtr node = core(element);
-    return node && node->hasTagName(formTag) ? static_cast<WebCore::HTMLFormElement*>(node.get()) : nullptr;
+    return dynamicDowncast<WebCore::HTMLFormElement>(core(element));
 }
 
 - (DOMElement *)elementWithName:(NSString *)name inForm:(DOMElement *)form
@@ -325,7 +328,7 @@ static RefPtr<WebCore::HTMLInputElement> inputElementFromDOMElement(DOMElement* 
 
 - (DOMElement *)currentForm
 {
-    return kit(core([_private->dataSource webFrame])->selection().currentForm().get());
+    return kit(protect(core([protect(_private->dataSource) webFrame])->selection())->currentForm().get());
 }
 
 - (NSArray *)controlsInForm:(DOMElement *)form
@@ -444,7 +447,7 @@ static RetainPtr<NSString> searchForLabelsBeforeElement(WebCore::LocalFrame* fra
                 return result;
             }
             searchedCellAbove = true;
-        } else if (auto* renderText = dynamicDowncast<WebCore::RenderText>(n->renderer()); renderText && renderText->style().usedVisibility() == WebCore::Visibility::Visible) {
+        } else if (CheckedPtr renderText = dynamicDowncast<WebCore::RenderText>(n->renderer()); renderText && renderText->style().usedVisibility() == WebCore::Visibility::Visible) {
             // For each text chunk, run the regexp
             String nodeString = n->nodeValue();
             // add 100 for slop, to make it more likely that we'll search whole nodes
@@ -534,7 +537,7 @@ static RetainPtr<NSString> matchLabelsAgainstElement(NSArray *labels, WebCore::E
     size_t distance;
     bool isInCellAbove;
     
-    RetainPtr result = searchForLabelsBeforeElement(protect(core([_private->dataSource webFrame])), labels, protect(core(element)), &distance, &isInCellAbove);
+    RetainPtr result = searchForLabelsBeforeElement(protect(core([protect(_private->dataSource) webFrame])), labels, protect(core(element)), &distance, &isInCellAbove);
     
     if (outDistance) {
         if (distance == notFound)

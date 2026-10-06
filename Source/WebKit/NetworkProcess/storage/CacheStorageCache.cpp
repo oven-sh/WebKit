@@ -226,7 +226,7 @@ void CacheStorageCache::retrieveRecords(const Vector<CacheStorageRecordInformati
             }
 
             if (record.response.type == WebCore::ResourceResponse::Type::Opaque) {
-                if (WebCore::validateCrossOriginResourcePolicy(options.crossOriginEmbedderPolicy.value, options.sourceOrigin, record.request.url(), false, record.response.url, record.response.httpHeaderFields.get(WebCore::HTTPHeaderName::CrossOriginResourcePolicy), WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton()))
+                if (WebCore::validateCrossOriginResourcePolicy(options.crossOriginEmbedderPolicy.value, options.documentIsolationPolicy, options.sourceOrigin, record.request.url(), false, record.response.url, record.response.httpHeaderFields.get(WebCore::HTTPHeaderName::CrossOriginResourcePolicy), WebCore::ForNavigation::No, WebCore::EmptyOriginAccessPatterns::singleton()))
                     return callback(makeUnexpected(Error::CORP));
             }
 

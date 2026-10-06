@@ -70,7 +70,10 @@ NS_SWIFT_UI_ACTOR
 - (void)positionInformationDidChange:(const WebKit::InteractionInformationAtPosition&)info;
 - (void)didCommitLoadForMainFrame;
 - (void)didEndSyntheticMomentumScrolling;
+- (void)transformGestureWasNotHandledByContent;
 - (void)reset;
+
+@property (nonatomic, readonly) BOOL everMagnifiedDuringCurrentGesture;
 
 #if ENABLE(TWO_PHASE_CLICKS)
 
@@ -104,6 +107,7 @@ NS_SWIFT_UI_ACTOR
 - (void)setUpPanGestureRecognizer;
 - (void)setUpDOMDoubleClickGestureRecognizer;
 - (void)resetDOMDoubleClickGestureRecognizer;
+- (BOOL)takeCompletedDOMDoubleClick;
 - (WKDeferringGestureRecognizer *)makeImageAnalysisDeferringGestureRecognizerWithName:(NSString *)name;
 
 - (NSPoint)panVelocityInView:(nullable NSView *)view;

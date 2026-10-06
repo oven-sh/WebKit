@@ -40,6 +40,7 @@
 #include "RasterLayoutShape.h"
 #include "RectangleLayoutShape.h"
 #include "StyleBasicShape.h"
+#include "StyleImage.h"
 #include "StylePrimitiveNumericTypes+Evaluation.h"
 
 namespace WebCore {
@@ -195,7 +196,22 @@ Ref<const LayoutShape> LayoutShape::createShape(const Style::BasicShape& basicSh
     return shape;
 }
 
-Ref<const LayoutShape> LayoutShape::createRasterShape(Image* image, float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode writingMode, float logicalMargin)
+Ref<const LayoutShape> LayoutShape::createRasterShape(Image* image, float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode writingMode, float logicalMargin, ConcreteObjectSize concreteObjectSize, FloatSize sourceSize)
+{
+    return createRasterShapeImpl(threshold, logicalImageRect, logicalMarginRect, writingMode, logicalMargin, [&](auto& context, const auto& physicalImageSize) {
+        if (image)
+            context.drawImage(*image, concreteObjectSize, IntRect({ }, physicalImageSize), FloatRect { { }, sourceSize });
+    });
+}
+
+Ref<const LayoutShape> LayoutShape::createRasterShape(const Style::Image& styleImage, const RenderElement& renderer, float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode writingMode, float logicalMargin, ConcreteObjectSize concreteObjectSize)
+{
+    return createRasterShapeImpl(threshold, logicalImageRect, logicalMarginRect, writingMode, logicalMargin, [&](auto& context, auto& physicalImageSize) {
+        styleImage.draw(context, renderer, concreteObjectSize, FloatRect { { }, physicalImageSize }, FloatRect { { }, concreteObjectSize.size() });
+    });
+}
+
+Ref<const LayoutShape> LayoutShape::createRasterShapeImpl(float threshold, const LayoutRect& logicalImageRect, const LayoutRect& logicalMarginRect, WritingMode writingMode, float logicalMargin, NOESCAPE auto&& rasterize)
 {
     ASSERT(logicalMarginRect.height() >= 0);
 
@@ -216,9 +232,7 @@ Ref<const LayoutShape> LayoutShape::createRasterShape(Image* image, float thresh
     if (!imageBuffer)
         return createShape();
 
-    GraphicsContext& graphicsContext = imageBuffer->context();
-    if (image)
-        graphicsContext.drawImage(*image, IntRect({ }, snappedPhysicalImageSize));
+    rasterize(imageBuffer->context(), snappedPhysicalImageSize);
 
     PixelBufferFormat format { AlphaPremultiplication::Unpremultiplied, PixelFormat::RGBA8, ColorSpace::SRGB() };
     auto pixelBuffer = imageBuffer->getPixelBuffer(format, { { }, snappedPhysicalImageSize });
@@ -238,23 +252,28 @@ Ref<const LayoutShape> LayoutShape::createRasterShape(Image* image, float thresh
         int maxBufferY = std::min(snappedLogicalImageRect.height(), snappedLogicalMarginRect.maxY() - snappedLogicalImageRect.y());
 
         for (int y = minBufferY; y < maxBufferY; ++y) {
+            // We're creating "end-point exclusive" intervals here. The value of an interval's x1 is
+            // the first index of an above-threshold pixel for y, and the value of x2 is 1+ the index
+            // of the last above-threshold pixel.
+            auto addInterval = [&](int startX, int endX) {
+                intervals->intervalAt(y + snappedLogicalImageRect.y()).unite(IntShapeInterval(startX + snappedLogicalImageRect.x(), endX + snappedLogicalImageRect.x()));
+            };
+
             int startX = -1;
             for (int x = 0; x < snappedLogicalImageRect.width(); ++x) {
                 size_t pixelPosition = writingMode.isHorizontal() ? snappedLogicalImageRect.width() * y + x : snappedLogicalImageRect.height() * (x + 1) - (y + 1);
                 uint8_t alpha = pixelBuffer->item(pixelPosition * pixelArraySize + alphaBitOffset);
 
                 bool alphaAboveThreshold = alpha > alphaPixelThreshold;
-                if (startX == -1 && alphaAboveThreshold) {
+                if (startX == -1 && alphaAboveThreshold)
                     startX = x;
-                } else if (startX != -1 && (!alphaAboveThreshold || x == snappedLogicalImageRect.width() - 1)) {
-                    // We're creating "end-point exclusive" intervals here. The value of an interval's x1 is
-                    // the first index of an above-threshold pixel for y, and the value of x2 is 1+ the index
-                    // of the last above-threshold pixel.
-                    int endX = alphaAboveThreshold ? x + 1 : x;
-                    intervals->intervalAt(y + snappedLogicalImageRect.y()).unite(IntShapeInterval(startX + snappedLogicalImageRect.x(), endX + snappedLogicalImageRect.x()));
+                else if (startX != -1 && !alphaAboveThreshold) {
+                    addInterval(startX, x);
                     startX = -1;
                 }
             }
+            if (startX != -1)
+                addInterval(startX, snappedLogicalImageRect.width());
         }
     }
 

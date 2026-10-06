@@ -31,6 +31,9 @@
 
 #if PLATFORM(IOS_FAMILY)
 #include <pal/system/ios/UserInterfaceIdiom.h>
+#endif
+
+#if PLATFORM(COCOA)
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
@@ -71,6 +74,14 @@ bool evaluateURLEnvironment(URLEnvironment environment)
 #else
         return false;
 #endif
+    case URLEnvironment::SafariWebApp:
+#if PLATFORM(MAC)
+        return WTF::MacApplication::isSafariWebApp();
+#elif PLATFORM(IOS_FAMILY)
+        return WTF::IOSApplication::isAppleWebApp();
+#else
+        return false;
+#endif
     }
 
     ASSERT_NOT_REACHED();
@@ -83,15 +94,20 @@ bool URLMatch::RefinementSet::matchesPathPattern(const URL& url) const
     case PathComparison::PathContains:
         return url.path().contains(pathPattern);
     case PathComparison::PathStartsWith:
-        return startsWithLettersIgnoringASCIICase(url.path(), pathPattern);
+        return url.path().startsWith(pathPattern);
+    case PathComparison::PathStartsWithComponent: {
+        auto path = url.path();
+        if (!path.startsWith('/'))
+            return false;
+        auto components = path.substring(1);
+        if (!components.startsWith(pathPattern))
+            return false;
+        return components.length() == pathPattern.length() || components[pathPattern.length()] == '/';
+    }
     case PathComparison::PathIs:
         return url.path() == pathPattern;
-    case PathComparison::PathOrFragmentContains:
-        return url.path().contains(pathPattern) || url.fragmentIdentifier().contains(pathPattern);
     case PathComparison::LastPathComponentIs:
         return url.lastPathComponent() == pathPattern;
-    case PathComparison::LastPathComponentStartsWith:
-        return url.lastPathComponent().startsWith(pathPattern);
     case PathComparison::LastPathComponentEndsWith:
         return url.lastPathComponent().endsWith(pathPattern);
     }
@@ -106,6 +122,9 @@ bool URLMatch::RefinementSet::matches(const URLMatchContext& context) const
         return false;
 
     if (!queryPattern.isNull() && !context.url().query().contains(queryPattern))
+        return false;
+
+    if (!fragmentPattern.isNull() && !context.url().fragmentIdentifier().contains(fragmentPattern))
         return false;
 
     if (environment && !evaluateURLEnvironment(*environment))

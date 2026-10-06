@@ -1,37 +1,20 @@
 CommandLineAPIModuleSourceBuiltins.h
-Modules/notifications/NotificationController.h
 ReadableStreamInternalsBuiltins.h
 StreamInternalsBuiltins.h
 TransformStreamInternalsBuiltins.h
 WritableStreamInternalsBuiltins.h
-accessibility/AccessibilityObject.cpp
 bindings/js/GarbageCollectionController.cpp
 bindings/js/JSLocationCustom.cpp
 bindings/js/JSPaintRenderingContext2DCustom.cpp
-css/StyleSheetContents.cpp
-css/StyleSheetContents.h
 css/values/primitives/CSSPrimitiveData.h
 dom/CustomElementReactionQueue.h
 dom/ElementInlinesLight.h
-html/HTMLMediaElement.cpp
-html/canvas/PlaceholderRenderingContext.cpp
 layout/formattingContexts/inline/InlineFormattingContext.h
 layout/formattingContexts/inline/InlineItemsBuilder.cpp
 layout/formattingContexts/inline/InlineLine.h
-page/Page.h
-[ iOS ] page/cocoa/ContentChangeObserver.h
-[ Mac ] page/scrolling/ScrollingStateScrollingNode.cpp
-platform/PODRedBlackTree.h
-platform/cocoa/TelephoneNumberDetectorCocoa.cpp
-platform/graphics/ca/PlatformCALayer.h
-platform/graphics/ca/TileController.cpp
-[ iOS ] platform/ios/DeviceMotionClientIOS.h
-[ iOS ] platform/ios/LegacyTileCache.h
-platform/mediastream/libwebrtc/LibWebRTCDav1dDecoder.cpp
 rendering/RenderLayerBacking.cpp
 rendering/RenderLayerCompositor.cpp
 rendering/RenderTextLineBoxes.h
 rendering/svg/SVGRenderingContext.h
 style/StyleBuilderState.h
 style/StyleExtractorState.h
-style/values/images/kinds/StyleCachedImage.cpp

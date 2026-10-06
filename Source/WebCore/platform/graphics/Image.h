@@ -27,12 +27,14 @@
 #pragma once
 
 #include <WebCore/ColorSpace.h>
+#include <WebCore/ConcreteObjectSize.h>
 #include <WebCore/DecodingOptions.h>
 #include <WebCore/FloatRect.h>
 #include <WebCore/ImageAdapter.h>
 #include <WebCore/ImageOrientation.h>
 #include <WebCore/ImagePaintingOptions.h>
 #include <WebCore/ImageTypes.h>
+#include <WebCore/NaturalDimensions.h>
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/RetainPtr.h>
@@ -47,6 +49,7 @@ class FloatPoint;
 class FloatSize;
 class FragmentedSharedBuffer;
 class GraphicsContext;
+class ImageDrawingExtras;
 class NativeImage;
 class ShareableBitmap;
 class Timer;
@@ -67,19 +70,12 @@ public:
     WEBCORE_EXPORT static bool supportsType(const String&);
 
     virtual bool isBitmapImage() const { return false; }
-    virtual bool isGeneratedImage() const { return false; }
-    virtual bool isCrossfadeGeneratedImage() const { return false; }
-    virtual bool isNamedImageGeneratedImage() const { return false; }
-    virtual bool isGradientImage() const { return false; }
     virtual bool NODELETE isSVGImage() const { return false; }
-    virtual bool NODELETE isSVGImageForContainer() const { return false; }
-    virtual bool isSVGResourceImage() const { return false; }
     virtual bool isPDFDocumentImage() const { return false; }
-    virtual bool isCustomPaintImage() const { return false; }
 
     virtual void subresourcesAreFinished(Document*, CompletionHandler<void()>&&);
 
-    bool NODELETE drawsSVGImage() const { return isSVGImage() || isSVGImageForContainer(); }
+    bool NODELETE drawsSVGImage() const { return isSVGImage(); }
 
     virtual unsigned frameCount() const { return 1; }
 
@@ -95,18 +91,11 @@ public:
     WEBCORE_EXPORT static Image& nullImage();
     bool isNull() const { return size().isEmpty(); }
 
-    virtual void setContainerSize(const FloatSize&) { }
-    virtual bool usesContainerSize() const { return false; }
-    virtual bool hasIntrinsicWidth() const { return true; }
-    virtual bool hasIntrinsicHeight() const { return true; }
-    // FIXME: hasRelativeWidth/Height should be deduplicated with hasIntrinsicWidth/Height.
     virtual bool hasRelativeWidth() const { return false; }
     virtual bool hasRelativeHeight() const { return false; }
     virtual void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio);
-    virtual bool hasNaturalAspectRatio() const { return true; }
 
     virtual FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const = 0;
-    virtual FloatSize sourceSize(ImageOrientation = ImageOrientation::Orientation::FromImage) const;
     virtual bool hasDensityCorrectedSize() const { return false; }
     FloatRect rect() const { return FloatRect(FloatPoint(), size()); }
     float width() const { return size().width(); }
@@ -114,6 +103,16 @@ public:
     virtual std::optional<IntPoint> hotSpot() const { return std::nullopt; }
     virtual ImageOrientation orientation() const { return ImageOrientation::Orientation::FromImage; }
 
+    // https://drafts.csswg.org/css-images-3/#natural-dimensions
+    NaturalDimensions naturalDimensions(ImageOrientation requestedOrientation = ImageOrientation::Orientation::FromImage) const
+    {
+        auto orientation = requestedOrientation.orientation() == ImageOrientation::Orientation::FromImage ? this->orientation() : requestedOrientation;
+        if (orientation.orientation() == ImageOrientation::Orientation::FromImage)
+            orientation = ImageOrientation::Orientation::None;
+        return unorientedNaturalDimensions().oriented(orientation);
+    }
+
+public:
     WEBCORE_EXPORT EncodedDataStatus setData(RefPtr<FragmentedSharedBuffer>&& data, bool allDataReceived);
     virtual EncodedDataStatus dataChanged(bool /* allDataReceived */) { return EncodedDataStatus::Unknown; }
 
@@ -159,12 +158,12 @@ public:
 
     enum TileRule { StretchTile, RoundTile, SpaceTile, RepeatTile };
 
-    virtual RefPtr<NativeImage> nativeImage(const ColorSpace& = ColorSpace::SRGB());
-    virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned);
-    virtual RefPtr<NativeImage> currentNativeImage();
-    virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ImageOrientation = ImageOrientation::Orientation::FromImage);
+    virtual RefPtr<NativeImage> nativeImage(ConcreteObjectSize, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr);
+    virtual RefPtr<NativeImage> nativeImageAtIndex(unsigned, ConcreteObjectSize, const ImageDrawingExtras* = nullptr);
+    virtual RefPtr<NativeImage> currentNativeImage(ConcreteObjectSize, const ImageDrawingExtras* = nullptr);
+    virtual RefPtr<NativeImage> currentPreTransformedNativeImage(ConcreteObjectSize, ImageOrientation = ImageOrientation::Orientation::FromImage, const ImageDrawingExtras* = nullptr);
 
-    virtual void drawPattern(GraphicsContext&, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { });
+    virtual void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr);
 
 #if ASSERT_ENABLED
     virtual bool hasSolidColor() { return false; }
@@ -183,33 +182,33 @@ public:
 
     virtual void dump(WTF::TextStream&) const;
 
+    WEBCORE_EXPORT RefPtr<ShareableBitmap> toShareableBitmap(ConcreteObjectSize) const;
     WEBCORE_EXPORT RefPtr<ShareableBitmap> toShareableBitmap() const;
+
+    // Supporting tiled drawing
+    static void fillWithSolidColor(GraphicsContext&, const FloatRect& dstRect, const Color&, CompositeOperator);
+    virtual std::optional<Color> singlePixelSolidColor() const;
 
 protected:
     WEBCORE_EXPORT Image(ImageObserver* = nullptr);
 
-    static void fillWithSolidColor(GraphicsContext&, const FloatRect& dstRect, const Color&, CompositeOperator);
-
     virtual bool shouldDrawFromCachedSubimage(GraphicsContext&) const { return false; }
     virtual bool mustDrawFromCachedSubimage(GraphicsContext&) const { return false; }
-    virtual ImageDrawResult draw(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { }) = 0;
-    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatPoint& srcPoint, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions = { });
-    ImageDrawResult drawTiled(GraphicsContext&, const FloatRect& dstRect, const FloatRect& srcRect, const FloatSize& tileScaleFactor, TileRule hRule, TileRule vRule, ImagePaintingOptions = { });
-
-    // Supporting tiled drawing
-    virtual std::optional<Color> singlePixelSolidColor() const;
+    virtual ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& dstRect, const FloatRect& srcRect, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) = 0;
 
     virtual bool canReplaceData() const { return false; }
     virtual void dataReplaced() { }
 
+    virtual NaturalDimensions unorientedNaturalDimensions() const { return NaturalDimensions::none(); }
+
 private:
     RefPtr<FragmentedSharedBuffer> m_encodedImageData;
     WeakPtr<ImageObserver> m_imageObserver;
-    std::unique_ptr<ImageAdapter> m_adapter;
+    const std::unique_ptr<ImageAdapter> m_adapter;
 
     // A value of true or false will override the default Page::imageAnimationEnabled state.
     std::optional<bool> m_allowsAnimation { std::nullopt };
-    std::unique_ptr<Timer> m_animationStartTimer;
+    const std::unique_ptr<Timer> m_animationStartTimer;
     WEBCORE_EXPORT static bool gSystemAllowsAnimationControls;
 };
 

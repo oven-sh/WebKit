@@ -31,36 +31,6 @@
 namespace WTF {
 
 WTF_EXPORT_PRIVATE size_t availableMemory();
-
-#if PLATFORM(IOS_FAMILY) || OS(LINUX) || OS(FREEBSD) || (OS(DARWIN) && defined(BUILDING_WITH_CMAKE) && BUILDING_WITH_CMAKE)
-struct MemoryStatus {
-    MemoryStatus(size_t memoryFootprint, double percentAvailableMemoryInUse)
-        : memoryFootprint(memoryFootprint)
-        , percentAvailableMemoryInUse(percentAvailableMemoryInUse)
-    {
-    }
-
-    size_t memoryFootprint;
-    double percentAvailableMemoryInUse;
-};
-
-WTF_EXPORT_PRIVATE MemoryStatus memoryStatus();
-
-inline double percentAvailableMemoryInUse()
-{
-    auto memoryUse = memoryStatus();
-    return memoryUse.percentAvailableMemoryInUse;
-}
-#endif
-
-inline bool isUnderMemoryPressure()
-{
-#if PLATFORM(IOS_FAMILY) || OS(LINUX) || OS(FREEBSD) || (OS(DARWIN) && defined(BUILDING_WITH_CMAKE) && BUILDING_WITH_CMAKE)
-    constexpr double memoryPressureThreshold = 0.75;
-    return percentAvailableMemoryInUse() > memoryPressureThreshold;
-#else
-    return false;
-#endif
-}
+WTF_EXPORT_PRIVATE double percentAvailableMemoryInUse();
 
 } // namespace WTF

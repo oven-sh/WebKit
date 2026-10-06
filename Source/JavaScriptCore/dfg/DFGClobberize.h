@@ -48,13 +48,13 @@ enum class DateField : int64_t {
 };
 
 template<typename ReadFunctor, typename WriteFunctor, typename DefFunctor>
-void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFunctor& write, const DefFunctor& def)
+void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOESCAPE const WriteFunctor& write, NOESCAPE const DefFunctor& def)
 {
     clobberize(graph, node, read, write, def, [] { });
 }
 
 template<typename ReadFunctor, typename WriteFunctor, typename DefFunctor, typename ClobberTopFunctor>
-void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFunctor& write, const DefFunctor& def, const ClobberTopFunctor& clobberTopFunctor)
+void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOESCAPE const WriteFunctor& write, NOESCAPE const DefFunctor& def, NOESCAPE const ClobberTopFunctor& clobberTopFunctor)
 {
     // Some notes:
     //
@@ -203,7 +203,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case BufferWrite:
             return clobberTop();
         default:
-            DFG_CRASH(graph, node, "Unhandled ArrayMode opcode.");
+            DFG_CRASH(graph, node, "Unhandled ArrayMode opcode."_s);
         }
     }
     
@@ -505,7 +505,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
         return;
 
@@ -522,7 +522,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
         return;
 
@@ -546,7 +546,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
 
     case ArithRound:
@@ -920,7 +920,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
 
     case Inc:
@@ -938,7 +938,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
 
     case ValueBitAnd:
@@ -1210,7 +1210,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         // We should not get an AnyTypedArray in a GetByVal as AnyTypedArray is only created from intrinsics, which
         // are only added from Inline Caching a GetById.
         case Array::AnyTypedArray:
-            DFG_CRASH(graph, node, "impossible array mode for get");
+            DFG_CRASH(graph, node, "impossible array mode for get"_s);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1274,7 +1274,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                     }
                     break;
                 default:
-                    DFG_CRASH(graph, node, "impossible array mode for MultiGetByVal");
+                    DFG_CRASH(graph, node, "impossible array mode for MultiGetByVal"_s);
                     break;
                 }
             }
@@ -1417,7 +1417,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         case Array::String:
         case Array::DirectArguments:
         case Array::ScopedArguments:
-            DFG_CRASH(graph, node, "impossible array mode for put");
+            DFG_CRASH(graph, node, "impossible array mode for put"_s);
             return;
         }
         RELEASE_ASSERT_NOT_REACHED();
@@ -1493,7 +1493,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
                     }
                     break;
                 default:
-                    DFG_CRASH(graph, node, "impossible array mode for MultiPutByVal");
+                    DFG_CRASH(graph, node, "impossible array mode for MultiPutByVal"_s);
                     break;
                 }
             }
@@ -2067,7 +2067,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             sourceHeap = IndexedContiguousProperties;
             break;
         default:
-            DFG_CRASH(graph, node, "Bad array mode for ArraySortCompact");
+            DFG_CRASH(graph, node, "Bad array mode for ArraySortCompact"_s);
             return;
         }
         read(JSObject_butterfly);
@@ -2089,7 +2089,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             targetHeap = IndexedContiguousProperties;
             break;
         default:
-            DFG_CRASH(graph, node, "Bad array mode for ArraySortCommit");
+            DFG_CRASH(graph, node, "Bad array mode for ArraySortCommit"_s);
             return;
         }
         read(JSObject_butterfly);
@@ -2124,7 +2124,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
             clobberTop();
             return;
         default:
-            DFG_CRASH(graph, node, "Bad use kind");
+            DFG_CRASH(graph, node, "Bad use kind"_s);
         }
         break;
 
@@ -2807,7 +2807,7 @@ void clobberize(Graph& graph, Node* node, const ReadFunctor& read, const WriteFu
         return;
     }
     
-    DFG_CRASH(graph, node, toUTF8CString("Unrecognized node type: ", Graph::opName(node->op())).legacyCStringPointer());
+    DFG_CRASH(graph, node, toUTF8CString("Unrecognized node type: ", Graph::opName(node->op())));
 }
 
 class NoOpClobberize {

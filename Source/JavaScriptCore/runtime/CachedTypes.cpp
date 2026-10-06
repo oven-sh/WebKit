@@ -5318,7 +5318,9 @@ protected:
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
-    static constexpr uint32_t cachedTypesFormatRevision = 12;
+    // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
+    // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 13;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)

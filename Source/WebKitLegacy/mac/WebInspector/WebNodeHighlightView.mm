@@ -47,7 +47,7 @@
 #if PLATFORM(IOS_FAMILY)
 - (void)_removeAllLayers
 {
-    for (CAShapeLayer *layer in _layers)
+    for (CAShapeLayer *layer in _layers.get())
         [layer removeFromSuperlayer];
     [_layers removeAllObjects];
 }
@@ -59,10 +59,10 @@
     if (!self)
         return nil;
 
-    _webNodeHighlight = [webNodeHighlight retain];
+    _webNodeHighlight = webNodeHighlight;
 
 #if PLATFORM(IOS_FAMILY)
-    _layers = [[NSMutableArray alloc] init];
+    _layers = adoptNS([[NSMutableArray alloc] init]);
 #endif
 
     return self;
@@ -73,14 +73,12 @@
     [self detachFromWebNodeHighlight];
 #if PLATFORM(IOS_FAMILY)
     [self _removeAllLayers];
-    [_layers release];
 #endif
     [super dealloc];
 }
 
 - (void)detachFromWebNodeHighlight
 {
-    [_webNodeHighlight release];
     _webNodeHighlight = nil;
 }
 
@@ -98,7 +96,7 @@
         ASSERT([[NSGraphicsContext currentContext] isFlipped]);
 
         WebCore::GraphicsContextCG context([[NSGraphicsContext currentContext] CGContext]);
-        if (CheckedPtr controller = [_webNodeHighlight inspectorController].get())
+        if (CheckedPtr controller = [protect(_webNodeHighlight) inspectorController].get())
             controller->drawHighlight(context);
         [NSGraphicsContext restoreGraphicsState];
     }
@@ -316,16 +314,17 @@ static void layerPath(CAShapeLayer *layer, const FloatQuad& outerQuad)
 
 - (void)layoutSublayers:(CALayer *)parentLayer
 {
-    if (!_webNodeHighlight)
+    RetainPtr webNodeHighlight = _webNodeHighlight;
+    if (!webNodeHighlight)
         return;
 
     WebThreadLock();
 
-    if (![_webNodeHighlight inspectorController])
+    if (![webNodeHighlight inspectorController])
         return;
 
     InspectorOverlay::Highlight h;
-    protect([_webNodeHighlight inspectorController].get())->getHighlight(h, InspectorOverlay::CoordinateSystem::View);
+    protect([webNodeHighlight inspectorController].get())->getHighlight(h, InspectorOverlay::CoordinateSystem::View);
 
     if (h.type == InspectorOverlay::Highlight::Type::Node)
         [self _layoutForNodeHighlight:&h parent:parentLayer];

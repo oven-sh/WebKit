@@ -219,35 +219,70 @@ void RemoteRenderingBackend::moveToImageBuffer(RemoteSerializedImageBufferIdenti
     MESSAGE_CHECK(result.isNewEntry, "Duplicate ImageBuffer");
 }
 
-void RemoteRenderingBackend::moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferIdentifier serializedIdentifier, WebCore::ImageBufferTransferIdentifier transferIdentifier)
+void RemoteRenderingBackend::moveSerializedBufferToTransferHeap(RemoteSerializedImageBufferIdentifier serializedIdentifier, CompletionHandler<void(std::optional<WebCore::ImageBufferTransferIdentifier>)>&& completionHandler)
 {
     assertIsCurrent(workQueue());
-    RefPtr imageBuffer = m_sharedResourceCache->takeSerializedImageBuffer(serializedIdentifier);
-    MESSAGE_CHECK(imageBuffer, "Missing SerializedImageBuffer");
-    bool success = GPUProcess::singleton().depositTransferredImageBuffer(transferIdentifier, m_gpuConnectionToWebProcess->webProcessIdentifier(), imageBuffer.releaseNonNull());
-    MESSAGE_CHECK(success, "Duplicate transferred ImageBuffer");
+    std::optional<WebCore::ImageBufferTransferIdentifier> result;
+    [&] {
+        RefPtr imageBuffer = m_sharedResourceCache->takeSerializedImageBuffer(serializedIdentifier);
+        MESSAGE_CHECK(imageBuffer, "Missing SerializedImageBuffer");
+        result = GPUProcess::singleton().depositTransferredImageBuffer(m_gpuConnectionToWebProcess->webProcessIdentifier(), imageBuffer.releaseNonNull());
+    }();
+    // The identifier exists only once the buffer has been deposited, so a claim made with it can
+    // never arrive too early.
+    completionHandler(result);
 }
 
-void RemoteRenderingBackend::takeTransferredBuffer(WebCore::ImageBufferTransferIdentifier transferIdentifier, RenderingResourceIdentifier imageBufferIdentifier, RemoteGraphicsContextIdentifier contextIdentifier)
+static bool transferHandleDescribes(const ImageBufferTransferHandle& handle, const ImageBuffer& imageBuffer)
+{
+    if (handle.parameters != imageBuffer.parameters())
+        return false;
+    if (handle.renderingMode == imageBuffer.renderingMode())
+        return true;
+    return handle.renderingMode == RenderingMode::Accelerated && imageBuffer.renderingMode() == RenderingMode::Unaccelerated;
+}
+
+void RemoteRenderingBackend::takeTransferredBuffer(const ImageBufferTransferHandle& handle, RenderingResourceIdentifier imageBufferIdentifier, RemoteGraphicsContextIdentifier contextIdentifier)
 {
     assertIsCurrent(workQueue());
-    // Ownership is handed over before the broker releases the message naming this buffer, so a
-    // claim that cannot be satisfied means the sender was never given this identifier.
-    RefPtr imageBuffer = GPUProcess::singleton().takeTransferredImageBuffer(transferIdentifier, m_gpuConnectionToWebProcess->webProcessIdentifier());
-    MESSAGE_CHECK(imageBuffer, "Missing transferred ImageBuffer");
+    RefPtr imageBuffer = GPUProcess::singleton().takeTransferredImageBuffer(handle.identifier);
+    if (imageBuffer && !transferHandleDescribes(handle, *imageBuffer))
+        imageBuffer = nullptr;
+    if (!imageBuffer) {
+        // Discarded along with the process that owned it, claimed already by a process that was
+        // given the same identifier, or misdescribed by the sender.
+        RELEASE_LOG(RemoteLayerBuffers, "[renderingBackend=%" PRIu64 "] RemoteRenderingBackend::takeTransferredBuffer - no buffer to take for image buffer %" PRIu64, m_renderingBackendIdentifier.toUInt64(), imageBufferIdentifier.toUInt64());
+        imageBuffer = ImageBuffer::create<NullImageBufferBackend>({ 0, 0 }, 1, ColorSpace::SRGB(), { PixelFormat::BGRA8 }, RenderingPurpose::Unspecified, { });
+        RELEASE_ASSERT(imageBuffer);
+        streamConnection().send(Messages::RemoteImageBufferProxy::DidFailToCreateBackend(), imageBufferIdentifier);
+        auto result = m_remoteImageBuffers.add(imageBufferIdentifier, RemoteImageBuffer::create(imageBuffer.releaseNonNull(), imageBufferIdentifier, contextIdentifier, *this));
+        MESSAGE_CHECK(result.isNewEntry, "Duplicate ImageBuffer");
+        return;
+    }
 
     ImageBufferCreationContext creationContext;
     adjustImageBufferCreationContext(m_sharedResourceCache, creationContext);
+#if HAVE(IOSURFACE)
+    // The sender may have kept a send right to the surface, and could then alias it in a buffer of its own
+    // with CreateMappableImageBuffer.
+    creationContext.surfacePool = nullptr;
+#endif
     imageBuffer->transferToNewContext(creationContext);
     auto result = m_remoteImageBuffers.add(imageBufferIdentifier, RemoteImageBuffer::create(imageBuffer.releaseNonNull(), imageBufferIdentifier, contextIdentifier, *this));
     MESSAGE_CHECK(result.isNewEntry, "Duplicate ImageBuffer");
 }
 
+void RemoteRenderingBackend::createSnapshot(RemoteSnapshotIdentifier snapshotIdentifier, FrameIdentifier rootFrameIdentifier, const FloatSize& size, CompletionHandler<void()>&& completionHandler)
+{
+    assertIsCurrent(workQueue());
+    GPUProcess::singleton().createSnapshot(snapshotIdentifier, rootFrameIdentifier, size, m_gpuConnectionToWebProcess->webProcessIdentifier());
+    completionHandler();
+}
+
 void RemoteRenderingBackend::createSnapshotRecorder(RemoteSnapshotRecorderIdentifier identifier, RemoteSnapshotIdentifier snapshotIdentifier)
 {
     assertIsCurrent(workQueue());
-    // FIXME: using global identifiers (snapshotIdentifier) is not secure. Do not follow this pattern.
-    Ref snapshot = GPUProcess::singleton().getOrCreateSnapshot(snapshotIdentifier);
+    Ref snapshot = GPUProcess::singleton().snapshotForRecorder(snapshotIdentifier);
     auto result = m_remoteSnapshotRecorders.add(identifier, RemoteSnapshotRecorder::create(identifier, snapshot, *this));
     MESSAGE_CHECK(result.isNewEntry, "Recorder already created");
 }
@@ -261,10 +296,6 @@ void RemoteRenderingBackend::sinkSnapshotRecorderIntoSnapshotFrame(RemoteSnapsho
     // FIXME: using global identifiers (frameIdentifier) is not secure. Do not follow this pattern.
     bool success = snapshot->setFrame(frameIdentifier, recorder->takeDisplayList(), workQueue());
     MESSAGE_CHECK(success, "Frame already present");
-
-    // Note:
-    // Success completion handlers are used to ensure that getOrCreateSnapshot does not vivify already released snapshot identifier into a leaked object. Caller is expected to wait
-    // until completion of *all* handlers, failing or not, before consuming the snapshot, otherwise leaks occur.
     completionHandler(true);
 }
 

@@ -1041,7 +1041,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
 
                 GraphicsContextStateSaver verticalLabelStateSaver(context);
                 context.translate(zoom(x) + 0.5f, scrollY);
-                context.drawText(font, TextRun(String::number(x)), { 2, drawTopEdge ? rulerLabelSize : rulerLabelSize - rulerSize + font.metricsOfPrimaryFont().intHeight() - 1.0f });
+                context.drawText(font, TextRun { String::number(x) }, { 2, drawTopEdge ? rulerLabelSize : rulerLabelSize - rulerSize + font.metricsOfPrimaryFont().intHeight() - 1.0f });
             }
         }
 
@@ -1079,7 +1079,7 @@ void InspectorOverlay::drawRulers(GraphicsContext& context, const InspectorOverl
                 GraphicsContextStateSaver horizontalLabelStateSaver(context);
                 context.translate(scrollX, zoom(y) + 0.5f);
                 context.rotate(drawLeftEdge ? -piOverTwoFloat : piOverTwoFloat);
-                context.drawText(font, TextRun(String::number(y)), { 2, drawLeftEdge ? rulerLabelSize : rulerLabelSize - rulerSize });
+                context.drawText(font, TextRun { String::number(y) }, { 2, drawLeftEdge ? rulerLabelSize : rulerLabelSize - rulerSize });
             }
         }
     }
@@ -1556,7 +1556,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     // Always re-check because the node's renderer may have changed since being added.
     // If renderer is no longer a grid, then remove the grid overlay for the node.
     RefPtr node = gridOverlay.gridNode.get();
-    auto renderer = node->renderer();
+    CheckedPtr renderer = node->renderer();
     if (!is<RenderGrid>(renderer)) {
         removeGridOverlayForNode(*node);
         return { };
@@ -1573,7 +1573,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     if (offsetBoundsByScroll)
         viewportBounds.setLocation(scrollPosition);
     
-    CheckedRef renderGrid = *downcast<RenderGrid>(renderer);
+    CheckedRef renderGrid = downcast<RenderGrid>(*renderer);
     auto columnPositions = renderGrid->columnPositions();
     auto rowPositions = renderGrid->rowPositions();
     if (!columnPositions.size() || !rowPositions.size())
@@ -1605,7 +1605,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
         return { };
     RefPtr containingView = containingFrame->view();
 
-    auto computedStyle = node->computedStyle();
+    CheckedPtr computedStyle = node->computedStyle();
     if (!computedStyle)
         return { };
 
@@ -1703,7 +1703,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
     // Draw columns and rows.
     auto& columnWidths = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Columns);
-    auto columnLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Columns, columnPositions.size());
+    auto columnLineNames = gridLineNames(protect(node->renderStyle()), Style::GridTrackSizingDirection::Columns, columnPositions.size());
     auto authoredTrackColumnSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Columns, columnWidths.size());
     FloatLine previousColumnEndLine;
     for (unsigned i = 0; i < columnPositions.size(); ++i) {
@@ -1792,7 +1792,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     }
 
     auto& rowHeights = renderGrid->trackSizesForComputedStyle(Style::GridTrackSizingDirection::Rows);
-    auto rowLineNames = gridLineNames(node->renderStyle(), Style::GridTrackSizingDirection::Rows, rowPositions.size());
+    auto rowLineNames = gridLineNames(protect(node->renderStyle()), Style::GridTrackSizingDirection::Rows, rowPositions.size());
     auto authoredTrackRowSizes = authoredGridTrackSizes(node, Style::GridTrackSizingDirection::Rows, rowHeights.size());
     FloatLine previousRowEndLine;
     for (unsigned i = 0; i < rowPositions.size(); ++i) {
@@ -1904,11 +1904,8 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
         };
 
         Vector<ItemInfo> allItems;
-        for (CheckedPtr gridItem = orderIterator.first(); gridItem; gridItem = orderIterator.next()) {
-            if (orderIterator.shouldSkipChild(*gridItem))
-                continue;
-
-            auto gridArea = renderGrid->currentGrid().gridItemArea(*gridItem);
+        for (CheckedRef gridItem : orderIterator.gridItems()) {
+            auto gridArea = renderGrid->currentGrid().gridItemArea(gridItem);
             auto absoluteRect = FloatRect { gridItem->absoluteBoundingBoxRect(true) };
             absoluteRect.expand(gridItem->marginBox());
 
@@ -1920,12 +1917,12 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
                 auto& columnSpan = gridArea.columns;
                 if (!columnSpan.isTranslatedDefinite())
                     continue;
-                allItems.append({ gridItem, rootRect, columnSpan.startLine(), columnSpan.endLine() });
+                allItems.append({ gridItem.ptr(), rootRect, columnSpan.startLine(), columnSpan.endLine() });
             } else {
                 auto& rowSpan = gridArea.rows;
                 if (!rowSpan.isTranslatedDefinite())
                     continue;
-                allItems.append({ gridItem, rootRect, rowSpan.startLine(), rowSpan.endLine() });
+                allItems.append({ gridItem.ptr(), rootRect, rowSpan.startLine(), rowSpan.endLine() });
             }
         }
 
@@ -1998,20 +1995,17 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
     }
 
     if (gridOverlay.config.showOrderNumbers) {
-        Vector<RenderBox*> gridItemsInGridOrder;
         Vector<RenderBox*> gridItemsInDOMOrder;
         bool hasCustomOrder = false;
 
         auto& orderIterator = renderGrid->currentGrid().orderIterator();
-        for (CheckedPtr gridItem = orderIterator.first(); gridItem; gridItem = orderIterator.next()) {
-            if (orderIterator.shouldSkipChild(*gridItem))
-                continue;
-            gridItemsInGridOrder.append(gridItem);
-        }
+        HashSet<SingleThreadWeakRef<const RenderBox>> gridItemSet;
+        for (CheckedRef gridItem : orderIterator.gridItems())
+            gridItemSet.add(gridItem.get());
 
         for (RefPtr child = node->firstChild(); child; child = child->nextSibling()) {
             if (CheckedPtr renderer = dynamicDowncast<RenderBox>(child->renderer())) {
-                if (!gridItemsInGridOrder.contains(renderer))
+                if (!gridItemSet.contains(*renderer))
                     continue;
 
                 gridItemsInDOMOrder.append(renderer);
@@ -2021,7 +2015,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
             }
         }
 
-        for (CheckedPtr gridItem : gridItemsInGridOrder) {
+        for (CheckedRef gridItem : orderIterator.gridItems()) {
             FloatQuad itemBounds;
 
             if (renderGrid->isGridLanes()) {
@@ -2038,7 +2032,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
                 };
             } else {
                 // For regular grid layouts, compute bounds from the grid area.
-                auto gridArea = renderGrid->currentGrid().gridItemArea(*gridItem);
+                auto gridArea = renderGrid->currentGrid().gridItemArea(gridItem);
                 if (!gridArea.rows.isTranslatedDefinite() || !gridArea.columns.isTranslatedDefinite())
                     continue;
 
@@ -2070,7 +2064,7 @@ std::optional<InspectorOverlay::Highlight::GridHighlightOverlay> InspectorOverla
 
             StringBuilder orderNumbers;
 
-            if (auto index = gridItemsInDOMOrder.find(gridItem); index != notFound)
+            if (auto index = gridItemsInDOMOrder.find(gridItem.ptr()); index != notFound)
                 orderNumbers.append(WEB_UI_FORMAT_STRING("Item %lu", "Inspector Grid Item DOM order label", static_cast<unsigned long>(index + 1)));
 
             if (auto order = gridItem->style().order(); !order.isZero() || hasCustomOrder)
@@ -2135,22 +2129,22 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     // Always re-check because the node's renderer may have changed since being added.
     // If renderer is no longer a flex, then remove the flex overlay for the node.
     RefPtr node = flexOverlay.flexNode.get();
-    auto renderer = node->renderer();
+    CheckedPtr renderer = node->renderer();
     if (!is<RenderFlexibleBox>(renderer)) {
         removeFlexOverlayForNode(*node);
         return { };
     }
 
-    CheckedRef renderFlex = *downcast<RenderFlexibleBox>(renderer);
+    CheckedRef renderFlex = downcast<RenderFlexibleBox>(*renderer);
 
-    auto itemsAtStartOfLine = protect(m_controller)->ensureDOMAgent().flexibleBoxRendererCachedItemsAtStartOfLine(renderFlex);
+    auto itemsAtStartOfLine = protect(protect(m_controller)->ensureDOMAgent())->flexibleBoxRendererCachedItemsAtStartOfLine(renderFlex);
 
     RefPtr containingFrame = protect(node->document())->frame();
     if (!containingFrame)
         return { };
     RefPtr containingView = containingFrame->view();
 
-    auto computedStyle = node->computedStyle();
+    CheckedPtr computedStyle = node->computedStyle();
     if (!computedStyle)
         return { };
 
@@ -2252,9 +2246,9 @@ std::optional<InspectorOverlay::Highlight::FlexHighlightOverlay> InspectorOverla
     // The container's in-flow children in order-modified document order, which is the order the flex algorithm laid
     // them out in and so the order the cached line-start indices below are relative to. A stable sort by the used
     // 'order' value keeps document order among equal values.
-    for (auto& flexItem : childrenOfType<RenderBox>(renderFlex.get())) {
-        if (!flexItem.isOutOfFlowPositioned() && !flexItem.isExcludedFromNormalLayout())
-            renderChildrenInFlexOrder.append(&flexItem);
+    for (CheckedRef flexItem : childrenOfType<RenderBox>(renderFlex.get())) {
+        if (!flexItem->isOutOfFlowPositioned() && !flexItem->isExcludedFromNormalLayout())
+            renderChildrenInFlexOrder.append(flexItem.ptr());
     }
     std::stable_sort(renderChildrenInFlexOrder.begin(), renderChildrenInFlexOrder.end(), [](auto& a, auto& b) {
         return a->style().order().value < b->style().order().value;

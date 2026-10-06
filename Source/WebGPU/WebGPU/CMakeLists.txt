@@ -8,12 +8,14 @@ set(WebGPU_PUBLIC_FRAMEWORK_HEADERS
 )
 
 set(WebGPU_PRIVATE_FRAMEWORK_HEADERS
+    ${WebGPU_CPP_API_HEADERS}
     CxxBridgingPublic.h
     WGPUBufferImpl.h
     WGPUQuerySetImpl.h
     WGPUTextureImpl.h
     WGPUTextureViewImpl.h
     WebGPU.h
+    WebGPUCppBridge.h
     WebGPUExt.h
 )
 
@@ -73,7 +75,7 @@ endif ()
 
 # Variables used to generate Info.plist.
 set(BUNDLE_VERSION "${MACOSX_FRAMEWORK_BUNDLE_VERSION}")
-set(SHORT_VERSION_STRING "${WEBKIT_MAC_VERSION}")
+set(SHORT_VERSION_STRING "${MACOSX_FRAMEWORK_SHORT_VERSION_STRING}")
 set(PRODUCT_NAME "WebGPU")
 set(PRODUCT_BUNDLE_IDENTIFIER "com.apple.WebGPU")
 set_target_properties(WebGPU PROPERTIES

@@ -114,7 +114,7 @@ extension WKTextSelectionController {
         }
 
         let editorState = page.editorState
-        return editorState.selectionType == .Caret
+        return editorState.selectionType == .Caret && editorState.isContentEditable
     }
 
     @objc(isTextSelectedAtPoint:)
@@ -183,6 +183,7 @@ extension WKTextSelectionController {
         } else {
             await withCheckedContinuation { continuation in
                 page.selectPositionAtPoint(
+                    nil,
                     WebCore.IntPoint(point),
                     isInteractingWithFocusedElement,
                     consuming: .init(continuation)

@@ -49,7 +49,10 @@ NS_SWIFT_UI_ACTOR
 
 // The equivalent of Util::parseExtension() for callers that cannot spell RetainPtr, such as Swift.
 - (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(nullable NSDictionary<NSString *, id> *)resources;
-- (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(nullable NSDictionary<NSString *, id> *)resources extensionControllerConfiguration:(nullable WKWebExtensionControllerConfiguration *)configuration;
+- (instancetype)initWithManifest:(NSDictionary<NSString *, id> *)manifest resources:(nullable NSDictionary<NSString *, id> *)resources extensionControllerConfiguration:(nullable WKWebExtensionControllerConfiguration *)configuration usesEnhancedSecurity:(BOOL)usesEnhancedSecurity;
+
+// The equivalent of Util::shouldEnableSiteIsolationForWebExtensionsTest for callers that cannot reach C++ globals, such as Swift.
+@property (class, nonatomic) BOOL shouldEnableSiteIsolation;
 
 @property (nonatomic, strong) WKWebExtension *extension;
 // Cleared by tests that check what the controller does once the context is released.
@@ -93,11 +96,12 @@ NS_SWIFT_UI_ACTOR
 - (void)run NS_SWIFT_UNAVAILABLE("Spins the run loop; use run() async instead.");
 - (void)runForTimeInterval:(NSTimeInterval)interval NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
 - (id)runUntilTestMessage:(NSString *)message NS_SWIFT_UNAVAILABLE("Spins the run loop; use waitForTestMessage(_:) async instead.");
-- (void)runUntilContextError NS_SWIFT_UNAVAILABLE("Spins the run loop; add an async variant instead.");
+- (void)runUntilContextError NS_SWIFT_UNAVAILABLE("Spins the run loop; use waitForContextError() async instead.");
 
 - (void)runWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler;
-- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForTestMessage(_:completionHandler:));
+- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(id _Nullable argument, NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForTestMessage(_:completionHandler:));
 - (void)loadAndRunWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler;
+- (void)waitForContextErrorWithCompletionHandler:(void (^)(NSError * _Nullable error))completionHandler NS_SWIFT_NAME(waitForContextError(completionHandler:));
 
 - (void)done;
 
@@ -172,6 +176,28 @@ NS_SWIFT_UI_ACTOR
 @property (nonatomic, copy, nullable) void (^didClose)(void);
 
 @end
+
+// +matchPatternWith… is unavailable in Swift, which redirects it to -initWithString:error:, and that
+// initializer consults the pattern cache only when no error out-parameter is given — which Swift's
+// throwing bridge always supplies. The cache is unreachable from Swift without these.
+@interface WKWebExtensionMatchPattern (TestWebKitAPIExtras)
+
++ (nullable instancetype)testCachedPatternWithString:(NSString *)string NS_SWIFT_NAME(cachedPattern(string:));
++ (nullable instancetype)testCachedPatternWithScheme:(NSString *)scheme host:(NSString *)host path:(NSString *)path NS_SWIFT_NAME(cachedPattern(scheme:host:path:));
+
+@end
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+// An Objective-C exception cannot unwind through a Swift frame, so a Swift test that expects a setter to raise one has
+// to call the setter from here.
+NSExceptionName _Nullable testExceptionRaisedBySettingValue(id, NSString *key, id _Nullable value) NS_SWIFT_NAME(exceptionRaised(setting:forKey:to:));
+
+#ifdef __cplusplus
+}
+#endif
 
 NS_HEADER_AUDIT_END(nullability, sendability)
 

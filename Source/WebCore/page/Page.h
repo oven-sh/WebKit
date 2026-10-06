@@ -20,6 +20,7 @@
 
 #pragma once
 
+#include <JavaScriptCore/Debugger.h>
 #include <WebCore/ActivityState.h>
 #include <WebCore/AnimationFrameRate.h>
 #include <WebCore/BackForwardFrameItemIdentifier.h>
@@ -624,7 +625,7 @@ public:
     WEBCORE_EXPORT void removeSchedulePair(Ref<WTF::SchedulePair>&&);
     WTF::SchedulePairHashSet* scheduledRunLoopPairs() LIFETIME_BOUND { return m_scheduledRunLoopPairs.get(); }
 
-    std::unique_ptr<WTF::SchedulePairHashSet> m_scheduledRunLoopPairs;
+    const std::unique_ptr<WTF::SchedulePairHashSet> m_scheduledRunLoopPairs;
 #endif
 
     WEBCORE_EXPORT const VisibleSelection& selection() const LIFETIME_BOUND;
@@ -655,7 +656,7 @@ public:
     void willChangeLocationInCompletelyLoadedSubframe();
 
     bool delegatesScaling() const { return m_delegatesScaling; }
-    WEBCORE_EXPORT void NODELETE setDelegatesScaling(bool);
+    WEBCORE_EXPORT void setDelegatesScaling(bool);
 
     // The view scale factor is multiplied into the page scale factor by all
     // callers of setPageScaleFactor.
@@ -970,6 +971,10 @@ public:
     const FixedContainerEdges& fixedContainerEdges() const LIFETIME_BOUND { return m_fixedContainerEdgesAndElements.first; }
     Element* NODELETE lastFixedContainer(BoxSide) const;
 
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    void invalidateColorsSampledFromPaintedContent();
+#endif
+
 #if HAVE(APP_ACCENT_COLORS) && PLATFORM(MAC)
     WEBCORE_EXPORT void NODELETE setAppUsesCustomAccentColor(bool);
     WEBCORE_EXPORT bool NODELETE appUsesCustomAccentColor() const;
@@ -1091,7 +1096,7 @@ public:
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
     void addPlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier);
     void removePlaybackTargetPickerClient(PlaybackTargetClientContextIdentifier);
-    void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, FrameIdentifier, const IntPoint&, bool, RouteSharingPolicy, const String&);
+    void showPlaybackTargetPicker(PlaybackTargetClientContextIdentifier, const IntPoint& positionInMainFrameView, bool, RouteSharingPolicy, const String&);
     void playbackTargetPickerClientStateDidChange(PlaybackTargetClientContextIdentifier, MediaProducerMediaStateFlags);
     WEBCORE_EXPORT void setMockMediaPlaybackTargetPickerEnabled(bool);
     WEBCORE_EXPORT void setMockMediaPlaybackTargetPickerState(const String&, MediaPlaybackTargetMockState);
@@ -1186,6 +1191,8 @@ public:
     bool shouldBuildInteractionRegions() const;
     WEBCORE_EXPORT void setInteractionRegionsEnabled(bool);
 #endif
+
+    WEBCORE_EXPORT void devicePostureTypeChanged();
 
 #if ENABLE(DEVICE_ORIENTATION) && PLATFORM(IOS_FAMILY)
     DeviceOrientationUpdateProvider* deviceOrientationUpdateProvider() const { return m_deviceOrientationUpdateProvider.get(); }
@@ -1300,6 +1307,9 @@ public:
 
     std::optional<std::pair<uint16_t, uint16_t>> NODELETE portsForUpgradingInsecureSchemeForTesting() const;
     WEBCORE_EXPORT void NODELETE setPortsForUpgradingInsecureSchemeForTesting(uint16_t upgradeFromInsecurePort, uint16_t upgradeToSecurePort);
+
+    const URL& NODELETE quirksSubframeURLForTesting() const LIFETIME_BOUND { return m_quirksSubframeURLForTesting; }
+    WEBCORE_EXPORT void setQuirksSubframeURLForTesting(URL&&);
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(WEBXR)
     WEBCORE_EXPORT bool hasActiveImmersiveSession() const;
@@ -1539,7 +1549,7 @@ private:
     const UniqueRef<PointerLockController> m_pointerLockController;
 #endif
     const UniqueRef<ElementTargetingController> m_elementTargetingController;
-    RefPtr<ScrollingCoordinator> m_scrollingCoordinator;
+    const RefPtr<ScrollingCoordinator> m_scrollingCoordinator;
 
     const RefPtr<Settings> m_settings;
     const UniqueRef<CryptoClient> m_cryptoClient;
@@ -1587,6 +1597,7 @@ private:
     bool m_shouldSuppressHDR { false };
 
     float m_pageScaleFactor { 1 };
+    float m_pageScaleFactorViewsWereSizedFor { 1 };
     float m_zoomedOutPageScaleFactor { 0 };
     float m_deviceScaleFactor { 1 };
     float m_viewScaleFactor { 1 };
@@ -1657,14 +1668,14 @@ private:
     int m_headerHeight { 0 };
     int m_footerHeight { 0 };
 
-    std::unique_ptr<RenderingUpdateScheduler> m_renderingUpdateScheduler;
+    const std::unique_ptr<RenderingUpdateScheduler> m_renderingUpdateScheduler;
     SingleThreadWeakHashSet<const RenderObject> m_relevantUnpaintedRenderObjects;
 
     bool m_isCountingRelevantRepaintedObjects { false };
 #ifndef NDEBUG
     bool m_isPainting { false };
 #endif
-    std::unique_ptr<AlternativeTextClient> m_alternativeTextClient;
+    const std::unique_ptr<AlternativeTextClient> m_alternativeTextClient;
 
     bool m_scriptedAnimationsSuspended { false };
 
@@ -1758,13 +1769,13 @@ private:
 #if PLATFORM(MAC) && (ENABLE(SERVICE_CONTROLS) || ENABLE(TELEPHONE_NUMBER_DETECTION))
     const UniqueRef<ServicesOverlayController> m_servicesOverlayController;
 #endif
-    std::unique_ptr<ImageOverlayController> m_imageOverlayController;
+    const std::unique_ptr<ImageOverlayController> m_imageOverlayController;
 
 #if ENABLE(IMAGE_ANALYSIS)
     RefPtr<ImageAnalysisQueue> m_imageAnalysisQueue;
 #endif
 
-    std::unique_ptr<WheelEventDeltaFilter> m_recentWheelEventDeltaFilter;
+    const std::unique_ptr<WheelEventDeltaFilter> m_recentWheelEventDeltaFilter;
     const UniqueRef<PageOverlayController> m_pageOverlayController;
 
 #if ENABLE(APPLE_PAY)
@@ -1787,11 +1798,11 @@ private:
     std::unique_ptr<ViewportArguments> m_overrideViewportArguments;
 
 #if ENABLE(DEVICE_ORIENTATION) && PLATFORM(IOS_FAMILY)
-    RefPtr<DeviceOrientationUpdateProvider> m_deviceOrientationUpdateProvider;
+    const RefPtr<DeviceOrientationUpdateProvider> m_deviceOrientationUpdateProvider;
 #endif
 
 #if ENABLE(DEVICE_ORIENTATION)
-    std::unique_ptr<DeviceOrientationAndMotionAccessController> m_deviceOrientationAndMotionAccessController;
+    const std::unique_ptr<DeviceOrientationAndMotionAccessController> m_deviceOrientationAndMotionAccessController;
 #endif
 
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
@@ -1833,6 +1844,8 @@ private:
 
     std::optional<std::pair<uint16_t, uint16_t>> m_portsForUpgradingInsecureSchemeForTesting;
 
+    URL m_quirksSubframeURLForTesting;
+
     RefPtr<StringCallback> m_consoleMessageListenerForTesting;
 
     const UniqueRef<StorageProvider> m_storageProvider;
@@ -1841,7 +1854,7 @@ private:
     WeakPtr<KeyboardScrollingAnimator> m_currentKeyboardScrollingAnimator;
 
 #if ENABLE(ATTACHMENT_ELEMENT)
-    std::unique_ptr<AttachmentElementClient> m_attachmentElementClient;
+    const std::unique_ptr<AttachmentElementClient> m_attachmentElementClient;
 #endif
 
     bool m_isWaitingForLoadToFinish { false };
@@ -1922,7 +1935,7 @@ private:
 
     using MediaSessionManagerFactory = Function<RefPtr<MediaSessionManagerInterface> (PageIdentifier)>;
     std::optional<MediaSessionManagerFactory> m_mediaSessionManagerFactory;
-    RefPtr<MediaSessionManagerInterface> m_mediaSessionManager;
+    const RefPtr<MediaSessionManagerInterface> m_mediaSessionManager;
 
 #if ENABLE(MODEL_ELEMENT)
     bool m_modelLoadDelaysDisabledForTesting { false };

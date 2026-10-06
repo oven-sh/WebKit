@@ -37,6 +37,7 @@
 #include <wtf/PageBlock.h>
 #include <wtf/Threading.h>
 #include <wtf/UniStdExtras.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringToIntegerConversion.h>
@@ -171,8 +172,8 @@ FILE* getCgroupFile(ASCIILiteral cgroupControllerName, const UTF8CString& cgroup
     // cgroups.7: The usual place for such mounts is under a tmpfs(5)
     // filesystem mounted at /sys/fs/cgroup.
     auto cgroupPath = makeString("/sys/fs/cgroup/"_s, cgroupControllerName, '/', cgroupControllerPath.span(), '/', cgroupFileName).utf8();
-    LOG_VERBOSE(MemoryPressure, "Open: %s", cgroupPath.legacyCStringPointer());
-    FILE* file = fopen(cgroupPath.legacyCStringPointer(), "r");
+    LOG_VERBOSE(MemoryPressure, "Open: %s", cgroupPath);
+    FILE* file = posixFopen(cgroupPath, "r"_s);
     if (file)
         setbuf(file, nullptr);
     return file;
@@ -222,17 +223,17 @@ static UTF8CString getCgroupControllerPath(FILE* cgroupControllerFile, ASCIILite
                 return { };
         }
         if (!strcmp(name.data(), controllerName)) {
-            cgroupMemoryControllerPath = UTF8CString { byteCast<char8_t>(path.data()) };
+            cgroupMemoryControllerPath = UTF8CString::unsafeFromUTF8(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - %s namespace (hierarchy: %d): %s", controllerName, hierarchyId, cgroupMemoryControllerPath);
             return cgroupMemoryControllerPath;
         }
         if (!strcmp(name.data(), "name=systemd")) {
-            cgroupMemoryControllerPath = UTF8CString { byteCast<char8_t>(path.data()) };
+            cgroupMemoryControllerPath = UTF8CString::unsafeFromUTF8(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - systemd namespace (hierarchy: %d): %s", hierarchyId, cgroupMemoryControllerPath);
             return cgroupMemoryControllerPath;
         }
         if (!strcmp(name.data(), "")) {
-            cgroupMemoryControllerPath = UTF8CString { byteCast<char8_t>(path.data()) };
+            cgroupMemoryControllerPath = UTF8CString::unsafeFromUTF8(path.data());
             LOG_VERBOSE(MemoryPressure, "memoryControllerName - empty namespace (hierarchy: %d): %s", hierarchyId, cgroupMemoryControllerPath);
             return cgroupMemoryControllerPath;
         }

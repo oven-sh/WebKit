@@ -84,14 +84,14 @@ Navigation::Navigation(WebCore::ProcessIdentifier processID, std::unique_ptr<Sub
     : Navigation(processID)
 {
     ASSERT(substituteData);
-    m_substituteData = WTF::move(substituteData);
+    lazyInitialize(m_substituteData, WTF::move(substituteData));
 }
 
 Navigation::Navigation(WebCore::ProcessIdentifier processID, WebCore::ResourceRequest&& simulatedRequest, std::unique_ptr<SubstituteData>&& substituteData, RefPtr<WebKit::WebBackForwardListItem>&& fromItem)
     : Navigation(processID, WTF::move(simulatedRequest), WTF::move(fromItem))
 {
     ASSERT(substituteData);
-    m_substituteData = WTF::move(substituteData);
+    lazyInitialize(m_substituteData, WTF::move(substituteData));
 }
 
 Navigation::~Navigation() = default;
@@ -106,6 +106,7 @@ void Navigation::setCurrentRequest(ResourceRequest&& request)
     m_currentRequest = WTF::move(request);
     m_hasStorageForCurrentSite = false;
     m_isEnhancedSecurityLinkForCurrentSite = false;
+    m_unpartitionedStorageSite = std::nullopt;
 }
 
 void Navigation::upgradeCurrentInsecureRequest()

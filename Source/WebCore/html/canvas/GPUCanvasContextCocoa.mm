@@ -75,7 +75,7 @@ public:
             layer.setOpaque(m_isOpaque);
         if (m_displayBuffer) {
             layer.setContentsFormat(m_contentsFormat);
-            layer.setDelegatedContents({ MachSendRight { m_displayBuffer }, { }, std::nullopt });
+            layer.setDelegatedContents({ MachSendRight { m_displayBuffer }, { } });
         } else
             layer.clearContents();
     }
@@ -193,23 +193,20 @@ GPUCanvasContextCocoa::GPUCanvasContextCocoa(CanvasBase& canvas, Ref<GPUComposit
     , m_presentationContext(WTF::move(presentationContext))
     , m_width(getCanvasWidth(htmlOrOffscreenCanvas()))
     , m_height(getCanvasHeight(htmlOrOffscreenCanvas()))
-#if HAVE(SUPPORT_HDR_DISPLAY)
-    , m_screenPropertiesChangedObserver(ScreenPropertiesChangedObserver::create([weakThis = WeakPtr { *this }](PlatformDisplayID displayID) {
-        RefPtr protectedThis = weakThis.get();
-        if (!protectedThis)
-            return;
-
-        Ref screen = PlatformScreen::singleton();
-        if (auto* screenData = screen->screenData(displayID))
-            protectedThis->updateScreenHeadroom(screenData->currentEDRHeadroom, screenData->suppressEDR);
-    }))
-#endif // HAVE(SUPPORT_HDR_DISPLAY)
 {
 #if HAVE(SUPPORT_HDR_DISPLAY)
-    if (document)
-        document->addScreenPropertiesChangedObserver(protect(*m_screenPropertiesChangedObserver));
-    else
-        m_screenPropertiesChangedObserver = nullptr;
+    if (document) {
+        lazyInitialize(m_screenPropertiesChangedObserver, ScreenPropertiesChangedObserver::create([weakThis = WeakPtr { *this }](PlatformDisplayID displayID) {
+            RefPtr protectedThis = weakThis.get();
+            if (!protectedThis)
+                return;
+
+            Ref screen = PlatformScreen::singleton();
+            if (auto* screenData = screen->screenData(displayID))
+                protectedThis->updateScreenHeadroom(screenData->currentEDRHeadroom, screenData->suppressEDR);
+        }));
+        document->addScreenPropertiesChangedObserver(*m_screenPropertiesChangedObserver);
+    }
 #else
     UNUSED_PARAM(document);
 #endif
@@ -764,7 +761,8 @@ void GPUCanvasContextCocoa::updateFramePacing()
 
     auto now = MonotonicTime::now();
     auto gpuCost = m_compositorIntegration->lastFrameGPUCost();
-    m_framePacer.recordFrame(gpuCost, now);
+    auto presentStall = m_compositorIntegration->lastFramePresentStall();
+    m_framePacer.recordFrame(gpuCost, presentStall, now);
 
     if (!m_isRegisteredForPacing) {
         page->addGPUCanvasRequestingRenderingUpdatePacing(*this);

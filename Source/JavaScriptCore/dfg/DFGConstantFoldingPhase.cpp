@@ -105,6 +105,10 @@ public:
             bool didClipBlock = false;
             Vector<Node*> nodesToDelete;
             for (BasicBlock* block : m_graph.blocksInNaturalOrder()) {
+                // CFA proved this block unreachable, so there is no abstract state at its head to
+                // run AI from. CFG simplification will remove it later.
+                if (!block->cfaHasVisited)
+                    continue;
                 m_state.beginBasicBlock(block);
                 for (unsigned nodeIndex = 0; nodeIndex < block->size(); ++nodeIndex) {
                     if (block->at(nodeIndex)->isTerminal()) {
@@ -1848,7 +1852,7 @@ private:
                             node->setOp(ArithBitURShift);
                             break;
                         default:
-                            DFG_CRASH(m_graph, node, "Unexpected node");
+                            DFG_CRASH(m_graph, node, "Unexpected node"_s);
                             break;
                         }
                         node->child1() = Edge(node->child1().node(), KnownInt32Use);
@@ -2599,7 +2603,7 @@ private:
                 node->remove(m_graph);
                 break;
             default:
-                DFG_CRASH(m_graph, node, "Bad Upsilon phi() pointer");
+                DFG_CRASH(m_graph, node, "Bad Upsilon phi() pointer"_s);
                 break;
             }
         }

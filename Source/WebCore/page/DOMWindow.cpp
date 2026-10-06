@@ -33,6 +33,7 @@
 #include "CookieStore.h"
 #include "Crypto.h"
 #include "CustomElementRegistry.h"
+#include "DOMRect.h"
 #include "DocumentSecurityOrigin.h"
 #include "DocumentView.h"
 #include "ExceptionOr.h"
@@ -100,7 +101,7 @@ ExceptionOr<RefPtr<SecurityOrigin>> DOMWindow::createTargetOriginForPostMessage(
 Location& DOMWindow::location()
 {
     if (!m_location)
-        m_location = Location::create(*this);
+        lazyInitialize(m_location, Location::create(*this));
     return *m_location;
 }
 
@@ -776,6 +777,14 @@ ExceptionOr<RefPtr<Element>> DOMWindow::matchingElementInFlatTree(Node& node, co
     if (!localThis)
         return Exception { ExceptionCode::SecurityError };
     return localThis->matchingElementInFlatTree(node, selectors);
+}
+
+ExceptionOr<Ref<DOMRect>> DOMWindow::convertRectToMainFrameCoordinates(const DOMRectInit& rect)
+{
+    auto* localThis = dynamicDowncast<LocalDOMWindow>(*this);
+    if (!localThis)
+        return Exception { ExceptionCode::SecurityError };
+    return localThis->convertRectToMainFrameCoordinates(rect);
 }
 
 ExceptionOr<void> DOMWindow::scrollBy(const ScrollToOptions& options) const

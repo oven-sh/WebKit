@@ -72,7 +72,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGSVGElement);
 
 inline SVGSVGElement::SVGSVGElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this), TypeFlag::HasDidMoveToNewDocument)
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton(), TypeFlag::HasDidMoveToNewDocument)
     , SVGFitToViewBox(this)
     , m_timeContainer(SMILTimeContainer::create(*this))
 {
@@ -118,7 +118,7 @@ void SVGSVGElement::didMoveToNewDocument(Document& oldDocument, Document& newDoc
 SVGViewSpec& SVGSVGElement::currentView()
 {
     if (!m_viewSpec)
-        m_viewSpec = SVGViewSpec::create(*this);
+        lazyInitialize(m_viewSpec, SVGViewSpec::create(*this));
     return *m_viewSpec;
 }
 
@@ -650,7 +650,7 @@ void SVGSVGElement::unpauseAnimations()
 bool SVGSVGElement::resumePausedAnimationsIfNeeded(const IntRect& visibleRect)
 {
     bool animationEnabled = document().page() ? document().page()->imageAnimationEnabled() : true;
-    if (!animationEnabled || !renderer() || !renderer()->isVisibleInDocumentRect(visibleRect))
+    if (!animationEnabled || !renderer() || !protect(renderer())->isVisibleInDocumentRect(visibleRect))
         return false;
 
     unpauseAnimations();
@@ -687,8 +687,7 @@ bool SVGSVGElement::hasTransformRelatedAttributes() const
     if (isOutermostSVGSVGElement() ? !!supplementalTransform() : SVGGraphicsElement::hasTransformRelatedAttributes())
         return true;
 
-    // 'x' / 'y' / 'viewBox' lead to a non-identity supplementalLayerTransform in RenderSVGViewportContainer
-    return (hasAttribute(SVGNames::xAttr) || hasAttribute(SVGNames::yAttr)) || (hasAttribute(SVGNames::viewBoxAttr) && !hasEmptyViewBox());
+    return x().valueInSpecifiedUnits() || y().valueInSpecifiedUnits() || !viewBox().isEmpty();
 }
 
 static bool isEmbeddedThroughSVGImage(const SVGSVGElement& element)

@@ -83,7 +83,12 @@ bool RenderHTMLCanvas::requiresLayer() const
 
 bool RenderHTMLCanvas::canHaveChildren() const
 {
-    return settings().htmlInCanvasEnabled() && (protect(canvasElement())->layoutSubtree() || firstChild());
+    return settings().htmlInCanvasEnabled() && (protect(canvasElement())->canvasContent() == CanvasContent::Drawable || firstChild());
+}
+
+bool RenderHTMLCanvas::hasDrawableContent() const
+{
+    return settings().htmlInCanvasEnabled() && protect(canvasElement())->canvasContent() == CanvasContent::Drawable;
 }
 
 void RenderHTMLCanvas::layout()

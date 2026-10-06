@@ -1239,7 +1239,7 @@ void URLParser::copyURLPartsUntil(const URL& base, URLPart part, const CodePoint
 {
     syntaxViolation(iterator);
 
-    m_asciiBuffer.clear();
+    m_asciiBuffer.shrink(0);
     copyASCIIStringUntil(base.m_string, urlLengthUntilPart(base, part));
     switch (part) {
     case URLPart::QueryEnd:
@@ -1840,7 +1840,7 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                     appendToASCIIBuffer(toASCIILower(*c));
                     advance(c);
                     if (c.atEnd()) {
-                        m_asciiBuffer.clear();
+                        m_asciiBuffer.shrink(0);
                         state = State::NoScheme;
                         c = iteratorAt(beginAfterControlAndSpace);
                         break;
@@ -1927,14 +1927,14 @@ void URLParser::parse(std::span<const CharacterType> input, const URL& base, con
                 }
                 break;
             } else {
-                m_asciiBuffer.clear();
+                m_asciiBuffer.shrink(0);
                 state = State::NoScheme;
                 c = iteratorAt(beginAfterControlAndSpace);
                 break;
             }
             advance(c);
             if (c.atEnd()) {
-                m_asciiBuffer.clear();
+                m_asciiBuffer.shrink(0);
                 state = State::NoScheme;
                 c = iteratorAt(beginAfterControlAndSpace);
             }
@@ -3357,7 +3357,7 @@ std::optional<URLParser::IPv6Address> URLParser::parseIPv6Host(CodePointIterator
 
 // FIXME: This function should take span<const char8_t>, since it requires UTF-8.
 template<typename SyntaxViolationHandler>
-URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, SyntaxViolationHandler&& syntaxViolationHandler)
+URLParser::Latin1Buffer URLParser::percentDecodeImpl(std::span<const Latin1Character> input, NOESCAPE const SyntaxViolationHandler& syntaxViolationHandler)
 {
     Latin1Buffer output;
     output.grow(input.size());

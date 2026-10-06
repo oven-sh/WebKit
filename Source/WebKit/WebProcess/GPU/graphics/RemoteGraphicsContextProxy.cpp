@@ -376,7 +376,7 @@ void RemoteGraphicsContextProxy::drawSystemImage(SystemImage& systemImage, const
 #if USE(SYSTEM_PREVIEW)
     if (RefPtr badgeSystemImage = dynamicDowncast<ARKitBadgeSystemImage>(systemImage)) {
         if (RefPtr image = badgeSystemImage->image()) {
-            auto nativeImage = image->nativeImage();
+            auto nativeImage = image->nativeImage(ConcreteObjectSize::fixed(image->size()));
             if (!nativeImage)
                 return;
             if (!recordResourceUse(*nativeImage))
@@ -961,8 +961,6 @@ void RemoteGraphicsContextProxy::appendStateChangeItemIfNecessary()
         send(Messages::RemoteGraphicsContext::SetShouldSmoothFonts(state.shouldSmoothFonts()));
     if (changes.contains(GraphicsContextState::Change::ShouldSubpixelQuantizeFonts))
         send(Messages::RemoteGraphicsContext::SetShouldSubpixelQuantizeFonts(state.shouldSubpixelQuantizeFonts()));
-    if (changes.contains(GraphicsContextState::Change::DrawLuminanceMask))
-        send(Messages::RemoteGraphicsContext::SetDrawLuminanceMask(state.drawLuminanceMask()));
 
     commitStateChanges(pendingChanges);
 }

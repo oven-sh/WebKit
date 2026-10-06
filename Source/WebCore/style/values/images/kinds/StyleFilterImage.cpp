@@ -37,7 +37,9 @@
 #include "DeprecatedCSSOMValue.h"
 #include "HostWindow.h"
 #include "ImageBuffer.h"
+#include "ImageQualityController.h"
 #include "NullGraphicsContext.h"
+#include "RenderBoxModelObject.h"
 #include "RenderElement.h"
 #include "RenderObjectInlines.h"
 #include "Settings.h"
@@ -126,47 +128,81 @@ void FilterImage::load(CachedResourceLoader& cachedResourceLoader, const Resourc
     m_inputImageIsReady = true;
 }
 
-RefPtr<WebCore::Image> FilterImage::image(const RenderElement* renderElement, const FloatSize& size, const GraphicsContext& destinationContext, bool isForFirstLine) const
+RefPtr<WebCore::Image> FilterImage::resolvedImage(const RenderElement& renderElement, const FloatSize& size, const GraphicsContext& destinationContext, bool isForFirstLine) const
 {
-    CheckedPtr renderer = renderElement;
-    if (!renderer)
-        return &WebCore::Image::nullImage();
+    CheckedRef renderer = renderElement;
 
     if (size.isEmpty())
         return nullptr;
 
     RefPtr styleImage = m_image;
-    if (!styleImage)
-        return &WebCore::Image::nullImage();
-
-    auto image = styleImage->image(renderer, size, destinationContext, isForFirstLine);
-    if (!image || image->isNull())
-        return &WebCore::Image::nullImage();
+    if (!styleImage || !styleImage->canDrawAtSize(renderer, size))
+        return nullptr;
 
     auto preferredFilterRenderingModes = protect(renderer->page())->preferredFilterRenderingModes(destinationContext);
     auto sourceImageRect = FloatRect { { }, size };
 
     auto renderingOptions(protect(renderer->settings())->showDebugBorders() ? std::make_optional(FilterRenderingOption::ShowDebugOverlay) : std::nullopt);
-    auto cssFilter = CSSFilterRenderer::create(const_cast<RenderElement&>(*renderer), m_filter, {
+    auto cssFilter = CSSFilterRenderer::create(const_cast<RenderElement&>(renderer.get()), m_filter, {
             .referenceBox = sourceImageRect,
             .filterRegion = sourceImageRect,
             .scale = { 1, 1 },
         }, preferredFilterRenderingModes, renderingOptions, NullGraphicsContext());
     if (!cssFilter)
-        return &WebCore::Image::nullImage();
+        return nullptr;
 
     cssFilter->setFilterRegion(sourceImageRect);
 
     auto sourceImage = ImageBuffer::create(size, destinationContext.renderingMode(), RenderingPurpose::DOM, 1, ColorSpace::SRGB(), PixelFormat::BGRA8, renderer->hostWindow());
     if (!sourceImage)
-        return &WebCore::Image::nullImage();
+        return nullptr;
 
     auto filteredImage = sourceImage->filteredNativeImage(*cssFilter, [&](GraphicsContext& context) {
-        context.drawImage(*image, sourceImageRect);
+        styleImage->draw(context, renderer, ConcreteObjectSize::fixed(size), sourceImageRect, sourceImageRect, { }, isForFirstLine);
     });
     if (!filteredImage)
-        return &WebCore::Image::nullImage();
+        return nullptr;
+
     return BitmapImage::create(WTF::move(filteredImage));
+}
+
+ImageDrawResult FilterImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool isForFirstLine) const
+{
+    if (isPending())
+        return ImageDrawResult::DidNothing;
+
+    RefPtr image = resolvedImage(renderer, flooredIntSize(destination.size()), context, isForFirstLine);
+    if (!image)
+        return ImageDrawResult::DidNothing;
+
+    return drawResolved(context, renderer, *image, concreteObjectSize, destination, source, options);
+}
+
+ImageDrawResult FilterImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
+{
+    RefPtr image = resolvedImage(renderer, concreteObjectSize.size() * concreteObjectSize.zoom(), context, isForFirstLine);
+    if (!image || context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
+
+    return drawResolvedAsPattern(context, renderer, *image, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options);
+}
+
+ImageDrawResult FilterImage::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
+{
+    RefPtr image = resolvedImage(renderer, tileSize, context, isForFirstLine);
+    if (!image || context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
+
+    return drawResolvedTiled(context, renderer, *image, concreteObjectSize, destination, phase, tileSize, spacing, options);
+}
+
+ImageDrawResult FilterImage::drawNinePiece(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
+{
+    RefPtr image = resolvedImage(renderer, concreteObjectSize.size() * concreteObjectSize.zoom(), context, false);
+    if (!image || context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
+
+    return drawResolvedNinePiece(context, renderer, *image, concreteObjectSize, geometry, options);
 }
 
 bool FilterImage::knownToBeOpaque(const RenderElement&) const
@@ -174,11 +210,35 @@ bool FilterImage::knownToBeOpaque(const RenderElement&) const
     return false;
 }
 
+bool FilterImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& size) const
+{
+    return !size.isEmpty() && m_image && protect(m_image)->canDrawAtSize(renderer, size);
+}
+
+DecodingMode FilterImage::decodingModeForImageDraw(const RenderBoxModelObject& renderer, const PaintInfo& paintInfo) const
+{
+    if (!m_image)
+        return Image::decodingModeForImageDraw(renderer, paintInfo);
+    return protect(m_image)->decodingModeForImageDraw(renderer, paintInfo);
+}
+
+InterpolationQuality FilterImage::interpolationQualityForImageDraw(GraphicsContext& context, const RenderElement& renderer, const void* layer, const LayoutSize& size) const
+{
+    return ImageQualityController::chooseInterpolationQualityForBitmapOfSize(context, renderer, calculateImageBufferBackendSize(size, 1), layer, size);
+}
+
 FloatSize FilterImage::fixedSize(const RenderElement& renderer) const
 {
     if (RefPtr image = m_image)
         return image->imageSize(&renderer, 1);
     return { };
+}
+
+NaturalDimensions FilterImage::naturalDimensions(const RenderElement& renderer, const ImageSizingContext& context) const
+{
+    if (RefPtr image = m_image)
+        return image->naturalDimensions(renderer, context);
+    return NaturalDimensions::zero();
 }
 
 void FilterImage::imageChanged(WebCore::CachedImage*, const IntRect*)

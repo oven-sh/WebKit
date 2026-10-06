@@ -79,9 +79,9 @@ public:
     String(const char8_t* characters) : String(unsafeSpan(characters)) { }
 
     // Construct a string from a CString that knows its encoding, decoding it as that encoding.
-    // Unlike CString, which would have to be decoded by the caller, and unlike fromUTF8(), which
+    // Unlike CStringBase, which would have to be decoded by the caller, and unlike fromUTF8(), which
     // will happily reinterpret Latin-1 bytes as UTF-8, the character type picks the decoding.
-    template<OneByteCharacterType CharacterType> String(const CStringWithEncoding<CharacterType>&);
+    template<OneByteCharacterType CharacterType> String(const CString<CharacterType>&);
 
     // Construct a string referencing an existing StringImpl.
     String(StringImpl&);
@@ -226,7 +226,7 @@ public:
     [[nodiscard]] WTF_EXPORT_PRIVATE String simplifyWhiteSpace(CodeUnitMatchFunction) const;
 
     [[nodiscard]] WTF_EXPORT_PRIVATE String trim(CodeUnitMatchFunction) const;
-    template<typename Predicate> [[nodiscard]] String removeCharacters(const Predicate&) const;
+    template<typename Predicate> [[nodiscard]] String removeCharacters(NOESCAPE const Predicate&) const;
 
     // Returns the string with case folded for case insensitive comparison.
     // Use convertToASCIILowercase instead if ASCII case insensitive comparison is desired.
@@ -358,7 +358,7 @@ private:
     WTF_EXPORT_PRIVATE explicit String(std::span<const char> characters);
 
     RefPtr<StringImpl> m_impl;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 static_assert(sizeof(String) == sizeof(void*), "String should effectively be a pointer to a StringImpl, and efficient to pass by value");
 
@@ -475,7 +475,7 @@ inline String::String(StaticStringImpl* string)
 {
 }
 
-template<OneByteCharacterType CharacterType> inline String::String(const CStringWithEncoding<CharacterType>& string)
+template<OneByteCharacterType CharacterType> inline String::String(const CString<CharacterType>& string)
     : String(string.span())
 {
 }
@@ -599,7 +599,7 @@ inline RetainPtr<NSString> nsStringNilIfNull(const String& string)
 #endif
 
 template<typename Predicate>
-String String::removeCharacters(const Predicate& findMatch) const
+String String::removeCharacters(NOESCAPE const Predicate& findMatch) const
 {
     SUPPRESS_UNCOUNTED_ARG return m_impl ? m_impl->removeCharacters(findMatch) : String { };
 }

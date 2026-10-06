@@ -244,9 +244,9 @@ bool CoreAudioCaptureUnit::isAnyUnitCapturing()
     return isAnyUnitCapturingExceptFor(nullptr);
 }
 
-void CoreAudioCaptureUnit::forEach(NOESCAPE Function<void(CoreAudioCaptureUnit&)>&& callback)
+void CoreAudioCaptureUnit::forEach(NOESCAPE const Function<void(CoreAudioCaptureUnit&)>& callback)
 {
-    allCoreAudioCaptureUnits().forEach(WTF::move(callback));
+    allCoreAudioCaptureUnits().forEach(callback);
 }
 
 static Function<void(CoreAudioCaptureUnit&)>& coreAudioCaptureNewUnitCallback()
@@ -723,7 +723,7 @@ OSStatus CoreAudioCaptureUnit::startInternal()
     m_microphoneProcsCalled = 0;
     m_microphoneProcsCalledLastTime = 0;
     if (!m_verifyCapturingTimer)
-        m_verifyCapturingTimer = makeUnique<Timer>(*this, &CoreAudioCaptureUnit::verifyIsCapturing);
+        lazyInitialize(m_verifyCapturingTimer, makeUnique<Timer>(*this, &CoreAudioCaptureUnit::verifyIsCapturing));
     m_verifyCapturingTimer->startRepeating(m_ioUnit->verifyCaptureInterval(!m_microphoneProcsCalledLastTime || isProducingMicrophoneSamples()));
 
     updateVoiceActivityDetection();
@@ -741,7 +741,7 @@ void CoreAudioCaptureUnit::isProducingMicrophoneSamplesChanged()
         return;
 
     if (!m_verifyCapturingTimer)
-        m_verifyCapturingTimer = makeUnique<Timer>(*this, &CoreAudioCaptureUnit::verifyIsCapturing);
+        lazyInitialize(m_verifyCapturingTimer, makeUnique<Timer>(*this, &CoreAudioCaptureUnit::verifyIsCapturing));
     m_verifyCapturingTimer->startRepeating(m_ioUnit->verifyCaptureInterval(!m_microphoneProcsCalledLastTime || isProducingMicrophoneSamples()));
 }
 
@@ -755,7 +755,7 @@ void CoreAudioCaptureUnit::updateMutedState(SyncUpdate syncUpdate)
         static constexpr Seconds mutedStateDelay = 500_ms;
 
         if (!m_updateMutedStateTimer)
-            m_updateMutedStateTimer = makeUnique<Timer>(*this, &CoreAudioCaptureUnit::updateMutedStateTimerFired);
+            lazyInitialize(m_updateMutedStateTimer, makeUnique<Timer>(*this, &CoreAudioCaptureUnit::updateMutedStateTimerFired));
         m_updateMutedStateTimer->startOneShot(mutedStateDelay);
         return;
     }

@@ -25,12 +25,12 @@
 
 #pragma once
 
+#include "ExplicitGridTrackSizes.h"
 #include "GridTypeAliases.h"
 #include "UsedTrackSizes.h"
 #include <WebCore/LayoutIntegrationUtils.h>
 #include <WebCore/LayoutState.h>
 #include <WebCore/StyleGapGutter.h>
-#include <WebCore/StyleGridTemplateList.h>
 #include <WebCore/StyleGridTrackSizes.h>
 #include <WebCore/StylePrimitiveNumericTypes+Evaluation.h>
 #include <WebCore/StyleZoomPrimitives.h>
@@ -64,6 +64,7 @@ struct GridAutoFlowOptions {
 struct GridLayoutResult {
     UsedTrackSizes usedTrackSizes;
     GridItemRects gridItemRects;
+    LayoutUnit blockContentSize;
 };
 
 // The number of implicit tracks generated before the start of the explicit grid, per axis, because
@@ -78,8 +79,7 @@ struct LeadingImplicitTracks {
 
 // https://drafts.csswg.org/css-grid-1/#grid-definition
 struct GridDefinition {
-    Style::GridTemplateList gridTemplateColumns;
-    Style::GridTemplateList gridTemplateRows;
+    ExplicitGridTrackSizes explicitGridTrackSizes;
     Style::GridTrackSizes gridAutoColumns;
     Style::GridTrackSizes gridAutoRows;
     GridAutoFlowOptions autoFlowOptions;
