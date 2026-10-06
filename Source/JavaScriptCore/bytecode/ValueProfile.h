@@ -157,24 +157,16 @@ struct ArgumentValueProfile : public ValueProfileBase<1, 1> {
 };
 
 struct ValueProfileAndVirtualRegister : public ValueProfile {
-    // An empty bucket means no sample, so the empty value has a flag of its own: a sampled operand never predicts SpecNone.
+    // An empty bucket means no sample, so the empty value goes to the prediction: a sampled operand never predicts SpecNone.
     void sample(JSValue value)
     {
         if (value)
             m_buckets[0] = JSValue::encode(value);
         else
-            m_sawEmptyValue = true;
-    }
-
-    SpeculatedType computeUpdatedPrediction()
-    {
-        if (m_sawEmptyValue)
             mergeSpeculation(m_prediction, SpecEmpty);
-        return ValueProfile::computeUpdatedPrediction();
     }
 
     VirtualRegister m_operand;
-    bool m_sawEmptyValue { false };
 };
 
 static_assert(sizeof(ValueProfileAndVirtualRegister) >= sizeof(unsigned));
