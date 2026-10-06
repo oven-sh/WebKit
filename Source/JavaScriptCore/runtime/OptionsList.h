@@ -482,6 +482,8 @@ bool hasCapacityToUseLargeGigacage();
     /* WARNING: this option is important for compatibility be *VERY* careful when lowering it. See: rdar://145585141 and https://bugs.webkit.org/show_bug.cgi?id=289330 */ \
     /* Cap on the bytecode RegExp interpreter's backtracking-context pool (allocated a page at a time, only while a match runs, and released after it). Each quantified-group iteration takes a context sized by the pattern's call frame, which grew with the ParenthesesOnce/BackReference slots and the alternation folding; 192MB keeps the reach interpreter-only patterns had at 128MB (prism/highlight.js tokenizers over ~600KB inputs). */ \
     v(Unsigned, maxRegExpStackSize, 192 * MB, Normal, nullptr) \
+    /* A step is one entry of a disjunction in the interpreter (the pattern's body, then each iteration of a group that repeats and can be backtracked into, forwards and again on backtracking) and one iteration of such a group in JIT code. So the two engines stop at different inputs, and a pattern with no such group is never stopped. */ \
+    v(Unsigned, regExpMatchLimit, 100000000, Normal, "steps one RegExp match may take before it is abandoned and throws a RangeError"_s) \
     \
     v(Double, percentCPUPerMBForFullTimer, 0.0003125, Normal, nullptr) \
     v(Double, percentCPUPerMBForEdenTimer, 0.0025, Normal, nullptr) \

@@ -1261,7 +1261,7 @@ PASS regex628.exec(input1); is results
 PASS regex630.exec(input0); is results
 PASS regex630.exec(input1); is results
 PASS regex631.exec(input0); is results
-PASS regex632.exec(input0); is results
+PASS regex632.exec(input0); threw exception RangeError: Regular expression backtracking limit exceeded.
 PASS regex633.exec(input0); is results
 PASS regex633.exec(input1); is results
 PASS regex633.exec(input2); is results
