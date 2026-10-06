@@ -918,6 +918,15 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
         auto* promise = uncheckedDowncast<JSPromise>(result);
         if (promise->realm() == globalObject && promise->isThenFastAndNonObservable()) {
             scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+            // Phase 2 runs as a later microtask, after this job's async context is gone. The job
+            // reads resultPromise from `context`, so an async context to carry takes the cell's
+            // place, the way phase 1 is registered.
+            if (JSValue asyncContext = AsyncContextSwapScope::current(vm, globalObject); !asyncContext.isUndefined()) {
+                promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyAwaitJob, nullptr, context, asyncContext);
+                return;
+            }
+#endif
             promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseFinallyAwaitJob, resultPromise, context);
             return;
         }
@@ -960,7 +969,11 @@ static void promiseFinallyReactionJob(JSGlobalObject* globalObject, VM& vm, JSPr
         return;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, InternalMicrotask::PromiseFinallyAwaitJob, context, AsyncContextSwapScope::current(vm, globalObject));
+#else
     auto [resolve, reject] = JSPromise::createResolvingFunctionsWithInternalMicrotask(vm, globalObject, InternalMicrotask::PromiseFinallyAwaitJob, context);
+#endif
     scope.release();
     promiseResolveThenableJob(globalObject, resolutionObject, then, resolve, reject, microtaskCallCache);
 }
@@ -1818,15 +1831,23 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         auto* promise = uncheckedDowncast<JSPromise>(arguments[0]);
         auto* promiseToResolve = uncheckedDowncast<JSPromise>(arguments[1]);
 
-        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
-            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
-
 #if USE(BUN_JSC_ADDITIONS)
+        // Installed before the species check: the slow path runs user code and registers its
+        // reactions through performPromiseThen, which captures the current async context.
         AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
 #endif
 
+        if (!promiseSpeciesWatchpointIsValid(vm, promise)) [[unlikely]]
+            RELEASE_AND_RETURN(scope, promiseResolveThenableJobFastSlow(globalObject, promise, promiseToResolve));
+
         scope.release();
+#if USE(BUN_JSC_ADDITIONS)
+        // PromiseResolveWithoutHandlerJob takes its async context as arguments[2], so that
+        // promiseToResolve settles under the context it was resolved in.
+        promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, arguments[2]);
+#else
         promise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::PromiseResolveWithoutHandlerJob, promiseToResolve, jsUndefined());
+#endif
         return;
     }
 
@@ -1883,6 +1904,12 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
     }
 
     case InternalMicrotask::PromiseResolveWithoutHandlerJob: {
+#if USE(BUN_JSC_ADDITIONS)
+        // arguments[2] is the async context the reaction captured, or undefined. The derived promise
+        // settles under it, so a rejection reaches the rejection tracker in the context then() was
+        // called in, as it does through PromiseReactionJob when the settled side has a handler.
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[2]);
+#endif
         RELEASE_AND_RETURN(scope, promiseResolveWithoutHandlerJob(globalObject, vm, arguments[0], arguments[1], static_cast<JSPromise::Status>(payload)));
     }
 
@@ -2142,7 +2169,11 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         // arguments[0] = unused (we get resultPromise from context)
         // arguments[1] = settled value from onFinally's result
         // arguments[2] = context (JSSlimPromiseReaction: promise=resultPromise, handlerOrContext=originalValue, perCellBit=wasFulfilled)
+        // arguments[3] = captured async context (USE(BUN_JSC_ADDITIONS))
         // payload = status of onFinally's result
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, arguments[3]);
+#endif
         auto* context = uncheckedDowncast<JSSlimPromiseReaction>(arguments[2]);
         auto* resultPromise = uncheckedDowncast<JSPromise>(context->promise());
         scope.release();
