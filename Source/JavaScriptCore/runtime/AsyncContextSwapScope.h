@@ -30,6 +30,7 @@
 #include "InternalFieldTuple.h"
 #include "JSCast.h"
 #include "JSGlobalObject.h"
+#include "JSPromise.h"
 #include <wtf/ForbidHeapAllocation.h>
 #include <wtf/Noncopyable.h>
 
@@ -80,6 +81,9 @@ public:
     {
         restoreEarly();
     }
+
+    // False until async contexts are tracked.
+    ALWAYS_INLINE bool hasEntered() const { return m_asyncContextData; }
 
     // Restore the previous async context before the scope's natural end. Later
     // destruction becomes a no-op. Use this when the tail of a case must run
@@ -159,6 +163,13 @@ private:
     InternalFieldTuple* m_asyncContextData { nullptr };
     JSValue m_restoreAsyncContext;
 };
+
+// JSPromise::keepAsyncContextForUnhandledRejection() of the async context that is current.
+ALWAYS_INLINE void keepCurrentAsyncContextForUnhandledRejection(VM& vm, JSGlobalObject* globalObject, JSPromise* promise)
+{
+    if (vm.reportsUnhandledRejectionsInAsyncContext()) [[unlikely]]
+        promise->keepAsyncContextForUnhandledRejection(vm, AsyncContextSwapScope::current(vm, globalObject));
+}
 
 } // namespace JSC
 

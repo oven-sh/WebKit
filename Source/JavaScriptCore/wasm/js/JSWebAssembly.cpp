@@ -53,6 +53,9 @@
 #include "WebAssemblyCompileOptions.h"
 #include "WebAssemblyModuleRecord.h"
 #include "WebAssemblyPromising.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "AsyncContextSwapScope.h"
+#endif
 
 namespace JSC {
 
@@ -495,6 +498,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyCompileStreamingFunc, (JSGlobalObject* globa
     JSPromise* sourcePromise = JSPromise::resolvedPromise(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects `promise`, if sourcePromise is rejected, is a job with no handler.
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
+#endif
     sourcePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::WebAssemblyCompileStreaming, nullptr, context);
     return JSValue::encode(promise);
 }
@@ -544,6 +551,10 @@ JSC_DEFINE_HOST_FUNCTION(webAssemblyInstantiateStreamingFunc, (JSGlobalObject* g
     JSPromise* sourcePromise = JSPromise::resolvedPromise(globalObject, callFrame->argument(0));
     RETURN_IF_EXCEPTION(scope, JSValue::encode(promise->rejectWithCaughtException(vm, scope)));
 
+#if USE(BUN_JSC_ADDITIONS)
+    // What rejects `promise`, if sourcePromise is rejected, is a job with no handler.
+    keepCurrentAsyncContextForUnhandledRejection(vm, globalObject, promise);
+#endif
     sourcePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::WebAssemblyInstantiateStreaming, nullptr, context);
     return JSValue::encode(promise);
 }
