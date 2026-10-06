@@ -172,7 +172,7 @@ Rules for an edit to an upstream test:
 
 ## E. After a sync: a failing test, step by step
 
-1. Does the difference match A1–A9 exactly (same text, same shape)? Check that the fork code named there is still in the
+1. Does the difference match A1–A10 exactly (same text, same shape)? Check that the fork code named there is still in the
    tree, then update the expectation with a `// Bun:` comment and add the file to its list here.
 2. Does it fail only in one mode or only with ASan, for a reason in the test and not the engine (it counts JIT compiles,
    depends on allocation never failing, needs more than 300 s)? Narrow it as in B.
