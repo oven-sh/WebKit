@@ -43,6 +43,7 @@
 #include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/RefPtr.h>
+#include <wtf/SetForScope.h>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/Vector.h>
@@ -288,6 +289,12 @@ void Debugger::registerCodeBlock(CodeBlock* codeBlock)
     applyBreakpoints(codeBlock);
     if (isStepping())
         codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
+#if USE(BUN_JSC_ADDITIONS)
+    // A code block calls its debug hooks only when it has a debugger request. This one has to
+    // reach willExecuteProgram() or callEvent() for the entry pause, without stepping mode.
+    else if (!m_pauseAtEntryURL.isNull() && m_breakpointsActivated && isPauseAtEntryTarget(codeBlock)) [[unlikely]]
+        codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
+#endif
 }
 
 void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock*)>& callback)
@@ -915,6 +922,61 @@ bool Debugger::cancelPauseForSpecialBreakpoint(Breakpoint& breakpoint)
     return true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Debugger::schedulePauseAtEntry(const String& url, bool programCode)
+{
+    cancelPauseAtEntry();
+
+    m_pauseAtEntryURL = url;
+    m_pauseAtEntryProgramCode = programCode;
+}
+
+void Debugger::cancelPauseAtEntry()
+{
+    if (m_pauseAtEntryURL.isNull())
+        return;
+
+    m_pauseAtEntryURL = String();
+    m_pauseAtEntryProgramCode = false;
+    SourceID sourceID = std::exchange(m_pauseAtEntrySourceID, noSourceID);
+
+    // Take back the request that registerCodeBlock() gave to the code blocks of the script.
+    if (sourceID == noSourceID || isStepping())
+        return;
+
+    m_vm.heap.completeAllJITPlans();
+    forEachRegisteredCodeBlock([&] (CodeBlock* codeBlock) {
+        if (codeBlock->ownerExecutable()->sourceID() == sourceID)
+            codeBlock->setSteppingMode(CodeBlock::SteppingModeDisabled);
+    });
+}
+
+bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
+{
+    switch (codeBlock->codeType()) {
+    case ModuleCode:
+    case FunctionCode:
+        break;
+    case GlobalCode:
+        // The program code of a CommonJS module only makes its wrapper function.
+        if (!m_pauseAtEntryProgramCode)
+            return false;
+        break;
+    case EvalCode:
+        return false;
+    }
+
+    ScriptExecutable* executable = codeBlock->ownerExecutable();
+    SourceID sourceID = executable->sourceID();
+    if (m_pauseAtEntrySourceID == noSourceID) {
+        if (executable->source().provider()->sourceURL() != m_pauseAtEntryURL)
+            return false;
+        m_pauseAtEntrySourceID = sourceID;
+    }
+    return m_pauseAtEntrySourceID == sourceID;
+}
+#endif
+
 void Debugger::breakProgram(RefPtr<Breakpoint>&& specialBreakpoint)
 {
     if (m_isPaused || isPauseBlockedByAnotherDebugger())
@@ -1039,6 +1101,18 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
     SourceID sourceID = DebuggerCallFrame::sourceIDForCallFrame(m_currentCallFrame);
     TextPosition position = DebuggerCallFrame::positionForCallFrame(vm, m_currentCallFrame);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_entryPauseCallFrame && m_entryPauseCallFrame == m_currentCallFrame) [[unlikely]] {
+        m_entryPauseCallFrame = nullptr;
+        // A step or a breakpoint does not stop again where the entry pause stopped. A debugger
+        // statement there does.
+        if (!m_isPausingAtEntry && !m_specialBreakpoint && sourceID == m_entryPauseSourceID && position == m_entryPausePosition) {
+            m_lastExecutedLine = position.m_line.zeroBasedInt();
+            return;
+        }
+    }
+#endif
+
     BlackboxFlags relevantBlackboxFlags;
     if (const auto it = m_blackboxConfigurations.find(sourceID); it != m_blackboxConfigurations.end()) {
         for (const auto& [blackboxRange, blackboxFlags] : it->value) {
@@ -1060,6 +1134,13 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         pauseNow = true;
         didPauseForStep = true;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isPausingAtEntry) {
+        pauseNow = true;
+        didPauseForStep = true;
+    }
+#endif
 
     if (auto breakpoint = didHitBreakpoint(sourceID, position)) {
         pauseNow = true;
@@ -1173,6 +1254,14 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
         handlePause(globalObject);
         scope.releaseAssertNoException();
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isPausingAtEntry && m_currentCallFrame) {
+        m_entryPauseCallFrame = m_currentCallFrame;
+        m_entryPauseSourceID = sourceID;
+        m_entryPausePosition = position;
+    }
+#endif
 
     m_pausingBreakpointID = noBreakpointID;
 
@@ -1353,11 +1442,41 @@ void Debugger::didAwait(CallFrame*, JSValue generatorValue)
     schedulePauseAtNextOpportunity();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool Debugger::takePauseAtEntry(CallFrame* callFrame)
+{
+    if (m_pauseAtEntryURL.isNull()) [[likely]]
+        return false;
+
+    if (!callFrame || !m_breakpointsActivated)
+        return false;
+
+    CodeBlock* codeBlock = callFrame->codeBlock();
+    if (!codeBlock || !isPauseAtEntryTarget(codeBlock))
+        return false;
+
+    cancelPauseAtEntry();
+    return true;
+}
+
+void Debugger::pauseAtEntry(CallFrame* callFrame)
+{
+    PauseReasonDeclaration reason(*this, PausedAtEntry);
+    SetForScope isPausingAtEntry(m_isPausingAtEntry, true);
+    updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, AttemptPause);
+}
+#endif
+
 void Debugger::callEvent(CallFrame* callFrame)
 {
     if (m_isPaused)
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (takePauseAtEntry(callFrame)) [[unlikely]]
+        pauseAtEntry(callFrame);
+    else
+#endif
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, NoPause);
 
     if (callFrame) {
@@ -1420,6 +1539,13 @@ void Debugger::willExecuteProgram(CallFrame* callFrame)
 {
     if (m_isPaused)
         return;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (takePauseAtEntry(callFrame)) [[unlikely]] {
+        pauseAtEntry(callFrame);
+        return;
+    }
+#endif
 
     updateCallFrame(lexicalGlobalObjectForCallFrame(m_vm, callFrame), callFrame, NoPause);
 }
