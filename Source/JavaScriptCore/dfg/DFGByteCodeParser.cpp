@@ -10235,8 +10235,8 @@ void ByteCodeParser::parseBlock(unsigned limit)
             }
 
             if (!everyOperandIsSampled) {
-                // Options::useLazyCatchLiveness() creates the buffer apart from an execution of the catch. Later phases
-                // take SpecNone for code that never ran and convert such a value without a check.
+                // A buffer exists before its first sample: Options::useLazyCatchLiveness() creates it at a tier-up check, and the
+                // mutator may still be filling it. The DFG takes SpecNone for code that never ran and converts the value unchecked.
                 NEXT_OPCODE(op_catch);
             }
 

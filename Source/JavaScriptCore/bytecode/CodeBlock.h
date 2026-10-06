@@ -916,7 +916,7 @@ public:
 
     // Null while Options::useLazyCatchLiveness() defers creating the buffer; op_catch does not profile until then.
     ValueProfileAndVirtualRegisterBuffer* ensureCatchLivenessIsComputedForBytecodeIndex(BytecodeIndex);
-    // Mutator only, on the baseline block: creates the buffers useLazyCatchLiveness deferred. True if it created one; it has no samples yet.
+    // Mutator only, on the baseline block: creates the buffers useLazyCatchLiveness deferred. True if it created one, which has no samples.
     bool ensureCatchLivenessIsComputedForExecutedCatches()
     {
         if (m_hasCatchThatExecutedWithoutBuffer) [[unlikely]]
