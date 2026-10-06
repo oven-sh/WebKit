@@ -409,6 +409,29 @@ int RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffs
     return matchInline(globalObject, globalObject->vm(), s, startOffset, ovector);
 }
 
+NEVER_INLINE void RegExp::throwParseError(JSGlobalObject* nullOrGlobalObject, VM& vm)
+{
+    if (nullOrGlobalObject) {
+        auto throwScope = DECLARE_THROW_SCOPE(vm);
+        throwScope.throwException(nullOrGlobalObject, errorToThrow(nullOrGlobalObject));
+    }
+    if (!hasHardError(m_constructionErrorCode))
+        reset();
+}
+
+NEVER_INLINE void RegExp::throwMatchAbandoned(JSGlobalObject* globalObject, Yarr::JSRegExpResult result)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    ASSERT(Yarr::isAbandoned(result));
+    if (result == Yarr::JSRegExpResult::ErrorNoMemory) {
+        throwStackOverflowError(globalObject, scope);
+        return;
+    }
+    throwRangeError(globalObject, scope, "Regular expression backtracking limit exceeded"_s);
+}
+
 bool RegExp::matchConcurrently(
     VM& vm, StringView s, unsigned startOffset, int& position, std::span<int> ovector)
 {
@@ -418,7 +441,9 @@ bool RegExp::matchConcurrently(
         return false;
 
     position = matchInline<Yarr::MatchFrom::CompilerThread>(nullptr, vm, s, startOffset, ovector);
-    if (position == static_cast<int>(Yarr::JSRegExpResult::JITCodeFailure))
+    // Below -1 there is no answer to fold: JITCodeFailure with no bytecode to rerun, or a search
+    // that was abandoned. The VM's thread runs the match itself and throws for the latter.
+    if (position < -1)
         return false;
     if (m_state == ParseError)
         return false;
@@ -496,7 +521,8 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
         return false;
 
     result = matchInline<Yarr::MatchFrom::CompilerThread>(nullptr, vm, s, startOffset);
-    if (result.start == static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure))
+    // As above: JITCodeFailure or an abandoned search, in MatchResult::start.
+    if (static_cast<ptrdiff_t>(result.start) < -1)
         return false;
     return true;
 }
@@ -550,7 +576,13 @@ void RegExp::matchCompareWithInterpreter(StringView s, int startOffset, int* off
     for (unsigned j = 0, i = 0; i < m_numSubpatterns + 1; j += 2, i++)
         interpreterOffsetVector[j] = -1;
 
-    interpreterResult = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(interpreterOffsetVector));
+    Yarr::JSRegExpResult interpreted = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(interpreterOffsetVector));
+    if (interpreted == Yarr::JSRegExpResult::Match)
+        interpreterResult = interpreterOffsetVector[0];
+    else if (interpreted == Yarr::JSRegExpResult::NoMatch)
+        interpreterResult = -1;
+    else
+        interpreterResult = static_cast<int>(interpreted);
 
     if (jitResult != interpreterResult)
         differences++;

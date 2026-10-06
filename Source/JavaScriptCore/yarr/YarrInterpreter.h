@@ -563,6 +563,9 @@ private:
 };
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
-JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+// Match: output[0] and output[1] bound the match, and the pairs after them bound the subpatterns.
+// NoMatch: the pattern does not match. ErrorHitLimit, ErrorNoMemory: the search was abandoned
+// (isAbandoned()), which says nothing about whether the pattern matches.
+[[nodiscard]] JS_EXPORT_PRIVATE JSRegExpResult interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
 
 } } // namespace JSC::Yarr
