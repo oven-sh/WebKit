@@ -133,9 +133,10 @@ public:
     bool cancelPauseForSpecialBreakpoint(Breakpoint&);
 #if USE(BUN_JSC_ADDITIONS)
     // A one-time request to pause when the script at `url` starts to run: at the start of its
-    // module code, or at the first call of one of its functions (the wrapper of a CommonJS
-    // module), or, with `programCode`, at the start of its program code. No other code takes the
-    // request. It stays pending until that script runs with breakpoints active, or it is cancelled.
+    // module code, or at the call of the function that its program code makes (the wrapper of a
+    // CommonJS module), or, with `programCode`, at the start of its program code. No other code
+    // takes the request. It stays pending until that script runs with breakpoints active, or it
+    // is cancelled. The pause has the reason PausedAtEntry, also when a breakpoint is there.
     void schedulePauseAtEntry(const String& url, bool programCode);
     void cancelPauseAtEntry();
 #endif
@@ -419,6 +420,7 @@ private:
     String m_pauseAtEntryURL;
     SourceID m_pauseAtEntrySourceID { noSourceID };
     bool m_pauseAtEntryProgramCode { false };
+    bool m_pauseAtEntrySawProgramCode { false };
     bool m_isPausingAtEntry { false };
 
     // Where the entry pause stopped. The first statement of a program has the position of the

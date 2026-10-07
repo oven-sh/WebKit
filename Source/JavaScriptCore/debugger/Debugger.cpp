@@ -938,6 +938,7 @@ void Debugger::cancelPauseAtEntry()
 
     m_pauseAtEntryURL = String();
     m_pauseAtEntryProgramCode = false;
+    m_pauseAtEntrySawProgramCode = false;
     SourceID sourceID = std::exchange(m_pauseAtEntrySourceID, noSourceID);
 
     // Take back the request that registerCodeBlock() gave to the code blocks of the script.
@@ -951,20 +952,12 @@ void Debugger::cancelPauseAtEntry()
     });
 }
 
-bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
+// Not inline: registerCodeBlock() then saves no more registers than it did without the request.
+NEVER_INLINE bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
 {
-    switch (codeBlock->codeType()) {
-    case ModuleCode:
-    case FunctionCode:
-        break;
-    case GlobalCode:
-        // The program code of a CommonJS module only makes its wrapper function.
-        if (!m_pauseAtEntryProgramCode)
-            return false;
-        break;
-    case EvalCode:
+    CodeType codeType = codeBlock->codeType();
+    if (codeType == EvalCode)
         return false;
-    }
 
     ScriptExecutable* executable = codeBlock->ownerExecutable();
     SourceID sourceID = executable->sourceID();
@@ -972,8 +965,26 @@ bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
         if (executable->source().provider()->sourceURL() != m_pauseAtEntryURL)
             return false;
         m_pauseAtEntrySourceID = sourceID;
+    } else if (m_pauseAtEntrySourceID != sourceID)
+        return false;
+
+    switch (codeType) {
+    case ModuleCode:
+        return true;
+    case GlobalCode:
+        if (m_pauseAtEntryProgramCode)
+            return true;
+        // The program code of a CommonJS module only makes its wrapper function.
+        m_pauseAtEntrySawProgramCode = true;
+        return false;
+    case FunctionCode:
+        // The wrapper function is the start of a CommonJS module. A function of an ES module is
+        // not the start of it: a dependency in a cycle can call one before the module code runs.
+        return m_pauseAtEntrySawProgramCode;
+    case EvalCode:
+        break;
     }
-    return m_pauseAtEntrySourceID == sourceID;
+    return false;
 }
 #endif
 
@@ -1247,7 +1258,13 @@ void Debugger::pauseIfNeeded(JSGlobalObject* globalObject)
             reason = PausedAfterBlackboxedScript;
         else if (didPauseInAwait)
             reason = PausedAfterAwait;
+#if USE(BUN_JSC_ADDITIONS)
+        // The entry pause keeps its reason when a breakpoint is at the same place, so that a
+        // frontend can tell the pause it asked for from a breakpoint.
+        else if (m_pausingBreakpointID && !m_isPausingAtEntry)
+#else
         else if (m_pausingBreakpointID)
+#endif
             reason = PausedForBreakpoint;
         PauseReasonDeclaration rauseReasonDeclaration(*this, reason);
 
