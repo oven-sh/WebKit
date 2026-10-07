@@ -2393,20 +2393,31 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleCallVariant(Node* c
         }
     };
 
+    // handleConstantFunction(), handleIntrinsicCall() and handleDOMJITCall() put nodes in place of the call, and those
+    // nodes check their operands. When a compile proves that such a check never passes, the code ends there in an exit
+    // of kind Uncountable (SpeculativeJIT::fillSpeculateInt32Internal() and its siblings, lowInt32() and its siblings
+    // in the FTL). Code that has left through that exit would be compiled to leave through it again, so the call stays
+    // a call. A callee that is a JS function without an intrinsic has no such nodes, and is not asked.
+    Intrinsic intrinsic = callee.intrinsicFor(specializationKind);
+    bool canReplaceCallWithNodes = true;
+    if (callee.internalFunction() || callee.nativeExecutable() || intrinsic != NoIntrinsic)
+        canReplaceCallWithNodes = !m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable);
+
     if (callee.internalFunction() || callee.function()) {
-        JSObject* function = callee.internalFunction() ? static_cast<JSObject*>(callee.internalFunction()) : static_cast<JSObject*>(callee.function());
-        if (handleConstantFunction(callTargetNode, result, function, registerOffset, argumentCountIncludingThis, specializationKind, prediction, newTarget, insertChecksWithAccounting)) {
-            endSpecialCase();
-            return CallOptimizationResult::Inlined;
+        if (canReplaceCallWithNodes) {
+            JSObject* function = callee.internalFunction() ? static_cast<JSObject*>(callee.internalFunction()) : static_cast<JSObject*>(callee.function());
+            if (handleConstantFunction(callTargetNode, result, function, registerOffset, argumentCountIncludingThis, specializationKind, prediction, newTarget, insertChecksWithAccounting)) {
+                endSpecialCase();
+                return CallOptimizationResult::Inlined;
+            }
+            RELEASE_ASSERT(!didInsertChecks);
         }
-        RELEASE_ASSERT(!didInsertChecks);
         if (callee.internalFunction())
             return CallOptimizationResult::DidNothing;
         // For normal JSFunction case, the latter optimizations can be still effective.
     }
 
-    Intrinsic intrinsic = callee.intrinsicFor(specializationKind);
-    if (intrinsic != NoIntrinsic) {
+    if (intrinsic != NoIntrinsic && canReplaceCallWithNodes) {
         CallOptimizationResult optimizationResult = handleIntrinsicCall(callTargetNode, result, callee, intrinsic, registerOffset, argumentCountIncludingThis, osrExitIndex, callOp, kind, specializationKind, prediction, insertChecksWithAccounting);
         if (optimizationResult != CallOptimizationResult::DidNothing) {
             endSpecialCase();
@@ -2416,7 +2427,7 @@ ByteCodeParser::CallOptimizationResult ByteCodeParser::handleCallVariant(Node* c
         // We might still try to inline the Intrinsic because it might be a builtin JS function.
     }
 
-    if (Options::useDOMJIT()) {
+    if (Options::useDOMJIT() && canReplaceCallWithNodes) {
         if (const DOMJIT::Signature* signature = callee.signatureFor(specializationKind)) {
             if (handleDOMJITCall(callTargetNode, result, signature, registerOffset, argumentCountIncludingThis, prediction, insertChecksWithAccounting)) {
                 endSpecialCase();
@@ -3616,7 +3627,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 1)
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -3634,7 +3645,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 1)
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -3653,7 +3664,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -3678,7 +3689,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
             insertChecks();
@@ -3781,7 +3792,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
             if (argumentCountIncludingThis < 2)
                 return CallOptimizationResult::DidNothing;
 
-            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, Uncountable) || m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
+            if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, BadType))
                 return CallOptimizationResult::DidNothing;
 
             NodeType nodeType = intrinsic == StringPrototypeStartsWithIntrinsic ? StringStartsWith : StringEndsWith;
@@ -5425,7 +5436,7 @@ auto ByteCodeParser::handleIntrinsicCall(Node* callee, Operand resultOperand, Ca
 
 #if USE(BUN_JSC_ADDITIONS)
         case BufferAccessorIntrinsic: {
-            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Int52Overflow, Uncountable }) {
+            for (ExitKind kind : { BadType, BadIndexingType, OutOfBounds, Int52Overflow }) {
                 if (m_inlineStackTop->m_exitProfile.hasExitSite(m_currentIndex, kind))
                     return CallOptimizationResult::DidNothing;
             }
