@@ -287,14 +287,12 @@ void Debugger::setSteppingMode(SteppingMode mode)
 void Debugger::registerCodeBlock(CodeBlock* codeBlock)
 {
     applyBreakpoints(codeBlock);
+#if USE(BUN_JSC_ADDITIONS)
+    if (!m_pauseAtEntryURL.isNull()) [[unlikely]]
+        registerCodeBlockForPauseAtEntry(codeBlock);
+#endif
     if (isStepping())
         codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
-#if USE(BUN_JSC_ADDITIONS)
-    // A code block calls its debug hooks only when it has a debugger request. This one has to
-    // reach willExecuteProgram() or callEvent() for the entry pause, without stepping mode.
-    else if (!m_pauseAtEntryURL.isNull() && m_breakpointsActivated && isPauseAtEntryTarget(codeBlock)) [[unlikely]]
-        codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
-#endif
 }
 
 void Debugger::forEachRegisteredCodeBlock(NOESCAPE const Function<void(CodeBlock*)>& callback)
@@ -952,8 +950,7 @@ void Debugger::cancelPauseAtEntry()
     });
 }
 
-// Not inline: registerCodeBlock() then saves no more registers than it did without the request.
-NEVER_INLINE bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
+bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
 {
     CodeType codeType = codeBlock->codeType();
     if (codeType == EvalCode)
@@ -985,6 +982,22 @@ NEVER_INLINE bool Debugger::isPauseAtEntryTarget(CodeBlock* codeBlock)
         break;
     }
     return false;
+}
+
+// Not inline: registerCodeBlock() then saves no more registers than it did without the request.
+NEVER_INLINE void Debugger::registerCodeBlockForPauseAtEntry(CodeBlock* codeBlock)
+{
+    if (!isPauseAtEntryTarget(codeBlock))
+        return;
+
+    // A code block calls its debug hooks only when it has a debugger request. This one has to
+    // reach willExecuteProgram() or callEvent() for the entry pause, without stepping mode.
+    if (m_breakpointsActivated)
+        codeBlock->setSteppingMode(CodeBlock::SteppingModeEnabled);
+    else {
+        // The script starts with no debug hooks, so nothing can pause at its start.
+        cancelPauseAtEntry();
+    }
 }
 #endif
 
@@ -1465,15 +1478,13 @@ bool Debugger::takePauseAtEntry(CallFrame* callFrame)
     if (m_pauseAtEntryURL.isNull()) [[likely]]
         return false;
 
-    if (!callFrame || !m_breakpointsActivated)
-        return false;
-
-    CodeBlock* codeBlock = callFrame->codeBlock();
+    CodeBlock* codeBlock = callFrame ? callFrame->codeBlock() : nullptr;
     if (!codeBlock || !isPauseAtEntryTarget(codeBlock))
         return false;
 
+    // The script starts now. The request ends here, with a pause or without one.
     cancelPauseAtEntry();
-    return true;
+    return m_breakpointsActivated;
 }
 
 void Debugger::pauseAtEntry(CallFrame* callFrame)

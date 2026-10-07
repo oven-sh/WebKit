@@ -135,8 +135,9 @@ public:
     // A one-time request to pause when the script at `url` starts to run: at the start of its
     // module code, or at the call of the function that its program code makes (the wrapper of a
     // CommonJS module), or, with `programCode`, at the start of its program code. No other code
-    // takes the request. It stays pending until that script runs with breakpoints active, or it
-    // is cancelled. The pause has the reason PausedAtEntry, also when a breakpoint is there.
+    // takes the request. It stays pending until that code starts to run, or it is cancelled. It
+    // needs active breakpoints at that time: with none, the request ends and nothing pauses.
+    // The pause has the reason PausedAtEntry, also when a breakpoint is there.
     void schedulePauseAtEntry(const String& url, bool programCode);
     void cancelPauseAtEntry();
 #endif
@@ -330,6 +331,7 @@ private:
     void pauseIfNeeded(JSC::JSGlobalObject*);
 #if USE(BUN_JSC_ADDITIONS)
     bool isPauseAtEntryTarget(CodeBlock*);
+    void registerCodeBlockForPauseAtEntry(CodeBlock*);
     bool takePauseAtEntry(CallFrame*);
     void pauseAtEntry(CallFrame*);
 #endif
