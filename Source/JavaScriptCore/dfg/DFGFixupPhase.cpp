@@ -1161,7 +1161,13 @@ private:
                 ASSERT(node->arrayMode() == ArrayMode(Array::String, Array::Read));
             blessArrayOperation(node->child1(), node->child2(), node->child1()); // Rewrite child1 with ResolveRope.
             fixEdge<KnownStringUse>(node->child1());
-            fixEdge<Int32Use>(node->child2());
+            // StringCharCodeAt and StringCodePointAt have no result for an index past the end: they leave the compiled
+            // code, FTL code with OutOfBounds, which nothing reads. After that exit a double index keeps its check, so
+            // that the call becomes a call instead of a node that leaves again in every compile.
+            if ((op == StringCharCodeAt || op == StringCodePointAt) && m_graph.hasExitSite(node->origin.semantic, OutOfBounds))
+                fixEdge<Int32Use>(node->child2());
+            else
+                fixTruncatedInt32Edge(node, node->child2());
             break;
         }
 
@@ -1170,7 +1176,7 @@ private:
             fixEdge<StringUse>(node->child1());
             fixEdge<StringUse>(node->child2());
             if (node->child3())
-                fixEdge<Int32Use>(node->child3());
+                fixTruncatedInt32Edge(node, node->child3());
             break;
         }
 
@@ -1179,7 +1185,7 @@ private:
             fixEdge<StringUse>(node->child1());
             fixEdge<StringUse>(node->child2());
             if (node->child3())
-                fixEdge<Int32Use>(node->child3());
+                fixTruncatedInt32Edge(node, node->child3());
             break;
         }
 
@@ -1848,9 +1854,9 @@ private:
         case ArraySlice: {
             fixEdge<KnownCellUse>(m_graph.varArgChild(node, 0));
             if (node->numChildren() >= 3) {
-                fixEdge<Int32Use>(m_graph.varArgChild(node, 1));
+                fixTruncatedInt32Edge(node, m_graph.varArgChild(node, 1));
                 if (node->numChildren() == 4)
-                    fixEdge<Int32Use>(m_graph.varArgChild(node, 2));
+                    fixTruncatedInt32Edge(node, m_graph.varArgChild(node, 2));
             }
             break;
         }
@@ -1883,8 +1889,8 @@ private:
 
         case ArraySplice: {
             fixEdge<ArrayUse>(m_graph.child(node, 0));
-            fixEdge<Int32Use>(m_graph.child(node, 1));
-            fixEdge<Int32Use>(m_graph.child(node, 2));
+            fixTruncatedInt32Edge(node, m_graph.child(node, 1));
+            fixTruncatedInt32Edge(node, m_graph.child(node, 2));
             break;
         }
 
@@ -2287,13 +2293,13 @@ private:
 
         case NewArrayWithSize: {
             watchHavingABadTime(node);
-            fixEdge<Int32Use>(node->child1());
+            fixArrayLengthEdge(node, node->child1());
             break;
         }
 
         case NewArrayWithSizeAndStructure: {
             watchHavingABadTime(node);
-            fixEdge<Int32Use>(node->child1());
+            fixArrayLengthEdge(node, node->child1());
             break;
         }
 
@@ -3441,9 +3447,9 @@ private:
         case StringSubstring:
         case StringSubstr: {
             fixEdge<StringUse>(node->child1());
-            fixEdge<Int32Use>(node->child2());
+            fixTruncatedInt32Edge(node, node->child2());
             if (node->child3())
-                fixEdge<Int32Use>(node->child3());
+                fixTruncatedInt32Edge(node, node->child3());
             break;
         }
 
@@ -3472,7 +3478,7 @@ private:
             }
 
             if (op == NumberToStringWithRadix)
-                fixEdge<Int32Use>(node->child2());
+                fixTruncatedInt32Edge(node, node->child2());
             else if (node->validRadixConstant() == 10 && node->child1()->shouldSpeculateNumber()) {
                 node->setOp(ToString);
                 node->resetOpInfo();
@@ -3538,7 +3544,7 @@ private:
             }
 
             if (node->child2())
-                fixEdge<Int32Use>(node->child2());
+                fixTruncatedInt32Edge(node, node->child2());
 
             break;
         }
@@ -3683,7 +3689,7 @@ private:
         case DataViewGetInt:
         case DataViewGetFloat: {
             fixEdge<DataViewObjectUse>(node->child1());
-            fixEdge<Int32Use>(node->child2());
+            fixTruncatedInt32Edge(node, node->child2());
             if (node->child3())
                 fixEdge<BooleanUse>(node->child3());
 
@@ -3712,7 +3718,7 @@ private:
 
         case DataViewSet: {
             fixEdge<DataViewObjectUse>(m_graph.varArgChild(node, 0));
-            fixEdge<Int32Use>(m_graph.varArgChild(node, 1));
+            fixTruncatedInt32Edge(node, m_graph.varArgChild(node, 1));
             if (m_graph.varArgChild(node, 3))
                 fixEdge<BooleanUse>(m_graph.varArgChild(node, 3));
             
@@ -5201,6 +5207,42 @@ private:
         edge = Edge(newNode, KnownInt32Use);
     }
     
+    // For an index, a position, a count, a radix or a byte offset, which the builtin truncates (ToIntegerOrInfinity,
+    // ToIndex, ToInt32) and the node takes as an Int32. An operand with a double result never was a JSValue, so a
+    // check of it for Int32 cannot pass: truncate it instead. A NaN, an Infinity or a number outside Int32 exits with
+    // Overflow. The next compile then keeps the check, and ByteCodeParser::handleCallVariant() keeps the call.
+    void fixTruncatedInt32Edge(Node* node, Edge& edge)
+    {
+        if (!edge->hasDoubleResult() || !node->origin.exitOK || m_graph.hasExitSite(node->origin.semantic, Overflow)) {
+            fixEdge<Int32Use>(edge);
+            return;
+        }
+
+        Node* truncated = m_insertionSet.insertNode(
+            m_indexInBlock, SpecInt32Only, ArithTrunc, node->origin, Edge(edge.node(), DoubleRepUse));
+        truncated->setArithRoundingMode(Arith::RoundingMode::Int32);
+        truncated->setResult(NodeResultInt32);
+        truncated->clearFlags(NodeMustGenerate);
+        edge = Edge(truncated, Int32Use);
+    }
+
+    // For the length of a new Array, which is not converted: a double is a valid length only when it is a whole
+    // number. As above for an operand that was made as a double, except that the conversion is exact: a fraction,
+    // which is a RangeError, exits too. There is no test for an earlier exit, because a length that does not fit
+    // leaves the compiled code either way, and without the conversion every other length would leave it as well.
+    void fixArrayLengthEdge(Node* node, Edge& edge)
+    {
+        if (!edge->hasDoubleResult() || !node->origin.exitOK) {
+            fixEdge<Int32Use>(edge);
+            return;
+        }
+
+        Node* length = m_insertionSet.insertNode(
+            m_indexInBlock, SpecInt32Only, DoubleAsInt32, node->origin, Edge(edge.node(), DoubleRepUse));
+        length->setArithMode(Arith::CheckOverflow);
+        edge = Edge(length, Int32Use);
+    }
+
     void fixIntOrBooleanEdge(Edge& edge)
     {
         Node* node = edge.node();
@@ -5639,7 +5681,7 @@ private:
 
         fixEdge<KnownCellUse>(array);
         if (node->numChildren() == 4)
-            fixEdge<Int32Use>(m_graph.varArgChild(node, 2));
+            fixTruncatedInt32Edge(node, m_graph.varArgChild(node, 2));
 
         // Constant folding.
         switch (node->arrayMode().type()) {
