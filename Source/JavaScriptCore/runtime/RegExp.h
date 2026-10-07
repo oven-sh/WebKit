@@ -114,8 +114,7 @@ public:
     template<Yarr::MatchFrom thread = Yarr::MatchFrom::VMThread>
     MatchResult matchInline(JSGlobalObject* nullOrGlobalObject, VM&, StringView, unsigned startOffset);
 
-    // size_t so that a result code in MatchResult::start (see matchInlineOnce) is out of bounds here.
-    static bool splitsSurrogatePair(StringView s, size_t offset)
+    static bool splitsSurrogatePair(StringView s, unsigned offset)
     {
         return offset && offset < s.length() && U16_IS_TRAIL(s[offset]) && U16_IS_LEAD(s[offset - 1]);
     }
