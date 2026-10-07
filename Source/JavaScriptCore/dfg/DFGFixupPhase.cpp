@@ -89,13 +89,10 @@ private:
             fixIntOrBooleanEdge(rightChild);
             // We need to be careful about skipping overflow check because div / mod can generate non integer values
             // from (Int32, Int32) inputs. For now, we always check non-zero divisor.
-            if (bytecodeCanTruncateInteger(node->arithNodeFlags()) && bytecodeCanIgnoreNaNAndInfinity(node->arithNodeFlags()) && bytecodeCanIgnoreNegativeZero(node->arithNodeFlags())) {
-                node->setArithMode(Arith::Unchecked);
+            Arith::Mode mode = m_graph.int32DivModArithMode(node);
+            node->setArithMode(mode);
+            if (mode == Arith::Unchecked)
                 node->clearFlags(NodeMustGenerate);
-            } else if (bytecodeCanIgnoreNegativeZero(node->arithNodeFlags()))
-                node->setArithMode(Arith::CheckOverflow);
-            else
-                node->setArithMode(Arith::CheckOverflowAndNegativeZero);
             return;
         }
 

@@ -447,13 +447,34 @@ public:
         return shouldSpeculateInt52ForMod(left) && shouldSpeculateInt52ForMod(right);
     }
 
+    // The mode of an ArithDiv or ArithMod over Int32s. Div and mod turn Int32s into a fraction, a NaN, an Infinity or
+    // a -0, so they are unchecked only when nothing that uses the result can tell any of those from its truncation.
+    Arith::Mode int32DivModArithMode(Node* node)
+    {
+        NodeFlags flags = node->arithNodeFlags();
+        if (bytecodeCanTruncateInteger(flags) && bytecodeCanIgnoreNaNAndInfinity(flags) && bytecodeCanIgnoreNegativeZero(flags))
+            return Arith::Unchecked;
+        if (bytecodeCanIgnoreNegativeZero(flags))
+            return Arith::CheckOverflow;
+        return Arith::CheckOverflowAndNegativeZero;
+    }
+
     bool binaryArithShouldSpeculateInt32(Node* node, PredictionPass pass)
     {
         Node* left = node->child1().node();
         Node* right = node->child2().node();
-        
-        return Node::shouldSpeculateInt32OrBooleanForArithmetic(left, right)
-            && node->canSpeculateInt32(node->sourceFor(pass));
+
+        if (!Node::shouldSpeculateInt32OrBooleanForArithmetic(left, right))
+            return false;
+
+        // nodeCanSpeculateInt32() keeps a node that overflows Int32 when its result is not used as a number, because
+        // such a node is unchecked. That alone does not make a division unchecked: the one in `(x / y + 1) | 0` is
+        // checked, and as an Int32 division it would exit on every quotient that has a remainder, in every compile.
+        RareCaseProfilingSource source = node->sourceFor(pass);
+        if ((node->op() == ArithDiv || node->op() == ValueDiv) && nodeMayOverflowInt32(node->arithNodeFlags(), source))
+            return int32DivModArithMode(node) == Arith::Unchecked;
+
+        return node->canSpeculateInt32(source);
     }
     
     bool binaryArithShouldSpeculateInt52(Node* node, PredictionPass pass)
