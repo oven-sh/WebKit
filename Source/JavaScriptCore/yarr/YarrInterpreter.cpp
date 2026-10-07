@@ -2349,6 +2349,12 @@ public:
     {
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // For tests: a limit below matchLimit, and whether the match ended at its limit.
+    void setMatchLimitForTesting(unsigned limit) { remainingMatchCount = limit; }
+    bool reachedMatchLimitForTesting() const { return !remainingMatchCount; }
+#endif
+
 private:
     inline bool NODELETE isLegacyCompilation() const { return compileMode == CompileMode::Legacy; }
     inline bool NODELETE isUnicodeCompilation() const { return compileMode == CompileMode::Unicode; }
@@ -3312,18 +3318,92 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
     m_lineIndent = savedLineIndent;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, LinearRefusal& refusal, ConcurrentJSLock* lock)
+{
+    // Before the ByteCompiler: BytecodePattern takes the pattern's character classes.
+    auto linearProgram = compileLinear(pattern, refusal);
+    if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
+        if (linearProgram)
+            linearProgram->dump(WTF::dataFile());
+        else
+            dataLogLn("The non-backtracking matcher refused this regular expression: ", linearRefusalName(refusal));
+    }
+    if (!linearProgram)
+        return nullptr;
+
+    auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+    if (bytecode)
+        bytecode->m_linearProgram = WTF::move(linearProgram);
+    return bytecode;
+}
+#endif
+
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // For the callers that have this engine and no other (Yarr::RegularExpression), and for a
+    // RegExp whose JIT code gave up. RegExp::compile() asks byteCompileLinear() itself, before
+    // it turns to the JIT.
+    if (Options::useRegExpLinearEngine()) [[unlikely]] {
+        LinearRefusal refusal = LinearRefusal::None;
+        if (auto bytecode = byteCompileLinear(pattern, allocator, errorCode, refusal, lock))
+            return bytecode;
+        if (hasError(errorCode))
+            return nullptr;
+        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
+        if (bytecode)
+            bytecode->m_linearRefusal = refusal;
+        return bytecode;
+    }
+#endif
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output)
 {
     SuperSamplerScope superSamplerScope(false);
+#if USE(BUN_JSC_ADDITIONS)
+    if (bytecode->m_linearProgram) [[unlikely]]
+        return bytecode->m_linearProgram->match(input, start, output);
+#endif
     if (input.is8Bit())
         return Interpreter<Latin1Character>(bytecode, output, input.span8(), start).interpret();
     return Interpreter<char16_t>(bytecode, output, input.span16(), start).interpret();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
+{
+    statistics = { };
+    statistics.refusal = bytecode->m_linearRefusal;
+    if (bytecode->m_linearProgram) {
+        statistics.engine = InterpretStatistics::Engine::Linear;
+        statistics.programSize = bytecode->m_linearProgram->instructionCount();
+        statistics.maximumStepsPerPosition = bytecode->m_linearProgram->m_maximumStepsPerPosition;
+        statistics.maximumScratchBytes = bytecode->m_linearProgram->m_maximumScratchBytes;
+        return bytecode->m_linearProgram->match(input, start, output, &statistics.linear);
+    }
+    return interpret(bytecode, input, start, output);
+}
+
+unsigned interpretByBacktrackingForTesting(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
+{
+    // Far below matchLimit: a pattern that makes the interpreter backtrack for seconds is given
+    // up in milliseconds, and the test knows that the answer is not one.
+    static constexpr unsigned matchLimitForTesting = 100000;
+    auto interpretWith = [&](auto characters) {
+        Interpreter<typename decltype(characters)::value_type> interpreter(bytecode, output, characters, start);
+        interpreter.setMatchLimitForTesting(matchLimitForTesting);
+        unsigned result = interpreter.interpret();
+        statistics.reachedMatchLimit |= interpreter.reachedMatchLimitForTesting();
+        return result;
+    };
+    if (input.is8Bit())
+        return interpretWith(input.span8());
+    return interpretWith(input.span16());
+}
+#endif
 
 // These should be the same for both char16_t & Latin1Character.
 static_assert(sizeof(BackTrackInfoPatternCharacter) == (YarrStackSpaceForBackTrackInfoPatternCharacter * sizeof(uintptr_t)));

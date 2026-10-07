@@ -74,6 +74,7 @@
 #include "Parser.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "RegExpObject.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
 #include "Snippet.h"
@@ -88,6 +89,7 @@
 #include "VMInspector.h"
 #include "VMTrapsInlines.h"
 #include "WasmCapabilities.h"
+#include "YarrInterpreter.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
 #include "JSArrayBufferView.h"
@@ -2175,6 +2177,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuRdtsc);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuCpuid);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuPause);
 static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
+#if USE(BUN_JSC_ADDITIONS)
+static JSC_DECLARE_HOST_FUNCTION(functionRegExpMatchStatistics);
+static JSC_DECLARE_HOST_FUNCTION(functionRegExpMatchOnBothEngines);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionNoInline);
@@ -2578,6 +2584,107 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // plus the second argument as a byte offset. It'll also flush on the object
 // itself so its length, etc, aren't in the cache.
 //
+#if USE(BUN_JSC_ADDITIONS)
+// Matches a RegExp once, with the engine it is compiled for, and reports which engine that is
+// and what the match cost the non-backtracking matcher. With "backtracking" as the engine, the
+// match is the bytecode interpreter's, also for a RegExp that has another engine: a test
+// compares the engines on one RegExp that way.
+// Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset[, engine]])
+// Returns { index, captures, engine, refusal, jit, reachedMatchLimit, programSize,
+// maximumStepsPerPosition, maximumScratchBytes, steps, scratchBytes }. captures is the output
+// vector of the match (the start and the end of each group, then the group each duplicate name
+// chose), or null. reachedMatchLimit: the interpreter gave up, which it does early here, and
+// index is -1 whatever the string has.
+JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExpObject = dynamicDowncast<RegExpObject>(callFrame->argument(0));
+    if (!regExpObject)
+        return throwVMTypeError(globalObject, scope, "regExpMatchStatistics expects a RegExp"_s);
+    String string = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned startOffset = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    bool byBacktrackingInterpreter = false;
+    if (!callFrame->argument(3).isUndefined()) {
+        String engine = callFrame->argument(3).toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (engine != "backtracking"_s)
+            return throwVMTypeError(globalObject, scope, "regExpMatchStatistics expects \"backtracking\" or no engine"_s);
+        byBacktrackingInterpreter = true;
+    }
+
+    Yarr::InterpretStatistics statistics;
+    Vector<int> captures;
+    int index = regExpObject->regExp()->matchForTesting(globalObject, string, startOffset, statistics, &captures, byBacktrackingInterpreter);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSValue capturesValue = jsNull();
+    if (index >= 0) {
+        JSArray* array = constructEmptyArray(globalObject, nullptr, captures.size());
+        RETURN_IF_EXCEPTION(scope, { });
+        for (unsigned captureIndex = 0; captureIndex < captures.size(); ++captureIndex) {
+            array->putDirectIndex(globalObject, captureIndex, jsNumber(captures[captureIndex]));
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        capturesValue = array;
+    }
+
+    bool isLinear = statistics.engine == Yarr::InterpretStatistics::Engine::Linear;
+    JSObject* result = constructEmptyObject(globalObject);
+    result->putDirect(vm, Identifier::fromString(vm, "index"_s), jsNumber(index));
+    result->putDirect(vm, Identifier::fromString(vm, "captures"_s), capturesValue);
+    result->putDirect(vm, Identifier::fromString(vm, "engine"_s), jsNontrivialString(vm, isLinear ? "linear"_s : "backtracking"_s));
+    result->putDirect(vm, Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
+    result->putDirect(vm, Identifier::fromString(vm, "jit"_s), jsBoolean(statistics.usesJIT));
+    result->putDirect(vm, Identifier::fromString(vm, "reachedMatchLimit"_s), jsBoolean(statistics.reachedMatchLimit));
+    result->putDirect(vm, Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
+    result->putDirect(vm, Identifier::fromString(vm, "maximumStepsPerPosition"_s), jsNumber(static_cast<double>(statistics.maximumStepsPerPosition)));
+    result->putDirect(vm, Identifier::fromString(vm, "maximumScratchBytes"_s), jsNumber(static_cast<double>(statistics.maximumScratchBytes)));
+    result->putDirect(vm, Identifier::fromString(vm, "steps"_s), jsNumber(static_cast<double>(statistics.linear.steps)));
+    result->putDirect(vm, Identifier::fromString(vm, "scratchBytes"_s), jsNumber(statistics.linear.scratchBytes));
+    return JSValue::encode(result);
+}
+
+// Matches a RegExp twice: with the engine it is compiled for, and with the bytecode interpreter.
+// Usage: $vm.regExpMatchOnBothEngines(regExp, string[, startOffset])
+// Returns the index of the match (-1 for none) when the two give the same match with the same
+// groups, false when they do not, and null when the interpreter gave up (see
+// regExpMatchStatistics).
+JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchOnBothEngines, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExpObject = dynamicDowncast<RegExpObject>(callFrame->argument(0));
+    if (!regExpObject)
+        return throwVMTypeError(globalObject, scope, "regExpMatchOnBothEngines expects a RegExp"_s);
+    String string = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned startOffset = callFrame->argument(2).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    RegExp* regExp = regExpObject->regExp();
+    Yarr::InterpretStatistics statistics;
+    Vector<int> captures;
+    int index = regExp->matchForTesting(globalObject, string, startOffset, statistics, &captures);
+    RETURN_IF_EXCEPTION(scope, { });
+    Vector<int> capturesOfInterpreter;
+    int indexOfInterpreter = regExp->matchForTesting(globalObject, string, startOffset, statistics, &capturesOfInterpreter, true);
+    RETURN_IF_EXCEPTION(scope, { });
+
+    if (statistics.reachedMatchLimit)
+        return JSValue::encode(jsNull());
+    if (index != indexOfInterpreter || captures != capturesOfInterpreter)
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsNumber(index));
+}
+#endif
+
 // If the first argument is not a JSArrayBuffer, we load the butterfly
 // and clflush at the address of the butterfly.
 JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFrame))
@@ -5909,6 +6016,11 @@ void JSDollarVM::finishCreation(VM& vm)
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuCpuid"_s), 0, functionCpuCpuid, ImplementationVisibility::Public, CPUCpuidIntrinsic, jsDollarVMPropertyAttributes);
     putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "cpuPause"_s), 0, functionCpuPause, ImplementationVisibility::Public, CPUPauseIntrinsic, jsDollarVMPropertyAttributes);
     addFunction(vm, alwaysAllow, "cpuClflush"_s, functionCpuClflush, 2);
+
+#if USE(BUN_JSC_ADDITIONS)
+    addFunction(vm, alwaysAllow, "regExpMatchStatistics"_s, functionRegExpMatchStatistics, 4);
+    addFunction(vm, alwaysAllow, "regExpMatchOnBothEngines"_s, functionRegExpMatchOnBothEngines, 3);
+#endif
 
     addFunction(vm, alwaysAllow, "llintTrue"_s, functionLLintTrue, 0);
     addFunction(vm, alwaysAllow, "baselineJITTrue"_s, functionBaselineJITTrue, 0);
