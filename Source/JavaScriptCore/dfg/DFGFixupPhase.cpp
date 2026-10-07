@@ -3720,22 +3720,18 @@ private:
             Edge& valueToStore = m_graph.varArgChild(node, 2);
             if (data.isFloatingPoint)
                 fixEdge<DoubleRepUse>(valueToStore);
-            else {
-                switch (data.byteSize) {
-                case 1:
-                case 2:
-                    fixEdge<Int32Use>(valueToStore);
-                    break;
-                case 4:
-                    if (data.isSigned)
-                        fixEdge<Int32Use>(valueToStore);
-                    else
-                        fixEdge<Int52RepUse>(valueToStore);
-                    break;
-                case 8:
-                    fixEdge<HeapBigIntUse>(valueToStore);
-                    break;
-                }
+            else if (data.byteSize == 8)
+                fixEdge<HeapBigIntUse>(valueToStore);
+            else if (data.byteSize == 4 && !data.isSigned && (valueToStore->hasInt52Result() || valueToStore->shouldSpeculateInt52())) {
+                // The backends store the low four bytes of an Int52. getUint32() has an Int52 result even while its
+                // prediction is Int32, so an Int32 check of it would exit on the first value above INT32_MAX.
+                fixEdge<Int52RepUse>(valueToStore);
+            } else {
+                // SetViewValue stores the low bytes of ToInt32(value), for every number. So any other value is converted
+                // like the operand of a bitwise operation, and a fraction does not exit.
+                fixIntConvertingEdge(valueToStore);
+                // The backends switch on the use kind of this edge, and fixIntConvertingEdge() can leave KnownInt32Use.
+                valueToStore.setUseKind(Int32Use);
             }
             break;
         }
