@@ -5,7 +5,7 @@
 // $vm.regExpMatchOnBothEngines(regExp, string, start) matches with the engine the RegExp is
 // compiled for, and then the bytecode interpreter matches the same RegExp. It returns the index
 // of the match when the two have the same output vector (the start and the end of each group,
-// then the group that each duplicate name chose), and false when they do not.
+// then the group that each duplicated name chose), and false when they do not.
 //
 // The backtracking interpreter answers "no match" when it reaches its limit. That answer is not
 // one to compare with, so the function returns null for it. In this function the limit of the
@@ -118,6 +118,13 @@ function compareFromEveryStart(source, flags, subjects, startLimit)
         "^.$", "..", ".{2}", "(?<=.)a", "(?<!.)a", "\\S", "[^]", "\\u{10400}", "\\u{10428}", "[\\u{10400}-\\u{10427}]", "\\u00DF", "ss", "\\u0130", "i", "\\u0131",
         "\\u03A3", "\\u03C3", "\\u03C2", "[\\u03C3]", "\\u1E9E", "a\\u0301", ".\\u0301",
         "(?<a>x)|(?<a>y)", "(?<y>\\d{4})-(?<m>\\d{2})|(?<m>\\d{2})\\/(?<y>\\d{4})", "(?:(?<n>a)|(?<n>b))+", "(?<n>a)?(?:(?<m>b)|(?<m>c))",
+        // A duplicated name that a lookaround sets, that a lookaround sets and the match then
+        // gives up, and that no group of the match has.
+        "(?=(?<n>a)|(?<n>b))[ab]", "(?<=(?<n>a)|(?<n>b))c", "(?<n>a)(?=(?<m>b)|(?<m>c))|(?<n>x)", "(?<n>a)(?=(?<k>b))|(?<k>x)(?<n>y)",
+        "(?:(?=(?<n>a)|(?<n>b))[ab])+", "(?!(?<n>a)|(?<n>b))c|(?<n>d)", "(?<n>a)(?!(?<m>b)|(?<m>c))|(?<n>b)(?<m>c)",
+        "(?<n>a)|(?<n>b)|c", "(c)|(?<n>a)|(?<n>b)", "(?:(?<n>a)|(?<n>b)|c)+", "(?<n>a)?(?:(?<m>b)|(?<m>c)|d)", "(?=(?<n>a))a|(?<n>b)|c",
+        "(?:(?<m>a)|(?<m>b))(?=(?<n>c)|(?<n>d))", "(?:(?<m>a)|(?<m>b))(?<=(?<n>a)|(?<n>b))(?=(?<k>c)|(?<k>d))", "(?:(?=(?<n>a)|(?<n>b))[ab]|c)+",
+        "(?:(?<n>a)|(?=(?<n>b)).|c){1,3}", "(?:(?<n>a)|(?=(?<n>b)).|c){2}?", "(?:(?=(?<n>a))b|a)|(?<n>q)", "(?:(?!(?<n>a))x|a)|(?<n>q)", "(?!(?<n>a)|(?<n>b))",
         "(?:(a)|b)*", "(?:(a)|(b))+", "(a*)*", "(a|ab)(c|bcd)(d*)", "(?:a(b)?)+", "(z)((a+)?(b+)?(c))*", "(a*)+", "(a+)+", "((a)|(b))*?c", "(a)|b", "(?:(a)|b)\\b",
         "a*?", "(a+?)(b*)", "(?:a|ab)*?c", "a{2,3}?", "a{2,3}", "(a{1,2}){2}", "(?:a{0,2}){2,3}b", "(a){0}b", "(a){0,1}b", "(?:(a)|(b)|(c)){3}",
         "(?:a*)*", "(?:a?)*?b", "(a?)+", "(?:|a)+", "()*", "(?:)*", "(a*)+$", "(?:a|)*b", "(|a)+b", "(?:(?:a?)+)+b", "(a*?)*", "(a*?)+b",
@@ -136,6 +143,7 @@ function compareFromEveryStart(source, flags, subjects, startLimit)
         "k", "K", "\u212A", "s", "S", "\u017F", "ks\u212A\u017F", "\u{10400}", "\u{10428}", "\u{10400}\u{10428}", "ss", "\u00DF", "\u1E9E", "i", "I", "\u0130", "\u0131",
         "\u03A3", "\u03C3", "\u03C2", "a\u0301", "e\u0301a", "2024-05", "05/2024", "12 2024-05 x", "1053", "3.14", "1.", " a ", "a b", "a\nb", "\na", "b\n", "a\n\nb", " \t a \n",
         "A", "Ab", "aB", "\xE9", "\xC9", "\xB5", "\u039C", "\u03BC", "cab", "bc", "abc abc", "dab", "a1 b2",
+        "d", "ad", "bd", "xy", "ca", "q", "x",
     ];
 
     for (let source of sources) {
@@ -180,6 +188,38 @@ function compareFromEveryStart(source, flags, subjects, startLimit)
         throw new Error("Only " + (acceptedPatterns - before) + " of the made patterns ran on the non-backtracking matcher, " + withLookaround + " of them with a lookaround");
 }
 
+// 4. Made patterns again, with group names this time: a name is in one group of an alternative and
+// again in another alternative. The engines then also report which group of a name matched.
+{
+    state = 20261008;
+    let names = ["n", "m", "k"];
+    let duplicated = 0;
+    let matchesBefore = matches;
+    let withoutAGroupForAName = 0;
+    for (let index = 0; index < 3000; ++index) {
+        let source = disjunction(index < 500 ? 0 : 1, false, names.slice());
+        let flags = pick(["", "", "i", "m", "s", "y", "u", "v"]);
+        let subjects = [];
+        for (let count = 0; count < 4; ++count)
+            subjects.push(subject(10));
+        subjects.push(pick(["a", "b", "ab", "ba", "a "]).repeat(1 + random() % 4));
+        if (!hasDuplicatedName(source, names) || !compareFromEveryStart(source, flags, subjects, 3))
+            continue;
+        ++duplicated;
+        // How often a name of the pattern has no group in the match: the case in which the
+        // engines differ in what they leave in the vector.
+        let regExp = new RegExp(source, flags.replace("y", ""));
+        for (let subject of subjects) {
+            let match = regExp.exec(subject);
+            if (match && Object.values(match.groups).includes(undefined))
+                ++withoutAGroupForAName;
+        }
+    }
+    // Fewer means that this part no longer reaches what it is for.
+    if (duplicated < 400 || matches - matchesBefore < 2500 || withoutAGroupForAName < 800)
+        throw new Error("Only " + duplicated + " of the made patterns with a duplicated name ran on the non-backtracking matcher, with " + (matches - matchesBefore) + " matches, " + withoutAGroupForAName + " of them with a name that has no group");
+}
+
 // The interpreter gives up on few of these. More means that this test compares less than it says.
-if (comparisons < 1200000 || matches < 400000 || givenUp > 100)
+if (comparisons < 1300000 || matches < 420000 || givenUp > 100)
     throw new Error(comparisons + " comparisons, " + matches + " of them of a match, and the interpreter gave up " + givenUp + " times");

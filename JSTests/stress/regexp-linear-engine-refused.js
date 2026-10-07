@@ -1,7 +1,9 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maximumRegExpLinearProgramSize=200")
+//@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maximumRegExpLinearProgramSize=200", "--useRegExpJIT=0")
 
 // A pattern the non-backtracking matcher refuses is compiled as it is without the matcher, for
-// the JIT or for the bytecode interpreter, and matches what it always matched.
+// the JIT or for the bytecode interpreter, and matches what it always matched. The second run
+// has no RegExp JIT, so there the interpreter runs every refused pattern.
 
 function describe(value)
 {
@@ -64,10 +66,16 @@ refused(/a{0,300}b/, "aab", "program too large", { index: 0, match: ["aab"] });
 refused(/(?=a{300})a/, "a".repeat(300), "program too large", { index: 0, match: ["a"] });
 
 accepted(/a{100}/, "a".repeat(100), { index: 0, match: ["a".repeat(100)] });
+// The limit itself: 197 copies, two instructions for the match's own slots, and the end.
+accepted(/a{197}/, "a".repeat(197), { index: 0, match: ["a".repeat(197)] });
+refused(/a{198}/, "a".repeat(198), "program too large", { index: 0, match: ["a".repeat(198)] });
 accepted(/(?:a{5}){20}/, "a".repeat(100), { index: 0, match: ["a".repeat(100)] });
 accepted(/(?:(?:(?:){1000}){1000}){1000}a/, "a", { index: 0, match: ["a"] });
 accepted(/(?:(?:(?:\b){1000}){1000}){1000}a/, "a", { index: 0, match: ["a"] });
 accepted(/(?:(?:(?:){0,1000}){0,1000}){0,1000}a/, "a", { index: 0, match: ["a"] });
+// A term that emits nothing still costs the compiler a visit, and the visits have a limit too:
+// this one is 100 instructions and 5,100 visits.
+refused(new RegExp("(?:" + "(?:)".repeat(50) + "a){100}"), "a".repeat(100), "program too large", { index: 0, match: ["a".repeat(100)] });
 
 // A lookaround is run to its end at every position that asserts it, and one inside another
 // at every position the outer one reads. What a position of the subject costs is therefore a
@@ -105,10 +113,11 @@ function hasCodeOfJIT(regExp, subject)
     return $vm.regExpMatchStatistics(regExp, subject, 0).jit;
 }
 
-if ($vm.useJIT()) {
+if ($vm.useJIT() && jscOptions().useRegExpJIT) {
     if (!hasCodeOfJIT(/(a)\1/, "aa") || !hasCodeOfJIT(/(?=.*b)a/, "ab") || !hasCodeOfJIT(/(?:a{50}){5}b/, "ab"))
         throw new Error("A refused pattern does not have the code of the JIT");
-}
+} else if (hasCodeOfJIT(/(a)\1/, "aa") || hasCodeOfJIT(/(?=.*b)a/, "ab"))
+    throw new Error("A refused pattern has the code of a JIT that is off");
 if (hasCodeOfJIT(/(a*)*b/, "aab") || hasCodeOfJIT(/a/, "a"))
     throw new Error("An accepted pattern has the code of the JIT");
 

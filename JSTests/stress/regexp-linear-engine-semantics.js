@@ -220,6 +220,20 @@ test(/(?:(?<n>a)|(?<n>b))+/, "ab", { index: 0, match: ["ab", undefined, "b"], gr
 test(/(?:(?<n>a)|(?<n>b)|c)+/, "abc", { index: 0, match: ["abc", undefined, undefined], groups: { n: undefined } });
 test(/(?<a>x)|(?<b>y)/, "y", { index: 0, match: ["y", undefined, "y"], groups: { a: undefined, b: "y" } });
 
+// A name used by more than one alternative, with its groups in a lookaround: the lookaround says
+// which group has the name, and a lookaround whose match is given up leaves no group for it.
+test(/(?=(?<n>a)|(?<n>b))./, "b", { index: 0, match: ["b", undefined, "b"], groups: { n: "b" } });
+test(/(?<=(?<n>a)|(?<n>b))c/, "bc", { index: 1, match: ["c", undefined, "b"], groups: { n: "b" } });
+test(/(?:(?<m>a)|(?<m>b))(?=(?<n>c)|(?<n>d))/, "ad", { index: 0, match: ["a", "a", undefined, undefined, "d"], groups: { m: "a", n: "d" } });
+test(/(?:(?<m>a)|(?<m>b))(?<=(?<n>a)|(?<n>b))(?=(?<k>c)|(?<k>d))/, "bd", { index: 0, match: ["b", undefined, "b", undefined, "b", undefined, "d"], groups: { m: "b", n: "b", k: "d" } });
+test(/(?:(?=(?<n>a)|(?<n>b))[ab]|c)+/, "abc", { index: 0, match: ["abc", undefined, undefined], groups: { n: undefined } });
+test(/(?:(?=(?<n>a)|(?<n>b))[ab]|c)+/, "cab", { index: 0, match: ["cab", undefined, "b"], groups: { n: "b" } });
+test(/(?:(?<n>a)|(?=(?<n>b)).|c){1,3}/, "cab", { index: 0, match: ["cab", undefined, "b"], groups: { n: "b" } });
+test(/(?:(?<n>a)|(?=(?<n>b)).|c){2}?/, "abc", { index: 0, match: ["ab", undefined, "b"], groups: { n: "b" } });
+test(/(?:(?=(?<n>a))b|a)|(?<n>q)/, "a", { index: 0, match: ["a", undefined, undefined], groups: { n: undefined } });
+test(/(?:(?!(?<n>a))x|a)|(?<n>q)/, "a", { index: 0, match: ["a", undefined, undefined], groups: { n: undefined } });
+test(/(?!(?<n>a)|(?<n>b))/, "a", { index: 1, match: ["", undefined, undefined], groups: { n: undefined } });
+
 // A pattern that .* wraps, which the backtracking engines match as a DotStarEnclosure.
 test(/.*a.*/, "xxaxx\nyy", { index: 0, match: ["xxaxx"] });
 test(/^.*a.*$/, "xxaxx", { index: 0, match: ["xxaxx"] });
@@ -286,3 +300,12 @@ test(/.*foo.*/y, "a foo b", { index: 2, match: ["foo b"], lastIndex: 7 }, 2);
 test(/.*foo(?=.{0,3}bar).*/, "a foo x bar\nfoo", { index: 0, match: ["a foo x bar"] });
 test(/.*a{2,3}.*/, "a\nbaaaab\naa", { index: 2, match: ["baaaab"] });
 test(/.*(?<!x)foo.*/, "xfoo\nyfoo", { index: 5, match: ["yfoo"] });
+
+// With u or v, the offset between the two halves of a surrogate pair is not a position of the
+// subject. The backtracking engines try the expression that .* wraps there too (the
+// DotStarEnclosure), and answer with a match where the specification has none. The matcher runs
+// the pattern as it is written. These two are the cases where it differs from them on purpose.
+if (matcherIsOn) {
+    test(/.*\B.*/u, "a\u{1F600}a", null);
+    test(/.*(?<=\uD83D).*/u, "a\u{1F600}a", null);
+}

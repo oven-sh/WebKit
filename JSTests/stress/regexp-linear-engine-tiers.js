@@ -63,17 +63,26 @@ function refused(subject)
 noInline(refused);
 
 let manyA = "a".repeat(64) + "!";
+// A function is optimized code at some time in the loop. The collector can throw that code away
+// again, so the question is asked through the loop and not once after it.
+let optimized = new Set;
 for (let i = 0; i < 20000; ++i) {
     check("accepted", accepted("ab 2026-10-01, x"), [false, [3, "2026", "10", "01"], "ab_2026-10-01,_x", 2, 3, ["ab", "x"], true, true, 14, 2]);
     check("accepted", accepted(manyA), [true, null, manyA, 1, -1, ["a".repeat(64)], true, true, 0, 2]);
     check("folded", folded(), [true, "20", 3, "on 01.10.2026", true]);
     check("refused", refused("aa <b>x</b> 1"), [true, "b", "a <b>x</b> 1", true]);
     check("refused", refused("ab"), [false, null, "ab", false]);
+    if (!(i % 500)) {
+        for (let f of [accepted, folded, refused]) {
+            if (numberOfDFGCompiles(f))
+                optimized.add(f);
+        }
+    }
 }
 
 if ($vm.useJIT() && $vm.useDFGJIT()) {
     for (let f of [accepted, folded, refused]) {
-        if (!numberOfDFGCompiles(f))
+        if (!optimized.has(f) && !numberOfDFGCompiles(f))
             throw new Error(f.name + " never ran as DFG code");
     }
 }
@@ -85,6 +94,6 @@ for (let [regExp, subject] of [[/^(?:a|b)+!?$/, "ab"], [/(\d{4})-(\d{2})-(\d{2})
 }
 for (let [regExp, subject] of [[/(a)\1/, "aa"], [/(?=.*\d)\w+/, "a1"]]) {
     let statistics = $vm.regExpMatchStatistics(regExp, subject, 0);
-    if (statistics.engine !== "backtracking" || statistics.jit !== $vm.useJIT())
+    if (statistics.engine !== "backtracking" || statistics.jit !== ($vm.useJIT() && !!jscOptions().useRegExpJIT))
         throw new Error(regExp + " ran on " + statistics.engine + (statistics.jit ? ", with" : ", without") + " the code of the JIT");
 }
