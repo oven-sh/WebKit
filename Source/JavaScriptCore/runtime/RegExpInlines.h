@@ -154,17 +154,19 @@ ALWAYS_INLINE int RegExp::matchParseError(JSGlobalObject* nullOrGlobalObject, VM
     return -1;
 }
 
-// The search was abandoned (Yarr::isAbandoned). With a global object this throws and returns -1: the
-// caller sees no match and the exception. Without one it returns the code, which
-// matchConcurrently() reads as no answer.
+// The search was abandoned (Yarr::isAbandoned). On the VM thread this throws and returns -1: the
+// caller sees no match and the exception. A compiler thread has nothing to throw on, so it gets the
+// code, which matchConcurrently() reads as no answer.
 template<Yarr::MatchFrom matchFrom>
 ALWAYS_INLINE int RegExp::matchAbandoned(JSGlobalObject* nullOrGlobalObject, int code)
 {
     ASSERT(Yarr::isAbandoned(static_cast<Yarr::JSRegExpResult>(code)));
-    if (matchFrom == Yarr::MatchFrom::CompilerThread || !nullOrGlobalObject)
-        return code;
-    throwMatchAbandoned(nullOrGlobalObject, static_cast<Yarr::JSRegExpResult>(code));
-    return -1;
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+        ASSERT(nullOrGlobalObject);
+        throwMatchAbandoned(nullOrGlobalObject, static_cast<Yarr::JSRegExpResult>(code));
+        return -1;
+    }
+    return code;
 }
 
 // The same in MatchResult::start, where JIT code puts a code. -1 there is WTF::notFound: MatchResult::failed().
