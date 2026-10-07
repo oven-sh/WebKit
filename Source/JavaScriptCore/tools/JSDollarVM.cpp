@@ -2584,6 +2584,51 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // plus the second argument as a byte offset. It'll also flush on the object
 // itself so its length, etc, aren't in the cache.
 //
+// If the first argument is not a JSArrayBuffer, we load the butterfly
+// and clflush at the address of the butterfly.
+JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+#if CPU(X86_64)
+    if (!callFrame->argument(1).isUInt32())
+        return JSValue::encode(jsBoolean(false));
+
+    auto clflush = [] (void* ptr) {
+        DollarVMAssertScope assertScope;
+        char* ptrToFlush = static_cast<char*>(ptr);
+        asm volatile ("clflush %0" :: "m"(*ptrToFlush) : "memory");
+    };
+
+    Vector<void*> toFlush;
+
+    uint32_t offset = callFrame->argument(1).asUInt32();
+
+    if (JSArrayBufferView* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0)))
+        toFlush.append(std::bit_cast<char*>(view->vector()) + offset);
+    else if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0))) {
+        switch (object->indexingType()) {
+        case ALL_INT32_INDEXING_TYPES:
+        case ALL_CONTIGUOUS_INDEXING_TYPES:
+        case ALL_DOUBLE_INDEXING_TYPES:
+            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfVectorLength());
+            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfPublicLength());
+        }
+    }
+
+    if (!toFlush.size())
+        return JSValue::encode(jsBoolean(false));
+
+    for (void* ptr : toFlush)
+        clflush(ptr);
+    return JSValue::encode(jsBoolean(true));
+#else
+    UNUSED_PARAM(callFrame);
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+
 #if USE(BUN_JSC_ADDITIONS)
 // Matches a RegExp once, with the engine it is compiled for, and reports which engine that is
 // and what the match cost the non-backtracking matcher. With "backtracking" as the engine, the
@@ -2686,51 +2731,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchOnBothEngines, (JSGlobalObject* glob
     return JSValue::encode(jsNumber(index));
 }
 #endif
-
-// If the first argument is not a JSArrayBuffer, we load the butterfly
-// and clflush at the address of the butterfly.
-JSC_DEFINE_HOST_FUNCTION(functionCpuClflush, (JSGlobalObject*, CallFrame* callFrame))
-{
-    DollarVMAssertScope assertScope;
-#if CPU(X86_64)
-    if (!callFrame->argument(1).isUInt32())
-        return JSValue::encode(jsBoolean(false));
-
-    auto clflush = [] (void* ptr) {
-        DollarVMAssertScope assertScope;
-        char* ptrToFlush = static_cast<char*>(ptr);
-        asm volatile ("clflush %0" :: "m"(*ptrToFlush) : "memory");
-    };
-
-    Vector<void*> toFlush;
-
-    uint32_t offset = callFrame->argument(1).asUInt32();
-
-    if (JSArrayBufferView* view = dynamicDowncast<JSArrayBufferView>(callFrame->argument(0)))
-        toFlush.append(std::bit_cast<char*>(view->vector()) + offset);
-    else if (JSObject* object = dynamicDowncast<JSObject>(callFrame->argument(0))) {
-        switch (object->indexingType()) {
-        case ALL_INT32_INDEXING_TYPES:
-        case ALL_CONTIGUOUS_INDEXING_TYPES:
-        case ALL_DOUBLE_INDEXING_TYPES:
-            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfVectorLength());
-            toFlush.append(std::bit_cast<char*>(object->butterfly()) + Butterfly::offsetOfPublicLength());
-        }
-    }
-
-    if (!toFlush.size())
-        return JSValue::encode(jsBoolean(false));
-
-    for (void* ptr : toFlush)
-        clflush(ptr);
-    return JSValue::encode(jsBoolean(true));
-#else
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsBoolean(false));
-#endif
-}
-
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 class CallerFrameJITTypeFunctor {
 public:
