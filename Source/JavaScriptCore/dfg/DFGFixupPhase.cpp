@@ -4362,6 +4362,20 @@ private:
         }
     }
 
+    // Whether a ToNumber, ToNumeric or CallNumberConstructor of a number should give an Int32: the child itself when
+    // that is predicted Int32, else a DoubleAsInt32, which exits with Overflow on every other number.
+    bool numberChildShouldBecomeInt32(Node* node)
+    {
+        // ByteCodeParser::makeSafe() sets these flags from the UnaryArithProfile of op_to_number and op_to_numeric.
+        if (node->op() != CallNumberConstructor)
+            return !node->mayHaveDoubleResult() && !node->mayHaveBigIntResult();
+
+        // A CallNumberConstructor comes from a call: there is no arith profile, so the flags above are never set. What
+        // says that the result is not an Int32 is a fraction among the results seen so far, or the exit of the
+        // DoubleAsInt32 that an earlier compile made here.
+        return !(node->getHeapPrediction() & (SpecNonIntAsDouble | SpecDoubleNaN)) && !m_graph.hasExitSite(node->origin.semantic, Overflow);
+    }
+
     void fixupToNumberOrToNumericOrCallNumberConstructor(Node* node)
     {
 #if USE(BIGINT32)
@@ -4415,7 +4429,7 @@ private:
 
         // If the prediction of the child is Number, we attempt to convert ToNumber to Identity.
         if (node->child1()->shouldSpeculateNumber()) {
-            if ((node->op() == CallNumberConstructor && isInt32Speculation(node->getHeapPrediction())) || (!node->mayHaveDoubleResult() && !node->mayHaveBigIntResult())) {
+            if (numberChildShouldBecomeInt32(node)) {
                 // If the both predictions of this node and the child is Int32, we just convert ToNumber to Identity, that's simple.
                 if (node->child1()->shouldSpeculateInt32()) {
                     fixEdge<Int32Use>(node->child1());
