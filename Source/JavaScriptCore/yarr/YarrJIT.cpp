@@ -904,6 +904,90 @@ class YarrGenerator final : public YarrJITInfo {
         PreferredTarget m_preferredTarget;
     };
 
+    // Options::useMemoizedRegExp(): m_regs.remainingMatchCount is a budget proportional to the subject
+    // (initializeMatchBudget()) instead of matchLimit, and the match stops with JITCodeFailure once it is
+    // negative. That hands it to the interpreter, which remembers what has failed once it finds that the
+    // match backtracks too much (m_retryWithMemoizationWhenOverBudget).
+
+    // A match without nested groups takes more than linear time by backtracking into a quantified
+    // character or character class to try another length, and by running loops again over what they,
+    // or other loops, have already been run over (canTakeMoreThanLinearTime()).
+    void consumeMatchBudgetForBacktrack()
+    {
+        if (m_retryWithMemoizationWhenOverBudget)
+            m_hitMatchLimit.append(m_jit.branchSub64(MacroAssembler::Signed, MacroAssembler::TrustedImm32(1), m_regs.remainingMatchCount));
+    }
+
+    // What a greedy loop has taken comes off the budget too.
+    void consumeMatchBudgetForLoop(MacroAssembler::RegisterID countRegister)
+    {
+        if (m_retryWithMemoizationWhenOverBudget)
+            m_hitMatchLimit.append(m_jit.branchSub64(MacroAssembler::Signed, countRegister, m_regs.remainingMatchCount));
+    }
+
+    void initializeMatchBudget()
+    {
+        ASSERT(m_retryWithMemoizationWhenOverBudget);
+        m_jit.zeroExtend32ToWord(m_regs.length, m_regs.remainingMatchCount);
+        m_jit.lshift64(MacroAssembler::TrustedImm32(matchBudgetPerCharacterShift), m_regs.remainingMatchCount);
+        m_jit.add64(MacroAssembler::TrustedImm32(matchBudgetBase), m_regs.remainingMatchCount);
+        auto withinLimit = m_jit.branch64(MacroAssembler::Below, m_regs.remainingMatchCount, MacroAssembler::TrustedImm64(matchLimit));
+        m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
+        withinLimit.link(&m_jit);
+    }
+
+    // Whether a match can take more than linear time without going through a quantified group that is
+    // matched an iteration at a time (canTakeMoreThanLinearTime()).
+    //  - Within one attempt that takes two quantified characters or character classes on one path, the
+    //    earlier of which can be backtracked into: each character it gives back runs the later one
+    //    again, whether or not that one can be backtracked into itself (in /a*a*b/ the second a* is
+    //    possessive, and an attempt is still quadratic; three loops make /(.*)-(.*)-(.*)$/ cubic).
+    //  - One loop keeps an attempt linear, but when a failed attempt is followed by one from the next
+    //    position, that one runs the loop over the same characters again (/\s+$/, /a*b/).
+    struct CharacterLoopsOnAPath {
+        unsigned count { 0 }; // No further than 2.
+        bool anyCanBacktrack { false };
+        bool canBeSuperLinear() const { return count >= 2 && anyCanBacktrack; }
+    };
+    static CharacterLoopsOnAPath characterLoopsInOneAttempt(PatternDisjunction* disjunction)
+    {
+        CharacterLoopsOnAPath most;
+        for (auto& alternative : disjunction->m_alternatives) {
+            CharacterLoopsOnAPath path;
+            for (auto& term : alternative->m_terms) {
+                switch (term.type) {
+                case PatternTerm::Type::PatternCharacter:
+                case PatternTerm::Type::CharacterClass:
+                    // x? is not a loop: running it again costs the same however long the subject is.
+                    if (term.quantityType != QuantifierType::FixedCount && term.quantityMaxCount > 1) {
+                        ++path.count;
+                        path.anyCanBacktrack |= !term.possessive();
+                    }
+                    break;
+                case PatternTerm::Type::ParenthesesSubpattern:
+                case PatternTerm::Type::ParentheticalAssertion: {
+                    auto inner = characterLoopsInOneAttempt(term.parentheses.disjunction);
+                    path.count += inner.count;
+                    path.anyCanBacktrack |= inner.anyCanBacktrack;
+                    break;
+                }
+                default:
+                    break;
+                }
+                path.count = std::min(path.count, 2u);
+            }
+            // Alternatives are different paths, so take the worst of them (and not their sum).
+            if (path.canBeSuperLinear())
+                return path;
+            most.count = std::max(most.count, path.count);
+            most.anyCanBacktrack |= path.anyCanBacktrack;
+        }
+        // Only reached when no single alternative can: report that, whatever the mix says.
+        if (most.canBeSuperLinear())
+            most.count = 1;
+        return most;
+    }
+
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
     struct ParenContextSizes {
         size_t m_numSubpatterns;
@@ -979,9 +1063,28 @@ class YarrGenerator final : public YarrJITInfo {
         }
     };
 
+    bool canTakeMoreThanLinearTime()
+    {
+        if (m_containsNestedSubpatterns)
+            return true;
+        auto loops = characterLoopsInOneAttempt(m_pattern.m_body);
+        if (loops.canBeSuperLinear())
+            return true;
+        if (!loops.count || m_pattern.sticky())
+            return false;
+        for (auto& alternative : m_pattern.m_body->m_alternatives) {
+            if (!alternative->onceThrough())
+                return true;
+        }
+        return false;
+    }
+
     void allocateParenContext(MacroAssembler::RegisterID result)
     {
-        m_hitMatchLimit.append(m_jit.branchSub32(MacroAssembler::Zero, MacroAssembler::TrustedImm32(1), m_regs.remainingMatchCount));
+        if (m_retryWithMemoizationWhenOverBudget)
+            m_hitMatchLimit.append(m_jit.branchSub64(MacroAssembler::Signed, MacroAssembler::TrustedImm32(1), m_regs.remainingMatchCount));
+        else
+            m_hitMatchLimit.append(m_jit.branchSub32(MacroAssembler::Zero, MacroAssembler::TrustedImm32(1), m_regs.remainingMatchCount));
 
         // Try to allocate from freelist first.
         MacroAssembler::Jump allocateFromStack;
@@ -2192,7 +2295,8 @@ class YarrGenerator final : public YarrJITInfo {
 
         if (!m_hitMatchLimit.empty()) {
             m_hitMatchLimit.link(&m_jit);
-            m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(JSRegExpResult::ErrorNoMatch)), m_regs.returnRegister);
+            auto result = m_retryWithMemoizationWhenOverBudget ? JSRegExpResult::JITCodeFailure : JSRegExpResult::ErrorNoMatch;
+            m_jit.move(MacroAssembler::TrustedImmPtr((void*)static_cast<size_t>(result)), m_regs.returnRegister);
         }
 
         finishExiting.link(&m_jit);
@@ -3884,6 +3988,7 @@ class YarrGenerator final : public YarrJITInfo {
 
             failures.link(&m_jit);
         }
+        consumeMatchBudgetForLoop(countRegister);
         defineReentryLabel(op);
 
         storeToFrame(countRegister, term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex());
@@ -3908,6 +4013,7 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
 
+        consumeMatchBudgetForBacktrack();
         loadFromFrame(term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex(), countRegister);
         m_backtrackingState.append(m_jit.branchTest32(MacroAssembler::Zero, countRegister));
         m_jit.sub32(MacroAssembler::TrustedImm32(1), countRegister);
@@ -3944,6 +4050,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         m_backtrackingState.link(*this, op);
 
+        consumeMatchBudgetForBacktrack();
         loadFromFrame(term->frameLocation + BackTrackInfoPatternCharacter::matchAmountIndex(), countRegister);
 
         // Unless have a 16 bit pattern character and an 8 bit string - short circuit
@@ -4266,6 +4373,7 @@ class YarrGenerator final : public YarrJITInfo {
                     m_jit.branch32(MacroAssembler::NotEqual, countRegister, MacroAssembler::Imm32(term->quantityMaxCount)).linkTo(sharedLoop, &m_jit);
 
                 sharedFailures.link(&m_jit);
+                consumeMatchBudgetForLoop(countRegister);
                 defineReentryLabel(op);
                 storeToFrame(countRegister, term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
                 return;
@@ -4336,6 +4444,7 @@ class YarrGenerator final : public YarrJITInfo {
         }
 
         failures.link(&m_jit);
+        consumeMatchBudgetForLoop(countRegister);
         defineReentryLabel(op);
 
         storeToFrame(countRegister, term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex());
@@ -4361,6 +4470,7 @@ class YarrGenerator final : public YarrJITInfo {
             return;
         }
 
+        consumeMatchBudgetForBacktrack();
         loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex(), countRegister);
         m_backtrackingState.append(m_jit.branchTest32(MacroAssembler::Zero, countRegister));
         m_jit.sub32(MacroAssembler::TrustedImm32(1), countRegister);
@@ -4432,6 +4542,7 @@ class YarrGenerator final : public YarrJITInfo {
 
         m_backtrackingState.link(*this, op);
 
+        consumeMatchBudgetForBacktrack();
         loadFromFrame(term->frameLocation + BackTrackInfoCharacterClass::matchAmountIndex(), countRegister);
 
         nonGreedyFailures.append(atEndOfInput());
@@ -9119,10 +9230,10 @@ class YarrGenerator final : public YarrJITInfo {
     {
         RegisterSet registers;
 #if CPU(X86_64)
-        if (m_containsNestedSubpatterns) {
+        if (m_containsNestedSubpatterns)
             registers.add(X86Registers::ebx, IgnoreVectors); // matchingContext
+        if (m_containsNestedSubpatterns || m_retryWithMemoizationWhenOverBudget)
             registers.add(X86Registers::r12, IgnoreVectors); // remainingMatchCount
-        }
 
         if (mayCall() || m_callFrameSizeInBytes) {
             registers.add(X86Registers::r13, IgnoreVectors);
@@ -9411,6 +9522,14 @@ public:
             return;
         }
 
+        // The budget is there to notice a match that is taking more than linear time, so only patterns
+        // that can are made to keep one. (A quantified group that is matched an iteration at a time
+        // counts against matchLimit otherwise.)
+#if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
+        if (Options::useMemoizedRegExp()) [[unlikely]]
+            m_retryWithMemoizationWhenOverBudget = m_pattern.canMemoizeMatches() && canTakeMoreThanLinearTime();
+#endif
+
         if (Options::dumpDisassembly() || Options::dumpRegExpDisassembly()) [[unlikely]]
             m_disassembler = makeUnique<YarrDisassembler>(this);
 
@@ -9464,7 +9583,8 @@ public:
 #else
             ASSERT(GPRInfo::argumentGPR4 == m_regs.matchingContext);
 #endif
-            m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
+            if (!m_retryWithMemoizationWhenOverBudget)
+                m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
 
             // Initialize freelist to null - contexts will be allocated from stack
             // and freed contexts will be added to the freelist for reuse
@@ -9474,6 +9594,8 @@ public:
                 m_jit.storePtr(MacroAssembler::TrustedImmPtr(nullptr), MacroAssembler::Address(m_regs.matchingContext, MatchingContextHolder::offsetOfFreeList()));
         }
 #endif
+        if (m_retryWithMemoizationWhenOverBudget)
+            initializeMatchBudget();
 
         // Initialize subpatterns' starts. And initialize matchStart if `!m_pattern.m_body->m_hasFixedSize`.
         // If shouldRecordSubpatterns(), then matchStart is subpatterns[0]'s start.
@@ -9518,6 +9640,8 @@ public:
             if (m_containsNestedSubpatterns)
                 return false;
 #endif
+            if (m_retryWithMemoizationWhenOverBudget)
+                return false; // Inlined code keeps no budget: it has no register for one.
             if (m_pattern.m_containsBackreferences)
                 return false;
             if (m_pattern.m_saveInitialStartValue)
@@ -9960,6 +10084,9 @@ private:
     bool m_containsNestedSubpatterns { false };
     ParenContextSizes m_parenContextSizes;
 #endif
+    bool m_retryWithMemoizationWhenOverBudget { false };
+    static constexpr unsigned matchBudgetPerCharacterShift = 7;
+    static constexpr unsigned matchBudgetBase = 4096;
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
     bool m_useFirstNonBMPCharacterOptimization { false };
 #endif
