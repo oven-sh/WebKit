@@ -21,26 +21,12 @@ function refusalOf(regExp)
     return $vm.regExpMatchStatistics(regExp, "", 0).refusal;
 }
 
-// The deepest nesting the compiler has the stack for here, with the stack this frame leaves.
-// These patterns are not the one below: a RegExp of the same source is the same RegExp, and it
-// would have its code already.
-let deepest = 500;
-let tooDeep = 0;
-for (let depth = 1000; !tooDeep; depth *= 2) {
-    let refusal = refusalOf(new RegExp(nested(depth, "y")));
-    if (refusal === "none")
-        deepest = depth;
-    else if (refusal === "not enough stack")
-        tooDeep = depth;
-    else
-        throw new Error(depth + " nested groups: " + refusal);
-}
-while (tooDeep - deepest > deepest / 32) {
-    let depth = (deepest + tooDeep) >> 1;
-    if (refusalOf(new RegExp(nested(depth, "y"))) === "none")
-        deepest = depth;
-    else
-        tooDeep = depth;
+// A RegExp of the same source is the same RegExp, and it has its code already. So every
+// question to the compiler is a pattern of its own.
+let probes = 0;
+function refusalOfDepth(depth)
+{
+    return refusalOf(new RegExp(nested(depth, "y" + probes++)));
 }
 
 function recurse(frames, callback)
@@ -48,23 +34,30 @@ function recurse(frames, callback)
     return frames ? recurse(frames - 1, callback) : callback();
 }
 
-function fits(frames)
-{
-    try {
-        recurse(frames, () => 1);
-        return true;
-    } catch {
-        return false;
+// The deepest nesting the compiler has the stack for, from 1024 frames down, to within 8 groups.
+// A compile that has to be accepted below runs with more stack than that, and one that has to
+// be refused runs from 2048 frames down at least.
+let deepest = recurse(1024, () => {
+    let accepted = 500;
+    let tooDeep = 0;
+    for (let depth = 1000; !tooDeep; depth *= 2) {
+        let refusal = refusalOfDepth(depth);
+        if (refusal === "none")
+            accepted = depth;
+        else if (refusal === "not enough stack")
+            tooDeep = depth;
+        else
+            throw new Error(depth + " nested groups: " + refusal);
     }
-}
-
-let mostFrames = 1000;
-while (fits(mostFrames * 2))
-    mostFrames *= 2;
-for (let step = mostFrames >> 1; step >= 64; step >>= 1) {
-    if (fits(mostFrames + step))
-        mostFrames += step;
-}
+    while (tooDeep - accepted > 8) {
+        let depth = (accepted + tooDeep) >> 1;
+        if (refusalOfDepth(depth) === "none")
+            accepted = depth;
+        else
+            tooDeep = depth;
+    }
+    return accepted;
+});
 
 function answers(regExp)
 {
@@ -74,17 +67,30 @@ function answers(regExp)
     return { engine: statistics.engine, refusal: statistics.refusal, axa: first && first.index, xaa: second && second.index };
 }
 
-let stackDependent = new RegExp(nested(deepest));
-// With nine tenths of the stack in use, the compiler has too little of it for this pattern.
-expectAnswers("first compile", recurse(Math.floor(mostFrames * 0.9), () => answers(stackDependent)), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
-// The refusal stays while the code does, whatever the stack is then.
-expectAnswers("same code", answers(stackDependent), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
-
 function expectAnswers(name, actual, expected)
 {
     if (describe(actual) !== describe(expected))
         throw new Error(name + ": expected " + describe(expected) + " but got " + describe(actual));
 }
+
+let stackDependent = new RegExp(nested(deepest));
+
+// The first compile, from so many frames down that the compiler has too little stack for a
+// pattern this deep. The frames of a function are not of one size for the whole run, so each
+// number of frames is asked with a pattern of its own, and the RegExp is compiled under the
+// frames that refused that pattern, a few frames further down.
+function firstCompileWithLittleStack()
+{
+    for (let frames = 2048; frames <= 65536; frames *= 2) {
+        let result = recurse(frames, () => refusalOfDepth(deepest) === "not enough stack" ? recurse(16, () => answers(stackDependent)) : null);
+        if (result)
+            return result;
+    }
+    throw new Error("The compiler has the stack for " + deepest + " nested groups from 65536 frames down");
+}
+expectAnswers("first compile", firstCompileWithLittleStack(), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
+// The refusal stays while the code does, whatever the stack is then.
+expectAnswers("same code", answers(stackDependent), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
 
 $vm.deleteAllCodeWhenIdle();
 setTimeout(() => {
