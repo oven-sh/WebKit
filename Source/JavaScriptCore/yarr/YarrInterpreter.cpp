@@ -3321,7 +3321,9 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
 #if USE(BUN_JSC_ADDITIONS)
 std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, LinearRefusal& refusal, ConcurrentJSLock* lock)
 {
-    // Before the ByteCompiler: BytecodePattern takes the pattern's character classes.
+    // The pattern has to be as the parser left it: jitCompile() reorders its terms, and the
+    // program takes them in the order of the list. So a caller asks here before it asks the JIT.
+    // Also before the ByteCompiler: BytecodePattern takes the pattern's character classes.
     auto linearProgram = compileLinear(pattern, refusal);
     if (Options::dumpCompiledRegExpPatterns()) [[unlikely]] {
         if (linearProgram)
@@ -3341,22 +3343,6 @@ std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern& pattern, BumpPoi
 
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    // For the callers that have this engine and no other (Yarr::RegularExpression), and for a
-    // RegExp whose JIT code gave up. RegExp::compile() asks byteCompileLinear() itself, before
-    // it turns to the JIT.
-    if (Options::useRegExpLinearEngine()) [[unlikely]] {
-        LinearRefusal refusal = LinearRefusal::None;
-        if (auto bytecode = byteCompileLinear(pattern, allocator, errorCode, refusal, lock))
-            return bytecode;
-        if (hasError(errorCode))
-            return nullptr;
-        auto bytecode = ByteCompiler(pattern).compile(allocator, lock, errorCode);
-        if (bytecode)
-            bytecode->m_linearRefusal = refusal;
-        return bytecode;
-    }
-#endif
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
 }
 
@@ -3376,7 +3362,6 @@ unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, 
 unsigned interpret(BytecodePattern* bytecode, StringView input, unsigned start, unsigned* output, InterpretStatistics& statistics)
 {
     statistics = { };
-    statistics.refusal = bytecode->m_linearRefusal;
     if (bytecode->m_linearProgram) {
         statistics.engine = InterpretStatistics::Engine::Linear;
         statistics.programSize = bytecode->m_linearProgram->instructionCount();

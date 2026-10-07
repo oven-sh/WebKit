@@ -2590,11 +2590,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 // match is the bytecode interpreter's, also for a RegExp that has another engine: a test
 // compares the engines on one RegExp that way.
 // Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset[, engine]])
-// Returns { index, captures, engine, refusal, jit, reachedMatchLimit, programSize,
+// Returns { index, captures, engine, refusal, jit, reachedMatchLimit, compiles, programSize,
 // maximumStepsPerPosition, maximumScratchBytes, steps, scratchBytes }. captures is the output
 // vector of the match (the start and the end of each group, then the group each duplicate name
 // chose), or null. reachedMatchLimit: the interpreter gave up, which it does early here, and
-// index is -1 whatever the string has.
+// index is -1 whatever the string has. compiles: how many times the RegExp asked the matcher
+// for a program.
 JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -2641,6 +2642,7 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalO
     result->putDirect(vm, Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
     result->putDirect(vm, Identifier::fromString(vm, "jit"_s), jsBoolean(statistics.usesJIT));
     result->putDirect(vm, Identifier::fromString(vm, "reachedMatchLimit"_s), jsBoolean(statistics.reachedMatchLimit));
+    result->putDirect(vm, Identifier::fromString(vm, "compiles"_s), jsNumber(statistics.linearCompiles));
     result->putDirect(vm, Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
     result->putDirect(vm, Identifier::fromString(vm, "maximumStepsPerPosition"_s), jsNumber(static_cast<double>(statistics.maximumStepsPerPosition)));
     result->putDirect(vm, Identifier::fromString(vm, "maximumScratchBytes"_s), jsNumber(static_cast<double>(statistics.maximumScratchBytes)));
@@ -2652,8 +2654,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalO
 // Matches a RegExp twice: with the engine it is compiled for, and with the bytecode interpreter.
 // Usage: $vm.regExpMatchOnBothEngines(regExp, string[, startOffset])
 // Returns the index of the match (-1 for none) when the two give the same match with the same
-// groups, false when they do not, and null when the interpreter gave up (see
-// regExpMatchStatistics).
+// groups and the same group for every duplicate name, false when they do not, and null when
+// the interpreter gave up (see regExpMatchStatistics).
 JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchOnBothEngines, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;

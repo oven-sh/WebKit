@@ -41,6 +41,11 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+// This file follows YarrPattern: a PatternTerm::Type that a switch below does not name is an
+// error here, and not only a warning, so that a new one is handled before the build passes.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic error "-Wswitch"
+
 namespace JSC { namespace Yarr {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(LinearProgram);
@@ -66,6 +71,8 @@ ASCIILiteral linearRefusalName(LinearRefusal refusal)
         return "lookaround too costly"_s;
     case LinearRefusal::UnsupportedTerm:
         return "unsupported term"_s;
+    case LinearRefusal::OutOfStack:
+        return "not enough stack"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return { };
@@ -81,6 +88,7 @@ public:
         : m_pattern(pattern)
         , m_program(makeUnique<LinearProgram>())
         , m_maximumProgramSize(std::min(Options::maximumRegExpLinearProgramSize(), maximumProgramSizeLimit))
+        , m_maximumProgramSizeInWorkingMemory(Options::maximumRegExpLinearWorkingMemory() / (2 * sizeof(unsigned)))
     {
         // A term that emits nothing still costs the compiler a visit, so the visits have a
         // limit of their own: /(?:(?:(?:){1000}){1000}){1000}/ has no instruction at all.
@@ -117,8 +125,10 @@ private:
     // native stack while the outer ones wait.
     static constexpr unsigned maximumLookaroundDepth = 16;
 
-    // The matcher keeps an instruction's index and a bit in one unsigned.
-    static constexpr unsigned maximumProgramSizeLimit = 1u << 30;
+    // The matcher keeps an instruction's index and a bit in one unsigned, and the compiler holds
+    // the whole program before it can say that the working memory is too large: 16 million
+    // instructions are 200 MB.
+    static constexpr unsigned maximumProgramSizeLimit = 1u << 24;
 
     // LinearMatcher::Frame.
     static constexpr uint64_t bytesPerFrame = 3 * sizeof(unsigned);
@@ -187,6 +197,10 @@ private:
     {
         if (m_instructionCount >= m_maximumProgramSize)
             refuse(LinearRefusal::ProgramTooLarge);
+        else if (m_instructionCount >= m_maximumProgramSizeInWorkingMemory) {
+            // The matcher has two entries per instruction in its table of visits alone.
+            refuse(LinearRefusal::WorkingMemoryTooLarge);
+        }
         ++m_instructionCount;
         unsigned index = here();
         code().instructions.append(LinearInstruction { opcode, flags, a, b });
@@ -208,7 +222,7 @@ private:
             return iterator->value;
 
         if (!m_stackCheck.isSafeToRecurse()) [[unlikely]] {
-            refuse(LinearRefusal::NestingTooDeep);
+            refuse(LinearRefusal::OutOfStack);
             return { 0, unbounded };
         }
 
@@ -258,8 +272,9 @@ private:
             };
         }
         }
-        RELEASE_ASSERT_NOT_REACHED();
-        return { };
+        // A kind of term that is newer than this compiler.
+        refuse(LinearRefusal::UnsupportedTerm);
+        return { 0, unbounded };
     }
 
     unsigned classIndexFor(CharacterClass* characterClass)
@@ -353,7 +368,7 @@ private:
     bool compileDisjunction(PatternDisjunction* disjunction, MatchDirection direction)
     {
         if (!m_stackCheck.isSafeToRecurse()) [[unlikely]]
-            return refuse(LinearRefusal::NestingTooDeep);
+            return refuse(LinearRefusal::OutOfStack);
 
         Vector<PatternAlternative*, 8> alternatives;
         for (auto& alternative : disjunction->m_alternatives)
@@ -629,8 +644,8 @@ private:
             return refuse(LinearRefusal::UnsupportedTerm);
         }
 
-        RELEASE_ASSERT_NOT_REACHED();
-        return false;
+        // A kind of term that is newer than this compiler.
+        return refuse(LinearRefusal::UnsupportedTerm);
     }
 
     // One code per lookaround of the pattern: the copies of a repeated group share it, and with
@@ -690,11 +705,12 @@ private:
     }
 
     // The most the vectors of the matcher can hold for this program, whatever the subject is. A
-    // position has at most two states per instruction that waits on a character, in two lists,
-    // and every state of a code that writes slots has a copy of the slots. addThread() keeps a
-    // frame for each instruction it is in the middle of, and one for each slot that instruction
-    // wrote. The vectors grow by a quarter at a time.
-    uint64_t workingMemoryBound() const
+    // position has at most two states per instruction that waits on a character, in each of two
+    // lists, and every state of a code that writes slots has a copy of the slots. addThread()
+    // keeps a frame for each instruction it is in the middle of, and one for each slot that
+    // instruction wrote. The matcher lets no vector grow past these counts, so the bound does
+    // not depend on how a Vector grows.
+    uint64_t workingMemoryBound()
     {
         uint64_t bytes = 0;
         for (auto& code : m_program->m_codes) {
@@ -721,13 +737,17 @@ private:
                 }
                 frames += 2 * (1 + writes);
             }
-            uint64_t states = waiting * 2 * 2;
-            bytes += states * (1 + slots) * sizeof(unsigned);
-            bytes += code.instructions.size() * 2 * sizeof(unsigned);
-            bytes += frames * bytesPerFrame;
-            bytes += 2 * slots * sizeof(unsigned);
+            uint64_t states = waiting * 2;
+            // Both fit: a program has at most maximumProgramSizeLimit instructions, and a pattern
+            // whose counts pass an unsigned is over any limit of the working memory.
+            code.maximumStates = static_cast<unsigned>(std::min<uint64_t>(states, std::numeric_limits<unsigned>::max()));
+            code.maximumFrames = static_cast<unsigned>(std::min<uint64_t>(frames, std::numeric_limits<unsigned>::max()));
+            bytes = saturatedSum(bytes, saturatedProduct(2 * states, (1 + slots) * sizeof(unsigned)));
+            bytes = saturatedSum(bytes, code.instructions.size() * 2 * sizeof(unsigned));
+            bytes = saturatedSum(bytes, saturatedProduct(frames, bytesPerFrame));
+            bytes = saturatedSum(bytes, 2 * slots * sizeof(unsigned));
         }
-        return bytes + bytes / 4;
+        return bytes;
     }
 
     // A step of the matcher is a visit of addThread(), or a state run() takes over a
@@ -954,6 +974,7 @@ private:
     unsigned m_currentCode { 0 };
     unsigned m_lookaroundDepth { 0 };
     unsigned m_maximumProgramSize;
+    unsigned m_maximumProgramSizeInWorkingMemory;
     unsigned m_instructionCount { 0 };
     uint64_t m_remainingWork { 0 };
     UncheckedKeyHashMap<PatternDisjunction*, Lengths> m_lengths;
@@ -976,6 +997,7 @@ public:
         , m_length(input.size())
         , m_decodeSurrogatePairs(program.m_decodeSurrogatePairs && sizeof(CharType) > 1)
     {
+        m_lookaroundScratch.reserveCapacity(program.m_codes.size());
         m_lookaroundScratch.resize(program.m_codes.size());
     }
 
@@ -1016,6 +1038,19 @@ private:
         return vector.capacity() > inlineCapacity ? vector.capacity() * sizeof(T) : 0;
     }
 
+    // Before `extra` elements are appended. A vector of the matcher grows to no more than the
+    // size the compiler counted for it (LinearCompiler::workingMemoryBound()), whatever the
+    // growth of a Vector is, so that what a match holds stays under m_maximumScratchBytes.
+    template<typename VectorType>
+    static void makeRoom(VectorType& vector, size_t extra, size_t maximumSize)
+    {
+        size_t needed = vector.size() + extra;
+        if (needed <= vector.capacity())
+            return;
+        ASSERT(needed <= maximumSize);
+        vector.reserveCapacity(std::max(needed, std::min(maximumSize, vector.capacity() * 2)));
+    }
+
     // The states of one position, in the order backtracking would try them. A state is the
     // instruction it waits on and, in a code that writes slots, its copy of the slots.
     struct ThreadList {
@@ -1028,9 +1063,11 @@ private:
             slots.shrink(0);
         }
 
-        void append(unsigned programCounter, std::span<const unsigned> threadSlots)
+        void append(unsigned programCounter, std::span<const unsigned> threadSlots, unsigned maximumStates)
         {
+            makeRoom(programCounters, 1, maximumStates);
             programCounters.append(programCounter);
+            makeRoom(slots, threadSlots.size(), static_cast<size_t>(maximumStates) * threadSlots.size());
             slots.append(threadSlots);
         }
 
@@ -1084,9 +1121,8 @@ private:
 
 public:
     // What the matcher holds for one code before any vector allocates: a Scratch, with the
-    // inline capacity of its eight vectors, each of which can then hold one element more than a
-    // quarter over what it needs, and a pointer to the Scratch.
-    static constexpr size_t bytesPerCode = sizeof(Scratch) + 8 * sizeof(Frame) + sizeof(std::unique_ptr<Scratch>);
+    // inline capacity of its vectors, and a pointer to the Scratch.
+    static constexpr size_t bytesPerCode = sizeof(Scratch) + sizeof(std::unique_ptr<Scratch>);
 
 private:
     Scratch& scratchFor(unsigned codeIndex)
@@ -1114,9 +1150,12 @@ private:
         scratch.isPrepared = true;
         scratch.visited.fill(0, code.instructions.size() * 2);
         if (code.writesSlots) {
+            scratch.working.reserveCapacity(m_program.m_slotCount);
             scratch.working.resize(m_program.m_slotCount);
-            if (&scratch != &m_scratch)
+            if (&scratch != &m_scratch) {
+                scratch.result.reserveCapacity(m_program.m_slotCount);
                 scratch.result.resize(m_program.m_slotCount);
+            }
         }
     }
 
@@ -1223,10 +1262,14 @@ private:
         auto& stack = scratch.stack;
         ASSERT(stack.isEmpty());
 
+        auto push = [&](Frame frame) {
+            makeRoom(stack, 1, code.maximumFrames);
+            stack.append(frame);
+        };
         auto setSlot = [&](unsigned slot, unsigned value) {
             if (working[slot] == value)
                 return;
-            stack.append(Frame { Frame::Kind::RestoreSlot, slot, working[slot] });
+            push(Frame { Frame::Kind::RestoreSlot, slot, working[slot] });
             working[slot] = value;
         };
 
@@ -1245,7 +1288,7 @@ private:
                 case Opcode::CharacterEither:
                 case Opcode::CharacterClass:
                 case Opcode::Match:
-                    list.append(programCounter, scratch.working.span());
+                    list.append(programCounter, scratch.working.span(), code.maximumStates);
                     alive = false;
                     break;
 
@@ -1254,7 +1297,7 @@ private:
                     break;
 
                 case Opcode::Split:
-                    stack.append(Frame { Frame::Kind::Explore, instruction.b, 0 });
+                    push(Frame { Frame::Kind::Explore, instruction.b, 0 });
                     programCounter = instruction.a;
                     break;
 
@@ -1276,7 +1319,7 @@ private:
 
                 case Opcode::LoopBegin:
                     if (consumed) {
-                        stack.append(Frame { Frame::Kind::RestoreConsumed, 0, 0 });
+                        push(Frame { Frame::Kind::RestoreConsumed, 0, 0 });
                         consumed = false;
                     }
                     ++programCounter;
@@ -1464,11 +1507,13 @@ std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal
     if (!program)
         return nullptr;
 
-    program->m_maximumScratchBytes += program->m_codes.size() * LinearMatcher<Latin1Character>::bytesPerCode;
-    if (program->m_maximumScratchBytes > Options::maximumRegExpLinearWorkingMemory()) {
+    uint64_t limit = Options::maximumRegExpLinearWorkingMemory();
+    uint64_t beforeAnyVector = program->m_codes.size() * LinearMatcher<Latin1Character>::bytesPerCode;
+    if (program->m_maximumScratchBytes > limit || beforeAnyVector > limit - program->m_maximumScratchBytes) {
         refusal = LinearRefusal::WorkingMemoryTooLarge;
         return nullptr;
     }
+    program->m_maximumScratchBytes += beforeAnyVector;
     return program;
 }
 
@@ -1576,6 +1621,8 @@ void LinearProgram::dump(PrintStream& out) const
 }
 
 } } // namespace JSC::Yarr
+
+#pragma GCC diagnostic pop
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 

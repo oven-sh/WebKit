@@ -568,9 +568,8 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     // With Options::useRegExpLinearEngine(): the program interpret() runs in place of m_body.
-    // Null for a pattern the non-backtracking matcher refused, and m_linearRefusal is why.
+    // Null for a pattern the non-backtracking matcher refused.
     std::unique_ptr<LinearProgram> m_linearProgram;
-    LinearRefusal m_linearRefusal { LinearRefusal::None };
 #endif
 
 private:
@@ -585,6 +584,7 @@ JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigne
 // byteCompile() for the non-backtracking matcher: bytecode that has a LinearProgram, which is
 // what interpret() then runs. Null, with the reason, for a pattern the matcher refuses. The
 // pattern is then as it was, and the caller compiles it as it does without the matcher.
+// byteCompile() does not ask: a caller asks here, with a pattern that jitCompile() has not seen.
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern&, BumpPointerAllocator*, ErrorCode&, LinearRefusal&, ConcurrentJSLock* = nullptr);
 
 // What one match ran on and what it cost, for tests.
@@ -599,6 +599,8 @@ struct InterpretStatistics {
     // Engine::Backtracking, by interpretByBacktrackingForTesting(): the interpreter reached its
     // limit and gave up. Its answer is then "no match", whatever the subject has.
     bool reachedMatchLimit { false };
+    // For a RegExp: how many times it asked the matcher for a program (up to 255).
+    unsigned linearCompiles { 0 };
     // The rest is of Engine::Linear only: the backtracking engines do not count.
     size_t programSize { 0 };
     uint64_t maximumStepsPerPosition { 0 };

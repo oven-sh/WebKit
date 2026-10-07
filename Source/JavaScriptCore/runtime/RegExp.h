@@ -115,9 +115,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     // For tests. One match, with the engine this RegExp is compiled for, as match() does it, and
     // a report of which engine that is and what the match cost. Returns the offset of the
-    // match, or -1. With captures: the output vector of a match, appended. With
-    // byBacktrackingInterpreter: the match is the bytecode interpreter's, whatever engine this
-    // RegExp is compiled for, so that a test can compare the engines on one RegExp.
+    // match, or -1. With captures: the output vector of a match, appended, with the slots no
+    // reader looks at set to one value for every engine. With byBacktrackingInterpreter: the
+    // match is the bytecode interpreter's, whatever engine this RegExp is compiled for, so that
+    // a test can compare the engines on one RegExp.
     JS_EXPORT_PRIVATE int matchForTesting(JSGlobalObject*, StringView, unsigned startOffset, Yarr::InterpretStatistics&, Vector<int>* captures = nullptr, bool byBacktrackingInterpreter = false);
 #endif
 
@@ -265,6 +266,7 @@ private:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool compileForLinearMatcher(VM*, Yarr::YarrPattern&);
+    bool usesLinearMatcher() const;
 #endif
 
     static uint8_t currentUseEpoch(VM&);
@@ -299,8 +301,12 @@ private:
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
 #if USE(BUN_JSC_ADDITIONS)
     // With Options::useRegExpLinearEngine(): why the non-backtracking matcher refused this
-    // RegExp, so that it is asked once. A refused RegExp is compiled as it is without the option.
+    // RegExp, so that it is asked once while the RegExp has code. A refused RegExp is compiled
+    // as it is without the option.
     Yarr::LinearRefusal m_linearRefusal { };
+    // How many times this RegExp asked the matcher for a program, up to 255. A test reads it:
+    // a RegExp that has a program is not compiled again for a match.
+    uint8_t m_linearCompileCount { 0 };
 #endif
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };

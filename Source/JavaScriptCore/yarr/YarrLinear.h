@@ -75,6 +75,8 @@ enum class LinearRefusal : uint8_t {
     WorkingMemoryTooLarge,
     LookaroundTooCostly,
     UnsupportedTerm,
+    // Not about the pattern: the stack had too little room left for the compiler this time.
+    OutOfStack,
 };
 
 JS_EXPORT_PRIVATE ASCIILiteral NODELETE linearRefusalName(LinearRefusal);
@@ -152,6 +154,10 @@ struct LinearCode {
     unsigned endSlot { 0 };
     bool writesSlots { false };
     bool writesDuplicateNameSlots { false };
+    // The most the matcher holds for this code at one position: the states of one list, and the
+    // frames of the walk that collects them. Its vectors do not grow past these.
+    unsigned maximumStates { 0 };
+    unsigned maximumFrames { 0 };
 };
 
 class LinearProgram {
