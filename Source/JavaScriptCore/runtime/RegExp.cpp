@@ -404,9 +404,13 @@ const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPositio
     return &result;
 }
 
+// Only an abandoned search throws, which few tests run. The scope makes exception check validation
+// require the check from a caller after every search.
 int RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset, std::span<int> ovector)
 {
-    return matchInline(globalObject, globalObject->vm(), s, startOffset, ovector);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, matchInline(globalObject, vm, s, startOffset, ovector));
 }
 
 NEVER_INLINE void RegExp::throwParseError(JSGlobalObject* nullOrGlobalObject, VM& vm)
@@ -510,7 +514,9 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 MatchResult RegExp::match(JSGlobalObject* globalObject, StringView s, unsigned startOffset)
 {
-    return matchInline(globalObject, globalObject->vm(), s, startOffset);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RELEASE_AND_RETURN(scope, matchInline(globalObject, vm, s, startOffset));
 }
 
 bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, MatchResult& result)
