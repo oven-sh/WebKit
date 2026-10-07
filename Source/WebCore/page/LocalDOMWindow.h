@@ -151,16 +151,6 @@ public:
     WEBCORE_EXPORT void NODELETE consumeLastActivationIfNecessary();
     void consumeHistoryActionActivation() { m_hasHistoryActionActivation = false; }
     MonotonicTime lastActivationTimestamp() const { return m_lastActivationTimestamp; }
-    // Takes back the transient activation that a forced user gesture (e.g. evaluateJavaScript:) granted
-    // at grantedActivationTime, restoring the activation the window had before it. Does nothing and
-    // returns false if the activation has changed since, e.g. because of a real user gesture.
-    bool revokeForcedActivation(MonotonicTime grantedActivationTime, MonotonicTime previousActivationTime)
-    {
-        if (m_lastActivationTimestamp != grantedActivationTime)
-            return false;
-        m_lastActivationTimestamp = previousActivationTime;
-        return true;
-    }
     void notifyActivated(MonotonicTime);
     WEBCORE_EXPORT bool hasTransientActivation() const;
     bool hasStickyActivation() const;
@@ -283,7 +273,7 @@ public:
     // Secure Contexts
     bool isSecureContext() const;
 
-    bool NODELETE crossOriginIsolated() const;
+    bool crossOriginIsolated() const;
     bool NODELETE originAgentCluster() const;
 
     // Events
@@ -323,6 +313,8 @@ public:
 
     ExceptionOr<Ref<NodeList>> collectMatchingElementsInFlatTree(Node&, const String& selectors);
     ExceptionOr<RefPtr<Element>> matchingElementInFlatTree(Node&, const String& selectors);
+
+    ExceptionOr<Ref<DOMRect>> convertRectToMainFrameCoordinates(const DOMRectInit&);
 
 #if ENABLE(ORIENTATION_EVENTS)
     // This is the interface orientation in degrees. Some examples are:
@@ -532,7 +524,7 @@ private:
     mutable RefPtr<WebKitNamespace> m_webkitNamespace;
 #endif
 
-    RefPtr<CookieStore> m_cookieStore;
+    const RefPtr<CookieStore> m_cookieStore;
 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     const std::unique_ptr<PushManager> m_pushManager;

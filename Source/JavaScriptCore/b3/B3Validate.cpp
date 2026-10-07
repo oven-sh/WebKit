@@ -53,7 +53,7 @@ namespace {
 
 class Validater {
 public:
-    Validater(Procedure& procedure, const char* dumpBefore)
+    Validater(Procedure& procedure, UTF8CStringView dumpBefore)
         : m_procedure(procedure)
         , m_dumpBefore(dumpBefore)
     {
@@ -1160,12 +1160,12 @@ private:
     }
     
     Procedure& m_procedure;
-    const char* m_dumpBefore;
+    UTF8CStringView m_dumpBefore;
 };
 
 } // anonymous namespace
 
-void validate(Procedure& procedure, const char* dumpBefore)
+void validate(Procedure& procedure, UTF8CStringView dumpBefore)
 {
     Validater validater(procedure, dumpBefore);
     validater.run();

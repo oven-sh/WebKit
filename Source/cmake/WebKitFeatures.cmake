@@ -43,11 +43,11 @@ macro(WEBKIT_OPTION_DEFAULT_PORT_VALUE _name _public _value)
     set(_WEBKIT_AVAILABLE_OPTIONS_INITIAL_VALUE_${_name} ${_value})
 endmacro()
 
-# Retires options whose value wtf/Platform.h owns on this port. That value depends
-# on the SDK, so it isn't knowable at configure time: dropping them from the option
-# list keeps cmakeconfig.h from overriding Platform.h, keeps them out of
-# FEATURE_DEFINES, and makes CMake code that reads one fail loudly. The generators
-# get them from the build-time --defines-file instead. Bug 312033.
+# Retires options whose value wtf/Platform.h owns on this port. That value can
+# depend on the SDK, so it isn't knowable at configure time: dropping them from
+# the option list keeps cmakeconfig.h from overriding Platform.h, keeps them out
+# of FEATURE_DEFINES, and makes CMake code that reads one fail loudly. The
+# generators get them from the build-time --defines-file instead. Bug 312033.
 macro(WEBKIT_OPTION_OWNED_BY_PLATFORM_H)
     _ENSURE_OPTION_MODIFICATION_IS_ALLOWED()
 
@@ -176,6 +176,19 @@ macro(WEBKIT_OPTION_BEGIN)
         set(ENABLE_BACK_FORWARD_LIST_SWIFT_DEFAULT ${_swift_features_default})
     endif ()
 
+    # Annotating WTF's ref-counted base classes for Swift needs Swift 6.4 or newer;
+    # older toolchains don't apply the annotation to derived classes. Cocoa ports
+    # gate this in PlatformEnable.h on the SDK version instead.
+    if (NOT DEFINED ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT)
+        set(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT OFF)
+        if (NOT APPLE AND NOT CMAKE_CROSSCOMPILING)
+            _WEBKIT_DETECT_SWIFT_VERSION_NUMBER(_swift_version_number)
+            if (_swift_version_number AND _swift_version_number VERSION_GREATER_EQUAL 6.4)
+                set(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT ON)
+            endif ()
+        endif ()
+    endif ()
+
     WEBKIT_OPTION_DEFINE(ENABLE_ACCESSIBILITY_ISOLATED_TREE "Toggle accessibility isolated tree support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_API_TESTS "Enable public API unit tests" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_APPLE_PAY "Toggle Apple Pay support" PRIVATE OFF)
@@ -207,6 +220,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_BREAKPAD "Toggle breakpad minidump support." PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_BUBBLEWRAP_SANDBOX "Toggle Bubblewrap sandboxing support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_CACHE_PARTITIONING "Toggle cache partitioning support" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_CONNECTED_VOLUMETRIC_SCENE "Toggle connected volumetric scene support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_CONTENT_EXTENSIONS "Toggle Content Extensions support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_CONTENT_FILTERING "Toggle content filtering support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_CONTEXT_MENUS "Toggle Context Menu support" PRIVATE ON)
@@ -285,6 +299,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_SPEECH_SYNTHESIS "Toggle Speech Synthesis API support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_SPELLCHECK "Toggle Spellchecking support (requires Enchant)" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_STREAMING_IPC_IN_LOG_FORWARDING "Toggle streaming connection in WebKit::LogStream" PRIVATE OFF)
+    WEBKIT_OPTION_DEFINE(ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS "Toggle Swift reference counting annotations on WTF base classes" PRIVATE ${ENABLE_SWIFT_BASE_CLASS_ANNOTATIONS_DEFAULT})
     WEBKIT_OPTION_DEFINE(ENABLE_TELEPHONE_NUMBER_DETECTION "Toggle telephone number detection support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_THUNDER "Toggle EME V3 Thunder support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_TOUCH_EVENTS "Toggle Touch Events support" PRIVATE OFF)
@@ -322,6 +337,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_DEFINE(ENABLE_WRITING_TOOLS "Toggle Writing Tools support" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(ENABLE_XSLT "Toggle XSLT support" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(USE_AVIF "Toggle support for AVIF images." PRIVATE ON)
+    WEBKIT_OPTION_DEFINE(USE_EXTENSIONKIT "Toggle launching the auxiliary processes as ExtensionKit extensions rather than XPC services" PRIVATE OFF)
     WEBKIT_OPTION_DEFINE(USE_LCMS "Toggle support for image color management using libcms2" PRIVATE ON)
     WEBKIT_OPTION_DEFINE(USE_ISO_MALLOC "Toggle IsoMalloc support" PRIVATE ${USE_ISO_MALLOC_DEFAULT})
     WEBKIT_OPTION_DEFINE(USE_JPEGXL "Toggle support for JPEG XL images" PRIVATE ON)
@@ -339,6 +355,7 @@ macro(WEBKIT_OPTION_BEGIN)
     WEBKIT_OPTION_CONFLICT(ENABLE_WEBASSEMBLY ENABLE_C_LOOP)
 
     WEBKIT_OPTION_DEPEND(ENABLE_WEB_RTC ENABLE_MEDIA_STREAM)
+    WEBKIT_OPTION_DEPEND(ENABLE_CONNECTED_VOLUMETRIC_SCENE ENABLE_SPATIAL_PORTAL)
     WEBKIT_OPTION_DEPEND(ENABLE_ENCRYPTED_MEDIA ENABLE_VIDEO)
     WEBKIT_OPTION_DEPEND(ENABLE_LEGACY_ENCRYPTED_MEDIA ENABLE_VIDEO)
     WEBKIT_OPTION_DEPEND(ENABLE_DFG_JIT ENABLE_JIT)
@@ -400,6 +417,38 @@ macro(_WEBKIT_OPTION_ENFORCE_ALL_CONFLICTS)
     endforeach ()
 endmacro()
 
+# enable_language(Swift) hasn't run yet and gets replaced by swiftc-wrapper
+# anyway, so resolve swiftc from PATH like the wrapper does on non-Apple hosts.
+macro(_WEBKIT_FIND_PROBE_SWIFTC _swiftc_var)
+    set(${_swiftc_var} "${CMAKE_Swift_COMPILER}")
+    if (NOT ${_swiftc_var} OR ${_swiftc_var} MATCHES "swiftc-wrapper")
+        find_program(_WEBKIT_PROBE_SWIFTC NAMES swiftc)
+        set(${_swiftc_var} "${_WEBKIT_PROBE_SWIFTC}")
+    endif ()
+endmacro()
+
+# Sets _result_var to the Swift toolchain's version number (e.g. "6.4"), or to an
+# empty string if there is no usable swiftc.
+function(_WEBKIT_DETECT_SWIFT_VERSION_NUMBER _result_var)
+    if (DEFINED SWIFT_DETECTED_VERSION_NUMBER)
+        set(${_result_var} "${SWIFT_DETECTED_VERSION_NUMBER}" PARENT_SCOPE)
+        return ()
+    endif ()
+
+    _WEBKIT_FIND_PROBE_SWIFTC(_swiftc)
+    set(_number "")
+    if (_swiftc)
+        execute_process(COMMAND "${_swiftc}" --version
+            OUTPUT_VARIABLE _version ERROR_QUIET)
+        if (_version MATCHES "Swift version ([0-9]+(\\.[0-9]+)*)")
+            set(_number "${CMAKE_MATCH_1}")
+        endif ()
+    endif ()
+
+    set(SWIFT_DETECTED_VERSION_NUMBER "${_number}" CACHE INTERNAL "Detected Swift toolchain version number")
+    set(${_result_var} "${_number}" PARENT_SCOPE)
+endfunction()
+
 # Probe whether the Swift toolchain is new enough for WebKit's Swift/C++ reverse
 # interop, which needs the -emit-clang-header-min-access frontend flag (first
 # shipped in Swift 6.3; 6.2 and earlier reject it with "unknown argument"). Tests
@@ -409,16 +458,10 @@ endmacro()
 function(_WEBKIT_DETECT_SWIFT_CXX_INTEROP_SUPPORT _result_var)
     if (DEFINED SWIFT_CXX_INTEROP_SUPPORTED)
         set(${_result_var} ${SWIFT_CXX_INTEROP_SUPPORTED} PARENT_SCOPE)
-        return()
+        return ()
     endif ()
 
-    # enable_language(Swift) hasn't run yet and gets replaced by swiftc-wrapper
-    # anyway, so resolve swiftc from PATH like the wrapper does on non-Apple hosts.
-    set(_swiftc "${CMAKE_Swift_COMPILER}")
-    if (NOT _swiftc OR _swiftc MATCHES "swiftc-wrapper")
-        find_program(_WEBKIT_PROBE_SWIFTC NAMES swiftc)
-        set(_swiftc "${_WEBKIT_PROBE_SWIFTC}")
-    endif ()
+    _WEBKIT_FIND_PROBE_SWIFTC(_swiftc)
 
     set(_supported FALSE)
     set(_version "not found")

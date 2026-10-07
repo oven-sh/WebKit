@@ -40,12 +40,12 @@ public:
     ~GStreamerVideoDecoder();
 
 private:
-    Ref<DecodePromise> decode(EncodedFrame&&) final;
+    Ref<DecodePromise> decode(VideoEncodedData&&) final;
     Ref<GenericPromise> flush() final;
     void reset() final;
     void close() final;
 
-    Ref<GStreamerInternalVideoDecoder> m_internalDecoder;
+    const Ref<GStreamerInternalVideoDecoder> m_internalDecoder;
 };
 
 }

@@ -188,7 +188,7 @@ public:
     };
 
     template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, StackVisitorFunctor Functor>
-    static void visit(CallFrame* startFrame, VM& vm, const Functor& functor, bool skipFirstFrame = false)
+    static void visit(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame = false)
     {
         StackVisitor visitor(startFrame, vm, skipFirstFrame);
         if constexpr (requires { functor.didSkipAOTAdapterAtTop(startFrame); }) {

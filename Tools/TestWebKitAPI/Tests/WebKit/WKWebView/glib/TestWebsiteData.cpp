@@ -23,6 +23,7 @@
 #include "WebViewTest.h"
 #include <WebCore/GUniquePtrSoup.h>
 #include <glib/gstdio.h>
+#include <wtf/glib/GLibExtras.h>
 
 static WebKitTestServer* kServer;
 // Shares a host with kServer, so it is a different origin in the same cache partition.
@@ -195,7 +196,7 @@ static void testWebsiteDataConfiguration(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpstr(webkit_website_data_manager_get_base_data_directory(test->m_manager), ==, Test::dataDirectory());
     g_assert_cmpstr(webkit_website_data_manager_get_base_cache_directory(test->m_manager), ==, Test::dataDirectory());
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
     test->runJavaScriptAndWaitUntilFinished("window.localStorage.myproperty = 42;", nullptr);
 #if !ENABLE(2022_GLIB_API)
@@ -209,7 +210,7 @@ static void testWebsiteDataConfiguration(WebsiteDataTest* test, gconstpointer)
     g_assert_true(g_file_test(localStorageDirectory.get(), G_FILE_TEST_IS_DIR));
     test->runJavaScriptAndWaitUntilFinished("window.localStorage.clear();", nullptr);
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
     test->runJavaScriptAndWaitUntilFinished("window.indexedDB.open('TestDatabase');", nullptr);
 #if !ENABLE(2022_GLIB_API)
@@ -329,7 +330,7 @@ static void testWebsiteDataOriginAndTotalStorageRatio(WebsiteDataTest* test, gco
     auto webView = test->createWebView("web-context", webContext.get(), nullptr);
     g_signal_connect(webView.get(), "load-changed", G_CALLBACK(loadChanged), test);
 
-    webkit_web_view_load_uri(webView.get(), kServer->getURIForPath("/empty").data());
+    webkit_web_view_load_uri(webView.get(), kServer->getURIForPath("/empty").legacyCStringPointer());
     test->waitUntilLoadFinished(webView.get());
     test->runJavaScriptAndWaitUntilFinished("window.indexedDB.open('TestDatabase');", nullptr, webView.get());
     test->assertFileIsNotCreated(indexedDBDirectory.get());
@@ -393,7 +394,7 @@ static void testWebsiteDataEphemeral(WebViewTest* test, gconstpointer)
 #endif
 
     g_signal_connect(webView.get(), "load-changed", G_CALLBACK(ephemeralViewloadChanged), test);
-    webkit_web_view_load_uri(webView.get(), kServer->getURIForPath("/empty").data());
+    webkit_web_view_load_uri(webView.get(), kServer->getURIForPath("/empty").legacyCStringPointer());
     g_main_loop_run(test->m_mainLoop);
 
     GUniquePtr<char> itpDirectory(g_build_filename(Test::dataDirectory(), "itp", nullptr));
@@ -406,7 +407,7 @@ static void testWebsiteDataEphemeral(WebViewTest* test, gconstpointer)
         g_assert_cmpuint(g_list_length(dataList), ==, 1);
         WebKitWebsiteData* data = static_cast<WebKitWebsiteData*>(dataList->data);
         g_assert_nonnull(data);
-        WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+        WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
         g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
         webkit_security_origin_unref(origin);
         g_list_free_full(dataList, reinterpret_cast<GDestroyNotify>(webkit_website_data_unref));
@@ -430,7 +431,7 @@ static void testWebsiteDataCache(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(cacheTypes);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
 
     // Disk cache delays the storing of initial resources for 1 second to avoid
@@ -443,7 +444,7 @@ static void testWebsiteDataCache(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     WebKitWebsiteData* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
     g_assert_cmpuint(webkit_website_data_get_types(data), ==, cacheTypes);
@@ -460,11 +461,11 @@ static void testWebsiteDataCache(WebsiteDataTest* test, gconstpointer)
     g_assert_true(webkit_website_data_get_types(data) & WEBKIT_WEBSITE_DATA_DISK_CACHE);
     g_assert_false(webkit_website_data_get_types(data) & WEBKIT_WEBSITE_DATA_MEMORY_CACHE);
 
-    GUniquePtr<char> fileURL(g_strdup_printf("file://%s/simple.html", Test::getResourcesDir(Test::WebKit2Resources).data()));
+    GUniquePtr<char> fileURL(SAFE_G_STRDUP_PRINTF("file://%s/simple.html", Test::getResourcesDir(Test::WebKit2Resources)));
     test->loadURI(fileURL.get());
     test->waitUntilLoadFinished();
 
-    fileURL.reset(g_strdup_printf("file://%s/simple2.html", Test::getResourcesDir(Test::WebKit2Resources).data()));
+    fileURL.reset(SAFE_G_STRDUP_PRINTF("file://%s/simple2.html", Test::getResourcesDir(Test::WebKit2Resources)));
     test->loadURI(fileURL.get());
     test->waitUntilLoadFinished();
 
@@ -549,7 +550,7 @@ static guint64 waitUntilDiskCacheSizeIsAtMost(WebsiteDataTest* test, guint64 max
 static void loadCompressionDictionaryPage(WebsiteDataTest* test, WebKitTestServer* server, const char* token)
 {
     GUniquePtr<char> path(g_strdup_printf("/compression-dictionary/page?token=%s", token));
-    test->loadURI(server->getURIForPath(path.get()).data());
+    test->loadURI(server->getURIForPath(path.get()));
     test->waitUntilTitleChangedTo("Registered");
 }
 
@@ -585,7 +586,7 @@ static void testWebsiteDataCompressionDictionary(WebsiteDataTest* test, gconstpo
     guint64 sizeWithDictionary = registerCompressionDictionary(test, "1");
 
     // Clear-Site-Data: "cookies" clears the dictionaries of the origin, but not its cached resources.
-    test->loadURI(kServer->getURIForPath("/compression-dictionary/clear-cookies").data());
+    test->loadURI(kServer->getURIForPath("/compression-dictionary/clear-cookies"));
     test->waitUntilLoadFinished();
     guint64 sizeWithoutDictionary = waitUntilDiskCacheSizeIsAtMost(test, sizeWithDictionary - kCompressionDictionaryLength);
     g_assert_cmpuint(sizeWithoutDictionary, >, 0);
@@ -610,7 +611,7 @@ static void testWebsiteDataCompressionDictionaryForeignMatch(WebsiteDataTest* te
 
     enableCompressionDictionary(test);
 
-    test->loadURI(kServer->getURIForPath("/compression-dictionary/page?resource=foreign-dictionary").data());
+    test->loadURI(kServer->getURIForPath("/compression-dictionary/page?resource=foreign-dictionary"));
     test->waitUntilTitleChangedTo("Registered");
 
     // A match pattern naming another origin is not registered, so the dictionary body is only
@@ -641,7 +642,7 @@ static void testWebsiteDataCompressionDictionaryOtherOrigin(WebsiteDataTest* tes
 
     // Clear-Site-Data: "cookies" clears the dictionaries of the origin that sent it, and leaves
     // the dictionaries of every other origin sharing the partition alone.
-    test->loadURI(kServer->getURIForPath("/compression-dictionary/clear-cookies").data());
+    test->loadURI(kServer->getURIForPath("/compression-dictionary/clear-cookies"));
     test->waitUntilLoadFinished();
     guint64 sizeAfter = waitUntilDiskCacheSizeIsAtMost(test, sizeWithBoth - kCompressionDictionaryLength);
     g_assert_cmpuint(sizeWithBoth - sizeAfter, >=, kCompressionDictionaryLength);
@@ -656,10 +657,10 @@ static void testWebsiteDataStorage(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(storageTypes);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/sessionstorage").data());
+    test->loadURI(kServer->getURIForPath("/sessionstorage"));
     test->waitUntilLoadFinished();
 
-    test->loadURI(kServer->getURIForPath("/localstorage").data());
+    test->loadURI(kServer->getURIForPath("/localstorage"));
     test->waitUntilLoadFinished();
 
     // Local storage uses a 1 second timer to update the database.
@@ -670,7 +671,7 @@ static void testWebsiteDataStorage(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     WebKitWebsiteData* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
     g_assert_cmpuint(webkit_website_data_get_types(data), ==, storageTypes);
@@ -718,7 +719,7 @@ static void testWebsiteDataDatabases(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(databaseTypes);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
     test->runJavaScriptAndWaitUntilFinished("let idbOpened = false; window.indexedDB.open('TestDatabase').onsuccess = () => { idbOpened = true; };", nullptr);
 
@@ -731,7 +732,7 @@ static void testWebsiteDataDatabases(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     WebKitWebsiteData* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
     g_assert_cmpuint(webkit_website_data_get_types(data), ==, WEBKIT_WEBSITE_DATA_INDEXEDDB_DATABASES);
@@ -806,7 +807,7 @@ static void testWebsiteDataCookies(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(WEBKIT_WEBSITE_DATA_COOKIES);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
 
     dataList = test->fetch(WEBKIT_WEBSITE_DATA_COOKIES);
@@ -843,7 +844,7 @@ static void testWebsiteDataDeviceIdHashSalt(WebsiteDataTest* test, gconstpointer
     GList* dataList = test->fetch(WEBKIT_WEBSITE_DATA_DEVICE_ID_HASH_SALT);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/enumeratedevices").data());
+    test->loadURI(kServer->getURIForPath("/enumeratedevices"));
     test->waitUntilTitleChangedTo("Finished");
 
     dataList = test->fetch(WEBKIT_WEBSITE_DATA_DEVICE_ID_HASH_SALT);
@@ -852,7 +853,7 @@ static void testWebsiteDataDeviceIdHashSalt(WebsiteDataTest* test, gconstpointer
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     WebKitWebsiteData* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
     g_assert_cmpuint(webkit_website_data_get_types(data), ==, WEBKIT_WEBSITE_DATA_DEVICE_ID_HASH_SALT);
@@ -866,7 +867,7 @@ static void testWebsiteDataDeviceIdHashSalt(WebsiteDataTest* test, gconstpointer
     test->waitUntilTitleChanged();
 
     // Test removing the cookies.
-    test->loadURI(kServer->getURIForPath("/enumeratedevices").data());
+    test->loadURI(kServer->getURIForPath("/enumeratedevices"));
     test->waitUntilTitleChangedTo("Finished");
 
     dataList = test->fetch(WEBKIT_WEBSITE_DATA_DEVICE_ID_HASH_SALT);
@@ -906,7 +907,7 @@ static void testWebsiteDataITP(WebsiteDataTest* test, gconstpointer)
 #else
     g_assert_false(webkit_website_data_manager_get_itp_enabled(test->m_manager));
 #endif
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
 
     g_assert_false(g_file_test(itpDirectory.get(), G_FILE_TEST_IS_DIR));
@@ -920,7 +921,7 @@ static void testWebsiteDataITP(WebsiteDataTest* test, gconstpointer)
     g_assert_true(webkit_website_data_manager_get_itp_enabled(test->m_manager));
 #endif
 
-    test->loadURI(kServer->getURIForPath("/empty").data());
+    test->loadURI(kServer->getURIForPath("/empty"));
     test->waitUntilLoadFinished();
     test->assertFileIsCreated(itpDatabaseFile.get());
     g_assert_true(g_file_test(itpDirectory.get(), G_FILE_TEST_IS_DIR));
@@ -934,7 +935,7 @@ static void testWebsiteDataITP(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     auto* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
 
@@ -964,7 +965,7 @@ static void testWebsiteDataServiceWorkerRegistrations(WebsiteDataTest* test, gco
     GList* dataList = test->fetch(WEBKIT_WEBSITE_DATA_SERVICE_WORKER_REGISTRATIONS);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/service/register.html").data());
+    test->loadURI(kServer->getURIForPath("/service/register.html"));
     test->waitUntilLoadFinished();
     test->wait(1);
 
@@ -973,7 +974,7 @@ static void testWebsiteDataServiceWorkerRegistrations(WebsiteDataTest* test, gco
     g_assert_nonnull(dataList);
     auto* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/service/register.html").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/service/register.html").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
 
@@ -995,7 +996,7 @@ static void testWebsiteDataDOMCache(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(WEBKIT_WEBSITE_DATA_DOM_CACHE);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/").data());
+    test->loadURI(kServer->getURIForPath("/"));
     test->waitUntilLoadFinished();
     test->runJavaScriptAndWaitUntilFinished("let domCacheOpened = false; window.caches.open('TestDOMCache').then(() => { domCacheOpened = true});", nullptr);
 
@@ -1007,7 +1008,7 @@ static void testWebsiteDataDOMCache(WebsiteDataTest* test, gconstpointer)
     g_assert_cmpuint(g_list_length(dataList), ==, 1);
     auto* data = static_cast<WebKitWebsiteData*>(dataList->data);
     g_assert_nonnull(data);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(kServer->getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
 
@@ -1032,7 +1033,7 @@ static void testWebsiteDataSizes(WebsiteDataTest* test, gconstpointer)
     GList* dataList = test->fetch(sizeTypes);
     g_assert_null(dataList);
 
-    test->loadURI(kServer->getURIForPath("/localstorage").data());
+    test->loadURI(kServer->getURIForPath("/localstorage"));
     test->waitUntilLoadFinished();
 
     // Local storage uses a 1 second timer to update the database.
@@ -1105,7 +1106,7 @@ static void testWebsiteDataFileSystem(WebsiteDataTest* test, gconstpointer)
     WebKitTestServer server(WebKitTestServer::ServerHTTPS);
     server.run(serverCallback);
     WebViewTest::NetworkPolicyGuard guard(test, WEBKIT_TLS_ERRORS_POLICY_IGNORE);
-    test->loadURI(server.getURIForPath("/").data());
+    test->loadURI(server.getURIForPath("/"));
     test->waitUntilLoadFinished();
     GUniqueOutPtr<GError> error;
     test->runAsyncJavaScriptFunctionInWorldAndWaitUntilFinished("const root = await navigator.storage.getDirectory(); await root.getFileHandle('test', { create: true }); const estimate = await navigator.storage.estimate(); if (typeof estimate.usage !== 'number' || typeof estimate.quota !== 'number') throw new Error('Invalid storage estimate');", nullptr, nullptr, &error.outPtr());
@@ -1118,7 +1119,7 @@ static void testWebsiteDataFileSystem(WebsiteDataTest* test, gconstpointer)
     g_assert_nonnull(data);
     g_assert_true(webkit_website_data_get_types(data) & WEBKIT_WEBSITE_DATA_FILE_SYSTEM);
     g_assert_true(WEBKIT_WEBSITE_DATA_ALL & WEBKIT_WEBSITE_DATA_FILE_SYSTEM);
-    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(server.getURIForPath("/").data());
+    WebKitSecurityOrigin* origin = webkit_security_origin_new_for_uri(server.getURIForPath("/").legacyCStringPointer());
     g_assert_cmpstr(webkit_website_data_get_name(data), ==, webkit_security_origin_get_host(origin));
     webkit_security_origin_unref(origin);
 

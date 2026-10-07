@@ -267,18 +267,18 @@ extern "C" UGPRPair SYSV_ABI llint_trace_value(CallFrame* callFrame, const JSIns
         EncodedJSValue asValue;
     } u;
     u.asValue = JSValue::encode(value);
-    dataLogF(
+    SAFE_DATALOGF(
         "<%p> %p / %p: executing bc#%zu, op#%u: Trace(%d): %d: %08x:%08x: %s\n",
         &Thread::currentSingleton(),
         callFrame->codeBlock(),
         callFrame,
         static_cast<intptr_t>(callFrame->codeBlock()->bytecodeOffset(pc)),
-        pc->opcodeID(),
+        std::to_underlying(pc->opcodeID()),
         fromWhere,
         operand.offset(),
         u.bits.tag,
         u.bits.payload,
-        toUTF8CString(value).legacyCStringPointer());
+        toUTF8CString(value));
     LLINT_END_IMPL();
 }
 
@@ -2613,7 +2613,7 @@ LLINT_SLOW_PATH_DECL(slow_path_profile_catch)
     if (!buffer)
         LLINT_END();
     buffer->forEach([&] (ValueProfileAndVirtualRegister& profile) {
-        profile.m_buckets[0] = JSValue::encode(callFrame->uncheckedR(profile.m_operand).jsValue());
+        profile.sample(callFrame->uncheckedR(profile.m_operand).jsValue());
     });
 
     LLINT_END();

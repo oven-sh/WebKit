@@ -231,7 +231,7 @@ bool JSTestNamedGetterNoIdentifier::put(JSCell* cell, JSGlobalObject* lexicalGlo
         return JSObject::put(thisObject, lexicalGlobalObject, propertyName, value, putPropertySlot);
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::put(thisObject, lexicalGlobalObject, propertyName, value, putPropertySlot);
     }
@@ -255,7 +255,7 @@ bool JSTestNamedGetterNoIdentifier::putByIndex(JSCell* cell, JSGlobalObject* lex
 {
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::putByIndex(cell, lexicalGlobalObject, index, value, shouldThrow);
     }
@@ -301,7 +301,7 @@ bool JSTestNamedGetterNoIdentifier::deleteProperty(JSCell* cell, JSGlobalObject*
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::deleteProperty(cell, lexicalGlobalObject, propertyName, slot);
     }
@@ -321,7 +321,7 @@ bool JSTestNamedGetterNoIdentifier::deletePropertyByIndex(JSCell* cell, JSGlobal
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::deletePropertyByIndex(cell, lexicalGlobalObject, index);
     }

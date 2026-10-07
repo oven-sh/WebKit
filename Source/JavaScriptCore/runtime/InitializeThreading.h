@@ -37,9 +37,9 @@ namespace JSC {
 JS_EXPORT_PRIVATE void initialize();
 JS_EXPORT_PRIVATE void installCompilers();
 JS_EXPORT_PRIVATE void installRegExpCompiler();
-JS_EXPORT_PRIVATE void initializeWithOptionsCustomization(const ScopedLambda<void()>& optionsCustomizationCallback);
+JS_EXPORT_PRIVATE void initializeWithOptionsCustomization(NOESCAPE const ScopedLambda<void()>& optionsCustomizationCallback);
 
-ALWAYS_INLINE void initialize(const Invocable<void()> auto& optionsCustomizationCallback)
+ALWAYS_INLINE void initialize(NOESCAPE const Invocable<void()> auto& optionsCustomizationCallback)
 {
     SUPPRESS_FORWARD_DECL_ARG initializeWithOptionsCustomization(optionsCustomizationCallback);
 }

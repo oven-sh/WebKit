@@ -29,12 +29,26 @@
 #include "StylePaintImage.h"
 
 #include "CSSPaintImageValue.h"
+#include "CSSPropertyNames.h"
+#include "CSSPropertyParser.h"
 #include "CSSVariableData.h"
-#include "CustomPaintImage.h"
+#include "ContextDestructionObserverInlines.h"
+#include "CustomPaintCanvas.h"
 #include "DeprecatedCSSOMValue.h"
+#include "GraphicsContext.h"
+#include "HashMapStylePropertyMapReadOnly.h"
+#include "ImageBuffer.h"
+#include "JSCSSPaintCallback.h"
+#include "JSDOMExceptionHandling.h"
+#include "PaintRenderingContext2D.h"
 #include "PaintWorkletGlobalScope.h"
 #include "RenderElement.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
+#include "StyleExtractor.h"
+#include <JavaScriptCore/ArgList.h>
+#include <JavaScriptCore/ConstructData.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/PointerComparison.h>
 
 namespace WebCore {
@@ -75,24 +89,48 @@ void PaintImage::load(CachedResourceLoader&, const ResourceLoaderOptions&)
 {
 }
 
-RefPtr<WebCore::Image> PaintImage::image(const RenderElement* renderer, const FloatSize& size, const GraphicsContext&, bool) const
+ImageDrawResult PaintImage::draw(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options, bool) const
 {
-    if (!renderer)
-        return &WebCore::Image::nullImage();
+    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    if (!canDrawAtSize(renderer, size))
+        return ImageDrawResult::DidNothing;
 
-    if (size.isEmpty())
-        return nullptr;
+    return drawIntoDestination(context, destination, source, options, [&](GraphicsContext& context) {
+        return paint(context, renderer, size);
+    });
+}
 
-    RefPtr selectedGlobalScope = protect(renderer->document())->paintWorkletGlobalScopeForName(m_name.value);
-    if (!selectedGlobalScope)
-        return nullptr;
+ImageDrawResult PaintImage::drawAsPattern(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, bool) const
+{
+    auto size = concreteObjectSize.size() * concreteObjectSize.zoom();
+    if (!canDrawAtSize(renderer, size) || context.paintingDisabled())
+        return ImageDrawResult::DidNothing;
 
-    Locker locker { selectedGlobalScope->paintDefinitionLock() };
-    CheckedPtr registration = selectedGlobalScope->paintDefinitionMap().get(m_name.value);
+    RefPtr buffer = context.createAlignedImageBuffer(size);
+    if (!buffer)
+        return ImageDrawResult::DidNothing;
 
-    if (!registration)
-        return nullptr;
+    // Factor in the destination context's scale to generate at the best resolution.
+    auto contextCTM = context.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
+    double xScale = std::abs(contextCTM.xScale());
+    double yScale = std::abs(contextCTM.yScale());
+    auto adjustedPatternCTM = patternTransform;
+    adjustedPatternCTM.scale(1.0 / xScale, 1.0 / yScale);
+    auto adjustedTile = tile;
+    adjustedTile.scale(xScale, yScale);
 
+    paint(buffer->context(), renderer, size);
+
+    if (options.drawLuminanceMask() == DrawLuminanceMask::Yes)
+        buffer->convertToLuminanceMask();
+
+    context.drawPattern(*buffer, destination, adjustedTile, adjustedPatternCTM, phase, spacing, options);
+
+    return ImageDrawResult::DidDraw;
+}
+
+Vector<WTF::String> PaintImage::paintArguments() const
+{
     // FIXME: Check if argument list matches syntax.
     Vector<WTF::String> arguments;
     CSSParserTokenRange localRange(m_arguments->tokenRange());
@@ -113,12 +151,113 @@ RefPtr<WebCore::Image> PaintImage::image(const RenderElement* renderer, const Fl
         arguments.append(builder.toString());
     }
 
-    return CustomPaintImage::create(*registration, size, *renderer, arguments);
+    return arguments;
+}
+
+static RefPtr<CSSValue> extractComputedProperty(const AtomString& name, Element& element)
+{
+    Extractor extractor(&element);
+
+    if (isCustomPropertyName(name))
+        return extractor.customPropertyValue(name);
+
+    CSSPropertyID propertyID = cssPropertyID(name);
+    if (!propertyID)
+        return nullptr;
+
+    return extractor.propertyValue(propertyID, Extractor::UpdateLayout::No);
+}
+
+ImageDrawResult PaintImage::paint(GraphicsContext& context, const RenderElement& renderer, FloatSize paintSize) const
+{
+    RefPtr element = renderer.element();
+    if (!element)
+        return ImageDrawResult::DidNothing;
+
+    RefPtr globalScope = protect(renderer.document())->paintWorkletGlobalScopeForName(m_name.value);
+    if (!globalScope)
+        return ImageDrawResult::DidNothing;
+
+    // The definition is read under the worklet's lock, and the callback, which is script, runs without it.
+    WeakPtr<PaintDefinition> paintDefinition;
+    Vector<AtomString> inputProperties;
+    {
+        Locker locker { globalScope->paintDefinitionLock() };
+        CheckedPtr registration = globalScope->paintDefinitionMap().get(m_name.value);
+        if (!registration)
+            return ImageDrawResult::DidNothing;
+
+        paintDefinition = *registration;
+        inputProperties = registration->inputProperties;
+    }
+
+    CheckedPtr definition = paintDefinition.get();
+    if (!definition)
+        return ImageDrawResult::DidNothing;
+
+    JSC::JSValue paintConstructor = definition->paintConstructor;
+    if (!paintConstructor)
+        return ImageDrawResult::DidNothing;
+
+    ASSERT(!renderer.needsLayout());
+    ASSERT(!element->document().needsStyleRecalc());
+
+    Ref callback = definition->paintCallback.get();
+    RefPtr scriptExecutionContext = callback->scriptExecutionContext();
+    if (!scriptExecutionContext)
+        return ImageDrawResult::DidNothing;
+
+    Ref canvas = CustomPaintCanvas::create(*scriptExecutionContext, paintSize.width(), paintSize.height());
+    RefPtr canvasContext = canvas->getContext();
+
+    HashMap<AtomString, RefPtr<CSSValue>> propertyValues;
+    for (auto& name : inputProperties)
+        propertyValues.add(name, extractComputedProperty(name, *element));
+
+    auto size = CSSPaintSize::create(paintSize.width(), paintSize.height());
+    Ref<StylePropertyMapReadOnly> propertyMap = HashMapStylePropertyMapReadOnly::create(WTF::move(propertyValues));
+
+    auto& vm = paintConstructor.getObject()->vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto& globalObject = *paintConstructor.getObject()->realm();
+
+    auto& lexicalGlobalObject = globalObject;
+    JSC::ArgList noArgs;
+    JSC::JSValue thisObject = { JSC::construct(&lexicalGlobalObject, paintConstructor, noArgs, "Failed to construct paint class"_s) };
+
+    if (scope.exception()) [[unlikely]] {
+        reportException(&lexicalGlobalObject, scope.exception());
+        return ImageDrawResult::DidNothing;
+    }
+
+    auto result = callback->invoke(WTF::move(thisObject), *canvasContext, size, propertyMap, paintArguments());
+    if (result.type() != CallbackResultType::Success)
+        return ImageDrawResult::DidNothing;
+
+    canvas->replayDisplayList(context);
+
+    return ImageDrawResult::DidDraw;
 }
 
 bool PaintImage::knownToBeOpaque(const RenderElement&) const
 {
     return false;
+}
+
+bool PaintImage::canDraw(const RenderElement& renderer) const
+{
+    RefPtr selectedGlobalScope = protect(renderer.document())->paintWorkletGlobalScopeForName(m_name.value);
+    if (!selectedGlobalScope)
+        return false;
+
+    Locker locker { selectedGlobalScope->paintDefinitionLock() };
+    return !!selectedGlobalScope->paintDefinitionMap().get(m_name.value);
+}
+
+bool PaintImage::canDrawAtSize(const RenderElement& renderer, const FloatSize& size) const
+{
+    return !size.isEmpty() && canDraw(renderer);
 }
 
 FloatSize PaintImage::fixedSize(const RenderElement&) const

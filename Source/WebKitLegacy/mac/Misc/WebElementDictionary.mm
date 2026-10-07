@@ -118,8 +118,6 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
         return;
 
     delete _result;
-    [_cache release];
-    [_nilValues release];
     [super dealloc];
 }
 
@@ -133,21 +131,21 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
 {
     if (!_cacheComplete)
         [self _fillCache];
-    return [_cache count];
+    return [protect(_cache) count];
 }
 
 - (NSEnumerator *)keyEnumerator
 {
     if (!_cacheComplete)
         [self _fillCache];
-    return [_cache keyEnumerator];
+    return [protect(_cache) keyEnumerator];
 }
 
 - (id)objectForKey:(id)key
 {
-    id value = [_cache objectForKey:key];
-    if (value || _cacheComplete || [_nilValues containsObject:key])
-        return value;
+    RetainPtr<id> value = [protect(_cache) objectForKey:key];
+    if (value || _cacheComplete || [protect(_nilValues) containsObject:key])
+        return value.autorelease();
 
     SEL selector = static_cast<SEL>(const_cast<void*>(CFDictionaryGetValue(lookupTable().get(), (__bridge CFTypeRef)key)));
     if (!selector)
@@ -157,17 +155,17 @@ static void cacheValueForKey(const void *key, const void *value, void *self)
     NSUInteger lookupTableCount = CFDictionaryGetCount(lookupTable().get());
     if (value) {
         if (!_cache)
-            _cache = [[NSMutableDictionary alloc] initWithCapacity:lookupTableCount];
-        [_cache setObject:value forKey:key];
+            _cache = adoptNS([[NSMutableDictionary alloc] initWithCapacity:lookupTableCount]);
+        [protect(_cache) setObject:value forKey:key];
     } else {
         if (!_nilValues)
-            _nilValues = [[NSMutableSet alloc] initWithCapacity:lookupTableCount];
-        [_nilValues addObject:key];
+            _nilValues = adoptNS([[NSMutableSet alloc] initWithCapacity:lookupTableCount]);
+        [protect(_nilValues) addObject:key];
     }
 
-    _cacheComplete = ([_cache count] + [_nilValues count]) == lookupTableCount;
+    _cacheComplete = ([protect(_cache) count] + [protect(_nilValues) count]) == lookupTableCount;
 
-    return value;
+    return value.autorelease();
 }
 
 - (DOMNode *)_domNode

@@ -37,7 +37,6 @@
 #include "NativeImage.h"
 #include "PixelBuffer.h"
 #include "SVGImage.h"
-#include "SVGImageForContainer.h"
 #include "UTIRegistry.h"
 #include "UTIUtilities.h"
 #include <CoreFoundation/CoreFoundation.h>
@@ -295,8 +294,7 @@ static RefPtr<NativeImage> createNativeImageFromSVGImage(SVGImage& image, const 
     if (!buffer)
         return nullptr;
 
-    Ref svgImageContainer = SVGImageForContainer::create(&image, { .containerSize = size });
-    buffer->context().drawImage(svgImageContainer.get(), FloatPoint::zero());
+    buffer->context().drawImage(image, ConcreteObjectSize::fixed(size), FloatPoint::zero());
 
     return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
 }
@@ -461,7 +459,7 @@ static RetainPtr<CFDictionaryRef> imagePropertiesForDestinationUTIAndQuality(CFS
     // in the calling functions, but it doesn't seem to work.
 }
 
-static bool encode(CGImageRef image, const String& mimeType, std::optional<double> quality, const ScopedLambda<PutBytesCallback>& function)
+static bool encode(CGImageRef image, const String& mimeType, std::optional<double> quality, NOESCAPE const ScopedLambda<PutBytesCallback>& function)
 {
     if (!image)
         return false;
@@ -487,7 +485,7 @@ static bool encode(CGImageRef image, const String& mimeType, std::optional<doubl
     return CGImageDestinationFinalize(destination.get());
 }
 
-static bool encode(const PixelBuffer& source, const String& mimeType, std::optional<double> quality, const ScopedLambda<PutBytesCallback>& function)
+static bool encode(const PixelBuffer& source, const String& mimeType, std::optional<double> quality, NOESCAPE const ScopedLambda<PutBytesCallback>& function)
 {
     ASSERT(MIMETypeRegistry::isSupportedImageMIMETypeForEncoding(mimeType));
 

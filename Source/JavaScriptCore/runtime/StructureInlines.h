@@ -72,7 +72,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
 }
 
 template<typename Functor>
-void Structure::forEachPropertyConcurrently(const Functor& functor)
+void Structure::forEachPropertyConcurrently(NOESCAPE const Functor& functor)
 {
     Vector<Structure*, 8> structures;
     Structure* tableStructure;
@@ -125,7 +125,7 @@ void Structure::forEachPropertyConcurrently(const Functor& functor)
 }
 
 template<typename Functor>
-void Structure::forEachProperty(VM& vm, const Functor& functor)
+void Structure::forEachProperty(VM& vm, NOESCAPE const Functor& functor)
 {
     if (PropertyTable* table = ensurePropertyTableIfNotEmpty(vm)) {
         table->forEachProperty([&](const auto& entry) {
@@ -243,7 +243,7 @@ inline PropertyOffset Structure::nextOffsetFor(PropertyTable* table, UniquedStri
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
-inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
+inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
@@ -306,7 +306,7 @@ inline PropertyOffset Structure::add(VM& vm, PropertyName propertyName, unsigned
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
-inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const Func& func)
+inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, NOESCAPE const Func& func)
 {
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
@@ -352,7 +352,7 @@ inline PropertyOffset Structure::remove(VM& vm, PropertyName propertyName, const
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>
-inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
+inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
@@ -403,7 +403,7 @@ inline PropertyOffset Structure::attributeChange(VM& vm, PropertyName propertyNa
 }
 
 template<typename Func>
-inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
+inline PropertyOffset Structure::addPropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
 #if USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(!hasImmutableShape());
@@ -430,7 +430,7 @@ inline void Structure::movePropertyOutOfLineWithoutTransition(VM& vm, PropertyNa
 #endif
 
 template<typename Func>
-inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, PropertyName propertyName, const Func& func)
+inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, PropertyName propertyName, NOESCAPE const Func& func)
 {
 #if USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(!hasStableFields() || (!hasImmutableShape() && !isStableField(get(vm, propertyName))));
@@ -443,7 +443,7 @@ inline PropertyOffset Structure::removePropertyWithoutTransition(VM& vm, Propert
 }
 
 template<typename Func>
-ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned newAttributes, const Func& func) -> decltype(auto)
+ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, PropertyName propertyName, unsigned newAttributes, NOESCAPE const Func& func) -> decltype(auto)
 {
     ASSERT(!isCompilationThread());
     PropertyTable* table = ensurePropertyTable(vm);
@@ -502,7 +502,7 @@ ALWAYS_INLINE auto Structure::addOrReplacePropertyWithoutTransition(VM& vm, Prop
 }
 
 template<typename Func>
-inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, const Func& func)
+inline PropertyOffset Structure::attributeChangeWithoutTransition(VM& vm, PropertyName propertyName, unsigned attributes, NOESCAPE const Func& func)
 {
 #if USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(!hasStableFields() || (!hasImmutableShape() && (!(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || !isStableField(get(vm, propertyName)))));

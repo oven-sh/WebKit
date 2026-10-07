@@ -64,7 +64,12 @@ const urls = [
     "https://www.google.com/search/howsearchworks",
     // anyTopLevelDomain, so the ccTLD results pages match too.
     "https://www.google.co.jp/search",
+    // pathStartsWithComponent("maps"), so the bare path that Maps first serves matches, as do
+    // deeper paths, but a longer first path component does not.
+    "https://www.google.com/maps",
     "https://www.google.com/maps/",
+    "https://www.google.com/maps/@37.33,-122.01,15z",
+    "https://www.google.com/mapsearch",
     "https://maps.google.com/maps/",
     "https://docs.google.com/",
     "https://translate.google.com/",
@@ -103,6 +108,10 @@ const urls = [
     "https://invideo.io/",
     "https://www.linkedin.com/",
     "https://outlook.live.com/",
+    // Outlook on the web is also served from these hosts, which share only some of outlook.live.com's quirks.
+    "https://outlook.office.com/",
+    "https://outlook.office365.com/",
+    "https://outlook.cloud.microsoft/",
     // handleLiveQuirks applies some quirks to every live.com host and others only to these three,
     // including a PLATFORM(MAC) one for onedrive. The bare host is the non-Outlook baseline.
     "https://live.com/",
@@ -111,7 +120,11 @@ const urls = [
     "https://madisoncity.k12.al.us/",
     "https://mailchimp.com/",
     "https://www.marcus.com/",
+    "https://jalopnik.com/",
+    "https://kotaku.com/",
     "https://medium.com/",
+    "https://www.microsoft.com/",
+    "https://microsoft.com/",
     "https://m365.cloud.microsoft/",
     "https://cloud.microsoft/",
     "https://safe.menlosecurity.com/",
@@ -124,6 +137,8 @@ const urls = [
     "https://www.nytimes.com/",
     "https://www.pandora.com/",
     "https://www.pinterest.com/",
+    "https://www.playstation.com/",
+    "https://my.playstation.com/",
     "https://www.premierleague.com/",
     "https://www.ralphlauren.com/",
     "https://www.reddit.com/",

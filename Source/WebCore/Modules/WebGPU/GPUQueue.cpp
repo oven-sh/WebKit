@@ -438,7 +438,7 @@ static void getImageBytesFromVideoFrame(WebGPU::Queue& backing, const RefPtr<Vid
     RetainPtr platformImage = nativeImage->platformImage();
     if (!platformImage)
         return callback({ }, 0, 0);
-    RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(CGImageGetDataProvider(platformImage.get())));
+    RetainPtr pixelDataCfData = adoptCF(CGDataProviderCopyData(protect(CGImageGetDataProvider(platformImage.get()))));
     if (!pixelDataCfData)
         return callback({ }, 0, 0);
 
@@ -527,7 +527,7 @@ static void imageBytesForSource(WebGPU::Queue& backing, const GPUImageCopyExtern
             if (!platformImage)
                 return callback({ }, 0, 0);
 
-            if (CGColorSpaceGetModel(CGImageGetColorSpace(platformImage.get())) == kCGColorSpaceModelIndexed) {
+            if (CGColorSpaceGetModel(protect(CGImageGetColorSpace(platformImage.get()))) == kCGColorSpaceModelIndexed) {
                 auto indexedWidth = CGImageGetWidth(platformImage.get());
                 auto indexedHeight = CGImageGetHeight(platformImage.get());
                 RetainPtr bitmapContext = adoptCF(CGBitmapContextCreate(nullptr, indexedWidth, indexedHeight, 8, indexedWidth * 4, sRGBColorSpaceSingleton(), static_cast<uint32_t>(kCGImageAlphaPremultipliedLast) | static_cast<uint32_t>(kCGBitmapByteOrder32Big)));
@@ -808,7 +808,7 @@ static GPUResidentSource gpuResidentSourceForImageElement(ScriptExecutionContext
     // CoreGraphics decodes to premultiplied alpha, so compositing over the buffer's transparent
     // black leaves the decoded channels untouched; the copy is lossless for as long as the
     // destination wants premultiplied alpha too.
-    imageBuffer->context().drawImage(*image, destinationRect, sourceRect, { CompositeOperator::Copy, ImageOrientation::Orientation::FromImage });
+    imageBuffer->context().drawBitmapImage(*image, destinationRect, sourceRect, { CompositeOperator::Copy, ImageOrientation::Orientation::FromImage });
     return { WTF::move(imageBuffer) };
 }
 #endif // HAVE(IOSURFACE) && ENABLE(VIDEO) && ENABLE(WEB_CODECS)
@@ -1462,7 +1462,7 @@ ExceptionOr<void> GPUQueue::copyExternalImageToTexture(ScriptExecutionContext& c
     return { };
 }
 
-ExceptionOr<void> GPUQueue::copyElementImageToTexture(const GPUCopyElementImageSource&, const GPUCopyElementImageDestination&)
+ExceptionOr<void> GPUQueue::drawElementImageToTexture(const GPUDrawElementImageSource&, const GPUDrawElementImageDestination&)
 {
     return Exception { ExceptionCode::InvalidStateError };
 }

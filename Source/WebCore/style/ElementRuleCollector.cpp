@@ -281,6 +281,8 @@ void ElementRuleCollector::collectMatchingRules(const MatchRequest& matchRequest
     } else {
         // If pseudo-element is not requested then just mark the bits that tell that this element has these.
         m_matchedPseudoElements.add(pseudoElementTypes & allPublicPseudoElementTypes);
+        if ((isHTMLElement ? ruleSet.universalHTMLPseudoElementBoxGeneration() : ruleSet.universalPseudoElementBoxGeneration()) == PseudoElementBoxGeneration::Normal)
+            m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
     }
 }
 
@@ -308,8 +310,10 @@ void ElementRuleCollector::sortAndTransferMatchedRules(DeclarationOrigin declara
 
 void ElementRuleCollector::transferMatchedRules(DeclarationOrigin declarationOrigin, std::optional<ScopeOrdinal> fromScope)
 {
-    if (m_mode != SelectorChecker::Mode::CollectingRules)
-        declarationsForOrigin(declarationOrigin).reserveCapacity(m_matchedRules.size());
+    if (m_mode != SelectorChecker::Mode::CollectingRules) {
+        auto& declarations = declarationsForOrigin(declarationOrigin);
+        declarations.reserveCapacity(declarations.size() + (m_matchedRules.size() - m_matchedRuleTransferIndex));
+    }
 
     for (; m_matchedRuleTransferIndex < m_matchedRules.size(); ++m_matchedRuleTransferIndex) {
         auto& matchedRule = m_matchedRules[m_matchedRuleTransferIndex];
@@ -630,6 +634,8 @@ inline bool ElementRuleCollector::ruleMatches(const RuleData& ruleData, unsigned
     }
 
     m_matchedPseudoElements.add(context.publicPseudoElements);
+    if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal && !context.publicPseudoElements.isEmpty())
+        m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
     m_styleRelations.appendVector(context.styleRelations);
 
     return selectorMatches;
@@ -647,8 +653,11 @@ void ElementRuleCollector::collectMatchingRulesForListSlow(const RuleSet::RuleDa
         if (m_selectorMatchingState && m_selectorMatchingState->selectorFilter.fastRejectSelector(ruleData.descendantSelectorIdentifierHashes()))
             continue;
 
-        if (matchRequest.ruleSet.hasContainerQueries() && !containerQueriesMatch(ruleData, matchRequest))
+        if (matchRequest.ruleSet.hasContainerQueries() && !containerQueriesMatch(ruleData, matchRequest)) {
+            if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal)
+                m_pseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
             continue;
+        }
 
         std::optional<Vector<ScopingRootWithDistance>> scopingRoots;
         if (matchRequest.ruleSet.hasScopeRules()) {
@@ -757,6 +766,8 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
                         subContext.scopingRootMatchesVisited = false;
                         subContext.isEvaluatingScopingRoot = true;
                         auto match = checker.match(selector, *ancestor, subContext);
+                        m_styleRelations.appendVector(subContext.styleRelations);
+                        subContext.styleRelations.clear();
                         if (match)
                             scopingRoots.append({ ancestor, distance, subContext.scopingRootMatchesVisited });
                     };

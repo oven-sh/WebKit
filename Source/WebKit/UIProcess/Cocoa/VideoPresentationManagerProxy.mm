@@ -592,17 +592,17 @@ void VideoPresentationModelContext::requestHideCaptionDisplaySettingsPreview()
 #if !RELEASE_LOG_DISABLED
 uint64_t VideoPresentationModelContext::logIdentifier() const
 {
-    return protect(m_playbackSessionModel)->logIdentifier();
+    return m_playbackSessionModel->logIdentifier();
 }
 
 uint64_t VideoPresentationModelContext::nextChildIdentifier() const
 {
-    return LoggerHelper::childLogIdentifier(protect(m_playbackSessionModel)->logIdentifier(), ++m_childIdentifierSeed);
+    return LoggerHelper::childLogIdentifier(m_playbackSessionModel->logIdentifier(), ++m_childIdentifierSeed);
 }
 
 const Logger* VideoPresentationModelContext::loggerPtr() const
 {
-    return protect(m_playbackSessionModel)->loggerPtr();
+    return m_playbackSessionModel->loggerPtr();
 }
 
 WTFLogChannel& VideoPresentationModelContext::logChannel() const
@@ -854,7 +854,7 @@ void VideoPresentationManagerProxy::removeClientForContext(PlaybackSessionContex
     m_clientCounts.set(contextId, clientCount);
 }
 
-void VideoPresentationManagerProxy::forEachSession(Function<void(VideoPresentationModelContext&, PlatformVideoPresentationInterface&)>&& callback)
+void VideoPresentationManagerProxy::forEachSession(NOESCAPE const Function<void(VideoPresentationModelContext&, PlatformVideoPresentationInterface&)>& callback)
 {
     if (m_contextMap.isEmpty())
         return;
@@ -1104,6 +1104,8 @@ void VideoPresentationManagerProxy::setupFullscreenWithID(IPC::Connection& conne
     RefPtr page = m_page.get();
     if (!page)
         return;
+
+    m_lastSetupFullscreenRectForTesting = screenRect;
 
     auto contextId = contextIdForConnection(connection, identifier);
     auto [model, interface] = ensureModelAndInterface(contextId);

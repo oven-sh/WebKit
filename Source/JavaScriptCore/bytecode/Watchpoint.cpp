@@ -56,7 +56,7 @@ void StringFireDetail::dump(PrintStream& out) const
 }
 
 template<typename Func>
-inline void Watchpoint::runWithDowncast(const Func& func)
+inline void Watchpoint::runWithDowncast(NOESCAPE const Func& func)
 {
     switch (m_type) {
 #define JSC_DEFINE_WATCHPOINT_DISPATCH(type, cast) \

@@ -44,7 +44,7 @@ namespace JSC {
 #define USES USES_OR_DEFS
 #define DEFS USES_OR_DEFS
 
-void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoint checkpoint, const ScopedLambda<void(VirtualRegister)>& functor)
+void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoint checkpoint, NOESCAPE const ScopedLambda<void(VirtualRegister)>& functor)
 {
     OpcodeID opcodeID = instruction->opcodeID();
 
@@ -390,7 +390,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     }
 }
 
-void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* instruction, Checkpoint checkpoint, const ScopedLambda<void(VirtualRegister)>& functor)
+void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* instruction, Checkpoint checkpoint, NOESCAPE const ScopedLambda<void(VirtualRegister)>& functor)
 {
 
     auto defAt = [&] (Checkpoint target, VirtualRegister operand) {
@@ -639,7 +639,6 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_iterator_next: {
         auto bytecode = instruction->as<OpIteratorNext>();
 
-        // With no iterator object (see op_iterator_open), the index of the next element is kept in m_next.
         defAt(OpIteratorNext::computeNext, bytecode.m_next);
         defAt(OpIteratorNext::getDone, bytecode.m_done);
         // We need to claim we set m_value here because we could early exit from the bytecode if we are done.

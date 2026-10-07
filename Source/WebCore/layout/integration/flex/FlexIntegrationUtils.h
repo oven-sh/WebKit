@@ -36,6 +36,7 @@ namespace WebCore {
 enum class LogicalBoxAxis : uint8_t;
 
 namespace Style {
+class UnevaluatedCalcSize;
 struct FlexBasis;
 struct MaximumSize;
 struct MinimumSize;
@@ -84,6 +85,7 @@ public:
     static bool canResolvePercentAgainstContainerBlockSize(const RenderBox&, RenderBox::UpdatePercentageHeightDescendants, const FlexLayoutState*);
     static std::optional<bool> isFlexBoxBlockSizeDefiniteForFlexItem(const RenderBox&, const FlexLayoutState*);
     template<typename SizeType> std::optional<LayoutUnit> computeMainAxisExtentForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit mainAxisSizeForLengthResolution);
+    LayoutUnit resolveCalcSizeMainAxisExtentForFlexItem(const FlexLayoutItem&, const Style::UnevaluatedCalcSize&, LayoutUnit keywordMainAxisExtent, LayoutUnit mainAxisSizeForLengthResolution);
     LayoutUnit maxContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
     LayoutUnit minContentMainAxisContributionForFlexItem(const FlexLayoutItem&);
     LayoutUnit flexItemIntrinsicLogicalHeight(const FlexLayoutItem&, bool needToStretchLogicalHeight) const;
@@ -120,7 +122,6 @@ public:
 private:
     const CheckedRef<RenderBox> m_flexItem;
     bool m_mainAxisIsInlineAxis { false };
-    bool m_didOverride { false };
 };
 
 // RAII for measuring a flex item before it is stretched. When the item is going to be stretched to a definite cross

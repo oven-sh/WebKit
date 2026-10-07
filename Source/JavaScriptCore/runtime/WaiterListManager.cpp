@@ -132,8 +132,29 @@ WaiterListManager::WaitSyncResult WaiterListManager::waitSyncImpl(VM& vm, ValueT
         dataLogLnIf(WaiterListsManagerInternal::verbose, "<WaiterListManager> <Thread:", Thread::currentSingleton(), "> added a new SyncWaiter=", syncWaiter.get(), " to a waiterList for ptr ", RawPointer(ptr));
         syncWaiter->setParkedList(list.copyRef());
 
-        while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm))
+#if USE(MIMALLOC)
+        // Only the owning thread can return the memory its thread-local heap holds, so do that once in a wait that
+        // takes a while. A wait that is notified soon pays nothing.
+        MonotonicTime releaseFreeMemoryTime = MonotonicTime::now() + 100_ms;
+        bool didReleaseFreeMemory = false;
+#endif
+        while (syncWaiter->isOnList() && time.now() < time && !shouldStopWaitingForTermination(vm)) {
+#if USE(MIMALLOC)
+            if (!didReleaseFreeMemory && releaseFreeMemoryTime < time) {
+                if (MonotonicTime::now() < releaseFreeMemoryTime) {
+                    syncWaiter->condition().waitUntil(list->lock, releaseFreeMemoryTime.approximate<WallTime>());
+                    continue;
+                }
+                didReleaseFreeMemory = true;
+                // A notification in the meantime takes us off the list, and the loop tests for that (and for a
+                // termination request) under the lock again before it waits.
+                DropLockForScope dropLock { listLocker };
+                WTF::releaseFastMallocFreeMemoryForIdleThread();
+                continue;
+            }
+#endif
             syncWaiter->condition().waitUntil(list->lock, time.approximate<WallTime>());
+        }
 
         syncWaiter->setParkedList(nullptr);
 
@@ -186,7 +207,7 @@ JSValue WaiterListManager::waitAsyncImpl(JSGlobalObject* globalObject, VM& vm, V
             list->addLast(listLocker, waiter);
 
             if (timeout != Seconds::infinity()) {
-                Ref<RunLoop::DispatchTimer> timer = RunLoop::currentSingleton().dispatchAfter(timeout, [this, ptr, waiter = waiter.copyRef()]() mutable {
+                Ref<RunLoop::DispatchTimer> timer = RunLoop::currentSingleton().scheduleTimer(timeout, [this, ptr, waiter = waiter.copyRef()]() mutable {
                     timeoutAsyncWaiter(ptr, WTF::move(waiter));
                 });
                 waiter->setTimer(listLocker, WTF::move(timer));

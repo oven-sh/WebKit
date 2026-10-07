@@ -126,8 +126,8 @@ bool RenderSVGShape::strokeContains(const FloatPoint& point, bool requiresStroke
     if (!strokeWidth())
         return false;
 
-    auto approximateStrokeBoundingBox = this->approximateStrokeBoundingBox();
-    if (approximateStrokeBoundingBox.isEmpty() || !approximateStrokeBoundingBox.contains(point))
+    auto hitTestStrokeBoundingBox = this->hitTestStrokeBoundingBox();
+    if (hitTestStrokeBoundingBox.isEmpty() || !hitTestStrokeBoundingBox.contains(point))
         return false;
 
     auto paintServerResult = SVGPaintServerHandling::requestPaintServer<SVGPaintServerHandling::Operation::Stroke>(*this, style());
@@ -257,7 +257,8 @@ void RenderSVGShape::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     }
 
     ASSERT(paintInfo.phase == PaintPhase::Foreground);
-    GraphicsContextStateSaver stateSaver(paintInfo.context());
+    GraphicsContextStateSaver stateSaver(paintInfo.context(), paintInfo.stateSavedByCaller == StateSavedByCaller::No);
+    paintInfo.stateSavedByCaller = StateSavedByCaller::No;
 
     auto coordinateSystemOriginTranslation = adjustedPaintOffset - nominalSVGLayoutLocation();
     paintInfo.context().translate(coordinateSystemOriginTranslation.width(), coordinateSystemOriginTranslation.height());
@@ -313,7 +314,7 @@ bool RenderSVGShape::nodeAtPoint(const HitTestRequest& request, HitTestResult& r
     SVGVisitedRendererTracking::Scope recursionScope(recursionTracking, *this);
 
     auto adjustedLocation = accumulatedOffset + currentSVGLayoutLocation();
-    auto localPoint = locationInContainer.point();
+    auto localPoint = locationInContainer.transformedPoint();
     auto coordinateSystemOriginTranslation = nominalSVGLayoutLocation() - adjustedLocation;
     localPoint.move(coordinateSystemOriginTranslation);
 
@@ -343,6 +344,24 @@ bool RenderSVGShape::nodeAtPoint(const HitTestRequest& request, HitTestResult& r
     }
 
     return false;
+}
+
+void RenderSVGShape::updateFromStyle()
+{
+    RenderSVGModelObject::updateFromStyle();
+
+    if (hasNonScalingStroke())
+        setMayHaveNonScalingStrokeInSubtreeIncludingAncestors();
+}
+
+void RenderSVGShape::invalidateNonScalingStrokeCaches()
+{
+    if (!hasNonScalingStroke() || !hasPath())
+        return;
+
+    m_strokeBoundingBox = std::nullopt;
+    m_approximateStrokeBoundingBox = std::nullopt;
+    invalidateCachedVisualOverflowRect();
 }
 
 FloatRect RenderSVGShape::strokeBoundingBox() const
@@ -401,6 +420,18 @@ FloatRect RenderSVGShape::calculateApproximateStrokeBoundingBox() const
         return *m_strokeBoundingBox;
 
     return SVGRenderSupport::calculateApproximateStrokeBoundingBox(*this);
+}
+
+FloatRect RenderSVGShape::hitTestStrokeBoundingBox() const
+{
+    if (!style().stroke().isNone())
+        return approximateStrokeBoundingBox();
+    if (m_shapeType == ShapeType::Empty)
+        return { };
+    // When stroke is none, approximateStrokeBoundingBox() leaves out the stroke area, which pointer-events can still hit.
+    if (!m_hitTestStrokeBoundingBox)
+        m_hitTestStrokeBoundingBox = SVGRenderSupport::calculateApproximateStrokeBoundingBox(*this, StrokeBoundingBoxPurpose::HitTesting);
+    return *m_hitTestStrokeBoundingBox;
 }
 
 float RenderSVGShape::strokeWidth() const

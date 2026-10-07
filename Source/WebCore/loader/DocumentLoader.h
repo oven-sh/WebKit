@@ -49,6 +49,7 @@
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/NavigationRequester.h>
 #include <WebCore/OriginKeyed.h>
+#include <WebCore/RegistrableDomain.h>
 #include <WebCore/ResourceError.h>
 #include <WebCore/ResourceLoaderIdentifier.h>
 #include <WebCore/ResourceLoaderOptions.h>
@@ -172,6 +173,8 @@ public:
     WEBCORE_EXPORT static DocumentLoader* NODELETE fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
 
     WEBCORE_EXPORT virtual ~DocumentLoader();
+
+    virtual bool isWebDocumentLoaderMac() const { return false; }
 
     // CachedResourceClient, FrameDestructionObserver, ContentFilterClient.
     void ref() const final { RefCounted::ref(); }
@@ -493,6 +496,8 @@ public:
     const std::optional<CrossOriginOpenerPolicy>& crossOriginOpenerPolicy() const LIFETIME_BOUND { return m_responseCOOP; }
     OriginKeyed isOriginKeyedFromUIProcess() const { return m_isOriginKeyedFromUIProcess; }
     void setIsOriginKeyedFromUIProcess(OriginKeyed value) { m_isOriginKeyedFromUIProcess = value; }
+    bool hasUnpartitionedStorageAccess(const URL& url) const { return m_unpartitionedStorageSite && m_unpartitionedStorageSite->matches(url); }
+    void setUnpartitionedStorageSite(std::optional<RegistrableDomain>&& site) { m_unpartitionedStorageSite = WTF::move(site); }
     OptionSet<ClearSiteDataValue> responseClearSiteDataValues() const { return m_responseClearSiteDataValues; }
 
     std::unique_ptr<IntegrityPolicy> integrityPolicy();
@@ -501,6 +506,9 @@ public:
     bool isContinuingLoadAfterProvisionalLoadStarted() const { return m_isContinuingLoad == ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted; }
     bool isContinuingLoadAfterNavigationPolicyDecision() const { return m_isContinuingLoad == ShouldTreatAsContinuingLoad::YesAfterNavigationPolicyDecision; }
     void setIsContinuingLoad(ShouldTreatAsContinuingLoad shouldTreatAsContinuingLoad) { m_isContinuingLoad = shouldTreatAsContinuingLoad; }
+
+    bool isCacheOnlyLoadRetry() const { return m_isCacheOnlyLoadRetry; }
+    void markIsCacheOnlyLoadRetry() { m_isCacheOnlyLoadRetry = true; }
 
     bool isRequestFromClientOrUserInput() const { return m_isRequestFromClientOrUserInput; }
     void setIsRequestFromClientOrUserInput(bool isRequestFromClientOrUserInput) { m_isRequestFromClientOrUserInput = isRequestFromClientOrUserInput; }
@@ -522,6 +530,7 @@ public:
 
     std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
     WEBCORE_EXPORT void NODELETE setNavigationID(NavigationIdentifier);
+    std::optional<NavigationIdentifier> takeNavigationID() { return std::exchange(m_navigationID, { }).asOptional(); }
 
     IsInitialAboutBlank isInitialAboutBlank() const { return m_isInitialAboutBlank; }
 
@@ -565,6 +574,7 @@ private:
 #endif
 
     void willSendRequest(ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&);
+    void updateRequestForUnpartitionedStorageAccess(ResourceRequest&, bool isRedirect) const;
     void finishedLoading();
     void mainReceivedError(const ResourceError&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
     WEBCORE_EXPORT void redirectReceived(CachedResource&, ResourceRequest&&, const ResourceResponse&, CompletionHandler<void(ResourceRequest&&)>&&) override;
@@ -682,6 +692,7 @@ private:
 
     std::optional<CrossOriginOpenerPolicy> m_responseCOOP;
     OriginKeyed m_isOriginKeyedFromUIProcess { OriginKeyed::No };
+    std::optional<RegistrableDomain> m_unpartitionedStorageSite;
     OptionSet<ClearSiteDataValue> m_responseClearSiteDataValues;
     
     using SubstituteResourceMap = HashMap<Ref<ResourceLoader>, RefPtr<SubstituteResource>>;
@@ -775,6 +786,7 @@ private:
 
     bool m_idempotentModeAutosizingOnlyHonorsPercentages { false };
 
+    bool m_isCacheOnlyLoadRetry { false };
     bool m_isRequestFromClientOrUserInput { false };
     bool m_hasCrossOriginRedirect { false };
     bool m_loadStartedDuringSwipeAnimation { false };

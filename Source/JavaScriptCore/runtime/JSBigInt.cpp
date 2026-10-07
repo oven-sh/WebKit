@@ -3064,7 +3064,8 @@ std::span<JSBigInt::Digit> JSBigInt::rightShift(std::span<Digit> z, std::span<co
 // Q = (A - R) / B, with 0 <= R < B.
 // Both Q and R are optional: callers that are only interested in one of them
 // can pass the other with len == 0.
-// If Q is present, its length must be at least A.len - B.len + 1.
+// If Q is present, its length must be at least A.len - B.len + 1, or A.len - B.len if the top
+// digit of the quotient is known to be zero.
 // If R is present, its length must be at least B.len.
 // Callers must not assume either returned span is trimmed of leading zero digits.
 // See Knuth, Volume 2, section 4.3.1, Algorithm D.
@@ -3111,7 +3112,7 @@ std::tuple<std::span<JSBigInt::Digit>, std::span<JSBigInt::Digit>> JSBigInt::div
 
     // U holds the (continuously updated) remaining part of the dividend, which
     // eventually becomes the remainder.
-    Vector<Digit, 16> u(a.size() + 1);
+    Vector<Digit, 32> u(a.size() + 1);
     auto uSpan = u.mutableSpan();
     {
         auto filled = leftShift(uSpan, a, shift);
@@ -5931,7 +5932,7 @@ inline bool JSBigInt::productGreaterThan(Digit factor1, Digit factor2, Digit hig
 //                   v     v     v     v
 // result: [  0 ][ x3 ][ r2 ][ r1 ][ r0 ]
 template<typename BitwiseOp>
-inline std::span<JSBigInt::Digit> JSBigInt::absoluteBitwiseOp(std::span<const Digit> x, std::span<const Digit> y, ExtraDigitsHandling extraDigits, BitwiseOp&& op, std::span<Digit> result)
+inline std::span<JSBigInt::Digit> JSBigInt::absoluteBitwiseOp(std::span<const Digit> x, std::span<const Digit> y, ExtraDigitsHandling extraDigits, NOESCAPE const BitwiseOp& op, std::span<Digit> result)
 {
     if (x.size() < y.size())
         std::swap(x, y);

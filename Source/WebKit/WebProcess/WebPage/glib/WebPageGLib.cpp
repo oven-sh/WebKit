@@ -79,7 +79,7 @@ void WebPage::platformInitialize(const WebPageCreationParameters&)
     // process to connect the two worlds through the accessibility
     // object there specifically placed for that purpose (the socket).
     if (RefPtr page = corePage()) {
-        m_accessibilityRootObject = AccessibilityRootAtspi::create(*page);
+        lazyInitialize(m_accessibilityRootObject, AccessibilityRootAtspi::create(*page));
         m_accessibilityRootObject->registerObject([&](const String& plugID) {
             if (!plugID.isEmpty())
                 send(Messages::WebPageProxy::BindAccessibilityTree(plugID));
@@ -187,6 +187,11 @@ static std::optional<InputMethodState> inputMethodStateForElement(Element* eleme
     if (is<HTMLInputElement>(*element)) {
         auto& inputElement = downcast<HTMLInputElement>(*element);
         state.setPurposeForInputElement(inputElement);
+        // A missing inputmode attribute keeps the purpose derived from the type. A password
+        // field keeps its purpose too, because the state has no way to say "secret" separately.
+        auto inputMode = inputElement.canonicalInputMode();
+        if (inputMode == InputMode::None || (inputMode != InputMode::Unspecified && !inputElement.isPasswordField()))
+            state.setPurposeOrHintForInputMode(inputMode);
 #if ENABLE(AUTOCAPITALIZE)
         state.addHintsForAutocapitalizeType(inputElement.autocapitalizeType());
 #endif

@@ -58,6 +58,7 @@
 #import <wtf/text/Base64.h>
 #import <wtf/text/StringHash.h>
 
+#import <pal/cf/CoreMediaSoftLink.h>
 #import <pal/cocoa/AVFoundationSoftLink.h>
 
 static NSString * const ContentKeyReportGroupKey = @"ContentKeyReportGroup";
@@ -264,11 +265,11 @@ AVContentKeySession* CDMInstanceFairPlayStreamingAVFObjC::contentKeySession()
     if (!PAL::canLoad_AVFoundation_AVContentKeySystemFairPlayStreaming())
         return nullptr;
 
-    auto storageURL = this->storageURL();
+    RetainPtr storageURL = this->storageURL();
     if (!persistentStateAllowed() || !storageURL)
-        m_session = [PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming];
+        lazyInitialize(m_session, retainPtr([PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming]));
     else
-        m_session = [PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL];
+        lazyInitialize(m_session, retainPtr([PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL]));
 
     if (!m_session)
         return nullptr;
@@ -658,7 +659,7 @@ CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC:
     if (index != notFound)
         return m_sessions[index].get();
 
-    return sessionForGroup(groupForRequest(request));
+    return sessionForGroup(protect(groupForRequest(request)));
 }
 
 CDMInstanceSessionFairPlayStreamingAVFObjC* CDMInstanceFairPlayStreamingAVFObjC::sessionForGroup(WebAVContentKeyGrouping *group) const
@@ -826,12 +827,12 @@ ALLOW_NEW_API_WITHOUT_GUARDS_END
     m_requestLicenseCallback = WTF::move(callback);
 
     if (m_group) {
-        auto* options = @{ ContentKeyReportGroupKey: m_group.get(), InitializationDataTypeKey: initDataType.createNSString().get() };
+        RetainPtr options = @{ ContentKeyReportGroupKey: m_group.get(), InitializationDataTypeKey: initDataType.createNSString().get() };
         [m_group processContentKeyRequestWithIdentifier:identifier.get() initializationData:initializationData.get() options:options];
         return;
     }
 
-    auto* options = @{ InitializationDataTypeKey: initDataType.createNSString().get() };
+    RetainPtr options = @{ InitializationDataTypeKey: initDataType.createNSString().get() };
     [m_session processContentKeyRequestWithIdentifier:identifier.get() initializationData:initializationData.get() options:options];
 }
 
@@ -955,7 +956,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::updateLicense(const String&, Li
                 return false;
 
             auto keyID = SharedBuffer::create(WTF::move(*keyIDVector));
-            auto foundIndex = m_currentRequest.value().requests.findIf([&] (auto& request) {
+            auto foundIndex = m_currentRequest.value().requests.findIf([&] (const RetainPtr<AVContentKeyRequest>& request) {
                 auto keyIDs = CDMPrivateFairPlayStreaming::keyIDsForRequest(request.get());
                 return keyIDs.findIf([&](const Ref<SharedBuffer>& id) {
                     return id.get() == keyID.get();
@@ -1773,9 +1774,9 @@ bool CDMInstanceSessionFairPlayStreamingAVFObjC::ensureSessionOrGroup(KeyGroupin
 
     RetainPtr storageURL = m_instance->storageURL();
     if (!m_instance->persistentStateAllowed() || !storageURL)
-        m_session = [PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming];
+        lazyInitialize(m_session, retainPtr([PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming]));
     else
-        m_session = [PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL.get()];
+        lazyInitialize(m_session, retainPtr([PAL::getAVContentKeySessionClassSingleton() contentKeySessionWithKeySystem:AVContentKeySystemFairPlayStreaming storageDirectoryAtURL:storageURL.get()]));
 
     if (!m_session)
         return false;
@@ -1824,7 +1825,7 @@ void CDMInstanceSessionFairPlayStreamingAVFObjC::attachContentKeyToSample(const 
         return;
 
     NSError *error = nil;
-    if (!AVSampleBufferAttachContentKey(sample.platformSample().cmSampleBuffer(), contentKey.get(), &error))
+    if (!AVSampleBufferAttachContentKey(protect(sample.platformSample().cmSampleBuffer()), contentKey.get(), &error))
         ERROR_LOG(LOGIDENTIFIER, "Failed to attach content key with error: %{public}@", error);
 }
 

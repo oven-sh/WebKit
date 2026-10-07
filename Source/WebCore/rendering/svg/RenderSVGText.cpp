@@ -709,7 +709,7 @@ bool RenderSVGText::nodeAtPoint(const HitTestRequest& request, HitTestResult& re
     if (hitTestAction != HitTestAction::Foreground)
         return false;
 
-    PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGText, request, style().pointerEvents());
+    PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGText, request, usedPointerEvents());
     if (request.isVisibleForStyle(style()) || !hitRules.requireVisible) {
         if ((hitRules.canHitStroke && (!style().stroke().isNone() || !hitRules.requireStroke))
         || (hitRules.canHitFill && (!style().fill().isNone() || !hitRules.requireFill))) {
@@ -1070,7 +1070,7 @@ SVGRootInlineBox* RenderSVGText::legacyRootBox() const
 bool RenderSVGText::isObjectBoundingBoxValid() const
 {
     // If we don't have any line boxes, then consider the bbox invalid.
-    return legacyRootBox();
+    return !!InlineIterator::firstRootInlineBoxFor(*this);
 }
 
 }

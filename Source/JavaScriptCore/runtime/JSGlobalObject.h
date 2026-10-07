@@ -984,6 +984,9 @@ public:
     Structure* arrayStructureForIndexingTypeDuringAllocation(JSGlobalObject* globalObject, IndexingType indexingType, JSValue newTarget) const;
     inline Structure* arrayStructureForProfileDuringAllocation(JSGlobalObject*, ArrayAllocationProfile*, JSValue newTarget) const;
         
+    // What JSObject::makePropertiesImmutable() turns an original array structure into: the same (no) properties, the same prototype.
+    inline bool isOriginalArrayStructureWithImmutableProperties(Structure*); // Defined in JSGlobalObjectInlines.h
+
     bool isOriginalArrayStructure(Structure* structure)
     {
         return originalArrayStructureForIndexingType(structure->indexingMode() | IsArray) == structure;
@@ -1162,6 +1165,7 @@ public:
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
     static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfOriginalArrayStructureForIndexingShape() { return OBJECT_OFFSETOF(JSGlobalObject, m_originalArrayStructureForIndexingShape); }
+    static constexpr ptrdiff_t offsetOfStringIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_stringIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
     static constexpr ptrdiff_t offsetOfPerformProxyObjectHasFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_performProxyObjectHasFunction); }

@@ -222,7 +222,7 @@ static void append(Vector<char>& vector, const char* string)
     vector.append(unsafeSpan(string));
 }
 
-static void append(Vector<char>& vector, const CString& string)
+static void append(Vector<char>& vector, const CStringBase& string)
 {
     vector.append(string.span());
 }
@@ -275,7 +275,7 @@ void markupToCFHTML(const String& markup, const String& srcURL, Vector<char>& re
         static const constexpr unsigned InitialBufferSize { 2048 };
         Vector<char, InitialBufferSize> headerBuffer(headerBufferLength);
         snprintf(headerBuffer.mutableSpan().data(), headerBufferLength, header, startHTMLOffset, endHTMLOffset, startFragmentOffset, endFragmentOffset);
-        append(result, CString(headerBuffer.span().data()));
+        append(result, headerBuffer.span().data());
     }
     if (sourceURLUTF8.length()) {
         append(result, sourceURLPrefix);

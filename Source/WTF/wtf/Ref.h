@@ -67,7 +67,7 @@ template<typename T> struct DefaultRefDerefTraits {
 };
 
 template<typename T>
-concept CanUseDefaultRefDerefTraits = HasRefPtrMemberFunctions<T> || !DefaultRefDerefTraits<T>::isDefaultImplementation;
+concept CanUseDefaultRefDerefTraits = !std::is_void_v<T> && (HasRefPtrMemberFunctions<T> || !DefaultRefDerefTraits<T>::isDefaultImplementation);
 
 template<typename T, typename PtrTraits, typename RefDerefTraits> class Ref;
 template<typename T, typename PtrTraits = RawPtrTraits<T>, typename RefDerefTraits = DefaultRefDerefTraits<T>> Ref<T, PtrTraits, RefDerefTraits> adoptRef(T&);
@@ -140,6 +140,12 @@ public:
     {
     }
 
+    template<typename X>
+    Ref(const UniqueRef<X>& other) requires std::is_convertible_v<X*, T*>
+        : m_ptr(&RefDerefTraits::ref(other.get()))
+    {
+    }
+
     Ref& operator=(T&);
     Ref& operator=(Ref&&);
     template<typename X, typename Y, typename Z> Ref& operator=(Ref<X, Y, Z>&&);
@@ -200,7 +206,7 @@ private:
     }
 
     typename PtrTraits::StorageType m_ptr;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 // Template deduction guide.
 template<typename X, typename Y> Ref(const WeakRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
@@ -209,6 +215,8 @@ template<typename X, typename Y> Ref(const CheckedRef<X, Y>&) -> Ref<X, RawPtrTr
 template<typename X, typename Y> Ref(CheckedRef<X, Y>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X> Ref(const ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 template<typename X> Ref(ThreadSafeWeakRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(const UniqueRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
+template<typename X> Ref(UniqueRef<X>&) -> Ref<X, RawPtrTraits<X>, DefaultRefDerefTraits<X>>;
 
 template<typename T, typename _PtrTraits, typename RefDerefTraits> Ref<T, _PtrTraits, RefDerefTraits> adoptRef(T&);
 

@@ -251,14 +251,13 @@ auto DFABytecodeInterpreter::actionsMatchingEverything() -> Actions
 
 DFABytecodeInterpreter::DFABytecodeInterpreter(std::span<const uint8_t> bytecode, EnableResumeCache enableCache)
     : m_bytecode(bytecode)
+    , m_resumeCache(enableCache == EnableResumeCache::Yes ? makeUnique<ResumeSlots>() : nullptr)
 {
-    if (enableCache == EnableResumeCache::Yes)
-        m_resumeCache = makeUnique<ResumeSlots>();
 }
 
 auto DFABytecodeInterpreter::interpret(const String& urlString, ResourceFlags flags) -> Actions
 {
-    CString urlCString;
+    UTF8CString urlCString;
     std::span<const Latin1Character> url;
     if (urlString.is8Bit()) [[likely]]
         url = urlString.span8();

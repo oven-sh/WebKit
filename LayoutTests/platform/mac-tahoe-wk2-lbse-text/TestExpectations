@@ -58,10 +58,7 @@ svg/zoom/zoomed-inline-svg-getscreenctm.html [ Failure ]
 svg/custom/pattern-content-inheritance-cycle.svg  [ ImageOnlyFailure ]
 
 # Clipping problems
-css3/masking/reference-clip-path-change-repaint.html          [ Failure ]
 svg/batik/text/textProperties.svg                             [ ImageOnlyFailure ]
-svg/clip-path/hittest-transformed-clip-objectboundingbox.html [ Failure ]
-svg/clip-path/transformed-clip.svg                            [ ImageOnlyFailure ]
 
 # Bounding box issues
 imported/w3c/web-platform-tests/svg/interact/scripted/svg-pointer-events-bbox.html [ Failure ]
@@ -91,9 +88,6 @@ svg/css/mix-blend-mode-opacity-root.svg    [ ImageOnlyFailure ]
 # Non-scaling stroke issues
 svg/repaint/non-scaling-stroke-transform-animation.html               [ ImageOnlyFailure ]
 
-# SMIL animation issues
-svg/stroke/animated-non-scaling-stroke.html [ ImageOnlyFailure ]
-
 # SVG <image> (buffered-rendering) issues
 svg/repaint/buffered-rendering-static-image.html [ ImageOnlyFailure ]
 
@@ -101,7 +95,6 @@ svg/repaint/buffered-rendering-static-image.html [ ImageOnlyFailure ]
 svg/text/adding-id-on-pending-path.html            [ ImageOnlyFailure ]
 
 # Hit testing
-svg/custom/image-clipped-hit.svg               [ Failure ]
 svg/hittest/svg-ellipse-non-scale-stroke.xhtml [ Failure ]
 svg/hittest/svg-ellipse-rect-stroke.xhtml      [ Failure ]
 svg/hittest/svg-shapes-non-scale-stroke.html   [ Failure ]

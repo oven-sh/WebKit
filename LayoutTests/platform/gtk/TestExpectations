@@ -202,9 +202,6 @@ webkit.org/b/99028 fast/autoresize [ Failure ]
 webkit.org/b/245840 webgl/1.0.x/conformance/context/premultiplyalpha-test.html [ Failure ]
 webkit.org/b/245840 fast/canvas/webgl/drawingbuffer-test.html [ Failure ]
 
-# WebGL ANGLE backed flaky tests
-webkit.org/b/245840 fast/canvas/webgl/premultiplyalpha-test.html [ Failure ]
-
 # WEBGL2 failures
 webkit.org/b/251107 fast/canvas/webgl/webgl2-texture-upload-enums.html [ Pass Timeout ]
 webkit.org/b/251107 webgl/2.0.y/conformance/offscreencanvas/offscreencanvas-transfer-image-bitmap.html [ Timeout ]
@@ -619,6 +616,10 @@ webgl/1.0.x/conformance/ogles/GL/ceil/ceil_001_to_006.html [ Slow ]
 webgl/1.0.x/conformance/ogles/GL/cos/cos_001_to_006.html [ Slow ]
 webgl/1.0.x/conformance/ogles/GL/floor/floor_001_to_006.html [ Slow ]
 webgl/buffer-copysubdata-overlap-no-crash.html [ Slow ]
+webgl/default-framebuffer-size-limits-1.html [ Slow ]
+webgl/default-framebuffer-size-limits-2.html [ Slow ]
+webgl/default-framebuffer-size-limits-3.html [ Slow ]
+webgl/default-framebuffer-size-limits-4.html [ Slow ]
 
 #////////////////////////////////////////////////////////////////////////////////////////
 # End of slow tests
@@ -1005,8 +1006,6 @@ webgl/2.0.y/conformance2/textures/video [ Skip ]
 webgl/2.0.y/conformance2/textures/image_bitmap_from_video [ Skip ]
 webgl/2.0.y/conformance2/textures/misc/tex-image-with-bad-args-from-dom-elements.html [ Skip ]
 
-imported/w3c/web-platform-tests/css/filter-effects/backdrop-filter-plus-filter.html [ ImageOnlyFailure ]
-
 imported/w3c/web-platform-tests/css/filter-effects/blur-text.html [ ImageOnlyFailure ]
 
 # Flaky tests Nov2023
@@ -1120,7 +1119,6 @@ webkit.org/b/309266 [ Release ] css3/scroll-snap/scroll-snap-drag-scrollbar-thum
 
 [ Release ] http/tests/security/video-cross-origin-accessfailure.html [ Pass Failure Timeout ]
 [ Release ] imported/w3c/web-platform-tests/permissions/permissions-garbage-collect.https.html [ Pass Failure ]
-[ Release ] imported/w3c/web-platform-tests/content-security-policy/frame-ancestors/frame-ancestors-none-block.html [ Failure Pass ]
 [ Release ] fast/dom/Window/window-resize-update-scrollbars.html [ Failure Pass ]
 
 platform/gtk/fast/frames/scrolling-iframe-out-of-viewport.html [ Pass Failure ]
@@ -1300,9 +1298,19 @@ webkit.org/b/324823 [ Debug ] webrtc/video-disabled-black.html [ Failure Pass ]
 webkit.org/b/324824 [ Debug ] imported/w3c/web-platform-tests/mimesniff/mime-types/parsing.any.worker.html [ Pass Timeout ]
 
 webkit.org/b/324838 inspector/timeline/setInstruments-programmatic-capture.html [ Crash Pass ]
+webkit.org/b/324838 inspector/timeline/timeline-event-EventDispatch.html [ Crash Pass ]
+webkit.org/b/324838 inspector/timeline/timeline-event-FireAnimationFrame.html [ Crash Pass ]
+webkit.org/b/324838 inspector/timeline/timeline-event-RequestAnimationFrame.html [ Crash Pass ]
 webkit.org/b/324838 inspector/timeline/timeline-event-TimerFire.html [ Crash Pass ]
 webkit.org/b/324838 inspector/timeline/timeline-event-TimerRemove.html [ Crash Pass ]
+webkit.org/b/324838 inspector/timeline/timeline-recording-autocapture.html [ Crash Pass ]
+webkit.org/b/324838 inspector/timeline/timeline-recording.html [ Crash Pass ]
+
 webkit.org/b/324840 accessibility/shadow-dom/reference-target/aria-controls.html [ Pass Timeout ]
 
 webkit.org/b/324374 webgl/1.0.x/conformance/textures/misc/texture-size-limit.html [ Failure ]
 webkit.org/b/324374 webgl/2.0.y/conformance/textures/misc/texture-size-limit.html [ Failure ]
+
+webkit.org/b/319065 [ Debug ] imported/w3c/web-platform-tests/pointerevents/pointerevent_setpointercapture_relatedtarget.html [ Failure Pass ]
+
+webkit.org/b/325941 [ Debug ] fast/mediastream/video-mediastream-restricted-invisible-autoplay-user-click.html [ Crash Pass Timeout ]

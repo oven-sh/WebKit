@@ -43,14 +43,20 @@ public:
 #if PLATFORM(COCOA)
 #if ENABLE(WK_WEB_EXTENSIONS_NOTIFICATIONS)
     void createNotification(const String& identifier, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void update(const String& identifier, NSDictionary *options, Ref<WebExtensionCallbackHandler>&&, NSString **outExceptionString);
+    void clear(const String& identifier, Ref<WebExtensionCallbackHandler>&&);
+    void getAll(Ref<WebExtensionCallbackHandler>&&);
+    void getPermissionLevel(Ref<WebExtensionCallbackHandler>&&);
 #endif
 
     WebExtensionAPIEvent& onClicked();
     WebExtensionAPIEvent& onButtonClicked();
+    WebExtensionAPIEvent& onClosed();
 
 private:
-    RefPtr<WebExtensionAPIEvent> m_onClicked;
-    RefPtr<WebExtensionAPIEvent> m_onButtonClicked;
+    const RefPtr<WebExtensionAPIEvent> m_onClicked;
+    const RefPtr<WebExtensionAPIEvent> m_onButtonClicked;
+    const RefPtr<WebExtensionAPIEvent> m_onClosed;
 #endif
 };
 

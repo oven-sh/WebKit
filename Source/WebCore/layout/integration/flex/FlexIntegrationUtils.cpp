@@ -551,6 +551,16 @@ template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentFo
 template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentForFlexItem<Style::MaximumSize>(const FlexLayoutItem&, const Style::MaximumSize&, LayoutUnit);
 template std::optional<LayoutUnit> FlexIntegrationUtils::computeMainAxisExtentForFlexItem<Style::PreferredSize>(const FlexLayoutItem&, const Style::PreferredSize&, LayoutUnit);
 
+// The automatic minimum a calc-size() over an auto basis stands for, run through its calculation. The
+// extents here are content sizes, and box-sizing decides which box `size` is measured in.
+LayoutUnit FlexIntegrationUtils::resolveCalcSizeMainAxisExtentForFlexItem(const FlexLayoutItem& flexLayoutItem, const Style::UnevaluatedCalcSize& calcSize, LayoutUnit keywordMainAxisExtent, LayoutUnit mainAxisSizeForLengthResolution)
+{
+    CheckedRef flexItem = flexLayoutItem.renderer;
+    return flexLayoutItem.mainAxisIsInlineAxis
+        ? flexItem->resolveCalcSizeLogicalWidth(calcSize, keywordMainAxisExtent, mainAxisSizeForLengthResolution)
+        : flexItem->resolveCalcSizeLogicalHeight(calcSize, keywordMainAxisExtent, mainAxisSizeForLengthResolution);
+}
+
 // The item's max-content main-axis extent with its own main-axis border/padding removed — the flex base size for the
 // case that sizes the item under a content/max-content used flex basis. Measured with the content laid out under the
 // cross-size override (the scope invalidates the item's preferred widths so they recompute with it in place).
@@ -668,21 +678,14 @@ ScopedFlexBasisAsFlexItemMainSize::ScopedFlexBasisAsFlexItemMainSize(const FlexL
     : m_flexItem(flexLayoutItem.renderer)
     , m_mainAxisIsInlineAxis(flexLayoutItem.mainAxisIsInlineAxis)
 {
-    if (flexBasis.isAuto())
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->setOverridingBorderBoxLogicalWidthForFlexBasisComputation(WTF::move(flexBasis));
     else
         m_flexItem->setOverridingBorderBoxLogicalHeightForFlexBasisComputation(WTF::move(flexBasis));
-    m_didOverride = true;
 }
 
 ScopedFlexBasisAsFlexItemMainSize::~ScopedFlexBasisAsFlexItemMainSize()
 {
-    if (!m_didOverride)
-        return;
-
     if (m_mainAxisIsInlineAxis)
         m_flexItem->clearOverridingLogicalWidthForFlexBasisComputation();
     else
@@ -727,7 +730,13 @@ FlexItemDefiniteCrossSizeScope::FlexItemDefiniteCrossSizeScope(RenderBox& flexIt
     }
 
     auto crossSize = FlexFormattingUtils::innerCrossSizeForFlexItem(flexItem);
-    FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem) ? saveAndSetBlockSize(crossSize) : saveAndSetInlineSize(crossSize);
+    if (FlexFormattingUtils::mainAxisIsFlexItemInlineAxis(flexItem)) {
+        saveAndSetInlineSize({ });
+        saveAndSetBlockSize(crossSize);
+    } else {
+        saveAndSetInlineSize(crossSize);
+        saveAndSetBlockSize({ });
+    }
 
     if (invalidateContentWidths == InvalidateContentWidths::Yes) {
         flexItem.invalidateContentLogicalWidths(MarkingBehavior::MarkOnlyThis);

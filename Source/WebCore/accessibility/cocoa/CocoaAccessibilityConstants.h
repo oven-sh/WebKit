@@ -177,6 +177,13 @@
 #define NSAccessibilityEndTextMarkerAttribute @"AXEndTextMarker"
 #define NSAccessibilityEndTextMarkerForTextMarkerRangeAttribute @"_AXEndTextMarkerForTextMarkerRange"
 #define NSAccessibilityErrorMessageElementsAttribute @"AXErrorMessageElements"
+
+#define NSAccessibilityPossibleFormValidationErrorNotification @"AXPossibleFormValidationError"
+
+// AXPossibleFormValidationError notification userInfo attributes.
+#define NSAccessibilityFormValidationUnannouncedTextKey @"AXFormValidationUnannouncedText"
+#define NSAccessibilityFormValidationErrorFieldCountKey @"AXFormValidationErrorFieldCount"
+#define NSAccessibilityFormValidationTargetIsSubmitterKey @"AXFormValidationTargetIsSubmitter"
 #define NSAccessibilityErrorMessageForAttribute @"AXErrorMessageFor"
 #define NSAccessibilityExpandedTextValueAttribute @"AXExpandedTextValue"
 #define NSAccessibilityFlowFromAttribute @"AXFlowFrom"

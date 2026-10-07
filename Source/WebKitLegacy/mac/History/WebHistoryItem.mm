@@ -62,36 +62,36 @@
 #if PLATFORM(IOS_FAMILY)
 #import <WebCore/WebCoreThreadMessage.h>
 
-NSString *WebViewportInitialScaleKey = @"initial-scale";
-NSString *WebViewportMinimumScaleKey = @"minimum-scale";
-NSString *WebViewportMaximumScaleKey = @"maximum-scale";
-NSString *WebViewportUserScalableKey = @"user-scalable";
-NSString *WebViewportShrinkToFitKey  = @"shrink-to-fit";
-NSString *WebViewportFitKey          = @"viewport-fit";
-NSString *WebViewportWidthKey        = @"width";
-NSString *WebViewportHeightKey       = @"height";
+NSString * const WebViewportInitialScaleKey = @"initial-scale";
+NSString * const WebViewportMinimumScaleKey = @"minimum-scale";
+NSString * const WebViewportMaximumScaleKey = @"maximum-scale";
+NSString * const WebViewportUserScalableKey = @"user-scalable";
+NSString * const WebViewportShrinkToFitKey  = @"shrink-to-fit";
+NSString * const WebViewportFitKey          = @"viewport-fit";
+NSString * const WebViewportWidthKey        = @"width";
+NSString * const WebViewportHeightKey       = @"height";
 
-NSString *WebViewportFitAutoValue    = @"auto";
-NSString *WebViewportFitContainValue = @"contain";
-NSString *WebViewportFitCoverValue   = @"cover";
+NSString * const WebViewportFitAutoValue    = @"auto";
+NSString * const WebViewportFitContainValue = @"contain";
+NSString * const WebViewportFitCoverValue   = @"cover";
 
-static NSString *scaleKey = @"scale";
-static NSString *scaleIsInitialKey = @"scaleIsInitial";
-static NSString *scrollPointXKey = @"scrollPointX";
-static NSString *scrollPointYKey = @"scrollPointY";
+static NSString * const scaleKey = @"scale";
+static NSString * const scaleIsInitialKey = @"scaleIsInitial";
+static NSString * const scrollPointXKey = @"scrollPointX";
+static NSString * const scrollPointYKey = @"scrollPointY";
 #endif
 
 // Private keys used in the WebHistoryItem's dictionary representation.
 // see 3245793 for explanation of "lastVisitedDate"
-static NSString *lastVisitedTimeIntervalKey = @"lastVisitedDate";
-static NSString *titleKey = @"title";
-static NSString *childrenKey = @"children";
-static NSString *displayTitleKey = @"displayTitle";
-static NSString *lastVisitWasFailureKey = @"lastVisitWasFailure";
-static NSString *redirectURLsKey = @"redirectURLs";
+static NSString * const lastVisitedTimeIntervalKey = @"lastVisitedDate";
+static NSString * const titleKey = @"title";
+static NSString * const childrenKey = @"children";
+static NSString * const displayTitleKey = @"displayTitle";
+static NSString * const lastVisitWasFailureKey = @"lastVisitWasFailure";
+static NSString * const redirectURLsKey = @"redirectURLs";
 
 // Notification strings.
-NSString *WebHistoryItemChangedNotification = @"WebHistoryItemChangedNotification";
+NSString * const WebHistoryItemChangedNotification = @"WebHistoryItemChangedNotification";
 
 
 @implementation WebHistoryItemPrivate
@@ -100,7 +100,7 @@ NSString *WebHistoryItemChangedNotification = @"WebHistoryItemChangedNotificatio
 
 using HistoryItemMap = HashMap<WeakRef<WebCore::HistoryItem>, WebHistoryItem*>;
 
-static inline WebCoreHistoryItem* core(WebHistoryItemPrivate* itemPrivate)
+SUPPRESS_NODELETE static inline WebCoreHistoryItem* NODELETE core(WebHistoryItemPrivate* itemPrivate)
 {
     return itemPrivate->_historyItem.get();
 }
@@ -149,7 +149,8 @@ void WKNotifyHistoryItemChanged()
         return;
 
     historyItemWrappers().remove(protect(*_private->_historyItem));
-    [_private release];
+    // Retaining the member just to release it would be pointless.
+    SUPPRESS_UNRETAINED_ARG [_private release];
 
     [super dealloc];
 }
@@ -419,7 +420,7 @@ WebHistoryItem *kit(WebCore::HistoryItem* item)
         NSMutableArray *childDicts = [NSMutableArray arrayWithCapacity:children.size()];
         
         for (int i = children.size() - 1; i >= 0; i--)
-            [childDicts addObject:[kit(const_cast<WebCore::HistoryItem*>(children[i].ptr())) dictionaryRepresentation]];
+            [childDicts addObject:[protect(kit(const_cast<WebCore::HistoryItem*>(children[i].ptr()))) dictionaryRepresentation]];
         [dict setObject: childDicts forKey:childrenKey];
     }
 

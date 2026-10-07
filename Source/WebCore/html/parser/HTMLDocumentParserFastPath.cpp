@@ -615,7 +615,7 @@ private:
     // callable) and a scalar fallback, find the first special character in |span|.
     // https://lemire.me/blog/2024/06/08/scan-html-faster-with-simd-instructions-chrome-edition/
     template<typename VectorEquals8BitFunction, typename ScalarMatchFunction>
-    ALWAYS_INLINE static std::span<const CharacterType> findSpecialCharacter(std::span<const CharacterType> span, VectorEquals8BitFunction&& vectorEquals8Bit, ScalarMatchFunction&& scalarMatch)
+    ALWAYS_INLINE static std::span<const CharacterType> findSpecialCharacter(std::span<const CharacterType> span, NOESCAPE const VectorEquals8BitFunction& vectorEquals8Bit, NOESCAPE const ScalarMatchFunction& scalarMatch)
     {
         if constexpr (sizeof(CharacterType) == 1) {
             auto vectorMatch = [&](auto input) ALWAYS_INLINE_LAMBDA {
@@ -716,7 +716,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         }
         if (m_ucharBuffer.size() >= Text::defaultLengthLimit) [[unlikely]]
             return didFail(HTMLFastPathResult::FailedBigText, String());
-        return m_ucharBuffer.isEmpty() ? String() : String(std::exchange(m_ucharBuffer, { }));
+        return m_ucharBuffer.isEmpty() ? String() : String(m_ucharBuffer.span());
     }
 
     // Scan a tagName and convert to lowercase if necessary.

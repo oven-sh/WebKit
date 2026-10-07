@@ -32,6 +32,7 @@
 #include "LoadedWebArchive.h"
 #include "Logging.h"
 #include "NetworkBroadcastChannelRegistry.h"
+#include "NetworkConnectionToWebProcess.h"
 #include "NetworkDataTask.h"
 #include "NetworkLoadScheduler.h"
 #include "NetworkProcess.h"
@@ -54,6 +55,8 @@
 #include "WebSharedWorkerServer.h"
 #include "WebSocketTask.h"
 #include <WebCore/CookieJar.h>
+#include <WebCore/DNS.h>
+#include <WebCore/IPAddressSpace.h>
 #include <WebCore/LocalNetworkAccess.h>
 #include <WebCore/PermissionState.h>
 #include <WebCore/ResourceRequest.h>
@@ -62,6 +65,7 @@
 #include <wtf/RuntimeApplicationChecks.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/StringToIntegerConversion.h>
 
 #if PLATFORM(COCOA)
 #include "DefaultWebBrowserChecks.h"
@@ -197,6 +201,8 @@ NetworkSession::NetworkSession(NetworkProcess& networkProcess, const NetworkSess
 #endif
     , m_dataStoreIdentifier(parameters.dataStoreIdentifier)
 {
+    setIPAddressSpaceOverridesForTesting(parameters.ipAddressSpaceOverridesForTesting);
+
     if (!m_sessionID.isEphemeral()) {
         String networkCacheDirectory = parameters.networkCacheDirectory;
         if (!networkCacheDirectory.isNull()) {
@@ -252,54 +258,63 @@ NetworkSession::~NetworkSession()
         loader->abort();
 }
 
-WebCore::PermissionState NetworkSession::requestLocalNetworkAccessPermission(const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, bool canPrompt)
+void NetworkSession::requestLocalNetworkAccessPermission(WebPageProxyIdentifier pageID, const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace, CompletionHandler<void(WebCore::PermissionState)>&& completionHandler)
 {
-    auto iterator = m_localNetworkAccessPermissions.find({ origin, addressSpace });
-    auto hasRecordedDecision = iterator != m_localNetworkAccessPermissions.end();
+    protect(m_networkProcess->parentProcessConnection())->sendWithAsyncReply(Messages::NetworkProcessProxy::RequestLocalNetworkAccessPermission(m_sessionID, pageID, origin, addressSpace), WTF::move(completionHandler));
+}
 
-    switch (WebCore::localNetworkAccessPermissionRequestOutcome(addressSpace, hasRecordedDecision, canPrompt)) {
-    // FIXME: This leaves a connection whose peer address is unavailable unrecoverable for the user. It
-    // should become unreachable once CFNetwork reports the connection's address space directly
-    // (rdar://183944437).
-    case WebCore::LocalNetworkAccessPermissionRequestOutcome::RefuseAsUndetermined:
-        return WebCore::PermissionState::Denied;
-    case WebCore::LocalNetworkAccessPermissionRequestOutcome::UseRecordedDecision:
-        return iterator->value;
-    // Prompt, not Denied: nothing is recorded, so the origin can still be asked about from a page.
-    case WebCore::LocalNetworkAccessPermissionRequestOutcome::RefuseAsUnpromptable:
-        return WebCore::PermissionState::Prompt;
-    case WebCore::LocalNetworkAccessPermissionRequestOutcome::Prompt:
-        break;
+static std::optional<WebCore::IPAddressSpace> addressSpaceFromName(StringView name)
+{
+    if (name == "local"_s)
+        return WebCore::IPAddressSpace::Local;
+    if (name == "public"_s)
+        return WebCore::IPAddressSpace::Public;
+    if (name == "loopback"_s)
+        return WebCore::IPAddressSpace::Loopback;
+    return std::nullopt;
+}
+
+void NetworkSession::setIPAddressSpaceOverridesForTesting(const String& overrides)
+{
+    m_ipAddressSpaceOverridesForTesting.clear();
+    if (overrides.isEmpty())
+        return;
+
+    // Each entry is <address>:<port>=<space>, e.g. "127.0.0.1:8802=local".
+    for (auto entry : StringView { overrides }.split(',')) {
+        auto equals = entry.reverseFind('=');
+        auto colon = entry.reverseFind(':');
+        if (equals == notFound || colon == notFound || colon > equals) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+
+        auto address = WebCore::IPAddress::fromString(entry.left(colon).toString());
+        auto port = parseInteger<uint16_t>(entry.substring(colon + 1, equals - colon - 1));
+        auto space = addressSpaceFromName(entry.substring(equals + 1));
+        if (!address || !port || !space) {
+            ASSERT_NOT_REACHED();
+            continue;
+        }
+
+        m_ipAddressSpaceOverridesForTesting.append({ *address, *port, *space });
+    }
+}
+
+WebCore::IPAddressSpace NetworkSession::classifyConnectionAddressSpace(const std::optional<WebCore::IPAddress>& resolvedIPAddress, const URL& url) const
+{
+    if (!resolvedIPAddress)
+        return WebCore::IPAddressSpace::Unknown;
+
+    // Checked first, so a test can describe a space a loopback-only server could not otherwise produce.
+    if (auto port = url.port()) {
+        for (auto& candidate : m_ipAddressSpaceOverridesForTesting) {
+            if (candidate.port == *port && candidate.address == *resolvedIPAddress)
+                return candidate.space;
+        }
     }
 
-    // FIXME: There is nothing to ask yet, so an origin that could be prompted is refused instead. The
-    // prompt and the grant store land in https://bugs.webkit.org/show_bug.cgi?id=319907
-    return WebCore::PermissionState::Denied;
-}
-
-void NetworkSession::setLocalNetworkAccessPermissionForTesting(WebCore::ClientOrigin&& origin, WebCore::IPAddressSpace addressSpace, WebCore::PermissionState decision)
-{
-    m_localNetworkAccessPermissions.set({ WTF::move(origin), addressSpace }, decision);
-}
-
-WebCore::PermissionState NetworkSession::localNetworkAccessPermission(const WebCore::ClientOrigin& origin, WebCore::IPAddressSpace addressSpace) const
-{
-    auto iterator = m_localNetworkAccessPermissions.find({ origin, addressSpace });
-    if (iterator == m_localNetworkAccessPermissions.end())
-        return WebCore::PermissionState::Prompt;
-    return iterator->value;
-}
-
-void NetworkSession::removeLocalNetworkAccessPermissions(const WebCore::SecurityOriginData& topOrigin)
-{
-    m_localNetworkAccessPermissions.removeIf([&topOrigin](auto& entry) {
-        return entry.key.first.topOrigin == topOrigin;
-    });
-}
-
-void NetworkSession::clearLocalNetworkAccessPermissionsForTesting()
-{
-    m_localNetworkAccessPermissions.clear();
+    return WebCore::classifyIPAddressSpace(*resolvedIPAddress);
 }
 
 void NetworkSession::destroyResourceLoadStatistics(CompletionHandler<void()>&& completionHandler)
@@ -378,15 +393,6 @@ void NetworkSession::forwardResourceLoadStatisticsSettings()
 bool NetworkSession::isTrackingPreventionEnabled() const
 {
     return !!m_resourceLoadStatistics;
-}
-
-bool NetworkSession::isRequestBlockable(const WebCore::ResourceRequest& request)
-{
-#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    return WebKit::isRequestBlockable(request);
-#else
-    return false;
-#endif
 }
 
 IsKnownCrossSiteTracker NetworkSession::isRequestToKnownCrossSiteTracker(const ResourceRequest& request)
@@ -697,6 +703,19 @@ NetworkSession::CachedNetworkResourceLoader::CachedNetworkResourceLoader(Ref<Net
     m_expirationTimer.startOneShot(cachedNetworkResourceLoaderLifetime);
 }
 
+#if ENABLE(IPC_TESTING_API)
+Ref<NetworkSession::CachedNetworkResourceLoader> NetworkSession::CachedNetworkResourceLoader::createForTesting()
+{
+    return adoptRef(*new NetworkSession::CachedNetworkResourceLoader());
+}
+
+NetworkSession::CachedNetworkResourceLoader::CachedNetworkResourceLoader()
+    : m_expirationTimer(*this, &CachedNetworkResourceLoader::expirationTimerFired)
+{
+    m_expirationTimer.startOneShot(cachedNetworkResourceLoaderLifetime);
+}
+#endif
+
 RefPtr<NetworkResourceLoader> NetworkSession::CachedNetworkResourceLoader::takeLoader()
 {
     return std::exchange(m_loader, nullptr);
@@ -705,6 +724,11 @@ RefPtr<NetworkResourceLoader> NetworkSession::CachedNetworkResourceLoader::takeL
 void NetworkSession::CachedNetworkResourceLoader::expirationTimerFired()
 {
     RefPtr loader = m_loader;
+#if ENABLE(IPC_TESTING_API)
+    // Synthetic test entries are created without an attached loader; the timer is a no-op for them.
+    if (!loader)
+        return;
+#endif
     CheckedPtr session = protect(loader->connectionToWebProcess())->networkSession();
     ASSERT(session);
     if (!session)
@@ -721,10 +745,88 @@ void NetworkSession::addLoaderAwaitingWebProcessTransfer(Ref<NetworkResourceLoad
     m_loadersAwaitingWebProcessTransfer.add(identifier, CachedNetworkResourceLoader::create(WTF::move(loader)));
 }
 
-RefPtr<NetworkResourceLoader> NetworkSession::takeLoaderAwaitingWebProcessTransfer(NetworkResourceLoadIdentifier identifier)
+struct NetworkSession::CachedNetworkResourceLoader::PendingClaim {
+    WTF_MAKE_TZONE_ALLOCATED(PendingClaim);
+public:
+    WeakPtr<NetworkConnectionToWebProcess> connection;
+    NetworkResourceLoadParameters loadParameters;
+};
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(NetworkSession::CachedNetworkResourceLoader::PendingClaim);
+
+NetworkSession::CachedNetworkResourceLoader::~CachedNetworkResourceLoader() = default;
+
+bool NetworkSession::CachedNetworkResourceLoader::addPendingClaim(WeakPtr<NetworkConnectionToWebProcess> connection, NetworkResourceLoadParameters&& loadParameters)
+{
+    if (m_pendingClaims.size() >= maxPendingClaims)
+        return false;
+    m_pendingClaims.append(makeUnique<PendingClaim>(PendingClaim { WTF::move(connection), WTF::move(loadParameters) }));
+    return true;
+}
+
+Vector<std::unique_ptr<NetworkSession::CachedNetworkResourceLoader::PendingClaim>> NetworkSession::CachedNetworkResourceLoader::takePendingClaims()
+{
+    return std::exchange(m_pendingClaims, { });
+}
+
+void NetworkSession::setParkedLoaderDestinationAndResolvePendingClaims(NetworkResourceLoadIdentifier identifier, WebCore::ProcessIdentifier destinationWebProcess)
+{
+    auto entry = m_loadersAwaitingWebProcessTransfer.find(identifier);
+    if (entry == m_loadersAwaitingWebProcessTransfer.end())
+        return;
+    Ref parkedLoader = entry->value;
+    parkedLoader->setDestinationWebProcess(destinationWebProcess);
+
+    auto pendingClaims = parkedLoader->takePendingClaims();
+    if (pendingClaims.isEmpty())
+        return;
+
+    // Walk pending claims. The one whose caller matches the destination completes the transfer;
+    // any others were sent by processes that were not nominated for this loader and are terminated.
+    bool transferred = false;
+    for (auto& claim : pendingClaims) {
+        RefPtr connection = claim->connection.get();
+        if (!connection)
+            continue;
+
+        if (connection->webProcessIdentifier() != destinationWebProcess)
+            connection->terminateForInvalidLoaderResumeClaim();
+        else if (!transferred) {
+            m_loadersAwaitingWebProcessTransfer.remove(identifier);
+            if (RefPtr loader = parkedLoader->takeLoader())
+                connection->completeQueuedExistingLoaderResume(loader.releaseNonNull(), WTF::move(claim->loadParameters));
+            transferred = true;
+        }
+        // If transferred && identifiers match: duplicate from correct process — ignore silently.
+    }
+}
+
+NetworkSession::LoaderAwaitingWebProcessTransferClaim NetworkSession::takeLoaderAwaitingWebProcessTransfer(NetworkResourceLoadIdentifier identifier, WebCore::ProcessIdentifier callerWebProcess)
+{
+    auto it = m_loadersAwaitingWebProcessTransfer.find(identifier);
+    if (it == m_loadersAwaitingWebProcessTransfer.end())
+        return { nullptr, LoaderAwaitingWebProcessTransferOutcome::NotFound };
+    auto destination = it->value->destinationWebProcess();
+    if (!destination)
+        return { nullptr, LoaderAwaitingWebProcessTransferOutcome::Pending };
+    if (*destination != callerWebProcess)
+        return { nullptr, LoaderAwaitingWebProcessTransferOutcome::WrongCaller };
+    auto cachedResourceLoader = m_loadersAwaitingWebProcessTransfer.take(identifier);
+    return { cachedResourceLoader->takeLoader(), LoaderAwaitingWebProcessTransferOutcome::Success };
+}
+
+RefPtr<NetworkResourceLoader> NetworkSession::takeParkedLoaderForOriginalProcess(NetworkResourceLoadIdentifier identifier)
 {
     auto cachedResourceLoader = m_loadersAwaitingWebProcessTransfer.take(identifier);
     return cachedResourceLoader ? cachedResourceLoader->takeLoader() : nullptr;
+}
+
+bool NetworkSession::queuePendingLoaderClaim(NetworkResourceLoadIdentifier identifier, WeakPtr<NetworkConnectionToWebProcess> connection, NetworkResourceLoadParameters&& loadParameters)
+{
+    auto it = m_loadersAwaitingWebProcessTransfer.find(identifier);
+    if (it == m_loadersAwaitingWebProcessTransfer.end())
+        return true;
+    return protect(it->value)->addPendingClaim(WTF::move(connection), WTF::move(loadParameters));
 }
 
 void NetworkSession::removeLoaderWaitingWebProcessTransfer(NetworkResourceLoadIdentifier identifier)
@@ -732,6 +834,24 @@ void NetworkSession::removeLoaderWaitingWebProcessTransfer(NetworkResourceLoadId
     if (auto cachedResourceLoader = m_loadersAwaitingWebProcessTransfer.take(identifier))
         cachedResourceLoader->takeLoader()->abort();
 }
+
+#if ENABLE(IPC_TESTING_API)
+bool NetworkSession::addSyntheticLoaderAwaitingWebProcessTransferForTesting(NetworkResourceLoadIdentifier identifier, std::optional<WebCore::ProcessIdentifier> destination)
+{
+    if (m_loadersAwaitingWebProcessTransfer.contains(identifier))
+        return false;
+    auto cached = CachedNetworkResourceLoader::createForTesting();
+    if (destination)
+        cached->setDestinationWebProcess(*destination);
+    m_loadersAwaitingWebProcessTransfer.add(identifier, WTF::move(cached));
+    return true;
+}
+
+void NetworkSession::removeSyntheticLoaderAwaitingWebProcessTransferForTesting(NetworkResourceLoadIdentifier identifier)
+{
+    m_loadersAwaitingWebProcessTransfer.remove(identifier);
+}
+#endif
 
 RefPtr<WebSocketTask> NetworkSession::createWebSocketTask(WebPageProxyIdentifier, std::optional<WebCore::FrameIdentifier>, std::optional<WebCore::PageIdentifier>, NetworkSocketChannel&, const WebCore::ResourceRequest&, const String& protocol, const WebCore::ClientOrigin&, bool, bool, OptionSet<WebCore::AdvancedPrivacyProtections>, WebCore::StoredCredentialsPolicy, IsInitiatedByDedicatedWorker)
 {

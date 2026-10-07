@@ -58,6 +58,7 @@
 #include "RenderCombineText.h"
 #include "RenderCounter.h"
 #include "RenderDeprecatedFlexibleBox.h"
+#include "RenderDescendantIterator.h"
 #include "RenderElementStyleInlines.h"
 #include "FlexFormattingUtils.h"
 #include "RenderFlexibleBox.h"
@@ -893,6 +894,36 @@ LayoutUnit RenderBlockFlow::shiftForAlignContent(LayoutUnit intrinsicLogicalHeig
     return space;
 }
 
+static bool contentFitsWithinMaximumLines(const RenderBlockFlow& lineClampContainer)
+{
+    // The block ellipsis goes on the last formatted line of the block with the clamped line.
+    CheckedPtr<const RenderBlockFlow> blockWithClampedLine;
+    for (CheckedPtr<const RenderObject> descendant = &lineClampContainer; descendant; descendant = descendant->nextInPreOrder(&lineClampContainer)) {
+        CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*descendant);
+        if (blockFlow && blockFlow->childrenInline() && blockFlow->inlineLayout() && blockFlow->inlineLayout()->hasEllipsisInBlockDirectionOnLastFormattedLine()) {
+            blockWithClampedLine = blockFlow;
+            break;
+        }
+    }
+    if (!blockWithClampedLine || !blockWithClampedLine->inlineLayout()->contentFitsWithinMaximumLines())
+        return false;
+    for (CheckedPtr<const RenderObject> renderer = blockWithClampedLine.get(); renderer && renderer != &lineClampContainer; renderer = renderer->parent()) {
+        CheckedPtr parent = renderer->parent();
+        if (is<RenderInline>(*parent))
+            continue;
+        if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(*parent); blockFlow && blockFlow->childrenInline()) {
+            if (!blockFlow->inlineLayout() || !blockFlow->inlineLayout()->contentFitsWithinMaximumLines())
+                return false;
+            continue;
+        }
+        // "A point between two in-flow block-level sibling boxes in the line-clamp container's block formatting context."
+        // https://drafts.csswg.org/css-overflow-4/#line-clamp-containers
+        if (renderer->nextInFlowSibling())
+            return false;
+    }
+    return true;
+}
+
 void RenderBlockFlow::layoutInFlowChildren(RelayoutChildren relayoutChildren, LayoutUnit previousHeight, LayoutUnit& repaintLogicalTop, LayoutUnit& repaintLogicalBottom, LayoutUnit& maxFloatLogicalBottom)
 {
     if (!firstChild()) {
@@ -919,8 +950,27 @@ void RenderBlockFlow::layoutInFlowChildren(RelayoutChildren relayoutChildren, La
     {
         auto textBoxTrimmer = TextBoxTrimmer { *this };
         auto lineClampUpdater = LineClampUpdater { *this };
-        childrenInline() ? layoutInlineChildren(relayoutChildren, previousHeight, repaintLogicalTop, repaintLogicalBottom) : layoutBlockChildren(relayoutChildren, maxFloatLogicalBottom);
+        auto layoutChildren = [&](RelayoutChildren relayoutChildren) {
+            childrenInline() ? layoutInlineChildren(relayoutChildren, previousHeight, repaintLogicalTop, repaintLogicalBottom) : layoutBlockChildren(relayoutChildren, maxFloatLogicalBottom);
+        };
+        layoutChildren(relayoutChildren);
+
+        auto autoClampMaximumLines = lineClampUpdater.maximumLinesForAutoClampPoint();
+        auto ellipsisIsOnLastLine = lineClampUpdater.isLineClampRoot() && contentFitsWithinMaximumLines(*this);
+        if (autoClampMaximumLines)
+            lineClampUpdater.setMaximumLines(*autoClampMaximumLines);
+        else if (ellipsisIsOnLastLine)
+            lineClampUpdater.resetLineClamp();
+
+        auto contentNeedsRelayout = autoClampMaximumLines || ellipsisIsOnLastLine;
+        if (contentNeedsRelayout) {
+            rebuildFloatingObjectSetFromIntrudingFloats();
+            for (CheckedRef descendant : descendantsOfType<RenderBox>(*this))
+                descendant->setNeedsLayout(MarkingBehavior::MarkOnlyThis);
+            layoutChildren(RelayoutChildren::Yes);
+        }
     }
+
     {
         auto applyTextBoxTrimEndIfNeeded = [&] {
             // With block children and blocks-inside-inline, there's no way to tell what the last formatted line is until after we finished laying out the subtree.
@@ -3756,7 +3806,7 @@ GapRects RenderBlockFlow::inlineSelectionGaps(RenderBlock& rootBlock, const Layo
         if (fillGapAboveLine())
             result.uniteCenter(blockSelectionGap(rootBlock, rootBlockPhysicalPosition, offsetFromRootBlock, lastLogicalTop, lastLogicalLeft, lastLogicalRight, selectionTop, cache, paintInfo));
 
-        LayoutRect logicalRect { LayoutUnit(lineBox->contentLogicalLeft()), selectionTop, LayoutUnit(lineBox->contentLogicalWidth()), selectionTop + selectionHeight };
+        LayoutRect logicalRect { LayoutUnit(lineBox->contentLogicalLeft()), selectionTop, LayoutUnit(lineBox->contentLogicalWidth()), selectionHeight };
         logicalRect.move(isHorizontalWritingMode() ? offsetFromRootBlock : offsetFromRootBlock.transposedSize());
         LayoutRect physicalRect = rootBlock.logicalRectToPhysicalRect(rootBlockPhysicalPosition, logicalRect);
         if (blockContainerWithOwnGaps) {
@@ -4577,7 +4627,7 @@ RenderBlockFlowRareData& RenderBlockFlow::ensureRareBlockFlowData()
 void RenderBlockFlow::materializeRareBlockFlowData()
 {
     ASSERT(!hasRareBlockFlowData());
-    m_rareBlockFlowData = makeUnique<RenderBlockFlowRareData>(*this);
+    lazyInitialize(m_rareBlockFlowData, makeUnique<RenderBlockFlowRareData>(*this));
 }
 
 static inline bool isVisibleRenderText(const RenderObject& renderer)

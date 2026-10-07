@@ -30,6 +30,7 @@
 #include <wtf/TZoneMalloc.h>
 #include <wtf/Vector.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/UTF8CStringView.h>
 
 namespace WPE {
 
@@ -53,13 +54,13 @@ public:
         uint32_t hotspotY { 0 };
         Vector<uint32_t> pixels;
     };
-    const Vector<Image>& cursor(const char*, double, std::optional<uint32_t> maxImages = std::nullopt);
+    const Vector<Image>& cursor(UTF8CStringView, double, std::optional<uint32_t> maxImages = std::nullopt);
 
 private:
-    void loadCursor(const char*, double, std::optional<uint32_t> maxImages, Vector<CursorTheme::Image>&);
+    void loadCursor(UTF8CStringView, double, std::optional<uint32_t> maxImages, Vector<CursorTheme::Image>&);
 
-    std::unique_ptr<WPE::CursorTheme> m_theme;
-    HashMap<std::pair<CString, uint32_t>, Vector<Image>> m_cursors;
+    const std::unique_ptr<WPE::CursorTheme> m_theme;
+    HashMap<std::pair<UTF8CString, uint32_t>, Vector<Image>> m_cursors;
 };
 
 } // namespace DRM

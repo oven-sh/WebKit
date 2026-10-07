@@ -213,6 +213,10 @@ public:
     // This is only used when state changes and we do not exepect a style update or layout to happen soon (e.g. when
     // we discover that an iframe is overlapped during painting).
     void scheduleCompositingLayerUpdate();
+
+    // Destroys a scrolling node after unparenting its children, and marks the children's layers as needing a
+    // scrolling tree update so that they get reattached.
+    void unparentChildrenAndDestroyScrollingNode(ScrollingNodeID);
     // This is used to cancel any pending update timers when the document goes into back/forward cache.
     void cancelCompositingLayerUpdate();
 
@@ -359,6 +363,7 @@ public:
     float contentsScaleMultiplierForNewTiles(const GraphicsLayer*) const override;
     float pageScaleFactor() const override;
     float zoomedOutPageScaleFactor() const override;
+    bool delegatesScaling() const override;
     FloatSize enclosingFrameViewVisibleSize() const override;
     void didChangePlatformLayerForLayer(const GraphicsLayer*) override { }
 
@@ -420,6 +425,7 @@ public:
     const Color& rootExtendedBackgroundColor() const LIFETIME_BOUND { return m_rootExtendedBackgroundColor; }
 
     void updateRootContentLayerClipping();
+    void updateRootContentsLayerAppliesPageScale();
 
     void setRootElementCapturedInViewTransition(bool);
 
@@ -466,7 +472,7 @@ private:
     bool updateExplicitBacking(RenderLayer&, RequiresCompositingData&, BackingRequired = BackingRequired::Unknown);
     bool updateReflectionCompositingState(RenderLayer&, const RenderLayer* compositingAncestor, RequiresCompositingData&);
 
-    template<typename ApplyFunctionType> void applyToCompositedLayerIncludingDescendants(RenderLayer&, const ApplyFunctionType&);
+    template<typename ApplyFunctionType> void applyToCompositedLayerIncludingDescendants(RenderLayer&, NOESCAPE const ApplyFunctionType&);
 
     // Repaint this and its child layers.
     void recursiveRepaintLayer(RenderLayer&);
@@ -540,6 +546,8 @@ private:
 
     GraphicsLayerFactory* graphicsLayerFactory() const;
     ScrollingCoordinator* scrollingCoordinator() const;
+
+    void setNeedsScrollingTreeUpdateForChildrenOfNode(ScrollingCoordinator&, ScrollingNodeID);
 
     // Non layout-dependent
     bool requiresCompositingForAnimation(RenderLayerModelObject&) const;
@@ -706,7 +714,7 @@ private:
     HashMap<ScrollingNodeID, InlineWeakPtr<RenderLayer>> m_scrollingNodeToLayerMap;
     InlineWeakKeyHashSet<RenderLayer> m_layersWithUnresolvedRelations;
 #if PLATFORM(IOS_FAMILY)
-    std::unique_ptr<LegacyWebKitScrollingLayerCoordinator> m_legacyScrollingLayerCoordinator;
+    const std::unique_ptr<LegacyWebKitScrollingLayerCoordinator> m_legacyScrollingLayerCoordinator;
 #endif
 };
 

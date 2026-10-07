@@ -1,15 +1,5 @@
-accessibility/AXObjectCache.cpp
-accessibility/AccessibilityRenderObject.cpp
-[ iOS ] accessibility/cocoa/AXTextMarkerCocoa.mm
-[ iOS ] accessibility/ios/AccessibilityObjectIOS.mm
-[ iOS ] accessibility/ios/WebAccessibilityObjectWrapperIOS.mm
 dom/Document.cpp
 dom/Position.cpp
-[ iOS ] editing/cocoa/EditorCocoa.mm
-[ macOS ] html/HTMLMediaElement.cpp
-inspector/InspectorOverlay.cpp
-inspector/agents/InspectorDOMAgent.cpp
-inspector/agents/InspectorDOMDebuggerAgent.cpp
 layout/formattingContexts/FormattingGeometry.cpp
 layout/formattingContexts/inline/InlineLineBoxBuilder.cpp
 layout/formattingContexts/inline/InlineLineBuilder.cpp
@@ -22,16 +12,6 @@ layout/formattingContexts/table/TableLayout.cpp
 layout/integration/LayoutIntegrationBoxGeometryUpdater.cpp
 layout/integration/LayoutIntegrationBoxTreeUpdater.cpp
 layout/integration/inline/LayoutIntegrationLineLayout.cpp
-[ iOS ] page/DOMTimer.cpp
-page/ElementTargetingController.cpp
-page/EventHandler.cpp
-page/LocalFrameView.cpp
-[ iOS ] page/cocoa/ContentChangeObserver.cpp
-[ iOS ] page/ios/FrameIOS.mm
-platform/graphics/ca/GraphicsLayerCA.cpp
-platform/graphics/cg/CGSubimageCacheWithTimer.cpp
-[ iOS ] platform/ios/WebVideoFullscreenControllerAVKit.mm
-platform/network/cocoa/ResourceHandleCocoa.mm
 rendering/AutoTableLayout.cpp
 rendering/BackgroundPainter.cpp
 rendering/CounterNode.cpp
@@ -62,7 +42,6 @@ rendering/RenderFragmentedFlow.cpp
 rendering/RenderFrameSet.cpp
 rendering/RenderGrid.cpp
 rendering/RenderImage.cpp
-rendering/RenderInline.cpp
 rendering/RenderIterator.h
 rendering/RenderLayer.cpp
 rendering/RenderLayerBacking.cpp
@@ -168,10 +147,5 @@ style/computed/StyleComputedStyleBase.cpp
 style/values/grid/StyleGridPositionsResolver.cpp
 style/values/images/kinds/StyleCanvasImage.cpp
 style/values/primitives/StyleLengthResolution.cpp
-svg/SVGFilterPrimitiveStandardAttributes.cpp
-svg/SVGGeometryElement.cpp
-svg/SVGLengthContext.cpp
-svg/SVGUseElement.cpp
-testing/Internals.cpp
 workers/WorkerGlobalScope.cpp
 workers/WorkerOrWorkletThread.cpp

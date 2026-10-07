@@ -1159,7 +1159,7 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
@@ -1193,7 +1193,7 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType())) {
+    if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
         RETURN_IF_EXCEPTION(scope, nullptr);
         return object;

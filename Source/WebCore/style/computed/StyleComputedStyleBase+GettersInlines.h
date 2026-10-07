@@ -119,16 +119,6 @@ inline const Color& ComputedStyleBase::colorForHighlight() const
     return m_inheritedRareData->colorForHighlight;
 }
 
-inline bool ComputedStyleBase::usesCurrentBackgroundColorKeyword() const
-{
-    return m_nonInheritedFlags.usesCurrentBackgroundColorKeyword;
-}
-
-inline const WebCore::Color& ComputedStyleBase::currentBackgroundColor() const
-{
-    return m_inheritedData->currentBackgroundColor;
-}
-
 inline InsideLink ComputedStyleBase::insideLink() const
 {
     return static_cast<InsideLink>(m_inheritedFlags.insideLink);
@@ -182,6 +172,11 @@ inline bool ComputedStyleBase::insideDefaultButton() const
 inline bool ComputedStyleBase::insideSubmitButton() const
 {
     return m_inheritedRareData->insideSubmitButton;
+}
+
+inline bool ComputedStyleBase::inBaseAppearanceSubtree() const
+{
+    return m_inheritedRareData->inBaseAppearanceSubtree;
 }
 
 inline bool ComputedStyleBase::isInSubtreeWithBlendMode() const
@@ -318,6 +313,11 @@ inline EnumSet<PseudoElementType> ComputedStyleBase::highlightPseudoElementTypes
 inline bool ComputedStyleBase::hasPseudoStyle(PseudoElementType pseudo) const
 {
     return m_nonInheritedFlags.hasPseudoStyle(pseudo);
+}
+
+inline PseudoElementBoxGeneration ComputedStyleBase::pseudoElementBoxGeneration() const
+{
+    return static_cast<PseudoElementBoxGeneration>(m_nonInheritedFlags.pseudoElementBoxGeneration);
 }
 
 inline bool ComputedStyleBase::hasAnyPublicPseudoStyles() const
@@ -508,6 +508,11 @@ inline const BorderValue& ComputedStyleBase::borderTop() const
 inline const BorderValue& ComputedStyleBase::columnRule() const
 {
     return m_nonInheritedData->miscData->multiCol->columnRule;
+}
+
+inline bool ComputedStyleBase::hasLegacyLineClamp() const
+{
+    return static_cast<OverflowContinue>(m_nonInheritedData->rareData->overflowContinue) == OverflowContinue::WebkitLegacy && !m_nonInheritedData->rareData->maxLines.isAuto();
 }
 
 // MARK: - Properties/descriptors that are not yet generated

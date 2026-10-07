@@ -597,6 +597,12 @@ class ResultsDBReportMixin(abc.ABC):
             configuration['style'] = style
         if (flavor := self.getProperty('flavor', None)) in ('wk1', 'wk2', 'site-isolation'):
             configuration['flavor'] = flavor
+        # GTK and WPE post-commit bots run on more than one architecture, and pooling their history
+        # can excuse a failure on this architecture with failures seen only on another one.
+        if platform and platform.lower() in ('gtk', 'wpe'):
+            architecture = self.getProperty('machine_architecture', None) or self.getProperty('architecture', None)
+            if architecture and ' ' not in architecture:
+                configuration['architecture'] = architecture
         return configuration
 
     def results_db_configuration(self):
@@ -1541,7 +1547,6 @@ class CheckChangeRelevance(AnalyzeChange):
         re.compile(rb'Tools/Scripts/compare-static-analysis-results', re.IGNORECASE),
         re.compile(rb'Tools/Scripts/generate-dirty-files', re.IGNORECASE),
         re.compile(rb'Tools/CISupport/Shared/download-and-install-build-tools', re.IGNORECASE),
-        re.compile(rb'Tools/CISupport/safer-cpp-llvm-version', re.IGNORECASE),
         re.compile(rb'Tools/CISupport/safer-cpp-swift-version', re.IGNORECASE)
     ]
 
@@ -4081,6 +4086,7 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
         self.pre_existing_flakes_in_results_db = {}
         self.unsupported_flakes_in_results_db = []
         self.unknown_flakes_in_results_db = []
+        self.tests_modified_by_change = []
         self.layout_test_driver = None
 
     def doStepIf(self, step):
@@ -4210,14 +4216,35 @@ class RunWebKitTests(shell.Test, ResultsDBReportMixin, AddToLogMixin, ShellMixin
 
         self._parseRunWebKitTestsOutput(logText)
 
+    def modified_test_names(self):
+        """Tests this change modifies, named as run-webkit-tests reports failures."""
+        # modified_tests carries a 'LayoutTests/' prefix, failing tests are named relative to it.
+        prefix = 'LayoutTests/'
+        changed = set()
+        for test in self.getProperty('modified_tests', None) or []:
+            changed.add(test[len(prefix):] if test.startswith(prefix) else test)
+        return changed
+
     @defer.inlineCallbacks
     def filter_failures_using_results_db(self, failing_tests):
         self.failing_tests_filtered = failing_tests.copy()
         configuration = self.results_db_query_configuration()
 
-        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(failing_tests))
+        # The database only knows the test without this change, so it cannot vouch for one it modifies.
+        modified = self.modified_test_names()
+        self.tests_modified_by_change = [test for test in failing_tests if test in modified]
+        candidates = [test for test in failing_tests if test not in modified]
+        if self.tests_modified_by_change:
+            yield self._addToLog(
+                self.results_db_log_name,
+                'Not consulting the results database for {} failing test(s) modified by this change: {}\n'.format(
+                    len(self.tests_modified_by_change), ', '.join(self.tests_modified_by_change),
+                ),
+            )
 
-        tests = failing_tests[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
+        identifier, has_commit = yield self.resolve_identifier_for_results_db(configuration, bool(candidates))
+
+        tests = candidates[:self.MAX_FAILURES_TO_CHECK_RESULTS_DB]
         unexplained = set()
         for test in tests:
             data = yield ResultsDatabase.is_test_pre_existing_failure(

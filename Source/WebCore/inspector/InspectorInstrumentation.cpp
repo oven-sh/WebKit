@@ -442,13 +442,13 @@ void InspectorInstrumentation::characterDataModifiedImpl(InstrumentingAgents& in
 void InspectorInstrumentation::willSendXMLHttpRequestImpl(InstrumentingAgents& instrumentingAgents, const String& url)
 {
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendXMLHttpRequest(instrumentingAgents.enabledWebDebuggerAgent(), url);
+        domDebuggerAgent->willSendXMLHttpRequest(protect(instrumentingAgents.enabledWebDebuggerAgent()), url);
 }
 
 void InspectorInstrumentation::willFetchImpl(InstrumentingAgents& instrumentingAgents, const String& url)
 {
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willFetch(instrumentingAgents.enabledWebDebuggerAgent(), url);
+        domDebuggerAgent->willFetch(protect(instrumentingAgents.enabledWebDebuggerAgent()), url);
 }
 
 void InspectorInstrumentation::didInstallTimerImpl(InstrumentingAgents& instrumentingAgents, int timerId, Seconds timeout, bool singleShot, ScriptExecutionContext& context)
@@ -739,7 +739,7 @@ void InspectorInstrumentation::willSendRequestImpl(InstrumentingAgents& instrume
     if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
         networkProxy->willSendRequest(identifier, loader, request, redirectResponse, cachedResource, resourceLoader);
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendRequest(instrumentingAgents.enabledWebDebuggerAgent(), request);
+        domDebuggerAgent->willSendRequest(protect(instrumentingAgents.enabledWebDebuggerAgent()), request);
 }
 
 void InspectorInstrumentation::willSendRequestOfTypeImpl(InstrumentingAgents& instrumentingAgents, ResourceLoaderIdentifier identifier, DocumentLoader* loader, ResourceRequest& request, Inspector::UncachedLoadType loadType)
@@ -749,7 +749,7 @@ void InspectorInstrumentation::willSendRequestOfTypeImpl(InstrumentingAgents& in
     if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
         networkProxy->willSendRequestOfType(identifier, loader, request, loadType);
     if (CheckedPtr domDebuggerAgent = instrumentingAgents.enabledDOMDebuggerAgent())
-        domDebuggerAgent->willSendRequestOfType(instrumentingAgents.enabledWebDebuggerAgent(), request);
+        domDebuggerAgent->willSendRequestOfType(protect(instrumentingAgents.enabledWebDebuggerAgent()), request);
 }
 
 void InspectorInstrumentation::didLoadResourceFromMemoryCacheImpl(InstrumentingAgents& instrumentingAgents, DocumentLoader* loader, CachedResource* cachedResource)
@@ -1009,6 +1009,8 @@ bool InspectorInstrumentation::willInterceptImpl(InstrumentingAgents& instrument
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->willIntercept(request);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->willIntercept(request);
     return false;
 }
 
@@ -1016,6 +1018,8 @@ bool InspectorInstrumentation::shouldInterceptRequestImpl(InstrumentingAgents& i
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->shouldInterceptRequest(loader);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->shouldInterceptRequest(loader);
     return false;
 }
 
@@ -1023,6 +1027,8 @@ bool InspectorInstrumentation::shouldInterceptResponseImpl(InstrumentingAgents& 
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         return networkAgent->shouldInterceptResponse(response);
+    if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        return networkProxy->shouldInterceptResponse(response);
     return false;
 }
 
@@ -1030,12 +1036,16 @@ void InspectorInstrumentation::interceptRequestImpl(InstrumentingAgents& instrum
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->interceptRequest(loader, WTF::move(handler));
+    else if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        networkProxy->interceptRequest(loader, WTF::move(handler));
 }
 
 void InspectorInstrumentation::interceptResponseImpl(InstrumentingAgents& instrumentingAgents, const ResourceResponse& response, ResourceLoaderIdentifier identifier, CompletionHandler<void(const ResourceResponse&, RefPtr<FragmentedSharedBuffer>)>&& handler)
 {
     if (CheckedPtr networkAgent = instrumentingAgents.enabledNetworkAgent())
         networkAgent->interceptResponse(response, identifier, WTF::move(handler));
+    else if (CheckedPtr networkProxy = instrumentingAgents.enabledNetworkProxy())
+        networkProxy->interceptResponse(response, identifier, WTF::move(handler));
 }
 
 // JavaScriptCore InspectorDebuggerAgent should know Console MessageTypes.

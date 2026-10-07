@@ -137,7 +137,6 @@ static inline bool shouldKeepInConstraintSet(Visitor& visitor, CodeBlock* codeBl
 template<typename Visitor>
 void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
     FunctionExecutable* thisObject = uncheckedDowncast<FunctionExecutable>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
@@ -168,7 +167,7 @@ void FunctionExecutable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         visitCodeBlockEdge(visitor, codeBlockForConstruct);
 
     if (shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
+        thisObject->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.add(thisObject);
 }
 
 DEFINE_VISIT_CHILDREN(FunctionExecutable);
@@ -176,7 +175,6 @@ DEFINE_VISIT_CHILDREN(FunctionExecutable);
 template<typename Visitor>
 void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visitor)
 {
-    VM& vm = visitor.vm();
     auto* executable = uncheckedDowncast<FunctionExecutable>(cell);
     auto* codeBlockForCall = executable->m_codeBlockForCall.get();
     if (codeBlockForCall) {
@@ -190,7 +188,7 @@ void FunctionExecutable::visitOutputConstraintsImpl(JSCell* cell, Visitor& visit
     }
 
     if (!shouldKeepInConstraintSet(visitor, codeBlockForCall, codeBlockForConstruct))
-        vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
+        executable->vm().heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(executable);
 }
 
 DEFINE_VISIT_OUTPUT_CONSTRAINTS(FunctionExecutable);

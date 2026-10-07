@@ -290,6 +290,7 @@ private:
     bool isChecked() const final { return boolAttributeValue(AXProperty::IsChecked); }
     bool isEnabled() const final { return boolAttributeValue(AXProperty::IsEnabled); }
     bool isSelected() const final { return boolAttributeValue(AXProperty::IsSelected); }
+    String selectedOptionCheckmark() const final { return stringAttributeValue(AXProperty::SelectedOptionCheckmark); }
     bool isFocused() const final;
     bool isMultiSelectable() const final { return boolAttributeValue(AXProperty::IsMultiSelectable); }
     bool isVisited() const final { return boolAttributeValue(AXProperty::IsVisited); }
@@ -325,7 +326,11 @@ private:
     bool supportsARIAOwns() const final { return boolAttributeValue(AXProperty::SupportsARIAOwns); }
     AccessibilityPopupValue popupValue() const final { return static_cast<AccessibilityPopupValue>(intAttributeValue(AXProperty::PopupValue)); }
     bool pressedIsPresent() const final;
-    String explicitInvalidStatus() const final { return stringAttributeValue(AXProperty::ExplicitInvalidStatus); }
+    String invalidStatusIncludingInferred() const final
+    {
+        auto value = stringAttributeValue(AXProperty::InvalidStatus);
+        return value.isEmpty() ? "false"_s : value;
+    }
     bool supportsExpanded() const final { return boolAttributeValue(AXProperty::SupportsExpanded); }
     AccessibilitySortDirection sortDirection() const final { return static_cast<AccessibilitySortDirection>(intAttributeValue(AXProperty::SortDirection)); }
     String identifierAttribute() const final;

@@ -103,6 +103,7 @@ using MutationObserverOptions = OptionSet<MutationObserverOptionType>;
 using MutationRecordDeliveryOptions = OptionSet<MutationObserverOptionType>;
 
 enum class IsMutationBySetInnerHTML : uint8_t { No, Yes };
+enum class CloneSubtree : bool { No, Yes };
 
 using NodeOrString = Variant<Ref<Node>, String>;
 
@@ -180,8 +181,8 @@ public:
     };
     virtual Ref<Node> cloneNodeInternal(Document&, CloningOperation, CustomElementRegistry*) const = 0;
     virtual SerializedNode serializeNode(CloningOperation) const = 0;
-    Ref<Node> cloneNode(bool deep) const;
-    WEBCORE_EXPORT ExceptionOr<Ref<Node>> cloneNodeForBindings(bool deep) const;
+    Ref<Node> cloneNode(CloneSubtree) const;
+    WEBCORE_EXPORT ExceptionOr<Ref<Node>> cloneNodeForBindings(bool subtree) const;
 
     virtual const AtomString& NODELETE localName() const;
     virtual const AtomString& NODELETE namespaceURI() const;
@@ -458,7 +459,10 @@ public:
     ALWAYS_INLINE bool isShadowIncludingInclusiveAncestorOf(const Node& other) const { return this == &other || other.isShadowIncludingDescendantOf(*this); }
     ALWAYS_INLINE bool isShadowIncludingInclusiveAncestorOf(const Node* other) const { return other && isShadowIncludingInclusiveAncestorOf(*other); }
 
-    bool NODELETE isComposedTreeDescendantOf(const Node&) const;
+    WEBCORE_EXPORT bool NODELETE isComposedTreeDescendantOf(const Node&) const;
+    ALWAYS_INLINE bool isComposedTreeInclusiveDescendantOf(const Node& other) const { return this == &other || isComposedTreeDescendantOf(other); }
+    ALWAYS_INLINE bool isComposedTreeInclusiveAncestorOf(const Node& other) const { return other.isComposedTreeInclusiveDescendantOf(*this); }
+    ALWAYS_INLINE bool isComposedTreeInclusiveAncestorOf(const Node* other) const { return other && isComposedTreeInclusiveAncestorOf(*other); }
 
     // Whether or not a selection can be started in this object
     virtual bool canStartSelection() const;
@@ -505,12 +509,13 @@ public:
     // https://dom.spec.whatwg.org/#concept-node-remove-ext
     virtual void removingSteps(RemovalType, ContainerNode& oldParentOfRemovedTree);
 
-    enum class IsSubtreeRoot {
-        Yes,
-        No
+    struct MovingType {
+        bool isSubtreeRoot { false };
+        bool didRemoveFromOldTreeScope { false };
+        bool didInsertIntoNewTreeScope { false };
     };
     // https://dom.spec.whatwg.org/#concept-node-move-ext
-    virtual void movingSteps(IsSubtreeRoot, ContainerNode&);
+    virtual void movingSteps(MovingType, ContainerNode& oldParent);
 
     void updateShadowIncludingRootForSubtree();
 
@@ -787,7 +792,7 @@ private:
     void derefEventTarget() final;
 
 #if ASSERT_ENABLED
-    bool checkIsInUserAgentShadowTree(bool) const;
+    WEBCORE_EXPORT bool checkIsInUserAgentShadowTree(bool) const;
 #else
     bool checkIsInUserAgentShadowTree(bool value) const { return value; }
 #endif

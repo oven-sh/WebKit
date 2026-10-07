@@ -41,6 +41,7 @@
 #include <wtf/ProcessID.h>
 #include <wtf/RefCountedAndCanMakeWeakPtr.h>
 #include <wtf/StringPrintStream.h>
+#include <wtf/posix/POSIXExtras.h>
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -577,7 +578,7 @@ public:
     {
     }
 
-    template<typename CharacterType> uintptr_t add(const CStringWithEncoding<CharacterType>& str)
+    template<typename CharacterType> uintptr_t add(const CString<CharacterType>& str)
     {
         if (str.isEmpty())
             return 0;
@@ -609,7 +610,7 @@ public:
     }
 
 private:
-    template<typename CharacterType> void writeString(const CStringWithEncoding<CharacterType>& str)
+    template<typename CharacterType> void writeString(const CString<CharacterType>& str)
     {
         for (auto c : str.span())
             m_writer->write(c);
@@ -1392,7 +1393,7 @@ static void addJITCodeEntry(GdbJITCodeMap& map, std::span<const uint8_t> region,
             filename.print("/tmp");
         filename.print("/jit-", getCurrentProcessID(), fileNum++, nameHint, ".o");
         auto path = filename.toUTF8CString();
-        auto fd = open(path.legacyCStringPointer(), O_CREAT | O_TRUNC | O_RDWR, 0666);
+        auto fd = posixOpen(path, O_CREAT | O_TRUNC | O_RDWR, 0666);
         RELEASE_ASSERT(fd != -1);
         auto file = fdopen(fd, "wb");
         RELEASE_ASSERT(file);

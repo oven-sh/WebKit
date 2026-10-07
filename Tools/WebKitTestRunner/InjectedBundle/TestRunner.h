@@ -28,7 +28,7 @@
 #include "JSWrappable.h"
 #include "StringFunctions.h"
 #include "WhatToDump.h"
-#include <JavaScriptCore/JSRetainPtr.h>
+#include <JavaScriptCore/JSStringRefPtr.h>
 #include <WebKit/WKBundleScriptWorld.h>
 #include <WebKit/WKRetainPtr.h>
 #include <string>
@@ -69,15 +69,6 @@ public:
     bool isMac() const
     {
 #if PLATFORM(MAC)
-        return true;
-#else
-        return false;
-#endif
-    }
-
-    bool haveSecureCodingRequest() const
-    {
-#if HAVE(WK_SECURE_CODING_NSURLREQUEST)
         return true;
 #else
         return false;
@@ -192,7 +183,7 @@ public:
     // Local storage
     void clearAllDatabases();
     void setDatabaseQuota(uint64_t);
-    JSRetainPtr<JSStringRef> pathToLocalResource(JSStringRef);
+    RefPtr<OpaqueJSString> pathToLocalResource(JSStringRef);
     void syncLocalStorage();
     unsigned storageAreaMapCount();
 
@@ -236,7 +227,7 @@ public:
     bool didReceiveServerRedirectForProvisionalNavigation() const;
     void clearDidReceiveServerRedirectForProvisionalNavigation();
 
-    JSRetainPtr<JSStringRef> lastProvisionalNavigationFailureURL() const;
+    RefPtr<OpaqueJSString> lastProvisionalNavigationFailureURL() const;
 
     bool shouldWaitUntilDone() const;
     // True until notifyDone() is called. Unlike shouldWaitUntilDone(), not held true by a
@@ -255,7 +246,7 @@ public:
     void closeWebInspector();
     void disconnectFrameInspectorTarget(JSContextRef);
     void evaluateInWebInspector(JSStringRef script);
-    JSRetainPtr<JSStringRef> inspectorTestStubURL();
+    RefPtr<OpaqueJSString> inspectorTestStubURL();
 
     void setPOSIXLocale(JSStringRef);
 
@@ -300,17 +291,17 @@ public:
     void simulateWebNotificationClick(JSContextRef, JSValueRef notification);
     void simulateWebNotificationClickForServiceWorkerNotifications();
 
-    JSRetainPtr<JSStringRef> getBackgroundFetchIdentifier();
+    RefPtr<OpaqueJSString> getBackgroundFetchIdentifier();
     void abortBackgroundFetch(JSStringRef);
     void pauseBackgroundFetch(JSStringRef);
     void resumeBackgroundFetch(JSStringRef);
     void simulateClickBackgroundFetch(JSStringRef);
     void setBackgroundFetchPermission(bool);
     void setVirtualWalletBehavior(JSStringRef action, JSStringRef protocol, JSStringRef responseJSON);
-    JSRetainPtr<JSStringRef> lastAddedBackgroundFetchIdentifier() const;
-    JSRetainPtr<JSStringRef> lastRemovedBackgroundFetchIdentifier() const;
-    JSRetainPtr<JSStringRef> lastUpdatedBackgroundFetchIdentifier() const;
-    JSRetainPtr<JSStringRef> backgroundFetchState(JSStringRef);
+    RefPtr<OpaqueJSString> lastAddedBackgroundFetchIdentifier() const;
+    RefPtr<OpaqueJSString> lastRemovedBackgroundFetchIdentifier() const;
+    RefPtr<OpaqueJSString> lastUpdatedBackgroundFetchIdentifier() const;
+    RefPtr<OpaqueJSString> backgroundFetchState(JSStringRef);
 
     // Geolocation.
     void setGeolocationPermission(bool);

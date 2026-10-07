@@ -200,7 +200,7 @@ public:
         bool accept { false };
         std::optional<OptionSet<DragOperation>> operationMask;
     };
-    DragTargetResponse updateDragAndDrop(const PlatformMouseEvent&, const std::function<std::unique_ptr<Pasteboard>()>&, OptionSet<DragOperation>, bool draggingFiles);
+    DragTargetResponse updateDragAndDrop(const PlatformMouseEvent&, NOESCAPE const std::function<std::unique_ptr<Pasteboard>()>&, OptionSet<DragOperation>, bool draggingFiles);
     void cancelDragAndDrop(const PlatformMouseEvent&, std::unique_ptr<Pasteboard>&&, OptionSet<DragOperation>, bool draggingFiles);
     DragEventTargetData performDragAndDrop(const PlatformMouseEvent&, std::unique_ptr<Pasteboard>&&, OptionSet<DragOperation>, bool draggingFiles, const HitTestResult&, DragData&&);
     void updateDragStateAfterEditDragIfNeeded(Element& rootEditableElement);
@@ -218,7 +218,7 @@ public:
     void resizeLayerDestroyed();
 
     // FIXME: Each Frame has an EventHandler, and not every event goes to all frames, so this position can be stale. It should probably be stored on Page.
-    DoublePoint NODELETE lastKnownMousePosition() const;
+    WEBCORE_EXPORT DoublePoint NODELETE lastKnownMousePosition() const;
     DoublePoint lastKnownMouseGlobalPosition() const { return m_lastKnownMouseGlobalPosition; }
     Cursor currentMouseCursor() const { return m_currentMouseCursor; }
 
@@ -254,6 +254,7 @@ public:
     void wheelEventWasProcessedByMainThread(const PlatformWheelEvent&, OptionSet<EventHandling>);
 
     WEBCORE_EXPORT void NODELETE setLastKnownMousePosition(const DoublePoint& position, const DoublePoint& globalPosition, std::optional<LastKnownMousePositionSource>&& = std::nullopt);
+    WEBCORE_EXPORT void mousePointerDidDisappear();
 
     bool handlePasteGlobalSelection();
 
@@ -320,6 +321,7 @@ public:
     WEBCORE_EXPORT void NODELETE didStartDrag();
     WEBCORE_EXPORT void NODELETE dragCancelled();
     WEBCORE_EXPORT std::optional<RemoteUserInputEventData> dragSourceEndedAt(const PlatformMouseEvent&, OptionSet<DragOperation>, MayExtendDragSession = MayExtendDragSession::No);
+    WEBCORE_EXPORT void dragSourceEnded(const PlatformMouseEvent&, OptionSet<DragOperation>, MayExtendDragSession = MayExtendDragSession::No);
 #endif
 
     void focusDocumentView();
@@ -386,6 +388,7 @@ public:
 
 #if ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
     WEBCORE_EXPORT std::optional<NodeIdentifier> requestInteractiveModelElementAtPoint(const IntPoint& clientPosition);
+    WEBCORE_EXPORT void stageModeSessionDidBegin(NodeIdentifier, const TransformationMatrix&);
     WEBCORE_EXPORT void stageModeSessionDidUpdate(std::optional<NodeIdentifier>, const TransformationMatrix&);
     WEBCORE_EXPORT void stageModeSessionDidEnd(std::optional<NodeIdentifier>);
 #endif
@@ -496,6 +499,8 @@ private:
 
     static bool isKeyboardOptionTab(const FocusEventData&);
     static bool eventInvertsTabsToLinksClientCallResult(const FocusEventData&);
+
+    void clearLastKnownMousePosition();
 
 #if !ENABLE(IOS_TOUCH_EVENTS)
     void fakeMouseMoveEventTimerFired();

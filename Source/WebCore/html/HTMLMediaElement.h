@@ -134,7 +134,7 @@ template<typename, typename> class PODInterval;
 class RemotePlayback;
 #endif
 
-using CueInterval = PODInterval<MediaTime, TextTrackCue*>;
+using CueInterval = PODInterval<MediaTime, CheckedPtr<TextTrackCue>>;
 using CueList = Vector<CueInterval>;
 using PlatformDisplayID = uint32_t;
 
@@ -466,7 +466,7 @@ public:
 
     // TextTrackClient
     void textTrackKindChanged(TextTrack&) final;
-    void textTrackModeChanged(TextTrack&) final;
+    void textTrackModeChanged(TextTrack&, TextTrack::ModeChangeType) final;
     void textTrackLabelChanged(TextTrack&) final;
     void textTrackLanguageChanged(TextTrack&) final;
     void textTrackAddCues(TextTrack&, const TextTrackCueList&) final;
@@ -854,6 +854,10 @@ private:
 
     void createMediaPlayer();
 
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    void updatePlayerVideoFullscreenLayer(MediaPlayer&);
+#endif
+
     bool supportsFocus() const override;
     bool rendererIsNeeded(const Style::ComputedStyle&) override;
     bool childShouldCreateRenderer(const Node&) const override;
@@ -1031,6 +1035,8 @@ private:
     void playInternal();
     void pauseInternal(bool dispatchPauseEvent = true);
     void completePlayInternal();
+
+    void playIfPermitted(MediaElementSession::ForAutoplay);
 
     enum class IsExplicitLoad : bool { No, Yes };
     void prepareForLoad(IsExplicitLoad = IsExplicitLoad::No);
@@ -1423,7 +1429,7 @@ private:
     Vector<Ref<TextTrack>> m_textTracksWhenResourceSelectionBegan;
 
     struct CueData;
-    std::unique_ptr<CueData> m_cueData;
+    const std::unique_ptr<CueData> m_cueData;
 
     RefPtr<TextTrack> m_findCaptionTrack;
     std::optional<TextTrack::Mode> m_findCaptionTrackPreviousMode;

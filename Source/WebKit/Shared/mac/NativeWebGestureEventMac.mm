@@ -102,6 +102,7 @@ NativeWebGestureEvent::NativeWebGestureEvent(WebEventType type, const Init& init
             .gestureScale = init.gestureScale,
             .gestureRotation = init.gestureRotation,
             .phase = init.phase,
+            .inputSource = init.inputSource,
         } }
     , m_allowsNativeZoom(init.allowsNativeZoom)
     , m_kind(init.kind)

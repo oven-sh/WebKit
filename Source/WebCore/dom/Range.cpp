@@ -495,7 +495,7 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
         endOffset = std::min(endOffset, dataNode.length());
         startOffset = std::min(startOffset, endOffset);
         if (action == Range::Extract || action == Range::Clone) {
-            Ref characters = uncheckedDowncast<CharacterData>(dataNode.cloneNode(true));
+            Ref characters = uncheckedDowncast<CharacterData>(dataNode.cloneNode(CloneSubtree::Yes));
             auto deleteResult = deleteCharacterData(characters, startOffset, endOffset);
             if (deleteResult.hasException())
                 return deleteResult.releaseException();
@@ -519,7 +519,7 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
         endOffset = std::min(endOffset, instruction.data().length());
         startOffset = std::min(startOffset, endOffset);
         if (action == Range::Extract || action == Range::Clone) {
-            Ref processingInstruction = uncheckedDowncast<ProcessingInstruction>(instruction.cloneNode(true));
+            Ref processingInstruction = uncheckedDowncast<ProcessingInstruction>(instruction.cloneNode(CloneSubtree::Yes));
             processingInstruction->setData(processingInstruction->data().substring(startOffset, endOffset - startOffset));
             if (fragment) {
                 result = fragment;
@@ -545,7 +545,7 @@ static ExceptionOr<RefPtr<Node>> processContentsBetweenOffsets(Range::ActionType
             if (fragment)
                 result = fragment;
             else
-                result = container->cloneNode(false);
+                result = container->cloneNode(CloneSubtree::No);
         }
         Vector<Ref<Node>> nodes;
         {
@@ -584,7 +584,7 @@ static ExceptionOr<void> processNodes(Range::ActionType action, Vector<Ref<Node>
             break;
         }
         case Range::Clone: {
-            auto result = newContainer->appendChild(node->cloneNode(true));
+            auto result = newContainer->appendChild(node->cloneNode(CloneSubtree::Yes));
             if (result.hasException())
                 return result.releaseException();
             break;
@@ -612,7 +612,7 @@ ExceptionOr<RefPtr<Node>> processAncestorsAndTheirSiblings(Range::ActionType act
                 if (!shadowRoot->isClonable())
                     continue;
             }
-            Ref clonedAncestor = ancestor->cloneNode(false); // Might have been removed already during mutation event.
+            Ref clonedAncestor = ancestor->cloneNode(CloneSubtree::No); // Might have been removed already during mutation event.
             if (clonedContainer) {
                 auto result = clonedAncestor->appendChild(*clonedContainer);
                 if (result.hasException())
@@ -652,11 +652,11 @@ ExceptionOr<RefPtr<Node>> processAncestorsAndTheirSiblings(Range::ActionType act
                 break;
             case Range::Clone:
                 if (direction == ProcessContentsForward) {
-                    auto result = clonedContainer->appendChild(child->cloneNode(true));
+                    auto result = clonedContainer->appendChild(child->cloneNode(CloneSubtree::Yes));
                     if (result.hasException())
                         return result.releaseException();
                 } else {
-                    auto result = clonedContainer->insertBefore(child->cloneNode(true), protect(clonedContainer->firstChild()));
+                    auto result = clonedContainer->insertBefore(child->cloneNode(CloneSubtree::Yes), protect(clonedContainer->firstChild()));
                     if (result.hasException())
                         return result.releaseException();
                 }

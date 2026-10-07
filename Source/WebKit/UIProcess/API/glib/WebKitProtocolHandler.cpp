@@ -43,6 +43,8 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/URL.h>
 #include <wtf/WorkQueue.h>
+#include <wtf/glib/GLibExtras.h>
+#include <wtf/glib/GMallocString.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/GUniquePtr.h>
 #include <wtf/text/MakeString.h>
@@ -65,6 +67,7 @@
 #include "WPEUtilities.h"
 #if ENABLE(WPE_PLATFORM)
 #include "DisplayVBlankMonitorWPE.h"
+#include "WebKitSettingsPrivate.h"
 #include <wpe/wpe-platform.h>
 #endif
 #endif
@@ -125,6 +128,13 @@ static inline ASCIILiteral webkitPortName()
 static ASCIILiteral hardwareAccelerationPolicy(WebKitURISchemeRequest* request)
 {
 #if PLATFORM(WPE)
+#if ENABLE(WPE_PLATFORM)
+    if (WKWPE::isUsingWPEPlatformAPI()) {
+        auto* webView = webkit_uri_scheme_request_get_web_view(request);
+        ASSERT(webView);
+        return webkitSettingsGetPreferences(webkit_web_view_get_settings(webView))->hardwareAccelerationEnabled() ? "always"_s : "never"_s;
+    }
+#endif
     return "always"_s;
 #elif PLATFORM(GTK)
     auto* webView = webkit_uri_scheme_request_get_web_view(request);
@@ -234,7 +244,7 @@ static String webkitDrmGetModifierName(uint64_t modifier)
 #if HAVE(DRM_GET_FORMAT_MODIFIER_VENDOR) && HAVE(DRM_GET_FORMAT_MODIFIER_NAME)
     std::unique_ptr<char, decltype(free)*> modifierVendor(drmGetFormatModifierVendor(modifier), free);
     std::unique_ptr<char, decltype(free)*> modifierName(drmGetFormatModifierName(modifier), free);
-    return makeString(String::fromUTF8(modifierVendor.get()), "_"_s, String::fromUTF8(modifierName.get()));
+    return makeString(unsafeSpan(byteCast<char8_t>(modifierVendor.get())), '_', unsafeSpan(byteCast<char8_t>(modifierName.get())));
 #else
     return { };
 #endif
@@ -637,8 +647,8 @@ void WebKitProtocolHandler::handleGPU(WebKitURISchemeRequest* request, RenderPro
     addTableRow(versionObject, "Desktop"_s, (desktopName && *desktopName) ? String::fromUTF8(desktopName) : "Unknown"_s);
 
 #if USE(GSTREAMER)
-    GUniquePtr<char> gstVersion(gst_version_string());
-    addTableRow(versionObject, "GStreamer version"_s, makeString(GST_VERSION_MAJOR, '.', GST_VERSION_MINOR, '.', GST_VERSION_MICRO, " (build) "_s, unsafeSpan(gstVersion.get()), " (runtime)"_s));
+    auto gstVersion = GMallocString::unsafeAdoptFromUTF8(gst_version_string());
+    addTableRow(versionObject, "GStreamer version"_s, makeString(GST_VERSION_MAJOR, '.', GST_VERSION_MINOR, '.', GST_VERSION_MICRO, " (build) "_s, gstVersion.span(), " (runtime)"_s));
 #endif
 
 #if PLATFORM(GTK)
@@ -831,7 +841,7 @@ void WebKitProtocolHandler::handleGPU(WebKitURISchemeRequest* request, RenderPro
 
     auto html = htmlBuilder.toString().utf8();
     gsize streamLength = html.length();
-    GRefPtr<GInputStream> stream = adoptGRef(g_memory_input_stream_new_from_data(g_strdup(html.legacyCStringPointer()), streamLength, g_free));
+    GRefPtr<GInputStream> stream = adoptGRef(g_memory_input_stream_new_from_data(gStrdup(html), streamLength, g_free));
     webkit_uri_scheme_request_finish(request, stream.get(), streamLength, "text/html");
 
     if (requestURL.path() == "/stdout"_s)

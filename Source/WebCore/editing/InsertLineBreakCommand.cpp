@@ -102,7 +102,7 @@ void InsertLineBreakCommand::doApply()
         insertNodeAt(nodeToInsert.copyRef(), position);
 
         if (needExtraLineBreak)
-            insertNodeBefore(nodeToInsert->cloneNode(false), nodeToInsert);
+            insertNodeBefore(nodeToInsert->cloneNode(CloneSubtree::No), nodeToInsert);
         
         VisiblePosition endingPosition(positionBeforeNode(nodeToInsert));
         setEndingSelection(VisibleSelection(endingPosition, endingSelection().directionality()));
@@ -111,7 +111,7 @@ void InsertLineBreakCommand::doApply()
         
         // Insert an extra br or '\n' if the just inserted one collapsed.
         if (!isStartOfParagraph(positionBeforeNode(nodeToInsert)))
-            insertNodeBefore(nodeToInsert->cloneNode(false), nodeToInsert);
+            insertNodeBefore(nodeToInsert->cloneNode(CloneSubtree::No), nodeToInsert);
         
         setEndingSelection(VisibleSelection(positionInParentAfterNode(nodeToInsert), Affinity::Downstream, endingSelection().directionality()));
     // If we're inserting after all of the rendered text in a text node, or into a non-text node,

@@ -30,6 +30,7 @@
 #include <WebKit/WKRetainPtr.h>
 #include <WebKit/WKString.h>
 #include <WebKit/WKStringPrivate.h>
+#include <WebKit/WKURL.h>
 #include <string>
 #include <wtf/Platform.h>
 #include <wtf/StdLibExtras.h>
@@ -50,7 +51,7 @@ inline WKRetainPtr<WKStringRef> toWK(JSStringRef string)
     return adoptWK(WKStringCreateWithJSString(string));
 }
 
-inline WKRetainPtr<WKStringRef> toWK(const JSRetainPtr<JSStringRef>& string)
+inline WKRetainPtr<WKStringRef> toWK(const RefPtr<OpaqueJSString>& string)
 {
     return toWK(string.get());
 }
@@ -65,17 +66,37 @@ inline WKRetainPtr<WKStringRef> toWK(const std::string& string)
     return toWK(string.c_str());
 }
 
+inline WKRetainPtr<WKStringRef> toWK(const WTF::UTF8CString& string)
+{
+    return adoptWK(WKStringCreateWithUTF8CString(string.legacyCStringPointer()));
+}
+
 inline WKRetainPtr<WKStringRef> toWK(const WTF::String& string)
 {
-    return toWK(string.utf8().legacyCStringPointer());
+    return toWK(string.utf8());
 }
 
-inline JSRetainPtr<JSStringRef> toJS(WKStringRef string)
+inline WKRetainPtr<WKURLRef> toWKURL(const WTF::UTF8CString& string)
 {
-    return adopt(WKStringCopyJSString(string));
+    return adoptWK(WKURLCreateWithUTF8CString(string.legacyCStringPointer()));
 }
 
-inline JSRetainPtr<JSStringRef> toJS(const WKRetainPtr<WKStringRef>& string)
+inline WKRetainPtr<WKURLRef> toWKURL(const WTF::String& string)
+{
+    return toWKURL(string.utf8());
+}
+
+inline WKRetainPtr<WKURLRef> toWKURL(WKURLRef baseURL, const WTF::String& relativeURL)
+{
+    return adoptWK(WKURLCreateWithBaseURL(baseURL, relativeURL.utf8().legacyCStringPointer()));
+}
+
+inline RefPtr<OpaqueJSString> toJS(WKStringRef string)
+{
+    return adoptRef(WKStringCopyJSString(string));
+}
+
+inline RefPtr<OpaqueJSString> toJS(const WKRetainPtr<WKStringRef>& string)
 {
     return toJS(string.get());
 }
@@ -115,7 +136,7 @@ inline WTF::String toWTFString(JSStringRef string)
     return toWTFString(toWK(string));
 }
 
-inline WTF::String toWTFString(const JSRetainPtr<JSStringRef>& string)
+inline WTF::String toWTFString(const RefPtr<OpaqueJSString>& string)
 {
     return toWTFString(string.get());
 }

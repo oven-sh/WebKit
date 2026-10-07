@@ -119,9 +119,10 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
     MessagePortDisentangled(struct WebCore::MessagePortIdentifier local)
     MessagePortClosed(struct WebCore::MessagePortIdentifier local)
     TakeAllMessagesForPort(struct WebCore::MessagePortIdentifier port) -> (Vector<WebCore::MessageWithMessagePorts> messages, std::optional<WebKit::MessageBatchIdentifier> messageBatchIdentifier)
-    QueryLocalNetworkAccessPermission(struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t std::optional<WebCore::PermissionState> state)
+    QueryLocalNetworkAccessPermission(std::optional<WebKit::WebPageProxyIdentifier> webPageProxyID, struct WebCore::ClientOrigin origin, enum:uint8_t WebCore::IPAddressSpace addressSpace) -> (enum:uint8_t std::optional<WebCore::PermissionState> state)
     PostMessageToRemote(struct WebCore::MessageWithMessagePorts message, struct WebCore::MessagePortIdentifier remote, Vector<URL> blobURLs)
     DidDeliverMessagePortMessages(WebKit::MessageBatchIdentifier messageBatchIdentifier)
+    FlushNetworkProcessIPC() -> ()
     RegisterURLSchemesAsCORSEnabled(Vector<String> schemes);
 #if PLATFORM(MAC)
     GetProcessDisplayName(struct WebKit::CoreIPCAuditToken auditToken) -> (String displayName)
@@ -164,5 +165,7 @@ messages -> NetworkConnectionToWebProcess WantsDispatchMessage {
 
 #if ENABLE(IPC_TESTING_API)
     TakeInvalidMessageStringForTesting() -> (String error) Synchronous
+    AddSyntheticParkedLoaderForTesting(WebKit::NetworkResourceLoadIdentifier identifier, WebCore::ProcessIdentifier destination) -> (bool added) Synchronous
+    RemoveSyntheticParkedLoaderForTesting(WebKit::NetworkResourceLoadIdentifier identifier) -> () Synchronous
 #endif
 }

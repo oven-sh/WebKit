@@ -39,12 +39,12 @@ https://codepen.io/
 https://www.codepen.io/
     (none)
 https://www.bankofamerica.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenUnloadListenerAndElementMatchesQuirk
 https://www.bestbuy.com/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
 https://www.bing.com/
-    MaybeBypassBackForwardCache
     NeedsMediaRewriteRangeRequestQuirk
+    ShouldBypassBackForwardCacheWhenRenderedElementMatchesQuirk
 https://bungalow.com/
     ShouldBypassAsyncScriptDeferring
 https://www.capitalgroup.com/
@@ -64,6 +64,7 @@ https://www.crunchyroll.com/
 https://digits.t-mobile.com/
     NeedsCustomUserAgentData
     NeedsNavigatorUserAgentDataQuirk
+    NeedsUserAgentStringOverrideQuirk
 https://www.t-mobile.com/
     (none)
 https://www.descript.com/
@@ -93,36 +94,46 @@ https://gizmodo.com/
 https://play.geforcenow.com/
     NeedsGeforcenowWarningDisplayNoneQuirk
 https://www.google.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://www.google.com/search
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://www.google.com/search/howsearchworks
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://www.google.co.jp/search
-    MaybeBypassBackForwardCache
-https://www.google.com/maps/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
+https://www.google.com/maps
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
-https://maps.google.com/maps/
-    MaybeBypassBackForwardCache
+https://www.google.com/maps/
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
+    ShouldDispatchSimulatedMouseEventsQuirk
+https://www.google.com/maps/@37.33,-122.01,15z
+    ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
+    ShouldDispatchSimulatedMouseEventsQuirk
+https://www.google.com/mapsearch
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
+https://maps.google.com/maps/
+    ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
 https://docs.google.com/
     InputMethodUsesCorrectKeyEventOrder
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://translate.google.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://mail.google.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://sites.google.com/
-    MaybeBypassBackForwardCache
-    ShouldPreventDispatchOfTouchEventQuirk
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
+    ShouldPreventTouchEndDispatchQuirk
 https://meet.google.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
     ShouldEnableCameraBackgroundPlayback
 https://www.google.co.uk/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheWhenElementMatchesQuirk
 https://www.hbomax.com/
     ShouldEnableFontLoadingAPIQuirk
 https://play.hbomax.com/
@@ -172,13 +183,20 @@ https://www.instagram.com/
     NeedsInstagramResizingReelsQuirk
 https://invideo.io/
     NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk
+    NeedsUserAgentStringOverrideQuirk
 https://www.linkedin.com/
     (none)
 https://outlook.live.com/
     NeedsMozillaFileTypeForDataTransferQuirk
     NeedsUserAgentStringOverrideQuirk
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
-    ShouldPreventDispatchOfTouchEventQuirk
+    ShouldPreventTouchMoveDispatchQuirk
+https://outlook.office.com/
+    (none)
+https://outlook.office365.com/
+    (none)
+https://outlook.cloud.microsoft/
+    (none)
 https://live.com/
     ShouldAvoidResizingWhenInputViewBoundsChangeQuirk
 https://onedrive.live.com/
@@ -193,8 +211,16 @@ https://mailchimp.com/
     (none)
 https://www.marcus.com/
     ShouldExposeShowModalDialog
+https://jalopnik.com/
+    NeedsKinjaLoginStorageAccessQuirk
+https://kotaku.com/
+    NeedsKinjaLoginStorageAccessQuirk
 https://medium.com/
     ShouldDispatchSyntheticMouseEventsWhenModifyingSelectionQuirk
+https://www.microsoft.com/
+    NeedsStorageAccessOnLoginButtonClickQuirk
+https://microsoft.com/
+    (none)
 https://m365.cloud.microsoft/
     (none)
 https://cloud.microsoft/
@@ -224,10 +250,13 @@ https://www.pandora.com/
     ShouldExposeShowModalDialog
 https://www.pinterest.com/
     ShouldAllowNotificationPermissionWithoutUserGesture
+https://www.playstation.com/
+    NeedsStorageAccessOnLoginButtonClickQuirk
+https://my.playstation.com/
+    NeedsStorageAccessOnLoginButtonClickQuirk
 https://www.premierleague.com/
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
     ShouldDispatchPlayPauseEventsOnResume
-    ShouldIgnorePlaysInlineRequirementQuirk
 https://www.ralphlauren.com/
     (none)
 https://www.reddit.com/
@@ -266,7 +295,9 @@ https://www.theguardian.com/
 https://www.thesaurus.com/
     (none)
 https://www.tiktok.com/
-    NeedsTikTokOverflowingContentQuirk
+    NeedsTikTokCommentsOverflowingContentQuirk
+    NeedsTikTokVideoOverflowingContentQuirk
+    NeedsUserAgentStringOverrideQuirk
     ShouldComputeSimulatedMouseEventMovementDeltaQuirk
     ShouldDispatchSimulatedMouseEventsAssumeDefaultPreventedQuirk
     ShouldDispatchSimulatedMouseEventsQuirk
@@ -279,7 +310,7 @@ https://tympanus.net/
 https://www.victoriassecret.com/
     ShouldDisableFetchMetadata
 https://vimeo.com/
-    MaybeBypassBackForwardCache
+    ShouldBypassBackForwardCacheForNoStoreQuirk
 https://www.walmart.com/
     (none)
 https://en.wikipedia.org/
@@ -301,7 +332,7 @@ https://twitter.com/
 https://www.yahoo.com/
     NeedsYahooVolumeSliderQuirk
     ShouldAvoidStartingSelectionOnMouseDownOverPointerCursor
-    ShouldPreventDispatchOfTouchEventQuirk
+    ShouldPreventTouchEndDispatchQuirk
 https://news.ycombinator.com/
     ShouldIgnoreTextAutoSizingQuirk
 https://ycombinator.com/

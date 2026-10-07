@@ -175,9 +175,10 @@ void CanvasRenderingContext2D::drawFocusIfNeededInternal(const Path& path, Eleme
     CheckedPtr canvasStyle = canvas->computedStyle();
     auto zoomFactor = canvasStyle ? canvasStyle->usedZoom() : 1.f;
     willUpdateEntireContents();
-    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(protect(element.document())->styleColorOptions(canvasStyle)), zoomFactor);
+    Ref document = element.document();
+    context->drawFocusRing(path, 1, RenderTheme::singleton().focusRingColor(document->styleColorOptions(canvasStyle)), zoomFactor);
 
-    if (CheckedPtr cache = element.document().existingAXObjectCache()) {
+    if (CheckedPtr cache = document->existingAXObjectCache()) {
         auto pathBounds = path.boundingRect();
         auto canvasBounds = state().transform.mapRect(pathBounds);
 
@@ -259,7 +260,7 @@ void CanvasRenderingContext2D::setFontWithoutUpdatingStyle(const String& newFont
     modifiableState().unparsedFont = newFontSafeCopy;
     modifiableState().fontResolutionBase = WTF::move(fontDescription);
 
-    modifiableState().font.initialize(protect(document->fontSelector()), *fontCascade);
+    modifiableState().font.initialize(protect(document->fontSelector()), protect(*fontCascade));
     ASSERT(state().font.realized());
     ASSERT(state().font.isPopulated());
 

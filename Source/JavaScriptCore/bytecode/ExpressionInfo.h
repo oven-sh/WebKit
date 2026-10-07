@@ -40,6 +40,8 @@ namespace JSC {
 
 class SourceProvider;
 
+class ConcurrentJSLocker;
+
 // See comment at the top of ExpressionInfo.cpp on how ExpressionInfo works.
 
 class ExpressionInfo {
@@ -184,10 +186,14 @@ public:
 
     ~ExpressionInfo() = default;
 
-    Entry NODELETE entryForInstPC(InstPC);
+    // The caller holds the owning UnlinkedCodeBlock's lock, because compiler threads also look up
+    // entries (useSourceCodeDump) and lookups fill a cache.
+    Entry entryForInstPC(const ConcurrentJSLocker&, InstPC);
+    // Decodes without touching the cache: takes no lock and does not allocate (UnlinkedCodeBlock::expressionInfoIfDecoded).
+    Entry NODELETE decodeEntryForInstPC(InstPC);
 
     // The zero-based line and column of the instruction's divot in the text of its source, where this code starts at
-    // sourceOffset. entryForInstPC() decodes from the start of the chapter on every call, and stack traces ask for the
+    // sourceOffset. Decoding an entry starts from the start of its chapter, and stack traces ask for the
     // same instructions again, so this keeps each answer. Sources share unlinked code when the CodeCache finds their text
     // equal (a precompiled program is for the source it was compiled from), and everyone who asks it for global code
     // gives it all of a source. So the text and sourceOffset, and with them the answer, are the same for every source
@@ -325,6 +331,8 @@ private:
     static constexpr unsigned numberOfWordsBetweenChapters = 10000;
 
     using LineColumnMap = UncheckedKeyHashMap<InstPC, LineColumn, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>>;
+
+    UncheckedKeyHashMap<InstPC, Entry, WTF::IntHash<InstPC>, WTF::UnsignedWithZeroKeyHashTraits<InstPC>> m_cachedEntries;
 
     LineColumnMap m_cachedLineColumns;
     unsigned m_numberOfChapters;

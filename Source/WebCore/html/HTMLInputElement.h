@@ -220,6 +220,7 @@ public:
     void setValueFromRenderer(const String&);
 
     bool rendererIsNeeded(const Style::ComputedStyle&) final;
+    bool NODELETE supportsBaseAppearance(StyleAppearance) const final;
     RenderPtr<RenderElement> createElementRenderer(Style::ComputedStyle&&, const RenderTreePosition&) final;
     bool isReplaced(const Style::ComputedStyle* = nullptr) const final;
     void willAttachRenderers() final;
@@ -378,6 +379,7 @@ private:
     NeedsPostConnectionSteps insertionSteps(InsertionType, ContainerNode&) final;
     void postConnectionSteps() final;
     void removingSteps(RemovalType, ContainerNode&) final;
+    void movingSteps(MovingType, ContainerNode&) final;
     void didMoveToNewDocument(Document& oldDocument, Document& newDocument) final;
 
     int defaultTabIndex() const final;

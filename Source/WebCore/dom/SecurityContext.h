@@ -29,6 +29,7 @@
 
 #include <WebCore/CrossOriginEmbedderPolicy.h>
 #include <WebCore/CrossOriginOpenerPolicy.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/IPAddressSpace.h>
 #include <WebCore/ReferrerPolicy.h>
 #include <memory>
@@ -85,6 +86,9 @@ public:
     virtual CrossOriginOpenerPolicy crossOriginOpenerPolicy() const { return m_crossOriginOpenerPolicy; }
     void setCrossOriginOpenerPolicy(const CrossOriginOpenerPolicy& crossOriginOpenerPolicy) { m_crossOriginOpenerPolicy = crossOriginOpenerPolicy; }
 
+    DocumentIsolationPolicy documentIsolationPolicy() const { return m_documentIsolationPolicy; }
+    void setDocumentIsolationPolicy(DocumentIsolationPolicy documentIsolationPolicy) { m_documentIsolationPolicy = documentIsolationPolicy; }
+
     const IntegrityPolicy* NODELETE integrityPolicy() const LIFETIME_BOUND;
     void setIntegrityPolicy(std::unique_ptr<IntegrityPolicy>&&);
 
@@ -139,6 +143,7 @@ private:
     std::unique_ptr<ContentSecurityPolicy> m_contentSecurityPolicy;
     CrossOriginEmbedderPolicy m_crossOriginEmbedderPolicy;
     CrossOriginOpenerPolicy m_crossOriginOpenerPolicy;
+    DocumentIsolationPolicy m_documentIsolationPolicy { DocumentIsolationPolicy::None };
     std::unique_ptr<IntegrityPolicy> m_integrityPolicy;
     std::unique_ptr<IntegrityPolicy> m_integrityPolicyReportOnly;
     SandboxFlags m_creationSandboxFlags;

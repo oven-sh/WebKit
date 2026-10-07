@@ -270,7 +270,7 @@ static bool writeCStringSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
     }
 
-    const CString* utf8 = context.cachedUTF8(*impl);
+    const UTF8CString* utf8 = context.cachedUTF8(*impl);
     if (!utf8) {
         auto result = impl->tryGetUTF8();
         if (!result) [[unlikely]] {

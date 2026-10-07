@@ -184,6 +184,10 @@ class MockMediaSessionCoordinator;
 class HTMLModelElement;
 #endif
 
+#if ENABLE(MODEL_PROCESS)
+struct ModelSceneGraphAsTextOptions;
+#endif
+
 #if ENABLE(SPEECH_SYNTHESIS)
 class PlatformSpeechSynthesizerMock;
 #endif
@@ -250,11 +254,11 @@ public:
     bool NODELETE isSharingStyleSheetContents(HTMLLinkElement&, HTMLLinkElement&);
     bool isStyleSheetLoadingSubresources(HTMLLinkElement&);
     enum class CachePolicy { UseProtocolCachePolicy, ReloadIgnoringCacheData, ReturnCacheDataElseLoad, ReturnCacheDataDontLoad };
-    void NODELETE setOverrideCachePolicy(CachePolicy);
+    void setOverrideCachePolicy(CachePolicy);
     ExceptionOr<void> setCanShowModalDialogOverride(bool allow);
     enum class ResourceLoadPriority { ResourceLoadPriorityVeryLow, ResourceLoadPriorityLow, ResourceLoadPriorityMedium, ResourceLoadPriorityHigh, ResourceLoadPriorityVeryHigh };
-    void NODELETE setOverrideResourceLoadPriority(ResourceLoadPriority);
-    void NODELETE setStrictRawResourceValidationPolicyDisabled(bool);
+    void setOverrideResourceLoadPriority(ResourceLoadPriority);
+    void setStrictRawResourceValidationPolicyDisabled(bool);
     void setImmediateRendererDestructionEnabled(bool);
     std::optional<ResourceLoadPriority> getResourcePriority(const String& url);
 
@@ -286,6 +290,7 @@ public:
     unsigned remoteImagesCountForTesting() const;
     void setAsyncDecodingEnabledForTesting(HTMLImageElement&, bool enabled);
     void NODELETE setForceUpdateImageDataEnabledForTesting(HTMLImageElement&, bool enabled);
+    void simulateImageDataReplacedForTesting(HTMLImageElement&);
     void setHasHDRContentForTesting(HTMLImageElement&);
 
 #if ENABLE(WEB_CODECS)
@@ -301,7 +306,7 @@ public:
 
     void disableTileSizeUpdateDelay();
 
-    void NODELETE setSpeculativeTilingDelayDisabledForTesting(bool);
+    void setSpeculativeTilingDelayDisabledForTesting(bool);
 
     Ref<CSSComputedStyleDeclaration> computedStyleIncludingVisitedInfo(Element&) const;
 
@@ -320,14 +325,14 @@ public:
     ExceptionOr<bool> isTimerAligned(int timeoutId);
     String requestAnimationFrameThrottlingReasons() const;
     double requestAnimationFrameInterval() const;
-    bool NODELETE scriptedAnimationsAreSuspended() const;
+    bool scriptedAnimationsAreSuspended() const;
     bool NODELETE areTimersThrottled() const;
     double domTimerAlignmentInterval() const;
     double domTimerAlignmentIntervalIncreaseLimit() const;
 
     enum EventThrottlingBehavior { Responsive, Unresponsive };
-    void NODELETE setEventThrottlingBehaviorOverride(std::optional<EventThrottlingBehavior>);
-    std::optional<EventThrottlingBehavior> NODELETE eventThrottlingBehaviorOverride() const;
+    void setEventThrottlingBehaviorOverride(std::optional<EventThrottlingBehavior>);
+    std::optional<EventThrottlingBehavior> eventThrottlingBehaviorOverride() const;
 
     // Spatial Navigation testing.
     ExceptionOr<unsigned> lastSpatialNavigationCandidateCount() const;
@@ -763,7 +768,7 @@ public:
 
     ExceptionOr<void> startTrackingStyleRecalcs();
     ExceptionOr<unsigned> styleRecalcCount();
-    unsigned NODELETE lastStyleUpdateSize() const;
+    unsigned lastStyleUpdateSize() const;
     unsigned styleInvalidationTraversalCount() const;
     void resetStyleInvalidationTraversalCount();
 
@@ -806,6 +811,8 @@ public:
 
     void forceAXObjectCacheUpdate() const;
     void setAccessibilityAnnouncementTranslationTimeout(double seconds);
+    void setAccessibilityFormErrorSettleDelay(double seconds);
+    bool isWatchingForAccessibilityFormErrors() const;
     unsigned liveRegionSnapshotBuildCount() const;
     void resetLiveRegionSnapshotBuildCount() const;
     void setShouldMockParentSearchResultsForTesting(bool);
@@ -836,7 +843,7 @@ public:
 #endif
 
 #if ENABLE(MEDIA_STREAM)
-    void NODELETE setShouldInterruptAudioOnPageVisibilityChange(bool);
+    void setShouldInterruptAudioOnPageVisibilityChange(bool);
 #endif
 #if ENABLE(MEDIA_RECORDER)
     void NODELETE setCustomPrivateRecorderCreator();
@@ -846,7 +853,7 @@ public:
     void emulateRTCPeerConnectionPlatformEvent(RTCPeerConnection&, const String& action);
     void useMockRTCPeerConnectionFactory(const String&);
     void setICECandidateFiltering(bool);
-    void NODELETE setEnumeratingAllNetworkInterfacesEnabled(bool);
+    void setEnumeratingAllNetworkInterfacesEnabled(bool);
     void stopPeerConnection(RTCPeerConnection&);
     void clearPeerConnectionFactory();
     void clearWebRTCCodecsConnection();
@@ -868,7 +875,7 @@ public:
     void isBlobInternalURLRegistered(const String&, DOMPromiseDeferred<IDLBoolean>&&);
 
 #if ENABLE(VIDEO)
-    unsigned NODELETE mediaElementCount();
+    unsigned mediaElementCount();
     Vector<String> mediaResponseSources(HTMLMediaElement&);
     Vector<String> mediaResponseContentRanges(HTMLMediaElement&);
     void NODELETE simulateAudioInterruption(HTMLMediaElement&);
@@ -968,6 +975,7 @@ public:
     void suspendAllMediaBuffering();
     void suspendAllMediaPlayback();
     void resumeAllMediaPlayback();
+    void setMediaElementGracePeriodForResumingPlaybackInBackground(const HTMLMediaElement&, double gracePeriodInSeconds);
 #endif
 
 #if ENABLE(WIRELESS_PLAYBACK_TARGET)
@@ -1026,7 +1034,7 @@ public:
     void setMediaControlsHidePlaybackRates(HTMLMediaElement&, bool);
 #endif // ENABLE(VIDEO)
 
-    float NODELETE pageMediaVolume();
+    float pageMediaVolume();
     void setPageMediaVolume(float);
 
 #if ENABLE(NSREFRESHCONTROLLER_TESTING)
@@ -1034,7 +1042,7 @@ public:
 #endif
 
     String userVisibleString(const DOMURL&);
-    void NODELETE setShowAllPlugins(bool);
+    void setShowAllPlugins(bool);
 
     String resourceLoadStatisticsForURL(const DOMURL&);
     void NODELETE setTrackingPreventionEnabled(bool);
@@ -1048,7 +1056,7 @@ public:
     String composedTreeAsTextFromNode(Node& root, Node& startNode);
 
     bool isProcessingUserGesture();
-    double NODELETE lastHandledUserGestureTimestamp();
+    double lastHandledUserGestureTimestamp();
 
     void withUserGesture(Ref<VoidCallback>&&);
     void withoutUserGesture(Ref<VoidCallback>&&);
@@ -1075,8 +1083,8 @@ public:
     void setBaseWritingDirection(BaseWritingDirection);
 
 #if ENABLE(POINTER_LOCK)
-    bool NODELETE pageHasPendingPointerLock() const;
-    bool NODELETE pageHasPointerLock() const;
+    bool pageHasPendingPointerLock() const;
+    bool pageHasPointerLock() const;
 #endif
 
     Vector<String> accessKeyModifiers() const;
@@ -1088,7 +1096,9 @@ public:
 #if ENABLE(WEBGL)
     enum class SimulatedWebGLContextEvent {
         GPUStatusFailure,
-        Timeout
+        Timeout,
+        DisplayBufferAllocationFailure,
+        RenderbufferAllocationFailure
     };
     void simulateEventForWebGLContext(SimulatedWebGLContextEvent, WebGLRenderingContextBase&);
 
@@ -1098,13 +1108,15 @@ public:
         HighPerformance
     };
     RequestedGPU NODELETE requestedGPU(WebGLRenderingContextBase&);
+    // The largest drawing buffer width and height, including the limits of the compositor buffers.
+    Vector<int> webglMaxDrawingBufferSize(WebGLRenderingContextBase&);
 #endif
 
     void setPageVisibility(bool isVisible);
     void setPageIsFocused(bool);
     void setPageIsFocusedAndActive(bool);
     void setPageIsInWindow(bool);
-    bool NODELETE isPageActive() const;
+    bool isPageActive() const;
 
 #if ENABLE(MEDIA_STREAM)
     void stopObservingRealtimeMediaSource();
@@ -1481,7 +1493,7 @@ public:
 
     Vector<WebDriverCookieData> webDriverGetCookies(Document&) const;
 
-    void NODELETE setAlwaysAllowLocalWebarchive(bool);
+    void setAlwaysAllowLocalWebarchive(bool);
     void processWillSuspend();
     void processDidResume();
 
@@ -1575,11 +1587,12 @@ public:
     bool destroySleepDisabler(unsigned identifier);
 
     void setTopDocumentURLForQuirks(const String&);
+    void setSubframeURLForQuirks(const String&);
     Vector<String> activeQuirks() const;
 
 #if ENABLE(APP_HIGHLIGHTS)
     Vector<String> appHighlightContextMenuItemTitles() const;
-    unsigned NODELETE numberOfAppHighlights();
+    unsigned numberOfAppHighlights();
 #endif
 
     Vector<Ref<AbstractRange>> textExtractionHighlightRanges() const;
@@ -1595,6 +1608,10 @@ public:
 
     enum class ContentSizeCategory { L, XXXL };
     void setContentSizeCategory(ContentSizeCategory);
+
+#if ENABLE(TELEPHONE_NUMBER_DETECTION)
+    unsigned telephoneNumberRangesChangedCount() const;
+#endif
 
 #if ENABLE(ATTACHMENT_ELEMENT)
 #if ENABLE(SERVICE_CONTROLS)
@@ -1645,7 +1662,7 @@ public:
 
     RefPtr<PushSubscription> createPushSubscription(const String& endpoint, std::optional<EpochTimeStamp> expirationTime, const ArrayBuffer& serverVAPIDPublicKey, const ArrayBuffer& clientECDHPublicKey, const ArrayBuffer& auth);
 
-    bool NODELETE hasSleepDisabler() const;
+    bool hasSleepDisabler() const;
 
     void NODELETE acceptTypedArrays(Int32Array&);
 
@@ -1659,7 +1676,7 @@ public:
 
     JSC::JSValue dumpJSNodeStatistics();
 
-    bool NODELETE isVisuallyNonEmpty() const;
+    bool isVisuallyNonEmpty() const;
         
     bool isUsingUISideCompositing() const;
 
@@ -1696,7 +1713,7 @@ public:
     using ImageBufferResourceLimitsPromise = DOMPromiseDeferred<IDLDictionary<ImageBufferResourceLimits>>;
     void getImageBufferResourceLimits(ImageBufferResourceLimitsPromise&&);
 
-    void NODELETE setResourceCachingDisabledByWebInspector(bool);
+    void setResourceCachingDisabledByWebInspector(bool);
     ExceptionOr<void> lowerAllFrameMemoryMonitorLimits();
 
 #if ENABLE(DAMAGE_TRACKING)
@@ -1712,9 +1729,13 @@ public:
     ExceptionOr<Ref<WritableStream>> writableStreamFromMessagePort(JSDOMGlobalObject&, MessagePort&);
 
 #if ENABLE(MODEL_ELEMENT)
-    void NODELETE disableModelLoadDelaysForTesting();
+    void disableModelLoadDelaysForTesting();
     String modelElementState(HTMLModelElement&);
     bool NODELETE isModelElementIntersectingViewport(HTMLModelElement&);
+#endif
+
+#if ENABLE(MODEL_PROCESS)
+    void modelSceneGraphAsText(Element&, const ModelSceneGraphAsTextOptions&, DOMPromiseDeferred<IDLDOMString>&&);
 #endif
 
 #if ENABLE(SPATIAL_PORTAL)
@@ -1725,9 +1746,13 @@ public:
     String NODELETE effectiveEnvironmentMap(Element&);
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    String volumetricScenePresentationMode(Element&);
+#endif
+
     ExceptionOr<void> copyImageAtLocation(int x, int y);
 
-    bool NODELETE hasMediaSessionManager() const;
+    bool hasMediaSessionManager() const;
 
     size_t NODELETE fileConnectionHandleCount(const FileSystemHandle&) const;
 
@@ -1751,7 +1776,7 @@ private:
 #endif // ENABLE(MEDIA_STREAM)
 
     Document* NODELETE contextDocument() const;
-    LocalFrame* NODELETE frame() const;
+    LocalFrame* frame() const;
 
     AccessibilityObject* axObjectForElement(Element&) const;
 
@@ -1800,17 +1825,17 @@ private:
     std::unique_ptr<TextIterator> m_textIterator;
 
 #if ENABLE(WEBXR)
-    RefPtr<WebXRTest> m_xrTest;
+    const RefPtr<WebXRTest> m_xrTest;
 #endif
 
 #if ENABLE(SPEECH_SYNTHESIS)
     RefPtr<PlatformSpeechSynthesizerMock> m_platformSpeechSynthesizer;
 #endif
 #if ENABLE(MEDIA_SESSION_COORDINATOR)
-    RefPtr<MockMediaSessionCoordinator> m_mockMediaSessionCoordinator;
+    const RefPtr<MockMediaSessionCoordinator> m_mockMediaSessionCoordinator;
 #endif
 #if ENABLE(VIDEO)
-    std::unique_ptr<CaptionUserPreferencesTestingModeToken> m_testingModeToken;
+    const std::unique_ptr<CaptionUserPreferencesTestingModeToken> m_testingModeToken;
     RefPtr<MockCaptionDisplaySettingsClientCallback> m_mockCaptionDisplaySettingsClientCallback;
 #endif
 #if ENABLE(WIRELESS_PLAYBACK_MEDIA_PLAYER)

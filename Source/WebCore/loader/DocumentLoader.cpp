@@ -655,6 +655,26 @@ void DocumentLoader::redirectReceived(ResourceRequest&& request, const ResourceR
     });
 }
 
+void DocumentLoader::updateRequestForUnpartitionedStorageAccess(ResourceRequest& request, bool isRedirect) const
+{
+    bool wasUnpartitioned = request.isTopSite();
+    bool isUnpartitioned = hasUnpartitionedStorageAccess(request.url());
+    if (isUnpartitioned)
+        request.setFirstPartyForCookies(request.url());
+
+    if (wasUnpartitioned == isUnpartitioned)
+        return;
+
+    request.setIsTopSite(isUnpartitioned);
+    if (!isUnpartitioned) {
+        if (RefPtr frame = m_frame.get(); frame && frame->document())
+            request.setFirstPartyForCookies(FrameLoader::partitionedFirstPartyForCookiesForSubframeNavigation(*protect(frame->document())));
+    }
+
+    if (isRedirect)
+        request.setIsSameSite(false);
+}
+
 void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const ResourceResponse& redirectResponse, CompletionHandler<void(ResourceRequest&&)>&& completionHandler)
 {
     // Note that there are no asserts here as there are for the other callbacks. This is due to the
@@ -738,6 +758,10 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
     // URL of the main frame which doesn't change when we redirect.
     if (frame->isMainFrame())
         newRequest.setFirstPartyForCookies(newRequest.url());
+    else if (didReceiveRedirectResponse)
+        m_unpartitionedStorageSite = std::nullopt;
+    else
+        updateRequestForUnpartitionedStorageAccess(newRequest, isContinuingLoadAfterProvisionalLoadStarted());
 
     FrameLoader::addSameSiteInfoToRequestIfNeeded(newRequest, document.get());
 
@@ -793,6 +817,11 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
             stopLoadingForPolicyChange(navigationPolicyDecision == NavigationPolicyDecision::LoadWillContinueInAnotherProcess ? LoadWillContinueInAnotherProcess::Yes : LoadWillContinueInAnotherProcess::No);
             break;
         case NavigationPolicyDecision::ContinueLoad:
+            if (!frame->isMainFrame()) {
+                updateRequestForUnpartitionedStorageAccess(request, true);
+                setRequest(ResourceRequest { request });
+            }
+
             // The client may have updated the User-Agent (via webView.customUserAgent,
             // WKWebpagePreferences._customUserAgent, an Inspector override, or a quirk
             // triggered by the redirect target URL) during the policy callback. The
@@ -1044,6 +1073,11 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
             frameLoader->notifier().dispatchDidReceiveResponse(this, *m_identifierForLoadWithoutResourceLoader, m_response, 0);
     }
 
+    // Don't ask the client about error responses from failed prefetches. The response will
+    // not be committed, and the navigation will be retried with a fresh request when the load finishes.
+    if (m_prefetchResponseFailed)
+        return;
+
     ASSERT(!m_waitingForContentPolicy);
     ASSERT(frameLoader());
     m_waitingForContentPolicy = true;
@@ -1156,16 +1190,6 @@ void DocumentLoader::continueAfterContentPolicy(PolicyAction policy)
         if (!m_mainResource) {
             DOCUMENTLOADER_RELEASE_LOG("continueAfterContentPolicy: cannot show URL");
             mainReceivedError(platformStrategies()->loaderStrategy()->cannotShowURLError(m_request));
-            return;
-        }
-
-        // Defense-in-depth: refuse to download a data: URL through a top-frame navigation that
-        // wasn't initiated by the user or the API client, mirroring the existing check in the
-        // PolicyAction::Use branch. The primary defense lives in the UI process; this guards
-        // ports / future flows that don't share that boundary.
-        if (disallowDataRequest()) {
-            protect(frameLoader())->policyChecker().cannotShowMIMEType(m_response);
-            stopLoadingForPolicyChange();
             return;
         }
 
@@ -1602,6 +1626,7 @@ void DocumentLoader::clearMainResourceLoader()
 {
     m_loadingMainResource = false;
     m_isContinuingLoad = ShouldTreatAsContinuingLoad::No;
+    m_isCacheOnlyLoadRetry = false;
 
     RefPtr frameLoader = this->frameLoader();
 
@@ -2089,7 +2114,7 @@ void DocumentLoader::removePlugInStreamLoader(ResourceLoader& loader)
     ASSERT(m_plugInStreamLoaders.contains(&loader));
     m_plugInStreamLoaders.remove(&loader);
     if (m_frame && m_frame->document()) {
-        protect(m_frame->document())->eventLoop().queueTask(TaskSource::Networking, [protectedThis = Ref { *this }]() {
+        protect(protect(m_frame->document())->eventLoop())->queueTask(TaskSource::Networking, [protectedThis = Ref { *this }]() {
             protectedThis->checkLoadComplete();
         });
     }
@@ -2436,6 +2461,7 @@ void DocumentLoader::clearMainResource()
 
     m_mainResource = nullptr;
     m_isContinuingLoad = ShouldTreatAsContinuingLoad::No;
+    m_isCacheOnlyLoadRetry = false;
 
     unregisterReservedServiceWorkerClient();
 }

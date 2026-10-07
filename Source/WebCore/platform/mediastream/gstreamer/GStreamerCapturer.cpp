@@ -105,7 +105,7 @@ GStreamerCapturerObserver::~GStreamerCapturerObserver() = default;
 void GStreamerCapturer::setDevice(std::optional<GStreamerCaptureDevice>&& device)
 {
     if (device)
-        GST_DEBUG_OBJECT(m_pipeline.get(), "Setting new capture device: %s", device->label().utf8().legacyCStringPointer());
+        GST_DEBUG_OBJECT(m_pipeline.get(), "Setting new capture device: %s", device->label().utf8());
     else
         GST_DEBUG_OBJECT(m_pipeline.get(), "Clearing capture device");
     tearDown(true);
@@ -198,7 +198,8 @@ GstElement* GStreamerCapturer::createSource() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
             auto [rotation, isMirrored] = webkitGstBufferGetVideoRotation(buffer);
 
             auto modifiedBuffer = webkitGstBufferSetVideoFrameMetadata(GRefPtr(buffer), metadata, rotation, isMirrored);
-            gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
+            if (modifiedBuffer)
+                gst_pad_probe_info_set_buffer(info, modifiedBuffer.leakRef());
             return GST_PAD_PROBE_OK;
         }, nullptr, nullptr);
     }

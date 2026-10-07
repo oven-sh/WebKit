@@ -159,6 +159,7 @@ set(WTF_PUBLIC_HEADERS
     LEBEncoder.h
     LLVMProfilingUtils.h
     Language.h
+    LayeredHashMap.h
     LazyRef.h
     LazyUniqueRef.h
     LikelyDenseUnsignedIntegerSet.h
@@ -199,6 +200,7 @@ set(WTF_PUBLIC_HEADERS
     MetaAllocator.h
     MetaAllocatorHandle.h
     MmapSpan.h
+    MonotonicObjectIdentifier.h
     MonotonicTime.h
     module.modulemap
     NakedPtr.h
@@ -357,7 +359,6 @@ set(WTF_PUBLIC_HEADERS
     StructDump.h
     SuspendableWorkQueue.h
     SwiftBridging.h
-    SwiftCXXThunk.h
     SynchronizedFixedQueue.h
     SystemFree.h
     SystemMalloc.h
@@ -466,6 +467,8 @@ set(WTF_PUBLIC_HEADERS
     persistence/PersistentDecoder.h
     persistence/PersistentEncoder.h
 
+    posix/POSIXExtras.h
+
     simde/simde.h
     simde/arm/neon.h
     simde/arm/sve.h
@@ -482,7 +485,6 @@ set(WTF_PUBLIC_HEADERS
     text/AtomStringTable.h
     text/Base64.h
     text/CString.h
-    text/CStringView.h
     text/CharacterProperties.h
     text/CodePointIterator.h
     text/ConversionMode.h
@@ -519,6 +521,7 @@ set(WTF_PUBLIC_HEADERS
     text/TextBreakIteratorInternalICU.h
     text/TextPosition.h
     text/TextStream.h
+    text/UTF8CStringView.h
     text/UTF8ConversionError.h
     text/UniquedStringImpl.h
     text/WTFString.h
@@ -687,7 +690,6 @@ set(WTF_SOURCES
     text/AtomStringTable.cpp
     text/Base64.cpp
     text/CString.cpp
-    text/CStringView.cpp
     text/ExternalStringImpl.cpp
     text/LineEnding.cpp
     text/StringBuffer.cpp
@@ -700,6 +702,7 @@ set(WTF_SOURCES
     text/SymbolRegistry.cpp
     text/TextBreakIterator.cpp
     text/TextStream.cpp
+    text/UTF8CStringView.cpp
     text/UniquedStringImpl.cpp
     text/WTFString.cpp
 

@@ -3,7 +3,7 @@ set(SWIFTBROWSER_DIR "${TOOLS_DIR}/SwiftBrowser")
 # Matches the WK_MACOS_2600 gate in Configurations/Base.xcconfig.
 if (WEBKIT_SDK_VERSION VERSION_LESS 26.0)
     message(STATUS "Not building SwiftBrowser: it needs the macOS 26 SDK or later")
-    return()
+    return ()
 endif ()
 
 message(STATUS "Building SwiftBrowser")
@@ -37,7 +37,6 @@ set(SwiftBrowser_FRAMEWORKS
 
 set(SwiftBrowser_DEPENDENCIES
     SwiftBrowserAssets
-    _WebKit_SwiftUI_StageSwiftModule
 )
 
 set(SwiftBrowser_CODE_SIGN_ENTITLEMENTS ${SWIFTBROWSER_DIR}/Resources/SwiftBrowser.entitlements)

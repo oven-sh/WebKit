@@ -110,11 +110,14 @@ public:
     LayoutUnit contentLogicalHeight() const;
     std::optional<LayoutUnit> clampedContentLogicalHeight() const;
     bool NODELETE hasEllipsisInBlockDirectionOnLastFormattedLine() const;
+    bool contentFitsWithinMaximumLines() const { return m_inlineContent && m_inlineContent->contentFitsWithinMaximumLines(); }
     bool contains(const RenderElement& renderer) const;
 
     bool NODELETE isPaginated() const;
     size_t NODELETE lineCount() const;
     size_t NODELETE lineCountIgnoringBlockLevelBoxes() const;
+    // Lines with contentful inline content (block-in-inline and empty lines don't count) ending within logicalHeight from the border box top, and whether any ends past it.
+    std::pair<size_t, bool> NODELETE lineCountForHeight(LayoutUnit logicalHeight) const;
     bool hasContent() const { return !!m_inlineContent; }
     bool NODELETE hasContentfulInlineOrBlockLine() const;
     bool NODELETE hasContentfulInlineLine() const;
@@ -129,7 +132,7 @@ public:
     InlineIterator::LeafBoxIterator boxFor(const RenderElement&) const;
     InlineIterator::InlineBoxIterator firstInlineBoxFor(const RenderBoxModelObject&) const;
     InlineIterator::InlineBoxIterator firstRootInlineBox() const;
-    InlineIterator::InlineBoxIterator lastRootInlineBox() const;
+    InlineIterator::BoxIterator lastBox() const;
     InlineIterator::LineBoxIterator firstLineBox() const;
     InlineIterator::LineBoxIterator lastLineBox() const;
 

@@ -100,8 +100,29 @@ void WebRemoteFrameClient::postMessageToRemote(FrameIdentifier source, const Sec
     if (RefPtr serializedValue = message.message)
         serializedValue->sinkBuffersIntoTransferHandles();
 
-    if (RefPtr page = m_frame->page())
+    RefPtr page = m_frame->page();
+    if (!page)
+        return;
+
+    if (message.transferredPorts.isEmpty() && (!m_pendingPostMessages || m_pendingPostMessages->isEmpty())) {
         page->send(Messages::WebPageProxy::PostMessageToRemote(source, sourceOrigin, target, targetOrigin, message, userGestureToken));
+        return;
+    }
+
+    if (!m_pendingPostMessages)
+        lazyInitialize(m_pendingPostMessages, PendingPostMessages::create());
+
+    RefPtr pendingPostMessages = m_pendingPostMessages;
+    pendingPostMessages->append(PendingPostMessages::PendingPostMessage { source, sourceOrigin, target, targetOrigin, message, userGestureToken });
+
+    if (message.transferredPorts.isEmpty())
+        return;
+
+    WebMessagePortChannelProvider::singleton().ensureMessagePortCreatedWithRoundtrip([pendingPostMessages, page] {
+        auto messagesToSend = pendingPostMessages->takeMessagesThroughNextPortTransfer();
+        for (auto& pendingPostMessage : messagesToSend)
+            page->send(Messages::WebPageProxy::PostMessageToRemote(pendingPostMessage.source, pendingPostMessage.sourceOrigin, pendingPostMessage.target, pendingPostMessage.targetOrigin, pendingPostMessage.message, pendingPostMessage.userGestureToken));
+    });
 }
 
 void WebRemoteFrameClient::changeLocation(FrameLoadRequest&& request, std::optional<PrivateClickMeasurement>&& privateClickMeasurement)

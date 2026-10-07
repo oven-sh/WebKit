@@ -1136,6 +1136,20 @@ class Port(object):
     def experimental_feature(self):
         return self.get_option("experimental_feature", [])
 
+    def ip_address_space_overrides(self):
+        # Web Platform Tests synthesize the local and public address spaces with extra server ports
+        # bound to loopback, so the browser has to be told which port means which space. Documented
+        # here: https://github.com/web-platform-tests/rfcs/blob/master/rfcs/address_space_overrides.md
+        from webkitpy.layout_tests.servers import web_platform_test_server
+        config = web_platform_test_server.wpt_config_json(self)
+        if not config:
+            return ""
+        ports = (("http-local", "local"), ("http-public", "public"),
+                 ("https-local", "local"), ("https-public", "public"))
+        return ",".join("127.0.0.1:{}={}".format(port_number, address_space)
+                        for port_name, address_space in ports
+                        for port_number in config["ports"].get(port_name, []))
+
     def localhost_aliases(self):
         if not self.supports_localhost_aliases or self.get_option("disable_wpt_hostname_aliases"):
             return []
@@ -1272,18 +1286,14 @@ class Port(object):
     def run_minibrowser(self, args):
         # FIXME: Migrate to webkitpy based run-minibrowser. https://bugs.webkit.org/show_bug.cgi?id=213464
         miniBrowser = self.path_to_script("old-run-minibrowser")
-        args.append(self._config.flag_for_configuration(self.get_option('configuration')))
+        args.extend(self._arguments_for_configuration())
         args.append("--%s" % self.get_option('platform'))
-        if self.get_option('use_cmake'):
-            args.append('--cmake')
         return self._executive.run_command([miniBrowser] + args, stdout=None, cwd=self.webkit_base(), return_stderr=False, decode_output=False, ignore_errors=True)
 
     def run_swiftbrowser(self, args):
         swiftBrowser = self.path_to_script("run-swiftbrowser-perl-wrapper")
-        args.append(self._config.flag_for_configuration(self.get_option('configuration')))
+        args.extend(self._arguments_for_configuration())
         args.append("--%s" % self.get_option('platform'))
-        if self.get_option('use_cmake'):
-            args.append('--cmake')
         return self._executive.run_command([swiftBrowser] + args, stdout=None, cwd=self.webkit_base(), return_stderr=False, decode_output=False, ignore_errors=True)
 
     def run_webdriver(self, args):
@@ -1430,6 +1440,13 @@ class Port(object):
         port_flag = self._port_flag_for_scripts()
         if port_flag:
             config_args.append(port_flag)
+        # Match the tree Config.build_directory() resolves, so build-* scripts don't build a different one.
+        if self.get_option('use_cmake'):
+            config_args.append('--cmake')
+        if self.get_option('use_xcode'):
+            config_args.append('--xcode')
+        if self.get_option('asan'):
+            config_args.append('--asan')
         return config_args
 
     def _run_script(self, script_name, args=None, include_configuration_arguments=True, decode_output=True, env=None):

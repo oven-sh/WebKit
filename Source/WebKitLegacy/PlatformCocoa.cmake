@@ -1,6 +1,9 @@
 # FIXME: Remove once source files are fixed. https://bugs.webkit.org/show_bug.cgi?id=312034
 WEBKIT_ADD_TARGET_CXX_FLAGS(WebKitLegacy -Wno-unused-parameter)
 
+# Unlike other parts of the WebKit stack, WKL's Objective-C API isn't annotated for export.
+target_compile_options(WebKitLegacy PRIVATE "$<$<COMPILE_LANGUAGE:OBJC,OBJCXX>:-fvisibility=default>")
+
 WEBKIT_ADD_PREFIX_HEADER(WebKitLegacy WebKitLegacyPrefix.h PREFIX_LANGUAGES CXX OBJC OBJCXX)
 
 find_library(UIKIT_LIBRARY UIKit)
@@ -14,6 +17,9 @@ endif ()
 if (WEBKIT_SDK_IS_MACOS)
     list(APPEND WebKitLegacy_PRIVATE_LIBRARIES ${SECURITYINTERFACE_LIBRARY})
 endif ()
+
+# FIXME: Unset for production-style CMake builds.
+list(APPEND WebKitLegacy_PRIVATE_DEFINITIONS ENABLE_WEBKIT_UNSET_DYLD_FRAMEWORK_PATH)
 
 list(APPEND WebKitLegacy_PRIVATE_INCLUDE_DIRECTORIES
     "${PAL_FRAMEWORK_HEADERS_DIR}"
@@ -61,16 +67,16 @@ list(APPEND WebKitLegacy_SOURCES
 
     cf/WebCoreSupport/WebInspectorClientCF.cpp
 
-    mac/DefaultDelegates/WebDefaultEditingDelegate.m
+    mac/DefaultDelegates/WebDefaultEditingDelegate.mm
 
-    mac/Misc/WebKitErrors.m
+    mac/Misc/WebKitErrors.mm
     mac/Misc/WebKitLogging.m
     mac/Misc/WebKitStatistics.m
     mac/Misc/WebNSDictionaryExtras.m
     mac/Misc/WebNSURLRequestExtras.m
 
-    mac/WebView/WebFeature.m
-    mac/WebView/WebFormDelegate.m
+    mac/WebView/WebFeature.mm
+    mac/WebView/WebFormDelegate.mm
 )
 
 # Preferences codegen.
@@ -110,24 +116,24 @@ list(APPEND WebKitLegacy_SOURCES
 
     mac/Misc/WebNSControlExtras.m
     mac/Misc/WebNSEventExtras.m
-    mac/Misc/WebNSImageExtras.m
+    mac/Misc/WebNSImageExtras.mm
     mac/Misc/WebNSPrintOperationExtras.m
-    mac/Misc/WebNSViewExtras.m
+    mac/Misc/WebNSViewExtras.mm
     mac/Misc/WebNSWindowExtras.m
 
-    mac/Panels/WebAuthenticationPanel.m
-    mac/Panels/WebPanelAuthenticationHandler.m
+    mac/Panels/WebAuthenticationPanel.mm
+    mac/Panels/WebPanelAuthenticationHandler.mm
 
-    mac/WebCoreSupport/WebJavaScriptTextInputPanel.m
+    mac/WebCoreSupport/WebJavaScriptTextInputPanel.mm
 )
 endif ()
 
 if (WEBKIT_SDK_IS_IOS_FAMILY)
 list(APPEND WebKitLegacy_SOURCES
-    ios/DefaultDelegates/WebDefaultFormDelegate.m
-    ios/DefaultDelegates/WebDefaultFrameLoadDelegate.m
-    ios/DefaultDelegates/WebDefaultResourceLoadDelegate.m
-    ios/DefaultDelegates/WebDefaultUIKitDelegate.m
+    ios/DefaultDelegates/WebDefaultFormDelegate.mm
+    ios/DefaultDelegates/WebDefaultFrameLoadDelegate.mm
+    ios/DefaultDelegates/WebDefaultResourceLoadDelegate.mm
+    ios/DefaultDelegates/WebDefaultUIKitDelegate.mm
 
     ios/Misc/WebGeolocationCoreLocationProvider.mm
     ios/Misc/WebGeolocationProviderIOS.mm
@@ -234,19 +240,22 @@ endif ()
 
 set(WebKitLegacy_OUTPUT_NAME WebKitLegacy)
 
+# Used to substitute placeholders in Info.plist.
+set(BUNDLE_VERSION "${MACOSX_FRAMEWORK_BUNDLE_VERSION}")
+set(SHORT_VERSION_STRING "${MACOSX_FRAMEWORK_SHORT_VERSION_STRING}")
+set(PRODUCT_NAME "WebKitLegacy")
+set(PRODUCT_BUNDLE_IDENTIFIER "com.apple.WebKitLegacy")
+
 # Platform-specific configuration, selected by the target SDK.
 if (WEBKIT_SDK_IS_IOS_FAMILY)
 
 target_compile_options(WebKitLegacy PRIVATE
     "$<$<COMPILE_LANGUAGE:OBJC>:-std=gnu99>")
 
-set(BUNDLE_VERSION "${MACOSX_FRAMEWORK_BUNDLE_VERSION}")
-set(SHORT_VERSION_STRING "${WEBKIT_MAC_VERSION}")
-set(PRODUCT_NAME "WebKitLegacy")
-set(PRODUCT_BUNDLE_IDENTIFIER "com.apple.WebKitLegacy")
 configure_file(${WEBKITLEGACY_DIR}/mac/Info.plist ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist)
 execute_process(COMMAND plutil -insert MinimumOSVersion -string "${CMAKE_OSX_DEPLOYMENT_TARGET}" ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist)
-execute_process(COMMAND plutil -insert UIDeviceFamily -json "[1,2]" ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist)
+WEBKIT_GET_DEVICE_FAMILY(_device_family)
+execute_process(COMMAND plutil -insert UIDeviceFamily -json "[${_device_family}]" ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist)
 
 set(WebKitLegacy_POST_BUILD_COMMAND
     ${CMAKE_COMMAND} -E copy ${CMAKE_CURRENT_BINARY_DIR}/WebKitLegacy-Info.plist
@@ -1261,6 +1270,27 @@ if (WebKitLegacy_INSTALL_NAME_DIR)
         INSTALL_NAME_DIR "${WebKitLegacy_INSTALL_NAME_DIR}"
     )
 endif ()
+
+set_target_properties(WebKitLegacy PROPERTIES
+    MACOSX_FRAMEWORK_INFO_PLIST ${WEBKITLEGACY_DIR}/mac/Info.plist)
+
+set(WebKitLegacy_XIBS
+    ${WEBKITLEGACY_DIR}/en.lproj/WebJavaScriptTextInputPanel.xib
+    ${WEBKITLEGACY_DIR}/mac/Panels/en.lproj/WebAuthenticationPanel.xib
+)
+set(_wkl_localized_resources_dir ${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebKitLegacy.framework/Versions/A/Resources/en.lproj)
+foreach (_xib IN LISTS WebKitLegacy_XIBS)
+    get_filename_component(_nib_name ${_xib} NAME_WE)
+    set(_nib ${_wkl_localized_resources_dir}/${_nib_name}.nib)
+    add_custom_command(OUTPUT ${_nib}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_wkl_localized_resources_dir}
+        COMMAND ibtool --compile ${_nib} ${_xib}
+        DEPENDS ${_xib}
+        VERBATIM)
+    list(APPEND WebKitLegacy_NIBS ${_nib})
+endforeach ()
+add_custom_target(WebKitLegacy_CompileXIBs DEPENDS ${WebKitLegacy_NIBS})
+add_dependencies(WebKitLegacy WebKitLegacy_CompileXIBs)
 
 
 # WebKit reexports WebKitLegacy, so the legacy ObjC API is part of WebKit's

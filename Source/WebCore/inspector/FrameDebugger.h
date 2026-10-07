@@ -27,6 +27,7 @@
 
 #include <JavaScriptCore/Debugger.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 
@@ -37,9 +38,14 @@ class FrameDebugger final : public JSC::Debugger {
     WTF_MAKE_TZONE_ALLOCATED(FrameDebugger);
 public:
     FrameDebugger(LocalFrame&);
-    ~FrameDebugger() override = default;
+    ~FrameDebugger() override;
 
     void recompileAllJSFunctions() override;
+
+    // True between attachDebugger() and detachDebugger(), i.e. while an agent is actually
+    // debugging the frame. The debugger outlives that window, since FrameInspectorController
+    // creates it up front and keeps it for the lifetime of the frame target.
+    bool isAttachedToFrame() const { return m_isAttachedToFrame; }
 
 private:
     // JSC::Debugger
@@ -48,17 +54,20 @@ private:
     void didPause(JSC::JSGlobalObject*) final;
     void didContinue(JSC::JSGlobalObject*) final;
     void runEventLoopWhilePaused() final;
+    bool isPauseBlockedByAnotherDebugger() const final;
     bool isContentScript(JSC::JSGlobalObject*) const final;
     URL sourceURLBase(JSC::JSGlobalObject*) const final;
     void reportException(JSC::JSGlobalObject*, JSC::Exception*) const final;
 
     void runEventLoopWhilePausedInternal();
 
+    void setJavaScriptPausedInAllPages(bool);
     void setJavaScriptPaused(LocalFrame&, bool paused);
 
     bool platformShouldContinueRunningEventLoopWhilePaused();
 
     WeakRef<LocalFrame> m_frame;
+    bool m_isAttachedToFrame { false };
 };
 
 } // namespace WebCore

@@ -756,10 +756,6 @@
 #define WTF_NONNULL
 #endif
 
-// Used to indicate that a class member has a specialized implementation in Swift. See
-// "SwiftCXXThunk.h".
-#define HAS_SWIFTCXX_THUNK  NS_REFINED_FOR_SWIFT
-
 #ifdef __cplusplus
 namespace WTF {
 // When -fpch-debuginfo is enabled, clang sometimes forgets to emit a vtable (rdar://176736350).

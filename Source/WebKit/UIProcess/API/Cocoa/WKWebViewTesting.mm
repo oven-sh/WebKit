@@ -33,12 +33,14 @@
 #import "LogStream.h"
 #import "MediaSessionCoordinatorProxyPrivate.h"
 #import "NetworkProcessProxy.h"
+#import "PendingSnapshotDrawing.h"
 #import "PlaybackSessionManagerProxy.h"
 #import "PrintInfo.h"
 #import "RemoteLayerTreeDrawingAreaProxy.h"
 #import "RemoteScrollingCoordinatorProxy.h"
 #import "SuspendedPageProxy.h"
 #import "UserMediaProcessManager.h"
+#import "VideoPresentationManagerProxy.h"
 #import "ViewGestureController.h"
 #import "ViewSnapshotStore.h"
 #import "WKColorExtensionView.h"
@@ -62,6 +64,7 @@
 #import <WebCore/TextIndicator.h>
 #import <WebCore/ValidationBubble.h>
 #import <pal/spi/cocoa/QuartzCoreSPI.h>
+#import <wtf/Box.h>
 #import <wtf/RetainPtr.h>
 #import <wtf/RuntimeApplicationChecks.h>
 #import <wtf/TZoneMallocInlines.h>
@@ -76,6 +79,7 @@
 #endif
 
 #if PLATFORM(MAC)
+#import "RemoteLayerTreeDrawingAreaProxyMac.h"
 #import "WKWebViewMac.h"
 #endif
 
@@ -292,6 +296,11 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #else
     _impl->setGrammarCheckingEnabled(enabled);
 #endif
+}
+
+- (void)_setUseDarkAppearanceForTesting:(BOOL)useDarkAppearance
+{
+    _page->setUseDarkAppearanceForTesting(useDarkAppearance);
 }
 
 - (NSDictionary *)_contentsOfUserInterfaceItem:(NSString *)userInterfaceItem
@@ -597,6 +606,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     return std::numeric_limits<double>::quiet_NaN();
 }
 
+- (CGRect)_lastVideoPresentationSetupRectForTesting
+{
+#if ENABLE(VIDEO_PRESENTATION_MODE)
+    if (RefPtr videoPresentationManager = _page->videoPresentationManager())
+        return videoPresentationManager->lastSetupFullscreenRectForTesting();
+#endif
+    return CGRectZero;
+}
+
 - (void)_doAfterProcessingAllPendingMouseEvents:(dispatch_block_t)action
 {
     _page->doAfterProcessingAllPendingMouseEvents([action = makeBlockPtr(action)] {
@@ -863,6 +881,27 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     });
 }
 
+- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle
+{
+    RefPtr frame = WebKit::WebFrameProxy::webFrame(*handle->_frameHandle->frameID());
+    if (!frame)
+        return nil;
+
+    WebKit::PrintInfo printInfo;
+    printInfo.pageSetupScaleFactor = 1;
+    printInfo.availablePaperWidth = 612;
+    printInfo.availablePaperHeight = 792;
+    // Outlives this call if the wait gives up.
+    auto result = Box<RetainPtr<NSData>>::create();
+    auto replyID = _page->drawPagesToPDF(*frame, printInfo, 0, 1, [result](API::Data* data) {
+        if (data)
+            *result = toNSData(data->span());
+    });
+    if (replyID)
+        WebKit::PendingSnapshotDrawing::wait(*replyID);
+    return result->autorelease();
+}
+
 - (void)_endPrintingForTesting:(void(^)(void))completionHandler
 {
     _page->endPrinting([completionHandler = makeBlockPtr(completionHandler)] {
@@ -921,7 +960,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
             : WebKit::MediaSessionCoordinatorProxyPrivate()
             , m_clientCoordinator(clientCoordinator)
         {
-            m_coordinatorDelegate = adoptNS([[WKMediaSessionCoordinatorHelper alloc] initWithCoordinator:this]);
+            lazyInitialize(m_coordinatorDelegate, adoptNS([[WKMediaSessionCoordinatorHelper alloc] initWithCoordinator:this]));
             [m_clientCoordinator setDelegate:m_coordinatorDelegate.get()];
         }
 
@@ -1082,8 +1121,8 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         }
 
     private:
-        RetainPtr<id <_WKMediaSessionCoordinator>> m_clientCoordinator;
-        RetainPtr<WKMediaSessionCoordinatorHelper> m_coordinatorDelegate;
+        const RetainPtr<id<_WKMediaSessionCoordinator>> m_clientCoordinator;
+        const RetainPtr<WKMediaSessionCoordinatorHelper> m_coordinatorDelegate;
     };
 
     ASSERT(!_impl->mediaSessionCoordinatorForTesting());
@@ -1234,6 +1273,20 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
         @"opaque" : @(layer.get().opaque),
         @"opacity" : @(layer.get().opacity),
     };
+}
+
+- (NSString *)_delegatedZoomOverrideAsTextForTesting
+{
+#if PLATFORM(MAC)
+    if (RefPtr drawingArea = dynamicDowncast<WebKit::RemoteLayerTreeDrawingAreaProxyMac>(protect(_page->drawingArea())))
+        return drawingArea->delegatedZoomOverrideAsTextForTesting().createNSString().autorelease();
+    return @"";
+#else
+    // Magnification gestures, and so the override, are macOS only. Empty is also what having no override looks
+    // like, so a caller on another platform wouldn't be able to tell the difference.
+    ASSERT_NOT_REACHED();
+    return @"";
+#endif
 }
 
 - (void)_textFragmentRangesWithCompletionHandlerForTesting:(void(^)(NSArray<NSValue *> *fragmentRanges))completionHandler
@@ -1519,6 +1572,15 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     auto completionHandlerCopy = makeBlockPtr(completionHandler);
     protect(protect(_page->websiteDataStore())->networkProcess())->lastPageLoadNetworkActivityCompletionCodeForTesting(_page->sessionID(), _page->webPageIDInMainFrameProcess(), [completionHandlerCopy = WTF::move(completionHandlerCopy)](std::optional<WebKit::NetworkActivityTracker::CompletionCode> code) {
         completionHandlerCopy(code ? @(static_cast<uint8_t>(*code)) : nil);
+    });
+}
+
+- (void)_topDocumentURLsInBackForwardCacheAtIndexForTesting:(NSInteger)relativeIndex completionHandler:(void(^)(NSArray<NSURL *> *))completionHandler
+{
+    _page->getBackForwardCacheEntryTopDocumentURLsForTesting(static_cast<int>(relativeIndex), [completionHandler = makeBlockPtr(completionHandler)] (Vector<URL>&& topDocumentURLs) {
+        completionHandler(createNSArray(topDocumentURLs, [] (auto& url) {
+            return url.createNSURL();
+        }).get());
     });
 }
 

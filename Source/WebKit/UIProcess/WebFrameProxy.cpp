@@ -407,6 +407,9 @@ void WebFrameProxy::didCommitLoad(const String& contentType, bool containsPlugin
         protect(process())->didCommitLoadClientOrigin(ClientOrigin { mainFrame ? mainFrame->documentSecurityOriginData() : SecurityOriginData { }, documentSecurityOriginData() });
     }
 
+    m_frameGeometry = { };
+    m_frameViewportInfo = { };
+
     RefPtr webPage = page();
     if (webPage && protect(webPage->preferences())->siteIsolationEnabled())
         broadcastFrameTreeSyncData(calculateFrameTreeSyncData());
@@ -721,10 +724,6 @@ void WebFrameProxy::getFrameInfo(CompletionHandler<void(std::optional<FrameInfoD
         if (!frameInfo)
             return completionHandler({ });
 
-        if (frameInfo->isMainFrame != isMainFrame()) {
-            RELEASE_LOG_ERROR(IPC, "WebFrameProxy::getFrameInfo: isMainFrame mismatch");
-            frameInfo->isMainFrame = isMainFrame();
-        }
         if (frameInfo->frameID != frameID()) {
             RELEASE_LOG_ERROR(IPC, "WebFrameProxy::getFrameInfo: frameID mismatch");
             frameInfo->frameID = frameID();
@@ -776,8 +775,7 @@ void WebFrameProxy::getFrameTree(CompletionHandler<void(std::optional<FrameTreeN
         void addChildFrameData(size_t index, FrameTreeNodeData&& data) { m_childFrameData[index] = WTF::move(data); }
         ~FrameInfoCallbackAggregator()
         {
-            // FIXME: We currently have to drop child frames that are currently not subframes of this frame
-            // (e.g. they are in the back/forward cache). They really should not be part of m_childFrames.
+            // Drop child frames whose process did not reply.
             auto nonEmptyChildFrameData = WTF::compactMap(WTF::move(m_childFrameData), [](std::optional<FrameTreeNodeData>&& data) {
                 return std::forward<decltype(data)>(data);
             });
@@ -804,21 +802,11 @@ void WebFrameProxy::getFrameTree(CompletionHandler<void(std::optional<FrameTreeN
             aggregator->setCurrentFrameData(WTF::move(*info));
     });
 
-    RefPtr page = this->page();
-    bool isSiteIsolationEnabled = page && protect(page->preferences())->siteIsolationEnabled();
     size_t index = 0;
     for (Ref childFrame : m_childFrames) {
-        childFrame->getFrameTree([aggregator, index = index++, frameID = this->frameID(), isSiteIsolationEnabled] (std::optional<FrameTreeNodeData>&& data) {
+        childFrame->getFrameTree([aggregator, index = index++] (std::optional<FrameTreeNodeData>&& data) {
             if (!data)
                 return;
-
-            // FIXME: m_childFrames currently contains iframes that are in the back/forward cache, not currently
-            // connected to this parent frame. They should really not be part of m_childFrames anymore.
-            // FIXME: With site isolation enabled, remote frames currently don't have a parentFrameID so we temporarily
-            // ignore this check.
-            if (data->info.parentFrameID != frameID && !isSiteIsolationEnabled)
-                return;
-
             aggregator->addChildFrameData(index, WTF::move(*data));
         });
     }
@@ -909,7 +897,7 @@ Ref<FrameTreeSyncData> WebFrameProxy::calculateFrameTreeSyncData() const
     bool isSecureForPaymentSession = false;
 #endif
 
-    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, FrameGeometrySyncData { }, FrameViewportInfo { });
+    return FrameTreeSyncData::create(isSecureForPaymentSession, securityOrigin(), m_documentSecurityPolicy, m_effectiveSandboxFlags.contains(WebCore::SandboxFlag::Origin), url().protocol().toString(), IntRect { }, FrameGeometrySyncData { m_frameGeometry }, FrameViewportInfo { m_frameViewportInfo });
 }
 
 Ref<SecurityOrigin> WebFrameProxy::securityOrigin() const
@@ -1330,6 +1318,8 @@ ProvisionalFrameCreationParameters WebFrameProxy::provisionalFrameCreationParame
         scrollingMode(),
         remoteFrameRect(),
         commitTiming,
+        m_page ? m_page->pageZoomFactor() : 1,
+        m_page ? m_page->textZoomFactor() : 1,
     };
 }
 

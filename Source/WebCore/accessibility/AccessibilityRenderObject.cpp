@@ -212,7 +212,7 @@ AccessibilityObject* AccessibilityRenderObject::firstChild() const
     if (!m_renderer)
         return AccessibilityNodeObject::firstChild();
 
-    if (CheckedPtr firstChild = m_renderer->firstChildSlow()) {
+    if (CheckedPtr firstChild = protect(m_renderer)->firstChildSlow()) {
         CheckedPtr cache = axObjectCache();
         return cache ? cache->getOrCreate(*firstChild) : nullptr;
     }
@@ -232,9 +232,9 @@ AccessibilityObject* AccessibilityRenderObject::lastChild() const
     if (!m_renderer)
         return AccessibilityNodeObject::lastChild();
 
-    if (CheckedPtr lastChild = m_renderer->lastChildSlow()) {
+    if (CheckedPtr lastChild = protect(m_renderer)->lastChildSlow()) {
         CheckedPtr cache = axObjectCache();
-        return cache ? cache->getOrCreate(lastChild.unsafeGet()) : nullptr;
+        return cache ? cache->getOrCreate(lastChild) : nullptr;
     }
 
     if (!canHaveChildren())
@@ -265,20 +265,11 @@ AccessibilityObject* AccessibilityRenderObject::nextSibling() const
         return nullptr;
 
     CheckedPtr nextSibling = m_renderer->nextSibling();
-
     if (!nextSibling)
         return nullptr;
 
     CheckedPtr cache = axObjectCache();
-    if (!cache)
-        return nullptr;
-
-    RefPtr nextObject = cache->getOrCreate(*nextSibling);
-    RefPtr nextAXRenderObject = dynamicDowncast<AccessibilityRenderObject>(nextObject);
-    RefPtr nextRenderParent = nextAXRenderObject ? cache->getOrCreate(nextAXRenderObject->renderParentObject()) : nullptr;
-
-    // Make sure the next sibling has the same render parent.
-    return !nextRenderParent || nextRenderParent == cache->getOrCreate(renderParentObject()) ? nextObject.unsafeGet() : nullptr;
+    return cache ? cache->getOrCreate(*nextSibling) : nullptr;
 }
 
 RenderObject* AccessibilityRenderObject::renderParentObject() const
@@ -326,10 +317,9 @@ AccessibilityObject* AccessibilityRenderObject::parentObject() const
 #endif // !USE(ATSPI)
 
     // Expose markers that are not direct children of a list item too.
-    if (m_renderer->isRenderListOutsideMarker()) {
-        for (CheckedRef listItemAncestor : ancestorsOfType<RenderListItem>(*m_renderer)) {
-            RefPtr parent = dynamicDowncast<AccessibilityRenderObject>(axObjectCache()->getOrCreate(listItemAncestor));
-            if (parent && parent->markerRenderer() == m_renderer)
+    if (CheckedPtr marker = dynamicDowncast<RenderListOutsideMarker>(*m_renderer)) {
+        if (CheckedPtr listItem = marker->listItem(); listItem && listItem->markerBox() == marker) {
+            if (RefPtr parent = cache->getOrCreate(*listItem); parent && parent->isListItem())
                 return parent.unsafeGet();
         }
     }
@@ -383,7 +373,7 @@ bool AccessibilityRenderObject::isOffScreen() const
     if (!m_renderer)
         return true;
 
-    IntRect contentRect = snappedIntRect(m_renderer->absoluteClippedOverflowRectForSpatialNavigation());
+    IntRect contentRect = snappedIntRect(protect(m_renderer)->absoluteClippedOverflowRectForSpatialNavigation());
     // FIXME: unclear if we need LegacyIOSDocumentVisibleRect.
     IntRect viewRect = m_renderer->view().frameView().visibleContentRect(ScrollableArea::LegacyIOSDocumentVisibleRect);
     viewRect.intersect(contentRect);
@@ -400,7 +390,7 @@ Element* AccessibilityRenderObject::anchorElement() const
         return nullptr;
 
     // Search up the render tree for a RenderObject with a DOM node.
-    auto* currentRenderer = renderer();
+    CheckedPtr currentRenderer = renderer();
     while (currentRenderer && !currentRenderer->node())
         currentRenderer = currentRenderer->parent();
 
@@ -449,7 +439,7 @@ String AccessibilityRenderObject::textUnderElement(TextUnderElementMode mode) co
         return { };
     }
 
-    if (auto* listMarker = dynamicDowncast<RenderListOutsideMarker>(*m_renderer)) {
+    if (CheckedPtr listMarker = dynamicDowncast<RenderListOutsideMarker>(*m_renderer)) {
         // A `content` marker has no text of its own; the child walk below reads the renderers holding it.
         if (!listMarker->hasContentProperty()) {
             if (mode.includeListMarkers == IncludeListMarkerText::Yes) {
@@ -727,13 +717,13 @@ LayoutRect AccessibilityRenderObject::boundingBoxRect() const
 
 bool AccessibilityRenderObject::isNonLayerSVGObject() const
 {
-    auto* renderer = this->renderer();
-    return renderer ? is<RenderSVGInlineText>(renderer) || is<LegacyRenderSVGModelObject>(renderer) : false;
+    CheckedPtr renderer = this->renderer();
+    return renderer ? is<RenderSVGInlineText>(renderer.get()) || is<LegacyRenderSVGModelObject>(renderer.get()) : false;
 }
 
 static Path computePathForRenderBox(const RenderBox& renderBox)
 {
-    auto borderShape = BorderShape::shapeForBorderRect(renderBox.style(), renderBox.borderBoxRect());
+    auto borderShape = BorderShape::shapeForBorderRect(protect(renderBox.style()), renderBox.borderBoxRect());
     auto path = borderShape.pathForOuterShape(protect(renderBox.document())->deviceScaleFactor());
     // borderBoxRect() is in local coordinates. Offset it to absolute document coordinates
     // to match the coordinate system used by SVG, RenderText, and RenderInline paths.
@@ -1079,7 +1069,7 @@ bool AccessibilityRenderObject::computeIsIgnored() const
         return true;
 
     // WebAreas should be ignored if their iframe container is marked as presentational.
-    if (webAreaIsPresentational(renderer()))
+    if (webAreaIsPresentational(protect(renderer())))
         return true;
 
     // An ARIA tree can only have tree items and static text as children.
@@ -1172,7 +1162,7 @@ bool AccessibilityRenderObject::computeIsIgnored() const
                     // text alongside buttons and links). When the option has interactive
                     // content, expose text nodes so VoiceOver can navigate to them.
                     // Presentational wrappers like <span> don't count.
-                    if (auto* optionElement = dynamicDowncast<HTMLOptionElement>(ancestor->node()); optionElement && optionElement->belongsToBaseAppearancePicker()) {
+                    if (auto* optionElement = dynamicDowncast<HTMLOptionElement>(ancestor->node()); optionElement && optionElement->isRenderedWithBaseAppearance()) {
                         bool hasInteractiveContent = false;
                         for (Ref descendant : descendantsOfType<HTMLElement>(*optionElement)) {
                             if (descendant->isInteractiveContent()) {
@@ -1270,10 +1260,14 @@ bool AccessibilityRenderObject::computeIsIgnored() const
             if (image->borderBoxHeight() <= 1 || image->borderBoxWidth() <= 1)
                 return true;
 
-            // check whether rendered image was stretched from one-dimensional file image
-            if (image->cachedImage()) {
-                LayoutSize imageSize = protect(image->cachedImage())->imageSizeForRenderer(image.get(), image->view().pageZoomFactor());
-                return imageSize.height() <= 1 || imageSize.width() <= 1;
+            if (RefPtr cachedImage = image->cachedImage()) {
+                // check whether the image has loaded
+                if (!cachedImage->hasImage())
+                    return true;
+
+                // check whether rendered image was stretched from one-dimensional file image
+                auto naturalDimensions = cachedImage->naturalDimensions();
+                return naturalDimensions.width && naturalDimensions.height && (*naturalDimensions.width <= 1 || *naturalDimensions.height <= 1);
             }
         }
         return false;
@@ -1638,7 +1632,7 @@ AXTextRuns AccessibilityRenderObject::textRuns()
         if (textBoxStyle->textTransform().contains(Style::TextTransformValue::FullSizeKana)) {
             // We don't want to serve transformed kana text to AT since it is a visual affordance.
             // Using the original text from the renderer provides the untransformed string.
-            text = textBox->renderer().originalText().substring(textBox->start(), textBox->length());
+            text = protect(textBox->renderer())->originalText().substring(textBox->start(), textBox->length());
         }
 
         bool collapseTabs = textBoxStyle->collapseWhiteSpace();
@@ -1858,7 +1852,7 @@ void AccessibilityRenderObject::setSelectedTextRange(CharacterRange&& range)
         auto end = visiblePositionForIndexUsingCharacterIterator(node.get(), range.location + range.length);
         if (!contains<ComposedTree>(*elementRange, makeBoundaryPoint(end)))
             end = makeContainerOffsetPosition(elementRange->start);
-        m_renderer->frame().selection().setSelection(VisibleSelection(start, end), FrameSelection::defaultSetSelectionOptions(UserTriggered::Yes));
+        protect(protect(m_renderer)->frame().selection())->setSelection(VisibleSelection(start, end), FrameSelection::defaultSetSelectionOptions(UserTriggered::Yes));
     }
 
     clearTextSelectionIntent(axObjectCache());
@@ -1926,7 +1920,7 @@ bool AccessibilityRenderObject::press()
                 cache->postNotification(selectElement.get(), AXNotification::PressDidFail);
             return false;
         }
-        if (selectElement->popupIsVisible())
+        if (selectElement->isOpen())
             selectElement->hidePickerPopoverElement();
         else
             selectElement->openPickerForUserInteraction();
@@ -2145,12 +2139,12 @@ void AccessibilityRenderObject::setSelectedVisiblePositionRange(const VisiblePos
                     start = makeContainerOffsetPosition(elementRange->start);
             }
 
-            m_renderer->frame().selection().moveTo(start, UserTriggered::Yes);
+            protect(protect(m_renderer)->frame().selection())->moveTo(start, UserTriggered::Yes);
         } else {
             setTextSelectionIntent(axObjectCache(), AXTextStateChangeType::SelectionExtend);
 
             VisibleSelection newSelection = VisibleSelection(range.start, range.end);
-            m_renderer->frame().selection().setSelection(newSelection, FrameSelection::defaultSetSelectionOptions(UserTriggered::Yes));
+            protect(protect(m_renderer)->frame().selection())->setSelection(newSelection, FrameSelection::defaultSetSelectionOptions(UserTriggered::Yes));
         }
     }
 
@@ -2525,7 +2519,7 @@ AccessibilityRole AccessibilityRenderObject::determineAccessibilityRole()
         return AccessibilityRole::LineBreak;
     if (RefPtr img = dynamicDowncast<HTMLImageElement>(node); img && img->hasAttributeWithoutSynchronization(usemapAttr))
         return AccessibilityRole::ImageMap;
-    if (m_renderer->isImage()) {
+    if (protect(m_renderer)->isImage()) {
         if (is<HTMLInputElement>(node))
             return selfOrAncestorLinkHasPopup() ? AccessibilityRole::PopUpButton : AccessibilityRole::Button;
 
@@ -2635,7 +2629,7 @@ std::optional<AXCoreObject::AccessibilityChildrenVector> AccessibilityRenderObje
 {
     AXTRACE("AccessibilityRenderObject::imageOverlayElements"_s);
 
-    if (!m_renderer || !toSimpleImage(*m_renderer))
+    if (!m_renderer || !toSimpleImage(protect(*m_renderer)))
         return std::nullopt;
 
     // Don't expose image overlay elements for images that are accessibility-ignored
@@ -2747,7 +2741,7 @@ void AccessibilityRenderObject::addTextFieldChildren()
     if (!spinButtonElement)
         return;
 
-    Ref axSpinButton = axObjectCache()->createSpinButton(*spinButtonElement);
+    Ref axSpinButton = protect(axObjectCache())->createSpinButton(*spinButtonElement);
     axSpinButton->setParent(this);
     addChild(WTF::move(axSpinButton));
 }
@@ -3208,7 +3202,7 @@ bool AccessibilityRenderObject::hasSameFontColor(AXCoreObject& object)
     if (!m_renderer || !renderer)
         return false;
 
-    return m_renderer->style().visitedDependentColor() == renderer->style().visitedDependentColor();
+    return protect(m_renderer->style())->visitedDependentColor() == protect(renderer->style())->visitedDependentColor();
 }
 
 bool AccessibilityRenderObject::hasSameStyle(AXCoreObject& object)
@@ -3266,7 +3260,7 @@ void AccessibilityRenderObject::scrollTo(const IntPoint& point) const
     // FIXME: is point a ScrollOffset or ScrollPosition? Test in RTL overflow.
     AX_ASSERT(box->layer());
     AX_ASSERT(box->layer()->scrollableArea());
-    box->layer()->scrollableArea()->scrollToOffset(point);
+    protect(box->layer()->scrollableArea())->scrollToOffset(point);
 }
 
 FloatRect AccessibilityRenderObject::localRect() const

@@ -1241,13 +1241,13 @@ void WebAutomationSession::fragmentNavigatedForFrame(const WebFrameProxy& frame,
 void WebAutomationSession::emitContextCreatedEvent(const WebPageProxy& page)
 {
     if (RefPtr mutablePage = WebProcessProxy::webPage(page.identifier())) {
-        mutablePage->getAllFrameTrees([this, protectedThis = Ref { *this }, pageID = page.identifier()](Vector<FrameTreeNodeData>&& trees) {
+        mutablePage->getAllFrames([this, protectedThis = Ref { *this }, pageID = page.identifier()](std::optional<FrameTreeNodeData>&& tree) {
             RefPtr page = WebProcessProxy::webPage(pageID);
             if (!page)
                 return;
 
-            for (auto& tree : trees)
-                recursivelyEmitContextCreatedEvent(tree, std::nullopt);
+            if (tree)
+                recursivelyEmitContextCreatedEvent(*tree, std::nullopt);
         });
     }
 }
@@ -1320,7 +1320,7 @@ void WebAutomationSession::recursivelyEmitContextCreatedEvent(const FrameTreeNod
     String contextHandle;
     String originalOpenerHandle = "null"_s;
 
-    if (tree.info.isMainFrame) {
+    if (frame->isMainFrame()) {
         contextHandle = handleForWebPageProxy(*page);
         if (RefPtr openerPage = this->getOpenerPage(*page))
             originalOpenerHandle = handleForWebPageProxy(*openerPage);

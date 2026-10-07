@@ -28,6 +28,7 @@
 
 #include "ContainerNodeInlines.h"
 #include "CSSValueKeywords.h"
+#include "Document.h"
 #include "HTMLOptionElement.h"
 #include "HTMLSelectElement.h"
 #include "LocalizedStrings.h"
@@ -42,6 +43,7 @@
 #include "StyleTextAlign.h"
 #include "Text.h"
 #include "UserAgentParts.h"
+#include <ranges>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore {
@@ -56,6 +58,24 @@ static size_t selectedOptionCount(const HTMLSelectElement& selectElement)
             ++count;
     }
     return count;
+}
+
+// During style resolution computedStyle() would build on the old styles of the select and its ancestors.
+static std::unique_ptr<Style::ComputedStyle> resolveOptionStyle(HTMLOptionElement& option, const HTMLSelectElement& select, const Style::ComputedStyle& selectStyle)
+{
+    Vector<Ref<Element>, 4> lineage;
+    for (RefPtr<Element> element = &option; element && element != &select; element = element->parentElementInComposedTree())
+        lineage.append(*element);
+
+    Ref document = option.document();
+    std::unique_ptr<Style::ComputedStyle> style;
+    CheckedPtr parentStyle = &selectStyle;
+    for (auto& element : lineage | std::views::reverse) {
+        auto elementStyle = document->styleForElementIgnoringPendingStylesheets(element, parentStyle.get());
+        parentStyle = elementStyle.get();
+        style = WTF::move(elementStyle);
+    }
+    return style;
 }
 
 Ref<SelectFallbackButtonElement> SelectFallbackButtonElement::create(Document& document)
@@ -89,6 +109,11 @@ void SelectFallbackButtonElement::updateText(HTMLOptionElement* selectedOption, 
         invalidateStyle();
         selectElement->didUpdateActiveOption(optionIndex);
     };
+
+    if (selectElement->buttonElement()) {
+        applyText(selectElement->buttonLabelText({ }));
+        return;
+    }
 
     if (selectElement->multiple()) {
         size_t count = selectedOptionCount(selectElement);
@@ -125,6 +150,13 @@ std::optional<Style::UnadjustedStyle> SelectFallbackButtonElement::resolveCustom
     auto elementStyle = resolveStyle(resolutionContext);
     CheckedRef style = *elementStyle.style;
 
+    Ref selectElement = this->selectElement();
+
+    if (hostStyle->usedAppearance() == StyleAppearance::Base && selectElement->buttonElement()) {
+        style->setDisplay(Style::DisplayType::None);
+        return elementStyle;
+    }
+
     auto hostTextAlign = hostStyle->textAlign();
     if (hostTextAlign == Style::TextAlign::Start)
         style->setTextAlign(hostStyle->writingMode().isBidiLTR() ? Style::TextAlign::Left : Style::TextAlign::Right);
@@ -134,16 +166,14 @@ std::optional<Style::UnadjustedStyle> SelectFallbackButtonElement::resolveCustom
         style->setTextAlign(hostTextAlign);
 
     // Apply direction and unicodeBidi from the selected option for proper bidirectional text rendering.
-    Ref selectElement = this->selectElement();
     for (auto& item : selectElement->listItems()) {
         RefPtr option = dynamicDowncast<HTMLOptionElement>(item.get());
         if (!option || !option->selected())
             continue;
 
-        if (CheckedPtr optionStyle = option->computedStyleForEditability()) {
-            style->setDirection(optionStyle->writingMode().bidiDirection());
-            style->setUnicodeBidi(optionStyle->unicodeBidi());
-        }
+        auto optionStyle = resolveOptionStyle(*option, selectElement, *hostStyle);
+        style->setDirection(optionStyle->writingMode().bidiDirection());
+        style->setUnicodeBidi(optionStyle->unicodeBidi());
         break;
     }
 

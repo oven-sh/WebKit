@@ -99,6 +99,7 @@ public:
 
     // Update graphics layer position and bounds.
     void updateGeometry(const RenderLayer* compositingAncestor);
+    void updateAnimationExtent();
 
     // Update state the requires that descendant layers have been updated.
     void updateAfterDescendants();
@@ -269,6 +270,7 @@ public:
 
     float pageScaleFactor() const override;
     float zoomedOutPageScaleFactor() const override;
+    bool delegatesScaling() const override;
 
     FloatSize enclosingFrameViewVisibleSize() const override;
 
@@ -347,6 +349,8 @@ private:
 
     void createPrimaryGraphicsLayer();
     void destroyGraphicsLayers();
+
+    void updateAppliesPageScale();
     
     void willDestroyLayer(const GraphicsLayer*);
 
@@ -488,6 +492,7 @@ private:
     static AnimatedProperty NODELETE cssToGraphicsLayerProperty(CSSPropertyID);
 
     bool canIssueSetNeedsDisplay() const { return !paintsIntoWindow() && !paintsIntoCompositedAncestor(); }
+    float pixelSnappingScaleFactor() const;
     LayoutRect computeParentGraphicsLayerRect(const RenderLayer* compositedAncestor) const;
     LayoutRect computePrimaryGraphicsLayerRect(const RenderLayer* compositedAncestor, const LayoutRect& parentGraphicsLayerRect) const;
 

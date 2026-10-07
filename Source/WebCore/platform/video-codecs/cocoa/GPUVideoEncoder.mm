@@ -139,7 +139,7 @@ RefPtr<GPUVideoEncoder> GPUVideoEncoder::create(CreationInfo&& creationInfo, con
 
     std::map<std::string, std::string> rtcParameters;
     for (auto& parameter : parameters)
-        rtcParameters.emplace(parameter.first.utf8().legacyCStringPointer(), parameter.second.utf8().legacyCStringPointer());
+        rtcParameters.emplace(parameter.first.utf8().toStdString(), parameter.second.utf8().toStdString());
 
     webrtc::LocalEncoderScalabilityMode rtcScalabilityMode;
     switch (creationInfo.scalabilityMode) {
@@ -157,7 +157,14 @@ RefPtr<GPUVideoEncoder> GPUVideoEncoder::create(CreationInfo&& creationInfo, con
         callback(unsafeMakeSpan(buffer, size), toGPUVideoEncoderFrameInfo(info));
     });
     auto newConfigurationBlock = makeBlockPtr([descriptionCallback = WTF::move(descriptionCallback)](const uint8_t* buffer, size_t size) {
-        descriptionCallback(unsafeMakeSpan(buffer, size));
+        // This backend has no way to report the color space it actually encoded with, so we report a fixed default.
+        PlatformVideoColorSpace colorSpace {
+            .primaries = PlatformVideoColorPrimaries::Bt709,
+            .transfer = PlatformVideoTransferCharacteristics::Iec6196621,
+            .matrix = PlatformVideoMatrixCoefficients::Bt709,
+            .fullRange = true
+        };
+        descriptionCallback(unsafeMakeSpan(buffer, size), colorSpace);
     });
     auto errorBlock = makeBlockPtr([errorCallback = WTF::move(errorCallback)](bool isFrameDropped) {
         errorCallback(isFrameDropped);

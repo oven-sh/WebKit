@@ -111,6 +111,10 @@ class RemoteLayerTreeDrawingAreaProxy : public DrawingAreaProxy, public RefCount
     WTF_MAKE_NONCOPYABLE(RemoteLayerTreeDrawingAreaProxy);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(RemoteLayerTreeDrawingAreaProxy);
 public:
+    // For contents committed by a process other than the layer's owner, which the caller must have
+    // checked may set them.
+    void setLayerContentsFromAnotherProcess(WebCore::PlatformLayerIdentifier, RemoteLayerBackingStoreProperties&&);
+
     virtual ~RemoteLayerTreeDrawingAreaProxy();
 
     void ref() const final { RefCounted::ref(); }
@@ -129,6 +133,14 @@ public:
 
     virtual void didRefreshDisplay();
     virtual bool displayLinkWantsHighFrameRateForTesting() const { return false; };
+
+    // True while this layer's transform is the page scale owned by the UI process (unified macOS zoom).
+    // RemoteLayerTreePropertyApplier has to leave the committed transform alone in that case.
+    virtual bool ownsTransformOfLayer(WebCore::PlatformLayerIdentifier) const { return false; }
+
+    // Likewise for the position, which the scrolling thread writes scaled by the page scale while the web
+    // process commits it unscaled. See RenderLayerCompositor::updateScrollLayerPosition().
+    virtual bool ownsPositionOfLayer(WebCore::PlatformLayerIdentifier) const { return false; }
 
     bool hasDebugIndicator() const { return !!m_debugIndicatorLayerTreeHost; }
 
@@ -166,7 +178,7 @@ protected:
     ProcessState& processStateForConnection(IPC::Connection&);
     const ProcessState& NODELETE processStateForIdentifier(WebCore::ProcessIdentifier) const;
     IPC::Connection* connectionForIdentifier(WebCore::ProcessIdentifier);
-    void forEachProcessState(NOESCAPE Function<void(ProcessState&, WebProcessProxy&)>&&);
+    void forEachProcessState(NOESCAPE const Function<void(ProcessState&, WebProcessProxy&)>&);
 
     std::unique_ptr<RemoteLayerTreeHost> m_remoteLayerTreeHost;
     bool m_needsDisplayRefreshCallbacksForDrawing { false };
@@ -226,7 +238,7 @@ private:
     void commitLayerTreeTransaction(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>&, const PageData&, const TransactionID&);
     virtual void didCommitLayerTree(IPC::Connection&, const RemoteLayerTreeTransaction&, const RemoteScrollingCoordinatorTransaction&, const std::optional<MainFrameData>&, const TransactionID&) { }
 
-    void asyncSetLayerContents(WebCore::PlatformLayerIdentifier, RemoteLayerBackingStoreProperties&&);
+    void asyncSetLayerContents(IPC::Connection&, WebCore::PlatformLayerIdentifier, RemoteLayerBackingStoreProperties&&);
 
     void sendUpdateGeometry();
 
@@ -243,11 +255,11 @@ private:
     WebCore::IntSize m_lastSentMinimumSizeForAutoLayout;
     WebCore::IntSize m_lastSentSizeToContentAutoSizeMaximumSize;
 
-    std::unique_ptr<RemoteLayerTreeHost> m_debugIndicatorLayerTreeHost;
-    RetainPtr<CALayer> m_tileMapHostLayer;
-    RetainPtr<CALayer> m_exposedRectIndicatorLayer;
+    const std::unique_ptr<RemoteLayerTreeHost> m_debugIndicatorLayerTreeHost;
+    const RetainPtr<CALayer> m_tileMapHostLayer;
+    const RetainPtr<CALayer> m_exposedRectIndicatorLayer;
 
-    RetainPtr<CALayer> m_slowFrameIndicatorLayer;
+    const RetainPtr<CALayer> m_slowFrameIndicatorLayer;
     Deque<Seconds> m_frameDurations;
 
     Markable<IPC::AsyncReplyID> m_replyForUnhidingContent;

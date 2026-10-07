@@ -456,7 +456,6 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
     LOG_IF_DIFFERENT(usesViewportUnits);
     LOG_IF_DIFFERENT(isContainerDependent);
     LOG_IF_DIFFERENT(useTreeCountingFunctions);
-    LOG_IF_DIFFERENT(usesCurrentBackgroundColorKeyword);
 
     LOG_IF_DIFFERENT_WITH_FROM_RAW(TextDecorationLine, textDecorationLine);
 
@@ -469,6 +468,7 @@ void ComputedStyleBase::NonInheritedFlags::dumpDifferences(TextStream& ts, const
 
     LOG_IF_DIFFERENT_WITH_CAST(PseudoId, pseudoElementType);
     LOG_IF_DIFFERENT_WITH_CAST(unsigned, pseudoBits);
+    LOG_IF_DIFFERENT(pseudoElementBoxGeneration);
 }
 
 void ComputedStyleBase::InheritedFlags::dumpDifferences(TextStream& ts, const InheritedFlags& other) const

@@ -53,14 +53,14 @@
 #import <wtf/RetainPtr.h>
 
 #if !TARGET_OS_IPHONE
-extern NSString *_WebCanGoBackKey;
-extern NSString *_WebCanGoForwardKey;
-extern NSString *_WebEstimatedProgressKey;
-extern NSString *_WebIsLoadingKey;
-extern NSString *_WebMainFrameIconKey;
-extern NSString *_WebMainFrameTitleKey;
-extern NSString *_WebMainFrameURLKey;
-extern NSString *_WebMainFrameDocumentKey;
+extern NSString * const _WebCanGoBackKey;
+extern NSString * const _WebCanGoForwardKey;
+extern NSString * const _WebEstimatedProgressKey;
+extern NSString * const _WebIsLoadingKey;
+extern NSString * const _WebMainFrameIconKey;
+extern NSString * const _WebMainFrameTitleKey;
+extern NSString * const _WebMainFrameURLKey;
+extern NSString * const _WebMainFrameDocumentKey;
 #endif
 
 namespace WebCore {
@@ -373,6 +373,9 @@ WebLayoutMilestones kitLayoutMilestones(OptionSet<WebCore::LayoutMilestone>);
 
 - (void)showFormValidationMessage:(NSString *)message withAnchorRect:(NSRect)anchorRect;
 - (void)hideFormValidationMessage;
+
+- (void)_registerWithGeolocationProvider;
+- (void)_unregisterFromGeolocationProvider;
 
 #if !PLATFORM(IOS_FAMILY)
 - (void)_setMainFrameIcon:(NSImage *)icon;

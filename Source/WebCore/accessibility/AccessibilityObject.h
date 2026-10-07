@@ -64,6 +64,7 @@ WTF_ALLOW_COMPACT_POINTERS_TO_INCOMPLETE_TYPE(WebCore::AXObjectRareData);
 
 namespace WebCore {
 
+class ChromeClient;
 class HTMLTextFormControlElement;
 class IntPoint;
 class IntSize;
@@ -243,6 +244,7 @@ public:
     bool isChecked() const override { return false; }
     bool isEnabled() const override { return false; }
     bool isSelected() const override;
+    String selectedOptionCheckmark() const final;
     bool isTabItemSelected() const;
     bool isFocused() const override { return false; }
     bool isIndeterminate() const override { return false; }
@@ -326,7 +328,9 @@ public:
     bool supportsHasPopup() const final;
     bool pressedIsPresent() const final;
     bool ariaIsMultiline() const;
-    String explicitInvalidStatus() const final;
+    String explicitInvalidStatus() const;
+    String invalidStatusIncludingInferred() const final;
+    RefPtr<AXCoreObject> formOwnerObject() const;
     bool supportsPressed() const;
     bool supportsExpanded() const final;
     bool supportsChecked() const final;
@@ -423,6 +427,9 @@ public:
     bool hasTextContent() const;
 #if PLATFORM(COCOA)
     bool hasAttributedText() const;
+    // Defined in AccessibilityObjectCocoa.mm: NSResponder is WAKResponder on iOS, which can
+    // only be completed in an Objective-C++ translation unit.
+    static void makeFirstResponderForPlatformWidget(ChromeClient&, Widget&);
 #endif
     String textContentPrefixFromListMarker() const override;
 

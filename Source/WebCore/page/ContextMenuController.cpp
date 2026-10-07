@@ -1079,12 +1079,6 @@ void ContextMenuController::populate()
     if (!frame)
         return;
 
-#if ENABLE(SERVICE_CONTROLS)
-    // The default image control menu gets populated solely by the platform.
-    if (m_context.controlledImage())
-        return;
-#endif
-
     auto addSelectedTextActionsIfNeeded = [&] (const String& selectedText) {
         if (selectedText.isEmpty())
             return;
@@ -1414,7 +1408,7 @@ void ContextMenuController::populate()
             appendItem(writingToolsItem, m_contextMenu.get());
 #if ENABLE(TOP_LEVEL_WRITING_TOOLS_CONTEXT_MENU_ITEMS)
             bool editorHasText = [&] {
-                if (auto range = frame->editor().contextRangeForCandidateRequest())
+                if (auto range = protect(frame->editor())->contextRangeForCandidateRequest())
                     return !plainText(*range).isEmpty();
 
                 return false;

@@ -877,11 +877,17 @@ void AXIsolatedTree::updateNodeProperties(AccessibilityObject& axObject, const A
         case AXProperty::HasCursorPointer:
             properties.append({ AXProperty::HasCursorPointer, axObject.hasCursorPointer() });
             break;
+        case AXProperty::InvalidStatus:
+            properties.append({ AXProperty::InvalidStatus, axObject.invalidStatusIncludingInferred().isolatedCopy() });
+            break;
         case AXProperty::RadioButtonGroupMembers:
             properties.append({ AXProperty::RadioButtonGroupMembers, axIDs(axObject.radioButtonGroup()) });
             break;
         case AXProperty::ScreenRelativePosition:
             properties.append({ AXProperty::ScreenRelativePosition, axObject.screenRelativePosition() });
+            break;
+        case AXProperty::SelectedOptionCheckmark:
+            properties.append({ AXProperty::SelectedOptionCheckmark, axObject.selectedOptionCheckmark().isolatedCopy() });
             break;
         case AXProperty::SelectedTextRange:
             properties.append({ AXProperty::SelectedTextRange, axObject.selectedTextRange() });
@@ -2035,7 +2041,7 @@ void AXIsolatedTree::sortedNonRootWebAreasDidChange(Vector<AXID> webAreaIDs)
     markDirtyAndGetWorkingChanges().sortedNonRootWebAreaIDs = WTF::move(webAreaIDs);
 }
 
-AXTreePtr findAXTree(Function<bool(AXTreePtr)>&& match)
+AXTreePtr findAXTree(NOESCAPE const Function<bool(AXTreePtr)>& match)
 {
     if (isMainThread()) {
         for (WeakPtr tree : AXTreeStore<AXObjectCache>::liveTreeMap().values()) {
@@ -2490,7 +2496,7 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         setProperty(AXProperty::MinValueForRange, object.minValueForRange());
         setProperty(AXProperty::SupportsARIAOwns, object.supportsARIAOwns());
         setProperty(AXProperty::PopupValue, static_cast<int>(object.popupValue()));
-        setProperty(AXProperty::ExplicitInvalidStatus, object.explicitInvalidStatus().isolatedCopy());
+        setProperty(AXProperty::InvalidStatus, object.invalidStatusIncludingInferred().isolatedCopy());
         setProperty(AXProperty::SupportsExpanded, object.supportsExpanded());
         setProperty(AXProperty::SortDirection, static_cast<int>(object.sortDirection()));
         // FIXME: We never update AXProperty::SupportsDropping.
@@ -2714,6 +2720,8 @@ IsolatedObjectData createIsolatedObjectData(const Ref<AccessibilityObject>& axOb
         if (isScrollArea) {
             setObjectProperty(AXProperty::VerticalScrollBar, object.scrollBar(AccessibilityOrientation::Vertical));
             setObjectProperty(AXProperty::HorizontalScrollBar, object.scrollBar(AccessibilityOrientation::Horizontal));
+            setProperty(AXProperty::HasRemoteFrameChild, object.hasRemoteFrameChild());
+        } else if (object.role() == AccessibilityRole::FrameHost) {
             setProperty(AXProperty::HasRemoteFrameChild, object.hasRemoteFrameChild());
         } else if (isWebArea && !tree->isEmptyContentTree()) {
             // We expose DocumentLinks only for the web area objects when the tree is not an empty content tree. This property is expensive and makes no sense in an empty content tree.

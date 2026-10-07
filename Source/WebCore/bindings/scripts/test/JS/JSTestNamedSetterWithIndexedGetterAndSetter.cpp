@@ -378,7 +378,7 @@ bool JSTestNamedSetterWithIndexedGetterAndSetter::deleteProperty(JSCell* cell, J
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::deleteProperty(cell, lexicalGlobalObject, propertyName, slot);
     }
@@ -400,7 +400,7 @@ bool JSTestNamedSetterWithIndexedGetterAndSetter::deletePropertyByIndex(JSCell* 
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
 
     // Temporary quirk for ungap/@custom-elements polyfill (rdar://problem/111008826), consider removing in 2025.
-    if (auto* document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
+    if (RefPtr document = dynamicDowncast<Document>(dynamicDowncast<JSDOMGlobalObject>(lexicalGlobalObject)->scriptExecutionContext())) {
         if (document->quirks().needsConfigurableIndexedPropertiesQuirk()) [[unlikely]]
             return JSObject::deletePropertyByIndex(cell, lexicalGlobalObject, index);
     }
@@ -440,7 +440,7 @@ static inline JSC::EncodedJSValue jsTestNamedSetterWithIndexedGetterAndSetterPro
 
 JSC_DEFINE_HOST_FUNCTION(jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_namedSetter, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSTestNamedSetterWithIndexedGetterAndSetter>::call<jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_namedSetterBody>(*lexicalGlobalObject, *callFrame, "namedSetter");
+    return IDLOperation<JSTestNamedSetterWithIndexedGetterAndSetter>::call<jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_namedSetterBody>(*lexicalGlobalObject, *callFrame, "namedSetter"_s);
 }
 
 static inline JSC::EncodedJSValue jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_indexedSetter1Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSTestNamedSetterWithIndexedGetterAndSetter>::ClassParameter castedThis)
@@ -493,7 +493,7 @@ static inline JSC::EncodedJSValue jsTestNamedSetterWithIndexedGetterAndSetterPro
 
 JSC_DEFINE_HOST_FUNCTION(jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_indexedSetter, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
 {
-    return IDLOperation<JSTestNamedSetterWithIndexedGetterAndSetter>::call<jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_indexedSetterOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "indexedSetter");
+    return IDLOperation<JSTestNamedSetterWithIndexedGetterAndSetter>::call<jsTestNamedSetterWithIndexedGetterAndSetterPrototypeFunction_indexedSetterOverloadDispatcher>(*lexicalGlobalObject, *callFrame, "indexedSetter"_s);
 }
 
 JSC::GCClient::IsoSubspace* JSTestNamedSetterWithIndexedGetterAndSetter::subspaceForImpl(JSC::VM& vm)

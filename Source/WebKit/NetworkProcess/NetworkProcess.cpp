@@ -1781,27 +1781,6 @@ void NetworkProcess::setOptInCookiePartitioningEnabled(PAL::SessionID sessionID,
 }
 #endif
 
-void NetworkProcess::setLocalNetworkAccessPermissionForTesting(PAL::SessionID sessionID, WebCore::ClientOrigin&& origin, WebCore::IPAddressSpace addressSpace, WebCore::PermissionState state, CompletionHandler<void()>&& completionHandler)
-{
-    if (CheckedPtr session = networkSession(sessionID))
-        session->setLocalNetworkAccessPermissionForTesting(WTF::move(origin), addressSpace, state);
-    completionHandler();
-}
-
-void NetworkProcess::removeLocalNetworkAccessPermissions(PAL::SessionID sessionID, WebCore::SecurityOriginData&& topOrigin, CompletionHandler<void()>&& completionHandler)
-{
-    if (CheckedPtr session = networkSession(sessionID))
-        session->removeLocalNetworkAccessPermissions(topOrigin);
-    completionHandler();
-}
-
-void NetworkProcess::clearLocalNetworkAccessPermissionsForTesting(PAL::SessionID sessionID, CompletionHandler<void()>&& completionHandler)
-{
-    if (CheckedPtr session = networkSession(sessionID))
-        session->clearLocalNetworkAccessPermissionsForTesting();
-    completionHandler();
-}
-
 void NetworkProcess::preconnectTo(PAL::SessionID sessionID, WebPageProxyIdentifier webPageProxyID, WebCore::PageIdentifier webPageID, WebCore::ResourceRequest&& request, WebCore::StoredCredentialsPolicy storedCredentialsPolicy, std::optional<NavigatingToAppBoundDomain> isNavigatingToAppBoundDomain, uint64_t requiredCookiesVersion)
 {
     auto url = request.url();
@@ -2114,7 +2093,17 @@ static void deleteCacheRecordsForOrigin(NetworkCache::Cache& cache, const Client
     // A first-party origin has no partition of its own, so its traversal sees every origin's
     // records; only whole-disk-cache removal is allowed to take them all.
     bool shouldClearAllEntriesInPartition = origin.clientOrigin == origin.topOrigin && recordsToDelete == CacheRecordsToDelete::AllTypes;
-    auto recordHandler = [cache = Ref { cache }, clearTasksHandler = WTF::move(clearTasksHandler), shouldClearAllEntriesInPartition, origin = origin.clientOrigin, cachePartition, cacheKeysToDelete = WTF::move(cacheKeysToDelete)](auto* traversalRecord) mutable {
+    // A dictionary is indexed when it is registered, before its record has been written, so the
+    // traversal below cannot see one that was registered moments ago. Take those now, and remove
+    // only what was registered by this point, since the same key is reused when a dictionary is
+    // registered again.
+    auto deletionTime = WallTime::now();
+    for (auto& key : cache.compressionDictionaryKeys(cachePartition)) {
+        if (shouldClearAllEntriesInPartition || SecurityOriginData::fromURLWithoutStrictOpaqueness(URL { key.identifier() }) == origin.clientOrigin)
+            cacheKeysToDelete.append(key);
+    }
+
+    auto recordHandler = [cache = Ref { cache }, clearTasksHandler = WTF::move(clearTasksHandler), shouldClearAllEntriesInPartition, origin = origin.clientOrigin, cachePartition, deletionTime, cacheKeysToDelete = WTF::move(cacheKeysToDelete)](auto* traversalRecord) mutable {
         if (traversalRecord) {
             ASSERT_UNUSED(cachePartition, equalIgnoringNullity(traversalRecord->record.key.partition(), cachePartition));
             if (shouldClearAllEntriesInPartition) {
@@ -2128,7 +2117,7 @@ static void deleteCacheRecordsForOrigin(NetworkCache::Cache& cache, const Client
             return;
         }
 
-        cache->remove(cacheKeysToDelete, [clearTasksHandler] { });
+        cache->remove(cacheKeysToDelete, [clearTasksHandler] { }, deletionTime);
     };
 
     if (recordsToDelete == CacheRecordsToDelete::CompressionDictionariesOnly)
@@ -3507,7 +3496,7 @@ RTCDataChannelRemoteManagerProxy& NetworkProcess::rtcDataChannelProxy()
 {
     ASSERT(isMainRunLoop());
     if (!m_rtcDataChannelProxy)
-        m_rtcDataChannelProxy = RTCDataChannelRemoteManagerProxy::create(*this);
+        lazyInitialize(m_rtcDataChannelProxy, RTCDataChannelRemoteManagerProxy::create(*this));
     return *m_rtcDataChannelProxy;
 }
 #endif
@@ -3681,6 +3670,11 @@ void NetworkProcess::resetResourceMonitorThrottlerForTesting(PAL::SessionID sess
         session->clearResourceMonitorThrottlerData(WTF::move(completionHandler));
     else
         completionHandler();
+}
+
+void NetworkProcess::setTrackingPreventionContentRuleList(std::optional<WebCompiledContentRuleListData>&& ruleListData)
+{
+    protect(networkContentRuleListManager())->setTrackingPreventionContentRuleList(WTF::move(ruleListData));
 }
 #endif
 

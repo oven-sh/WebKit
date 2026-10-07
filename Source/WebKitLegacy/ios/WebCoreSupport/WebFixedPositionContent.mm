@@ -56,8 +56,8 @@ struct ViewportConstrainedLayerData {
     ViewportConstrainedLayerData()
         : m_enclosingAcceleratedScrollLayer(nil)
     { }
-    CALayer* m_enclosingAcceleratedScrollLayer; // May be nil.
-    std::unique_ptr<ViewportConstraints> m_viewportConstraints;
+    __weak CALayer *m_enclosingAcceleratedScrollLayer; // May be nil.
+    const std::unique_ptr<ViewportConstraints> m_viewportConstraints;
 };
 
 typedef HashMap<RetainPtr<CALayer>, std::unique_ptr<ViewportConstrainedLayerData>> LayerInfoMap;
@@ -68,7 +68,7 @@ public:
     WebFixedPositionContentData(WebView *);
     ~WebFixedPositionContentData();
     
-    WebView *m_webView;
+    __weak WebView *m_webView;
     LayerInfoMap m_viewportConstrainedLayers;
 };
 
@@ -104,7 +104,7 @@ WebFixedPositionContentData::~WebFixedPositionContentData() = default;
 
     LayerInfoMap::const_iterator end = _private->m_viewportConstrainedLayers.end();
     for (LayerInfoMap::const_iterator it = _private->m_viewportConstrainedLayers.begin(); it != end; ++it) {
-        CALayer *layer = it->key.get();
+        RetainPtr layer = it->key;
         ViewportConstrainedLayerData* constraintData = it->value.get();
         const ViewportConstraints& constraints = *(constraintData->m_viewportConstraints.get());
 
@@ -143,11 +143,11 @@ WebFixedPositionContentData::~WebFixedPositionContentData() = default;
 
     LayerInfoMap::const_iterator end = _private->m_viewportConstrainedLayers.end();
     for (LayerInfoMap::const_iterator it = _private->m_viewportConstrainedLayers.begin(); it != end; ++it) {
-        CALayer *layer = it->key.get();
+        RetainPtr layer = it->key;
         ViewportConstrainedLayerData* constraintData = it->value.get();
         
         if (constraintData->m_enclosingAcceleratedScrollLayer == scrollLayer) {
-            const StickyPositionViewportConstraints& stickyConstraints = static_cast<const StickyPositionViewportConstraints&>(*(constraintData->m_viewportConstraints.get()));
+            const StickyPositionViewportConstraints& stickyConstraints = downcast<StickyPositionViewportConstraints>(*(constraintData->m_viewportConstraints.get()));
             FloatRect constrainingRectAtLastLayout = stickyConstraints.constrainingRectAtLastLayout();
             FloatRect scrolledConstrainingRect = FloatRect(scrollPosition.x, scrollPosition.y, constrainingRectAtLastLayout.width(), constrainingRectAtLastLayout.height());
             FloatPoint layerPosition = stickyConstraints.anchorLayerPositionForConstrainingRect(scrolledConstrainingRect);
@@ -165,7 +165,7 @@ WebFixedPositionContentData::~WebFixedPositionContentData() = default;
 - (void)didFinishScrollingOrZooming
 {
     WebThreadRun(^{
-        if (auto* frame = [_private->m_webView _mainCoreFrame])
+        if (RefPtr frame = [protect(_private->m_webView) _mainCoreFrame])
             frame->viewportOffsetChanged(LocalFrame::CompletedScrollOffset);
     });
 }
@@ -177,11 +177,11 @@ WebFixedPositionContentData::~WebFixedPositionContentData() = default;
     _private->m_viewportConstrainedLayers.clear();
 
     for (auto& layerAndConstraints : layerMap) {
-        CALayer* layer = layerAndConstraints.key;
+        RetainPtr layer = layerAndConstraints.key;
         auto layerData = makeUnique<ViewportConstrainedLayerData>();
 
         layerData->m_enclosingAcceleratedScrollLayer = stickyContainers.get(layer);
-        layerData->m_viewportConstraints = WTF::move(layerAndConstraints.value);
+        lazyInitialize(layerData->m_viewportConstraints, WTF::move(layerAndConstraints.value));
 
         _private->m_viewportConstrainedLayers.set(layer, WTF::move(layerData));
     }

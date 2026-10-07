@@ -33,6 +33,7 @@
 
 #include "AOTCompiler.h"
 #include "AOTTypeTable.h"
+#include "AOTTypedProgram.h"
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
@@ -5584,7 +5585,9 @@ protected:
     // 11: source positions are offsets only (321541@main): no lines or columns in ExpressionInfo, a function executable's
     // scalars, a global code block, a class source or a JSTextPosition.
     // 12: a global code block and the entry of a builtin function have the line starts of their source.
-    static constexpr uint32_t cachedTypesFormatRevision = 15;
+    // 13: upstream's op_iterator_close_check (with metadata) replaces the fork's, and op_iterator_open / op_iterator_next
+    // keep a String's iteration state in their registers too (321765@main, 322172@main; opcode numbering).
+    static constexpr uint32_t cachedTypesFormatRevision = 16;
     static uint32_t currentCacheVersion() { return computeJSCBytecodeCacheVersion() ^ (cachedTypesFormatRevision * 0x9E3779B9u); }
 
     GenericCacheEntry(Encoder& encoder, CachedCodeBlockTag tag)
@@ -5971,6 +5974,8 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(AOT)
+    std::unique_ptr<AOT::Typed::Program> typedProgram;
+    uint32_t typedModule { 0 };
     Vector<UnlinkedFunctionExecutable*> engineBuiltins;
     void addEngineBuiltins()
     {
@@ -7186,7 +7191,11 @@ struct BytecodeLinkEncoder::Impl {
                     auto* executable = jobs[index].executable;
                     code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
                 }
-                if (AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode)) {
+                bool isTypedEntry = typedProgram && jobs[index].module == typedModule && !jobs[index].executable;
+                bool isCompiled = isTypedEntry ? AOT::Typed::compile(vm, *typedProgram, typedProgram->entry, code) : AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode);
+                if (isTypedEntry && isCompiled)
+                    code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
+                if (isCompiled) {
                     {
                         auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
                         bool isTopLevel = !(jobs[index].rank & 2);
@@ -7385,7 +7394,7 @@ struct BytecodeLinkEncoder::Impl {
             std::ranges::sort(allRemarks, [](auto& a, auto& b) {
                 return std::tuple { a.key.module, a.key.start, a.key.kind } < std::tuple { b.key.module, b.key.start, b.key.kind };
             });
-            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotRemarksPath()), "wb")) {
+            if (auto file = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(byteCast<char>(Options::aotRemarksPath())), "wb"_s)) {
                 for (auto& function : allRemarks) {
                     String key = makeString(function.module, ':', function.key.start, ':', function.key.kind);
                     file->print(function.name, "\tcompiled\t", key, "\n");
@@ -7395,7 +7404,7 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
         if (Options::aotTypeCoveragePath()) [[unlikely]] {
-            if (auto file = FilePrintStream::open(byteCast<char>(Options::aotTypeCoveragePath()), "wb")) {
+            if (auto file = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(byteCast<char>(Options::aotTypeCoveragePath())), "wb"_s)) {
                 Vector<Vector<unsigned>> lineStarts(modules.size());
                 UncheckedKeyHashMap<uint32_t, unsigned> moduleIndices;
                 for (unsigned module = 0; module < modules.size(); ++module)
@@ -7477,6 +7486,22 @@ struct BytecodeLinkEncoder::Impl {
                 }
                 file->print("U\t", unreachedFunctions.load(), "\t", unreachedBytecodeSize.load(), "\n");
             }
+        }
+        if (typedProgram) {
+            for (uint32_t function = 0; function < typedProgram->functions.size(); ++function) {
+                if (function == typedProgram->entry)
+                    continue;
+                AOT::CompiledCode code;
+                String name = String::fromUTF8(typedProgram->strings[typedProgram->functions[function].name]);
+                if (Options::aotFunctionToDump()) [[unlikely]]
+                    code.mayBeDumped = name == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                if (!AOT::Typed::compile(vm, *typedProgram, function, code)) {
+                    dataLogLn("AOT: `", name, "` was not compiled: ", code.whyDeclined);
+                    return { };
+                }
+                builder.add(AOT::Typed::keyOf(function), isNotHot | 1ull << 61 | static_cast<uint64_t>(function) << 2, WTF::move(code), WTF::move(name));
+            }
+            builder.setTypedData(AOT::Typed::encodeData(*typedProgram));
         }
         AOT::forgetDeclaredNames();
         AOT::setProgramIdentifierIndices(nullptr);
@@ -7571,6 +7596,19 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
     m_impl->prelinkedGraph = blob;
     m_impl->prelinkedGraphStringSlots = stringSlots;
     m_impl->graphModuleIndices = WTF::move(graphModuleIndices);
+}
+
+bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, uint32_t module)
+{
+#if ENABLE(AOT)
+    m_impl->typedProgram = AOT::Typed::Program::tryDecode(bytes);
+    m_impl->typedModule = module;
+    return !!m_impl->typedProgram;
+#else
+    UNUSED_PARAM(bytes);
+    UNUSED_PARAM(module);
+    return false;
+#endif
 }
 
 void installImageCompiler()

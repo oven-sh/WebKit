@@ -60,6 +60,7 @@
 #include <wtf/NeverDestroyed.h>
 #include <wtf/RefCounted.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
@@ -105,7 +106,7 @@ static std::array<GParamSpec*, N_PROPERTIES> sObjProperties;
 struct _WebKitWebPagePrivate {
     WebPage* webPage;
 
-    CString uri;
+    UTF8CString uri;
 
     GRefPtr<WebKitWebEditor> webEditor;
     HashMap<WebKitScriptWorld*, GRefPtr<WebKitWebFormManager>> formManagerMap;
@@ -180,7 +181,7 @@ static void webFrameDestroyed(WebFrame* webFrame)
     webFrameMap().remove(webFrame);
 }
 
-static void webkitWebPageSetURI(WebKitWebPage* webPage, const CString& uri)
+static void webkitWebPageSetURI(WebKitWebPage* webPage, const UTF8CString& uri)
 {
     if (webPage->priv->uri == uri)
         return;
@@ -197,7 +198,7 @@ public:
     }
 
 private:
-    static CString getDocumentLoaderURL(DocumentLoader* documentLoader)
+    static UTF8CString getDocumentLoaderURL(DocumentLoader* documentLoader)
     {
         ASSERT(documentLoader);
         if (!documentLoader->unreachableURL().isEmpty())
@@ -469,8 +470,8 @@ private:
         GRefPtr<GPtrArray> textFieldNames = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         GRefPtr<GPtrArray> textFieldValues = adoptGRef(g_ptr_array_new_full(values.size(), g_free));
         for (auto& pair : values) {
-            g_ptr_array_add(textFieldNames.get(), g_strdup(pair.first.utf8().legacyCStringPointer()));
-            g_ptr_array_add(textFieldValues.get(), g_strdup(pair.second.utf8().legacyCStringPointer()));
+            g_ptr_array_add(textFieldNames.get(), gStrdup(pair.first.utf8()));
+            g_ptr_array_add(textFieldValues.get(), gStrdup(pair.second.utf8()));
         }
 
         ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -874,7 +875,7 @@ const gchar* webkit_web_page_get_uri(WebKitWebPage* webPage)
 {
     g_return_val_if_fail(WEBKIT_IS_WEB_PAGE(webPage), 0);
 
-    return webPage->priv->uri.data();
+    return webPage->priv->uri.legacyCStringPointer();
 }
 
 /**
@@ -954,7 +955,7 @@ void webkit_web_page_send_message_to_view(WebKitWebPage* webPage, WebKitUserMess
             g_task_return_pointer(task.get(), g_object_ref_sink(webkitUserMessageCreate(WTF::move(replyMessage))), static_cast<GDestroyNotify>(g_object_unref));
             break;
         case UserMessage::Type::Error:
-            g_task_return_new_error(task.get(), WEBKIT_USER_MESSAGE_ERROR, replyMessage.errorCode, _("Message %s was not handled"), replyMessage.name.legacyCStringPointer());
+            SAFE_G_TASK_RETURN_NEW_ERROR(task.get(), WEBKIT_USER_MESSAGE_ERROR, replyMessage.errorCode, _("Message %s was not handled"), replyMessage.name);
             break;
         }
     };

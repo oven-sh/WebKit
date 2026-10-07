@@ -90,10 +90,12 @@
 #include <wtf/MathExtras.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/NotFound.h>
+#include <wtf/glib/GLibExtras.h>
 #include <wtf/glib/GRefPtr.h>
 #include <wtf/glib/RunLoopSourcePriority.h>
 #include <wtf/glib/WTFGType.h>
 #include <wtf/text/CString.h>
+#include <wtf/text/MakeString.h>
 
 #if ENABLE(FULLSCREEN_API)
 #include "WebFullScreenManagerProxy.h"
@@ -2006,7 +2008,7 @@ GVariant* webkitWebViewBaseContentsOfUserInterfaceItem(WebKitWebViewBase* webVie
 
     GVariantBuilder subBuilder;
     g_variant_builder_init(&subBuilder, G_VARIANT_TYPE_VARDICT);
-    g_variant_builder_add(&subBuilder, "{sv}", "message", g_variant_new_string(message.utf8().legacyCStringPointer()));
+    g_variant_builder_add(&subBuilder, "{sv}", "message", gVariantNewString(message.utf8()));
     g_variant_builder_add(&subBuilder, "{sv}", "fontSize", g_variant_new_double(fontSize));
 
     GVariantBuilder builder;
@@ -2595,11 +2597,11 @@ void webkitWebViewBaseCreateWebPage(WebKitWebViewBase* webkitWebViewBase, Ref<AP
     }, webkitWebViewBase);
 }
 
-void webkitWebViewBaseSetTooltipText(WebKitWebViewBase* webViewBase, const char* tooltip)
+void webkitWebViewBaseSetTooltipText(WebKitWebViewBase* webViewBase, const String& tooltip)
 {
     WebKitWebViewBasePrivate* priv = webViewBase->priv;
-    if (tooltip && tooltip[0] != '\0') {
-        priv->tooltipText = UTF8CString { byteCast<char8_t>(tooltip) };
+    if (!tooltip.isEmpty()) {
+        priv->tooltipText = tooltip.utf8();
         gtk_widget_set_has_tooltip(GTK_WIDGET(webViewBase), TRUE);
     } else {
         priv->tooltipText = ""_s;
@@ -3560,11 +3562,9 @@ void webkitWebViewBaseSetPlugID(WebKitWebViewBase* webViewBase, const String& pl
     auto plugBusName = tokens[0].utf8();
     RELEASE_ASSERT(g_dbus_is_name(plugBusName.legacyCStringPointer()));
 
-    auto* busNamePrefix = !g_dbus_is_unique_name(plugBusName.legacyCStringPointer()) ? "" : ":";
+    auto busName = makeString(g_dbus_is_unique_name(plugBusName.legacyCStringPointer()) ? ":"_s : ""_s, tokens[0]).utf8();
 
-    GUniquePtr<char> busName(g_strdup_printf("%s%s", busNamePrefix, plugBusName.legacyCStringPointer()));
-
-    priv->socketAccessible = adoptGRef(gtk_at_spi_socket_new(busName.get(), tokens[1].utf8().legacyCStringPointer(), &error.outPtr()));
+    priv->socketAccessible = adoptGRef(gtk_at_spi_socket_new(busName.legacyCStringPointer(), tokens[1].utf8().legacyCStringPointer(), &error.outPtr()));
 
     if (priv->socketAccessible) {
         auto* widget = gtk_widget_get_first_child(GTK_WIDGET(webViewBase));
@@ -3778,7 +3778,7 @@ void webkitWebViewBaseSetCursor(WebKitWebViewBase* webViewBase, const Cursor& cu
         return;
     }
 
-    RefPtr nativeImage = cursor.image()->currentNativeImage();
+    RefPtr nativeImage = cursor.image()->currentNativeImage(WebCore::ConcreteObjectSize::fixed(cursor.image()->size()));
     if (!nativeImage)
         return;
 

@@ -256,18 +256,14 @@ void GPUVideoEncoderVTBH264::configureAdditionalProperties()
     setProperty(PAL::kVTCompressionPropertyKey_ProfileLevel, m_profileLevel);
 }
 
-bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sampleBuffer, GPUVideoEncoderFrameInfo&& info)
+bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sampleBuffer, GPUVideoEncoderFrameInfo&& info, const PlatformVideoColorSpace& colorSpace)
 {
     if (useAnnexB()) {
         auto annexBBuffer = convertAVCCMSampleBufferToAnnexB(sampleBuffer, info.isKeyFrame);
         if (annexBBuffer.isEmpty())
             return false;
 
-        m_bitstreamParser.parseBitstream(annexBBuffer.span());
-        if (auto qp = m_bitstreamParser.lastSliceQP())
-            info.qp = *qp;
-
-        notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"));
+        notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"), colorSpace);
         notifyEncodedFrame(annexBBuffer.span(), info);
         return true;
     }
@@ -276,7 +272,7 @@ bool GPUVideoEncoderVTBH264::convertAndNotify(RetainPtr<CMSampleBufferRef>&& sam
     if (!buffer)
         return false;
 
-    notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"));
+    notifyDescriptionIfNeeded(sampleBuffer, CFSTR("avcC"), colorSpace);
     notifyEncodedFrame(buffer->span(), info);
     return true;
 }

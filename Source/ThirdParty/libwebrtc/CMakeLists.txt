@@ -3,11 +3,20 @@ set (CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 set(libwebrtc_DERIVED_SOURCES_DIR "${CMAKE_BINARY_DIR}/libwebrtc/DerivedSources")
 file(MAKE_DIRECTORY ${libwebrtc_DERIVED_SOURCES_DIR})
 
-enable_language(ASM)
+WEBKIT_ENABLE_LANGUAGE(ASM)
 
 add_definitions(-DLIBYUV_DISABLE_SME)
 add_definitions(-DLIBYUV_DISABLE_SVE)
 add_definitions(-DWEBRTC_WEBKIT_BUILD=1)
+
+# BoringSSL is built into the static webrtc library under its public symbol
+# names, which WebKit code using the system OpenSSL in the same binary would
+# otherwise bind to. Prefix them where the library is static. The renaming
+# must use BoringSSL's macro form: the #pragma redefine_extname form is lost
+# when the compiler is fed preprocessed source, as icecc and distcc do.
+if (NOT APPLE)
+    set(BORINGSSL_PREFIX libwebrtc)
+endif ()
 
 # Suppress all warnings for third-party libwebrtc code.
 add_compile_options(-w)
@@ -15,7 +24,7 @@ add_compile_options(-w)
 # The tree-wide -fvisibility=hidden makes these symbols private-extern, which
 # -exported_symbols_list cannot then export from libwebrtc.dylib.
 if (APPLE)
-    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX>:-fvisibility=default>")
+    add_compile_options("$<$<COMPILE_LANGUAGE:C,CXX,OBJC,OBJCXX>:-fvisibility=default>")
 endif ()
 
 # Match the Xcode build (Configurations/Base.xcconfig: CLANG_ENABLE_OBJC_ARC = YES).
@@ -2558,6 +2567,11 @@ target_compile_definitions(webrtc PRIVATE __cpp_lib_bind_front=0)
 set_target_properties(webrtc PROPERTIES CXX_VISIBILITY_PRESET hidden)
 set_target_properties(webrtc PROPERTIES C_VISIBILITY_PRESET hidden)
 
+if (BORINGSSL_PREFIX)
+    target_compile_definitions(webrtc PRIVATE BORINGSSL_PREFIX=${BORINGSSL_PREFIX})
+    target_compile_options(webrtc PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:-U__PRAGMA_REDEFINE_EXTNAME>")
+endif ()
+
 target_compile_definitions(webrtc PRIVATE
   DYNAMIC_ANNOTATIONS_ENABLED=1
   EXPAT_RELATIVE_PATH
@@ -2798,6 +2812,11 @@ target_compile_definitions(libsrtp PRIVATE
     PACKAGE_VERSION="2.1.0-pre"
 )
 
+if (BORINGSSL_PREFIX)
+    target_compile_definitions(libsrtp PRIVATE BORINGSSL_PREFIX=${BORINGSSL_PREFIX})
+    target_compile_options(libsrtp PRIVATE "$<$<COMPILE_LANGUAGE:C,CXX>:-U__PRAGMA_REDEFINE_EXTNAME>")
+endif ()
+
 target_include_directories(libsrtp PRIVATE
     Source/third_party/boringssl/src/include
     Source/third_party/libsrtp
@@ -3011,6 +3030,7 @@ if (APPLE)
         "-DOPUS_BUILD"
         "-DOPUS_EXPORT="
         "-DHAVE_LRINT HAVE_LRINTF"
+        "-Wno-incompatible-pointer-types" # FIXME: Not great but matches Configurations/opus.xcconfig.
     )
     if (WTF_CPU_ARM64)
         # Configurations/opus.xcconfig:17, which is what makes the NEON sources
@@ -3338,7 +3358,7 @@ if (WTF_CPU_X86_64)
     if (NOT APPLE)
         # Apple ports assemble the .asm sources with the in-tree yasm below,
         # matching the Xcode build. Everything else uses nasm.
-        enable_language(ASM_NASM)
+        WEBKIT_ENABLE_LANGUAGE(ASM_NASM)
         # Override the compile command to only pass nasm-compatible flags.
         set(CMAKE_ASM_NASM_COMPILE_OBJECT "<CMAKE_ASM_NASM_COMPILER> <DEFINES> <INCLUDES> -f ${CMAKE_ASM_NASM_OBJECT_FORMAT} -o <OBJECT> <SOURCE>")
     endif ()

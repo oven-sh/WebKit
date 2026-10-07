@@ -150,7 +150,7 @@ private:
     friend struct DFG::ArrayBufferViewWatchpointAdaptor;
     void fire(VM&, const FireDetail&);
     template<typename Func>
-    void runWithDowncast(const Func&);
+    void runWithDowncast(NOESCAPE const Func&);
 
     Type m_type;
 };
@@ -346,7 +346,7 @@ public:
         return !hasBeenInvalidated();
     }
     
-    void add(Watchpoint*);
+    JS_EXPORT_PRIVATE void add(Watchpoint*);
     
     void startWatching()
     {

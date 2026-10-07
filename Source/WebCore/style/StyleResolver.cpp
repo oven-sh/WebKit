@@ -318,7 +318,7 @@ UnadjustedStyle Resolver::unadjustedStyleForElement(Element& element, const Reso
     if (state.parentStyle())
         matchedPseudoElements.add(state.parentStyle()->highlightPseudoElementTypes());
     if (matchedPseudoElements)
-        style.setHasPseudoStyles(matchedPseudoElements);
+        style.setHasPseudoStyles(matchedPseudoElements, collector.pseudoElementBoxGeneration());
 
     auto elementStyleRelations = commitRelationsToRenderStyle(style, element, collector.styleRelations());
 
@@ -942,7 +942,7 @@ const CustomFunctionRegistry* Resolver::customFunctionRegistry() const
 CustomFunctionRegistry& Resolver::ensureCustomFunctionRegistry()
 {
     if (!m_customFunctionRegistry)
-        m_customFunctionRegistry = makeUnique<CustomFunctionRegistry>();
+        lazyInitialize(m_customFunctionRegistry, makeUnique<CustomFunctionRegistry>());
     return *m_customFunctionRegistry;
 }
 

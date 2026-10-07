@@ -81,11 +81,9 @@ private:
     std::optional<ScopedSetAuxiliaryProcessTypeForTesting> m_scopedProcessType;
 };
 
-class AnyContextAttributeTest : public testing::TestWithParam<std::tuple<bool, bool, bool>> {
+class AnyContextAttributeTest : public testing::TestWithParam<bool> {
 protected:
-    bool antialias() const { return std::get<0>(GetParam()); }
-    bool preserveDrawingBuffer() const { return std::get<1>(GetParam()); }
-    bool isWebGL2() const { return std::get<2>(GetParam()); }
+    bool isWebGL2() const { return GetParam(); }
 #if ENABLE(WEBXR)
     GraphicsContextGLAttributes attributes();
     RefPtr<TestedGraphicsContextGLEGL> createTestContext(IntSize contextSize);
@@ -113,11 +111,7 @@ GraphicsContextGLAttributes AnyContextAttributeTest::attributes()
 {
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = isWebGL2();
-    attributes.antialias = antialias();
-    attributes.depth = false;
-    attributes.stencil = false;
     attributes.alpha = true;
-    attributes.preserveDrawingBuffer = preserveDrawingBuffer();
     return attributes;
 }
 
@@ -151,8 +145,6 @@ TEST_F(GraphicsContextGLEGLTest, ClearBufferIncorrectSizes)
     using GL = GraphicsContextGL;
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = true;
-    attributes.depth = true;
-    attributes.stencil = true;
     auto gl = createTestedGraphicsContextGL(attributes);
     gl->reshape(1, 1);
 
@@ -238,8 +230,6 @@ TEST_F(GraphicsContextGLEGLTest, DestroyWithoutMakingCurrent)
 {
     GraphicsContextGLAttributes attributes;
     attributes.isWebGL2 = true;
-    attributes.depth = true;
-    attributes.stencil = true;
     RefPtr gl1 = createTestedGraphicsContextGL(attributes);
     gl1->reshape(1, 1);
     RefPtr gl2 = createTestedGraphicsContextGL(attributes);
@@ -298,14 +288,14 @@ TEST_F(GraphicsContextGLEGLTest, CopyNativeImageIsNotYFlipped)
 
     RefPtr drawingImage = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage, FloatPoint(5, 8)));
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage, FloatPoint(5, 1)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage, FloatPoint(5, 8)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage, FloatPoint(5, 1)));
 
     gl->prepareForDisplay();
     RefPtr displayImage = gl->copyNativeImage(GL::SurfaceBuffer::DisplayBuffer);
     ASSERT_NE(displayImage, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::green, *displayImage, FloatPoint(5, 8)));
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *displayImage, FloatPoint(5, 1)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *displayImage, FloatPoint(5, 8)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *displayImage, FloatPoint(5, 1)));
 }
 
 // Test copying images and mutating the drawing buffer.
@@ -317,30 +307,30 @@ TEST_F(GraphicsContextGLEGLTest, CopyImageAndMutateDrawingBuffer)
     gl->reshape(10, 10);
     RefPtr drawingImage0 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage0, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
     gl->clearColor(0.f, 1.f, 0.f, 1.f);
     gl->clear(GL::COLOR_BUFFER_BIT);
     RefPtr drawingImage1 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage1, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
 
     gl->clearColor(0.f, 0.f, 1.f, 1.f);
     gl->clear(GL::COLOR_BUFFER_BIT);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
     RefPtr drawingImage2 = gl->copyNativeImage(GL::SurfaceBuffer::DrawingBuffer);
     ASSERT_NE(drawingImage2, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
     gl->prepareForDisplay();
     RefPtr displayImage = gl->copyNativeImage(GL::SurfaceBuffer::DisplayBuffer);
     ASSERT_NE(displayImage, nullptr);
-    EXPECT_TRUE(imagePixelIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
-    EXPECT_TRUE(imagePixelIs(Color::blue, *displayImage, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::transparentBlack, *drawingImage0, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::green, *drawingImage1, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *drawingImage2, FloatPoint(5, 5)));
+    EXPECT_TRUE(nativeImagePixelsIs(Color::blue, *displayImage, FloatPoint(5, 5)));
 }
 
 #if ENABLE(WEBXR)
@@ -449,10 +439,7 @@ TEST_P(AnyContextAttributeTest, WebXRBlitTest)
 
 INSTANTIATE_TEST_SUITE_P(GraphicsContextGLEGLTest,
     AnyContextAttributeTest,
-    testing::Combine(
-        testing::Values(true, false),
-        testing::Values(true, false),
-        testing::Values(true, false)),
+    testing::Values(true, false),
     TestParametersToStringFormatter());
 
 class GraphicsContextGLEGLReadPixelsTest : public ::testing::Test {

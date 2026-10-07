@@ -73,12 +73,16 @@ class WPEPort(GLibPort):
     def setup_environ_for_server(self, server_name=None):
         environment = super(WPEPort, self).setup_environ_for_server(server_name)
         self._copy_values_from_environ_with_prefix(environment, 'WPE_')
-        environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
-        # Run WPE tests with Skia CPU (usual configuration on embedded)
-        # to help catching issues/crashes <https://webkit.org/b/287632>
-        if 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' in environment:
-            _log.warning('Ignoring "WEBKIT_SKIA_ENABLE_CPU_RENDERING" variable from environment. Defaulting to value "1".')
-        environment['WEBKIT_SKIA_ENABLE_CPU_RENDERING'] = '1'
+        if self._gl_rendering_backend != "gpu":
+            environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
+        if self._skia_rendering_backend != "gpu":
+            if 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' in environment:
+                _log.warning('Ignoring "WEBKIT_SKIA_ENABLE_CPU_RENDERING" variable from environment. Defaulting to value "1".')
+            environment['WEBKIT_SKIA_ENABLE_CPU_RENDERING'] = '1'
+        else:
+            if 'WEBKIT_SKIA_ENABLE_CPU_RENDERING' in environment:
+                _log.warning('Ignoring "WEBKIT_SKIA_ENABLE_CPU_RENDERING" variable from environment. Defaulting to value "0".')
+            environment['WEBKIT_SKIA_ENABLE_CPU_RENDERING'] = '0'
         self._copy_value_from_environ_if_set(environment, 'XR_RUNTIME_JSON')
         self._copy_value_from_environ_if_set(environment, 'BREAKPAD_MINIDUMP_DIR')
         return environment
@@ -126,62 +130,20 @@ class WPEPort(GLibPort):
         configuration.pop('version_name', None)
         return configuration
 
-    def cog_path_to(self, *components):
-        return self._build_path('Tools', 'cog-prefix', 'src', 'cog-build', *components)
-
     def get_browser_path(self, browser_name):
-        return self.cog_path_to('launcher', browser_name) if browser_name == 'cog' else self._build_path('bin', browser_name)
-
-    def browser_name(self):
-        """Returns the lower case name of the browser to be used (Cog or MiniBrowser)
-
-        Users can select between both with the environment variable WPE_BROWSER
-        """
-        browser = os.environ.get("WPE_BROWSER", "").lower()
-        if browser in ("cog", "minibrowser"):
-            return browser
-
-        if browser:
-            _log.warning("Unknown browser {}. Defaulting to MiniBrowser".format(browser))
-
-        return "minibrowser"
-
-    def setup_environ_for_minibrowser(self):
-        env = super(WPEPort, self).setup_environ_for_minibrowser()
-
-        if self.browser_name() == "cog":
-            env['COG_MODULEDIR'] = self.cog_path_to('platform')
-
-        return env
+        return self._build_path('bin', browser_name)
 
     def setup_environ_for_webdriver(self):
-        env = super(WPEPort, self).setup_environ_for_minibrowser()
         # The browser is started from the webdriver process and will inherit
         # the environmnet of the webdriver process. So setup an environmnet
-        # that works for any browser (cog, minibrowser)
-        env['COG_MODULEDIR'] = self.cog_path_to('platform')
-        return env
+        # that works for minibrowser
+        return super(WPEPort, self).setup_environ_for_minibrowser()
 
     def run_minibrowser(self, args):
-        miniBrowser = None
-
-        if self.browser_name() == "cog":
-            miniBrowser = self.get_browser_path("cog")
-            if not self._filesystem.isfile(miniBrowser):
-                _log.warning("Cog not found 😢. If you wish to enable it, rebuild with `-DENABLE_COG=ON`. Falling back to MiniBrowser")
-                miniBrowser = None
-            else:
-                print("Using Cog as MiniBrowser")
-                has_platform_arg = any((a == "-P" or a.startswith("--platform=") for a in args)) or "COG_PLATFORM_NAME" in os.environ
-                if not has_platform_arg:
-                    args.insert(0, "--platform=gtk4")
-
-        if not miniBrowser:
-            print("Using default MiniBrowser")
-            miniBrowser = self.get_browser_path("MiniBrowser")
-            if not self._filesystem.isfile(miniBrowser):
-                _log.warning("%s not found... Did you run build-webkit?" % miniBrowser)
-                return 1
+        miniBrowser = self.get_browser_path("MiniBrowser")
+        if not self._filesystem.isfile(miniBrowser):
+            _log.warning("%s not found... Did you run build-webkit?" % miniBrowser)
+            return 1
         command = [miniBrowser]
         if os.environ.get("WEBKIT_MINI_BROWSER_PREFIX"):
             command = shlex.split(os.environ["WEBKIT_MINI_BROWSER_PREFIX"]) + command

@@ -273,11 +273,17 @@ NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 @property (weak) id /* <NSTextSelectionManagerDelegate> */ _webkitDelegate;
 @end
 
-NS_HEADER_AUDIT_END(nullability, sendability)
+// FIXME: Move this above once <rdar://problem/188247170> is in an SDK.
+@interface NSPanGestureRecognizer (Staging_188247170)
+- (NSPoint)_startLocationInView:(NSView *)view;
+@end
 
 @interface NSGestureRecognizer (IPI)
 @property (setter=_setIsScrollGestureRecognizer:) BOOL _isScrollGestureRecognizer;
+- (BOOL)_acceptsBeingFailureRequirementForGestureRecognizer:(NSGestureRecognizer *)otherGestureRecognizer;
 @end
+
+NS_HEADER_AUDIT_END(nullability, sendability)
 
 #endif // HAVE(APPKIT_GESTURES_SUPPORT)
 

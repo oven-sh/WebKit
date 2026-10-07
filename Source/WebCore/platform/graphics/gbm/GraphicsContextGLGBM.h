@@ -44,7 +44,7 @@ public:
     static bool checkRequirements();
 
     WTF::UnixFileDescriptor createExportedFence() const;
-    void prepareForDisplayWithFinishedSignal(Function<void()>&&);
+    void prepareForDisplayWithFinishedSignal(NOESCAPE const Function<void()>&);
     DMABufBuffer* displayBuffer() { return m_displayBuffer.dmabuf.get(); }
 
 #if ENABLE(WEBXR)
@@ -60,6 +60,7 @@ private:
     bool platformInitializeExtensions() override;
     bool reshapeDrawingBuffer() override;
     void prepareForDisplay() override;
+    RefPtr<PixelBuffer> readCompositedResults() final;
 #if ENABLE(WEBXR)
     bool enableRequiredWebXRExtensionsImpl();
 #endif

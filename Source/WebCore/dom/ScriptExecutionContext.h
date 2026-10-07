@@ -238,7 +238,7 @@ public:
     WEBCORE_EXPORT static void NODELETE setCrossOriginMode(CrossOriginMode);
     static CrossOriginMode NODELETE crossOriginMode();
 
-    virtual bool NODELETE crossOriginIsolated() const { return false; }
+    virtual bool crossOriginIsolated() const { return false; }
     virtual String agentClusterID() const = 0;
 
     WEBCORE_EXPORT void NODELETE ref();
@@ -398,7 +398,7 @@ public:
 
     void addMicrotaskGlobalObject(JSC::JSGlobalObject*);
     template<typename Functor>
-    void forEachMicrotaskGlobalObject(const Functor&);
+    void forEachMicrotaskGlobalObject(NOESCAPE const Functor&);
     void clearMicrotaskGlobalObjects();
     virtual bool isEventLoopGroupStoppedPermanently() const { return false; }
 
@@ -448,7 +448,7 @@ private:
     std::unique_ptr<Vector<std::unique_ptr<PendingException>>> m_pendingExceptions;
     std::unique_ptr<RejectedPromiseTracker> m_rejectedPromiseTracker;
 
-    RefPtr<PublicURLManager> m_publicURLManager;
+    const RefPtr<PublicURLManager> m_publicURLManager;
 
     RefPtr<DatabaseContext> m_databaseContext;
 

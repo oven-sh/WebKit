@@ -27,7 +27,7 @@ webkit_platform_headers: "StreamConnectionEncoder.h"
 }
 
 header: <wtf/text/CString.h>
-[Alias=class CStringWithEncoding<char8_t>, CustomHeader, WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder] alias WTF::UTF8CString {
+[Alias=class CString<char8_t>, CustomHeader, WebKitPlatform, AdditionalEncoder=StreamConnectionEncoder] alias WTF::UTF8CString {
    std::span<const char8_t> span()
 }
 
@@ -58,6 +58,9 @@ header: <wtf/text/AtomString.h>
     uint64_t high();
     uint64_t low();
 }
+
+header: "RemoteSnapshotIdentifier.h"
+using WebKit::RemoteSnapshotIdentifier = WTF::UUID;
 
 header: <wtf/JSONValues.h>
 [RefCounted, CustomHeader, CreateUsing=optionalParseJSON] class WTF::JSONImpl::Value {
@@ -204,7 +207,6 @@ template: enum class WebCore::IDBResourceObjectIdentifierType
 template: struct WebCore::LibWebRTCSocketIdentifierType
 template: enum class WebCore::MainThreadPermissionObserverIdentifierType
 template: enum class WebCore::OpaqueOriginIdentifierType
-template: struct WebCore::ImageBufferTransferIdentifierType
 template: enum class WebCore::PortIdentifierType
 template: struct WebCore::PendingStreamIdentifierType
 template: enum class WebCore::RTCDataChannelLocalIdentifierType
@@ -231,7 +233,6 @@ template: struct WebKit::RemoteMediaResourceIdentifierType
 template: struct WebKit::RemotePathImplIdentifierType
 template: struct WebKit::RemoteRenderingBackendIdentifierType
 template: struct WebKit::RemoteSerializedImageBufferIdentifierType
-template: struct WebKit::RemoteSnapshotIdentifierType
 template: struct WebKit::RemoteSnapshotRecorderIdentifierType
 template: struct WebKit::RemoteVideoFrameIdentifierType
 template: struct WebKit::VideoDecoderIdentifierType

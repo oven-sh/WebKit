@@ -30,7 +30,6 @@
 
 #include "ContentExtensionError.h"
 #include "ResourceRequest.h"
-#include <JavaScriptCore/JSRetainPtr.h>
 #include <JavaScriptCore/JSStringRefCPP.h>
 #include <JavaScriptCore/JavaScript.h>
 #include <wtf/CrossThreadCopier.h>
@@ -49,7 +48,7 @@ static void append(Vector<uint8_t>& vector, size_t length)
     vector.append(asByteSpan(integer));
 }
 
-static void append(Vector<uint8_t>& vector, const CString& string)
+static void append(Vector<uint8_t>& vector, const CStringBase& string)
 {
     vector.append(string.span());
 }
@@ -430,25 +429,22 @@ void RedirectAction::RegexSubstitutionAction::applyToURL(URL& url) const
         return JSValueToObject(context, value, nullptr);
     };
     auto getProperty = [&] (JSValueRef value, ASCIILiteral name) {
-        // Static analysis doesn't understand JSRetainPtr protects the object.
-        SUPPRESS_UNCOUNTED_ARG return JSObjectGetProperty(context, toObject(value), createJSString(name).get(), nullptr);
+        return JSObjectGetProperty(context, toObject(value), createJSString(name).get(), nullptr);
     };
     auto getArrayValue = [&] (JSValueRef value, size_t index) {
         return JSObjectGetPropertyAtIndex(context, toObject(value), index, nullptr);
     };
     auto valueToWTFString = [&] (JSValueRef value) {
-        // Static analysis does not recognize JSRetainPtr.
-        SUPPRESS_UNCOUNTED_ARG auto string = adopt(JSValueToStringCopy(context, value, nullptr));
-        SUPPRESS_UNCOUNTED_ARG return String { utf8CString(string.get()) };
+        RefPtr string = adoptRef(JSValueToStringCopy(context, value, nullptr));
+        return String { utf8CString(string.get()) };
     };
 
     // Effectively execute this JavaScript:
     // const regexp = new RegExp(regexFilter);
     // const result = url.match(regexp);
-    // Static analysis does not recognize JSRetainPtr.
-    SUPPRESS_UNCOUNTED_ARG JSValueRef regexFilterValue = JSValueMakeString(context, createJSString(regexFilter).get());
+    JSValueRef regexFilterValue = JSValueMakeString(context, createJSString(regexFilter).get());
     JSObjectRef regexp = JSObjectMakeRegExp(context, 1, &regexFilterValue, nullptr);
-    SUPPRESS_UNCOUNTED_ARG JSValueRef urlValue = JSValueMakeString(context, createJSString(url.string()).get());
+    JSValueRef urlValue = JSValueMakeString(context, createJSString(url.string()).get());
     JSObjectRef matchFunction = JSValueToObject(context, getProperty(urlValue, "match"_s), nullptr);
     JSValueRef result = JSObjectCallAsFunction(context, matchFunction, toObject(urlValue), 1, &regexp, nullptr);
     if (!JSValueIsArray(context, result))
@@ -532,7 +528,7 @@ void RedirectAction::URLTransformAction::serialize(Vector<uint8_t>& vector) cons
     uint8_t hasScheme = !!scheme;
     uint8_t hasUsername = !!username;
     auto* queryString = std::get_if<String>(&queryTransform);
-    auto queryStringUTF8 = queryString ? queryString->utf8() : CString();
+    auto queryStringUTF8 = queryString ? queryString->utf8() : UTF8CString();
     uint8_t hasQuery = !queryString || !!*queryString;
 
     auto fragmentUTF8 = fragment.utf8();
@@ -564,7 +560,7 @@ void RedirectAction::URLTransformAction::serialize(Vector<uint8_t>& vector) cons
         | hasUsername << 1
         | hasQuery << 0
     );
-    auto appendLengthAndString = [&] (const CString& string) {
+    auto appendLengthAndString = [&] (const CStringBase& string) {
         append(vector, string.length());
         append(vector, string);
     };

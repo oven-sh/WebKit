@@ -1476,6 +1476,8 @@ namespace JSC {
         void setExpr(ExpressionNode* expr) { m_expr = expr; }
         ExpressionNode* expr() const { return m_expr; }
 
+        void emitCallee(BytecodeGenerator&, RegisterID* function, RegisterID* thisRegister);
+
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
         void emitBytecodeInConditionContext(BytecodeGenerator&, Label& trueTarget, Label& falseTarget, FallThroughMode) final;

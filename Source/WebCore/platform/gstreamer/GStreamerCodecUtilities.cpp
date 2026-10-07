@@ -23,14 +23,15 @@
 #if USE(GSTREAMER)
 
 #include "AV1Utilities.h"
+#include "GStreamerCommon.h"
 #include "HEVCUtilities.h"
 #include "VP9Utilities.h"
 #include <gst/pbutils/codec-utils.h>
 #include <gst/video/video.h>
-#include <wtf/text/CStringView.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/text/StringToIntegerConversion.h>
+#include <wtf/text/UTF8CStringView.h>
 #include <wtf/text/WTFString.h>
 
 GST_DEBUG_CATEGORY(webkit_gst_codec_utilities_debug);
@@ -46,7 +47,7 @@ static void ensureDebugCategoryInitialized()
     });
 }
 
-std::pair<CStringView, String> GStreamerCodecUtilities::parseH264ProfileAndLevel(const String& codec)
+std::pair<UTF8CStringView, String> GStreamerCodecUtilities::parseH264ProfileAndLevel(const String& codec)
 {
     ensureDebugCategoryInitialized();
 
@@ -60,7 +61,7 @@ std::pair<CStringView, String> GStreamerCodecUtilities::parseH264ProfileAndLevel
     sps[1] = (spsAsInteger >> 8) & 0xff;
     sps[2] = spsAsInteger & 0xff;
 
-    auto profile = CStringView::unsafeFromUTF8(gst_codec_utils_h264_get_profile(sps.data(), 3));
+    auto profile = UTF8CStringView::unsafeFromUTF8(gst_codec_utils_h264_get_profile(sps.data(), 3));
     auto level = String::fromLatin1(gst_codec_utils_h264_get_level(sps.data(), 3));
 
     // To avoid going through a class hierarchy for such a simple
@@ -72,7 +73,7 @@ std::pair<CStringView, String> GStreamerCodecUtilities::parseH264ProfileAndLevel
         level = String(byteCast<Latin1Character>(unsafeSpan(levelAsStringFallback)));
     }
 
-    GST_DEBUG("Codec %s translates to H.264 profile %s and level %s", codec.utf8().legacyCStringPointer(), GST_STR_NULL(profile.utf8()), level.ascii().data());
+    GST_DEBUG("Codec %s translates to H.264 profile %s and level %s", codec.utf8(), GST_STR_NULL(profile.utf8()), level.ascii().data());
     return { profile, level };
 }
 
@@ -111,7 +112,7 @@ static std::pair<GRefPtr<GstCaps>, GRefPtr<GstCaps>> h264CapsFromCodecString(con
     return { inputCaps, outputCaps };
 }
 
-CStringView GStreamerCodecUtilities::parseHEVCProfile(const String& codec)
+UTF8CStringView GStreamerCodecUtilities::parseHEVCProfile(const String& codec)
 {
     ensureDebugCategoryInitialized();
 
@@ -141,7 +142,7 @@ CStringView GStreamerCodecUtilities::parseHEVCProfile(const String& codec)
             profileTierLevel[i] = constraints[j];
     }
 
-    return CStringView::unsafeFromUTF8(gst_codec_utils_h265_get_profile(profileTierLevel.data(), profileTierLevel.size()));
+    return UTF8CStringView::unsafeFromUTF8(gst_codec_utils_h265_get_profile(profileTierLevel.data(), profileTierLevel.size()));
 }
 
 static std::pair<GRefPtr<GstCaps>, GRefPtr<GstCaps>> h265CapsFromCodecString(const String& codecString)

@@ -31,6 +31,7 @@
 #include <sys/mman.h>
 #include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/posix/POSIXExtras.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/WTFString.h>
@@ -70,18 +71,18 @@ static UnixFileDescriptor createSharedMemory()
         fileDescriptor = shm_open(SHM_ANON, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     } while (fileDescriptor == -1 && errno == EINTR);
 #else
-    CString tempName;
+    UTF8CString tempName;
     for (int tries = 0; fileDescriptor == -1 && tries < 10; ++tries) {
         auto name = makeString("/WPEWaylandSHMPool."_s, cryptographicallyRandomNumber<unsigned>());
         tempName = name.utf8();
 
         do {
-            fileDescriptor = shm_open(tempName.data(), O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+            fileDescriptor = posixShmOpen(tempName, O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
         } while (fileDescriptor == -1 && errno == EINTR);
     }
 
     if (fileDescriptor != -1)
-        shm_unlink(tempName.data());
+        posixShmUnlink(tempName);
 #endif
 
     return UnixFileDescriptor { fileDescriptor, UnixFileDescriptor::Adopt };

@@ -115,23 +115,6 @@ private func simulateHostApplicationEnteredBackground(_ webView: TestWKWebView) 
     #endif
 }
 
-@MainActor
-private func waitForCondition(
-    _ description: String,
-    timeout: Duration = .seconds(5),
-    _ condition: () async throws -> Bool
-) async throws {
-    let deadline = ContinuousClock.now + timeout
-
-    while !(try await condition()) {
-        guard ContinuousClock.now < deadline else {
-            Issue.record("Timed out waiting for condition: \(description)")
-            return
-        }
-        try await Task.sleep(for: .milliseconds(10))
-    }
-}
-
 extension WKWebView {
     @MainActor
     fileprivate func debugText(_ configuration: _WKTextExtractionConfiguration? = nil) async throws -> String {

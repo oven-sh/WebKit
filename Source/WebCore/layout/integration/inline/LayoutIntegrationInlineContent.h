@@ -82,6 +82,7 @@ public:
     float clearGapBeforeFirstLine() const { return m_clearGapBeforeFirstLine; }
     bool hasBlockLevelBoxes() const { return m_hasBlockLevelBoxes; }
     bool hasPaintedInlineLevelBoxes() const { return m_hasPaintedInlineLevelBoxes; }
+    bool contentFitsWithinMaximumLines() const { return m_contentFitsWithinMaximumLines; }
 
     IteratorRange<const InlineDisplay::Box*> boxesForRect(const LayoutRect&) const;
 
@@ -94,7 +95,7 @@ public:
     const InlineDisplay::Box* NODELETE blockLevelBoxForLine(const InlineDisplay::Line&) const LIFETIME_BOUND;
     bool NODELETE isInlineBoxWrapperForBlockLevelBox(const InlineDisplay::Box&) const;
 
-    template<typename Function> void traverseNonRootInlineBoxes(const Layout::Box&, Function&&);
+    template<typename Function> void traverseNonRootInlineBoxes(const Layout::Box&, NOESCAPE const Function&);
 
     const RenderBlockFlow& NODELETE formattingContextRoot() const;
 
@@ -120,6 +121,7 @@ private:
     void setContentMayHaveInkOverflow(bool mayHaveInkOverflow) { m_contentMayHaveInkOverflow = mayHaveInkOverflow; }
     bool contentMayHaveInkOverflow() const { return m_contentMayHaveInkOverflow; }
     void setHasPaintedInlineLevelBoxes() { m_hasPaintedInlineLevelBoxes = true; }
+    void setContentFitsWithinMaximumLines(bool contentFits) { m_contentFitsWithinMaximumLines = contentFits; }
 
     const Vector<size_t>& nonRootInlineBoxIndexesForLayoutBox(const Layout::Box&) const LIFETIME_BOUND;
 
@@ -136,6 +138,7 @@ private:
     float m_clearGapBeforeFirstLine { 0 };
     float m_clearGapAfterLastLine { 0 };
     std::optional<float> m_firstLinePaginationOffset { };
+    bool m_contentFitsWithinMaximumLines { false };
 
     bool m_hasMultilinePaintOverlap { false };
     bool m_hasBlockLevelBoxes { false };
@@ -145,7 +148,7 @@ private:
     Vector<Vector<SVGTextFragment>> m_svgTextFragmentsForBoxes;
 };
 
-template<typename Function> void InlineContent::traverseNonRootInlineBoxes(const Layout::Box& layoutBox, Function&& function)
+template<typename Function> void InlineContent::traverseNonRootInlineBoxes(const Layout::Box& layoutBox, NOESCAPE const Function& function)
 {
     for (auto index : nonRootInlineBoxIndexesForLayoutBox(layoutBox))
         function(displayContent().boxes[index]);

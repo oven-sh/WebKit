@@ -2026,7 +2026,7 @@ IGNORE_GCC_WARNINGS_END
 
     friend struct detail::access::variant;
     friend struct detail::visitation::variant;
-  } SWIFT_ESCAPABLE_IF(Ts) SWIFT_COPYABLE_IF(Ts);
+  } SWIFT_SELF_CONTAINED_IF(Ts) SWIFT_COPYABLE_IF(Ts);
 
   template <std::size_t I, typename... Ts>
   [[nodiscard]] inline constexpr bool holds_alternative(const variant<Ts...> &v) noexcept {
@@ -2478,7 +2478,7 @@ template<typename... Types> struct VariantSize<Variant<Types...>> : std::integra
 template<typename T> struct VariantSize<const T> : VariantSize<T> { };
 template<typename T> constexpr size_t VariantSizeV = VariantSize<T>::value;
 
-template<typename Visitor, typename... Variants> constexpr auto visit(Visitor&& v, Variants&&... values)
+template<typename Visitor, typename... Variants> constexpr auto visit(NOESCAPE Visitor&& v, Variants&&... values)
     -> decltype(mpark::visit<Visitor, Variants...>(std::forward<Visitor>(v), std::forward<Variants>(values)...))
 {
     return mpark::visit<Visitor, Variants...>(std::forward<Visitor>(v), std::forward<Variants>(values)...);

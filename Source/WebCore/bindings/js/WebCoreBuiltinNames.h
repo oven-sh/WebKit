@@ -194,6 +194,7 @@ namespace WebCore {
     macro(DeprecationReportBody) \
     macro(DeviceMotionEvent) \
     macro(DeviceOrientationEvent) \
+    macro(DevicePosture) \
     macro(DigitalCredential) \
     macro(DocumentTimeline) \
     macro(DynamicsCompressorNode) \
@@ -311,6 +312,7 @@ namespace WebCore {
     macro(LockManager) \
     macro(ManagedMediaSource) \
     macro(ManagedSourceBuffer) \
+    macro(MathMLAnchorElement) \
     macro(MathMLElement) \
     macro(MathMLMathElement) \
     macro(MediaCapabilities) \
@@ -618,6 +620,7 @@ namespace WebCore {
     macro(consumeChunk) \
     macro(controlledReadableStream) \
     macro(controller) \
+    macro(convertRectToMainFrameCoordinates) \
     macro(cookieStore) \
     macro(createAbortSignal) \
     macro(createImageBitmap) \

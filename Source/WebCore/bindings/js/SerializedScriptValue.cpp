@@ -80,6 +80,7 @@
 #include "JSWebCodecsEncodedVideoChunk.h"
 #include "JSWebCodecsVideoFrame.h"
 #include "JSWritableStream.h"
+#include "QuotaExceededError.h"
 #include "ScriptExecutionContext.h"
 #include "SecurityOrigin.h"
 #include "SerializedScriptValueInternals.h"
@@ -124,6 +125,7 @@
 #include <JavaScriptCore/TopExceptionScope.h>
 #include <JavaScriptCore/VMManager.h>
 #include <JavaScriptCore/YarrFlags.h>
+#include <cmath>
 #include <limits>
 #include <optional>
 #include <wtf/CheckedArithmetic.h>
@@ -236,6 +238,7 @@ static bool NODELETE isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObje
     case RTCDataChannelTransferTag:
 #endif
     case DOMExceptionTag:
+    case QuotaExceededErrorTag:
 #if ENABLE(WEB_CODECS)
     case WebCodecsEncodedVideoChunkTag:
     case WebCodecsVideoFrameTag:
@@ -1063,13 +1066,19 @@ private:
             return;
         }
 
-        write(DOMExceptionTag);
+        RefPtr quotaExceededError = dynamicDowncast<QuotaExceededError>(exception);
+        write(quotaExceededError ? QuotaExceededErrorTag : DOMExceptionTag);
         write(exception->message());
         write(exception->name());
         write(errorInformation->line);
         write(errorInformation->column);
         writeNullableString(errorInformation->sourceURL);
         writeNullableString(errorInformation->stack);
+
+        if (quotaExceededError) {
+            write(quotaExceededError->quota().value_or(std::numeric_limits<double>::quiet_NaN()));
+            write(quotaExceededError->requested().value_or(std::numeric_limits<double>::quiet_NaN()));
+        }
     }
 
 public:
@@ -2781,8 +2790,14 @@ private:
             return JSValue();
         }
 
-        if (!m_offscreenCanvases[index])
+        if (!m_offscreenCanvases[index]) {
+            if (!m_detachedOffscreenCanvases[index]) {
+                SERIALIZE_TRACE("FAIL deserialize");
+                fail();
+                return JSValue();
+            }
             m_offscreenCanvases[index] = OffscreenCanvas::create(*protect(executionContext(m_lexicalGlobalObject)), WTF::move(m_detachedOffscreenCanvases.at(index)));
+        }
         return getJSValue(protect(*m_offscreenCanvases[index]));
     }
 
@@ -3132,8 +3147,11 @@ private:
         return getJSValue(WTF::move(bitmap));
     }
 
-    JSValue readDOMException()
+    JSValue readDOMException(SerializationTag tag)
     {
+        ASSERT(tag == DOMExceptionTag || tag == QuotaExceededErrorTag);
+        bool isQuotaExceededError = tag == QuotaExceededErrorTag;
+
         CachedStringRef message;
         if (!readStringData(message))
             return JSValue();
@@ -3151,7 +3169,19 @@ private:
                 return JSValue();
         }
 
-        auto exception = DOMException::create(message->string(), name->string());
+        double quota = std::numeric_limits<double>::quiet_NaN();
+        double requested = std::numeric_limits<double>::quiet_NaN();
+        if (isQuotaExceededError && (!read(quota) || !read(requested)))
+            return JSValue();
+
+        auto toOptional = [](double value) -> std::optional<double> {
+            if (std::isnan(value))
+                return std::nullopt;
+            return value;
+        };
+        Ref<DOMException> exception = isQuotaExceededError
+            ? Ref<DOMException> { QuotaExceededError::create(message->string(), { toOptional(quota), toOptional(requested) }) }
+            : DOMException::create(message->string(), name->string());
         JSValue result = getJSValue(exception);
         // Creating the wrapper captured a stack trace of the frame doing the deserializing; replace
         // it with the serialized one so the clone reports the same stack as the original did.
@@ -3459,7 +3489,8 @@ public:
             return readMediaSourceHandle();
 #endif
         case DOMExceptionTag:
-            return readDOMException();
+        case QuotaExceededErrorTag:
+            return readDOMException(tag);
 
         case FileSystemHandleTag:
             return readFileSystemHandle();
@@ -3692,6 +3723,11 @@ SerializedScriptValueInternals SerializedScriptValueInternals::clone() const
         .exposedMessagePortCount = exposedMessagePortCount,
         .nonSerializedDataToken = nonSerializedDataToken,
         .detachedImageBitmaps = detachedImageBitmaps,
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+        .detachedOffscreenCanvases = detachedOffscreenCanvases.map([](const auto& canvas) {
+            return canvas->clone();
+        }),
+#endif
         .fileSystemHandleKeepAlives = fileSystemHandleKeepAlives.map([](const auto& alive) { return alive.copy(); }),
 #if ENABLE(WEB_CODECS)
         .serializedVideoFrames = serializedVideoFrames,
@@ -3714,9 +3750,6 @@ SerializedScriptValueInternals SerializedScriptValueInternals::clone() const
 #endif
         .sharedBufferContentsArray = copyArrayBufferContentsArray(sharedBufferContentsArray),
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        .detachedOffscreenCanvases = detachedOffscreenCanvases.map([](const auto& canvas) {
-            return makeUnique<DetachedOffscreenCanvas>(canvas->size(), canvas->originClean(), RefPtr { canvas->placeholderSource() });
-        }),
         .inMemoryOffscreenCanvases = inMemoryOffscreenCanvases,
 #endif
         .inMemoryMessagePorts = inMemoryMessagePorts,
@@ -4337,6 +4370,9 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         , .exposedMessagePortCount = exposedMessagePortsCount
         , .detachedImageBitmaps = WTF::move(detachedImageBitmaps)
+#if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
+        , .detachedOffscreenCanvases = WTF::move(detachedCanvases)
+#endif
         , .fileSystemHandleKeepAlives = WTF::move(fileSystemHandleKeepAlives)
 #if ENABLE(WEB_CODECS)
         , .serializedVideoFrames = WTF::move(serializedVideoFrameData)
@@ -4355,7 +4391,6 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #endif
         , .sharedBufferContentsArray = WTF::move(sharedBuffers)
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
-        , .detachedOffscreenCanvases = WTF::move(detachedCanvases)
         , .inMemoryOffscreenCanvases = WTF::move(inMemoryOffscreenCanvases)
 #endif
         , .inMemoryMessagePorts = WTF::move(inMemoryMessagePorts)

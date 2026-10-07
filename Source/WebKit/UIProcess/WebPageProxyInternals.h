@@ -54,11 +54,13 @@
 #include "WindowKind.h"
 #include <WebCore/BackForwardItemIdentifier.h>
 #include <WebCore/CornerRadii.h>
+#include <WebCore/DevicePostureType.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/IntPointHash.h>
 #include <WebCore/PrivateClickMeasurement.h>
 #include <WebCore/RegistrableDomain.h>
+#include <WebCore/RemoteUserInputEventData.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOriginData.h>
 #include <pal/HysteresisActivity.h>
@@ -259,6 +261,7 @@ public:
     WebCore::FloatSize minimumUnobscuredSize;
     Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
     Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
+    RunLoop::Timer remoteFrameMouseEventTimeoutTimer;
     WebCore::MediaProducerMutedStateFlags mutedState;
     WebNotificationManagerMessageHandler notificationManagerMessageHandler;
     OptionSet<WebCore::LayoutMilestone> observedLayoutMilestones;
@@ -326,7 +329,7 @@ public:
     struct OutstandingPositionInformationRequest {
         InteractionInformationRequest request;
         IPC::AsyncReplyID replyID;
-        Ref<IPC::Connection> connection;
+        WeakPtr<WebProcessProxy> process;
     };
     std::optional<OutstandingPositionInformationRequest> outstandingPositionInformationRequest;
 
@@ -432,6 +435,7 @@ public:
 
 #if PLATFORM(MAC)
     WebCore::FloatPoint scrollPositionDuringLastEditorStateUpdate;
+    std::optional<WebCore::RemoteUserInputEventData> acceptsFirstMouseRemoteUserInputEventData;
 #endif
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(MODEL_PROCESS)
@@ -466,6 +470,8 @@ public:
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)
     WebCore::CornerRadii scrollbarAvoidanceCornerRadii;
 #endif
+
+    std::optional<WebCore::DevicePostureType> currentDevicePostureType;
 
     explicit Internals(WebPageProxy&, bool processInheritedFromOpener);
 

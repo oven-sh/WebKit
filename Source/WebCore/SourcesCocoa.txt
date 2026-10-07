@@ -208,6 +208,7 @@ editing/mac/TextAlternativeWithRange.mm @nonARC @no-unify-when(bundle<=8)
 editing/mac/TextUndoInsertionMarkupMac.mm @nonARC
 fileapi/FileCocoa.mm @nonARC
 history/mac/HistoryItemMac.mm @nonARC
+html/HTMLMediaElementCocoa.mm
 html/canvas/GPUCanvasContextCocoa.mm @nonARC
 html/shadow/YouTubeEmbedShadowElement.cpp
 inspector/LegacyWebSocketInspectorInstrumentation.cpp
@@ -403,10 +404,9 @@ platform/graphics/avfoundation/objc/WebAVContentKeyGroup.mm @nonARC @no-unify-wh
 platform/graphics/avfoundation/objc/WebCoreAVFResourceLoader.mm @nonARC
 platform/graphics/ca/FrameProcessIndicators.cpp
 platform/graphics/ca/GraphicsLayerCA.cpp
-platform/graphics/ca/LayerPool.cpp
 platform/graphics/ca/PlatformCAAnimation.cpp
 platform/graphics/ca/PlatformCALayer.mm @nonARC
-platform/graphics/ca/TileController.cpp
+platform/graphics/ca/TileController.mm @nonARC
 platform/graphics/ca/TileCoverageMap.cpp
 platform/graphics/ca/TileGrid.cpp
 platform/graphics/ca/TransformationMatrixCA.cpp
@@ -699,7 +699,7 @@ platform/mock/MediaPlaybackTargetPickerMock.cpp
 platform/mock/MockAudioDestinationCocoa.cpp
 platform/network/cf/CertificateInfoCFNet.cpp
 platform/network/cf/CookieStorageSessionCFNet.cpp
-platform/network/cf/DNSResolveQueueCFNet.cpp
+platform/network/cf/DNSResolveQueueCFNet.mm @nonARC
 platform/network/cf/FormDataStreamCFNet.mm @nonARC
 platform/network/cf/ResourceRequestCFNet.cpp
 platform/network/cocoa/AuthenticationCocoa.mm @nonARC
@@ -729,17 +729,18 @@ platform/text/cocoa/LocaleCocoa.mm @nonARC
 platform/text/cocoa/LocalizedDateCache.mm @nonARC
 platform/text/cocoa/TextBoundaries.mm @nonARC
 platform/text/mac/TextCheckingMac.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoderVTBH264.mm @nonARC
 platform/video-codecs/cocoa/GPUVideoDecoderVTBH265.mm @nonARC
 platform/video-codecs/cocoa/GPUVideoEncoder.mm @nonARC
 platform/video-codecs/cocoa/GPUVideoEncoderVTB.mm @nonARC
 platform/video-codecs/cocoa/GPUVideoEncoderVTBH264.mm @nonARC
 platform/video-codecs/cocoa/GPUVideoEncoderVTBH265.mm @nonARC
-platform/video-codecs/cocoa/VideoDecoderVTB.mm @nonARC
+platform/video-codecs/cocoa/VideoDecoderVTBSession.mm @nonARC
 platform/video-codecs/cocoa/VideoEncoderVTBSession.mm @nonARC
-platform/video-codecs/cocoa/WebRTCVideoDecoder.mm @nonARC
-platform/video-codecs/cocoa/WebRTCVideoDecoderVTB.mm @nonARC
-platform/video-codecs/cocoa/WebRTCVideoDecoderVTBAV1.mm @nonARC
-platform/video-codecs/cocoa/WebRTCVideoDecoderVTBVP9.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoder.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoderVTB.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoderVTBAV1.mm @nonARC
+platform/video-codecs/cocoa/GPUVideoDecoderVTBVP9.mm @nonARC
 platform/xr/cocoa/PlatformXRPose.cpp
 rendering/AttachmentLayout.mm @nonARC
 rendering/cocoa/RenderThemeCocoa.mm @nonARC

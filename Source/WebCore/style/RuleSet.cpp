@@ -513,6 +513,11 @@ void RuleSet::addRuleToBucket(RuleData& ruleData)
         m_universalHTMLPseudoElementTypes.add(*stylePseudoElement);
         if (!isHTMLNamespace)
             m_universalPseudoElementTypes.add(*stylePseudoElement);
+        if (ruleData.pseudoElementBoxGeneration() == PseudoElementBoxGeneration::Normal) {
+            m_universalHTMLPseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
+            if (!isHTMLNamespace)
+                m_universalPseudoElementBoxGeneration = PseudoElementBoxGeneration::Normal;
+        }
         return true;
     };
 
@@ -542,7 +547,7 @@ RefPtr<StyleRuleViewTransition> RuleSet::viewTransitionRule() const
 }
 
 template<typename Function>
-void RuleSet::traverseRuleDatas(Function&& function)
+void RuleSet::traverseRuleDatas(NOESCAPE const Function& function)
 {
     auto traverseVector = [&](auto& vector) {
         for (auto& ruleData : vector)
@@ -578,7 +583,7 @@ void RuleSet::traverseRuleDatas(Function&& function)
     traverseVector(m_universalPseudoElementRules);
 }
 
-template<typename Function> void RuleSet::traverseRuleDatas(Function&& function) const
+template<typename Function> void RuleSet::traverseRuleDatas(NOESCAPE const Function& function) const
 {
     const_cast<RuleSet&>(*this).traverseRuleDatas([&](const RuleData& ruleData) {
         function(ruleData);

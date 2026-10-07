@@ -759,10 +759,11 @@ namespace JSC {
         RegisterID* emitNewPromise(RegisterID* dst);
         RegisterID* emitNewGenerator(RegisterID* dst);
         RegisterID* emitNewAsyncFunctionGenerator(RegisterID* dst);
-        RegisterID* emitNewArray(RegisterID* dst, ElementNode*, unsigned length, IndexingType recommendedIndexingType); // stops at first elision
-        RegisterID* emitNewArrayBuffer(RegisterID* dst, JSCellButterfly*, IndexingType recommendedIndexingType);
+        RegisterID* emitNewArray(RegisterID* dst, ElementNode*, unsigned length, IndexingType recommendedIndexingType, uint32_t typeTag = 0); // stops at first elision
+        RegisterID* emitNewArrayByReversingArguments(RegisterID* dst, CallArguments&);
+        RegisterID* emitNewArrayBuffer(RegisterID* dst, JSCellButterfly*, IndexingType recommendedIndexingType, uint32_t typeTag = 0);
         // FIXME: new_array_with_spread should use an array allocation profile and take a recommendedIndexingType
-        RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*);
+        RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*, uint32_t typeTag = 0);
         RegisterID* emitNewArrayWithSize(RegisterID* dst, RegisterID* length);
         RegisterID* emitNewArrayWithSpecies(RegisterID* dst, RegisterID* length, RegisterID* array);
 
@@ -885,16 +886,16 @@ namespace JSC {
             RegisterID* valueRegister, RegisterID* getterRegister, RegisterID* setterRegister, unsigned options, const JSTextPosition&);
 
         enum class MayCompleteNormally : bool { No, Yes };
-        void emitTryWithFinallyThatDoesNotShadowException(const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
-        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, const ScopedLambda<void(BytecodeGenerator&)>& emitTry, const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally);
+        void emitTryWithFinallyThatDoesNotShadowException(NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally);
+        void emitTryWithFinallyThatDoesNotShadowException(FinallyContext&, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally);
 
         // Explicit Resource Management: using declarations
         UsingScope& currentUsingScope() { ASSERT(!m_usingScopeStack.isEmpty()); return m_usingScopeStack.last(); }
         void emitPrepareDisposable(RegisterID* value, const JSTextPosition& divot, bool isAsync = false);
-        void emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsing, const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
-        void emitBodyWithUsingIfNeeded(unsigned usingCount, bool hasAwaitUsing, const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
+        void emitUsingBodyScope(unsigned usingCount, bool hasAwaitUsing, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
+        void emitBodyWithUsingIfNeeded(unsigned usingCount, bool hasAwaitUsing, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitBody);
 
-        void emitEnumeration(ThrowableExpressionData* enumerationNode, ExpressionNode* subjectNode, const ScopedLambda<void(BytecodeGenerator&, RegisterID*)>& callBack, ForOfNode* = nullptr, RegisterID* forLoopSymbolTable = nullptr);
+        void emitEnumeration(ThrowableExpressionData* enumerationNode, ExpressionNode* subjectNode, NOESCAPE const ScopedLambda<void(BytecodeGenerator&, RegisterID*)>& callBack, ForOfNode* = nullptr, RegisterID* forLoopSymbolTable = nullptr);
 
         RegisterID* emitGetTemplateObject(RegisterID* dst, TaggedTemplateNode*);
         RegisterID* emitGetGlobalPrivate(RegisterID* dst, const Identifier& property);
@@ -911,7 +912,7 @@ namespace JSC {
         ResolveType NODELETE resolveType();
         RegisterID* emitResolveConstantLocal(RegisterID* dst, const Variable&);
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
-        RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
+        RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode, uint32_t typeTag = 0);
         bool isLazyModuleFunctionDeclaration(const Variable&) const;
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);
@@ -981,9 +982,8 @@ namespace JSC {
         RegisterID* emitIteratorGenericNext(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, const ThrowableExpressionData* node, JSC::EmitAwait = JSC::EmitAwait::No);
         RegisterID* emitIteratorGenericNextWithValue(RegisterID* dst, RegisterID* nextMethod, RegisterID* iterator, RegisterID* value, const ThrowableExpressionData* node);
         void emitIteratorGenericClose(RegisterID* iterator, const ThrowableExpressionData* node, EmitAwait = EmitAwait::No);
-        // IteratorClose for an iterator that came from emitIteratorOpen, which may have left the three registers without an iterator object.
         void emitJumpIfFastArrayIteration(RegisterID* iterator, Label& target);
-        void emitIteratorCloseAfterIteratorOpen(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node);
+        void emitIteratorClose(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node);
 
         RegisterID* emitRestParameter(RegisterID* result, unsigned numParametersToSkip);
 
@@ -1277,7 +1277,7 @@ namespace JSC {
 
         void initializeParameters(FunctionParameters&);
         void initializeVarLexicalEnvironment(int symbolTableConstantIndex, SymbolTable* functionSymbolTable, bool hasCapturedVariables);
-        void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, const ScopedLambda<bool (UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);
+        void initializeDefaultParameterValuesAndSetupFunctionScopeStack(FunctionParameters&, bool isSimpleParameterList, FunctionNode*, SymbolTable*, int symbolTableConstantIndex, NOESCAPE const ScopedLambda<bool(UniquedStringImpl*)>& captures, bool shouldCreateArgumentsVariableInParameterScope);
         void initializeArrowFunctionContextScopeIfNeeded(SymbolTable* functionSymbolTable = nullptr, bool canReuseLexicalEnvironment = false);
         bool NODELETE needsDerivedConstructorInArrowFunctionLexicalEnvironment();
 
@@ -1309,7 +1309,7 @@ namespace JSC {
         void restoreTDZStack(const PreservedTDZStack&);
 
         template<typename Func>
-        void withWriter(JSInstructionStreamWriter& writer, const Func& fn)
+        void withWriter(JSInstructionStreamWriter& writer, NOESCAPE const Func& fn)
         {
             auto prevLastOpcodeID = m_lastOpcodeID;
             auto prevLastInstruction = m_lastInstruction;
@@ -1436,7 +1436,7 @@ namespace JSC {
         std::optional<AsyncFuncParametersTryCatchInfo> m_asyncFuncParametersTryCatchInfo;
 
         template<typename EmitBytecodeFunctor>
-        void asyncFuncParametersTryCatchWrap(const EmitBytecodeFunctor&);
+        void asyncFuncParametersTryCatchWrap(NOESCAPE const EmitBytecodeFunctor&);
 
         Vector<TryRange> m_tryRanges;
         SegmentedVector<TryData, 8> m_tryData;

@@ -164,6 +164,10 @@ _PATH_RULES_SPECIFIER = [
     ([  # Ignore use of RetainPtr<NSObject *> for tests that ensure its compatibility with ReteainPtr<NSObject>.
       os.path.join('Tools', 'TestWebKitAPI', 'Tests', 'WTF', 'ns', 'RetainPtr.mm')],
      ["-runtime/retainptr"]),
+    ([  # Ignore append() of a default-constructed temporary in tests that compare it with constructAndAppend().
+        os.path.join('Tools', 'TestWebKitAPI', 'Tests', 'WTF', 'Deque.cpp'),
+        os.path.join('Tools', 'TestWebKitAPI', 'Tests', 'WTF', 'Vector.cpp')],
+     ["-runtime/construct_and_append"]),
     ([  # There is no clean way to avoid "yy_*" names used by flex.
       os.path.join('Source', 'WebCore', 'css', 'CSSParser.cpp'),
       # TestWebKitAPI uses funny macros like EXPECT_WK_STREQ.
@@ -450,6 +454,7 @@ _PATH_RULES_SPECIFIER = [
      ["-non-inclusive-term"]),
 
     ([  # The GTK/WPE MiniBrowser uses public API and GLib-style conventions and indentation.
+     os.path.join('Tools', 'MiniBrowser', 'glib'),
      os.path.join('Tools', 'MiniBrowser', 'gtk'),
      os.path.join('Tools', 'MiniBrowser', 'wpe')],
      ["-readability/enum_casing",

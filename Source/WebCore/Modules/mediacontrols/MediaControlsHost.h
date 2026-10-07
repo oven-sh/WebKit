@@ -113,6 +113,7 @@ public:
     bool spatialVideoRenderingEnabled() const;
     String spatialVideoProjectionKind() const;
     std::optional<int32_t> spatialVideoHorizontalFieldOfView() const;
+    void spatialCameraDidMove(double yaw, double pitch, double fieldOfView);
     bool NODELETE isAVExperienceControllerFullscreenEnabled() const;
 
     void captionPreferencesChanged();
@@ -201,7 +202,7 @@ private:
 #endif
 
     WeakRef<HTMLMediaElement> m_mediaElement;
-    RefPtr<MediaControlTextTrackContainerElement> m_textTrackContainer;
+    const RefPtr<MediaControlTextTrackContainerElement> m_textTrackContainer;
     RefPtr<TextTrack> m_previouslySelectedTextTrack;
 
 #if ENABLE(MEDIA_CONTROLS_CONTEXT_MENUS)

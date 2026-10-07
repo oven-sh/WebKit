@@ -241,7 +241,6 @@ for this property.
 
 - (void)_frames:(void (^)(_WKFrameTreeNode *))completionHandler WK_API_AVAILABLE(macos(11.0), ios(14.0));
 - (void)_frameTrees:(void (^)(NSSet<_WKFrameTreeNode *> *))completionHandler WK_API_AVAILABLE(macos(14.0), ios(17.0));
-- (void)_frameTreesInBackForwardCacheAtIndex:(NSInteger)relativeIndex completionHandler:(void (^)(NSSet<_WKFrameTreeNode *> *))completionHandler WK_API_AVAILABLE(macos(27.0), ios(27.0));
 - (void)_frameInfoFromHandle:(_WKFrameHandle *)handle completionHandler:(void (^)(WKFrameInfo *))completionHandler WK_API_AVAILABLE(macos(15.4), ios(18.4));
 
 // FIXME: Remove these once nobody is using them.
@@ -456,7 +455,6 @@ for this property.
 
 - (void)_nowPlayingMediaTitleAndArtist:(void (^)(NSString *, NSString *))completionHandler;
 
-- (void)_convertPoint:(CGPoint)point fromFrame:(WKFrameInfo *)frame toMainFrameCoordinates:(void (^)(CGPoint, NSError *error))completionHandler WK_API_AVAILABLE(macos(26.0), ios(26.0), visionos(26.0));
 - (void)_convertRect:(CGRect)rect fromFrame:(WKFrameInfo *)frame toMainFrameCoordinates:(void (^)(CGRect, NSError *error))completionHandler WK_API_AVAILABLE(macos(26.0), ios(26.0), visionos(26.0));
 
 @property (nonatomic, setter=_setStatusBarIsVisible:) BOOL _statusBarIsVisible WK_API_AVAILABLE(macos(26.4), ios(26.4), visionos(26.4));

@@ -48,7 +48,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 namespace JSC {
 
 template<typename DetailsFunc>
-void Structure::checkOffsetConsistency(PropertyTable* propertyTable, const DetailsFunc& detailsFunc) const
+void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE const DetailsFunc& detailsFunc) const
 {
     // We cannot reliably assert things about the property table in the concurrent
     // compilation thread. It is possible for the table to be stolen and then have
@@ -362,6 +362,7 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setTransitionKind(TransitionKind::Unknown);
     setMayBePrototype(previous->mayBePrototype());
     setDidPreventExtensions(previous->didPreventExtensions());
+    setHasImmutableProperties(previous->hasImmutableProperties());
     setDidTransition(true);
     setStaticPropertiesReified(previous->staticPropertiesReified());
     setHasBeenDictionary(previous->hasBeenDictionary());
@@ -900,6 +901,8 @@ Structure* Structure::removeNewPropertyTransition(VM& vm, Structure* structure, 
 
 Structure* Structure::changePrototypeTransition(VM& vm, Structure* structure, JSValue prototype, DeferredStructureTransitionWatchpointFire& deferred)
 {
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     ASSERT(isValidPrototype(prototype));
 #if ENABLE(AOT)
     if (structure->m_family && !structure->hasStableFields()) [[unlikely]]
@@ -996,6 +999,8 @@ Structure* Structure::attributeChangeTransition(VM& vm, Structure* structure, Pr
 #if USE(BUN_JSC_ADDITIONS)
     RELEASE_ASSERT(!structure->hasStableFields() || !(attributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue) || !structure->isStableField(structure->get(vm, propertyName)));
 #endif
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     if (structure->isUncacheableDictionary()) {
         structure->attributeChangeWithoutTransition(vm, propertyName, attributes, [](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset) { });
         structure->checkOffsetConsistency();
@@ -1086,11 +1091,15 @@ Structure* Structure::toUncacheableDictionaryTransition(VM& vm, Structure* struc
 
 Structure* Structure::sealTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     return nonPropertyTransition(vm, structure, TransitionKind::Seal, deferred);
 }
 
 Structure* Structure::freezeTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     return nonPropertyTransition(vm, structure, TransitionKind::Freeze, deferred);
 }
 
@@ -1101,6 +1110,8 @@ Structure* Structure::makePropertiesImmutableTransition(VM& vm, Structure* struc
 
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
+    // (JSObject refuses before it asks for this.)
+    ASSERT(!structure->hasImmutableProperties() || vm.allowLazyMaterializationOfImmutablePropertiesCount);
     return nonPropertyTransition(vm, structure, TransitionKind::PreventExtensions, deferred);
 }
 
@@ -1181,6 +1192,16 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
 
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);
+
+    if (transitionKind == TransitionKind::MakePropertiesImmutable) {
+        transition->setHasImmutableProperties(true);
+        // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
+        // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once.
+        transition->setTransitionWatchpointIsLikelyToBeFired(false);
+        // didTransition() is how built-ins ask whether an object still has only the properties its class gave it (JSObject::
+        // hasCustomProperties()). This transition adds and changes none, so the answer is the one the object had.
+        transition->setDidTransition(structure->didTransition());
+    }
     
     if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
         // We pin the property table on transitions that do wholesale editing of the property
@@ -2068,7 +2089,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         // NOTE: This can interleave in pin(), in which case it may see a null property table.
         // That's fine, because then the barrier will fire and we will scan this again.
         visitor.append(thisObject->m_propertyTableUnsafe);
-    } else if (visitor.vm().isAnalyzingHeap())
+    } else if (visitor.heapAnalyzer())
         visitor.append(thisObject->m_propertyTableUnsafe);
     else if (thisObject->m_propertyTableUnsafe)
         thisObject->m_propertyTableUnsafe.clear();
@@ -2090,7 +2111,7 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
 
     // Mark only in non Full collection. In full collection, we handle it as a weak-link.
-    if (!(visitor.heap()->collectionScope() == CollectionScope::Full)) {
+    if (visitor.collectionScope() != CollectionScope::Full) {
         if (auto* transition = thisObject->m_transitionTable.trySingleTransition())
             visitor.appendUnbarriered(transition);
     }

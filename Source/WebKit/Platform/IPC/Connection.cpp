@@ -100,7 +100,7 @@ public:
     bool processIncomingMessage(Connection& connectionForLockCheck, UniqueRef<Decoder>&) WTF_REQUIRES_LOCK(connectionForLockCheck.m_incomingMessagesLock);
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply.
-    void dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage = { });
+    void dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage = { });
 
     // Dispatch pending messages that should be dispatched while waiting for a sync reply,
     // up until the message with the provided identifier.
@@ -230,7 +230,7 @@ bool Connection::SyncMessageState::processIncomingMessage(Connection& connection
     return true;
 }
 
-void Connection::SyncMessageState::dispatchMessages(Function<void(MessageName, uint64_t)>&& willDispatchMessage)
+void Connection::SyncMessageState::dispatchMessages(NOESCAPE const Function<void(MessageName, uint64_t)>& willDispatchMessage)
 {
     assertIsCurrent(m_dispatcher.get());
     {
@@ -1119,7 +1119,7 @@ void Connection::processIncomingMessage(UniqueRef<Decoder> message)
         Locker locker { m_incomingSyncMessageCallbackLock };
 
         for (auto& callback : m_incomingSyncMessageCallbacks.values())
-            RefPtr { m_incomingSyncMessageCallbackQueue }->dispatch(WTF::move(callback));
+            m_incomingSyncMessageCallbackQueue->dispatch(WTF::move(callback));
 
         m_incomingSyncMessageCallbacks.clear();
     }
@@ -1167,7 +1167,7 @@ uint64_t Connection::installIncomingSyncMessageCallback(WTF::Function<void ()>&&
     m_nextIncomingSyncMessageCallbackID++;
 
     if (!m_incomingSyncMessageCallbackQueue)
-        m_incomingSyncMessageCallbackQueue = WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s);
+        lazyInitialize(m_incomingSyncMessageCallbackQueue, WorkQueue::create("com.apple.WebKit.IPC.IncomingSyncMessageCallbackQueue"_s));
 
     m_incomingSyncMessageCallbacks.add(m_nextIncomingSyncMessageCallbackID, WTF::move(callback));
 
@@ -1763,3 +1763,8 @@ void Connection::logFailedMessageCheck(const String& reason, const String& funct
 }
 
 } // namespace IPC
+
+#if ENABLE(SWIFT_BASE_CLASS_ANNOTATIONS)
+// Workaround for rdar://188816334
+template void WTF::ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<IPC::Connection, WTF::DestructionThread::MainRunLoop>::operator delete(void*);
+#endif

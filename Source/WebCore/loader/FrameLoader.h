@@ -37,8 +37,10 @@
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/LayoutMilestone.h>
 #include <WebCore/LoaderMalloc.h>
+#include <WebCore/NavigateEventDispatchResult.h>
 #include <WebCore/NavigationAction.h>
 #include <WebCore/NavigationHistoryBehavior.h>
+#include <WebCore/NavigationIdentifier.h>
 #include <WebCore/NavigationRequester.h>
 #include <WebCore/PageIdentifier.h>
 #include <WebCore/PendingNavigateEventIdentifier.h>
@@ -169,9 +171,9 @@ public:
     void stopForBackForwardCache();
     void stop();
     void stopLoading(UnloadEventPolicy);
-    void closeURL();
+    WEBCORE_EXPORT void closeURL();
     // FIXME: clear() is trying to do too many things. We should break it down into smaller functions (ideally with fewer raw Boolean parameters).
-    void clear(RefPtr<Document>&& newDocument, bool clearWindowProperties = true, bool clearScriptObjects = true, bool clearFrameView = true, Function<void()>&& handleDOMWindowCreation = nullptr);
+    void clear(RefPtr<Document>&& newDocument, bool clearWindowProperties = true, bool clearScriptObjects = true, bool clearFrameView = true, NOESCAPE const Function<void()>& handleDOMWindowCreation = nullptr);
 
     bool NODELETE isLoading() const;
     WEBCORE_EXPORT bool NODELETE frameHasLoaded() const;
@@ -236,6 +238,7 @@ public:
 
     static void addHTTPOriginIfNeeded(ResourceRequest&, const String& origin);
     static void addSameSiteInfoToRequestIfNeeded(ResourceRequest&, const Document* initiator = nullptr);
+    static URL partitionedFirstPartyForCookiesForSubframeNavigation(const Document&);
 
     const LocalFrameLoaderClient& client() const { return m_client.get(); }
     LocalFrameLoaderClient& client() { return m_client.get(); }
@@ -296,7 +299,7 @@ public:
     bool shouldInterruptLoadForXFrameOptions(const String&, const URL&, ResourceLoaderIdentifier);
 
     void completed();
-    bool NODELETE allAncestorsAreComplete() const; // including this
+    bool allAncestorsAreComplete() const; // including this
     void clientRedirected(const URL&, double delay, WallTime fireDate, LockBackForwardList);
     void clientRedirectCancelledOrFinished(NewLoadInProgress);
 
@@ -452,6 +455,7 @@ private:
     void dispatchDidCommitLoad(const std::optional<BackForwardCacheCommitData>&);
 
     void loadWithDocumentLoader(DocumentLoader*, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, CompletionHandler<void()>&& = [] { }); // Calls continueLoadAfterNavigationPolicy
+    bool shouldCheckNavigationPolicyAfterDispatchingEvents(DocumentLoader&);
     void load(DocumentLoader&, const SecurityOrigin* requesterOrigin); // Calls loadWithDocumentLoader
 
     void loadWithNavigationAction(ResourceRequest&&, NavigationAction&&, FrameLoadType, RefPtr<const FormSubmission>&&, AllowNavigationToInvalidURL, ShouldTreatAsContinuingLoad, ShouldRestoreFromBackForwardCache = ShouldRestoreFromBackForwardCache::Unspecified, CompletionHandler<void()>&& = [] { }); // Calls loadWithDocumentLoader
@@ -489,7 +493,7 @@ private:
 
     // SubframeLoader specific.
     void loadURLIntoChildFrame(const URL&, const String& referer, LocalFrame&);
-    void NODELETE started();
+    void started();
 
     // PolicyChecker specific.
     void clearProvisionalLoadForPolicyCheck();
@@ -497,7 +501,7 @@ private:
 
     void updateRequestAndAddExtraFields(Frame&, ResourceRequest&, IsMainResource, FrameLoadType, ShouldUpdateAppInitiatedValue, IsServiceWorkerNavigationLoad, WillOpenInNewWindow, Document*);
 
-    bool dispatchNavigateEvent(FrameLoadType, const FrameLoadRequest&, bool isSameDocument, FormState* = nullptr, Event* = nullptr, SerializedScriptValue* classicHistoryAPIState = nullptr);
+    NavigateEventDispatchResult dispatchNavigateEvent(FrameLoadType, const FrameLoadRequest&, bool isSameDocument, FormState* = nullptr, Event* = nullptr, SerializedScriptValue* classicHistoryAPIState = nullptr);
     bool shouldDispatchNavigateEventForHistoryTraversal(const HistoryItem&, const HistoryItem* fromItem);
 
     WeakRef<LocalFrame> m_frame;
@@ -594,6 +598,8 @@ private:
     Function<bool()> m_pendingDispatchNavigateEvent;
 
     bool m_needsCancellationForContentRuleListCrossOriginRedirect { false };
+    bool m_isStoppingForCacheOnlyLoadRetry { false };
+    std::optional<NavigationIdentifier> m_navigationIDForCacheOnlyLoadRetry;
 };
 
 // This function is called by createWindow() in JSDOMWindowBase.cpp, for example, for

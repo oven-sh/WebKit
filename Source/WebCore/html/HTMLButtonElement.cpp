@@ -37,6 +37,7 @@
 #include "KeyboardEvent.h"
 #include "RenderButton.h"
 #include "Settings.h"
+#include "StyleAppearance.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StdLibExtras.h>
@@ -87,6 +88,11 @@ void HTMLButtonElement::removingSteps(RemovalType removalType, ContainerNode& ol
     computeType(attributeWithoutSynchronization(HTMLNames::typeAttr));
 }
 
+bool HTMLButtonElement::supportsBaseAppearance(StyleAppearance appearance) const
+{
+    return appearance == StyleAppearance::Base;
+}
+
 RenderPtr<RenderElement> HTMLButtonElement::createElementRenderer(Style::ComputedStyle&& style, const RenderTreePosition& position)
 {
     // https://html.spec.whatwg.org/multipage/rendering.html#button-layout
@@ -134,6 +140,14 @@ void HTMLButtonElement::attributeChanged(const QualifiedName& name, const AtomSt
         computeType(attributeWithoutSynchronization(HTMLNames::typeAttr));
     else
         HTMLFormControlElement::attributeChanged(name, oldValue, newValue, attributeModificationReason);
+}
+
+void HTMLButtonElement::childrenChanged(const ChildChange& change)
+{
+    HTMLFormControlElement::childrenChanged(change);
+
+    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(parentNode()); select && select->buttonElement() == this)
+        select->buttonElementChildrenChanged();
 }
 
 RefPtr<Element> HTMLButtonElement::commandForElement() const

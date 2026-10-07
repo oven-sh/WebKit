@@ -25,14 +25,18 @@
 #include "SVGImageElement.h"
 
 #include "CSSPropertyNames.h"
+#include "CachedImage.h"
 #include "ContainerNodeInlines.h"
 #include "HTMLParserIdioms.h"
+#include "ImageOrientation.h"
+#include "ImageRequestState.h"
 #include "LegacyRenderSVGImage.h"
 #include "LegacyRenderSVGResource.h"
 #include "NodeName.h"
 #include "RenderImageResource.h"
 #include "RenderSVGImage.h"
 #include "SVGElementInlines.h"
+#include "SVGElementTypeHelpers.h"
 #include "SVGNames.h"
 #include "SVGParsingError.h"
 #include "Settings.h"
@@ -45,7 +49,7 @@ namespace WebCore {
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SVGImageElement);
 
 inline SVGImageElement::SVGImageElement(const QualifiedName& tagName, Document& document)
-    : SVGGraphicsElement(tagName, document, makeUniqueRef<PropertyRegistry>(*this), TypeFlag::HasDidMoveToNewDocument)
+    : SVGGraphicsElement(tagName, document, PropertyRegistry::singleton(), TypeFlag::HasDidMoveToNewDocument)
     , SVGURIReference(this)
     , m_imageLoader(makeUniqueRefWithoutRefCountedCheck<SVGImageLoader>(*this))
 {
@@ -70,6 +74,23 @@ Ref<SVGImageElement> SVGImageElement::create(const QualifiedName& tagName, Docum
 CachedImage* SVGImageElement::cachedImage() const
 {
     return m_imageLoader->image();
+}
+
+ImageRequestState SVGImageElement::currentRequestState() const
+{
+    return m_imageLoader->currentRequestState();
+}
+
+RefPtr<Image> SVGImageElement::sourceImage() const
+{
+    if (RefPtr cachedImage = this->cachedImage())
+        return cachedImage->image();
+    return nullptr;
+}
+
+ImageOrientation SVGImageElement::orientationForSourceImage()
+{
+    return ImageOrientation::Orientation::FromImage;
 }
 
 bool SVGImageElement::renderingTaintsOrigin() const

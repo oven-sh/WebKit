@@ -452,7 +452,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     mutable Atomic<uintptr_t> m_bits { refIncrement + strongOnlyFlag };
-} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT;
+} SWIFT_RETURNED_AS_UNRETAINED_BY_DEFAULT BASE_CLASS_SWIFT_SHARED_REFERENCE(.ref, .deref);
 
 template<typename T>
 class ThreadSafeWeakPtr {
@@ -565,7 +565,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     ThreadSafeWeakPtrStorage m_storage;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<class T> ThreadSafeWeakPtr(const T&) -> ThreadSafeWeakPtr<T>;
 template<class T> ThreadSafeWeakPtr(const T*) -> ThreadSafeWeakPtr<T>;
@@ -648,7 +648,7 @@ private:
     template<typename> friend class ThreadSafeWeakHashSet;
 
     ThreadSafeWeakPtrStorage m_storage;
-} SWIFT_ESCAPABLE;
+} SWIFT_SELF_CONTAINED;
 
 template<class T> ThreadSafeWeakRef(const T&) -> ThreadSafeWeakRef<T>;
 

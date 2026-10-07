@@ -1,9 +1,7 @@
 //@ runDefault
-//@ runDefault("--useUnboxedFastArrayIteration=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useJIT=0")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
-//@ runDefault("--useUnboxedFastArrayIteration=1", "--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
+//@ runDefault("--useJIT=0")
+//@ runDefault("--useDFGJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10")
+//@ runDefault("--useConcurrentJIT=0", "--thresholdForJITAfterWarmUp=10", "--thresholdForJITSoon=10", "--thresholdForOptimizeAfterWarmUp=20", "--thresholdForOptimizeAfterLongWarmUp=20", "--thresholdForOptimizeSoon=20", "--thresholdForFTLOptimizeAfterWarmUp=50", "--thresholdForFTLOptimizeSoon=50")
 
 // The Array Iterator protocol is a per-realm thing. An Array of another realm is iterated with that realm's iterator
 // (always an object here), and what the other realm does to its prototypes must not leak into loops over this realm's Arrays.

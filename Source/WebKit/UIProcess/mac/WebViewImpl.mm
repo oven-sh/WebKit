@@ -1388,7 +1388,7 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
         if (RetainPtr layerHostingView = dynamic_objc_cast<WKFlippedView>(subview)) {
             // A layer hosting view may have already been created and added to the view hierarchy
             // in the process of initializing the WKWebView from an NSCoder.
-            m_layerHostingView = layerHostingView.get();
+            lazyInitialize(m_layerHostingView, retainPtr(layerHostingView.get()));
             [layerHostingView setFrame:[m_view.get() bounds]];
             break;
         }
@@ -1396,7 +1396,7 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
 
     if (!m_layerHostingView) {
         // Create an NSView that will host our layer tree.
-        m_layerHostingView = adoptNS([[WKFlippedView alloc] initWithFrame:[m_view.get() bounds]]);
+        lazyInitialize(m_layerHostingView, adoptNS([[WKFlippedView alloc] initWithFrame:[m_view.get() bounds]]));
         [view addSubview:m_layerHostingView.get() positioned:NSWindowBelow relativeTo:nil];
     }
 
@@ -1415,8 +1415,8 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     m_page->setIntrinsicDeviceScaleFactor(intrinsicDeviceScaleFactor());
 
     if (Class gestureClass = NSClassFromString(@"NSImmediateActionGestureRecognizer")) {
-        m_immediateActionGestureRecognizer = adoptNS([(NSImmediateActionGestureRecognizer *)[gestureClass alloc] init]);
-        m_immediateActionController = adoptNS([[WKImmediateActionController alloc] initWithPage:m_page.get() view:view viewImpl:*this recognizer:m_immediateActionGestureRecognizer.get()]);
+        lazyInitialize(m_immediateActionGestureRecognizer, adoptNS([(NSImmediateActionGestureRecognizer *)[gestureClass alloc] init]));
+        lazyInitialize(m_immediateActionController, adoptNS([[WKImmediateActionController alloc] initWithPage:m_page.get() view:view viewImpl:*this recognizer:m_immediateActionGestureRecognizer.get()]));
         [m_immediateActionGestureRecognizer setDelegate:m_immediateActionController.get()];
         [m_immediateActionGestureRecognizer setDelaysPrimaryMouseButtonEvents:NO];
     }
@@ -1444,17 +1444,17 @@ WebViewImpl::WebViewImpl(WKWebView *view, WebProcessPool& processPool, Ref<API::
     m_lastScrollViewFrame = scrollViewFrame();
 
 #if HAVE(REDESIGNED_TEXT_CURSOR) && PLATFORM(MAC)
-    m_textInputNotifications = subscribeToTextInputNotifications(this);
+    lazyInitialize(m_textInputNotifications, subscribeToTextInputNotifications(this));
 #endif
 
-    m_pageScrollingHysteresis = makeUnique<PAL::HysteresisActivity>([weakThis = WeakPtr { *this }](auto state) {
+    lazyInitialize(m_pageScrollingHysteresis, makeUnique<PAL::HysteresisActivity>([weakThis = WeakPtr { *this }](auto state) {
         if (CheckedPtr checkedImpl = weakThis.get())
             checkedImpl->pageScrollingHysteresisFired(state);
-    }, viewStateHysteresis);
+    }, viewStateHysteresis));
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-    m_appKitGestureController = adoptNS([[WKAppKitGestureController alloc] initWithView:view]);
-    m_textSelectionController = adoptNS([[WKTextSelectionController alloc] initWithView:view]);
+    lazyInitialize(m_appKitGestureController, adoptNS([[WKAppKitGestureController alloc] initWithView:view]));
+    lazyInitialize(m_textSelectionController, adoptNS([[WKTextSelectionController alloc] initWithView:view]));
 #endif
 
     WebProcessPool::statistics().wkViewCount++;
@@ -2837,13 +2837,13 @@ RetainPtr<NSView> WebViewImpl::hitTest(CGPoint point)
     return hitView;
 }
 
-void WebViewImpl::scheduleMouseDidMoveOverElement(NSEvent *flagsChangedEvent)
+void WebViewImpl::scheduleMouseDidMoveOverElementForModifierFlagsChange(NSEvent *flagsChangedEvent)
 {
     RetainPtr fakeEvent = [NSEvent mouseEventWithType:NSEventTypeMouseMoved location:flagsChangedEvent.window.mouseLocationOutsideOfEventStream
         modifierFlags:flagsChangedEvent.modifierFlags timestamp:flagsChangedEvent.timestamp windowNumber:flagsChangedEvent.windowNumber
         context:nullptr eventNumber:0 clickCount:0 pressure:0];
     Ref webEvent = NativeWebMouseEvent::create(fakeEvent.get(), m_lastPressureEvent.get(), m_view.get().get(), WebEventInputSource::UserDriven);
-    m_page->dispatchMouseDidMoveOverElementAsynchronously(WTF::move(webEvent));
+    m_page->dispatchMouseDidMoveOverElementForModifierFlagsChange(WTF::move(webEvent));
 }
 
 WebCore::ColorSpace WebViewImpl::colorSpace()
@@ -3620,7 +3620,7 @@ void WebViewImpl::setContinuousSpellCheckingEnabled(bool enabled)
         return;
 
     TextChecker::setContinuousSpellCheckingEnabled(enabled);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleContinuousSpellChecking()
@@ -3628,7 +3628,7 @@ void WebViewImpl::toggleContinuousSpellChecking()
     bool spellCheckingEnabled = !TextChecker::state().contains(TextCheckerState::ContinuousSpellCheckingEnabled);
     TextChecker::setContinuousSpellCheckingEnabled(spellCheckingEnabled);
 
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 bool WebViewImpl::isGrammarCheckingEnabled()
@@ -3642,7 +3642,7 @@ void WebViewImpl::setGrammarCheckingEnabled(bool flag)
         return;
 
     TextChecker::setGrammarCheckingEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleGrammarChecking()
@@ -3650,14 +3650,14 @@ void WebViewImpl::toggleGrammarChecking()
     bool grammarCheckingEnabled = !TextChecker::state().contains(TextCheckerState::GrammarCheckingEnabled);
     TextChecker::setGrammarCheckingEnabled(grammarCheckingEnabled);
 
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleAutomaticSpellingCorrection()
 {
     TextChecker::setAutomaticSpellingCorrectionEnabled(!TextChecker::state().contains(TextCheckerState::AutomaticSpellingCorrectionEnabled));
 
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::orderFrontSubstitutionsPanel(id sender)
@@ -3692,13 +3692,13 @@ void WebViewImpl::setAutomaticQuoteSubstitutionEnabled(bool flag)
         return;
 
     TextChecker::setAutomaticQuoteSubstitutionEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleAutomaticQuoteSubstitution()
 {
     TextChecker::setAutomaticQuoteSubstitutionEnabled(!TextChecker::state().contains(TextCheckerState::AutomaticQuoteSubstitutionEnabled));
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 bool WebViewImpl::isAutomaticDashSubstitutionEnabled()
@@ -3712,13 +3712,13 @@ void WebViewImpl::setAutomaticDashSubstitutionEnabled(bool flag)
         return;
 
     TextChecker::setAutomaticDashSubstitutionEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleAutomaticDashSubstitution()
 {
     TextChecker::setAutomaticDashSubstitutionEnabled(!TextChecker::state().contains(TextCheckerState::AutomaticDashSubstitutionEnabled));
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 bool WebViewImpl::isAutomaticLinkDetectionEnabled()
@@ -3732,13 +3732,13 @@ void WebViewImpl::setAutomaticLinkDetectionEnabled(bool flag)
         return;
 
     TextChecker::setAutomaticLinkDetectionEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleAutomaticLinkDetection()
 {
     TextChecker::setAutomaticLinkDetectionEnabled(!TextChecker::state().contains(TextCheckerState::AutomaticLinkDetectionEnabled));
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 bool WebViewImpl::isAutomaticTextReplacementEnabled()
@@ -3752,13 +3752,13 @@ void WebViewImpl::setAutomaticTextReplacementEnabled(bool flag)
         return;
 
     TextChecker::setAutomaticTextReplacementEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleAutomaticTextReplacement()
 {
     TextChecker::setAutomaticTextReplacementEnabled(!TextChecker::state().contains(TextCheckerState::AutomaticTextReplacementEnabled));
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 bool WebViewImpl::isSmartListsEnabled()
@@ -3778,7 +3778,7 @@ void WebViewImpl::setSmartListsEnabled(bool flag)
         return;
 
     TextChecker::setSmartListsEnabled(flag);
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::toggleSmartLists()
@@ -3787,7 +3787,7 @@ void WebViewImpl::toggleSmartLists()
         return;
 
     TextChecker::setSmartListsEnabled(!TextChecker::state().contains(TextCheckerState::SmartListsEnabled));
-    protect(m_page->legacyMainFrameProcess())->updateTextCheckerState();
+    WebProcessPool::notifyProcessPoolsTextCheckerStateChanged();
 }
 
 void WebViewImpl::uppercaseWord()
@@ -3992,7 +3992,7 @@ void WebViewImpl::updateAXCustomColorModeControlsVisibility()
     }
 
     if (!m_axCustomColorModeControlsController)
-        m_axCustomColorModeControlsController = adoptNS([[WKAXCustomColorModePreferencesController alloc] initWithPreferences:m_page->preferences()]);
+        lazyInitialize(m_axCustomColorModeControlsController, adoptNS([[WKAXCustomColorModePreferencesController alloc] initWithPreferences:m_page->preferences()]));
 
     [m_axCustomColorModeControlsController attachToView:m_view.getAutoreleased() topInset:obscuredContentInsets().top()];
 }
@@ -4177,11 +4177,6 @@ void WebViewImpl::setAllowsLinkPreview(bool allowsLinkPreview)
 NSObject *WebViewImpl::immediateActionAnimationControllerForHitTestResult(API::HitTestResult* hitTestResult, uint32_t type, API::Object* userData)
 {
     return [m_view.get() _web_immediateActionAnimationControllerForHitTestResultInternal:hitTestResult withType:type userData:userData];
-}
-
-void WebViewImpl::didPerformImmediateActionHitTest(const WebHitTestResultData& result, bool contentPreventsDefault, API::Object* userData)
-{
-    [m_immediateActionController didPerformImmediateActionHitTest:result contentPreventsDefault:contentPreventsDefault userData:userData];
 }
 
 void WebViewImpl::prepareForImmediateActionAnimation()
@@ -5062,171 +5057,157 @@ void WebViewImpl::startDrag(const WebCore::DragItem& item, ShareableBitmap::Hand
     // The call below could release the view.
     auto protector = m_view.get();
 
-    if (RefPtr frame = WebFrameProxy::webFrame(item.rootFrameID)) {
-        // FIXME: The `dragLocationInWindowCoordinates` is in window coordinates (equivalent to root view), but `convertPointToMainFrameCoordinates`
-        // expects the input to be in content coordinates of the frame corresponding to the given frame ID.
-        m_page->convertPointToMainFrameCoordinates(item.dragLocationInWindowCoordinates, item.rootFrameID, [weakThis = WeakPtr { *this }, promisedAttachmentInfo = item.promisedAttachmentInfo, dragNSImage = WTF::move(dragNSImage), size, lastMouseDownEvent = m_lastMouseDownEvent, frameID, eventPositionInRootViewCoordinates = item.eventPositionInRootViewCoordinates](std::optional<FloatPoint> dragLocationInMainFrameCoordinates) mutable {
+    BEGIN_BLOCK_OBJC_EXCEPTIONS
 
-            BEGIN_BLOCK_OBJC_EXCEPTIONS
+    // clientDragLocation is the bottom-left of the image, but setDraggingFrame: expects a top-left origin.
+    auto clientDragLocation = item.dragLocationInWindowCoordinates;
+    auto draggingFrame = NSMakeRect(clientDragLocation.x(), clientDragLocation.y() - size.height(), size.width(), size.height());
 
-            CheckedPtr protectedThis = weakThis.get();
-            if (!protectedThis || !dragLocationInMainFrameCoordinates)
-                return;
+    bool isImageDrag = m_promisedImageDragData.has_value();
+    bool canUseFilePromiseForImageDrag = isImageDrag && !m_promisedImageDragData->imageUTI.isEmpty();
 
-            // clientDragLocation is the bottom-left of the image, but setDraggingFrame: expects a top-left origin.
-            auto clientDragLocation = IntPoint(dragLocationInMainFrameCoordinates.value());
-            auto draggingFrame = NSMakeRect(clientDragLocation.x(), clientDragLocation.y() - size.height(), size.width(), size.height());
-
-            bool isImageDrag = protectedThis->m_promisedImageDragData.has_value();
-            bool canUseFilePromiseForImageDrag = isImageDrag && !protectedThis->m_promisedImageDragData->imageUTI.isEmpty();
-
-            RetainPtr pasteboard = [NSPasteboard pasteboardWithName:NSPasteboardNameDrag];
+    RetainPtr pasteboard = [NSPasteboard pasteboardWithName:NSPasteboardNameDrag];
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-            RetainPtr gestureController = protectedThis->appKitGestureController();
-            bool missingDragInitiator = !lastMouseDownEvent && ![gestureController activeDragGestureRecognizer];
+    RetainPtr gestureController = appKitGestureController();
+    bool missingDragInitiator = !m_lastMouseDownEvent && ![gestureController activeDragGestureRecognizer];
 #else
-            bool missingDragInitiator = !lastMouseDownEvent;
+    bool missingDragInitiator = !m_lastMouseDownEvent;
 #endif
-            if (missingDragInitiator) {
+    if (missingDragInitiator) {
+        cancelDrag();
+        return;
+    }
+
+    auto startDraggingSessionWithItems = makeBlockPtr([weakThis = WeakPtr { *this }, promisedAttachmentInfo = item.promisedAttachmentInfo, dragNSImage, draggingFrame, isImageDrag, canUseFilePromiseForImageDrag, pasteboard, lastMouseDownEvent = m_lastMouseDownEvent, frameID](NSArray<NSDraggingItem *> *adjustedItems) {
+        BEGIN_BLOCK_OBJC_EXCEPTIONS
+
+        CheckedPtr protectedThis = weakThis.get();
+        if (!protectedThis)
+            return;
+        RefPtr page = protectedThis->page();
+        RetainPtr view = protectedThis->view();
+        if (!page || !view) {
+            protectedThis->cancelDrag();
+            return;
+        }
+
+        bool delegateSubstituted = adjustedItems.count;
+        RetainPtr<NSArray<NSDraggingItem *>> draggingItems;
+
+        // beginDraggingSessionWithItems: clears the pasteboard and populates it with UTI-typed data
+        // from NSPasteboardItems. We restore the legacy-typed pasteboard data afterwards so that WP
+        // read paths (which expect legacy types) can find this data in the original order.
+        RetainPtr<NSArray<NSString *>> savedLegacyPasteboardTypes;
+        RetainPtr<NSMutableDictionary<NSString *, NSData *>> savedLegacyPasteboardData;
+
+        if (delegateSubstituted) {
+            // The delegate supplied its own items and owns the pasteboard, so WebKit's promised-image
+            // data (if any) is unused for this drag. Clear it so it cannot leak into a later drag.
+            protectedThis->clearPromisedImageDragData();
+            draggingItems = adjustedItems;
+        } else if (promisedAttachmentInfo) {
+            RefPtr attachment = page->attachmentForIdentifier(promisedAttachmentInfo.attachmentIdentifier);
+            if (!attachment) {
                 protectedThis->cancelDrag();
                 return;
             }
+            RetainPtr utiType = attachment->utiType().createNSString();
+            if (![utiType length]) {
+                protectedThis->cancelDrag();
+                return;
+            }
+            RetainPtr fileName = attachment->fileName().createNSString();
+            RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:utiType.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
+            RetainPtr context = adoptNS([[WKPromisedAttachmentContext alloc] initWithIdentifier:promisedAttachmentInfo.attachmentIdentifier.createNSString().get() fileName:fileName.get()]);
+            [provider setUserInfo:context.get()];
+            RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
+            [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+            draggingItems = @[ defaultDraggingItem.get() ];
+        } else if (canUseFilePromiseForImageDrag) {
+            RetainPtr imageUTI = protectedThis->m_promisedImageDragData->imageUTI.createNSString();
+            RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:imageUTI.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
+            RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
+            [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+            draggingItems = @[ defaultDraggingItem.get() ];
+        } else {
+            protectedThis->clearPromisedImageDragData();
 
-            auto startDraggingSessionWithItems = makeBlockPtr([weakThis, promisedAttachmentInfo, dragNSImage, draggingFrame, isImageDrag, canUseFilePromiseForImageDrag, pasteboard, lastMouseDownEvent, frameID](NSArray<NSDraggingItem *> *adjustedItems) {
-                BEGIN_BLOCK_OBJC_EXCEPTIONS
-
-                CheckedPtr protectedThis = weakThis.get();
-                if (!protectedThis)
-                    return;
-                RefPtr page = protectedThis->page();
-                RetainPtr view = protectedThis->view();
-                if (!page || !view) {
-                    protectedThis->cancelDrag();
-                    return;
-                }
-
-                bool delegateSubstituted = adjustedItems.count;
-                RetainPtr<NSArray<NSDraggingItem *>> draggingItems;
-
-                // beginDraggingSessionWithItems: clears the pasteboard and populates it with UTI-typed data
-                // from NSPasteboardItems. We restore the legacy-typed pasteboard data afterwards so that WP
-                // read paths (which expect legacy types) can find this data in the original order.
-                RetainPtr<NSArray<NSString *>> savedLegacyPasteboardTypes;
-                RetainPtr<NSMutableDictionary<NSString *, NSData *>> savedLegacyPasteboardData;
-
-                if (delegateSubstituted) {
-                    // The delegate supplied its own items and owns the pasteboard, so WebKit's promised-image
-                    // data (if any) is unused for this drag. Clear it so it cannot leak into a later drag.
-                    protectedThis->clearPromisedImageDragData();
-                    draggingItems = adjustedItems;
-                } else if (promisedAttachmentInfo) {
-                    RefPtr attachment = page->attachmentForIdentifier(promisedAttachmentInfo.attachmentIdentifier);
-                    if (!attachment) {
-                        protectedThis->cancelDrag();
-                        return;
-                    }
-                    RetainPtr utiType = attachment->utiType().createNSString();
-                    if (![utiType length]) {
-                        protectedThis->cancelDrag();
-                        return;
-                    }
-                    RetainPtr fileName = attachment->fileName().createNSString();
-                    RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:utiType.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
-                    RetainPtr context = adoptNS([[WKPromisedAttachmentContext alloc] initWithIdentifier:promisedAttachmentInfo.attachmentIdentifier.createNSString().get() fileName:fileName.get()]);
-                    [provider setUserInfo:context.get()];
-                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
-                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-                    draggingItems = @[ defaultDraggingItem.get() ];
-                } else if (canUseFilePromiseForImageDrag) {
-                    RetainPtr imageUTI = protectedThis->m_promisedImageDragData->imageUTI.createNSString();
-                    RetainPtr provider = adoptNS([[NSFilePromiseProvider alloc] initWithFileType:imageUTI.get() delegate:(id<NSFilePromiseProviderDelegate>)view.get()]);
-                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:provider.get()]);
-                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-                    draggingItems = @[ defaultDraggingItem.get() ];
-                } else {
-                    protectedThis->clearPromisedImageDragData();
-
-                    // NSPasteboardItem here is a placeholder to satisfy the NSDraggingItem initializer.
-                    // The real data lives in the saved legacy state and is restored once the drag session starts.
-                    savedLegacyPasteboardTypes = adoptNS([[pasteboard types] copy]);
-                    savedLegacyPasteboardData = adoptNS([[NSMutableDictionary alloc] init]);
-                    for (NSString *type in [pasteboard types]) {
-                        if (RetainPtr data = [pasteboard dataForType:type])
-                            [savedLegacyPasteboardData setObject:data.get() forKey:type];
-                    }
-                    RetainPtr pasteboardItem = adoptNS([[NSPasteboardItem alloc] init]);
-                    [pasteboardItem setData:[NSData data] forType:UTTypeData.identifier];
-                    RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem.get()]);
-                    [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-                    draggingItems = @[ defaultDraggingItem.get() ];
-                }
+            // NSPasteboardItem here is a placeholder to satisfy the NSDraggingItem initializer.
+            // The real data lives in the saved legacy state and is restored once the drag session starts.
+            savedLegacyPasteboardTypes = adoptNS([[pasteboard types] copy]);
+            savedLegacyPasteboardData = adoptNS([[NSMutableDictionary alloc] init]);
+            for (NSString *type in [pasteboard types]) {
+                if (RetainPtr data = [pasteboard dataForType:type])
+                    [savedLegacyPasteboardData setObject:data.get() forKey:type];
+            }
+            RetainPtr pasteboardItem = adoptNS([[NSPasteboardItem alloc] init]);
+            [pasteboardItem setData:[NSData data] forType:UTTypeData.identifier];
+            RetainPtr defaultDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:pasteboardItem.get()]);
+            [defaultDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+            draggingItems = @[ defaultDraggingItem.get() ];
+        }
 
 #if HAVE(APPKIT_GESTURES_SUPPORT)
-                RetainPtr gestureController = protectedThis->appKitGestureController();
-                if (RetainPtr gesture = [gestureController activeDragGestureRecognizer]) {
-                    RetainPtr session = [view beginDraggingSessionWithItems:draggingItems.get() gesture:gesture source:static_cast<id<NSDraggingSource>>(view.get())];
-                    [gestureController setGestureDraggingSession:session.get()];
-                    if (!session) {
-                        protectedThis->cancelDrag();
-                        return;
-                    }
-                } else
+        RetainPtr gestureController = protectedThis->appKitGestureController();
+        if (RetainPtr gesture = [gestureController activeDragGestureRecognizer]) {
+            RetainPtr session = [view beginDraggingSessionWithItems:draggingItems.get() gesture:gesture source:static_cast<id<NSDraggingSource>>(view.get())];
+            [gestureController setGestureDraggingSession:session.get()];
+            if (!session) {
+                protectedThis->cancelDrag();
+                return;
+            }
+        } else
 #endif
-                {
-                    [view beginDraggingSessionWithItems:draggingItems.get() event:lastMouseDownEvent source:static_cast<id<NSDraggingSource>>(view.get())];
-                }
+        {
+            [view beginDraggingSessionWithItems:draggingItems.get() event:lastMouseDownEvent source:static_cast<id<NSDraggingSource>>(view.get())];
+        }
 
-                if (delegateSubstituted) {
-                    // The delegate's writers own the pasteboard; skip WebKit's own data population.
-                    page->didStartDrag(frameID);
-                } else if (promisedAttachmentInfo) {
-                    for (auto& [type, data] : promisedAttachmentInfo.additionalTypesAndData) {
-                        RetainPtr nsData = protect(*data)->createNSData();
-                        [pasteboard setData:nsData.get() forType:type.createNSString().get()];
-                    }
-                    // FIXME: should we plumb the frameID for promised blobs?
-                    page->didStartDrag();
-                } else if (isImageDrag) {
-                    protectedThis->writePromisedImageDragDataToPasteboard(pasteboard.get());
-                    if (page->sessionID().isEphemeral())
-                        [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
-                    page->didStartDrag(frameID);
-                } else {
-                    if (savedLegacyPasteboardTypes && [savedLegacyPasteboardTypes count]) {
-                        [pasteboard clearContents];
-                        [pasteboard addTypes:savedLegacyPasteboardTypes.get() owner:nil];
-                        for (NSString *type in savedLegacyPasteboardTypes.get()) {
-                            if (RetainPtr data = [savedLegacyPasteboardData objectForKey:type])
-                                [pasteboard setData:data.get() forType:type];
-                        }
-                        if (page->sessionID().isEphemeral())
-                            [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
-                    }
-                    [pasteboard setString:@"" forType:PasteboardTypes::WebDummyPboardType];
-                    page->didStartDrag(frameID);
+        if (delegateSubstituted) {
+            // The delegate's writers own the pasteboard; skip WebKit's own data population.
+            page->didStartDrag(frameID);
+        } else if (promisedAttachmentInfo) {
+            for (auto& [type, data] : promisedAttachmentInfo.additionalTypesAndData) {
+                RetainPtr nsData = protect(*data)->createNSData();
+                [pasteboard setData:nsData.get() forType:type.createNSString().get()];
+            }
+            // FIXME: should we plumb the frameID for promised blobs?
+            page->didStartDrag();
+        } else if (isImageDrag) {
+            protectedThis->writePromisedImageDragDataToPasteboard(pasteboard.get());
+            if (page->sessionID().isEphemeral())
+                [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
+            page->didStartDrag(frameID);
+        } else {
+            if (savedLegacyPasteboardTypes && [savedLegacyPasteboardTypes count]) {
+                [pasteboard clearContents];
+                [pasteboard addTypes:savedLegacyPasteboardTypes.get() owner:nil];
+                for (NSString *type in savedLegacyPasteboardTypes.get()) {
+                    if (RetainPtr data = [savedLegacyPasteboardData objectForKey:type])
+                        [pasteboard setData:data.get() forType:type];
                 }
+                if (page->sessionID().isEphemeral())
+                    [pasteboard _setExpirationDate:[NSDate dateWithTimeIntervalSinceNow:pasteboardExpirationDelay.seconds()]];
+            }
+            [pasteboard setString:@"" forType:PasteboardTypes::WebDummyPboardType];
+            page->didStartDrag(frameID);
+        }
 
-                END_BLOCK_OBJC_EXCEPTIONS
-            });
+        END_BLOCK_OBJC_EXCEPTIONS
+    });
 
 #if ENABLE(DRAG_SOURCE_CUSTOMIZATION)
-            if (RetainPtr view = protectedThis->view()) {
-                RetainPtr placeholderWriter = adoptNS([[NSPasteboardItem alloc] init]);
-                [placeholderWriter setData:[NSData data] forType:UTTypeData.identifier];
-                RetainPtr contextDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:placeholderWriter]);
-                [contextDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
-                [view _web_draggingItemsForDraggingItem:contextDraggingItem atLocation:eventPositionInRootViewCoordinates completionHandler:startDraggingSessionWithItems.get()];
-            } else
+    if (RetainPtr view = this->view()) {
+        RetainPtr placeholderWriter = adoptNS([[NSPasteboardItem alloc] init]);
+        [placeholderWriter setData:[NSData data] forType:UTTypeData.identifier];
+        RetainPtr contextDraggingItem = adoptNS([[NSDraggingItem alloc] initWithPasteboardWriter:placeholderWriter]);
+        [contextDraggingItem setDraggingFrame:draggingFrame contents:dragNSImage];
+        [view _web_draggingItemsForDraggingItem:contextDraggingItem atLocation:item.eventPositionInRootViewCoordinates completionHandler:startDraggingSessionWithItems.get()];
+    } else
 #endif
-            {
-                UNUSED_PARAM(eventPositionInRootViewCoordinates);
-                startDraggingSessionWithItems(nil);
-            }
+        startDraggingSessionWithItems(nil);
 
-            END_BLOCK_OBJC_EXCEPTIONS
-        });
-    }
+    END_BLOCK_OBJC_EXCEPTIONS
 }
 
 static bool matchesExtensionOrEquivalent(const String& filename, const String& extension)
@@ -5610,7 +5591,7 @@ void WebViewImpl::addTextAnimationForAnimationID(WTF::UUID uuid, const WebCore::
         return;
 
     if (!m_textAnimationTypeManager)
-        m_textAnimationTypeManager = adoptNS([[WKTextAnimationManager alloc] initWithWebViewImpl:*this]);
+        lazyInitialize(m_textAnimationTypeManager, adoptNS([[WKTextAnimationManager alloc] initWithWebViewImpl:*this]));
 
     [m_textAnimationTypeManager addTextAnimationForAnimationID:uuid.createNSUUID().get() withData:data];
 }
@@ -5635,7 +5616,7 @@ void WebViewImpl::addTextEffectForID(NSUUID *uuid, const WebCore::TextEffectData
         return;
 
     if (!m_textEffectManager)
-        m_textEffectManager = adoptNS([[WKTextEffectManager alloc] initWithWebView:view()]);
+        lazyInitialize(m_textEffectManager, adoptNS([[WKTextEffectManager alloc] initWithWebView:view()]));
 
     [m_textEffectManager addTextEffectForID:uuid withData:data];
 }
@@ -5869,6 +5850,11 @@ void WebViewImpl::gestureEventWasNotHandledByWebCore(const NativeWebGestureEvent
         return;
     }
 
+#if HAVE(APPKIT_GESTURES_SUPPORT)
+    if (event.type() == WebEventType::GestureChange && event.kind() == NativeWebGestureEvent::Kind::Magnification && event.gestureScale())
+        [appKitGestureController() transformGestureWasNotHandledByContent];
+#endif
+
     if (event.kind() != NativeWebGestureEvent::Kind::Magnification || !event.allowsNativeZoom())
         return;
 
@@ -6009,7 +5995,7 @@ void WebViewImpl::interpretKeyEvent(NSEvent *event, void(^completionHandler)(BOO
         // released keyup dispatches handleEventByInputMethod: directly (bypassing the
         // tank-check) so it doesn't re-tank when other keydowns are still in flight.
         if ([event type] == NSEventTypeKeyDown)
-            m_collectedKeypressCommands.append(Vector<WebCore::KeypressCommand> { });
+            m_collectedKeypressCommands.constructAndAppend();
         else if (!m_collectedKeypressCommands.isEmpty()) {
             m_interpretKeyEventHoldingTank.append([weakThis = WeakPtr { *this }, capturedEvent = retainPtr(event), capturedBlock = makeBlockPtr(completionHandler)] {
                 CheckedPtr checkedThis = weakThis.get();
@@ -6954,7 +6940,7 @@ void WebViewImpl::createFlagsChangedEventMonitor()
     WeakPtr weakThis { *this };
     m_flagsChangedEventMonitor = [NSEvent addLocalMonitorForEventsMatchingMask:NSEventMaskFlagsChanged handler:[weakThis] (NSEvent *flagsChangedEvent) {
         if (CheckedPtr checkedThis = weakThis)
-            checkedThis->scheduleMouseDidMoveOverElement(flagsChangedEvent);
+            checkedThis->scheduleMouseDidMoveOverElementForModifierFlagsChange(flagsChangedEvent);
         return flagsChangedEvent;
     }];
 }
@@ -7444,7 +7430,7 @@ void WebViewImpl::updateTextTouchBar()
     SetForScope isUpdatingTextFunctionBar(m_isUpdatingTextTouchBar, true);
 
     if (!m_textTouchBarItemController)
-        m_textTouchBarItemController = adoptNS([[WKTextTouchBarItemController alloc] initWithWebViewImpl:this]);
+        lazyInitialize(m_textTouchBarItemController, adoptNS([[WKTextTouchBarItemController alloc] initWithWebViewImpl:this]));
 
     if (!m_startedListeningToCustomizationEvents) {
         [[NSNotificationCenter defaultCenter] addObserver:m_textTouchBarItemController.get() selector:@selector(touchBarDidExitCustomization:) name:NSTouchBarDidExitCustomization object:nil];
@@ -7455,23 +7441,23 @@ void WebViewImpl::updateTextTouchBar()
     }
 
     if (!m_richTextCandidateListTouchBarItem || !m_plainTextCandidateListTouchBarItem || !m_passwordTextCandidateListTouchBarItem) {
-        m_richTextCandidateListTouchBarItem = adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]);
+        lazyInitialize(m_richTextCandidateListTouchBarItem, adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]));
         [m_richTextCandidateListTouchBarItem setDelegate:m_textTouchBarItemController.get()];
-        m_plainTextCandidateListTouchBarItem = adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]);
+        lazyInitialize(m_plainTextCandidateListTouchBarItem, adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]));
         [m_plainTextCandidateListTouchBarItem setDelegate:m_textTouchBarItemController.get()];
-        m_passwordTextCandidateListTouchBarItem = adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]);
+        lazyInitialize(m_passwordTextCandidateListTouchBarItem, adoptNS([[NSCandidateListTouchBarItem alloc] initWithIdentifier:NSTouchBarItemIdentifierCandidateList]));
         [m_passwordTextCandidateListTouchBarItem setDelegate:m_textTouchBarItemController.get()];
         requestCandidatesForSelectionIfNeeded();
     }
 
     if (!m_richTextTouchBar) {
-        m_richTextTouchBar = adoptNS([[NSTouchBar alloc] init]);
+        lazyInitialize(m_richTextTouchBar, adoptNS([[NSTouchBar alloc] init]));
         setUpTextTouchBar(m_richTextTouchBar.get());
         [m_richTextTouchBar setCustomizationIdentifier:@"WKRichTextTouchBar"];
     }
 
     if (!m_plainTextTouchBar) {
-        m_plainTextTouchBar = adoptNS([[NSTouchBar alloc] init]);
+        lazyInitialize(m_plainTextTouchBar, adoptNS([[NSTouchBar alloc] init]));
         setUpTextTouchBar(m_plainTextTouchBar.get());
         [m_plainTextTouchBar setCustomizationIdentifier:@"WKPlainTextTouchBar"];
     }
@@ -7485,7 +7471,7 @@ void WebViewImpl::updateTextTouchBar()
 
     if (m_page->editorState().isInPasswordField) {
         if (!m_passwordTextTouchBar) {
-            m_passwordTextTouchBar = adoptNS([[NSTouchBar alloc] init]);
+            lazyInitialize(m_passwordTextTouchBar, adoptNS([[NSTouchBar alloc] init]));
             setUpTextTouchBar(m_passwordTextTouchBar.get());
         }
         [m_passwordTextCandidateListTouchBarItem setCandidates:@[ ] forSelectedRange:NSMakeRange(0, 0) inString:nil];
@@ -7571,7 +7557,7 @@ void WebViewImpl::updateMediaPlaybackControlsManager()
         return;
 
     if (!m_playbackControlsManager) {
-        m_playbackControlsManager = adoptNS([[WebPlaybackControlsManager alloc] init]);
+        lazyInitialize(m_playbackControlsManager, adoptNS([[WebPlaybackControlsManager alloc] init]));
         [m_playbackControlsManager setAllowsPictureInPicturePlayback:protect(m_page->preferences())->allowsPictureInPictureMediaPlayback()];
         [m_playbackControlsManager setCanTogglePictureInPicture:NO];
     }
@@ -7604,11 +7590,11 @@ void WebViewImpl::updateMediaTouchBar()
 {
 #if ENABLE(WEB_PLAYBACK_CONTROLS_MANAGER) && ENABLE(VIDEO_PRESENTATION_MODE)
     if (!m_mediaTouchBarProvider) {
-        m_mediaTouchBarProvider = adoptNS([allocAVTouchBarPlaybackControlsProviderInstance() init]);
+        lazyInitialize(m_mediaTouchBarProvider, adoptNS([allocAVTouchBarPlaybackControlsProviderInstance() init]));
     }
 
     if (!m_mediaPlaybackControlsView) {
-        m_mediaPlaybackControlsView = adoptNS([allocAVTouchBarScrubberInstance() init]);
+        lazyInitialize(m_mediaPlaybackControlsView, adoptNS([allocAVTouchBarScrubberInstance() init]));
         // FIXME: Remove this once setCanShowMediaSelectionButton: is declared in an SDK used by Apple's buildbot.
         if ([m_mediaPlaybackControlsView respondsToSelector:@selector(setCanShowMediaSelectionButton:)])
             [m_mediaPlaybackControlsView setCanShowMediaSelectionButton:YES];
@@ -7626,7 +7612,7 @@ void WebViewImpl::updateMediaTouchBar()
         RetainPtr touchBar = [m_mediaTouchBarProvider respondsToSelector:@selector(touchBar)] ? [(id)m_mediaTouchBarProvider.get() touchBar] : [(id)m_mediaTouchBarProvider.get() touchBar];
         if (hasFullScreenWindowController() && [m_fullScreenWindowController isFullScreen]) {
             if (!m_exitFullScreenButton) {
-                m_exitFullScreenButton = adoptNS([[NSCustomTouchBarItem alloc] initWithIdentifier:WKMediaExitFullScreenItem]);
+                lazyInitialize(m_exitFullScreenButton, adoptNS([[NSCustomTouchBarItem alloc] initWithIdentifier:WKMediaExitFullScreenItem]));
 
                 RetainPtr image = [NSImage imageNamed:NSImageNameTouchBarExitFullScreenTemplate];
                 [image setTemplate:YES];
@@ -8116,10 +8102,21 @@ void WebViewImpl::updateWebContentDistancesFromEdges()
 
     auto leftInset = obscuredContentInsets().left();
     auto viewWidth = [view bounds].size.width;
-    auto contentsWidth = m_lastPageContentsSize.width;
-    auto effectiveScrollOffsetX = m_scrollOffsetBeforeTransientZoom
+    auto contentsWidth = static_cast<CGFloat>(m_lastPageContentsSize.width);
+    auto effectiveScrollOffsetX = static_cast<CGFloat>(m_scrollOffsetBeforeTransientZoom
         ? m_scrollOffsetBeforeTransientZoom->x()
-        : m_lastPageScrollOffset.x();
+        : m_lastPageScrollOffset.x());
+
+    // These distances are in view coordinates, but with delegated scaling the web process reports the contents
+    // size and scroll offset unscaled, since Frame::frameScaleFactor() is 1 there. Otherwise the page scale is
+    // already baked into both.
+    if (m_page->delegatesScalingToUIProcess()) {
+        // The scale those values were reported at. That's the committed one except mid-gesture, where the block
+        // below carries the geometry the rest of the way.
+        auto baselineScale = m_pageScaleBeforeTransientZoom.value_or(m_page->pageScaleFactor());
+        contentsWidth = std::trunc(contentsWidth * baselineScale);
+        effectiveScrollOffsetX = std::trunc(effectiveScrollOffsetX * baselineScale);
+    }
 
     auto leftDistance = leftInset - effectiveScrollOffsetX;
     auto rightDistance = viewWidth - leftInset - contentsWidth + effectiveScrollOffsetX;
@@ -8298,7 +8295,7 @@ void WebViewImpl::registerViewAboveScrollPocket(NSView *containerView)
         return;
 
     if (!m_viewsAboveScrollPocket)
-        m_viewsAboveScrollPocket = [NSHashTable<NSView *> weakObjectsHashTable];
+        lazyInitialize(m_viewsAboveScrollPocket, retainPtr([NSHashTable<NSView *> weakObjectsHashTable]));
 
     [m_viewsAboveScrollPocket addObject:containerView];
     [m_topScrollPocket addElementContainer:containerView];

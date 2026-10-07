@@ -74,7 +74,7 @@ public:
         std::unique_ptr<StackTrace> m_stack;
     };
 
-    VerifierSlotVisitor(Heap&);
+    explicit VerifierSlotVisitor(Collector&);
     ~VerifierSlotVisitor();
 
     void append(const ConservativeRoots&) final;
@@ -109,9 +109,9 @@ public:
     NO_RETURN_DUE_TO_CRASH void addParallelConstraintTask(RefPtr<SharedTask<void(SlotVisitor&)>>) final;
     void executeConstraintTasks();
 
-    template<typename Functor> void forEachLiveCell(const Functor&);
-    template<typename Functor> void forEachLivePreciseAllocation(const Functor&);
-    template<typename Functor> void forEachLiveMarkedBlockCell(const Functor&);
+    template<typename Functor> void forEachLiveCell(NOESCAPE const Functor&);
+    template<typename Functor> void forEachLivePreciseAllocation(NOESCAPE const Functor&);
+    template<typename Functor> void forEachLiveMarkedBlockCell(NOESCAPE const Functor&);
 
     JS_EXPORT_PRIVATE void dumpMarkerData(HeapCell*);
 
