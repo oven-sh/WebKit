@@ -147,6 +147,11 @@ Rules for an edit to an upstream test:
   also runs wherever `--jsc-only` is given (so the JSCOnly port can be tested on macOS and Windows, where `jsc` is
   `<root>/bin/jsc`).
 - `Tools/Scripts/run-jsc-stress-tests`: `--asan` sets `$asan`, for `//@ skip if $asan`.
+- `JSTests/regexpLinearEngine.yaml`, a collection of this fork in the list of `run-javascriptcore-tests`: the RegExp tests
+  of `JSTests/stress` once more with `--useRegExpLinearEngine=1` (the non-backtracking matcher, `yarr/YarrLinear.h`). A
+  RegExp test that fails only in this collection is a difference between the matcher and the backtracking engines: fix
+  the matcher. The one test it leaves out expects the `false` that a backtracking engine answers at its match limit. The
+  collection file names it.
 - `Tools/Scripts/webkitdirs.pm`: on Windows the machine's architecture is read from the registry (no `uname`; an emulated
   x64 perl on Windows-on-ARM reports `AMD64`); `ARM64` as cmake on Windows spells it is `arm64`.
 

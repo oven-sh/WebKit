@@ -607,8 +607,10 @@ private:
                 return false;
             // The one iteration of a plain group starts with its groups clear already. Where
             // X{min,max} was split in two terms that share X's groups, the second term starts
-            // with what the first one captured.
-            bool isPlain = term.quantityType == QuantifierType::FixedCount && repeat.maximum == 1 && !term.parentheses.isCopy;
+            // with what the first one captured. That term is the copy, and it is never plain:
+            // its count is not fixed.
+            ASSERT(!term.parentheses.isCopy || term.quantityType != QuantifierType::FixedCount);
+            bool isPlain = term.quantityType == QuantifierType::FixedCount && repeat.maximum == 1;
             if (term.containsAnyCaptures() && !isPlain) {
                 repeat.clears = true;
                 repeat.firstClearedGroup = group;
@@ -1180,7 +1182,10 @@ private:
                     width = 2;
                     return U16_GET_SUPPLEMENTARY(character, m_input[position + 1]);
                 }
-                // The second half of a pair is not a character: nothing matches it.
+                // The second half of a pair is not a character: nothing matches it. A match
+                // reads it only when it starts there. A RegExp never starts one there
+                // (RegExp::matchInline() moves such a start to the first half), and a
+                // Yarr::RegularExpression can.
                 if (U16_IS_TRAIL(character) && position && U16_IS_LEAD(m_input[position - 1]))
                     return errorCodePoint;
             }

@@ -62,7 +62,7 @@ function escapeLit(ch, inClass, flags) {
 }
 
 // ---------------------------------------------------------------------------
-// Pattern generator. ctx: {flags, depth, groups (count so far), names[], inLookbehind, budget}
+// Pattern generator. ctx: {flags, depth, groups (count so far), names[], pathNames[], inLookbehind, budget}
 function genLiteralChar(ctx) {
     const prof = ctx.profile;
     return pickW([
@@ -161,11 +161,19 @@ function genAtom(ctx) {
 }
 
 function genNamedGroup(ctx) {
-    const name = "n" + ctx.names.length + pick(["", "a", "b"]);
-    // Duplicate names only allowed in different alternatives; keep unique to avoid excess syntax errors.
-    if (ctx.names.includes(name)) return genGroup(ctx, "(");
+    // A name can be used again where no group of that name is on the same way through the
+    // pattern, which is in another alternative (ctx.pathNames, kept by genDisjunction).
+    const reusable = ctx.names.filter((n) => !ctx.pathNames.includes(n));
+    let name;
+    if (reusable.length && chance(0.5))
+        name = pick(reusable);
+    else {
+        name = "n" + ctx.names.length + pick(["", "a", "b"]);
+        if (ctx.names.includes(name)) return genGroup(ctx, "(");
+        ctx.names.push(name);
+    }
+    ctx.pathNames.push(name);
     ctx.groups++;
-    ctx.names.push(name);
     ctx.depth++;
     const body = genDisjunction(ctx, rr(1, 2), rr(0, 3));
     ctx.depth--;
@@ -244,7 +252,16 @@ function genAlternative(ctx, nTerms) {
 
 function genDisjunction(ctx, nAlts, nTerms) {
     const alts = [];
-    for (let i = 0; i < nAlts; ++i) alts.push(genAlternative(ctx, i === 0 ? nTerms : rr(0, nTerms + 1)));
+    // Every alternative starts from the names that are in use before the disjunction. After it,
+    // the names of all its alternatives are in use.
+    const before = ctx.pathNames;
+    let after = before;
+    for (let i = 0; i < nAlts; ++i) {
+        ctx.pathNames = before.slice();
+        alts.push(genAlternative(ctx, i === 0 ? nTerms : rr(0, nTerms + 1)));
+        after = after.concat(ctx.pathNames.filter((n) => !after.includes(n)));
+    }
+    ctx.pathNames = after;
     return alts.join("|");
 }
 
@@ -264,7 +281,7 @@ const flagStr = (f) => ["d", "g", "i", "m", "s", "u", "v", "y"].filter((k) => f[
 
 function genPattern(profile) {
     const flags = genFlags(profile);
-    const ctx = { flags, depth: 0, groups: 0, names: [], inLookbehind: false, budget: profile.budget, profile };
+    const ctx = { flags, depth: 0, groups: 0, names: [], pathNames: [], inLookbehind: false, budget: profile.budget, profile };
     let src;
     const shape = pickW(profile.shapes);
     switch (shape) {

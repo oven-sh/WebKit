@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Differential driver: runs regex-fuzz.js under several jsc configurations (and node) per seed,
 // compares outputs line-by-line, records mismatches / crashes / timeouts.
-// Usage: node drive.mjs --seeds 1-200 --count 400 --profile mixed --par 32 --configs jit,interp,gatesoff,node[,linear,asan,asan-interp,asan-linear,base]
+// Usage: node drive.mjs --seeds 1-200 --count 400 --profile mixed --par 32 --configs jit,interp,gatesoff,node[,linear,linear-interp,asan,asan-interp,asan-linear,base]
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { cpus } from "node:os";
@@ -29,6 +29,8 @@ const CFG = {
     interp:       { bin: REL,  args: [...common, "--useRegExpJIT=0"] },
     // The non-backtracking matcher runs every pattern it accepts; the JIT runs the rest, as in "jit".
     linear:       { bin: REL,  args: [...common, "--useRegExpLinearEngine=1"] },
+    // The same, with the bytecode interpreter for the rest.
+    "linear-interp": { bin: REL, args: [...common, "--useRegExpLinearEngine=1", "--useRegExpJIT=0"] },
     gatesoff:     { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0", "--useRegExpAlternationFactoring=0", "--useRegExpAlternationDispatch=0"] },
     nolb:         { bin: REL,  args: [...common, "--useRegExpLookbehindJIT=0"] },
     nofactor:     { bin: REL,  args: [...common, "--useRegExpAlternationFactoring=0"] },
