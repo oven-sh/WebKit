@@ -34,6 +34,7 @@
 #include "JSModuleRecord.h"
 #include "JSScopeInlines.h"
 #include "JSWithScope.h"
+#include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
 #include "VMTrapsInlines.h"
 #include "VariableEnvironment.h"
@@ -94,6 +95,12 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             catchScope.releaseAssertNoException();
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
+#if USE(BUN_JSC_ADDITIONS)
+                if (SyntheticModuleRecord::liveExporter(importedRecord)) [[unlikely]] {
+                    op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
+                    return true;
+                }
+#endif
                 JSModuleEnvironment* importedEnvironment = importedRecord->moduleEnvironment();
                 SymbolTable* symbolTable = importedEnvironment->symbolTable();
                 ConcurrentJSLocker locker(symbolTable->m_lock);

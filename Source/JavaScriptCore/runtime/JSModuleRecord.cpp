@@ -41,6 +41,7 @@
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
+#include "SyntheticModuleRecord.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
@@ -479,7 +480,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         if (resolution.type != Resolution::Type::Resolved)
             return IterationStatus::Continue;
         if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
-            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index });
+            bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index, false });
             return IterationStatus::Continue;
         }
         JSModuleEnvironment* environment = resolution.moduleRecord->moduleEnvironmentMayBeNull();
@@ -491,7 +492,11 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iterator = symbolTable->find(locker, resolution.localName.impl());
         RELEASE_ASSERT(iterator != symbolTable->end(locker));
-        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index });
+        bool exporterHasLiveExports = false;
+#if USE(BUN_JSC_ADDITIONS)
+        exporterHasLiveExports = SyntheticModuleRecord::liveExporter(resolution.moduleRecord);
+#endif
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index, exporterHasLiveExports });
         return IterationStatus::Continue;
     });
     RETURN_IF_EXCEPTION(scope, std::nullopt);

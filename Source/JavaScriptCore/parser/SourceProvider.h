@@ -368,6 +368,18 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
+        // Like createWithLazyExports(), except that an export declared without a value never gets one: every read of it,
+        // through an import binding or a module namespace object, reads the property of the returned object again.
+        // See SyntheticModuleRecord::hasLiveExports().
+        static Ref<SyntheticSourceProvider> createWithLiveExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
+        {
+            Ref provider = createWithLazyExports(WTF::move(generator), sourceOrigin, WTF::move(sourceURL));
+            provider->m_lazyExportsAreLive = true;
+            return provider;
+        }
+
+        bool lazyExportsAreLive() const { return m_lazyExportsAreLive; }
+
         // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
         // It does not run when the module record is created, which happens whenever that module's fetch completes, but
         // once the whole graph importing it has loaded, in import order, right before that graph is linked. See
@@ -414,6 +426,7 @@ private:
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
         bool m_isDeferred { false };
+        bool m_lazyExportsAreLive { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

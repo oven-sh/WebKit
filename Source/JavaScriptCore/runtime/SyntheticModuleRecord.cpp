@@ -150,12 +150,12 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
     return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, exportValues, sourceType, nullptr);
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource, LazyExports lazyExports)
 {
-    return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, exportValues, SourceProviderSourceType::Module, lazyExportsSource);
+    return tryCreateWithExportNamesAndValues(globalObject, moduleLoader, moduleKey, exportNames, exportValues, SourceProviderSourceType::Module, lazyExportsSource, lazyExports);
 }
 
-SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType, JSObject* lazyExportsSource)
+SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType, JSObject* lazyExportsSource, LazyExports lazyExports)
 #else
 SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(JSGlobalObject* globalObject, JSModuleLoader* moduleLoader, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType sourceType)
 #endif
@@ -166,6 +166,7 @@ SyntheticModuleRecord* SyntheticModuleRecord::tryCreateWithExportNamesAndValues(
     auto* moduleRecord = create(globalObject, vm, globalObject->syntheticModuleRecordStructure(), moduleLoader, moduleKey, sourceType);
 #if USE(BUN_JSC_ADDITIONS)
     moduleRecord->initializeExports(globalObject, exportNames, exportValues, lazyExportsSource);
+    moduleRecord->m_lazyExportsAreLive = lazyExports == LazyExports::Live && moduleRecord->hasLazyExports();
 #else
     moduleRecord->initializeExports(globalObject, exportNames, exportValues, nullptr);
 #endif
@@ -232,7 +233,7 @@ void SyntheticModuleRecord::initializeExports(JSGlobalObject* globalObject, cons
 void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, PropertyName localName)
 {
     JSObject* source = m_lazyExportsSource.get();
-    if (!source)
+    if (!source || m_lazyExportsAreLive)
         return;
 
     VM& vm = globalObject->vm();
@@ -280,6 +281,26 @@ void SyntheticModuleRecord::materializeLazyExport(JSGlobalObject* globalObject, 
     if (!syntheticModuleRecord || !syntheticModuleRecord->hasLazyExports()) [[likely]]
         return;
     syntheticModuleRecord->materializeLazyExport(globalObject, localName);
+}
+
+SyntheticModuleRecord* SyntheticModuleRecord::liveExporter(AbstractModuleRecord* moduleRecord)
+{
+    auto* syntheticModuleRecord = dynamicDowncast<SyntheticModuleRecord>(moduleRecord);
+    if (!syntheticModuleRecord || !syntheticModuleRecord->hasLiveExports()) [[likely]]
+        return nullptr;
+    return syntheticModuleRecord;
+}
+
+JSValue SyntheticModuleRecord::readLiveExport(JSGlobalObject* globalObject, PropertyName localName)
+{
+    ASSERT(m_lazyExportsAreLive);
+    return m_lazyExportsSource->get(globalObject, localName);
+}
+
+void SyntheticModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
+{
+    RELEASE_ASSERT(m_lazyExportsAreLive && source);
+    m_lazyExportsSource.set(vm, this, source);
 }
 #endif
 

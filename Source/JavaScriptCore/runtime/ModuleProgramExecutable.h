@@ -54,13 +54,15 @@ public:
     // What an imported binding read by this executable's code resolves to: the
     // exporting module's source (whose text fixes the binding's ScopeOffset) and the
     // binding's name there, or for exporters that are not source text modules the
-    // ScopeOffset itself; and the import slot the code reads the exporter from.
+    // ScopeOffset itself; and the import slot the code reads the exporter from. Code does not
+    // read a binding of an exporter with live exports from its slot at all (SyntheticModuleRecord::hasLiveExports).
     struct ImportedBinding {
         RefPtr<UniquedStringImpl> localName;
         RefPtr<SourceProvider> exporterSource;
         RefPtr<UniquedStringImpl> exporterLocalName;
         unsigned offset { 0 };
         unsigned importSlot { 0 };
+        bool exporterHasLiveExports { false };
         bool operator==(const ImportedBinding&) const;
     };
     using ImportedBindings = Vector<ImportedBinding>;

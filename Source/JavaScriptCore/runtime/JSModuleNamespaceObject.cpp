@@ -199,6 +199,12 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             value = environment->readVariable(vm, scopeOffset);
 #if USE(BUN_JSC_ADDITIONS)
         if (!value) [[unlikely]] {
+            if (auto* exporter = SyntheticModuleRecord::liveExporter(exportEntry.moduleRecord.get())) {
+                value = exporter->readLiveExport(globalObject, exportEntry.localName);
+                RETURN_IF_EXCEPTION(scope, false);
+                slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+                return true;
+            }
             // Same idea as the *namespace* case above: a lazy export of a SyntheticModuleRecord is materialized on
             // first read, then looked up from the scope again so that the module namespace object IC applies to it.
             SyntheticModuleRecord::materializeLazyExport(globalObject, exportEntry.moduleRecord.get(), exportEntry.localName);

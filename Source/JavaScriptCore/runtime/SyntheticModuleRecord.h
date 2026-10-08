@@ -68,7 +68,10 @@ public:
     // and is filled in by materializeLazyExport(), which reads the property of the same name off lazyExportsSource.
     // That happens the first time something binds to the export, i.e. when an importing module links a named import
     // of it or when it is read off a module namespace object.
-    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
+    // With LazyExports::Live such a binding stays uninitialized for good (unless JSModuleNamespaceObject::overrideExportValue
+    // writes it) and every read of the export reads the property again; see hasLiveExports().
+    enum class LazyExports : bool { ReadOnce, Live };
+    JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 
     // Creates a record without exports for a SyntheticSourceProvider::createDeferred() provider. runDeferredGenerator()
     // gives the record its exports; AbstractModuleRecord::link() calls it before it links anything.
@@ -86,6 +89,19 @@ public:
 
     // Convenience for code holding a Resolution: materializes the binding if it points into a lazy synthetic module.
     static void materializeLazyExport(JSGlobalObject*, AbstractModuleRecord*, PropertyName localName);
+
+    // Fixed when the record gets its exports. Code must not read a binding of such a record straight from its slot:
+    // import bindings into it link as Dynamic (JSScope::abstractAccess) and reach readLiveExport() through
+    // JSModuleEnvironment::getOwnPropertySlot. An initialized binding never goes back to uninitialized, which the
+    // optimizing tiers rely on, so a slot that has a value may be cached as any other.
+    bool hasLiveExports() const { return m_lazyExportsAreLive; }
+    static SyntheticModuleRecord* liveExporter(AbstractModuleRecord*);
+
+    // For a binding of a record with live exports that is uninitialized. May run arbitrary JS and throw.
+    JSValue readLiveExport(JSGlobalObject*, PropertyName localName);
+
+    // The object live exports are read from, from now on. Only for a record with live exports.
+    JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
 #endif
 
 private:
@@ -94,7 +110,7 @@ private:
     static SyntheticModuleRecord* tryCreateDefaultExportSyntheticModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, JSValue, SourceProviderSourceType);
     static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType);
 #if USE(BUN_JSC_ADDITIONS)
-    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource);
+    static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, SourceProviderSourceType, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 #endif
 
     void finishCreation(JSGlobalObject*, VM&);
@@ -105,6 +121,7 @@ private:
     WriteBarrier<JSObject> m_lazyExportsSource;
     RefPtr<SyntheticSourceProvider> m_deferredGenerator;
     WriteBarrier<Unknown> m_deferredGeneratorError;
+    bool m_lazyExportsAreLive { false };
 #endif
 };
 
