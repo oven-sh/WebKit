@@ -23,7 +23,7 @@
   cmd: |
       name = $benchmark.to_s
       if name =~ /regexp|regex|yarr|string-(replace|split|match)/i and name !~ /\Aregexp-linear-engine-/ and name != "regexp-fixedcount-zero-length-content-backtrack.js"
-          runCommands = File.foreach(($benchmarkDirectory + $benchmark).to_s).grep(/^\/\/@/).join
+          runCommands = File.binread(($benchmarkDirectory + $benchmark).to_s).lines.grep(/\A\/\/@/).join
           unless runCommands =~ /--regExpMatchLimit|--maxRegExpStackSize/
               requireOptions("--useRegExpLinearEngine=1", "--verifyRegExpLinearEngine=1")
               runDefault unless parseRunCommands

@@ -3408,6 +3408,20 @@ static NEVER_INLINE void verifyLinearMatch(BytecodePattern* bytecode, StringView
     Vector<unsigned, 32> expected(FillWith { }, static_cast<size_t>(bytecode->m_offsetsSize), offsetNoMatch);
     InterpretStatistics statistics;
     unsigned expectedResult = interpretByBacktrackingForTesting(bytecode, input, start, expected.mutableSpan().data(), statistics);
+    // With the u or v flag, a RegExp takes no match that starts between the two halves of a
+    // surrogate pair. A backtracking engine can find one there, and RegExp::matchInline() then
+    // searches again after the pair. The matcher finds none there in the first place.
+    if (bytecode->eitherUnicode() && !input.is8Bit()) {
+        unsigned expectedStart = start;
+        auto splitsSurrogatePair = [&](unsigned offset) {
+            return offset && offset < input.length() && U16_IS_TRAIL(input[offset]) && U16_IS_LEAD(input[offset - 1]);
+        };
+        while (!statistics.gaveUp && expectedResult != offsetNoMatch && expectedResult > expectedStart && splitsSurrogatePair(expectedResult)) {
+            expectedStart = expectedResult + 1;
+            expected.fill(offsetNoMatch);
+            expectedResult = interpretByBacktrackingForTesting(bytecode, input, expectedStart, expected.mutableSpan().data(), statistics);
+        }
+    }
     if (statistics.gaveUp)
         return;
 

@@ -1,6 +1,7 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1")
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--useRegExpJIT=0")
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maxPerThreadStackUsage=1073741824")
+//@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maxPerThreadStackUsage=1073741824", "--softReservedZoneSize=70000") unless $asan
 
 // Whether a RegExp runs on the non-backtracking matcher depends on its pattern, and not on the
 // stack that is left when the RegExp is first used.
@@ -10,6 +11,8 @@
 //   of a compile do: the match throws a RangeError, nothing is remembered, and the next match
 //   asks the matcher again.
 // The third run lets JavaScript use the stack to its end, as a thread with a small stack does.
+// The fourth also leaves native code less stack than it has by default at the end of a
+// recursion, so that the compiler does run out of it there.
 
 function describe(value)
 {
@@ -99,6 +102,7 @@ function fromTheDeepestFrame(callback)
     return recurse();
 }
 
+const hasDefaultReservedZone = jscOptions().softReservedZoneSize >= 128 * 1024;
 const depths = [0, 1, 2, 4, 8, 16, 24, 32];
 let regExps = depths.map(depth => new RegExp(nested(depth) + "|w"));
 let firstUses = fromTheDeepestFrame(() => regExps.map(regExp => {
@@ -114,9 +118,10 @@ let firstUses = fromTheDeepestFrame(() => regExps.map(regExp => {
 depths.forEach((depth, index) => {
     if (firstUses[index] !== "linear, none, 0" && firstUses[index] !== outOfStack)
         throw new Error(depth + " levels, first used from the deepest frame: " + firstUses[index]);
-    // The compiler has the room for the patterns that programs have. A sanitizer makes its
-    // frames several times larger.
-    if (depth <= 8 && !$vm.asanEnabled() && firstUses[index] !== "linear, none, 0")
+    // With the stack that native code has by default at the end of a recursion, the compiler
+    // has the room for the patterns that programs have. A sanitizer makes its frames several
+    // times larger.
+    if (depth <= 8 && hasDefaultReservedZone && !$vm.asanEnabled() && firstUses[index] !== "linear, none, 0")
         throw new Error(depth + " levels, first used from the deepest frame: " + firstUses[index]);
     expectSame(depth + " levels, next use", answers(regExps[index]), onTheMatcher);
 });
