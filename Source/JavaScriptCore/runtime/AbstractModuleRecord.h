@@ -311,6 +311,22 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
 
+    // Live exports: nothing caches what an export of such a record reads. Every read of it, through an import binding or
+    // a module namespace object, reads the property of that name off liveExportsSource() again (getLiveExport). Such a
+    // record also exports whatever name it is asked for; only a name that is looked for through an `export *` has to be
+    // one that it declares (resolveExport). Set before anything can link against the record, and for good.
+    // No code reads a binding of such a record from its slot: import bindings into it link as Dynamic
+    // (JSScope::abstractAccess), which ends in JSModuleEnvironment::getOwnPropertySlot, and code with such imports shares
+    // nothing with code of the same source without them (ModuleProgramExecutable::liveImports).
+    bool hasLiveExports() const { return m_hasLiveExports; }
+    void setHasLiveExports();
+    // Null until the embedder has one. Until then a read throws like a read of a binding that is not initialized yet.
+    JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
+    JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
+    // These may run arbitrary JS and throw.
+    JSValue getLiveExport(JSGlobalObject*, PropertyName exportName);
+    bool hasLiveExport(JSGlobalObject*, PropertyName exportName);
+
     // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
     // requests, import and export entries live in the graph; a request that names a graph module is answered by the
     // loader's index table, any other request by [[LoadedModules]] as usual (the embedder calls setImportedModule);
@@ -415,6 +431,8 @@ protected:
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
+    bool m_hasLiveExports { false };
+    WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already

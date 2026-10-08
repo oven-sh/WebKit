@@ -98,7 +98,7 @@ public:
     iterator end() { return m_map.end(); }
 
     template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM& vm, const SourceCodeKey& key)
+    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
     {
         prune();
 
@@ -107,7 +107,7 @@ public:
             // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it the
             // way getUnlinkedGlobalCodeBlock() remembers those, so another global in this VM loading the same source
             // links against this block instead of decoding its own copy of the unlinked tree.
-            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
+            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key, recoverableCode);
             if (decoded && Options::useCodeCache())
                 addCache(key, SourceCodeValue(vm, decoded, m_age));
             return decoded;

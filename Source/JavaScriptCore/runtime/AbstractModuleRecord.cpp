@@ -108,6 +108,9 @@ void AbstractModuleRecord::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cycleRoot);
     visitor.append(thisObject->m_topLevelCapability);
     visitor.append(thisObject->m_asyncCapability);
+#if USE(BUN_JSC_ADDITIONS)
+    visitor.append(thisObject->m_liveExportsSource);
+#endif
     Locker locker { thisObject->cellLock() };
     visitor.append(thisObject->m_asyncParentModules.begin(), thisObject->m_asyncParentModules.end());
     for (const auto& [key, loadedModule] : thisObject->m_loadedModules)
@@ -932,6 +935,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     struct Task {
         ResolveQuery query;
         Type type;
+        bool throughStar { false }; // A Query for a name that an `export *` on the way here may or may not provide.
     };
 
     auto typeString = [] (Type type) -> const char* {
@@ -979,7 +983,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             const auto& [starModuleName, starModuleRequestType] = *iterator;
             AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
             RETURN_IF_EXCEPTION(scope, false);
-            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query });
+            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query, true });
         }
         return true;
     };
@@ -1030,6 +1034,16 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
             const std::optional<ExportEntry> optionalExportEntry = moduleRecord->tryGetExportEntry(query.exportName.get());
             if (!optionalExportEntry) {
+#if USE(BUN_JSC_ADDITIONS)
+                // Were it to claim every name that is looked for through a star as well, it would make the names of the
+                // other stars next to it ambiguous.
+                if (moduleRecord->hasLiveExports() && !task.throughStar) [[unlikely]] {
+                    Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+                    if (!mergeToCurrentTop(resolution))
+                        return Resolution::ambiguous();
+                    continue;
+                }
+#endif
                 // If there is no matched exported binding in the current module, we need to look
                 // into the stars. We don't probe m_resolutionCache here: the only writer that can
                 // populate (moduleRecord, exportName) while exportEntries has no match for exportName
@@ -1074,7 +1088,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 pendingTasks.append(Task { query, Type::IndirectFallback });
                 // And append the new Resolution frame to check the indirect export will be resolved or not.
                 frames.append(Resolution::notFound());
-                pendingTasks.append(Task { ResolveQuery(importedModuleRecord, exportEntry.importName), Type::Query });
+                pendingTasks.append(Task { ResolveQuery(importedModuleRecord, exportEntry.importName), Type::Query, task.throughStar });
                 continue;
             }
 
@@ -1120,6 +1134,12 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         case Type::GatherStars: {
             Resolution resolution = frames.takeLast();
             ASSERT_WITH_MESSAGE(resolution.type == Resolution::Type::Resolved || resolution.type == Resolution::Type::NotFound, "When we see Error and Ambiguous, we immediately return from this loop. So here, only Resolved and NotFound comes.");
+
+#if USE(BUN_JSC_ADDITIONS)
+            // What a record with live exports has from a star of its own says which names it has. They are read like its others.
+            if (resolution.type == Resolution::Type::Resolved && query.moduleRecord->hasLiveExports()) [[unlikely]]
+                resolution = Resolution { Resolution::Type::Resolved, query.moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+#endif
 
             // Merge the star resolution to the upper frame.
             if (!mergeToCurrentTop(resolution))
@@ -2140,5 +2160,42 @@ void AbstractModuleRecord::dump()
     for (const auto& starExportEntry : m_starExportEntries)
         dataLog("      [Star] module(", printableName(starExportEntry.first), ")\n");
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractModuleRecord::setHasLiveExports()
+{
+    m_hasLiveExports = true;
+    m_moduleLoader->didMakeRecordWithLiveExports();
+}
+
+void AbstractModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)
+{
+    RELEASE_ASSERT(m_hasLiveExports && source);
+    m_liveExportsSource.set(vm, this, source);
+}
+
+JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(m_hasLiveExports);
+    ASSERT(exportName != vm.propertyNames->starNamespacePrivateName);
+
+    JSObject* source = m_liveExportsSource.get();
+    if (!source) [[unlikely]] {
+        RefPtr uid = exportName.uid();
+        throwVMError(globalObject, scope, createTDZError(globalObject, *uid));
+        return { };
+    }
+    RELEASE_AND_RETURN(scope, source->get(globalObject, exportName));
+}
+
+bool AbstractModuleRecord::hasLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
+{
+    ASSERT(m_hasLiveExports);
+    JSObject* source = m_liveExportsSource.get();
+    return source && source->hasProperty(globalObject, exportName);
+}
+#endif
 
 } // namespace JSC

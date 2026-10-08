@@ -147,6 +147,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+
+    // The record made for this module has live exports: see AbstractModuleRecord::hasLiveExports().
+    bool moduleHasLiveExports() const { return m_moduleHasLiveExports; }
+    void setModuleHasLiveExports() { m_moduleHasLiveExports = true; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -289,6 +293,9 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_moduleHasLiveExports { false };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
@@ -368,17 +375,14 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
-        // Like createWithLazyExports(), except that an export declared without a value never gets one: every read of it,
-        // through an import binding or a module namespace object, reads the property of the returned object again.
-        // See SyntheticModuleRecord::hasLiveExports().
+        // For a record with live exports (AbstractModuleRecord::hasLiveExports). The generator declares every export
+        // without a value and returns the object they are read from, which it has to have.
         static Ref<SyntheticSourceProvider> createWithLiveExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
         {
             Ref provider = createWithLazyExports(WTF::move(generator), sourceOrigin, WTF::move(sourceURL));
-            provider->m_lazyExportsAreLive = true;
+            provider->setModuleHasLiveExports();
             return provider;
         }
-
-        bool lazyExportsAreLive() const { return m_lazyExportsAreLive; }
 
         // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
         // It does not run when the module record is created, which happens whenever that module's fetch completes, but
@@ -426,7 +430,6 @@ private:
         SyntheticSourceGenerator m_generator;
         LazySyntheticSourceGenerator m_lazyGenerator;
         bool m_isDeferred { false };
-        bool m_lazyExportsAreLive { false };
     };
 
 #if ENABLE(WEBASSEMBLY)

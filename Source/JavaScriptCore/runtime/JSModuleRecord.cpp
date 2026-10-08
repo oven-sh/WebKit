@@ -41,10 +41,10 @@
 #include "JSPromise.h"
 #include "ModuleProgramExecutable.h"
 #include "SourceProfiler.h"
-#include "SyntheticModuleRecord.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "WeakGCMapInlines.h"
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 namespace JSC {
 
@@ -479,6 +479,13 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
         if (resolution.type != Resolution::Type::Resolved)
             return IterationStatus::Continue;
+#if USE(BUN_JSC_ADDITIONS)
+        // Read by name, whatever the exporter is. It may have no binding of that name.
+        if (resolution.moduleRecord->hasLiveExports()) [[unlikely]] {
+            bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, true });
+            return IterationStatus::Continue;
+        }
+#endif
         if (auto* sourceTextModule = dynamicDowncast<JSModuleRecord>(resolution.moduleRecord)) {
             bindings.append({ localName.impl(), sourceTextModule->sourceCode().provider(), resolution.localName.impl(), 0, index, false });
             return IterationStatus::Continue;
@@ -492,11 +499,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         ConcurrentJSLocker locker(symbolTable->m_lock);
         auto iterator = symbolTable->find(locker, resolution.localName.impl());
         RELEASE_ASSERT(iterator != symbolTable->end(locker));
-        bool exporterHasLiveExports = false;
-#if USE(BUN_JSC_ADDITIONS)
-        exporterHasLiveExports = SyntheticModuleRecord::liveExporter(resolution.moduleRecord);
-#endif
-        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index, exporterHasLiveExports });
+        bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), iterator->value.scopeOffset().offset(), index, false });
         return IterationStatus::Continue;
     });
     RETURN_IF_EXCEPTION(scope, std::nullopt);
@@ -504,6 +507,28 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
         return std::nullopt;
     return bindings;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+String JSModuleRecord::liveImports(JSGlobalObject* globalObject)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!moduleLoader()->hasMadeRecordWithLiveExports()) [[likely]]
+        return { };
+
+    StringBuilder builder;
+    forEachImportSlot([&](unsigned, const Identifier& localName) {
+        Resolution resolution = resolveImport(globalObject, localName);
+        RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
+        if (resolution.type == Resolution::Type::Resolved && resolution.moduleRecord->hasLiveExports())
+            builder.append(StringView(localName.impl()), ',');
+        return IterationStatus::Continue;
+    });
+    RETURN_IF_EXCEPTION(scope, { });
+    return builder.isEmpty() ? String() : builder.toString();
+}
+#endif
 
 bool JSModuleRecord::resolvesImportsLike(JSGlobalObject* globalObject, ModuleProgramExecutable* executable)
 {
@@ -600,7 +625,12 @@ ModuleProgramExecutable* JSModuleRecord::getOrMakeExecutable(JSGlobalObject* glo
         }
     }
 
-    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables);
+    String liveImports;
+#if USE(BUN_JSC_ADDITIONS)
+    liveImports = this->liveImports(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+#endif
+    executable = ModuleProgramExecutable::tryCreate(globalObject, sourceCode(), this, moduleScopeSymbolTables, liveImports);
     RETURN_IF_EXCEPTION(scope, nullptr);
     executable->willBeEvaluatedByAnotherRecord();
     m_moduleProgramExecutable.set(vm, this, executable);
