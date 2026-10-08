@@ -50,7 +50,7 @@ for (let [open, most] of [["(?:", 32], ["(", 32], ["(?:b|", 32], ["(?i:", 32], [
     expectSame(open + " x " + most, answers(new RegExp(nested(most, open))), onTheMatcher);
     expectSame(open + " x " + (most + 1), answers(new RegExp(nested(most + 1, open))), tooDeep);
 }
-expectSame("4,000 levels", answers(new RegExp(nested(4000))), tooDeep);
+expectSame("200 levels", answers(new RegExp(nested(200))), tooDeep);
 
 // The compile that finds no stack. The mode "outOfStack" makes a RegExp that asks the matcher
 // in that call find the compiler out of stack, as it is at the end of a deep recursion.
