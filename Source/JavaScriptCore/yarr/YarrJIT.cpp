@@ -1980,6 +1980,74 @@ class YarrGenerator final : public YarrJITInfo {
             startIsLastUnit.link(&m_jit);
     }
 #endif
+
+    // With the u or v flag the input is a sequence of code points, so the offset between the two
+    // halves of a surrogate pair is not a position, and no match attempt begins there. A body that
+    // must consume a character fails there by itself: its first forward read finds half a character
+    // (errorCodePoint, see tryReadUnicodeCharSlowImpl). A body that can match without consuming one
+    // would succeed there through \B, a lookbehind or a negative lookahead, so for such a body
+    // (YarrOp::m_startSearchStepsOverSurrogatePairs) the start search steps over the trail itself.
+    //
+    // Emitted where the search arrives at a start it has just advanced to, so the start is at least
+    // 1, with index == start + claim. When the start splits a pair, index and the recorded match
+    // start move one unit forward, past the pair.
+    //
+    // claimNoLongerAvailable is null where the search arrives with index > length (the claim is not
+    // available). Elsewhere index <= length on arrival, and the list receives the jump taken when
+    // the step moves index past the length.
+    void stepStartOverSurrogatePairTrail(unsigned claim, MacroAssembler::JumpList* claimNoLongerAvailable)
+    {
+        ASSERT(m_decodeSurrogatePairs);
+        ASSERT(m_direction == Forward);
+
+        bool claimIsAvailable = claimNoLongerAvailable;
+        ASSERT(claimIsAvailable || claim);
+
+        const MacroAssembler::RegisterID scratch = m_regs.regT0;
+        MacroAssembler::JumpList startIsPosition;
+
+        // Falls through when the unit `unitsBeforeIndex` units before index exists and its high
+        // byte is in [first, last]. Otherwise the start is a position. The high byte alone tells
+        // a lead surrogate (0xD8 to 0xDB) and a trail surrogate (0xDC to 0xDF) from everything
+        // else, and it is the second byte of the unit: the subject is little-endian UTF-16, as
+        // for the pair loads of tryReadUnicodeCharImpl. Most units are below the surrogates, so
+        // that is the first test.
+        auto continueIfHighByteIsIn = [&](unsigned unitsBeforeIndex, uint8_t first, uint8_t last, bool unitIsKnownToExist) {
+            if (!unitIsKnownToExist) {
+                if (!unitsBeforeIndex)
+                    startIsPosition.append(atEndOfInput());
+                else {
+                    m_jit.sub32(m_regs.index, MacroAssembler::Imm32(unitsBeforeIndex), scratch);
+                    startIsPosition.append(m_jit.branch32(MacroAssembler::AboveOrEqual, scratch, m_regs.length));
+                }
+            }
+            MacroAssembler::BaseIndex unit = negativeOffsetIndexedAddress(unitsBeforeIndex, scratch);
+            verifySubjectRead(unit, 2, __LINE__);
+            MacroAssembler::BaseIndex highByte = unit.withOffset(1);
+            startIsPosition.append(m_jit.branch8(MacroAssembler::Below, highByte, MacroAssembler::TrustedImm32(first)));
+            startIsPosition.append(m_jit.branch8(MacroAssembler::Above, highByte, MacroAssembler::TrustedImm32(last)));
+        };
+
+        // The unit before the start, a lead surrogate? Every start the search advances to runs
+        // this test. After the attempt at the last position the search can arrive with a start
+        // one past the length; only an available claim rules that out.
+        continueIfHighByteIsIn(claim + 1, 0xd8, 0xdb, claimIsAvailable);
+        // The unit at the start, a trail surrogate?
+        continueIfHighByteIsIn(claim, 0xdc, 0xdf, claimIsAvailable && claim);
+
+        m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
+        if (!m_pattern.m_body->m_hasFixedSize) {
+            if (claim) {
+                m_jit.sub32(m_regs.index, MacroAssembler::Imm32(claim), scratch);
+                setMatchStart(scratch);
+            } else
+                setMatchStart(m_regs.index);
+        }
+        if (claim && claimIsAvailable)
+            claimNoLongerAvailable->append(jumpIfNoAvailableInput());
+
+        startIsPosition.link(&m_jit);
+    }
 #endif
 
     void readCharacter(Checked<unsigned> negativeCharacterOffset, MacroAssembler::RegisterID resultReg)
@@ -2484,6 +2552,10 @@ class YarrGenerator final : public YarrJITInfo {
 
         // Shared UTF-16 lead surrogate across all repeated alternatives' first character.
         std::optional<char16_t> m_bodyAltSharedLead;
+
+        // Set on the repeated body's Begin op when the start search has to step over the trail
+        // of a surrogate pair itself (see stepStartOverSurrogatePairTrail).
+        bool m_startSearchStepsOverSurrogatePairs { false };
 
         // For quantified parentheses (FixedCount/Greedy/NonGreedy): label for the
         // content's backtrack entry. BEGIN.bt jumps here to re-drive an iteration's
@@ -4869,9 +4941,24 @@ class YarrGenerator final : public YarrJITInfo {
                 // to run the first alternative. (This progresses the input position).
                 op.m_jumps.append(jumpIfNoAvailableInput(alternative->m_minimumSize));
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+                // The start offset the caller gives is a position (see RegExp::matchInline), so
+                // the first attempt goes around the step that the search takes at later starts.
+                MacroAssembler::Jump firstAttempt;
+                if (op.m_startSearchStepsOverSurrogatePairs)
+                    firstAttempt = m_jit.jump();
+#endif
+
                 // We will reenter after the check, and assume the input position to have been
                 // set as appropriate to this alternative.
                 defineReentryLabel(op);
+
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+                if (op.m_startSearchStepsOverSurrogatePairs) {
+                    stepStartOverSurrogatePairTrail(alternative->m_minimumSize, &op.m_jumps);
+                    firstAttempt.link(&m_jit);
+                }
+#endif
 
                 // These may advance |index| to a candidate position before entering the body.
                 auto emitStartPositionPrefilters = [&] {
@@ -5813,6 +5900,14 @@ class YarrGenerator final : public YarrJITInfo {
                 //
                 // Either way, we have just failed the input check for the first alternative.
                 MacroAssembler::Label firstInputCheckFailed(&m_jit);
+
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+                // Both of these arrive at a start the search has just advanced to, and a later
+                // alternative that claims less is about to be tried there. With a first alternative
+                // that claims nothing, the search only gets here once it has passed the end.
+                if (beginOp->m_startSearchStepsOverSurrogatePairs && beginOp->m_alternative->m_minimumSize)
+                    stepStartOverSurrogatePairTrail(beginOp->m_alternative->m_minimumSize, nullptr);
+#endif
 
                 if (BodyDispatchInfo* bodyDispatch = beginOp->m_bodyDispatch) {
                     // Dispatched body: the Begin's input-check failures and the
@@ -7297,6 +7392,22 @@ class YarrGenerator final : public YarrJITInfo {
                 }
             }
         }
+
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+        // A repeated alternative that can match without consuming a character could match between
+        // the two halves of a surrogate pair, so the search for such a body steps over the pair
+        // (see stepStartOverSurrogatePairTrail). A sticky pattern does not search. Such a body has a
+        // minimum size of 0, so none of the start prefilters above is in use for it.
+        if (m_decodeSurrogatePairs && !m_pattern.sticky()) {
+            for (size_t i = firstRepeatedAlternative; i < alternatives.size(); ++i) {
+                if (!alternatives[i]->m_minimumSize) {
+                    ASSERT(!disjunction->m_minimumSize && !bodyDispatch);
+                    m_ops[repeatLoop].m_startSearchStepsOverSurrogatePairs = true;
+                    break;
+                }
+            }
+        }
+#endif
 
         do {
             size_t lastOpIndex = m_ops.size() - 1;
@@ -9388,14 +9499,12 @@ public:
         // (readUnicodeCharBackward, matching the interpreter's tryReadBackward).
 
         // The first-non-BMP-character skip advances the next match start past the
-        // trailing surrogate of an astral start character. That is only sound when
-        // no match can begin at a mid-pair position -- i.e. when the pattern cannot
-        // match zero-width (a body minimum size of 0 means some alternative can, and
-        // a zero-width alternative such as a negative lookahead over . or an
-        // assertion can then succeed at a dangling-trail position, whose match the
-        // skip would drop).
+        // trailing surrogate of an astral start character. It learns that character
+        // from the first one the body reads, so it needs a body that always reads one:
+        // a minimum size of at least 1. A body with a minimum size of 0 (e.g. /aa|\B/u)
+        // does not use the skip. Where such a body can be attempted again, its start
+        // search steps over surrogate pairs with stepStartOverSurrogatePairTrail.
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
-        // A zero minimum-size alternative (e.g. /aa|\B/u) can match in the middle of a surrogate pair, so it must not be skipped.
         if (m_decodeSurrogatePairs && m_executionMode != ExecutionMode::InlineTest && !m_pattern.multiline() && !m_pattern.m_containsBOL && !m_pattern.m_containsLookbehinds && !m_pattern.m_containsModifiers && m_pattern.m_body->m_minimumSize) {
             ASSERT(m_regs.firstCharacterAdditionalReadSize != InvalidGPRReg);
             m_useFirstNonBMPCharacterOptimization = true;

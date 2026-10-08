@@ -125,16 +125,16 @@ ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, s
     compile(&vm, charSize, sampleString);
 }
 
+// With the u or v flag the search starts at the code point that holds startOffset (RegExpBuiltinExec).
+// From there the engines keep to code point boundaries themselves: their start search steps over a
+// surrogate pair, so no match they report starts between its two halves.
 template<Yarr::MatchFrom matchFrom>
 NEVER_INLINE int RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject* nullOrGlobalObject, VM& vm, StringView s, unsigned startOffset, std::span<int> ovector)
 {
     if (splitsSurrogatePair(s, startOffset))
         --startOffset;
     int result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
-    while (result > static_cast<int>(startOffset) && splitsSurrogatePair(s, result)) {
-        startOffset = result + 1;
-        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset, ovector);
-    }
+    ASSERT(result < 0 || !splitsSurrogatePair(s, result));
     return result;
 }
 
@@ -291,10 +291,7 @@ NEVER_INLINE MatchResult RegExp::matchInlineAtCodePointBoundaries(JSGlobalObject
     if (splitsSurrogatePair(s, startOffset))
         --startOffset;
     MatchResult result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
-    while (result && result.start > startOffset && splitsSurrogatePair(s, result.start)) {
-        startOffset = result.start + 1;
-        result = matchInlineOnce<matchFrom>(nullOrGlobalObject, vm, s, startOffset);
-    }
+    ASSERT(!result || !splitsSurrogatePair(s, result.start));
     return result;
 }
 

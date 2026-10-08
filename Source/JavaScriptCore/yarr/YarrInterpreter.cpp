@@ -385,6 +385,16 @@ public:
             return result;
         }
 
+        // With the u or v flag the input is code points, so the offset between the two halves of a
+        // surrogate pair is not a position. A surrogate without its partner is a code point of its
+        // own: the offsets around it are positions.
+        bool NODELETE splitsSurrogatePair()
+        {
+            if (sizeof(CharType) == 1)
+                return false;
+            return decodeSurrogatePairs && pos < length && U16_IS_TRAIL(input[pos]) && pos && U16_IS_LEAD(input[pos - 1]);
+        }
+
         char32_t prev()
         {
             ASSERT(!(pos > length));
@@ -1776,6 +1786,20 @@ public:
         return true;
     }
 
+    // The step of the start search for a pattern with the y, u or v flag. A sticky pattern does not
+    // search: false. With the u or v flag the search steps by code point, so that no attempt begins
+    // between the two halves of a surrogate pair. Out of line, so that the search of a pattern with
+    // none of these flags keeps its one test of the flags.
+    NEVER_INLINE bool stepStartOfStickyOrUnicodePattern()
+    {
+        if (pattern->sticky())
+            return false;
+        input.next();
+        if (input.splitsSurrogatePair())
+            input.next();
+        return true;
+    }
+
 #define MATCH_NEXT() { if (verbose) { dataLog(" - Match\n"); if (btrack) { dataLog("  Matching\n"); btrack = false; } }  ++context->term; goto matchAgain; }
 #define BACKTRACK() { if (verbose) { dataLog(" - Backtrack\n"); if (!btrack) { dataLog("  Backtracking\n"); btrack = true; } } --context->term; goto backtrack; }
 #define currentTerm() (disjunction->terms[context->term])
@@ -2153,12 +2177,24 @@ public:
             if (offset > 0)
                 MATCH_NEXT();
 
-            if (input.atEnd() || pattern->sticky()) {
+            if (input.atEnd()) {
                 DUMP_EXTRA("- Return NoMatch\n");
                 return JSRegExpResult::NoMatch;
             }
 
-            input.next();
+            // The search moves to the next start. The y, u and v flags are tested as one, so that a
+            // pattern with none of them steps exactly as it did before the code point step existed.
+            // An 8-bit subject has no surrogates: only the y flag matters there.
+            static constexpr OptionSet<Flags> flagsWithTheirOwnStep = sizeof(CharType) == 1
+                ? OptionSet<Flags> { Flags::Sticky }
+                : OptionSet<Flags> { Flags::Sticky, Flags::Unicode, Flags::UnicodeSets };
+            if (pattern->m_flags.containsAny(flagsWithTheirOwnStep)) [[unlikely]] {
+                if (!stepStartOfStickyOrUnicodePattern()) {
+                    DUMP_EXTRA("- Return NoMatch\n");
+                    return JSRegExpResult::NoMatch;
+                }
+            } else
+                input.next();
 
             context->matchBegin = input.getPos();
 

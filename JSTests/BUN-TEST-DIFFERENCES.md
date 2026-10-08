@@ -89,10 +89,14 @@ Rules for an edit to an upstream test:
 
 ### A6. `/u` regular expressions never start a match inside a surrogate pair
 
-- Fork code: `RegExp::matchInlineAtCodePointBoundaries` (`runtime/RegExpInlines.h:115`, fork PR #299).
-  - A sticky or global `/u` regexp whose `lastIndex` is inside a pair matches from the pair's start, as the spec's
-    `RegExpBuiltinExec` and V8 do. Upstream: no match.
-  - A match is not reported at an index between the two halves. Here the fork differs from V8 too.
+- Fork code (fork PR #299):
+  - `RegExp::matchInlineAtCodePointBoundaries` (`runtime/RegExpInlines.h`). A sticky or global `/u` regexp whose
+    `lastIndex` is inside a pair matches from the pair's start, as the spec's `RegExpBuiltinExec` and V8 do.
+    Upstream: no match.
+  - The start search of both engines steps by code point: `InputStream::splitsSurrogatePair` at the
+    `BodyAlternativeBegin` backtrack of `yarr/YarrInterpreter.cpp`, `stepStartOverSurrogatePairTrail` in
+    `yarr/YarrJIT.cpp`. No match is attempted at an index between the two halves, so none is reported there, also not
+    behind a `.*X.*` rewrite (DotStarEnclosure) or through `Yarr::RegularExpression`. Here the fork differs from V8 too.
 - File: `stress/regexp-unicode-code-unit-read-for-bmp-terms.js`, two expectations.
 
 ### A7. A host time-zone change is seen when the VM is next entered
