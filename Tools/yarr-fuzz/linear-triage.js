@@ -1,5 +1,5 @@
-// Triage of the differences that drive.mjs records between the "linear" configuration and a
-// backtracking one (jit~linear in out/mismatch-<profile>.jsonl).
+// Triage of the differences that drive.mjs records between a "linear" configuration and a
+// backtracking one (jit~linear, jit~linear-interp or jit~linear-verify in out/mismatch-<profile>.jsonl).
 //
 // A backtracking engine that reaches its match limit answers "no match", whatever the subject has.
 // The non-backtracking matcher has no such limit, so the two differ on those cases, and that is
@@ -19,7 +19,7 @@ for (const path of arguments) {
         if (!line)
             continue;
         const record = JSON.parse(line);
-        if (!record.a || !record.pair.endsWith("linear"))
+        if (!record.a || !/~linear(?:-|$)/.test(record.pair))
             continue;
         const regExp = new RegExp(decode(record.a.p), record.a.f);
         const subject = decode(record.a.s);
@@ -48,6 +48,30 @@ for (const path of arguments) {
         differences += differAt.length;
         print(where + ": " + (subject.length + 1) + " prefixes, the two engines agree on " + agreed + " (" + agreedOnAMatch + " of them a match), the interpreter gives up on " + givenUp
             + (differAt.length ? ", and THEY DIFFER on the prefixes of length " + differAt.join(", ") : ""));
+
+        // The same for the matches of a global loop over the whole subject (match, matchAll, replace, split): each
+        // starts where the one before it ended. A backtracking engine that gives up on one of them ends the loop there.
+        let matches = 0;
+        let agreedInLoop = 0;
+        let givenUpInLoop = 0;
+        const differFrom = [];
+        for (let start = 0; start <= subject.length;) {
+            const index = $vm.regExpMatchOnBothEngines(regExp, subject, start);
+            if (index === null)
+                ++givenUpInLoop;
+            else if (index === false)
+                differFrom.push(start);
+            else
+                ++agreedInLoop;
+            const captures = $vm.regExpMatchStatistics(regExp, subject, start).captures;
+            if (!captures)
+                break;
+            ++matches;
+            start = captures[1] > captures[0] ? captures[1] : captures[1] + 1;
+        }
+        differences += differFrom.length;
+        print("    as a global loop: " + matches + " matches on the matcher, the two engines agree on " + agreedInLoop + " searches, the interpreter gives up on " + givenUpInLoop
+            + (differFrom.length ? ", and THEY DIFFER on the searches from " + differFrom.join(", ") : ""));
     }
 }
 if (differences)

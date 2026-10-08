@@ -19,11 +19,12 @@ difference is a crash), gatesoff, nolb, nofactor, nodispatch, nodfg, eager, asan
 (WebKitBuild/DebugASAN), base (a baseline jsc: $YARR_FUZZ_BASE_JSC), node.
 
 A backtracking engine that reaches its match limit answers "no match", and the matcher of the
-`linear` configuration has no such limit. So a `jit~linear` difference where the `jit` side took
+`linear` configurations has no such limit. So a `jit~linear` difference where the `jit` side took
 seconds is that limit, and not a bug. `linear-triage.js` tells the two apart:
 `jsc --useDollarVM=1 --useRegExpLinearEngine=1 linear-triage.js -- out/mismatch-mixed.jsonl` runs
-the matcher and the bytecode interpreter on every prefix of each subject, and reports the prefixes
-where they agree, where the interpreter gives up, and where they differ (a bug).
+the matcher and the bytecode interpreter on every prefix of each subject, and on every search of a
+global loop over it. It reports where they agree, where the interpreter gives up, and where they
+differ (a bug).
 
 `regex-fuzz.js` also runs standalone: `jsc --useDollarVM=1 regex-fuzz.js -- <seed> <count> [profile]`
 or `node regex-fuzz.js <seed> <count> [profile]`; one JSON line per case, identical across engines
