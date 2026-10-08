@@ -115,11 +115,8 @@ allows("a new name on a built-in function", () => { Math.floor.added = 2; return
 allows("writing it again", () => { Math.floor.added = 3; return Math.floor.added; }, 3);
 allows("deleting it", () => delete Math.floor.added && !("added" in Math.floor), true);
 allows("defining a new name on a built-in function", () => Object.defineProperty(Math.floor, "defined", { value: 4, configurable: true }).defined, 4);
-allows("a new name on a prototype", () => { Object.defineProperty(Array.prototype, "added", { value: 5, configurable: true, writable: true }); return [].added; }, 5);
-allows("deleting it from the prototype", () => delete Array.prototype.added && [].added, undefined);
-allows("a new name on Function.prototype", () => { Function.prototype.addedToAll = 6; return Math.floor.addedToAll; }, 6);
-allows("a built-in function shadows a name the program added", () => { Math.floor.addedToAll = 7; return Math.floor.addedToAll + Math.ceil.addedToAll; }, 13);
-allows("deleting both", () => delete Math.floor.addedToAll && delete Function.prototype.addedToAll && Math.floor.addedToAll, undefined);
+refuses("a new name on a prototype", () => Object.defineProperty(Array.prototype, "added", { value: 5, configurable: true, writable: true }));
+refuses("a new name on Function.prototype", () => { Function.prototype.addedToAll = 6; });
 allows("many new names on a holder", () => { for (let i = 0; i < 200; ++i) JSON["added" + i] = i; return JSON.added199; }, 199);
 refuses("toString on a holder with many names", () => { JSON.toString = mine; });
 allows("Error.stackTraceLimit", () => { const old = Error.stackTraceLimit; Error.stackTraceLimit = 7; const seen = Error.stackTraceLimit; Error.stackTraceLimit = old; return seen; }, 7);
@@ -127,6 +124,9 @@ allows("Error.stackTraceLimit", () => { const old = Error.stackTraceLimit; Error
 allows("an object shadows toString", () => { const object = { }; object.toString = mine; return object.toString(); }, "mine");
 allows("an object defines hasOwnProperty", () => Object.defineProperty({ }, "hasOwnProperty", { value: mine }).hasOwnProperty(), "mine");
 allows("an array shadows push", () => { const array = []; array.push = mine; return array.push(); }, "mine");
+allows("an array gets another prototype", () => Object.setPrototypeOf([], { push: mine }).push(), "mine");
+allows("an array gets an accessor for an element", () => Object.defineProperty([], 0, { get: mine })[0], "mine");
+allows("an array loses its prototype", () => typeof Object.setPrototypeOf([], null).push, "undefined");
 allows("a map shadows get", () => { const map = new Map; map.get = mine; return map.get(); }, "mine");
 allows("a subclass overrides push", () => new (class extends Array { push() { return "mine"; } })().push(), "mine");
 allows("a subclass has a static from", () => (class extends Array { static from() { return "mine"; } }).from(), "mine");

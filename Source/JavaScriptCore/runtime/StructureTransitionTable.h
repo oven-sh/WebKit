@@ -66,8 +66,15 @@ enum class TransitionKind : uint8_t {
     // Support for transitions related with private brand
     SetBrand = 17,
 
-    // The object becomes non-extensible and its own properties and prototype can no longer change. Property attributes do not change.
+    // The object becomes non-extensible and its own properties and prototype can no longer change.
     MakePropertiesImmutable = 18,
+
+    // The properties the object has become non-configurable and, unless they are accessors, read-only, and its prototype can no longer
+    // change. The object stays extensible, and what is added to it is as any other property.
+    FixProperties = 19,
+
+    // With immutable intrinsics: an array of ArrayType is of DerivedArrayType from here on. See JSObject::becomeDerivedArray().
+    BecomeDerivedArray = 20,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -146,6 +153,7 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FixProperties:
         return true;
     default:
         return false;
@@ -157,6 +165,7 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FixProperties:
         return true;
     default:
         return false;

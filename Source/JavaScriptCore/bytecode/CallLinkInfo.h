@@ -567,8 +567,8 @@ inline JSCell* CallLinkInfo::ownerForSlowPath(CallFrame* calleeFrame)
         return m_owner;
 
 #if ENABLE(AOT)
-    if (CodeBlock* codeBlock = AOT::callerCodeBlock(calleeFrame))
-        return std::bit_cast<JSCell*>(codeBlock);
+    if (JSCell* owner = AOT::callerOwnerCell(calleeFrame))
+        return owner;
 #endif
 
     // Right now, IC (Getter, Setter, Proxy IC etc.) / WasmToJS sets nullptr intentionally since we would like to share IC / WasmToJS thunk eventually.

@@ -30,7 +30,7 @@ static constexpr size_t imagePageSize = 16 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 8;
-static constexpr unsigned numberOfAdapters = 6;
+static constexpr unsigned numberOfAdapters = 7;
 
 struct ImageHeader {
     uint64_t magic;
@@ -88,6 +88,8 @@ struct ImageHeader {
     uint32_t codeGranulesOffset;
     uint32_t callSitesOffset;
     uint32_t framesOffset;
+    uint32_t typedDataOffset;
+    uint32_t typedDataSize;
     uint32_t functionsEnd;
     uint32_t stubsSize;
     uint32_t numberOfStubCopies;
@@ -171,6 +173,7 @@ public:
         m_numberOfProgramIdentifiers = number;
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
+    void setTypedData(Vector<uint8_t>&& data) { m_typedData = WTF::move(data); }
     bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
     Vector<uint8_t> finish();
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
@@ -197,6 +200,7 @@ private:
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
+    Vector<uint8_t> m_typedData;
     Vector<RegExpCode> m_regExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
     UncheckedKeyHashMap<String, bool> m_requestedRegExps;

@@ -29,6 +29,8 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTTypedObject.h"
+
 #include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"

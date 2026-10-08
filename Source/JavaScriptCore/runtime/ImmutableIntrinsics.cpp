@@ -67,7 +67,7 @@ unsigned ImmutableIntrinsics::find(unsigned holder, const StringImpl& name) cons
     return it->value;
 }
 
-Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObject, std::span<const ASCIILiteral> variableNames)
+Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObject, std::span<const ASCIILiteral> variableNames, unsigned numberOfVariablesWithNumberedProperties)
 {
     VM& vm = globalObject->vm();
     auto description = std::unique_ptr<ImmutableIntrinsics>(new ImmutableIntrinsics);
@@ -91,7 +91,7 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
                     entry.builtinCode = *index + 1;
             } else if (function)
                 entry.isHostFunction = function->isHostFunction();
-            entry.inheritsFromFunctionPrototype = number && isFunctionToMakeImmutable(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
+            entry.inheritsFromFunctionPrototype = number && isFunctionOfIntrinsic(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
         } else
             entry.primitive = JSValue::encode(value);
         if (number && !description->m_numbers.add(keyFor(holder, name), number).isNewEntry)
@@ -109,6 +109,8 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
     for (unsigned number = 1; number < values.size(); ++number) {
         JSObject* object = JSValue::decode(values[number]).getObject();
         if (!object || description->m_entries[number].canonical != number || !object->structure()->inheritorsMayOverrideReadOnlyProperties())
+            continue;
+        if (description->m_entries[number].type == JSFunctionType || (number > numberOfVariablesWithNumberedProperties && number <= variableNames.size()))
             continue;
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& property) {
             constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;

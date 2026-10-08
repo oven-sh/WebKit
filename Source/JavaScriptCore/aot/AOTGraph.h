@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTFacts.h"
 #include "AOTProgram.h"
 #include "AOTPropertyPlaces.h"
 #include "AOTStubs.h"
@@ -254,6 +255,8 @@ struct Node {
     bool accessesLocalEnvironment { false };
     bool isSharedRegExpLiteral { false };
     bool isSaveAtDefinition { false };
+    bool indexIsInBounds { false };
+    bool isIndexedTypedArray { false };
     Node* promotedEnvironment { nullptr };
     unsigned offsetInEnvironment { 0 };
     Node* scopeToStartFrom { nullptr };
@@ -512,7 +515,7 @@ public:
     static const KnownFunction* functionMadeBy(const Node*);
     static bool makesNoFunctionObject(const Node*);
     uint16_t thisLayoutID() const;
-    Type thisTypeOnEntry() const;
+    Type thisTypeOnEntry();
     static uint32_t typeTagOf(const Node* node) { return node->kind == NodeKind::Bytecode && node->instruction ? node->graph->typeTagAt(node->bytecodeIndex.offset()) : 0; }
     const Vector<unsigned, 4>& literalStores(unsigned offsetOfNewObject);
     static std::optional<JSType> typedArrayAccessed(const Node*);
@@ -572,14 +575,33 @@ public:
     Variable variableAccessedBy(const Node*);
     bool isGeneratorFrame(const void* scope) { return scope && scope == generatorFrameIdentity(); }
     void recordUntrackableVariableAccesses(VariableSummaries&);
-    Type argumentTypeOnEntry(unsigned indexIncludingThis) const
+    Type argumentTypeOnEntry(unsigned indexIncludingThis)
     {
+        Type type = TTop;
+        if (auto function = factsAboutFunction()) {
+            if (!indexIncludingThis)
+                type = typeForFact(function->thisType);
+            else if (indexIncludingThis <= function->parameters.size())
+                type = typeForFact(function->parameters[indexIncludingThis - 1]);
+        }
         if (!m_summary || !m_summary->hasOnlyKnownCallers || indexIncludingThis >= FunctionSummary::maxParameters)
-            return TTop;
+            return type;
         if (!indexIncludingThis)
-            return m_summary->thisType.load();
-        return m_summary->parameterTypes[indexIncludingThis].load();
+            return type & m_summary->thisType.load();
+        return type & m_summary->parameterTypes[indexIncludingThis].load();
     }
+    Type typeForShape(uint32_t);
+    Type typeForFact(uint32_t);
+    std::optional<Facts::Function> factsAboutFunction() const;
+    static Facts::Site factsAbout(const Node*);
+    std::optional<Vector<uint32_t, 8>> shapesIn(Type);
+    std::optional<Type> typeOfProperty(Type base, UniquedStringImpl*);
+    std::optional<unsigned> slotOfPlacedField(Type base, UniquedStringImpl*);
+    static Vector<UniquedStringImpl*, 8> namesPlacedIn(uint32_t shape);
+    std::optional<Type> typeOfElements(Type base);
+    const KnownFunction* calleeProvenByFacts(const Node*) const;
+    Type refinedByFacts(const Node*, Type computed);
+    static bool hasFixedLength(const Node* base);
     const CalleeHints* calleeHints() const { return m_hints; }
     unsigned knownCalleeIndex(const ImageKey&);
     Vector<ImageKey> knownCallees;
@@ -735,6 +757,10 @@ private:
     mutable bool m_hasFoundNamesAccessed { false };
     ASCIILiteral m_failureReason;
     OpcodeID m_failureOpcode { op_nop };
+    Type typeOfPropertyInShape(uint32_t shape, UniquedStringImpl*, unsigned depth);
+    Vector<uint32_t, 8> m_shapesListed;
+    Vector<uint32_t, 8> m_arrayShapesListed;
+    UncheckedKeyHashMap<uint32_t, Type, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_typesForFacts;
     Graph* m_outermost { this };
     unsigned m_inlineFrame { 0 };
     unsigned m_numberOfInlinedNodes { 0 };
@@ -766,6 +792,7 @@ bool parseBytecode(Graph&);
 Type inferTypes(Graph&, Vector<const KnownFunction*>* calleesRead = nullptr, Vector<const KnownFunction*>* calleesWithWidenedInputs = nullptr);
 void noteBuiltinsExtended(Graph&);
 void inferRanges(Graph&);
+bool proveIndexesInBounds(Graph&);
 void optimizeLoops(Graph&);
 void simplify(Graph&);
 void inlineCalls(Graph&, const ProgramCode&);

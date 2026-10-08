@@ -581,6 +581,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
                 return ReadonlyPropertyWriteError;
         }
+        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+            becomeDerivedArray(vm);
+            return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+        }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
             unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
@@ -746,6 +750,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             return NonExtensibleObjectPropertyDefineError;
         if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
             return ReadonlyPropertyWriteError;
+    }
+    if (type() == ArrayType && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+        becomeDerivedArray(vm);
+        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
     }
 
 #if ENABLE(AOT)

@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ObjectConstructor.h"
 
+#include "AOTTypedObject.h"
 #include "BuiltinNames.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -1159,6 +1160,14 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+#endif
+
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1192,6 +1201,14 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+#endif
 
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);

@@ -105,6 +105,8 @@ Type valueType(JSValue value)
 
 Type AtomicType::join(Type type)
 {
+    if (Facts::shared())
+        type = withoutShapes(type);
     Type before = load();
     if ((before | type) == before)
         return before;
@@ -161,6 +163,10 @@ void dumpType(PrintStream& out, Type type)
         type &= ~TFunction;
     }
     take(TArray, "Array"_s);
+    if (type & TArrayTag) {
+        out.print(bar, "Array{", static_cast<unsigned>((type & TAnyArrayShape) >> firstArrayShapeBit), "}");
+        type &= ~TArray;
+    }
     take(TObject, "Object"_s);
     take(TOtherObject, "OtherObject"_s);
     take(TFinalObject, "FinalObject"_s);
@@ -201,7 +207,7 @@ Graph::Graph(VM& vm, UnlinkedCodeBlock* codeBlock, const ScopeChain& scopeChain)
     , m_numLocals(codeBlock->numCalleeLocals())
     , m_convention(conventionOf(codeBlock))
 {
-    if (Options::useTypeTags()) [[unlikely]] {
+    if (Options::useTypeTags() || Facts::shared()) [[unlikely]] {
         auto& instructions = codeBlock->instructions();
         for (unsigned offset = 0; offset < instructions.size(); offset += instructions.at(offset)->size()) {
             auto instruction = instructions.at(offset);
@@ -725,7 +731,9 @@ const KnownFunction* Graph::knownCallee(const Node* node, bool* isExact) const
     if (node->graph != this)
         return node->graph->knownCallee(node, isExact);
     bool proven = true;
-    const KnownFunction* known = calleeKnownByFact(node);
+    const KnownFunction* known = calleeProvenByFacts(node);
+    if (!known)
+        known = calleeKnownByFact(node);
     if (!known)
         known = knownCalleeWithoutFacts(node, &proven);
     if (isExact)
@@ -1042,8 +1050,6 @@ void Graph::elideArrayIteratorMethodReads()
 
 void Graph::sinkIteratorMethodReads()
 {
-    if (!Options::useUnboxedFastArrayIteration())
-        return;
     Vector<Node*, 4> candidates;
     for (BasicBlock* block : m_rpo) {
         if (block->isGeneric)
@@ -2408,6 +2414,39 @@ void Graph::noteClassesDefined()
     noteBuiltinsExtended(*this);
     ProgramClasses* classes = programClasses();
     const ProgramFunctions* functions = programFunctions();
+    if (const Facts* facts = Facts::shared(); facts && functions) {
+        for (BasicBlock* block : m_rpo) {
+            for (Node* note : block->nodes) {
+                if (!note->isBytecode(op_call_ignore_result))
+                    continue;
+                CallOperands operands = callOperands(note->instruction);
+                if (operands.argc != 2 || linkTimeConstantOf(note->use(operands.callee)) != LinkTimeConstant::noteClass)
+                    continue;
+                auto site = factsAbout(note);
+                if (site.kind != Facts::SiteKind::Class)
+                    continue;
+                Node* constructor = note->use(operands.argument(0));
+                for (BasicBlock* otherBlock : m_rpo) {
+                    for (Node* node : otherBlock->nodes) {
+                        if (!node->isBytecode(op_put_by_id))
+                            continue;
+                        auto bytecode = node->as<OpPutById>();
+                        if (node->use(bytecode.m_base) != constructor || node->graph->codeBlock()->identifier(bytecode.m_property) != m_vm.propertyNames->builtinNames().instanceFieldInitializerPrivateName())
+                            continue;
+                        UnlinkedFunctionExecutable* made = functionCreatedBy(node->use(bytecode.m_value));
+                        uint32_t number = made ? functions->numberOf(made) : 0;
+                        const KnownFunction* initializer = functions->function(number);
+                        if (!initializer || !initializer->forCall)
+                            continue;
+                        UnlinkedFunctionExecutable* madeConstructor = functionCreatedBy(constructor);
+                        const KnownFunction* known = madeConstructor ? functions->function(functions->numberOf(madeConstructor)) : nullptr;
+                        UnlinkedCodeBlock* codeOfConstructor[] = { known ? known->forConstruct : nullptr, known ? known->forCall : nullptr };
+                        facts->noteFieldInitializer(initializer->forCall, site.callee, number, codeOfConstructor);
+                    }
+                }
+            }
+        }
+    }
     if (!classes || !functions || !TypeTable::typedFieldsAreEnforced())
         return;
     if (m_codeBlock->isConstructor() && m_codeBlock->constructorKind() == ConstructorKind::None) {
@@ -2563,11 +2602,13 @@ uint32_t Graph::closedMethodReadBy(const Node* node)
     return classType ? programClasses()->closedMethod(classType, name) : 0;
 }
 
-Type Graph::thisTypeOnEntry() const
+Type Graph::thisTypeOnEntry()
 {
     if (m_codeBlock->parseMode() == SourceParseMode::ClassFieldInitializerMode) {
         if (uint16_t layoutID = thisLayoutID())
             return objectTypeForLayout(layoutID);
+        if (auto type = Facts::shared() ? Facts::shared()->typeOfThisInFieldInitializer(m_codeBlock) : std::nullopt)
+            return typeForFact(*type);
     }
     return argumentTypeOnEntry(0);
 }
@@ -3339,6 +3380,7 @@ public:
         : m_graph(graph)
         , m_codeBlock(graph.codeBlock())
         , m_instructions(m_codeBlock->instructions())
+        , m_hasFacts(!!graph.factsAboutFunction())
     {
     }
 
@@ -3467,6 +3509,16 @@ private:
 
     bool canBeGuarded(const JSInstruction* instruction)
     {
+        if (m_hasFacts) {
+            switch (instruction->opcodeID()) {
+            case op_get_by_val:
+            case op_put_by_val:
+            case op_check_traps:
+                return true;
+            default:
+                return false;
+            }
+        }
         switch (instruction->opcodeID()) {
         case op_resolve_scope:
             return !isStaticClosureVarResolveType(instruction->as<OpResolveScope>().m_resolveType);
@@ -4548,7 +4600,7 @@ private:
                 continue;
             }
             case op_create_this: {
-                if (m_graph.hasFrameRegisters() || block->isInLoop)
+                if (m_graph.hasFrameRegisters() || block->isInLoop || m_graph.factsAboutFunction())
                     break;
                 m_objectPlan = NewObjectPlan::forCreateThis(m_codeBlock, offset);
                 if (m_objectPlan.stores.isEmpty() || m_objectPlan.stores.last().offset >= block->bytecodeEnd)
@@ -4933,6 +4985,7 @@ private:
     NewObjectPlan m_objectPlan;
     unsigned m_nextPlanStore { 0 };
     Vector<std::pair<BasicBlock*, BasicBlock*>> m_backEdges;
+    bool m_hasFacts { false };
     Vector<std::pair<VirtualRegister, unsigned>, 8> m_recentProperties;
     Vector<std::pair<VirtualRegister, const KnownFunction*>, 8> m_recentFunctions;
     UncheckedKeyHashMap<UnlinkedFunctionCodeBlock*, bool> m_canBeInlined;

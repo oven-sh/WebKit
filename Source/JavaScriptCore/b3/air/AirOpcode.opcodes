@@ -771,6 +771,8 @@ arm64: StorePair64 U:G:64, U:G:64, D:G:128
 
 64: SignExtend32To64 U:G:32, D:G:64
     Tmp, Tmp
+    Addr, Tmp as load32SignedExtendTo64
+    Index, Tmp as load32SignedExtendTo64
 
 ZeroExtend8To32 U:G:8, ZD:G:32
     Tmp, Tmp

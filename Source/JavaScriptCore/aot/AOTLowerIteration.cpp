@@ -92,7 +92,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
         std::optional<ValueFromBlock> iteratorOfArray;
         std::optional<ValueFromBlock> nextOfArray;
         LBasicBlock continuation = nullptr;
-        if (Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
+        if (mayBe(node->use(iterableRegister)->type, TArray)) {
             LBasicBlock isArray = m_out.newBlock();
             LBasicBlock isOtherKind = m_out.newBlock();
             continuation = m_out.newBlock();
@@ -128,7 +128,7 @@ void Lowering::lowerIteratorOpen(Node* node, bool isAsync)
 
     std::optional<ValueFromBlock> iteratorOfArray;
     std::optional<ValueFromBlock> arrayNextResult;
-    if (!isAsync && Options::useUnboxedFastArrayIteration() && mayBe(node->use(iterableRegister)->type, TArray)) {
+    if (!isAsync && mayBe(node->use(iterableRegister)->type, TArray)) {
         LBasicBlock isArray = m_out.newBlock();
         LBasicBlock isOtherKind = m_out.newBlock();
         m_out.branch(isCellAnd(node->use(iterableRegister), iterable, [&](LValue cell) { return isOriginalArray(cell); }), unsure(isArray), unsure(isOtherKind));

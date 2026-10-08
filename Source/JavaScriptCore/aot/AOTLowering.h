@@ -72,6 +72,13 @@ private:
         B3::Variable* limit { nullptr };
     };
     const ArrayView* viewOf(Node* access, Node* base);
+    struct TypedArrayView {
+        LValue vector { nullptr };
+        LValue length { nullptr };
+    };
+    UncheckedKeyHashMap<Node*, TypedArrayView> m_typedArrayViews;
+    void findIndexedTypedArrays();
+    TypedArrayView typedArrayViewOf(Node* base, LValue cell);
     void hoistArrayStorageLoadsAheadOf(BasicBlock*);
     void loadArrayView(Node* origin, Node* array, const ArrayViewVariables&);
     void reloadArrayViews();

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSMicrotask.h"
 
+#include "AOTTypedObject.h"
 #include "AOTFunction.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
@@ -2114,6 +2115,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         asyncFunctionGeneratorBodyCall(generatorGlobalObject, vm, generator, resolution, resumeMode, microtaskCallCache);
         return;
     }
+
+#if ENABLE(AOT)
+    case InternalMicrotask::AOTAsyncFunctionResume: {
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+#endif
+        scope.release();
+        AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
+        return;
+    }
+#endif
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:
     case InternalMicrotask::AsyncFromSyncIteratorDone: {

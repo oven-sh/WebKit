@@ -63,9 +63,19 @@ static constexpr unsigned layoutNumberBits = 16;
 static constexpr unsigned firstLayoutNumberBit = firstFunctionNumberBit + 2 * functionNumberBits;
 static constexpr Type TAnyLayoutNumber = ((Type(1) << 2 * layoutNumberBits) - 1) << firstLayoutNumberBit;
 static_assert(firstLayoutNumberBit + 2 * layoutNumberBits <= 128);
+static constexpr unsigned firstShapeBit = firstLayoutNumberBit;
+static constexpr unsigned numberOfShapeBits = 2 * layoutNumberBits;
+static constexpr Type TAnyShape = TAnyLayoutNumber;
+static constexpr Type TShapesNotListed = Type(1) << (firstShapeBit + numberOfShapeBits - 1);
+static constexpr unsigned firstArrayShapeBit = firstShapeBit + numberOfShapeBits;
+static constexpr unsigned numberOfArrayShapeBits = 16;
+static_assert(firstArrayShapeBit + numberOfArrayShapeBits == 128);
+static constexpr Type TAnyArrayShape = ((Type(1) << numberOfArrayShapeBits) - 1) << firstArrayShapeBit;
+static constexpr Type TArrayShapesNotListed = Type(1) << (firstArrayShapeBit + numberOfArrayShapeBits - 1);
 static constexpr Type TFunctionTag = Type(1) << 8;
 static constexpr Type TFunction = TFunctionTag | TAnyFunctionNumber;
-static constexpr Type TArray = Type(1) << 9;
+static constexpr Type TArrayTag = Type(1) << 9;
+static constexpr Type TArray = TArrayTag | TAnyArrayShape;
 static constexpr Type TOtherObject = Type(1) << 10;
 static constexpr Type TCellOther = Type(1) << 11;
 static constexpr Type TEmpty = Type(1) << 12;
@@ -175,6 +185,15 @@ constexpr uint32_t intrinsicFunctionOf(Type type)
     return numbers.isOne() && numbers.lowest > largestFunctionNumberInTypes ? numbers.lowest - largestFunctionNumberInTypes : 0;
 }
 constexpr DualRailNumbers layoutRangeOf(Type type) { return dualRailDecode(type, firstLayoutNumberBit, layoutNumberBits); }
+
+constexpr Type withoutShapes(Type type)
+{
+    if (type & TFinalObjectTag)
+        type |= TAnyShape;
+    if (type & TArrayTag)
+        type |= TAnyArrayShape;
+    return type;
+}
 
 inline bool isSubtype(Type type, Type of) { return !(type & ~of); }
 inline bool mayBe(Type type, Type what) { return type & what; }

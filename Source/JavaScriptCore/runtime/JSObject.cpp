@@ -745,7 +745,7 @@ bool ordinarySetWithOwnDescriptor(JSGlobalObject* globalObject, JSObject* object
     // 9.1.9.1-4 If IsDataDescriptor(ownDesc) is true, then
     if (ownDescriptor.isDataDescriptor()) {
         // 9.1.9.1-4-a If ownDesc.[[Writable]] is false, return false.
-        if (!ownDescriptor.writable())
+        if (!ownDescriptor.writable() && (receiver == JSValue(current) || !current->structure()->inheritorsMayOverrideReadOnlyProperties()))
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         // 9.1.9.1-4-b If Type(Receiver) is not Object, return false.
@@ -881,6 +881,8 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
                 if (attributes & PropertyAttribute::CustomAccessorOrValue)
                     customSetter = entry->value->propertyPutter();
+                else if (!(attributes & PropertyAttribute::Accessor) && isFixedStaticProperty(vm, *obj, *entry->value)) [[unlikely]]
+                    attributes |= PropertyAttribute::ReadOnly;
             }
         }
 
@@ -1046,6 +1048,8 @@ bool JSObject::putInlineFastReplacingStaticPropertyIfNeeded(JSGlobalObject* glob
                 if (customSetter)
                     RELEASE_AND_RETURN(scope, customSetter(structure->realm(), JSValue::encode(this), JSValue::encode(value), propertyName));
             }
+            if (isFixedStaticProperty(vm, *this, *entry->value)) [[unlikely]]
+                return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
             // Avoid PutModePut because it fails for non-extensible structures.
             putDirect(vm, propertyName, value, attributesForStructure(entry->value->attributes()) & ~PropertyAttribute::CustomValue, slot);
             return true;
@@ -2182,6 +2186,9 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
     else if (!prototype.isNull()) [[unlikely]] // Conservative hardening.
         return;
 
+    if (vm.useImmutableIntrinsics && type() == ArrayType && getPrototypeDirect() != prototype) [[unlikely]]
+        becomeDerivedArray(vm);
+
     bool chainAlreadyMayInterceptIndexedAccesses = mayBePrototype() && anyObjectInChainMayInterceptIndexedAccesses();
 
     if (structure()->hasMonoProto()) {
@@ -2472,7 +2479,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             // If the static table contains a non-configurable (DontDelete) property then we can return early;
             // if there is a property in the storage array it too must be non-configurable (the language does
             // not allow repacement of a non-configurable property with a configurable one).
-            if (entry->value->attributes() & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
+            if ((entry->value->attributes() & PropertyAttribute::DontDelete || isFixedStaticProperty(vm, *thisObject, *entry->value)) && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
                 ASSERT(!isValidOffset(thisObject->structure()->get(vm, propertyName, attributes)) || attributes & PropertyAttribute::DontDelete);
                 return false;
             }
@@ -3068,21 +3075,26 @@ void JSObject::seal(VM& vm)
     }
 }
 
-void JSObject::makePropertiesImmutable(JSGlobalObject* globalObject)
+void JSObject::fixProperties(VM& vm, FixedObject kind)
 {
-    VM& vm = globalObject->vm();
     if (structure()->inheritorsMayOverrideReadOnlyProperties())
         return;
-    if (hasNonReifiedStaticProperties())
-        reifyAllStaticProperties(globalObject);
-    materializeLazyOwnProperties(vm);
     if (structure()->isDictionary())
         flattenDictionaryObject(vm);
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
+    setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
     if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+
+void JSObject::becomeDerivedArray(VM& vm)
+{
+    ASSERT(vm.useImmutableIntrinsics);
+    Structure* oldStructure = structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::BecomeDerivedArray, &deferred));
+    ensureArrayStorage(vm);
 }
 
 bool JSObject::inheritsImmutableProperty(VM& vm, PropertyName propertyName)
@@ -3090,7 +3102,12 @@ bool JSObject::inheritsImmutableProperty(VM& vm, PropertyName propertyName)
     for (JSValue prototype = getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
         Structure* structure = asObject(prototype)->structure();
         unsigned attributes;
-        if (structure->inheritorsMayOverrideReadOnlyProperties() && isValidOffset(structure->get(vm, propertyName, attributes)) && (attributes & PropertyAttribute::DontDelete))
+        if (!structure->inheritorsMayOverrideReadOnlyProperties())
+            continue;
+        if (isValidOffset(structure->get(vm, propertyName, attributes))) {
+            if (attributes & PropertyAttribute::DontDelete)
+                return true;
+        } else if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(propertyName))
             return true;
     }
     return false;
@@ -3426,6 +3443,9 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
 
     if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
         return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+
+    if (descriptor.isAccessorDescriptor() && vm.useImmutableIntrinsics && type() == ArrayType) [[unlikely]]
+        becomeDerivedArray(vm);
 
     ensureWritable(vm);
 

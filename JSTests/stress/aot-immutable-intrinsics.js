@@ -55,8 +55,6 @@ check(repeat(tdz), "ReferenceError", "before its declaration");
 
 function added() { return Math.added; }
 check(repeat(added), undefined, "not there"); Math.added = 1; check(repeat(added), 1, "added"); Math.added = 2; check(repeat(added), 2, "changed"); delete Math.added; check(repeat(added), undefined, "deleted");
-function addedMethod(a) { return Array.prototype.addedMethod ? a.addedMethod() : "none"; }
-check(repeat(addedMethod, [1]), "none", "no such method"); Array.prototype.addedMethod = function () { return this.length; }; check(repeat(addedMethod, [1]), 1, "a method that was added"); delete Array.prototype.addedMethod;
 function accessors() { return typeof Object.getOwnPropertyDescriptor(RegExp.prototype, "flags").get + RegExp.prototype.source + Map.prototype[Symbol.toStringTag] + Array[Symbol.species].name; }
 check(repeat(accessors), "function(?:)MapArray", "accessors are called");
 function inheritedByIntrinsic() { return Math.toString() + typeof Math.hasOwnProperty + Array.name + Array.length + typeof Array.call + Math.floor.name + Math.floor.length; }

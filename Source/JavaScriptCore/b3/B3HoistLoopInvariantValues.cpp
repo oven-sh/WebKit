@@ -227,7 +227,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     if (effects.readsLocalState && data[loop].writesLocalState)
                         continue;
 
-                    if (data[loop].writes.overlaps(effects.reads))
+                    if (effects.readsMutability != Mutability::Immutable && data[loop].writes.overlaps(effects.reads))
                         continue;
 
                     data[loop].preHeader->appendNonTerminal(value);

@@ -12,6 +12,7 @@
 #include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AOTThunks.h"
+#include "AOTTypedObject.h"
 #include "BaselineJITRegisters.h"
 #include "CodeBlock.h"
 #include "FunctionExecutable.h"
@@ -3298,6 +3299,24 @@ static void generateEnterStaticFunction(CCallHelpers& jit, CodeSpecializationKin
 static void generateEnterStaticFunctionForCall(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForCall, Entry::CallLinkInfoForCall); }
 static void generateEnterStaticFunctionForConstruct(CCallHelpers& jit) { generateEnterStaticFunction(jit, CodeSpecializationKind::CodeForConstruct, Entry::CallLinkInfoForConstruct); }
 
+static void generateEnterClosure(CCallHelpers& jit)
+{
+    constexpr GPRReg T12 = entryT12;
+    loadCalleeFrameCalleeAndVM(jit, T11, T12);
+    jit.load32(Address(T11, JSCell::structureIDOffset()), T9);
+    jit.add64(Address(T12, VM::offsetOfStructureIDBase()), T9);
+    jit.loadPtr(Address(T9, Structure::offsetOfAOTInstance()), T12);
+    jit.loadPtr(Address(T11, Typed::Closure::offsetOfEntry()), T11);
+    adapt(jit, T11, T12);
+}
+
+static void generateCallClosure(CCallHelpers& jit)
+{
+    jit.loadPtr(Address(calleeGPR, Typed::Closure::offsetOfEntry()), T11);
+    jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T11);
+    jit.farJump(T11, JSEntryPtrTag);
+}
+
 static void generateCallBoundFunction(CCallHelpers& jit)
 {
     constexpr GPRReg bound = GPRInfo::regT0;
@@ -4618,7 +4637,7 @@ static void generateIteratorNext(CCallHelpers& jit)
 static void generateIteratorOpen(CCallHelpers& jit)
 {
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
-    if (Options::useUnboxedFastArrayIteration()) {
+    {
         Jump isNotCell = jit.branchIfNotCell(R0);
         jit.load8(Address(R0, JSCell::indexingTypeAndMiscOffset()), T11);
         jit.urshift32(TrustedImm32(Instance::arrayKindShift), T11);
@@ -6140,6 +6159,24 @@ const StubBlob& stubBlob()
                         HostCallThunks thunksToCache { thunkLabels[firstCallThunkOf(Stub::CallHostFunction) + count], thunkLabels[firstCallThunkOf(Stub::CallInternalFunction) + count], thunkLabels.last() };
                         generateCallTo(jit, CodeSpecializationKind::CodeForCall, count, &thunksToCache);
                         continue;
+                    }
+                    if (stub == Stub::Call) {
+                        // A closure of the typed compiler that takes its arguments in registers is entered as CallClosure enters it.
+                        CCallHelpers::JumpList isNotSuchClosure;
+                        isNotSuchClosure.append(jit.branchIfNotCell(calleeGPR));
+                        jit.load32(Address(calleeGPR, JSCell::structureIDOffset()), T11);
+                        CCallHelpers::JumpList isClosure;
+                        for (unsigned which = 0; which + 1 < Instance::numberOfTypedClosureStructures; ++which)
+                            isClosure.append(jit.branch32(CCallHelpers::Equal, T11, Address(instanceGPR, Instance::offsetOfTypedClosureStructureID(which))));
+                        isNotSuchClosure.append(jit.branch32(CCallHelpers::NotEqual, T11, Address(instanceGPR, Instance::offsetOfTypedClosureStructureID(Instance::numberOfTypedClosureStructures - 1))));
+                        isClosure.link(&jit);
+                        jit.loadPtr(Address(calleeGPR, Typed::Closure::offsetOfEntry()), T11);
+                        isNotSuchClosure.append(jit.branchTest64(CCallHelpers::NonZero, T11, CCallHelpers::TrustedImm64(1LL << EntryWord::isListBit | 1LL << EntryWord::isNotCallableBit)));
+                        for (unsigned i = count; i < numberOfArgumentGPRs; ++i)
+                            jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsUndefined())), argumentGPR(i));
+                        jit.and64(CCallHelpers::TrustedImm64(static_cast<int64_t>(EntryWord::addressMask)), T11);
+                        jit.farJump(T11, JSEntryPtrTag);
+                        isNotSuchClosure.link(&jit);
                     }
                     jit.move(CCallHelpers::TrustedImm32(count), countGPR);
                     generateCallTo(jit, stub == Stub::Call ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct, count);

@@ -72,13 +72,81 @@ throwsTypeError(() => { Object.defineProperty(global, "Array", { value: 1 }); },
 })();
 check(Object.prototype.toString, toString, "Object.prototype.toString, still");
 
-// ---- All but Object.prototype can be given more.
-Array.prototype.somethingNew = function () { return this.length; }; check([1, 2].somethingNew(), 2, "an addition to Array.prototype");
-Array.prototype.somethingNew = () => "changed"; check([].somethingNew(), "changed", "which can be changed"); check(delete Array.prototype.somethingNew, true, "and deleted"); check([].somethingNew, undefined, "and is gone");
+// ---- What is not a prototype can be given more, and that is as any other property.
 Math.clamp2 = (x) => x; check(Math.clamp2(3), 3, "an addition to Math"); Object.groupBy2 = 1; check(Object.groupBy2, 1, "an addition to Object"); Promise.try2 = 1; check(Promise.try2, 1, "an addition to Promise");
-String.prototype.shout = function () { return this + "!"; }; check("a".shout(), "a!", "an addition to String.prototype");
-for (let o of [Array.prototype, Math, Object, Promise, Promise.prototype, Function.prototype, Number, Number.prototype, Array, Function, String.prototype, Map.prototype, JSON])
-    check(Object.isExtensible(o), true, "extensible");
+Math.clamp2 = 2; check(Math.clamp2, 2, "which can be changed"); check(delete Math.clamp2, true, "and deleted"); check("clamp2" in Math, false, "and is gone"); delete Object.groupBy2; delete Promise.try2;
+Math.floor.extra = 1; check(Math.floor.extra, 1, "an addition to a function"); check(delete Math.floor.extra, true, "and deleted");
+Math[1] = "one"; check(Math[1], "one", "an element of Math"); check(delete Math[1], true, "and deleted");
+throwsTypeError(() => { "use strict"; Intl.DateTimeFormat = 1; }, "assigning to what has not been asked for yet"); check(Reflect.deleteProperty(Intl, "PluralRules"), false, "or deleting it"); check(typeof Intl.PluralRules, "function", "it is there");
+const typedArray = Object.getPrototypeOf(Uint8Array), generatorFunction = Object.getPrototypeOf(function* () { }), asyncGeneratorFunction = Object.getPrototypeOf(async function* () { });
+for (let o of [Math, JSON, Reflect, Atomics, Intl, Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Promise, RegExp, Date, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Proxy, Iterator, Error, TypeError, AggregateError,
+    ArrayBuffer, DataView, typedArray, Uint8Array, Float64Array, BigInt64Array, Intl.NumberFormat, Intl.Collator, generatorFunction.constructor, Math.floor, Array.prototype.push, parseInt, escape, eval]) {
+    check(Object.isExtensible(o), true, "extensible"); check(Object.isFrozen(o), false, "so not frozen");
+    throwsTypeError(() => { "use strict"; o.toString = 1; }, "shadowing what it inherits"); throwsTypeError(() => Object.setPrototypeOf(o, {}), "giving it another prototype");
+    for (let k of Reflect.ownKeys(o)) {
+        if (o === Error && k === "stackTraceLimit")
+            continue;
+        let d = Object.getOwnPropertyDescriptor(o, k);
+        check(d.configurable, false, String(k) + " is not configurable"); check(d.writable === true && o !== RegExp, false, String(k) + " is not writable");
+    }
+}
+{ let limit = Error.stackTraceLimit; Error.stackTraceLimit = 7; check(Error.stackTraceLimit, 7, "Error.stackTraceLimit is a setting"); Error.stackTraceLimit = limit; }
+throwsTypeError(() => { "use strict"; Uint8Array.from = 1; }, "shadowing what a constructor inherits from another");
+
+// ---- A prototype cannot.
+for (let o of [Object, Function, Array, String, Number, Boolean, Symbol, BigInt, Promise, RegExp, Date, Map, Set, WeakMap, WeakSet, WeakRef, FinalizationRegistry, Iterator, Error, TypeError, RangeError, AggregateError,
+    ArrayBuffer, DataView, typedArray, Uint8Array, Float64Array, BigInt64Array, Intl.NumberFormat, Intl.Collator, generatorFunction, asyncGeneratorFunction].map((o) => o.prototype).concat([generatorFunction, asyncGeneratorFunction,
+    Object.getPrototypeOf(async function () { }), Object.getPrototypeOf(asyncGeneratorFunction.prototype), Object.getPrototypeOf([][Symbol.iterator]()), Object.getPrototypeOf(new Map().entries()), Object.getPrototypeOf(new Set().values()),
+    Object.getPrototypeOf(""[Symbol.iterator]()), Object.getPrototypeOf("".matchAll(/a/g)), Object.getPrototypeOf([].values().map((v) => v))])) {
+    check(Object.isExtensible(o), false, "not extensible"); check(Object.isFrozen(o), true, "and frozen");
+    throwsTypeError(() => { "use strict"; o.somethingNew = 1; }, "adding to a prototype"); throwsTypeError(() => { "use strict"; o[1] = 1; }, "adding an element to a prototype");
+    throwsTypeError(() => Object.defineProperty(o, "somethingNew", { value: 1 }), "defining on a prototype"); throwsTypeError(() => Object.setPrototypeOf(o, {}), "giving a prototype another prototype");
+    check(Object.freeze(o), o, "freezing it changes nothing");
+}
+check("return" in [][Symbol.iterator](), false, "an iterator of the engine has no return"); check("return" in ""[Symbol.iterator](), false, "nor has that of a string");
+
+// ---- The variables, made or not.
+for (let k of ["Object", "Array", "Math", "Atomics", "Intl", "Iterator", "BigInt", "Int16Array", "Float32Array", "FinalizationRegistry", "WebAssembly", "console", "escape", "unescape", "eval", "parseInt", "globalThis"]) {
+    throwsTypeError(() => { "use strict"; global[k] = 1; }, "assigning to " + k); check(Reflect.deleteProperty(global, k), false, "deleting " + k);
+    let d = Object.getOwnPropertyDescriptor(global, k);
+    check(d.writable, false, k + " is not writable"); check(d.configurable, false, k + " is not configurable"); check(d.enumerable, false, k + " is not enumerable");
+}
+console.somethingNew = 1; check(delete console.somethingNew, true, "console itself is as any other object");
+
+// ---- An array can be given all an object can. It is no longer what the engine takes for a plain array then, and goes on working.
+{
+    const isPlain = typeof $vm !== "undefined" && $vm.indexingMode ? (a) => !$vm.indexingMode(a).includes("ArrayStorage") : () => undefined;
+    function sum(a) { let s = ""; for (let i = 0; i < a.length; ++i) s += a[i]; for (let v of a) s += v; return s + a.indexOf(3) + a.includes(1) + a.join("") + JSON.stringify(a) + [...a].length + a.concat(a).length + a.slice(1).length; }
+    noInline(sum);
+    const expected = "1undefined31undefined32true13[1,null,3]362";
+    for (let [what, change, afterwards] of [
+        ["its own push", (a) => { a.push = () => "own"; }, (a) => a.push(4) === "own" && a.length === 3],
+        ["its own toString, defined", (a) => { Object.defineProperty(a, "toString", { value: () => "own" }); }, (a) => String(a) === "own"],
+        ["its own constructor", (a) => { a.constructor = Object; }, (a) => a.constructor === Object && Array.isArray(a.map((v) => v))],
+        ["another prototype", (a) => { Object.setPrototypeOf(a, { __proto__: Array.prototype, push() { return "inherited"; } }); }, (a) => a.push(4) === "inherited" && a.length === 3],
+        ["another prototype by __proto__", (a) => { a.__proto__ = Object.create(Array.prototype); }, (a) => a.push(4) === 4 && a.pop() === 4],
+    ]) {
+        let a = [1, , 3];
+        for (let i = 0; i < 200; ++i) check(sum(a), expected, "before " + what);
+        check(isPlain(a) !== false, true, "plain before " + what); change(a); check(isPlain(a) !== true, true, "not after " + what);
+        check(Array.isArray(a), true, "an array after " + what); check(afterwards(a), true, what);
+        for (let i = 0; i < 200; ++i) check(sum(a), expected, "after " + what);
+        a[5] = 6; check(a.length, 6, "it grows after " + what); a.length = 3; check(sum(a), expected, "and shrinks");
+    }
+    let a = [1, , 3]; a.extra = 1; a[Symbol.isConcatSpreadable] = true; Object.defineProperty(a, 0, { value: 1, writable: false }); check(sum(a), expected, "under another name, or with an element that is not writable");
+    let got = 0; a = [1, , 3]; Object.defineProperty(a, 1, { get() { ++got; return 2; } }); check(a[1] + "" + a.indexOf(2) + a.join(""), "21123", "an accessor for an element"); check(got, 3, "is asked");
+    a = [1, , 3]; Object.setPrototypeOf(a, { __proto__: Array.prototype, 1: "behind" }); check(a[1] + a.join(""), "behind1behind3", "an element that is inherited"); check(a[7], undefined, "and none");
+    a = [1, , 3]; check(Object.setPrototypeOf(a, Array.prototype), a, "the prototype it has"); check(isPlain(a) !== false, true, "changes nothing");
+    a = [1, , 3]; Object.setPrototypeOf(a, null); check(a.push, undefined, "without a prototype it has no methods"); check(Array.isArray(a), true, "and is an array"); check(a[1], undefined, "with a hole");
+    // While it is being gone through.
+    a = [1, 2, 3]; let seen = ""; for (let v of a) { seen += v; if (v === 1) a.push = 1; if (v === 2) Object.setPrototypeOf(a, null); } check(seen, "123", "changed in the middle of for of");
+    a = [1, 2, 3]; seen = ""; for (let [i, v] of a.entries()) { seen += i + "" + v; if (!i) a.__proto__ = {}; } check(seen, "011223", "changed in the middle of entries()");
+    class Loud extends Array { push() { return "loud"; } }
+    let loud = new Loud(1, 2); check(loud.push(3), "loud", "a subclass's push"); check(loud.length, 2, "and nothing was"); check(Array.isArray(loud), true, "it is an array"); check(loud.map((v) => v) instanceof Loud, true, "of its species");
+    loud.pop = () => "own"; check(loud.pop(), "own", "with properties of its own"); Object.defineProperty(loud, 0, { get() { return "got"; } }); check(loud[0], "got", "and accessors"); check(JSON.stringify(loud), '["got",2]', "that are asked");
+    check(Object.setPrototypeOf(loud, Array.prototype), loud, "and any prototype"); check(loud.push(3), 3, "whose methods it then has");
+    check(Reflect.construct(Array, [], Object).push, undefined, "constructed for another"); check(Reflect.construct(Array, [1, 2], Array).push(3), 3, "or for Array");
+}
 check(Array.prototype.push, push, "and what was there is still there");
 check(Object.isExtensible(Object.prototype), false, "Object.prototype is not extensible");
 (function sloppy() { Object.prototype.extra = 1; Object.prototype[3] = 1; Object.prototype[Symbol.iterator] = 1; })();

@@ -7,6 +7,7 @@
 #include "AOTRuntime.h"
 #include "CompilerHooks.h"
 #include "HeapIterationScope.h"
+#include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
 
 #include "AOTBuiltins.h"
@@ -36,6 +37,7 @@
 #include "AOTOperations.h"
 #include "AOTProgram.h"
 #include "AOTThunks.h"
+#include "AOTTypedObject.h"
 #include "CCallHelpers.h"
 #include "CallLinkInfo.h"
 #include "CodeBlock.h"
@@ -56,6 +58,7 @@
 #include "StackFrame.h"
 #include "ThunkGenerators.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
+#include <mutex>
 #include <wtf/FileHandle.h>
 #include <wtf/FilePrintStream.h>
 #include <wtf/FileSystem.h>
@@ -282,7 +285,7 @@ void RuntimeTable::countOperationBySlotState(const char* name, const Slot* slot)
 
 void RuntimeTable::countOperationAtSite(const char* name, uint32_t function, unsigned bytecodeOffset, unsigned line, unsigned column)
 {
-    CString& detail = m_detailsOfSites.add((static_cast<uint64_t>(function) + 1) << 32 | bytecodeOffset, CString()).iterator->value;
+    UTF8CString& detail = m_detailsOfSites.add((static_cast<uint64_t>(function) + 1) << 32 | bytecodeOffset, UTF8CString()).iterator->value;
     if (detail.isNull())
         detail = toUTF8CString("at:", line, ":", column, ":bc", bytecodeOffset);
     countOperation(name, byteCast<char>(detail.data()));
@@ -291,7 +294,7 @@ void RuntimeTable::countOperationAtSite(const char* name, uint32_t function, uns
 void RuntimeTable::countForFamily(const char* name, const char* nameByFamily, uint16_t family, const char* detail)
 {
     countOperation(name, detail);
-    CString& detailByFamily = m_detailsByFamily.add(std::pair { detail, static_cast<unsigned>(family) }, CString()).iterator->value;
+    UTF8CString& detailByFamily = m_detailsByFamily.add(std::pair { detail, static_cast<unsigned>(family) }, UTF8CString()).iterator->value;
     if (detailByFamily.isNull())
         detailByFamily = toUTF8CString(static_cast<unsigned>(family), ":", detail);
     countOperation(nameByFamily, byteCast<char>(detailByFamily.data()));
@@ -301,7 +304,7 @@ void RuntimeTable::countAllocatedBytes(const char* kind, const Subspace* subspac
 {
     const char* name = "Heap::didAllocate";
     const void* source = subspace ? static_cast<const void*>(subspace) : static_cast<const void*>(classOfOwner);
-    CString& detail = m_detailsOfAllocatedBytes.add(std::tuple { kind, source, cellSize }, CString()).iterator->value;
+    UTF8CString& detail = m_detailsOfAllocatedBytes.add(std::tuple { kind, source, cellSize }, UTF8CString()).iterator->value;
     if (detail.isNull()) {
         if (subspace && cellSize)
             detail = toUTF8CString(kind, ":", subspace->name(), ":", cellSize);
@@ -337,7 +340,7 @@ void RuntimeTable::clearLiveBytes()
 
 void RuntimeTable::setLiveBytes(const Subspace& subspace, size_t cellSize, size_t bytes)
 {
-    CString& detail = m_detailsOfAllocatedBytes.add(std::tuple { "live", static_cast<const void*>(&subspace), cellSize }, CString()).iterator->value;
+    UTF8CString& detail = m_detailsOfAllocatedBytes.add(std::tuple { "live", static_cast<const void*>(&subspace), cellSize }, UTF8CString()).iterator->value;
     if (detail.isNull())
         detail = cellSize ? toUTF8CString("block:", subspace.name(), ":", cellSize) : toUTF8CString("precise:", subspace.name());
     countOperation("Heap::live", byteCast<char>(detail.data()), bytes);
@@ -393,16 +396,16 @@ void RuntimeTable::writeOperationCounts() const
     if (!Options::useAOTOperationCounters() || !path)
         return;
     String name = makeStringByReplacingAll(String::fromUTF8(path), "%p"_s, String::number(getCurrentProcessID()));
-    if (auto file = FilePrintStream::open(byteCast<char>(makeString(name, ".operations"_s).utf8().data()), "w"))
+    if (auto file = FilePrintStream::open(makeString(name, ".operations"_s).utf8(), "w"_s))
         dumpOperationCounts(*file);
-    if (auto file = FilePrintStream::open(byteCast<char>(makeString(name, ".allocations"_s).utf8().data()), "w")) {
+    if (auto file = FilePrintStream::open(makeString(name, ".allocations"_s).utf8(), "w"_s)) {
         file->println("ANCHOR\t", RawPointer(reinterpret_cast<void*>(&WTFGetBacktrace)));
         for (auto& [stack, entry] : m_allocatedBytesByStack)
             file->println(entry.first, "\t", entry.second, "\t", byteCast<char>(stack.data()));
     }
     if (m_guests.isEmpty())
         return;
-    if (auto file = FilePrintStream::open(byteCast<char>(makeString(name, ".guests"_s).utf8().data()), "w")) {
+    if (auto file = FilePrintStream::open(makeString(name, ".guests"_s).utf8(), "w"_s)) {
         for (auto& [guest, entry] : m_guests)
             file->println(entry.first, "\t", guest, "\t", entry.second);
     }
@@ -463,7 +466,7 @@ void writeOperationCounts(VM& vm)
     if (!Options::useAOTOperationCounters() || !path)
         return;
     String name = makeStringByReplacingAll(String::fromUTF8(path), "%p"_s, String::number(getCurrentProcessID()));
-    if (auto file = FilePrintStream::open(byteCast<char>(makeString(name, ".callees"_s).utf8().data()), "w")) {
+    if (auto file = FilePrintStream::open(makeString(name, ".callees"_s).utf8(), "w"_s)) {
         unsigned count = 0;
         for (Instance* instance : vm.m_aotInstances)
             count += instance->dumpCalleesSeen(*file);
@@ -771,7 +774,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
         instance->emptyString = vm.smallStrings.emptyString();
         instance->sentinelString = vm.smallStrings.sentinelString();
-        instance->arrayIterationSentinel = vm.fastArrayUnboxedSentinel();
+        instance->arrayIterationSentinel = vm.fastArraySentinel();
         instance->stringStructureID = idOf(vm.stringStructure.get());
         instance->smallIntStrings = vm.numericStrings.smallIntCache();
         instance->intStrings = vm.numericStrings.intCache();
@@ -808,6 +811,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->selectorsOnObjectPrototype = static_cast<uint8_t*>(fastZeroedMalloc(image->header().numberOfSelectors / 8 + 1));
     }
     instance->collections->token = Symbol::create(vm);
+    if (Image* image = Image::withCode(); image && image->header().typedDataSize)
+        instance->typed = new Typed::State(vm, *instance, *image->at<Typed::Data>(image->header().typedDataOffset));
     loader->setAOTInstance(instance);
     if (!vm.m_aotInstances.isEmpty())
         memcpySpan(std::span { instance->departedFamilies }, std::span { vm.m_aotInstances[0]->departedFamilies });
@@ -958,6 +963,8 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
     VM& vm = *this->vm;
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint32_t index = executable->programModule()->functionIndex;
+    if (typed && !typed->moduleRecord && scope->type() == ModuleEnvironmentType)
+        typed->moduleRecord = uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord();
     if (Data* data = dataIfExists(index); data && data->executable == executable)
         return data->code->entry();
     DeferGCForAWhile deferGC(vm);
@@ -995,6 +1002,11 @@ void Instance::didFinishModuleEvaluation(ModuleProgramExecutable* executable)
 CodePtr<JSEntryPtrTag> moduleCodeEntrypoint()
 {
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterModule)));
+}
+
+CodePtr<JSEntryPtrTag> closureEntrypoint()
+{
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterClosure)));
 }
 
 void Instance::setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable* executable)
@@ -1164,10 +1176,15 @@ SUPPRESS_ASAN FunctionRef callerFunction(const CallFrame* callFrame)
     }
 }
 
-CodeBlock* callerCodeBlock(const CallFrame* callFrame)
+JSCell* callerOwnerCell(const CallFrame* callFrame)
 {
     FunctionRef function = callerFunction(callFrame);
-    return function ? function.ensureCodeBlock() : nullptr;
+    if (!function)
+        return nullptr;
+    // What was compiled from types has no bytecode to make a code block of.
+    if (!function.unlinkedCodeBlockIfExists() && !(function.metadata() && function.metadata()->find(FunctionMetadata::Scalars)))
+        return function.instance->globalObject;
+    return function.ensureCodeBlock();
 }
 
 bool hasCompiledCode(VM& vm, JSFunction* function)
@@ -1272,10 +1289,11 @@ Data* Instance::ensureData(uint32_t index)
     if (data)
         return data;
     const FunctionInfo& info = infos[index];
-    RELEASE_ASSERT(info.hasExecutable());
-    FunctionExecutable* executable = program->executable(info.indexPlusOne() - 1);
+    // What was compiled from types has no executable: only its caches live here.
+    FunctionExecutable* executable = info.hasExecutable() ? program->executable(info.indexPlusOne() - 1) : nullptr;
+    RELEASE_ASSERT(executable || !info.isTopLevelCode());
     UnlinkedFunctionCodeBlock* unlinkedCodeBlock = nullptr;
-    Ref<JITCode> code = executable->aotIndexFor(info.kind()) == index && executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : jitCodeForImageFunction({ &Image::of(*info.function()), info.function() }, info.kind());
+    Ref<JITCode> code = executable && executable->aotIndexFor(info.kind()) == index && executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : jitCodeForImageFunction({ &Image::of(*info.function()), info.function() }, info.kind());
     RELEASE_ASSERT(code->index() == index);
     code->setInstance(*this);
     data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
@@ -1883,7 +1901,8 @@ void Data::noteFilled()
 template<typename Visitor>
 void Data::visit(Visitor& visitor)
 {
-    visitor.appendUnbarriered(executable);
+    if (executable)
+        visitor.appendUnbarriered(executable);
     if (unlinkedCodeBlock)
         visitor.appendUnbarriered(unlinkedCodeBlock);
     if (codeBlock)

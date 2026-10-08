@@ -205,6 +205,7 @@ public:
             });
         }
         findVariablesThatAreNotEmptyWhenRead();
+        forgetTypes();
         iterateToFixpoint();
         for (size_t rounds = 0, maxRounds = 2 * m_graph.blocks.size() + m_graph.numberOfNodes(); narrowTestedValues(); ++rounds) {
             RELEASE_ASSERT(rounds < maxRounds);
@@ -339,6 +340,7 @@ public:
                     break;
                 default:
                     node->type = TNone;
+                    node->wasInferredUnreachable = false;
                     break;
                 }
             }
@@ -570,7 +572,7 @@ public:
         }
     }
 
-    bool narrowAfterCheck(BasicBlock* block, unsigned index, Node* value)
+    bool narrowAfterCheck(BasicBlock* block, unsigned index, Node* value, Type excluded = TEmpty)
     {
         Node* check = block->nodes[index];
         Node* narrow = nullptr;
@@ -578,15 +580,15 @@ public:
             if (!narrow) {
                 narrow = m_graph.addNode(NodeKind::Narrow);
                 narrow->graph = check->graph;
-                narrow->narrowedTo = TAll & ~TEmpty;
-                narrow->type = value->type & ~TEmpty;
+                narrow->narrowedTo = TAll & ~excluded;
+                narrow->type = value->type & ~excluded;
                 narrow->bytecodeIndex = check->bytecodeIndex;
                 narrow->uses.append({ VirtualRegister(), value });
             }
             return narrow;
         };
         auto narrowUsesOf = [&](Node* user) {
-            if (user->kind == NodeKind::Narrow && user->narrowedTo && !mayBe(user->narrowedTo, TEmpty))
+            if (user->kind == NodeKind::Narrow && user->narrowedTo && !mayBe(user->narrowedTo, excluded))
                 return;
             for (auto& use : user->uses) {
                 if (use.node == value && !isCalleeOf(user, use.reg))
@@ -614,6 +616,26 @@ public:
         return true;
     }
 
+    static Node* baseThatMustBeObjectFor(Node* access)
+    {
+        if (access->kind != NodeKind::Bytecode || access->guard || access->guarded || access->isElided)
+            return nullptr;
+        switch (access->opcode) {
+        case op_get_by_id:
+            return access->use(access->as<OpGetById>().m_base);
+        case op_put_by_id:
+            return access->use(access->as<OpPutById>().m_base);
+        case op_get_by_val:
+            return access->use(access->as<OpGetByVal>().m_base);
+        case op_put_by_val:
+            return access->use(access->as<OpPutByVal>().m_base);
+        case op_get_length:
+            return access->use(access->as<OpGetLength>().m_base);
+        default:
+            return nullptr;
+        }
+    }
+
     bool narrowTestedValues()
     {
         bool hasDominators = false;
@@ -625,6 +647,15 @@ public:
                 continue;
             for (unsigned index = 0; index < block->nodes.size(); ++index) {
                 Node* check = block->nodes[index];
+                if (Node* base = Facts::shared() ? baseThatMustBeObjectFor(check) : nullptr; base && !base->isElided && mayBe(base->type, TOther) && (base->type & ~(TOther | TEmpty)) && m_checksTried.add(check->index)) {
+                    if (!std::exchange(hasDominators, true))
+                        m_graph.computeDominators();
+                    if (narrowAfterCheck(block, index, base, TOther)) {
+                        m_graph.remark("narrowed-after-access"_s);
+                        changed = true;
+                    }
+                    continue;
+                }
                 if (!check->isBytecode(op_check_tdz) || check->guard || check->guarded || check->isElided)
                     continue;
                 Node* value = check->uses[0].node;
@@ -1835,6 +1866,8 @@ private:
     bool update(Node* node)
     {
         Type computed = compute(node);
+        if (Facts::shared())
+            computed = m_graph.refinedByFacts(node, computed);
         if (Options::validateAOTInferredTypes() && calleesWithWidenedInputs && (node->type & ~computed)) [[unlikely]] {
             StringPrintStream operands;
             for (auto& use : node->uses)
@@ -2294,7 +2327,7 @@ private:
                     return TNone;
                 if (auto type = Graph::typedArrayAccessed(node)) {
                     Type element = *type == Float32ArrayType || *type == Float64ArrayType || *type == Uint32ArrayType ? TNumber : TInt32;
-                    if (node->guard)
+                    if (node->guard || node->indexIsInBounds)
                         return element;
                     if (isSubtype(typeOf(bytecode.m_property), TNumber))
                         return element | TUndefined;
@@ -2339,7 +2372,7 @@ private:
                 return TNone;
             if (isSubtype(base, TString) || node->guard)
                 return TInt32;
-            if (isSubtype(base, TString | TArray))
+            if (isSubtype(base, TString | TArray) || (isSubtype(base, TTypedArray) && Graph::hasFixedLength(node->use(node->as<OpGetLength>().m_base))))
                 return TNumber;
             return TTop;
         }

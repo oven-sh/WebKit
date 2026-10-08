@@ -415,7 +415,7 @@ private:
                     return false;
                 known = numbered;
                 likelyFunction = number;
-            } else if (!known->isDeclaration && !Graph::closedMethodReadBy(calleeNode)) {
+            } else if (!known->isDeclaration && !Graph::closedMethodReadBy(calleeNode) && !caller.calleeProvenByFacts(call)) {
                 if (!calleeNode->isBytecode(op_get_from_scope) || call->opcode == op_tail_call)
                     return false;
                 checksCalleeIsInitialized = true;

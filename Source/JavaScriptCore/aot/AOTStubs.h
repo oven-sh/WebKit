@@ -137,6 +137,8 @@ static constexpr unsigned codeGranuleShift = 10;
     v(CallIntrinsic) \
     v(Enter) \
     v(EnterModule) \
+    v(EnterClosure) \
+    v(CallClosure) \
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
     v(EnterStaticFunctionForCall) \
@@ -374,6 +376,7 @@ struct ImageKey {
     uint32_t record { 0 };
 
     static constexpr uint32_t typedBody = 1u << 16;
+    static constexpr uint32_t typedFunction = 1u << 17;
     ImageKey ofPublicBody() const
     {
         ImageKey result = *this;

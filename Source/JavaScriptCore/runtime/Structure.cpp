@@ -381,6 +381,8 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 
     ASSERT(!previous->typeInfo().structureIsImmortal());
 #if USE(BUN_JSC_ADDITIONS)
+    // An object of a compiled layout has no butterfly and no property table: its Structure has no transitions.
+    RELEASE_ASSERT(!previous->compiledLayout());
     RELEASE_ASSERT(!previous->hasImmutableShape());
 #endif
     setPreviousID(vm, previous);
@@ -1108,6 +1110,11 @@ Structure* Structure::makePropertiesImmutableTransition(VM& vm, Structure* struc
     return nonPropertyTransition(vm, structure, TransitionKind::MakePropertiesImmutable, deferred);
 }
 
+Structure* Structure::fixPropertiesTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
+{
+    return nonPropertyTransition(vm, structure, TransitionKind::FixProperties, deferred);
+}
+
 Structure* Structure::preventExtensionsTransition(VM& vm, Structure* structure, DeferredStructureTransitionWatchpointFire* deferred)
 {
     // (JSObject refuses before it asks for this.)
@@ -1156,6 +1163,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         case TransitionKind::MakePropertiesImmutable:
             road = "immutable-properties";
             break;
+        case TransitionKind::FixProperties:
+            road = "fixed-properties";
+            break;
         default:
             break;
         }
@@ -1163,8 +1173,9 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     }
 #endif
 #if USE(BUN_JSC_ADDITIONS)
-    RELEASE_ASSERT(!structure->hasStableFields() || (transitionKind != TransitionKind::Freeze && transitionKind != TransitionKind::MakePropertiesImmutable));
+    RELEASE_ASSERT(!structure->hasStableFields() || !setsReadOnlyOnNonAccessorProperties(transitionKind));
 #endif
+    bool fixesProperties = transitionKind == TransitionKind::MakePropertiesImmutable || transitionKind == TransitionKind::FixProperties;
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
     if (!structure->isDictionary()) {
@@ -1180,6 +1191,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     Structure* transition = Structure::create(vm, structure, deferred);
     transition->setTransitionKind(transitionKind);
     transition->m_blob.setIndexingModeIncludingHistory(indexingModeIncludingHistory);
+    if (transitionKind == TransitionKind::BecomeDerivedArray) {
+        TypeInfo typeInfo = structure->typeInfo();
+        RELEASE_ASSERT(typeInfo.type() == ArrayType);
+        transition->m_blob = TypeInfoBlob(indexingModeIncludingHistory, TypeInfo(DerivedArrayType, typeInfo.inlineTypeFlags(), typeInfo.outOfLineTypeFlags()));
+    }
 
     if (changesIndexingType(transitionKind) && hasAnyArrayStorage(indexingModeIncludingHistory)) {
         transition->setHasNonEnumerableProperties(true);
@@ -1193,10 +1209,13 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (transitionKind == TransitionKind::BecomePrototype)
         transition->setMayBePrototype(true);
 
-    if (transitionKind == TransitionKind::MakePropertiesImmutable) {
+    if (transitionKind == TransitionKind::MakePropertiesImmutable)
         transition->setHasImmutableProperties(true);
+
+    if (fixesProperties) {
         // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
-        // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once.
+        // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once, and for one
+        // that stays extensible the rare addition.
         transition->setTransitionWatchpointIsLikelyToBeFired(false);
         // didTransition() is how built-ins ask whether an object still has only the properties its class gave it (JSObject::
         // hasCustomProperties()). This transition adds and changes none, so the answer is the one the object had.
@@ -1208,7 +1227,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         // table, since our logic for walking the property transition chain to rematerialize the
         // table doesn't know how to take into account such wholesale edits.
 
-        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || transitionKind == TransitionKind::MakePropertiesImmutable);
+        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || fixesProperties);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
@@ -1218,11 +1237,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
-        else if (transitionKind == TransitionKind::MakePropertiesImmutable) {
+        else if (fixesProperties) {
             RELEASE_ASSERT(!table->hasDeletedOffset());
             table->fix();
-        }
-        else
+        } else
             table->freeze();
 
         transition->setHasNonEnumerableProperties(true);
@@ -1238,9 +1256,10 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
 #endif
     }
     
-    if (transitionKind == TransitionKind::MakePropertiesImmutable)
+    // (An object with immutable properties refuses as the receiver whatever this says, and does not slow down its inheritors.)
+    if (fixesProperties)
         transition->setInheritorsMayOverrideReadOnlyProperties(true);
-    else if (setsReadOnlyOnNonAccessorProperties(transitionKind)
+    if (setsReadOnlyOnNonAccessorProperties(transitionKind) && transitionKind != TransitionKind::MakePropertiesImmutable
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
     
@@ -2465,6 +2484,12 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::MakePropertiesImmutable:
         kindName = "MakePropertiesImmutable";
+        break;
+    case TransitionKind::FixProperties:
+        kindName = "FixProperties";
+        break;
+    case TransitionKind::BecomeDerivedArray:
+        kindName = "BecomeDerivedArray";
         break;
     case TransitionKind::BecomePrototype:
         kindName = "BecomePrototype";

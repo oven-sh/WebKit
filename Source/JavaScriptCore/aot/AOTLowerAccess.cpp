@@ -598,6 +598,31 @@ void Lowering::lowerGetById(Node* node)
 {
     auto bytecode = node->as<OpGetById>();
     Node* baseNode = node->use(bytecode.m_base);
+    if (auto slot = m_graph.slotOfPlacedField(baseNode->type, node->graph->codeBlock()->identifier(bytecode.m_property).impl()); slot && !node->guard && !node->guarded) {
+        m_graph.remark("reads-placed-field"_s, node->graph->codeBlock()->identifier(bytecode.m_property).string());
+        LValue base = lowJSValue(baseNode);
+        TypedPointer field = m_out.address(m_heaps.properties[numberOf(bytecode.m_property)], base, JSObject::offsetOfInlineStorage() + *slot * sizeof(EncodedJSValue));
+        if (isSubtype(baseNode->type, TCell)) {
+            LValue value = m_out.load64(field);
+            if (Options::validateAOTInferredTypes()) [[unlikely]]
+                vmCall(node, Void, Entry::operationAOTVerifyPlacedField, m_instance, base, m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(*slot));
+            setJSValue(node, value);
+            return;
+        }
+        LBasicBlock isObject = m_out.newBlock();
+        LBasicBlock otherwise = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isCell(base), usually(isObject), rarely(otherwise));
+        m_out.appendTo(isObject);
+        ValueFromBlock loaded = m_out.anchor(m_out.load64(field));
+        m_out.jump(continuation);
+        m_out.appendTo(otherwise);
+        ValueFromBlock found = m_out.anchor(getByIdCached(node, base, baseNode->type, Entry::operationAOTGetById, bytecode.m_property));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        setJSValue(node, m_out.phi(Int64, loaded, found));
+        return;
+    }
     if (ImmutableIntrinsics::shared() && baseNode->type && !node->guard && !node->guarded && !node->builtinCalled && !node->isElided && !node->isReadOnlyForCall) {
         UniquedStringImpl* name = node->graph->codeBlock()->identifier(bytecode.m_property).impl();
         unsigned method = mayBe(baseNode->type, TEmpty) ? 0 : intrinsicFoundOnPrimitive(baseNode->type & ~TOther, *name);
@@ -693,7 +718,7 @@ void Lowering::lowerGetById(Node* node)
     }
     if (lowerSizeOfMapOrSet(node, baseNode))
         return;
-    if (const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared(); intrinsics && !node->isElided && Options::useUnboxedFastArrayIteration() && mayBe(baseNode->type, TArray)
+    if (const ImmutableIntrinsics* intrinsics = ImmutableIntrinsics::shared(); intrinsics && !node->isElided && mayBe(baseNode->type, TArray)
         && code().codeBlock()->identifier(bytecode.m_property) == m_graph.vm().propertyNames->iteratorSymbol) {
         unsigned array = intrinsics->find(ImmutableIntrinsics::globalObject, *String("Array"_s).impl());
         unsigned prototype = array ? intrinsics->find(intrinsics->at(array).canonical, *String("prototype"_s).impl()) : 0;
@@ -1013,7 +1038,7 @@ void Lowering::findPropertyRuns(BasicBlock* block)
 {
     constexpr unsigned minimumLength = 4;
     constexpr unsigned maximumLength = 64;
-    if (block->isInLoop || block->isGeneric)
+    if (block->isInLoop || block->isGeneric || Facts::shared())
         return;
     struct Base {
         bool operator==(const Base&) const = default;
@@ -1208,6 +1233,24 @@ void Lowering::lowerPutById(Node* node)
     m_effectEpochBeforeStore = loadEffectEpoch();
     uint32_t flags = (bytecode.m_flags.isDirect() ? 1 : 0) | (bytecode.m_flags.ecmaMode().isStrict() ? 2 : 0);
     LBasicBlock afterTypedStore = nullptr;
+    if (auto slot = m_graph.slotOfPlacedField(baseNode->type, node->graph->codeBlock()->identifier(bytecode.m_property).impl()); slot && !node->guard && !node->guarded) {
+        m_graph.remark("writes-placed-field"_s, node->graph->codeBlock()->identifier(bytecode.m_property).string());
+        if (!isSubtype(baseNode->type, TCell)) {
+            LBasicBlock isObject = m_out.newBlock();
+            LBasicBlock otherwise = newColdBlock();
+            m_out.branch(isCell(base), usually(isObject), rarely(otherwise));
+            m_out.appendTo(otherwise);
+            vmCall(node, Void, Entry::operationAOTPutById, m_instance, base, value, m_out.constInt32(numberOf(bytecode.m_property)), slotAddress(allocateSlot()), m_out.constInt32(flags));
+            m_out.unreachable();
+            m_out.appendTo(isObject);
+        }
+        if (Options::validateAOTInferredTypes()) [[unlikely]]
+            vmCall(node, Void, Entry::operationAOTVerifyPlacedField, m_instance, base, m_out.constInt32(numberOf(bytecode.m_property)), m_out.constInt32(*slot));
+        m_out.store64(value, m_out.address(m_heaps.properties[numberOf(bytecode.m_property)], base, JSObject::offsetOfInlineStorage() + *slot * sizeof(EncodedJSValue)));
+        if (mayBe(valueNode->type, TCell))
+            storeBarrier(base);
+        return;
+    }
     if (auto field = !Options::auditAOTTypedFields() ? fieldAccessedBy(node, bytecode.m_property) : std::nullopt; field && !field->id) {
         m_graph.remark("typed-field-write"_s, code().codeBlock()->identifier(bytecode.m_property).string());
         LBasicBlock cellCase = m_out.newBlock();
@@ -1427,9 +1470,57 @@ static std::optional<JSType> typedArrayToAccessInline(const BasicBlock* block, N
     return type;
 }
 
+void Lowering::findIndexedTypedArrays()
+{
+    if (!Facts::shared() || !Facts::shared()->buffersAreFixed())
+        return;
+    for (BasicBlock* block : m_graph.m_rpo) {
+        for (Node* node : block->nodes) {
+            if (node->kind != NodeKind::Bytecode)
+                continue;
+            Node* base;
+            if (node->opcode == op_get_by_val)
+                base = node->use(node->as<OpGetByVal>().m_base);
+            else if (node->opcode == op_put_by_val)
+                base = node->use(node->as<OpPutByVal>().m_base);
+            else if (node->opcode == op_get_length)
+                base = node->use(node->as<OpGetLength>().m_base);
+            else
+                continue;
+            while (base->kind == NodeKind::Narrow && Graph::hasFixedLength(base->uses[0].node))
+                base = base->uses[0].node;
+            if (Graph::hasFixedLength(base) && base->kind != NodeKind::Phi)
+                base->isIndexedTypedArray = true;
+        }
+    }
+}
+
+auto Lowering::typedArrayViewOf(Node* base, LValue cell) -> TypedArrayView
+{
+    for (Node* node = base;; node = node->uses[0].node) {
+        if (auto it = m_typedArrayViews.find(node); it != m_typedArrayViews.end())
+            return it->value;
+        if (node->kind != NodeKind::Narrow)
+            break;
+    }
+    return { m_out.loadPtr(cell, m_heaps.JSArrayBufferView_vector), m_out.loadPtr(cell, m_heaps.JSArrayBufferView_length) };
+}
+
 TypedPointer Lowering::typedArrayElement(Node* baseNode, Node* propertyNode, JSType type, LBasicBlock outOfBounds, LBasicBlock slowCase)
 {
     LValue base = lowJSValue(baseNode);
+    if (Graph::hasFixedLength(baseNode) && propertyNode->isInteger() && !Options::validateAOTInferredTypes()) {
+        TypedArrayView view = typedArrayViewOf(baseNode, base);
+        LValue index = lowInt64(propertyNode);
+        if (outOfBounds) {
+            LBasicBlock inBounds = m_out.newBlock();
+            m_out.branch(m_out.below(index, view.length), usually(inBounds), rarely(outOfBounds));
+            m_out.appendTo(inBounds);
+        }
+        return TypedPointer(m_heaps.TypedArrayProperties, m_out.add(view.vector, m_out.shl(index, m_out.constInt32(logElementSize(type)))));
+    }
+    if (!outOfBounds)
+        outOfBounds = slowCase;
     bool isKnownToBeCell = isSubtype(baseNode->type, TCell);
     LBasicBlock isNotOfType = Options::validateAOTInferredTypes() ? newColdBlock() : nullptr;
     if (!isKnownToBeCell || isNotOfType) {
@@ -1475,6 +1566,13 @@ void Lowering::lowerGetByVal(Node* node)
         unsigned slot = sharedSite(node, key->identifier);
         m_graph.noteSiteSelector(slot, key->name);
         setJSValue(node, callStub(Stub::GetById, Int64, { { base, firstStubOperandGPR }, { slotAddress(slot), GPRInfo::argumentGPR1 } }, { }));
+        return;
+    }
+
+    if (auto type = typedArrayToAccessInline(m_block, baseNode); type && node->indexIsInBounds && !allowsEmpty && Graph::hasFixedLength(baseNode) && propertyNode->isInteger() && !Options::validateAOTInferredTypes()) {
+        m_graph.remark("reads-element-of-typed-array"_s);
+        LValue element = loadTypedArrayElement(*type, typedArrayElement(baseNode, propertyNode, *type, nullptr, nullptr));
+        setResult(node, element, element->type() == Double ? Rep::Double : element->type() == Int64 ? Rep::Int64 : Rep::Int32);
         return;
     }
 
@@ -1638,7 +1736,7 @@ void Lowering::lowerPutByVal(Node* node)
                 number = m_out.phi(Int32, fromInt32, fromDouble);
             }
         }
-        storeTypedArrayElement(*type, number, typedArrayElement(baseNode, propertyNode, *type, continuation, slowCase));
+        storeTypedArrayElement(*type, number, typedArrayElement(baseNode, propertyNode, *type, node->indexIsInBounds ? nullptr : continuation, slowCase));
         m_out.jump(continuation);
         m_out.appendTo(slowCase);
         vmCall(node, Void, Entry::operationAOTPutByVal, m_instance, lowJSValue(baseNode), lowJSValue(propertyNode), lowJSValue(valueNode), m_out.constInt32(bytecode.m_ecmaMode.isStrict()));

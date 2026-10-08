@@ -1055,7 +1055,6 @@ ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObj
     JSObject* iterator = uncheckedDowncast<JSObject>(GET(bytecode.m_iterator).jsValue());;
     if (auto arrayIterator = dynamicDowncast<JSArrayIterator>(iterator)) {
         auto* array = downcast<JSArray>(arrayIterator->iteratedObject());
-        ASSERT(isJSArray(array));
         metadata.m_iterableProfile.observeStructureID(array->structureID());
 
         IterationKind kind = arrayIterator->kind();
@@ -1188,7 +1187,7 @@ ALWAYS_INLINE UGPRPair iteratorNextFastArrayImpl(VM& vm, JSGlobalObject* globalO
     ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
 
     JSValue iterable = GET(bytecode.m_iterable).jsValue();
-    RELEASE_ASSERT(isJSArray(iterable));
+    RELEASE_ASSERT(is<JSArray>(iterable));
     auto* array = asArray(iterable);
     metadata.m_iterableProfile.observeStructureID(array->structureID());
     metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
@@ -1274,7 +1273,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_iterator_close_check)
     }
 
     ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
-    RELEASE_ASSERT(isJSArray(iterable));
+    RELEASE_ASSERT(is<JSArray>(iterable));
     auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asArray(iterable), IterationKind::Values);
     iterator->setIndex(GET(bytecode.m_next).jsValue().asAnyInt());
     GET(bytecode.m_iterator) = iterator;

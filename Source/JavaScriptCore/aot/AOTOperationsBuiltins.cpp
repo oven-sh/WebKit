@@ -101,35 +101,85 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTWeakSetHas, size_t, (JSCell* set, 
     return key.isCell() && uncheckedDowncast<JSWeakSet>(set)->has(key.asCell());
 }
 
+// A key that is a part of another string, as `slice` yields it, and has not been made a string of its own, which takes an allocation and a
+// copy. It is looked for by its characters where they are. If the table has the key, this one comes to share the characters of that one, and
+// is found by comparing pointers from then on. Nothing: it is no such key. InvalidTableIndex: the table does not have it.
+template<typename Table>
+static std::optional<typename Table::TableIndex> findSubstring(JSGlobalObject* globalObject, Table* table, JSValue key)
+{
+    using Helper = typename Table::Helper;
+    if (!key.isString() || !asString(key)->isSubstring())
+        return std::nullopt;
+    if (!table->storage())
+        return Helper::InvalidTableIndex;
+    JSString* string = asString(key);
+    auto& storage = table->storageRef();
+    auto characters = string->view(globalObject);
+    unsigned hash = characters->hash();
+    for (JSValue next = Helper::get(storage, Helper::bucketIndex(Helper::capacity(storage), hash)); !next.isEmpty();) {
+        typename Table::TableIndex index = Helper::toNumber(next);
+        next = Helper::get(storage, index + Helper::ChainOffset);
+        JSValue entryKey = Helper::get(storage, index);
+        if (!entryKey.isString())
+            continue;
+        StringImpl* impl = asString(entryKey)->tryGetValueImpl();
+        if (!impl)
+            return std::nullopt;
+        if (impl->hash() != hash || StringView { *impl } != characters.data)
+            continue;
+        if (impl->is8Bit() || !string->is8Bit())
+            uncheckedDowncast<JSRopeString>(string)->resolveSubstringBySharing(*impl);
+        return index;
+    }
+    return Helper::InvalidTableIndex;
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<JSMap>(map)->get(globalObject, JSValue::decode(key))));
+    JSMap* table = uncheckedDowncast<JSMap>(map);
+    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)))
+        OPERATION_RETURN(scope, JSValue::encode(JSMap::Helper::isValidTableIndex(*found) ? table->get(*found) : jsUndefined()));
+    OPERATION_RETURN(scope, JSValue::encode(table->get(globalObject, JSValue::decode(key))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(uncheckedDowncast<JSMap>(map)->has(globalObject, JSValue::decode(key)))));
+    JSMap* table = uncheckedDowncast<JSMap>(map);
+    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)))
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(JSMap::Helper::isValidTableIndex(*found))));
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(table->has(globalObject, JSValue::decode(key)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetHas, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(uncheckedDowncast<JSSet>(set)->has(globalObject, JSValue::decode(key)))));
+    JSSet* table = uncheckedDowncast<JSSet>(set);
+    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)))
+        OPERATION_RETURN(scope, JSValue::encode(jsBoolean(JSSet::Helper::isValidTableIndex(*found))));
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(table->has(globalObject, JSValue::decode(key)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMapSetGeneric, EncodedJSValue, (Instance* instance, JSCell* map, EncodedJSValue key, EncodedJSValue value))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    uncheckedDowncast<JSMap>(map)->set(globalObject, JSValue::decode(key), JSValue::decode(value));
+    JSMap* table = uncheckedDowncast<JSMap>(map);
+    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)); found && JSMap::Helper::isValidTableIndex(*found)) {
+        JSMap::Helper::setKeyOrValueData(vm, table->storageRef(), *found + 1, JSValue::decode(value));
+        OPERATION_RETURN(scope, JSValue::encode(map));
+    }
+    table->set(globalObject, JSValue::decode(key), JSValue::decode(value));
     OPERATION_RETURN(scope, JSValue::encode(map));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTSetAddGeneric, EncodedJSValue, (Instance* instance, JSCell* set, EncodedJSValue key))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    uncheckedDowncast<JSSet>(set)->add(globalObject, JSValue::decode(key));
+    JSSet* table = uncheckedDowncast<JSSet>(set);
+    if (auto found = findSubstring(globalObject, table, JSValue::decode(key)); found && JSSet::Helper::isValidTableIndex(*found))
+        OPERATION_RETURN(scope, JSValue::encode(set));
+    table->add(globalObject, JSValue::decode(key));
     OPERATION_RETURN(scope, JSValue::encode(set));
 }
 

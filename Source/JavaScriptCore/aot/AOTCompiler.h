@@ -33,6 +33,8 @@ void recordAllSitesOf(Graph&);
 void emitEpilogueBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 void emitRestoreBeforeLeaving(CCallHelpers&, const Graph&, B3::Air::Code&);
 bool hasNoFrame(const Graph&, B3::Air::Code&);
+void estimateFrequencies(B3::Procedure&);
+void usePinnedRegistersDirectly(B3::Air::Code&);
 
 struct Node;
 

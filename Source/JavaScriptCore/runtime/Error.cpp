@@ -147,6 +147,9 @@ public:
             return IterationStatus::Continue;
 
 #if ENABLE(AOT)
+        // What was compiled from types has no executable, and nothing to quote.
+        if (AOT::FunctionRef function = visitor->aotFunction(); function && !function.executable())
+            return IterationStatus::Done;
         if (AOT::FunctionRef function = visitor->aotFunction(); function && function.executable()->source().provider()->hasNoSourceText()) {
             m_aotFunction = function;
             m_bytecodeIndex = visitor->bytecodeIndex();

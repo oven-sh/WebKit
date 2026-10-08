@@ -353,6 +353,24 @@ void Lowering::lowerCall(Node* node, VirtualRegister calleeRegister, unsigned ar
 
     Node* calleeNode = node->use(calleeRegister);
     LValue callee = lowJSValue(calleeNode);
+    if (Facts::shared() && Graph::linkTimeConstantOf(calleeNode) == LinkTimeConstant::noteClass) {
+        if (auto site = Graph::factsAbout(node); site.kind == Facts::SiteKind::Class) {
+            if (uint32_t instances = Facts::shared()->shapeOfInstancesOf(site.number)) {
+                if (auto names = Graph::namesPlacedIn(instances); !names.isEmpty()) {
+                    RELEASE_ASSERT(programIdentifierIndices());
+                    unsigned slot = allocateSlots(2);
+                    Vector<uint32_t, 16> words { AllocationPlan::encode(0, names.size()) };
+                    for (UniquedStringImpl* name : names)
+                        words.append(AllocationPlan::encode(programIdentifierIndices()->get(name), true, true, true));
+                    words.append(0);
+                    m_graph.noteSitePlan(slot, WTF::move(words));
+                    m_graph.remark("defines-shape-of-instances"_s, String::number(names.size()));
+                    vmCall(node, Void, Entry::operationAOTDefineShapeOfInstances, m_instance, arguments[0], slotAddress(slot));
+                }
+            }
+        }
+        return;
+    }
     if (uint32_t classType = Graph::classRecordedBy(node)) {
         if (uint16_t layoutID = TypeTable::shared()->instanceLayoutIDFor(classType))
             vmCall(node, Void, Entry::operationAOTNoteClass, m_instance, arguments[0], arguments[1], m_out.constInt32(layoutID));

@@ -31,6 +31,7 @@
 #include "Debugger.h"
 #include "Error.h"
 #include "FunctionExecutable.h"
+#include "JSModuleLoader.h"
 #include "JSModuleRecord.h"
 #include "ModuleProgramCodeBlock.h"
 #include "AOTProgramData.h"

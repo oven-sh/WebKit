@@ -3379,7 +3379,6 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextTryFast, UGPRPair, (JSGlobalObject
 
     if (auto* arrayIterator = dynamicDowncast<JSArrayIterator>(iterator)) {
         auto* array = downcast<JSArray>(arrayIterator->iteratedObject());
-        ASSERT(isJSArray(array));
         IterationKind kind = arrayIterator->kind();
         IterationMode mode = IterationMode::FastArrayValues;
         switch (kind) {
@@ -3485,7 +3484,7 @@ JSC_DEFINE_JIT_OPERATION(operationIteratorNextFastArray, UGPRPair, (JSGlobalObje
 
     auto& metadata = *std::bit_cast<OpIteratorNext::Metadata*>(metadataPointer);
     JSValue iterable = JSValue::decode(encodedIterable);
-    RELEASE_ASSERT(isJSArray(iterable));
+    RELEASE_ASSERT(is<JSArray>(iterable));
     auto* array = asArray(iterable);
     metadata.m_iterableProfile.observeStructureID(array->structureID());
     metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;

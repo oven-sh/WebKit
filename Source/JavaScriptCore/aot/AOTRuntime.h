@@ -14,6 +14,7 @@
 #include "AOTProgramData.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTStubs.h"
+#include "AOTTypedOperations.h"
 #include "BytecodeIndex.h"
 #include "CallLinkInfo.h"
 #include "ExecutableAllocator.h"
@@ -40,6 +41,10 @@ class UnlinkedCodeBlock;
 class VM;
 
 namespace AOT {
+
+namespace Typed {
+struct State;
+}
 
 #define FOR_EACH_AOT_OPERATION(v) \
     v(operationAOTValueAdd) \
@@ -110,6 +115,7 @@ namespace AOT {
     v(operationAOTDoubleToInt32) \
     FOR_EACH_AOT_OBJECT_OPERATION(v) \
     FOR_EACH_AOT_BUILTIN_OPERATION(v) \
+    FOR_EACH_AOT_TYPED_OPERATION(v) \
     FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
 
 #define FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
@@ -345,11 +351,11 @@ private:
     void* m_entries[numberOfEntries];
     Vector<std::unique_ptr<VirtualCallInfo>> m_callLinkInfos;
     UncheckedKeyHashMap<std::pair<const char*, const char*>, uint64_t> m_operationCounts;
-    UncheckedKeyHashMap<std::tuple<const char*, const void*, size_t>, CString> m_detailsOfAllocatedBytes;
-    UncheckedKeyHashMap<CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
+    UncheckedKeyHashMap<std::tuple<const char*, const void*, size_t>, UTF8CString> m_detailsOfAllocatedBytes;
+    UncheckedKeyHashMap<UTF8CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
     size_t m_bytesAllocatedSinceLastWrite { 0 };
-    UncheckedKeyHashMap<uint64_t, CString> m_detailsOfSites;
-    UncheckedKeyHashMap<std::pair<const char*, unsigned>, CString> m_detailsByFamily;
+    UncheckedKeyHashMap<uint64_t, UTF8CString> m_detailsOfSites;
+    UncheckedKeyHashMap<std::pair<const char*, unsigned>, UTF8CString> m_detailsByFamily;
     uint16_t m_lastMegamorphicCacheEpoch { 0 };
     uint16_t m_epochOfFilledPairs { 0 };
     UncheckedKeyHashSet<std::tuple<const char*, const void*, size_t>> m_filledPairs;
@@ -840,6 +846,36 @@ struct Instance {
     CachedAddressInfo& cachedAddressInfo(const void* address) { return cachedAddressInfos[(std::bit_cast<uintptr_t>(address) >> 2) % numberOfCachedAddressInfos]; }
     uint32_t operationSamplingState { 0 };
     const CallSiteOverride* callSiteOverrides { nullptr };
+    // What an allocation stores into the object. All clear until the first one, which takes the slow path.
+    struct TypedAllocation {
+        uint64_t header;
+        void* allocator;
+        // The order word and, in the upper half, the shape word: what is at offset 8. Only of Record and Instance layouts.
+        uint64_t words;
+    };
+    Typed::State* typed { nullptr };
+    uint8_t* typedStatics { nullptr };
+    // By the number of the Typed::AllocationData.
+    TypedAllocation* typedAllocations { nullptr };
+    // Typed::Data::shapeSetsOffset, as an address.
+    const uint32_t* typedShapeSets { nullptr };
+    // Of a closure as it is allocated: of a plain function, an async function, a generator function, an async generator function. They
+    // differ in the prototype. Clear until there is a closure.
+    static constexpr unsigned numberOfTypedClosureStructures = 4;
+    uint32_t typedClosureStructureIDs[numberOfTypedClosureStructures] { };
+    JSCell** typedStrings { nullptr };
+    uint64_t* typedFunctions { nullptr };
+    JSCell** typedClosures { nullptr };
+    // By the number Typed::Builtins gives a function or symbol of the engine. They live as long as the global object.
+    JSCell** typedBuiltins { nullptr };
+    static constexpr ptrdiff_t offsetOfTypedStatics() { return OBJECT_OFFSETOF(Instance, typedStatics); }
+    static constexpr ptrdiff_t offsetOfTypedAllocations() { return OBJECT_OFFSETOF(Instance, typedAllocations); }
+    static constexpr ptrdiff_t offsetOfTypedShapeSets() { return OBJECT_OFFSETOF(Instance, typedShapeSets); }
+    static constexpr ptrdiff_t offsetOfTypedClosureStructureID(unsigned which = 0) { return OBJECT_OFFSETOF(Instance, typedClosureStructureIDs) + which * sizeof(uint32_t); }
+    static constexpr ptrdiff_t offsetOfTypedStrings() { return OBJECT_OFFSETOF(Instance, typedStrings); }
+    static constexpr ptrdiff_t offsetOfTypedFunctions() { return OBJECT_OFFSETOF(Instance, typedFunctions); }
+    static constexpr ptrdiff_t offsetOfTypedClosures() { return OBJECT_OFFSETOF(Instance, typedClosures); }
+    static constexpr ptrdiff_t offsetOfTypedBuiltins() { return OBJECT_OFFSETOF(Instance, typedBuiltins); }
     Data* ownData[maxNumberOfOwnData];
     uint32_t states[0];
 };
@@ -948,7 +984,7 @@ struct Quote {
     uint32_t bytecodeOffset;
     uint32_t start;
     Kind kind;
-    CString text;
+    UTF8CString text;
 };
 
 struct CompiledFunctionInfo {
@@ -987,6 +1023,9 @@ struct CompiledFunctionInfo {
     Vector<uint32_t> constructSites;
     Vector<uint32_t> callSites;
     Vector<uint32_t> identifierIndices;
+    Vector<uint32_t> typedIdentifierIndices;
+    Vector<String> typedIdentifierNames;
+    Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
     Vector<uint32_t> constantIndices;
     Vector<std::pair<uint32_t, uint32_t>> constructionStarts;
     Vector<Quote> quotes;
@@ -1105,6 +1144,7 @@ bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, 
 bool linkColdStaticFunction(Instance*, uint32_t functionIndex, JSScope*);
 
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> moduleCodeEntrypoint();
+CodePtr<JSEntryPtrTag> closureEntrypoint();
 void* catchThunk();
 void* stubAddress(Stub);
 

@@ -364,7 +364,7 @@ inline JSArray* asArray(JSValue value)
 
 inline bool isJSArray(JSCell* cell)
 {
-    ASSERT((cell->classInfo() == JSArray::info()) == (cell->type() == ArrayType));
+    ASSERT(cell->type() != ArrayType || cell->classInfo() == JSArray::info());
     return cell->type() == ArrayType;
 }
 

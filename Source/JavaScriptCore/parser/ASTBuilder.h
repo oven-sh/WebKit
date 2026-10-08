@@ -216,6 +216,11 @@ public:
     }
     void setTypeTag(ExpressionNode* node, uint32_t tag) { node->setTypeTag(tag); }
     void setClassTypeTag(ClassExprNode* node, uint32_t tag) { node->setTypeTag(tag); }
+    ArgumentsNode* withTypeTag(ArgumentsNode* node, uint32_t tag)
+    {
+        node->setTypeTag(tag);
+        return node;
+    }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location) { return new (m_parserArena) ObjectLiteralNode(location); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location, PropertyListNode* properties) { return new (m_parserArena) ObjectLiteralNode(location, properties); }
 
@@ -1526,7 +1531,9 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
                 return check;
             }
         }
-        return new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
+        auto* call = new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
+        call->setTypeTag(resolve->typeTag());
+        return call;
     }
     if (func->isBracketAccessorNode()) {
         BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(func);

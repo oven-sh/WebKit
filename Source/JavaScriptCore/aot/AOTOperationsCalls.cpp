@@ -45,9 +45,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (Insta
 
     switch (getIterationMode(vm, globalObject, iterable, symbolIterator)) {
     case IterationMode::FastArray:
-        if (Options::useUnboxedFastArrayIteration())
-            OPERATION_RETURN(scope, finish(vm.fastArrayUnboxedSentinel(), jsNumber(0)));
-        OPERATION_RETURN(scope, finish(JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asObject(iterable), IterationKind::Values), vm.fastArrayValuesSentinel()));
+        OPERATION_RETURN(scope, finish(vm.fastArraySentinel(), jsNumber(0)));
     case IterationMode::FastArrayValues:
         OPERATION_RETURN(scope, finish(iterable, vm.fastArrayValuesSentinel()));
     case IterationMode::FastArrayKeys:
@@ -69,7 +67,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (Insta
     case IterationMode::FastSetEntries:
         OPERATION_RETURN(scope, finish(iterable, vm.fastSetEntriesSentinel()));
     case IterationMode::FastString:
-        OPERATION_RETURN(scope, finish(JSStringIterator::create(vm, globalObject->stringIteratorStructure(), asString(iterable)), vm.fastStringValuesSentinel()));
+        OPERATION_RETURN(scope, finish(JSStringIterator::create(vm, globalObject->stringIteratorStructure(), asString(iterable)), vm.fastStringSentinel()));
     case IterationMode::FastAsyncGenerator:
     case IterationMode::AsyncFromSync:
         RELEASE_ASSERT_NOT_REACHED();
@@ -159,7 +157,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextWithIndex, EncodedJSValue, (Ins
     AOT_OPERATION_BEGIN(instance);
     JSValue index = JSValue::decode(*encodedIndex);
     JSValue value;
-    bool hasNext = JSArrayIterator::nextValueWithIndexInFrame(globalObject, JSValue::decode(iterable), index, value);
+    RELEASE_ASSERT(is<JSArray>(JSValue::decode(iterable)));
+    bool hasNext = iteratorNextFastArray(globalObject, asArray(JSValue::decode(iterable)), index, value);
     *encodedIndex = JSValue::encode(index);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, hasNext ? JSValue::encode(value) : encodedJSValue());
@@ -174,7 +173,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorNextWithDriver, EncodedJSValue
 JSC_DEFINE_JIT_OPERATION(operationAOTMaterializeArrayIterator, JSObject*, (Instance* instance, EncodedJSValue iterable, EncodedJSValue index))
 {
     AOT_OPERATION_BEGIN(instance);
-    OPERATION_RETURN(scope, static_cast<JSObject*>(materializeUnboxedFastArrayIterator(globalObject, JSValue::decode(iterable), JSValue::decode(index))));
+    RELEASE_ASSERT(is<JSArray>(JSValue::decode(iterable)));
+    auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asArray(JSValue::decode(iterable)), IterationKind::Values);
+    iterator->setIndex(JSValue::decode(index).asAnyInt());
+    OPERATION_RETURN(scope, static_cast<JSObject*>(iterator));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTThrowIteratorResultIsNotObject, void, (Instance* instance))

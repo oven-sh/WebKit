@@ -44,6 +44,7 @@ API/JSWeakPrivate.cpp
 API/JSWeakValue.cpp
 API/OpaqueJSString.cpp
 
+aot/AOTBounds.cpp @no-unify
 aot/AOTBuiltins.cpp
 aot/AOTCompiler.cpp
 aot/AOTGraph.cpp
@@ -52,6 +53,8 @@ aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
 aot/AOTEmitter.cpp @no-unify
 aot/AOTEscapeAnalysis.cpp @no-unify
+aot/AOTFacts.cpp @no-unify
+aot/AOTShapes.cpp @no-unify
 aot/AOTLowerBuiltins.cpp @no-unify
 aot/AOTOperationsBuiltins.cpp @no-unify
 aot/AOTTypeTable.cpp @no-unify
@@ -77,6 +80,33 @@ aot/AOTStubs.cpp
 aot/AOTSlotWatchpoint.cpp
 aot/AOTThunks.cpp
 aot/AOTTypeInference.cpp
+aot/AOTTypedBuiltinResolution.cpp @no-unify
+aot/AOTTypedBuiltins.cpp @no-unify
+aot/AOTTypedCallResolution.cpp @no-unify
+aot/AOTTypedCastSimplification.cpp @no-unify
+aot/AOTTypedCoroutineSplitting.cpp @no-unify
+aot/AOTTypedEffects.cpp @no-unify
+aot/AOTTypedCleanup.cpp @no-unify
+aot/AOTTypedIR.cpp @no-unify
+aot/AOTTypedInlining.cpp @no-unify
+aot/AOTTypedLoweringAccess.cpp @no-unify
+aot/AOTTypedLoweringBuiltins.cpp @no-unify
+aot/AOTTypedLoweringCalls.cpp @no-unify
+aot/AOTTypedLoweringChecks.cpp @no-unify
+aot/AOTTypedLoweringContainers.cpp @no-unify
+aot/AOTTypedLoweringConvert.cpp @no-unify
+aot/AOTTypedLoweringCore.cpp @no-unify
+aot/AOTTypedLoweringExceptions.cpp @no-unify
+aot/AOTTypedLoweringGeneric.cpp @no-unify
+aot/AOTTypedLoweringOperators.cpp @no-unify
+aot/AOTTypedLoweringStrings.cpp @no-unify
+aot/AOTTypedObject.cpp @no-unify
+aot/AOTTypedOperations.cpp @no-unify
+aot/AOTTypedPlacement.cpp @no-unify
+aot/AOTTypedPreparation.cpp @no-unify
+aot/AOTTypedReader.cpp @no-unify
+aot/AOTTypedType.cpp @no-unify
+aot/AOTTypedVerifier.cpp @no-unify
 
 assembler/AbstractMacroAssembler.cpp
 assembler/AssemblerBuffer.cpp

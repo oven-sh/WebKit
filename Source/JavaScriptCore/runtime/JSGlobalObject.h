@@ -703,6 +703,7 @@ public:
     bool m_webAssemblyEnabled { true };
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
+    bool m_isNumberingIntrinsics { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
@@ -1283,7 +1284,16 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
+    // With VM::useImmutableIntrinsics. What the engine gives a realm stays what it is:
+    // - a prototype keeps its properties and gets no others;
+    // - any other object (a constructor, a namespace such as Math, a function) keeps its properties, and can be given others;
+    // - the properties of the global object that name them are read-only and non-configurable.
+    // What exists when the realm is made is dealt with then, anything else when it is made, and nothing is made for this but what
+    // ImmutableIntrinsics numbers.
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
+    enum class IntrinsicKind : bool { Prototype, Other };
+    JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind);
+    void makeValueOfIntrinsicImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
     std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 

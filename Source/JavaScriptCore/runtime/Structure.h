@@ -428,6 +428,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* fixPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -1039,9 +1040,13 @@ public:
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
-    DEFINE_BITFIELD(bool, didConvertFirstObjectToDictionary, DidConvertFirstObjectToDictionary, 1, 10);
+    bool didConvertFirstObjectToDictionary() const { return m_didConvertFirstObjectToDictionary; }
+    void setDidConvertFirstObjectToDictionary(bool value) { m_didConvertFirstObjectToDictionary = value; }
     DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
     DEFINE_BITFIELD(bool, hasStableFields, HasStableFields, 1, 12);
+    static_assert(!((s_hasImmutableShapeBits | s_hasStableFieldsBits) & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
+    static_assert(!(s_hasImmutableShapeBits & s_hasStableFieldsBits));
+    static_assert(!(s_inheritorsMayOverrideReadOnlyPropertiesBits & s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits));
 #endif
 
     enum class StructureVariant : uint8_t {
@@ -1221,6 +1226,7 @@ private:
     uint32_t m_propertyHash;
 #if USE(BUN_JSC_ADDITIONS)
     uint8_t m_numberOfStableFields { 0 };
+    bool m_didConvertFirstObjectToDictionary { false };
 #endif
     SeenProperties m_seenProperties;
 

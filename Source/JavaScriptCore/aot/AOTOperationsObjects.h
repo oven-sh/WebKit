@@ -46,6 +46,9 @@ struct Slot;
     v(operationAOTCloneObject) \
     v(operationAOTTryCopyDataProperties) \
     v(operationAOTNoteClass) \
+    v(operationAOTDefineShapeOfInstances) \
+    v(operationAOTCreateThisOfShape) \
+    v(operationAOTVerifyPlacedField) \
     v(operationAOTMakeAtom) \
     v(operationAOTNewFunction) \
     v(operationAOTNewFunctionWithCaptures) \
@@ -162,6 +165,9 @@ JSC_DECLARE_JIT_OPERATION(operationAOTNewTypedObject, JSObject*, (Instance*, uin
 JSC_DECLARE_JIT_OPERATION(operationAOTCloneObject, JSObject*, (Instance*, EncodedJSValue source, uint32_t layoutID));
 JSC_DECLARE_JIT_OPERATION(operationAOTTryCopyDataProperties, size_t, (Instance*, EncodedJSValue target, EncodedJSValue source, EncodedJSValue excludedSetIndex, uint32_t whose));
 JSC_DECLARE_JIT_OPERATION(operationAOTNoteClass, void, (Instance*, EncodedJSValue constructor, EncodedJSValue prototype, uint32_t layoutID));
+JSC_DECLARE_JIT_OPERATION(operationAOTDefineShapeOfInstances, void, (Instance*, EncodedJSValue constructor, Slot*));
+JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisOfShape, JSObject*, (Instance*, JSObject* callee, Slot*, uint32_t isOnlyShape));
+JSC_DECLARE_JIT_OPERATION(operationAOTVerifyPlacedField, void, (Instance*, EncodedJSValue base, uint32_t identifier, uint32_t slot));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCreateThisWithProperties, JSObject*, (Instance*, JSObject* callee, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutProperties, void, (Instance*, EncodedJSValue base, EncodedJSValue* values, uint32_t count, Slot* cache));

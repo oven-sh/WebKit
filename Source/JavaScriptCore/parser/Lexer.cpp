@@ -25,6 +25,7 @@
 #include "config.h"
 #include "Lexer.h"
 
+#include "AOTFacts.h"
 #include "BuiltinNames.h"
 #include "Identifier.h"
 #include "KeywordLookup.h"
@@ -2967,8 +2968,12 @@ start:
     }
 
     case   1 /*   1 = Start of Heading CharacterInvalid */: {
-        if (!Options::useTypeTags())
+#if ENABLE(AOT)
+        if (!AOT::Facts::sourceMayHaveTags())
             goto invalidCharacter;
+#else
+        goto invalidCharacter;
+#endif
         uint64_t tag = 0;
         for (unsigned i = 0; i < 6; ++i) {
             shift();

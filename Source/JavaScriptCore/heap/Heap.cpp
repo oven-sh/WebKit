@@ -23,6 +23,7 @@
 #include "Heap.h"
 
 #include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 
 #include "JSCJSValueInlines.h"
 
@@ -1453,6 +1454,10 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
 // possibly shared) and for storage that is a precise allocation.
 static void* baseOfMovableStorage(JSObject* object)
 {
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout())
+        return nullptr;
+#endif
     Butterfly* butterfly = object->butterfly();
     if (!butterfly || isCopyOnWrite(object->indexingMode()))
         return nullptr;
@@ -3150,6 +3155,18 @@ void Heap::addCoreConstraints()
             }
         })),
         ConstraintVolatility::GreyedByMarking,
+        ConstraintConcurrency::Concurrent,
+        ConstraintParallelism::Sequential);
+    m_collector->addMarkingConstraint(
+        "At"_s, "Static Variables of Compiled Code"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+            for (AOT::Instance* instance : vm().m_aotInstances) {
+                if (instance->typed)
+                    instance->typed->visit(visitor);
+            }
+        })),
+        ConstraintVolatility::GreyedByExecution,
         ConstraintConcurrency::Concurrent,
         ConstraintParallelism::Sequential);
 #endif

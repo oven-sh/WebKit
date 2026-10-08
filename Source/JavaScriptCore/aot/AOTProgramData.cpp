@@ -146,7 +146,7 @@ public:
             return static_cast<uint64_t>(value << 1) ^ static_cast<uint64_t>(value >> 63);
         };
         auto appendPosition = [&](LineColumn inModule) {
-            CString name;
+            UTF8CString name;
             LineColumn position = inModule;
             uint32_t source = 0;
             if (m_positions.find(m_moduleEntryOffset, inModule, name, position)) {
@@ -204,6 +204,25 @@ public:
         return offset;
     }
 
+    // The handlers of what was compiled from types: the calls stand for places in the code, the number of a handler for where it starts.
+    Vector<UnlinkedHandlerInfo> typedExceptionHandlers(uint32_t index)
+    {
+        Vector<UnlinkedHandlerInfo> handlers;
+        for (auto& [site, handler] : m_reportableSites[index].typedCatchEntrypointsForCallSites) {
+            if (!handlers.isEmpty() && handlers.last().end == site && handlers.last().target == handler) {
+                handlers.last().end = site + 1;
+                continue;
+            }
+            handlers.grow(handlers.size() + 1);
+            zeroSpan(handlers.mutableSpan().last(1));
+            handlers.last().start = site;
+            handlers.last().end = site + 1;
+            handlers.last().target = handler;
+            handlers.last().setType(HandlerType::Catch);
+        }
+        return handlers;
+    }
+
     void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, LineStartTable& lineStarts)
     {
         if (m_functionMetadataOffsets[index])
@@ -215,7 +234,11 @@ public:
             words[0] |= Metadata::ExpressionInfo;
             words.append(makePositions(index, codeBlock, executable ? executable->source().startOffset() : 0, lineStarts));
         }
-        if (size_t count = codeBlock->numberOfExceptionHandlers()) {
+        if (auto handlers = typedExceptionHandlers(index); !handlers.isEmpty()) {
+            words[0] |= Metadata::Handlers;
+            words.append(append(handlers));
+            words.append(handlers.size());
+        } else if (size_t count = codeBlock->numberOfExceptionHandlers()) {
             Vector<UnlinkedHandlerInfo> handlers;
             handlers.grow(count);
             zeroSpan(handlers.mutableSpan());
@@ -339,6 +362,38 @@ public:
         info.hasInlineFrames = function.hasInlineFrames;
         info.flags = (function.hasSiteConstants ? FunctionInfo::hasSiteConstants : FunctionInfo::sitesHaveInlineConstants) | (function.startsCold && executable ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
         fillMetadata(function.index, codeBlock, executable, lineStarts);
+    }
+
+    void noteTypedIdentifiers()
+    {
+        for (auto& sites : m_reportableSites) {
+            RELEASE_ASSERT(sites.typedIdentifierIndices.size() == sites.typedIdentifierNames.size());
+            for (unsigned i = 0; i < sites.typedIdentifierIndices.size(); ++i) {
+                AtomString name(sites.typedIdentifierNames[i]);
+                m_typedIdentifiers.append(name);
+                UniquedStringImpl*& inTable = m_identifiers[sites.typedIdentifierIndices[i]];
+                RELEASE_ASSERT(!inTable || inTable == name.impl());
+                if (!inTable)
+                    m_identifierIndices.add(name.impl(), sites.typedIdentifierIndices[i]);
+                inTable = name.impl();
+            }
+        }
+    }
+
+    void fillTypedInfo(const ImageView::Function& function)
+    {
+        FunctionInfo& info = m_infos[function.index];
+        info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
+        info.set(0, CodeSpecializationKind::CodeForCall, FunctionCode);
+        info.calleeStart = function.calleeStart;
+        info.flags = FunctionInfo::sitesHaveInlineConstants | (function.startsCold ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
+        Vector<uint32_t, 3> words { FunctionMetadata::isBuiltinFunction };
+        if (auto handlers = typedExceptionHandlers(function.index); !handlers.isEmpty()) {
+            words[0] |= FunctionMetadata::Handlers;
+            words.append(append(handlers));
+            words.append(handlers.size());
+        }
+        m_functionMetadataOffsets[function.index] = append(words);
     }
 
     void fillTopLevelCodeInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
@@ -599,6 +654,7 @@ public:
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionExecutable;
     Vector<std::pair<uint32_t, Vector<UnlinkedFunctionExecutable*>>> m_functionLists;
     Vector<UniquedStringImpl*> m_identifiers;
+    Vector<AtomString> m_typedIdentifiers;
     Vector<RefPtr<AtomStringImpl>> m_switchAtoms;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_identifierIndices;
     Vector<JSValue> m_constants;
@@ -606,8 +662,8 @@ public:
     Vector<UnlinkedFunctionExecutable*> m_unlinkedFunctions;
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionIndices;
     Vector<UnlinkedCodeBlock*> m_topLevelCodes;
-    UncheckedKeyHashMap<CString, uint32_t> m_sources;
-    Vector<CString> m_sourceNames;
+    UncheckedKeyHashMap<UTF8CString, uint32_t> m_sources;
+    Vector<UTF8CString> m_sourceNames;
     UncheckedKeyHashSet<SymbolTable*> m_processedSymbolTables;
 };
 
@@ -746,6 +802,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     for (auto* function : builder.m_unlinkedFunctions)
         function->discardCode();
 
+    builder.noteTypedIdentifiers();
+
     ProgramData header { };
     header.magic = expectedMagic;
     header.stamp = imageStamp();
@@ -806,6 +864,21 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         header.engineBuiltinModulesOffset = builder.append(engineBuiltinModules);
         header.numberOfEngineBuiltins = engineBuiltinModules.size();
     }
+    Vector<uint64_t> typedEntries;
+    for (auto& key : image->keys()) {
+        if (!key.record || key.kind == std::numeric_limits<uint32_t>::max() || !(key.kind & ImageKey::typedFunction))
+            continue;
+        if (auto function = image->find(key)) {
+            builder.fillTypedInfo(*function);
+            while (typedEntries.size() <= key.start)
+                typedEntries.append(0);
+            typedEntries[key.start] = function->entry;
+        }
+    }
+    while (builder.m_out.size() % sizeof(uint64_t))
+        builder.m_out.append(0);
+    header.typedEntriesOffset = builder.append(typedEntries);
+    header.numberOfTypedEntries = typedEntries.size();
     header.infosOffset = builder.append(builder.m_infos);
     header.numberOfFunctions = builder.m_infos.size();
     header.functionMetadataTableOffset = builder.append(builder.m_functionMetadataOffsets);

@@ -47,7 +47,7 @@ static ScopeChain unknownScopeChain()
 
 #if CPU(ARM64) || CPU(X86_64)
 
-static void estimateFrequencies(B3::Procedure& proc)
+void estimateFrequencies(B3::Procedure& proc)
 {
     proc.resetReachability();
     auto& loops = proc.naturalLoops();
@@ -155,7 +155,7 @@ static bool mayReturnScopeVariable(UnlinkedCodeBlock* unlinkedCodeBlock)
     return false;
 }
 
-static void usePinnedRegistersDirectly(B3::Air::Code& code)
+void usePinnedRegistersDirectly(B3::Air::Code& code)
 {
     using namespace B3::Air;
     Vector<std::pair<Tmp, Tmp>, 4> copies;
@@ -242,6 +242,17 @@ void emitRestoreBeforeLeaving(CCallHelpers& jit, const Graph& graph, B3::Air::Co
 
 static bool canSkipLoopSplitting(Graph& graph)
 {
+    if (Facts::shared() && graph.factsAboutFunction()) {
+        for (BasicBlock* block : graph.m_rpo) {
+            if (!block->isInLoop)
+                continue;
+            for (Node* node : block->nodes) {
+                if (node->isBytecode(op_get_by_val) && !node->isElided && mayBe(node->type, TNumber) && mayBe(node->type, TUndefined))
+                    return false;
+            }
+        }
+        return true;
+    }
     bool hasLoop = false;
     for (BasicBlock* block : graph.m_rpo) {
         if (!block->isInLoop)
@@ -408,6 +419,11 @@ static bool compile(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const CalleeHi
     while (foldBranchesOnKnownValues(graph))
         scalarReplaceReadOnlyObjects(graph);
     inferTypes(graph);
+    if (Facts::shared()) {
+        inferRanges(graph);
+        if (proveIndexesInBounds(graph))
+            inferTypes(graph);
+    }
     if (program)
         program->contradictionsIgnoredBehindUnreachableValue.fetch_add(graph.contradictionsIgnoredBehindUnreachableValue, std::memory_order_relaxed);
     if (!graph.contradictionOfAnalysis.isNull()) {

@@ -56,7 +56,7 @@ public:
         bool isHostFunction { false };
         bool inheritsFromFunctionPrototype { false };
     };
-    static bool isFunctionToMakeImmutable(const Entry& entry) { return entry.type == JSFunctionType || (entry.type == InternalFunctionType && entry.holder != globalObject); }
+    static bool isFunctionOfIntrinsic(const Entry& entry) { return entry.type == JSFunctionType || (entry.type == InternalFunctionType && entry.holder != globalObject); }
 
     JS_EXPORT_PRIVATE static const ImmutableIntrinsics* NODELETE shared();
 
@@ -67,7 +67,8 @@ public:
 
     JS_EXPORT_PRIVATE static void ensureShared(VM&);
 
-    static Vector<EncodedJSValue> describe(JSGlobalObject*, std::span<const ASCIILiteral> variableNames);
+    // Numbers the global object, the variables and, starting from the first so many of them, the fixed properties of what has a number.
+    static Vector<EncodedJSValue> describe(JSGlobalObject*, std::span<const ASCIILiteral> variableNames, unsigned numberOfVariablesWithNumberedProperties);
 
 private:
     ImmutableIntrinsics() = default;

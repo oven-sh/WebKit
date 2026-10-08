@@ -140,6 +140,10 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
 #else
     bool isWebAssembly = false;
 #endif
+#if ENABLE(AOT)
+    // Nor has code that was compiled ahead of time from types.
+    isWebAssembly |= !callerCodeBlock;
+#endif
     bool isTailCall = callLinkInfo.isTailCall();
 
     bool isClosureCall = false;

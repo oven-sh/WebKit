@@ -941,9 +941,12 @@ namespace JSC {
         ArgumentsNode(ArgumentListNode*, bool hasAssignments);
 
         bool hasAssignments() const { return m_hasAssignments; }
+        uint32_t typeTag() const { return m_typeTag; }
+        void setTypeTag(uint32_t tag) { m_typeTag = tag; }
 
         ArgumentListNode* m_listNode;
     private:
+        uint32_t m_typeTag { 0 };
         bool m_hasAssignments { false };
     };
 

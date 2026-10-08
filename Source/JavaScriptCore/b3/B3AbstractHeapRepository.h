@@ -43,7 +43,23 @@ namespace JSC::B3 {
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
-    macro(AOTInstance_mutableFields, 0, Mutability::Mutable)
+    macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
+    macro(AOTTypedClosure_entry, AOT::Typed::Closure::offsetOfEntry(), Mutability::Immutable) \
+    macro(AOTTypedClosure_environment, AOT::Typed::Closure::offsetOfEnvironment(), Mutability::Immutable) \
+    macro(AOTTypedClosure_function, AOT::Typed::Closure::offsetOfFunction(), Mutability::Immutable) \
+    macro(AOTTypedObject_words, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
+    macro(AOTTypedObject_orderWord, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
+    macro(AOTTypedObject_shapeWord, AOT::Typed::offsetOfShapeWord, Mutability::Mutable) \
+    macro(AOTTyped_shapeSets, 0, Mutability::Immutable)
+#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTTyped_fields) \
+    macro(AOTTyped_collectorState) \
+    macro(AOTTyped_runtimeState) \
+    macro(AOTTyped_argumentBuffer)
+#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTTyped_slots) \
+    macro(AOTTyped_variables) \
+    macro(AOTTyped_catchSpillSlots)
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
     macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
@@ -53,10 +69,13 @@ namespace JSC::B3 {
     macro(AOTRuntimeTable, 0, sizeof(void*))
 #else
 #define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
+#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro)
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro)
+#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro)
 #endif
 
 #define FOR_EACH_ABSTRACT_HEAP(macro) \
+    FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(TypedArrayProperties) \
     macro(JSCellHeaderAndNamedProperties) \
     macro(OrderedHashTableData) \
@@ -259,6 +278,7 @@ namespace JSC::B3 {
     macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID)) \
 
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP(macro) \
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(properties) \
     /* WasmGC Struct access are analyzed via field index and field type. We can include Wasm type definition to further make alias analysis better. */ \
     macro(JSWebAssemblyStruct_fields) \
@@ -373,6 +393,8 @@ public:
     void decorateCCallWrite(const AbstractHeap*, Value*);
     void decoratePatchpointRead(const AbstractHeap*, Value*);
     void decoratePatchpointWrite(const AbstractHeap*, Value*);
+    // All from the first heap to the last, as they are numbered.
+    void decoratePatchpointWrite(const AbstractHeap* first, const AbstractHeap* last, Value*);
     void decorateFenceRead(const AbstractHeap*, Value*);
     void decorateFenceWrite(const AbstractHeap*, Value*);
     void decorateFencedAccess(const AbstractHeap*, Value*);
@@ -408,6 +430,7 @@ private:
     Vector<HeapForValue> m_heapForCCallWrite;
     Vector<HeapForValue> m_heapForPatchpointRead;
     Vector<HeapForValue> m_heapForPatchpointWrite;
+    Vector<std::pair<const AbstractHeap*, HeapForValue>> m_heapsForPatchpointWrite;
     Vector<HeapForValue> m_heapForFenceRead;
     Vector<HeapForValue> m_heapForFenceWrite;
     Vector<HeapForValue> m_heapForFencedAccess;

@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTImage.h"
 
+#include "AOTFacts.h"
 #include "AOTTypeTable.h"
 
 #if ENABLE(AOT)
@@ -55,6 +56,7 @@ uint64_t imageStamp()
     mix(numberOfEntries);
     mix(Instance::offsetOfStates());
     mix(Instance::offsetOfOwnData());
+    mix(Instance::offsetOfTypedStatics());
     mix(Instance::minStateWithData);
     mix(numberOfStubs);
     mix(numOpcodeIDs);
@@ -361,6 +363,9 @@ Vector<FunctionReportableSites> ImageBuilder::reportableSites()
         FunctionReportableSites result;
         result.offsets = WTF::move(info.callSites);
         result.identifierIndices = WTF::move(info.identifierIndices);
+        result.typedIdentifierIndices = WTF::move(info.typedIdentifierIndices);
+        result.typedIdentifierNames = WTF::move(info.typedIdentifierNames);
+        result.typedCatchEntrypointsForCallSites = WTF::move(info.typedCatchEntrypointsForCallSites);
         result.constantIndices = WTF::move(info.constantIndices);
         for (unsigned i = 0; i < info.constructSites.size(); ++i) {
             if (info.constructionStarts[i].first || info.constructionStarts[i].second)
@@ -643,6 +648,10 @@ Vector<uint8_t> ImageBuilder::finish()
             RELEASE_ASSERT(number);
             identifierIsEncoded.set(number);
         }
+        for (uint32_t number : function.code.info.typedIdentifierIndices) {
+            RELEASE_ASSERT(number);
+            identifierIsEncoded.set(number);
+        }
     }
     auto isEncoded = [&](UniquedStringImpl* name) {
         return identifierIndices && identifierIsEncoded.get(identifierIndices->get(name));
@@ -875,7 +884,7 @@ Vector<uint8_t> ImageBuilder::finish()
     functionStarts.append(std::numeric_limits<uint32_t>::max());
     std::unique_ptr<FilePrintStream> map;
     if (Options::aotMapFilePath()) [[unlikely]] {
-        map = FilePrintStream::open(byteCast<char>(Options::aotMapFilePath()), "w");
+        map = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(byteCast<char>(Options::aotMapFilePath())), "w"_s);
         RELEASE_ASSERT(map);
         auto& out = map;
         for (unsigned index = 0; index < m_functions.size(); ++index) {
@@ -990,6 +999,8 @@ Vector<uint8_t> ImageBuilder::finish()
                 codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
                 at[i] = codeSize;
                 codeSize += regExp.code[i].bytes.size();
+                if (map) [[unlikely]]
+                    map->println("X\t", at[i], "\t", regExp.code[i].bytes.size(), "\t", i ? 16 : 8, "\t", regExp.flags.toRaw(), "\t", regExp.pattern);
             }
             regExpPlacement.append(at);
             ImageRegExp record { };
@@ -1021,7 +1032,7 @@ Vector<uint8_t> ImageBuilder::finish()
     Vector<uint32_t> functionQuotes;
     functionQuotes.fill(0, m_functions.size());
     {
-        UncheckedKeyHashMap<CString, uint32_t> knownLocation;
+        UncheckedKeyHashMap<UTF8CString, uint32_t> knownLocation;
         size_t numberOfQuotes = 0;
         for (size_t index = 0; index < m_functions.size(); ++index) {
             auto& all = m_functions[index].code.info.quotes;
@@ -1059,16 +1070,16 @@ Vector<uint8_t> ImageBuilder::finish()
                         outer = i;
                 }
             }
-            if (Options::useTypeTags()) {
-                auto withoutTypeTags = [](std::span<const char> text) {
-                    Vector<char, 64> result;
+            if (Options::useTypeTags() || Facts::shared()) {
+                auto withoutTypeTags = [](std::span<const char8_t> text) {
+                    Vector<char8_t, 64> result;
                     for (size_t at = 0; at < text.size(); ++at) {
                         if (text[at] == 1)
                             at += 6;
                         else
                             result.append(text[at]);
                     }
-                    return CString(result.span());
+                    return UTF8CString(result.span());
                 };
                 for (auto& place : within)
                     place.offset = withoutTypeTags(all[place.quote].text.span().first(place.offset)).length();
@@ -1081,7 +1092,7 @@ Vector<uint8_t> ImageBuilder::finish()
             int64_t previousStart = 0;
             for (unsigned i = 0; i < all.size(); ++i) {
                 auto& quote = all[i];
-                const CString* kept = &all[within[i].quote].text;
+                const UTF8CString* kept = &all[within[i].quote].text;
                 uint32_t start = within[i].offset + knownLocation.ensure(*kept, [&] {
                     uint32_t result = safeCast<uint32_t>(quotesText.size());
                     quotesText.append(kept->span());
@@ -1216,6 +1227,8 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
     header.framesOffset = place(frames.sizeInBytes());
+    header.typedDataOffset = place(m_typedData.size());
+    header.typedDataSize = safeCast<uint32_t>(m_typedData.size());
     header.functionsEnd = safeCast<uint32_t>(functionsEnd);
     header.stubsSize = safeCast<uint32_t>(stubs.bytes.size());
     for (unsigned i = 0; i < 4; ++i)
@@ -1274,6 +1287,7 @@ Vector<uint8_t> ImageBuilder::finish()
     memcpy(base + header.codeGranulesOffset, codeGranules.span().data(), codeGranules.sizeInBytes());
     memcpy(base + header.callSitesOffset, callSites.span().data(), callSites.size());
     memcpy(base + header.framesOffset, frames.span().data(), frames.sizeInBytes());
+    memcpy(base + header.typedDataOffset, m_typedData.span().data(), m_typedData.size());
     for (auto& [table, at] : regExpTables) {
         for (auto& regExp : m_regExps) {
             bool copied = false;
@@ -2153,7 +2167,7 @@ AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
 
 #endif
 
-Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
+Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule, std::span<const uint8_t> typedProgram)
 {
     auto& options = vm.bytecodeGenerationOptions;
     options.resolveAllScopeSlotsStatically = true;
@@ -2176,12 +2190,14 @@ Vector<uint8_t> buildAOTFile(VM& vm, const SourceCode& source, bool isModule)
         if (error.isValid() || !codeBlock)
             return { };
         encoder.addModule(isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source), codeBlock, source, { });
+        if (!typedProgram.empty() && !encoder.setTypedProgram(typedProgram, 0))
+            return { };
         linked = encoder.finish();
     }
     auto sizeOfImage = aotImageSize(linked.aotImage.span());
     if (!linked.payload || !sizeOfImage)
         return { };
-    AOT::ProgramData::RetainedPositions positions { linked.reportableSites, [](uint32_t, LineColumn, CString&, LineColumn&) { return false; } };
+    AOT::ProgramData::RetainedPositions positions { linked.reportableSites, [](uint32_t, LineColumn, UTF8CString&, LineColumn&) { return false; } };
     Vector<uint8_t> data = AOT::ProgramData::build(vm, strings.serialize().span(), linked.payload->span(), linked.moduleEntryOffsets.span(), linked.aotImage.span(), positions, linked.reportableSites.span(), linked.variablesExportedByModules.span());
     if (data.isEmpty())
         return { };
@@ -2228,7 +2244,7 @@ namespace JSC {
 bool isAOTImagePC(const void*) { return false; }
 bool registerAOTImage(std::span<const uint8_t>, const void*) { return false; }
 AOTFileUse useAOTFile(std::span<const uint8_t>, int, int64_t) { return { "not supported on this platform", "not supported on this platform" }; }
-Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool) { return { }; }
+Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool, std::span<const uint8_t>) { return { }; }
 std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t>) { return std::nullopt; }

@@ -178,6 +178,7 @@ bool Lowering::run()
 {
     m_out.initialize(m_heaps);
     m_out.setFrequency(1);
+    findIndexedTypedArrays();
 
     unsigned numEntrypoints = 1 + m_graph.catchEntrypoints.size();
     m_proc.setNumEntrypoints(numEntrypoints);
@@ -1118,6 +1119,8 @@ void Lowering::verifyInferredType(Node* node, LValue value)
     if (node->kind == NodeKind::Argument && node->reg == virtualRegisterForArgumentIncludingThis(0) && !m_graph.convention().usesThis)
         return;
     Type expected = node->wasInferredUnreachable ? TNone : node->type;
+    if (Facts::shared())
+        expected = withoutShapes(expected);
     if (const KnownFunction* known = programFunctions() ? programFunctions()->function(functionNumberOf(expected)) : nullptr; known && known->summary && known->summary->takesScopeAsCallee)
         expected = (expected & ~TFunction) | TOtherObject;
     bool hasWrongTypesForTesting = false;
@@ -1189,6 +1192,8 @@ void Lowering::setResult(Node* node, LValue value, Rep rep)
         RELEASE_ASSERT_NOT_REACHED();
     }
     node->lowered = convert(value, rep, node->type, node->rep());
+    if (node->isIndexedTypedArray && rep == Rep::JSValue)
+        m_typedArrayViews.set(node, TypedArrayView { m_out.loadPtr(value, m_heaps.JSArrayBufferView_vector), m_out.loadPtr(value, m_heaps.JSArrayBufferView_length) });
     if (m_aliasTarget && m_aliasTarget->loweredAsJSValue && node->rep() != Rep::JSValue)
         node->loweredAsJSValue = m_aliasTarget->loweredAsJSValue;
     if (rep == Rep::JSValue && node->rep() != Rep::JSValue)

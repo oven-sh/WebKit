@@ -29,11 +29,13 @@
 
 #include "JSDollarVM.h"
 
+#include "AOTTypedPasses.h"
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
 #include "CachedCall.h"
+#include "CachedTypes.h"
 #include "CharacterPropertyDataGenerator.h"
 #include "CodeBlock.h"
 #include "Completion.h"
@@ -2317,6 +2319,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionIsPrivateSymbol);
 static JSC_DECLARE_HOST_FUNCTION(functionIsDefinitelyAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionIsAtomString);
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
+#if ENABLE(AOT)
+static JSC_DECLARE_HOST_FUNCTION(functionDumpAOTTypedProgram);
+static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram);
+#endif
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionApproximateTimeNow);
@@ -4863,6 +4869,47 @@ JSC_DEFINE_HOST_FUNCTION(functionIsAtomString, (JSGlobalObject*, CallFrame* call
     return JSValue::encode(jsBoolean(impl && impl->isAtom()));
 }
 
+#if ENABLE(AOT)
+// dumpAOTTypedProgram(bytes: Uint8Array, stage: string): what the ahead-of-time compiler makes of the front end's program.
+JSC_DEFINE_HOST_FUNCTION(functionDumpAOTTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* bytes = dynamicDowncast<JSUint8Array>(callFrame->argument(0));
+    if (!bytes)
+        return throwVMTypeError(globalObject, scope, "Expected a Uint8Array"_s);
+    String stage = callFrame->argument(1).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    StringPrintStream out;
+    if (!AOT::Typed::dumpAtStage(bytes->span(), stage, out))
+        return throwVMError(globalObject, scope, createError(globalObject, out.toString()));
+    return JSValue::encode(jsString(vm, out.toString()));
+}
+
+// buildAOTImageOfTypedProgram(module: string, bytes: Uint8Array): the image of a module whose code is the front end's program, for
+// aotImagePath. Null: it could not be compiled.
+JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String text = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* bytes = dynamicDowncast<JSUint8Array>(callFrame->argument(1));
+    if (!bytes)
+        return throwVMTypeError(globalObject, scope, "Expected a Uint8Array"_s);
+    SourceCode source = makeSource(WTF::move(text), { }, SourceTaintedOrigin::Untainted, { }, { }, SourceProviderSourceType::Module);
+    Vector<uint8_t> file = buildAOTFile(vm, source, true, bytes->span());
+    if (file.isEmpty())
+        return JSValue::encode(jsNull());
+    auto* result = JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>(), file.size());
+    RETURN_IF_EXCEPTION(scope, { });
+    memcpySpan(result->typedSpan(), file.span());
+    return JSValue::encode(result);
+}
+#endif
+
 JSC_DEFINE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum, (JSGlobalObject*, CallFrame*))
 {
     DollarVMAssertScope assertScope;
@@ -6084,6 +6131,10 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "isDefinitelyAtomString"_s, functionIsDefinitelyAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "isAtomString"_s, functionIsAtomString, 1);
     addFunction(vm, allowIfNotFuzz, "dumpAndResetPasDebugSpectrum"_s, functionDumpAndResetPasDebugSpectrum, 0);
+#if ENABLE(AOT)
+    addFunction(vm, allowIfNotFuzz, "dumpAOTTypedProgram"_s, functionDumpAOTTypedProgram, 2);
+    addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageOfTypedProgram, 2);
+#endif
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);
     addFunction(vm, alwaysAllow, "wallTimeNow"_s, functionWallTimeNow, 0);

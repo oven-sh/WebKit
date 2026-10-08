@@ -46,6 +46,9 @@ struct FunctionReportableSites {
     Vector<uint32_t> offsets;
     Vector<Construction> constructions;
     Vector<uint32_t> identifierIndices;
+    Vector<uint32_t> typedIdentifierIndices;
+    Vector<String> typedIdentifierNames;
+    Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
     Vector<uint32_t> constantIndices;
 };
 
@@ -103,7 +106,7 @@ struct ProgramData {
 
     struct RetainedPositions {
         const Vector<FunctionReportableSites>& sites;
-        Function<bool(uint32_t moduleEntryOffset, LineColumn inModule, CString& sourceName, LineColumn& inSource)> find;
+        Function<bool(uint32_t moduleEntryOffset, LineColumn inModule, UTF8CString& sourceName, LineColumn& inSource)> find;
     };
     JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> moduleEntryOffsets, std::span<const uint8_t> codeImage, const RetainedPositions&, std::span<const FunctionReportableSites>, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules);
 
@@ -123,6 +126,7 @@ struct ProgramData {
     inline const FunctionInfo* infos() const;
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
     const ExecutableRow& executableRow(uint32_t index) const { return at<ExecutableRow>(executableRowsOffset)[index]; }
+    uint64_t typedEntry(uint32_t function) const { return function < numberOfTypedEntries ? at<uint64_t>(typedEntriesOffset)[function] : 0; }
     JS_EXPORT_PRIVATE const ExecutableRow& executableRowForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE uint32_t executableIndexForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE LineColumn functionStartPosition(uint32_t functionIndex) const;
@@ -144,6 +148,8 @@ struct ProgramData {
     uint32_t functionMetadataTableOffset;
     uint32_t executableRowsOffset;
     uint32_t numberOfExecutables;
+    uint32_t typedEntriesOffset;
+    uint32_t numberOfTypedEntries;
     uint32_t numberOfIdentifiers;
     uint32_t numberOfConstants;
     uint32_t numberOfUnlinkedFunctions;

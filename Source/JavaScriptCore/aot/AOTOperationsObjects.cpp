@@ -91,6 +91,64 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNoteClass, void, (Instance* instance, Encod
     OPERATION_RETURN(scope);
 }
 
+static Structure* structureOfInstances(VM& vm, JSGlobalObject* globalObject, Instance* instance, CallFrame* callFrame, JSFunction* constructor, Slot* cache)
+{
+    FunctionRareData* rareData = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, 0);
+    Structure* structure = rareData->objectAllocationStructure();
+    if (structure->maxOffset() != invalidOffset && !structure->hasPolyProto())
+        return structure;
+    AllocationPlan plan = caller(instance, callFrame).planOf(cache);
+    if (!plan)
+        return nullptr;
+    Vector<UniquedStringImpl*, 16> names;
+    for (unsigned i = 0; i < plan.count(); ++i)
+        names.append(identifierAt(instance, callFrame, plan.identifier(i)).impl());
+    if (names.isEmpty())
+        return structure;
+    DeferGC deferGC(vm);
+    JSObject* prototype = rareData->objectAllocationProfile()->prototype();
+    Structure* empty = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, prototype, KnownShape::inlineCapacityFor(names.size()));
+    structure = Structure::createWithProperties(vm, empty, names.span());
+    RELEASE_ASSERT(structure && !structure->outOfLineCapacity());
+    rareData->objectAllocationProfile()->replaceStructure(vm, rareData, structure);
+    return structure;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTDefineShapeOfInstances, void, (Instance* instance, EncodedJSValue encodedConstructor, Slot* cache))
+{
+    AOT_OPERATION_BEGIN(instance);
+    auto* constructor = dynamicDowncast<JSFunction>(JSValue::decode(encodedConstructor));
+    RELEASE_ASSERT(constructor && constructor->canUseAllocationProfiles());
+    RELEASE_ASSERT(structureOfInstances(vm, globalObject, instance, callFrame, constructor, cache));
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTCreateThisOfShape, JSObject*, (Instance* instance, JSObject* callee, Slot* cache, uint32_t isOnlyShape))
+{
+    AOT_OPERATION_BEGIN(instance);
+    auto* constructor = dynamicDowncast<JSFunction>(callee);
+    RELEASE_ASSERT(constructor && constructor->canUseAllocationProfiles());
+    Structure* structure = structureOfInstances(vm, globalObject, instance, callFrame, constructor, cache);
+    RELEASE_ASSERT(structure);
+    JSObject* object = constructEmptyObject(vm, structure);
+    for (PropertyOffset offset = 0; offset <= structure->maxOffset(); ++offset)
+        object->putDirectOffset(vm, offset, jsUndefined());
+    if (isOnlyShape)
+        fillAllocationCache(vm, callerData(instance, callFrame), cache, structure, subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator), structure->inlineCapacity(), constructor);
+    OPERATION_RETURN(scope, object);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTVerifyPlacedField, void, (Instance* instance, EncodedJSValue encodedBase, uint32_t identifier, uint32_t slot))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSObject* base = JSValue::decode(encodedBase).getObject();
+    RELEASE_ASSERT(base && base->type() == FinalObjectType);
+    unsigned attributes = 0;
+    PropertyOffset offset = base->structure()->get(vm, identifierAt(instance, callFrame, identifier), attributes);
+    RELEASE_ASSERT(offset == static_cast<PropertyOffset>(slot) && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue | PropertyAttribute::ReadOnly)));
+    OPERATION_RETURN(scope);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTMakeAtom, void, (EncodedJSValue value))
 {
     TypedLayoutTable::atomizeIfString(JSValue::decode(value));
@@ -644,6 +702,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTCreateThis, JSObject*, (Instance* instance,
             JSObject* prototype = allocationProfile->prototype();
             result->putDirectOffset(vm, knownPolyProtoOffset, prototype);
             prototype->didBecomePrototype(vm);
+        } else {
+            for (PropertyOffset offset = 0; offset <= structure->maxOffset(); ++offset)
+                result->putDirectOffset(vm, offset, jsUndefined());
         }
         OPERATION_RETURN(scope, ensureTypedLayout(globalObject, instance, result, layoutID));
     }

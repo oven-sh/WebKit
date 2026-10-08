@@ -33,7 +33,7 @@
 
 #include "AOTCompiler.h"
 #include "AOTTypeTable.h"
-#include "AOTTypedProgram.h"
+#include "AOTTypedPasses.h"
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
@@ -7174,74 +7174,87 @@ struct BytecodeLinkEncoder::Impl {
         builder.setNumberOfTypeCoverageCounters(numberOfTypeCoverageCounters * AOT::CoveredOperation::countersPerOperation);
         std::atomic<uint64_t> unreachedFunctions { 0 };
         std::atomic<uint64_t> unreachedBytecodeSize { 0 };
-        auto work = [&] {
-            for (size_t index = next++; index < jobs.size(); index = next++) {
-                if (jobs[index].isOmitted)
-                    continue;
-                if (const AOT::FunctionSummary* summary = jobs[index].summary; summary && !summary->isReached()) {
-                    unreachedFunctions++;
-                    unreachedBytecodeSize += jobs[index].codeBlock->instructionsSize();
-                    if (Options::verboseAOTCompilation()) [[unlikely]]
-                        dataLogLn("AOT: omitted as unreachable: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
-                    continue;
-                }
-                AOT::CompiledCode code;
-                if (Options::aotFunctionToDump()) [[unlikely]] {
-                    StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
-                    auto* executable = jobs[index].executable;
-                    code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
-                }
-                bool isTypedEntry = typedProgram && jobs[index].module == typedModule && !jobs[index].executable;
-                bool isCompiled = isTypedEntry ? AOT::Typed::compile(vm, *typedProgram, typedProgram->entry, code) : AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode);
-                if (isTypedEntry && isCompiled)
-                    code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
-                if (isCompiled) {
-                    {
-                        auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
-                        bool isTopLevel = !(jobs[index].rank & 2);
-                        bool startIsKnown = isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor;
-                        AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, jobs[index].sourceStart);
-                    }
-                    if (Options::logAOTTypeInference()) [[unlikely]] {
-                        auto* executable = jobs[index].executable;
-                        dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
-                    }
+        auto isTypedEntry = [&](size_t index) {
+            return typedProgram && jobs[index].module == typedModule && !jobs[index].executable;
+        };
+        Vector<String> typedFunctionsForMap;
+        if (typedProgram && Options::aotMapFilePath()) [[unlikely]]
+            typedFunctionsForMap = AOT::Typed::describeForMap(*typedProgram);
+        auto compileJob = [&](size_t index) {
+            if (jobs[index].isOmitted)
+                return;
+            if (const AOT::FunctionSummary* summary = jobs[index].summary; summary && !summary->isReached()) {
+                unreachedFunctions++;
+                unreachedBytecodeSize += jobs[index].codeBlock->instructionsSize();
+                if (Options::verboseAOTCompilation()) [[unlikely]]
+                    dataLogLn("AOT: omitted as unreachable: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
+                return;
+            }
+            AOT::CompiledCode code;
+            if (Options::aotFunctionToDump()) [[unlikely]] {
+                StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                auto* executable = jobs[index].executable;
+                code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
+            }
+            bool isCompiled = isTypedEntry(index) ? AOT::Typed::compile(vm, *typedProgram, typedProgram->entry, code) : AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode);
+            if (isTypedEntry(index) && isCompiled)
+                code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
+            if (isCompiled) {
+                {
                     auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
                     bool isTopLevel = !(jobs[index].rank & 2);
-                    bool isInProgram = isProgramModule(jobs[index].module);
-                    if (isInProgram && (isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor))
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), jobs[index].sourceStart);
-                    else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
-                        SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
-                        AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
-                    }
-                    if (auto* numbers = AOT::programIdentifierIndices()) {
-                        for (auto& identifier : jobs[index].codeBlock->identifiers())
-                            code.info.identifierIndices.append(numbers->get(identifier.impl()));
-                    }
-                    if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
-                        code.info.constantIndices = *numbers;
-                    if (Options::aotRemarksPath()) [[unlikely]] {
-                        Locker locker { declinedLock };
-                        allRemarks.append({ jobs[index].key, jobs[index].module, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
-                    }
-                    if (Options::aotTypeCoveragePath()) [[unlikely]] {
-                        Locker locker { declinedLock };
-                        allCoverage.append({ jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.coverage) });
-                    }
-                    String nameForMap;
-                    if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
-                        nameForMap = executable->ecmaName().string();
-                    builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
+                    bool startIsKnown = isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor;
+                    AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, jobs[index].sourceStart);
                 }
-                else {
+                if (Options::logAOTTypeInference()) [[unlikely]] {
+                    auto* executable = jobs[index].executable;
+                    dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
+                }
+                auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
+                bool isTopLevel = !(jobs[index].rank & 2);
+                bool isInProgram = isProgramModule(jobs[index].module);
+                if (isInProgram && (isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor))
+                    AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), jobs[index].sourceStart);
+                else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
+                    SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
+                    AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
+                }
+                if (auto* numbers = AOT::programIdentifierIndices()) {
+                    for (auto& identifier : jobs[index].codeBlock->identifiers())
+                        code.info.identifierIndices.append(numbers->get(identifier.impl()));
+                }
+                if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
+                    code.info.constantIndices = *numbers;
+                if (Options::aotRemarksPath()) [[unlikely]] {
                     Locker locker { declinedLock };
-                    declined.add(jobs[index].codeBlock);
-                    dataLogLn("AOT: cannot compile `", jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
+                    allRemarks.append({ jobs[index].key, jobs[index].module, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
                 }
+                if (Options::aotTypeCoveragePath()) [[unlikely]] {
+                    Locker locker { declinedLock };
+                    allCoverage.append({ jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.coverage) });
+                }
+                String nameForMap;
+                if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
+                    nameForMap = executable->ecmaName().string();
+                else if (isTypedEntry(index) && Options::aotMapFilePath()) [[unlikely]]
+                    nameForMap = typedFunctionsForMap[typedProgram->entry.index()];
+                builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
+            }
+            else {
+                Locker locker { declinedLock };
+                declined.add(jobs[index].codeBlock);
+                dataLogLn("AOT: cannot compile `", jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
+            }
+        };
+        auto work = [&] {
+            for (size_t index = next++; index < jobs.size(); index = next++) {
+                // What is compiled from bytecode may have to be compiled again, see below. The typed program is compiled once, after that.
+                if (!isTypedEntry(index))
+                    compileJob(index);
             }
         };
         AOT::IdentifierIndices identifierIndices;
+        Vector<std::pair<AOT::Typed::StringID, Identifier>> typedIdentifiers;
         {
             uint64_t totalCount = 0;
             for (auto& job : jobs) {
@@ -7250,6 +7263,14 @@ struct BytecodeLinkEncoder::Impl {
                 for (auto& identifier : job.codeBlock->identifiers()) {
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
                     ++totalCount;
+                }
+            }
+            if (typedProgram) {
+                for (AOT::Typed::StringID name : typedProgram->genericAccessIdentifiers()) {
+                    Identifier identifier = Identifier::fromString(vm, String::fromUTF8(typedProgram->string(name)));
+                    strings->ordinalFor(*identifier.impl());
+                    identifierIndices.add(identifier.impl(), 0).iterator->value++;
+                    typedIdentifiers.append({ name, WTF::move(identifier) });
                 }
             }
             Vector<std::pair<UniquedStringImpl*, uint32_t>> inOrder;
@@ -7266,6 +7287,11 @@ struct BytecodeLinkEncoder::Impl {
                 identifierIndices.set(inOrder[number].first, number + 1);
             AOT::setProgramIdentifierIndices(&identifierIndices);
             builder.setProgramIdentifierIndices(&identifierIndices, inOrder.size() + 1);
+            if (typedProgram) {
+                typedProgram->identifierNumbers.fill(0, typedProgram->strings.size());
+                for (auto& [name, identifier] : typedIdentifiers)
+                    typedProgram->identifierNumbers[name.index()] = identifierIndices.get(identifier.impl());
+            }
         }
 
         AOT::ConstantIndices constantIndices;
@@ -7488,19 +7514,82 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
         if (typedProgram) {
-            for (uint32_t function = 0; function < typedProgram->functions.size(); ++function) {
-                if (function == typedProgram->entry)
-                    continue;
+            // Compiled on all threads, and added in order, so that the image does not depend on who was first.
+            struct TypedResult {
+                WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(TypedResult);
                 AOT::CompiledCode code;
-                String name = String::fromUTF8(typedProgram->strings[typedProgram->functions[function].name]);
-                if (Options::aotFunctionToDump()) [[unlikely]]
-                    code.mayBeDumped = name == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
-                if (!AOT::Typed::compile(vm, *typedProgram, function, code)) {
-                    dataLogLn("AOT: `", name, "` was not compiled: ", code.whyDeclined);
-                    return { };
-                }
-                builder.add(AOT::Typed::keyOf(function), isNotHot | 1ull << 61 | static_cast<uint64_t>(function) << 2, WTF::move(code), WTF::move(name));
+                bool isCompiled { false };
+            };
+            for (size_t index = 0; index < jobs.size(); ++index) {
+                if (isTypedEntry(index))
+                    compileJob(index);
             }
+            if (!declined.isEmpty())
+                return { };
+            uint32_t numberOfTypedFunctions = typedProgram->functions.size();
+            Vector<std::unique_ptr<TypedResult>> typedResults(numberOfTypedFunctions);
+            std::atomic<uint32_t> nextTypedFunction { 0 };
+            auto nameOf = [&](AOT::Typed::FunctionID id) {
+                return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
+            };
+            auto compileTypedFunctions = [&] {
+                for (uint32_t function = nextTypedFunction++; function < numberOfTypedFunctions; function = nextTypedFunction++) {
+                    AOT::Typed::FunctionID id(function);
+                    // The entry is compiled in the place of the code of its module.
+                    if (id == typedProgram->entry)
+                        continue;
+                    auto result = makeUnique<TypedResult>();
+                    if (Options::aotFunctionToDump()) [[unlikely]]
+                        result->code.mayBeDumped = nameOf(id) == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                    result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
+                    typedResults[function] = WTF::move(result);
+                }
+            };
+            {
+                Vector<Ref<Thread>> threads;
+                for (unsigned i = 1; i < numberOfThreads; ++i)
+                    threads.append(Thread::create("AOT compiler"_s, [&compileTypedFunctions] { compileTypedFunctions(); }));
+                compileTypedFunctions();
+                for (auto& thread : threads)
+                    thread->waitForCompletion();
+            }
+            if (Options::verboseAOTCompilation()) [[unlikely]] {
+                uint64_t total = 0;
+                uint64_t count = 0;
+                std::array<uint64_t, 24> bytesBySize { };
+                std::array<uint64_t, 24> countBySize { };
+                for (auto& result : typedResults) {
+                    if (!result || !result->isCompiled)
+                        continue;
+                    size_t size = result->code.bytes.size();
+                    total += size;
+                    ++count;
+                    unsigned bucket = std::min<unsigned>(23, size ? WTF::fastLog2(static_cast<unsigned>(size)) : 0);
+                    bytesBySize[bucket] += size;
+                    ++countBySize[bucket];
+                }
+                dataLogLn("AOT statistics: code of typed functions: ", total, " bytes in ", count, " functions");
+                for (unsigned bucket = 0; bucket < bytesBySize.size(); ++bucket) {
+                    if (countBySize[bucket])
+                        dataLogLn("AOT statistics: functions of up to ", 1u << bucket, " bytes: ", countBySize[bucket], ", ", bytesBySize[bucket], " bytes");
+                }
+            }
+            unsigned numberOfDeclinedFunctions = 0;
+            for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
+                auto result = WTF::move(typedResults[function]);
+                if (!result)
+                    continue;
+                AOT::Typed::FunctionID id(function);
+                if (!result->isCompiled) {
+                    // All of them are reported, so that one build shows everything that is missing.
+                    dataLogLn("AOT: `", nameOf(id), "` was not compiled: ", result->code.whyDeclined);
+                    ++numberOfDeclinedFunctions;
+                    continue;
+                }
+                builder.add(AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | static_cast<uint64_t>(function) << 2, WTF::move(result->code), typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]));
+            }
+            if (numberOfDeclinedFunctions)
+                return { };
             builder.setTypedData(AOT::Typed::encodeData(*typedProgram));
         }
         AOT::forgetDeclaredNames();
@@ -7598,15 +7687,43 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
     m_impl->graphModuleIndices = WTF::move(graphModuleIndices);
 }
 
-bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, uint32_t module)
+bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, uint32_t module, std::span<const uint8_t> replacedStrings)
 {
 #if ENABLE(AOT)
-    m_impl->typedProgram = AOT::Typed::Program::tryDecode(bytes);
+    ASCIILiteral whyFailed;
+    m_impl->typedProgram = AOT::Typed::Program::tryRead(bytes, whyFailed);
     m_impl->typedModule = module;
-    return !!m_impl->typedProgram;
+    if (!m_impl->typedProgram) {
+        dataLogLn("AOT: ", whyFailed);
+        return false;
+    }
+    // Pairs of a string and what to put in its place, each a length in four bytes and the bytes.
+    while (replacedStrings.size() >= sizeof(uint32_t)) {
+        auto take = [&]() -> std::span<const uint8_t> {
+            uint32_t length = 0;
+            if (replacedStrings.size() < sizeof(length))
+                return { };
+            memcpySpan(asMutableByteSpan(length), replacedStrings.first(sizeof(length)));
+            replacedStrings = replacedStrings.subspan(sizeof(length));
+            auto result = replacedStrings.first(std::min<size_t>(length, replacedStrings.size()));
+            replacedStrings = replacedStrings.subspan(result.size());
+            return result;
+        };
+        auto from = take();
+        auto to = take();
+        m_impl->typedProgram->replaceString(from, to);
+    }
+    auto findings = AOT::Typed::optimize(*m_impl->typedProgram);
+    for (auto& finding : findings)
+        dataLogLn("AOT: the types do not hold: ", finding);
+    if (!findings.isEmpty())
+        return false;
+    AOT::Typed::place(*m_impl->typedProgram);
+    return true;
 #else
     UNUSED_PARAM(bytes);
     UNUSED_PARAM(module);
+    UNUSED_PARAM(replacedStrings);
     return false;
 #endif
 }

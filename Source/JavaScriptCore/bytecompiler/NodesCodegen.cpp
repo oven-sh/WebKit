@@ -315,10 +315,10 @@ RegisterID* ResolveNode::emitBytecode(BytecodeGenerator& generator, RegisterID* 
     RefPtr<RegisterID> scope = generator.emitResolveScope(dst, var);
     RegisterID* finalDest = generator.finalDestination(dst);
     if (!generator.needsTDZCheck(var))
-        generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound);
+        generator.emitGetFromScope(finalDest, scope.get(), var, ThrowIfNotFound, typeTag());
     else {
         RefPtr<RegisterID> uncheckedResult = generator.newTemporary();
-        generator.emitGetFromScope(uncheckedResult.get(), scope.get(), var, ThrowIfNotFound);
+        generator.emitGetFromScope(uncheckedResult.get(), scope.get(), var, ThrowIfNotFound, typeTag());
         generator.emitTDZCheck(uncheckedResult.get(), m_ident);
         generator.move(finalDest, uncheckedResult.get());
     }
@@ -509,9 +509,9 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
                 }
                 array->setIndex(generator.vm(), index++, constant);
             }
-            return generator.emitNewArrayBuffer(dst, array, recommendedIndexingType);
+            return generator.emitNewArrayBuffer(dst, array, recommendedIndexingType, typeTag());
         }
-        return generator.emitNewArray(dst, elements, length, recommendedIndexingType);
+        return generator.emitNewArray(dst, elements, length, recommendedIndexingType, typeTag());
     };
 
     if (!firstPutElement && !m_elision)
@@ -531,7 +531,7 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
         }
 
         if (!hasElision)
-            return generator.emitNewArrayWithSpread(generator.finalDestination(dst), m_element);
+            return generator.emitNewArrayWithSpread(generator.finalDestination(dst), m_element, typeTag());
     }
 
     RefPtr<RegisterID> array = newArray(generator.tempDestination(dst), m_element, length);
@@ -1560,7 +1560,7 @@ RegisterID* FunctionCallResolveNode::emitBytecode(BytecodeGenerator& generator, 
         generator.move(
             callArguments.thisRegister(),
             generator.emitResolveScope(callArguments.thisRegister(), var));
-        generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound);
+        generator.emitGetFromScope(func.get(), callArguments.thisRegister(), var, ThrowIfNotFound, typeTag());
         generator.emitTDZCheckIfNecessary(var, func.get(), nullptr);
     }
 

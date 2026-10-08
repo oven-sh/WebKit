@@ -78,6 +78,8 @@ struct EntryWord {
     static constexpr unsigned numberOfParametersShift = 48;
     static constexpr unsigned numberOfParametersBits = 4;
     static constexpr unsigned isListBit = 52;
+    // [[Call]] throws: a class constructor.
+    static constexpr unsigned isNotCallableBit = 53;
     static constexpr uint64_t addressMask = (1ULL << numberOfParametersShift) - 1;
     static_assert(numberOfArgumentGPRs < (1u << numberOfParametersBits));
 

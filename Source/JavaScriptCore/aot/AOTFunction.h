@@ -184,7 +184,7 @@ JS_EXPORT_PRIVATE Instance* instanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
-JS_EXPORT_PRIVATE CodeBlock* callerCodeBlock(const CallFrame*);
+JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
 JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&, bool entersStaticCode);

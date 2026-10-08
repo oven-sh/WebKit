@@ -23,6 +23,7 @@
 #include "config.h"
 #include "Parser.h"
 
+#include "AOTFacts.h"
 #include "ASTBuilder.h"
 #include "BuiltinNames.h"
 #include "DebuggerParseData.h"
@@ -3441,7 +3442,8 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.endOffset = (*initializerPosition);
                     restoreLexerState(LexerState { initializerPosition->offset, loc, hasLineTerminatorBeforeToken, ERRORTOK });
                 }
-                if (Options::useTypeTags() && initializerPosition->offset >= 7) [[unlikely]] {
+#if ENABLE(AOT)
+                if ((Options::useTypeTags() || AOT::Facts::shared()) && initializerPosition->offset >= 7) [[unlikely]] {
                     StringView text = m_source->provider()->source();
                     unsigned at = initializerPosition->offset - 7;
                     if (text[at] == 1) {
@@ -3454,6 +3456,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                         m_token.m_typeTag = static_cast<uint32_t>(tag);
                     }
                 }
+#endif
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().
@@ -5169,8 +5172,13 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         return parseClassExpression(context);
     case OPENBRACE:
         return parseObjectLiteral(context);
-    case OPENBRACKET:
-        return parseArrayLiteral(context);
+    case OPENBRACKET: {
+        uint32_t typeTag = m_token.m_typeTag;
+        TreeExpression array = parseArrayLiteral(context);
+        if (typeTag && array) [[unlikely]]
+            context.setTypeTag(array, typeTag);
+        return array;
+    }
     case OPENPAREN: {
         next();
         SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
@@ -5220,13 +5228,17 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         if (*ident == m_vm.propertyNames->arguments) [[unlikely]]
             failIfTrue(closestScopeOwningArguments()->evalContextType() == EvalContextType::InstanceFieldEvalContext, "arguments is not valid in this context");
         JSTokenLocation location(tokenLocation());
+        uint32_t typeTag = m_token.m_typeTag;
         next();
 
         // Avoid using variable if it is an arrow function parameter
         if (match(ARROWFUNCTION)) [[unlikely]]
             return 0;
 
-        return createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
+        TreeExpression resolve = createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
+        if (typeTag) [[unlikely]]
+            context.setTypeTag(resolve, typeTag);
+        return resolve;
     }
     case BIGINT: {
         const Identifier* ident = m_token.m_data.bigIntString;
@@ -5314,8 +5326,9 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
     consumeOrFailWithFlags(OPENPAREN, TreeBuilder::DontBuildStrings, "Expected opening '(' at start of argument list");
     JSTokenLocation location(tokenLocation());
     if (match(CLOSEPAREN)) {
+        uint32_t typeTag = m_token.m_typeTag;
         next();
-        return context.createArguments();
+        return context.withTypeTag(context.createArguments(), typeTag);
     }
     auto argumentsStart = m_token.m_startPosition;
     auto argumentsDivot = m_token.m_endPosition;
@@ -5349,13 +5362,14 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
         tail = context.createArgumentsList(argumentLocation, tail, arg);
     }
 
+    uint32_t typeTag = m_token.m_typeTag;
     handleProductionOrFail2(CLOSEPAREN, ")", "end", "argument list");
     if (hasSpread) {
         TreeExpression spreadArray = context.createSpreadExpression(location, context.createArray(location, context.createElementList(argList)), argumentsStart, argumentsDivot, lastTokenEndPosition());
-        return context.createArguments(context.createArgumentsList(location, spreadArray), initialAssignments != m_parserState.assignmentCount);
+        return context.withTypeTag(context.createArguments(context.createArgumentsList(location, spreadArray), initialAssignments != m_parserState.assignmentCount), typeTag);
     }
 
-    return context.createArguments(argList, initialAssignments != m_parserState.assignmentCount);
+    return context.withTypeTag(context.createArguments(argList, initialAssignments != m_parserState.assignmentCount), typeTag);
 }
 
 template <typename LexerType>

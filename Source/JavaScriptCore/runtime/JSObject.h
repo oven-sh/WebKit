@@ -581,8 +581,18 @@ public:
 
     inline void setStructure(VM&, Structure*); // Defined in StructureCreateInlines.h
 
-    JS_EXPORT_PRIVATE void makePropertiesImmutable(JSGlobalObject*);
+    // For the intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). The properties the object has become non-configurable and, unless
+    // they are accessors, read-only; so does an entry of its class's static table when it is reified, and before that it is treated
+    // as if it were. Its prototype stays the one it has, and it gets no property under a name that it inherits from another such
+    // object. An object that inherits from it can still be assigned a property of its own under such a name.
+    enum class FixedObject : bool { StaysExtensible, BecomesNonExtensible };
+    JS_EXPORT_PRIVATE void fixProperties(VM&, FixedObject);
     JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
+    // With immutable intrinsics, ArrayType says that an array is as the engine makes them: it inherits from Array.prototype directly, has
+    // no property of its own under a name it inherits, and no element that is an accessor. One that is about to be given any of these
+    // is of DerivedArrayType from then on, as what a class that extends Array makes is from the start, and keeps its elements in
+    // ArrayStorage, which it never leaves: code that stores or reads elements in place by their shape does not take it for what it was.
+    JS_EXPORT_PRIVATE void becomeDerivedArray(VM&);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
 #if USE(BUN_JSC_ADDITIONS)

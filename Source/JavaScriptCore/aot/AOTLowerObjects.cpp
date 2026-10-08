@@ -210,6 +210,43 @@ bool Lowering::tryLowerAllocation(Node* node)
 
     switch (node->opcode) {
     case op_new_object:
+        if (auto site = Graph::factsAbout(node); site.kind == Facts::SiteKind::Object) {
+            if (auto names = Graph::namesPlacedIn(site.number); !names.isEmpty()) {
+                unsigned given = node->numberOfLiteralProperties;
+                RELEASE_ASSERT(given <= names.size() && programIdentifierIndices());
+                auto& instructions = code().codeBlock()->instructions();
+                auto& stores = code().literalStores(node->bytecodeIndex.offset());
+                Vector<LValue, 8> values;
+                for (unsigned i = 0; i < given; ++i) {
+                    RELEASE_ASSERT(code().codeBlock()->identifier(instructions.at(stores[i])->as<OpPutById>().m_property).impl() == names[i]);
+                    values.append(lowJSValue(node->use(NewObjectPlan::registerOf(i))));
+                }
+                while (values.size() < names.size())
+                    values.append(m_out.constInt64(JSValue::ValueUndefined));
+                unsigned slot = allocateSlots(2);
+                Vector<uint32_t, 16> words { AllocationPlan::encode(node->as<OpNewObject>().m_inlineCapacity, names.size()) };
+                for (UniquedStringImpl* name : names)
+                    words.append(AllocationPlan::encode(programIdentifierIndices()->get(name), true, true, true));
+                KnownShape shape;
+                shape.inlineCapacity = KnownShape::inlineCapacityFor(names.size());
+                shape.names = names;
+                m_graph.noteSiteShape(slot, WTF::move(shape));
+                m_graph.noteSitePlan(slot, WTF::move(words));
+                m_graph.remark("object-born-with-shape"_s, String::number(names.size()));
+                LBasicBlock slowCase = m_out.newBlock();
+                LBasicBlock continuation = m_out.newBlock();
+                ValueFromBlock fastResult = m_out.anchor(allocateObjectWithProperties(slot, values, slowCase));
+                m_out.jump(continuation);
+                m_out.appendTo(slowCase, continuation);
+                for (unsigned i = 0; i < values.size(); ++i)
+                    m_out.store64(values[i], scratchWord(i));
+                ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTNewObjectLiteral, m_instance, scratchAddress(), m_out.constInt32(values.size()), slotAddress(slot)));
+                m_out.jump(continuation);
+                m_out.appendTo(continuation);
+                setJSValue(node, m_out.phi(pointerType(), fastResult, slowResult));
+                return true;
+            }
+        }
         if (unsigned count = node->numberOfLiteralProperties) {
             Vector<LValue, 8> values;
             Vector<Node*, 8> layoutSlotNodes;
@@ -333,6 +370,38 @@ bool Lowering::tryLowerAllocation(Node* node)
         return true;
     case op_create_this: {
         auto bytecode = node->as<OpCreateThis>();
+        if (auto shapes = Facts::shared() && node->type && isSubtype(node->type, TFinalObject) ? m_graph.shapesIn(node->type) : std::nullopt; shapes && !shapes->isEmpty()) {
+            RELEASE_ASSERT(!node->numberOfLiteralProperties && programIdentifierIndices());
+            LValue callee = lowCell(node->use(bytecode.m_callee));
+            unsigned slot = allocateSlots(2);
+            if (shapes->size() > 1) {
+                m_graph.remark("this-born-with-one-of-shapes"_s, String::number(shapes->size()));
+                setJSValue(node, vmCall(node, pointerType(), Entry::operationAOTCreateThisOfShape, m_instance, callee, slotAddress(slot), m_out.constInt32(0)));
+                return true;
+            }
+            auto names = Graph::namesPlacedIn(shapes->first());
+            Vector<uint32_t, 16> words { AllocationPlan::encode(bytecode.m_inlineCapacity, names.size()) };
+            for (UniquedStringImpl* name : names)
+                words.append(AllocationPlan::encode(programIdentifierIndices()->get(name), true, true, true));
+            words.append(0);
+            m_graph.noteSitePlan(slot, WTF::move(words));
+            m_graph.remark("this-born-with-shape"_s, String::number(names.size()));
+            Vector<LValue, 8> values;
+            values.fill(m_out.constInt64(JSValue::ValueUndefined), names.size());
+            LBasicBlock isSameCallee = m_out.newBlock();
+            LBasicBlock slowCase = m_out.newBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            m_out.branch(m_out.equal(m_out.loadPtr(slotWord(slot, 1)), callee), usually(isSameCallee), rarely(slowCase));
+            m_out.appendTo(isSameCallee);
+            ValueFromBlock fastResult = m_out.anchor(allocateObjectWithProperties(slot, values, slowCase));
+            m_out.jump(continuation);
+            m_out.appendTo(slowCase, continuation);
+            ValueFromBlock slowResult = m_out.anchor(vmCall(node, pointerType(), Entry::operationAOTCreateThisOfShape, m_instance, callee, slotAddress(slot), m_out.constInt32(1)));
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            setJSValue(node, m_out.phi(pointerType(), fastResult, slowResult));
+            return true;
+        }
         if (unsigned count = node->numberOfLiteralProperties) {
             Vector<LValue, 8> values;
             Vector<Node*, 8> layoutSlotNodes;
@@ -963,6 +1032,12 @@ void Lowering::lowerGetLength(Node* node)
             m_out.appendTo(isNotNullish);
         }
         baseType = unlessNullish;
+    }
+
+    if (Graph::hasFixedLength(baseNode)) {
+        m_graph.remark("reads-length-of-typed-array"_s);
+        setInt64(node, typedArrayViewOf(baseNode, base).length);
+        return;
     }
 
     if (isSubtype(baseType, TArray) && baseType) {

@@ -27,6 +27,18 @@ public:
     void run()
     {
         m_frameRegisters.fill(FrameRegister { }, m_graph.numRegisters());
+        for (BasicBlock* block : m_graph.m_rpo) {
+            for (Node* phi : block->phis) {
+                phi->range = Range::none();
+                phi->rangeUpdates = 0;
+            }
+            for (Node* node : block->nodes) {
+                if (node->kind == NodeKind::Constant)
+                    continue;
+                node->range = Range::none();
+                node->rangeUpdates = 0;
+            }
+        }
         bool changed = true;
         while (changed) {
             changed = false;
@@ -487,6 +499,8 @@ private:
                 return Range::of(0, INT32_MAX);
             if (base && isSubtype(base, TString | TArray))
                 return Range::of(0, UINT32_MAX);
+            if (Graph::hasFixedLength(node->use(node->as<OpGetLength>().m_base)))
+                return Range::of(0, static_cast<int64_t>(MAX_ARRAY_BUFFER_SIZE));
             return Range::unknown();
         }
         default:

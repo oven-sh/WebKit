@@ -428,7 +428,31 @@ struct HashTable {
 };
 
 JS_EXPORT_PRIVATE bool setUpStaticFunctionSlot(VM&, const ClassInfo*, const HashTableValue*, JSObject* thisObject, PropertyName, PropertySlot&);
-JS_EXPORT_PRIVATE void reifyStaticAccessor(VM&, const HashTableValue&, JSObject& thisObject, PropertyName);
+JS_EXPORT_PRIVATE void reifyStaticAccessor(VM&, const HashTableValue&, JSObject& thisObject, PropertyName, unsigned attributes);
+JS_EXPORT_PRIVATE void reifyFixedStaticProperty(VM&, const ClassInfo*, const PropertyName&, const HashTableValue&, JSObject& thisObject);
+
+// With immutable intrinsics: an entry of the table of an object whose properties are fixed (JSObject::fixProperties()), or of the
+// global object's own table, which names the intrinsics. It cannot be replaced or deleted, reified or not.
+inline bool isFixedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+{
+    if (!vm.useImmutableIntrinsics) [[likely]]
+        return false;
+    if (object.structure()->inheritorsMayOverrideReadOnlyProperties())
+        return true;
+    const HashTable& bindings = *JSGlobalObject::info()->staticPropHashTable;
+    return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue);
+}
+
+inline unsigned attributesOfStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+{
+    unsigned attributes = attributesForStructure(value.attributes());
+    if (isFixedStaticProperty(vm, object, value)) [[unlikely]] {
+        attributes |= PropertyAttribute::DontDelete;
+        if ((value.attributes() & (PropertyAttribute::BuiltinOrFunctionOrLazyProperty | PropertyAttribute::ConstantInteger)) && !(value.attributes() & PropertyAttribute::Accessor))
+            attributes |= PropertyAttribute::ReadOnly;
+    }
+    return attributes;
+}
 
 inline BuiltinGenerator HashTableValue::builtinAccessorGetterGenerator() const
 {
@@ -459,34 +483,34 @@ inline bool getStaticPropertySlotFromTable(VM& vm, const ClassInfo* classInfo, c
         return setUpStaticFunctionSlot(vm, classInfo, entry, thisObject, propertyName, slot);
 
     if (entry->attributes() & PropertyAttribute::ConstantInteger) {
-        slot.setValue(thisObject, attributesForStructure(entry->attributes()), jsNumber(entry->constantInteger()));
+        slot.setValue(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), jsNumber(entry->constantInteger()));
         return true;
     }
 
     if (entry->attributes() & PropertyAttribute::DOMJITAttribute) {
         ASSERT_WITH_MESSAGE(entry->attributes() & PropertyAttribute::ReadOnly, "DOMJITAttribute supports readonly attributes currently.");
         const DOMJIT::GetterSetter* domJIT = entry->domJIT();
-        slot.setCacheableCustom(thisObject, attributesForStructure(entry->attributes()), domJIT->getter(), entry->domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
+        slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), domJIT->getter(), entry->domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
         return true;
     }
 
     if (entry->attributes() & PropertyAttribute::DOMAttribute) {
-        slot.setCacheableCustom(thisObject, attributesForStructure(entry->attributes()), entry->propertyGetter(), entry->propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
+        slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
         return true;
     }
 
-    slot.setCacheableCustom(thisObject, attributesForStructure(entry->attributes()), entry->propertyGetter(), entry->propertyPutter());
+    slot.setCacheableCustom(thisObject, attributesOfStaticProperty(vm, *thisObject, *entry), entry->propertyGetter(), entry->propertyPutter());
     return true;
 }
 
-inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
+inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj, unsigned attributes)
 {
     if (value.attributes() & PropertyAttribute::Builtin) {
         if (value.attributes() & PropertyAttribute::Accessor)
-            reifyStaticAccessor(vm, value, thisObj, propertyName);
+            reifyStaticAccessor(vm, value, thisObj, propertyName, attributes);
         else {
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            SUPPRESS_FORWARD_DECL_ARG thisObj.putDirectBuiltinFunction(vm, thisObj.realm(), propertyName, value.builtinGenerator()(vm), attributesForStructure(value.attributes()));
+            SUPPRESS_FORWARD_DECL_ARG thisObj.putDirectBuiltinFunction(vm, thisObj.realm(), propertyName, value.builtinGenerator()(vm), attributes);
         }
         return;
     }
@@ -496,7 +520,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
             thisObj.putDirectNativeFunction(
                 vm, thisObj.realm(), propertyName, value.functionLength(),
-                value.domJITFunction(), ImplementationVisibility::Public, value.intrinsic(), value.signature(), attributesForStructure(value.attributes()));
+                value.domJITFunction(), ImplementationVisibility::Public, value.intrinsic(), value.signature(), attributes);
             return;
         }
         #if USE(BUN_JSC_ADDITIONS)
@@ -504,25 +528,25 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
             StringImpl *name = propertyName.publicName();
             JSFunction* function = JSFunction::create(vm, thisObj.realm(), value.functionLength(), name, value.function(), ImplementationVisibility::Public, value.intrinsic(), value.function(), nullptr);
             AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-            thisObj.putDirect(vm, propertyName, function, attributesForStructure(value.attributes()));
+            thisObj.putDirect(vm, propertyName, function, attributes);
             return;
         }
         #endif
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         thisObj.putDirectNativeFunction(
             vm, thisObj.realm(), propertyName, value.functionLength(),
-            value.function(), ImplementationVisibility::Public, value.intrinsic(), attributesForStructure(value.attributes()));
+            value.function(), ImplementationVisibility::Public, value.intrinsic(), attributes);
         return;
     }
 
     if (value.attributes() & PropertyAttribute::ConstantInteger) {
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirect(vm, propertyName, jsNumber(value.constantInteger()), attributesForStructure(value.attributes()));
+        thisObj.putDirect(vm, propertyName, jsNumber(value.constantInteger()), attributes);
         return;
     }
 
     if (value.attributes() & PropertyAttribute::Accessor) {
-        reifyStaticAccessor(vm, value, thisObj, propertyName);
+        reifyStaticAccessor(vm, value, thisObj, propertyName, attributes);
         return;
     }
     
@@ -531,7 +555,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
             std::bit_cast<char*>(&thisObj) + value.lazyCellPropertyOffset());
         JSCell* result = property->get(&thisObj);
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
+        thisObj.putDirect(vm, propertyName, result, attributes);
         return;
     }
     
@@ -540,7 +564,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
             std::bit_cast<char*>(&thisObj) + value.lazyClassStructureOffset());
         JSObject* constructor = lazyStructure->constructor(&uncheckedDowncast<JSGlobalObject>(thisObj));
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirect(vm, propertyName, constructor, attributesForStructure(value.attributes()));
+        thisObj.putDirect(vm, propertyName, constructor, attributes);
         return;
     }
     
@@ -552,7 +576,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         if (!result) [[unlikely]]
             return;
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirect(vm, propertyName, result, attributesForStructure(value.attributes()));
+        thisObj.putDirect(vm, propertyName, result, attributes);
         return;
     }
 
@@ -561,7 +585,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         const DOMJIT::GetterSetter* domJIT = value.domJIT();
         auto* customGetterSetter = DOMAttributeGetterSetter::create(vm, domJIT->getter(), value.domJITSetter(), DOMAttributeAnnotation { classInfo, domJIT });
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
+        thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributes);
         return;
     }
 
@@ -569,13 +593,22 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
         ASSERT_WITH_MESSAGE(classInfo, "DOMAttribute should have class info for type checking.");
         auto* customGetterSetter = DOMAttributeGetterSetter::create(vm, value.propertyGetter(), value.propertyPutter(), DOMAttributeAnnotation { classInfo, nullptr });
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-        thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
+        thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributes);
         return;
     }
 
     CustomGetterSetter* customGetterSetter = CustomGetterSetter::create(vm, value.propertyGetter(), value.propertyPutter());
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
-    thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributesForStructure(value.attributes()));
+    thisObj.putDirectCustomAccessor(vm, propertyName, customGetterSetter, attributes);
+}
+
+inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
+{
+    if (isFixedStaticProperty(vm, thisObj, value)) [[unlikely]] {
+        reifyFixedStaticProperty(vm, classInfo, propertyName, value, thisObj);
+        return;
+    }
+    reifyStaticProperty(vm, classInfo, propertyName, value, thisObj, attributesForStructure(value.attributes()));
 }
 
 template<typename ArrayType>

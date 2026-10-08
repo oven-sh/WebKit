@@ -689,7 +689,7 @@ uint16_t Graph::familyGivenAt(const Node* birth, std::span<UniquedStringImpl* co
 Graph::PlacesToGuard Graph::findPlacesToGuard()
 {
     PlacesToGuard places;
-    if (!m_propertyPlaces || !usesDataStubs())
+    if (!m_propertyPlaces || !usesDataStubs() || Facts::shared())
         return places;
     static constexpr unsigned maximumBytecodeSize = 4096;
     static constexpr unsigned minimumNumberOfPlacesPerThousandBytes = 10;

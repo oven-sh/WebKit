@@ -109,7 +109,15 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
             return encodedJSUndefined();
     }
 
-    object->putDirect(vm, vm.propertyNames->stack, jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace)), static_cast<unsigned>(PropertyAttribute::DontEnum));
+    JSString* stack = jsString(vm, Interpreter::stackTraceAsString(vm, stackTrace));
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        object->methodTable()->defineOwnProperty(object, globalObject, vm.propertyNames->stack, PropertyDescriptor(stack, static_cast<unsigned>(PropertyAttribute::DontEnum)), true);
+        RETURN_IF_EXCEPTION(scope, { });
+        return encodedJSUndefined();
+    }
+#endif
+    object->putDirect(vm, vm.propertyNames->stack, stack, static_cast<unsigned>(PropertyAttribute::DontEnum));
     RETURN_IF_EXCEPTION(scope, { });
 
     return encodedJSUndefined();
