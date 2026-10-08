@@ -28,6 +28,7 @@
 
 #include "AsyncContextSwapScope.h"
 #include "BuiltinNames.h"
+#include "CodeCache.h"
 #include "Interpreter.h"
 #include "JSAsyncFunction.h"
 #include "JSAsyncGeneratorFunction.h"
@@ -481,7 +482,7 @@ std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importe
             return IterationStatus::Continue;
 #if USE(BUN_JSC_ADDITIONS)
         // Read by name, whatever the exporter is. It may have no binding of that name.
-        if (resolution.moduleRecord->hasLiveExports()) [[unlikely]] {
+        if (resolution.isLiveExport(vm)) [[unlikely]] {
             bindings.append({ localName.impl(), nullptr, resolution.localName.impl(), 0, index, true });
             return IterationStatus::Continue;
         }
@@ -514,14 +515,14 @@ String JSModuleRecord::liveImports(JSGlobalObject* globalObject)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!moduleLoader()->hasMadeRecordWithLiveExports()) [[likely]]
+    if (!vm.codeCache()->hasModuleRecordWithLiveExports()) [[likely]]
         return { };
 
     StringBuilder builder;
     forEachImportSlot([&](unsigned, const Identifier& localName) {
         Resolution resolution = resolveImport(globalObject, localName);
         RETURN_IF_EXCEPTION(scope, IterationStatus::Done);
-        if (resolution.type == Resolution::Type::Resolved && resolution.moduleRecord->hasLiveExports())
+        if (resolution.isLiveExport(vm))
             builder.append(StringView(localName.impl()), ',');
         return IterationStatus::Continue;
     });

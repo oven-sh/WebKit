@@ -27,6 +27,7 @@
 #include "AbstractModuleRecord.h"
 
 #include "BuiltinNames.h"
+#include "CodeCache.h"
 #include "CyclicModuleRecord.h"
 #include "Error.h"
 #include "JSCInlines.h"
@@ -1033,17 +1034,17 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 foundStarLinks = true;
 
             const std::optional<ExportEntry> optionalExportEntry = moduleRecord->tryGetExportEntry(query.exportName.get());
-            if (!optionalExportEntry) {
 #if USE(BUN_JSC_ADDITIONS)
-                // Were it to claim every name that is looked for through a star as well, it would make the names of the
-                // other stars next to it ambiguous.
-                if (moduleRecord->hasLiveExports() && !task.throughStar) [[unlikely]] {
-                    Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
-                    if (!mergeToCurrentTop(resolution))
-                        return Resolution::ambiguous();
-                    continue;
-                }
+            // Were it to claim every name that is looked for through a star as well, it would make the names of the other
+            // stars next to it ambiguous.
+            if (moduleRecord->hasLiveExports() && (optionalExportEntry || !task.throughStar)) [[unlikely]] {
+                Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+                if (!mergeToCurrentTop(resolution))
+                    return Resolution::ambiguous();
+                continue;
+            }
 #endif
+            if (!optionalExportEntry) {
                 // If there is no matched exported binding in the current module, we need to look
                 // into the stars. We don't probe m_resolutionCache here: the only writer that can
                 // populate (moduleRecord, exportName) while exportEntries has no match for exportName
@@ -1088,7 +1089,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 pendingTasks.append(Task { query, Type::IndirectFallback });
                 // And append the new Resolution frame to check the indirect export will be resolved or not.
                 frames.append(Resolution::notFound());
-                pendingTasks.append(Task { ResolveQuery(importedModuleRecord, exportEntry.importName), Type::Query, task.throughStar });
+                pendingTasks.append(Task { ResolveQuery(importedModuleRecord, exportEntry.importName), Type::Query });
                 continue;
             }
 
@@ -1161,7 +1162,7 @@ auto AbstractModuleRecord::resolveExport(JSGlobalObject* globalObject, const Ide
 #if USE(BUN_JSC_ADDITIONS)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (m_prelinked) {
+    if (m_prelinked && !m_hasLiveExports) {
         std::optional<Resolution> resolution = tryResolveExportPrelinked(globalObject, exportName);
         RETURN_IF_EXCEPTION(scope, Resolution::error());
         if (resolution) [[likely]] {
@@ -1185,6 +1186,11 @@ auto AbstractModuleRecord::resolveExportByName(JSGlobalObject* globalObject, con
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_hasLiveExports) [[unlikely]]
+        return Resolution { Resolution::Type::Resolved, this, exportName };
+#endif
 
     // Local / Namespace exports are trivially derivable from m_exportEntries.
     // m_resolutionCache only holds results that actually amortise costly traversals, Indirect resolutions and star-resolved results.
@@ -1233,8 +1239,9 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     Vector<std::pair<Identifier, Resolution>> resolutions;
 #if USE(BUN_JSC_ADDITIONS)
-    bool collected = false;
-    if (m_prelinked && !Options::validatePrelinkedModuleInfo()) {
+    // Its namespace object has what liveExportsSource() has.
+    bool collected = m_hasLiveExports;
+    if (!collected && m_prelinked && !Options::validatePrelinkedModuleInfo()) {
         collected = collectPrelinkedNamespaceResolutions(globalObject, resolutions);
         RETURN_IF_EXCEPTION(scope, nullptr);
     }
@@ -1254,12 +1261,18 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     UncheckedKeyHashSet<AbstractModuleRecord*> exportStarSet;
     Vector<AbstractModuleRecord*, 8> pendingModules;
     pendingModules.append(this);
+#if USE(BUN_JSC_ADDITIONS)
+    bool sawLiveExports = false;
+#endif
 
     while (!pendingModules.isEmpty()) {
         AbstractModuleRecord* moduleRecord = pendingModules.takeLast();
         if (!exportStarSet.add(moduleRecord).isNewEntry)
             continue;
         bool isRoot = moduleRecord == this;
+#if USE(BUN_JSC_ADDITIONS)
+        sawLiveExports |= moduleRecord->hasLiveExports();
+#endif
 
         for (const auto& pair : moduleRecord->exportEntries()) {
             const ExportEntry& exportEntry = pair.value;
@@ -1318,6 +1331,15 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             pendingModules.append(requestedModuleRecord);
         }
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // The walk found the names. Only resolveExport() knows which of them are read from a record with live exports.
+    if (sawLiveExports) [[unlikely]] {
+        for (auto& pair : uniqueBindings)
+            slowPathNames.add(pair.key);
+        uniqueBindings.clear();
+    }
+#endif
 
     resolutions.reserveCapacity(resolutions.size() + uniqueBindings.size() + slowPathNames.size());
     for (auto& pair : uniqueBindings) {
@@ -2162,10 +2184,15 @@ void AbstractModuleRecord::dump()
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+bool AbstractModuleRecord::Resolution::isLiveExport(VM& vm) const
+{
+    return type == Type::Resolved && moduleRecord->hasLiveExports() && localName != vm.propertyNames->starNamespacePrivateName;
+}
+
 void AbstractModuleRecord::setHasLiveExports()
 {
     m_hasLiveExports = true;
-    m_moduleLoader->didMakeRecordWithLiveExports();
+    vm().codeCache()->didMakeModuleRecordWithLiveExports();
 }
 
 void AbstractModuleRecord::setLiveExportsSource(VM& vm, JSObject* source)

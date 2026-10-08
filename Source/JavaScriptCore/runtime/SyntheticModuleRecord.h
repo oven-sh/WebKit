@@ -69,7 +69,7 @@ public:
     // That happens the first time something binds to the export, i.e. when an importing module links a named import
     // of it or when it is read off a module namespace object.
     // With LazyExports::Live the record has live exports (AbstractModuleRecord::hasLiveExports) that are read from
-    // lazyExportsSource: such a binding stays uninitialized unless JSModuleNamespaceObject::overrideExportValue writes it.
+    // lazyExportsSource: such a binding stays uninitialized.
     enum class LazyExports : bool { ReadOnce, Live };
     JS_EXPORT_PRIVATE static SyntheticModuleRecord* tryCreateWithExportNamesAndValues(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource, LazyExports = LazyExports::ReadOnce);
 

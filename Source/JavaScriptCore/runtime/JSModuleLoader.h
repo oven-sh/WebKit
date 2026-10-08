@@ -242,10 +242,6 @@ public:
     // Options::usePrelinkedModuleInfo(): the embedder's pre-resolved graph for this realm and the record it registered
     // for each of its modules (null until that module is fetched). Prelinked records resolve their pre-resolved
     // import bindings' module indices through this table.
-    // Until then no record of this loader needs to look for imports of live exports (JSModuleRecord::liveImports).
-    bool hasMadeRecordWithLiveExports() const { return m_hasMadeRecordWithLiveExports; }
-    void didMakeRecordWithLiveExports() { m_hasMadeRecordWithLiveExports = true; }
-
     PrelinkedModuleGraph* prelinkedModuleGraph() const { return m_prelinkedGraph.get(); }
     JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(Ref<PrelinkedModuleGraph>&&);
     AbstractModuleRecord* prelinkedRecord(uint32_t moduleIndex) const
@@ -284,7 +280,6 @@ private:
     Vector<WriteBarrier<AbstractModuleRecord>> m_prelinkedRecords; // visited under cellLock()
     BitVector m_prelinkedRecordRemoved; // empty until the first removal
     unsigned m_nonJavaScriptEntryCount { 0 }; // m_moduleMap entries whose type is not JavaScript, for registryEntry()'s by-specifier fallback
-    bool m_hasMadeRecordWithLiveExports { false };
 #endif
     void didAddModuleMapEntry(ScriptFetchParameters::Type type)
     {

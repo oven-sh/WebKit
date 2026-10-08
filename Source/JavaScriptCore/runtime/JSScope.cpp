@@ -95,7 +95,7 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
                 AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
-                if (importedRecord->hasLiveExports()) [[unlikely]] {
+                if (resolution.isLiveExport(vm)) [[unlikely]] {
                     op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
                     return true;
                 }

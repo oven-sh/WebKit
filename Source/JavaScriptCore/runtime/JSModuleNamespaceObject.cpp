@@ -350,6 +350,14 @@ bool JSModuleNamespaceObject::deleteProperty(JSCell* cell, JSGlobalObject* globa
         RETURN_IF_EXCEPTION(scope, false);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_moduleRecord->hasLiveExports()) [[unlikely]] {
+        bool hasExport = thisObject->m_moduleRecord->hasLiveExport(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, false);
+        return !hasExport;
+    }
+#endif
+
     return !thisObject->m_exports.contains(propertyName.uid());
 }
 
@@ -362,6 +370,13 @@ bool JSModuleNamespaceObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject
         thisObject->ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (thisObject->m_moduleRecord->hasLiveExports()) [[unlikely]] {
+        bool hasExport = thisObject->m_moduleRecord->hasLiveExport(globalObject, Identifier::from(vm, propertyName));
+        RETURN_IF_EXCEPTION(scope, false);
+        return !hasExport;
+    }
+#endif
     return !thisObject->m_exports.contains(Identifier::from(vm, propertyName).impl());
 }
 
@@ -518,8 +533,6 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A binding that has been initialized stays so: the optimizing tiers do not check again.
-    RELEASE_ASSERT(value);
     JSC::Identifier identifier = Identifier::fromUid(vm, name.uid());
     auto resolution = moduleRecord()->resolveExport(globalObject, identifier);
     RETURN_IF_EXCEPTION(scope, false);
@@ -540,6 +553,8 @@ bool JSModuleNamespaceObject::overrideExportValue(JSGlobalObject* globalObject, 
     // Its exports are what liveExportsSource() has.
     if (record->hasLiveExports())
         return false;
+    // A binding that has been initialized stays so: the optimizing tiers do not check again.
+    RELEASE_ASSERT(value);
     auto* moduleNamespaceObject = record->getModuleNamespace(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 

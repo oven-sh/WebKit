@@ -243,6 +243,11 @@ public:
 
         bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
+#if USE(BUN_JSC_ADDITIONS)
+        // Read with moduleRecord->getLiveExport(localName), and never from a slot. (The namespace object of a record with
+        // live exports, which `export * as ns from` resolves to, is a binding like any other.)
+        bool isLiveExport(VM&) const;
+#endif
 
         Type type;
         AbstractModuleRecord* moduleRecord;
@@ -312,12 +317,13 @@ public:
     bool m_isTypeScript = false;
 
     // Live exports: nothing caches what an export of such a record reads. Every read of it, through an import binding or
-    // a module namespace object, reads the property of that name off liveExportsSource() again (getLiveExport). Such a
-    // record also exports whatever name it is asked for; only a name that is looked for through an `export *` has to be
-    // one that it declares (resolveExport). Set before anything can link against the record, and for good.
-    // No code reads a binding of such a record from its slot: import bindings into it link as Dynamic
-    // (JSScope::abstractAccess), which ends in JSModuleEnvironment::getOwnPropertySlot, and code with such imports shares
-    // nothing with code of the same source without them (ModuleProgramExecutable::liveImports).
+    // a module namespace object, reads the property of the exported name off liveExportsSource() again (getLiveExport),
+    // however the record declares that name. Such a record also exports whatever name it is asked for; only a name that
+    // is looked for through an `export *` has to be one that it declares or has from a star of its own (resolveExport).
+    // Set before anything can link against the record, and for good.
+    // No code reads an export of such a record from its slot (Resolution::isLiveExport): import bindings into it link as
+    // Dynamic (JSScope::abstractAccess), which ends in JSModuleEnvironment::getOwnPropertySlot, and code with such imports
+    // shares nothing with code of the same source without them (ModuleProgramExecutable::liveImports).
     bool hasLiveExports() const { return m_hasLiveExports; }
     void setHasLiveExports();
     // Null until the embedder has one. Until then a read throws like a read of a binding that is not initialized yet.

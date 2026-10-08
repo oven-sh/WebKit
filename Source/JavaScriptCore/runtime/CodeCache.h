@@ -97,17 +97,21 @@ public:
     iterator begin() { return m_map.begin(); }
     iterator end() { return m_map.end(); }
 
+    enum class FetchFromDisk : bool { No, Yes };
+
     template<typename UnlinkedCodeBlockType>
-    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
+    UnlinkedCodeBlockType* findCacheAndUpdateAge(VM& vm, const SourceCodeKey& key, FetchFromDisk mayFetchFromDisk = FetchFromDisk::Yes)
     {
         prune();
 
         iterator findResult = m_map.find(key);
         if (findResult == m_map.end()) {
+            if (mayFetchFromDisk == FetchFromDisk::No)
+                return nullptr;
             // A block decoded from the provider's cached bytecode is as reusable as one we generated: remember it the
             // way getUnlinkedGlobalCodeBlock() remembers those, so another global in this VM loading the same source
             // links against this block instead of decoding its own copy of the unlinked tree.
-            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key, recoverableCode);
+            UnlinkedCodeBlockType* decoded = fetchFromDisk<UnlinkedCodeBlockType>(vm, key);
             if (decoded && Options::useCodeCache())
                 addCache(key, SourceCodeValue(vm, decoded, m_age));
             return decoded;
@@ -253,6 +257,10 @@ public:
     // into another global object of this VM, which then decodes or generates its own.
     void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
 
+    // Until there is one, no module record has to look for imports of live exports (JSModuleRecord::liveImports).
+    bool hasModuleRecordWithLiveExports() const { return m_hasModuleRecordWithLiveExports; }
+    void didMakeModuleRecordWithLiveExports() { m_hasModuleRecordWithLiveExports = true; }
+
     void clear()
     {
         write();
@@ -267,6 +275,7 @@ private:
     UnlinkedCodeBlockType* getUnlinkedGlobalCodeBlock(VM&, ExecutableType*, const SourceCode&, JSParserScriptMode, OptionSet<CodeGenerationMode>, ParserError&, EvalContextType);
 
     CodeCacheMap m_sourceCode;
+    bool m_hasModuleRecordWithLiveExports { false };
 };
 
 template <typename T> struct CacheTypes { };

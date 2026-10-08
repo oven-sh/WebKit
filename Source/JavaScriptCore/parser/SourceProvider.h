@@ -375,6 +375,7 @@ private:
             return adoptRef(*new SyntheticSourceProvider(nullptr, WTF::move(generator), sourceOrigin, WTF::move(sourceURL)));
         }
 
+#if USE(BUN_JSC_ADDITIONS)
         // For a record with live exports (AbstractModuleRecord::hasLiveExports). The generator declares every export
         // without a value and returns the object they are read from, which it has to have.
         static Ref<SyntheticSourceProvider> createWithLiveExports(LazySyntheticSourceGenerator&& generator, const SourceOrigin& sourceOrigin, String sourceURL)
@@ -383,6 +384,7 @@ private:
             provider->setModuleHasLiveExports();
             return provider;
         }
+#endif
 
         // For a generator that evaluates a module written by the user to find out what it exports (a CommonJS module).
         // It does not run when the module record is created, which happens whenever that module's fetch completes, but

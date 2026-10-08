@@ -132,7 +132,7 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
     RETURN_IF_EXCEPTION(scope, false);
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
 #if USE(BUN_JSC_ADDITIONS)
-        if (resolution.moduleRecord->hasLiveExports()) [[unlikely]] {
+        if (resolution.isLiveExport(vm)) [[unlikely]] {
             JSValue value = jsUndefined();
             if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
                 value = resolution.moduleRecord->getLiveExport(globalObject, resolution.localName);

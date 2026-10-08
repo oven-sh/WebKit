@@ -225,7 +225,13 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         privateToExecutable = !executable->resolvesInGlobalScope();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
-    UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key, liveImports.isNull() ? Decoder::RecoverableCode::Yes : Decoder::RecoverableCode::No);
+    // The provider's bytecode is that of the code every record of the source can use.
+    bool usesBytecodeOfProvider = liveImports.isNull();
+    UnlinkedCodeBlockType* unlinkedCodeBlock = nullptr;
+    if (!privateToExecutable)
+        unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key, usesBytecodeOfProvider ? CodeCacheMap::FetchFromDisk::Yes : CodeCacheMap::FetchFromDisk::No);
+    else if (usesBytecodeOfProvider)
+        unlinkedCodeBlock = m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
         return unlinkedCodeBlock;
@@ -236,8 +242,7 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     if (unlinkedCodeBlock && Options::useCodeCache() && !privateToExecutable) {
         m_sourceCode.addCache(key, SourceCodeValue(vm, unlinkedCodeBlock, m_sourceCode.age()));
 
-        // The provider's bytecode is that of the code every record of the source can use.
-        if (liveImports.isNull()) {
+        if (usesBytecodeOfProvider) {
             key.source().provider().cacheBytecode([&] {
                 return encodeCodeBlock(vm, key, unlinkedCodeBlock);
             });
