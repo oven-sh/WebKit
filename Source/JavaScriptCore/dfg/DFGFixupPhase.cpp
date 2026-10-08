@@ -260,7 +260,7 @@ private:
             Node* nodeConstantOne;
             if (node->child1()->shouldSpeculateInt32OrBoolean() && node->canSpeculateInt32(FixupPass)) {
                 node->setOp(op == Inc ? ArithAdd : ArithSub);
-                node->setArithMode(Arith::CheckOverflow);
+                node->setArithMode(bytecodeCanTruncateInteger(node->arithNodeFlags()) ? Arith::Unchecked : Arith::CheckOverflow);
                 nodeConstantOne = m_insertionSet.insertNode(m_indexInBlock, SpecInt32Only, JSConstant, node->origin, OpInfo(m_graph.freeze(jsNumber(1))));
                 node->children.setChild2(Edge(nodeConstantOne));
                 fixEdge<Int32Use>(node->child1());
