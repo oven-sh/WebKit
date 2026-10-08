@@ -698,6 +698,17 @@ public:
     void setScopeType(ScopeType type) { m_scopeType = type; }
     ScopeType scopeType() const { return static_cast<ScopeType>(m_scopeType); }
 
+    // A generator, or an async function that has an await, is two functions: a wrapper, which holds the parameters
+    // and `arguments`, and a body. Their two var scopes are the one variable environment of the function as written,
+    // and a sloppy direct eval that declares a name treats them as such (JSScope::wrapperVarScopeOfGeneratorOrAsyncBody).
+    enum class GeneratorOrAsyncFunctionPart : uint8_t {
+        None,
+        Wrapper,
+        Body
+    };
+    void setGeneratorOrAsyncFunctionPart(GeneratorOrAsyncFunctionPart part) { ASSERT(scopeType() == VarScope); m_generatorOrAsyncFunctionPart = static_cast<unsigned>(part); }
+    GeneratorOrAsyncFunctionPart generatorOrAsyncFunctionPart() const { return static_cast<GeneratorOrAsyncFunctionPart>(m_generatorOrAsyncFunctionPart); }
+
     enum class PropagateCloneInvalidationToOriginal : bool { No, Yes };
     SymbolTable* cloneScopePart(VM&, PropagateCloneInvalidationToOriginal);
 
@@ -770,6 +781,7 @@ private:
     unsigned m_usesSloppyEval : 1;
     unsigned m_nestedLexicalScope : 1; // Non-function LexicalScope.
     unsigned m_scopeType : 3; // ScopeType
+    unsigned m_generatorOrAsyncFunctionPart : 2 { 0 }; // GeneratorOrAsyncFunctionPart, of a VarScope
     PropagateCloneInvalidationToOriginal m_propagateCloneInvalidationToOriginal : 1 { PropagateCloneInvalidationToOriginal::No };
     unsigned m_cachedEntriesScopePartOnly : 1 { 0 };
 
