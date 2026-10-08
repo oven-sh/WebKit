@@ -66,6 +66,8 @@ namespace JSC { namespace Yarr {
 // The bound is for one match. A global loop (replace, matchAll, split) runs one match per
 // result, and each of them can read the subject to its end.
 
+// Why the matcher does not run a pattern. A refusal is about the pattern and about nothing else:
+// the same pattern is refused every time, for the same reason.
 enum class LinearRefusal : uint8_t {
     None,
     BackReference,
@@ -75,8 +77,11 @@ enum class LinearRefusal : uint8_t {
     WorkingMemoryTooLarge,
     LookaroundTooCostly,
     UnsupportedTerm,
-    // Not about the pattern: the stack had too little room left for the compiler this time.
-    OutOfStack,
+    // The last two are about the YarrPattern and not about the source: the caller gave the
+    // compiler one that it cannot take. Yarr::jitCompile() has moved its terms, or it was built
+    // for a match that reports no groups.
+    PatternReorderedForJIT,
+    PatternWithoutGroups,
 };
 
 JS_EXPORT_PRIVATE ASCIILiteral NODELETE linearRefusalName(LinearRefusal);
@@ -197,6 +202,10 @@ public:
     bool m_sticky { false };
     // Every alternative begins with a ^ that only the start of the subject satisfies.
     bool m_anchoredAtStart { false };
+    // YarrPattern::m_endAnchoredFixedSize: every alternative matches a fixed number of characters
+    // and ends with a $ that only the end of the subject satisfies, so no match starts further
+    // than this from the end. The search starts there, as it does in the other engines.
+    unsigned m_endAnchoredFixedSize { YarrPattern::endAnchoredFixedSizeNotSet };
     // A match that starts at `start` takes at most this many steps for each of the positions
     // start, ..., length of the subject. At most four times
     // Options::maximumRegExpLinearProgramSize(): the compiler refuses the program otherwise.
@@ -206,8 +215,11 @@ public:
     uint64_t m_maximumScratchBytes { 0 };
 };
 
-// Null, with the reason in the LinearRefusal, for a pattern the matcher cannot run.
-std::unique_ptr<LinearProgram> compileLinear(YarrPattern&, LinearRefusal&);
+// Null, with the reason in the LinearRefusal, for a pattern the matcher does not run. Null with
+// an ErrorCode and no reason when the stack had too little room left for the compiler: that is
+// not about the pattern, and it is the soft error that the other stages of a compile report.
+// The pattern has to be as the parser left it, so a caller asks before it asks the JIT.
+std::unique_ptr<LinearProgram> compileLinear(YarrPattern&, LinearRefusal&, ErrorCode&);
 
 } } // namespace JSC::Yarr
 

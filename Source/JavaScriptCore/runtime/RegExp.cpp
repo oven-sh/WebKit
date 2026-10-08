@@ -454,15 +454,22 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if USE(BUN_JSC_ADDITIONS)
     if (Options::useRegExpLinearEngine() && m_linearRefusal == Yarr::LinearRefusal::None) [[unlikely]] {
-        // exec() and match() share what is compiled here, so the program of the matcher comes
-        // from a pattern that has every group, as the bytecode below does.
-        Yarr::YarrPattern capturePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
-        if (hasError(m_constructionErrorCode)) {
-            m_state = ParseError;
-            return;
+        if (pattern.m_containsBackreferences) {
+            // The matcher refuses this pattern before it looks at anything else, so it does not
+            // need the pattern that has every group.
+            if (compileForLinearMatcher(vm, pattern))
+                return;
+        } else {
+            // exec() and match() share what is compiled here, so the program of the matcher
+            // comes from a pattern that has every group, as the bytecode below does.
+            Yarr::YarrPattern capturePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
+            if (hasError(m_constructionErrorCode)) {
+                m_state = ParseError;
+                return;
+            }
+            if (compileForLinearMatcher(vm, capturePattern))
+                return;
         }
-        if (compileForLinearMatcher(vm, capturePattern))
-            return;
     }
 #endif
 
@@ -525,6 +532,12 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
 }
 
 #if USE(BUN_JSC_ADDITIONS)
+#if CPU(ADDRESS64) && !ENABLE(REGEXP_TRACING)
+// A RegExp is in the size class of 80 bytes, and m_linearRefusal is in its padding. A member that
+// does not fit there moves every RegExp of every process to the next size class.
+static_assert(sizeof(RegExp) <= 80, "RegExp should not move up a size class");
+#endif
+
 // With Options::useRegExpLinearEngine(), before the RegExp is compiled for the JIT or the
 // interpreter: true when the non-backtracking matcher accepts the pattern. The RegExp then has
 // bytecode that carries the matcher's program, and no JIT code, so no tier runs anything else.
@@ -533,6 +546,10 @@ bool RegExp::matchConcurrently(VM& vm, StringView s, unsigned startOffset, Match
 //
 // This is the one place that asks for a RegExp, and it asks before the JIT: Yarr::jitCompile()
 // reorders the terms of the pattern it is given, and the matcher's program takes them in order.
+//
+// Also true when the stack has too little room left for the compile. That is not about the
+// pattern, so nothing is remembered: as in every other stage of a compile, the match throws
+// the error, and the next match compiles again (RegExp::reset()).
 bool RegExp::compileForLinearMatcher(VM* vm, Yarr::YarrPattern& pattern)
 {
     if (m_linearRefusal != Yarr::LinearRefusal::None)
@@ -540,16 +557,26 @@ bool RegExp::compileForLinearMatcher(VM* vm, Yarr::YarrPattern& pattern)
 
     // A RegExp that has a program has code for every subject, so nothing compiles it again.
     ASSERT(!usesLinearMatcher());
-    if (m_linearCompileCount < std::numeric_limits<uint8_t>::max())
-        ++m_linearCompileCount;
+    RegExpCache& cache = *vm->regExpCache();
+    ++cache.m_linearCompileCount;
 
     Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
-    auto bytecode = Yarr::byteCompileLinear(pattern, &vm->m_regExpAllocator, errorCode, m_linearRefusal, &vm->m_regExpAllocatorLock);
+    std::unique_ptr<Yarr::BytecodePattern> bytecode;
+    if (std::exchange(cache.m_failsNextLinearCompileForTesting, false)) [[unlikely]]
+        errorCode = Yarr::ErrorCode::TooManyDisjunctions;
+    else
+        bytecode = Yarr::byteCompileLinear(pattern, &vm->m_regExpAllocator, errorCode, m_linearRefusal, &vm->m_regExpAllocatorLock);
     if (!bytecode) {
-        // Accepted, but the bytecode that carries the program could not be made: the
-        // ByteCompiler had too little stack, or the pattern is too large for it.
+        if (hasError(errorCode) && !hasHardError(errorCode)) {
+            ASSERT(m_linearRefusal == Yarr::LinearRefusal::None);
+            m_constructionErrorCode = errorCode;
+            m_state = ParseError;
+            return true;
+        }
+        // The matcher accepted the pattern, and the pattern is too large for the bytecode that
+        // carries the program.
         if (m_linearRefusal == Yarr::LinearRefusal::None)
-            m_linearRefusal = errorCode == Yarr::ErrorCode::TooManyDisjunctions ? Yarr::LinearRefusal::OutOfStack : Yarr::LinearRefusal::UnsupportedTerm;
+            m_linearRefusal = Yarr::LinearRefusal::ProgramTooLarge;
         dataLogLnIf(Options::reportRegExpLinearRefusals(), "The non-backtracking matcher refused ", toSourceString(), ": ", Yarr::linearRefusalName(m_linearRefusal));
         return false;
     }
@@ -609,24 +636,11 @@ int RegExp::matchForTesting(JSGlobalObject* globalObject, StringView s, unsigned
             statistics.refusal = m_linearRefusal;
     }
 
-    statistics.linearCompiles = m_linearCompileCount;
+    statistics.linearCompiles = vm.regExpCache()->linearCompileCount();
 
     if (captures && result >= 0) {
-        // The engines write the end of a group only when the group matched.
-        for (unsigned index = 0; index < offsetVectorBaseForNamedCaptures(); index += 2) {
-            if (ovector[index] < 0)
-                ovector[index + 1] = -1;
-        }
-        // A duplicate name: the backtracking engines leave the number of a group that a
-        // lookaround matched and then gave up, and that group has no match. A reader sees no
-        // group for the name either way. The matcher's vector stays as it is.
-        if (!usesMatcher) {
-            for (unsigned index = offsetVectorBaseForNamedCaptures(); index < ovector.size(); ++index) {
-                int group = ovector[index];
-                if (group >= 1 && static_cast<unsigned>(group) <= numSubpatterns() && ovector[2 * group] < 0)
-                    ovector[index] = 0;
-            }
-        }
+        std::span<unsigned> output { reinterpret_cast<unsigned*>(ovector.mutableSpan().data()), ovector.size() };
+        Yarr::normalizeOutputForTesting(output, numSubpatterns(), offsetVectorBaseForNamedCaptures(), !usesMatcher);
         captures->append(ovector.span());
     }
     return result;
@@ -646,12 +660,6 @@ void RegExp::deleteCode()
         return;
     m_state = NotCompiled;
     m_minimumSize = 0;
-#if USE(BUN_JSC_ADDITIONS)
-    // The engine of a RegExp stays while its code does. A refusal that was about the stack of
-    // that compile, and not about the pattern, ends with the code: the next compile asks again.
-    if (m_linearRefusal == Yarr::LinearRefusal::OutOfStack)
-        m_linearRefusal = Yarr::LinearRefusal::None;
-#endif
     // m_atom and m_specificPattern stay: they describe the pattern (every compile sets them to the same values), the fast paths that
     // use them never run the code, and RegExpCachedResult needs the atom of a one-character match it has yet to reify.
 #if ENABLE(YARR_JIT)

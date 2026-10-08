@@ -100,6 +100,23 @@ for (let subject of [latin1, utf16]) {
     testLinear(/^(\w+\s?)*\W?$/, subject("a ", ""), 0);
 }
 
+// Every alternative of these patterns has a fixed length and ends with a $ that only the end of
+// the subject satisfies, so a match can only start that far from the end. The search starts
+// there, as it does in the backtracking engines, and the steps do not depend on the subject.
+for (let [regExp, end, lengthOfMatch] of [[/\.json$/, ".json", 5], [/\.json$/, ".jsonx", null], [/\.JSON$/i, ".json", 5], [/a$|bc$/, "abc", 2], [/a$|bc$/, "bca", 1], [/\u2603!$/, "\u2603!", 2]]) {
+    for (let filler of ["x", "\u2192"]) {
+        let steps = [4096, 8192, 12288].map(length => {
+            let subject = filler.repeat(length) + end;
+            let statistics = statisticsOf(regExp, subject);
+            if (statistics.index !== (lengthOfMatch === null ? -1 : subject.length - lengthOfMatch))
+                throw new Error(regExp + " on " + length + " characters and " + JSON.stringify(end) + " matched at " + statistics.index);
+            return statistics.steps;
+        });
+        if (steps[0] !== steps[1] || steps[1] !== steps[2])
+            throw new Error(regExp + " took " + steps.join(", ") + " steps for 4096, 8192 and 12288 characters before " + JSON.stringify(end));
+    }
+}
+
 // A subject of code points, for a pattern that reads them.
 testLinear(/(\p{L}*)*!/u, count => "\u{10400}".repeat(count) + "?", -1);
 testLinear(/(.*)*!/u, count => "\u{1F600}".repeat(count) + "?", -1);

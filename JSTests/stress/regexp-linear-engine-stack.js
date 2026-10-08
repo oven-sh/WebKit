@@ -1,63 +1,33 @@
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1")
 //@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--useRegExpJIT=0")
+//@ runDefault("--useRegExpLinearEngine=1", "--useDollarVM=1", "--maxPerThreadStackUsage=1073741824")
+
+// Whether a RegExp runs on the non-backtracking matcher depends on its pattern, and not on the
+// stack that is left when the RegExp is first used.
+// - The compiler of the matcher recurses once per level of groups. It refuses a pattern with
+//   more than 32 levels, whatever the stack is.
+// - When the stack has too little room for the compiler, the compile fails as the other stages
+//   of a compile do: the match throws a RangeError, nothing is remembered, and the next match
+//   asks the matcher again.
+// The third run lets JavaScript use the stack to its end, as a thread with a small stack does.
 
 function describe(value)
 {
     return JSON.stringify(value, (key, entry) => entry === undefined ? "<undefined>" : entry);
 }
 
-// The compiler of the matcher refuses when the stack has too little room left for it. That is
-// about the compile and not about the pattern, so the refusal lasts as long as the code of the
-// RegExp does: once the code is deleted, the next compile asks the matcher again. The RegExp
-// asks before it asks the JIT, which reorders the terms of a pattern ([a-c]x here), and the
-// answers are the same whichever engine gives them.
-function nested(depth, second = "x")
+function expectSame(name, actual, expected)
 {
-    return "[a-c]" + second + "(?:".repeat(depth) + "a" + ")".repeat(depth);
+    if (describe(actual) !== describe(expected))
+        throw new Error(name + ": expected " + describe(expected) + " but got " + describe(actual));
 }
 
-function refusalOf(regExp)
+// [a-c]x: the JIT moves the class behind the x when it compiles a pattern. The answers below
+// are the same whichever engine gives them.
+function nested(depth, open = "(?:")
 {
-    return $vm.regExpMatchStatistics(regExp, "", 0).refusal;
+    return "[a-c]x" + open.repeat(depth) + "a" + ")".repeat(depth);
 }
-
-// A RegExp of the same source is the same RegExp, and it has its code already. So every
-// question to the compiler is a pattern of its own.
-let probes = 0;
-function refusalOfDepth(depth)
-{
-    return refusalOf(new RegExp(nested(depth, "y" + probes++)));
-}
-
-function recurse(frames, callback)
-{
-    return frames ? recurse(frames - 1, callback) : callback();
-}
-
-// The deepest nesting the compiler has the stack for, from 1024 frames down, to within 8 groups.
-// A compile that has to be accepted below runs with more stack than that, and one that has to
-// be refused runs from 2048 frames down at least.
-let deepest = recurse(1024, () => {
-    let accepted = 500;
-    let tooDeep = 0;
-    for (let depth = 1000; !tooDeep; depth *= 2) {
-        let refusal = refusalOfDepth(depth);
-        if (refusal === "none")
-            accepted = depth;
-        else if (refusal === "not enough stack")
-            tooDeep = depth;
-        else
-            throw new Error(depth + " nested groups: " + refusal);
-    }
-    while (tooDeep - accepted > 8) {
-        let depth = (accepted + tooDeep) >> 1;
-        if (refusalOfDepth(depth) === "none")
-            accepted = depth;
-        else
-            tooDeep = depth;
-    }
-    return accepted;
-});
 
 function answers(regExp)
 {
@@ -67,32 +37,86 @@ function answers(regExp)
     return { engine: statistics.engine, refusal: statistics.refusal, axa: first && first.index, xaa: second && second.index };
 }
 
-function expectAnswers(name, actual, expected)
+const onTheMatcher = { engine: "linear", refusal: "none", axa: 0, xaa: null };
+const tooDeep = { engine: "backtracking", refusal: "nesting too deep", axa: 0, xaa: null };
+
+// The limit is on the levels, of groups of every kind. The last kind has a lookahead in its
+// innermost group, which is one level more. Lookarounds inside one another have a lower limit
+// of their own.
+for (let [open, most] of [["(?:", 32], ["(", 32], ["(?:b|", 32], ["(?i:", 32], ["(?:(?=a)", 31], ["(?=", 16]]) {
+    expectSame(open + " x " + most, answers(new RegExp(nested(most, open))), onTheMatcher);
+    expectSame(open + " x " + (most + 1), answers(new RegExp(nested(most + 1, open))), tooDeep);
+}
+expectSame("4,000 levels", answers(new RegExp(nested(4000))), tooDeep);
+
+// The compile that finds no stack. The mode "outOfStack" makes a RegExp that asks the matcher
+// in that call find the compiler out of stack, as it is at the end of a deep recursion.
+function asksSoFar(regExp)
 {
-    if (describe(actual) !== describe(expected))
-        throw new Error(name + ": expected " + describe(expected) + " but got " + describe(actual));
+    return $vm.regExpMatchStatistics(regExp, "", 0).linearCompiles;
 }
 
-let stackDependent = new RegExp(nested(deepest));
-
-// The first compile, from so many frames down that the compiler has too little stack for a
-// pattern this deep. The frames of a function are not of one size for the whole run, so each
-// number of frames is asked with a pattern of its own, and the RegExp is compiled under the
-// frames that refused that pattern, a few frames further down.
-function firstCompileWithLittleStack()
+function firstUseWithoutStack(regExp)
 {
-    for (let frames = 2048; frames <= 65536; frames *= 2) {
-        let result = recurse(frames, () => refusalOfDepth(deepest) === "not enough stack" ? recurse(16, () => answers(stackDependent)) : null);
-        if (result)
-            return result;
+    try {
+        $vm.regExpMatchStatistics(regExp, "axa", 0, "outOfStack");
+    } catch (error) {
+        return error.constructor.name + ": " + error.message;
     }
-    throw new Error("The compiler has the stack for " + deepest + " nested groups from 65536 frames down");
+    return "no error";
 }
-expectAnswers("first compile", firstCompileWithLittleStack(), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
-// The refusal stays while the code does, whatever the stack is then.
-expectAnswers("same code", answers(stackDependent), { engine: "backtracking", refusal: "not enough stack", axa: 0, xaa: null });
 
-$vm.deleteAllCodeWhenIdle();
-setTimeout(() => {
-    expectAnswers("compile after the code is deleted", answers(stackDependent), { engine: "linear", refusal: "none", axa: 0, xaa: null });
-}, 0);
+const outOfStack = "RangeError: Out of memory: Invalid regular expression: too many nested disjunctions";
+for (let source of [nested(3) + "|y", nested(3, "(") + "|y", "[a-c]x(?=a)a|y", "[a-c]xa|y"]) {
+    let regExp = new RegExp(source);
+    let before = asksSoFar(/a RegExp that has its program/);
+    expectSame("/" + source + "/, first use", firstUseWithoutStack(regExp), outOfStack);
+    // Nothing is remembered: the RegExp asks again, and gets its program.
+    expectSame("/" + source + "/, second use", answers(regExp), onTheMatcher);
+    expectSame("/" + source + "/, times it asked", asksSoFar(regExp) - before, 2);
+    // A RegExp that has its program does not ask, and the mode is over with the call.
+    expectSame("/" + source + "/, with its program", firstUseWithoutStack(regExp), "no error");
+    expectSame("/" + source + "/, the next RegExp", answers(new RegExp(source + "|z")), onTheMatcher);
+}
+
+// The stack as it is at the end of a recursion. A RegExp that is first used there runs on the
+// matcher, or its match throws the RangeError of the compile. It does not run on a backtracking
+// engine because the stack was short.
+const stackOverflow = "Maximum call stack size exceeded.";
+function fromTheDeepestFrame(callback)
+{
+    function recurse()
+    {
+        try {
+            return recurse();
+        } catch (error) {
+            if (!(error instanceof RangeError) || error.message !== stackOverflow)
+                throw error;
+            // From the deepest frame that has the stack for the callback itself.
+            return callback();
+        }
+    }
+    return recurse();
+}
+
+const depths = [0, 1, 2, 4, 8, 16, 24, 32];
+let regExps = depths.map(depth => new RegExp(nested(depth) + "|w"));
+let firstUses = fromTheDeepestFrame(() => regExps.map(regExp => {
+    try {
+        let statistics = $vm.regExpMatchStatistics(regExp, "axa", 0);
+        return statistics.engine + ", " + statistics.refusal + ", " + statistics.index;
+    } catch (error) {
+        if (error.message === stackOverflow)
+            throw error;
+        return error.constructor.name + ": " + error.message;
+    }
+}));
+depths.forEach((depth, index) => {
+    if (firstUses[index] !== "linear, none, 0" && firstUses[index] !== outOfStack)
+        throw new Error(depth + " levels, first used from the deepest frame: " + firstUses[index]);
+    // The compiler has the room for the patterns that programs have. A sanitizer makes its
+    // frames several times larger.
+    if (depth <= 8 && !$vm.asanEnabled() && firstUses[index] !== "linear, none, 0")
+        throw new Error(depth + " levels, first used from the deepest frame: " + firstUses[index]);
+    expectSame(depth + " levels, next use", answers(regExps[index]), onTheMatcher);
+});

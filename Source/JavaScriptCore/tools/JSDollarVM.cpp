@@ -74,6 +74,7 @@
 #include "Parser.h"
 #include "ProbeContext.h"
 #include "PropertyInlineCacheClearingWatchpoint.h"
+#include "RegExpCache.h"
 #include "RegExpObject.h"
 #include "Scribble.h"
 #include "ShadowChicken.h"
@@ -90,6 +91,7 @@
 #include "VMTrapsInlines.h"
 #include "WasmCapabilities.h"
 #include "YarrInterpreter.h"
+#include "YarrJIT.h"
 #if USE(BUN_JSC_ADDITIONS)
 #include "BufferAccessorRegistry.h"
 #include "JSArrayBufferView.h"
@@ -2180,6 +2182,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionCpuClflush);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionRegExpMatchStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionRegExpMatchOnBothEngines);
+static JSC_DECLARE_HOST_FUNCTION(functionRegExpLinearRefusalAfterJITCompile);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionLLintTrue);
 static JSC_DECLARE_HOST_FUNCTION(functionBaselineJITTrue);
@@ -2631,16 +2634,20 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
 #if USE(BUN_JSC_ADDITIONS)
 // Matches a RegExp once, with the engine it is compiled for, and reports which engine that is
-// and what the match cost the non-backtracking matcher. With "backtracking" as the engine, the
-// match is the bytecode interpreter's, also for a RegExp that has another engine: a test
-// compares the engines on one RegExp that way.
-// Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset[, engine]])
-// Returns { index, captures, engine, refusal, jit, reachedMatchLimit, compiles, programSize,
+// and what the match cost the non-backtracking matcher.
+// Usage: $vm.regExpMatchStatistics(regExp, string[, startOffset[, mode]])
+// Returns { index, captures, engine, refusal, jit, gaveUp, linearCompiles, programSize,
 // maximumStepsPerPosition, maximumScratchBytes, steps, scratchBytes }. captures is the output
 // vector of the match (the start and the end of each group, then the group each duplicate name
-// chose), or null. reachedMatchLimit: the interpreter gave up, which it does early here, and
-// index is -1 whatever the string has. compiles: how many times the RegExp asked the matcher
+// chose), or null. linearCompiles: how many times the RegExps of the VM have asked the matcher
 // for a program.
+// With the mode "backtracking", the match is the bytecode interpreter's, also for a RegExp that
+// has another engine: a test compares the engines on one RegExp that way. gaveUp: the
+// interpreter gave the search up, which it does early here, and index is -1 whatever the string
+// has.
+// With the mode "outOfStack", a RegExp that asks the matcher for a program in this call finds
+// the stack of the matcher's compiler used up, as at the end of a deep recursion. The call then
+// throws what a match throws there.
 JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -2655,17 +2662,23 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalO
     unsigned startOffset = callFrame->argument(2).toUInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
     bool byBacktrackingInterpreter = false;
+    bool outOfStack = false;
     if (!callFrame->argument(3).isUndefined()) {
-        String engine = callFrame->argument(3).toWTFString(globalObject);
+        String mode = callFrame->argument(3).toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, { });
-        if (engine != "backtracking"_s)
-            return throwVMTypeError(globalObject, scope, "regExpMatchStatistics expects \"backtracking\" or no engine"_s);
-        byBacktrackingInterpreter = true;
+        if (mode == "backtracking"_s)
+            byBacktrackingInterpreter = true;
+        else if (mode == "outOfStack"_s)
+            outOfStack = true;
+        else
+            return throwVMTypeError(globalObject, scope, "regExpMatchStatistics expects \"backtracking\", \"outOfStack\" or no mode"_s);
     }
 
     Yarr::InterpretStatistics statistics;
     Vector<int> captures;
+    vm.regExpCache()->setFailsNextLinearCompileForTesting(outOfStack);
     int index = regExpObject->regExp()->matchForTesting(globalObject, string, startOffset, statistics, &captures, byBacktrackingInterpreter);
+    vm.regExpCache()->setFailsNextLinearCompileForTesting(false);
     RETURN_IF_EXCEPTION(scope, { });
 
     JSValue capturesValue = jsNull();
@@ -2686,8 +2699,8 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchStatistics, (JSGlobalObject* globalO
     result->putDirect(vm, Identifier::fromString(vm, "engine"_s), jsNontrivialString(vm, isLinear ? "linear"_s : "backtracking"_s));
     result->putDirect(vm, Identifier::fromString(vm, "refusal"_s), jsNontrivialString(vm, Yarr::linearRefusalName(statistics.refusal)));
     result->putDirect(vm, Identifier::fromString(vm, "jit"_s), jsBoolean(statistics.usesJIT));
-    result->putDirect(vm, Identifier::fromString(vm, "reachedMatchLimit"_s), jsBoolean(statistics.reachedMatchLimit));
-    result->putDirect(vm, Identifier::fromString(vm, "compiles"_s), jsNumber(statistics.linearCompiles));
+    result->putDirect(vm, Identifier::fromString(vm, "gaveUp"_s), jsBoolean(statistics.gaveUp));
+    result->putDirect(vm, Identifier::fromString(vm, "linearCompiles"_s), jsNumber(statistics.linearCompiles));
     result->putDirect(vm, Identifier::fromString(vm, "programSize"_s), jsNumber(statistics.programSize));
     result->putDirect(vm, Identifier::fromString(vm, "maximumStepsPerPosition"_s), jsNumber(static_cast<double>(statistics.maximumStepsPerPosition)));
     result->putDirect(vm, Identifier::fromString(vm, "maximumScratchBytes"_s), jsNumber(static_cast<double>(statistics.maximumScratchBytes)));
@@ -2724,11 +2737,50 @@ JSC_DEFINE_HOST_FUNCTION(functionRegExpMatchOnBothEngines, (JSGlobalObject* glob
     int indexOfInterpreter = regExp->matchForTesting(globalObject, string, startOffset, statistics, &capturesOfInterpreter, true);
     RETURN_IF_EXCEPTION(scope, { });
 
-    if (statistics.reachedMatchLimit)
+    if (statistics.gaveUp)
         return JSValue::encode(jsNull());
     if (index != indexOfInterpreter || captures != capturesOfInterpreter)
         return JSValue::encode(jsBoolean(false));
     return JSValue::encode(jsNumber(index));
+}
+
+// What the non-backtracking matcher answers for a YarrPattern that Yarr::jitCompile() has been
+// given. No RegExp asks that way: the JIT moves the terms of the pattern, and the program of the
+// matcher takes them in order, so the matcher has to refuse such a pattern.
+// Usage: $vm.regExpLinearRefusalAfterJITCompile(regExp)
+// Returns the reason of the refusal, "none" when the matcher accepts the pattern, and undefined
+// where there is no RegExp JIT.
+JSC_DEFINE_HOST_FUNCTION(functionRegExpLinearRefusalAfterJITCompile, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* regExpObject = dynamicDowncast<RegExpObject>(callFrame->argument(0));
+    if (!regExpObject)
+        return throwVMTypeError(globalObject, scope, "regExpLinearRefusalAfterJITCompile expects a RegExp"_s);
+
+#if ENABLE(YARR_JIT)
+    if (!Options::useJIT() || !Options::useRegExpJIT())
+        return JSValue::encode(jsUndefined());
+
+    RegExp* regExp = regExpObject->regExp();
+    Yarr::ErrorCode errorCode = Yarr::ErrorCode::NoError;
+    Yarr::YarrPattern pattern(regExp->pattern(), regExp->flags(), errorCode);
+    if (hasError(errorCode))
+        return throwVMError(globalObject, scope, Yarr::errorToThrow(globalObject, errorCode));
+    Yarr::YarrCodeBlock codeBlock(regExp);
+    Yarr::jitCompile(pattern, regExp->pattern(), Yarr::CharSize::Char8, std::nullopt, &vm, codeBlock, Yarr::ExecutionMode::IncludeSubpatterns);
+
+    Yarr::LinearRefusal refusal = Yarr::LinearRefusal::None;
+    auto program = Yarr::compileLinear(pattern, refusal, errorCode);
+    if (hasError(errorCode))
+        return throwVMError(globalObject, scope, Yarr::errorToThrow(globalObject, errorCode));
+    return JSValue::encode(jsNontrivialString(vm, Yarr::linearRefusalName(refusal)));
+#else
+    UNUSED_PARAM(vm);
+    return JSValue::encode(jsUndefined());
+#endif
 }
 #endif
 
@@ -6022,6 +6074,7 @@ void JSDollarVM::finishCreation(VM& vm)
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "regExpMatchStatistics"_s, functionRegExpMatchStatistics, 4);
     addFunction(vm, alwaysAllow, "regExpMatchOnBothEngines"_s, functionRegExpMatchOnBothEngines, 3);
+    addFunction(vm, alwaysAllow, "regExpLinearRefusalAfterJITCompile"_s, functionRegExpLinearRefusalAfterJITCompile, 1);
 #endif
 
     addFunction(vm, alwaysAllow, "llintTrue"_s, functionLLintTrue, 0);

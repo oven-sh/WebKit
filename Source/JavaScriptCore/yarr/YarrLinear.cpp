@@ -71,8 +71,10 @@ ASCIILiteral linearRefusalName(LinearRefusal refusal)
         return "lookaround too costly"_s;
     case LinearRefusal::UnsupportedTerm:
         return "unsupported term"_s;
-    case LinearRefusal::OutOfStack:
-        return "not enough stack"_s;
+    case LinearRefusal::PatternReorderedForJIT:
+        return "pattern already reordered for the JIT"_s;
+    case LinearRefusal::PatternWithoutGroups:
+        return "pattern built for a match without groups"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
     return { };
@@ -95,9 +97,16 @@ public:
         m_remainingWork = static_cast<uint64_t>(m_maximumProgramSize) * 8 + 1024;
     }
 
-    std::unique_ptr<LinearProgram> compile(LinearRefusal& refusal)
+    std::unique_ptr<LinearProgram> compile(LinearRefusal& refusal, ErrorCode& errorCode)
     {
         compileBody();
+        if (m_refusal == LinearRefusal::None && m_isOutOfStack) [[unlikely]] {
+            // The same pattern compiles with more stack, so this is no refusal. It is the error
+            // the ByteCompiler and the constructor of YarrPattern report when they are here.
+            refusal = LinearRefusal::None;
+            errorCode = ErrorCode::TooManyDisjunctions;
+            return nullptr;
+        }
         // compileLinear() adds what the matcher holds before any vector allocates, and refuses
         // the program when that is too much.
         if (!failed())
@@ -124,6 +133,11 @@ private:
     // The lookarounds that can be inside one another. Each level is a matcher of its own on the
     // native stack while the outer ones wait.
     static constexpr unsigned maximumLookaroundDepth = 16;
+
+    // The groups and lookarounds that can be inside one another. The compiler recurses once per
+    // level, so this bounds its native stack by the pattern, and what is left of the stack when
+    // a RegExp is first used does not choose its engine.
+    static constexpr unsigned maximumNestingDepth = 32;
 
     // The matcher keeps an instruction's index and a bit in one unsigned, and the compiler holds
     // the whole program before it can say that the working memory is too large: 16 million
@@ -154,7 +168,16 @@ private:
         unsigned lastClearedGroup { 0 };
     };
 
-    bool failed() const { return m_refusal != LinearRefusal::None; }
+    bool failed() const { return m_refusal != LinearRefusal::None || m_isOutOfStack; }
+
+    // The stack check of a function that recurses over the pattern.
+    bool hasStackToRecurse()
+    {
+        if (m_stackCheck.isSafeToRecurse()) [[likely]]
+            return true;
+        m_isOutOfStack = true;
+        return false;
+    }
 
     bool refuse(LinearRefusal refusal)
     {
@@ -221,12 +244,17 @@ private:
         if (iterator != m_lengths.end())
             return iterator->value;
 
-        if (!m_stackCheck.isSafeToRecurse()) [[unlikely]] {
-            refuse(LinearRefusal::OutOfStack);
+        // This disjunction is m_lengthsDepth levels inside the one compileTerm() asked about,
+        // which is one level inside the level the compiler is at.
+        if (m_nestingDepth + m_lengthsDepth >= maximumNestingDepth) {
+            refuse(LinearRefusal::NestingTooDeep);
             return { 0, unbounded };
         }
+        if (!hasStackToRecurse())
+            return { 0, unbounded };
 
         Lengths result { unbounded, 0 };
+        ++m_lengthsDepth;
         for (auto& alternative : disjunction->m_alternatives) {
             Lengths sum;
             for (auto& term : alternative->m_terms) {
@@ -237,6 +265,10 @@ private:
             result.minimum = std::min(result.minimum, sum.minimum);
             result.maximum = std::max(result.maximum, sum.maximum);
         }
+        --m_lengthsDepth;
+        // What a disjunction further in could not say is not kept.
+        if (failed())
+            return { 0, unbounded };
         if (disjunction->m_alternatives.isEmpty())
             result = { };
 
@@ -338,6 +370,13 @@ private:
             refuse(LinearRefusal::BackReference);
             return;
         }
+        // exec() and test() share the code of a RegExp, so the program comes from a pattern
+        // that has every group.
+        if (m_pattern.m_executionMode != ExecutionMode::IncludeSubpatterns) {
+            refuse(LinearRefusal::PatternWithoutGroups);
+            return;
+        }
+        m_program->m_endAnchoredFixedSize = m_pattern.m_endAnchoredFixedSize;
 
         // optimizeBOL() lays the body out as the pattern's own alternatives, marked onceThrough,
         // followed by the copies the backtracking engines retry at later positions. The copies
@@ -367,13 +406,18 @@ private:
 
     bool compileDisjunction(PatternDisjunction* disjunction, MatchDirection direction)
     {
-        if (!m_stackCheck.isSafeToRecurse()) [[unlikely]]
-            return refuse(LinearRefusal::OutOfStack);
+        if (m_nestingDepth >= maximumNestingDepth)
+            return refuse(LinearRefusal::NestingTooDeep);
+        if (!hasStackToRecurse())
+            return false;
 
         Vector<PatternAlternative*, 8> alternatives;
         for (auto& alternative : disjunction->m_alternatives)
             alternatives.append(alternative.get());
-        return compileAlternatives(alternatives.span(), direction);
+        ++m_nestingDepth;
+        bool compiled = compileAlternatives(alternatives.span(), direction);
+        --m_nestingDepth;
+        return compiled;
     }
 
     bool compileAlternatives(std::span<PatternAlternative* const> alternatives, MatchDirection direction)
@@ -427,6 +471,20 @@ private:
 
     bool compileAlternative(PatternAlternative& alternative, MatchDirection direction)
     {
+        // The program takes the terms in the order of the list. Yarr::jitCompile() moves a
+        // character class behind the characters that follow it (optimizeAlternative()), and the
+        // terms keep the positions the parser gave them. The engines it is for read each term at
+        // its position. So in a list the JIT has seen, a term can begin before the one in front
+        // of it, and in a list as the parser left it none does.
+        unsigned lastPosition = 0;
+        for (auto& term : alternative.m_terms) {
+            if (term.type != PatternTerm::Type::PatternCharacter && term.type != PatternTerm::Type::CharacterClass)
+                continue;
+            if (term.inputPosition < lastPosition)
+                return refuse(LinearRefusal::PatternReorderedForJIT);
+            lastPosition = term.inputPosition;
+        }
+
         size_t count = alternative.m_terms.size();
         PatternTerm* enclosure = dotStarEnclosureOf(alternative);
         if (enclosure) {
@@ -975,6 +1033,9 @@ private:
     StackCheck m_stackCheck;
     unsigned m_currentCode { 0 };
     unsigned m_lookaroundDepth { 0 };
+    unsigned m_nestingDepth { 0 };
+    unsigned m_lengthsDepth { 0 };
+    bool m_isOutOfStack { false };
     unsigned m_maximumProgramSize;
     unsigned m_maximumProgramSizeInWorkingMemory;
     unsigned m_instructionCount { 0 };
@@ -1042,12 +1103,13 @@ private:
 
     // Before `extra` elements are appended. A vector of the matcher grows to no more than the
     // size the compiler counted for it (LinearCompiler::workingMemoryBound()), whatever the
-    // growth of a Vector is, so that what a match holds stays under m_maximumScratchBytes.
+    // growth of a Vector is, so that what a match holds stays under m_maximumScratchBytes. The
+    // append that follows has its room, and does not check for it again.
     template<typename VectorType>
-    static void makeRoom(VectorType& vector, size_t extra, size_t maximumSize)
+    static ALWAYS_INLINE void makeRoom(VectorType& vector, size_t extra, size_t maximumSize)
     {
         size_t needed = vector.size() + extra;
-        if (needed <= vector.capacity())
+        if (needed <= vector.capacity()) [[likely]]
             return;
         ASSERT(needed <= maximumSize);
         vector.reserveCapacity(std::max(needed, std::min(maximumSize, vector.capacity() * 2)));
@@ -1068,9 +1130,9 @@ private:
         void append(unsigned programCounter, std::span<const unsigned> threadSlots, unsigned maximumStates)
         {
             makeRoom(programCounters, 1, maximumStates);
-            programCounters.append(programCounter);
+            programCounters.unsafeAppendWithoutCapacityCheck(programCounter);
             makeRoom(slots, threadSlots.size(), static_cast<size_t>(maximumStates) * threadSlots.size());
-            slots.append(threadSlots);
+            slots.unsafeAppendWithoutCapacityCheck(threadSlots.data(), threadSlots.size());
         }
 
         std::span<const unsigned> slotsOf(unsigned index, unsigned slotCount) const
@@ -1269,7 +1331,7 @@ private:
 
         auto push = [&](Frame frame) {
             makeRoom(stack, 1, code.maximumFrames);
-            stack.append(frame);
+            stack.unsafeAppendWithoutCapacityCheck(frame);
         };
         auto setSlot = [&](unsigned slot, unsigned value) {
             if (working[slot] == value)
@@ -1506,9 +1568,9 @@ private:
     Vector<std::unique_ptr<Scratch>, 4> m_lookaroundScratch;
 };
 
-std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal& refusal)
+std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal& refusal, ErrorCode& errorCode)
 {
-    auto program = LinearCompiler(pattern).compile(refusal);
+    auto program = LinearCompiler(pattern).compile(refusal, errorCode);
     if (!program)
         return nullptr;
 
@@ -1524,6 +1586,10 @@ std::unique_ptr<LinearProgram> compileLinear(YarrPattern& pattern, LinearRefusal
 
 unsigned LinearProgram::match(StringView input, unsigned start, unsigned* output, Statistics* statistics) const
 {
+    // As Interpreter::interpret() and the code of the JIT do.
+    if (m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet && input.length() >= m_endAnchoredFixedSize)
+        start = std::max(start, input.length() - m_endAnchoredFixedSize);
+
     auto matchWith = [&](auto characters) {
         LinearMatcher<typename decltype(characters)::value_type> matcher(*this, characters);
         unsigned result = matcher.match(start, output);

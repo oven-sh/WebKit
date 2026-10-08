@@ -60,7 +60,7 @@ function compareFromEveryStart(source, flags, subjects, startLimit)
     let expected = "3,10,-1,-1,-1,-1,3,5,6,10,3,4";
     if (linear.engine !== "linear" || linear.index !== 3 || String(linear.captures) !== expected)
         throw new Error("The matcher: " + JSON.stringify(linear));
-    if (backtracking.engine !== "backtracking" || backtracking.index !== 3 || String(backtracking.captures) !== expected || backtracking.reachedMatchLimit)
+    if (backtracking.engine !== "backtracking" || backtracking.index !== 3 || String(backtracking.captures) !== expected || backtracking.gaveUp)
         throw new Error("The backtracking interpreter: " + JSON.stringify(backtracking));
     if ($vm.regExpMatchOnBothEngines(regExp, "on 05/2024", 0) !== 3 || $vm.regExpMatchOnBothEngines(regExp, "on", 0) !== -1)
         throw new Error("The two engines on " + regExp);
@@ -69,9 +69,9 @@ function compareFromEveryStart(source, flags, subjects, startLimit)
     let subject = "a".repeat(40);
     linear = $vm.regExpMatchStatistics(regExp, subject, 0);
     backtracking = $vm.regExpMatchStatistics(regExp, subject, 0, "backtracking");
-    if (linear.engine !== "linear" || linear.index !== -1 || linear.reachedMatchLimit)
+    if (linear.engine !== "linear" || linear.index !== -1 || linear.gaveUp)
         throw new Error("The matcher: " + JSON.stringify(linear));
-    if (backtracking.engine !== "backtracking" || backtracking.index !== -1 || !backtracking.reachedMatchLimit)
+    if (backtracking.engine !== "backtracking" || backtracking.index !== -1 || !backtracking.gaveUp)
         throw new Error("The backtracking interpreter: " + JSON.stringify(backtracking));
     if ($vm.regExpMatchOnBothEngines(regExp, subject, 0) !== null)
         throw new Error("The two engines on " + regExp);

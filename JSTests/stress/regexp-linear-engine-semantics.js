@@ -6,7 +6,29 @@
 // Every expectation here is what the YARR JIT, the YARR interpreter and V8 report, and this
 // file runs on each of the three engines of JavaScriptCore to say so.
 
-const matcherIsOn = $vm.regExpMatchStatistics(/a/, "a", 0).engine === "linear";
+// The option says which engine this run is for. What a RegExp got is checked against the
+// option, and not the other way round: without the option no RegExp asks the matcher, whichever
+// way it is first compiled.
+const matcherIsOn = !!jscOptions().useRegExpLinearEngine;
+{
+    let compiledForExec = /(a*)*b/;
+    compiledForExec.exec("aab");
+    let compiledForTest = /(a|aa)+b/;
+    compiledForTest.test("aab");
+    let regExps = [compiledForExec, compiledForTest, /a/];
+    let expected = matcherIsOn ? "linear none false" : "backtracking none " + ($vm.useJIT() && !!jscOptions().useRegExpJIT);
+    let asked = 0;
+    for (let regExp of regExps) {
+        let statistics = $vm.regExpMatchStatistics(regExp, "aab", 0);
+        let actual = [statistics.engine, statistics.refusal, statistics.jit].join(" ");
+        if (actual !== expected)
+            throw new Error(regExp + " with useRegExpLinearEngine=" + matcherIsOn + ": expected " + expected + " but got " + actual);
+        asked = statistics.linearCompiles;
+    }
+    // Each of them asked the matcher once with the option, and none did without it.
+    if (asked !== (matcherIsOn ? regExps.length : 0))
+        throw new Error("With useRegExpLinearEngine=" + matcherIsOn + " the matcher was asked " + asked + " times");
+}
 
 function describe(value)
 {
@@ -62,6 +84,7 @@ test(/(?:a{0,2}){0,2}?b/, "aaab", { index: 0, match: ["aaab"] });
 test(/(?:a?b?)*c/, "abbac", { index: 0, match: ["abbac"] });
 test(/(?:(?:a*)*b?)*c/, "aabac", { index: 0, match: ["aabac"] });
 test(/(?:(a*)|b)*?c/, "aabc", { index: 0, match: ["aabc", undefined] });
+test(/(?:(a)|b)*?c/, "abc", { index: 0, match: ["abc", undefined] });
 test(/((?:)|a)*b/, "aab", { index: 0, match: ["aab", "a"] });
 
 // Every iteration starts with the groups inside it cleared.
@@ -309,3 +332,10 @@ if (matcherIsOn) {
     test(/.*\B.*/u, "a\u{1F600}a", null);
     test(/.*(?<=\uD83D).*/u, "a\u{1F600}a", null);
 }
+
+// A ^ in a lookahead that is inside a lookbehind can hold although the match starts later. When
+// another alternative of the pattern begins with ^, optimizeBOL() drops that ^ from the copy of
+// the pattern that the backtracking engines retry after the start of the subject, and they find
+// no match here. The matcher runs the alternatives as they are written.
+if (matcherIsOn)
+    test(/(?<=(?=^|x)a)b|^2/, "ab", { index: 1, match: ["b"] });

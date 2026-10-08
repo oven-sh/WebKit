@@ -138,3 +138,22 @@ refusedWrapped(/.*foo(?=.*bar).*/, "x".repeat(32000) + "foo bar", 0);
 refusedWrapped(/.*err(?!.*ignored).*/, "c".repeat(8000), -1);
 refusedWrapped(/.*(?<!\/\/.*)import.*/, "x".repeat(2000), -1);
 refusedWrapped(/.*(?:ab)+(?=.*;).*/, ("c".repeat(2000) + "\n").repeat(60) + "ab;", 120060);
+
+// The program of the matcher takes the terms of a pattern in the order of their list. When the
+// JIT compiles a pattern, it moves a character class of a fixed count behind the characters that
+// follow it. A RegExp asks the matcher before it asks the JIT, so it never asks with such a
+// list. The matcher refuses one all the same, whoever asks with it.
+function refusalAfterJIT(regExp, expected)
+{
+    // undefined: this run has no RegExp JIT.
+    let refusal = $vm.regExpLinearRefusalAfterJITCompile(regExp);
+    if (refusal !== undefined && refusal !== expected)
+        throw new Error(regExp + " after the JIT: expected \"" + expected + "\" but got \"" + refusal + "\"");
+    accepted(regExp, "", null);
+}
+refusalAfterJIT(/[a-c]x/, "pattern already reordered for the JIT");
+refusalAfterJIT(/q|[0-9]{2}bc/, "pattern already reordered for the JIT");
+refusalAfterJIT(/(?:[a-c]x)+y/, "pattern already reordered for the JIT");
+// Nothing for the JIT to move: a class at the end, and a class without a fixed count.
+refusalAfterJIT(/x[a-c]/, "none");
+refusalAfterJIT(/[a-c]+x/, "none");

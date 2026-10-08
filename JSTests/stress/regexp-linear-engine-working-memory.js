@@ -120,8 +120,9 @@ for (let groupCount of [mostInALoop + 1, mostInALoop * 2]) {
 }
 
 // The limits of this test and the default ones. A change of a number here is a change of what
-// the compiler counts.
-let expected = { 65536: [40, 38], 8388608: [507, 505] }[limit];
+// the compiler counts. A sanitizer makes the matcher itself larger (the inline storage of its
+// vectors), so these are the numbers of a build without one.
+let expected = $vm.asanEnabled() ? undefined : { 65536: [40, 38], 8388608: [507, 505] }[limit];
 if (expected && (most !== expected[0] || mostInALoop !== expected[1]))
     throw new Error("With " + limit + " bytes the matcher accepts " + most + " groups and " + mostInALoop + " in a loop, expected " + expected);
 

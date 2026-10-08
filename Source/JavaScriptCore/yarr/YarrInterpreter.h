@@ -583,7 +583,8 @@ JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigne
 #if USE(BUN_JSC_ADDITIONS)
 // byteCompile() for the non-backtracking matcher: bytecode that has a LinearProgram, which is
 // what interpret() then runs. Null, with the reason, for a pattern the matcher refuses. The
-// pattern is then as it was, and the caller compiles it as it does without the matcher.
+// pattern is then as it was, and the caller compiles it as it does without the matcher. Null
+// with an ErrorCode and no reason when the compile itself failed, as byteCompile() does.
 // byteCompile() does not ask: a caller asks here, with a pattern that jitCompile() has not seen.
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern&, BumpPointerAllocator*, ErrorCode&, LinearRefusal&, ConcurrentJSLock* = nullptr);
 
@@ -596,10 +597,11 @@ struct InterpretStatistics {
     // Engine::Backtracking, for a RegExp: whether that is the JIT's code and not the bytecode
     // interpreter.
     bool usesJIT { false };
-    // Engine::Backtracking, by interpretByBacktrackingForTesting(): the interpreter reached its
-    // limit and gave up. Its answer is then "no match", whatever the subject has.
-    bool reachedMatchLimit { false };
-    // For a RegExp: how many times it asked the matcher for a program (up to 255).
+    // Engine::Backtracking, by interpretByBacktrackingForTesting(): the interpreter gave the
+    // search up, at its limit or for the memory of its contexts or the stack. Its answer is
+    // then "no match", whatever the subject has.
+    bool gaveUp { false };
+    // For a RegExp: how many times the RegExps of its VM have asked the matcher for a program.
     unsigned linearCompiles { 0 };
     // The rest is of Engine::Linear only: the backtracking engines do not count.
     size_t programSize { 0 };
@@ -611,8 +613,13 @@ struct InterpretStatistics {
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output, InterpretStatistics&);
 // interpret() by the backtracking interpreter, also for bytecode that has a LinearProgram: that
 // bytecode has a body too. A test compares the two engines on one pattern with it. The
-// interpreter gives up early here, and InterpretStatistics::reachedMatchLimit says when it did.
+// interpreter gives up early here, and InterpretStatistics::gaveUp says when it did.
 JS_EXPORT_PRIVATE unsigned interpretByBacktrackingForTesting(BytecodePattern*, StringView input, unsigned start, unsigned* output, InterpretStatistics&);
+// What a reader can see of the output vector of a match, the same for every engine. The engines
+// write the end of a group only when the group matched. In the slot of a duplicated name, the
+// backtracking engines leave the number of a group that a lookaround matched and then gave up:
+// that group has no match, and a reader sees no group for the name either way.
+JS_EXPORT_PRIVATE void normalizeOutputForTesting(std::span<unsigned> output, unsigned numSubpatterns, unsigned offsetVectorBaseForNamedCaptures, bool ofBacktrackingEngine);
 #endif
 
 } } // namespace JSC::Yarr
