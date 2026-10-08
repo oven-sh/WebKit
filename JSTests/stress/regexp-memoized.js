@@ -136,6 +136,8 @@ for (const { source, flags, results } of cases) {
             testRe.lastIndex = lastIndex;
             if (testRe.test(inputs[i]) !== (results[i].m !== null))
                 throw new Error("/" + source + "/" + flags + ".test(" + JSON.stringify(inputs[i]) + ") is wrong");
+            if (testRe.lastIndex !== results[i].lastIndex)
+                throw new Error("/" + source + "/" + flags + ".test(" + JSON.stringify(inputs[i]) + ") left lastIndex at " + testRe.lastIndex + " instead of " + results[i].lastIndex);
         }
     }
 }

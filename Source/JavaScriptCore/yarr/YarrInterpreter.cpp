@@ -2093,8 +2093,6 @@ public:
         return false;
     }
 
-    static constexpr size_t memoMaxTableBytes = 64 * MB;
-
     static uint64_t memoTableBytes(BytecodePattern* pattern, size_t inputLength)
     {
         return ((static_cast<uint64_t>(inputLength) + 1) * pattern->m_memoPointCount + 7) / 8;
@@ -2103,7 +2101,7 @@ public:
     // Whether a match of input can be run with memoization at all.
     static bool canMemoize(BytecodePattern* pattern, size_t inputLength)
     {
-        return pattern->m_memoPointCount && memoTableBytes(pattern, inputLength) <= memoMaxTableBytes;
+        return pattern->m_memoPointCount && memoTableBytes(pattern, inputLength) <= maxMemoTableBytes;
     }
 
     // How many times BacktrackingMode::Counted lets a term that has a cache point be backtracked into
@@ -2196,6 +2194,10 @@ public:
         if (!--remainingMatchCount) {
             dataLogLnIf(verbose, "      Reached match limit - Returning ErrorHitLimit");
             return JSRegExpResult::ErrorHitLimit;
+        }
+        if constexpr (countBacktracks) {
+            if (!--m_memo.budget) [[unlikely]]
+                return JSRegExpResult::ErrorHitLimit;
         }
 
         ByteTermDumper termDumper(compileMode);
@@ -2519,7 +2521,8 @@ public:
         DUMP_TERM();
 
         // Backtracking into a term that has a cache point means that everything after it has failed.
-        // BacktrackingMode::Counted counts how often that happens, and gives up when it is too often.
+        // BacktrackingMode::Counted counts how often that happens (and how often a disjunction is
+        // entered, above), and gives up when it is too often.
         if constexpr (countBacktracks) {
             ByteTerm& term = currentTerm();
             if (term.m_memoLoop || term.m_memoExit) {
@@ -2753,11 +2756,16 @@ public:
         ASSERT(backtrackingMode == BacktrackingMode::Unbounded || canMemoize(pattern, input.size()));
         if constexpr (countBacktracks)
             m_memo.budget = memoInitialBudget();
+        if constexpr (memoize) {
+            // The table bounds the match, and the JIT code that hands matches over has no such limit.
+            if (pattern->m_memoizesWholePattern)
+                remainingMatchCount = std::numeric_limits<unsigned>::max();
+        }
     }
 
     // BacktrackingMode::Counted, after interpret() has returned offsetNoMatch: whether that is because
-    // the match was stopped, and is to be run again with memoization.
-    bool backtrackedExcessively() const { return !m_memo.budget; }
+    // the match was stopped, by its budget or by matchLimit, and is to be run again with memoization.
+    bool backtrackedExcessively() const { return !m_memo.budget || !remainingMatchCount; }
 
     // BacktrackingMode::Memoized, after interpret() has returned offsetNoMatch: whether that is because
     // the match ran out of memory. Its DisjunctionContexts are larger (MemoContext), so it does that
@@ -2828,13 +2836,8 @@ public:
         regexEnd();
 
         unsigned memoPointCount = 0;
-        if (Options::useMemoizedRegExp() && m_pattern.canMemoizeMatches()) [[unlikely]] {
-            auto count = assignMemoPoints(*m_bodyDisjunction, /* isParenthesesBody= */ false);
-            if (count && count.value() <= memoMaxPoints)
-                memoPointCount = count.value();
-            else
-                removeMemoPoints(*m_bodyDisjunction);
-        }
+        if (Options::useMemoizedRegExp()) [[unlikely]]
+            memoPointCount = assignMemoPoints();
 
 #ifdef ASSERT_ENABLED
         if (Options::dumpCompiledRegExpPatterns())
@@ -2843,7 +2846,33 @@ public:
 
         auto bytecodePattern = makeUnique<BytecodePattern>(WTF::move(m_bodyDisjunction), m_allParenthesesInfo, m_pattern, allocator, lock, m_pattern.offsetVectorBaseForNamedCaptures(), m_pattern.offsetsSize());
         bytecodePattern->m_memoPointCount = memoPointCount;
+        bytecodePattern->m_memoizesWholePattern = memoPointCount && !m_memoizesOnlyPartOfThePattern;
         return bytecodePattern;
+    }
+
+    // Returns the pattern's number of cache points: 0 if it cannot be memoized.
+    unsigned assignMemoPoints()
+    {
+        if (!m_pattern.canMemoizeMatches())
+            return 0;
+        auto count = assignMemoPoints(*m_bodyDisjunction, /* isParenthesesBody= */ false);
+        if (count && count.value() <= memoMaxPoints)
+            return count.value();
+        removeMemoPoints(*m_bodyDisjunction);
+        return 0;
+    }
+
+    // See Yarr::memoPointCountIfFullyMemoized().
+    unsigned memoPointCountIfFullyMemoized()
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return 0;
+        regexBegin(m_pattern.m_numSubpatterns, m_pattern.m_body->m_callFrameSize, m_pattern.m_body->m_alternatives[0]->onceThrough());
+        if (emitDisjunction(m_pattern.m_body, 0, 0))
+            return 0;
+        regexEnd();
+        unsigned count = assignMemoPoints();
+        return m_memoizesOnlyPartOfThePattern ? 0 : count;
     }
 
     // Match memoization (see Interpreter::memoTest()): numbers the cache points of a disjunction, from 0
@@ -2861,7 +2890,6 @@ public:
     // A ParentheticalAssertion's body is never backtracked into once it has matched, so nothing that
     // encloses the assertion has a bearing on the terms inside it; "left at" its own End says nothing,
     // because what follows that is matched from where the assertion began.
-    static constexpr unsigned memoMaxCategoriesPerParentheses = 32;
     static constexpr unsigned memoMaxPointsPerParentheses = 1024;
     static constexpr unsigned memoMaxPoints = 1 << 16;
 
@@ -2939,9 +2967,10 @@ public:
                 ByteDisjunction& body = *term.atom.parenthesesDisjunction;
                 uint64_t categoryCount = term.atom.quantityMaxCount == quantifyInfinite ? static_cast<uint64_t>(term.atom.quantityMinCount) + 1 : term.atom.quantityMaxCount;
                 auto pointsPerIteration = assignMemoPoints(body, /* isParenthesesBody= */ true);
-                if (!pointsPerIteration || categoryCount > memoMaxCategoriesPerParentheses || categoryCount * pointsPerIteration.value() > memoMaxPointsPerParentheses) {
+                if (!pointsPerIteration || categoryCount * pointsPerIteration.value() > memoMaxPointsPerParentheses) {
                     // Too many to be worth it: nothing inside the group is remembered. What encloses it still is.
                     removeMemoPoints(body);
+                    m_memoizesOnlyPartOfThePattern = true;
                     break;
                 }
                 body.m_memoPointCount = pointsPerIteration.value();
@@ -3573,6 +3602,7 @@ private:
     Vector<ParenthesesStackEntry> m_parenthesesStack;
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     OptionSet<Flags> m_currentFlags;
+    bool m_memoizesOnlyPartOfThePattern { false };
 };
 
 void ByteTermDumper::dumpTerm(size_t idx, ByteTerm term)
@@ -3894,6 +3924,11 @@ void ByteTermDumper::dumpDisjunction(ByteDisjunction* disjunction, unsigned nest
 std::unique_ptr<BytecodePattern> byteCompile(YarrPattern& pattern, BumpPointerAllocator* allocator, ErrorCode& errorCode, ConcurrentJSLock* lock)
 {
     return ByteCompiler(pattern).compile(allocator, lock, errorCode);
+}
+
+unsigned memoPointCountIfFullyMemoized(YarrPattern& pattern)
+{
+    return ByteCompiler(pattern).memoPointCountIfFullyMemoized();
 }
 
 // For a pattern that has cache points, which takes Options::useMemoizedRegExp().

@@ -566,8 +566,11 @@ public:
 
     std::unique_ptr<ByteDisjunction> m_body;
     OptionSet<Flags> m_flags;
-    // Number of match memoization cache points; 0 without Options::useMemoizedRegExp(), and when the
-    // pattern cannot be memoized.
+    // Match memoization: whether every part of the pattern has its cache points, which bounds a
+    // memoized match by its table.
+    bool m_memoizesWholePattern { false };
+    // Number of cache points; 0 without Options::useMemoizedRegExp(), and when the pattern cannot be
+    // memoized.
     unsigned m_memoPointCount { 0 };
     // Each BytecodePattern is associated with a RegExp, each RegExp is associated
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.
@@ -591,5 +594,14 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+
+// Match memoization (Options::useMemoizedRegExp()). The table has a bit per cache point and position of
+// the subject, and a match whose table would be larger than this is not memoized.
+static constexpr size_t maxMemoTableBytes = 64 * MB;
+// The number of cache points byteCompile() gives the pattern if it memoizes all of it, and 0 if it
+// memoizes none of it or leaves a group out. This is for the JIT, which only hands a match that
+// backtracks too much to the interpreter when that bounds it. (The bytecode of a match-only pattern is
+// compiled from the pattern with its captures, whose count can differ a little.)
+unsigned memoPointCountIfFullyMemoized(YarrPattern&);
 
 } } // namespace JSC::Yarr

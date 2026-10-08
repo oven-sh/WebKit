@@ -42,6 +42,27 @@ shouldMatchWithLastGroup(/^(?:(?:a|b|ab)*c|([^]*))$/, "ab".repeat(100) + "d");
 shouldMatchWithLastGroup(/^(?:(?:(?:a|b)*a){2}c|([^]*))$/, "ab".repeat(200) + "d");
 shouldMatchWithLastGroup(/^(?:(?:xy|x){2,3}?(?:y|yx)*w|([^]*))$/, "xy".repeat(200) + "z");
 
+// Groups with many categories of iteration.
+shouldMatchWithLastGroup(/^(?:(a|a){1,60}b|([^]*))$/, a(40) + "c");
+shouldMatchWithLastGroup(/^(?:(a|a){40}b|([^]*))$/, a(40) + "c");
+shouldMatchWithLastGroup(/^(?:(a|a){33,}b|([^]*))$/, a(60) + "c");
+
+// A match that the JIT code finishes on its own without the option, and hands over with it: iterations
+// of the inner group are entered far more often than a term with a cache point is backtracked into.
+{
+    const re = /(?:(?:ab){32})*c/;
+    const input = "ab".repeat(3000) + "x" + "ab".repeat(32) + "c";
+    for (let i = 0; i < 2; ++i) {
+        const match = re.exec(input);
+        shouldBe(match !== null, true, String(re));
+        shouldBe(match.index, 6001, String(re));
+        shouldBe(match[0].length, 65, String(re));
+    }
+}
+
+// Optional characters in front of something that fails.
+shouldMatchWithLastGroup(new RegExp("^(?:" + "\\w?\\d?".repeat(20) + "!|([^]*))$"), "1".repeat(40));
+
 // Consecutive loops over the same characters.
 shouldMatchWithLastGroup(/^(?:a*a*a*a*b|([^]*))$/, a(3000) + "c");
 // Two loops are enough, even when the second one cannot be backtracked into (nothing it matches can start

@@ -39,6 +39,7 @@
 #include "Yarr.h"
 #include "YarrCanonicalize.h"
 #include "YarrDisassembler.h"
+#include "YarrInterpreter.h"
 #include "YarrJITRegisters.h"
 #include "YarrMatchingContextHolder.h"
 #include <wtf/ASCIICType.h>
@@ -904,10 +905,11 @@ class YarrGenerator final : public YarrJITInfo {
         PreferredTarget m_preferredTarget;
     };
 
-    // Options::useMemoizedRegExp(): m_regs.remainingMatchCount is a budget proportional to the subject
-    // (initializeMatchBudget()) instead of matchLimit, and the match stops with JITCodeFailure once it is
-    // negative. That hands it to the interpreter, which remembers what has failed once it finds that the
-    // match backtracks too much (m_retryWithMemoizationWhenOverBudget).
+    // Options::useMemoizedRegExp(): for a pattern that can take more than linear time and that the
+    // interpreter memoizes all of (m_retryWithMemoizationWhenOverBudget), m_regs.remainingMatchCount is a
+    // budget proportional to the subject (initializeMatchBudget()) instead of matchLimit, and the match
+    // stops with JITCodeFailure once it is negative. That hands it to the interpreter, which remembers
+    // what has failed once it finds that the match backtracks too much.
 
     // A match without nested groups takes more than linear time by backtracking into a quantified
     // character or character class to try another length, and by running loops again over what they,
@@ -931,9 +933,16 @@ class YarrGenerator final : public YarrJITInfo {
         m_jit.zeroExtend32ToWord(m_regs.length, m_regs.remainingMatchCount);
         m_jit.lshift64(MacroAssembler::TrustedImm32(matchBudgetPerCharacterShift), m_regs.remainingMatchCount);
         m_jit.add64(MacroAssembler::TrustedImm32(matchBudgetBase), m_regs.remainingMatchCount);
-        auto withinLimit = m_jit.branch64(MacroAssembler::Below, m_regs.remainingMatchCount, MacroAssembler::TrustedImm64(matchLimit));
-        m_jit.move(MacroAssembler::TrustedImm32(matchLimit), m_regs.remainingMatchCount);
-        withinLimit.link(&m_jit);
+
+        // The interpreter does not memoize a subject whose table would be too large, so such a match is
+        // better off staying here, as without the option. With a quantified group that is matched an
+        // iteration at a time it would have no limit at all, though: that one keeps its budget.
+        uint64_t maxLengthToMemoize = static_cast<uint64_t>(maxMemoTableBytes) * 8 / m_memoPointCount - 1;
+        if (!m_containsNestedSubpatterns && maxLengthToMemoize < static_cast<uint64_t>(std::numeric_limits<int32_t>::max())) {
+            auto memoizable = m_jit.branch32(MacroAssembler::BelowOrEqual, m_regs.length, MacroAssembler::TrustedImm32(static_cast<int32_t>(maxLengthToMemoize)));
+            m_jit.move(MacroAssembler::TrustedImm64(std::numeric_limits<int64_t>::max()), m_regs.remainingMatchCount);
+            memoizable.link(&m_jit);
+        }
     }
 
     // Whether a match can take more than linear time without going through a quantified group that is
@@ -942,49 +951,63 @@ class YarrGenerator final : public YarrJITInfo {
     //    earlier of which can be backtracked into: each character it gives back runs the later one
     //    again, whether or not that one can be backtracked into itself (in /a*a*b/ the second a* is
     //    possessive, and an attempt is still quadratic; three loops make /(.*)-(.*)-(.*)$/ cubic).
-    //  - One loop keeps an attempt linear, but when a failed attempt is followed by one from the next
-    //    position, that one runs the loop over the same characters again (/\s+$/, /a*b/).
-    struct CharacterLoopsOnAPath {
-        unsigned count { 0 }; // No further than 2.
-        bool anyCanBacktrack { false };
-        bool canBeSuperLinear() const { return count >= 2 && anyCanBacktrack; }
+    //  - One loop keeps an attempt linear, but when the attempt can still fail after the loop and is
+    //    then made again from the next position, that one runs the loop over the same characters
+    //    (/\s+$/, /a*b/, but not /\d+/).
+    //  - Optional characters each double the ways through the pattern (/a?a?a?...aaa.../); a path with
+    //    enough of them to use up the budget keeps one.
+    struct PathShape {
+        unsigned loops { 0 }; // No further than 2.
+        bool anyLoopCanBacktrack { false };
+        bool loopIsFollowed { false };
+        unsigned optionals { 0 };
+        bool canBeSuperLinear() const { return (loops >= 2 && anyLoopCanBacktrack) || optionals >= matchBudgetMinOptionals; }
     };
-    static CharacterLoopsOnAPath characterLoopsInOneAttempt(PatternDisjunction* disjunction)
+    static PathShape shapeOfOneAttempt(PatternDisjunction* disjunction)
     {
-        CharacterLoopsOnAPath most;
+        PathShape most;
         for (auto& alternative : disjunction->m_alternatives) {
-            CharacterLoopsOnAPath path;
+            PathShape path;
             for (auto& term : alternative->m_terms) {
+                if (path.loops)
+                    path.loopIsFollowed = true;
                 switch (term.type) {
                 case PatternTerm::Type::PatternCharacter:
                 case PatternTerm::Type::CharacterClass:
-                    // x? is not a loop: running it again costs the same however long the subject is.
-                    if (term.quantityType != QuantifierType::FixedCount && term.quantityMaxCount > 1) {
-                        ++path.count;
-                        path.anyCanBacktrack |= !term.possessive();
-                    }
+                    if (term.quantityType == QuantifierType::FixedCount)
+                        break;
+                    if (term.quantityMaxCount > 1) {
+                        ++path.loops;
+                        path.anyLoopCanBacktrack |= !term.possessive();
+                    } else if (!term.possessive())
+                        ++path.optionals;
                     break;
                 case PatternTerm::Type::ParenthesesSubpattern:
                 case PatternTerm::Type::ParentheticalAssertion: {
-                    auto inner = characterLoopsInOneAttempt(term.parentheses.disjunction);
-                    path.count += inner.count;
-                    path.anyCanBacktrack |= inner.anyCanBacktrack;
+                    auto inner = shapeOfOneAttempt(term.parentheses.disjunction);
+                    path.loops += inner.loops;
+                    path.anyLoopCanBacktrack |= inner.anyLoopCanBacktrack;
+                    path.loopIsFollowed |= inner.loopIsFollowed;
+                    path.optionals += inner.optionals;
                     break;
                 }
                 default:
                     break;
                 }
-                path.count = std::min(path.count, 2u);
+                path.loops = std::min(path.loops, 2u);
+                path.optionals = std::min(path.optionals, matchBudgetMinOptionals);
             }
             // Alternatives are different paths, so take the worst of them (and not their sum).
             if (path.canBeSuperLinear())
                 return path;
-            most.count = std::max(most.count, path.count);
-            most.anyCanBacktrack |= path.anyCanBacktrack;
+            most.loops = std::max(most.loops, path.loops);
+            most.anyLoopCanBacktrack |= path.anyLoopCanBacktrack;
+            most.loopIsFollowed |= path.loopIsFollowed;
+            most.optionals = std::max(most.optionals, path.optionals);
         }
         // Only reached when no single alternative can: report that, whatever the mix says.
         if (most.canBeSuperLinear())
-            most.count = 1;
+            most.loops = 1;
         return most;
     }
 
@@ -1067,10 +1090,10 @@ class YarrGenerator final : public YarrJITInfo {
     {
         if (m_containsNestedSubpatterns)
             return true;
-        auto loops = characterLoopsInOneAttempt(m_pattern.m_body);
-        if (loops.canBeSuperLinear())
+        auto shape = shapeOfOneAttempt(m_pattern.m_body);
+        if (shape.canBeSuperLinear())
             return true;
-        if (!loops.count || m_pattern.sticky())
+        if (!shape.loops || !shape.loopIsFollowed || m_pattern.sticky())
             return false;
         for (auto& alternative : m_pattern.m_body->m_alternatives) {
             if (!alternative->onceThrough())
@@ -9526,8 +9549,10 @@ public:
         // that can are made to keep one. (A quantified group that is matched an iteration at a time
         // counts against matchLimit otherwise.)
 #if ENABLE(YARR_JIT_ALL_PARENS_EXPRESSIONS)
-        if (Options::useMemoizedRegExp()) [[unlikely]]
-            m_retryWithMemoizationWhenOverBudget = m_pattern.canMemoizeMatches() && canTakeMoreThanLinearTime();
+        if (Options::useMemoizedRegExp() && canTakeMoreThanLinearTime()) [[unlikely]] {
+            m_memoPointCount = memoPointCountIfFullyMemoized(m_pattern);
+            m_retryWithMemoizationWhenOverBudget = !!m_memoPointCount;
+        }
 #endif
 
         if (Options::dumpDisassembly() || Options::dumpRegExpDisassembly()) [[unlikely]]
@@ -10085,8 +10110,10 @@ private:
     ParenContextSizes m_parenContextSizes;
 #endif
     bool m_retryWithMemoizationWhenOverBudget { false };
+    unsigned m_memoPointCount { 0 }; // What the interpreter gives the pattern: see memoPointCountIfFullyMemoized().
     static constexpr unsigned matchBudgetPerCharacterShift = 7;
     static constexpr unsigned matchBudgetBase = 4096;
+    static constexpr unsigned matchBudgetMinOptionals = 8; // 2^8 ways through them are more than matchBudgetPerCharacter.
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS) && ENABLE(YARR_JIT_UNICODE_CAN_INCREMENT_INDEX_FOR_NON_BMP)
     bool m_useFirstNonBMPCharacterOptimization { false };
 #endif
