@@ -2306,6 +2306,11 @@ public:
     }
 
     // WTF_IGNORES_THREAD_SAFETY_ANALYSIS because this function does conditional locking.
+#if USE(BUN_JSC_ADDITIONS)
+    // interpretByBacktrackingForTesting() is a second caller of this function. It stays inline
+    // in Yarr::interpret(), as it is where that is its one caller.
+    ALWAYS_INLINE
+#endif
     unsigned interpret() WTF_IGNORES_THREAD_SAFETY_ANALYSIS
     {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=195970
