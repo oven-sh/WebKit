@@ -13,8 +13,10 @@ forced 16-bit subjects, plus engine-independent metamorphic checks).
 
 Profiles: mixed, lookbehind, alt, unicode, bm, deep, fold, small, strings, wide (see PROFILES in
 regex-fuzz.js). Configs: jit, interp (--useRegExpJIT=0), linear (--useRegExpLinearEngine=1),
-gatesoff, nolb, nofactor, nodispatch, nodfg, eager, asan (WebKitBuild/DebugASAN), base (a baseline
-jsc: $YARR_FUZZ_BASE_JSC), node.
+linear-interp (the same with --useRegExpJIT=0), linear-verify (the same with
+--verifyRegExpLinearEngine=1: the bytecode interpreter checks every match of the matcher, and a
+difference is a crash), gatesoff, nolb, nofactor, nodispatch, nodfg, eager, asan
+(WebKitBuild/DebugASAN), base (a baseline jsc: $YARR_FUZZ_BASE_JSC), node.
 
 A backtracking engine that reaches its match limit answers "no match", and the matcher of the
 `linear` configuration has no such limit. So a `jit~linear` difference where the `jit` side took

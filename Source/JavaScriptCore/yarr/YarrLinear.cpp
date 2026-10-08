@@ -1628,7 +1628,7 @@ size_t LinearProgram::estimatedSizeInBytes() const
 void LinearProgram::dump(PrintStream& out) const
 {
     out.println("Linear program: ", instructionCount(), " instructions, ", m_slotCount, " slots, at most ", m_maximumStepsPerPosition, " steps per position",
-        m_sticky ? ", sticky" : "", m_anchoredAtStart ? ", anchored at start" : "", m_decodeSurrogatePairs ? ", decodes surrogate pairs" : "");
+        m_sticky ? ", sticky" : "", m_anchoredAtStart ? ", anchored at start" : "", m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet ? ", anchored at end" : "", m_decodeSurrogatePairs ? ", decodes surrogate pairs" : "");
     for (unsigned codeIndex = 0; codeIndex < m_codes.size(); ++codeIndex) {
         auto& code = m_codes[codeIndex];
         out.println("  code ", codeIndex, code.direction == Backward ? " (backward)" : "", ":");
