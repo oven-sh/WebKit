@@ -1240,10 +1240,10 @@ void AssemblyHelpers::rapidHashMix64(GPRReg inputAndResult, GPRReg scratch1, GPR
 
 #if CPU(ARM64)
     // scratch1 = input ^ secret1 = a
-    move(TrustedImm64(static_cast<int64_t>(0x2d358dccaa6c78a5ULL)), scratch1);
+    move(TrustedImm64(static_cast<int64_t>(WTF::hashSecrets().secret[0])), scratch1);
     xor64(input, scratch1);
     // scratch2 = input ^ secret2 = b
-    move(TrustedImm64(static_cast<int64_t>(0x8bb84b93962eacc9ULL)), scratch2);
+    move(TrustedImm64(static_cast<int64_t>(WTF::hashSecrets().secret[1])), scratch2);
     xor64(input, scratch2);
     // input is dead as a value now; reuse its register for the hi half.
     uMulHigh64(scratch1, scratch2, input);  // input = hi64(a * b)
@@ -1284,10 +1284,10 @@ void AssemblyHelpers::rapidHashMix64(GPRReg inputAndResult, GPRReg scratch1, GPR
         move(X86Registers::edx, rdxSaveSlot);
 
     // rax = input ^ secret1 = a
-    move(TrustedImm64(static_cast<int64_t>(0x2d358dccaa6c78a5ULL)), X86Registers::eax);
+    move(TrustedImm64(static_cast<int64_t>(WTF::hashSecrets().secret[0])), X86Registers::eax);
     xor64(inputSafe, X86Registers::eax);
     // rdx = input ^ secret2 = b
-    move(TrustedImm64(static_cast<int64_t>(0x8bb84b93962eacc9ULL)), X86Registers::edx);
+    move(TrustedImm64(static_cast<int64_t>(WTF::hashSecrets().secret[1])), X86Registers::edx);
     xor64(inputSafe, X86Registers::edx);
 
     // mulq rdx: rdx:rax = rax * rdx = a * b; rax has lo, rdx has hi.

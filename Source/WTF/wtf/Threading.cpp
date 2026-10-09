@@ -527,6 +527,7 @@ void initialize()
 #if ENABLE(CONJECTURE_ASSERT)
         wtfConjectureAssertIsEnabled = !!getenv("ENABLE_WEBKIT_CONJECTURE_ASSERT");
 #endif
+        initializeHashSecrets();
         setPermissionsOfConfigPage();
         Config::initialize();
 #if USE(TZONE_MALLOC)

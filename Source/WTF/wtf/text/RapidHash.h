@@ -36,6 +36,7 @@
 #pragma once
 
 #include <wtf/FastMalloc.h>
+#include <wtf/HashSecrets.h>
 #include <wtf/Int128.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/ASCIIFastPath.h>
@@ -61,14 +62,18 @@ public:
     static constexpr unsigned maskHash = StringHasher::maskHash;
     using DefaultConverter = StringHasher::DefaultConverter;
 
-    static constexpr std::array<uint64_t, 3> secret { 0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull };
-
     RapidHash() = default;
 
     template<typename T, typename Converter = DefaultConverter>
-    ALWAYS_INLINE static constexpr unsigned computeHashAndMaskTop8Bits(std::span<const T> data)
+    ALWAYS_INLINE static unsigned computeHashAndMaskTop8Bits(std::span<const T> data)
     {
-        return StringHasher::avoidZero(static_cast<unsigned>(rapidhash<T, Converter>(data)) & StringHasher::maskHash);
+        return StringHasher::avoidZero(static_cast<unsigned>(rapidhash<T, Converter>(data, hashSecrets())) & StringHasher::maskHash);
+    }
+
+    template<typename T, typename Converter = DefaultConverter>
+    ALWAYS_INLINE static constexpr unsigned computeStableHashAndMaskTop8Bits(std::span<const T> data)
+    {
+        return StringHasher::avoidZero(static_cast<unsigned>(rapidhash<T, Converter>(data, stableHashSecrets)) & StringHasher::maskHash);
     }
 
 private:
@@ -90,9 +95,10 @@ private:
     // Read64Fn: (size_t byteOffset) -> uint64_t  (reads 8 bytes at offset)
     // Read32Fn: (size_t byteOffset) -> uint64_t  (reads 4 bytes at offset)
     // ReadSmallFn: (size_t byteOffset, size_t k) -> uint64_t  (reads 1-3 bytes)
-    ALWAYS_INLINE static constexpr uint64_t rapidhashImpl(size_t len, NOESCAPE const Invocable<uint64_t(size_t)> auto& read64, NOESCAPE const Invocable<uint64_t(size_t)> auto& read32, NOESCAPE const Invocable<uint64_t(size_t, size_t)> auto& readSmall)
+    ALWAYS_INLINE static constexpr uint64_t rapidhashImpl(const HashSecrets& secrets, size_t len, NOESCAPE const Invocable<uint64_t(size_t)> auto& read64, NOESCAPE const Invocable<uint64_t(size_t)> auto& read32, NOESCAPE const Invocable<uint64_t(size_t, size_t)> auto& readSmall)
     {
-        uint64_t seed = rapidMix(0 ^ secret[0], secret[1]) ^ len;
+        const std::array<uint64_t, 3> secret = secrets.secret;
+        uint64_t seed = secrets.seed ^ len;
         uint64_t a, b;
 
         if (len <= 16) [[likely]] {
@@ -148,13 +154,13 @@ private:
     //     character via (convert(c) & 0xFF) | (convert(c) >> 8); the converter
     //     may legitimately produce non-Latin1 output and we don't scan it.
     template<typename T, typename Converter>
-    ALWAYS_INLINE static constexpr uint64_t rapidhash(std::span<const T> data)
+    ALWAYS_INLINE static constexpr uint64_t rapidhash(std::span<const T> data, const HashSecrets& secrets)
     {
         if constexpr (sizeof(T) == 2 && std::is_same_v<Converter, DefaultConverter>) {
             if (!charactersAreAllLatin1(data)) [[unlikely]]
-                return rapidhashRawBytes(data);
+                return rapidhashRawBytes(data, secrets);
         }
-        return rapidhashOneBytePerChar<T, Converter>(data);
+        return rapidhashOneBytePerChar<T, Converter>(data, secrets);
     }
 
     // Hash N bytes, one per character, where byte[i] = foldByte(data[i]).
@@ -164,7 +170,7 @@ private:
     // For custom Converter: byte = (convert(c) & 0xFF) | (convert(c) >> 8),
     // an OR-fold that covers arbitrary converter outputs.
     template<typename T, typename Converter>
-    ALWAYS_INLINE static constexpr uint64_t rapidhashOneBytePerChar(std::span<const T> data)
+    ALWAYS_INLINE static constexpr uint64_t rapidhashOneBytePerChar(std::span<const T> data, const HashSecrets& secrets)
     {
         const T* p = data.data();
 
@@ -230,12 +236,12 @@ private:
                 | static_cast<uint64_t>(foldByte(off + k - 1));
         };
 
-        return rapidhashImpl(data.size(), read64, read32, readSmall);
+        return rapidhashImpl(secrets, data.size(), read64, read32, readSmall);
     }
 
     // Hash the raw 2N little-endian bytes of a char16_t buffer. Used only when
     // the input contains at least one non-Latin1 character.
-    ALWAYS_INLINE static constexpr uint64_t rapidhashRawBytes(std::span<const char16_t> data)
+    ALWAYS_INLINE static constexpr uint64_t rapidhashRawBytes(std::span<const char16_t> data, const HashSecrets& secrets)
     {
         const char16_t* p = data.data();
         const size_t byteLength = 2 * data.size();
@@ -269,7 +275,7 @@ private:
                 | static_cast<uint64_t>(readByte(byteOff + k - 1));
         };
 
-        return rapidhashImpl(byteLength, read64, read32, readSmall);
+        return rapidhashImpl(secrets, byteLength, read64, read32, readSmall);
     }
 };
 

@@ -23,6 +23,7 @@
 #include <stdint.h>
 #include <tuple>
 #include <wtf/GetPtr.h>
+#include <wtf/HashSecrets.h>
 #include <wtf/Int128.h>
 #include <wtf/RefPtr.h>
 #include <wtf/StdLibExtras.h>
@@ -34,8 +35,8 @@ namespace WTF {
     // Keep in sync with AssemblyHelpers::rapidHashMix64 and FTL rapidHashMix64 code as we need to use the same hash function.
     inline unsigned intHash(uint64_t key)
     {
-        constexpr uint64_t secret1 = 0x2d358dccaa6c78a5ULL;
-        constexpr uint64_t secret2 = 0x8bb84b93962eacc9ULL;
+        uint64_t secret1 = hashSecrets().secret[0];
+        uint64_t secret2 = hashSecrets().secret[1];
         UInt128 product = static_cast<UInt128>(key ^ secret1) * static_cast<UInt128>(key ^ secret2);
         uint64_t folded = static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64);
         return static_cast<unsigned>(folded);

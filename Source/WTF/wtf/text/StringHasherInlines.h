@@ -32,16 +32,22 @@ unsigned StringHasher::computeHashAndMaskTop8Bits(std::span<const T> data)
     return RapidHash::computeHashAndMaskTop8Bits<T, Converter>(data);
 }
 
-template<typename T, unsigned characterCount>
-constexpr unsigned StringHasher::computeLiteralHashAndMaskTop8Bits(const T (&characters)[characterCount])
+template<typename T>
+constexpr unsigned StringHasher::computeStableHashAndMaskTop8Bits(std::span<const T> data)
 {
-    constexpr unsigned characterCountWithoutNull = characterCount - 1;
-    return RapidHash::computeHashAndMaskTop8Bits<T>(unsafeMakeSpan(characters, characterCountWithoutNull));
+    return RapidHash::computeStableHashAndMaskTop8Bits<T>(data);
 }
 
-constexpr unsigned StringHasher::computeLiteralHashAndMaskTop8Bits(ASCIILiteral literal)
+template<typename T, unsigned characterCount>
+constexpr unsigned StringHasher::computeStableHashAndMaskTop8Bits(const T (&characters)[characterCount])
 {
-    return RapidHash::computeHashAndMaskTop8Bits<char>(literal.span());
+    constexpr unsigned characterCountWithoutNull = characterCount - 1;
+    return RapidHash::computeStableHashAndMaskTop8Bits<T>(unsafeMakeSpan(characters, characterCountWithoutNull));
+}
+
+constexpr unsigned StringHasher::computeStableHashAndMaskTop8Bits(ASCIILiteral literal)
+{
+    return RapidHash::computeStableHashAndMaskTop8Bits<char>(literal.span());
 }
 
 } // namespace WTF

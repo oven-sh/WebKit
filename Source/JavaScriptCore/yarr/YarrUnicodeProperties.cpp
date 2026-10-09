@@ -54,7 +54,8 @@ struct HashTable {
 
     ALWAYS_INLINE int entry(WTF::String& key) const
     {
-        int indexEntry = key.impl()->hash() & indexMask;
+        // generateYarrUnicodePropertyTables.py laid the index out.
+        int indexEntry = key.impl()->stableHash() & indexMask;
         int valueIndex = index[indexEntry].value;
 
         if (valueIndex == -1)

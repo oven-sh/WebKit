@@ -49,7 +49,7 @@ class VM;
 // little-endian u32 throughout, 4-byte aligned:
 //   Header, then the arrays it points at. Module-relative request indices (< 2^16); graph-wide module indices
 //   (noModule = none); sids < stringCount, or starDefaultSid / starNamespaceSid. Imports are sorted by
-//   (localHash, localSid), exports by (exportHash, exportSid); hash = StringImpl::hash() of the name (24 bits), and an
+//   (localHash, localSid), exports by (exportHash, exportSid); hash = StringImpl::stableHash() of the name (24 bits), and an
 //   entry whose name is a sentinel carries hash 0xffffffff so it sorts last.
 class PrelinkedModuleGraph final : public RefCounted<PrelinkedModuleGraph> {
     WTF_MAKE_NONCOPYABLE(PrelinkedModuleGraph);

@@ -47,13 +47,18 @@ public:
         }
     };
 
+    // What StringImpl::hash() is: keyed with this process's secrets (HashSecrets.h).
     template<typename T, typename Converter = DefaultConverter>
     static unsigned computeHashAndMaskTop8Bits(std::span<const T> data);
 
-    template<typename T, unsigned characterCount>
-    static constexpr unsigned computeLiteralHashAndMaskTop8Bits(const T (&characters)[characterCount]);
+    // The same function keyed with stableHashSecrets. Never equal to StringImpl::hash() other than by chance.
+    template<typename T>
+    static constexpr unsigned computeStableHashAndMaskTop8Bits(std::span<const T> data);
 
-    static constexpr unsigned computeLiteralHashAndMaskTop8Bits(ASCIILiteral);
+    template<typename T, unsigned characterCount>
+    static constexpr unsigned computeStableHashAndMaskTop8Bits(const T (&characters)[characterCount]);
+
+    static constexpr unsigned computeStableHashAndMaskTop8Bits(ASCIILiteral);
 
 private:
     friend class SuperFastHash;

@@ -75,8 +75,8 @@ TEST(WTF, RapidHasher)
     for (size_t size = 0; size <= max8Bit; size++) {
         std::unique_ptr<const Latin1Character[]> arr1 = generateLatin1Array(size);
         std::unique_ptr<const char16_t[]> arr2 = generateUTF16Array(size);
-        unsigned left = RapidHash::computeHashAndMaskTop8Bits(std::span { arr1.get(), size });
-        unsigned right = RapidHash::computeHashAndMaskTop8Bits(std::span { arr2.get(), size });
+        unsigned left = RapidHash::computeStableHashAndMaskTop8Bits(std::span { arr1.get(), size });
+        unsigned right = RapidHash::computeStableHashAndMaskTop8Bits(std::span { arr2.get(), size });
         ASSERT_EQ(left, right);
         ASSERT_EQ(left, expected[size]);
     }
@@ -97,8 +97,8 @@ TEST(WTF, RapidHasher_LongStringInvariant)
     const Latin1Character* arr1 = arr1Mut.get();
     const char16_t* arr2 = arr2Mut.get();
     for (size_t size = 0; size <= maxSize; ++size) {
-        unsigned left = RapidHash::computeHashAndMaskTop8Bits(std::span { arr1, size });
-        unsigned right = RapidHash::computeHashAndMaskTop8Bits(std::span { arr2, size });
+        unsigned left = RapidHash::computeStableHashAndMaskTop8Bits(std::span { arr1, size });
+        unsigned right = RapidHash::computeStableHashAndMaskTop8Bits(std::span { arr2, size });
         ASSERT_EQ(left, right) << "size=" << size;
     }
 }
@@ -114,9 +114,9 @@ TEST(WTF, RapidHasher_ConstexprMatchesRuntime)
         constexpr size_t length = std::extent_v<std::remove_reference_t<decltype(literal8)>> - 1;
         static_assert(std::extent_v<std::remove_reference_t<decltype(literal16)>> - 1 == length);
 
-        unsigned constexprHash16 = RapidHash::computeHashAndMaskTop8Bits<char16_t>(std::span { literal16, length });
-        unsigned runtimeHash16 = RapidHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { literal16, length });
-        unsigned runtimeHash8 = RapidHash::computeHashAndMaskTop8Bits(std::span { reinterpret_cast<const Latin1Character*>(literal8), length });
+        unsigned constexprHash16 = RapidHash::computeStableHashAndMaskTop8Bits<char16_t>(std::span { literal16, length });
+        unsigned runtimeHash16 = RapidHash::computeStableHashAndMaskTop8Bits(std::span<const char16_t> { literal16, length });
+        unsigned runtimeHash8 = RapidHash::computeStableHashAndMaskTop8Bits(std::span { reinterpret_cast<const Latin1Character*>(literal8), length });
         EXPECT_EQ(constexprHash16, runtimeHash16) << "length=" << length;
         EXPECT_EQ(constexprHash16, runtimeHash8) << "length=" << length;
     };
@@ -196,8 +196,8 @@ TEST(WTF, RapidHasher_NonLatin1ConstexprMatchesRuntime)
 {
     static constexpr char16_t mixed[] = u"a\u00A3\u1234b\u4E2D\u6587\u0041";
     constexpr size_t length = std::extent_v<decltype(mixed)> - 1;
-    unsigned constexprHash = RapidHash::computeHashAndMaskTop8Bits<char16_t>(std::span { mixed, length });
-    unsigned runtimeHash = RapidHash::computeHashAndMaskTop8Bits(std::span<const char16_t> { mixed, length });
+    unsigned constexprHash = RapidHash::computeStableHashAndMaskTop8Bits<char16_t>(std::span { mixed, length });
+    unsigned runtimeHash = RapidHash::computeStableHashAndMaskTop8Bits(std::span<const char16_t> { mixed, length });
     EXPECT_EQ(constexprHash, runtimeHash);
 }
 
@@ -287,8 +287,8 @@ TEST(WTF, RapidHasher_SameContentDifferentWidthSameHash)
             buf8[i] = static_cast<Latin1Character>(c.ascii[i]);
             buf16[i] = static_cast<char16_t>(c.ascii[i]);
         }
-        unsigned raw8 = RapidHash::computeHashAndMaskTop8Bits(buf8.span());
-        unsigned raw16 = RapidHash::computeHashAndMaskTop8Bits<char16_t>(buf16.span());
+        unsigned raw8 = RapidHash::computeStableHashAndMaskTop8Bits(buf8.span());
+        unsigned raw16 = RapidHash::computeStableHashAndMaskTop8Bits<char16_t>(buf16.span());
         EXPECT_EQ(raw8, raw16) << "ascii=\"" << c.ascii << "\" length=" << length;
 
         // 2. StringImpl-level: build a single-byte StringImpl and a 16-bit
@@ -363,7 +363,7 @@ TEST(WTF, RapidHasher_BuildTimeHashersMatchRuntime)
 
     for (auto& c : cases) {
         auto s = genString(c.length);
-        unsigned h = RapidHash::computeHashAndMaskTop8Bits(std::span<const Latin1Character>(
+        unsigned h = RapidHash::computeStableHashAndMaskTop8Bits(std::span<const Latin1Character>(
             reinterpret_cast<const Latin1Character*>(s.data()), s.size()));
         EXPECT_EQ(h, c.expected) << "length=" << c.length;
     }

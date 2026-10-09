@@ -308,7 +308,9 @@ public:
 
     unsigned hash() const override
     {
-        return m_source.get().hash();
+        if (!m_hash)
+            m_hash = m_source.get().stableHash();
+        return m_hash;
     }
 
     StringView source() const override
@@ -325,6 +327,7 @@ protected:
 
 private:
     const Ref<StringImpl> m_source;
+    mutable unsigned m_hash { 0 };
 };
 
 // The texts of many builtins, one after the other. None of them knows of the others, so a line and column in one

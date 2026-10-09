@@ -127,6 +127,7 @@ set(WTF_PUBLIC_HEADERS
     HashIterators.h
     HashMap.h
     HashMethod.h
+    HashSecrets.h
     HashSet.h
     HashTable.h
     HashTraits.h
@@ -589,6 +590,7 @@ set(WTF_SOURCES
     FileSystem.cpp
     FunctionDispatcher.cpp
     GlobalVersion.cpp
+    HashSecrets.cpp
     HashTable.cpp
     HexNumber.cpp
     Int128.cpp

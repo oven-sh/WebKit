@@ -359,7 +359,7 @@ uint32_t EncoderStringTable::slotFor(const StringImpl& string)
     return VariableLengthObjectBase::externalStringTag | ordinal << 2;
 }
 
-// [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, u32 hash, chars, pad-to-4}...]; offsets are from the start of the blob.
+// [u32 count][u32 offsets[count]][records: {u32 length|is8Bit<<31, chars, pad-to-4}...]; offsets are from the start of the blob.
 Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStringHashes) const
 {
     Vector<uint8_t> out;
@@ -394,7 +394,7 @@ Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStrin
     size_t header = sizeof(uint32_t) * (1 + static_cast<size_t>(count));
     size_t body = 0;
     for (auto& s : m_strings)
-        body += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s->length() * (s->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+        body += roundUpToMultipleOf<4>(sizeof(uint32_t) + s->length() * (s->is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
     out.grow(header + body);
     std::memset(out.mutableSpan().data(), 0, out.size());
     uint32_t* words = std::bit_cast<uint32_t*>(out.mutableSpan().data());
@@ -406,12 +406,11 @@ Vector<uint8_t> EncoderStringTable::serialize(std::span<const uint64_t> hotStrin
         const StringImpl& s = m_strings[i].get();
         uint32_t* record = std::bit_cast<uint32_t*>(out.mutableSpan().data() + offset);
         record[0] = s.length() | (s.is8Bit() ? 1u << 31 : 0);
-        record[1] = s.hash();
         if (s.is8Bit())
-            std::memcpy(record + 2, s.span8().data(), s.length());
+            std::memcpy(record + 1, s.span8().data(), s.length());
         else
-            std::memcpy(record + 2, s.span16().data(), s.length() * sizeof(char16_t));
-        offset += roundUpToMultipleOf<4>(2 * sizeof(uint32_t) + s.length() * (s.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
+            std::memcpy(record + 1, s.span16().data(), s.length() * sizeof(char16_t));
+        offset += roundUpToMultipleOf<4>(sizeof(uint32_t) + s.length() * (s.is8Bit() ? sizeof(Latin1Character) : sizeof(char16_t)));
     }
     ASSERT(offset == out.size());
     return out;
@@ -433,7 +432,7 @@ DecoderStringTable::~DecoderStringTable()
 {
     // One per VM: a Worker that exits must give back the references it took on its thread's atoms.
     for (uint32_t i = 0; i < m_count; ++i) {
-        if (m_slots[i] && !isCell(m_slots[i]))
+        if (holdsString(m_slots[i]) && !isCell(m_slots[i]))
             impl(m_slots[i])->deref();
     }
     if (m_slots)
@@ -456,11 +455,6 @@ Ref<StringImpl> DecoderStringTable::createImpl(const Record& r)
     Ref<StringImpl> result = r.is8Bit
         ? create(std::span<const Latin1Character> { std::bit_cast<const Latin1Character*>(r.characters), r.length })
         : create(std::span<const char16_t> { std::bit_cast<const char16_t*>(r.characters), r.length });
-#if USE(BUN_JSC_ADDITIONS)
-    // The hash a later atomFor promotion, property-key use or map insert would otherwise compute over the characters.
-    if (AtomStringImpl::isValidPrecomputedHash(r.hash))
-        AtomStringImpl::adoptPrecomputedHash(result, r.hash);
-#endif
     return result;
 }
 
@@ -474,31 +468,25 @@ DecoderStringTable::Record DecoderStringTable::record(uint32_t ordinal) const
 #endif
     const uint32_t* offsets = std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t));
     size_t offset = offsets[ordinal];
-    RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= 2 * sizeof(uint32_t), offset, m_bytes.size());
+    RELEASE_ASSERT(!(offset % 4) && offset <= m_bytes.size() && m_bytes.size() - offset >= sizeof(uint32_t), offset, m_bytes.size());
     const uint32_t* header = std::bit_cast<const uint32_t*>(m_bytes.data() + offset);
     Record result;
     result.length = header[0] & 0x7fffffffu;
     result.is8Bit = header[0] >> 31;
-    static_assert(recordHashOffset == sizeof(header[0]));
-    result.hash = header[1];
-    result.characters = std::bit_cast<const uint8_t*>(header + 2);
+    result.characters = std::bit_cast<const uint8_t*>(header + 1);
     size_t byteLength = static_cast<size_t>(result.length) * (result.is8Bit ? sizeof(Latin1Character) : sizeof(char16_t));
-    RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - 2 * sizeof(uint32_t), ordinal, result.length, m_bytes.size());
+    RELEASE_ASSERT(byteLength <= m_bytes.size() - offset - sizeof(uint32_t), ordinal, result.length, m_bytes.size());
     return result;
 }
 
 template<typename CharacterType>
 static Ref<AtomStringImpl> atomize(std::span<const CharacterType> characters, uint32_t hash)
 {
-#if USE(BUN_JSC_ADDITIONS)
-    if (!AtomStringImpl::isValidPrecomputedHash(hash)) [[unlikely]] // an edited executable; never let it pick the bucket
-        return AtomStringImpl::add(characters).releaseNonNull();
-#endif
     // Same threshold as CachedUniquedStringImplBase::minimumLengthToAliasPayload: long strings alias the (persistent) blob.
     WTF::HashTranslatorCharBuffer<CharacterType> hashed { characters, hash };
     if (characters.size() >= 48) {
 #if USE(BUN_JSC_ADDITIONS)
-        return AtomStringImpl::addWithoutCopying(hashed); // probes with the stored hash; allocates (a header only) just for a new atom
+        return AtomStringImpl::addWithoutCopying(hashed); // allocates (a header only) just for a new atom
 #else
         return AtomStringImpl::add(RefPtr<StringImpl> { StringImpl::createWithoutCopying(characters) }).releaseNonNull();
 #endif
@@ -533,7 +521,7 @@ ALWAYS_INLINE void DecoderStringTable::prefetchTarget(uint32_t ordinal) const
 {
     if (ordinal >= m_count)
         return;
-    if (uintptr_t slot = m_slots[ordinal]) {
+    if (uintptr_t slot = m_slots[ordinal]; holdsString(slot)) {
         if (!isCell(slot))
             __builtin_prefetch(std::bit_cast<const void*>(slot), 1); // the header atomFor ref()s / jsStringFor hands to a new cell
         else if (use == PrefetchFor::Atom)
@@ -546,18 +534,22 @@ ALWAYS_INLINE void DecoderStringTable::prefetchLookup(AtomStringTable& atoms, ui
 {
     if (ordinal >= m_count)
         return;
-    if (uintptr_t slot = m_slots[ordinal]) {
+    uintptr_t& slot = m_slots[ordinal];
+    if (holdsString(slot)) {
         if (isCell(slot))
             __builtin_prefetch(impl(slot), 1); // atomFor's isAtom() and ref()
         return;
     }
-    size_t offset = offsets()[ordinal];
-    if (offset > m_bytes.size() || m_bytes.size() - offset < recordHashOffset + sizeof(uint32_t))
-        return;
-    uint32_t hash;
-    std::memcpy(&hash, m_bytes.data() + offset + recordHashOffset, sizeof(hash)); // without record()'s checks: a bad record only wastes a prefetch here
-    if (AtomStringImpl::isValidPrecomputedHash(hash))
-        atoms.table().prefetchForHash(hash);
+    if (!slot)
+        slot = static_cast<uintptr_t>(hashOf(record(ordinal))) << hashShift | hashTag; // atomFor takes it from here
+    atoms.table().prefetchForHash(slot >> hashShift);
+}
+
+uint32_t DecoderStringTable::hashOf(const Record& r)
+{
+    return r.is8Bit
+        ? StringHasher::computeHashAndMaskTop8Bits(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length })
+        : StringHasher::computeHashAndMaskTop8Bits(std::span { std::bit_cast<const char16_t*>(r.characters), r.length });
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -620,7 +612,7 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
     RELEASE_ASSERT(ordinal < m_count);
     uintptr_t& slot = m_slots[ordinal];
     m_atomForCalls++;
-    if (slot) [[likely]] {
+    if (holdsString(slot)) [[likely]] {
         StringImpl* existing = impl(slot);
         if (existing->isAtom()) [[likely]]
             return *static_cast<AtomStringImpl*>(existing);
@@ -639,9 +631,10 @@ Ref<AtomStringImpl> DecoderStringTable::atomFor(VM& vm, uint32_t ordinal)
     }
     m_atomsCreated++;
     Record r = record(ordinal);
+    uint32_t hash = slot ? slot >> hashShift : hashOf(r);
     Ref<AtomStringImpl> atom = r.is8Bit
-        ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, r.hash)
-        : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, r.hash);
+        ? atomize(std::span { std::bit_cast<const Latin1Character*>(r.characters), r.length }, hash)
+        : atomize(std::span { std::bit_cast<const char16_t*>(r.characters), r.length }, hash);
     atom->ref();
     slot = std::bit_cast<uintptr_t>(static_cast<StringImpl*>(atom.ptr()));
     return atom;
@@ -669,19 +662,19 @@ RefPtr<AtomStringImpl> DecoderStringTable::atomForSlot(VM& vm, uint32_t slot)
 std::optional<uint32_t> DecoderStringTable::hashForSlot(uint32_t slot) const
 {
     if (slot == VariableLengthObjectBase::emptySentinel)
-        return emptyAtom().impl()->hash();
+        return emptyAtom().impl()->stableHash();
     switch (slot & VariableLengthObjectBase::inlineStringTagMask) {
     case VariableLengthObjectBase::inlineStringTag: {
         unsigned length = (slot >> 2) & 3;
         if (!length)
             return std::nullopt;
         auto bytes = asByteSpan<uint32_t, sizeof(uint32_t)>(slot);
-        return StringHasher::computeHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
+        return StringHasher::computeStableHashAndMaskTop8Bits(std::span<const Latin1Character> { bytes.subspan(1).first(length) });
     }
     case VariableLengthObjectBase::externalStringTag:
         if (slot >> 2 >= m_count)
             return std::nullopt;
-        return record(slot >> 2).hash;
+        return stringFor(slot >> 2).impl()->stableHash();
     default:
         return std::nullopt;
     }
@@ -706,7 +699,7 @@ bool DecoderStringTable::slotEquals(uint32_t slot, const StringImpl& string) con
         uint32_t ordinal = slot >> 2;
         if (ordinal >= m_count)
             return false;
-        if (StringImpl* existing = m_slots[ordinal] ? impl(m_slots[ordinal]) : nullptr) {
+        if (StringImpl* existing = holdsString(m_slots[ordinal]) ? impl(m_slots[ordinal]) : nullptr) {
             if (existing == &string)
                 return true;
             if (existing->isAtom() && string.isAtom())
@@ -731,7 +724,7 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
     if (isCell(slot))
         return cell(slot);
     RefPtr<StringImpl> value;
-    if (!slot) {
+    if (!holdsString(slot)) {
         Record r = record(ordinal);
         if (r.length == 1) {
             char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
@@ -2272,7 +2265,7 @@ public:
     static constexpr bool decodesToCanonicalObject = true;
 #endif
 
-    // The characters follow this 12-byte header (length/flags, precomputed hash, ordinal) directly (see tailSize), instead
+    // The characters follow this 8-byte header (length/flags, ordinal) directly (see tailSize), instead
     // of a separately aligned allocation reached through an offset.
     static size_t tailSize(const StringImpl& string) { return Shape(string).byteLength(); }
 
@@ -2286,7 +2279,6 @@ public:
         m_is8Bit = shape.characters->is8Bit();
         m_length = shape.characters->length();
         RELEASE_ASSERT(m_length == shape.characters->length()); // fits the bitfield
-        m_hash = shape.characters->hash(); // what StringImpl::hash() / the atom table use, so decode never rehashes
         m_ordinal = m_isSymbol || !m_length ? noOrdinal : encoder.nextStringOrdinal(); // see Decoder::atomForOrdinal
         if (m_is8Bit)
             memcpy(tail(), shape.characters->span8().data(), shape.byteLength());
@@ -2306,8 +2298,8 @@ public:
             if (!m_isSymbol) {
                 RefPtr<AtomStringImpl> atom;
                 // Long strings out of a persistent payload keep their characters in the mapping (clean, shared pages) and
-                // only allocate the StringImpl header, and only once the stored-hash probe found no atom.
-                WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer, m_hash };
+                // only allocate the StringImpl header, and only once the probe found no atom.
+                WTF::HashTranslatorCharBuffer<std::remove_const_t<typename decltype(buffer)::element_type>> hashed { buffer };
                 if (buffer.size() >= minimumLengthToAliasPayload && decoder.canBorrowPayload()) {
 #if USE(BUN_JSC_ADDITIONS)
                     atom = AtomStringImpl::addWithoutCopying(hashed);
@@ -2411,7 +2403,6 @@ private:
     uint32_t m_isWellKnownSymbol : 1;
     uint32_t m_isRegistered : 1;
     uint32_t m_isPrivate : 1;
-    uint32_t m_hash { 0 };
     // Distinct (non-symbol) strings are numbered in encode order; the decoder keeps the atom for each number it has seen,
     // so only the first block to name a string goes through the atom table.
     static constexpr uint32_t noOrdinal = std::numeric_limits<uint32_t>::max();
@@ -2814,7 +2805,6 @@ public:
         }
         EncodingOrder::sort(compact, [](const auto& key) -> const auto& { return key; });
         m_variables.encode(encoder, compact);
-        m_hash = env.m_hash;
     }
 
     void decode(Decoder& decoder, CompactTDZEnvironment& env) const
@@ -2823,9 +2813,11 @@ public:
             CompactTDZEnvironment::Compact compact;
             m_variables.decode(decoder, compact);
             CompactTDZEnvironment::sortCompact(compact);
+            env.m_hash = 0;
+            for (auto& key : compact)
+                env.m_hash ^= key->hash();
             env.m_variables = CompactTDZEnvironment::Variables(WTF::move(compact));
         }
-        env.m_hash = m_hash;
     }
 
     CompactTDZEnvironment* decode(Decoder& decoder) const
@@ -2837,7 +2829,6 @@ public:
 
 private:
     CachedVector<CachedRefPtr<CachedUniquedStringImpl, UniquedStringImpl, WTF::PackedPtrTraits<UniquedStringImpl>>> m_variables;
-    unsigned m_hash;
 };
 
 class CachedCompactTDZEnvironmentMapHandle : public CachedObject<CompactTDZEnvironmentMap::Handle> {
@@ -5949,7 +5940,7 @@ static_assert(sizeof(CachedBitVector) == 8);
 static_assert(sizeof(CachedClassElementDefinition) == 16);
 static_assert(sizeof(CachedCodeBlockExtras) == 4);
 static_assert(sizeof(CachedCodeBlockRareData) == 68);
-static_assert(sizeof(CachedCompactTDZEnvironment) == 12);
+static_assert(sizeof(CachedCompactTDZEnvironment) == 8);
 static_assert(sizeof(CachedCompactTDZEnvironmentMapHandle) == 4);
 static_assert(sizeof(CachedEvalCodeBlock) == 40);
 static_assert(sizeof(CachedExpressionInfo) == 4);
@@ -5972,7 +5963,7 @@ static_assert(sizeof(CachedSourceCodeKey) == 28);
 static_assert(sizeof(CachedSourceOrigin) == 4);
 static_assert(sizeof(CachedSourceProvider) == 8);
 static_assert(sizeof(CachedString) == 4);
-static_assert(sizeof(CachedStringImpl) == 12);
+static_assert(sizeof(CachedStringImpl) == 8);
 static_assert(sizeof(CachedStringJumpTable) == 20);
 static_assert(sizeof(CachedStringSourceProvider) == 36);
 static_assert(sizeof(CachedSymbolTable) == 24);
@@ -5981,7 +5972,7 @@ static_assert(sizeof(CachedSymbolTableRareData) == 8);
 static_assert(sizeof(CachedTDZEnvironmentLink) == 8);
 static_assert(sizeof(CachedTemplateObjectDescriptor) == 20);
 static_assert(sizeof(CachedTextPosition) == 8);
-static_assert(sizeof(CachedUniquedStringImpl) == 12);
+static_assert(sizeof(CachedUniquedStringImpl) == 8);
 static_assert(sizeof(CachedUnlinkedSourceCode) == 12);
 static_assert(sizeof(CachedVariableEnvironment) == 16);
 static_assert(sizeof(CachedVariableEnvironmentRareData) == 8);
