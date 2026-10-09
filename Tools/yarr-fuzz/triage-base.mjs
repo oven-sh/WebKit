@@ -19,8 +19,6 @@ for (const f of readdirSync(dir).filter((f) => f.startsWith("mismatch-"))) {
         if (!pairRe.test(o.pair)) continue;
         const key = o.a.p + " " + o.a.f + " " + o.a.s + " " + o.a.w;
         if (seen.has(key)) continue; seen.add(key);
-        // Known, intended divergence from main: /u|/v matches never start/report mid-surrogate-pair.
-        if (/[uv]/.test(o.a.f) && /\\ud[89a-f][0-9a-f]{2}/i.test(o.a.s) && !process.env.ALL) { skipped.surrogate = (skipped.surrogate||0) + 1; continue; }
         if ((o.ta > 300 || o.tb > 300) && !process.env.ALL) { skipped.slow = (skipped.slow||0) + 1; continue; }
         rows.push(o);
     }

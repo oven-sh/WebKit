@@ -4538,6 +4538,26 @@ class YarrGenerator final : public YarrJITInfo {
             op.m_jumps.append(m_jit.branch32(MacroAssembler::Equal, matchPos, MacroAssembler::TrustedImm32(bolUnsatisfiable)));
         }
 
+#if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
+        if (m_decodeSurrogatePairs) {
+            // With the u or v flag the offset between the two halves of a surrogate pair is not a
+            // position of the input, so an expression that matched from there did not match. The
+            // start search tries that offset all the same, and what drops such a match afterwards
+            // (RegExp::matchInlineAtCodePointBoundaries) sees the start this term reports, not where
+            // the expression began. So this term rejects it.
+            getMatchStart(matchPos);
+            MacroAssembler::JumpList beginIsPosition;
+            beginIsPosition.append(m_jit.branchTest32(MacroAssembler::Zero, matchPos));
+            beginIsPosition.append(m_jit.branch32(MacroAssembler::AboveOrEqual, matchPos, m_regs.length));
+            MacroAssembler::BaseIndex unitsAroundBegin(m_regs.input, matchPos, MacroAssembler::TimesTwo, -static_cast<int32_t>(sizeof(char16_t)));
+            verifySubjectRead(unitsAroundBegin, 4, __LINE__);
+            m_jit.load32WithUnalignedHalfWords(unitsAroundBegin, character);
+            m_jit.and32(surrogateTagMask, character);
+            op.m_jumps.append(m_jit.branch32(MacroAssembler::Equal, character, surrogatePairTags));
+            beginIsPosition.link(&m_jit);
+        }
+#endif
+
         if (term->dotAll()) {
             // With /s the leading .* reaches back to where matching began -- the start
             // offset (lastIndex for /g), not position 0 -- and the trailing .* runs to the
