@@ -86,7 +86,11 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
     });
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
+// Every function that is generated assigns `error`, so a function that fails is forgotten when the next one succeeds.
+// Stop: the walk ends at the first function that fails, and `error` is that failure.
+enum class AfterNestedFailure : bool { Continue, Stop };
+
+static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize, AfterNestedFailure afterFailure = AfterNestedFailure::Continue)
 {
     if (!depth)
         return;
@@ -97,13 +101,18 @@ static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unl
         SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
         UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
         if (unlinkedFunctionCodeBlock)
-            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
+            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize, afterFailure);
+        return afterFailure == AfterNestedFailure::Continue || !error.isValid();
     };
 
-    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
-        generate(unlinkedCodeBlock->functionDecl(i));
-    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++)
-        generate(unlinkedCodeBlock->functionExpr(i));
+    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++) {
+        if (!generate(unlinkedCodeBlock->functionDecl(i)))
+            return;
+    }
+    for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++) {
+        if (!generate(unlinkedCodeBlock->functionExpr(i)))
+            return;
+    }
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
@@ -177,7 +186,7 @@ void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionEx
     SourceCode source = executable->linkedSourceCode(parentSource);
     UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode(), optimize);
     if (codeBlock)
-        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth, optimize);
+        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth, optimize, AfterNestedFailure::Stop);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth, OptimizeBytecode optimize)

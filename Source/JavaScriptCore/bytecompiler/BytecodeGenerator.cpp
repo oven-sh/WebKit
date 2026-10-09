@@ -382,8 +382,11 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     if (size > static_cast<unsigned>(INT32_MAX))
         return ParserError(ParserError::OutOfMemory);
 
-    if (m_expressionTooDeep)
+    if (m_generationFailure != GenerationFailure::None) [[unlikely]] {
+        if (m_generationFailure == GenerationFailure::InvalidPrivateName)
+            return ParserError(ParserError::SyntaxError, ParserError::SyntaxErrorIrrecoverable, JSToken(), makeString("Invalid private name '"_s, m_invalidPrivateName->string(), '\''), m_invalidPrivateNameLine);
         return ParserError(ParserError::OutOfMemory);
+    }
     return ParserError(ParserError::ErrorNone);
 }
 
@@ -397,7 +400,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
     , m_codeType(GlobalCode)
     , m_vm(vm)
     , m_usesExceptions(false)
-    , m_expressionTooDeep(false)
+    , m_generationFailure(GenerationFailure::None)
     , m_isBuiltinFunction(false)
     , m_usesSloppyEval(false)
     , m_allowTailCallOptimization(false)
@@ -446,7 +449,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     , m_defaultAllowCallIgnoreResultOptimization(!Options::evalMode())
     // FIXME: This should be a flag
     , m_usesExceptions(false)
-    , m_expressionTooDeep(false)
+    , m_generationFailure(GenerationFailure::None)
     , m_isBuiltinFunction(codeBlock->isBuiltinFunction())
     , m_isBuiltinDefaultClassConstructor(codeBlock->isBuiltinDefaultClassConstructor())
     , m_usesSloppyEval(functionNode->usesEval() && !functionNode->isStrictMode())
@@ -1018,7 +1021,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
     , m_codeType(EvalCode)
     , m_vm(vm)
     , m_usesExceptions(false)
-    , m_expressionTooDeep(false)
+    , m_generationFailure(GenerationFailure::None)
     , m_isBuiltinFunction(false)
     , m_usesSloppyEval(evalNode->usesEval() && !evalNode->isStrictMode())
     , m_allowTailCallOptimization(false)
@@ -1087,7 +1090,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     , m_vm(vm)
     , m_defaultAllowCallIgnoreResultOptimization(!Options::evalMode())
     , m_usesExceptions(false)
-    , m_expressionTooDeep(false)
+    , m_generationFailure(GenerationFailure::None)
     , m_isBuiltinFunction(false)
     , m_usesSloppyEval(false)
     , m_allowTailCallOptimization(false)
@@ -4783,7 +4786,18 @@ RegisterID* BytecodeGenerator::emitThrowExpressionTooDeepException()
     // And we could make the caller pass the node pointer in, if there was some way of getting
     // that from an arbitrary node. However, calling emitExpressionInfo without any useful data
     // is still good enough to get us an accurate line number.
-    m_expressionTooDeep = true;
+    m_generationFailure = GenerationFailure::ExpressionTooDeep;
+    return newTemporary();
+}
+
+RegisterID* BytecodeGenerator::failForInvalidPrivateName(const Identifier& name, const JSTextPosition& position)
+{
+    if (m_generationFailure == GenerationFailure::None) {
+        m_generationFailure = GenerationFailure::InvalidPrivateName;
+        m_invalidPrivateName = &name;
+        SourceProvider& provider = *m_scopeNode->source().provider();
+        m_invalidPrivateNameLine = provider.documentLineColumn(provider.lineColumnInTextForOffset(position.offset)).line;
+    }
     return newTemporary();
 }
 
