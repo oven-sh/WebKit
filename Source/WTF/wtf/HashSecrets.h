@@ -54,7 +54,7 @@ struct HashSecrets {
 };
 
 // rapidhash's published secrets. A hash made with these is the same in every process, so it can be computed at compile
-// time or stored in a file, and anyone can make inputs that collide under it: never bucket untrusted keys by one.
+// time or stored in a file.
 inline constexpr HashSecrets stableHashSecrets { 0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull };
 
 // WTFConfig.h includes the headers that hash, so they cannot reach a field of WTF::Config.
@@ -64,8 +64,13 @@ constexpr size_t reservedSlotsForHashSecrets = sizeof(HashSecrets) / sizeof(WebC
 
 #define g_wtfHashSecrets (*std::bit_cast<WTF::HashSecrets*>(&WebConfig::g_config[WTF::startSlotOfHashSecrets]))
 
-// Picks this process's secrets. A hash made before this would not match one made after, so it has to come first.
-WTF_EXPORT_PRIVATE void initializeHashSecrets();
+enum class HashSecretsChoice : uint8_t {
+    Stable, // stableHashSecrets
+    PerProcess, // Random, so that which keys share a bucket cannot be known ahead of time.
+};
+
+// The first call picks this process's secrets. A hash made before it would not match one made after, so it has to come first.
+WTF_EXPORT_PRIVATE void initializeHashSecrets(HashSecretsChoice = HashSecretsChoice::Stable);
 
 ALWAYS_INLINE const HashSecrets& hashSecrets()
 {

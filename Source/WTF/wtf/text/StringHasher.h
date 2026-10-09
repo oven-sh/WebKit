@@ -51,7 +51,7 @@ public:
     template<typename T, typename Converter = DefaultConverter>
     static unsigned computeHashAndMaskTop8Bits(std::span<const T> data);
 
-    // The same function keyed with stableHashSecrets. Never equal to StringImpl::hash() other than by chance.
+    // The same function keyed with stableHashSecrets, whatever this process's secrets are.
     template<typename T>
     static constexpr unsigned computeStableHashAndMaskTop8Bits(std::span<const T> data);
 

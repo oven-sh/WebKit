@@ -61,13 +61,16 @@ static HashSecrets makeHashSecrets(std::span<const uint8_t> random)
     return { secret[0], secret[1], secret[2] };
 }
 
-void initializeHashSecrets()
+void initializeHashSecrets(HashSecretsChoice choice)
 {
     static std::once_flag onceKey;
-    std::call_once(onceKey, [] {
-        std::array<uint8_t, 16> random;
-        cryptographicallyRandomValuesFromOS(random);
-        g_wtfHashSecrets = makeHashSecrets(random);
+    std::call_once(onceKey, [&] {
+        if (choice == HashSecretsChoice::PerProcess) {
+            std::array<uint8_t, 16> random;
+            cryptographicallyRandomValuesFromOS(random);
+            g_wtfHashSecrets = makeHashSecrets(random);
+        } else
+            g_wtfHashSecrets = stableHashSecrets;
         // The one static atom that is a property key without going through an atom table, which is what hashes the others.
         StringImpl::empty()->hash();
     });
