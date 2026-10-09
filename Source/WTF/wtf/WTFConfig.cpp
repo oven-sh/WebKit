@@ -125,10 +125,10 @@ void setPermissionsOfConfigPage()
 #if PLATFORM(COCOA)
     static std::once_flag onceFlag;
     std::call_once(onceFlag, [] {
-        constexpr size_t preWTFConfigSize = Gigacage::startOffsetOfGigacageConfig + Gigacage::reservedBytesForGigacageConfig;
+        constexpr size_t preWTFConfigSize = startOffsetOfWTFConfig;
 
         // We may have potentially initialized some of g_config, namely the
-        // gigacage config, prior to reaching this function. We need to
+        // gigacage config and the hash secrets, prior to reaching this function. We need to
         // preserve these config contents across the mach_vm_map.
         uint8_t preWTFConfigContents[preWTFConfigSize];
         memcpySpan(std::span<uint8_t> { preWTFConfigContents, preWTFConfigSize }, std::span<uint8_t> { std::bit_cast<uint8_t*>(&WebConfig::g_config), preWTFConfigSize });

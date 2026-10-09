@@ -26,6 +26,8 @@
 #pragma once
 
 #include <array>
+#include <bit>
+#include <bmalloc/GigacageConfig.h>
 #include <cstdint>
 #include <wtf/Assertions.h>
 #include <wtf/ExportMacros.h>
@@ -55,17 +57,19 @@ struct HashSecrets {
 // time or stored in a file, and anyone can make inputs that collide under it: never bucket untrusted keys by one.
 inline constexpr HashSecrets stableHashSecrets { 0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull };
 
-WTF_EXPORT_PRIVATE extern HashSecrets g_wtfHashSecrets;
-#if ASSERT_ENABLED
-WTF_EXPORT_PRIVATE extern bool g_wtfHashSecretsAreInitialized;
-#endif
+// WTFConfig.h includes the headers that hash, so they cannot reach a field of WTF::Config.
+// Should be kept in sync with the layout of WTFConfig.h:ReservedGlobalConfigSlots
+constexpr size_t startSlotOfHashSecrets = Gigacage::startSlotOfGigacageConfig + Gigacage::reservedSlotsForGigacageConfig;
+constexpr size_t reservedSlotsForHashSecrets = sizeof(HashSecrets) / sizeof(WebConfig::Slot);
+
+#define g_wtfHashSecrets (*std::bit_cast<WTF::HashSecrets*>(&WebConfig::g_config[WTF::startSlotOfHashSecrets]))
 
 // Picks this process's secrets. A hash made before this would not match one made after, so it has to come first.
 WTF_EXPORT_PRIVATE void initializeHashSecrets();
 
 ALWAYS_INLINE const HashSecrets& hashSecrets()
 {
-    ASSERT(g_wtfHashSecretsAreInitialized);
+    ASSERT(g_wtfHashSecrets.secret[0]);
     return g_wtfHashSecrets;
 }
 

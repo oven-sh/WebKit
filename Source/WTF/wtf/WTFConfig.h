@@ -34,6 +34,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/Assertions.h>
 #include <wtf/Atomics.h>
 #include <wtf/ExportMacros.h>
+#include <wtf/HashSecrets.h>
 #include <wtf/PageBlock.h>
 #include <wtf/PtrTag.h>
 #include <wtf/StdLibExtras.h>
@@ -63,6 +64,7 @@ struct ReservedGlobalConfigSlots {
     Slot reservationForLibpas[reservedSlotsForLibpasConfiguration];
     Slot reservationForExecutableAllocator[reservedSlotsForExecutableAllocator];
     Slot reservationForGigacage[Gigacage::reservedSlotsForGigacageConfig];
+    Slot reservationForHashSecrets[WTF::reservedSlotsForHashSecrets];
     // Storage for the WTF config proper begins here
 };
 
@@ -72,6 +74,7 @@ constexpr ptrdiff_t startOffsetOfExecutableAllocatorConfig =
 #if !USE(SYSTEM_MALLOC)
 static_assert(Gigacage::startOffsetOfGigacageConfig == offsetof(ReservedGlobalConfigSlots, reservationForGigacage));
 #endif
+static_assert(WTF::startSlotOfHashSecrets * sizeof(Slot) == offsetof(ReservedGlobalConfigSlots, reservationForHashSecrets));
 
 } // namespace WebConfig
 

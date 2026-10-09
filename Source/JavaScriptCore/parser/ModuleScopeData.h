@@ -27,6 +27,7 @@
 #pragma once
 
 #include "Identifier.h"
+#include <wtf/OrderedHashMap.h>
 #include <wtf/RefPtr.h>
 #include <wtf/TZoneMalloc.h>
 
@@ -36,7 +37,7 @@ class ModuleScopeData : public RefCounted<ModuleScopeData> {
     WTF_MAKE_NONCOPYABLE(ModuleScopeData);
     WTF_MAKE_TZONE_ALLOCATED(ModuleScopeData);
 public:
-    typedef UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
+    typedef OrderedHashMap<RefPtr<UniquedStringImpl>, Vector<RefPtr<UniquedStringImpl>>, IdentifierRepHash, HashTraits<RefPtr<UniquedStringImpl>>> IdentifierAliasMap;
 
     static Ref<ModuleScopeData> create() { return adoptRef(*new ModuleScopeData); }
 

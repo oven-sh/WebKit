@@ -510,6 +510,20 @@ public:
         materializeCachedEntriesIfPossible(locker);
         return m_map.end();
     }
+
+    // In the order the names were given their offsets. The map's own order depends on the process.
+    void forEachInVarOffsetOrder(const ConcurrentJSLocker& locker, NOESCAPE const Invocable<void(Map::KeyValuePairType&)> auto& functor)
+    {
+        Vector<Map::KeyValuePairType*, 16> entries;
+        for (auto it = begin(locker), last = end(locker); it != last; ++it)
+            entries.append(&*it);
+        std::ranges::sort(entries, { }, [](auto* entry) {
+            VarOffset offset = entry->value.varOffset();
+            return std::pair { offset.kind(), offset.rawOffset() };
+        });
+        for (auto* entry : entries)
+            functor(*entry);
+    }
     
     size_t size(const ConcurrentJSLocker& locker) const
     {

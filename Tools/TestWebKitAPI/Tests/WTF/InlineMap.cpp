@@ -1951,7 +1951,7 @@ TEST(WTF_InlineMap, ShrinkAfterRemovalReducesCapacity)
 
 TEST(WTF_InlineMap, DeletedCountTracking)
 {
-    // Deleted count is incremented on remove and decremented when a deleted slot is reused.
+    // Deleted count is incremented on remove. An add goes after the entries there are, so it leaves the count alone.
     InlineMap<unsigned, unsigned, 3, IntHash<unsigned>> map;
 
     // Go to hashed mode
@@ -1967,11 +1967,53 @@ TEST(WTF_InlineMap, DeletedCountTracking)
     EXPECT_EQ(map.size(), 8u);
     EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 2u);
 
-    // Re-add one of the removed keys — should reuse a deleted slot
+    // Re-add one of the removed keys
     auto result = map.add(1, 100);
     EXPECT_TRUE(result.isNewEntry);
-    EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 1u);
+    EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 2u);
     EXPECT_EQ(map.size(), 9u);
+}
+
+TEST(WTF_InlineMap, HashedModeIteratesInInsertionOrder)
+{
+    InlineMap<unsigned, unsigned, 3, IntHash<unsigned>> map;
+    Vector<unsigned> expected;
+    auto add = [&](unsigned key) {
+        if (map.add(key, key * 10).isNewEntry)
+            expected.append(key);
+    };
+    auto check = [&] {
+        EXPECT_FALSE(WTF::InlineMapAccessForTesting::isInline(map));
+        Vector<unsigned> keys;
+        for (auto& entry : map)
+            keys.append(entry.key);
+        EXPECT_EQ(keys, expected);
+    };
+
+    for (unsigned i = 0; i < 300; ++i)
+        add(i * 7919 % 1009 + 1);
+    check();
+
+    // Removing leaves the rest in order, through the shrinks it causes.
+    for (unsigned i = 0; i < 300; ++i) {
+        if (i % 8) {
+            unsigned key = i * 7919 % 1009 + 1;
+            EXPECT_TRUE(map.remove(key));
+            expected.removeFirst(key);
+        }
+    }
+    check();
+
+    // A removed key that comes back goes last.
+    for (unsigned i = 1; i < 200; i += 2)
+        add(i * 7919 % 1009 + 1);
+    check();
+
+    auto copy = map;
+    Vector<unsigned> copiedKeys;
+    for (auto& entry : copy)
+        copiedKeys.append(entry.key);
+    EXPECT_EQ(copiedKeys, expected);
 }
 
 TEST(WTF_InlineMap, DeletedCountResetAfterRehash)
@@ -2049,8 +2091,7 @@ TEST(WTF_InlineMap, CompactOnlyWhenManyDeleted)
 
     // Add new keys (that won't match any deleted slot's key) until expansion triggers.
     // Expansion triggers when (m_size + deletedCount) * 4 >= capacity * 3.
-    // Each add of a new key into an empty slot: m_size++, deletedCount unchanged, sum increases.
-    // Each add into a deleted slot: m_size++, deletedCount--, sum unchanged.
+    // Each add: m_size++, deletedCount unchanged, sum increases.
     // We keep adding until expansion happens.
     unsigned nextKey = 100;
     while (WTF::InlineMapAccessForTesting::capacity(map) == currentCapacity) {
@@ -2252,9 +2293,9 @@ TEST(WTF_InlineMap, DeletedCountWithCollisions)
     EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 3u);
     EXPECT_EQ(map.size(), 7u);
 
-    // Re-add one of them — should reuse a deleted slot and decrement deletedCount
+    // Re-add one of them
     map.add(3, 300);
-    EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 2u);
+    EXPECT_EQ(WTF::InlineMapAccessForTesting::deletedCount(map), 3u);
     EXPECT_EQ(map.size(), 8u);
     EXPECT_EQ(map.find(3)->value, 300u);
 

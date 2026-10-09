@@ -33,11 +33,6 @@
 
 namespace WTF {
 
-constinit HashSecrets g_wtfHashSecrets = stableHashSecrets;
-#if ASSERT_ENABLED
-constinit bool g_wtfHashSecretsAreInitialized = false;
-#endif
-
 // wyhash's make_secret without its primality test, which takes milliseconds: every byte has four bits set, every secret
 // is odd, and any two secrets differ in 32 bits.
 static HashSecrets makeHashSecrets(std::span<const uint8_t> random)
@@ -73,9 +68,6 @@ void initializeHashSecrets()
         std::array<uint8_t, 16> random;
         cryptographicallyRandomValuesFromOS(random);
         g_wtfHashSecrets = makeHashSecrets(random);
-#if ASSERT_ENABLED
-        g_wtfHashSecretsAreInitialized = true;
-#endif
         // The one static atom that is a property key without going through an atom table, which is what hashes the others.
         StringImpl::empty()->hash();
     });
