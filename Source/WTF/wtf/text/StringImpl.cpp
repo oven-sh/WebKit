@@ -1697,7 +1697,7 @@ NEVER_INLINE unsigned StringImpl::hashSlowCase() const
 {
     unsigned hash = concurrentHash();
     if (isStatic() || !canBecomeAtom()) [[unlikely]] // shared between threads
-        std::atomic_ref { m_hashAndFlags }.fetch_or(hash << s_flagCount, std::memory_order_relaxed);
+        atomicExchangeOr(&m_hashAndFlags, hash << s_flagCount, std::memory_order_relaxed);
     else
         setHash(hash);
     return hash;
