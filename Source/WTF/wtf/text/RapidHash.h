@@ -98,7 +98,7 @@ private:
     ALWAYS_INLINE static constexpr uint64_t rapidhashImpl(const HashSecrets& secrets, size_t len, NOESCAPE const Invocable<uint64_t(size_t)> auto& read64, NOESCAPE const Invocable<uint64_t(size_t)> auto& read32, NOESCAPE const Invocable<uint64_t(size_t, size_t)> auto& readSmall)
     {
         const std::array<uint64_t, 3> secret = secrets.secret;
-        uint64_t seed = secrets.seed ^ len;
+        uint64_t seed = secrets.mixedSeed ^ len;
         uint64_t a, b;
 
         if (len <= 16) [[likely]] {

@@ -43,19 +43,19 @@ struct HashSecrets {
         return static_cast<uint64_t>(product) ^ static_cast<uint64_t>(product >> 64);
     }
 
-    constexpr HashSecrets(uint64_t secret0, uint64_t secret1, uint64_t secret2)
+    constexpr HashSecrets(uint64_t seed, uint64_t secret0, uint64_t secret1, uint64_t secret2)
         : secret { secret0, secret1, secret2 }
-        , seed(mix(secret0, secret1))
+        , mixedSeed(seed ^ mix(seed ^ secret0, secret1))
     {
     }
 
     std::array<uint64_t, 3> secret;
-    uint64_t seed; // What rapidhash starts from, before the length.
+    uint64_t mixedSeed; // What rapidhash makes of its seed before the length goes in.
 };
 
-// rapidhash's published secrets. A hash made with these is the same in every process, so it can be computed at compile
-// time or stored in a file.
-inline constexpr HashSecrets stableHashSecrets { 0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull };
+// rapidhash's published secrets, and no seed. A hash made with these is the same in every process, so it can be computed
+// at compile time or stored in a file.
+inline constexpr HashSecrets stableHashSecrets { 0, 0x2d358dccaa6c78a5ull, 0x8bb84b93962eacc9ull, 0x4b33a62ed433d4a3ull };
 
 // WTFConfig.h includes the headers that hash, so they cannot reach a field of WTF::Config.
 // Should be kept in sync with the layout of WTFConfig.h:ReservedGlobalConfigSlots
