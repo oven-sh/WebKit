@@ -229,7 +229,21 @@ template<typename CallbackWhenNoException>
 ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type JSObject::getPropertySlot(JSGlobalObject* globalObject, PropertyName propertyName, CallbackWhenNoException callback) const
 {
     PropertySlot slot(this, PropertySlot::InternalMethodType::Get);
+#if USE(BUN_JSC_ADDITIONS)
+    // Reads of a variable in a scope come here. A Proxy answers every [[Get]]: whether a global object with one in its
+    // prototype chain has the binding is for [[HasProperty]] to say.
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool found = const_cast<JSObject*>(this)->getPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (found && slot.isTaintedByOpaqueObject() && isGlobalObject()) [[unlikely]] {
+        found = const_cast<JSObject*>(this)->hasProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, callback(found, slot));
+#else
     return getPropertySlot(globalObject, propertyName, slot, callback);
+#endif
 }
 
 template<typename CallbackWhenNoException>

@@ -168,6 +168,10 @@ public:
 
     int64_t age() { return m_age; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void setWorkingSetMaxEntries(size_t entries) { m_workingSetMaxEntries = std::max(entries, workingSetMaxEntries); }
+#endif
+
     template<typename UnlinkedCodeBlockType>
     UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
     {
@@ -217,7 +221,11 @@ private:
     static constexpr int64_t oldObjectSamplingMultiplier = 32;
 
     size_t numberOfEntries() const { return static_cast<size_t>(m_map.size()); }
+#if USE(BUN_JSC_ADDITIONS)
+    bool canPruneQuickly() const { return numberOfEntries() < m_workingSetMaxEntries; }
+#else
     bool canPruneQuickly() const { return numberOfEntries() < workingSetMaxEntries; }
+#endif
 
     void pruneSlowCase();
     void prune()
@@ -240,6 +248,9 @@ private:
     int64_t m_minCapacity;
     int64_t m_capacity;
     int64_t m_age;
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_workingSetMaxEntries { workingSetMaxEntries };
+#endif
 };
 
 // Caches top-level code such as <script>, window.eval(), new Function, and JSEvaluateScript().
@@ -256,6 +267,10 @@ public:
     // The module's evaluation finished, so nothing links against this block again unless the same source is loaded
     // into another global object of this VM, which then decodes or generates its own.
     void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
+
+    // For an embedder that loads the same sources into one global object after another: with fewer entries than it loads
+    // into each, every one of them evicts what the next is about to ask for.
+    void setWorkingSetMaxEntries(size_t entries) { m_sourceCode.setWorkingSetMaxEntries(entries); }
 
     // Until there is one, no module record has to look for imports of live exports (JSModuleRecord::liveImports).
     bool hasModuleRecordWithLiveExports() const { return m_hasModuleRecordWithLiveExports; }
