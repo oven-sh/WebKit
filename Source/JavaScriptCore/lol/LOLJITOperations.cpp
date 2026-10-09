@@ -96,6 +96,11 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
         OPERATION_RETURN(scope, JSValue::encode(result));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // With a Proxy in the global object's prototype chain what follows runs traps, and a trap can declare a global lexical
+    // binding of this name. What is cached under the epoch from before them is looked up again on the next run.
+    auto globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+#endif
     JSObject* resolvedScope = JSScope::resolve(globalObject, environment, ident);
     // Proxy can throw an error here, e.g. Proxy in with statement's @unscopables.
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -115,7 +120,11 @@ JSC_DEFINE_JIT_OPERATION(operationResolveScopeForLOL, EncodedJSValue, (CallFrame
                 ConcurrentJSLocker locker(codeBlock->m_lock);
                 metadata.m_resolveType = needsVarInjectionChecks(resolveType) ? GlobalPropertyWithVarInjectionChecks : GlobalProperty;
                 metadata.m_globalObject.set(vm, codeBlock, globalObject);
+#if USE(BUN_JSC_ADDITIONS)
+                metadata.m_globalLexicalBindingEpoch = globalLexicalBindingEpoch;
+#else
                 metadata.m_globalLexicalBindingEpoch = globalObject->globalLexicalBindingEpoch();
+#endif
             }
         } else if (resolvedScope->isGlobalLexicalEnvironment()) {
             JSGlobalLexicalEnvironment* globalLexicalEnvironment = uncheckedDowncast<JSGlobalLexicalEnvironment>(resolvedScope);
@@ -152,7 +161,7 @@ JSC_DEFINE_JIT_OPERATION(operationGetFromScopeForLOL, EncodedJSValue, (CallFrame
     if (getPutInfo.resolveType() == LazyClosureVar || getPutInfo.resolveType() == ClosureVar)
         OPERATION_RETURN(scope, JSValue::encode(JSModuleEnvironment::readLazyClosureVar(vm, environment, ScopeOffset(bytecode.metadata(codeBlock).m_operand))));
 
-    OPERATION_RETURN(scope, JSValue::encode(environment->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
+    OPERATION_RETURN(scope, JSValue::encode(CommonSlowPaths::getPropertySlotOfScope(globalObject, environment, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             if (getPutInfo.resolveMode() == ThrowIfNotFound)
                 throwException(globalObject, scope, createUndefinedVariableError(globalObject, ident));

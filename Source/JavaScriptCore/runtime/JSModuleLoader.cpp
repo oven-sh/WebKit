@@ -783,7 +783,8 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
 #if USE(BUN_JSC_ADDITIONS)
         // Every module gets a GraphLoadingState of its own (moduleLoadStep), and every state that reaches a record that is
         // still NEW asks about each request of it that is not in [[LoadedModules]] yet: the same edge, once per state.
-        // The host has to give the same answer each time, so it is asked the first time only.
+        // The host has to give the same answer each time, so it is asked the first time only, until the load of that edge
+        // has finished: then the answer is in [[LoadedModules]], or the load has failed and the host is asked again.
         auto* resolvedRequests = record && payload->inherits<ModuleGraphLoadingState>() ? &record->resolvedRequests() : nullptr;
         if (UniquedStringImpl* known = resolvedRequests ? resolvedRequests->get(moduleMapKey) : nullptr)
             resolved = Identifier::fromUid(vm, known);
@@ -1052,9 +1053,6 @@ void JSModuleLoader::innerModuleLoading(JSGlobalObject* globalObject, ModuleGrap
                 // 5.b.i. If loaded.[[Status]] is NEW, set loaded.[[Status]] to UNLINKED.
                 if (loaded->status() == CyclicModuleRecord::Status::New)
                     loaded->setStatus(CyclicModuleRecord::Status::Unlinked);
-#if USE(BUN_JSC_ADDITIONS)
-                loaded->resolvedRequests().clear();
-#endif
             });
             // 5.c. Perform ! Call(state.[[PromiseCapability]].[[Resolve]], undefined, « undefined »).
             state->promise()->fulfill(vm, module);
@@ -1075,6 +1073,11 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (CyclicModuleRecord* module = referrer.getModule())
+        module->forgetResolvedRequest(moduleRequest);
+#endif
 
     // 1. If result is a normal completion, then
 #if USE(BUN_JSC_ADDITIONS)
@@ -1157,9 +1160,6 @@ void JSModuleLoader::continueModuleLoading(JSGlobalObject* globalObject, ModuleG
                 state->iterateVisited([](CyclicModuleRecord* loaded) {
                     if (loaded->status() == CyclicModuleRecord::Status::New)
                         loaded->setStatus(CyclicModuleRecord::Status::Unlinked);
-#if USE(BUN_JSC_ADDITIONS)
-                    loaded->resolvedRequests().clear();
-#endif
                 });
                 state->promise()->fulfill(vm, *module);
             }

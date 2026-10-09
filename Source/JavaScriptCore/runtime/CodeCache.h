@@ -169,6 +169,7 @@ public:
     int64_t age() { return m_age; }
 
 #if USE(BUN_JSC_ADDITIONS)
+    size_t workingSetMaxEntriesLimit() const { return m_workingSetMaxEntries; }
     void setWorkingSetMaxEntries(size_t entries) { m_workingSetMaxEntries = std::max(entries, workingSetMaxEntries); }
 #endif
 
@@ -268,13 +269,16 @@ public:
     // into another global object of this VM, which then decodes or generates its own.
     void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
 
+#if USE(BUN_JSC_ADDITIONS)
     // For an embedder that loads the same sources into one global object after another: with fewer entries than it loads
     // into each, every one of them evicts what the next is about to ask for.
+    size_t workingSetMaxEntries() const { return m_sourceCode.workingSetMaxEntriesLimit(); }
     void setWorkingSetMaxEntries(size_t entries) { m_sourceCode.setWorkingSetMaxEntries(entries); }
 
     // Until there is one, no module record has to look for imports of live exports (JSModuleRecord::liveImports).
     bool hasModuleRecordWithLiveExports() const { return m_hasModuleRecordWithLiveExports; }
     void didMakeModuleRecordWithLiveExports() { m_hasModuleRecordWithLiveExports = true; }
+#endif
 
     void clear()
     {

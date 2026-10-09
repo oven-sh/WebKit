@@ -1026,6 +1026,18 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
         case Type::Query: {
             AbstractModuleRecord* moduleRecord = query.moduleRecord;
 
+#if USE(BUN_JSC_ADDITIONS)
+            // Were it to claim every name that is looked for through a star as well, it would make the names of the other
+            // stars next to it ambiguous. So its answer depends on how it is asked, and having been asked through a star
+            // does not count as having been asked: this comes before the resolve set.
+            if (moduleRecord->hasLiveExports() && (!task.throughStar || moduleRecord->tryGetExportEntry(query.exportName.get()))) [[unlikely]] {
+                Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
+                if (!mergeToCurrentTop(resolution))
+                    return Resolution::ambiguous();
+                continue;
+            }
+#endif
+
             if (!resolveSet.add(task.query).isNewEntry)
                 continue;
 
@@ -1034,16 +1046,6 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
                 foundStarLinks = true;
 
             const std::optional<ExportEntry> optionalExportEntry = moduleRecord->tryGetExportEntry(query.exportName.get());
-#if USE(BUN_JSC_ADDITIONS)
-            // Were it to claim every name that is looked for through a star as well, it would make the names of the other
-            // stars next to it ambiguous.
-            if (moduleRecord->hasLiveExports() && (optionalExportEntry || !task.throughStar)) [[unlikely]] {
-                Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
-                if (!mergeToCurrentTop(resolution))
-                    return Resolution::ambiguous();
-                continue;
-            }
-#endif
             if (!optionalExportEntry) {
                 // If there is no matched exported binding in the current module, we need to look
                 // into the stars. We don't probe m_resolutionCache here: the only writer that can
@@ -1262,7 +1264,8 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     Vector<AbstractModuleRecord*, 8> pendingModules;
     pendingModules.append(this);
 #if USE(BUN_JSC_ADDITIONS)
-    bool sawLiveExports = false;
+    [[maybe_unused]] bool sawLiveExports = false;
+    Vector<AbstractModuleRecord*, 8> liveRecordsWithStars;
 #endif
 
     while (!pendingModules.isEmpty()) {
@@ -1271,7 +1274,11 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             continue;
         bool isRoot = moduleRecord == this;
 #if USE(BUN_JSC_ADDITIONS)
-        sawLiveExports |= moduleRecord->hasLiveExports();
+        if (moduleRecord->hasLiveExports()) [[unlikely]] {
+            sawLiveExports = true;
+            if (!moduleRecord->starExportEntries().isEmpty())
+                liveRecordsWithStars.append(moduleRecord);
+        }
 #endif
 
         for (const auto& pair : moduleRecord->exportEntries()) {
@@ -1293,6 +1300,12 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             }
 
             Resolution candidate;
+#if USE(BUN_JSC_ADDITIONS)
+            // However it declares the name, as in resolveExport().
+            if (moduleRecord->hasLiveExports()) [[unlikely]]
+                candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.exportName };
+            else
+#endif
             switch (exportEntry.type) {
             case ExportEntry::Type::Local:
                 candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.localName };
@@ -1333,12 +1346,40 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // The walk found the names. Only resolveExport() knows which of them are read from a record with live exports.
-    if (sawLiveExports) [[unlikely]] {
-        for (auto& pair : uniqueBindings)
-            slowPathNames.add(pair.key);
-        uniqueBindings.clear();
+    // What a record with live exports has from a star of its own is read from that record. The walk visits a module once,
+    // by whichever path comes first, so it cannot tell. Every name that is exported anywhere below such a record is left
+    // to resolveExport(); no such record has a say in any other name.
+    if (!liveRecordsWithStars.isEmpty()) [[unlikely]]
+        exportStarSet.clear();
+    while (!liveRecordsWithStars.isEmpty()) {
+        AbstractModuleRecord* moduleRecord = liveRecordsWithStars.takeLast();
+        if (!exportStarSet.add(moduleRecord).isNewEntry)
+            continue;
+        for (const auto& pair : moduleRecord->exportEntries()) {
+            auto iterator = uniqueBindings.find(pair.value.exportName.impl());
+            if (iterator == uniqueBindings.end())
+                continue;
+            slowPathNames.add(iterator->key);
+            uniqueBindings.remove(iterator);
+        }
+        for (const auto& [starModuleName, starModuleRequestType] : moduleRecord->starExportEntries()) {
+            AbstractModuleRecord* requestedModuleRecord = moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            liveRecordsWithStars.append(requestedModuleRecord);
+        }
     }
+#if ASSERT_ENABLED
+    if (sawLiveExports) {
+        unsigned namesToCheck = 64; // Each costs a walk of the graph, which is what the above is there to avoid.
+        for (auto& pair : uniqueBindings) {
+            if (!namesToCheck--)
+                break;
+            Resolution expected = resolveExportImpl(globalObject, ResolveQuery(this, pair.key.get()));
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            ASSERT(expected.type == Resolution::Type::Resolved && expected.isSameBinding(pair.value));
+        }
+    }
+#endif
 #endif
 
     resolutions.reserveCapacity(resolutions.size() + uniqueBindings.size() + slowPathNames.size());
@@ -2208,6 +2249,12 @@ JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, Proper
     ASSERT(m_hasLiveExports);
     ASSERT(exportName != vm.propertyNames->starNamespacePrivateName);
 
+    // The source can be, or lead back to, a namespace object that reads from this record, with no JS frame in between.
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return { };
+    }
+
     JSObject* source = m_liveExportsSource.get();
     if (!source) [[unlikely]] {
         RefPtr uid = exportName.uid();
@@ -2219,9 +2266,19 @@ JSValue AbstractModuleRecord::getLiveExport(JSGlobalObject* globalObject, Proper
 
 bool AbstractModuleRecord::hasLiveExport(JSGlobalObject* globalObject, PropertyName exportName)
 {
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     ASSERT(m_hasLiveExports);
+
+    if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+        throwStackOverflowError(globalObject, scope);
+        return false;
+    }
+
     JSObject* source = m_liveExportsSource.get();
-    return source && source->hasProperty(globalObject, exportName);
+    if (!source)
+        return false;
+    RELEASE_AND_RETURN(scope, source->hasProperty(globalObject, exportName));
 }
 #endif
 

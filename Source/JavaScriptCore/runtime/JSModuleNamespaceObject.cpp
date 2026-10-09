@@ -393,6 +393,10 @@ void JSModuleNamespaceObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject
     }
 #if USE(BUN_JSC_ADDITIONS)
     if (JSObject* source = thisObject->m_moduleRecord->hasLiveExports() ? thisObject->m_moduleRecord->liveExportsSource() : nullptr) [[unlikely]] {
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
+            throwStackOverflowError(globalObject, scope);
+            return;
+        }
         PropertyNameArrayBuilder names(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
         source->methodTable()->getOwnPropertyNames(source, globalObject, names, DontEnumPropertiesMode::Exclude);
         RETURN_IF_EXCEPTION(scope, void());

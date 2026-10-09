@@ -207,8 +207,9 @@ public:
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
     // The key the host resolved a request in requestedModules() to, from the first HostLoadImportedModule for it until
-    // LoadRequestedModules is done with this record and [[LoadedModules]] has them all. The requests keep the map's keys alive.
+    // that load has finished: [[LoadedModules]] has it then, or it has failed. The requests keep the map's keys alive.
     ModuleMap<RefPtr<UniquedStringImpl>>& resolvedRequests() LIFETIME_BOUND { return m_resolvedRequests; }
+    void forgetResolvedRequest(const ModuleRequest& request) { m_resolvedRequests.remove(ModuleMapKey { request.m_specifier.impl(), request.type() }); }
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
     const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
     const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
@@ -323,6 +324,8 @@ public:
     // a module namespace object, reads the property of the exported name off liveExportsSource() again (getLiveExport),
     // however the record declares that name. Such a record also exports whatever name it is asked for; only a name that
     // is looked for through an `export *` has to be one that it declares or has from a star of its own (resolveExport).
+    // A binding of it is (record, exported name), so two names it exports for one variable are two bindings, and are
+    // ambiguous where two stars bring them together under one name.
     // Set before anything can link against the record, and for good.
     // No code reads an export of such a record from its slot (Resolution::isLiveExport): import bindings into it link as
     // Dynamic (JSScope::abstractAccess), which ends in JSModuleEnvironment::getOwnPropertySlot, and code with such imports
