@@ -473,7 +473,7 @@ bool URL::setProtocol(StringView newProtocol)
         return false;
 
     if (!m_isValid) {
-        parse(makeString(*newProtocolCanonicalized, ':', m_string));
+        parse(tryMakeString(*newProtocolCanonicalized, ':', m_string));
         return true;
     }
 
@@ -486,21 +486,19 @@ bool URL::setProtocol(StringView newProtocol)
     if (protocolIsFile() && host().isEmpty())
         return true;
 
-    parse(makeString(*newProtocolCanonicalized, StringView(m_string).substring(m_schemeEnd)));
+    parse(tryMakeString(*newProtocolCanonicalized, StringView(m_string).substring(m_schemeEnd)));
     return true;
 }
 
-// Appends the punycoded hostname identified by the given string and length to
-// the output buffer. The result will not be null terminated.
-// Return value of false means error in encoding.
-static bool appendEncodedHostname(Vector<char16_t, 512>& buffer, StringView string)
+// Returns the hostname to put in the URL: the punycoded hostname, which is put in the buffer, or the given string
+// itself when it needs no encoding. Such a string is not copied, so its length does not matter.
+// std::nullopt means error in encoding.
+static std::optional<StringView> encodedHostname(Vector<char16_t, 512>& buffer, StringView string)
 {
     // hostnameBuffer needs to be big enough to hold an IDN-encoded name.
     // For host names bigger than this, we won't do IDN encoding, which is almost certainly OK.
-    if (string.length() > URLParser::hostnameBufferLength || string.containsOnlyASCII()) {
-        append(buffer, string);
-        return true;
-    }
+    if (string.length() > URLParser::hostnameBufferLength || string.containsOnlyASCII())
+        return string;
 
     std::array<char16_t, URLParser::hostnameBufferLength> hostnameBuffer;
     UErrorCode error = U_ZERO_ERROR;
@@ -511,9 +509,9 @@ static bool appendEncodedHostname(Vector<char16_t, 512>& buffer, StringView stri
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~URLParser::allowedNameToASCIIErrors) && numCharactersConverted) {
         buffer.append(std::span { hostnameBuffer }.first(numCharactersConverted));
-        return true;
+        return StringView(buffer.span());
     }
-    return false;
+    return std::nullopt;
 }
 
 unsigned URL::hostStart() const
@@ -556,15 +554,16 @@ bool URL::setHost(StringView newHost)
     if (newHost.contains(':') && !newHost.startsWith('['))
         return false;
 
-    Vector<char16_t, 512> encodedHostName;
-    if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, newHost))
+    Vector<char16_t, 512> hostNameBuffer;
+    auto encodedHostName = hasSpecialScheme() ? encodedHostname(hostNameBuffer, newHost) : std::optional { newHost };
+    if (!encodedHostName)
         return false;
 
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
-        hasSpecialScheme() ? StringView(encodedHostName.span()) : newHost,
+        *encodedHostName,
         StringView(m_string).substring(m_hostEnd)
     ));
 
@@ -581,7 +580,7 @@ void URL::setPort(std::optional<uint16_t> port)
         return;
     }
 
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(m_hostEnd),
         ':',
         static_cast<unsigned>(*port),
@@ -634,15 +633,16 @@ void URL::setHostAndPort(StringView hostAndPort)
     if (!parseInteger<uint16_t>(portString))
         portString = { };
 
-    Vector<char16_t, 512> encodedHostName;
-    if (hasSpecialScheme() && !appendEncodedHostname(encodedHostName, hostName))
+    Vector<char16_t, 512> hostNameBuffer;
+    auto encodedHostName = hasSpecialScheme() ? encodedHostname(hostNameBuffer, hostName) : std::optional { hostName };
+    if (!encodedHostName)
         return;
 
     bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
-    parse(makeString(
+    parse(tryMakeString(
         StringView(m_string).left(hostStart()),
         slashSlashNeeded ? "//"_s : ""_s,
-        hasSpecialScheme() ? StringView(encodedHostName.span()) : hostName,
+        *encodedHostName,
         portString.isEmpty() ? ""_s : ":"_s,
         portString,
         StringView(m_string).substring(pathStart())
@@ -655,10 +655,12 @@ void URL::removeHostAndPort()
         remove(hostStart(), pathStart() - hostStart());
 }
 
+// The null string when the result does not fit in a String, or the UTF-8 form of the input does not fit in a Vector.
+// The input then is not empty, which is how a caller tells that from the null string an empty StringView gives.
 template<typename StringType>
 static String percentEncodeCharacters(const StringType& input, bool(*shouldEncode)(char16_t))
 {
-    auto encode = [shouldEncode] (const StringType& input) {
+    auto encode = [shouldEncode] (const StringType& input) -> String {
         auto result = input.tryGetUTF8([&](std::span<const char8_t> span) -> String {
             StringBuilder builder(OverflowPolicy::RecordOverflow);
             for (char c : span) {
@@ -671,7 +673,8 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
             }
             return builder.toString();
         });
-        RELEASE_ASSERT(result);
+        if (!result)
+            return { };
         return result.value();
     };
 
@@ -685,6 +688,8 @@ static String percentEncodeCharacters(const StringType& input, bool(*shouldEncod
         return input;
 }
 
+// The setters pass tryMakeString() of the parts. It gives the null string for parts that are too long together, and the null
+// string parses to the null URL. URLParser gives the same for a URL that percent-encoding makes too long.
 void URL::parse(String&& string)
 {
     URL result;
@@ -719,10 +724,15 @@ void URL::setUser(StringView newUser)
     if (!newUser.isEmpty()) {
         bool slashSlashNeeded = m_userStart == m_schemeEnd + 1U;
         bool needSeparator = end == m_hostEnd || (end == m_passwordEnd && m_string[end] != '@');
-        parse(makeString(
+        auto encodedUser = percentEncodeCharacters(newUser, URLParser::isInUserInfoEncodeSet);
+        if (encodedUser.isNull()) {
+            *this = { };
+            return;
+        }
+        parse(tryMakeString(
             StringView(m_string).left(m_userStart),
             slashSlashNeeded ? "//"_s : ""_s,
-            percentEncodeCharacters(newUser, URLParser::isInUserInfoEncodeSet),
+            encodedUser,
             needSeparator ? "@"_s : ""_s,
             StringView(m_string).substring(end)
         ));
@@ -741,10 +751,15 @@ void URL::setPassword(StringView newPassword)
 
     if (!newPassword.isEmpty()) {
         bool needLeadingSlashes = m_userEnd == m_schemeEnd + 1U;
-        parse(makeString(
+        auto encodedPassword = percentEncodeCharacters(newPassword, URLParser::isInUserInfoEncodeSet);
+        if (encodedPassword.isNull()) {
+            *this = { };
+            return;
+        }
+        parse(tryMakeString(
             StringView(m_string).left(m_userEnd),
             needLeadingSlashes ? "//:"_s : ":"_s,
-            percentEncodeCharacters(newPassword, URLParser::isInUserInfoEncodeSet),
+            encodedPassword,
             '@',
             StringView(m_string).substring(credentialsEnd())
         ));
@@ -767,7 +782,7 @@ void URL::setFragmentIdentifier(StringView identifier)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(StringView(m_string).left(m_queryEnd), '#', identifier));
+    parseAllowingC0AtEnd(tryMakeString(StringView(m_string).left(m_queryEnd), '#', identifier));
 }
 
 void URL::removeFragmentIdentifier()
@@ -795,7 +810,7 @@ void URL::setQuery(StringView newQuery)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(
+    parseAllowingC0AtEnd(tryMakeString(
         StringView(m_string).left(m_pathEnd),
         (!newQuery.startsWith('?') && !newQuery.isNull()) ? "?"_s : ""_s,
         newQuery,
@@ -842,11 +857,16 @@ void URL::setPath(StringView path)
     if (!m_isValid)
         return;
 
-    parseAllowingC0AtEnd(makeString(
+    auto escapedPath = escapePathWithoutCopying(path);
+    if (escapedPath.isNull() && !path.isEmpty()) {
+        *this = { };
+        return;
+    }
+    parseAllowingC0AtEnd(tryMakeString(
         StringView(m_string).left(pathStart()),
         path.startsWith('/') || (path.startsWith('\\') && hasSpecialScheme()) || (!hasSpecialScheme() && path.isEmpty() && m_schemeEnd + 1U < pathStart()) ? ""_s : "/"_s,
         !hasSpecialScheme() && host().isEmpty() && path.startsWith("//"_s) && path.length() > 2 ? "/."_s : ""_s,
-        escapePathWithoutCopying(path),
+        escapedPath,
         StringView(m_string).substring(m_pathEnd)
     ));
 }
@@ -1227,13 +1247,19 @@ URL URL::fileURLWithFileSystemPath(StringView path)
 #if OS(WINDOWS)
     // Handle UNC paths on Windows. should result in file://server/share
     if (isUNCLikePath(path)) {
-        return URL(makeString("file://"_s, escapeFilePathWithoutCopying(path.substring(2))));
+        auto escapedPath = escapeFilePathWithoutCopying(path.substring(2));
+        if (escapedPath.isNull())
+            return { };
+        return URL(tryMakeString("file://"_s, escapedPath));
     }
 #endif
-    return URL(makeString(
+    auto escapedPath = escapeFilePathWithoutCopying(path);
+    if (escapedPath.isNull() && !path.isEmpty())
+        return { };
+    return URL(tryMakeString(
         "file://"_s,
         path.startsWith('/') ? ""_s : "/"_s,
-        escapeFilePathWithoutCopying(path)
+        escapedPath
     ));
 }
 
