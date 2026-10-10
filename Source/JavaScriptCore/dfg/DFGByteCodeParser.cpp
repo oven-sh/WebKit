@@ -6378,6 +6378,10 @@ bool ByteCodeParser::handleDOMJITGetter(Operand result, const GetByVariant& vari
     DOMJIT::CallDOMGetterSnippet* callDOMGetterSnippet = callDOMGetterData->snippet;
     callDOMGetterData->identifierNumber = identifierNumber;
 
+    // Without a snippet, CallDOMGetter calls the getter with the realm of the code origin. GetByStatus guarantees that
+    // this is the realm the getter has to be called with.
+    ASSERT(variant.customAccessorRealm() == m_graph.globalObjectFor(currentNodeOrigin().semantic));
+
     Node* callDOMGetterNode = nullptr;
     // GlobalObject of thisNode is always used to create a DOMWrapper.
     if (callDOMGetterSnippet && callDOMGetterSnippet->requireGlobalObject) {
@@ -7462,6 +7466,9 @@ void ByteCodeParser::handleGetById(
             auto* customData = m_graph.m_callCustomAccessorData.add();
             customData->m_customAccessor = variant.customAccessorGetter();
             customData->m_identifier = identifier;
+            // CallCustomAccessorGetter calls the getter with the realm of the code origin. GetByStatus guarantees that
+            // this is the realm the getter has to be called with.
+            ASSERT(variant.customAccessorRealm() == m_graph.globalObjectFor(currentNodeOrigin().semantic));
             set(destination, addToGraph(CallCustomAccessorGetter, OpInfo(customData), OpInfo(prediction), base));
             return;
 
@@ -7895,6 +7902,9 @@ void ByteCodeParser::handlePutById(
             data->m_customAccessor = variant.customAccessorSetter();
             data->m_identifier = identifier;
             addToGraph(CheckStructure, OpInfo(m_graph.addStructureSet(variant.oldStructure())), unwrapped);
+            // CallCustomAccessorSetter calls the setter with the realm of the code origin. PutByStatus guarantees that
+            // this is the realm the setter has to be called with.
+            ASSERT(variant.customAccessorRealm() == m_graph.globalObjectFor(currentNodeOrigin().semantic));
             addToGraph(CallCustomAccessorSetter, OpInfo(data), OpInfo(SpecNone), base, value);
             return;
         }
