@@ -120,6 +120,28 @@ inline void tryCachePutToScopeGlobal(
     }
 }
 
+// The read of a variable from the object that resolve_scope found it in.
+template<typename CallbackWhenNoException>
+ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type getPropertySlotOfScope(JSGlobalObject* globalObject, JSObject* scopeObject, PropertyName propertyName, CallbackWhenNoException callback)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    // A Proxy answers every [[Get]]: whether a global object with one in its prototype chain has the binding is for
+    // [[HasProperty]] to say.
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    PropertySlot slot(scopeObject, PropertySlot::InternalMethodType::Get);
+    bool found = scopeObject->getPropertySlot(globalObject, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (found && slot.isTaintedByOpaqueObject() && scopeObject->isGlobalObject()) [[unlikely]] {
+        found = scopeObject->hasProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    RELEASE_AND_RETURN(scope, callback(found, slot));
+#else
+    return scopeObject->getPropertySlot(globalObject, propertyName, callback);
+#endif
+}
+
 inline void tryCacheGetFromScopeGlobal(
     JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
 {
