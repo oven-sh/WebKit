@@ -4434,7 +4434,7 @@ private:
             case Array::Double:
             case Array::Contiguous:
                 speculate(
-                    Uncountable, noValue(), nullptr,
+                    SparseIndex, noValue(), nullptr,
                     m_out.aboveOrEqual(property, m_out.constInt32(MIN_SPARSE_ARRAY_INDEX)));
                 break;
             default:
