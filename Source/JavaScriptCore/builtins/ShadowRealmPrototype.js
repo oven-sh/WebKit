@@ -74,12 +74,12 @@ function importValue(specifier, exportName)
     if (typeof exportName !== 'string')
         @throwTypeError("`%ShadowRealm%.importValue requires that the |exportName| argument be a string");
 
+    // https://tc39.es/proposal-shadowrealm/#sec-export-getter-functions
     var lookupBinding = (module) => {
-        var lookup = module[exportName]
-        if (lookup === @undefined)
+        if (!@Object.@hasOwn(module, exportName))
             @throwTypeError("%ShadowRealm%.importValue requires |exportName| to exist in the |specifier|");
 
-        return @wrapRemoteValue(true, this, lookup);
+        return @wrapRemoteValue(true, this, module[exportName]);
     };
 
     return @importInRealm(this, specifierString).@then(lookupBinding, @crossRealmThrow);
