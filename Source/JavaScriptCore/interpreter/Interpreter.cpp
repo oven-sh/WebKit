@@ -220,7 +220,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         else
             evalContextType = EvalContextType::None;
 
-        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin), lexicallyScopedFeatures, derivedContextType, callerUnlinkedCodeBlock->needsClassFieldInitializer(), callerUnlinkedCodeBlock->privateBrandRequirement(), isArrowFunctionContext, callerBaselineCodeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, &variablesUnderTDZ, &privateNameEnvironment);
+        eval = DirectEvalExecutable::create(globalObject, makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin), lexicallyScopedFeatures, derivedContextType, callerUnlinkedCodeBlock->needsClassFieldInitializer(), callerUnlinkedCodeBlock->privateBrandRequirement(), isArrowFunctionContext, callerBaselineCodeBlock->ownerExecutable()->isInsideOrdinaryFunction(), evalContextType, callerUnlinkedCodeBlock->isInGeneratorOrAsyncFunctionBody(), &variablesUnderTDZ, &privateNameEnvironment);
         EXCEPTION_ASSERT(!!scope.exception() == !eval);
         if (!eval) [[unlikely]]
             return { };
@@ -1527,6 +1527,7 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
 
     if (!variables.empty() || !topLevelFunctionDecls.empty() || !functionHoistingCandidates.empty()) {
         JSScope* variableObject = nullptr;
+        JSScope* wrapperVariableObject = nullptr;
         if ((!variables.empty() || !topLevelFunctionDecls.empty()) && eval->isInStrictContext()) {
             scope = StrictEvalActivation::create(vm, globalObject->strictEvalActivationStructure(), scope);
             variableObject = scope;
@@ -1547,6 +1548,8 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
             }
             if (variableObject->structure()->isUncacheableDictionary())
                 variableObject->flattenDictionaryObject(vm);
+            if (eval->unlinkedCodeBlock()->isInGeneratorOrAsyncFunctionBody()) [[unlikely]]
+                wrapperVariableObject = variableObject->wrapperVarScopeOfGeneratorOrAsyncBody();
         }
 
         EvalCodeBlock* codeBlock = nullptr;
@@ -1603,6 +1606,12 @@ JSValue Interpreter::executeEval(EvalExecutable* eval, JSValue thisValue, JSScop
         auto ensureBindingExists = [&](const Identifier& ident) {
             bool hasProperty = variableObject->hasOwnProperty(globalObject, ident);
             RETURN_IF_EXCEPTION(throwScope, void());
+            if (!hasProperty && wrapperVariableObject) {
+                // In a generator or async function, a parameter or `arguments` is a binding of the variable environment
+                // that the wrapper function holds.
+                hasProperty = wrapperVariableObject->hasOwnProperty(globalObject, ident);
+                RETURN_IF_EXCEPTION(throwScope, void());
+            }
             if (!hasProperty) {
                 bool shouldThrow = true;
                 PutPropertySlot slot(variableObject, shouldThrow);
