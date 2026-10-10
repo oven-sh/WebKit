@@ -84,7 +84,8 @@ for (let i = 15; i < 20; i++) {
     assert.eq(i32[i], i);
 }
 
-assert.throws(() => $1.exports.do_memcpy(0,16384-5,6), Error, "Out of bounds memory access (evaluating 'func(...args)')")
+// Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+assert.throws(() => $1.exports.do_memcpy(0,16384-5,6), Error, "Out of bounds memory access")
 for (let i = 0; i < 5; i++) {
     assert.eq(i32[16384-5 + i], i);
 }

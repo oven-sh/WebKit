@@ -54,8 +54,9 @@ import Builder from '../Builder.js';
     assert.eq($1.exports.tbl.get(0), "hi")
     assert.eq($1.exports.tbl.get(1), null)
 
-    assert.throws(() => $1.exports.get_tbl0(), Error, "Out of bounds table access (evaluating 'func(...args)')");
-    assert.throws(() => $1.exports.set_tbl0(null), Error, "Out of bounds table access (evaluating 'func(...args)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => $1.exports.get_tbl0(), Error, "Out of bounds table access");
+    assert.throws(() => $1.exports.set_tbl0(null), Error, "Out of bounds table access");
 }
 
 {
@@ -110,8 +111,9 @@ import Builder from '../Builder.js';
     assert.eq($1.exports.tbl.get(0), "hi")
     assert.eq($1.exports.tbl.get(1), null)
 
-    assert.throws(() => $1.exports.get_tbl0(), Error, "Out of bounds table access (evaluating 'func(...args)')");
-    assert.throws(() => $1.exports.set_tbl0(null), Error, "Out of bounds table access (evaluating 'func(...args)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => $1.exports.get_tbl0(), Error, "Out of bounds table access");
+    assert.throws(() => $1.exports.set_tbl0(null), Error, "Out of bounds table access");
 }
 
 {
@@ -215,8 +217,9 @@ import Builder from '../Builder.js';
     fullGC()
 
     assert.eq($1.exports.call_tbl1(0), 42)
-    assert.throws(() => $1.exports.call_tbl0(0), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
-    assert.throws(() => $1.exports.call_tbl1(1), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => $1.exports.call_tbl0(0), Error, "call_indirect to a signature that does not match")
+    assert.throws(() => $1.exports.call_tbl1(1), Error, "call_indirect to a signature that does not match")
 }
 
 {
@@ -268,9 +271,10 @@ import Builder from '../Builder.js';
     assert.eq($1.exports.call_tbl1(0), 42)
     assert.eq($1.exports.call_tbl0(0), 1337)
     assert.eq($1.exports.call_tbl1(1), 256)
-    assert.throws(() => $1.exports.call_tbl0(1), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
-    assert.throws(() => $1.exports.call_tbl0(2), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
-    assert.throws(() => $1.exports.call_tbl1(2), Error, "Out of bounds call_indirect (evaluating 'func(...args)')")
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')" on each.
+    assert.throws(() => $1.exports.call_tbl0(1), Error, "call_indirect to a signature that does not match")
+    assert.throws(() => $1.exports.call_tbl0(2), Error, "call_indirect to a signature that does not match")
+    assert.throws(() => $1.exports.call_tbl1(2), Error, "Out of bounds call_indirect")
 }
  assert.throws(() => new WebAssembly.Instance(new WebAssembly.Module((new Builder())
           .Type().End()

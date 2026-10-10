@@ -43,7 +43,8 @@ async function test() {
     set(2, f);
     assert.eq(get(2), f);
 
-    assert.throws(() => get(3), WebAssembly.RuntimeError, "Out of bounds table access (evaluating 'func(...args)')");
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+    assert.throws(() => get(3), WebAssembly.RuntimeError, "Out of bounds table access");
 }
 
 await assert.asyncTest(test());
