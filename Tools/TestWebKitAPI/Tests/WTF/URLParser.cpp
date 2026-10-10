@@ -871,6 +871,14 @@ TEST_F(WTF_URLParser, ParserDifferences)
         { "http"_s, ""_s, ""_s, "[::100:ffff]"_s, 0, "/"_s, ""_s, ""_s, "http://[::100:ffff]/"_s });
     checkURLDifferences("http://[::A:1.0.255.255]/"_s,
         { "http"_s, ""_s, ""_s, "[::a:100:ffff]"_s, 0, "/"_s, ""_s, ""_s, "http://[::a:100:ffff]/"_s });
+    checkURLDifferences("http://[2001:db8:1234::5efe:127.0.0.1]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:7f00:1]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:7f00:1]/"_s });
+    checkURLDifferences("http://[2001:db8:1234::5efe:10.0.0.1]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:a00:1]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:a00:1]/"_s });
+    checkURLDifferences("http://[2001:db8:1234::5efe:8.8.8.8]/"_s,
+        { "http"_s, ""_s, ""_s, "[2001:db8:1234::5efe:808:808]"_s, 0, "/"_s, ""_s, ""_s, "http://[2001:db8:1234::5efe:808:808]/"_s });
+    checkURLDifferences("http://[2001:db8:1234:4:5::5efe:127.0.0.1]/"_s,
+        { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http://[2001:db8:1234:4:5::5efe:127.0.0.1]/"_s });
     checkURLDifferences("http://[:127.0.0.1]"_s,
         { ""_s, ""_s, ""_s, ""_s, 0, ""_s, ""_s, ""_s, "http://[:127.0.0.1]"_s });
     checkURLDifferences("http://[127.0.0.1]"_s,
