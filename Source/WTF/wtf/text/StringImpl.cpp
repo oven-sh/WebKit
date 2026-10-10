@@ -1644,7 +1644,7 @@ std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(st
 #if USE(BUN_JSC_ADDITIONS)
 // Upstream's utf8ForCharactersIntoBuffer() below gets a buffer that the caller grew with Vector::resize(),
 // and repeats the strict conversion before it replaces.
-std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode mode, Vector<char8_t, 1024>& bufferVector)
+std::expected<std::span<const char8_t>, UTF8ConversionError> StringImpl::utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode mode, UTF8ConversionBuffer& buffer, std::span<char8_t> destination)
 {
     // No code unit takes more than 3 bytes, and U+FFFD takes 3.
     if (productOverflows<size_t>(characters.size(), 3) || !isValidCapacityForVector<char8_t>(characters.size() * 3)) [[unlikely]]
@@ -1654,14 +1654,20 @@ std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForIllFormedCharacter
     if (mode == StrictConversion)
         return makeUnexpected(UTF8ConversionError::Invalid);
 
-    size_t bufferSize = characters.size() * 3;
-    if (bufferVector.capacity() < bufferSize) {
-        bufferVector.clear();
-        if (!bufferVector.tryReserveCapacity(bufferSize)) [[unlikely]]
+    size_t maximumSize = characters.size() * 3;
+    if (destination.size() < maximumSize) {
+        destination = buffer.tryAllocate(maximumSize);
+        if (!destination.data()) [[unlikely]]
             return makeUnexpected(UTF8ConversionError::OutOfMemory);
     }
-    bufferVector.resize(bufferSize);
-    return simdutf::convert_utf16le_to_utf8_with_replacement(characters, bufferVector.mutableSpan());
+    size_t convertedSize = simdutf::convert_utf16le_to_utf8_with_replacement(characters, destination);
+    return std::span<const char8_t> { destination.first(convertedSize) };
+}
+
+size_t StringImpl::convertLatin1ToUTF8(std::span<const Latin1Character> source, std::span<char8_t> destination)
+{
+    ASSERT(destination.size() >= source.size() * 2);
+    return simdutf::convert_latin1_to_utf8(source, destination);
 }
 #else
 std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuffer(std::span<const char16_t> span, ConversionMode mode, Vector<char8_t, 1024>& bufferVector)

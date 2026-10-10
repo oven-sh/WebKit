@@ -172,6 +172,45 @@ protected:
     mutable unsigned m_hashAndFlags;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// The scratch memory of one conversion to UTF-8: 1,024 bytes inline, or one allocation of exactly the size asked for.
+// Upstream uses a Vector<char8_t, 1024>, which crashes when it cannot allocate and grows by 1.5x.
+class UTF8ConversionBuffer {
+    WTF_MAKE_NONCOPYABLE(UTF8ConversionBuffer);
+public:
+    static constexpr size_t inlineCapacity = 1024;
+
+    UTF8ConversionBuffer() { }
+
+    ~UTF8ConversionBuffer()
+    {
+        if (m_heapBuffer) [[unlikely]]
+            VectorBufferMalloc::free(m_heapBuffer);
+    }
+
+    std::span<char8_t> inlineSpan(size_t size) LIFETIME_BOUND
+    {
+        ASSERT(size <= inlineCapacity);
+        return std::span { m_inlineBuffer }.first(size);
+    }
+
+    // The span has null data() when the allocation fails. An earlier allocation is freed first, and nothing is copied.
+    ALWAYS_INLINE std::span<char8_t> tryAllocate(size_t size) LIFETIME_BOUND
+    {
+        if (size <= inlineCapacity) [[likely]]
+            return inlineSpan(size);
+        if (m_heapBuffer) [[unlikely]]
+            VectorBufferMalloc::free(std::exchange(m_heapBuffer, nullptr));
+        m_heapBuffer = static_cast<char8_t*>(VectorBufferMalloc::tryMalloc(size));
+        return unsafeMakeSpan(m_heapBuffer, m_heapBuffer ? size : 0);
+    }
+
+private:
+    std::array<char8_t, inlineCapacity> m_inlineBuffer;
+    char8_t* m_heapBuffer { nullptr };
+};
+#endif
+
 // FIXME: Use of StringImpl and const is rather confused.
 // The actual string inside a StringImpl is immutable, so you can't modify a string using a StringImpl&.
 // We could mark every member function const and always use "const StringImpl&" and "const StringImpl*".
@@ -344,8 +383,10 @@ public:
     static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const Latin1Character> characters);
     static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const char16_t> characters, ConversionMode = LenientConversion);
 #if USE(BUN_JSC_ADDITIONS)
-    // For characters that failed tryConvertUTF16ToUTF8(). Upstream has utf8ForCharactersIntoBuffer() in this place.
-    static WTF_EXPORT_PRIVATE std::expected<size_t, UTF8ConversionError> utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
+    // For characters that failed tryConvertUTF16ToUTF8() into `destination`. Upstream has utf8ForCharactersIntoBuffer() in this place.
+    static WTF_EXPORT_PRIVATE std::expected<std::span<const char8_t>, UTF8ConversionError> utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode, UTF8ConversionBuffer&, std::span<char8_t> destination);
+    // `destination` has 2 bytes for each character.
+    static WTF_EXPORT_PRIVATE size_t convertLatin1ToUTF8(std::span<const Latin1Character> source, std::span<char8_t> destination);
 #else
     static WTF_EXPORT_PRIVATE std::expected<size_t, UTF8ConversionError> utf8ForCharactersIntoBuffer(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
 #endif
@@ -1481,6 +1522,110 @@ static inline std::span<const char8_t> nonNullEmptyUTF8Span()
     return { &empty, 0 };
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+
+// Upstream's two functions are under #else. These differ from them as follows.
+//  - The scratch memory is a UTF8ConversionBuffer. An allocation that fails is UTF8ConversionError::OutOfMemory.
+//  - A 16-bit string whose longest result fits the inline buffer is not measured first.
+//  - For ill-formed UTF-16, upstream grows its Vector with resize(). That asks for 1.5x the old capacity, and
+//    crashes when the first buffer is over 1,431,655,764 bytes. utf8ForIllFormedCharacters() allocates the exact size.
+//  - Latin-1 is converted with simdutf. Upstream calls Unicode::convert(), which works one character at a time.
+// The strings that convert and the bytes they convert to are the same as upstream's.
+
+// The call into simdutf costs more than this loop below 16 characters. `destination` has 2 bytes for each character.
+static constexpr size_t shortLatin1Length = 16;
+ALWAYS_INLINE size_t convertShortLatin1ToUTF8(std::span<const Latin1Character> source, std::span<char8_t> destination)
+{
+    ASSERT(destination.size() >= source.size() * 2);
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+    auto* output = destination.data();
+    for (auto character : source) {
+        if (isASCII(character))
+            *output++ = character;
+        else {
+            *output++ = 0xC0 | (character >> 6);
+            *output++ = 0x80 | (character & 0x3F);
+        }
+    }
+    return output - destination.data();
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+}
+
+#if CPU(ARM64)
+// Not inline: an all-ASCII string needs no scratch memory, so its path does not get the frame for it.
+template<typename Func>
+NEVER_INLINE std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> tryGetUTF8ForLatin1WithNonASCII(NOESCAPE const Func& function, std::span<const Latin1Character> characters, size_t asciiPrefixLength)
+{
+    auto rest = characters.subspan(asciiPrefixLength);
+    UTF8ConversionBuffer buffer;
+    auto destination = buffer.tryAllocate(asciiPrefixLength + rest.size() * 2);
+    if (!destination.data()) [[unlikely]]
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+
+    memcpySpan(destination, characters.first(asciiPrefixLength));
+    auto restDestination = destination.subspan(asciiPrefixLength);
+    size_t restSize = rest.size() < shortLatin1Length ? convertShortLatin1ToUTF8(rest, restDestination) : StringImpl::convertLatin1ToUTF8(rest, restDestination);
+    return function(std::span<const char8_t> { destination.first(asciiPrefixLength + restSize) });
+}
+#endif
+
+template<typename Func>
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const Latin1Character> characters)
+{
+    if (characters.empty())
+        return function(nonNullEmptyUTF8Span());
+
+    // A Latin-1 character takes at most 2 bytes. The limit is the one of upstream's Vector.
+    if (productOverflows<size_t>(characters.size(), 2) || !isValidCapacityForVector<char8_t>(characters.size() * 2)) [[unlikely]]
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+
+#if CPU(ARM64)
+    if (auto* firstNonASCII = find8NonASCII(characters)) [[unlikely]]
+        return tryGetUTF8ForLatin1WithNonASCII(function, characters, firstNonASCII - characters.data());
+    return function(byteCast<char8_t>(characters));
+#else
+    UTF8ConversionBuffer buffer;
+    auto destination = buffer.tryAllocate(characters.size() * 2);
+    if (!destination.data()) [[unlikely]]
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+
+    size_t convertedSize = characters.size() < shortLatin1Length ? convertShortLatin1ToUTF8(characters, destination) : convertLatin1ToUTF8(characters, destination);
+    return function(std::span<const char8_t> { destination.first(convertedSize) });
+#endif
+}
+
+template<typename Func>
+inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const char16_t> characters, ConversionMode mode)
+{
+    if (characters.empty())
+        return function(nonNullEmptyUTF8Span());
+
+    UTF8ConversionBuffer buffer;
+    std::span<char8_t> destination;
+    if (characters.size() <= UTF8ConversionBuffer::inlineCapacity / 3) {
+        // No code unit takes more than 3 bytes, so the inline buffer holds every result.
+        destination = buffer.inlineSpan(characters.size() * 3);
+    } else {
+        size_t utf8Length = utf8LengthFromUTF16(characters);
+        if (!isValidCapacityForVector<char8_t>(utf8Length)) [[unlikely]]
+            return makeUnexpected(UTF8ConversionError::OutOfMemory);
+        destination = buffer.tryAllocate(utf8Length);
+        if (!destination.data()) [[unlikely]]
+            return makeUnexpected(UTF8ConversionError::OutOfMemory);
+    }
+
+    size_t convertedSize = tryConvertUTF16ToUTF8(characters, destination);
+    if (convertedSize != notFound) [[likely]]
+        return function(std::span<const char8_t> { destination.first(convertedSize) });
+
+    auto converted = utf8ForIllFormedCharacters(characters, mode, buffer, destination);
+    if (!converted) [[unlikely]]
+        return makeUnexpected(converted.error());
+    return function(*converted);
+}
+
+#else
+
 template<typename Func>
 inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8ConversionError> StringImpl::tryGetUTF8ForCharacters(NOESCAPE const Func& function, std::span<const Latin1Character> characters)
 {
@@ -1535,22 +1680,18 @@ inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8C
     if (simdConvertedSize != notFound)
         return function(bufferVector.span().first(simdConvertedSize));
 
-#if USE(BUN_JSC_ADDITIONS)
-    // Upstream calls bufferVector.resize(characters.size() * 3) here. resize() asks for 1.5x the old capacity,
-    // and crashes when that is not a valid capacity: a first buffer of over 1,431,655,764 bytes.
-    auto convertedSize = utf8ForIllFormedCharacters(characters, mode, bufferVector);
-#else
     if (productOverflows<size_t>(characters.size(), 3) || !isValidCapacityForVector<char8_t>(characters.size() * 3)) [[unlikely]]
         return makeUnexpected(UTF8ConversionError::OutOfMemory);
 
     size_t bufferSize = characters.size() * 3;
     bufferVector.resize(bufferSize);
     auto convertedSize = utf8ForCharactersIntoBuffer(characters, mode, bufferVector);
-#endif
     if (!convertedSize)
         return makeUnexpected(convertedSize.error());
     return function(bufferVector.span().first(*convertedSize));
 }
+
+#endif // USE(BUN_JSC_ADDITIONS)
 
 } // namespace WTF
 
