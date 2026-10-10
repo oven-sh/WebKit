@@ -29,6 +29,8 @@
 
 #if ENABLE(DFG_JIT)
 
+#include "DFGUseKind.h"
+#include "FFIType.h"
 #include "SpeculatedType.h"
 
 namespace JSC {
@@ -46,6 +48,19 @@ namespace FFI {
 bool tryConvertCallToCallFFI(DFG::Graph&, DFG::InsertionSet&, unsigned nodeIndex, DFG::Node*, JSFunction* callee);
 
 SpeculatedType speculatedResultTypeForCallFFI(DFG::Node*);
+
+// What a JIT tier has to know about an argument before it emits the conversion for it.
+//
+// conversionCanRunJS: the conversion can call back into JS, and that JS can detach, transfer, or
+// resize any buffer. Only an argument the DFG could not type can. An integer or a float argument
+// coerces through valueOf or Symbol.toPrimitive, and an object passed for a pointer has its 'ptr'
+// property read. 'buffer' and 'buffer_length' take a view or throw, and 'napi_value' passes the
+// JSValue through, so those three never run JS.
+//
+// conversionCanTakeBufferSnapshot: the conversion can read an address or a byte length off a live
+// TypedArray, DataView, or ArrayBuffer. Such a read holds only until the next JS runs.
+bool conversionCanRunJS(Type, DFG::UseKind);
+bool conversionCanTakeBufferSnapshot(Type, DFG::UseKind);
 
 } // namespace FFI
 
