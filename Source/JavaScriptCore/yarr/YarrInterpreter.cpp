@@ -2373,9 +2373,11 @@ class ByteCompiler {
     struct ParenthesesStackEntry {
         unsigned beginTerm;
         unsigned savedAlternativeIndex;
-        ParenthesesStackEntry(unsigned beginTerm, unsigned savedAlternativeIndex/*, unsigned subpatternId, bool capture = false*/)
+        bool hasAlternativeBegin;
+        ParenthesesStackEntry(unsigned beginTerm, unsigned savedAlternativeIndex, bool hasAlternativeBegin)
             : beginTerm(beginTerm)
             , savedAlternativeIndex(savedAlternativeIndex)
+            , hasAlternativeBegin(hasAlternativeBegin)
         {
         }
     };
@@ -2487,33 +2489,42 @@ public:
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
     }
 
-    void atomParenthesesOnceBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    // A disjunction with a single alternative gets no AlternativeBegin term. Appending one and
+    // removing it again in closeAlternative() shifts every term emitted for the alternative, which
+    // makes the compile of nested groups quadratic in the nesting depth. m_currentAlternativeIndex
+    // keeps pointing at the enclosing disjunction's alternative term in that case, because
+    // alternativeDisjunction() is never called for a single alternative.
+    void openParentheses(unsigned beginTerm, unsigned alternativeCount, unsigned alternativeFrameLocation)
+    {
+        bool hasAlternativeBegin = alternativeCount > 1;
+        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex, hasAlternativeBegin));
+        if (!hasAlternativeBegin)
+            return;
+
+        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
+        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
+        m_currentAlternativeIndex = beginTerm + 1;
+    }
+
+    void atomParenthesesOnceBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation, unsigned alternativeCount)
     {
         unsigned beginTerm = m_bodyDisjunction->terms.size();
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternOnceBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
-        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
-        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
-
-        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex));
-        m_currentAlternativeIndex = beginTerm + 1;
+        openParentheses(beginTerm, alternativeCount, alternativeFrameLocation);
     }
 
-    void atomParenthesesTerminalBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    void atomParenthesesTerminalBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation, unsigned alternativeCount)
     {
         unsigned beginTerm = m_bodyDisjunction->terms.size();
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternTerminalBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
-        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
-        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
-
-        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex));
-        m_currentAlternativeIndex = beginTerm + 1;
+        openParentheses(beginTerm, alternativeCount, alternativeFrameLocation);
     }
 
-    void atomParenthesesSubpatternBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation)
+    void atomParenthesesSubpatternBegin(unsigned subpatternId, MatchDirection matchDirection, bool capture, unsigned inputPosition, unsigned frameLocation, unsigned alternativeFrameLocation, unsigned alternativeCount)
     {
         // Errrk! - this is a little crazy, we initially generate as a Type::ParenthesesSubpatternOnceBegin,
         // then fix this up at the end! - simplifying this should make it much clearer.
@@ -2523,30 +2534,21 @@ public:
 
         m_bodyDisjunction->terms.append(ByteTerm(ByteTerm::Type::ParenthesesSubpatternOnceBegin, subpatternId, capture, false, matchDirection, inputPosition, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
-        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
-        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
-
-        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex));
-        m_currentAlternativeIndex = beginTerm + 1;
+        openParentheses(beginTerm, alternativeCount, alternativeFrameLocation);
     }
 
-    void atomParentheticalAssertionBegin(unsigned subpatternId, bool invert, MatchDirection matchDirection, unsigned frameLocation, unsigned alternativeFrameLocation)
+    void atomParentheticalAssertionBegin(unsigned subpatternId, bool invert, MatchDirection matchDirection, unsigned frameLocation, unsigned alternativeFrameLocation, unsigned alternativeCount)
     {
         unsigned beginTerm = m_bodyDisjunction->terms.size();
 
         m_bodyDisjunction->terms.append(ByteTerm::ParentheticalAssertionBegin(subpatternId, invert, matchDirection, m_currentFlags));
         m_bodyDisjunction->terms.last().frameLocation = frameLocation;
-        m_bodyDisjunction->terms.append(ByteTerm::AlternativeBegin(m_currentFlags));
-        m_bodyDisjunction->terms.last().frameLocation = alternativeFrameLocation;
-
-        m_parenthesesStack.append(ParenthesesStackEntry(beginTerm, m_currentAlternativeIndex));
-        m_currentAlternativeIndex = beginTerm + 1;
+        openParentheses(beginTerm, alternativeCount, alternativeFrameLocation);
     }
 
     void atomParentheticalAssertionEnd(unsigned lastSubpatternId, unsigned frameLocation, Checked<unsigned> quantityMaxCount, QuantifierType quantityType)
     {
         unsigned beginTerm = popParenthesesStack();
-        closeAlternative(beginTerm + 1);
         unsigned endTerm = m_bodyDisjunction->terms.size();
 
         ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::ParentheticalAssertionBegin);
@@ -2571,42 +2573,42 @@ public:
         m_bodyDisjunction->terms.append(ByteTerm::DotStarEnclosure(bolAnchored, eolAnchored, m_currentFlags));
     }
 
+    // Pops the innermost open parentheses, closes its alternatives and returns the index of its begin term.
     unsigned NODELETE popParenthesesStack()
     {
         ASSERT(m_parenthesesStack.size());
-        unsigned beginTerm = m_parenthesesStack.last().beginTerm;
-        m_currentAlternativeIndex = m_parenthesesStack.last().savedAlternativeIndex;
-        m_parenthesesStack.removeLast();
+        ParenthesesStackEntry entry = m_parenthesesStack.takeLast();
+        m_currentAlternativeIndex = entry.savedAlternativeIndex;
 
-        ASSERT(beginTerm < m_bodyDisjunction->terms.size());
+        ASSERT(entry.beginTerm < m_bodyDisjunction->terms.size());
         ASSERT(m_currentAlternativeIndex < m_bodyDisjunction->terms.size());
 
-        return beginTerm;
+        if (entry.hasAlternativeBegin)
+            closeAlternative(entry.beginTerm + 1);
+
+        return entry.beginTerm;
     }
 
     void closeAlternative(unsigned beginTerm)
     {
         unsigned origBeginTerm = beginTerm;
         ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::AlternativeBegin);
+        ASSERT(m_bodyDisjunction->terms[beginTerm].alternative.next);
         unsigned endIndex = m_bodyDisjunction->terms.size();
 
         unsigned frameLocation = m_bodyDisjunction->terms[beginTerm].frameLocation;
 
-        if (!m_bodyDisjunction->terms[beginTerm].alternative.next)
-            m_bodyDisjunction->terms.removeAt(beginTerm);
-        else {
-            while (m_bodyDisjunction->terms[beginTerm].alternative.next) {
-                beginTerm += m_bodyDisjunction->terms[beginTerm].alternative.next;
-                ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::AlternativeDisjunction);
-                m_bodyDisjunction->terms[beginTerm].alternative.end = endIndex - beginTerm;
-                m_bodyDisjunction->terms[beginTerm].frameLocation = frameLocation;
-            }
-
-            m_bodyDisjunction->terms[beginTerm].alternative.next = origBeginTerm - beginTerm;
-
-            m_bodyDisjunction->terms.append(ByteTerm::AlternativeEnd(m_currentFlags));
-            m_bodyDisjunction->terms[endIndex].frameLocation = frameLocation;
+        while (m_bodyDisjunction->terms[beginTerm].alternative.next) {
+            beginTerm += m_bodyDisjunction->terms[beginTerm].alternative.next;
+            ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::AlternativeDisjunction);
+            m_bodyDisjunction->terms[beginTerm].alternative.end = endIndex - beginTerm;
+            m_bodyDisjunction->terms[beginTerm].frameLocation = frameLocation;
         }
+
+        m_bodyDisjunction->terms[beginTerm].alternative.next = origBeginTerm - beginTerm;
+
+        m_bodyDisjunction->terms.append(ByteTerm::AlternativeEnd(m_currentFlags));
+        m_bodyDisjunction->terms[endIndex].frameLocation = frameLocation;
     }
 
     void closeBodyAlternative()
@@ -2634,7 +2636,6 @@ public:
     void atomParenthesesSubpatternEnd(unsigned lastSubpatternId, unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType, unsigned callFrameSize = 0)
     {
         unsigned beginTerm = popParenthesesStack();
-        closeAlternative(beginTerm + 1);
         unsigned endTerm = m_bodyDisjunction->terms.size();
 
         ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::ParenthesesSubpatternOnceBegin);
@@ -2677,7 +2678,6 @@ public:
     void atomParenthesesOnceEnd(unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType)
     {
         unsigned beginTerm = popParenthesesStack();
-        closeAlternative(beginTerm + 1);
         unsigned endTerm = m_bodyDisjunction->terms.size();
 
         ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::ParenthesesSubpatternOnceBegin);
@@ -2716,7 +2716,6 @@ public:
     void atomParenthesesTerminalEnd(unsigned inputPosition, unsigned frameLocation, Checked<unsigned> quantityMinCount, Checked<unsigned> quantityMaxCount, QuantifierType quantityType)
     {
         unsigned beginTerm = popParenthesesStack();
-        closeAlternative(beginTerm + 1);
         unsigned endTerm = m_bodyDisjunction->terms.size();
 
         ASSERT(m_bodyDisjunction->terms[beginTerm].type == ByteTerm::Type::ParenthesesSubpatternTerminalBegin);
@@ -2901,7 +2900,7 @@ public:
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
                             return ErrorCode::OffsetTooLarge;
-                        atomParenthesesOnceBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, alternativeFrameLocation);
+                        atomParenthesesOnceBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, alternativeFrameLocation, term.parentheses.disjunction->m_alternatives.size());
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, disjunctionAlreadyCheckedCount, matchDirection))
                             return error;
                         atomParenthesesOnceEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType);
@@ -2909,7 +2908,7 @@ public:
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
                             return ErrorCode::OffsetTooLarge;
-                        atomParenthesesTerminalBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, term.frameLocation + YarrStackSpaceForBackTrackInfoParenthesesTerminal);
+                        atomParenthesesTerminalBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, term.frameLocation + YarrStackSpaceForBackTrackInfoParenthesesTerminal, term.parentheses.disjunction->m_alternatives.size());
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, disjunctionAlreadyCheckedCount, matchDirection))
                             return error;
                         atomParenthesesTerminalEnd(delegateEndInputOffset, term.frameLocation, term.quantityMinCount, term.quantityMaxCount, term.quantityType);
@@ -2917,7 +2916,7 @@ public:
                         auto delegateEndInputOffset = currentCountAlreadyChecked - term.inputPosition;
                         if (delegateEndInputOffset.hasOverflowed())
                             return ErrorCode::OffsetTooLarge;
-                        atomParenthesesSubpatternBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, 0);
+                        atomParenthesesSubpatternBegin(term.parentheses.subpatternId, matchDirection, term.capture(), disjunctionAlreadyCheckedCount + delegateEndInputOffset, term.frameLocation, 0, term.parentheses.disjunction->m_alternatives.size());
                         unsigned inputOffset = 0;
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, inputOffset, matchDirection))
                             return error;
@@ -2941,7 +2940,7 @@ public:
                                 return ErrorCode::OffsetTooLarge;
                         }
 
-                        atomParentheticalAssertionBegin(term.parentheses.subpatternId, term.invert(), term.matchDirection(), term.frameLocation, alternativeFrameLocation);
+                        atomParentheticalAssertionBegin(term.parentheses.subpatternId, term.invert(), term.matchDirection(), term.frameLocation, alternativeFrameLocation, term.parentheses.disjunction->m_alternatives.size());
                         if (auto error = emitDisjunction(term.parentheses.disjunction, currentCountAlreadyChecked, positiveInputOffset - uncheckAmount, term.matchDirection()))
                             return error;
                         atomParentheticalAssertionEnd(term.parentheses.lastSubpatternId, term.frameLocation, term.quantityMaxCount, term.quantityType);
@@ -2968,7 +2967,7 @@ public:
                                 haveCheckedInput(checkedCountForLookbehind);
                             }
                         }
-                        atomParentheticalAssertionBegin(term.parentheses.subpatternId, term.invert(), term.matchDirection(), term.frameLocation, alternativeFrameLocation);
+                        atomParentheticalAssertionBegin(term.parentheses.subpatternId, term.invert(), term.matchDirection(), term.frameLocation, alternativeFrameLocation, term.parentheses.disjunction->m_alternatives.size());
 
                         if (auto error = emitDisjunction(term.parentheses.disjunction, checkedCountForLookbehind, positiveInputOffset + minimumSize, term.matchDirection()))
                             return error;
