@@ -22,7 +22,9 @@ extern "C" __attribute__((weak)) void WTFTimer__update(RunLoop::TimerBase::Bun__
 extern "C" __attribute__((weak)) void WTFTimer__deinit(RunLoop::TimerBase::Bun__WTFTimer*);
 extern "C" __attribute__((weak)) bool WTFTimer__isActive(const RunLoop::TimerBase::Bun__WTFTimer*);
 extern "C" __attribute__((weak)) double WTFTimer__secondsUntilTimer(const RunLoop::TimerBase::Bun__WTFTimer*);
-extern "C" __attribute__((weak)) void WTFTimer__cancel(RunLoop::TimerBase::Bun__WTFTimer*);
+// Returns whether the timer was still armed in Bun's wtf_timers heap (i.e.
+// fired() has not been and will not be dispatched for it).
+extern "C" __attribute__((weak)) bool WTFTimer__cancel(RunLoop::TimerBase::Bun__WTFTimer*);
 
 // Defined by Bun alongside the WTFTimer functions above; like them it is left undefined (null) in the
 // JSC shell, which only ever takes the RunLoopGeneric path below. No fallback definition here: a weak
@@ -77,7 +79,8 @@ void RunLoop::TimerBase::stop()
         return stopGeneric();
     case Kind::Bun:
         if (auto* ref = std::get_if<std::reference_wrapper<Bun__WTFTimer>>(&m_impl)) {
-            WTFTimer__cancel(&ref->get());
+            if (WTFTimer__cancel(&ref->get()))
+                didStopWhileActive();
         }
         return;
     }
