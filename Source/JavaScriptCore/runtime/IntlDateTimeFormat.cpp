@@ -862,12 +862,7 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
         }
         tzValue = jsString(vm, toLocaleStringTimeZone);
     }
-#if USE(BUN_JSC_ADDITIONS)
-    std::optional<TimeZone> tz;
-    String identifierWithoutTable;
-#else
     TimeZone tz;
-#endif
     String tzForResolvedOptions;
     if (!tzValue.isUndefined()) {
         String originalTz = tzValue.toWTFString(globalObject);
@@ -876,11 +871,6 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
             int64_t nanoseconds = minutesValue.value() * 60LL * 1000 * 1000 * 1000;
             tz = TimeZone::fromUTCOffset(nanoseconds);
             tzForResolvedOptions = ISO8601::formatTimeZoneOffsetString(nanoseconds);
-#if USE(BUN_JSC_ADDITIONS)
-        } else if (equalLettersIgnoringASCIICase(originalTz, "utc"_s)) {
-            identifierWithoutTable = "UTC"_s;
-            tzForResolvedOptions = identifierWithoutTable;
-#endif
         } else if (auto resolved = intlAvailableNamedTimeZone(originalTz)) {
             tz = TimeZone::fromID(resolved->id);
             tzForResolvedOptions = resolved->identifier;
@@ -892,19 +882,10 @@ void IntlDateTimeFormat::initializeDateTimeFormat(JSGlobalObject* globalObject, 
             return;
         }
     } else {
-#if USE(BUN_JSC_ADDITIONS)
-        identifierWithoutTable = vm.dateCache.defaultTimeZoneIdentifier();
-        tzForResolvedOptions = identifierWithoutTable;
-#else
         tz = vm.dateCache.defaultTimeZone();
         tzForResolvedOptions = tz.toString();
-#endif
     }
-#if USE(BUN_JSC_ADDITIONS)
-    impl->m_timeZone = { tz ? tz->toICUString() : identifierWithoutTable };
-#else
     impl->m_timeZone = tz;
-#endif
     impl->m_timeZoneForResolvedOptions = WTF::move(tzForResolvedOptions);
 
     Weekday weekday = intlOption<Weekday>(globalObject, options, vm.propertyNames->weekday, { { "narrow"_s, Weekday::Narrow }, { "short"_s, Weekday::Short }, { "long"_s, Weekday::Long } }, "weekday must be \"narrow\", \"short\", or \"long\""_s, Weekday::None);

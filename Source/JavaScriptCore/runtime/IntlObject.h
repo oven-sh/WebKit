@@ -31,9 +31,6 @@
 #include "JSCTimeZone.h"
 #include "JSObject.h"
 #include <wtf/RobinHoodHashSet.h>
-#if USE(BUN_JSC_ADDITIONS)
-#include <mutex>
-#endif
 
 struct UFieldPositionIterator;
 
@@ -93,43 +90,7 @@ private:
 };
 
 String defaultLocale(JSGlobalObject*);
-#if USE(BUN_JSC_ADDITIONS)
-// The locales one of ICU's services has. Nothing is asked of such a set but whether a tag is in it (bestAvailableLocale()), so none is
-// built, which is a thousand strings and their table: ICU's own list is asked.
-class LocaleSet {
-    WTF_MAKE_NONCOPYABLE(LocaleSet);
-public:
-    using Built = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
-
-    LocaleSet(int32_t (*count)(), const char* (*at)(int32_t))
-        : m_count(count)
-        , m_at(at)
-    {
-    }
-
-    bool contains(const String& tag) const;
-    // For whoever walks.
-    Built::const_iterator begin() const { return built().begin(); }
-    Built::const_iterator end() const { return built().end(); }
-
-private:
-    void prepare() const;
-    const Built& built() const;
-    int32_t firstNotBefore(const char* localeID) const;
-
-    int32_t (*m_count)();
-    const char* (*m_at)(int32_t);
-    mutable std::once_flag m_prepareOnce;
-    mutable std::once_flag m_buildOnce;
-    mutable int32_t m_size { 0 };
-    mutable bool m_isSorted { false };
-    // Of the IDs that are not language[_Script][_REGION]: a handful.
-    mutable Vector<String> m_tagsOfOtherIDs;
-    mutable Built m_built;
-};
-#else
 using LocaleSet = MemoryCompactLookupOnlyRobinHoodHashSet<String>;
-#endif
 const LocaleSet& intlAvailableLocales();
 const LocaleSet& intlCollatorAvailableLocales();
 const LocaleSet& intlSegmenterAvailableLocales();
@@ -211,11 +172,6 @@ JS_EXPORT_PRIVATE std::optional<AvailableNamedTimeZone> intlAvailableNamedTimeZo
 // to "UTC" per ECMA-402.
 JS_EXPORT_PRIVATE String toPrimaryIanaTimeZoneIdentifier(std::span<const char16_t> timeZone);
 JS_EXPORT_PRIVATE String toPrimaryIanaTimeZoneIdentifier(StringView timeZone);
-#if USE(BUN_JSC_ADDITIONS)
-// The identifier at intlResolveTimeZoneID(toPrimaryIanaTimeZoneIdentifier(timeZone)), where that can be told without the table
-// of all time zones, which takes 23 M instructions and 650 KB to build. Null: ask the table.
-JS_EXPORT_PRIVATE String intlPrimaryTimeZoneIdentifierWithoutTable(std::span<const char16_t> timeZone);
-#endif
 
 void initializeAvailableTimeZones();
 

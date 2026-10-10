@@ -413,83 +413,8 @@ String languageTagForLocaleID(const char* localeID, bool isImmortal)
     return createResult(canonicalizeUnicodeExtensionsAfterICULocaleCanonicalization(WTF::move(buffer)));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-// language[_Script][_REGION] as ICU spells the locales it has is its own language tag but for the separator. Not so any name: `aar` is `aa`.
-static bool appendTagOfPlainLocaleID(const char* localeID, Vector<char, 32>& tag)
-{
-    const char* position = localeID;
-    auto take = [&](unsigned length) {
-        tag.append(std::span { position, length });
-        position += length;
-    };
-    auto isOneOf = [&](unsigned length, std::initializer_list<const char*> codes) {
-        for (const char* code : codes) {
-            if (!strncmp(position, code, length))
-                return true;
-        }
-        return false;
-    };
-    auto isAtEnd = [&] {
-        if (!*position)
-            return true;
-        if (*position != '_')
-            return false;
-        ++position;
-        tag.append('-');
-        return false;
-    };
-
-    unsigned length = 0;
-    while (isASCIILower(position[length]))
-        ++length;
-    if (length < 2 || length > 3 || (position[length] && position[length] != '_'))
-        return false;
-    if (length == 2 && isOneOf(2, { "iw", "ji", "in", "jw", "mo", "sh", "tl" }))
-        return false;
-    take(length);
-    if (isAtEnd())
-        return true;
-
-    if (isASCIIUpper(position[0]) && isASCIILower(position[1]) && isASCIILower(position[2]) && isASCIILower(position[3]) && (!position[4] || position[4] == '_')) {
-        take(4);
-        if (isAtEnd())
-            return true;
-    }
-
-    if (isASCIIUpper(position[0]) && isASCIIUpper(position[1]) && !position[2]) {
-        if (isOneOf(2, { "AN", "BU", "CS", "DD", "FX", "NT", "SU", "TP", "YD", "YU", "ZR" }))
-            return false;
-        take(2);
-        return true;
-    }
-    if (isASCIIDigit(position[0]) && isASCIIDigit(position[1]) && isASCIIDigit(position[2]) && !position[3]) {
-        take(3);
-        return true;
-    }
-    return false;
-}
-#endif
-
-// Of a name from one of ICU's lists of the locales it has: a thousand each.
-static String languageTagForAvailableLocaleID(const char* localeID)
-{
-    constexpr bool isImmortal = true;
-#if USE(BUN_JSC_ADDITIONS)
-    if (Vector<char, 32> tag; appendTagOfPlainLocaleID(localeID, tag)) {
-        String result = StringImpl::createStaticStringImpl(tag.span());
-        ASSERT(result == languageTagForLocaleID(localeID, isImmortal));
-        return result;
-    }
-#endif
-    return languageTagForLocaleID(localeID, isImmortal);
-}
-
 // Ensure we have xx-ZZ whenever we have xx-Yyyy-ZZ.
-#if USE(BUN_JSC_ADDITIONS)
-static void addScriptlessLocaleIfNeeded(LocaleSet::Built& availableLocales, StringView locale)
-#else
 static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView locale)
-#endif
 {
     if (locale.length() < 10)
         return;
@@ -514,126 +439,17 @@ static void addScriptlessLocaleIfNeeded(LocaleSet& availableLocales, StringView 
     availableLocales.add(StringImpl::createStaticStringImpl(buffer.span()));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-const LocaleSet::Built& LocaleSet::built() const
-{
-    std::call_once(m_buildOnce, [&] {
-        int32_t count = m_count();
-        for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForAvailableLocaleID(m_at(i));
-            if (locale.isEmpty())
-                continue;
-            m_built.add(locale);
-            addScriptlessLocaleIfNeeded(m_built, locale);
-        }
-    });
-    return m_built;
-}
-
-void LocaleSet::prepare() const
-{
-    m_size = m_count();
-    const char* previous = nullptr;
-    for (int32_t i = 0; i < m_size; ++i) {
-        const char* localeID = m_at(i);
-        if (previous && strcmp(previous, localeID) >= 0)
-            return;
-        previous = localeID;
-        if (Vector<char, 32> tag; appendTagOfPlainLocaleID(localeID, tag))
-            continue;
-        String tag = languageTagForAvailableLocaleID(localeID);
-        if (tag.isEmpty())
-            continue;
-        m_tagsOfOtherIDs.append(tag);
-        Built scriptless;
-        addScriptlessLocaleIfNeeded(scriptless, tag);
-        for (auto& other : scriptless)
-            m_tagsOfOtherIDs.append(other);
-    }
-    m_isSorted = true;
-}
-
-int32_t LocaleSet::firstNotBefore(const char* localeID) const
-{
-    int32_t low = 0;
-    int32_t high = m_size;
-    while (low < high) {
-        int32_t middle = low + (high - low) / 2;
-        if (strcmp(m_at(middle), localeID) < 0)
-            low = middle + 1;
-        else
-            high = middle;
-    }
-    return low;
-}
-
-bool LocaleSet::contains(const String& tag) const
-{
-    std::call_once(m_prepareOnce, [&] {
-        prepare();
-    });
-    if (!m_isSorted)
-        return built().contains(tag);
-    for (auto& other : m_tagsOfOtherIDs) {
-        if (other == tag)
-            return true;
-    }
-
-    // What a plain ID comes to is itself but for the separator: at most lll-Ssss-RRR.
-    constexpr unsigned maxLength = 3 + 1 + 4 + 1 + 3;
-    unsigned length = tag.length();
-    if (length < 2 || length > maxLength)
-        return false;
-    std::array<char, maxLength + 2> localeID;
-    unsigned numberOfSeparators = 0;
-    unsigned firstSeparator = 0;
-    for (unsigned i = 0; i < length; ++i) {
-        char16_t character = tag[i];
-        if (!isASCIIAlphanumeric(character) && character != '-')
-            return false;
-        if (character == '-' && !numberOfSeparators++)
-            firstSeparator = i;
-        localeID[i] = character == '-' ? '_' : static_cast<char>(character);
-    }
-    localeID[length] = 0;
-    auto isPlain = [](const char* listed) {
-        Vector<char, 32> ignored;
-        return appendTagOfPlainLocaleID(listed, ignored);
-    };
-    if (int32_t found = firstNotBefore(localeID.data()); found < m_size && !strcmp(m_at(found), localeID.data()) && isPlain(m_at(found)))
-        return true;
-
-    // xx-ZZ wherever there is xx-Yyyy-ZZ: addScriptlessLocaleIfNeeded().
-    unsigned regionLength = length - firstSeparator - 1;
-    if (numberOfSeparators != 1 || !regionLength || regionLength > 3)
-        return false;
-    std::array<char, 4> region { };
-    memcpy(region.data(), localeID.data() + firstSeparator + 1, regionLength);
-    unsigned prefixLength = firstSeparator + 1;
-    localeID[prefixLength] = 0;
-    for (int32_t i = firstNotBefore(localeID.data()); i < m_size && !strncmp(m_at(i), localeID.data(), prefixLength); ++i) {
-        const char* rest = m_at(i) + prefixLength;
-        if (strlen(rest) == 4 + 1 + regionLength && rest[4] == '_' && !strcmp(rest + 5, region.data()) && isPlain(m_at(i)))
-            return true;
-    }
-    return false;
-}
-#endif
-
 const LocaleSet& intlAvailableLocales()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    static NeverDestroyed<LocaleSet> listed { uloc_countAvailable, uloc_getAvailable };
-    return listed;
-#else
     static LazyNeverDestroyed<LocaleSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
+        constexpr bool isImmortal = true;
         int32_t count = uloc_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForAvailableLocaleID(uloc_getAvailable(i));
+            String locale = languageTagForLocaleID(uloc_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
             availableLocales->add(locale);
@@ -641,7 +457,6 @@ const LocaleSet& intlAvailableLocales()
         }
     });
     return availableLocales;
-#endif
 }
 
 // This table is total ordering indexes for ASCII characters in UCA DUCET.
@@ -764,24 +579,15 @@ const uint8_t ducetLevel3Weights[256] = {
 
 const LocaleSet& intlCollatorAvailableLocales()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    static NeverDestroyed<LocaleSet> listed { ucol_countAvailable, ucol_getAvailable };
-#if ASSERT_ENABLED
-    static std::once_flag checkOnce;
-    std::call_once(checkOnce, [&] {
-        IntlCollator::checkICULocaleInvariants(listed.get());
-    });
-#endif
-    return listed;
-#else
     static LazyNeverDestroyed<LocaleSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
+        constexpr bool isImmortal = true;
         int32_t count = ucol_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForAvailableLocaleID(ucol_getAvailable(i));
+            String locale = languageTagForLocaleID(ucol_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
             availableLocales->add(locale);
@@ -790,23 +596,19 @@ const LocaleSet& intlCollatorAvailableLocales()
         IntlCollator::checkICULocaleInvariants(availableLocales.get());
     });
     return availableLocales;
-#endif
 }
 
 const LocaleSet& intlSegmenterAvailableLocales()
 {
-#if USE(BUN_JSC_ADDITIONS)
-    static NeverDestroyed<LocaleSet> listed { ubrk_countAvailable, ubrk_getAvailable };
-    return listed;
-#else
     static LazyNeverDestroyed<LocaleSet> availableLocales;
     static std::once_flag initializeOnce;
     std::call_once(initializeOnce, [&] {
         availableLocales.construct();
         ASSERT(availableLocales->isEmpty());
+        constexpr bool isImmortal = true;
         int32_t count = ubrk_countAvailable();
         for (int32_t i = 0; i < count; ++i) {
-            String locale = languageTagForAvailableLocaleID(ubrk_getAvailable(i));
+            String locale = languageTagForLocaleID(ubrk_getAvailable(i), isImmortal);
             if (locale.isEmpty())
                 continue;
             availableLocales->add(locale);
@@ -814,7 +616,6 @@ const LocaleSet& intlSegmenterAvailableLocales()
         }
     });
     return availableLocales;
-#endif
 }
 
 // https://tc39.es/ecma402/#sec-getoption
@@ -2215,24 +2016,6 @@ String toPrimaryIanaTimeZoneIdentifier(StringView timeZone)
     }
     return toPrimaryIanaTimeZoneIdentifier(timeZone.span16());
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-// The primary identifier of a system ID is in the table if it passes the test the table is filled by, but for ICU's name for no
-// zone at all (UCAL_UNKNOWN_ZONE_ID), which no enumeration lists.
-String intlPrimaryTimeZoneIdentifierWithoutTable(std::span<const char16_t> timeZone)
-{
-    Vector<char16_t, 32> canonical;
-    UBool isSystemID = false;
-    if (U_FAILURE(callBufferProducingFunction(ucal_getCanonicalTimeZoneID, timeZone.data(), static_cast<int32_t>(timeZone.size()), canonical, &isSystemID)) || !isSystemID)
-        return { };
-    String primary = toPrimaryIanaTimeZoneIdentifier(timeZone);
-    if (primary == "UTC"_s)
-        return primary;
-    if (!isValidTimeZoneNameFromICUTimeZone(primary) || primary == "Etc/Unknown"_s)
-        return { };
-    return primary;
-}
-#endif
 
 // Combined table of all accepted IANA time zone identifiers (primaries + Backward links),
 // indexed by TimeZoneID. Primaries come first (sorted by code-point order), aliases follow
