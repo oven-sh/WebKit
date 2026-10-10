@@ -343,7 +343,12 @@ public:
 
     static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const Latin1Character> characters);
     static WTF_EXPORT_PRIVATE std::expected<UTF8CString, UTF8ConversionError> utf8ForCharacters(std::span<const char16_t> characters, ConversionMode = LenientConversion);
+#if USE(BUN_JSC_ADDITIONS)
+    // For characters that failed tryConvertUTF16ToUTF8(). Upstream has utf8ForCharactersIntoBuffer() in this place.
+    static WTF_EXPORT_PRIVATE std::expected<size_t, UTF8ConversionError> utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
+#else
     static WTF_EXPORT_PRIVATE std::expected<size_t, UTF8ConversionError> utf8ForCharactersIntoBuffer(std::span<const char16_t> characters, ConversionMode, Vector<char8_t, 1024>&);
+#endif
     static WTF_EXPORT_PRIVATE size_t utf8LengthFromUTF16(std::span<const char16_t> characters);
     static WTF_EXPORT_PRIVATE size_t tryConvertUTF16ToUTF8(std::span<const char16_t> source, std::span<char8_t> destination);
 
@@ -1530,12 +1535,19 @@ inline std::expected<std::invoke_result_t<Func, std::span<const char8_t>>, UTF8C
     if (simdConvertedSize != notFound)
         return function(bufferVector.span().first(simdConvertedSize));
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Upstream calls bufferVector.resize(characters.size() * 3) here, since https://bugs.webkit.org/show_bug.cgi?id=304916.
+    // resize() asks for 1.5x the old capacity, and crashes when that is not a valid capacity: a first buffer of
+    // 1,431,655,766 bytes or more.
+    auto convertedSize = utf8ForIllFormedCharacters(characters, mode, bufferVector);
+#else
     if (productOverflows<size_t>(characters.size(), 3) || !isValidCapacityForVector<char8_t>(characters.size() * 3)) [[unlikely]]
         return makeUnexpected(UTF8ConversionError::OutOfMemory);
 
     size_t bufferSize = characters.size() * 3;
     bufferVector.resize(bufferSize);
     auto convertedSize = utf8ForCharactersIntoBuffer(characters, mode, bufferVector);
+#endif
     if (!convertedSize)
         return makeUnexpected(convertedSize.error());
     return function(bufferVector.span().first(*convertedSize));
