@@ -1,5 +1,7 @@
-//@ skip if $memoryLimited or $addressBits <= 32 or $buildType == "debug"
+//@ memoryHog!
+//@ skip if $addressBits <= 32 or $buildType == "debug"
 //@ slow!
+//@ runDefault
 
 // Date.parse() converts its argument to UTF-8. This string has an unpaired surrogate, and its UTF-8 form is
 // 1,431,655,768 bytes. The conversion measured the string, and grew a Vector of the measured size by 1.5x. That
