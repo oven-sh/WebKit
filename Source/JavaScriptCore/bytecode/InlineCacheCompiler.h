@@ -346,6 +346,7 @@ MacroAssemblerCodeRef<JITThunkPtrTag> getByIdGetterHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdMegamorphicGetterHandler(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdProxyObjectLoadHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> getByIdModuleNamespaceLoadHandler();
+MacroAssemblerCodeRef<JITThunkPtrTag> getByIdModuleNamespaceLoadByExportLayoutHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> putByIdReplaceHandler();
 MacroAssemblerCodeRef<JITThunkPtrTag> putByIdTransitionNonAllocatingHandler(VM&);
 MacroAssemblerCodeRef<JITThunkPtrTag> putByIdTransitionNewlyAllocatingHandler(VM&);
