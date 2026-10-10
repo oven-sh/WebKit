@@ -352,6 +352,12 @@ uint32_t ffi_call_cb_then_read_u32(uint32_t (*cb)(void), uint32_t* p)
     return *p;
 }
 
+static int32_t (*s_storedCbI32)(int32_t);
+
+void ffi_store_cb_i32(int32_t (*cb)(int32_t)) { s_storedCbI32 = cb; }
+
+int32_t ffi_call_stored_cb_i32(int32_t x) { return s_storedCbI32(x); }
+
 #if CPU(X86_64)
 
 struct FFICanaryStateX64 {
@@ -778,6 +784,8 @@ std::span<const FFIFixtureEntry> ffiTestFixtures()
         FFI_FIXTURE(ffi_call_cb_ret_cstring),
         FFI_FIXTURE(ffi_call_cb_ret_ptr),
         FFI_FIXTURE(ffi_call_cb_then_read_u32),
+        FFI_FIXTURE(ffi_store_cb_i32),
+        FFI_FIXTURE(ffi_call_stored_cb_i32),
         FFI_FIXTURE(ffi_canary_call),
         FFI_FIXTURE(ffi_sum_i32_x10),
         FFI_FIXTURE(ffi_call_cb_from_thread),

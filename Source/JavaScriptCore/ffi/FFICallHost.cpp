@@ -40,10 +40,16 @@
 #include "JSFFIFunction.h"
 #include "JSGlobalObject.h"
 #include "TopExceptionScope.h"
+#include <wtf/text/MakeString.h>
 
 namespace JSC {
 
 namespace FFI {
+
+void throwClosedError(JSGlobalObject* globalObject, ThrowScope& scope, JSFFIFunction* function)
+{
+    throwTypeError(globalObject, scope, makeString("bun:ffi: cannot call '"_s, function->name(globalObject->vm()), "' because its library was closed"_s));
+}
 
 static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFrame* callFrame)
 {
@@ -51,6 +57,11 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* function = uncheckedDowncast<JSFFIFunction>(callFrame->jsCallee());
+    if (function->isClosed()) [[unlikely]] {
+        throwClosedError(globalObject, scope, function);
+        return { };
+    }
+
     Signature& signature = function->signature();
     FFIContext& context = globalObject->ffiContext();
     StringArena::Scope arenaScope(context);
@@ -66,6 +77,13 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     }
     slots[argumentCount] = 0;
 
+    // Tested again now that the arguments are converted: a conversion can run JS (valueOf, a `ptr`
+    // getter), and that JS can close this function.
+    if (function->isClosed()) [[unlikely]] {
+        throwClosedError(globalObject, scope, function);
+        return { };
+    }
+
     CodePtr<JITThunkPtrTag> thunk = signature.invokeThunk();
     if (!thunk) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
@@ -77,8 +95,12 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
         {
             auto hookScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             void* hookToken = hooks->before ? hooks->before(globalObject, callFrame) : nullptr;
-            if (!hookScope.exception()) [[likely]]
-                thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+            if (!hookScope.exception()) [[likely]] {
+                if (function->isClosed()) [[unlikely]] // the before-hook can run JS too
+                    throwClosedError(globalObject, scope, function);
+                else
+                    thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+            }
             pending = hookScope.exception(); // from a throwing before-hook or an in-call callback
             if (pending) [[unlikely]]
                 hookScope.clearException();

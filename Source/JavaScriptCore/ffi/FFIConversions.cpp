@@ -32,6 +32,7 @@
 #include "CallFrame.h"
 #include "Error.h"
 #include "ExceptionHelpers.h"
+#include "FFICallHost.h"
 #include "FFIContext.h"
 #include "FFIType.h"
 #include "FrameTracers.h"
@@ -42,6 +43,7 @@
 #include "JSCInlines.h"
 #include "JSCJSValueInlines.h"
 #include "JSFFICallback.h"
+#include "JSFFIFunction.h"
 #include "JSGlobalObject.h"
 #include "JSString.h"
 #include "MathCommon.h"
@@ -373,6 +375,11 @@ static bool writePointerSlot(JSGlobalObject* globalObject, FFIContext& context, 
         }
 
         if (type != Type::Buffer && cell->isObject()) {
+            // The `ptr` of a closed function is dangling, and the native callee would call it.
+            if (auto* function = dynamicDowncast<JSFFIFunction>(cell); function && function->isClosed()) [[unlikely]] {
+                throwTypeError(globalObject, scope, makeString("bun:ffi: cannot pass '"_s, function->name(vm), "' as a pointer because its library was closed"_s));
+                return false;
+            }
             JSValue ptrValue = uncheckedDowncast<JSObject>(cell)->get(globalObject, Identifier::fromString(vm, "ptr"_s));
             RETURN_IF_EXCEPTION(scope, false);
             if (ptrValue.isNumber() || ptrValue.isBigInt())
@@ -512,16 +519,19 @@ JSC_DEFINE_JIT_OPERATION(operationFFIBoxSlot, EncodedJSValue, (JSGlobalObject* g
     OPERATION_RETURN(scope, JSValue::encode(boxed));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject* globalObject, FFI::FFIContext* context, uint32_t typeTag, EncodedJSValue value, uint64_t* slot))
+JSC_DEFINE_JIT_OPERATION(operationFFIWriteSlot, void, (JSGlobalObject* globalObject, JSFFIFunction* function, uint32_t typeTag, EncodedJSValue value, uint64_t* slot))
 {
     VM& vm = globalObject->vm();
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    ASSERT(context);
     ASSERT(typeTag < FFI::numberOfTypes);
-    FFI::writeSlotFromJSValue(globalObject, *context, static_cast<FFI::Type>(typeTag), JSValue::decode(value), *slot, &context->arena());
+    FFI::FFIContext& context = globalObject->ffiContext();
+    FFI::writeSlotFromJSValue(globalObject, context, static_cast<FFI::Type>(typeTag), JSValue::decode(value), *slot, &context.arena());
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (function->isClosed()) [[unlikely]]
+        FFI::throwClosedError(globalObject, scope, function);
     OPERATION_RETURN(scope);
 }
 
