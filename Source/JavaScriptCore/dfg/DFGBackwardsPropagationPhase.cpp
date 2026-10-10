@@ -162,7 +162,7 @@ private:
         if (!immediateValue.isNumber())
             return false;
         double immediate = immediateValue.asNumber();
-        return immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
+        return isInteger(immediate) && immediate > -(static_cast<int64_t>(1) << power) && immediate < (static_cast<int64_t>(1) << power);
     }
     
     template<int power>
