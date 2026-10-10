@@ -28,6 +28,7 @@
 #include "config.h"
 #include "RegularExpression.h"
 
+#include "Options.h"
 #include "Yarr.h"
 #include "YarrFlags.h"
 #include "YarrInterpreter.h"
@@ -77,6 +78,19 @@ private:
         }
 
         m_numSubpatterns = pattern.m_numSubpatterns;
+
+#if USE(BUN_JSC_ADDITIONS)
+        // This class has the bytecode interpreter and no other engine, so it asks the
+        // non-backtracking matcher itself. A RegExp asks in RegExp::compile().
+        if (Options::useRegExpLinearEngine()) [[unlikely]] {
+            LinearRefusal refusal = LinearRefusal::None;
+            if (auto bytecode = byteCompileLinear(pattern, &m_regexAllocator, m_constructionErrorCode, refusal))
+                return bytecode;
+            if (hasError(m_constructionErrorCode))
+                return nullptr;
+            dataLogLnIf(Options::reportRegExpLinearRefusals(), "The non-backtracking matcher refused /", patternString, "/", StringView { flagsString(flags).span() }, ": ", linearRefusalName(refusal));
+        }
+#endif
 
         return byteCompile(pattern, &m_regexAllocator, m_constructionErrorCode);
     }

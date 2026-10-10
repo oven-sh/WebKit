@@ -28,6 +28,7 @@
 #include "ConcurrentJSLock.h"
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
+#include "YarrLinear.h"
 #include "YarrPattern.h"
 #include <wtf/TZoneMalloc.h>
 
@@ -509,7 +510,15 @@ public:
         m_endAnchoredFixedSize = pattern.m_endAnchoredFixedSize;
     }
 
-    size_t estimatedSizeInBytes() const { return m_body->estimatedSizeInBytes(); }
+    size_t estimatedSizeInBytes() const
+    {
+        size_t bytes = m_body->estimatedSizeInBytes();
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_linearProgram)
+            bytes += m_linearProgram->estimatedSizeInBytes();
+#endif
+        return bytes;
+    }
 
     bool hasDuplicateNamedCaptureGroups() const { return !!m_numDuplicateNamedCaptureGroups; }
     bool hasEndAnchoredFixedSize() const { return m_endAnchoredFixedSize != YarrPattern::endAnchoredFixedSizeNotSet; }
@@ -557,6 +566,12 @@ public:
     CharacterClass* wordcharCharacterClass;
     CharacterClass* ignoreCaseWordcharCharacterClass;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // With Options::useRegExpLinearEngine(): the program interpret() runs in place of m_body.
+    // Null for a pattern the non-backtracking matcher refused.
+    std::unique_ptr<LinearProgram> m_linearProgram;
+#endif
+
 private:
     Vector<std::unique_ptr<ByteDisjunction>> m_allParenthesesInfo;
     Vector<std::unique_ptr<CharacterClass>> m_userCharacterClasses;
@@ -564,5 +579,47 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+
+#if USE(BUN_JSC_ADDITIONS)
+// byteCompile() for the non-backtracking matcher: bytecode that has a LinearProgram, which is
+// what interpret() then runs. Null, with the reason, for a pattern the matcher refuses. The
+// pattern is then as it was, and the caller compiles it as it does without the matcher. Null
+// with an ErrorCode and no reason when the compile itself failed, as byteCompile() does.
+// byteCompile() does not ask: a caller asks here, with a pattern that jitCompile() has not seen.
+JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompileLinear(YarrPattern&, BumpPointerAllocator*, ErrorCode&, LinearRefusal&, ConcurrentJSLock* = nullptr);
+
+// What one match ran on and what it cost, for tests.
+struct InterpretStatistics {
+    enum class Engine : uint8_t { Backtracking, Linear };
+    Engine engine { Engine::Backtracking };
+    // Why the engine is not Linear, when Options::useRegExpLinearEngine() asked for it.
+    LinearRefusal refusal { LinearRefusal::None };
+    // Engine::Backtracking, for a RegExp: whether that is the JIT's code and not the bytecode
+    // interpreter.
+    bool usesJIT { false };
+    // Engine::Backtracking, by interpretByBacktrackingForTesting(): the interpreter gave the
+    // search up, at its limit or for the memory of its contexts or the stack. Its answer is
+    // then "no match", whatever the subject has.
+    bool gaveUp { false };
+    // For a RegExp: how many times the RegExps of its VM have asked the matcher for a program.
+    unsigned linearCompiles { 0 };
+    // The rest is of Engine::Linear only: the backtracking engines do not count.
+    size_t programSize { 0 };
+    uint64_t maximumStepsPerPosition { 0 };
+    uint64_t maximumScratchBytes { 0 };
+    LinearProgram::Statistics linear;
+};
+// interpret(), with the report.
+JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output, InterpretStatistics&);
+// interpret() by the backtracking interpreter, also for bytecode that has a LinearProgram: that
+// bytecode has a body too. A test compares the two engines on one pattern with it. The
+// interpreter gives up early here, and InterpretStatistics::gaveUp says when it did.
+JS_EXPORT_PRIVATE unsigned interpretByBacktrackingForTesting(BytecodePattern*, StringView input, unsigned start, unsigned* output, InterpretStatistics&);
+// What a reader can see of the output vector of a match, the same for every engine. The engines
+// write the end of a group only when the group matched. In the slot of a duplicated name, the
+// backtracking engines leave the number of a group that a lookaround matched and then gave up:
+// that group has no match, and a reader sees no group for the name either way.
+JS_EXPORT_PRIVATE void normalizeOutputForTesting(std::span<unsigned> output, unsigned numSubpatterns, unsigned offsetVectorBaseForNamedCaptures, bool ofBacktrackingEngine);
+#endif
 
 } } // namespace JSC::Yarr
