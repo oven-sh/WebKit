@@ -1132,9 +1132,13 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
                     if (i == 0) {
                         RELEASE_ASSERT(baseObject == globalObject);
 
-                        auto doGet = [&] (JSSegmentedVariableObject* scope) {
+                        auto doGet = [&] (JSSegmentedVariableObject* scope) -> JSValue {
                             PropertySlot slot(scope, PropertySlot::InternalMethodType::Get);
-                            if (scope->getPropertySlot(globalObject, JSONPPath[i].m_pathEntryName, slot))
+                            bool hasProperty = scope->getPropertySlot(globalObject, JSONPPath[i].m_pathEntryName, slot);
+                            // getOwnPropertySlot can throw (a vm.Context's sandbox); the
+                            // callers check again right after doGet.
+                            RETURN_IF_EXCEPTION(throwScope, JSValue());
+                            if (hasProperty)
                                 return slot.getValue(globalObject, JSONPPath[i].m_pathEntryName);
                             return JSValue();
                         };
