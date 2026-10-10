@@ -7,13 +7,14 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedBuiltinLists.h"
+#include "JSCJSValue.h"
 #include "JSType.h"
 #include "TypedArrayType.h"
-#include <wtf/HashMap.h>
-#include <wtf/NeverDestroyed.h>
+#include <expected>
+#include <span>
 #include <wtf/Vector.h>
 #include <wtf/text/ASCIILiteral.h>
-#include <wtf/text/StringHash.h>
 #include <wtf/text/WTFString.h>
 
 namespace JSC {
@@ -23,16 +24,22 @@ class JSGlobalObject;
 
 namespace AOT { namespace Typed {
 
-// Every built-in of the language and every abstract operation the front end names. No other file knows a built-in by its name.
+// The built-ins table. Its source is aot/builtins/*.def: see Scripts/generate-aot-builtins.py. No other file knows a built-in by name.
+// It is constant data, which that script lays out: nothing is built when a process starts, neither one that compiles nor one that runs.
 //
-// An entry says three things: which arguments it holds for, what the engine vouches for about what it yields, and what it does besides.
-// It holds for a receiver of the class it is listed under, which is as the engine makes them (its elements are data, it has the
-// prototype it was made with), and for arguments whose conversion runs no code of the program.
-//
-// What comes down to an entry is carried out by code in place or by the function of the engine itself, see Builtins::findCell(). The name
-// is not looked up in the receiver: whatever else might be found there would be bound by nothing the entry says.
+// A call that is resolved to an entry does exactly what ECMAScript says the call by name does. The properties of built-in prototypes and
+// global objects are immutable, so what a primitive receiver or a global object finds under a name is fixed. An object receiver finds the
+// entry's function as long as it has its original structure (no own property, the prototype of its class). That is tested where the
+// call is made, and any other receiver takes the call by name: see hasGenericFallback(). Of a replaceable global (console) nothing is
+// fixed: the object and the function are read as the language says, and what is found is compared with the function the realm started
+// with: see speculateOnReceivers().
 
-// A name the table knows, as a number. The strings of a program are looked up once each.
+static constexpr uint32_t builtinsHash = AOT_TYPED_BUILTINS_HASH;
+static constexpr unsigned numberOfBuiltins = AOT_TYPED_NUMBER_OF_BUILTINS;
+static constexpr unsigned numberOfBuiltinNames = AOT_TYPED_NUMBER_OF_BUILTIN_NAMES;
+static constexpr unsigned numberOfEngineClasses = AOT_TYPED_NUMBER_OF_ENGINE_CLASSES;
+static constexpr unsigned numberOfOriginalStructures = AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES;
+
 class BuiltinName {
 public:
     constexpr BuiltinName() = default;
@@ -63,9 +70,9 @@ enum class BuiltinKind : uint8_t {
 enum class ArgumentConversion : uint8_t {
     None,
     RequiresNumber,
-    // What is looked at is its bytes and how many there are, which asks nothing of the object.
+    RequiresInteger,
     RequiresTypedArray,
-    // Also what goes on from there: ToIntegerOrInfinity, ToInt32, ToUint32.
+    // Also ToIntegerOrInfinity, ToInt32, ToUint32.
     ToNumber,
     ToString,
     ToPropertyKey,
@@ -82,8 +89,21 @@ struct BuiltinParameter {
     ParameterMode mode { ParameterMode::Required };
 };
 
-// What the engine vouches for: what the entry yields is one of these, whatever it is passed. Where that is within the type of the
-// value, nothing is tested.
+extern const BuiltinParameter builtinParameterPool[];
+
+struct BuiltinParameters {
+    uint16_t first;
+    uint16_t count;
+
+    size_t size() const { return count; }
+    bool isEmpty() const { return !count; }
+    const BuiltinParameter* begin() const { return builtinParameterPool + first; }
+    const BuiltinParameter* end() const { return begin() + count; }
+    const BuiltinParameter& operator[](size_t index) const { return begin()[index]; }
+    const BuiltinParameter& last() const { return begin()[count - 1]; }
+};
+
+// Where this is within the type of the value, the result is not tested.
 struct BuiltinResult {
     static constexpr uint16_t Undefined = 1 << 0;
     static constexpr uint16_t Null = 1 << 1;
@@ -94,14 +114,13 @@ struct BuiltinResult {
     static constexpr uint16_t String = 1 << 5;
     static constexpr uint16_t Symbol = 1 << 6;
     static constexpr uint16_t BigInt = 1 << 7;
-    // An object of `engineClass`.
+    // Of `engineClass`.
     static constexpr uint16_t Instance = 1 << 8;
-    // An object of the class of the receiver, or of the class the function or constructor was found on: Value::engineClass().
+    // Of Value::engineClass().
     static constexpr uint16_t InstanceOfSameClass = 1 << 9;
     static constexpr uint16_t This = 1 << 10;
 
     uint16_t kinds { 0 };
-    // Among the classes of the table.
     uint16_t engineClass { 0 };
     // A bit for each argument it may be. One that is not passed is `undefined`.
     uint8_t arguments { 0 };
@@ -111,130 +130,61 @@ struct BuiltinResult {
     bool isAnything() const { return !kinds && !arguments; }
 };
 
-// Of a call that the entry holds for.
 namespace Effect {
 static constexpr uint16_t Pure = 0;
-static constexpr uint16_t Throws = 1 << 0;
+static constexpr uint16_t MayThrow = 1 << 0;
 static constexpr uint16_t Allocates = 1 << 1;
-static constexpr uint16_t ReadsThis = 1 << 2;
-static constexpr uint16_t WritesThis = 1 << 3;
-// It looks into the objects among its arguments, which runs their accessors and traps.
+static constexpr uint16_t ReadsReceiver = 1 << 2;
+static constexpr uint16_t WritesReceiver = 1 << 3;
+// Runs the accessors and traps of the objects among the arguments.
 static constexpr uint16_t ReadsArguments = 1 << 4;
 static constexpr uint16_t WritesArguments = 1 << 5;
-// What only the engine looks into: the clock, the random numbers, the registry of symbols, the queue of jobs, the console, the last match.
-static constexpr uint16_t ReadsWorld = 1 << 6;
-static constexpr uint16_t WritesWorld = 1 << 7;
-// It calls a function it is passed, converts what a container holds, or asks Symbol.species what to make.
-static constexpr uint16_t RunsUnknownCode = 1 << 8;
-static constexpr uint16_t Unknown = RunsUnknownCode | Throws | Allocates | ReadsThis | WritesThis | ReadsArguments | WritesArguments | ReadsWorld | WritesWorld;
+// What no load or store of compiled code reaches: the clock, the random number generator, the symbol registry, the microtask queue, the
+// console, the last match, the contents of a Map, Set, Date or RegExp.
+static constexpr uint16_t ReadsRuntimeState = 1 << 6;
+static constexpr uint16_t WritesRuntimeState = 1 << 7;
+static constexpr uint16_t CallsUserCode = 1 << 8;
+static constexpr uint16_t ClobbersWorld = CallsUserCode | MayThrow | Allocates | ReadsReceiver | WritesReceiver | ReadsArguments | WritesArguments | ReadsRuntimeState | WritesRuntimeState;
 }
 
-#define FOR_EACH_AOT_TYPED_INLINE_BUILTIN(v) \
-    v(MathAbs) \
-    v(MathFloor) \
-    v(MathCeil) \
-    v(MathTrunc) \
-    v(MathSqrt) \
-    v(MathPow) \
-    v(MathMin) \
-    v(MathMax) \
-    v(MathImul) \
-    v(MathClz32) \
-    v(IsNaN) \
-    v(IsFinite) \
-    v(NumberIsNaN) \
-    v(NumberIsFinite) \
-    v(NumberIsInteger) \
-    v(NumberIsSafeInteger) \
-    v(ToNumber) \
-    v(StringLength) \
-    v(StringAt) \
-    v(StringCharAt) \
-    v(StringCharCodeAt) \
-    v(StringCodePointAt) \
-    v(StringSlice) \
-    v(StringSubstring) \
-    v(StringSubstr) \
-    v(StringStartsWith) \
-    v(StringEndsWith) \
-    v(StringIncludes) \
-    v(StringIndexOf) \
-    v(ArrayLength) \
-    v(ArraySetLength) \
-    v(ArrayPush) \
-    v(ArrayWithLength) \
-    v(ArrayOf) \
-    v(ArrayIsArray) \
-    v(TypedArrayWithLength) \
-    v(TypedArrayLength) \
-    v(MapNew) \
-    v(MapGet) \
-    v(MapSet) \
-    v(MapHas) \
-    v(MapSize) \
-    v(SetAdd) \
-    v(SetHas) \
-    v(SetSize) \
-    v(This)
+// A file aot/builtins/<family>.def, with its AOTTypedBuiltins<Family>.cpp.
+enum class BuiltinFamily : uint8_t {
+#define AOT_TYPED_DECLARE_BUILTIN_FAMILY(name) name,
+    FOR_EACH_AOT_TYPED_BUILTIN_FAMILY(AOT_TYPED_DECLARE_BUILTIN_FAMILY)
+#undef AOT_TYPED_DECLARE_BUILTIN_FAMILY
+};
 
 enum class InlineBuiltin : uint8_t {
-#define AOT_TYPED_DECLARE_INLINE_BUILTIN(name) name,
+#define AOT_TYPED_DECLARE_INLINE_BUILTIN(name, family, isExact) name,
     FOR_EACH_AOT_TYPED_INLINE_BUILTIN(AOT_TYPED_DECLARE_INLINE_BUILTIN)
 #undef AOT_TYPED_DECLARE_INLINE_BUILTIN
 };
 
-// What the language does and no built-in function of the same name: the front end asks for these by name.
-#define FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION(v) \
-    v(CopyDataProperties) \
-    v(CopyDataPropertiesExcluding) \
-    v(DefineField) \
-    v(DefineGetter) \
-    v(DefineSetter) \
-    v(ForInKeys) \
-    v(AppendSpread) \
-    v(AppendHole) \
-    v(Apply) \
-    v(ConstructWithArray) \
-    v(ConstructWith) \
-    v(ConstructWithSpread) \
-    v(MakeClass) \
-    v(NewObjectOfClass) \
-    v(DefineMethod) \
-    v(SuperGet) \
-    v(SuperSet) \
-    v(SuperConstruct) \
-    v(ConstructOn) \
-    v(ConstructorResult) \
-    v(NewPrivateName) \
-    v(PrivateGet) \
-    v(PrivateSet) \
-    v(PrivateHas) \
-    v(PrivateFieldAdd) \
-    v(PrivateMethodsAdd) \
-    v(HasEnumerableProperty) \
-    v(NewPromise) \
-    v(ResolvePromise) \
-    v(RejectPromise) \
-    v(Await) \
-    v(ImportExternalModule) \
-    v(NewGenerator) \
-    v(NewAsyncGenerator) \
-    v(GetAsyncIterator) \
-    v(CreateArguments) \
-    v(GetIterator) \
-    v(NewDisposableStack) \
-    v(AddDisposableResource) \
-    v(DisposeNextResource) \
-    v(RecordDisposeError) \
-    v(DisposeResources) \
-    v(ToESM) \
-    v(ParseJSON) \
-    v(RequireExternalModule) \
-    v(GetRequireFunction) \
-    v(GetTemplateObject) \
-    v(GetImportMeta) \
-    v(RequireIteratorResultObject) \
-    v(IteratorCloseAndThrowMissingThrowMethod)
+// The family that lowers it.
+inline BuiltinFamily familyOf(InlineBuiltin which)
+{
+    switch (which) {
+#define AOT_TYPED_FAMILY_OF_INLINE_BUILTIN(name, family, isExact) \
+    case InlineBuiltin::name: \
+        return BuiltinFamily::family;
+    FOR_EACH_AOT_TYPED_INLINE_BUILTIN(AOT_TYPED_FAMILY_OF_INLINE_BUILTIN)
+#undef AOT_TYPED_FAMILY_OF_INLINE_BUILTIN
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+// The code in place does what the call by name does whatever has become of the receiver.
+inline bool isExactForEveryReceiver(InlineBuiltin which)
+{
+    switch (which) {
+#define AOT_TYPED_IS_EXACT_INLINE_BUILTIN(name, family, isExact) \
+    case InlineBuiltin::name: \
+        return isExact;
+    FOR_EACH_AOT_TYPED_INLINE_BUILTIN(AOT_TYPED_IS_EXACT_INLINE_BUILTIN)
+#undef AOT_TYPED_IS_EXACT_INLINE_BUILTIN
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
 
 enum class LanguageOperation : uint8_t {
 #define AOT_TYPED_DECLARE_LANGUAGE_OPERATION(name) name,
@@ -242,18 +192,49 @@ enum class LanguageOperation : uint8_t {
 #undef AOT_TYPED_DECLARE_LANGUAGE_OPERATION
 };
 
+// A function of the front end's prelude (src/aot/prelude in Bun), which is compiled with the program.
+enum class PreludeFunction : uint8_t {
+#define AOT_TYPED_DECLARE_PRELUDE_FUNCTION(name, text) name,
+    FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(AOT_TYPED_DECLARE_PRELUDE_FUNCTION)
+#undef AOT_TYPED_DECLARE_PRELUDE_FUNCTION
+};
+
+static constexpr unsigned numberOfPreludeFunctions = 0
+#define AOT_TYPED_COUNT_PRELUDE_FUNCTION(name, text) + 1
+    FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(AOT_TYPED_COUNT_PRELUDE_FUNCTION)
+#undef AOT_TYPED_COUNT_PRELUDE_FUNCTION
+    ;
+
+// What the engine's function is. Builtins::findCell() asserts it, and Builtins::mismatches() lists where it is something else.
+enum class BuiltinCallee : uint8_t {
+    // There is no function: a number, a symbol, an operation, an own property of every instance (the length of an array).
+    None,
+    // Any function: it is called through Stub::Call.
+    Function,
+    HostFunction,
+    InternalFunction,
+};
+
 struct BuiltinImplementation {
     enum Kind : uint8_t {
-        Engine,
+        // The site is not resolved.
+        Generic,
+        Call,
         Inline,
+        // Builtins::numberOf() of the entry.
         Number,
+        // The value is Builtins::cellOf() of the entry.
+        Cell,
         Operation,
+        Prelude,
     };
 
-    Kind kind { Engine };
+    Kind kind { Generic };
+    // Also of Inline, for arguments it has no code for, and of Prelude, where the program has no such function.
+    BuiltinCallee callee { BuiltinCallee::Function };
     InlineBuiltin inlined { InlineBuiltin::This };
-    double number { 0 };
     LanguageOperation operation { LanguageOperation::CopyDataProperties };
+    PreludeFunction prelude { };
 };
 
 struct Builtin {
@@ -262,12 +243,14 @@ struct Builtin {
     ASCIILiteral name;
     BuiltinName holderName;
     BuiltinName nameName;
-    Vector<BuiltinParameter, 4> parameters;
+    BuiltinParameters parameters;
     BuiltinResult result;
     uint16_t effects;
     BuiltinImplementation implementation;
+    // The holder has the function under the private name of the same spelling too.
+    bool hasPrivateTwin { false };
 
-    bool isUnknown() const { return effects & Effect::RunsUnknownCode; }
+    bool callsUserCode() const { return effects & Effect::CallsUserCode; }
     bool takesReceiver() const { return kind == BuiltinKind::Method || kind == BuiltinKind::Getter || kind == BuiltinKind::Setter; }
     unsigned numberOfRequiredParameters() const;
     bool takes(unsigned numberOfArguments) const;
@@ -299,17 +282,18 @@ struct EngineClass {
     TypedArrayType typedArrayType { NotTypedArray };
     // What every instance has for its type, and nothing else has. CellType: there is no such type.
     //
-    // Array is the one class of which this is two things.
-    // To be TAKEN for an array (a cast, a claim, a store from code that is not typed: whatever tests a value that may be any object), a
-    // value has to be of ArrayType, which says that it is as the engine makes them: see JSObject::becomeDerivedArray().
-    // What HOLDS of a value that was taken for one, as long as it lives, is less, since code that is not typed may change it:
+    // Array is the one class that has two. ArrayType says that an array is as the engine makes them: see JSObject::becomeDerivedArray().
+    // An heir of Array is an array as well, and code that is not typed may change any array. So what is TAKEN for an array (a cast, a
+    // claim, a store from code that is not typed), and what HOLDS of it as long as it lives, is no more than this:
     // - it is a cell of ArrayType or DerivedArrayType whose ClassInfo is JSArray's, so it is laid out as a JSArray;
     // - it has a butterfly with an indexing header, so the length is where it is for every array;
     // - if it is of DerivedArrayType, its elements are in ArrayStorage.
-    // That it has the methods, the iteration and the (absent) inherited elements of Array.prototype holds while it is of ArrayType only.
     JSType type { CellType };
-    // The host has a class that extends it and replaces methods, whose objects get wherever those of this class do.
-    bool isExtendedByHost { false };
+    // Among Builtins::cellOfOriginalStructure(): the structures the engine gives a new instance.
+    uint8_t firstOriginalStructure { 0 };
+    uint8_t numberOfOriginalStructures { 0 };
+
+    bool canCheckOriginalStructure() const { return type == ArrayType || numberOfOriginalStructures; }
 };
 
 // What a declared type that names a global interface stands for, where that is not the instances of a class.
@@ -324,45 +308,93 @@ enum class GlobalInterface : uint8_t {
     Unknown,
 };
 
+struct BuiltinNameData {
+    static constexpr uint16_t noClass = UINT16_MAX;
+    static constexpr uint16_t severalClasses = UINT16_MAX - 1;
+
+    ASCIILiteral text;
+    uint16_t engineClass;
+    uint16_t classSpeculatedFor;
+    bool isGlobal;
+    bool isReplaceable;
+    bool mayBeExtended;
+};
+
+extern const Builtin builtinEntries[numberOfBuiltins];
+// In ascending order of their bytes.
+extern const BuiltinNameData builtinNames[numberOfBuiltinNames];
+extern const EngineClass engineClasses[numberOfEngineClasses];
+
 class Builtins {
     WTF_MAKE_NONCOPYABLE(Builtins);
 public:
-    static const Builtins& singleton();
+    constexpr Builtins() = default;
+    JS_EXPORT_PRIVATE static const Builtins& singleton();
 
-    const Builtin& at(BuiltinID id) const { return m_entries[id.index()]; }
-    unsigned size() const { return m_entries.size(); }
+    const Builtin& at(BuiltinID id) const { return builtinEntries[id.index()]; }
+    unsigned size() const { return numberOfBuiltins; }
+    // Of an entry that is a Number.
+    double numberOf(BuiltinID) const;
 
     BuiltinName nameOf(std::span<const uint8_t>) const;
 
-    // The entries of one built-in, which differ in what they take, are adjacent. A lookup yields the first. No holder: the
-    // global object.
+    // The entries of one built-in are adjacent. A lookup yields the first. No holder: the global object.
     BuiltinID find(BuiltinKind, BuiltinName holder, BuiltinName name) const;
     BuiltinID next(BuiltinID) const;
-    // Whether the global object has a property of this name that the table says something about. It cannot be replaced.
-    bool isGlobal(BuiltinName name) const { return name && m_isGlobal[name.index()]; }
-    // Programs do replace the properties of this global object (console), or extend this class. What the table says of the properties, or
-    // of what the instances find, applies only if the front end has not seen the program do that: see Program::extendedGlobals.
-    bool mayBeExtended(BuiltinName global) const { return global && m_mayBeExtended[global.index()]; }
-    // A property of such an object: of the kind, or nothing.
+    // Whether the global object has an immutable property of this name that the table has entries for.
+    bool isGlobal(BuiltinName name) const { return name && builtinNames[name.index()].isGlobal; }
+    // Hosts and programs replace this global object (console) and each of its properties. isGlobal() does not hold: compiled code reads
+    // both every time.
+    bool isReplaceable(BuiltinName global) const { return global && builtinNames[global.index()].isReplaceable; }
+    // Programs extend this class: see Program::extendedGlobals.
+    bool mayBeExtended(BuiltinName global) const { return global && builtinNames[global.index()].mayBeExtended; }
     BuiltinID findStatic(BuiltinKind, BuiltinName global, BuiltinName name) const;
-    // What an instance of the class finds under the name: of its class, of what that extends, of every object.
+    // What an instance with its original structure finds under the name: of its class, of what that extends, of Object.
     BuiltinID findForInstance(BuiltinKind, const EngineClass&, BuiltinName) const;
-    // With which `new` on the global makes an object.
     BuiltinID findConstructor(BuiltinName global) const;
     const EngineClass* classNamed(BuiltinName) const;
-    const Vector<EngineClass>& classes() const { return m_classes; }
+    std::span<const EngineClass> classes() const { return engineClasses; }
     GlobalInterface interfaceNamed(BuiltinName) const;
-    // `prototype`, under which a class has what its instances inherit from, and `call`, with which a function is called on a receiver.
-    BuiltinName prototypeName() const { return m_prototype; }
-    BuiltinName callName() const { return m_call; }
+    BuiltinName prototypeName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_prototype); }
+    BuiltinName callName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_call); }
+    BuiltinName applyName() const { return BuiltinName(AOT_TYPED_BUILTIN_NAME_apply); }
+    // Function.prototype.call or Function.prototype.apply, if that is the name.
+    BuiltinID callOrApply(BuiltinName name) const { return name && (name == callName() || name == applyName()) ? find(BuiltinKind::Method, functionClass().name, name) : BuiltinID(); }
+    // Object.prototype.hasOwnProperty, if that is the name.
+    BuiltinID hasOwnProperty(BuiltinName name) const { return name == BuiltinName(AOT_TYPED_BUILTIN_NAME_hasOwnProperty) ? find(BuiltinKind::Method, objectClass().name, name) : BuiltinID(); }
+    // With `this` for its first argument Object.hasOwn does what Object.prototype.hasOwnProperty does, but that it converts the object first and
+    // the key second. Where the conversion of the key runs no code and cannot throw, as its entries ask, that cannot be told.
+    BuiltinID hasOwn() const { return findStatic(BuiltinKind::StaticFunction, objectClass().name, BuiltinName(AOT_TYPED_BUILTIN_NAME_hasOwn)); }
+    // The only class with a method of that name among those whose instances can be told by one test (typed arrays share their methods and
+    // do not count). A receiver of unknown type is speculated to be of it.
+    const EngineClass* classSpeculatedFor(BuiltinName method) const;
+    std::optional<PreludeFunction> preludeFunctionNamed(std::span<const uint8_t>) const;
+    // The operations that passes create or rewrite.
+    BuiltinID hasOriginalStructureOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_HasOriginalStructure); }
+    BuiltinID callIntrinsic() const { return BuiltinID(AOT_TYPED_BUILTIN_Call); }
 
-    // The cells of the engine that compiled code asks for, by number. They are kept in Instance::typedBuiltins once they have been asked for.
-    unsigned numberOfCells() const { return m_entries.size() + m_texts.size(); }
-    // The function the entry describes: a method, a static function, what reads or stores an accessor. Of a constant: the symbol.
+    // The cells of the engine that compiled code asks for, by number: Instance::typedBuiltins. The collector does not visit that: the global
+    // object keeps each of them for as long as it lives. A function, an accessor, a symbol or a global is reached from it by own
+    // properties that cannot be replaced or deleted and, for what the typed arrays share, by a prototype that cannot be changed: lookUp()
+    // tests every step. An original structure is a member of JSGlobalObject that is never assigned again. The functions of replaceable
+    // globals are the exception: see captureCell().
+    static constexpr unsigned numberOfCells() { return numberOfBuiltins + numberOfBuiltinNames + numberOfOriginalStructures; }
+    // The function the entry describes: a method, a static function, a getter or setter. Of a constant: the symbol.
     unsigned cellOf(BuiltinID id) const { return id.index(); }
+    bool hasCell(BuiltinID id) const { return hasCell(cellOf(id)); }
     // What the global object has under the name: isGlobal() holds for it.
-    unsigned cellOf(BuiltinName global) const { return m_entries.size() + global.index(); }
+    unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
+    unsigned cellOfOriginalStructure(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }
     JSCell* findCell(JSGlobalObject*, unsigned) const;
+    // Compiled code does not test whether these are there.
+    std::array<unsigned, 2> cellsFilledFromStart() const { return { cellOf(callOrApply(callName())), cellOf(callOrApply(applyName())) }; }
+    // The cells of the functions of replaceable globals. Those of one object are filled in when the host makes the object, which is before
+    // any program can replace a function of it, and whoever does that keeps them alive: didCreateReplaceableGlobal(). What is filled in
+    // where the object has not what the table says is a cell that no value is, and so is what findCell() yields if it was never made.
+    std::span<const uint16_t> cellsOfReplaceableGlobals() const;
+    JSCell* captureCell(JSGlobalObject*, JSObject* holder, unsigned) const;
+    // One line for each cell that findCell() would trap on, and for each number of the table that the realm has another value for.
+    JS_EXPORT_PRIVATE Vector<String> mismatches(JSGlobalObject*) const;
 
 #define FOR_EACH_AOT_TYPED_WELL_KNOWN_CLASS(v) \
     v(array, Array) \
@@ -374,30 +406,15 @@ public:
     v(bigInt, BigInt) \
     v(function, Function) \
     v(object, Object)
-#define AOT_TYPED_DECLARE_CLASS_GETTER(lower, upper) const EngineClass& lower ## Class() const { return m_classes[m_ ## lower ## Class]; }
+#define AOT_TYPED_DECLARE_CLASS_GETTER(lower, upper) const EngineClass& lower ## Class() const { return engineClasses[AOT_TYPED_ENGINE_CLASS_ ## upper]; }
     FOR_EACH_AOT_TYPED_WELL_KNOWN_CLASS(AOT_TYPED_DECLARE_CLASS_GETTER)
 #undef AOT_TYPED_DECLARE_CLASS_GETTER
 
 private:
-    friend class BuiltinsFiller;
-    friend class LazyNeverDestroyed<Builtins>;
-    Builtins();
-
-    Vector<Builtin> m_entries;
-    UncheckedKeyHashMap<String, uint16_t> m_names;
-    UncheckedKeyHashMap<uint64_t, uint16_t, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_first;
-    // By name.
-    Vector<ASCIILiteral> m_texts;
-    Vector<bool> m_isGlobal;
-    Vector<bool> m_mayBeExtended;
-    Vector<uint16_t> m_classOfName;
-    Vector<EngineClass> m_classes;
-    BuiltinName m_typedArray;
-    BuiltinName m_prototype;
-    BuiltinName m_call;
-#define AOT_TYPED_DECLARE_CLASS_INDEX(lower, upper) uint16_t m_ ## lower ## Class { 0 };
-    FOR_EACH_AOT_TYPED_WELL_KNOWN_CLASS(AOT_TYPED_DECLARE_CLASS_INDEX)
-#undef AOT_TYPED_DECLARE_CLASS_INDEX
+    bool hasCell(unsigned) const;
+    std::expected<JSValue, String> findProperty(JSGlobalObject*, const Builtin&, JSObject* holder = nullptr, bool underPrivateName = false) const;
+    std::expected<JSCell*, String> findOriginalStructure(JSGlobalObject*, unsigned) const;
+    std::expected<JSCell*, String> lookUp(JSGlobalObject*, unsigned, JSObject* holder = nullptr) const;
 };
 
 } } } // namespace JSC::AOT::Typed

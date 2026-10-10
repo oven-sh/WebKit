@@ -5395,6 +5395,21 @@ RegisterID* BytecodeGenerator::emitGetPropertyEnumerator(RegisterID* dst, Regist
     return dst;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+RegisterID* BytecodeGenerator::emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last)
+{
+    ASSERT(dst != src && first <= last);
+    Ref<Label> done = newLabel();
+    for (unsigned type = first; type < last; ++type) {
+        emitIsCellWithType(dst, src, static_cast<JSType>(type));
+        emitJumpIfTrue(dst, done.get());
+    }
+    emitIsCellWithType(dst, src, last);
+    emitLabel(done.get());
+    return dst;
+}
+#endif
+
 RegisterID* BytecodeGenerator::emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType type)
 {
     OpIsCellWithType::emit(this, dst, src, type);

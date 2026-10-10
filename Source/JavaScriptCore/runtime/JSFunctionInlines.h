@@ -169,6 +169,13 @@ inline bool JSFunction::hasReifiedName() const
     return false;
 }
 
+#if ENABLE(AOT)
+namespace AOT {
+JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
+JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
+}
+#endif
+
 inline double JSFunction::originalLength(VM& vm)
 {
     if (inherits<JSBoundFunction>())
@@ -176,6 +183,10 @@ inline double JSFunction::originalLength(VM& vm)
     if (inherits<JSRemoteFunction>())
         return uncheckedDowncast<JSRemoteFunction>(this)->length(vm);
     if (isHostFunction()) {
+#if ENABLE(AOT)
+        if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures())
+            return AOT::lengthOfTypedClosure(this);
+#endif
         // The original length is captured in NativeExecutable at creation time.
         return uncheckedDowncast<NativeExecutable>(executable())->length();
     }
@@ -217,6 +228,12 @@ inline JSString* JSFunction::originalName(JSGlobalObject* globalObject)
         // NativeExecutable. NativeExecutable is shared and uniquely keyed by name, so this
         // always returns the original (creation-time) value even after the JSFunction's "name"
         // property has been reified or mutated.
+#if ENABLE(AOT)
+        if (uncheckedDowncast<NativeExecutable>(executable())->isSharedByAOTTypedClosures()) {
+            String name = AOT::nameOfTypedClosure(this);
+            return name.isEmpty() ? jsEmptyString(vm) : jsString(vm, WTF::move(name));
+        }
+#endif
         return uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
     }
 
@@ -306,6 +323,12 @@ inline JSString* JSFunction::asStringConcurrently() const
     return jsExecutable()->asStringConcurrently();
 }
 
+#if ENABLE(AOT)
+namespace AOT { namespace Typed {
+JS_EXPORT_PRIVATE JSC_DECLARE_HOST_FUNCTION(callClosure);
+} }
+#endif
+
 inline CallData JSFunction::getCallDataInline(JSCell* cell)
 {
     // Keep this function OK for invocation from concurrent compilers.
@@ -315,6 +338,15 @@ inline CallData JSFunction::getCallDataInline(JSCell* cell)
     if (thisObject->isHostFunction()) {
         callData.type = CallData::Type::Native;
         callData.native.function = thisObject->nativeFunction();
+#if ENABLE(AOT)
+        // Compiled ahead of time: it takes the frame of a JavaScript function, and has no FunctionExecutable.
+        if (callData.native.function == AOT::Typed::callClosure) {
+            callData.type = CallData::Type::JS;
+            callData.js.functionExecutable = nullptr;
+            callData.js.scope = thisObject->scope();
+            return callData;
+        }
+#endif
         callData.native.isBoundFunction = thisObject->inherits<JSBoundFunction>();
         callData.native.isWasm = false;
 #if ENABLE(WEBASSEMBLY)

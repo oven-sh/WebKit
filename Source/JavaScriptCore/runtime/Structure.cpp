@@ -369,6 +369,8 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     setProtectPropertyTableWhileTransitioning(false);
     setInheritorsMayOverrideReadOnlyProperties(previous->inheritorsMayOverrideReadOnlyProperties());
     setDidConvertFirstObjectToDictionary(previous->didConvertFirstObjectToDictionary());
+    setGrowsAlone(previous->growsAlone());
+    m_numberOfTurnsAlone = previous->m_numberOfTurnsAlone;
     setHasStableFields(previous->hasStableFields());
     if (previous->hasStableFields())
         m_family = previous->m_family;
@@ -710,6 +712,8 @@ bool Structure::holesMustForwardToPrototypeSlow(JSObject* base) const
 #if ENABLE(AOT)
 bool Structure::mayConvertFirstObjectToDictionaryForAdd(VM& vm)
 {
+    if (growsAlone() && m_numberOfTurnsAlone < maxNumberOfTurnsAlone)
+        return !isDictionary();
     if (!vm.m_aotProgram || transitionCountEstimate() < s_minTransitionLengthToConvertFirstObjectToDictionary || didConvertFirstObjectToDictionary())
         return false;
     JSType type = m_blob.type();
@@ -722,7 +726,8 @@ bool Structure::shouldConvertFirstObjectToDictionaryForAdd(VM& vm)
 {
     if (!mayConvertFirstObjectToDictionaryForAdd(vm))
         return false;
-    setDidConvertFirstObjectToDictionary(true);
+    if (!growsAlone())
+        setDidConvertFirstObjectToDictionary(true);
     return true;
 }
 #endif
@@ -1076,6 +1081,13 @@ Structure* Structure::toDictionaryTransition(VM& vm, Structure* structure, Dicti
     transition->setMaxOffset(vm, structure->maxOffset());
     transition->setDictionaryKind(kind);
     transition->setHasBeenDictionary(true);
+#if USE(BUN_JSC_ADDITIONS)
+    // It is one for as long as it grows, not by nature: unless it grows beyond what any object may have without being one.
+    if (structure->growsAlone() && structure->transitionCountEstimate() <= s_maxTransitionLength)
+        transition->setHasBeenFlattenedBefore(false);
+    if (structure->growsAlone() && structure->m_numberOfTurnsAlone < maxNumberOfTurnsAlone)
+        transition->m_numberOfTurnsAlone = structure->m_numberOfTurnsAlone + 1;
+#endif
     
     transition->checkOffsetConsistency();
     return transition;
@@ -1239,7 +1251,15 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
             table->seal();
         else if (fixesProperties) {
             RELEASE_ASSERT(!table->hasDeletedOffset());
+            JSType type = structure->typeInfo().type();
+            bool isFunction = transitionKind == TransitionKind::FixProperties && (type == JSFunctionType || type == InternalFunctionType);
+            unsigned attributesOfName = std::get<1>(table->get(vm.propertyNames->name.impl()));
+            unsigned attributesOfLength = std::get<1>(table->get(vm.propertyNames->length.impl()));
             table->fix();
+            if (isFunction) {
+                table->updateAttributeIfExists(vm.propertyNames->name.impl(), attributesOfName);
+                table->updateAttributeIfExists(vm.propertyNames->length.impl(), attributesOfLength);
+            }
         } else
             table->freeze();
 
@@ -1424,7 +1444,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (m_knownShape || m_family)) {
+    if (result.isNewEntry && (m_knownShape || m_family || m_isReplacedWithoutNotice)) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }

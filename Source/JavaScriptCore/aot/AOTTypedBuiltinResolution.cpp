@@ -18,6 +18,8 @@ static bool accepts(ArgumentConversion conversion, const Type& argument)
         return true;
     case ArgumentConversion::RequiresNumber:
         return argument.isNumber();
+    case ArgumentConversion::RequiresInteger:
+        return argument.isInteger();
     // `undefined` and `null` are turned away, which an entry with such a parameter says it may do.
     case ArgumentConversion::RequiresTypedArray:
         return argument.onlyEngineClass() && argument.onlyEngineClass()->typedArrayType != NotTypedArray;
@@ -209,6 +211,7 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::NewObjectWithShape:
     case Opcode::PutField:
     case Opcode::NewClosure:
+    case Opcode::NewClosureOnce:
     case Opcode::PutById:
     case Opcode::InById:
     case Opcode::DeleteById:
@@ -251,10 +254,17 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::IteratorClose:
     case Opcode::LoopHint:
     case Opcode::GetResumeMode:
-    case Opcode::GetScope:
+    case Opcode::GetCapture:
     case Opcode::CreateRest:
+    case Opcode::GetRestLength:
+    case Opcode::CreateThis:
     case Opcode::HasShapeOf:
+    case Opcode::IsClassObjectAsDeclared:
     case Opcode::IsClosureOf:
+    case Opcode::IsBuiltinFunction:
+    case Opcode::BuiltinFunction:
+    case Opcode::TypeOfIs:
+    case Opcode::AssertNotAllocated:
     // It is the test.
     case Opcode::Cast:
         return true;
@@ -287,6 +297,7 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::CallBuiltin:
         return tableVouchesFor(program, function, value, type);
     case Opcode::Construct:
+    case Opcode::ConstructSuper:
         return Type::object().isWithin(type, program);
 
     // It is what code that is not known, or a container, comes up with.
@@ -304,9 +315,24 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::GetExternalModule:
     case Opcode::Yield:
     case Opcode::GetArgument:
+    case Opcode::GetMyArgumentByVal:
+    case Opcode::CallForwardVarargs:
         return false;
     }
     RELEASE_ASSERT_NOT_REACHED();
+}
+
+bool hasGenericFallback(const Program& program, const Function& function, const Value& value)
+{
+    auto& builtin = Builtins::singleton().at(value.builtin());
+    if (!builtin.takesReceiver() || !program.typeOf(function, value.child(0)).hasObjects())
+        return false;
+    if (value.methodRead() || builtin.implementation.kind != BuiltinImplementation::Inline || !isExactForEveryReceiver(builtin.implementation.inlined))
+        return true;
+    Vector<Type, 4> arguments;
+    for (ValueID argument : value.arguments)
+        arguments.append(program.typeOf(function, argument));
+    return !writesOfInlineBuiltin(builtin.implementation.inlined, arguments.span());
 }
 
 namespace {
@@ -328,8 +354,10 @@ public:
             for (ValueID id : block.values)
                 resolve(m_function.at(id));
         }
+        foldReadsOfMethods();
         countUses();
         removeUnusedReadsOfBuiltins();
+        markMethodReads();
     }
 
 private:
@@ -354,16 +382,14 @@ private:
     }
 
     // The global object of the table that the value is, going by how it is defined. A class that the program may have extended is
-    // itself as it was. An object whose properties it may have replaced says nothing.
+    // itself as it was.
     BuiltinName globalDefinedBy(ValueID id) const
     {
         auto& value = definitionOf(id);
         if (value.opcode != Opcode::GetGlobal)
             return { };
         BuiltinName name = nameOf(value);
-        if (!m_builtins.isGlobal(name) || (m_program.isExtended(name) && !m_builtins.classNamed(name)))
-            return { };
-        return name;
+        return m_builtins.isGlobal(name) ? name : BuiltinName();
     }
 
     // `Array.prototype`: the class.
@@ -373,6 +399,20 @@ private:
         if (value.opcode != Opcode::GetById || nameOf(value) != m_builtins.prototypeName())
             return nullptr;
         return m_builtins.classNamed(globalDefinedBy(value.child(0)));
+    }
+
+    // A function of the table, going by how the value is defined. What it finds under `call` cannot change.
+    bool isFunctionOfTable(ValueID id) const
+    {
+        auto& value = definitionOf(id);
+        if (value.opcode == Opcode::BuiltinFunction)
+            return true;
+        if (value.opcode != Opcode::GetById)
+            return false;
+        if (BuiltinName holder = globalDefinedBy(value.child(0)))
+            return !!m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value));
+        const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0));
+        return holder && m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(value));
     }
 
     // The one class a value of the type is of. `undefined` and `null` are of none: whatever is asked of them throws. Beside a number or
@@ -399,12 +439,19 @@ private:
         return nullptr;
     }
 
-    // `Object.freeze(Map.prototype)`: the table says that the call hands back that argument and nothing else.
+    // `Object.freeze(Map.prototype)`: the table says that the call hands back that argument and nothing else. As a call by name, or as a
+    // read of the function and a call of what was read.
     bool handsBackPrototype(const Value& value) const
     {
-        if (value.opcode != Opcode::CallMethod)
-            return false;
-        BuiltinID entry = applicableEntry(m_builtins.findStatic(BuiltinKind::StaticFunction, globalDefinedBy(value.child(0)), nameOf(value)), typesOf(value.arguments.span()).span());
+        BuiltinID first;
+        if (value.opcode == Opcode::CallMethod)
+            first = m_builtins.findStatic(BuiltinKind::StaticFunction, globalDefinedBy(value.child(0)), nameOf(value));
+        else if (value.opcode == Opcode::Call) {
+            auto& read = m_function.at(value.child(0));
+            if (read.opcode == Opcode::GetById && &definitionOf(read.child(0)) == &definitionOf(value.child(1)))
+                first = m_builtins.findStatic(BuiltinKind::StaticFunction, globalDefinedBy(read.child(0)), nameOf(read));
+        }
+        BuiltinID entry = applicableEntry(first, typesOf(value.arguments.span()).span());
         if (!entry)
             return false;
         auto& result = m_builtins.at(entry).result;
@@ -454,6 +501,8 @@ private:
                 case Opcode::Eq:
                 case Opcode::InstanceOf:
                 case Opcode::TypeOf:
+                case Opcode::TypeOfIs:
+                case Opcode::IsBuiltinFunction:
                 case Opcode::ToBoolean:
                 case Opcode::IsUndefinedOrNull:
                     user.forEachChild([&](ValueID child) {
@@ -475,75 +524,98 @@ private:
     }
 
     // The receiver: `this`, of what takes one. The class: of the receiver, or the one the function or the constructor was found on.
-    void become(Value& value, BuiltinID entry, const EngineClass* engineClass, ValueID receiver, Arguments&& arguments)
+    // `methodRead`: see Value::methodRead().
+    void become(Value& value, BuiltinID entry, const EngineClass* engineClass, ValueID receiver, Arguments&& arguments, ValueID methodRead = { })
     {
         auto& builtin = m_builtins.at(entry);
-        if (builtin.implementation.kind == BuiltinImplementation::Number) {
-            if ((receiver && typeOf(receiver).mayBeUndefinedOrNull()) || !m_program.at(m_program.types.number).isWithin(m_program.at(value.type), m_program))
+        if (builtin.implementation.kind == BuiltinImplementation::Number && !receiver) {
+            if (!m_program.at(m_program.types.number).isWithin(m_program.at(value.type), m_program))
                 return;
             value.opcode = Opcode::Double;
             value.type = m_program.types.number;
             value.rep = Rep::Double;
             value.children = { };
             value.arguments.clear();
-            value.setBits(std::bit_cast<uint64_t>(builtin.implementation.number));
+            value.setBits(std::bit_cast<uint64_t>(m_builtins.numberOf(entry)));
             return;
         }
         value.opcode = Opcode::CallBuiltin;
-        value.children = { receiver, ValueID(), ValueID() };
+        value.children = { receiver, methodRead, ValueID() };
         value.immediates = { entry.index(), engineClass ? engineClass->index : Format::none };
         value.arguments = WTF::move(arguments);
+
+        // The one table says which integers the built-in yields. Where that is less than the value was taken for it is what the value is: the checker gives `a.length` its range only where it
+        // relies on the type of `a`, not behind an `as`; here it is known what is carried out.
+        // Not where other code may be carried out in its place: a method of an object may be another's, and a getter of a prototype is shadowed by a property of the object's own, as `length` of a typed
+        // array and `size` of a Map are: there the general arm yields whatever it yields.
+        TypeID yielded = m_program.integersYieldedByBuiltins[entry.index()];
+        if (!yielded || !m_program.at(yielded).isWithin(m_program.at(value.type), m_program) || m_program.at(value.type).isWithin(m_program.at(yielded), m_program))
+            return;
+        if (builtin.takesReceiver() && typeOf(receiver).hasObjects() && (builtin.kind != BuiltinKind::Getter || hasGenericFallback(m_program, m_function, value)))
+            return;
+        value.type = yielded;
+        value.rep = repOf(m_program.at(yielded));
     }
 
-    // Of what runs any code and yields anything there is nothing to know, and the stubs with their caches are the fastest way.
-    bool saysSomething(BuiltinID entry) const
+    bool isResolvable(BuiltinID entry) const
     {
-        return entry && !(m_builtins.at(entry).isUnknown() && m_builtins.at(entry).result.isAnything());
+        return entry && m_builtins.at(entry).implementation.kind != BuiltinImplementation::Generic;
     }
 
-    // The class whose properties a receiver of the type finds, and nothing else: an object of a class that extends it may find something
-    // else under a name.
-    const EngineClass* classOfReceiver(const Type& type, BuiltinKind kind) const
+    // The class whose properties a receiver of the type finds while it has its original structure, if that can be tested. A primitive
+    // always finds them.
+    const EngineClass* classOfReceiver(const Type& type) const
     {
         const EngineClass* engineClass = classOf(type);
-        if (!engineClass || m_program.isExtended(engineClass->name) || (engineClass->isExtendedByHost && kind == BuiltinKind::Method))
+        if (!engineClass || (type.hasObjects() && !engineClass->canCheckOriginalStructure()))
             return nullptr;
         return engineClass;
     }
 
-    bool resolveForReceiver(Value& value, BuiltinKind kind, ValueID receiver, BuiltinName name, Arguments&& arguments)
+    bool resolveForReceiver(Value& value, BuiltinKind kind, ValueID receiver, BuiltinName name, Arguments&& arguments, ValueID methodRead = { })
     {
-        const EngineClass* engineClass = classOfReceiver(typeOf(receiver), kind);
+        const EngineClass* engineClass = classOfReceiver(typeOf(receiver));
         if (!engineClass)
             return false;
         BuiltinID entry = applicableEntry(m_builtins.findForInstance(kind, *engineClass, name), typesOf(arguments.span()).span());
-        if (!saysSomething(entry))
+        if (!isResolvable(entry))
             return false;
-        become(value, entry, engineClass, receiver, WTF::move(arguments));
+        become(value, entry, engineClass, receiver, WTF::move(arguments), methodRead);
         return true;
     }
 
     bool resolveForHolder(Value& value, BuiltinName holder, BuiltinName name)
     {
         BuiltinID entry = applicableEntry(m_builtins.findStatic(BuiltinKind::StaticFunction, holder, name), typesOf(value.arguments.span()).span());
-        if (!saysSomething(entry))
+        if (!isResolvable(entry))
             return false;
         become(value, entry, m_builtins.classNamed(holder), { }, Arguments(value.arguments));
         return true;
     }
 
-    // `o.m(f())` reads `m` before it calls `f`: the front end writes a read, and a call of what was read with `o` for `this`. What is found
-    // cannot be replaced, so it makes no difference when it is looked for. What is left of the read is that it throws where `o` is
-    // `undefined` or `null`: a cast with the name, to the type `o` has.
+    // `o.m(f())` reads `m` before it calls `f`: the front end writes a read, and a call of what was read with `o` for `this`. What a global
+    // object or a primitive finds is immutable, so it makes no difference when it is looked for: what is left of the read is that it
+    // throws where `o` is `undefined` or `null`, a cast with the name, to the type `o` has. An object may lose its original structure in
+    // between: the read stays, for the fallback.
     bool resolveCallOfRead(Value& value)
     {
         ValueID readID = value.child(0);
         auto& read = m_function.at(readID);
         if (read.opcode != Opcode::GetById || &definitionOf(read.child(0)) != &definitionOf(value.child(1)))
             return false;
+        // `String.prototype.slice.call(receiver, i + 1)`
+        if (nameOf(read) == m_builtins.callName() && isFunctionOfTable(read.child(0)) && !value.arguments.isEmpty()) {
+            if (!resolveCallOfPrototypeMethod(value, read.child(0))) {
+                value.children = { read.child(0), value.arguments[0], ValueID() };
+                value.arguments.removeAt(0);
+            }
+            return true;
+        }
         if (BuiltinName holder = globalDefinedBy(read.child(0)))
             return resolveForHolder(value, holder, nameOf(read));
         ValueID receiver = read.child(0);
+        if (typeOf(receiver).hasObjects())
+            return resolveForReceiver(value, BuiltinKind::Method, receiver, nameOf(read), Arguments(value.arguments), readID);
         if (!resolveForReceiver(value, BuiltinKind::Method, receiver, nameOf(read), Arguments(value.arguments)))
             return false;
         if (m_uses[readID.index()] == 1 && typeOf(receiver).mayBeUndefinedOrNull()) {
@@ -555,23 +627,30 @@ private:
         return true;
     }
 
-    // `Array.prototype.slice.call(receiver, ...)`. What is listed under Object takes `undefined` and `null` too, which a receiver is not.
-    bool resolveCallOfPrototypeMethod(Value& value)
+    // `String.prototype.slice.call(receiver, ...)`. What is listed under Object takes `undefined` and `null` too, which a receiver is not.
+    // The function is named, so a receiver that would take the call by name instead is left alone.
+    bool resolveCallOfPrototypeMethod(Value& value, ValueID function)
     {
-        if (nameOf(value) != m_builtins.callName() || value.arguments.isEmpty())
+        if (value.arguments.isEmpty())
             return false;
-        auto& method = definitionOf(value.child(0));
+        auto& method = definitionOf(function);
         if (method.opcode != Opcode::GetById)
             return false;
         const EngineClass* holder = classWhosePrototypeIsDefinedBy(method.child(0));
+        if (BuiltinID found = m_builtins.hasOwnProperty(nameOf(method)); found && holder && m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(method)) == found) {
+            BuiltinID entry = applicableEntry(m_builtins.hasOwn(), typesOf(value.arguments.span()).span());
+            if (!isResolvable(entry))
+                return false;
+            become(value, entry, holder, { }, Arguments(value.arguments));
+            return true;
+        }
         const EngineClass* engineClass = classOf(typeOf(value.arguments[0]));
-        // What is called on an array is looked for by name once the array has changed, see Lowering::callMethodOfArray(). This names the function.
-        if (!holder || !engineClass || engineClass->type == ArrayType)
+        if (!holder || !engineClass || typeOf(value.arguments[0]).hasObjects())
             return false;
         Arguments arguments;
         arguments.append(value.arguments.span().subspan(1));
         BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(method)), typesOf(arguments.span()).span());
-        if (!saysSomething(entry))
+        if (!isResolvable(entry))
             return false;
         BuiltinName listedUnder = m_builtins.at(entry).holderName;
         if (listedUnder != engineClass->name && listedUnder != engineClass->listedAs)
@@ -599,7 +678,7 @@ private:
                 resolveForHolder(value, holder, nameOf(value));
                 return;
             }
-            if (!resolveCallOfPrototypeMethod(value))
+            if (nameOf(value) != m_builtins.callName() || !resolveCallOfPrototypeMethod(value, value.child(0)))
                 resolveForReceiver(value, BuiltinKind::Method, value.child(0), nameOf(value), Arguments(value.arguments));
             return;
         case Opcode::Call:
@@ -610,18 +689,51 @@ private:
             if (BuiltinName global = globalDefinedBy(value.child(0))) {
                 BuiltinID first = value.opcode == Opcode::Call ? m_builtins.find(BuiltinKind::Function, { }, global) : m_builtins.findConstructor(global);
                 BuiltinID entry = applicableEntry(first, typesOf(value.arguments.span()).span());
-                if (saysSomething(entry))
+                if (isResolvable(entry))
                     become(value, entry, m_builtins.classNamed(global), { }, Arguments(value.arguments));
             }
             return;
         case Opcode::Operation: {
             BuiltinID entry = applicableEntry(m_builtins.find(BuiltinKind::Operation, { }, nameOf(value)), typesOf(value.arguments.span()).span());
             RELEASE_ASSERT(entry);
+            if (entry == m_builtins.callIntrinsic()) {
+                convertCallIntrinsicToCall(value);
+                return;
+            }
+            // Asked for by name it is about the class its operand is of by type. Of none by now, or of one that cannot be asked: then it does not hold.
+            if (entry == m_builtins.hasOriginalStructureOperation()) {
+                auto* engineClass = typeOf(value.arguments[0]).onlyEngineClass();
+                become(value, entry, engineClass && engineClass->canCheckOriginalStructure() ? engineClass : nullptr, { }, Arguments(value.arguments));
+                return;
+            }
             become(value, entry, nullptr, { }, Arguments(value.arguments));
             return;
         }
         default:
             return;
+        }
+    }
+
+    // `Object.prototype.toString`, `Object.keys`, where the call it was read for is not resolved, or it was read for its own sake. What is found
+    // there cannot change, so it is not looked for.
+    void foldReadsOfMethods()
+    {
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (value.opcode != Opcode::GetById)
+                    continue;
+                BuiltinID entry;
+                if (const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0)))
+                    entry = m_builtins.findForInstance(BuiltinKind::Method, *holder, nameOf(value));
+                else if (BuiltinName holder = globalDefinedBy(value.child(0)))
+                    entry = m_builtins.findStatic(BuiltinKind::StaticFunction, holder, nameOf(value));
+                if (!entry || !m_builtins.hasCell(entry) || !Type::function().isWithin(typeOf(id), m_program))
+                    continue;
+                value.opcode = Opcode::BuiltinFunction;
+                value.children = { };
+                value.immediates = { entry.index(), Format::none };
+            }
         }
     }
 
@@ -632,15 +744,19 @@ private:
         case Opcode::GetGlobal:
         case Opcode::GetGlobalForTypeOf:
             return m_builtins.isGlobal(nameOf(value));
+        case Opcode::BuiltinFunction:
+            return true;
         case Opcode::GetById: {
             BuiltinName name = nameOf(value);
+            if (name == m_builtins.callName() && isFunctionOfTable(value.child(0)))
+                return true;
             if (BuiltinName holder = globalDefinedBy(value.child(0)))
                 return (name == m_builtins.prototypeName() && m_builtins.classNamed(holder)) || m_builtins.findStatic(BuiltinKind::StaticFunction, holder, name);
             if (const EngineClass* holder = classWhosePrototypeIsDefinedBy(value.child(0)))
                 return !!m_builtins.findForInstance(BuiltinKind::Method, *holder, name);
             auto& receiver = typeOf(value.child(0));
-            const EngineClass* engineClass = classOfReceiver(receiver, BuiltinKind::Method);
-            return engineClass && !receiver.mayBeUndefinedOrNull() && m_builtins.findForInstance(BuiltinKind::Method, *engineClass, name);
+            const EngineClass* engineClass = classOf(receiver);
+            return engineClass && !receiver.hasObjects() && !receiver.mayBeUndefinedOrNull() && m_builtins.findForInstance(BuiltinKind::Method, *engineClass, name);
         }
         default:
             return false;
@@ -691,6 +807,21 @@ private:
         } while (changed);
     }
 
+    // See Value::readsMethodFor().
+    void markMethodReads()
+    {
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& call = m_function.at(id);
+                if (call.opcode != Opcode::CallBuiltin || !call.methodRead())
+                    continue;
+                auto& read = m_function.at(call.methodRead());
+                if (read.opcode == Opcode::GetById && m_uses[call.methodRead().index()] == 1 && m_program.at(read.type).isAnything())
+                    read.immediates[1] = call.builtin().index();
+            }
+        }
+    }
+
     const Program& m_program;
     Function& m_function;
     const Builtins& m_builtins;
@@ -703,6 +834,16 @@ private:
 void resolveBuiltins(const Program& program, Function& function)
 {
     BuiltinResolution(program, function).run();
+}
+
+void convertCallIntrinsicToCall(Value& value)
+{
+    RELEASE_ASSERT(value.opcode == Opcode::Operation && value.arguments.size() >= 2);
+    value.opcode = Opcode::Call;
+    value.children = { value.arguments[0], value.arguments[1], ValueID() };
+    // The second is the inlining depth, as of every call.
+    value.immediates[0] = Format::none;
+    value.arguments.removeAt(0, 2);
 }
 
 } } } // namespace JSC::AOT::Typed

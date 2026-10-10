@@ -558,6 +558,21 @@ private:
 
         m_characterWidths |= (U_IS_BMP(ch) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars);
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Tables come in ascending order. What the search below finds and does for a character behind the last one.
+        if (range) {
+            char32_t last = matches.last();
+            if (ch > last) {
+                if (ch == last + 1) {
+                    matches.removeLast();
+                    addSortedRange(isLatin1(ch) ? m_ranges8 : m_ranges32, last, ch);
+                } else
+                    matches.append(ch);
+                return;
+            }
+        }
+#endif
+
         // binary chop, find position to insert char.
         while (range) {
             unsigned index = range >> 1;
@@ -607,6 +622,13 @@ private:
             m_characterWidths |= CharacterClassWidths::HasBMPChars;
         if (!U_IS_BMP(hi))
             m_characterWidths |= CharacterClassWidths::HasNonBMPChars;
+
+#if USE(BUN_JSC_ADDITIONS)
+        if (!ranges.isEmpty() && static_cast<uint64_t>(ranges.last().end) + 1 < lo) {
+            ranges.append(CharacterRange(lo, hi));
+            return;
+        }
+#endif
 
         auto iter = std::lower_bound(ranges.begin(), ranges.end(), lo,
             [](const CharacterRange& range, char32_t value) {
@@ -1286,6 +1308,9 @@ public:
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
         m_sharedCharacterClasses.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        m_characterClassesByText.clear();
+#endif
 
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1695,6 +1720,26 @@ public:
         m_currentCharacterClassConstructor = priorCharacterClassConstructor;
         m_invertCharacterClass = invert;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // What atomCharacterClassEnd() came to the first time, in a term of this place.
+    size_t atomCharacterClassSeenBefore(std::span<const uint8_t> rest)
+    {
+        size_t numberOfBytes = 0;
+        if (auto* seen = m_characterClassesByText.find(rest, ignoreCase(), numberOfBytes))
+            m_alternative->m_terms.append(PatternTerm(seen->characterClass, seen->invert, m_flags));
+        return numberOfBytes;
+    }
+
+    void rememberCharacterClass(std::span<const uint8_t> text)
+    {
+        if (hasError(m_error) || m_alternative->m_terms.isEmpty())
+            return;
+        auto& term = m_alternative->m_terms.last();
+        if (term.type == PatternTerm::Type::CharacterClass)
+            m_characterClassesByText.add(text, ignoreCase(), { term.characterClass, static_cast<bool>(term.m_invert) });
+    }
+#endif
 
     void atomCharacterClassEnd()
     {
@@ -3921,6 +3966,13 @@ private:
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
     HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
+#if USE(BUN_JSC_ADDITIONS)
+    struct CharacterClassOfTerm {
+        CharacterClass* characterClass;
+        bool invert;
+    };
+    CharacterClassesByText<CharacterClassOfTerm> m_characterClassesByText;
+#endif
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };

@@ -669,6 +669,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     aot/AOTFacts.h
     aot/AOTFunction.h
     aot/AOTProgramData.h
+    aot/AOTTypedBuiltins.h
 
     bytecode/BytecodeIndex.h
     bytecode/BytecodeIntrinsicRegistry.h
@@ -921,6 +922,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/MarkStack.h
     heap/MarkStackMergingConstraint.h
     heap/MarkedBlock.h
+    heap/MarkedBlockCage.h
     heap/MarkedBlockInlines.h
     heap/MarkedBlockSet.h
     heap/MarkedSpace.h

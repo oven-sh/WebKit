@@ -86,6 +86,7 @@
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
@@ -381,6 +382,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
     , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, fastMallocAllocator.get()) // Hash:0xaadcb3c1
     , cellSpace("JSCell"_s, *this, cellHeapCellType, fastMallocAllocator.get()) // Hash:0xadfb5a79
+#if USE(BUN_JSC_ADDITIONS)
+    , aotClosureSpace("AOTClosure"_s, *this, cellHeapCellType, fastMallocAllocator.get())
+#endif
     , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, fastMallocAllocator.get()) // Hash:0x4f5ed7a9
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(INIT_SERVER_ISO_SUBSPACE)
     FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
@@ -3374,6 +3378,12 @@ void Heap::setMutatorShouldBeFenced(bool value)
 {
     m_mutatorShouldBeFenced = value;
     m_barrierThreshold = value ? tautologicalThreshold : blackThreshold;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm().m_aotInstances) {
+        instance->barrierThreshold = m_barrierThreshold;
+        instance->mutatorShouldBeFenced = value;
+    }
+#endif
 }
 
 void Heap::performIncrement(size_t bytes)
@@ -3474,6 +3484,12 @@ void Heap::verifyGC()
             visitor.dumpMarkerData(cell);
         RELEASE_ASSERT(this->isMarked(cell));
     });
+
+    if (MarkedBlockCage::isRequired()) {
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* block) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() != fastMallocAllocator.get() || MarkedBlockCage::contains(&block->block()));
+        });
+    }
 
     if (!m_keepVerifierSlotVisitor)
         clearVerifierSlotVisitor();

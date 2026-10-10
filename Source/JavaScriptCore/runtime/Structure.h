@@ -58,6 +58,7 @@ namespace JSC {
 namespace AOT {
 struct Instance;
 namespace Typed {
+struct Data;
 struct LayoutData;
 }
 JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
@@ -65,6 +66,8 @@ JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
 JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
 JS_EXPORT_PRIVATE void noteDepartureFromFamily(VM&, uint16_t family, const char* road);
 JS_EXPORT_PRIVATE bool hasNotedDepartureFromFamily(VM&, uint16_t family);
+// Typed::ClassPrototype::becomeOrdinary().
+JS_EXPORT_PRIVATE bool becomesOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
 }
 #endif
 
@@ -479,7 +482,7 @@ public:
     static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
-        ASSERT(recordsPropertyNames() && ((!isDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
+        ASSERT(recordsPropertyNames() && ((!isUncacheableDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
         m_fieldIDInSlot[slot] = id;
     }
     JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>);
@@ -842,8 +845,19 @@ public:
 #if ENABLE(AOT)
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
-    const AOT::Typed::LayoutData* compiledLayout() const { return m_compiledLayout; }
-    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { m_compiledLayout = layout; }
+    bool isOfCompiledCells() const { return m_compiledLayoutOrData; }
+    const AOT::Typed::LayoutData* compiledLayout() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? nullptr : std::bit_cast<const AOT::Typed::LayoutData*>(m_compiledLayoutOrData); }
+    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { m_compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
+    // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::layoutOfEnvironment().
+    const AOT::Typed::Data* dataOfCompiledEnvironments() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? std::bit_cast<const AOT::Typed::Data*>(m_compiledLayoutOrData - isOfCompiledEnvironments) : nullptr; }
+    uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(m_pageOfEnvironmentShapes) << 16; }
+    void setCompiledEnvironments(const AOT::Typed::Data* data, uint16_t page)
+    {
+        m_compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | isOfCompiledEnvironments;
+        m_pageOfEnvironmentShapes = page;
+    }
+    // Of a cell of this Structure. Null: it is not laid out by the compiler.
+    JS_EXPORT_PRIVATE const AOT::Typed::LayoutData* compiledLayoutOf(const JSCell*) const;
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(Structure, m_aotInstance); }
 #endif
 
@@ -1042,6 +1056,12 @@ public:
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
     bool didConvertFirstObjectToDictionary() const { return m_didConvertFirstObjectToDictionary; }
     void setDidConvertFirstObjectToDictionary(bool value) { m_didConvertFirstObjectToDictionary = value; }
+    // Each object of it is taken to be the only one of its kind: it takes properties in place, as a dictionary, until a cache flattens it. See JSObject::putDirectInternal().
+    bool growsAlone() const { return m_growsAlone; }
+    void setGrowsAlone(bool value) { m_growsAlone = value; }
+    // How often it has become a dictionary. Each time costs a Structure, as a transition does, and a copy of the table.
+    static constexpr unsigned maxNumberOfTurnsAlone = 7;
+    bool hasUsedUpItsTurnsAlone() const { return m_numberOfTurnsAlone == maxNumberOfTurnsAlone; }
     DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
     DEFINE_BITFIELD(bool, hasStableFields, HasStableFields, 1, 12);
     static_assert(!((s_hasImmutableShapeBits | s_hasStableFieldsBits) & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
@@ -1226,14 +1246,23 @@ private:
     uint32_t m_propertyHash;
 #if USE(BUN_JSC_ADDITIONS)
     uint8_t m_numberOfStableFields { 0 };
-    bool m_didConvertFirstObjectToDictionary { false };
+    bool m_didConvertFirstObjectToDictionary : 1 { false };
+    bool m_growsAlone : 1 { false };
+    uint8_t m_numberOfTurnsAlone : 3 { 0 };
+    // Compiled code stores over properties of such objects and does not say so: see didCachePropertyReplacement().
+    bool m_isReplacedWithoutNotice { false };
+#endif
+#if ENABLE(AOT)
+    uint16_t m_pageOfEnvironmentShapes { 0 };
 #endif
     SeenProperties m_seenProperties;
 
     WriteBarrier<JSGlobalObject> m_realm;
 #if ENABLE(AOT)
     AOT::Instance* m_aotInstance { nullptr };
-    const AOT::Typed::LayoutData* m_compiledLayout { nullptr };
+    // An AOT::Typed::LayoutData, or with the bit an AOT::Typed::Data.
+    static constexpr uintptr_t isOfCompiledEnvironments = 1;
+    uintptr_t m_compiledLayoutOrData { 0 };
 #endif
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;

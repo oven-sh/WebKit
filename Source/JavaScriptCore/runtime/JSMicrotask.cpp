@@ -28,6 +28,7 @@
 
 #include "AOTTypedObject.h"
 #include "AOTFunction.h"
+#include "AOTRuntime.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "Debugger.h"
@@ -93,9 +94,8 @@ static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
 extern "C" void* g_aotStaticFunctionEntrypoints[3];
 
 template<typename... Args>
-static ALWAYS_INLINE JSValue callStaticCode(VM& vm, JSFunction* function, JSValue thisValue, JSCell* context, Args... args)
+static ALWAYS_INLINE JSValue callStaticCode(void* entry, VM& vm, JSObject* function, JSValue thisValue, JSCell* context, Args... args)
 {
-    void* entry = g_aotStaticFunctionEntrypoints[0];
     if constexpr (!sizeof...(args))
         return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, nullptr, function, thisValue, context));
     else if constexpr (sizeof...(args) == 1)
@@ -132,7 +132,13 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             if (Options::useAOTOperationCounters()) [[unlikely]]
                 AOT::countJobCall(vm, true);
             scope.release();
-            return callStaticCode(vm, jsFunction, thisValue, context, args...);
+            return callStaticCode(g_aotStaticFunctionEntrypoints[0], vm, jsFunction, thisValue, context, args...);
+        }
+        if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
+            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                return throwStackOverflowError(globalObject, scope);
+            scope.release();
+            return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
         }
     }
     if (Options::useAOTOperationCounters()) [[unlikely]]
@@ -2122,7 +2128,17 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
+        // Only MicrotaskQueue::drainImpl() brings a cache.
+        AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
+        return;
+    }
+
+    case InternalMicrotask::AOTAsyncGeneratorResume: {
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+#endif
+        scope.release();
+        AOT::Typed::resumeAsyncGenerator(globalObject, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
         return;
     }
 #endif

@@ -523,8 +523,9 @@ public:
     // reads it back given the payload and the entry's offset. The builtin is a module, and a function of it.
     JS_EXPORT_PRIVATE void addBuiltinFunction(UnlinkedFunctionExecutable*, const SourceCode& source, unsigned embedderStamp, const BytecodeOrderNames&);
     JS_EXPORT_PRIVATE void setPrelinkedModuleGraph(std::span<const uint8_t> blob, std::span<const uint32_t> stringSlots, Vector<uint32_t>&& graphModuleIndices);
-    // A program compiled from its types. It runs in the place of the top-level code of the module, by the order of the calls that add one.
-    JS_EXPORT_PRIVATE bool setTypedProgram(std::span<const uint8_t>, uint32_t module, std::span<const uint8_t> replacedStrings = { });
+    // A program compiled from its types. Its entry functions run in the place of the top-level code of the modules, one each, in that order.
+    // A module is named by the order of the calls that add one.
+    JS_EXPORT_PRIVATE bool setTypedProgram(std::span<const uint8_t>, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings = { });
     JS_EXPORT_PRIVATE Result finish();
     JS_EXPORT_PRIVATE VM& vm() const;
 
@@ -551,7 +552,7 @@ JS_EXPORT_PRIVATE AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> 
 using AOTFileHandle = int;
 #endif
 JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, AOTFileHandle, int64_t offsetInFile);
-JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, const SourceCode&, bool isModule, std::span<const uint8_t> typedProgram = { });
+JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, std::span<const SourceCode>, bool isModule, std::span<const uint8_t> typedProgram = { }, unsigned numberOfModulesWithoutEntry = 0);
 JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);

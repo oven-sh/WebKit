@@ -27,6 +27,7 @@
 #include "B3AbstractHeapRepository.h"
 
 #include "AOTRuntime.h"
+#include "AOTTypedCompactTable.h"
 #include "AOTTypedObject.h"
 #include "CodeBlock.h"
 #if ENABLE(B3_JIT)
@@ -134,11 +135,15 @@ AbstractHeapRepository::AbstractHeapRepository()
     AOTTyped_slots.atAnyNumber().changeParent(&AOTTyped_fields);
     AOTTyped_variables.atAnyNumber().changeParent(&AOTTyped_fields);
     AOTTypedObject_orderWord.changeParent(&AOTTypedObject_words);
+    // Between the two: what writes shape words may make a plain object one of the program where it is: another header, other slots. What writes the heap and no shape word ends here.
+    JSCellHeaderAndNamedProperties.changeParent(&AOTTypedObject_words);
     AOTTypedObject_shapeWord.changeParent(&AOTTypedObject_words);
     AOTTyped_fields.changeParent(&root);
     TypedArrayProperties.changeParent(&root);
     AOTTyped_collectorState.changeParent(&root);
+    indexedContiguousProperties.atAnyIndex().changeParent(&root);
     AOTTyped_runtimeState.changeParent(&root);
+    AOTTypedObject_extension.changeParent(&root);
     AOTTypedObject_words.changeParent(&root);
     // What compiled code reads in place of the state of the run time. A load from the rest of it is taken to be from any of these.
     JSRopeString_fiber0.changeParent(&AOTTyped_runtimeState);
@@ -146,8 +151,14 @@ AbstractHeapRepository::AbstractHeapRepository()
     JSRopeString_fiber2.changeParent(&AOTTyped_runtimeState);
     StringImpl_hashAndFlags.changeParent(&AOTTyped_runtimeState);
     JSMap_storage.changeParent(&AOTTyped_runtimeState);
+    JSMap_compactTable.changeParent(&AOTTyped_runtimeState);
+    JSSet_compactTable.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_used.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_deleted.changeParent(&AOTTyped_runtimeState);
     JSSet_storage.changeParent(&AOTTyped_runtimeState);
     OrderedHashTableData.changeParent(&AOTTyped_runtimeState);
+    JSPromise_packed.changeParent(&AOTTyped_runtimeState);
+    JSPromise_slot.changeParent(&AOTTyped_runtimeState);
 #endif
 
     RELEASE_ASSERT(!JSCell_freeListNext.offset());

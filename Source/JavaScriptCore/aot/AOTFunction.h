@@ -129,7 +129,57 @@ struct FunctionRef::Location {
     unsigned inlineFrame { 0 };
     bool isTailDeleted { false };
     bool isTailCall { false };
+    // With FunctionInfo::isTyped: the function to report, by its number in Typed::Data. `function` stays the one whose code is running,
+    // also for an inlined frame: positions and handlers are its own.
+    uint32_t typedFunction { FunctionRef::none };
 };
+
+// Functions compiled from types have no executable. Stack frames report them from Typed::Data, which lives in the image: no cells, no
+// Instance, usable on any thread.
+JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function);
+JS_EXPORT_PRIVATE CodeType typedFunctionCodeType(uint32_t function);
+JS_EXPORT_PRIVATE bool typedFunctionIsConstructor(uint32_t function);
+// Generic entrypoints and coroutine ramps: another frame of the same name stands next to them.
+JS_EXPORT_PRIVATE bool typedFunctionIsHiddenInStackTraces(uint32_t function);
+// The general entry or the ramp of an async function, or what is bound to one: see UnwindFunctor::rejectsInFrame().
+JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
+// Of a closure, whose executable is NativeExecutable::isSharedByAOTTypedClosures(): what the executable of any other host function has.
+JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
+JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
+// The ClosureWord of the function. `relative`: the EntryWord of its code, with the distance from the start of the code for an address.
+uint64_t closureWordOfTypedFunction(std::span<const uint8_t> image, uint32_t function, uint64_t relative);
+// Whether the cell is a closure of the function, whichever of its entrypoints each of the two goes by.
+JS_EXPORT_PRIVATE bool isClosureOfTypedFunction(JSCell*, uint32_t function);
+
+namespace Typed {
+
+// Whether an entry function of a program that was compiled from types runs in the place of the top-level code of the module, which is named
+// as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
+JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
+// For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
+JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
+// Runs the module, which the image has, and yields what it exports. Empty: it has thrown. Its top level is code that runs once: asked again,
+// this yields the same, or throws the same, without running anything, as for a module of the language.
+JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t id);
+// For whoever makes the functions that the engine or the host implements in JavaScript. Whether the image has the function of this number.
+JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
+// A new function object for it, which the image has. With another prototype than its kind of function has, if one is given. It can be made
+// while the global object is being created: until that is done it may be stored, and stored to with putDirect(), and nothing else.
+JS_EXPORT_PRIVATE JSFunction* builtinFunction(JSGlobalObject*, uint32_t id, JSObject* prototype = nullptr);
+// The global object is complete.
+void didFinishCreation(JSGlobalObject*);
+// A function that is compiled from types is a JSFunction with a NativeExecutable, which says nothing of what it was written as.
+enum class DeclaredAs : uint8_t { NotCompiled, Function, AsyncFunction, GeneratorFunction, AsyncGeneratorFunction, Class };
+JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
+// Whether it is such a function, and was written in one of the host's own modules.
+JS_EXPORT_PRIVATE bool isOfBuiltinModule(JSCell*);
+// What a compiled generator function or async generator function returns. It is no JSGenerator.
+JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
+// After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
+JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
+
+} // namespace Typed
+JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
 
 struct ImageAddressInfo {
     enum Kind : uint8_t {
@@ -152,6 +202,12 @@ struct FrameAndPC {
 JS_EXPORT_PRIVATE std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds&);
 JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
+// What calleeSaveRegistersOf() says, without a list: by Reg::index(); they are saved in that order, a word each, the first that many words from the frame pointer.
+struct SavedRegisters {
+    uint64_t mask;
+    ptrdiff_t first;
+};
+JS_EXPORT_PRIVATE SavedRegisters savedRegistersOf(const ImageFunction&);
 JS_EXPORT_PRIVATE bool hasCode();
 JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 std::optional<uint32_t> spreadSite(const ImageFunction&, uint32_t callSite, unsigned item);
@@ -162,6 +218,21 @@ struct ImageInlineFrame {
     bool isTailCall;
 };
 JS_EXPORT_PRIVATE ImageInlineFrame inlineFrameOf(const ImageFunction&, unsigned frame);
+// Of a function whose sites are numbered in the order of the code: the inline frame of number 1, 2, .. A number without code: a call that was
+// inlined is in the frame it stands in; whatever else has a number of that kind is in the function itself.
+class FramesOfSites {
+public:
+    explicit FramesOfSites(const ImageFunction&);
+    unsigned next();
+
+private:
+    const uint8_t* m_inlineFrames { nullptr };
+    const uint8_t* m_sites { nullptr };
+    uint64_t m_inFunctionItself { 0 };
+    uint64_t m_inlinedCalls { 0 };
+    uint64_t m_withCode { 0 };
+    unsigned m_frame { 0 };
+};
 class CallSiteOverride {
     WTF_MAKE_NONCOPYABLE(CallSiteOverride);
 public:

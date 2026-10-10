@@ -18,6 +18,9 @@ using namespace B3;
 // Toward zero. Of what does not fit: the least or the greatest integer, depending on the processor.
 Integer Lowering::truncateToInteger(Number value)
 {
+    // The back end does not look into a patchpoint.
+    if (value.value()->hasDouble() && std::abs(value.value()->asDouble()) < static_cast<double>(maxKeptInteger))
+        return integer(static_cast<int64_t>(value.value()->asDouble()));
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     patchpoint->append(value.value(), ValueRep::SomeRegister);
     patchpoint->effects = Effects::none();
@@ -96,6 +99,8 @@ Word32 Lowering::isMarker(Operand operand)
 // Of what was read from a place: whether the place holds nothing.
 Word32 Lowering::isAbsent(Operand raw)
 {
+    if (LValue index = indexOf(raw.value))
+        return Word32(m_out.isZero64(index));
     return equal(bitsOf(raw), integer(bitsOfMarker(Primitive::Absent, raw.rep)));
 }
 
@@ -128,7 +133,7 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
         // The number, as if it were one.
         Operand converted;
         if (from == Rep::OptionalDouble && to == Rep::JSValue)
-            converted = box(assumedNumber(operand.as<OptionalNumber>()));
+            converted = boxNumber(assumedNumber(operand.as<OptionalNumber>()));
         else
             converted = convert(Operand(plain(from), operand.value), type.withoutPrimitives(static_cast<uint16_t>(~Primitive::Number)), plain(to));
         if (from == Rep::Double && to == Rep::OptionalDouble)
@@ -209,7 +214,7 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
         if (to == Rep::Int32)
             return low32(truncateToInteger(value));
         if (to == Rep::JSValue)
-            return box(purified(value));
+            return boxNumber(value);
         break;
     }
     case Rep::JSValue: {
@@ -236,6 +241,17 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
 // What `x | 0` yields.
 Word32 Lowering::toInt32(Number value)
 {
+#if CPU(ARM64)
+    if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+        patchpoint->append(ConstrainedValue(value.value(), ValueRep::SomeRegister));
+        patchpoint->effects = Effects::none();
+        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
+        });
+        return Word32(patchpoint);
+    }
+#endif
     // Of a number that fits in 64 bits the low half is the answer. Where it does not fit, truncation yields the least or the greatest integer.
     Integer truncated = truncateToInteger(value);
     Word32 fits = below(integer(1), add(truncated, integer(std::numeric_limits<int64_t>::min() + 1)));
@@ -264,13 +280,26 @@ Word32 Lowering::toInt32OrElse(ValueID id, LBasicBlock otherwise)
 // Of a number, `undefined`, `null` or a boolean.
 Word32 Lowering::toInt32(ValueID id)
 {
+    // What is not a number becomes 0.
+    if (typeOf(id).isUndefinedOrNull())
+        return word32(0);
     Operand operand = get(id);
     switch (operand.rep) {
     case Rep::Int64:
         return low32(operand.as<Integer>());
     case Rep::Int32:
         return operand.as<Word32>();
+    case Rep::OptionalInt64:
+        return low32(select(isMarker(operand), integer(0), assumedInteger(operand.as<OptionalInteger>())));
     default:
+        if (LValue phi = m_int32Phis.get(id.index()))
+            return Word32(phi);
+        if (auto ofSum = toInt32OfSum(id))
+            return *ofSum;
+        if (auto ofQuotient = toInt32OfQuotient(id))
+            return *ofQuotient;
+        if (isInlineBuiltin(id, InlineBuiltin::MathTrunc) && m_function.at(id).arguments.size() == 1 && isNumericOperand(typeOf(m_function.at(id).arguments[0])))
+            return toInt32(m_function.at(id).arguments[0]);
         return toInt32(asNumericOperand(id));
     }
 }

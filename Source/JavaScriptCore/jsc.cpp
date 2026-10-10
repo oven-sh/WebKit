@@ -1213,6 +1213,10 @@ private:
 #endif
 
     static void reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*);
+#if USE(BUN_JSC_ADDITIONS)
+    static JSValue requireBuiltinModule(JSGlobalObject*, uint32_t id);
+    static JSValue nativeBinding(JSGlobalObject*, uint32_t index);
+#endif
 };
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(GlobalObject, JSGlobalObject);
 
@@ -1246,6 +1250,10 @@ const GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     &codeForEval,
     &canCompileStrings,
     &trustedScriptStructure,
+#if USE(BUN_JSC_ADDITIONS)
+    &requireBuiltinModule,
+    &nativeBinding,
+#endif
 };
 
 GlobalObject::GlobalObject(VM& vm, Structure* structure)
@@ -1699,7 +1707,7 @@ static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& sourc
 {
     VM& vm = globalObject->vm();
     if (const char* path = byteCast<char>(Options::writeAOTImageTo())) {
-        Vector<uint8_t> file = buildAOTFile(vm, source, isModule);
+        Vector<uint8_t> file = buildAOTFile(vm, singleElementSpan(source), isModule);
         FILE* output = fopen(path, "wb");
         bool ok = output && fwrite(file.span().data(), 1, file.size(), output) == file.size() && !fclose(output);
         jscExit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
@@ -1707,17 +1715,17 @@ static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& sourc
     const AOT::ProgramData* data = AOT::ProgramData::get();
     if (!data)
         return WTF::move(source);
-    Vector<uint32_t> modules = data->moduleEntryOffsets();
-    if (modules.isEmpty())
-        return WTF::move(source);
-    const AOT::ProgramModule& module = *data->moduleWithEntryOffset(modules[0]);
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
-    if (key.length() != module.keyLength || key.hash() != module.keyHash || key.flagsBits() != module.keyFlags)
-        return WTF::move(source);
-    if (!isModule && AOT::Instance::ensure(globalObject).topLevelExecutableOf(modules[0] + 1))
-        return WTF::move(source);
-    source.provider()->setHasNoSourceText();
-    source.provider()->setAOTModuleID(modules[0] + 1);
+    for (uint32_t entryOffset : data->moduleEntryOffsets()) {
+        const AOT::ProgramModule& module = *data->moduleWithEntryOffset(entryOffset);
+        if (key.length() != module.keyLength || key.hash() != module.keyHash || key.flagsBits() != module.keyFlags)
+            continue;
+        if (!isModule && AOT::Instance::ensure(globalObject).topLevelExecutableOf(entryOffset + 1))
+            break;
+        source.provider()->setHasNoSourceText();
+        source.provider()->setAOTModuleID(entryOffset + 1);
+        break;
+    }
     return WTF::move(source);
 }
 #endif
@@ -1836,6 +1844,70 @@ JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject, JSModul
     return promise;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// What a host's registry does: a module is evaluated when it is first asked for, and kept unless it throws.
+JSValue GlobalObject::requireBuiltinModule(JSGlobalObject* globalObject, uint32_t id)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+#if ENABLE(AOT)
+    Identifier nameOfCache = Identifier::fromString(vm, "$builtinModules"_s);
+    JSValue cache = globalObject->getDirect(vm, nameOfCache);
+    if (!cache) {
+        cache = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
+        globalObject->putDirect(vm, nameOfCache, cache, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
+    if (JSValue module = asObject(cache)->getDirectIndex(globalObject, id))
+        return module;
+    if (AOT::Typed::hasBuiltinModule(globalObject, id)) {
+        JSValue module = AOT::Typed::evaluateBuiltinModule(globalObject, id);
+        RETURN_IF_EXCEPTION(scope, { });
+        asObject(cache)->putDirectIndex(globalObject, id, module);
+        RETURN_IF_EXCEPTION(scope, { });
+        return module;
+    }
+    // A test may stand in for what the host has in native code, or has left out: `$builtinModule = id => ..`.
+    JSValue standIn = globalObject->get(globalObject, Identifier::fromString(vm, "$builtinModule"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (standIn.isCallable()) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(id));
+        JSValue module = call(globalObject, standIn, arguments, "$builtinModule is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!module.isUndefined()) {
+            asObject(cache)->putDirectIndex(globalObject, id, module);
+            RETURN_IF_EXCEPTION(scope, { });
+            return module;
+        }
+    }
+#endif
+    throwTypeError(globalObject, scope, makeString("builtin module "_s, id, " is not in the image"_s));
+    return { };
+}
+
+JSValue GlobalObject::nativeBinding(JSGlobalObject* globalObject, uint32_t index)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    // A test may stand in for the host: `$nativeBinding = index => ..`. Undefined: it has nothing for this one.
+    JSValue standIn = globalObject->get(globalObject, Identifier::fromString(vm, "$nativeBinding"_s));
+    RETURN_IF_EXCEPTION(scope, { });
+    if (standIn.isCallable()) {
+        MarkedArgumentBuffer arguments;
+        arguments.append(jsNumber(index));
+        JSValue binding = call(globalObject, standIn, arguments, "$nativeBinding is not a function"_s);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (!binding.isUndefined())
+            return binding;
+    }
+    return JSNativeStdFunction::create(vm, globalObject, 0, makeString("nativeBinding"_s, index), [index](JSGlobalObject* globalObject, CallFrame*) {
+        auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+        return throwVMTypeError(globalObject, scope, makeString("native binding "_s, index));
+    });
+}
+#endif
+
 JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* globalObject, JSModuleLoader*, JSValue key, JSModuleRecord*, RefPtr<ScriptFetcher>)
 {
     VM& vm = globalObject->vm();
@@ -1849,6 +1921,14 @@ JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObject* g
 
     metaProperties->putDirect(vm, JSC::Identifier::fromString(vm, "url"_s), key);
     RETURN_IF_EXCEPTION(scope, nullptr);
+
+#if ENABLE(AOT)
+    // Where a compiled program looks for the `require` of its host. A script that stands in for one puts it on the global object.
+    JSValue require = globalObject->get(globalObject, Identifier::fromString(vm, "require"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (require.isCallable())
+        metaProperties->putDirect(vm, Identifier::fromString(vm, "require"_s), require);
+#endif
 
     return metaProperties;
 }

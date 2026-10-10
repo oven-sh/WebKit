@@ -169,10 +169,41 @@ RegExp::RegExp(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags
 static constexpr unsigned maxEagerlyConstructedPatternLength = 64;
 // Deeper patterns are built eagerly so that YarrPatternConstructor's recursion limit still reports at construction.
 static constexpr unsigned maxLazilyConstructedParenthesesDepth = 64;
+#if USE(BUN_JSC_ADDITIONS)
+// Longer patterns, tables of code points as a rule, are long to read: they are built at once and what is built is kept for the first match.
+static constexpr unsigned maxLengthOfPatternParsedForSyntaxAlone = 4096;
+#endif
 
 void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags); code && !code->keepsMoreOfPattern) {
+        m_specificPattern = code->specificPattern;
+        m_numSubpatterns = code->numSubpatterns;
+        m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
+        return;
+    }
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useLazyRegExpPatternConstruction() && m_patternString.length() > maxLengthOfPatternParsedForSyntaxAlone) {
+        auto pattern = makeUniqueWithoutFastMallocCheck<Yarr::YarrPattern>(m_patternString, m_flags, m_constructionErrorCode);
+        if (!isValid()) {
+            m_state = ParseError;
+            return;
+        }
+        // Nothing of it is moved into this.
+        bool staysWhole = pattern->m_atom.isNull() && pattern->m_captureGroupNames.isEmpty() && pattern->m_namedGroupToParenIndices.isEmpty() && pattern->m_anchoredWords.isEmpty();
+        updateMetadataFromPattern(*pattern);
+        unsigned offsetVectorSize = offsetVectorBaseForNamedCaptures();
+        if (hasNamedCaptures())
+            offsetVectorSize += m_rareData->m_numDuplicateNamedCaptureGroups;
+        m_ovector = FixedVector<int>(offsetVectorSize);
+        if (staysWhole)
+            m_patternFromCreation = WTF::move(pattern);
+        return;
+    }
+#endif
     if (Options::useLazyRegExpPatternConstruction() && m_patternString.length() > maxEagerlyConstructedPatternLength) {
         Yarr::SyntaxSummary summary = Yarr::checkSyntax(m_patternString, m_flags);
         m_constructionErrorCode = summary.error;
@@ -336,7 +367,15 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     if (m_regExpBytecode)
         return;
 
+#if USE(BUN_JSC_ADDITIONS)
+    auto patternFromCreation = std::exchange(m_patternFromCreation, nullptr);
+    std::optional<Yarr::YarrPattern> parsedPattern;
+    if (!patternFromCreation)
+        parsedPattern.emplace(m_patternString, m_flags, m_constructionErrorCode);
+    Yarr::YarrPattern& pattern = patternFromCreation ? *patternFromCreation : *parsedPattern;
+#else
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+#endif
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -358,6 +397,24 @@ bool RegExp::startsInterpreted(std::optional<StringView> subject) const
     return m_workInInterpreter + (subject ? subject->length() / 32 : 0) < workBeforeJIT;
 }
 
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+// Without a Yarr::YarrPattern: finishCreation() made none either.
+bool RegExp::takeCodeFromImage(VM& vm)
+{
+    auto code = AOT::Image::codeForRegExp(m_patternString, m_flags);
+    if (!code || code->keepsMoreOfPattern)
+        return false;
+    if (!hasCode())
+        vm.regExpCache()->addToStrongCache(this);
+    ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
+    m_state = JITCode;
+    m_minimumSize = code->minimumSize;
+    if (!hasValidAtom() && m_specificPattern != Yarr::SpecificPattern::AnchoredWordList)
+        m_codeOfImage = { code->for8Bit, code->for16Bit };
+    return true;
+}
+#endif
+
 void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
 {
     Locker locker { cellLock() };
@@ -366,7 +423,19 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
         vm->m_aotRuntimeTable->countOperation("RegExp::compile");
 #endif
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    if (takeCodeFromImage(*vm))
+        return;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    auto patternFromCreation = std::exchange(m_patternFromCreation, nullptr);
+    std::optional<Yarr::YarrPattern> parsedPattern;
+    if (!patternFromCreation)
+        parsedPattern.emplace(m_patternString, m_flags, m_constructionErrorCode);
+    Yarr::YarrPattern& pattern = patternFromCreation ? *patternFromCreation : *parsedPattern;
+#else
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
+#endif
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -478,7 +547,27 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     if (Options::useAOTOperationCounters() && vm->m_aotRuntimeTable) [[unlikely]]
         vm->m_aotRuntimeTable->countOperation("RegExp::compile");
 #endif
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    if (takeCodeFromImage(*vm))
+        return;
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+    // The bytecode wants the pattern with its subpatterns: see below. Where the expression goes to the interpreter, at first or for good, that one is parsed, or taken from the creation, and no other.
+#if ENABLE(YARR_JIT)
+    bool goesToInterpreter = startsInterpreted(sampleString) || !Options::useRegExpJIT();
+#else
+    constexpr bool goesToInterpreter = true;
+#endif
+    auto patternFromCreation = std::exchange(m_patternFromCreation, nullptr);
+    if (!goesToInterpreter)
+        patternFromCreation = nullptr;
+    std::optional<Yarr::YarrPattern> parsedPattern;
+    if (!patternFromCreation)
+        parsedPattern.emplace(m_patternString, m_flags, m_constructionErrorCode, goesToInterpreter ? Yarr::ExecutionMode::IncludeSubpatterns : Yarr::ExecutionMode::MatchOnly);
+    Yarr::YarrPattern& pattern = patternFromCreation ? *patternFromCreation : *parsedPattern;
+#else
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::MatchOnly);
+#endif
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
         return;
@@ -539,6 +628,17 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
     // interpreter has no StringList fast path, so compile it from a capture-complete pattern rather
     // than the match-only one above, whose capturing fixed-string alternations may have been
     // flattened (dropping their subpatterns) for the JIT.
+#if USE(BUN_JSC_ADDITIONS)
+    if (goesToInterpreter) {
+        m_regExpBytecode = byteCodeCompilePattern(vm, pattern, m_constructionErrorCode);
+        if (!m_regExpBytecode) {
+            m_state = ParseError;
+            return;
+        }
+        m_minimumSize = pattern.m_body->m_minimumSize;
+        return;
+    }
+#endif
     Yarr::YarrPattern bytecodePattern(m_patternString, m_flags, m_constructionErrorCode, Yarr::ExecutionMode::IncludeSubpatterns);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -579,10 +679,16 @@ void RegExp::deleteCode()
 {
     Locker locker { cellLock() };
     
+#if USE(BUN_JSC_ADDITIONS)
+    m_patternFromCreation = nullptr;
+#endif
     if (!hasCode())
         return;
     m_state = NotCompiled;
     m_minimumSize = 0;
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    m_codeOfImage = { };
+#endif
     // m_atom and m_specificPattern stay: they describe the pattern (every compile sets them to the same values), the fast paths that
     // use them never run the code, and RegExpCachedResult needs the atom of a one-character match it has yet to reify.
 #if ENABLE(YARR_JIT)
@@ -828,6 +934,19 @@ static inline String escapePattern(const String& pattern, std::span<const Charac
     // that would match the same thing.
     if (characters.empty())
         return "(?:)"_s;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // Whatever stands around them, only these are ever escaped.
+    auto contains = [&](CharacterType character) {
+        return WTF::find(characters, character) != notFound;
+    };
+    if (!contains('/') && !contains('\n') && !contains('\r')) {
+        if constexpr (sizeof(CharacterType) == 1)
+            return pattern;
+        else if (!contains(0x2028) && !contains(0x2029))
+            return pattern;
+    }
+#endif
 
     // early return for strings that don't contain a forwards slash and LineTerminator
     for (auto ch : characters) {

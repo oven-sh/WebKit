@@ -85,6 +85,19 @@ public:
                 }
             }
 
+#if USE(BUN_JSC_ADDITIONS)
+            // Of the blocks that lead here one comes right in front of it in the code. Unless another is likely too, or something here depends on where control came from, a copy saves nothing.
+            if (canCopyBlock && m_proc.positionIndependent()) {
+                constexpr double maxRatioOfTailToLikelyPredecessor = 16;
+                unsigned numberOfLikelyPredecessors = 0;
+                for (BasicBlock* predecessor : block->predecessors())
+                    numberOfLikelyPredecessors += predecessor->frequency() * maxRatioOfTailToLikelyPredecessor >= block->frequency();
+                bool hasPhi = false;
+                for (Value* value : *block)
+                    hasPhi |= value->opcode() == Phi;
+                canCopyBlock = numberOfLikelyPredecessors >= 2 || hasPhi;
+            }
+#endif
             if (canCopyBlock)
                 candidates.add(block);
         }

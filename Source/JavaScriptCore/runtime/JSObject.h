@@ -69,6 +69,7 @@ class PropertyNameArrayBuilder;
 class Structure;
 class ThrowScope;
 class VM;
+struct BuiltinCode;
 struct HashTable;
 struct HashTableValue;
 
@@ -399,6 +400,10 @@ public:
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName);
         checkOffset(offset, structure->inlineCapacity());
+#if ENABLE(AOT)
+        if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
+            return getDirectOfCompiledObject(vm, propertyName, nullptr);
+#endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
     
@@ -407,6 +412,10 @@ public:
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
         checkOffset(offset, structure->inlineCapacity());
+#if ENABLE(AOT)
+        if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
+            return getDirectOfCompiledObject(vm, propertyName, &attributes);
+#endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
 
@@ -514,8 +523,8 @@ public:
     JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, const DOMJIT::Signature*, unsigned attributes);
     JS_EXPORT_PRIVATE void putDirectNativeFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, unsigned attributes);
 
-    JS_EXPORT_PRIVATE JSFunction* putDirectBuiltinFunction(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
-    JSFunction* putDirectBuiltinFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
+    JS_EXPORT_PRIVATE JSFunction* putDirectBuiltinFunction(VM&, JSGlobalObject*, const PropertyName&, BuiltinCode, unsigned attributes);
+    JSFunction* putDirectBuiltinFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, BuiltinCode, unsigned attributes);
 
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     bool createDataProperty(JSGlobalObject*, PropertyName, JSValue, bool shouldThrow);
@@ -598,11 +607,26 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE ASCIILiteral throwImmutableShapeError(VM&);
 #endif
+#if ENABLE(AOT)
+    // What getDirect() and putDirect() come to for an AOT::Typed::Object, whose properties its Structure does not list. For any other object
+    // of an immutable shape: nothing, and the error.
+    JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
+    JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
+#endif
 
     void flattenDictionaryObject(VM& vm)
     {
         structure()->flattenDictionaryStructure(vm, this);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // What grows alone is a dictionary while it grows: Structure::growsAlone(). Whoever keeps something for a Structure and refuses a dictionary calls this first: nothing moves, and the StructureID stays.
+    void flattenIfCacheableDictionary(VM& vm)
+    {
+        Structure* structure = this->structure();
+        if (structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore() && !structure->hasUsedUpItsTurnsAlone()) [[unlikely]]
+            structure->flattenDictionaryStructure(vm, this);
+    }
+#endif
     void shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM&, Structure*, size_t outOfLineCapacityAfter);
 
     JSGlobalObject* realmMayBeNull() const

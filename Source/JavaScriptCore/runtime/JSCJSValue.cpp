@@ -414,6 +414,12 @@ String JSValue::toWTFStringSlowCase(JSGlobalObject* globalObject) const
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (isInt32())
         return vm.numericStrings.add(asInt32());
+#if USE(BUN_JSC_ADDITIONS)
+    if (isDouble()) {
+        if (auto int32Value = tryConvertToStrictInt32(asDouble()))
+            return vm.numericStrings.add(*int32Value);
+    }
+#endif
     if (isDouble())
         return vm.numericStrings.add(asDouble());
     if (isTrue())

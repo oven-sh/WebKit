@@ -7,8 +7,21 @@
 
 #if ENABLE(AOT)
 
-#include "AOTGraph.h"
+#include "AOTFacts.h"
+#include "AOTProgram.h"
 #include "AOTRuntime.h"
+#include "AOTStubs.h"
+#include "AOTType.h"
+#include "AOTTypeTable.h"
+#include "BytecodeIndex.h"
+#include "BytecodeStructs.h"
+#include "CallFrame.h"
+#include "GetPutInfo.h"
+#include "Instruction.h"
+#include "LinkTimeConstant.h"
+#include "Opcode.h"
+#include "ScopeOffset.h"
+#include "VirtualRegister.h"
 #include "B3AbstractHeapRepository.h"
 #include "B3Procedure.h"
 #include "FTLAbbreviatedTypes.h"
@@ -27,6 +40,20 @@ using FTL::rarely;
 using FTL::unsure;
 using FTL::usually;
 
+class IntegersThatLookLikeAddresses {
+public:
+    static bool isOne(uint64_t bits) { return bits >= 4 * GB && bits < (1ULL << 47); }
+    void add(int64_t value)
+    {
+        if (isOne(value))
+            m_integers.add(value);
+    }
+    bool contains(int64_t value) const { return m_integers.contains(value); }
+
+private:
+    UncheckedKeyHashSet<int64_t, WTF::IntHash<int64_t>, WTF::UnsignedWithZeroKeyHashTraits<int64_t>> m_integers;
+};
+
 class Output final : public FTL::Output {
 public:
     using FTL::Output::Output;
@@ -41,6 +68,15 @@ public:
         FTL::Output::branch(condition, taken, notTaken);
     }
     void dropNextGuardForTesting() { m_dropsNextGuard = true; }
+
+    // What is made off the usual path is off it: whoever asks how often a block runs (Typed::Lowering::callEntry()) is told so behind a test or a join in a cold arm too.
+    LBasicBlock newBlock()
+    {
+        LBasicBlock block = FTL::Output::newBlock();
+        if (m_block && m_block->frequency() < block->frequency())
+            block->setFrequency(m_block->frequency());
+        return block;
+    }
 
     void noteFoldedConstantsIn(IntegersThatLookLikeAddresses& integers) { m_foldedConstants = &integers; }
     LValue add(LValue left, LValue right) { return noteIfFolded(FTL::Output::add(left, right), left, right); }
@@ -71,17 +107,16 @@ protected:
 
     void findPinnedRegisters();
 
-    LValue isInt32(LValue v) { return m_out.aboveOrEqual(v, m_numberTag); }
-    LValue isNotInt32(LValue v) { return m_out.below(v, m_numberTag); }
-    LValue isNumber(LValue v) { return m_out.testNonZero64(v, m_numberTag); }
-    LValue isNotNumber(LValue v) { return m_out.testIsZero64(v, m_numberTag); }
-    LValue isCell(LValue v) { return m_out.testIsZero64(v, m_notCellMask); }
-    LValue isNotCell(LValue v) { return m_out.testNonZero64(v, m_notCellMask); }
+    // The tags are in registers, which the back end cannot look into. So what is asked of a constant is answered here.
+    LValue isInt32(LValue v) { return v->hasInt64() ? m_out.constBool(static_cast<uint64_t>(v->asInt64()) >= static_cast<uint64_t>(JSValue::NumberTag)) : m_out.aboveOrEqual(v, m_numberTag); }
+    LValue isNumber(LValue v) { return v->hasInt64() ? m_out.constBool(v->asInt64() & JSValue::NumberTag) : m_out.testNonZero64(v, m_numberTag); }
+    LValue isCell(LValue v) { return v->hasInt64() ? m_out.constBool(!(v->asInt64() & JSValue::NotCellMask)) : m_out.testIsZero64(v, m_notCellMask); }
+    LValue isNotCell(LValue v) { return v->hasInt64() ? m_out.constBool(v->asInt64() & JSValue::NotCellMask) : m_out.testNonZero64(v, m_notCellMask); }
     LValue isBoolean(LValue v) { return m_out.testIsZero64(m_out.bitXor(v, m_out.constInt64(JSValue::ValueFalse)), m_out.constInt64(~1)); }
     LValue isOther(LValue v) { return m_out.equal(m_out.bitAnd(v, m_out.constInt64(~JSValue::UndefinedTag)), m_out.constInt64(JSValue::ValueNull)); }
     LValue unboxInt32(LValue v) { return m_out.castToInt32(v); }
     LValue boxInt32(LValue v) { return m_out.add(m_out.zeroExt(v, B3::Int64), m_numberTag); }
-    LValue unboxDouble(LValue v) { return m_out.bitCast(m_out.add(v, m_numberTag), B3::Double); }
+    LValue unboxDouble(LValue v) { return v->hasInt64() ? m_out.constDouble(std::bit_cast<double>(static_cast<uint64_t>(v->asInt64()) + static_cast<uint64_t>(JSValue::NumberTag))) : m_out.bitCast(m_out.add(v, m_numberTag), B3::Double); }
     LValue boxDouble(LValue v) { return m_out.sub(m_out.bitCast(v, B3::Int64), m_numberTag); }
     LValue unboxBoolean(LValue v) { return m_out.notZero64(m_out.bitAnd(v, m_out.constInt64(1))); }
     LValue boxBoolean(LValue v) { return m_out.select(v, m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::ValueFalse)); }
@@ -93,14 +128,13 @@ protected:
     LValue structureOf(LValue cell);
     LValue structureWithID(LValue structureID);
     LValue fieldIDInSlot(LValue structureID, unsigned slot);
-    LValue familyOfStructureWithID(LValue structureID);
-    LValue departedFamily(unsigned family);
     LValue entry(Entry);
 
     void orElse(LValue condition, LBasicBlock otherwise);
     template<typename Functor> void forEachUpTo(LValue count, const Functor&);
 
     LValue fixedPointer(ptrdiff_t offset);
+    LValue vm() { return m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm); }
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
 
@@ -144,7 +178,6 @@ protected:
     LValue stringSlice(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue stringSubstring(LValue string, LValue start, LValue end, LBasicBlock giveUp);
     LValue makeRope(LValue first, LValue second, LValue thirdOrNull, LBasicBlock giveUp);
-    LValue addStrings(LValue first, LValue second, LBasicBlock giveUp);
     LValue int32ToString(LValue, LBasicBlock giveUp);
     LValue stringOrInt32ToString(LValue, LBasicBlock giveUp);
     LValue addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp);

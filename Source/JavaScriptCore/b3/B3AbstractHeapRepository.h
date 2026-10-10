@@ -45,28 +45,33 @@ namespace JSC::B3 {
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
     macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
     macro(AOTTypedClosure_entry, AOT::Typed::Closure::offsetOfEntry(), Mutability::Immutable) \
-    macro(AOTTypedClosure_environment, AOT::Typed::Closure::offsetOfEnvironment(), Mutability::Immutable) \
-    macro(AOTTypedClosure_function, AOT::Typed::Closure::offsetOfFunction(), Mutability::Immutable) \
     macro(AOTTypedObject_words, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
     macro(AOTTypedObject_orderWord, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
     macro(AOTTypedObject_shapeWord, AOT::Typed::offsetOfShapeWord, Mutability::Mutable) \
+    macro(AOTTypedObject_extension, AOT::Typed::offsetOfExtension, Mutability::Mutable) \
+    macro(AOTTypedExtension_size, AOT::Typed::offsetOfExtensionSize, Mutability::Immutable) \
+    macro(AOTTypedCompactTable_used, AOT::Typed::CompactTable::offsetOfUsed(), Mutability::Mutable) \
+    macro(AOTTypedCompactTable_deleted, AOT::Typed::CompactTable::offsetOfDeleted(), Mutability::Mutable) \
+    macro(JSMap_compactTable, (JSMap::offsetOfCompactTable()), Mutability::Mutable) \
+    macro(JSSet_compactTable, (JSSet::offsetOfCompactTable()), Mutability::Mutable) \
     macro(AOTTyped_shapeSets, 0, Mutability::Immutable)
 #define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTTyped_fields) \
     macro(AOTTyped_collectorState) \
     macro(AOTTyped_runtimeState) \
-    macro(AOTTyped_argumentBuffer)
+    macro(AOTTyped_argumentBuffer) \
+    macro(AOTTyped_freshCell)
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTTyped_slots) \
     macro(AOTTyped_variables) \
     macro(AOTTyped_catchSpillSlots)
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
-    macro(AOTInstance_states, AOT::Instance::offsetOfStates(), sizeof(uint32_t)) \
     macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
     macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \
-    macro(AOTRuntimeTable, 0, sizeof(void*))
+    macro(AOTRuntimeTable, 0, sizeof(void*)) \
+    macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t))
 #else
 #define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
 #define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro)

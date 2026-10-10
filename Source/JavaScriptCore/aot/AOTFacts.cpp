@@ -119,12 +119,6 @@ void Facts::noteFunction(UnlinkedFunctionExecutable* executable, StringView sour
     s_shared->m_executables.add(site.number, Vector<UnlinkedFunctionExecutable*, 1> { }).iterator->value.append(executable);
 }
 
-Vector<UnlinkedFunctionExecutable*, 1> Facts::executablesOf(uint32_t function) const
-{
-    Locker locker { m_lock };
-    return m_executables.get(function);
-}
-
 void Facts::noteCode(UnlinkedCodeBlock* codeBlock, UnlinkedFunctionExecutable* executable)
 {
     if (!s_shared)
@@ -135,15 +129,6 @@ void Facts::noteCode(UnlinkedCodeBlock* codeBlock, UnlinkedFunctionExecutable* e
         s_shared->m_numbersOfFunctionsWithCode.set(codeBlock, it->value);
 }
 
-std::optional<uint32_t> Facts::numberOfFunctionWithCode(UnlinkedCodeBlock* codeBlock) const
-{
-    Locker locker { m_lock };
-    auto it = m_numbersOfFunctionsWithCode.find(codeBlock);
-    if (it == m_numbersOfFunctionsWithCode.end())
-        return std::nullopt;
-    return it->value;
-}
-
 std::optional<uint32_t> Facts::numberOf(UnlinkedFunctionExecutable* executable) const
 {
     Locker locker { m_lock };
@@ -151,31 +136,6 @@ std::optional<uint32_t> Facts::numberOf(UnlinkedFunctionExecutable* executable) 
     if (it == m_numbersOfFunctions.end())
         return std::nullopt;
     return it->value;
-}
-
-void Facts::noteFieldInitializer(UnlinkedCodeBlock* initializer, uint32_t typeOfThis, uint32_t function, std::span<UnlinkedCodeBlock* const> constructors) const
-{
-    Locker locker { m_lock };
-    m_typesOfThisInFieldInitializers.set(initializer, typeOfThis);
-    for (UnlinkedCodeBlock* constructor : constructors) {
-        if (constructor)
-            m_fieldInitializers.set(constructor, function);
-    }
-}
-
-std::optional<uint32_t> Facts::typeOfThisInFieldInitializer(UnlinkedCodeBlock* codeBlock) const
-{
-    Locker locker { m_lock };
-    auto it = m_typesOfThisInFieldInitializers.find(codeBlock);
-    if (it == m_typesOfThisInFieldInitializers.end())
-        return std::nullopt;
-    return it->value;
-}
-
-uint32_t Facts::fieldInitializerCalledBy(UnlinkedCodeBlock* constructor) const
-{
-    Locker locker { m_lock };
-    return m_fieldInitializers.get(constructor);
 }
 
 auto Facts::type(uint32_t number) const -> TypeFact

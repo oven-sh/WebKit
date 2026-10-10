@@ -73,7 +73,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
-const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of a built-in object: built-ins are immutable in compiled programs"_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
@@ -2235,7 +2235,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
     if (this->structure()->hasImmutableProperties()) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
-        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
+        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of a built-in object: built-ins are immutable in compiled programs"_s);
     }
 
     // Default realm global objects should have mutable prototypes despite having
@@ -4102,20 +4102,16 @@ void JSObject::putDirectNativeFunctionWithoutTransition(VM& vm, JSGlobalObject* 
     putDirectWithoutTransition(vm, propertyName, function, attributes);
 }
 
-JSFunction* JSObject::putDirectBuiltinFunction(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, FunctionExecutable* functionExecutable, unsigned attributes)
+JSFunction* JSObject::putDirectBuiltinFunction(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, BuiltinCode code, unsigned attributes)
 {
-    StringImpl* name = propertyName.publicName();
-    if (!name)
-        name = vm.propertyNames->anonymous.impl();
-    ASSERT(name);
-    JSFunction* function = JSFunction::create(vm, globalObject, static_cast<FunctionExecutable*>(functionExecutable), globalObject);
+    JSFunction* function = JSFunction::create(vm, globalObject, code, globalObject);
     putDirect(vm, propertyName, function, attributes);
     return function;
 }
 
-JSFunction* JSObject::putDirectBuiltinFunctionWithoutTransition(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, FunctionExecutable* functionExecutable, unsigned attributes)
+JSFunction* JSObject::putDirectBuiltinFunctionWithoutTransition(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, BuiltinCode code, unsigned attributes)
 {
-    JSFunction* function = JSFunction::create(vm, globalObject, static_cast<FunctionExecutable*>(functionExecutable), globalObject);
+    JSFunction* function = JSFunction::create(vm, globalObject, code, globalObject);
     putDirectWithoutTransition(vm, propertyName, function, attributes);
     return function;
 }
@@ -4423,7 +4419,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
-        if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+        if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
             return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         ASSERT(!object || !object->structure()->hasImmutableProperties());
 

@@ -53,7 +53,7 @@ public:
 
         // This does not take into account that we might have an strict opcode in a non-strict context, but that's
         // ok since we assert below that this function should never be called from any kind strict context.
-        m_callerIsStrict = visitor->hasCode() && visitor->ownerExecutable()->isInStrictContext();
+        m_callerIsStrict = visitor->isTypedAOTFrame() || (visitor->hasCode() && visitor->ownerExecutable()->isInStrictContext());
         return IterationStatus::Done;
     }
 

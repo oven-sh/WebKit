@@ -664,7 +664,8 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
-        if (visitor->isTailDeleted())
+        // A hidden frame at the very top threw the error itself (an argument that does not fit, say), and stands for its function then.
+        if (visitor->isTailDeleted() || (visitor->index() && visitor->isHiddenAOTFrame()))
             return IterationStatus::Continue;
         if (!visitor->aotFunction() && !visitor->isNativeCalleeFrame() && visitor->callee().isCell() && !*visitor->callFrame()->addressOfCodeBlock()) {
             if (auto* function = dynamicDowncast<JSFunction>(visitor->callee().asCell()); function && !function->isHostOrBuiltinFunction())
@@ -702,6 +703,9 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 }
                 }
 #if ENABLE(AOT)
+            } else if (visitor->isTypedAOTFrame()) {
+                AOT::FunctionRef function = visitor->aotFunction();
+                results.append(StackFrame(vm, owner, AOT::tokenOf(function.instance), function.index, visitor->typedAOTFunction(), visitor->bytecodeIndex()));
             } else if (AOT::FunctionRef function = visitor->aotFunction(); function && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
                 JSCell* callee = visitor->aotCallee();
                 if (callee)
@@ -903,9 +907,26 @@ public:
 #endif
 
 #if ENABLE(AOT)
+    static constexpr bool wantsOnlyHandlers = true;
+
     void didSkipAOTAdapterAtTop(CallFrame* adapter) const
     {
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
+    }
+
+    // An async function throws nothing to its caller. What is thrown while `this` and the arguments are handed over to one that is compiled from types rejects: its frame returns the promise.
+    // The frame is left by a bare epilogue, not by its own: so what it has saved is copied as for any frame that is left, or the caller gets its registers back as the frame left them. What an adapter under it has saved is not: the frame returns into the adapter.
+    bool rejectsInFrame(StackVisitor& visitor, const AOT::FunctionRef& function) const
+    {
+        // Of a frame without handlers the visitor has not found out where it stands: the function of the machine frame says what it is.
+        if (m_isTermination || visitor->isInlinedAOTFrame() || !function.info().isTyped || !AOT::typedFunctionRejectsWhatItThrows(function.info().typedFunction()))
+            return false;
+        m_handler.m_valid = true;
+        m_handler.m_isAOT = true;
+        m_handler.m_type = HandlerType::Catch;
+        m_handler.m_nativeCode = CodePtr<ExceptionHandlerPtrTag>::fromTaggedPtr(AOT::rejectInFrameThunk());
+        m_handler.m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
+        return true;
     }
 #endif
 
@@ -917,7 +938,14 @@ public:
 #if ENABLE(AOT)
         if (AOT::FunctionRef function = visitor->aotFunction()) {
             m_codeBlock = nullptr;
-            if (visitor->isInlinedAOTFrame())
+            if (function.info().hasNoHandlers) {
+                bool rejects = rejectsInFrame(visitor, function);
+                copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
+                return rejects || visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+            }
+            // The handlers of code compiled from types are keyed by the machine call, which the innermost frame has. The numbers that stand
+            // for inlined calls have no handlers.
+            if (visitor->isInlinedAOTFrame() && !visitor->isTypedAOTFrame())
                 return IterationStatus::Continue;
             RELEASE_ASSERT(visitor->bytecodeIndex());
             if (!m_isTermination) {
@@ -925,8 +953,11 @@ public:
                 if (m_handler.m_valid)
                     return IterationStatus::Done;
             }
-            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
-            return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+            if (visitor->isInlinedAOTFrame())
+                return IterationStatus::Continue;
+            bool rejects = rejectsInFrame(visitor, function);
+            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
+            return rejects || visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
         } else
 #endif
             m_codeBlock = visitor->codeBlock();
@@ -1074,6 +1105,15 @@ NEVER_INLINE CatchInfo Interpreter::unwind(VM& vm, CallFrame*& callFrame, Except
     JSRemoteFunction* seenRemoteFunction = nullptr;
     UnwindFunctor functor(vm, callFrame, exception, exceptionValue, codeBlock, catchInfo, seenRemoteFunction);
     StackVisitor::visit<StackVisitor::TerminateIfTopEntryFrameIsEmpty>(callFrame, vm, functor);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (exception->captureIsDeferred()) {
+        if (catchInfo.m_valid)
+            exception->cancelDeferredCapture();
+        else
+            exception->captureDeferredStack(vm);
+    }
+#endif
 
     if (seenRemoteFunction) {
         ASSERT(!vm.isTerminationException(exception));
@@ -1369,6 +1409,45 @@ JSValue Interpreter::executeBoundCall(VM& vm, JSBoundFunction* function, JSCell*
     RELEASE_AND_RETURN(scope, executeCallImpl(vm, targetFunction, callData, boundThis, context, combinedArgs));
 }
 
+#if ENABLE(AOT)
+// See JSFunction::getCallDataInline().
+static ALWAYS_INLINE JSValue callAOTClosure(VM& vm, JSObject* closure, JSGlobalObject* globalObject, JSValue thisValue, JSCell* context, const ArgList& args)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    VMEntryScope entryScope(vm, globalObject);
+    if (!vm.isSafeToRecurseSoft() || args.size() > maxArguments) [[unlikely]]
+        return throwStackOverflowError(globalObject, scope);
+
+    if (vm.disallowVMEntryCount) [[unlikely]]
+        return VM::checkVMEntryPermission();
+
+    scope.release();
+    void* entry = AOT::closureEntrypoint().taggedPtr();
+    switch (args.size()) {
+    case 0:
+        return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, nullptr, closure, thisValue, context));
+    case 1:
+        return JSValue::decode(vmEntryToJavaScriptWith1Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0)));
+    case 2:
+        return JSValue::decode(vmEntryToJavaScriptWith2Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1)));
+    case 3:
+        return JSValue::decode(vmEntryToJavaScriptWith3Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2)));
+    case 4:
+        return JSValue::decode(vmEntryToJavaScriptWith4Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3)));
+    case 5:
+        return JSValue::decode(vmEntryToJavaScriptWith5Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4)));
+    case 6:
+        return JSValue::decode(vmEntryToJavaScriptWith6Arguments(entry, &vm, nullptr, closure, thisValue, context, args.at(0), args.at(1), args.at(2), args.at(3), args.at(4), args.at(5)));
+    default:
+        break;
+    }
+    ProtoCallFrame protoCallFrame;
+    protoCallFrame.init(nullptr, globalObject, closure, thisValue, context, 1 + args.size(), args.data());
+    return JSValue::decode(vmEntryToJavaScript(entry, &vm, &protoCallFrame));
+}
+#endif
+
 ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, const CallData& callData, JSValue thisValue, JSCell* context, const ArgList& args)
 {
     auto clobberizeValidator = makeScopeExit([&] {
@@ -1382,6 +1461,10 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
     bool isJSCall = callData.type == CallData::Type::JS;
+#if ENABLE(AOT)
+    if (isJSCall && !callData.js.functionExecutable)
+        RELEASE_AND_RETURN(scope, callAOTClosure(vm, function, callData.js.scope->realm(), thisValue, context, args));
+#endif
     JSScope* functionScope = nullptr;
     FunctionExecutable* functionExecutable = nullptr;
     TaggedNativeFunction nativeFunction;

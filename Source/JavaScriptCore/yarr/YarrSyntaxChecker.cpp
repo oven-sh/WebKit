@@ -48,6 +48,16 @@ public:
     void NODELETE atomCharacterClassPushNested(bool) { }
     void NODELETE atomCharacterClassPopNested(bool) { }
     void NODELETE atomCharacterClassEnd() { }
+#if USE(BUN_JSC_ADDITIONS)
+    size_t atomCharacterClassSeenBefore(std::span<const uint8_t> rest)
+    {
+        size_t numberOfBytes = 0;
+        if (m_characterClassesByText.find(rest, 0, numberOfBytes))
+            m_summary.isOnlyPatternCharacters = false;
+        return numberOfBytes;
+    }
+    void rememberCharacterClass(std::span<const uint8_t> text) { m_characterClassesByText.add(text, 0, true); }
+#endif
     void NODELETE atomParenthesesSubpatternBegin(bool capture, std::optional<String> groupName = std::nullopt)
     {
         parenthesesBegin();
@@ -84,6 +94,9 @@ private:
     }
 
     unsigned m_parenthesesDepth { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    CharacterClassesByText<bool> m_characterClassesByText;
+#endif
 };
 static_assert(YarrSyntaxCheckable<SyntaxChecker>);
 

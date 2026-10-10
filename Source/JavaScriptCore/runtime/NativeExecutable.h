@@ -90,6 +90,12 @@ public:
     }
 
     JSString* asStringConcurrently() const LIFETIME_BOUND { return m_asString.get(); }
+#if ENABLE(AOT)
+    // The closures of many functions that are compiled ahead of time from types have it, and it has the name and the length of none:
+    // AOT::nameOfTypedClosure().
+    bool isSharedByAOTTypedClosures() const { return m_isSharedByAOTTypedClosures; }
+    void setIsSharedByAOTTypedClosures() { m_isSharedByAOTTypedClosures = true; }
+#endif
     static constexpr ptrdiff_t offsetOfAsString() { return OBJECT_OFFSETOF(NativeExecutable, m_asString); }
 private:
     NativeExecutable(VM&, TaggedNativeFunction, TaggedNativeFunction constructor, ImplementationVisibility);
@@ -101,6 +107,7 @@ private:
     TaggedNativeFunction m_constructor;
 
     unsigned m_implementationVisibility : bitWidthOfImplementationVisibility;
+    unsigned m_isSharedByAOTTypedClosures : 1 { 0 };
     unsigned m_length { 0 };
 
     String m_name;

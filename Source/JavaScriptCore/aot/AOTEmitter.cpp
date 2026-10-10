@@ -44,35 +44,31 @@ void Emitter::orElse(LValue condition, LBasicBlock otherwise)
     m_out.appendTo(next);
 }
 
+// The Instance is there for as long as the code runs.
+static LValue notControlDependent(LValue load)
+{
+    load->as<B3::MemoryValue>()->setControlDependent(false);
+    return load;
+}
+
 LValue Emitter::fixedPointer(ptrdiff_t offset)
 {
-    return m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset));
+    return notControlDependent(m_out.loadPtr(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset)));
 }
 
 LValue Emitter::fixed32(ptrdiff_t offset)
 {
-    return m_out.load32(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset));
+    return notControlDependent(m_out.load32(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset)));
 }
 
 LValue Emitter::changing32(ptrdiff_t offset)
 {
-    return m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset));
+    return notControlDependent(m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset)));
 }
 
 LValue Emitter::structureWithID(LValue structureID)
 {
     return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
-}
-
-LValue Emitter::familyOfStructureWithID(LValue structureID)
-{
-    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfFamilyBase()), m_out.zeroExtPtr(structureID))));
-}
-
-LValue Emitter::departedFamily(unsigned family)
-{
-    RELEASE_ASSERT(Instance::hasByteForFamily(family));
-    return m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfDepartedFamily(family)));
 }
 
 LValue Emitter::fieldIDInSlot(LValue structureID, unsigned slot)
@@ -109,10 +105,65 @@ LValue Emitter::allocateHeapCell(LValue allocator, LBasicBlock slowPath)
     allocation->resultConstraints = { ValueRep::SomeEarlyRegister };
     allocation->clobber(RegisterSet::macroClobberedGPRs());
     allocation->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        // AssemblyHelpers::emitAllocateWithNonNullAllocator(), with what comes behind the bump out of line.
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        CCallHelpers::JumpList outOfSpace;
-        jit.emitAllocateWithNonNullAllocator(params[0].gpr(), JITAllocator::variable(), params[1].gpr(), params.gpScratch(0), outOfSpace, CCallHelpers::SlowAllocationResult::ClearToNull);
-        outOfSpace.link(&jit);
+        GPRReg result = params[0].gpr();
+        GPRReg allocator = params[1].gpr();
+        GPRReg scratch = params.gpScratch(0);
+        if (Options::forceGCSlowPaths()) {
+            jit.move(CCallHelpers::TrustedImmPtr(nullptr), result);
+            return;
+        }
+        constexpr int32_t intervalStart = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart();
+        constexpr int32_t intervalEnd = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalEnd();
+        constexpr int32_t nextInterval = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfNextInterval();
+#if CPU(ARM64)
+        static_assert(intervalEnd - intervalStart == sizeof(uintptr_t));
+        static_assert(nextInterval - intervalEnd == sizeof(uintptr_t));
+        static_assert(FreeList::offsetOfSecret() - FreeList::offsetOfNextInterval() == sizeof(uintptr_t));
+        jit.loadPairPtr(allocator, CCallHelpers::TrustedImm32(intervalStart), result, scratch);
+        CCallHelpers::Jump intervalIsUsedUp = jit.branchPtr(CCallHelpers::AboveOrEqual, result, scratch);
+        CCallHelpers::Label bump = jit.label();
+        jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
+        jit.addPtr(result, scratch);
+        jit.storePtr(scratch, CCallHelpers::Address(allocator, intervalStart));
+#else
+        constexpr int32_t secret = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret();
+        jit.loadPtr(CCallHelpers::Address(allocator, intervalStart), result);
+        CCallHelpers::Jump intervalIsUsedUp = jit.branchPtr(CCallHelpers::AboveOrEqual, result, CCallHelpers::Address(allocator, intervalEnd));
+        CCallHelpers::Label bump = jit.label();
+        jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
+        jit.add64(scratch, CCallHelpers::Address(allocator, intervalStart));
+#endif
+        CCallHelpers::Label done = jit.label();
+        params.addLatePath([=](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            intervalIsUsedUp.link(&jit);
+#if CPU(ARM64)
+            GPRReg temporary = jit.scratchRegister();
+            jit.loadPairPtr(allocator, CCallHelpers::TrustedImm32(nextInterval), result, scratch);
+            CCallHelpers::Jump thereIsNone = jit.branchTestPtr(CCallHelpers::NonZero, result, CCallHelpers::TrustedImm32(1));
+            jit.xor64(CCallHelpers::Address(result, FreeCell::offsetOfScrambledBits()), scratch);
+            jit.addSignExtend64(result, scratch, temporary);
+            jit.addUnsignedRightShift64(result, scratch, CCallHelpers::TrustedImm32(32), scratch);
+            jit.storePairPtr(scratch, temporary, allocator, CCallHelpers::TrustedImm32(intervalEnd));
+#else
+            jit.loadPtr(CCallHelpers::Address(allocator, nextInterval), result);
+            CCallHelpers::Jump thereIsNone = jit.branchTestPtr(CCallHelpers::NonZero, result, CCallHelpers::TrustedImm32(1));
+            jit.load32(CCallHelpers::Address(allocator, secret), scratch);
+            jit.xor32(CCallHelpers::Address(result, FreeCell::offsetOfScrambledBits()), scratch);
+            jit.add64(scratch, CCallHelpers::Address(allocator, nextInterval));
+            jit.load32(CCallHelpers::Address(allocator, secret + 4), scratch);
+            jit.xor32(CCallHelpers::Address(result, FreeCell::offsetOfScrambledBits() + 4), scratch);
+            jit.storePtr(result, CCallHelpers::Address(allocator, intervalStart));
+            jit.addPtr(result, scratch);
+            jit.storePtr(scratch, CCallHelpers::Address(allocator, intervalEnd));
+#endif
+            jit.jump().linkTo(bump, &jit);
+            thereIsNone.link(&jit);
+            jit.move(CCallHelpers::TrustedImm32(0), result);
+            jit.jump().linkTo(done, &jit);
+        });
     });
     orElse(m_out.notNull(allocation), slowPath);
     return allocation;
@@ -169,7 +220,7 @@ void Emitter::mutatorFence()
 {
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
-    m_out.branch(m_out.load8ZeroExt32(m_vm, m_heaps.VM_heap_mutatorShouldBeFenced), rarely(fence), usually(done));
+    m_out.branch(m_out.load8ZeroExt32(vm(), m_heaps.VM_heap_mutatorShouldBeFenced), rarely(fence), usually(done));
     m_out.appendTo(fence, done);
     m_out.fence(&m_heaps.root, nullptr);
     m_out.jump(done);
@@ -294,6 +345,7 @@ LValue Emitter::newMapOrSet(Instance::InlineAllocation kind, LBasicBlock giveUp)
 {
     LValue result = allocateObject(kind, giveUp);
     m_out.storePtr(m_out.intPtrZero, result, kind == Instance::InlineAllocation::Map ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
+    m_out.storePtr(m_out.intPtrZero, result, kind == Instance::InlineAllocation::Map ? m_heaps.JSMap_compactTable : m_heaps.JSSet_compactTable);
     mutatorFence();
     return result;
 }
@@ -622,13 +674,6 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
     return m_out.phi(pointerType(), results);
 }
 
-LValue Emitter::addStrings(LValue first, LValue second, LBasicBlock giveUp)
-{
-    orElse(m_out.bitAnd(isCell(first), isCell(second)), giveUp);
-    orElse(m_out.bitAnd(isCellOfType(first, StringType), isCellOfType(second, StringType)), giveUp);
-    return makeRope(first, second, nullptr, giveUp);
-}
-
 LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
 {
     LBasicBlock smallIntCase = m_out.newBlock();
@@ -899,6 +944,28 @@ void generateHelper(CCallHelpers& jit, Stub stub)
     prepareForGeneration(proc);
     jit.setOopsEmitsBreakpointOnly();
     generate(proc, jit);
+}
+
+LValue Emitter::registerOnEntry(Reg reg)
+{
+    return m_out.m_block->appendNew<ArgumentRegValue>(m_proc, Origin(), reg);
+}
+
+LValue Emitter::structureOf(LValue cell)
+{
+    return structureWithID(m_out.load32(cell, m_heaps.JSCell_structureID));
+}
+
+LValue Emitter::entry(Entry which)
+{
+    LValue result = m_out.loadPtr(m_out.address(m_table, m_heaps.AOTRuntimeTable[static_cast<unsigned>(which)]));
+    static_cast<MemoryValue*>(result)->setReadsMutability(B3::Mutability::Immutable);
+    return result;
+}
+
+LValue Emitter::numberToDouble(LValue value)
+{
+    return m_out.select(isInt32(value), m_out.intToDouble(unboxInt32(value)), unboxDouble(value));
 }
 
 } } // namespace JSC::AOT

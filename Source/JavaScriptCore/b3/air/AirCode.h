@@ -363,6 +363,8 @@ public:
     const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
     void setKeepsFastTmpsFastWhenCoalesced() { m_keepsFastTmpsFastWhenCoalesced = true; }
     bool keepsFastTmpsFastWhenCoalesced() const { return m_keepsFastTmpsFastWhenCoalesced; }
+    void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
+    bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
 #endif
     
     void emitDefaultPrologue(CCallHelpers&);
@@ -400,6 +402,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     RegisterSet m_unsavedCalleeSaves;
     bool m_keepsFastTmpsFastWhenCoalesced { false };
+    bool m_chargesForCalleeSaves { false };
 #endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;

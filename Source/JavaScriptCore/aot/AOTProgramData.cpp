@@ -12,6 +12,7 @@
 #include "AOTOpcodeTraits.h"
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
+#include "AOTTypedThreads.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeStructs.h"
@@ -44,6 +45,53 @@ void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
     }
     bytes.append(static_cast<uint8_t>(value));
 }
+
+// The positions of FunctionMetadata::ExpressionInfo, each relative to the one before. FunctionRef::reportedPositionFor() reads them.
+class PositionEncoder {
+public:
+    explicit PositionEncoder(Vector<uint8_t>& stream)
+        : m_stream(stream)
+    {
+    }
+
+    void append(LineColumn position, uint32_t source)
+    {
+        auto zigZagEncode = [](int64_t value) {
+            return static_cast<uint64_t>(value << 1) ^ static_cast<uint64_t>(value >> 63);
+        };
+        if (position.line == m_line && source == m_source)
+            appendVarint(m_stream, zigZagEncode(static_cast<int64_t>(position.column) - m_column) << 1 | 1);
+        else {
+            appendVarint(m_stream, zigZagEncode(static_cast<int64_t>(position.line) - m_line) << 2 | (source != m_source) << 1);
+            if (source != m_source)
+                appendVarint(m_stream, source);
+            appendVarint(m_stream, position.column);
+        }
+        m_line = position.line;
+        m_column = position.column;
+        m_source = source;
+    }
+
+    // What the next position is relative to.
+    struct State {
+        int64_t line { 0 };
+        int64_t column { 0 };
+        uint32_t source { 0 };
+    };
+    State state() const { return { m_line, m_column, m_source }; }
+    void setState(const State& state)
+    {
+        m_line = state.line;
+        m_column = state.column;
+        m_source = state.source;
+    }
+
+private:
+    Vector<uint8_t>& m_stream;
+    int64_t m_line { 0 };
+    int64_t m_column { 0 };
+    uint32_t m_source { 0 };
+};
 
 struct DynamicallyResolvedNames {
     bool mayBeAnything { false };
@@ -116,6 +164,50 @@ public:
         }).iterator->value;
     }
 
+    // From 1: 0 stands for the module's own source.
+    uint32_t numberOfSource(const UTF8CString& name)
+    {
+        return m_sources.ensure(name, [&] {
+            m_sourceNames.append(name);
+            return static_cast<uint32_t>(m_sourceNames.size());
+        }).iterator->value;
+    }
+
+    // The same stream for a function compiled from types, without the steps: the offsets are call-site numbers, and every one of them has an entry.
+    // Each is relative to the last one of the same inline frame: the sites stand in the order of the code, where copied bodies lie interleaved.
+    // Which frame a number is in is not written again: see FramesOfSites, which has nothing to go by if no site has code.
+    static Vector<uint8_t> typedPositionsOf(const FunctionReportableSites& sites, std::span<const uint32_t> numbersOfSources)
+    {
+        RELEASE_ASSERT(!sites.typedPositions.isEmpty());
+        Vector<uint8_t> stream;
+        appendVarint(stream, sites.typedPositions[0].line);
+        appendVarint(stream, sites.typedPositions[0].column);
+        appendVarint(stream, sites.typedPositions.size());
+        PositionEncoder encoder(stream);
+        bool hasSitesWithCode = sites.typedPositions.size() > 1 + sites.numberOfSitesWithoutCode;
+        Vector<PositionEncoder::State, 8> states;
+        for (unsigned site = 0; site < sites.typedPositions.size(); ++site) {
+            auto& position = sites.typedPositions[site];
+            uint32_t frame = hasSitesWithCode ? position.frame : 0;
+            if (frame >= states.size())
+                states.grow(frame + 1);
+            encoder.setState(states[frame]);
+            encoder.append({ position.line, position.column }, numbersOfSources[position.source]);
+            states[frame] = encoder.state();
+        }
+        return stream;
+    }
+
+    // They are listed in the order the positions of the function first name them.
+    Vector<uint32_t, 2> numbersOfSourcesOf(uint32_t function)
+    {
+        return WTF::map<2>(m_reportableSites[function].typedSourceNames, [&](const UTF8CString& name) {
+            return numberOfSource(name);
+        });
+    }
+
+    const FunctionReportableSites& reportableSitesOf(uint32_t function) const { return m_reportableSites[function]; }
+
     uint32_t makePositions(uint32_t index, UnlinkedCodeBlock* codeBlock, unsigned sourceOffset, LineStartTable& lineStarts)
     {
         Vector<uint8_t> stream;
@@ -139,34 +231,16 @@ public:
         appendVarint(stream, start.column);
         appendVarint(stream, offsets.size());
         uint32_t previousOffset = 0;
-        int64_t previousLine = 0;
-        int64_t previousColumn = 0;
-        uint32_t previousSource = 0;
-        auto zigZagEncode = [](int64_t value) {
-            return static_cast<uint64_t>(value << 1) ^ static_cast<uint64_t>(value >> 63);
-        };
+        PositionEncoder encoder(stream);
         auto appendPosition = [&](LineColumn inModule) {
             UTF8CString name;
             LineColumn position = inModule;
             uint32_t source = 0;
-            if (m_positions.find(m_moduleEntryOffset, inModule, name, position)) {
-                source = m_sources.ensure(name, [&] {
-                    m_sourceNames.append(name);
-                    return static_cast<uint32_t>(m_sourceNames.size());
-                }).iterator->value;
-            } else
+            if (m_positions.find(m_moduleEntryOffset, inModule, name, position))
+                source = numberOfSource(name);
+            else
                 position = inModule;
-            if (position.line == previousLine && source == previousSource)
-                appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.column) - previousColumn) << 1 | 1);
-            else {
-                appendVarint(stream, zigZagEncode(static_cast<int64_t>(position.line) - previousLine) << 2 | (source != previousSource) << 1);
-                if (source != previousSource)
-                    appendVarint(stream, source);
-                appendVarint(stream, position.column);
-            }
-            previousLine = position.line;
-            previousColumn = position.column;
-            previousSource = source;
+            encoder.append(position, source);
         };
         size_t nextConstruction = 0;
         for (uint32_t offset : offsets) {
@@ -380,19 +454,24 @@ public:
         }
     }
 
-    void fillTypedInfo(const ImageView::Function& function)
+    void fillTypedInfo(const ImageView::Function& function, const Vector<uint8_t>& positions)
     {
         FunctionInfo& info = m_infos[function.index];
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
-        info.set(0, CodeSpecializationKind::CodeForCall, FunctionCode);
         info.calleeStart = function.calleeStart;
+        info.hasInlineFrames = function.hasInlineFrames;
         info.flags = FunctionInfo::sitesHaveInlineConstants | (function.startsCold ? FunctionInfo::startsCold : 0) | FunctionInfo::encodeSlotCountInFlags(function.numSlots);
-        Vector<uint32_t, 3> words { FunctionMetadata::isBuiltinFunction };
+        auto& sites = m_reportableSites[function.index];
+        info.setTyped(sites.typedFunction);
+        // The sections follow in the order of their bits.
+        Vector<uint32_t, 4> words { FunctionMetadata::ExpressionInfo };
+        words.append(append(positions.span(), 2));
         if (auto handlers = typedExceptionHandlers(function.index); !handlers.isEmpty()) {
             words[0] |= FunctionMetadata::Handlers;
             words.append(append(handlers));
             words.append(handlers.size());
-        }
+        } else
+            info.hasNoHandlers = true;
         m_functionMetadataOffsets[function.index] = append(words);
     }
 
@@ -401,6 +480,7 @@ public:
         fillInfo(function, codeBlock, nullptr, invalidExecutableIndex, CodeSpecializationKind::CodeForCall, lineStarts);
         FunctionInfo& info = m_infos[function.index];
         info.set(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, codeBlock->codeType());
+        info.isHiddenInStackTraces = m_reportableSites[function.index].typedFunction != FunctionReportableSites::notTyped;
     }
 
     void makeExecutables(UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleIndex, LineStartTable& lineStarts, UnlinkedFunctionExecutable* only = nullptr)
@@ -865,14 +945,33 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         header.numberOfEngineBuiltins = engineBuiltinModules.size();
     }
     Vector<uint64_t> typedEntries;
-    for (auto& key : image->keys()) {
-        if (!key.record || key.kind == std::numeric_limits<uint32_t>::max() || !(key.kind & ImageKey::typedFunction))
-            continue;
-        if (auto function = image->find(key)) {
-            builder.fillTypedInfo(*function);
+    auto keys = image->keys();
+    Vector<std::optional<ImageView::Function>> typedFunctions(keys.size());
+    Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
+        auto& key = keys[i];
+        if (key.record && key.kind != std::numeric_limits<uint32_t>::max() && key.kind & ImageKey::typedFunction)
+            typedFunctions[i] = image->find(key);
+    });
+    Vector<Vector<uint32_t, 2>> numbersOfSources(keys.size());
+    for (size_t i = 0; i < keys.size(); ++i) {
+        if (typedFunctions[i])
+            numbersOfSources[i] = builder.numbersOfSourcesOf(typedFunctions[i]->index);
+    }
+    Vector<Vector<uint8_t>> typedPositions(keys.size());
+    Typed::forEachIndexInParallel(keys.size(), [&](unsigned i) {
+        if (typedFunctions[i])
+            typedPositions[i] = Builder::typedPositionsOf(builder.reportableSitesOf(typedFunctions[i]->index), numbersOfSources[i].span());
+    });
+    for (size_t i = 0; i < keys.size(); ++i) {
+        auto& key = keys[i];
+        if (auto& function = typedFunctions[i]) {
+            builder.fillTypedInfo(*function, typedPositions[i]);
+            // A continuation: only its function enters it.
+            if (key.kind != ImageKey::typedFunction)
+                continue;
             while (typedEntries.size() <= key.start)
                 typedEntries.append(0);
-            typedEntries[key.start] = function->entry;
+            typedEntries[key.start] = closureWordOfTypedFunction(codeImage, key.start, function->entry);
         }
     }
     while (builder.m_out.size() % sizeof(uint64_t))
@@ -902,7 +1001,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     }
     if (image->keysAreOmitted()) {
         auto isLookedUp = [&](const ImageKey& key) {
-            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !builder.m_infos[image->functionIndexWith(key)].hasExecutable();
+            // What is compiled from types is reached by its number: see imageKeyFor().
+            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !(key.kind & (ImageKey::typedBody | ImageKey::typedFunction)) && !builder.m_infos[image->functionIndexWith(key)].hasExecutable();
         };
         size_t count = 0;
         for (auto& key : image->keys())
@@ -1071,6 +1171,7 @@ VMProgram::VMProgram(VM& vm)
 
 VMProgram::~VMProgram()
 {
+    Typed::destroy(typedFunctionTables);
     for (uint32_t index : m_impl->materializedIdentifierCount)
         m_identifiers[index]->deref();
     fastFree(m_constantValues);
@@ -1266,13 +1367,8 @@ SourceProvider* VMProgram::moduleProvider(uint32_t moduleIndex)
     RefPtr<SourceProvider>& provider = m_impl->providers[moduleIndex];
     if (!provider) {
         const ProgramModule& module = m_data.modules()[moduleIndex];
-        RELEASE_ASSERT(module.isBuiltinFunction);
-        String text;
-        if (BuiltinExecutables::isStamp(module.keyHash))
-            text = StringImpl::createWithoutCopying(BuiltinExecutables::textOf(module.keyHash & 0xffff));
-        provider = StringSourceProvider::create(text, SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
-        if (text.isNull())
-            provider->setHasNoSourceText();
+        RELEASE_ASSERT(module.isBuiltinFunction && BuiltinExecutables::isStamp(module.keyHash));
+        provider = StringSourceProvider::create(StringImpl::createWithoutCopying(BuiltinExecutables::textOf(module.keyHash & 0xffff)), SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
         provider->setAOTModuleID(module.entryOffset + 1);
     }
     return provider.get();
@@ -1312,21 +1408,6 @@ FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
         chunk = static_cast<FunctionExecutable**>(fastZeroedMalloc(executablesPerChunk * sizeof(FunctionExecutable*)));
     chunk[executableIndex % executablesPerChunk] = result;
     return result;
-}
-
-FunctionExecutable* VMProgram::builtinFunctionFor(uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin& sourceOrigin, const String& sourceURL)
-{
-    if (BytecodeOrderRecorder::ofVM(m_vm))
-        return nullptr;
-    const ProgramModule* module = m_data.moduleWithEntryOffset(entryOffset);
-    if (!module || !module->isBuiltinFunction || !module->hasExecutable() || module->keyHash != embedderStamp || module->keyLength != text.length())
-        return nullptr;
-    RefPtr<SourceProvider>& provider = m_impl->providers[module - m_data.modules().data()];
-    if (!provider) {
-        provider = StringSourceProvider::create(text, sourceOrigin, String { sourceURL }, SourceTaintedOrigin::Untainted);
-        provider->setAOTModuleID(entryOffset + 1);
-    }
-    return executable(module->executableIndex);
 }
 
 FunctionExecutable* VMProgram::engineBuiltinFor(unsigned index, std::span<const Latin1Character> text)

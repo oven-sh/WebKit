@@ -208,11 +208,30 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Call
 #endif
 }
 
+#if ENABLE(AOT)
+inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor, bool leavesAdapter) const
+#else
 inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor& visitor) const
+#endif
 {
+#if ENABLE(AOT) && ENABLE(ASSEMBLER)
+    if (const AOT::ImageFunction* function = visitor->compiledFunctionForUnwinding()) {
+        AOT::SavedRegisters saved = AOT::savedRegistersOf(*function);
+        auto dontCopyRegisters = RegisterSet::stackRegisters();
+        const CPURegister* slot = reinterpret_cast<const CPURegister*>(visitor->callFrame()->registers()) + saved.first;
+        for (uint64_t mask = saved.mask; mask; mask &= mask - 1, ++slot) {
+            unsigned index = WTF::ctz(mask);
+            if (dontCopyRegisters.contains(Reg::fromIndex(index), IgnoreVectors))
+                continue;
+            int8_t bufferSlot = m_vmCalleeSaveBufferSlotsByRegIndex[index];
+            RELEASE_ASSERT(bufferSlot >= 0);
+            m_vmEntryRecord->calleeSaveRegistersBuffer[bufferSlot] = *slot;
+        }
+    } else
+#endif
     copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
 #if ENABLE(AOT)
-    if (CallFrame* adapter = visitor->aotAdapterFrame())
+    if (CallFrame* adapter = leavesAdapter ? visitor->aotAdapterFrame() : nullptr)
         copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
 #endif
 }

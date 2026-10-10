@@ -110,8 +110,11 @@ static std::optional<typename Table::TableIndex> findSubstring(JSGlobalObject* g
     using Helper = typename Table::Helper;
     if (!key.isString() || !asString(key)->isSubstring())
         return std::nullopt;
-    if (!table->storage())
+    if (!table->m_storage) {
+        if (table->m_compactTable)
+            return std::nullopt;
         return Helper::InvalidTableIndex;
+    }
     JSString* string = asString(key);
     auto& storage = table->storageRef();
     auto characters = string->view(globalObject);

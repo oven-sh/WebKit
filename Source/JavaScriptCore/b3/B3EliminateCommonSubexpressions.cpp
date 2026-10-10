@@ -215,6 +215,15 @@ public:
         m_dominators = &m_proc.dominators();
         m_impureBlockData = IndexMap<BasicBlock*, ImpureBlockData>(m_proc.size());
         m_ssa = makeUnique<SSACalculator>(m_proc);
+        m_hasIndex = m_proc.size() > minBlocksForIndex;
+        if (m_hasIndex) {
+            for (BasicBlock* block : m_proc) {
+                if (!block->numSuccessors())
+                    m_blocksThatReachAnExit.push(block);
+            }
+            while (BasicBlock* block = m_blocksThatReachAnExit.pop())
+                m_blocksThatReachAnExit.pushAll(block->predecessors());
+        }
 
         // Summarize the impure effects of each block, and the impure values available at the end of
         // each block. This doesn't edit code yet.
@@ -237,8 +246,10 @@ public:
                     clobber(data, writes);
                 data.fence |= effects.fence;
 
-                if (memory)
+                if (memory) {
                     data.memoryValuesAtTail.add(memory);
+                    didAddMemoryValue(block, memory);
+                }
                 if (WasmAddressValue* wasmAddress = value->as<WasmAddressValue>())
                     data.m_candidateWasmAddressesAtTail.add(wasmAddress->child(0), wasmAddress);
 
@@ -680,12 +691,64 @@ private:
         }
 
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
+        didAddMemoryValue(m_block, m_value->as<MemoryValue>());
+    }
+
+    // Bun: by pointer and offset, the blocks that have ever had such a value in one of their maps, and the one store there is. Nothing is
+    // taken out, so this is a superset of what a search beyond the block at hand can find. Without it a search that finds nothing visits
+    // every block up to the root, or down to the exits, which is quadratic in the size of the procedure.
+    using MemoryKey = std::pair<Value*, int64_t>;
+
+    void didAddMemoryValue(BasicBlock* block, MemoryValue* memory)
+    {
+        if (!m_hasIndex)
+            return;
+        MemoryKey key { memory->lastChild(), memory->offset() };
+        auto& blocks = m_blocksWithMemoryValue.add(key, Vector<BasicBlock*, 2>()).iterator->value;
+        if (blocks.size() <= maxBlocksListed && !blocks.contains(block))
+            blocks.append(block);
+        if (!memory->isStore())
+            return;
+        auto result = m_storeWithKey.add(key, memory);
+        if (!result.isNewEntry && result.iterator->value != memory)
+            result.iterator->value = nullptr;
+    }
+
+    // Bun: matches come back only if they cut every path from the root to this block. On a simple one, no block is dominated by this block.
+    template<typename Filter>
+    bool mayFindMemoryValueInAnotherBlock(Value* ptr, int64_t offset, NOESCAPE const Filter& filter)
+    {
+        if (!m_hasIndex)
+            return true;
+        auto iter = m_blocksWithMemoryValue.find(MemoryKey { ptr, offset });
+        if (iter == m_blocksWithMemoryValue.end())
+            return false;
+        if (iter->value.size() > maxBlocksListed)
+            return true;
+        return iter->value.containsIf([&](BasicBlock* block) {
+            if (m_dominators->dominates(m_block, block))
+                return false;
+            MemoryValue* match = m_impureBlockData[block].memoryValuesAtTail.find(ptr, offset, filter);
+            return match && match != m_value;
+        });
+    }
+
+    // Bun: with no other store to find, the search says no at the first block that has no successors, if it gets that far.
+    bool mayFindAnotherStore(Value* ptr, int64_t offset)
+    {
+        if (!m_hasIndex || !m_blocksThatReachAnExit.saw(m_block))
+            return true;
+        auto iter = m_storeWithKey.find(MemoryKey { ptr, offset });
+        return iter != m_storeWithKey.end() && iter->value != m_value;
     }
 
     template<typename Filter>
     bool findStoreAfterClobber(Value* ptr, HeapRange range, NOESCAPE const Filter& filter)
     {
         if (m_value->as<MemoryValue>()->hasFence())
+            return false;
+
+        if (!mayFindAnotherStore(ptr, m_value->as<MemoryValue>()->offset()))
             return false;
         
         // We can eliminate a store if every forward path hits a store to the same location before
@@ -717,7 +780,14 @@ private:
         BlockWorklist worklist;
         worklist.pushAll(m_block->successorBlocks());
 
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned blocksSearched = 0;
+#endif
         while (BasicBlock* block = worklist.pop()) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (++blocksSearched > maxBlocksToSearch)
+                return false;
+#endif
             ImpureBlockData& data = m_impureBlockData[block];
 
             MemoryValue* match = data.memoryStoresAtHead.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
@@ -745,6 +815,7 @@ private:
         if (replaceMemoryValue(matches, replace))
             return;
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
+        didAddMemoryValue(m_block, m_value->as<MemoryValue>());
     }
 
     template<typename Replace>
@@ -827,6 +898,9 @@ private:
             return { };
         }
 
+        if (!mayFindMemoryValueInAnotherBlock(ptr, m_value->as<MemoryValue>()->offset(), filter))
+            return { };
+
         BlockWorklist worklist;
         worklist.pushAll(m_block->predecessors());
 
@@ -834,8 +908,15 @@ private:
         constexpr unsigned maxBlocksWithWritesToSearch = 64;
         unsigned blocksWithWritesSearched = 0;
 
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned blocksSearched = 0;
+#endif
         while (BasicBlock* block = worklist.pop()) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Looking at ", *block);
+#if USE(BUN_JSC_ADDITIONS)
+            if (++blocksSearched > maxBlocksToSearch)
+                return { };
+#endif
 
             ImpureBlockData& data = m_impureBlockData[block];
 
@@ -927,6 +1008,19 @@ private:
     PureCSE m_pureCSE;
 
     IndexMap<BasicBlock*, ImpureBlockData> m_impureBlockData;
+
+#if USE(BUN_JSC_ADDITIONS)
+    // A search for a memory value gives up beyond so many blocks. That keeps the phase linear in the size of the procedure.
+    static constexpr unsigned maxBlocksToSearch = 1024;
+#endif
+    static constexpr unsigned minBlocksForIndex = 64;
+    static constexpr unsigned maxBlocksListed = 4;
+    bool m_hasIndex { false };
+    // One more than maxBlocksListed: there are more.
+    UncheckedKeyHashMap<MemoryKey, Vector<BasicBlock*, 2>> m_blocksWithMemoryValue;
+    // Null: there are several.
+    UncheckedKeyHashMap<MemoryKey, MemoryValue*> m_storeWithKey;
+    BlockWorklist m_blocksThatReachAnExit;
 
     ImpureBlockData m_data;
 

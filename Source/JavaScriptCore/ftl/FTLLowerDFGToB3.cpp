@@ -20735,6 +20735,9 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue object = allocateObject<JSMap>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSMap_storage);
+#if ENABLE(AOT)
+        m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSMap_compactTable);
+#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);
@@ -20756,6 +20759,9 @@ IGNORE_CLANG_WARNINGS_END
 
         LValue object = allocateObject<JSSet>(m_node->structure(), m_out.intPtrZero, slowCase);
         m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSSet_storage);
+#if ENABLE(AOT)
+        m_out.storePtr(m_out.constIntPtr(0), object, m_heaps.JSSet_compactTable);
+#endif
         mutatorFence();
         ValueFromBlock fastResult = m_out.anchor(object);
         m_out.jump(continuation);

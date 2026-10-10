@@ -44,12 +44,16 @@
 #include "B3LowerMacrosAfterOptimizations.h"
 #include "B3LowerToAir.h"
 #include "B3MoveConstants.h"
+#include "B3NaturalLoops.h"
 #include "B3OptimizeAssociativeExpressionTrees.h"
 #include "B3Procedure.h"
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
+#include "B3RotateLoops.h"
+#include "B3StripMineLoops.h"
 #include "B3SpecializeSelect.h"
 #include "B3Validate.h"
+#include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
 
 namespace JSC { namespace B3 {
@@ -88,7 +92,7 @@ void generateToAir(Procedure& procedure)
         if (Options::useB3SpecializeSelect())
             specializeSelect(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Initial);
-        if (Options::useB3HoistLoopInvariantValues())
+        if (Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues() && !procedure.rotatesLoops())
             hoistLoopInvariantValues(procedure);
         eliminateCommonSubexpressions(procedure);
         eliminateDeadCode(procedure);
@@ -98,6 +102,13 @@ void generateToAir(Procedure& procedure)
         // In JS, switch can involve variables (non-constant values) and bytecode can fail
         // to be in op_switch. Thus after FTL with type speculation & constant folding,
         // we can infer a switch from if-else chain.
+#if USE(BUN_JSC_ADDITIONS)
+        // A later test that repeats one of a chain shares its comparison, and a comparison with two users is not taken into a switch. The chain decides that test, and what hangs on its other outcome goes.
+        if (procedure.positionIndependent()) {
+            foldPathConstants(procedure);
+            simplifyTerminals(procedure);
+        }
+#endif
         if (!procedure.isWasm())
             inferSwitches(procedure);
 
@@ -105,6 +116,31 @@ void generateToAir(Procedure& procedure)
             duplicateTails(procedure);
         fixSSA(procedure);
         foldPathConstants(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+        // By now a test in the body that repeats the loop test is decided. Behind the rotation it would no longer be seen to repeat it.
+        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops()) {
+            bool hoists = Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues();
+            simplifyTerminals(procedure);
+            if (hoists)
+                hoistLoopInvariantValues(procedure);
+            if (rotateLoops(procedure)) {
+                fixSSA(procedure);
+                if (hoists)
+                    hoistLoopInvariantValues(procedure);
+                eliminateCommonSubexpressions(procedure);
+                // The rotation has made two of what the loop test tests on its way: the one in front of the loop decides the one at its end.
+                foldPathConstants(procedure);
+                simplifyTerminals(procedure);
+                eliminateDeadCode(procedure);
+            }
+            if (hoists && versionLoops(procedure)) {
+                fixSSA(procedure);
+                eliminateDeadCode(procedure);
+            }
+            if (stripMineLoops(procedure) && hoists)
+                hoistLoopInvariantValues(procedure);
+        }
+#endif
         if (procedure.usesWasmGCStructAllocations() && Options::useB3EliminateWasmGCAllocations())
             eliminateWasmGCAllocations(procedure);
         // FIXME: Add more optimizations here.
@@ -127,6 +163,10 @@ void generateToAir(Procedure& procedure)
         // https://bugs.webkit.org/show_bug.cgi?id=150507
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (auto* phase = procedure.lastPhase())
+        phase->run(procedure);
+#endif
     lowerMacrosAfterOptimizations(procedure);
     legalizeMemoryOffsets(procedure);
     moveConstants(procedure);

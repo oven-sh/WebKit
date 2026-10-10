@@ -56,7 +56,6 @@ enum class StubIntrinsic : uint8_t {
     NumberOfStubIntrinsics
 };
 static constexpr unsigned numberOfStubIntrinsics = static_cast<unsigned>(StubIntrinsic::NumberOfStubIntrinsics) - 1;
-StubIntrinsic stubIntrinsicFor(UniquedStringImpl* name, unsigned argumentCountIncludingThis, bool usesResult);
 
 static constexpr ptrdiff_t offsetOfInstanceRegisterInAdapter = -24;
 static constexpr ptrdiff_t offsetOfNumberTagRegisterInAdapter = -16;
@@ -120,7 +119,6 @@ static constexpr unsigned codeGranuleShift = 10;
     v(HelperAddStrings) \
 
 #define FOR_EACH_AOT_STUB(v) \
-    v(Prologue) \
     v(ReturnFromCallWithList) \
     v(Call) \
     v(Construct) \
@@ -138,7 +136,13 @@ static constexpr unsigned codeGranuleShift = 10;
     v(Enter) \
     v(EnterModule) \
     v(EnterClosure) \
-    v(CallClosure) \
+    v(EnterResume) \
+    v(CallValue) \
+    v(CallMethod) \
+    v(CallMethodRead) \
+    v(ApplyArray) \
+    v(SpreadArray) \
+    v(ConstructClosure) \
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
     v(EnterStaticFunctionForCall) \
@@ -165,14 +169,101 @@ static constexpr unsigned codeGranuleShift = 10;
     v(OperationValueWithInstance) \
     v(OperationVoidWithInstance) \
     v(OperationDoubleWithInstance) \
+    v(ThrowAtSite) \
+    v(LeafThrowAtSite) \
+    v(ThrowAtFault) \
+    v(LeafThrowAtFault) \
     v(ColdOperationVoid) \
     v(LeafColdOperationVoid) \
+    v(ColdOperationVoidWithoutFPRs) \
+    v(LeafColdOperationVoidWithoutFPRs) \
     v(ColdOperationValue) \
     v(LeafColdOperationValue) \
+    v(ColdOperationValueWithoutFPRs) \
+    v(LeafColdOperationValueWithoutFPRs) \
+    v(ColdPlainOperation) \
+    v(LeafColdPlainOperation) \
+    v(ColdPlainOperationWithoutFPRs) \
+    v(LeafColdPlainOperationWithoutFPRs) \
+    v(ColdPlainOperationWithoutInstance) \
+    v(LeafColdPlainOperationWithoutInstance) \
+    v(ColdPlainOperationDouble) \
+    v(LeafColdPlainOperationDouble) \
+    v(ColdPlainOperationDoubleWithoutInstance) \
+    v(LeafColdPlainOperationDoubleWithoutInstance) \
+    v(ColdOperationDouble) \
+    v(LeafColdOperationDouble) \
+    v(ColdCallFunction) \
+    v(LeafColdCallFunction) \
     v(PlainOperation) \
     v(PlainOperationWithGlobalObject) \
     v(PlainOperationWithInstance) \
     v(PlainOperationWithVM) \
+    v(DidCreateTypedField) \
+    v(LeafDidCreateTypedField) \
+    v(PutPropertiesWithStorage) \
+    v(RememberElement) \
+    v(LeafRememberElement) \
+    v(AllocateTypedCell) \
+    v(LeafAllocateTypedCell) \
+    v(AllocateTypedObject) \
+    v(LeafAllocateTypedObject) \
+    v(AllocateTypedObjectFromTemplate) \
+    v(LeafAllocateTypedObjectFromTemplate) \
+    v(NewTypedClosure0) \
+    v(LeafNewTypedClosure0) \
+    v(NewTypedClosure1) \
+    v(LeafNewTypedClosure1) \
+    v(NewTypedClosure2) \
+    v(LeafNewTypedClosure2) \
+    v(NewTypedClosure3) \
+    v(LeafNewTypedClosure3) \
+    v(NewTypedClosure4) \
+    v(LeafNewTypedClosure4) \
+    v(TypedString) \
+    v(LeafTypedString) \
+    v(StringIsText) \
+    v(LeafStringIsText) \
+    v(StringStartsWithText) \
+    v(LeafStringStartsWithText) \
+    v(StringEndsWithText) \
+    v(LeafStringEndsWithText) \
+    v(StringsAreEqual) \
+    v(LeafStringsAreEqual) \
+    v(TypedClosure) \
+    v(LeafTypedClosure) \
+    v(TypedBuiltinCell) \
+    v(LeafTypedBuiltinCell) \
+    v(TypedClosureEntry) \
+    v(LeafTypedClosureEntry) \
+    v(ArrayLiteral0) \
+    v(LeafArrayLiteral0) \
+    v(ArrayLiteral1) \
+    v(LeafArrayLiteral1) \
+    v(ArrayLiteral2) \
+    v(LeafArrayLiteral2) \
+    v(ArrayLiteral3) \
+    v(LeafArrayLiteral3) \
+    v(ArrayLiteral4) \
+    v(LeafArrayLiteral4) \
+    v(ArrayOfDoubles) \
+    v(LeafArrayOfDoubles) \
+    v(ArrayOfInt32s) \
+    v(LeafArrayOfInt32s) \
+    v(EmptyArrayOfDoubles) \
+    v(LeafEmptyArrayOfDoubles) \
+    v(EmptyArrayOfInt32s) \
+    v(LeafEmptyArrayOfInt32s) \
+    v(EmptyArrayOfDoublesWithRoomFor1) \
+    v(LeafEmptyArrayOfDoublesWithRoomFor1) \
+    v(EmptyArrayOfDoublesWithRoomFor3) \
+    v(LeafEmptyArrayOfDoublesWithRoomFor3) \
+    v(EmptyArrayWithRoomFor1) \
+    v(LeafEmptyArrayWithRoomFor1) \
+    v(EmptyArrayWithRoomFor3) \
+    v(LeafEmptyArrayWithRoomFor3) \
+    v(PushToFullVector) \
+    v(LeafPushToFullVector) \
     v(WriteBarrier) \
     v(ToBoolean) \
     v(StrictEqual) \
@@ -194,6 +285,20 @@ static constexpr unsigned codeGranuleShift = 10;
     v(LessEq) \
     v(Greater) \
     v(GreaterEq) \
+    v(AddBehindInt32Test) \
+    v(SubBehindInt32Test) \
+    v(MulBehindInt32Test) \
+    v(DivBehindInt32Test) \
+    v(BitAndBehindInt32Test) \
+    v(BitOrBehindInt32Test) \
+    v(BitXorBehindInt32Test) \
+    v(LShiftBehindInt32Test) \
+    v(RShiftBehindInt32Test) \
+    v(URShiftBehindInt32Test) \
+    v(LessBehindInt32Test) \
+    v(LessEqBehindInt32Test) \
+    v(GreaterBehindInt32Test) \
+    v(GreaterEqBehindInt32Test) \
     v(GetByValAtIndex) \
     v(GetByVal) \
     v(PutByValAtIndex) \
@@ -240,6 +345,15 @@ static constexpr unsigned codeGranuleShift = 10;
     v(PutPrivateName) \
     v(DefinePrivateName) \
     v(SetPrivateBrand) \
+    v(DefineOwnProperty) \
+    v(GetByValCached) \
+    v(PutByValCached) \
+    v(PrivateGet) \
+    v(PrivateSet) \
+    v(PrivateHas) \
+    v(PrivateFieldAdd) \
+    v(InByValCached) \
+    v(DeleteByValCached) \
     v(ResolveScope) \
     v(GetFromScope) \
     v(PutToScope) \
@@ -254,6 +368,8 @@ static constexpr unsigned codeGranuleShift = 10;
     v(MapSet) \
     v(SetHas) \
     v(SetAdd) \
+    v(MapDelete) \
+    v(SetDelete) \
     v(WeakMapGet) \
     v(WeakMapHas) \
     v(WeakSetHas) \
@@ -266,6 +382,7 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ThrowStackOverflow) \
     v(ThrowCalledIndirectly) \
     v(Catch) \
+    v(RejectInFrame) \
     v(VirtualCall) \
     v(VirtualConstruct) \
     v(VirtualTailCall) \
@@ -302,12 +419,14 @@ static constexpr unsigned codeGranuleShift = 10;
     v(ObjectKeysObjectWithFastPath) \
     v(ValueAddWithFastPath) \
     v(StrcatWithFastPath) \
+    v(NewObjectLiteral0) \
     v(NewObjectLiteral1) \
     v(NewObjectLiteral2) \
     v(NewObjectLiteral3) \
     v(NewObjectLiteral4) \
     v(NewObjectLiteral5) \
     v(NewObjectLiteral6) \
+    v(CreateThisByNewTarget) \
     v(NewArrayLiteral1) \
     v(NewArrayLiteral2) \
     v(NewArrayLiteral3) \
@@ -329,6 +448,11 @@ static constexpr unsigned shortLiteralLengthBits = 4;
 static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits) - 1;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegisters <= 4);
+// For code compiled from types. Each is followed by its variant for a caller without a frame.
+// What Stub::ArrayOfDoubles and Stub::ArrayOfInt32s are handed: the length, and above it the capacity, which is odd.
+static constexpr unsigned capacityShiftInArrayOfNumbers = 8;
+static constexpr unsigned maxCapacityOfArrayOfNumbers = 127;
+static constexpr Stub arrayLiteralStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayLiteral0) + 2 * count); }
 static constexpr Stub newObjectLiteralStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectLiteral1) + count - 1); }
 static constexpr Stub newArrayLiteralStub(unsigned count, bool areInt32) { return static_cast<Stub>(static_cast<unsigned>(areInt32 ? Stub::NewInt32ArrayLiteral1 : Stub::NewArrayLiteral1) + count - 1); }
 
@@ -362,7 +486,6 @@ struct KnownShape {
     uint16_t reserved { 0 };
     uint16_t inlineSlots { 0 };
     uint16_t family { 0 };
-    bool hasSlotsOutside() const { return layoutID && numberOfSlots() > inlineSlots; }
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
     static constexpr unsigned maxProperties = 4096;
@@ -408,15 +531,12 @@ struct StubCall {
 
 std::optional<unsigned> thunkFor(Stub, uint32_t t9Value);
 
-bool acceptsOperandInAnyRegister(Stub, std::optional<uint32_t> t9Value);
 GPRReg defaultOperandRegister(Stub);
 bool operandAllowedInRegister(Stub, GPRReg);
 bool preservesOperandRegister(Stub);
 std::optional<RegisterSet> registersChangedBy(Stub);
 void dumpRegistersChangedByStubs(PrintStream&);
 unsigned thunkForOperandRegister(Stub, std::optional<uint32_t> t9Value, GPRReg);
-bool acceptsTwoOperandsInAnyRegisters(Stub);
-bool returnsResultInAnyRegister(Stub, std::optional<uint32_t> t9Value);
 
 struct StubBlob {
     Vector<uint8_t> bytes;
@@ -507,9 +627,6 @@ class StubCalls {
 public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite);
-    void callWithOperandInRegister(CCallHelpers&, Stub, std::optional<uint32_t> t9Value, GPRReg, CallSite);
-    void callWithOperandsInRegisters(CCallHelpers&, Stub, GPRReg first, GPRReg second, CallSite);
-    void callWithResultInRegister(CCallHelpers&, Stub, uint32_t t9Value, GPRReg operand, GPRReg result, CallSite);
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t t9Value);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);
@@ -530,10 +647,12 @@ private:
 
 void retargetStubCall(uint8_t* base, size_t instruction, size_t target, bool isTailCall);
 #if CPU(X86_64)
+static constexpr size_t sizeOfJump = 5;
 static constexpr size_t sizeOfNearCall = 5;
 static constexpr size_t codeOffsetUnit = 1;
 static constexpr size_t stubCallReach = 1536 * MB;
 #else
+static constexpr size_t sizeOfJump = sizeof(uint32_t);
 static constexpr size_t sizeOfNearCall = sizeof(uint32_t);
 static constexpr size_t codeOffsetUnit = sizeof(uint32_t);
 static constexpr size_t stubCallReach = 96 * MB;

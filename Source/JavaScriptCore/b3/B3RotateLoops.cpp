@@ -1,0 +1,226 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "B3RotateLoops.h"
+
+#if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
+
+#include "B3BasicBlockInlines.h"
+#include "B3FixSSA.h"
+#include "B3LoopUtilities.h"
+#include "B3NaturalLoops.h"
+#include "B3PhaseScope.h"
+#include "B3ProcedureInlines.h"
+#include <wtf/IndexSet.h>
+
+namespace JSC { namespace B3 {
+
+namespace {
+
+class RotateLoops {
+public:
+    RotateLoops(Procedure& proc)
+        : m_proc(proc)
+    {
+    }
+
+    bool run()
+    {
+        NaturalLoops& loops = m_proc.naturalLoops();
+        for (unsigned loopIndex = loops.numLoops(); loopIndex--;)
+            considerLoop(loops, loops.loop(loopIndex));
+        if (m_rotations.isEmpty())
+            return false;
+
+        // A back edge of an outer loop may start at the test of an inner one, whose copy then takes it along.
+        std::ranges::stable_sort(m_rotations, { }, &Rotation::depth);
+        demoteValuesThatLeaveTestBlocks();
+        for (auto& rotation : m_rotations)
+            rotate(rotation);
+        m_proc.resetReachability();
+        m_proc.invalidateCFG();
+        return true;
+    }
+
+private:
+    static constexpr unsigned maxNumberOfCopiedValues = 12;
+    static constexpr unsigned maxNumberOfRareBlocks = 8;
+
+    struct Rotation {
+        unsigned depth { 0 };
+        // From the header to the block that ends in the test. Each but the first has the one before it for its only predecessor.
+        Vector<BasicBlock*, 4> testBlocks;
+        Vector<BasicBlock*, 2> latches;
+        BasicBlock* body { nullptr };
+    };
+
+    // From the block on, control leaves the loop or comes back to its header, through a few blocks that nothing else of the loop is reached from.
+    static bool leadsBackToHeaderOnly(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* start, BasicBlock* body)
+    {
+        Vector<BasicBlock*, maxNumberOfRareBlocks> region { start };
+        for (unsigned i = 0; i < region.size(); ++i) {
+            if (region[i] == body || loops.innerMostLoopOf(region[i]) != &loop)
+                return false;
+            for (BasicBlock* successor : region[i]->successorBlocks()) {
+                if (successor == loop.header() || !loops.belongsTo(successor, loop) || region.contains(successor))
+                    continue;
+                if (region.size() == maxNumberOfRareBlocks)
+                    return false;
+                region.append(successor);
+            }
+        }
+        return true;
+    }
+
+    void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
+    {
+        Rotation rotation;
+        for (BasicBlock* predecessor : loop.header()->predecessors()) {
+            if (loops.belongsTo(predecessor, loop) && predecessor->frequency() * 8 >= loop.header()->frequency())
+                rotation.latches.append(predecessor);
+        }
+        if (rotation.latches.isEmpty())
+            return;
+        for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer; outer = loops.innerMostOuterLoop(*outer))
+            ++rotation.depth;
+
+        unsigned numberOfCopiedValues = 0;
+        for (BasicBlock* block = loop.header();;) {
+            if (block != loop.header() && (block->numPredecessors() != 1 || loops.headerOf(block)))
+                return;
+            if (loops.innerMostLoopOf(block) != &loop)
+                return;
+            for (Value* value : *block) {
+                if (!canCloneForLoop(value))
+                    return;
+                numberOfCopiedValues += takesInstructions(value);
+            }
+            if (numberOfCopiedValues > maxNumberOfCopiedValues)
+                return;
+            rotation.testBlocks.append(block);
+
+            BasicBlock* next = nullptr;
+            if (block->last()->opcode() == Jump)
+                next = block->successorBlock(0);
+            else if (block->last()->opcode() == Branch) {
+                for (unsigned i = 0; i < 2; ++i) {
+                    const FrequentedBlock& staying = block->successor(i);
+                    const FrequentedBlock& other = block->successor(1 - i);
+                    if (!loops.belongsTo(staying.block(), loop) || isRare(staying, loop.header()))
+                        continue;
+                    bool otherIsRare = isRare(other, loop.header());
+                    bool otherLeaves = !loops.belongsTo(other.block(), loop);
+                    if (otherLeaves && otherIsRare) {
+                        next = staying.block();
+                        break;
+                    }
+                    if (!otherLeaves && !(otherIsRare && leadsBackToHeaderOnly(loops, loop, other.block(), staying.block())))
+                        continue;
+                    if (staying.block() == loop.header() || loops.headerOf(staying.block()) || rotation.latches.contains(block))
+                        return;
+                    rotation.body = staying.block();
+                    for (BasicBlock* testBlock : rotation.testBlocks)
+                        m_testBlocks.add(testBlock);
+                    m_rotations.append(WTF::move(rotation));
+                    return;
+                }
+            }
+            if (!next || next == loop.header() || !loops.belongsTo(next, loop))
+                return;
+            block = next;
+        }
+    }
+
+    void demoteValuesThatLeaveTestBlocks()
+    {
+        m_proc.resetValueOwners();
+        IndexSet<Value*> valuesToDemote;
+        for (BasicBlock* block : m_proc) {
+            for (Value* value : *block) {
+                if (value->opcode() == Phi && m_testBlocks.contains(block))
+                    valuesToDemote.add(value);
+                for (Value* child : value->children()) {
+                    if (child->owner != block && m_testBlocks.contains(child->owner))
+                        valuesToDemote.add(child);
+                }
+            }
+        }
+        demoteValues(m_proc, valuesToDemote);
+    }
+
+    void rotate(const Rotation& rotation)
+    {
+        double frequencyOfGuard = 0;
+        for (BasicBlock* predecessor : rotation.testBlocks[0]->predecessors()) {
+            if (!rotation.latches.contains(predecessor))
+                frequencyOfGuard += predecessor->frequency();
+        }
+        Vector<BasicBlock*, 4> copies;
+        for (BasicBlock* block : rotation.testBlocks)
+            copies.append(m_proc.addBlock(block->frequency()));
+        for (unsigned i = 0; i < rotation.testBlocks.size(); ++i) {
+            BasicBlock* block = rotation.testBlocks[i];
+            BasicBlock* copy = copies[i];
+            UncheckedKeyHashMap<Value*, Value*> map;
+            for (Value* value : *block) {
+                Value* clone = m_proc.clone(value);
+                for (Value*& child : clone->children()) {
+                    if (Value* replacement = map.get(child))
+                        child = replacement;
+                }
+                if (value->type() != Void)
+                    map.add(value, clone);
+                copy->append(clone);
+            }
+            copy->successors() = block->successors();
+            if (i + 1 < rotation.testBlocks.size())
+                copy->replaceSuccessor(rotation.testBlocks[i + 1], copies[i + 1]);
+            block->setFrequency(std::min(block->frequency(), frequencyOfGuard));
+        }
+        for (BasicBlock* latch : rotation.latches)
+            latch->replaceSuccessor(rotation.testBlocks[0], copies[0]);
+
+        BasicBlock* preHeader = m_proc.addBlock(rotation.testBlocks.last()->frequency());
+        preHeader->appendNew<Value>(m_proc, Jump, rotation.body->at(0)->origin());
+        preHeader->setSuccessors(FrequentedBlock(rotation.body));
+        rotation.testBlocks.last()->replaceSuccessor(rotation.body, preHeader);
+    }
+
+    Procedure& m_proc;
+    Vector<Rotation> m_rotations;
+    IndexSet<BasicBlock*> m_testBlocks;
+};
+
+} // anonymous namespace
+
+bool simplifyTerminals(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "simplifyTerminals"_s);
+    bool changed = false;
+    for (BasicBlock* block : proc) {
+        Value* terminal = block->last();
+        if (terminal->opcode() != Branch || !terminal->child(0)->hasInt())
+            continue;
+        terminal->replaceWithJump(block, terminal->child(0)->asInt() ? block->taken() : block->notTaken());
+        changed = true;
+    }
+    if (changed) {
+        proc.resetReachability();
+        proc.invalidateCFG();
+    }
+    return changed;
+}
+
+bool rotateLoops(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "rotateLoops"_s);
+    RotateLoops rotateLoops(proc);
+    return rotateLoops.run();
+}
+
+} } // namespace JSC::B3
+
+#endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)

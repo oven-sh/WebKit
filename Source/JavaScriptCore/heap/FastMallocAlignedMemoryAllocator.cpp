@@ -27,6 +27,7 @@
 #include "FastMallocAlignedMemoryAllocator.h"
 
 #include "MarkedBlock.h"
+#include "MarkedBlockCage.h"
 #include "Options.h"
 #include "VM.h"
 #include <mutex>
@@ -50,6 +51,17 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 namespace JSC {
 
 #if !ENABLE(MALLOC_HEAP_BREAKDOWN)
+
+static void* tryAllocateBlockMemory()
+{
+    if (MarkedBlockCage::isEnabled()) {
+        void* block = MarkedBlockCage::tryAllocateBlock();
+        if (block || MarkedBlockCage::isRequired())
+            return block;
+        MarkedBlockCage::didAllocateBlockOutside();
+    }
+    return tryFastCompactAlignedMalloc(MarkedBlock::blockSize, MarkedBlock::blockSize);
+}
 
 static bool warmUpMarkedBlocksIsEnabled()
 {
@@ -99,7 +111,15 @@ void* tryAllocateBlock()
 {
     if (s_allocationFailsForTesting.load(std::memory_order_relaxed)) [[unlikely]]
         return nullptr;
-    return tryFastCompactAlignedMalloc(MarkedBlock::blockSize, MarkedBlock::blockSize);
+    return tryAllocateBlockMemory();
+}
+
+void freeBlock(void* block)
+{
+    if (MarkedBlockCage::contains(block))
+        MarkedBlockCage::freeBlock(block);
+    else
+        fastFree(block);
 }
 
 // The first store into a freshly allocated MarkedBlock takes a write fault, and a heap that is
@@ -205,10 +225,11 @@ private:
         void threadIsStopping(const AbstractLocker&) final
         {
             assertIsHeld(*m_provider.m_lock);
-            // fastFree does not reach back into this lock, so it is safe to call with it held.
+            // Freeing does not reach back into this lock, so it is safe to do with it held.
             m_provider.m_phase = Phase::Stopped;
             for (void* block : std::exchange(m_provider.m_blocks, { }))
-                fastFree(block);
+                freeBlock(block);
+            MarkedBlockCage::decommitFreeBlocks();
         }
 
     private:
@@ -328,12 +349,19 @@ void* FastMallocAlignedMemoryAllocator::tryAllocateAlignedMemory(size_t alignmen
     // The guard keeps a future caller of some other size from being handed a block.
     if (alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize && warmUpMarkedBlocksIsEnabled() && isPastWarmUpStartThreshold()) {
 #if USE(LIBPAS)
-        configureWarmUpSupply();
-        return bmalloc_prefault_supply_try_allocate();
+        if (!MarkedBlockCage::isEnabled()) {
+            configureWarmUpSupply();
+            return bmalloc_prefault_supply_try_allocate();
+        }
 #else
         if (void* block = WarmUpBlockProvider::singleton().tryTake())
             return block;
 #endif
+    }
+
+    if (MarkedBlockCage::isEnabled()) {
+        RELEASE_ASSERT(alignment == MarkedBlock::blockSize && size == MarkedBlock::blockSize);
+        return tryAllocateBlockMemory();
     }
 
     return tryFastCompactAlignedMalloc(alignment, size);
@@ -345,6 +373,10 @@ void FastMallocAlignedMemoryAllocator::freeAlignedMemory(void* basePtr)
 #if ENABLE(MALLOC_HEAP_BREAKDOWN)
     return m_heap.free(basePtr);
 #else
+    if (MarkedBlockCage::contains(basePtr)) {
+        MarkedBlockCage::freeBlock(basePtr);
+        return;
+    }
     fastFree(basePtr);
 #endif
 

@@ -53,6 +53,10 @@ JSC_DECLARE_JIT_OPERATION(operationAOTPutById, void, (Instance*, EncodedJSValue 
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (Instance*, EncodedJSValue array, EncodedJSValue index));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByVal, void, (Instance*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
+JSC_DECLARE_JIT_OPERATION(operationAOTPutByValAndCache, void, (Instance*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value));
+JSC_DECLARE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance*, EncodedJSValue base, EncodedJSValue property));
+JSC_DECLARE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance*, EncodedJSValue base, EncodedJSValue property, uint32_t, Slot*, uint32_t));
 JSC_DECLARE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (Instance*, JSScope*, uint32_t identifierIndex, Slot*, uint32_t localScopeDepth));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (Instance*, JSObject* scope, uint32_t identifierIndex, Slot*, uint32_t getPutInfo));
 JSC_DECLARE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (Instance*, JSObject* scope, uint32_t offset));

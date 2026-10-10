@@ -950,7 +950,14 @@ namespace JSC {
         RegisterID* emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType);
         RegisterID* emitIsGenerator(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSGeneratorType); }
         RegisterID* emitIsIteratorHelper(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSIteratorHelperType); }
+#if USE(BUN_JSC_ADDITIONS)
+        // One is_cell_with_type for each type, until one holds. `dst` is not `src`.
+        RegisterID* emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last);
+        // As isJSArray(JSCell*).
+        RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithTypeInRange(dst, src, ArrayType, DerivedArrayType); }
+#else
         RegisterID* emitIsJSArray(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ArrayType); }
+#endif
         RegisterID* emitIsPromise(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, JSPromiseType); }
         RegisterID* emitIsProxyObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, ProxyObjectType); }
         RegisterID* emitIsRegExpObject(RegisterID* dst, RegisterID* src) { return emitIsCellWithType(dst, src, RegExpObjectType); }

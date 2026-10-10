@@ -118,9 +118,11 @@ bool Type::isWithin(const Type& other, const Program& program, bool foreignObjec
         // It stands for any object.
         if (program.at(view).admitsForeignObjects)
             return false;
+        // The members say which objects there are of a view of objects. An environment is of its own layout and no other.
+        bool goesByMembers = isObjectLayout(program.at(view).kind);
         bool isWithinOne = false;
         for (LayoutID otherView : other.views)
-            isWithinOne |= view == otherView || std::ranges::includes(program.at(otherView).members, program.at(view).members);
+            isWithinOne |= view == otherView || (goesByMembers && std::ranges::includes(program.at(otherView).members, program.at(view).members));
         if (!isWithinOne)
             return false;
     }
@@ -264,6 +266,14 @@ ASCIILiteral nameOf(Store store)
         return "f64?"_s;
     case Store::Boolean:
         return "bool"_s;
+    case Store::Int32OrElsewhere:
+        return "i32|"_s;
+    case Store::Cell32:
+        return "ref32"_s;
+    case Store::OptionalCell32:
+        return "ref32?"_s;
+    case Store::OptionalBoolean:
+        return "bool?"_s;
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -274,6 +284,7 @@ unsigned sizeOf(Store store)
     case Store::Uint8:
     case Store::Int8:
     case Store::Boolean:
+    case Store::OptionalBoolean:
         return 1;
     case Store::Uint16:
     case Store::Int16:
@@ -281,6 +292,9 @@ unsigned sizeOf(Store store)
     case Store::Int32:
     case Store::Uint32:
     case Store::Float:
+    case Store::Int32OrElsewhere:
+    case Store::Cell32:
+    case Store::OptionalCell32:
         return 4;
     case Store::Int64:
     case Store::Double:
@@ -302,6 +316,8 @@ Rep repOf(Store store)
     case Store::Int16:
     case Store::Int32:
     case Store::Boolean:
+    // The word as it is. What it stands for takes the object: Lowering::readInt32OrElsewhere().
+    case Store::Int32OrElsewhere:
         return Rep::Int32;
     case Store::Uint32:
     case Store::Int64:
@@ -310,8 +326,11 @@ Rep repOf(Store store)
     case Store::Double:
         return Rep::Double;
     case Store::Cell:
+    case Store::Cell32:
         return Rep::Cell;
     case Store::JSValue:
+    case Store::OptionalCell32:
+    case Store::OptionalBoolean:
         return Rep::JSValue;
     case Store::OptionalInt64:
         return Rep::OptionalInt64;

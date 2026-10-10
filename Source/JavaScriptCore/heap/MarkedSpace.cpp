@@ -24,6 +24,7 @@
 #include "BlockDirectoryInlines.h"
 #include "HeapInlines.h"
 #include "IncrementalSweeper.h"
+#include "MarkedBlockCage.h"
 #include "MarkedBlockInlines.h"
 #include "MarkedSpaceInlines.h"
 #include "WeakSetInlines.h"
@@ -37,7 +38,7 @@ std::array<unsigned, MarkedSpace::numSizeClasses> MarkedSpace::s_sizeClassForSiz
 
 namespace {
 
-static Vector<size_t> sizeClasses()
+static Vector<size_t> sizeClasses(double progression)
 {
     Vector<size_t> result;
 
@@ -71,7 +72,7 @@ static Vector<size_t> sizeClasses()
     dataLogLnIf(Options::dumpSizeClasses(), "    Marked block payload size: ", static_cast<size_t>(MarkedSpace::blockPayload));
     
     for (unsigned i = 0; ; ++i) {
-        double approximateSize = MarkedSpace::preciseCutoff * pow(Options::sizeClassProgression(), i);
+        double approximateSize = MarkedSpace::preciseCutoff * pow(progression, i);
         dataLogLnIf(Options::dumpSizeClasses(), "    Next size class as a double: ", approximateSize);
 
         size_t approximateSizeInBytes = static_cast<size_t>(approximateSize);
@@ -146,7 +147,7 @@ template<typename TableType, typename SizeClassCons, typename DefaultCons>
 void buildSizeClassTable(TableType& table, NOESCAPE const SizeClassCons& cons, NOESCAPE const DefaultCons& defaultCons)
 {
     size_t nextIndex = 0;
-    for (size_t sizeClass : sizeClasses()) {
+    for (size_t sizeClass : sizeClasses(Options::sizeClassProgression())) {
         auto entry = cons(sizeClass);
         size_t index = MarkedSpace::sizeClassToIndex(sizeClass);
         for (size_t i = nextIndex; i <= index; ++i)
@@ -159,6 +160,11 @@ void buildSizeClassTable(TableType& table, NOESCAPE const SizeClassCons& cons, N
 }
 
 } // anonymous namespace
+
+Vector<size_t> MarkedSpace::sizeClassesFor(double progression)
+{
+    return sizeClasses(progression);
+}
 
 void MarkedSpace::initializeSizeClassForStepSize()
 {
@@ -196,6 +202,7 @@ void MarkedSpace::freeMemory()
         [&] (MarkedBlock::Handle* block) {
             freeBlock(block);
         });
+    MarkedBlockCage::decommitFreeBlocks();
     for (PreciseAllocation* allocation : m_preciseAllocations)
         allocation->destroy();
     forEachSubspace([&](Subspace& subspace) {
@@ -387,6 +394,7 @@ void MarkedSpace::shrink()
             directory.shrink();
             return IterationStatus::Continue;
         });
+    MarkedBlockCage::decommitFreeBlocks();
 }
 
 void MarkedSpace::beginMarking()

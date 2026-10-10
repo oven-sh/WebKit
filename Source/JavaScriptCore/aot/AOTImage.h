@@ -29,8 +29,8 @@ static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
 static constexpr size_t imagePageSize = 16 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
-static constexpr unsigned maxStubCopiesPerImage = 8;
-static constexpr unsigned numberOfAdapters = 7;
+static constexpr unsigned maxStubCopiesPerImage = 48;
+static constexpr unsigned numberOfAdapters = 8;
 
 struct ImageHeader {
     uint64_t magic;
@@ -87,9 +87,15 @@ struct ImageHeader {
     uint32_t functionStartsOffset;
     uint32_t codeGranulesOffset;
     uint32_t callSitesOffset;
+    // The offsets in the code, ascending, with FaultingAccessInImage::hasNoFrameBit; as many ThrowSite words; then (index, name) for each word with ThrowSite::hasWideA whose name is not ThrowSite::none.
+    uint32_t faultingAccessesOffset;
+    uint32_t numberOfFaultingAccesses;
+    uint32_t numberOfFaultingAccessesWithWideName;
     uint32_t framesOffset;
     uint32_t typedDataOffset;
     uint32_t typedDataSize;
+    uint32_t staticsOffset;
+    uint32_t staticsSize;
     uint32_t functionsEnd;
     uint32_t stubsSize;
     uint32_t numberOfStubCopies;
@@ -109,6 +115,12 @@ struct ImageRegExp {
     uint32_t flags;
     uint32_t codeFor8Bit;
     uint32_t codeFor16Bit;
+    // What a RegExp keeps of its Yarr::YarrPattern, so that none is made at run time. keepsMoreOfPattern: that is not all of it.
+    uint32_t numSubpatterns;
+    uint32_t minimumSize;
+    uint8_t specificPattern;
+    uint8_t keepsMoreOfPattern;
+    uint16_t unused;
 };
 
 struct ImageShape {
@@ -150,11 +162,15 @@ struct CompiledCode {
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
     String whyDeclined;
+    // For the map of the image: kinds of operations and the bytes of code that come from each, separated by tabs.
+    String bytesByOperation;
     bool mayBeDumped { true };
+    // See Typed::SplitFunction.
+    Vector<CompiledCode> continuations;
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();
-void didUseLinkTimeConstant(unsigned);
+void didUseNumberedIntrinsic();
 
 class ImageBuilder {
     WTF_MAKE_TZONE_ALLOCATED(ImageBuilder);
@@ -196,6 +212,10 @@ private:
         String pattern;
         OptionSet<Yarr::Flags> flags;
         Yarr::YarrCodeForImage code[2];
+        unsigned numSubpatterns { 0 };
+        unsigned minimumSize { 0 };
+        Yarr::SpecificPattern specificPattern { Yarr::SpecificPattern::None };
+        bool keepsMoreOfPattern { false };
     };
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
@@ -215,7 +235,11 @@ public:
     static bool hasAny();
     static bool containsCode(const void*);
     static Image* withCode();
+    // Whether a realm has to have its intrinsics numbered: see ImageHeader::intrinsicHash. Also where there is no image: the compiler.
+    JS_EXPORT_PRIVATE static bool usesNumberedIntrinsics();
     const void* code() const { return m_code; }
+    void* mapPrivately(uint32_t offset, size_t) const;
+    static void unmap(void*, size_t);
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctions();
     static uint32_t numberOfTypeCoverageCounters();
@@ -227,6 +251,10 @@ public:
     struct CodeForRegExp {
         const void* for8Bit;
         const void* for16Bit;
+        unsigned numSubpatterns;
+        unsigned minimumSize;
+        Yarr::SpecificPattern specificPattern;
+        bool keepsMoreOfPattern;
     };
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
 
@@ -305,6 +333,18 @@ struct ImageCode {
     const ImageFunction* function { nullptr };
     explicit operator bool() const { return !!function; }
 };
+struct FaultingAccessInImage {
+    // Offsets are multiples of 4 wherever a function can be without a frame.
+    static constexpr uint32_t hasNoFrameBit = hasStubsForFunctionsWithoutFrame ? 1 : 0;
+    // How far from zero, or from the base of the cage, an address is taken for an access through `undefined` or `null`.
+    static constexpr uintptr_t reach = 16 * KB;
+
+    std::array<uint32_t, 2> throwSite;
+    bool hasNoFrame;
+};
+std::optional<FaultingAccessInImage> faultingAccessAt(const void* instruction);
+// Before the configuration is frozen.
+void prepareFaultingAccesses();
 JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
 JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text = { }, unsigned sourceOffset = 0);
 ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);

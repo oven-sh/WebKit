@@ -305,7 +305,11 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
 
         m_megamorphicCache.initLater([](VM&, auto& ref) {
+#if USE(BUN_JSC_ADDITIONS) && !USE(TZONE_MALLOC)
+            ref.set(UniqueRef<MegamorphicCache>(MegamorphicCache::create()));
+#else
             ref.set(makeUniqueRef<MegamorphicCache>());
+#endif
         });
 
         m_stringSplitCache.initLater([](VM&, auto& ref) {
@@ -628,6 +632,9 @@ void waitForVMDestruction()
 void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 {
     m_crossTaskToken = WTF::move(token);
+#if USE(BUN_JSC_ADDITIONS)
+    updateHostObservesMicrotaskBoundaries();
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -1328,6 +1335,9 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    exceptionToThrow->willBeThrown(*this);
+#endif
     CallFrame* throwOriginFrame = topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
@@ -1356,8 +1366,13 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
-    if (!exception)
+    if (!exception) {
+#if USE(BUN_JSC_ADDITIONS)
+        exception = Exception::create(*this, thrownValue, Exception::StackCaptureAction::LeaveToUnwinder);
+#else
         exception = Exception::create(*this, thrownValue);
+#endif
+    }
 
     return throwException(globalObject, exception);
 }

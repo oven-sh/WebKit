@@ -16,12 +16,15 @@ namespace {
 
 // Splits an async function or a generator into a ramp function and a resume function.
 //
-// The ramp keeps the identity and the signature of the original. It allocates the coroutine frame, stores the arguments into it,
-// creates the result promise and calls the resume function once.
+// The ramp keeps the identity and the signature of the original. That of a generator allocates the coroutine frame and stores the arguments
+// into it. That of an async function creates the result promise and calls the start function: the original body up to the first Await on
+// every path, where the frame is allocated. An async function that returns before it awaits anything has no frame.
 //
 // The resume function is the original body behind a switch on the frame's state. At each Await, the SSA values that are live across
 // it are spilled to frame fields and the function returns. The matching resume block reloads them, and SSA form is repaired with
 // block parameters. Between two suspension points values stay in SSA form, so B3 keeps them in registers.
+//
+// An async function goes on in place where nobody can tell: see InlineBuiltin::AwaitMayContinue.
 //
 // No type is found out. A value that is kept in the frame gives its field its own type, and the reload and the block parameters that
 // stand in for it copy that. The fixed fields have the types their contract says, see CoroutineFrame. So placement picks an unboxed
@@ -41,6 +44,8 @@ public:
         m_startsEagerly = m_program.at(m_ramp).has(Format::FunctionStartsEagerly);
         m_position = m_program.at(m_ramp).position;
         createFrameLayout();
+        if (!m_isGenerator)
+            copyBodyToStartFunction();
         moveBodyToResumeFunction();
         createDispatchBlock();
         replaceResumeModeReads();
@@ -49,6 +54,10 @@ public:
         spillAndReload();
         finishDispatchBlock();
         m_program.functions.append(WTF::move(m_body));
+        if (!m_isGenerator) {
+            finishStartFunction();
+            m_program.functions.append(WTF::move(m_startBody));
+        }
         buildRamp();
     }
 
@@ -58,7 +67,13 @@ private:
         BlockID resumeBlock;
         // Where in the suspend block the spills go: before the store of the state.
         unsigned spillIndex { 0 };
+        // The Await or Yield.
+        ValueID suspension;
         bool isReachable { true };
+        // Not so if only the start function gets there.
+        bool isReachableInResumeFunction { true };
+        // What is kept in the frame across it, each with its field.
+        Vector<std::pair<ValueID, uint32_t>> spilled { };
     };
 
     static constexpr int64_t resumeModeNormal = 0;
@@ -147,12 +162,13 @@ private:
         return value;
     }
 
-    Value callResumeFunction(ValueID frame, ValueID mode) const
+    Value callResumeFunction(ValueID frame, ValueID mode, ValueID resumeValue) const
     {
         Value value = typed(Opcode::CallDirect, m_resultTypeOfResumeFunction);
         value.immediates[0] = m_resume.index();
         value.arguments.append(frame);
         value.arguments.append(mode);
+        value.arguments.append(resumeValue);
         return value;
     }
 
@@ -172,7 +188,7 @@ private:
         auto& types = m_program.types;
         m_frameLayout = LayoutID(m_program.layouts.size());
         m_frameType = types.intern(Type::view(m_frameLayout));
-        m_resumeModeType = types.intern(Type::integer({ resumeModeNormal, resumeModeReturn }));
+        m_resumeModeType = types.intern(Type::integer({ resumeModeNormal, m_isGenerator ? resumeModeReturn : resumeModeThrow | CoroutineFrame::isEnteredByJobLoop }));
         // What NewPromise makes is a promise. What stands for a generator is an object of the run time, which has no class of the engine.
         m_driverType = m_isGenerator ? types.object : types.intern(Type::engineClass(Builtins::singleton().promiseClass()));
         // An async function settles its promise. A generator hands what it yields and what it returns to its driver.
@@ -180,6 +196,7 @@ private:
 
         Layout layout;
         layout.kind = LayoutKind::Environment;
+        layout.name = m_program.at(m_ramp).name;
         layout.isCoroutineFrame = true;
         layout.type = m_frameType;
         m_program.layouts.append(WTF::move(layout));
@@ -187,8 +204,20 @@ private:
         RELEASE_ASSERT(addFrameField("state"_s, types.int32) == CoroutineFrame::stateField);
         RELEASE_ASSERT(addFrameField("promise"_s, m_driverType, fieldIsImmutable) == CoroutineFrame::promiseField);
         RELEASE_ASSERT(addFrameField("resumeClosure"_s, types.function, fieldIsImmutable) == CoroutineFrame::resumeClosureField);
-        RELEASE_ASSERT(addFrameField("resumeValue"_s, types.anything) == CoroutineFrame::resumeValueField);
-        RELEASE_ASSERT(addFrameField("resumeError"_s, types.anything) == CoroutineFrame::resumeErrorField);
+    }
+
+    // Values keep their numbers in both copies of the body.
+    void copyBodyToStartFunction()
+    {
+        auto& ramp = m_program.at(m_ramp);
+        m_startBody.name = ramp.name;
+        m_startBody.module = ramp.module;
+        m_startBody.position = ramp.position;
+        m_startBody.kind = FunctionKind::Plain;
+        m_startBody.flags = ramp.flags & Format::FunctionIsTyped;
+        m_startBody.resultType = m_program.types.undefined;
+        m_startBody.blocks = ramp.blocks;
+        m_startBody.values = ramp.values;
     }
 
     void moveBodyToResumeFunction()
@@ -199,14 +228,18 @@ private:
         m_body.module = ramp.module;
         m_body.position = ramp.position;
         m_body.kind = FunctionKind::Plain;
-        m_body.flags = Format::FunctionIsUsedAsValue | (ramp.flags & Format::FunctionIsTyped);
-        m_body.environment = m_frameLayout;
+        // Its closure is entered at the function itself: see Lowering::lowerNewClosure(). So it has no generic entrypoint.
+        m_body.flags = ramp.flags & Format::FunctionIsTyped;
+        m_body.captureTypes.append(m_frameType);
         m_body.parameterTypes.append(m_resumeModeType);
+        m_body.parameterTypes.append(m_program.types.anything);
         m_body.resultType = m_resultTypeOfResumeFunction;
         m_body.blocks = std::exchange(ramp.blocks, { });
         m_body.values = std::exchange(ramp.values, { });
         ramp.flags &= ~(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionStartsEagerly);
         ramp.resumeFunction = m_resume;
+        if (!m_isGenerator)
+            ramp.startFunction = FunctionID(m_resume.index() + 1);
     }
 
     // Block 0 becomes the dispatch block. The original entry block moves to the end, and its parameters become loads from the frame.
@@ -222,6 +255,7 @@ private:
         }
         m_frame = addParameter(m_body, BlockID(0u), m_frameType);
         m_resumeMode = addParameter(m_body, BlockID(0u), m_resumeModeType);
+        m_resumeValue = addParameter(m_body, BlockID(0u), m_program.types.anything);
 
         Vector<ValueID> arguments = std::exchange(m_body.at(m_start).parameters, { });
         for (ValueID argument : arguments) {
@@ -292,54 +326,81 @@ private:
             terminator.kind = TerminatorKind::Jump;
             terminator.targets.append(WTF::move(normal));
         }
-        auto goOn = [&](BlockID from, BlockID to, bool mayThrow) {
+        // The value becomes a parameter of the continuation: what the coroutine is resumed with, or what it goes on with in place. Nothing
+        // vouches for either, so it is held to the type of the value.
+        Value original = m_body.at(suspension);
+        bool isHeld = original.assertedType || !m_program.at(type).isAnything();
+        Value parameter = typed(Opcode::Parameter, type);
+        parameter.immediates = { continuation.index(), 0 };
+        parameter.position = m_position;
+        parameter.takePredictionOf(original);
+        m_body.at(suspension) = WTF::move(parameter);
+        m_body.at(continuation).parameters.append(suspension);
+        auto goOnWith = [&](BlockID from, ValueID yielded) {
+            if (isHeld) {
+                Value held = cast(yielded, type, CastReason::Claim);
+                held.assertedType = original.assertedType;
+                held.takePredictionOf(original);
+                yielded = append(m_body, from, WTF::move(held));
+            }
             auto& terminator = m_body.at(from).terminator;
-            terminator.kind = mayThrow && handler ? TerminatorKind::Invoke : TerminatorKind::Jump;
-            terminator.targets.append(Target { to, { } });
+            terminator.kind = isHeld && handler ? TerminatorKind::Invoke : TerminatorKind::Jump;
+            terminator.targets.append(Target { continuation, { yielded } });
             if (terminator.kind == TerminatorKind::Invoke)
                 terminator.targets.append(*handler);
         };
+        auto branch = [&](BlockID from, ValueID condition, BlockID taken, BlockID notTaken) {
+            auto& terminator = m_body.at(from).terminator;
+            terminator.kind = TerminatorKind::Branch;
+            terminator.value = condition;
+            terminator.targets.append(Target { taken, { } });
+            terminator.targets.append(Target { notTaken, { } });
+        };
 
-        // The value becomes what the coroutine is resumed with. Nothing vouches for that, so it is held to the type of the value.
         BlockID resumeBlock = addBlock(m_body);
-        BlockID normalBlock = addBlock(m_body);
-        bool isHeld = !m_program.at(type).isAnything();
-        Value resumed = getField(m_frame, CoroutineFrame::resumeValueField);
-        if (isHeld)
-            resumed = cast(append(m_body, normalBlock, WTF::move(resumed)), type, CastReason::Claim);
-        resumed.position = m_position;
-        resumed.takePredictionOf(m_body.at(suspension));
-        m_body.at(suspension) = WTF::move(resumed);
-        m_body.at(normalBlock).values.append(suspension);
-        goOn(normalBlock, continuation, isHeld);
-
         if (isYield) {
             // The front end dispatches on the resume mode itself.
-            goOn(resumeBlock, normalBlock, false);
+            goOnWith(resumeBlock, m_resumeValue);
         } else {
+            BlockID normalBlock = addBlock(m_body);
+            goOnWith(normalBlock, m_resumeValue);
             BlockID throwBlock = addBlock(m_body);
-            m_body.at(throwBlock).terminator.value = append(m_body, throwBlock, getField(m_frame, CoroutineFrame::resumeErrorField));
+            m_body.at(throwBlock).terminator.value = m_resumeValue;
             m_body.at(throwBlock).terminator.kind = TerminatorKind::Throw;
             if (handler)
                 m_body.at(throwBlock).terminator.targets.append(*handler);
 
+            ValueID throwMode = append(m_body, resumeBlock, integer(resumeModeThrow, m_resumeModeType));
+            ValueID mode = m_resumeMode;
+            if (!m_isGenerator) {
+                Value withoutFlags = typed(Opcode::BitAnd, m_resumeModeType);
+                withoutFlags.children[0] = m_resumeMode;
+                withoutFlags.children[1] = throwMode;
+                mode = append(m_body, resumeBlock, WTF::move(withoutFlags));
+            }
             Value isThrow = typed(Opcode::StrictEq, m_program.types.boolean);
-            isThrow.children[0] = m_resumeMode;
-            isThrow.children[1] = append(m_body, resumeBlock, integer(resumeModeThrow, m_resumeModeType));
-            m_body.at(resumeBlock).terminator.value = append(m_body, resumeBlock, WTF::move(isThrow));
-            m_body.at(resumeBlock).terminator.kind = TerminatorKind::Branch;
-            m_body.at(resumeBlock).terminator.targets.append(Target { throwBlock, { } });
-            m_body.at(resumeBlock).terminator.targets.append(Target { normalBlock, { } });
+            isThrow.children[0] = mode;
+            isThrow.children[1] = throwMode;
+            branch(resumeBlock, append(m_body, resumeBlock, WTF::move(isThrow)), throwBlock, normalBlock);
         }
 
-        m_suspensionPoints.append({ suspendBlock, resumeBlock, static_cast<unsigned>(m_body.at(suspendBlock).values.size()) });
+        if (!isYield && !m_isGenerator) {
+            BlockID inPlaceBlock = addBlock(m_body);
+            BlockID parkBlock = addBlock(m_body);
+            branch(suspendBlock, append(m_body, suspendBlock, operation("AwaitMayContinue"_s, m_program.types.boolean, { operand, m_resumeMode })), inPlaceBlock, parkBlock);
+            goOnWith(inPlaceBlock, append(m_body, inPlaceBlock, operation("AwaitedValue"_s, m_program.types.anything, { operand })));
+            suspendBlock = parkBlock;
+        }
+
+        m_suspensionPoints.append({ suspendBlock, resumeBlock, static_cast<unsigned>(m_body.at(suspendBlock).values.size()), suspension });
+        m_body.suspensionPositions.append(m_position);
         ValueID state = append(m_body, suspendBlock, integer(m_suspensionPoints.size(), m_program.types.int32));
         append(m_body, suspendBlock, putField(m_frame, CoroutineFrame::stateField, state));
         ValueID returned = operand;
         if (!isYield) {
             // What goes wrong with what is awaited is not thrown here: the function is resumed with it.
             ValueID closure = append(m_body, suspendBlock, getField(m_frame, CoroutineFrame::resumeClosureField));
-            append(m_body, suspendBlock, operation("Await"_s, m_program.types.undefined, { closure, operand }));
+            append(m_body, suspendBlock, operation(m_isGenerator ? "Await"_s : "SuspendAsyncFunction"_s, m_program.types.undefined, { closure, operand }));
             returned = append(m_body, suspendBlock, undefined());
         }
         m_body.at(suspendBlock).terminator.kind = TerminatorKind::Return;
@@ -380,40 +441,58 @@ private:
 
     // Backward liveness over the rewired CFG. What is live into a resume block has no definition on the path from the dispatch block,
     // which is exactly what has to be reloaded there.
-    Vector<BitVector> computeLiveAtHead()
+    // By block, for the first block and the resume blocks: the values, in the order of their numbers.
+    Vector<Vector<uint32_t>> computeLiveAtHead()
     {
         unsigned numberOfBlocks = m_body.blocks.size();
-        Vector<BitVector> liveAtHead(numberOfBlocks);
+        unsigned numberOfValues = m_body.values.size();
+        static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+        Vector<Vector<uint32_t>> liveAtHead(numberOfBlocks);
+        BitVector isAskedAbout(numberOfBlocks);
+        isAskedAbout.set(0);
+        Vector<Vector<uint32_t, 2>> predecessors(numberOfBlocks);
         // What is live after a suspension point is live before it, where it is spilled.
-        Vector<BlockID> resumeBlockOf = resumeBlocksBySuspendBlock();
-        bool changed = true;
-        while (changed) {
-            changed = false;
-            for (unsigned b = numberOfBlocks; b--;) {
-                auto& block = m_body.blocks[b];
-                BitVector live;
-                if (resumeBlockOf[b])
-                    live.merge(liveAtHead[resumeBlockOf[b].index()]);
-                for (auto& target : block.terminator.targets) {
-                    live.merge(liveAtHead[target.block.index()]);
-                    for (ValueID argument : target.arguments)
-                        live.set(argument.index());
-                }
-                if (block.terminator.value)
-                    live.set(block.terminator.value.index());
-                for (unsigned i = block.values.size(); i--;) {
-                    ValueID id = block.values[i];
-                    live.clear(id.index());
-                    m_body.at(id).forEachChild([&](ValueID child) {
-                        live.set(child.index());
-                    });
-                }
-                for (ValueID parameter : block.parameters)
-                    live.clear(parameter.index());
-                if (live != liveAtHead[b]) {
-                    liveAtHead[b] = WTF::move(live);
-                    changed = true;
-                }
+        for (auto& point : m_suspensionPoints) {
+            isAskedAbout.set(point.resumeBlock.index());
+            predecessors[point.resumeBlock.index()].append(point.suspendBlock.index());
+        }
+        Vector<uint32_t> definedIn;
+        definedIn.fill(none, numberOfValues);
+        Vector<Vector<uint32_t, 2>> usedIn(numberOfValues);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            auto& block = m_body.blocks[b];
+            auto use = [&](ValueID used) {
+                if (used && (usedIn[used.index()].isEmpty() || usedIn[used.index()].last() != b))
+                    usedIn[used.index()].append(b);
+            };
+            for (ValueID parameter : block.parameters)
+                definedIn[parameter.index()] = b;
+            for (ValueID id : block.values) {
+                definedIn[id.index()] = b;
+                m_body.at(id).forEachChild([&](ValueID child) {
+                    use(child);
+                });
+            }
+            use(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                predecessors[target.block.index()].append(b);
+                for (ValueID argument : target.arguments)
+                    use(argument);
+            }
+        }
+        Vector<uint32_t> lastValueLiveInto;
+        lastValueLiveInto.fill(none, numberOfBlocks);
+        Vector<uint32_t> worklist;
+        for (unsigned value = 0; value < numberOfValues; ++value) {
+            worklist.appendVector(usedIn[value]);
+            while (!worklist.isEmpty()) {
+                uint32_t b = worklist.takeLast();
+                if (b == definedIn[value] || lastValueLiveInto[b] == value)
+                    continue;
+                lastValueLiveInto[b] = value;
+                if (isAskedAbout.get(b))
+                    liveAtHead[b].append(value);
+                worklist.appendVector(predecessors[b]);
             }
         }
         return liveAtHead;
@@ -430,6 +509,7 @@ private:
         case Opcode::Double:
         case Opcode::String:
         case Opcode::FunctionReference:
+        case Opcode::BuiltinFunction:
             return true;
         // What the engine has under the name stays there. Whoever goes by the definition of an operand still finds it.
         case Opcode::GetGlobal: {
@@ -446,22 +526,35 @@ private:
     // An unreachable block has no definition to offer to the blocks it jumps to.
     void clearUnreachableBlocks()
     {
-        BitVector isReachable(m_body.blocks.size());
         Vector<BlockID> resumeBlockOf = resumeBlocksBySuspendBlock();
-        Vector<BlockID> worklist { m_start };
-        isReachable.set(0);
-        while (!worklist.isEmpty()) {
-            BlockID block = worklist.takeLast();
-            if (isReachable.set(block.index()))
-                continue;
-            if (resumeBlockOf[block.index()])
-                worklist.append(resumeBlockOf[block.index()]);
-            for (auto& target : m_body.at(block).terminator.targets)
-                worklist.append(target.block);
-        }
+        auto reachableFrom = [&](Vector<BlockID> worklist) {
+            BitVector isReachable(m_body.blocks.size());
+            isReachable.set(0);
+            while (!worklist.isEmpty()) {
+                BlockID block = worklist.takeLast();
+                if (isReachable.set(block.index()))
+                    continue;
+                if (resumeBlockOf[block.index()])
+                    worklist.append(resumeBlockOf[block.index()]);
+                for (auto& target : m_body.at(block).terminator.targets)
+                    worklist.append(target.block);
+            }
+            return isReachable;
+        };
+        BitVector isReachable = reachableFrom({ m_start });
         // The states keep their numbers.
         for (auto& point : m_suspensionPoints)
             point.isReachable = isReachable.get(point.suspendBlock.index());
+        if (!m_isGenerator) {
+            Vector<BlockID> resumeBlocks;
+            for (auto& point : m_suspensionPoints) {
+                if (point.isReachable)
+                    resumeBlocks.append(point.resumeBlock);
+            }
+            isReachable = reachableFrom(WTF::move(resumeBlocks));
+        }
+        for (auto& point : m_suspensionPoints)
+            point.isReachableInResumeFunction = isReachable.get(point.suspendBlock.index());
         for (unsigned b = 0; b < m_body.blocks.size(); ++b) {
             if (isReachable.get(b))
                 continue;
@@ -504,14 +597,15 @@ private:
             Vector<ValueID> spills;
             for (unsigned index : liveAtHead[point.resumeBlock.index()]) {
                 ValueID variable(index);
-                if (variable == m_frame || variable == m_resumeMode)
+                if (variable == m_frame || variable == m_resumeMode || variable == m_resumeValue)
                     continue;
                 TypeID type = m_body.at(variable).type;
                 auto& variableDefinitions = definitions.ensure(index, [&] {
                     Definitions result;
                     result.variable = variable;
                     result.type = type;
-                    result.atTail.add(definingBlock[index].index(), variable);
+                    if (definingBlock[index])
+                        result.atTail.add(definingBlock[index].index(), variable);
                     return result;
                 }).iterator->value;
                 ValueID reload;
@@ -524,17 +618,40 @@ private:
                     reload = addValue(m_body, getField(m_frame, field));
                     m_body.at(reload).takePredictionOf(m_body.at(variable));
                     spills.append(addValue(m_body, putField(m_frame, field, variable)));
+                    point.spilled.append({ variable, field });
                 }
                 reloads.append(reload);
                 variableDefinitions.atTail.add(point.resumeBlock.index(), reload);
             }
             m_body.at(point.resumeBlock).values.insertVector(0, reloads);
-            m_body.at(point.suspendBlock).values.insertVector(point.spillIndex, spills);
+            if (point.isReachableInResumeFunction)
+                m_body.at(point.suspendBlock).values.insertVector(point.spillIndex, spills);
         }
 
         computePredecessors();
+        // By value that is kept in the frame: where it is used, in the order of the blocks, and of the values in a block.
+        UncheckedKeyHashMap<uint32_t, Vector<Use>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> uses;
         for (auto& entry : definitions)
-            repairSSA(ValueID(entry.key), definingBlock[entry.key], entry.value);
+            uses.add(entry.key, Vector<Use>());
+        auto note = [&](ValueID used, Use use) {
+            if (!used)
+                return;
+            auto found = uses.find(used.index());
+            if (found != uses.end() && (found->value.isEmpty() || found->value.last() != use))
+                found->value.append(use);
+        };
+        for (unsigned b = 0; b < m_body.blocks.size(); ++b) {
+            for (ValueID id : m_body.blocks[b].values) {
+                m_body.at(id).forEachChild([&](ValueID child) {
+                    note(child, Use { BlockID(b), id });
+                });
+            }
+            m_body.blocks[b].terminator.forEachChild([&](ValueID& child) {
+                note(child, Use { BlockID(b), ValueID() });
+            });
+        }
+        for (auto& entry : definitions)
+            repairSSA(ValueID(entry.key), definingBlock[entry.key], entry.value, uses.find(entry.key)->value);
 
         // A value that was reloaded and not redefined since is in its spill slot already.
         for (auto& point : m_suspensionPoints) {
@@ -597,49 +714,37 @@ private:
         return phi;
     }
 
-    void repairSSA(ValueID variable, BlockID definingBlock, Definitions& definitions)
+    // The value that uses it. None: the terminator of the block.
+    struct Use {
+        BlockID block;
+        ValueID user;
+        friend bool operator==(const Use&, const Use&) = default;
+    };
+
+    void repairSSA(ValueID variable, BlockID definingBlock, Definitions& definitions, const Vector<Use>& uses)
     {
-        for (unsigned b = 0; b < m_body.blocks.size(); ++b) {
-            BlockID block(b);
-            if (block == definingBlock)
+        for (auto& use : uses) {
+            if (use.block == definingBlock)
                 continue;
             // A reload is at the head of its block, so it reaches every use in it.
-            auto local = definitions.atTail.find(b);
-            ValueID localDefinition = local != definitions.atTail.end() ? local->value : ValueID();
-            auto replacement = [&]() -> ValueID {
-                return localDefinition ? localDefinition : definitionAtHead(definitions, block);
-            };
-            unsigned numberOfValues = m_body.blocks[b].values.size();
-            for (unsigned i = 0; i < numberOfValues; ++i) {
-                ValueID id = m_body.blocks[b].values[i];
-                bool uses = false;
-                m_body.at(id).forEachChild([&](ValueID child) {
-                    uses |= child == variable;
-                });
-                if (!uses)
-                    continue;
-                ValueID with = replacement();
-                m_body.at(id).forEachChild([&](ValueID& child) {
-                    if (child == variable)
-                        child = with;
-                });
-            }
-            bool uses = false;
-            m_body.blocks[b].terminator.forEachChild([&](ValueID& child) {
-                uses |= child == variable;
-            });
-            if (!uses)
-                continue;
-            ValueID with = replacement();
-            m_body.blocks[b].terminator.forEachChild([&](ValueID& child) {
+            auto local = definitions.atTail.find(use.block.index());
+            ValueID with = local != definitions.atTail.end() ? local->value : definitionAtHead(definitions, use.block);
+            auto replace = [&](ValueID& child) {
                 if (child == variable)
                     child = with;
-            });
+            };
+            if (use.user)
+                m_body.at(use.user).forEachChild(replace);
+            else
+                m_body.at(use.block).terminator.forEachChild(replace);
         }
     }
 
     void finishDispatchBlock()
     {
+        // Nothing resumes an async function that never suspends, and it has no frame to look at.
+        if (!m_isGenerator && std::ranges::none_of(m_suspensionPoints, &SuspensionPoint::isReachable))
+            return;
         BlockID dispatch(0u);
         ValueID state = append(m_body, dispatch, getField(m_frame, CoroutineFrame::stateField));
         auto& terminator = m_body.at(dispatch).terminator;
@@ -649,8 +754,96 @@ private:
             terminator.cases.append(i + 1);
             terminator.targets.append(Target { m_suspensionPoints[i].resumeBlock, { } });
         }
-        // The last target is the default.
+        // The last target is the default. The frame of an async function is born suspended.
         terminator.targets.append(Target { m_start, { } });
+    }
+
+    // Behind an Await the start function has nothing: the function is resumed by a job.
+    void finishStartFunction()
+    {
+        auto& function = m_startBody;
+        BlockID first = addBlock(function);
+        function.at(first) = std::exchange(function.blocks[0], Block { });
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                if (!target.block.index())
+                    target.block = first;
+            }
+        }
+        m_position = function.position;
+        BlockID entry(0u);
+        function.at(entry).terminator.kind = TerminatorKind::Jump;
+        function.at(entry).terminator.targets.append(Target { first, { } });
+        for (TypeID type : m_argumentTypes) {
+            function.parameterTypes.append(type);
+            ValueID argument = addParameter(function, entry, type);
+            function.at(entry).terminator.targets[0].arguments.append(argument);
+        }
+        function.parameterTypes.append(m_driverType);
+        ValueID promise = addParameter(function, entry, m_driverType);
+        Vector<ValueID> arguments = function.at(first).parameters;
+        for (ValueID argument : arguments)
+            function.at(argument).immediates[0] = first.index();
+
+        UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> pointOf;
+        for (unsigned i = 0; i < m_suspensionPoints.size(); ++i)
+            pointOf.add(m_suspensionPoints[i].suspension.index(), i);
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            BlockID block(b);
+            size_t index = function.at(block).values.findIf([&](ValueID id) {
+                return function.at(id).opcode == Opcode::Await;
+            });
+            if (index == notFound) {
+                if (function.at(block).terminator.kind != TerminatorKind::Return)
+                    continue;
+                ValueID result = function.at(block).terminator.value;
+                if (!result)
+                    result = append(function, block, undefined());
+                append(function, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
+                function.at(block).terminator.value = append(function, block, undefined());
+                continue;
+            }
+            ValueID suspension = function.at(block).values[index];
+            ValueID operand = function.at(suspension).child(0);
+            unsigned point = pointOf.get(suspension.index());
+            m_position = function.at(suspension).position;
+            function.at(block).values.shrink(index);
+            function.at(block).terminator = Terminator { };
+            ValueID state = append(function, block, integer(point + 1, m_program.types.int32));
+            Value allocation = typed(Opcode::NewObjectWithShape, m_frameType);
+            allocation.immediates[0] = m_frameLayout.index();
+            ValueID frame = append(function, block, WTF::move(allocation));
+            append(function, block, putField(frame, CoroutineFrame::stateField, state));
+            append(function, block, putField(frame, CoroutineFrame::promiseField, promise));
+            for (unsigned i = 0; i < arguments.size(); ++i)
+                append(function, block, putField(frame, CoroutineFrame::firstArgumentField + i, arguments[i]));
+            for (auto [variable, field] : m_suspensionPoints[point].spilled)
+                append(function, block, putField(frame, field, variable));
+            Value closure = typed(Opcode::NewClosure, m_program.types.function);
+            closure.immediates[0] = m_resume.index();
+            closure.arguments.append(frame);
+            ValueID resumeClosure = append(function, block, WTF::move(closure));
+            append(function, block, putField(frame, CoroutineFrame::resumeClosureField, resumeClosure));
+            append(function, block, operation("SuspendAsyncFunction"_s, m_program.types.undefined, { resumeClosure, operand }));
+            function.at(block).terminator.kind = TerminatorKind::Return;
+            function.at(block).terminator.value = append(function, block, undefined());
+        }
+
+        BitVector isReachable(function.blocks.size());
+        Vector<BlockID> worklist { entry };
+        while (!worklist.isEmpty()) {
+            BlockID block = worklist.takeLast();
+            if (isReachable.set(block.index()))
+                continue;
+            for (auto& target : function.at(block).terminator.targets)
+                worklist.append(target.block);
+        }
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            if (isReachable.get(b))
+                continue;
+            function.blocks[b] = Block { };
+            function.blocks[b].terminator.kind = TerminatorKind::Unreachable;
+        }
     }
 
     // What the ramp hands back is what the engine makes, whatever the function is declared to yield.
@@ -671,6 +864,27 @@ private:
         for (TypeID type : m_argumentTypes)
             arguments.append(addParameter(ramp, entry, type));
 
+        if (!m_isGenerator) {
+            BlockID done = addBlock(ramp);
+            BlockID failed = addBlock(ramp);
+            ValueID promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
+            Value start = typed(Opcode::CallDirect, m_program.types.undefined);
+            start.immediates[0] = ramp.startFunction.index();
+            start.arguments.appendVector(arguments);
+            start.arguments.append(promise);
+            append(ramp, entry, WTF::move(start));
+            ramp.at(entry).terminator.kind = TerminatorKind::Invoke;
+            ramp.at(entry).terminator.targets.append(Target { done, { } });
+            ramp.at(entry).terminator.targets.append(Target { failed, { } });
+
+            returnFrom(ramp, done, promise);
+
+            ValueID error = append(ramp, failed, typed(Opcode::CatchValue, m_program.types.anything));
+            append(ramp, failed, operation("RejectPromise"_s, m_program.types.undefined, { promise, error }));
+            returnFrom(ramp, failed, promise);
+            return;
+        }
+
         ValueID notStarted = append(ramp, entry, integer(0, m_program.types.int32));
         Value allocation = typed(Opcode::NewObjectWithShape, m_frameType);
         allocation.immediates[0] = m_frameLayout.index();
@@ -680,58 +894,42 @@ private:
             append(ramp, entry, putField(frame, CoroutineFrame::firstArgumentField + i, arguments[i]));
         Value closure = typed(Opcode::NewClosure, m_program.types.function);
         closure.immediates[0] = m_resume.index();
-        closure.children[0] = frame;
+        closure.arguments.append(frame);
         ValueID resumeClosure = append(ramp, entry, WTF::move(closure));
         append(ramp, entry, putField(frame, CoroutineFrame::resumeClosureField, resumeClosure));
 
-        if (m_isGenerator) {
-            // The body does not start before the first call of next().
-            ValueID generator = append(ramp, entry, operation(m_isAsync ? "NewAsyncGenerator"_s : "NewGenerator"_s, m_driverType, { resumeClosure }));
-            // Resumption from an await finds the driver here.
-            if (m_isAsync)
-                append(ramp, entry, putField(frame, CoroutineFrame::promiseField, generator));
-            if (m_startsEagerly) {
-                // What it throws, the call throws.
-                ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));
-                append(ramp, entry, callResumeFunction(frame, mode));
-            }
-            returnFrom(ramp, entry, generator);
-            return;
+        // The body does not start before the first call of next().
+        ValueID generator = append(ramp, entry, operation(m_isAsync ? "NewAsyncGenerator"_s : "NewGenerator"_s, m_driverType, { resumeClosure }));
+        // Resumption from an await finds the driver here.
+        if (m_isAsync)
+            append(ramp, entry, putField(frame, CoroutineFrame::promiseField, generator));
+        if (m_startsEagerly) {
+            // What it throws, the call throws.
+            ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));
+            ValueID resumeValue = append(ramp, entry, undefined());
+            append(ramp, entry, callResumeFunction(frame, mode, resumeValue));
         }
-
-        BlockID done = addBlock(ramp);
-        BlockID failed = addBlock(ramp);
-        ValueID promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
-        append(ramp, entry, putField(frame, CoroutineFrame::promiseField, promise));
-        ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));
-        append(ramp, entry, callResumeFunction(frame, mode));
-        ramp.at(entry).terminator.kind = TerminatorKind::Invoke;
-        ramp.at(entry).terminator.targets.append(Target { done, { } });
-        ramp.at(entry).terminator.targets.append(Target { failed, { } });
-
-        returnFrom(ramp, done, promise);
-
-        ValueID error = append(ramp, failed, typed(Opcode::CatchValue, m_program.types.anything));
-        append(ramp, failed, operation("RejectPromise"_s, m_program.types.undefined, { promise, error }));
-        returnFrom(ramp, failed, promise);
+        returnFrom(ramp, entry, generator);
     }
 
     Program& m_program;
     FunctionID m_ramp;
     FunctionID m_resume;
     Function m_body;
+    Function m_startBody;
     LayoutID m_frameLayout;
     TypeID m_frameType;
     TypeID m_resumeModeType;
     // Of what the ramp hands back: the promise, or what stands for the generator.
     TypeID m_driverType;
     TypeID m_resultTypeOfResumeFunction;
-    // Of what the entry block of the original takes: the environment, `this`, the parameters.
+    // Of what the entry block of the original takes: the captures, `this`, the parameters.
     Vector<TypeID> m_argumentTypes;
     uint32_t m_position { 0 };
     BlockID m_start;
     ValueID m_frame;
     ValueID m_resumeMode;
+    ValueID m_resumeValue;
     bool m_isGenerator { false };
     bool m_isAsync { false };
     bool m_startsEagerly { false };

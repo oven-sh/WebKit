@@ -32,6 +32,7 @@
 #include "config.h"
 #include "JSGlobalObject.h"
 
+#include "AOTImage.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
 
@@ -450,7 +451,11 @@ static JSValue createAtomicsProperty(VM& vm, JSObject *object)
 static JSValue createConsoleProperty(VM& vm, JSObject* object)
 {
     JSGlobalObject* global = uncheckedDowncast<JSGlobalObject>(object);
-    return ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
+    JSObject* console = ConsoleObject::create(vm, global, ConsoleObject::createStructure(vm, global, constructEmptyObject(global)));
+#if ENABLE(AOT)
+    AOT::Typed::didCreateReplaceableGlobal(global, "console"_s, console);
+#endif
+    return console;
 }
 
 static JSValue createWebAssemblyProperty(VM& vm, JSObject* object)
@@ -725,6 +730,10 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
+#if USE(BUN_JSC_ADDITIONS)
+        nullptr, // requireBuiltinModule
+        nullptr, // nativeBinding
+#endif
     };
     return &table;
 };
@@ -3213,6 +3222,8 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitFunctionStructures(thisObject->m_ordinaryFunctions);
     visitor.append(thisObject->m_boundFunctionStructure);
     visitor.append(thisObject->m_trustedScriptStructure);
+    for (auto& structure : thisObject->m_aotClosureStructures)
+        visitor.append(structure);
 
     thisObject->m_customGetterFunctionStructure.visit(visitor);
     thisObject->m_customSetterFunctionStructure.visit(visitor);
@@ -3502,7 +3513,7 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
         return;
     }
     if (object->type() == JSFunctionType) {
-        object->fixProperties(vm, JSObject::FixedObject::StaysExtensible);
+        makeIntrinsicImmutable(object, IntrinsicKind::Other);
         return;
     }
     // Besides functions a prototype has data (Array.prototype[Symbol.unscopables]). The methods of console are for a host to replace.
@@ -3545,14 +3556,20 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     };
     constexpr unsigned numberOfNamesWithNumberedProperties = 18;
     RELEASE_ASSERT(names[numberOfNamesWithNumberedProperties - 1] == "ArrayBuffer"_s);
-    for (unsigned i = 0; i < std::size(names); ++i) {
+    // Only for whoever goes by the numbers. That they stay what they are takes none of it: what is made later is dealt with then.
+    bool numbersIntrinsics = true;
+#if ENABLE(AOT)
+    numbersIntrinsics = AOT::Image::usesNumberedIntrinsics();
+#endif
+    for (unsigned i = 0; i < std::size(names) && numbersIntrinsics; ++i) {
         SetForScope isNumberingIntrinsics(m_isNumberingIntrinsics, i < numberOfNamesWithNumberedProperties);
         JSValue value = get(this, Identifier::fromString(vm, names[i]));
         scope.assertNoException();
         RELEASE_ASSERT(value.isObject());
         makeIntrinsicImmutable(asObject(value), IntrinsicKind::Other);
     }
-    m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names, numberOfNamesWithNumberedProperties);
+    if (numbersIntrinsics)
+        m_immutableIntrinsics = ImmutableIntrinsics::describe(this, names, numberOfNamesWithNumberedProperties);
 
     // Whatever else the realm was made with: what a variable names, and the prototypes that only their objects lead to.
     structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
@@ -4088,6 +4105,9 @@ void JSGlobalObject::finishCreation(VM& vm)
     init(vm);
     setGlobalThis(vm, JSGlobalProxy::create(vm, JSGlobalProxy::createStructure(vm, this, getPrototypeDirect()), this));
     ASSERT(type() == GlobalObjectType);
+#if ENABLE(AOT)
+    AOT::Typed::didFinishCreation(this);
+#endif
 }
 
 void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
@@ -4099,6 +4119,9 @@ void JSGlobalObject::finishCreation(VM& vm, JSObject* thisValue)
     init(vm);
     setGlobalThis(vm, thisValue);
     ASSERT(type() == GlobalObjectType);
+#if ENABLE(AOT)
+    AOT::Typed::didFinishCreation(this);
+#endif
 }
 
 #ifdef JSC_GLIB_API_ENABLED

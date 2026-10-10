@@ -54,6 +54,13 @@ struct JSFrameData {
     CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
     WriteBarrier<ScriptExecutable> aotExecutable { };
     WriteBarrier<JSCell> aotInstanceToken { };
+    // A frame of code compiled from types, which has neither a CodeBlock nor an executable. aotTypedCode: the function in the image whose
+    // code was running; bytecodeIndex is a call site of it. aotTypedFunction: the function to report, which may have been inlined
+    // into that one. See AOT::FunctionRef::Location::typedFunction.
+    static constexpr uint32_t notTyped = UINT32_MAX;
+    uint32_t aotTypedCode { notTyped };
+    uint32_t aotTypedFunction { notTyped };
+    bool isTyped() const { return aotTypedCode != notTyped; }
 };
 
 struct WasmFrameData {
@@ -72,6 +79,7 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex, bool isAsyncFrame);
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken, BytecodeIndex, bool isAsyncFrame = false);
+    StackFrame(VM&, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite);
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
     StackFrame(Wasm::IndexOrName);
     StackFrame(Wasm::IndexOrName, size_t functionIndex);
@@ -80,9 +88,18 @@ public:
     bool hasLineAndColumnInfo() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
-            return jsFrame->codeBlock || jsFrame->aotExecutable;
+            return jsFrame->codeBlock || jsFrame->aotExecutable || jsFrame->isTyped();
         return false;
     }
+
+    // Compiled from types: codeBlock() and ownerExecutable() are null though hasLineAndColumnInfo() is true.
+    bool isTypedAOTFrame() const
+    {
+        auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+        return jsFrame && jsFrame->isTyped();
+    }
+    // The number isClosureOfTypedFunction() takes.
+    uint32_t typedAOTFunction() const { return std::get<JSFrameData>(m_frameData).aotTypedFunction; }
 
     CodeBlock* codeBlock() const
     {

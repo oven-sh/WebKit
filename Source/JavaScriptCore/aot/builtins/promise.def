@@ -1,0 +1,36 @@
+# The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
+
+class Promise : JSPromiseType = promiseStructure()
+
+inline AwaitMayContinue
+inline AwaitedValue
+inline SuspendAsyncFunction
+inline PromiseResolve
+inline PromiseThen
+
+runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
+runtime PromiseThen : RuntimeState void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived)
+
+operation AwaitMayContinue (any/-, any/-) -> boolean ; ReadsRuntimeState ; Inline(AwaitMayContinue)
+operation AwaitedValue (any/P) -> anything ; ReadsRuntimeState WritesRuntimeState ; Inline(AwaitedValue)
+operation SuspendAsyncFunction (any/K, any/KGP) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(SuspendAsyncFunction)
+
+static Array.fromAsync (any/KGP?, any/KC?, any/KA?, any/-...) -> new Promise/N ; CallsUserCode ; Call
+
+construct Promise (any/C) -> new Promise/N ; CallsUserCode ; Prelude(Promise$construct)
+construct Promise (any/C?, any/-...) -> new Promise/N ; CallsUserCode ; Call
+
+static Promise.all (any/GPD) -> new Promise/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static Promise.any (any/GPD) -> new Promise/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static Promise.race (any/GPD) -> new Promise/N ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static Promise.resolve (any/KGR?) -> new Promise ; Allocates ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(PromiseResolve)
+static Promise.allSettled (any/GPD?, any/-...) -> new Promise/N ; CallsUserCode ; HostCall
+static Promise.reject (any/K?, any/-...) -> new Promise/N ; CallsUserCode ; HostCall
+static Promise.try (any/C?, any/A...) -> new Promise/N ; CallsUserCode ; Call
+static Promise.withResolvers () -> new Object ; Allocates ; HostCall
+
+method Promise.prototype.then this/wGP (any/KC?, any/KC?, any/-...) -> anything ; CallsUserCode ; Inline(PromiseThen)
+method Promise.prototype.catch this/wGP (any/KC?, any/-...) -> anything ; CallsUserCode ; HostCall
+method Promise.prototype.finally this/wGP (any/KC?, any/-...) -> anything ; CallsUserCode ; HostCall
+
+construct AsyncDisposableStack () -> new Object ; Allocates ; HostCall

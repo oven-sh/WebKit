@@ -145,6 +145,15 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
         function.instance->countMisses(function.index, samplingInterval);
 }
 
+ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const Slot* cache)
+{
+    if (!SharedData::contains(cache)) [[likely]]
+        return;
+    FunctionRef function = caller(instance, callFrame);
+    if (!function.instance->dataIfExists(function.index))
+        function.instance->countMisses(function.index, 1);
+}
+
 #define AOT_OPERATION_BEGIN(instance) \
     JSGlobalObject* globalObject = (instance)->globalObject; \
     UNUSED_VARIABLE(globalObject); \
@@ -153,6 +162,18 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
     ++(instance)->effectEpoch; \
     countOperationFor(instance, callFrame); \
+    countOperationNamed(instance, __func__); \
+    auto scope = DECLARE_THROW_SCOPE(vm); \
+    UNUSED_VARIABLE(scope)
+
+#define AOT_OPERATION_BEGIN_AT(instance, cache) \
+    JSGlobalObject* globalObject = (instance)->globalObject; \
+    UNUSED_VARIABLE(globalObject); \
+    VM& vm = *(instance)->vm; \
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
+    ++(instance)->effectEpoch; \
+    countMissAt(instance, callFrame, cache); \
     countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
@@ -192,7 +213,6 @@ ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* cal
         return function;
     return { function.instance, function.info().function()->knownCallees()[whose - 1] };
 }
-ALWAYS_INLINE PutPropertySlot::Context putByIdContextOf(Instance* instance, CallFrame* callFrame) { return caller(instance, callFrame).codeType() == EvalCode ? PutPropertySlot::PutByIdEval : PutPropertySlot::PutById; }
 
 template<typename CellType>
 ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, Instance::InlineAllocation kind, Structure* structure)

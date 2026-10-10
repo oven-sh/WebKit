@@ -37,7 +37,6 @@
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
-#include "AOTPropertyPlaces.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BuiltinExecutables.h"
@@ -5975,29 +5974,8 @@ struct BytecodeLinkEncoder::Impl {
 
 #if ENABLE(AOT)
     std::unique_ptr<AOT::Typed::Program> typedProgram;
-    uint32_t typedModule { 0 };
-    Vector<UnlinkedFunctionExecutable*> engineBuiltins;
-    void addEngineBuiltins()
-    {
-        unsigned added = 0;
-        vm.builtinExecutables()->forEachStandaloneBuiltin([&](unsigned index, UnlinkedFunctionExecutable* executable, const SourceCode& source) {
-            ParserError error;
-            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, executable, source, error, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes);
-            if (error.isValid()) {
-                dataLogLn("AOT: cannot generate bytecode for the builtin function `", executable->name().string(), "`: ", error.message());
-                return;
-            }
-            while (engineBuiltins.size() <= index)
-                engineBuiltins.append(nullptr);
-            engineBuiltins[index] = executable;
-            Module module { SourceCodeKey(), Strong<JSCell>(vm, executable), source, BuiltinExecutables::stampOf(index) };
-            module.isEngineBuiltin = true;
-            add(WTF::move(module), BytecodeOrderNames { });
-            ++added;
-        });
-        if (Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: ", added, " builtin functions are included");
-    }
+    // By entry of the typed program.
+    Vector<uint32_t, 1> typedModules;
 #endif
 
     std::array<unsigned, 3> omittedFunctions { };
@@ -6033,12 +6011,11 @@ struct BytecodeLinkEncoder::Impl {
     }
 
 #if ENABLE(AOT)
-    Vector<std::unique_ptr<AOT::ModuleLinkage>> linkModules(const Vector<std::unique_ptr<AOT::ModuleHints>>& hints)
+    void placeModuleEnvironments()
     {
         using Graph = PrelinkedModuleGraph;
-        Vector<std::unique_ptr<AOT::ModuleLinkage>> result(modules.size());
         if (prelinkedGraph.size() < sizeof(Graph::Header))
-            return result;
+            return;
         auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
         auto arrayAt = [&]<typename T>(uint32_t offset, uint32_t count, const T*) -> std::span<const T> {
             RELEASE_ASSERT(offset <= prelinkedGraph.size() && count <= (prelinkedGraph.size() - offset) / sizeof(T));
@@ -6046,7 +6023,6 @@ struct BytecodeLinkEncoder::Impl {
         };
         RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
         auto graphModules = arrayAt(header.modulesOffset, header.moduleCount, static_cast<const Graph::Module*>(nullptr));
-        auto graphImports = arrayAt(header.importsOffset, header.importCount, static_cast<const Graph::Import*>(nullptr));
 
         struct Linked {
             UnlinkedModuleProgramCodeBlock* codeBlock { nullptr };
@@ -6072,214 +6048,8 @@ struct BytecodeLinkEncoder::Impl {
             linkEnvironments[graphModule] = { static_cast<uint32_t>(linkEnvironmentsSize), static_cast<uint32_t>(size) };
         }
 
-        auto nameOf = [&](uint32_t sid) -> Identifier {
-            if (sid == Graph::starDefaultSid)
-                return vm.propertyNames->starDefaultPrivateName;
-            if (sid >= prelinkedGraphStringSlots.size())
-                return Identifier();
-            String string = strings->stringForSlot(prelinkedGraphStringSlots[sid]);
-            return string.isNull() ? Identifier() : Identifier::fromString(vm, string);
-        };
-        for (unsigned graphModule = 0; graphModule < linked.size(); ++graphModule) {
-            auto& importer = linked[graphModule];
-            if (!importer.codeBlock)
-                continue;
-            auto& module = graphModules[graphModule];
-            RELEASE_ASSERT(module.firstImport <= graphImports.size() && module.importCount <= graphImports.size() - module.firstImport);
-            auto linkage = makeUnique<AOT::ModuleLinkage>();
-            linkage->environmentDepth = linkEnvironments[graphModule].distance;
-            for (unsigned slot = 0; slot < module.importCount; ++slot) {
-                auto& import = graphImports[module.firstImport + slot];
-                if (import.resolution() != Graph::ResolutionKind::Binding || import.isNamespace() || import.resolvedModule >= linked.size())
-                    continue;
-                auto& exporter = linked[import.resolvedModule];
-                Identifier localName = nameOf(import.localSid);
-                Identifier nameInExporter = nameOf(import.resolvedLocalSid);
-                if (!exporter.codeBlock || localName.isNull() || nameInExporter.isNull())
-                    continue;
-                SymbolTableEntry::Fast entry = exporter.symbolTable->get(nameInExporter.impl());
-                if (entry.isNull() || !entry.varOffset().isScope())
-                    continue;
-                const AOT::KnownFunction* function = hints[exporter.index] ? hints[exporter.index]->find(nameInExporter.impl(), entry.scopeOffset().offset()) : nullptr;
-                linkage->addImport(localName.impl(), { slot, JSModuleEnvironment::importSlotScopeOffset(importer.symbolTable, slot).offset(), entry.scopeOffset().offset(), function, linkEnvironments[import.resolvedModule].distance, exporter.symbolTable });
-                linkageNames.append(WTF::move(localName));
-            }
-            result[importer.index] = WTF::move(linkage);
-        }
-
-        auto graphExports = arrayAt(header.exportsOffset, header.exportCount, static_cast<const Graph::Export*>(nullptr));
-        auto graphRequests = arrayAt(header.requestsOffset, header.requestCount, static_cast<const Graph::Request*>(nullptr));
-        auto graphStarExports = arrayAt(header.starExportsOffset, header.starExportCount, static_cast<const uint32_t*>(nullptr));
-        auto variableEscapes = [&](uint32_t graphModule, uint32_t sid) {
-            if (graphModule >= linked.size() || !linked[graphModule].codeBlock)
-                return;
-            Identifier name = nameOf(sid);
-            if (name.isNull()) {
-                linkScopesReadIndirectly.append(linked[graphModule].symbolTable);
-                return;
-            }
-            SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(name.impl());
-            if (entry.isNull() || !entry.varOffset().isScope())
-                return;
-            linkVariablesReadIndirectly.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
-            if (hints[linked[graphModule].index])
-                hints[linked[graphModule].index]->noteEscape(entry.scopeOffset().offset());
-        };
-        BitVector allExportsEscape(graphModules.size());
-        Vector<uint32_t> pendingIndices;
-        auto everyExportEscapes = [&](uint32_t graphModule) {
-            if (graphModule < graphModules.size() && !allExportsEscape.set(graphModule))
-                pendingIndices.append(graphModule);
-        };
-        unsigned indirectlyReadImports = 0;
-        for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
-            auto& module = graphModules[graphModule];
-            bool isLinked = graphModule < linked.size() && linked[graphModule].codeBlock && result[linked[graphModule].index];
-            for (unsigned slot = 0; slot < module.importCount; ++slot) {
-                auto& import = graphImports[module.firstImport + slot];
-                uint32_t requested = import.request() < module.requestCount ? graphRequests[module.firstRequest + import.request()].moduleIndex : Graph::noModule;
-                if (import.isNamespace()) {
-                    everyExportEscapes(requested);
-                    if (Identifier localName = nameOf(import.localSid); !localName.isNull() && graphModule < linked.size() && linked[graphModule].codeBlock) {
-                        SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(localName.impl());
-                        if (!entry.isNull() && entry.varOffset().isScope())
-                            linkVariablesWrittenNatively.append({ linked[graphModule].symbolTable, entry.scopeOffset().offset() });
-                    }
-                    continue;
-                }
-                Identifier localName = nameOf(import.localSid);
-                if (isLinked && !localName.isNull() && result[linked[graphModule].index]->findImport(localName.impl()))
-                    continue;
-                indirectlyReadImports += requested != Graph::noModule;
-                if (import.resolution() == Graph::ResolutionKind::Binding)
-                    variableEscapes(import.resolvedModule, import.resolvedLocalSid);
-                else
-                    everyExportEscapes(requested);
-            }
-        }
-        while (!pendingIndices.isEmpty()) {
-            uint32_t graphModule = pendingIndices.takeLast();
-            auto& module = graphModules[graphModule];
-            auto requested = [&](uint32_t request) {
-                return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
-            };
-            for (unsigned i = 0; i < module.exportCount; ++i) {
-                auto& entry = graphExports[module.firstExport + i];
-                if (entry.isNamespaceReexport())
-                    everyExportEscapes(requested(entry.request()));
-                else if (entry.kind() == Graph::ExportKind::Local)
-                    variableEscapes(graphModule, entry.localOrImportSid);
-                else if (entry.resolution() == Graph::ResolutionKind::Binding)
-                    variableEscapes(entry.resolvedModule, entry.resolvedLocalSid);
-                else
-                    everyExportEscapes(requested(entry.request()));
-            }
-            for (unsigned i = 0; i < module.starExportCount; ++i)
-                everyExportEscapes(requested(graphStarExports[module.firstStarExport + i]));
-        }
-        if (Options::aotFactsPath()) [[unlikely]] {
-            StringPrintStream out;
-            auto printEscaped = [&](StringView text) {
-                for (char16_t character : text.codeUnits()) {
-                    if (character > ' ' && character != '\\' && character < 0x7f)
-                        out.print(static_cast<char>(character));
-                    else
-                        out.printf("\\u%04x", character);
-                }
-            };
-            auto keyOf = [&](uint32_t graphModule) -> uint32_t {
-                return graphModule < linked.size() && linked[graphModule].codeBlock ? modules[linked[graphModule].index].entryOffset + 1 : 0;
-            };
-            auto printVariable = [&](uint32_t graphModule, uint32_t sid) {
-                Identifier name = nameOf(sid);
-                if (keyOf(graphModule) && !name.isNull()) {
-                    SymbolTableEntry::Fast entry = linked[graphModule].symbolTable->get(name.impl());
-                    if (!entry.isNull() && entry.varOffset().isScope()) {
-                        out.print("variable=", reinterpret_cast<uintptr_t>(linked[graphModule].symbolTable), ":", entry.scopeOffset().offset());
-                        return;
-                    }
-                }
-                out.print("unknown");
-            };
-            for (unsigned graphModule = 0; graphModule < graphModules.size(); ++graphModule) {
-                uint32_t key = keyOf(graphModule);
-                if (!key)
-                    continue;
-                auto& module = graphModules[graphModule];
-                auto requested = [&](uint32_t request) {
-                    return request < module.requestCount ? graphRequests[module.firstRequest + request].moduleIndex : Graph::noModule;
-                };
-                for (unsigned i = 0; i < module.requestCount; ++i) {
-                    out.print("R\t", key, "\t");
-                    printEscaped(nameOf(graphRequests[module.firstRequest + i].specifierSid).string());
-                    out.print("\t", keyOf(graphRequests[module.firstRequest + i].moduleIndex), "\n");
-                }
-                for (unsigned slot = 0; slot < module.importCount; ++slot) {
-                    auto& import = graphImports[module.firstImport + slot];
-                    if (!import.isNamespace())
-                        continue;
-                    out.print("W\t", key, "\t");
-                    printVariable(graphModule, import.localSid);
-                    out.print("\tnamespace=", keyOf(requested(import.request())), "\n");
-                }
-                for (unsigned i = 0; i < module.exportCount; ++i) {
-                    auto& entry = graphExports[module.firstExport + i];
-                    out.print("E\t", key, "\t");
-                    printEscaped(nameOf(entry.exportSid).string());
-                    out.print("\t");
-                    if (entry.isNamespaceReexport())
-                        out.print("namespace=", keyOf(requested(entry.request())));
-                    else if (entry.kind() == Graph::ExportKind::Local)
-                        printVariable(graphModule, entry.localOrImportSid);
-                    else if (entry.resolution() == Graph::ResolutionKind::Binding)
-                        printVariable(entry.resolvedModule, entry.resolvedLocalSid);
-                    else
-                        out.print("unknown");
-                    out.print("\n");
-                }
-                for (unsigned i = 0; i < module.starExportCount; ++i)
-                    out.print("E\t", key, "\t*\tnamespace=", keyOf(requested(graphStarExports[module.firstStarExport + i])), "\n");
-            }
-            auto text = out.toUTF8CString();
-            AOT::appendToFacts(byteCast<char>(text.span()));
-        }
-        return result;
     }
-    Vector<AOT::Variable> linkVariablesWrittenNatively;
-    Vector<AOT::Variable> linkVariablesReadIndirectly;
-    Vector<const void*> linkScopesReadIndirectly;
 
-    Vector<AOT::ModuleHints::Binding> moduleBindings(unsigned index)
-    {
-        using Graph = PrelinkedModuleGraph;
-        Vector<AOT::ModuleHints::Binding> result;
-        auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
-        if (!codeBlock || index >= graphModuleIndices.size() || prelinkedGraph.size() < sizeof(Graph::Header))
-            return result;
-        auto& header = *reinterpret_cast<const Graph::Header*>(prelinkedGraph.data());
-        RELEASE_ASSERT(header.magic == Graph::magic && header.version == Graph::currentVersion);
-        uint32_t graphModule = graphModuleIndices[index];
-        if (graphModule >= header.moduleCount)
-            return result;
-        RELEASE_ASSERT(header.modulesOffset <= prelinkedGraph.size() && header.moduleCount <= (prelinkedGraph.size() - header.modulesOffset) / sizeof(Graph::Module));
-        RELEASE_ASSERT(header.bindingsOffset <= prelinkedGraph.size() && header.bindingCount <= (prelinkedGraph.size() - header.bindingsOffset) / sizeof(Graph::Binding));
-        auto& module = reinterpret_cast<const Graph::Module*>(prelinkedGraph.data() + header.modulesOffset)[graphModule];
-        RELEASE_ASSERT(module.firstBinding <= header.bindingCount && module.bindingCount <= header.bindingCount - module.firstBinding);
-        auto* bindings = reinterpret_cast<const Graph::Binding*>(prelinkedGraph.data() + header.bindingsOffset) + module.firstBinding;
-        auto* symbolTable = uncheckedDowncast<SymbolTable>(codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell());
-        for (unsigned i = 0; i < module.bindingCount; ++i) {
-            if (bindings[i].nameSid >= prelinkedGraphStringSlots.size())
-                continue;
-            String string = strings->stringForSlot(prelinkedGraphStringSlots[bindings[i].nameSid]);
-            if (string.isNull())
-                continue;
-            SymbolTableEntry::Fast entry = symbolTable->get(Identifier::fromString(vm, string).impl());
-            if (entry.isNull() || !entry.varOffset().isScope())
-                continue;
-            result.append({ entry.scopeOffset().offset(), bindings[i].keepsDeclaredValue(), !!(bindings[i].flags & Graph::Binding::Escapes), !!(bindings[i].flags & Graph::Binding::IsExternallyVisible) });
-        }
-        return result;
-    }
     std::optional<Vector<uint32_t>> variablesExportedBy(unsigned index)
     {
         using Graph = PrelinkedModuleGraph;
@@ -6329,7 +6099,6 @@ struct BytecodeLinkEncoder::Impl {
         }
         return result;
     }
-    Vector<Identifier> linkageNames;
     Vector<AOT::ImageEnvironment> linkEnvironments;
     size_t linkEnvironmentsSize { 0 };
 
@@ -6341,286 +6110,59 @@ struct BytecodeLinkEncoder::Impl {
             return { };
         }
         ImmutableIntrinsics::ensureShared(vm);
-        AOT::PropertyPlaces propertyPlaces;
-        auto dumpPropertyPlaces = makeScopeExit([&] {
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", propertyPlaces);
-        });
-        AOT::TypeTable::load(vm);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
             dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
             return { };
         }
+        for (auto& function : functionsToCompile) {
+            for (bool isConstruct : { false, true }) {
+                if (isConstruct ? function.forConstruct : function.forCall)
+                    dataLogLn("AOT: cannot compile `", function.executable->ecmaName().string(), "` @", modules[function.module].entryOffset + 1, ":", function.key.start, ":", static_cast<uint32_t>(function.key.kind) << 1 | isConstruct, ": it is not in the typed program");
+            }
+        }
+        if (!functionsToCompile.isEmpty())
+            return { };
         struct Job {
             AOT::ImageKey key;
             uint64_t rank;
             UnlinkedCodeBlock* codeBlock;
             unsigned module;
-            UnlinkedFunctionExecutable* executable { nullptr };
-            unsigned sourceStart { 0 };
-            const AOT::FunctionSummary* summary { nullptr };
-            bool isGeneralBody { false };
-            bool isOmitted { false };
         };
         Vector<Job> jobs;
         constexpr uint64_t isNotHot = 1ull << 63;
         constexpr uint64_t runsOnce = 1ull << 62;
-        for (unsigned index = 0; index < modules.size(); ++index) {
-            if (auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get()))
-                jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), (encoder.hasHotFunctions() && !modules[index].isLate ? runsOnce : isNotHot) | static_cast<uint64_t>(index) << 34, codeBlock, index });
-        }
-
-        UncheckedKeyHashMap<UnlinkedFunctionExecutable*, unsigned> functionIndex;
-        for (unsigned i = 0; i < functionsToCompile.size(); ++i)
-            functionIndex.add(functionsToCompile[i].executable, i);
-        Vector<std::unique_ptr<AOT::ModuleHints>> hints(modules.size());
-        Vector<std::array<AOT::Convention, 2>> conventions(functionsToCompile.size());
-        for (unsigned i = 0; i < functionsToCompile.size(); ++i) {
-            if (auto* codeBlock = functionsToCompile[i].forCall)
-                conventions[i][0] = AOT::conventionOf(codeBlock);
-            if (auto* codeBlock = functionsToCompile[i].forConstruct)
-                conventions[i][1] = AOT::conventionOf(codeBlock);
-        }
-        AOT::ModuleHints::Describe describe = [&](UnlinkedFunctionExecutable* executable, AOT::KnownFunction& known) {
-            auto it = functionIndex.find(executable);
-            if (it == functionIndex.end())
-                return false;
-            auto& function = functionsToCompile[it->value];
-            known.forCall = function.forCall;
-            known.forConstruct = function.forConstruct;
-            known.conventionForCall = conventions[it->value][0];
-            known.conventionForConstruct = conventions[it->value][1];
-            known.key.module = modules[function.module].entryOffset + 1;
-            known.key.start = function.key.start;
-            known.key.kind = static_cast<uint32_t>(function.key.kind) << 1;
+        auto hasNoEffects = [](UnlinkedCodeBlock* codeBlock) {
+            for (const auto& instruction : codeBlock->instructions()) {
+                OpcodeID opcode = instruction->opcodeID();
+                if (opcode != op_enter && opcode != op_mov && opcode != op_ret)
+                    return false;
+            }
             return true;
         };
+        bool isAllInTypedProgram = true;
         for (unsigned index = 0; index < modules.size(); ++index) {
             auto* codeBlock = dynamicDowncast<UnlinkedCodeBlock>(modules[index].root.get());
             if (!codeBlock)
                 continue;
-            hints[index] = makeUnique<AOT::ModuleHints>(codeBlock, moduleBindings(index).span(), describe);
-            hints[index]->recordFunctionAssignmentsIn(codeBlock, describe);
-        }
-        std::set<std::tuple<uint32_t, uint32_t, uint32_t>> keys;
-        for (auto& function : functionsToCompile) {
-            for (bool isConstruct : { false, true }) {
-                UnlinkedFunctionCodeBlock* codeBlock = isConstruct ? function.forConstruct : function.forCall;
-                if (!codeBlock)
-                    continue;
-                AOT::ImageKey key;
-                key.module = modules[function.module].entryOffset + 1;
-                key.start = function.key.start;
-                key.kind = static_cast<uint32_t>(function.key.kind) << 1 | isConstruct;
-                if (!keys.insert({ key.module, key.start, key.kind }).second)
-                    continue;
-                uint64_t place = isNotHot | static_cast<uint64_t>(function.module) << 34 | static_cast<uint64_t>(function.key.start) << 2;
-                if (auto hotRank = encoder.hotRankOf(*function.executable))
-                    place = *hotRank << 2;
-                jobs.append({ key, place | static_cast<uint64_t>(isConstruct) | 2, codeBlock, function.module, function.executable, function.sourceStart });
+            if (typedModules.contains(index)) {
+                jobs.append({ AOT::imageKeyForTopLevelCode(modules[index].entryOffset + 1), (encoder.hasHotFunctions() && !modules[index].isLate ? runsOnce : isNotHot) | static_cast<uint64_t>(index) << 34, codeBlock, index });
+                continue;
             }
+            if (hasNoEffects(codeBlock))
+                continue;
+            dataLogLn("AOT: cannot compile module ", index, " `", modules[index].source.provider()->sourceOrigin().url().string(), "`: it is not in the typed program");
+            isAllInTypedProgram = false;
         }
+        if (!isAllInTypedProgram)
+            return { };
 
         auto moduleText = [&](unsigned module) -> StringView {
             return modules[module].source.provider()->source();
         };
-        auto isProgramModule = [&](unsigned module) {
-            return !!dynamicDowncast<UnlinkedCodeBlock>(modules[module].root.get());
-        };
 
-        for (auto& function : functionsToCompile) {
-            if (!hints[function.module])
-                continue;
-            if (auto* codeBlock = function.forCall ? function.forCall : function.forConstruct)
-                hints[function.module]->recordFunctionAssignmentsIn(codeBlock, describe);
-        }
-        unsigned variables = 0;
-        unsigned proven = 0;
-        for (auto& moduleHints : hints) {
-            if (!moduleHints)
-                continue;
-            moduleHints->prove();
-            variables += moduleHints->numberOfVariables();
-            proven += moduleHints->numberOfSingleFunctionVariables();
-        }
-        if (Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: ", proven, " of ", variables, " candidate module variables always hold the same function");
-
-        auto linkages = linkModules(hints);
+        placeModuleEnvironments();
         unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
         DeferGC deferGC(vm);
-        auto inParallel = [&](size_t count, const auto& functor) {
-            std::atomic<size_t> nextIndex { 0 };
-            auto run = [&] {
-                for (size_t index = nextIndex++; index < count; index = nextIndex++)
-                    functor(index);
-            };
-            Vector<Ref<Thread>> threads;
-            for (unsigned i = 1; i < numberOfThreads; ++i)
-                threads.append(Thread::create("AOT compiler"_s, [&run] { run(); }));
-            run();
-            for (auto& thread : threads)
-                thread->waitForCompletion();
-        };
-
-        Vector<std::unique_ptr<AOT::FunctionSummary>> functionSummaries;
-        AOT::FunctionSummaryMap summariesByExecutable;
-        UncheckedKeyHashMap<UnlinkedCodeBlock*, const AOT::FunctionSummary*> summariesByCodeBlock;
-        AOT::VariableSummaries allVariableSummaries;
-        AOT::VariableSummaries* variableSummaries = &allVariableSummaries;
-        if (variableSummaries) {
-            for (auto& function : functionsToCompile) {
-                if (!function.forCall || !function.forConstruct)
-                    continue;
-                auto scopesOf = [](UnlinkedFunctionCodeBlock* codeBlock) {
-                    Vector<SymbolTable*, 8> scopes;
-                    for (auto& constant : codeBlock->constantRegisters()) {
-                        if (JSValue value = constant.get(); value && value.isCell() && value.asCell()->inherits<SymbolTable>())
-                            scopes.append(uncheckedDowncast<SymbolTable>(value.asCell()));
-                    }
-                    return scopes;
-                };
-                auto scopesForCall = scopesOf(function.forCall);
-                auto scopesForConstruct = scopesOf(function.forConstruct);
-                bool areSameScopes = scopesForCall.size() == scopesForConstruct.size();
-                for (unsigned i = 0; areSameScopes && i < scopesForCall.size(); ++i)
-                    areSameScopes = scopesForConstruct[i]->hasSameScopePartAs(*scopesForCall[i]);
-                if (areSameScopes) {
-                    for (unsigned i = 0; i < scopesForCall.size(); ++i)
-                        variableSummaries->noteSameScope(scopesForConstruct[i], scopesForCall[i]);
-                    continue;
-                }
-                for (auto* scopes : { &scopesForCall, &scopesForConstruct }) {
-                    for (SymbolTable* scope : *scopes)
-                        variableSummaries->giveUpOnScope(scope);
-                }
-            }
-            for (unsigned index = 0; index < modules.size(); ++index) {
-                auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
-                if (!codeBlock)
-                    continue;
-                JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
-                variableSummaries->noteModuleScope(scope);
-                if (!linkages[index]) {
-                    variableSummaries->giveUpOnScope(scope);
-                    continue;
-                }
-                variableSummaries->join({ scope, AOT::Variable::initialValue }, AOT::TEmpty | AOT::TUndefined);
-                if (auto* slots = codeBlock->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
-                    for (unsigned i = 0; i < slots->size(); ++i)
-                        variableSummaries->join({ scope, slots->at(i).offset() }, AOT::TFunction);
-                } else if (codeBlock->numberOfFunctionDecls())
-                    variableSummaries->giveUpOnScope(scope);
-                for (auto* name : { vm.propertyNames->starNamespacePrivateName.impl(), vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl(), vm.propertyNames->builtinNames().metaPrivateName().impl() }) {
-                    SymbolTableEntry::Fast entry = uncheckedDowncast<SymbolTable>(scope)->get(name);
-                    if (!entry.isNull() && entry.varOffset().isScope())
-                        variableSummaries->join({ scope, entry.scopeOffset().offset() }, AOT::TAll);
-                }
-            }
-            for (auto& variable : linkVariablesWrittenNatively)
-                variableSummaries->join(variable, AOT::TAll);
-        }
-        Vector<unsigned> functionNumberModules { 0 };
-        auto moduleForFunctionNumber = [&](uint32_t number) { return functionNumberModules[number]; };
-        AOT::ProgramFunctions programFunctions;
-        std::map<std::tuple<uint32_t, uint32_t, uint32_t>, uint32_t> numberOfKey;
-        for (auto& function : functionsToCompile) {
-            auto result = numberOfKey.try_emplace({ modules[function.module].entryOffset + 1, function.key.start, static_cast<uint32_t>(function.key.kind) }, 0);
-            if (result.second) {
-                AOT::KnownFunction known;
-                known.executable = function.executable;
-                RELEASE_ASSERT(describe(function.executable, known));
-                known.isExact = true;
-                functionSummaries.append(makeUnique<AOT::FunctionSummary>());
-                known.summary = functionSummaries.last().get();
-                result.first->second = programFunctions.add(known);
-                known.summary->number = result.first->second;
-                functionNumberModules.append(function.module);
-            }
-            uint32_t number = result.first->second;
-            programFunctions.addAlias(number, function.executable);
-            AOT::FunctionSummary* summary = programFunctions.function(number)->summary;
-            summariesByExecutable.add(function.executable, summary);
-            if (function.forCall)
-                summariesByCodeBlock.add(function.forCall, summary);
-        }
-        for (unsigned index = 0; index < engineBuiltins.size(); ++index) {
-            if (engineBuiltins[index])
-                programFunctions.setBuiltin(index, programFunctions.numberOf(engineBuiltins[index]));
-        }
-        AOT::setProgramFunctions(&programFunctions);
-        auto forgetProgramFunctions = makeScopeExit([] { AOT::setProgramFunctions(nullptr); });
-        AOT::CallTargets callTargets;
-        if (Options::aotCallTargetsPath()) [[unlikely]] {
-            std::map<CallTargetKey, UnlinkedCodeBlock*> codeBlockOfKey;
-            for (auto& job : jobs)
-                codeBlockOfKey.try_emplace({ job.key.module, job.key.start, job.key.kind }, job.codeBlock);
-            std::array<unsigned, 5> sitesWithTargets { };
-            forEachCallTargetFact([&](CallTargetKey site, uint32_t offset, StringView what, std::span<const CallTargetKey> targets) {
-                auto code = codeBlockOfKey.find(site);
-                if (code == codeBlockOfKey.end())
-                    return false;
-                OpcodeID opcode = op_nop;
-                for (const auto& instruction : code->second->instructions()) {
-                    if (instruction.offset() < offset)
-                        continue;
-                    if (instruction.offset() == offset)
-                        opcode = instruction->opcodeID();
-                    break;
-                }
-                if ((opcode != op_call && opcode != op_call_ignore_result && opcode != op_tail_call && opcode != op_construct) || what != StringView { opcodeNames[opcode] })
-                    return false;
-                uint32_t number = 0;
-                for (auto [module, start, kind] : targets) {
-                    auto function = numberOfKey.find({ module, start, kind >> 1 & 0xff });
-                    if (function == numberOfKey.end())
-                        return false;
-                    number = function->second;
-                }
-                if (AOT::calleeIsNamedLikeCallIntrinsic(code->second, offset)) {
-                    sitesWithTargets[0]++;
-                    return true;
-                }
-                sitesWithTargets[targets.size()]++;
-                return targets.size() > 1 || callTargets.add(code->second, offset, number);
-            });
-            AOT::setCallTargets(&callTargets);
-            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: call sites with 1, 2, 3, 4 targets by the file: ", sitesWithTargets[1], ", ", sitesWithTargets[2], ", ", sitesWithTargets[3], ", ", sitesWithTargets[4], "; ", sitesWithTargets[0], " more are left out, their callees are named like built-ins that are compiled in place");
-        }
-        auto forgetCallTargets = makeScopeExit([] { AOT::setCallTargets(nullptr); });
-        AOT::ProgramClasses programClasses;
-        AOT::setProgramClasses(&programClasses);
-        auto forgetProgramClasses = makeScopeExit([] { AOT::setProgramClasses(nullptr); });
-        if (Options::aotSiteTypesPath()) [[unlikely]] {
-            Vector<AOT::TypeTable::CodeBlockKey> codeBlocks;
-            for (auto& job : jobs)
-                codeBlocks.append({ job.module, job.key.start, job.key.kind, job.codeBlock });
-            AOT::TypeTable::loadSiteTypes(codeBlocks.span());
-        }
-        if (Options::aotFactsPath()) [[unlikely]] {
-            StringPrintStream out;
-            for (unsigned module = 0; module < modules.size(); ++module) {
-                if (!isProgramModule(module))
-                    continue;
-                SourceProvider& provider = *modules[module].source.provider();
-                out.print("M\t", modules[module].entryOffset + 1, "\t");
-                String name = provider.sourceURL().isEmpty() ? provider.sourceOrigin().url().string() : provider.sourceURL();
-                for (char16_t character : StringView(name).codeUnits()) {
-                    if (character > ' ' && character != '\\' && character < 0x7f)
-                        out.print(static_cast<char>(character));
-                    else
-                        out.printf("\\u%04x", character);
-                }
-                out.print("\n");
-                if (!hints[module])
-                    continue;
-                hints[module]->forEachDeclaration([&](unsigned offset, const AOT::KnownFunction& function) {
-                    out.print("D\t", modules[module].entryOffset + 1, "\tvariable=", reinterpret_cast<uintptr_t>(hints[module]->variableScope()), ":", offset, "\tfunction=0:", function.key.module, ":", function.key.start, ":", function.key.kind, "\n");
-                });
-            }
-            auto text = out.toUTF8CString();
-            AOT::appendToFacts(byteCast<char>(text.span()));
-        }
         MonotonicTime phaseStart = MonotonicTime::now();
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
@@ -6628,642 +6170,52 @@ struct BytecodeLinkEncoder::Impl {
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
         };
-        struct FunctionCreationSite {
-            uint32_t maker;
-            uint32_t made;
-            bool makerIsStrict;
-            bool makerHasDynamicScope;
-        };
-        Vector<FunctionCreationSite> functionCreationSites;
-        AOT::MultiValueReturnTable multiValueReturnTable;
-        AOT::setMultiValueReturnTable(&multiValueReturnTable);
-        auto forgetFunctionReturnValues = makeScopeExit([] { AOT::setMultiValueReturnTable(nullptr); });
-        {
-            for (auto& moduleHints : hints) {
-                if (!moduleHints)
-                    continue;
-                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    auto result = summariesByExecutable.add(function.executable, nullptr);
-                    if (result.isNewEntry) {
-                        functionSummaries.append(makeUnique<AOT::FunctionSummary>());
-                        result.iterator->value = functionSummaries.last().get();
-                    }
-                    function.summary = result.iterator->value;
-                    if (function.forCall)
-                        summariesByCodeBlock.add(function.forCall, function.summary);
-                });
-            }
-            std::atomic<unsigned> unreadable { 0 };
-            inParallel(jobs.size(), [&](size_t index) {
-                if (!AOT::recordKnownFunctionUsesForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), summariesByExecutable, summariesByCodeBlock.get(jobs[index].codeBlock), variableSummaries, &propertyPlaces))
-                    unreadable++;
-            });
-            propertyPlaces.finalize();
-            if (variableSummaries) {
-                for (unsigned index = 0; index < modules.size(); ++index) {
-                    auto* codeBlock = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(modules[index].root.get());
-                    if (!codeBlock)
-                        continue;
-                    JSCell* scope = codeBlock->getConstant(VirtualRegister(codeBlock->moduleEnvironmentSymbolTableConstantRegisterOffset())).asCell();
-                    if (auto exported = variablesExportedBy(index)) {
-                        UncheckedKeyHashSet<uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> onlyImportedStatically;
-                        for (auto& binding : moduleBindings(index)) {
-                            if (!binding.isExternallyVisible)
-                                onlyImportedStatically.add(binding.scopeOffset);
-                        }
-                        for (uint32_t offset : *exported) {
-                            if (!onlyImportedStatically.contains(offset))
-                                variableSummaries->noteObjectEscapes({ scope, offset }, "is-exported"_s);
-                        }
-                    } else
-                        variableSummaries->noteObjectsEscapeIn(scope, "may-be-exported"_s);
-                    if (auto* slots = codeBlock->heapAllocatedFunctionDeclSlots(); slots && !slots->hasDecodeSource()) {
-                        for (unsigned i = 0; i < slots->size(); ++i)
-                            variableSummaries->noteObjectEscapes({ scope, slots->at(i).offset() }, "may-hold-a-function-declaration"_s);
-                    }
-                }
-                for (AOT::Variable variable : linkVariablesReadIndirectly)
-                    variableSummaries->noteObjectEscapes(variable, "is-read-through-a-namespace"_s);
-                for (const void* scope : linkScopesReadIndirectly)
-                    variableSummaries->noteObjectsEscapeIn(scope, "is-read-through-a-namespace"_s);
-                for (AOT::Variable variable : linkVariablesWrittenNatively)
-                    variableSummaries->noteObjectEscapes(variable, "is-written-by-the-loader"_s);
-                unsigned neverAllocated = 0;
-                unsigned found = variableSummaries->finishFindingConstantObjects(neverAllocated);
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: ", found, " variables hold a constant object, ", neverAllocated, " of which are never allocated");
-            }
-            {
-                Vector<AOT::FunctionSummary*> calledRepeatedly;
-                for (auto& summary : functionSummaries) {
-                    if (summary->isCalledRepeatedly.load(std::memory_order_relaxed))
-                        calledRepeatedly.append(summary.get());
-                }
-                unsigned found = calledRepeatedly.size();
-                for (unsigned level = 0; level < 2; ++level) {
-                    Vector<AOT::FunctionSummary*> callees;
-                    for (auto* summary : calledRepeatedly) {
-                        Locker locker { summary->directCalleesLock };
-                        for (auto* callee : summary->directCallees) {
-                            if (!callee->isCalledRepeatedly.exchange(true, std::memory_order_relaxed))
-                                callees.append(callee);
-                        }
-                    }
-                    found += callees.size();
-                    calledRepeatedly = WTF::move(callees);
-                }
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: ", found, " of ", functionSummaries.size(), " functions are called repeatedly");
-            }
-            AOT::TypeTable::finalizeAtomizedFields();
-            RELEASE_ASSERT(!unreadable.load());
-            for (uint32_t number = 1; number <= std::min<uint32_t>(programFunctions.size(), AOT::maxFunctionNumberInTypes()); ++number) {
-                const AOT::KnownFunction& function = *programFunctions.function(number);
-                function.summary->mayHaveGeneralBody = isProgramModule(moduleForFunctionNumber(number)) && AOT::mayHaveGeneralBody(function);
-            }
-            programClasses.forEachNonEscapingMethod([&](uint32_t number) {
-                const AOT::KnownFunction& function = *programFunctions.function(number);
-                function.needsNoFunctionObject.store(function.forCall && !AOT::needsFunctionObject(function.forCall), std::memory_order_relaxed);
-            });
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", programClasses.numberOfNonEscapingMethods(), " methods do not escape");
-            BitVector hasVisibleCreationSite(programFunctions.size() + 1);
-            for (auto& job : jobs) {
-                size_t firstCreationSite = functionCreationSites.size();
-                uint32_t maker = job.executable ? programFunctions.numberOf(job.executable) : 0;
-                bool makerIsStrict = job.executable ? job.executable->isInStrictContext() : job.codeBlock->codeType() == ModuleCode;
-                bool makerHasDynamicScope = false;
-                for (const auto& instruction : job.codeBlock->instructions()) {
-                    UnlinkedFunctionExecutable* made = nullptr;
-                    switch (instruction->opcodeID()) {
-                    case op_push_with_scope:
-                    case op_call_direct_eval:
-                        makerHasDynamicScope = true;
-                        break;
-                    case op_new_func:
-                        made = job.codeBlock->functionDecl(instruction->as<OpNewFunc>().m_functionDecl);
-                        break;
-                    case op_new_func_exp:
-                        made = job.codeBlock->functionExpr(instruction->as<OpNewFuncExp>().m_functionDecl);
-                        break;
-                    case op_new_generator_func:
-                        made = job.codeBlock->functionDecl(instruction->as<OpNewGeneratorFunc>().m_functionDecl);
-                        break;
-                    case op_new_generator_func_exp:
-                        made = job.codeBlock->functionExpr(instruction->as<OpNewGeneratorFuncExp>().m_functionDecl);
-                        break;
-                    case op_new_async_func:
-                        made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncFunc>().m_functionDecl);
-                        break;
-                    case op_new_async_func_exp:
-                        made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncFuncExp>().m_functionDecl);
-                        break;
-                    case op_new_async_generator_func:
-                        made = job.codeBlock->functionDecl(instruction->as<OpNewAsyncGeneratorFunc>().m_functionDecl);
-                        break;
-                    case op_new_async_generator_func_exp:
-                        made = job.codeBlock->functionExpr(instruction->as<OpNewAsyncGeneratorFuncExp>().m_functionDecl);
-                        break;
-                    default:
-                        break;
-                    }
-                    if (made) {
-                        hasVisibleCreationSite.set(programFunctions.numberOf(made));
-                        if (uint32_t number = programFunctions.numberOf(made))
-                            functionCreationSites.append({ maker, number, makerIsStrict, false });
-                    }
-                }
-                for (size_t site = firstCreationSite; site < functionCreationSites.size(); ++site)
-                    functionCreationSites[site].makerHasDynamicScope = makerHasDynamicScope;
-            }
-            for (auto& moduleHints : hints) {
-                if (!moduleHints)
-                    continue;
-                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    uint32_t number = programFunctions.numberOf(function.executable);
-                    if (function.isExternallyVisible)
-                        function.summary->markEscaping(AOT::FunctionSummary::ReportedByBundler);
-                    else if (function.isDeclaration)
-                        hasVisibleCreationSite.set(number);
-                });
-            }
-            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                const AOT::KnownFunction& function = *programFunctions.function(number);
-                function.summary->isNonEscaping = !!function.forCall;
-                function.summary->hasOnlyKnownCallers = !!function.forCall;
-                if (!function.forCall)
-                    function.summary->markEscaping(AOT::FunctionSummary::NotCallable);
-                else if (number > AOT::maxFunctionNumberInTypes())
-                    function.summary->markEscaping(AOT::FunctionSummary::FunctionNumberOverflow);
-                else if (!isProgramModule(moduleForFunctionNumber(number)))
-                    function.summary->markEscaping(AOT::FunctionSummary::ExternalFunction);
-                else if (!hasVisibleCreationSite.get(number))
-                    function.summary->markEscaping(AOT::FunctionSummary::CreationSiteUnknown);
-                else if (AOT::mayReferenceItself(function.forCall))
-                    function.summary->markEscaping(AOT::FunctionSummary::ReferencesItself);
-            }
-        }
-
-        {
-            using UnitSet = UncheckedKeyHashSet<unsigned, WTF::IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>>;
-            struct AnalysisUnit {
-                Vector<const AOT::KnownFunction*, 1> functions;
-                const AOT::FunctionSummary* summary { nullptr };
-                UnitSet dependents;
-                Vector<const AOT::KnownFunction*> callees;
-                Vector<const AOT::KnownFunction*> calleesWithWidenedInputs;
-                bool changed { false };
-            };
-            constexpr unsigned noUnit = std::numeric_limits<unsigned>::max();
-            unsigned numberOfCodeBlocks = jobs.size();
-            Vector<unsigned> generalUnitOf;
-            generalUnitOf.fill(noUnit, numberOfCodeBlocks);
-            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
-                jobs[i].summary = summariesByCodeBlock.get(jobs[i].codeBlock);
-                if (!jobs[i].summary || !jobs[i].summary->mayHaveGeneralBody)
-                    continue;
-                functionSummaries.append(makeUnique<AOT::FunctionSummary>());
-                AOT::FunctionSummary& general = *functionSummaries.last();
-                general.function = jobs[i].summary;
-                general.number = jobs[i].summary->number;
-                general.markEscaping(AOT::FunctionSummary::ExternalFunction);
-                Job job = jobs[i];
-                job.summary = &general;
-                job.isGeneralBody = true;
-                generalUnitOf[i] = jobs.size();
-                jobs.append(job);
-            }
-            Vector<AnalysisUnit> units(jobs.size());
-            UncheckedKeyHashMap<UnlinkedCodeBlock*, unsigned> codeSummary;
-            for (unsigned i = 0; i < numberOfCodeBlocks; ++i)
-                codeSummary.add(jobs[i].codeBlock, i);
-            UncheckedKeyHashMap<const AOT::KnownFunction*, unsigned> summaryIndex;
-            for (unsigned module = 0; module < hints.size(); ++module) {
-                if (!hints[module])
-                    continue;
-                hints[module]->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    if (!function.forCall)
-                        return;
-                    auto it = codeSummary.find(function.forCall);
-                    if (it == codeSummary.end())
-                        return;
-                    summaryIndex.add(&function, it->value);
-                    units[it->value].functions.append(&function);
-                    units[it->value].summary = function.summary;
-                });
-            }
-            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                const AOT::KnownFunction* function = programFunctions.function(number);
-                if (!function->forCall)
-                    continue;
-                auto it = codeSummary.find(function->forCall);
-                if (it == codeSummary.end())
-                    continue;
-                summaryIndex.add(function, it->value);
-                units[it->value].functions.append(function);
-                units[it->value].summary = function->summary;
-            }
-            for (unsigned i = numberOfCodeBlocks; i < jobs.size(); ++i)
-                units[i].summary = jobs[i].summary;
-            Vector<unsigned> worklist;
-            for (unsigned i = 0; i < units.size(); ++i)
-                worklist.append(i);
-            endPhase("finding the uses of known functions"_s);
-            unsigned rounds = 0;
-            size_t inferences = 0;
-            unsigned neverCreatedScopes = 0;
-            auto summaryDigest = [&] {
-                uint64_t digest = 0;
-                auto mix = [&](uint64_t value) {
-                    digest = (digest ^ value) * 0x9e3779b97f4a7c15ull;
-                    digest ^= digest >> 29;
-                };
-                auto mixType = [&](AOT::Type type) {
-                    mix(static_cast<uint64_t>(type));
-                    mix(static_cast<uint64_t>(type >> 64));
-                };
-                for (auto& unit : units) {
-                    if (unit.summary) {
-                        mix(unit.summary->escapes.load());
-                        for (auto& type : unit.summary->parameterTypes)
-                            mixType(type.load());
-                        mixType(unit.summary->thisType.load());
-                        mixType(unit.summary->returnType.load());
-                        mix(unit.summary->escapingParameters.load());
-                        mix(unit.summary->escapingParametersUnlessPlainObjects.load());
-                        mix(unit.summary->needsReturnObject.load());
-                        for (auto& type : unit.summary->returnValueTypes)
-                            mixType(type.load());
-                    }
-                    for (auto* function : unit.functions)
-                        mixType(function->returnType.load());
-                }
-                uint64_t variables = 0;
-                if (variableSummaries) {
-                    variableSummaries->forEach([&](AOT::Variable, AOT::Type type) {
-                        uint64_t low = static_cast<uint64_t>(type) * 0x9e3779b97f4a7c15ull;
-                        uint64_t high = static_cast<uint64_t>(type >> 64) * 0xc2b2ae3d27d4eb4full;
-                        variables += (low ^ low >> 31) + (high ^ high >> 29);
-                    });
-                }
-                mix(variables);
-                mix(neverCreatedScopes);
-                return digest;
-            };
-            unsigned fullReanalysisCount = 0;
-            bool isReanalyzingAll = false;
-            uint64_t digestBefore = 0;
-            for (;;) {
-            while (!worklist.isEmpty()) {
-                ++rounds;
-                inferences += worklist.size();
-                if (unsigned seed = Options::seedOfAOTInferenceOrderForTesting()) [[unlikely]] {
-                    std::ranges::sort(worklist);
-                    WeakRandom random(seed + rounds);
-                    for (unsigned i = worklist.size(); i > 1; --i)
-                        std::swap(worklist[i - 1], worklist[random.getUint32(i)]);
-                }
-                inParallel(worklist.size(), [&](size_t at) {
-                    unsigned index = worklist[at];
-                    AnalysisUnit& unit = units[index];
-                    unit.callees.shrink(0);
-                    unit.calleesWithWidenedInputs.shrink(0);
-                    if (unit.summary && (unit.summary->function || unit.summary->mayHaveGeneralBody) && !unit.summary->isReached()) {
-                        unit.changed = false;
-                        return;
-                    }
-                    uint32_t escaping = 0;
-                    AOT::Type type = AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, index, unit.callees, unit.calleesWithWidenedInputs, escaping);
-                    unit.changed = false;
-                    if (unit.summary) {
-                        uint32_t old = unit.summary->escapingParameters.fetch_or(escaping, std::memory_order_relaxed);
-                        unit.changed |= (old | escaping) != old;
-                        unit.changed |= unit.summary->returnValueTypesChanged.exchange(false, std::memory_order_relaxed);
-                    }
-                    for (auto* function : unit.functions) {
-                        AOT::Type old = function->returnType.join(type);
-                        unit.changed |= (type | old) != old;
-                    }
-                    if (unit.summary)
-                        unit.summary->returnType.join(type);
-                });
-                UnitSet next;
-                for (unsigned index : worklist) {
-                    for (auto* callee : units[index].callees) {
-                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end())
-                            units[it->value].dependents.add(index);
-                    }
-                }
-                for (unsigned index : worklist) {
-                    for (auto* callee : units[index].calleesWithWidenedInputs) {
-                        if (auto it = summaryIndex.find(callee); it != summaryIndex.end()) {
-                            next.add(it->value);
-                            if (unsigned general = generalUnitOf[it->value]; general != noUnit)
-                                next.add(general);
-                        }
-                    }
-                    if (!std::exchange(units[index].changed, false))
-                        continue;
-                    for (unsigned dependent : units[index].dependents)
-                        next.add(dependent);
-                }
-                if (variableSummaries) {
-                    for (unsigned reader : variableSummaries->takeWidenedVariableReaders())
-                        next.add(reader);
-                    if (next.isEmpty()) {
-                        for (unsigned reader : variableSummaries->untrackVariablesReadButNeverWritten(neverCreatedScopes))
-                            next.add(reader);
-                    }
-                }
-                worklist = copyToVector(next);
-            }
-            uint64_t digest = summaryDigest();
-            if (fullReanalysisCount && digest == digestBefore)
-                break;
-            digestBefore = digest;
-            ++fullReanalysisCount;
-            isReanalyzingAll = true;
-            for (unsigned i = 0; i < units.size(); ++i)
-                worklist.append(i);
-            }
-            unsigned withCode = 0;
-            unsigned closed = 0;
-            unsigned isNeverCalled = 0;
-            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
-                if (generalUnitOf[i] == noUnit)
-                    continue;
-                const AOT::FunctionSummary& function = *jobs[i].summary;
-                if (!function.escapes.load() || function.hasUnknownCallers.load())
-                    continue;
-                bool knowsArguments = programFunctions.function(function.number)->conventionForCall.usesThis && function.thisType.load() != AOT::TTop;
-                for (unsigned parameter = 1; parameter < std::min<unsigned>(jobs[i].codeBlock->numParameters(), AOT::FunctionSummary::maxParameters); ++parameter)
-                    knowsArguments |= function.parameterTypes[parameter].load() != AOT::TTop;
-                if (!function.parameterTypes[0].load()) {
-                    const AOT::FunctionSummary& general = *jobs[generalUnitOf[i]].summary;
-                    function.returnType.join(general.returnType.load());
-                    function.escapingParameters.fetch_or(general.escapingParameters.load());
-                    function.escapingParametersUnlessPlainObjects.fetch_or(general.escapingParametersUnlessPlainObjects.load());
-                    for (auto* known : units[i].functions)
-                        known->returnType.join(general.returnType.load());
-                } else if (knowsArguments)
-                    continue;
-                function.hasUnknownCallers.store(true);
-            }
-            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                const AOT::KnownFunction& function = *programFunctions.function(number);
-                function.summary->isNonEscaping = function.forCall && !function.summary->escapes.load();
-                function.summary->hasOnlyKnownCallers = function.forCall && !function.summary->hasUnknownCallers.load();
-                withCode += !!function.forCall;
-                closed += function.summary->isNonEscaping;
-                isNeverCalled += function.summary->isNonEscaping && !function.summary->parameterTypes[0].load();
-            }
-            unsigned functionsWithTwoBodies = 0;
-            for (unsigned i = 0; i < numberOfCodeBlocks; ++i) {
-                unsigned general = generalUnitOf[i];
-                if (general == noUnit)
-                    continue;
-                if (!jobs[i].summary->escapes.load() || !jobs[i].summary->hasOnlyKnownCallers) {
-                    jobs[general].isOmitted = true;
-                    continue;
-                }
-                jobs[i].key.kind |= AOT::ImageKey::typedBody;
-                for (auto* function : units[i].functions)
-                    function->key.kind |= AOT::ImageKey::typedBody;
-                ++functionsWithTwoBodies;
-            }
-            if (variableSummaries) {
-                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                    const AOT::KnownFunction& function = *programFunctions.function(number);
-                    if (!function.forCall)
-                        continue;
-                    SourceParseMode mode = function.forCall->parseMode();
-                    function.summary->canHoldCaptures = mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode
-                        || mode == SourceParseMode::AsyncFunctionMode || mode == SourceParseMode::AsyncArrowFunctionMode || mode == SourceParseMode::AsyncFunctionBodyMode || mode == SourceParseMode::AsyncArrowFunctionBodyMode
-                        || mode == SourceParseMode::GeneratorBodyMode || mode == SourceParseMode::AsyncGeneratorBodyMode;
-                }
-                unsigned closuresWithCaptures = 0;
-                unsigned dissolved = variableSummaries->dissolveScopes(closuresWithCaptures);
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: ", dissolved, " scopes are never made; ", closuresWithCaptures, " functions hold what they capture");
-            }
-            {
-                BitVector isMadeBySloppyCode(programFunctions.size() + 1);
-                BitVector isUnderDynamicScope(programFunctions.size() + 1);
-                for (bool changed = true; changed;) {
-                    changed = false;
-                    for (auto& site : functionCreationSites) {
-                        if (!site.makerIsStrict)
-                            isMadeBySloppyCode.set(site.made);
-                        if (!isUnderDynamicScope.get(site.made) && (site.makerHasDynamicScope || isUnderDynamicScope.get(site.maker))) {
-                            isUnderDynamicScope.set(site.made);
-                            changed = true;
-                        }
-                    }
-                }
-                unsigned functionsWithoutObject = 0;
-                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                    const AOT::KnownFunction& function = *programFunctions.function(number);
-                    if (!function.summary->isNonEscaping || function.summary->needsObject.load(std::memory_order_relaxed) || function.forConstruct || !function.summary->captures.isEmpty() || isMadeBySloppyCode.get(number) || isUnderDynamicScope.get(number))
-                        continue;
-                    SourceParseMode mode = function.forCall->parseMode();
-                    const DeclaredNamesLink* declaredNames = AOT::declaredNamesFor(function.forCall);
-                    function.summary->takesScopeAsCallee = (mode == SourceParseMode::NormalFunctionMode || mode == SourceParseMode::ArrowFunctionMode) && declaredNames && !declaredNames->scopeIsOutermostEnvironment();
-                    functionsWithoutObject += function.summary->takesScopeAsCallee;
-                }
-                if (Options::verboseAOTCompilation()) [[unlikely]] {
-                    unsigned sitesThatMakeNothing = 0;
-                    for (auto& site : functionCreationSites) {
-                        const AOT::KnownFunction* made = programFunctions.function(site.made);
-                        sitesThatMakeNothing += made && made->summary->takesScopeAsCallee;
-                    }
-                    dataLogLn("AOT: ", functionsWithoutObject, " functions have no function object; ", sitesThatMakeNothing, " sites make nothing");
-                }
-            }
-            for (bool changed = true; changed;) {
-                changed = false;
-                for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                    const AOT::KnownFunction& caller = *programFunctions.function(number);
-                    for (const AOT::FunctionSummary* calleeSummary : caller.summary->knownTailCallees) {
-                        const AOT::KnownFunction& callee = *programFunctions.function(calleeSummary->number);
-                        if (AOT::valueRepresentations(caller.summary, caller.conventionForCall).result == AOT::valueRepresentations(callee.summary, callee.conventionForCall).result)
-                            continue;
-                        caller.summary->returnsBoxed = true;
-                        callee.summary->returnsBoxed = true;
-                        changed = true;
-                    }
-                }
-            }
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: ", withCode, " functions have code for calls, ", closed, " of them do not escape, ", isNeverCalled, " of those have no call site; ", functionsWithTwoBodies, " that escape have a body for their known callers");
-            if (Options::logAOTTypeInference()) [[unlikely]] {
-                auto jobName = [&](unsigned index) {
-                    auto* executable = jobs[index].executable;
-                    return makeString('`', executable ? executable->name().string() : "(top level)"_s, "` @"_s, jobs[index].key.module, ':', jobs[index].key.start);
-                };
-                for (unsigned index = 0; index < units.size(); ++index) {
-                    if (jobs[index].isOmitted)
-                        continue;
-                    if (Options::aotFunctionToDump()) {
-                        StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
-                        auto* executable = jobs[index].executable;
-                        if (!(executable && executable->ecmaName().string() == wanted) && makeString(jobs[index].key.start) != wanted && makeString(jobs[index].key.module, ':', jobs[index].key.start) != wanted)
-                            continue;
-                    }
-                    AnalysisUnit& unit = units[index];
-                    if (unit.summary) {
-                        StringPrintStream out;
-                        for (unsigned p = 1; p < std::min<unsigned>(jobs[index].codeBlock->numParameters(), AOT::FunctionSummary::maxParameters); ++p)
-                            out.print(" ", AOT::TypeDump(unit.summary->parameterTypes[p].load()));
-                        dataLogLn("AOT inference: function ", jobName(index), unit.summary->isNonEscaping ? " CLOSED, is passed" : " open", unit.summary->isNonEscaping ? out.toString() : String(), ", returns ", AOT::TypeDump(unit.functions[0]->returnType.load()), ", direct calls ", unit.summary->directCalls.load());
-                    }
-                    Vector<const AOT::KnownFunction*> ignored;
-                    Vector<const AOT::KnownFunction*> alsoIgnored;
-                    uint32_t ignoredAlso = 0;
-                    AOT::inferReturnTypeForImage(vm, jobs[index].codeBlock, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), unit.summary, variableSummaries, AOT::VariableSummaries::nobody, ignored, alsoIgnored, ignoredAlso, jobName(index));
-                }
-            }
-        }
-
-        endPhase("type inference"_s);
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
-        std::atomic<size_t> next { 0 };
-        Lock declinedLock;
-        struct FunctionRemarks {
-            AOT::ImageKey key;
-            unsigned module;
-            String name;
-            Vector<String> remarks;
-        };
-        Vector<FunctionRemarks> allRemarks;
-        struct FunctionCoverage {
-            String name;
-            Vector<AOT::CoveredOperation> operations;
-        };
-        Vector<FunctionCoverage> allCoverage;
         UncheckedKeyHashSet<UnlinkedCodeBlock*> declined;
-        class LinkedProgramCode final : public AOT::ProgramCode {
-        public:
-            std::optional<About> about(UnlinkedCodeBlock* codeBlock) const final
-            {
-                auto it = all.find(codeBlock);
-                return it == all.end() ? std::nullopt : std::optional { it->value };
-            }
-            UnlinkedFunctionCodeBlock* codeForBuiltin(unsigned index) const final
-            {
-                return index < builtins->size() && builtins->at(index) ? builtins->at(index)->codeBlockIfExists(CodeSpecializationKind::CodeForCall) : nullptr;
-            }
-            UncheckedKeyHashMap<UnlinkedCodeBlock*, About> all;
-            const Vector<UnlinkedFunctionExecutable*>* builtins { nullptr };
+        auto typedEntryOf = [&](size_t index) -> AOT::Typed::FunctionID {
+            if (!typedProgram)
+                return { };
+            size_t entry = typedModules.find(jobs[index].module);
+            return entry == notFound ? AOT::Typed::FunctionID() : typedProgram->entries[entry];
         };
-        AOT::closePropertyEffects(functionSummaries.span());
-        unsigned functionsWithoutStackCheck = AOT::findFunctionsWithoutStackCheck(programFunctions);
-        if (Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: ", functionsWithoutStackCheck, " functions rely on the stack check of a caller");
-        LinkedProgramCode programCode;
-        programCode.builtins = &engineBuiltins;
-        programCode.propertyPlaces = &propertyPlaces;
-        uint32_t numberOfTypeCoverageCounters = 0;
-        for (auto& job : jobs) {
-            if (job.isGeneralBody)
-                continue;
-            programCode.all.add(job.codeBlock, AOT::ProgramCode::About { hints[job.module].get(), linkages[job.module].get(), job.summary, job.key.ofPublicBody(), numberOfTypeCoverageCounters });
-            if (Options::useAOTTypeCoverageCounters() && Options::aotTypeCoveragePath()) [[unlikely]]
-                numberOfTypeCoverageCounters += job.codeBlock->instructionsSize();
-        }
-        builder.setNumberOfTypeCoverageCounters(numberOfTypeCoverageCounters * AOT::CoveredOperation::countersPerOperation);
-        std::atomic<uint64_t> unreachedFunctions { 0 };
-        std::atomic<uint64_t> unreachedBytecodeSize { 0 };
         auto isTypedEntry = [&](size_t index) {
-            return typedProgram && jobs[index].module == typedModule && !jobs[index].executable;
+            return !!typedEntryOf(index);
         };
         Vector<String> typedFunctionsForMap;
         if (typedProgram && Options::aotMapFilePath()) [[unlikely]]
             typedFunctionsForMap = AOT::Typed::describeForMap(*typedProgram);
         auto compileJob = [&](size_t index) {
-            if (jobs[index].isOmitted)
-                return;
-            if (const AOT::FunctionSummary* summary = jobs[index].summary; summary && !summary->isReached()) {
-                unreachedFunctions++;
-                unreachedBytecodeSize += jobs[index].codeBlock->instructionsSize();
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: omitted as unreachable: `", jobs[index].executable ? jobs[index].executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind);
-                return;
-            }
             AOT::CompiledCode code;
             if (Options::aotFunctionToDump()) [[unlikely]] {
                 StringView wanted = StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
-                auto* executable = jobs[index].executable;
-                code.mayBeDumped = (executable && executable->ecmaName().string() == wanted) || makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
+                code.mayBeDumped = makeString(jobs[index].key.start) == wanted || makeString(jobs[index].key.module, ':', jobs[index].key.start) == wanted;
             }
-            bool isCompiled = isTypedEntry(index) ? AOT::Typed::compile(vm, *typedProgram, typedProgram->entry, code) : AOT::compileForImage(vm, jobs[index].codeBlock, code, hints[jobs[index].module].get(), linkages[jobs[index].module].get(), jobs[index].summary, variableSummaries, &programCode);
-            if (isTypedEntry(index) && isCompiled)
-                code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
-            if (isCompiled) {
-                {
-                    auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
-                    bool isTopLevel = !(jobs[index].rank & 2);
-                    bool startIsKnown = isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor;
-                    AOT::collectConstructSites(code.info, jobs[index].codeBlock, startIsKnown ? moduleText(jobs[index].module) : StringView { }, jobs[index].sourceStart);
-                }
-                if (Options::logAOTTypeInference()) [[unlikely]] {
-                    auto* executable = jobs[index].executable;
-                    dataLogLn("CODESIZE `", executable ? executable->name().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, " ", code.bytes.size());
-                }
-                auto functionKind = static_cast<OrderFunctionKind>(jobs[index].key.kind >> 1 & 0xff);
-                bool isTopLevel = !(jobs[index].rank & 2);
-                bool isInProgram = isProgramModule(jobs[index].module);
-                if (isInProgram && (isTopLevel || functionKind != OrderFunctionKind::DefaultConstructor))
-                    AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), jobs[index].sourceStart);
-                else if (auto* executable = jobs[index].executable; executable && executable->isBuiltinDefaultClassConstructor()) {
-                    SourceCode source = executable->linkedSourceCode(BuiltinExecutables::defaultConstructorSourceCode(executable->constructorKind()));
-                    AOT::collectQuotes(code.info, jobs[index].codeBlock, source.provider()->source(), source.startOffset());
-                }
-                if (auto* numbers = AOT::programIdentifierIndices()) {
-                    for (auto& identifier : jobs[index].codeBlock->identifiers())
-                        code.info.identifierIndices.append(numbers->get(identifier.impl()));
-                }
-                if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
-                    code.info.constantIndices = *numbers;
-                if (Options::aotRemarksPath()) [[unlikely]] {
-                    Locker locker { declinedLock };
-                    allRemarks.append({ jobs[index].key, jobs[index].module, jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.remarks) });
-                }
-                if (Options::aotTypeCoveragePath()) [[unlikely]] {
-                    Locker locker { declinedLock };
-                    allCoverage.append({ jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), WTF::move(code.coverage) });
-                }
-                String nameForMap;
-                if (auto* executable = jobs[index].executable; executable && Options::aotMapFilePath()) [[unlikely]]
-                    nameForMap = executable->ecmaName().string();
-                else if (isTypedEntry(index) && Options::aotMapFilePath()) [[unlikely]]
-                    nameForMap = typedFunctionsForMap[typedProgram->entry.index()];
-                builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
-            }
-            else {
-                Locker locker { declinedLock };
+            if (!isTypedEntry(index) || !AOT::Typed::compile(vm, *typedProgram, typedEntryOf(index), code)) {
                 declined.add(jobs[index].codeBlock);
-                dataLogLn("AOT: cannot compile `", jobs[index].executable ? jobs[index].executable->ecmaName().string() : String(), "` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
+                dataLogLn("AOT: cannot compile `` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
+                return;
             }
-        };
-        auto work = [&] {
-            for (size_t index = next++; index < jobs.size(); index = next++) {
-                // What is compiled from bytecode may have to be compiled again, see below. The typed program is compiled once, after that.
-                if (!isTypedEntry(index))
-                    compileJob(index);
+            code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
+            AOT::collectConstructSites(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), 0);
+            AOT::collectQuotes(code.info, jobs[index].codeBlock, moduleText(jobs[index].module), 0);
+            if (auto* numbers = AOT::programIdentifierIndices()) {
+                for (auto& identifier : jobs[index].codeBlock->identifiers())
+                    code.info.identifierIndices.append(numbers->get(identifier.impl()));
             }
+            if (auto* numbers = AOT::programConstantIndicesFor(jobs[index].codeBlock))
+                code.info.constantIndices = *numbers;
+            String nameForMap;
+            if (Options::aotMapFilePath()) [[unlikely]]
+                nameForMap = typedFunctionsForMap[typedEntryOf(index).index()];
+            builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
         };
         AOT::IdentifierIndices identifierIndices;
         Vector<std::pair<AOT::Typed::StringID, Identifier>> typedIdentifiers;
         {
-            uint64_t totalCount = 0;
             for (auto& job : jobs) {
-                if (job.isGeneralBody)
-                    continue;
-                for (auto& identifier : job.codeBlock->identifiers()) {
+                for (auto& identifier : job.codeBlock->identifiers())
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
-                    ++totalCount;
-                }
             }
             if (typedProgram) {
                 for (AOT::Typed::StringID name : typedProgram->genericAccessIdentifiers()) {
@@ -7302,8 +6254,6 @@ struct BytecodeLinkEncoder::Impl {
             uint32_t next = 0;
             UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> templates;
             for (auto& job : jobs) {
-                if (job.isGeneralBody)
-                    continue;
                 Vector<uint32_t> numbers;
                 auto& representations = job.codeBlock->constantsSourceCodeRepresentation();
                 for (auto& constant : job.codeBlock->constantRegisters()) {
@@ -7364,155 +6314,6 @@ struct BytecodeLinkEncoder::Impl {
             builder.setNumberOfProgramConstants(next);
         }
 
-        for (bool again = true; again;) {
-            Vector<Ref<Thread>> threads;
-            for (unsigned i = 1; i < numberOfThreads; ++i)
-                threads.append(Thread::create("AOT compiler"_s, [&work] { work(); }));
-            work();
-            for (auto& thread : threads)
-                thread->waitForCompletion();
-            again = false;
-            for (auto& moduleHints : hints) {
-                if (!moduleHints)
-                    continue;
-                moduleHints->forEachSingleFunctionVariable([&](const AOT::KnownFunction& function) {
-                    if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
-                        function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
-                        again = true;
-                    }
-                });
-            }
-            programClasses.forEachNonEscapingMethod([&](uint32_t number) {
-                const AOT::KnownFunction& function = *programFunctions.function(number);
-                if (function.needsNoFunctionObject.load(std::memory_order_relaxed) && declined.contains(function.forCall)) {
-                    function.needsNoFunctionObject.store(false, std::memory_order_relaxed);
-                    again = true;
-                }
-            });
-            unsigned functionObjectsNeededAfterAll = 0;
-            for (uint32_t number = 1; number <= programFunctions.size(); ++number) {
-                AOT::FunctionSummary& summary = *programFunctions.function(number)->summary;
-                if (!summary.takesScopeAsCallee || !summary.needsObject.load(std::memory_order_relaxed))
-                    continue;
-                summary.takesScopeAsCallee = false;
-                summary.objectIsNeededAfterAll = true;
-                ++functionObjectsNeededAfterAll;
-                again = true;
-            }
-            if (Options::verboseAOTCompilation()) [[unlikely]] {
-                dataLogLn("AOT: omitted ", unreachedFunctions.load(), " unreachable functions (", unreachedBytecodeSize.load(), " bytes of bytecode)");
-                dataLogLn("AOT: ", functionObjectsNeededAfterAll, " function objects are needed after all");
-                dataLogLn("AOT: contradictions of the analysis ignored behind an unreachable value: ", programCode.contradictionsIgnoredBehindUnreachableValue.load(std::memory_order_relaxed));
-            }
-            RELEASE_ASSERT(declined.isEmpty());
-            if (again) {
-                unreachedFunctions = 0;
-                unreachedBytecodeSize = 0;
-                programCode.contradictionsIgnoredBehindUnreachableValue = 0;
-                builder.clear();
-                allRemarks.clear();
-                allCoverage.clear();
-                declined.clear();
-                next = 0;
-            }
-        }
-        if (Options::aotRemarksPath()) [[unlikely]] {
-            std::ranges::sort(allRemarks, [](auto& a, auto& b) {
-                return std::tuple { a.key.module, a.key.start, a.key.kind } < std::tuple { b.key.module, b.key.start, b.key.kind };
-            });
-            if (auto file = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(byteCast<char>(Options::aotRemarksPath())), "wb"_s)) {
-                for (auto& function : allRemarks) {
-                    String key = makeString(function.module, ':', function.key.start, ':', function.key.kind);
-                    file->print(function.name, "\tcompiled\t", key, "\n");
-                    for (auto& remark : function.remarks)
-                        file->print(function.name, "\t", remark, "\t", key, "\n");
-                }
-            }
-        }
-        if (Options::aotTypeCoveragePath()) [[unlikely]] {
-            if (auto file = FilePrintStream::open(UTF8CStringView::unsafeFromUTF8(byteCast<char>(Options::aotTypeCoveragePath())), "wb"_s)) {
-                Vector<Vector<unsigned>> lineStarts(modules.size());
-                UncheckedKeyHashMap<uint32_t, unsigned> moduleIndices;
-                for (unsigned module = 0; module < modules.size(); ++module)
-                    moduleIndices.add(modules[module].entryOffset + 1, module);
-                auto positionOf = [&](unsigned module, unsigned offset) {
-                    auto& starts = lineStarts[module];
-                    if (starts.isEmpty()) {
-                        starts.append(0);
-                        StringView text = moduleText(module);
-                        for (unsigned i = 0; i < text.length(); ++i) {
-                            if (text[i] == '\n')
-                                starts.append(i + 1);
-                        }
-                    }
-                    unsigned line = std::ranges::upper_bound(starts, offset) - starts.begin();
-                    return std::pair { line, offset - starts[line - 1] + 1 };
-                };
-                auto printEscaped = [&](StringView text) {
-                    for (char16_t character : text.codeUnits()) {
-                        if (character > ' ' && character != '\\' && character < 0x7f)
-                            file->print(static_cast<char>(character));
-                        else
-                            file->printf("\\u%04x", character);
-                    }
-                };
-                for (unsigned module = 0; module < modules.size(); ++module) {
-                    if (!isProgramModule(module))
-                        continue;
-                    SourceProvider& provider = *modules[module].source.provider();
-                    file->print("M\t", module, "\t", provider.sourceURL().isEmpty() ? provider.sourceOrigin().url().string() : provider.sourceURL(), "\n");
-                }
-                for (auto& function : allCoverage) {
-                    for (auto& operation : function.operations) {
-                        auto functionKind = static_cast<OrderFunctionKind>(operation.function.kind >> 1);
-                        bool isTopLevel = operation.codeBlock->codeType() != FunctionCode;
-                        auto found = moduleIndices.find(operation.function.module);
-                        if (found == moduleIndices.end())
-                            continue;
-                        unsigned module = found->value;
-                        if (!isProgramModule(module) || !(isTopLevel || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody))
-                            continue;
-                        unsigned offset = (isTopLevel ? 0 : operation.function.start) + operation.divot;
-                        if (offset >= moduleText(module).length())
-                            continue;
-                        auto [line, column] = positionOf(module, offset);
-                        file->print("O\t", module, "\t", line, "\t", column, "\t", opcodeNames[operation.opcode], "\t", operation.flags, "\t");
-                        if (operation.reason != AOT::CoveredOperation::noReason)
-                            file->print(operation.reason);
-                        file->print("\t");
-                        printEscaped(operation.property);
-                        file->print("\t");
-                        printEscaped(function.name);
-                        file->print("\t");
-                        for (unsigned i = 0; i < operation.outcomes.size(); ++i) {
-                            file->print(i ? " " : "");
-                            printEscaped(operation.outcomes[i]);
-                        }
-                        file->print("\t", operation.function.start, "\t", operation.function.kind, "\t", operation.bytecodeOffset, "\t");
-                        if (operation.counter != AOT::CoveredOperation::noCounter)
-                            file->print(operation.counter);
-                        file->print("\n");
-                    }
-                }
-                std::array<uint64_t, numOpcodeIDs> instructions { };
-                std::array<uint64_t, numOpcodeIDs> instructionsWithoutPosition { };
-                for (auto& job : jobs) {
-                    if (job.isGeneralBody || !isProgramModule(job.module) || declined.contains(job.codeBlock))
-                        continue;
-                    if (job.summary && !job.summary->isReached())
-                        continue;
-                    auto functionKind = static_cast<OrderFunctionKind>(job.key.kind >> 1 & 0xff);
-                    bool hasPosition = job.codeBlock->codeType() != FunctionCode || functionKind == OrderFunctionKind::Function || functionKind == OrderFunctionKind::InnerBody;
-                    for (const auto& instruction : job.codeBlock->instructions())
-                        (hasPosition ? instructions : instructionsWithoutPosition)[instruction->opcodeID()]++;
-                }
-                for (unsigned opcode = 0; opcode < numOpcodeIDs; ++opcode) {
-                    if (instructions[opcode] || instructionsWithoutPosition[opcode])
-                        file->print("T\t", opcodeNames[opcode], "\t", instructions[opcode], "\t", instructionsWithoutPosition[opcode], "\n");
-                }
-                file->print("U\t", unreachedFunctions.load(), "\t", unreachedBytecodeSize.load(), "\n");
-            }
-        }
         if (typedProgram) {
             // Compiled on all threads, and added in order, so that the image does not depend on who was first.
             struct TypedResult {
@@ -7520,23 +6321,37 @@ struct BytecodeLinkEncoder::Impl {
                 AOT::CompiledCode code;
                 bool isCompiled { false };
             };
+            size_t numberOfEntriesWithModule = 0;
             for (size_t index = 0; index < jobs.size(); ++index) {
-                if (isTypedEntry(index))
+                if (isTypedEntry(index)) {
                     compileJob(index);
+                    ++numberOfEntriesWithModule;
+                }
             }
             if (!declined.isEmpty())
                 return { };
+            if (numberOfEntriesWithModule != typedProgram->entries.size()) {
+                dataLogLn("AOT: ", typedProgram->entries.size(), " entry functions, and ", numberOfEntriesWithModule, " modules for them to run in the place of");
+                return { };
+            }
             uint32_t numberOfTypedFunctions = typedProgram->functions.size();
             Vector<std::unique_ptr<TypedResult>> typedResults(numberOfTypedFunctions);
             std::atomic<uint32_t> nextTypedFunction { 0 };
+            Vector<uint32_t> largestFirst(numberOfTypedFunctions, [](size_t index) {
+                return static_cast<uint32_t>(index);
+            });
+            std::ranges::stable_sort(largestFirst, [&](uint32_t a, uint32_t b) {
+                return typedProgram->functions[a].values.size() > typedProgram->functions[b].values.size();
+            });
             auto nameOf = [&](AOT::Typed::FunctionID id) {
                 return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
             };
             auto compileTypedFunctions = [&] {
-                for (uint32_t function = nextTypedFunction++; function < numberOfTypedFunctions; function = nextTypedFunction++) {
+                for (uint32_t next = nextTypedFunction++; next < numberOfTypedFunctions; next = nextTypedFunction++) {
+                    uint32_t function = largestFirst[next];
                     AOT::Typed::FunctionID id(function);
-                    // The entry is compiled in the place of the code of its module.
-                    if (id == typedProgram->entry)
+                    // An entry is compiled in the place of the code of its module.
+                    if (typedProgram->isEntry(id) || !typedProgram->hasCode(id))
                         continue;
                     auto result = makeUnique<TypedResult>();
                     if (Options::aotFunctionToDump()) [[unlikely]]
@@ -7545,14 +6360,22 @@ struct BytecodeLinkEncoder::Impl {
                     typedResults[function] = WTF::move(result);
                 }
             };
+            for (uint32_t module : typedModules)
+                typedProgram->modulesOfEntries.append(modules[module].entryOffset);
             {
                 Vector<Ref<Thread>> threads;
                 for (unsigned i = 1; i < numberOfThreads; ++i)
                     threads.append(Thread::create("AOT compiler"_s, [&compileTypedFunctions] { compileTypedFunctions(); }));
+                // Neither asks anything of the code.
+                builder.setTypedData(AOT::Typed::encodeData(*typedProgram));
+                endPhase("encoding the typed data"_s);
+                AOT::Typed::addRegExpLiterals(vm, *typedProgram, builder);
+                endPhase("regular expressions of the typed program"_s);
                 compileTypedFunctions();
                 for (auto& thread : threads)
                     thread->waitForCompletion();
             }
+            endPhase("code generation"_s);
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 uint64_t total = 0;
                 uint64_t count = 0;
@@ -7575,6 +6398,14 @@ struct BytecodeLinkEncoder::Impl {
                 }
             }
             unsigned numberOfDeclinedFunctions = 0;
+            // A general entry stands directly ahead of its function: whoever comes in by it is there at once.
+            Vector<uint64_t> placeOfTypedFunction(numberOfTypedFunctions, [](size_t function) {
+                return static_cast<uint64_t>(function) << 2;
+            });
+            for (auto& [function, entry] : typedProgram->genericEntrypoints) {
+                if (function)
+                    placeOfTypedFunction[entry.index()] = (static_cast<uint64_t>(function) << 2) - 1;
+            }
             for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
                 auto result = WTF::move(typedResults[function]);
                 if (!result)
@@ -7586,11 +6417,15 @@ struct BytecodeLinkEncoder::Impl {
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
-                builder.add(AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | static_cast<uint64_t>(function) << 2, WTF::move(result->code), typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]));
+                String nameForMap = typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]);
+                auto continuations = WTF::move(result->code.continuations);
+                for (unsigned index = 0; index < continuations.size(); ++index)
+                    builder.add(AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
+                builder.add(AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
             }
             if (numberOfDeclinedFunctions)
                 return { };
-            builder.setTypedData(AOT::Typed::encodeData(*typedProgram));
+            endPhase("adding the functions to the image"_s);
         }
         AOT::forgetDeclaredNames();
         AOT::setProgramIdentifierIndices(nullptr);
@@ -7601,7 +6436,7 @@ struct BytecodeLinkEncoder::Impl {
                     builder.addRegExp(vm, regExp->pattern(), regExp->flags());
             }
         }
-        endPhase("code generation"_s);
+        endPhase("regular expressions"_s);
         Vector<uint8_t> image = builder.finish();
         endPhase("writing the image"_s);
         reportableSites = builder.takeReportableSites();
@@ -7687,14 +6522,21 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
     m_impl->graphModuleIndices = WTF::move(graphModuleIndices);
 }
 
-bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, uint32_t module, std::span<const uint8_t> replacedStrings)
+bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings)
 {
 #if ENABLE(AOT)
     ASCIILiteral whyFailed;
+    MonotonicTime start = MonotonicTime::now();
     m_impl->typedProgram = AOT::Typed::Program::tryRead(bytes, whyFailed);
-    m_impl->typedModule = module;
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");
+    m_impl->typedModules = Vector<uint32_t, 1>(modules);
     if (!m_impl->typedProgram) {
         dataLogLn("AOT: ", whyFailed);
+        return false;
+    }
+    if (m_impl->typedProgram->entries.size() != modules.size()) {
+        dataLogLn("AOT: ", m_impl->typedProgram->entries.size(), " entry functions, and ", modules.size(), " modules for them to run in the place of");
+        m_impl->typedProgram = nullptr;
         return false;
     }
     // Pairs of a string and what to put in its place, each a length in four bytes and the bytes.
@@ -7716,13 +6558,16 @@ bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, uint32
     auto findings = AOT::Typed::optimize(*m_impl->typedProgram);
     for (auto& finding : findings)
         dataLogLn("AOT: the types do not hold: ", finding);
-    if (!findings.isEmpty())
+    if (!findings.isEmpty()) {
+        // It has no placement. Whoever goes on after the refusal must not find it and compile it.
+        m_impl->typedProgram = nullptr;
         return false;
+    }
     AOT::Typed::place(*m_impl->typedProgram);
     return true;
 #else
     UNUSED_PARAM(bytes);
-    UNUSED_PARAM(module);
+    UNUSED_PARAM(modules);
     UNUSED_PARAM(replacedStrings);
     return false;
 #endif
@@ -7738,10 +6583,6 @@ void installImageCompiler()
 auto BytecodeLinkEncoder::finish() -> Result
 {
     static_assert(numberOfRegions == BytecodeLinkRegions::Count);
-#if ENABLE(AOT)
-    if (m_impl->compilesAheadOfTime)
-        m_impl->addEngineBuiltins();
-#endif
     Result result;
     Encoder& encoder = m_impl->encoder;
     auto closeRegion = [&](unsigned region) {

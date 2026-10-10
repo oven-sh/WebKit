@@ -1136,7 +1136,9 @@ ValueKey Value::key() const
     case MemoryFill:
     case Fence:
     case CCall:
+#if !USE(BUN_JSC_ADDITIONS)
     case Patchpoint:
+#endif
     case Upsilon:
     case Phi:
     case Jump:
@@ -1146,6 +1148,12 @@ ValueKey Value::key() const
     case Return:
     case Oops:
         return ValueKey();
+#if USE(BUN_JSC_ADDITIONS)
+    case Patchpoint:
+        if (uint64_t key = as<PatchpointValue>()->pureFunctionKey)
+            return ValueKey(kind(), type(), static_cast<int64_t>(key));
+        return ValueKey();
+#endif
     }
     RELEASE_ASSERT_NOT_REACHED();
     return ValueKey();

@@ -378,9 +378,15 @@ ALWAYS_INLINE JSString* fastArrayJoin(JSGlobalObject* globalObject, JSObject* th
         auto& butterfly = *thisObject->butterfly();
         if (length > butterfly.publicLength()) [[unlikely]]
             break;
+        auto data = butterfly.contiguousDouble().data();
+#if USE(BUN_JSC_ADDITIONS)
+        JSOnlyStringsAndInt32sJoiner onlyInt32sJoiner(separator);
+        if (auto joined = onlyInt32sJoiner.tryJoin(globalObject, data, length))
+            RELEASE_AND_RETURN(scope, joined);
+        RETURN_IF_EXCEPTION(scope, { });
+#endif
         joiner.reserveCapacity(globalObject, length);
         RETURN_IF_EXCEPTION(scope, { });
-        auto data = butterfly.contiguousDouble().data();
         bool holesKnownToBeOK = false;
         for (; i < length; ++i) {
             double value = data[i];

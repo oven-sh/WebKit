@@ -28,8 +28,13 @@ namespace JSC { namespace AOT { namespace Typed {
 
 // Allocations.
 
-// The field, of the layout the object was made with, that the value stores to.
-static std::optional<uint32_t> fieldStoredTo(const Program& program, const Function& function, ValueID object, const Value& store)
+FunctionID constructedBy(const Program& program, const Function& function, ValueID object)
+{
+    return (program.allocations.isEmpty() ? function.allocations : program.allocations)[function.at(object).allocation()].constructedBy;
+}
+
+// The field, of the layout the object was made with, that the value stores to. `isForFunction`: isBornUnderAnyPrototype().
+static std::optional<uint32_t> fieldStoredTo(const Program& program, const Function& function, ValueID object, const Value& store, bool isForFunction)
 {
     if (store.child(0) != object || store.child(1) == object)
         return std::nullopt;
@@ -40,6 +45,10 @@ static std::optional<uint32_t> fieldStoredTo(const Program& program, const Funct
             return store.field();
         return program.at(made).fieldNamed(program.at(store.layout()).fields[store.field()].name);
     case Opcode::PutById:
+        // It is [[Set]], which asks the prototype chain: see mayInherit(). An object of a class that is made here has the prototype of the class, and a
+        // literal Object.prototype.
+        if (program.prototypePropertyNames.get(store.string().index()) || (program.at(made).kind == LayoutKind::Record && program.at(made).mayHaveOtherPrototype && isForFunction))
+            return std::nullopt;
         return program.at(made).fieldNamed(store.string());
     default:
         return std::nullopt;
@@ -51,10 +60,11 @@ bool isInitializingStore(const Program& program, const Function& function, const
     ValueID object = function.at(block.values[index]).child(0);
     if (!object || function.at(object).opcode != Opcode::NewObjectWithShape)
         return false;
+    bool isForFunction = isBornUnderAnyPrototype(program, function, object);
     for (size_t i = index + 1; i--;) {
         if (block.values[i] == object)
             return true;
-        if (!fieldStoredTo(program, function, object, function.at(block.values[i])))
+        if (!fieldStoredTo(program, function, object, function.at(block.values[i]), isForFunction))
             return false;
     }
     return false;
@@ -66,6 +76,33 @@ bool isLocalAllocation(const Function& function, ValueID id)
     while (function.at(id).opcode == Opcode::Cast)
         id = function.at(id).child(0);
     return function.at(id).opcode == Opcode::NewObjectWithShape;
+}
+
+std::span<const ValueID> initialStoresOf(const Function& function)
+{
+    if (function.blocks.isEmpty())
+        return { };
+    auto values = function.blocks[0].values.span();
+    auto isOne = [&](ValueID id) {
+        auto& value = function.at(id);
+        return value.opcode == Opcode::PutById && value.isInitialStore() && !value.inlineFrame;
+    };
+    size_t begin = 0;
+    while (begin < values.size() && !isOne(values[begin]))
+        ++begin;
+    size_t end = begin;
+    while (end < values.size() && isOne(values[end]))
+        ++end;
+    return values.subspan(begin, end - begin);
+}
+
+void setBornFields(const Layout& layout, Allocation& allocation)
+{
+    for (unsigned field = 0; field < layout.fields.size(); ++field) {
+        if (!(layout.fields[field].flags & fieldIsAbsentAtBirth))
+            allocation.order.append(static_cast<uint16_t>(field));
+    }
+    allocation.born = static_cast<uint16_t>(allocation.order.size());
 }
 
 void assignAllocations(Program& program)
@@ -81,17 +118,24 @@ void assignAllocations(Program& program)
                 auto& layout = program.at(allocation.layout);
                 if (layout.kind == LayoutKind::Record) {
                     for (size_t next = at + 1; next < block.values.size(); ++next) {
-                        auto field = fieldStoredTo(program, function, object, function.at(block.values[next]));
+                        auto field = fieldStoredTo(program, function, object, function.at(block.values[next]), false);
                         if (!field)
                             break;
                         if (!allocation.order.contains(*field))
                             allocation.order.append(static_cast<uint16_t>(*field));
                     }
-                } else {
-                    for (unsigned field = 0; field < layout.fields.size(); ++field)
-                        allocation.order.append(static_cast<uint16_t>(field));
+                    allocation.born = static_cast<uint16_t>(allocation.order.size());
+                } else
+                    setBornFields(layout, allocation);
+                // As it is read, the second immediate names the property that holds the child. From here on the child is there if and only
+                // if the allocation has a discriminant.
+                if (function.at(object).child(0)) {
+                    auto discriminant = layout.kind == LayoutKind::Record ? layout.fieldNamed(StringID(function.at(object).immediates[1])) : std::nullopt;
+                    if (discriminant)
+                        allocation.discriminant = static_cast<uint16_t>(*discriminant);
+                    else
+                        function.at(object).children[0] = { };
                 }
-                allocation.born = static_cast<uint16_t>(allocation.order.size());
                 function.at(object).immediates[1] = function.allocationOf(WTF::move(allocation));
             }
         }
@@ -100,19 +144,10 @@ void assignAllocations(Program& program)
 
 // Casts.
 
-// Whether holding an array to the type may replace elements: of the array by copies of plain objects, or of arrays within it.
-static bool coercesElements(const Program& program, const Type& type)
+// Whether a cast can convert an object. A container is tested for its kind only: its elements are converted when they are read.
+static bool coerces(const Type& from, const Type& to)
 {
-    if (!type.elements)
-        return false;
-    auto& elements = program.at(type.elements);
-    return !elements.views.isEmpty() || coercesElements(program, elements);
-}
-
-// Whether anything can be made of an object that is not of the type.
-static bool coerces(const Program& program, const Type& from, const Type& to)
-{
-    return from.hasObjects() && (!to.views.isEmpty() || coercesElements(program, to));
+    return from.hasObjects() && !to.views.isEmpty();
 }
 
 void findViewsRetaggedTo(Program& program)
@@ -141,27 +176,81 @@ void findViewsRetaggedTo(Program& program)
             }
         }
     }
+    auto& leftAlone = program.viewsLeftAlone;
+    leftAlone.clearAll();
+    if (Options::auditAOTTypedAssertions()) [[unlikely]]
+        return;
+    leftAlone.ensureSize(numberOfLayouts);
+    for (unsigned i = 0; i < numberOfLayouts; ++i) {
+        if (!retaggedTo.get(i) && !isSpecialization.get(i))
+            leftAlone.set(i);
+    }
+    // The largest set that holds: a view goes out of it where something can be made of what a field holds: a plain object is copied where the type of the field admits none as it is, and whatever can be made of an object
+    // through one of the views of that type can be made of it here.
+    BitVector hasOnlyFieldsLeftAlone(numberOfLayouts);
+    for (bool hasChanged = true; hasChanged;) {
+        hasChanged = false;
+        for (unsigned i = 0; i < numberOfLayouts; ++i) {
+            auto& layout = program.layouts[i];
+            hasOnlyFieldsLeftAlone.set(i, layout.kind != LayoutKind::Record || !layout.fields.containsIf([&](auto& field) {
+                if (!field.type || program.at(field.type).views.isEmpty())
+                    return false;
+                auto& type = program.at(field.type);
+                return !type.admitsForeignObjects(program) || type.views.containsIf([&](LayoutID view) {
+                    return !leftAlone.get(view.index());
+                });
+            }));
+        }
+        for (unsigned i = 0; i < numberOfLayouts; ++i) {
+            if (!leftAlone.get(i))
+                continue;
+            bool holds = hasOnlyFieldsLeftAlone.get(i) && std::ranges::all_of(program.layouts[i].members, [&](LayoutID member) {
+                return hasOnlyFieldsLeftAlone.get(member.index());
+            });
+            if (!holds) {
+                leftAlone.clear(i);
+                hasChanged = true;
+            }
+        }
+    }
 }
 
-bool coercionMayChangeObjects(const Program& program, const Type& from, const Type& to)
+bool coercionMayChangeObjects(const Program& program, const Type& from, const Type& to, bool isOfFreshData)
 {
-    // Then every object that is not of the type goes to the run time, which says so.
-    if (Options::reportAOTTypedCoercions() && from.hasObjects() && to.hasObjects()) [[unlikely]]
-        return true;
-    if (!coerces(program, from, to))
+    if (!coerces(from, to))
         return false;
-    // Plain data is copied, and an array that nothing is known of is gone through.
-    if (from.anyObject || from.admitsForeignObjects(program))
+    // Plain data that nobody else can hold is copied. Any other object that is not of the program stays what it is.
+    if (isOfFreshData && (from.anyObject || from.admitsForeignObjects(program)))
         return true;
     return narrowingMayRetag(program, to);
 }
 
-static Writes writesOfMakingObjects(const Program&, const Type& from, const Type& to);
+// A shape transition in place, or a copy of plain data, field by field. A plain object that a type admitting foreign objects keeps gets
+// its properties replaced. Compiled code tests the structure of such an object in line (Lowering::emitCachedGetById()) and may go by one
+// that it loaded ahead of the cast: that holds as long as nothing in here deletes or moves a property of an object that is not compiled,
+// gives it another prototype or another class. The value itself is read afresh.
+static Writes writesOfMakingObjects(const Type& from, const Type& to)
+{
+    return coerces(from, to) ? Writes::RuntimeState : Writes::Nothing;
+}
+
+Writes writesOfElementRead(const Program& program, const Type& type)
+{
+    for (LayoutID view : type.views) {
+        if (program.at(view).kind == LayoutKind::Record && !program.at(view).admitsForeignObjects)
+            return Writes::RuntimeState;
+    }
+    return Writes::Nothing;
+}
 
 Writes writesOfCast(const Program& program, const Function& function, const Value& value)
 {
     auto& from = program.typeOf(function, value.child(0));
-    switch (value.castReason()) {
+    CastReason reason = value.castReason();
+    // What the cast holds its operand to is not its type then.
+    if (Options::auditAOTTypedAssertions() && (reason == CastReason::As || reason == CastReason::Flow || reason == CastReason::Coerce)) [[unlikely]]
+        return Writes::Heap;
+    switch (reason) {
     case CastReason::Upcast:
         return Writes::Pure;
     case CastReason::Store:
@@ -171,38 +260,21 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::Flow:
         return narrowingMayRetag(program, program.at(value.type)) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::As:
-        return writesOfMakingObjects(program, from, program.at(value.type));
+        return writesOfMakingObjects(from, program.at(value.type));
     case CastReason::Coerce:
         break;
+    case CastReason::CoerceFreshObject:
+    case CastReason::CoerceFreshGraph:
+        RELEASE_ASSERT_NOT_REACHED();
     }
     auto& to = program.at(value.coercedType());
     Writes writes = Writes::Nothing;
     // ToNumber, ToString and ToPrimitive of an object run its methods. Of anything else they make a string at most.
     if (!from.isWithin(program.at(value.type), program))
         writes = from.hasObjects() && !to.hasObjects() ? Writes::Heap : Writes::RuntimeState;
-    if (coercionMayChangeObjects(program, from, to))
-        writes = std::max(writes, writesOfMakingObjects(program, from, to));
+    if (coercionMayChangeObjects(program, from, to, value.coercesFreshData()))
+        writes = std::max(writes, writesOfMakingObjects(from, to));
     return writes;
-}
-
-static Writes writesOfMakingObjects(const Program& program, const Type& from, const Type& to)
-{
-    if (!coerces(program, from, to))
-        return Writes::Nothing;
-    // An object of the program is made one of another layout where it is, or refused. Only a plain object is copied, field by field,
-    // and only an array is gone through. A plain object that a type which admits foreign objects keeps gets other values for its
-    // properties: those compiled code reads through stubs only, which take nothing for unchanged.
-    bool mayBeAnyObject = from.anyObject || from.admitsForeignObjects(program);
-    if ((mayBeAnyObject || from.engineClasses.contains(Builtins::singleton().arrayClass().index)) && coercesElements(program, to))
-        return Writes::Heap;
-    // What an object of the program has as extra properties is moved into the fields that its new layout has more, and coerced to them.
-    if (mayBeAnyObject || program.castsMayRetag) {
-        for (LayoutID view : to.views) {
-            if (program.layoutsCoercedThroughArrays.get(view.index()))
-                return Writes::Heap;
-        }
-    }
-    return Writes::RuntimeState;
 }
 
 bool narrowingMayRetag(const Program& program, const Type& type)
@@ -216,16 +288,18 @@ bool narrowingMayRetag(const Program& program, const Type& type)
 
 bool castWritesShapeWords(const Program& program, const Function& function, const Value& value)
 {
+    if (Options::auditAOTTypedAssertions()) [[unlikely]]
+        return writesOfCast(program, function, value) == Writes::Heap;
     if (value.castReason() == CastReason::Flow)
         return narrowingMayRetag(program, program.at(value.type));
     if (!program.castsMayRetag)
         return false;
     auto& from = program.typeOf(function, value.child(0));
-    // Also of an object of the program that a plain object or an array leads to.
+    // Also of an object of the program that a plain object leads to.
     if (value.castReason() == CastReason::As)
-        return coerces(program, from, program.at(value.type));
+        return coerces(from, program.at(value.type));
     // What runs code of the program may come to a cast.
-    return value.castReason() == CastReason::Coerce && (coercionMayChangeObjects(program, from, program.at(value.coercedType())) || writesOfCast(program, function, value) == Writes::Heap);
+    return value.castReason() == CastReason::Coerce && (coercionMayChangeObjects(program, from, program.at(value.coercedType()), value.coercesFreshData()) || writesOfCast(program, function, value) == Writes::Heap);
 }
 
 // Built-ins.
@@ -248,6 +322,7 @@ static bool convertsObjects(const Builtin& builtin, std::span<const Type> argume
             return true;
         case ArgumentConversion::None:
         case ArgumentConversion::RequiresNumber:
+        case ArgumentConversion::RequiresInteger:
         case ArgumentConversion::RequiresTypedArray:
             break;
         }
@@ -274,18 +349,18 @@ static bool isViewOnBuffer(const Type* receiver)
 // As the language sees it. The receiver is of the class the entry is listed under: that is a fact, and the entry is what is carried out.
 static Writes writesOf(const Builtin& builtin, const Type* receiver, std::span<const Type> arguments)
 {
-    if (builtin.effects & (Effect::RunsUnknownCode | Effect::WritesArguments))
+    if (builtin.effects & (Effect::CallsUserCode | Effect::WritesArguments))
         return Writes::Heap;
-    if (builtin.effects & Effect::WritesThis && !isViewOnBuffer(receiver))
+    if (builtin.effects & Effect::WritesReceiver && !isViewOnBuffer(receiver))
         return Writes::Heap;
     if ((builtin.effects & Effect::ReadsArguments && hasObjects(arguments)) || convertsObjects(builtin, arguments))
         return Writes::Heap;
     // A method of every object, called on any: what looking into that comes down to is not known.
-    if (builtin.effects & Effect::ReadsThis && receiver && receiver->hasObjects() && !receiver->onlyEngineClass())
+    if (builtin.effects & Effect::ReadsReceiver && receiver && receiver->hasObjects() && !receiver->onlyEngineClass())
         return Writes::Heap;
-    if (builtin.effects & Effect::WritesThis)
+    if (builtin.effects & Effect::WritesReceiver)
         return Writes::TypedArrayProperties;
-    if (builtin.effects & (Effect::WritesWorld | Effect::Allocates))
+    if (builtin.effects & (Effect::WritesRuntimeState | Effect::Allocates))
         return Writes::RuntimeState;
     // A property of `undefined` or `null` is not read: that throws.
     if (builtin.effects || (receiver && receiver->mayBeUndefinedOrNull()))
@@ -294,6 +369,11 @@ static Writes writesOf(const Builtin& builtin, const Type* receiver, std::span<c
 }
 
 Writes writesOfBuiltinCall(const Program& program, const Function& function, const Value& value)
+{
+    return hasGenericFallback(program, function, value) ? Writes::Heap : writesOfResolvedBuiltinCall(program, function, value);
+}
+
+Writes writesOfResolvedBuiltinCall(const Program& program, const Function& function, const Value& value)
 {
     auto& builtin = Builtins::singleton().at(value.builtin());
     const Type* receiver = builtin.takesReceiver() ? &program.typeOf(function, value.child(0)) : nullptr;
@@ -339,6 +419,9 @@ public:
     void run()
     {
         findWhatCastsMayDo();
+        // Every function is left with the most a function may do.
+        if (Options::auditAOTTypedAssertions()) [[unlikely]]
+            return;
         unsigned numberOfFunctions = m_program.functions.size();
         m_effects.fill({ }, 2 * numberOfFunctions);
         m_dependents.fill({ }, 2 * numberOfFunctions);
@@ -367,6 +450,8 @@ public:
             function.writesShapeWordsIfItReturns = m_effects[ofCallThatReturns(id)].writesShapeWords;
         }
     }
+
+    Writes writesOf(const Function& function, const Block& block, size_t index) { return effectsOf(function, block, index).writes; }
 
 private:
     struct Effects {
@@ -397,38 +482,16 @@ private:
 
     void findWhatCastsMayDo()
     {
-        unsigned numberOfLayouts = m_program.layouts.size();
-        auto& reached = m_program.layoutsCoercedThroughArrays;
-        reached.clearAll();
-        reached.ensureSize(numberOfLayouts);
         m_program.castsMayRetag = false;
-        // By layout: those with a field for an object of it, which a plain object is turned into along with the one that holds it, and
-        // the views it is a member of: a cast to a view may make a plain object one of a member.
-        Vector<Vector<LayoutID, 2>> holders(numberOfLayouts);
-        Vector<LayoutID> worklist;
-        for (unsigned i = 0; i < numberOfLayouts; ++i) {
-            auto& layout = m_program.layouts[i];
+        for (auto& layout : m_program.layouts)
             m_program.castsMayRetag |= !layout.specializations.isEmpty();
-            if (!isObjectLayout(layout.kind))
-                continue;
-            for (LayoutID member : layout.members)
-                holders[member.index()].append(LayoutID(i));
-            for (auto& field : layout.fields) {
-                if (!field.type)
-                    continue;
-                auto& type = m_program.at(field.type);
-                if (coercesElements(m_program, type) && !reached.set(i))
-                    worklist.append(LayoutID(i));
-                for (LayoutID view : type.views)
-                    holders[view.index()].append(LayoutID(i));
-            }
-        }
-        while (!worklist.isEmpty()) {
-            for (LayoutID holder : holders[worklist.takeLast().index()]) {
-                if (!reached.set(holder.index()))
-                    worklist.append(holder);
-            }
-        }
+    }
+
+    // The slow path converts a plain-data element as an `As` cast would, stores it back and rejoins.
+    Effects ofElementRead(const Value& value) const
+    {
+        Writes writes = writesOfElementRead(m_program, m_program.at(value.type));
+        return { writes, writes != Writes::Nothing && m_program.castsMayRetag };
     }
 
     // The blocks from which there is a way to a Return, also by way of a handler.
@@ -525,6 +588,15 @@ private:
         }).iterator->value;
     }
 
+    // Of a store for which isAccessToField() holds.
+    bool mayTransition(const Function& function, const Value& value)
+    {
+        auto access = fieldOf(m_program, typeOf(function, value.child(0)), value.string());
+        return m_storeMayTransition.ensure(static_cast<uint64_t>(access->layout.index()) << 32 | access->field, [&] {
+            return storeMayTransition(m_program, access->layout, value.string());
+        }).iterator->value;
+    }
+
     bool isGlobalOfEngine(const Value& value) const
     {
         BuiltinName name = m_program.builtinName(value.string());
@@ -543,29 +615,45 @@ private:
         case Opcode::Double:
         case Opcode::GetModuleVariable:
         case Opcode::GetField:
-        case Opcode::GetScope:
+        case Opcode::GetCapture:
         case Opcode::GetArgument:
+        case Opcode::GetRestLength:
         case Opcode::LogicalNot:
         case Opcode::IsUndefinedOrNull:
         case Opcode::HasShapeOf:
+        case Opcode::IsClassObjectAsDeclared:
         case Opcode::IsClosureOf:
+        case Opcode::Results:
+        case Opcode::Unspecified:
+        case Opcode::ResultAt:
+        case Opcode::TypeOfIs:
         case Opcode::LoopHint:
+        case Opcode::AssertNotAllocated:
             return changes(Writes::Nothing);
         case Opcode::String:
         case Opcode::BigInt:
         case Opcode::FunctionReference:
+        // The function is looked up on first use.
+        case Opcode::IsBuiltinFunction:
+        case Opcode::BuiltinFunction:
         case Opcode::NewObjectWithShape:
         case Opcode::NewClosure:
+        // Nothing else looks at the variable it keeps the closure in.
+        case Opcode::NewClosureOnce:
         case Opcode::NewArray:
         case Opcode::NewObject:
         case Opcode::CreateRest:
+        // The `prototype` of a function is made when it is first asked for.
+        case Opcode::CreateThis:
         case Opcode::StrictEq:
         case Opcode::ToBoolean:
         case Opcode::TypeOf:
         case Opcode::Strcat:
         case Opcode::CatchValue:
-        case Opcode::GetExternalModule:
             return changes(Writes::RuntimeState);
+        // Where the host has no record of the module it is required: its code runs.
+        case Opcode::GetExternalModule:
+            return changes(Writes::Heap);
         case Opcode::PutModuleVariable:
             return changes(Writes::Fields);
         // Nobody who was running before can have looked into what was made since.
@@ -579,7 +667,9 @@ private:
                 return changes(Writes::RuntimeState);
             if (!isAccessToField(function, value))
                 return changes(Writes::Heap);
-            return changes(isLocalAllocation(function, value.child(0)) ? Writes::RuntimeState : Writes::Fields);
+            if (isLocalAllocation(function, value.child(0)))
+                return changes(Writes::RuntimeState);
+            return { Writes::Fields, mayTransition(function, value) };
         // What the engine has under the name from the start, and the program leaves there, is not looked up.
         case Opcode::GetGlobal:
         case Opcode::GetGlobalForTypeOf:
@@ -587,6 +677,7 @@ private:
         case Opcode::GetByVal:
             switch (keyedAccessOf(m_program, function, value)) {
             case KeyedAccess::Array:
+                return ofElementRead(value);
             case KeyedAccess::TypedArray:
                 return changes(Writes::Nothing);
             // Looking at the characters flattens a rope.
@@ -596,12 +687,17 @@ private:
                 return changes(Writes::Heap);
             }
             break;
+        case Opcode::GetMyArgumentByVal:
+            return changes(typeOf(function, value.child(0)).isNumber() ? Writes::Nothing : Writes::Heap);
         // What is stored to a typed array is a number already. It stays as long as it is, with its elements where they are.
         case Opcode::PutByVal:
             return changes(keyedAccessOf(m_program, function, value) == KeyedAccess::TypedArray ? Writes::TypedArrayProperties : Writes::Heap);
+        case Opcode::IteratorValue:
+            if (keyedAccessOf(m_program, function, value) == KeyedAccess::Array)
+                return ofElementRead(value);
+            [[fallthrough]];
         case Opcode::IteratorOpen:
         case Opcode::IteratorHasNext:
-        case Opcode::IteratorValue:
         case Opcode::IteratorClose:
             return changes(keyedAccessOf(m_program, function, value) == KeyedAccess::Generic ? Writes::Heap : Writes::Nothing);
         case Opcode::Cast:
@@ -645,6 +741,8 @@ private:
         case Opcode::Call:
         case Opcode::Construct:
         case Opcode::CallMethod:
+        case Opcode::CallForwardVarargs:
+        case Opcode::ConstructSuper:
         case Opcode::Operation:
             return changes(Writes::Heap);
         case Opcode::CallDirect:
@@ -663,9 +761,16 @@ private:
     Vector<Vector<unsigned, 2>> m_dependents;
     // By view and field.
     UncheckedKeyHashMap<uint64_t, bool, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_onlyFieldsSupply;
+    UncheckedKeyHashMap<uint64_t, bool, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_storeMayTransition;
 };
 
 } // anonymous namespace
+
+Writes writesOf(const Program& program, const Function& function, const Block& block, size_t index)
+{
+    // Only run() changes the program.
+    return EffectSummaries(const_cast<Program&>(program)).writesOf(function, block, index);
+}
 
 void computeEffectSummaries(Program& program)
 {

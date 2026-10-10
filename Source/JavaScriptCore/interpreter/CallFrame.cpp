@@ -204,6 +204,10 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
         if (!std::exchange(haveSkippedFirstFrame, true))
             return IterationStatus::Continue;
 
+        // Code compiled from types has no executable to ask, like Wasm below.
+        if (visitor->isTypedAOTFrame())
+            return IterationStatus::Done;
+
         switch (visitor->codeType()) {
         case StackVisitor::Frame::CodeType::Function:
             // Skip the builtin functions since they should not pass the source origin to the dynamic code generation calls.

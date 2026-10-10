@@ -12,6 +12,7 @@
 
 #include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
+#include "AOTTypedObject.h"
 #include "CodeBlock.h"
 #include "CommonSlowPaths.h"
 #include "ExceptionHelpers.h"
@@ -31,6 +32,21 @@
 #include "VMTrapsInlines.h"
 
 namespace JSC { namespace AOT {
+
+enum class NodeKind : uint8_t {
+    Bytecode,
+    Constant,
+    ConstantCell,
+    Intrinsic,
+    LinkTimeConstant,
+    Argument,
+    Phi,
+    Proj,
+    GetStack,
+    SetStack,
+    Guard,
+    Narrow,
+};
 
 #define AOT_BINARY_OPERATION(name, function) \
     JSC_DEFINE_JIT_OPERATION(name, EncodedJSValue, (Instance* instance, EncodedJSValue encodedLeft, EncodedJSValue encodedRight)) \
@@ -180,6 +196,24 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
     countOperationAtSite(instance, callFrame, __func__);
     JSValue base = JSValue::decode(encodedBase);
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
+    if (Typed::State* typed = instance->typed) {
+        if (typed->isCounting()) [[unlikely]]
+            typed->countAccess(Typed::State::AccessKind::Read, removeCodePtrTag(callFrame->rawReturnPC()), ident, base);
+        if (JSValue value = base.isCell() ? Typed::Object::tryGetOwnData(vm, base.asCell(), ident) : JSValue()) {
+            // See Slot::FieldRead::NoField.
+            constexpr uint64_t isNoField = static_cast<uint64_t>(Slot::FieldRead::NoField) << Slot::fieldReadShift;
+            if (cache->structureID == base.asCell()->structureID() && (cache->offset & Slot::flagsMask) == Slot::compiledFieldFlags && std::bit_cast<uint64_t>(cache->pointer) == isNoField)
+                OPERATION_RETURN(scope, JSValue::encode(value));
+            noteNamedFieldRead(instance, base.asCell(), ident, identifierIndex);
+            if (!SharedData::contains(cache))
+                cacheCompiledField(vm, callerData(instance, callFrame), cache, base.asCell(), ident, true);
+            OPERATION_RETURN(scope, JSValue::encode(value));
+        }
+        if (base.isUndefinedOrNull()) [[unlikely]] {
+            throwTypeError(globalObject, scope, Typed::State::nullishMessage(base, ident.string(), false));
+            OPERATION_RETURN(scope, encodedJSValue());
+        }
+    }
     noteNamedAccess(instance, __func__, base, { }, ident.impl());
     if (Options::useAOTOperationCounters()) [[unlikely]] {
         countOperationNamed(instance, __func__, !base.isObject() ? "base-is-not-object" : vm.megamorphicCache() && vm.megamorphicCache()->findLoad(base.asCell()->structureID(), ident.impl()) ? "value-is-in-megamorphic-cache" : "value-is-not-in-megamorphic-cache");
@@ -196,13 +230,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance* instanc
     }
     PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
     Structure* structureBefore = base.isCell() ? base.asCell()->structure() : nullptr;
-    JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
+    JSValue result = isAbsentUnderObjectPrototype(globalObject, base, ident.impl()) ? jsUndefined() : getByIdAndFillMegamorphicCache(globalObject, base, ident, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     if (slot.isCacheableCustom() && base.isObject() && base.asCell()->structure() == structureBefore)
         noteCustomGetter(globalObject, *instance, asObject(base), ident, slot);
     if (slot.isUnset() && structureBefore && structureBefore->knownShape())
         caller(instance, callFrame).instance->inspectObjectPrototype();
-    cacheGetById(globalObject, callerData(instance, callFrame), base, structureBefore, ident, slot, cache, true);
+    if (!SharedData::contains(cache))
+        cacheGetById(globalObject, callerData(instance, callFrame), base, structureBefore, ident, slot, cache, true);
     OPERATION_RETURN(scope, JSValue::encode(result));
 }
 
@@ -216,14 +251,42 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
     const Identifier& ident = identifierAt(instance, callFrame, identifierIndex);
     bool isDirect = flagBits & 1;
     bool isStrict = flagBits & 2;
+    if (instance->typed && instance->typed->isCounting()) [[unlikely]]
+        instance->typed->countAccess(Typed::State::AccessKind::Write, removeCodePtrTag(callFrame->rawReturnPC()), ident, base);
+    if (base.isUndefinedOrNull() && instance->typed) [[unlikely]] {
+        throwTypeError(globalObject, scope, Typed::State::nullishMessage(base, ident.string(), true));
+        OPERATION_RETURN(scope);
+    }
 
-    PutPropertySlot slot(base, isStrict, putByIdContextOf(instance, callFrame));
     Structure* oldStructure = base.isCell() ? base.asCell()->structure() : nullptr;
+    // See Slot::FieldWrite::isNoField.
+    if (constexpr uint64_t isNoField = static_cast<uint64_t>(Slot::FieldWrite::isFieldWrite | Slot::FieldWrite::isNoField) << 32; cache && oldStructure && cache->structureID == oldStructure->id() && cache->offset & Slot::pointerIsNotCell && std::bit_cast<uint64_t>(cache->pointer) == isNoField) {
+        if (JSObject* extra = uncheckedDowncast<Typed::Object>(base.asCell())->extraProperties()) {
+            unsigned attributes = 0;
+            PropertyOffset offset = extra->structure()->get(vm, ident.impl(), attributes);
+            if (isValidOffset(offset) && !(attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
+                extra->putDirectOffset(vm, offset, value);
+                OPERATION_RETURN(scope);
+            }
+        }
+    }
+    if (!isDirect && oldStructure && oldStructure->compiledLayout() && base.asCell()->inherits<Typed::Object>()) {
+        auto* object = uncheckedDowncast<Typed::Object>(base.asCell());
+        uint64_t wordsBefore = object->orderAndShapeWords();
+        if (instance->typed->storeByKnownTransition(vm, object, ident.impl(), value)) {
+            if ((cache->offset & Slot::attemptsMask) != Slot::attemptsMask)
+                cacheStoreTransition(instance, callerData(instance, callFrame), object, oldStructure, wordsBefore, ident, cache);
+            OPERATION_RETURN(scope);
+        }
+    }
+    PutPropertySlot slot(base, isStrict, PutPropertySlot::PutById);
     if (Options::useAOTOperationCounters() && cache && oldStructure && (cache->offset & Slot::attemptsMask) == Slot::attemptsMask) [[unlikely]] {
         auto* entry = vm.megamorphicCache() ? vm.megamorphicCache()->findStore(oldStructure->id(), ident.impl()) : nullptr;
         countOperationNamed(instance, __func__, !entry ? "abandoned-and-not-in-table" : entry->m_reallocating ? "abandoned-and-entry-reallocates" : "abandoned-and-in-table");
     }
-    if (MegamorphicCache* table = base.isObject() ? vm.megamorphicCache() : nullptr) {
+    // No slot and no table will ever serve it: nothing is looked up and nothing is noted.
+    bool isGivenUp = cache && !cache->structureID && (cache->offset & Slot::attemptsMask) == Slot::attemptsMask && !isDirect && oldStructure && oldStructure->typeInfo().overridesPut();
+    if (MegamorphicCache* table = base.isObject() && !isGivenUp ? vm.megamorphicCache() : nullptr) {
         if (auto* entry = table->findStore(oldStructure->id(), ident.impl()); entry && entry->m_reallocating == MegamorphicCache::StoreEntry::reallocates) {
             countOperationNamed(instance, __func__, "grows-storage-by-entry");
             JSObject* object = asObject(base);
@@ -241,11 +304,18 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutById, void, (Instance* instance, Encoded
     if (isDirect && oldStructure->typedLayoutID() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
         if (!asObject(base)->putDirect(vm, ident, value, slot) && !value.isUndefined()) [[unlikely]]
             throwTypeError(globalObject, scope, TypedLayoutTable::describeRejectedStore(vm, oldStructure, ident.impl(), value));
-    } else if (isDirect)
+    } else if (unsigned attributes = 0; isDirect && instance->typed && (base.asCell()->type() != FinalObjectType || oldStructure->compiledLayout() || !oldStructure->isStructureExtensible() || (oldStructure->get(vm, ident, attributes) != invalidOffset && attributes))) [[unlikely]]
+        asObject(base)->createDataProperty(globalObject, ident, value, true);
+    else if (isDirect)
         CommonSlowPaths::putDirectWithReify(vm, globalObject, asObject(base), ident, value, slot, &oldStructure);
     else
         base.putInline(globalObject, ident, value, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope);
+    // Also where the slot is nobody's: a shared one reads as given up.
+    if (!isDirect && base.isObject() && oldStructure->compiledLayout() && base.asCell()->structure() == oldStructure)
+        noteNamedFieldWrite(instance, base.asCell(), ident, identifierIndex);
+    if (isGivenUp)
+        OPERATION_RETURN(scope);
     if (!isDirect || slot.type() == PutPropertySlot::ExistingProperty || (slot.type() == PutPropertySlot::NewProperty && base.isObject() && asObject(base)->canPerformFastPutInline(vm, ident)))
         fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, ident, slot);
     if (!isDirect && slot.isCacheableSetter() && base.isObject() && base.asCell()->structure() == oldStructure)
@@ -262,12 +332,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetElementOrEmpty, EncodedJSValue, (Instanc
     OPERATION_RETURN(scope, JSValue::encode(array->getIfPropertyExists(globalObject, static_cast<uint64_t>(JSValue::decode(encodedIndex).asNumber()))));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
+// No operation calls another: each takes the frame of its caller for that of compiled code.
+static OperationReturnType<EncodedJSValue> getByVal(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue base, JSValue property)
 {
-    AOT_OPERATION_BEGIN(instance);
-    JSValue base = JSValue::decode(encodedBase);
-    JSValue property = JSValue::decode(encodedProperty);
-    noteNamedAccess(instance, __func__, base, property);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    noteNamedAccess(instance, "operationAOTGetByVal", base, property);
+    if (base.isUndefinedOrNull() && instance->typed) [[unlikely]] {
+        throwTypeError(globalObject, scope, Typed::State::nullishMessage(globalObject, base, property, false));
+        OPERATION_RETURN(scope, encodedJSValue());
+    }
 
     if (base.isObject() && property.isString()) [[likely]] {
         auto existingAtomString = asString(property)->toExistingAtomString(globalObject);
@@ -306,13 +379,21 @@ JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instan
     OPERATION_RETURN(scope, JSValue::encode(base.get(globalObject, key)));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, uint32_t isStrict))
+JSC_DEFINE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
 {
     AOT_OPERATION_BEGIN(instance);
-    JSValue base = JSValue::decode(encodedBase);
-    JSValue property = JSValue::decode(encodedProperty);
-    JSValue value = JSValue::decode(encodedValue);
-    noteNamedAccess(instance, __func__, base, property);
+    scope.release();
+    return getByVal(instance, globalObject, vm, JSValue::decode(encodedBase), JSValue::decode(encodedProperty));
+}
+
+static OperationReturnType<void> putByVal(Instance* instance, JSGlobalObject* globalObject, VM& vm, JSValue base, JSValue property, JSValue value, bool isStrict)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    noteNamedAccess(instance, "operationAOTPutByVal", base, property);
+    if (base.isUndefinedOrNull() && instance->typed) [[unlikely]] {
+        throwTypeError(globalObject, scope, Typed::State::nullishMessage(globalObject, base, property, true));
+        OPERATION_RETURN(scope);
+    }
 
     if (std::optional<uint32_t> index = property.tryGetAsUint32Index()) {
         uint32_t i = *index;
@@ -339,9 +420,202 @@ JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, Encode
     OPERATION_RETURN(scope);
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (Instance* instance, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
+JSC_DEFINE_JIT_OPERATION(operationAOTPutByVal, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue, uint32_t isStrict))
 {
     AOT_OPERATION_BEGIN(instance);
+    scope.release();
+    return putByVal(instance, globalObject, vm, JSValue::decode(encodedBase), JSValue::decode(encodedProperty), JSValue::decode(encodedValue), isStrict);
+}
+
+// The name a key that is a cell stands for, if it is one that a slot can be filled for: a symbol, or a string that is the name of some property already and no index.
+static std::optional<Identifier> nameForKeyedCache(JSGlobalObject* globalObject, JSValue property)
+{
+    VM& vm = globalObject->vm();
+    if (property.isSymbol())
+        return Identifier::fromUid(asSymbol(property)->privateName());
+    if (!property.isString())
+        return std::nullopt;
+    auto existingAtomString = asString(property)->toExistingAtomString(globalObject);
+    if (!existingAtomString || parseIndex(*existingAtomString.data))
+        return std::nullopt;
+    return Identifier::fromUid(vm, existingAtomString.data);
+}
+
+// A store under the key has given the object a property it lacked. See Instance::KeyedAddition.
+static void cacheKeyedAddition(Instance* instance, VM& vm, Structure* before, Structure* after, JSCell* key, PropertyOffset offset)
+{
+    auto isPlain = [](Structure* structure) {
+        return !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype() && !structure->typedLayoutID() && !structure->family() && !structure->hasPolyProto();
+    };
+    if (!usesDataStubs() || !isPlain(before) || !isPlain(after) || after->previousID() != before || before->typeInfoBlob() != after->typeInfoBlob())
+        return;
+    bool allocatesInitialStorage = !before->outOfLineCapacity() && after->outOfLineCapacity() == initialOutOfLineCapacity && offset == firstOutOfLineOffset && !hasIndexedProperties(before->indexingType());
+    if (before->outOfLineCapacity() != after->outOfLineCapacity() && !allocatesInitialStorage)
+        return;
+    auto& entry = instance->keyedAdditionFor(before->id(), key);
+    cacheKeyedAccess(entry.slot, before, key, offset);
+    entry.newStructureID = after->id();
+    entry.epoch = vm.ensureMegamorphicCache().epoch();
+    entry.allocatesInitialStorage = allocatesInitialStorage;
+}
+
+// Both are cells.
+JSC_DEFINE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
+{
+    AOT_OPERATION_BEGIN(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    Structure* structure = base.asCell()->structure();
+    // A string that is no atom has just been made: `o["id" + n]`, `o[line.slice(0, colon)]`, `o[name.toLowerCase()]`: mostly nobody comes with that cell again. What an ordinary object has itself under the name is read
+    // here, and only the table that goes by the cell is told, which costs next to nothing and serves whoever does come again (nobody keeps the cell alive for the entry: Instance::finalizeUnconditionally() empties the
+    // table at every collection). The megamorphic cache, whose filling costs more than the read, is left to the names that sites ask for by name. All else goes on below.
+    auto isOrdinary = [](JSObject* object) {
+        Structure* structure = object->structure();
+        return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !structure->typedLayoutID() && !structure->compiledLayout();
+    };
+    if (property.isString() && base.isObject() && isOrdinary(asObject(base))) {
+        JSString* key = asString(property);
+        if (StringImpl* text = key->tryGetValueImpl(); !text || !text->isAtom()) {
+            auto name = key->toExistingAtomString(globalObject);
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            if (name) {
+                unsigned attributes;
+                if (PropertyOffset offset = parseIndex(*name.data) ? invalidOffset : structure->get(vm, name.data, attributes); offset != invalidOffset && !(attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))) {
+                    cacheKeyedAccess(instance->keyedReadFor(structure->id(), key).slot, structure, key, offset);
+                    OPERATION_RETURN(scope, JSValue::encode(asObject(base)->getDirect(offset)));
+                }
+            } else {
+                // The name of every property that lies in a Structure is an atom. There is none of this text: so no ordinary object has it, and none is made of it only to find that out.
+                auto flat = key->value(globalObject);
+                OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+                for (JSObject* holder = parseIndex(*flat.data.impl()) ? nullptr : asObject(base); holder && isOrdinary(holder) && !TypeInfo::hasStaticPropertyTable(holder->inlineTypeFlags());) {
+                    JSValue prototype = holder->getPrototypeDirect();
+                    if (!prototype.isObject())
+                        OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
+                    holder = asObject(prototype);
+                }
+            }
+        }
+    }
+    auto& read = instance->keyedReadFor(structure->id(), property.asCell());
+    Slot& entry = read.slot;
+    if (base.isObject()) {
+        auto name = nameForKeyedCache(globalObject, property);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        if (name) {
+            JSObject* object = asObject(base);
+            PropertySlot slot(base, PropertySlot::InternalMethodType::Get);
+            JSValue result = getByIdAndFillMegamorphicCache(globalObject, base, *name, slot);
+            OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+            bool isValueInObject = slot.isCacheableValue() && slot.slotBase() == object && object->structure() == structure && !structure->typedLayoutID();
+            cacheKeyedAccess(entry, structure, property.asCell(), isValueInObject ? std::optional(slot.cachedOffset()) : std::nullopt);
+            if (object->structure() == structure)
+                cacheKeyedReadOfCompiledField(globalObject, read, object, *name);
+            // What the megamorphic cache holds of the two by now holds while its epoch stands.
+            if (auto* found = isValueInObject || object->structure() != structure ? nullptr : vm.ensureMegamorphicCache().findLoad(structure->id(), name->impl()); found && found->m_holder != JSCell::seenMultipleCalleeObjects()) {
+                if (auto location = propertyLocation(found->m_offset)) {
+                    read.holder = found->m_holder;
+                    read.epoch = vm.ensureMegamorphicCache().epoch();
+                    entry.offset = *location | Slot::isGetter | Slot::pointerIsCell;
+                }
+            }
+            OPERATION_RETURN(scope, JSValue::encode(result));
+        }
+    }
+    cacheKeyedAccess(entry, structure, property.asCell(), std::nullopt);
+    scope.release();
+    return getByVal(instance, globalObject, vm, base, property);
+}
+
+// `property in base`, of whatever the two are.
+JSC_DEFINE_JIT_OPERATION(operationAOTInByValAndCache, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    if (!base.isObject()) {
+        throwException(globalObject, scope, createInvalidInParameterError(globalObject, base));
+        OPERATION_RETURN(scope, 0);
+    }
+    JSObject* object = asObject(base);
+    auto key = property.toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    // What a string or a symbol is as a key it is for good.
+    if (!property.isString() && !property.isSymbol())
+        OPERATION_RETURN(scope, object->hasProperty(globalObject, key));
+    Structure* structure = object->structure();
+    bool goesByStructure;
+    bool result = hasPropertyAndFillMegamorphicCache(globalObject, object, key.impl(), goesByStructure);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    Slot& entry = instance->keyedHasFor(structure->id(), property.asCell());
+    entry.structureID = StructureID();
+    entry.offset = goesByStructure && object->structure() == structure ? vm.ensureMegamorphicCache().epoch() | static_cast<uint32_t>(result) << Instance::keyedHasAnswerShift : Slot::isGetter;
+    entry.pointer = property.asCell();
+    entry.structureID = structure->id();
+    OPERATION_RETURN(scope, result);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTPutByValAndCache, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, EncodedJSValue encodedValue))
+{
+    AOT_OPERATION_BEGIN(instance);
+    constexpr uint32_t isStrict = 1;
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    Slot& entry = instance->keyedStoreFor(base.asCell()->structureID(), property.asCell());
+    Structure* structureOfEntry = base.asCell()->structure();
+    if (base.isObject()) {
+        auto name = nameForKeyedCache(globalObject, property);
+        OPERATION_RETURN_IF_EXCEPTION(scope);
+        if (name) {
+            JSObject* object = asObject(base);
+            Structure* oldStructure = object->structure();
+            PutPropertySlot slot(base, isStrict);
+            base.put(globalObject, *name, JSValue::decode(encodedValue), slot);
+            OPERATION_RETURN_IF_EXCEPTION(scope);
+            fillMegamorphicCacheAfterPut(globalObject, base, oldStructure, *name, slot);
+            bool isReplacementInObject = slot.isCacheablePut() && slot.type() == PutPropertySlot::ExistingProperty && slot.base() == object && object->structure() == oldStructure && !oldStructure->typedLayoutID();
+            if (isReplacementInObject)
+                oldStructure->didCachePropertyReplacement(vm, slot.cachedOffset());
+            if (slot.isCacheablePut() && slot.type() == PutPropertySlot::NewProperty && slot.base() == object) {
+                cacheKeyedAddition(instance, vm, oldStructure, object->structure(), property.asCell(), slot.cachedOffset());
+                OPERATION_RETURN(scope);
+            }
+            cacheKeyedAccess(entry, oldStructure, property.asCell(), isReplacementInObject ? std::optional(slot.cachedOffset()) : std::nullopt);
+            OPERATION_RETURN(scope);
+        }
+    }
+    cacheKeyedAccess(entry, structureOfEntry, property.asCell(), std::nullopt);
+    scope.release();
+    return putByVal(instance, globalObject, vm, base, property, JSValue::decode(encodedValue), isStrict);
+}
+
+// In strict code: it has deleted, or it throws. As operationAOTTypedDeleteByKey.
+JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCache, void, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedProperty, uint32_t, Slot* cache, uint32_t))
+{
+    AOT_OPERATION_BEGIN_AT(instance, cache);
+    countOperationBySlotState(instance, __func__, cache);
+    JSValue base = JSValue::decode(encodedBase);
+    JSValue property = JSValue::decode(encodedProperty);
+    JSObject* object = base.toObject(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    auto key = property.toPropertyKey(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    Structure* oldStructure = object->structure();
+    DeletePropertySlot slot;
+    bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    if (!isDeleted) {
+        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+        OPERATION_RETURN(scope);
+    }
+    if (base.isObject() && property.isCell())
+        cacheKeyedDelete(vm, callerData(instance, callFrame), cache, object, oldStructure, property, slot.isCacheableDelete() && slot.isDeleteHit() && !oldStructure->typedLayoutID() && !oldStructure->family() && !oldStructure->hasStableFields() ? std::optional(slot.cachedOffset()) : std::nullopt);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTResolveScope, JSObject*, (Instance* instance, JSScope* startScope, uint32_t identifierIndex, Slot* cache, uint32_t localScopeDepth))
+{
+    AOT_OPERATION_BEGIN_AT(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
@@ -402,7 +676,7 @@ static void cacheEnvironmentVariable(VM& vm, Data* codeBlock, Slot* cache, JSLex
 
 JSC_DEFINE_JIT_OPERATION(operationAOTGetFromScope, EncodedJSValue, (Instance* instance, JSObject* scopeObject, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
-    AOT_OPERATION_BEGIN(instance);
+    AOT_OPERATION_BEGIN_AT(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     bool throwIfNotFound = how & Site::throwsIfNotFound;
     Slot unusedSlot { };
@@ -515,7 +789,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTReadLazyClosureVar, EncodedJSValue, (Instan
 
 JSC_DEFINE_JIT_OPERATION(operationAOTPutToScope, void, (Instance* instance, JSObject* scopeObject, EncodedJSValue encodedValue, uint32_t identifierIndex, Slot* cache, uint32_t how))
 {
-    AOT_OPERATION_BEGIN(instance);
+    AOT_OPERATION_BEGIN_AT(instance, cache);
     countOperationBySlotState(instance, __func__, cache);
     Slot unusedSlot { };
     if (SharedData::contains(cache)) [[unlikely]]
@@ -814,15 +1088,14 @@ static const char* howReadByNameWillBeServed(VM& vm, JSValue base, UniquedString
         bool hitsByName = false;
         for (unsigned i = 0; i < several->numberOfUsedInlineNameSlots; ++i)
             hitsByName |= hasNameInSlot(static_cast<uint16_t>(several->byName), several->byName >> (PolymorphicSlots::inlineNameSlotsShift + i * 8) & 0xff);
-        static_assert(PolymorphicSlots::numberOfSlots == 4);
-        static constexpr const char* services[PolymorphicSlots::numberOfSlots + 1][4] = {
+        static constexpr const char* services[5][4] = {
             { "polymorphic-site-of-0-hits-by-name", "polymorphic-site-of-0-hits", "polymorphic-site-of-0-misses-and-table-hits", "polymorphic-site-of-0-misses-and-table-misses" },
             { "polymorphic-site-of-1-hits-by-name", "polymorphic-site-of-1-hits", "polymorphic-site-of-1-misses-and-table-hits", "polymorphic-site-of-1-misses-and-table-misses" },
             { "polymorphic-site-of-2-hits-by-name", "polymorphic-site-of-2-hits", "polymorphic-site-of-2-misses-and-table-hits", "polymorphic-site-of-2-misses-and-table-misses" },
             { "polymorphic-site-of-3-hits-by-name", "polymorphic-site-of-3-hits", "polymorphic-site-of-3-misses-and-table-hits", "polymorphic-site-of-3-misses-and-table-misses" },
             { "polymorphic-site-of-4-hits-by-name", "polymorphic-site-of-4-hits", "polymorphic-site-of-4-misses-and-table-hits", "polymorphic-site-of-4-misses-and-table-misses" },
         };
-        return services[used][hitsByName ? 0 : hits ? 1 : isInTable ? 2 : 3];
+        return services[std::min(used, 4u)][hitsByName ? 0 : hits ? 1 : isInTable ? 2 : 3];
     }
     if (structureID && cache->structureID == structureID)
         return cache->offset & Slot::flagsMask ? "site-hits-indirectly" : "site-hits";
@@ -1183,6 +1456,159 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTPow, double, (double a, double b))
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTDoubleToInt32, int32_t, (double value))
 {
     return JSC::toInt32(value);
+}
+
+static Type cellTypeForJSType(JSType type)
+{
+    switch (type) {
+    case StringType:
+        return TString;
+    case SymbolType:
+        return TSymbol;
+    case HeapBigIntType:
+        return TBigInt;
+    case JSFunctionType:
+    case InternalFunctionType:
+        return TFunction;
+    case ArrayType:
+    case DerivedArrayType:
+        return TArray;
+    case FinalObjectType:
+        return TFinalObject;
+    case JSMapType:
+        return TMap;
+    case JSSetType:
+        return TSet;
+    case JSWeakMapType:
+        return TWeakMap;
+    case JSWeakSetType:
+        return TWeakSet;
+    case RegExpObjectType:
+        return TRegExp;
+    case JSPromiseType:
+        return TPromise;
+    case JSDateType:
+        return TDate;
+    case ErrorInstanceType:
+        return TError;
+    case ArrayBufferType:
+        return TArrayBuffer;
+    case DataViewType:
+        return TDataView;
+    case StringObjectType:
+        return TStringObject;
+    default:
+        if (isTypedArrayType(type))
+            return typeForTypedArray(type);
+        return type >= ObjectType ? TOtherObject : TCellOther;
+    }
+}
+
+Type valueType(JSValue value)
+{
+    if (!value)
+        return TEmpty;
+    if (value.isInt32())
+        return TInt32;
+    if (value.isDouble())
+        return TDouble;
+    if (value.isBoolean())
+        return TBoolean;
+    if (value.isUndefined())
+        return TUndefined;
+    if (value.isNull())
+        return TNull;
+    if (!value.isCell())
+        return TTop;
+    if (value.isString()) {
+        const StringImpl* impl = asString(value)->tryGetValueImpl();
+        return impl && impl->isAtom() ? TAtomString : asString(value)->length() <= TypedLayoutTable::maxAtomizedStringLength ? TShortOtherString : TLongString;
+    }
+    if (value.asCell()->inlineTypeFlags() & MasqueradesAsUndefined)
+        return TOtherObject;
+    return cellTypeForJSType(value.asCell()->type());
+}
+
+void dumpType(PrintStream& out, Type type)
+{
+    if (!type) {
+        out.print("None");
+        return;
+    }
+    if (type == TAll) {
+        out.print("All");
+        return;
+    }
+    if (type == TTop) {
+        out.print("Top");
+        return;
+    }
+    CommaPrinter bar("|"_s);
+    auto take = [&](Type bits, ASCIILiteral name) {
+        if ((type & bits) == bits) {
+            out.print(bar, name);
+            type &= ~bits;
+        }
+    };
+    take(TNumber, "Number"_s);
+    take(TAnyObject, "AnyObject"_s);
+    take(TInt32, "Int32"_s);
+    take(TDouble, "Double"_s);
+    take(TBoolean, "Boolean"_s);
+    take(TUndefined, "Undefined"_s);
+    take(TNull, "Null"_s);
+    take(TString, "String"_s);
+    take(TAtomString, "AtomString"_s);
+    take(TOtherString, "OtherString"_s);
+    take(TShortOtherString, "ShortOtherString"_s);
+    take(TLongString, "LongString"_s);
+    take(TSymbol, "Symbol"_s);
+    take(TBigInt, "BigInt"_s);
+    take(TFunction, "Function"_s);
+    if (type & TFunctionTag) {
+        if (uint32_t function = functionNumberOf(type))
+            out.print(bar, "Function#", function);
+        else if (uint32_t intrinsic = intrinsicFunctionOf(type & TFunction))
+            out.print(bar, "Intrinsic#", intrinsic);
+        else
+            out.print(bar, "Function#?");
+        type &= ~TFunction;
+    }
+    take(TArray, "Array"_s);
+    if (type & TArrayTag) {
+        out.print(bar, "Array{", static_cast<unsigned>((type & TAnyArrayShape) >> firstArrayShapeBit), "}");
+        type &= ~TArray;
+    }
+    take(TObject, "Object"_s);
+    take(TOtherObject, "OtherObject"_s);
+    take(TFinalObject, "FinalObject"_s);
+    if (type & TFinalObjectTag) {
+        auto layouts = layoutRangeOf(type);
+        out.print(bar, "FinalObject#", layouts.lowest);
+        if (!layouts.isOne())
+            out.print("..", layouts.highest);
+        type &= ~TFinalObject;
+    }
+    take(TMap, "Map"_s);
+    take(TSet, "Set"_s);
+    take(TWeakMap, "WeakMap"_s);
+    take(TWeakSet, "WeakSet"_s);
+    take(TRegExp, "RegExp"_s);
+    take(TPromise, "Promise"_s);
+    take(TDate, "Date"_s);
+    take(TError, "Error"_s);
+    take(TArrayBuffer, "ArrayBuffer"_s);
+    take(TDataView, "DataView"_s);
+    take(TStringObject, "StringObject"_s);
+    take(TTypedArray, "TypedArray"_s);
+    for (unsigned i = 0; i < NumberOfTypedArrayTypesExcludingDataView; ++i) {
+        if (type & (1u << (firstTypedArrayBit + i))) {
+            out.print(bar, "TypedArray", i);
+            type &= ~(1u << (firstTypedArrayBit + i));
+        }
+    }
+    take(TCellOther, "CellOther"_s);
+    take(TEmpty, "Empty"_s);
 }
 
 } } // namespace JSC::AOT

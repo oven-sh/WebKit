@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ImmutableIntrinsics.h"
 
+#include "AOTFunction.h"
 #include "BuiltinExecutables.h"
 #include "FunctionPrototype.h"
 #include "JSCInlines.h"
@@ -50,6 +51,17 @@ void ImmutableIntrinsics::ensureShared(VM& vm)
         return;
     JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
     RELEASE_ASSERT(shared());
+}
+
+// The build describes the realm of a VM that has no image: there a builtin that is implemented in JavaScript is no host function.
+static bool isCompiledAheadOfTime(JSFunction* function)
+{
+#if ENABLE(AOT)
+    return AOT::Typed::declaredAs(function) != AOT::Typed::DeclaredAs::NotCompiled;
+#else
+    UNUSED_PARAM(function);
+    return false;
+#endif
 }
 
 static uint64_t keyFor(unsigned holder, const StringImpl& name)
@@ -90,7 +102,7 @@ Vector<EncodedJSValue> ImmutableIntrinsics::describe(JSGlobalObject* globalObjec
                 if (auto index = vm.builtinExecutables()->indexOf(function->jsExecutable()->unlinkedExecutable()))
                     entry.builtinCode = *index + 1;
             } else if (function)
-                entry.isHostFunction = function->isHostFunction();
+                entry.isHostFunction = function->isHostFunction() && !isCompiledAheadOfTime(function);
             entry.inheritsFromFunctionPrototype = number && isFunctionOfIntrinsic(entry) && asObject(value)->getPrototypeDirect() == globalObject->functionPrototype();
         } else
             entry.primitive = JSValue::encode(value);

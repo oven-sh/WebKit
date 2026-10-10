@@ -1162,6 +1162,9 @@ public:
     
     // Whenever possible, use subspaceFor<CellType>(vm) to get one of these subspaces.
     CompleteSubspace cellSpace;
+#if USE(BUN_JSC_ADDITIONS)
+    CompleteSubspace aotClosureSpace; // AOT::Typed::Closure and environments: as a rule they die young.
+#endif
     CompleteSubspace destructibleObjectSpace;
 
 #define DECLARE_ISO_SUBSPACE(name, heapCellType, type) \

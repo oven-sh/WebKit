@@ -1261,6 +1261,19 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
     return true;
 }
 
+#if ENABLE(AOT)
+bool JSArray::tryPutIndexInPlace(VM& vm, unsigned index, JSValue value)
+{
+    IndexingType indexingType = this->indexingType();
+    if (!hasUndecided(indexingType) && !hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType))
+        return false;
+    if (index > MAX_STORAGE_VECTOR_INDEX || !ensureLength(vm, index + 1))
+        return false;
+    setIndexQuickly(vm, index, value);
+    return true;
+}
+#endif
+
 bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startIndex, JSC::JSArray* otherArray)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);

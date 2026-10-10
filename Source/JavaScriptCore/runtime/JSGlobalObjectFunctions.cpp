@@ -1058,8 +1058,33 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
             return cloned;
     }
 
+#if ENABLE(AOT)
+    if (!into && sourceStructure->compiledLayout()) {
+        if (JSObject* copy = uncheckedDowncast<AOT::Typed::Object>(source)->tryCopyAsPlainObject(globalObject))
+            return copy;
+    }
+#endif
+
     JSObject* target = into ? into : constructEmptyObject(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
+
+#if ENABLE(AOT)
+    // As objectAssignFast(): its fields are enumerable data properties with string keys, and reading them runs nothing. The names live as long as the program.
+    if (sourceStructure->compiledLayout() && !target->structure()->typedLayoutID() && !target->structure()->compiledLayout()) {
+        Vector<UniquedStringImpl*, 8> properties;
+        MarkedArgumentBuffer values;
+        bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+            properties.append(&name);
+            values.appendWithCrashOnOverflow(value);
+            return true;
+        });
+        if (hasOnlyFields) {
+            if (properties.size())
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return target;
+        }
+    }
+#endif
 
     if (canPerformFastPropertyEnumerationForCopyDataProperties(sourceStructure)) [[likely]] {
         EnsureStillAliveScope sourceStructureScope(sourceStructure);

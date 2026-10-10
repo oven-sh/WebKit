@@ -11506,6 +11506,9 @@ void SpeculativeJIT::compileNewMap(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSMap>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSMap), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewMap, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));
@@ -11529,6 +11532,9 @@ void SpeculativeJIT::compileNewSet(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSSet>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSSet), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewSet, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));

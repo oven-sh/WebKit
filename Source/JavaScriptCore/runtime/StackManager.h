@@ -48,6 +48,12 @@ public:
         {
             return OBJECT_OFFSETOF(Mirror, m_softStackLimit);
         }
+#if USE(BUN_JSC_ADDITIONS)
+        static constexpr ptrdiff_t offsetOfTrapAwareSoftStackLimit()
+        {
+            return OBJECT_OFFSETOF(Mirror, m_trapAwareSoftStackLimit);
+        }
+#endif
 
     private:
         Atomic<void*> m_trapAwareSoftStackLimit { nullptr };

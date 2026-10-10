@@ -4135,7 +4135,7 @@ public:
                     relative += delta;
                 }
 
-                if (isInt<14>(relative))
+                if (isInt<16>(relative))
                     return LinkJumpTestBitDirect;
 
                 return LinkJumpTestBit;

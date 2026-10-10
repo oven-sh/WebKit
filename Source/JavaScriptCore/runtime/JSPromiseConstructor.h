@@ -45,6 +45,7 @@ public:
 
 protected:
     JSPromiseConstructor(VM&, FunctionExecutable*, JSGlobalObject*, Structure*);
+    JSPromiseConstructor(VM&, NativeExecutable*, JSGlobalObject*, Structure*);
     void finishCreation(VM&, JSPromisePrototype*);
 
 #if USE(BUN_JSC_ADDITIONS)

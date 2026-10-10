@@ -33,6 +33,7 @@ public:
             unsigned changedNow = removeCasts();
             changedNow += removeRepeatedCasts();
             changedNow += specializeAllocations();
+            changedNow += specializeAllocationsAcrossBlocks();
             if (!changedNow)
                 break;
             changed += changedNow;
@@ -95,10 +96,25 @@ private:
         if (!own)
             return false;
         for (auto& field : m_program.at(view).fields) {
-            if (!finds(own, field))
+            if (!(field.flags & fieldIsNeverStored) && !finds(own, field))
                 return false;
         }
         return true;
+    }
+
+    // Whether an object that was made with the layout gets into places of the view untested. Not Program::isUpcast(), which takes any layout for one of a view that admits foreign objects.
+    bool isMember(LayoutID made, LayoutID view) const
+    {
+        return std::ranges::binary_search(m_program.at(view).members, made);
+    }
+
+    // No foreign object: there is nothing to hold it to.
+    bool testsObjectMadeHere(const Value& cast, ValueID operand) const
+    {
+        if (!onlyTests(cast) || m_function.at(operand).opcode != Opcode::NewObjectWithShape)
+            return false;
+        LayoutID view = m_program.at(cast.type).onlyView();
+        return view && isMember(m_function.at(operand).layout(), view);
     }
 
     // A cast whose operand is of the type tests nothing. Its users take the operand, or, where they would see less by the type of
@@ -125,13 +141,19 @@ private:
                 if (cast.opcode != Opcode::Cast)
                     continue;
                 ValueID operand = resolve(cast.child(0));
-                if (!m_program.isHeldAlready(typeOf(operand), typeOf(id), cast.castReason()))
+                // What it tests is the value, however that is looked at.
+                if (cast.castReason() != CastReason::Upcast) {
+                    while (m_function.at(operand).opcode == Opcode::Cast && m_function.at(operand).castReason() == CastReason::Upcast && !m_function.at(operand).hasPredictionUnlike(m_function.at(resolve(m_function.at(operand).child(0)))))
+                        operand = resolve(m_function.at(operand).child(0));
+                    cast.children[0] = operand;
+                }
+                if (!m_program.isHeldAlready(typeOf(operand), typeOf(id), cast.castReason()) && !testsObjectMadeHere(cast, operand))
                     continue;
                 // Its operand is always of its type, as far as that is an object. It goes if the operand is of the type after `as`, or if
                 // nothing can be made of what is not.
                 if (cast.castReason() == CastReason::Coerce) {
                     auto& coercedTo = m_program.at(cast.coercedType());
-                    if (!m_program.isHeldAlready(typeOf(operand), coercedTo, CastReason::As) && coercionMayChangeObjects(m_program, typeOf(operand), coercedTo))
+                    if ((!typeOf(operand).isWithin(coercedTo, m_program, false) || mayBeTurnedInto(typeOf(operand), coercedTo)) && coercionMayChangeObjects(m_program, typeOf(operand), coercedTo, cast.coercesFreshData()))
                         continue;
                 }
                 // With the name of a property it turns away `undefined` and `null` whatever its type says. So does `x!`.
@@ -200,8 +222,9 @@ private:
     // the field without asking whether the object has one.
     unsigned removeRepeatedCasts()
     {
+        // A closure that is made once stays the one its variable holds for as long as the environment lives, whatever runs in between.
         auto isRepeatable = [&](ValueID id) {
-            return onlyTests(m_function.at(id)) || (m_function.at(id).opcode == Opcode::Cast && m_function.at(id).castReason() == CastReason::Coerce);
+            return onlyTests(m_function.at(id)) || (m_function.at(id).opcode == Opcode::Cast && m_function.at(id).castReason() == CastReason::Coerce) || m_function.at(id).opcode == Opcode::NewClosureOnce;
         };
         unsigned numberOfCasts = 0;
         unsigned numberOfTests = 0;
@@ -281,6 +304,9 @@ private:
         Vector<uint64_t> added;
         auto keyOf = [&](ValueID id) {
             auto& cast = m_function.at(id);
+            // No program has so many types that the two bits on top mean anything else.
+            if (cast.opcode == Opcode::NewClosureOnce)
+                return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | 3u << 30 | cast.field();
             uint32_t type = cast.castReason() == CastReason::Coerce ? cast.coercedType().index() | 1u << 31 : cast.type.index();
             return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | type;
         };
@@ -401,6 +427,26 @@ private:
         return changed;
     }
 
+    // Whether the value is one of the numbers the field lists, going by the type it is given or by the constant it is.
+    bool isAmongLiterals(ValueID value, const Field& field) const
+    {
+        auto& type = typeOf(value);
+        if (!type.isInteger())
+            return false;
+        auto& origin = m_function.at(originOf(value));
+        Range range = origin.opcode == Opcode::Integer ? Range::one(origin.integer()) : type.integers;
+        if (static_cast<uint64_t>(range.most) - static_cast<uint64_t>(range.least) >= field.literals.size())
+            return false;
+        for (int64_t number = range.least; number <= range.most; ++number) {
+            bool isListed = field.literals.containsIf([&](auto& literal) {
+                return !literal.string && literal.number == static_cast<double>(number);
+            });
+            if (!isListed)
+                return false;
+        }
+        return true;
+    }
+
     // `New L1`, stores to it, `as L2`, where the run time would turn the object into one of L2 where it is: it is made as one of L2.
     // Nobody can tell, because nobody has seen the object: all that happens to it from the allocation to the cast, which are in one
     // block, is that its first stores go to it and that it is looked at as what it is anyway. Whatever else uses it comes after the cast.
@@ -421,8 +467,13 @@ private:
         LayoutID made = m_function.at(object).layout();
         auto& from = m_program.at(made);
         auto& to = m_program.at(target);
-        // The prototype of an object of a class comes with its layout.
-        if (from.kind != LayoutKind::Record || to.kind != LayoutKind::Record)
+        // The prototype of an object of a class comes with the layout of the class. With another layout the allocation has to say it.
+        // Compiled code goes by the shape for what is on the prototype, so the run time turns no object of a class with methods into anything:
+        // State::hasPrototypeMembers().
+        bool isOfClass = from.kind == LayoutKind::Instance && from.isEvaluatedOnce && from.constructor && m_program.genericEntrypoints.contains(from.constructor.index());
+        for (LayoutID next = made; isOfClass && next; next = m_program.at(next).base)
+            isOfClass = m_program.at(next).methods.isEmpty();
+        if ((from.kind != LayoutKind::Record && !isOfClass) || to.kind != LayoutKind::Record)
             return false;
         // Every use of the object that was fine for one of L1 is fine for one of L2.
         if (!std::ranges::binary_search(from.specializations, target) || !m_program.isUpcast(target, made))
@@ -437,7 +488,9 @@ private:
             value.forEachChild([&](ValueID child) {
                 usesObject |= originOf(child) == object;
             });
-            if (usesObject && !(value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast) && !isInitializingStore(m_program, m_function, block, i))
+            // By a name that only L2 has a field for, a store makes a property that the cast would move to the field.
+            bool storesToFieldOfTarget = value.opcode == Opcode::PutById && value.child(0) == object && value.child(1) != object && !from.fieldNamed(value.string()) && to.fieldNamed(value.string()) && !mayInheritAtBirth(m_program, m_function, object, value.string());
+            if (usesObject && !(value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast) && !isInitializingStore(m_program, m_function, block, i) && !storesToFieldOfTarget)
                 return false;
         }
         // A property may be declared to be less in L2. What is stored going by the type of the allocation, now or later, has to be of that.
@@ -462,6 +515,16 @@ private:
         }
         Allocation allocation = m_function.allocations[m_function.at(object).allocation()];
         allocation.layout = target;
+        if (isOfClass)
+            allocation.constructedBy = from.constructor;
+        // How large the object is made goes by its discriminant, and what it is too small for it is not turned into. It has room for L2
+        // for sure if L2 lists what the discriminant is. Otherwise the cast may be refused, and then it is not for here to carry it out.
+        if (allocation.discriminant != UINT16_MAX) {
+            auto mapped = to.fieldNamed(from.fields[allocation.discriminant].name);
+            if (!mapped || !isAmongLiterals(m_function.at(object).child(0), to.fields[*mapped]))
+                return false;
+            allocation.discriminant = static_cast<uint16_t>(*mapped);
+        }
         for (uint16_t& field : allocation.order) {
             auto mapped = to.fieldNamed(from.fields[field].name);
             if (!mapped)
@@ -481,6 +544,204 @@ private:
         return true;
     }
 
+    // Some object of the one type is of a layout that a written cast turns into the own layout of a view of the other.
+    bool mayBeTurnedInto(const Type& from, const Type& to) const
+    {
+        for (LayoutID target : to.views) {
+            if (!m_program.at(target).isAllocated)
+                continue;
+            for (LayoutID view : from.views) {
+                // What is looked at as a view has been through a cast to it, or was made so.
+                if (to.views.contains(view))
+                    continue;
+                for (LayoutID member : m_program.at(view).members) {
+                    if (std::ranges::binary_search(m_program.at(member).specializations, target))
+                        return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    bool everyReturnPasses(unsigned from, const BitVector& through) const
+    {
+        if (through.get(from))
+            return true;
+        BitVector seen = through;
+        Vector<unsigned, 16> worklist { from };
+        seen.set(from);
+        while (!worklist.isEmpty()) {
+            auto& terminator = m_function.blocks[worklist.takeLast()].terminator;
+            if (terminator.kind == TerminatorKind::Return)
+                return false;
+            for (auto& target : terminator.targets) {
+                if (!seen.set(target.block.index()))
+                    worklist.append(target.block.index());
+            }
+        }
+        return true;
+    }
+
+    LayoutID targetOf(const Value& cast) const
+    {
+        return m_program.at(cast.castReason() == CastReason::Coerce ? cast.coercedType() : cast.type).onlyView();
+    }
+
+    // As specializeAllocationFor(), where blocks and joins lie between the allocation and the cast. Nobody has seen the object: see isTheObject.
+    bool specializeAllocationAcrossBlocks(ValueID object, unsigned birth)
+    {
+        LayoutID made = m_function.at(object).layout();
+        auto& from = m_program.at(made);
+        if (from.kind != LayoutKind::Record)
+            return false;
+        auto doesNothingToIt = [&](const Value& cast) {
+            if (cast.castReason() == CastReason::Upcast)
+                return true;
+            LayoutID target = targetOf(cast);
+            if (!target || !isMember(made, target))
+                return false;
+            // `as` makes a member one of the view's own layout where it can.
+            return onlyTests(cast) || !std::ranges::binary_search(from.specializations, target);
+        };
+        BitVector isTheObject(m_function.values.size());
+        isTheObject.set(object.index());
+        for (unsigned rounds = 0;; ++rounds) {
+            if (rounds == 8)
+                return false;
+            bool changed = false;
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    auto& value = m_function.at(id);
+                    if (value.opcode == Opcode::Cast && isTheObject.get(value.child(0).index()) && doesNothingToIt(value))
+                        changed |= !isTheObject.set(id.index());
+                }
+                for (auto& target : block.terminator.targets) {
+                    for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                        if (isTheObject.get(target.arguments[i].index()))
+                            changed |= !isTheObject.set(m_function.at(target.block).parameters[i].index());
+                    }
+                }
+            }
+            if (!changed)
+                break;
+        }
+
+        LayoutID target;
+        BitVector blocksWithCast(m_function.blocks.size());
+        Vector<ValueID, 8> storesIntoIt;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& block = m_function.blocks[b];
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                bool usesIt = false;
+                value.forEachChild([&](ValueID child) {
+                    usesIt |= isTheObject.get(child.index());
+                });
+                if (!usesIt || isTheObject.get(id.index()))
+                    continue;
+                if (value.opcode == Opcode::Cast && (value.castReason() == CastReason::As || value.castReason() == CastReason::Coerce)) {
+                    LayoutID asked = targetOf(value);
+                    if (!asked || (target && asked != target))
+                        return false;
+                    target = asked;
+                    blocksWithCast.set(b);
+                    continue;
+                }
+                if ((value.opcode != Opcode::PutById && value.opcode != Opcode::PutField) || !isTheObject.get(value.child(0).index()) || isTheObject.get(value.child(1).index()))
+                    return false;
+                storesIntoIt.append(id);
+            }
+            if (block.terminator.value && isTheObject.get(block.terminator.value.index()))
+                return false;
+        }
+        if (!target || !std::ranges::binary_search(from.specializations, target) || !m_program.isUpcast(target, made))
+            return false;
+        auto& to = m_program.at(target);
+        if (to.kind != LayoutKind::Record || to.isAbstract || !everyReturnPasses(birth, blocksWithCast))
+            return false;
+
+        unsigned numberOfInitialStores = 0;
+        unsigned numberBornWith = 0;
+        Vector<std::pair<ValueID, uint32_t>, 8> storesToAllocation;
+        for (ValueID id : storesIntoIt) {
+            auto& store = m_function.at(id);
+            // A store by place goes by the layout the object has.
+            if (store.opcode == Opcode::PutField && store.child(0) != object)
+                return false;
+            StringID name = store.opcode == Opcode::PutField ? m_program.at(store.layout()).fields[store.field()].name : store.string();
+            auto field = to.fieldNamed(name);
+            if (!field || mayInheritAtBirth(m_program, m_function, object, name) || inheritsByItsLayout(m_program, target, name))
+                return false;
+            TypeID type = to.fields[*field].type;
+            if (type && !typeOf(store.child(1)).isWithin(m_program.at(type), m_program))
+                return false;
+            if (store.child(0) == object)
+                storesToAllocation.append({ id, *field });
+            if (store.opcode == Opcode::PutById && store.isInitialStore()) {
+                ++numberOfInitialStores;
+                size_t at = m_function.blocks[birth].values.find(id);
+                numberBornWith += at != notFound && isInitializingStore(m_program, m_function, m_function.blocks[birth], at);
+            }
+        }
+        if (numberBornWith && numberBornWith != numberOfInitialStores)
+            return false;
+        Allocation allocation = m_function.allocations[m_function.at(object).allocation()];
+        allocation.layout = target;
+        if (allocation.discriminant != UINT16_MAX) {
+            auto mapped = to.fieldNamed(from.fields[allocation.discriminant].name);
+            if (!mapped || !isAmongLiterals(m_function.at(object).child(0), to.fields[*mapped]))
+                return false;
+            allocation.discriminant = static_cast<uint16_t>(*mapped);
+        }
+        for (uint16_t& field : allocation.order) {
+            auto mapped = to.fieldNamed(from.fields[field].name);
+            if (!mapped)
+                return false;
+            field = *mapped;
+        }
+        uint32_t number = m_function.allocationOf(WTF::move(allocation));
+        auto& allocated = m_function.at(object);
+        allocated.immediates = { target.index(), number };
+        allocated.type = to.type;
+        allocated.rep = repOf(m_program.at(to.type));
+        for (auto [store, field] : storesToAllocation) {
+            if (m_function.at(store).opcode == Opcode::PutField)
+                m_function.at(store).immediates = { target.index(), field };
+        }
+        return true;
+    }
+
+    unsigned specializeAllocationsAcrossBlocks()
+    {
+        Vector<LayoutID, 8> targets;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& cast = m_function.at(id);
+                if (cast.opcode != Opcode::Cast || (cast.castReason() != CastReason::As && cast.castReason() != CastReason::Coerce))
+                    continue;
+                if (LayoutID target = targetOf(cast); target && !targets.contains(target))
+                    targets.append(target);
+            }
+        }
+        if (targets.isEmpty())
+            return 0;
+        unsigned changed = 0;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            for (size_t i = 0; i < m_function.blocks[b].values.size(); ++i) {
+                ValueID id = m_function.blocks[b].values[i];
+                if (m_function.at(id).opcode != Opcode::NewObjectWithShape)
+                    continue;
+                auto& specializations = m_program.at(m_function.at(id).layout()).specializations;
+                bool isAskedFor = targets.containsIf([&](LayoutID target) {
+                    return std::ranges::binary_search(specializations, target);
+                });
+                if (isAskedFor)
+                    changed += specializeAllocationAcrossBlocks(id, b);
+            }
+        }
+        return changed;
+    }
+
     // Blocks have been merged, casts have gone, constructors have been copied in behind the allocation: more stores may follow an
     // allocation now than when it was given its Allocation. By the rule of assignAllocations().
     void updateAllocations()
@@ -496,6 +757,7 @@ private:
                 Allocation allocation;
                 allocation.layout = m_function.at(object).layout();
                 allocation.constructedBy = m_function.allocations[m_function.at(object).allocation()].constructedBy;
+                allocation.discriminant = m_function.allocations[m_function.at(object).allocation()].discriminant;
                 for (size_t next = i + 1; next < block.values.size() && isInitializingStore(m_program, m_function, block, next); ++next) {
                     uint16_t field = *layout.fieldNamed(fieldStoredTo(m_function.at(block.values[next])).name);
                     if (!allocation.order.contains(field))

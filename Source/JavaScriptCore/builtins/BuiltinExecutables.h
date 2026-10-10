@@ -83,6 +83,7 @@ SourceCode name##Source();
     static_assert(numberOfBuiltinCodes < 0x10000);
     static std::span<const Latin1Character> textOf(unsigned index);
     JS_EXPORT_PRIVATE FunctionExecutable* programExecutableFor(BuiltinCodeIndex, const char* text, size_t length);
+    bool hasCompiledFunction(BuiltinCodeIndex);
 
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);

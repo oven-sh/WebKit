@@ -70,6 +70,9 @@ public:
     static constexpr uint32_t getterCacheSecondaryMask = getterCacheSecondarySize - 1;
 
     static constexpr uint16_t invalidEpoch = 0;
+    // Of a load entry that says what no change of any object can make false. It ends with its Structure.
+    static constexpr uint16_t permanentEpoch = 1;
+    static constexpr uint16_t firstEpoch = 2;
     static constexpr PropertyOffset maxOffset = UINT16_MAX;
 
     struct LoadEntry {
@@ -207,6 +210,17 @@ public:
 
     MegamorphicCache() = default;
 
+#if USE(BUN_JSC_ADDITIONS) && !USE(TZONE_MALLOC)
+    // The empty cache is all zero but for the epoch. Memory that comes zeroed is not written: a page of it costs nothing until an entry in it is looked at.
+    static MegamorphicCache& create()
+    {
+        static_assert(!invalidEpoch);
+        auto* cache = static_cast<MegamorphicCache*>(fastZeroedMalloc(sizeof(MegamorphicCache)));
+        cache->m_epoch = firstEpoch;
+        return *cache;
+    }
+#endif
+
 #if CPU(ADDRESS64)
     // Because Structure is allocated with 16-byte alignment, we should assume that StructureID's lower 4 bits are zeros.
     static constexpr unsigned structureIDHashShift1 = 4;
@@ -261,30 +275,44 @@ public:
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
 
+    bool isLiveLoad(const LoadEntry& entry) const { return entry.m_epoch == m_epoch || entry.m_epoch == permanentEpoch; }
+
+    LoadEntry& makeRoomForLoad(StructureID structureID, UniquedStringImpl* uid)
+    {
+        auto& entry = m_loadCachePrimaryEntries[MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask];
+        if (isLiveLoad(entry)) {
+            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
+            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
+        }
+        return entry;
+    }
+
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
         if (!noteDependenceOnPrototypes(structureID))
             return;
-        uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
-        auto& entry = m_loadCachePrimaryEntries[primaryIndex];
-        if (entry.m_epoch == m_epoch) {
-            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
-            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-        }
-        m_loadCachePrimaryEntries[primaryIndex].initAsMiss(structureID, uid, m_epoch);
+        makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, m_epoch);
     }
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
         if (!ownProperty && !noteDependenceOnPrototypes(structureID, holder))
             return;
-        uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & loadCachePrimaryMask;
-        auto& entry = m_loadCachePrimaryEntries[primaryIndex];
-        if (entry.m_epoch == m_epoch) {
-            uint32_t secondaryIndex = MegamorphicCache::secondaryHash(entry.m_structureID, entry.m_uid.get()) & loadCacheSecondaryMask;
-            m_loadCacheSecondaryEntries[secondaryIndex] = WTF::move(entry);
-        }
-        m_loadCachePrimaryEntries[primaryIndex].initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
+        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
+    }
+
+    // No object of the Structure, which is no dictionary, has the property, and nothing on their prototype chain has it or can change.
+    void initAsPermanentMiss(StructureID structureID, UniquedStringImpl* uid)
+    {
+        m_hasPermanentEntries = true;
+        makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, permanentEpoch);
+    }
+
+    // Every object of the Structure, which is no dictionary, has the property itself, or finds it in the holder, and nothing on their prototype chain up to the holder can change.
+    void initAsPermanentHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
+    {
+        m_hasPermanentEntries = true;
+        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, ownProperty);
     }
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
@@ -357,7 +385,7 @@ public:
     const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
     {
         for (auto* entry : { &m_loadCachePrimaryEntries[primaryHash(structureID, uid) & loadCachePrimaryMask], &m_loadCacheSecondaryEntries[secondaryHash(structureID, uid) & loadCacheSecondaryMask] }) {
-            if (entry->m_structureID == structureID && entry->m_uid.get() == uid && entry->m_epoch == m_epoch)
+            if (entry->m_structureID == structureID && entry->m_uid.get() == uid && isLiveLoad(*entry))
                 return entry;
         }
         return nullptr;
@@ -395,8 +423,9 @@ private:
     std::array<GetterEntry, getterCachePrimarySize> m_getterCachePrimaryEntries { };
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
     std::array<ConstructionEntry, constructionCacheSize> m_constructionEntries { };
-    uint16_t m_epoch { 1 };
+    uint16_t m_epoch { firstEpoch };
     bool m_hasBeenReconciled { false };
+    bool m_hasPermanentEntries { false };
 };
 
 } // namespace JSC

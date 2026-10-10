@@ -120,6 +120,11 @@ public:
     // This function returns NonArray if the indexing types are not compatable for copying.
     IndexingType mergeIndexingTypeForCopying(IndexingType other, bool allowPromotion);
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, JSArray* otherArray);
+#if ENABLE(AOT)
+    // The store of an element at or beyond the end of the vector, which grows to hold it however far that is: the array does not become
+    // sparse. For whoever has made sure that the holes are worth it. False: nothing has been done, it is for the generic path.
+    JS_EXPORT_PRIVATE bool tryPutIndexInPlace(VM&, unsigned index, JSValue);
+#endif
     bool appendMemcpy(JSGlobalObject*, VM&, unsigned startIndex, IndexingType, std::span<const EncodedJSValue>);
 
     bool fastFill(VM&, unsigned startIndex, unsigned endIndex, JSValue);

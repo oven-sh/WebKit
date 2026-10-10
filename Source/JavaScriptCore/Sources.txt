@@ -44,48 +44,52 @@ API/JSWeakPrivate.cpp
 API/JSWeakValue.cpp
 API/OpaqueJSString.cpp
 
-aot/AOTBounds.cpp @no-unify
-aot/AOTBuiltins.cpp
 aot/AOTCompiler.cpp
-aot/AOTGraph.cpp
-aot/AOTGuardChecks.cpp @no-unify
 aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
 aot/AOTEmitter.cpp @no-unify
-aot/AOTEscapeAnalysis.cpp @no-unify
 aot/AOTFacts.cpp @no-unify
-aot/AOTShapes.cpp @no-unify
-aot/AOTLowerBuiltins.cpp @no-unify
 aot/AOTOperationsBuiltins.cpp @no-unify
 aot/AOTTypeTable.cpp @no-unify
-aot/AOTInlining.cpp
-aot/AOTLoopOptimization.cpp
-aot/AOTLowerAccess.cpp
-aot/AOTLowerArith.cpp
-aot/AOTLowerCalls.cpp
-aot/AOTLowerCore.cpp
-aot/AOTLowerGuards.cpp
-aot/AOTLowerIteration.cpp
-aot/AOTLowerMisc.cpp
-aot/AOTLowerObjects.cpp
 aot/AOTOperations.cpp
 aot/AOTOperationsCalls.cpp
 aot/AOTOperationsObjects.cpp
 aot/AOTProgram.cpp
 aot/AOTProgramData.cpp
-aot/AOTPropertyPlaces.cpp @no-unify
-aot/AOTRangeAnalysis.cpp
 aot/AOTRuntime.cpp
 aot/AOTStubs.cpp
 aot/AOTSlotWatchpoint.cpp
 aot/AOTThunks.cpp
-aot/AOTTypeInference.cpp
 aot/AOTTypedBuiltinResolution.cpp @no-unify
+aot/AOTTypedBuiltinSpecialization.cpp @no-unify
 aot/AOTTypedBuiltins.cpp @no-unify
+aot/AOTTypedBuiltinsArray.cpp @no-unify
+aot/AOTTypedBuiltinsArrayLoops.cpp @no-unify
+aot/AOTTypedBuiltinsBuffer.cpp @no-unify
+aot/AOTTypedBuiltinsBun.cpp @no-unify
+aot/AOTTypedBuiltinsDate.cpp @no-unify
+aot/AOTTypedBuiltinsEngine.cpp @no-unify
+aot/AOTTypedBuiltinsErrorJSONGlobal.cpp @no-unify
+aot/AOTTypedBuiltinsFunction.cpp @no-unify
+aot/AOTTypedBuiltinsHost.cpp @no-unify
+aot/AOTTypedBuiltinsIntlTemporal.cpp @no-unify
+aot/AOTTypedBuiltinsIterator.cpp @no-unify
+aot/AOTTypedBuiltinsLanguage.cpp @no-unify
+aot/AOTTypedBuiltinsMapSet.cpp @no-unify
+aot/AOTTypedBuiltinsMathNumber.cpp @no-unify
+aot/AOTTypedBuiltinsObject.cpp @no-unify
+aot/AOTTypedBuiltinsPromise.cpp @no-unify
+aot/AOTTypedBuiltinsRegExp.cpp @no-unify
+aot/AOTTypedBuiltinsString.cpp @no-unify
+aot/AOTTypedBuiltinsTypedArray.cpp @no-unify
+aot/AOTTypedAllocationRemarks.cpp @no-unify
 aot/AOTTypedCallResolution.cpp @no-unify
 aot/AOTTypedCastSimplification.cpp @no-unify
+aot/AOTTypedCompactTable.cpp @no-unify
 aot/AOTTypedCoroutineSplitting.cpp @no-unify
 aot/AOTTypedEffects.cpp @no-unify
+aot/AOTTypedFrameEnvironments.cpp @no-unify
+aot/AOTTypedFunctionSplitting.cpp @no-unify
 aot/AOTTypedCleanup.cpp @no-unify
 aot/AOTTypedIR.cpp @no-unify
 aot/AOTTypedInlining.cpp @no-unify
@@ -98,6 +102,7 @@ aot/AOTTypedLoweringConvert.cpp @no-unify
 aot/AOTTypedLoweringCore.cpp @no-unify
 aot/AOTTypedLoweringExceptions.cpp @no-unify
 aot/AOTTypedLoweringGeneric.cpp @no-unify
+aot/AOTTypedLoweringLoops.cpp @no-unify
 aot/AOTTypedLoweringOperators.cpp @no-unify
 aot/AOTTypedLoweringStrings.cpp @no-unify
 aot/AOTTypedObject.cpp @no-unify
@@ -105,6 +110,7 @@ aot/AOTTypedOperations.cpp @no-unify
 aot/AOTTypedPlacement.cpp @no-unify
 aot/AOTTypedPreparation.cpp @no-unify
 aot/AOTTypedReader.cpp @no-unify
+aot/AOTTypedRegExpLiterals.cpp @no-unify
 aot/AOTTypedType.cpp @no-unify
 aot/AOTTypedVerifier.cpp @no-unify
 
@@ -195,6 +201,7 @@ b3/B3Const128Value.cpp
 b3/B3ConstDoubleValue.cpp
 b3/B3ConstFloatValue.cpp
 b3/B3ConstrainedValue.cpp
+b3/B3CountedLoops.cpp @no-unify
 b3/B3DataSection.cpp
 b3/B3DuplicateTails.cpp
 b3/B3Effects.cpp
@@ -233,12 +240,14 @@ b3/B3Procedure.cpp
 b3/B3PureCSE.cpp
 b3/B3ReduceDoubleToFloat.cpp
 b3/B3ReduceStrength.cpp
+b3/B3RotateLoops.cpp @no-unify
 b3/B3SIMDValue.cpp
 b3/B3SlotBaseValue.cpp
 b3/B3SpecializeSelect.cpp
 b3/B3StackmapGenerationParams.cpp
 b3/B3StackmapSpecial.cpp
 b3/B3StackmapValue.cpp
+b3/B3StripMineLoops.cpp @no-unify
 b3/B3SwitchCase.cpp
 b3/B3SwitchValue.cpp
 b3/B3TZoneImpls.cpp
@@ -250,6 +259,7 @@ b3/B3Value.cpp
 b3/B3ValueKey.cpp
 b3/B3ValueRep.cpp
 b3/B3Variable.cpp
+b3/B3VersionLoops.cpp @no-unify
 b3/B3VariableLiveness.cpp
 b3/B3VariableValue.cpp
 b3/B3WasmAddressValue.cpp
@@ -620,6 +630,7 @@ heap/MachineStackMarker.cpp
 heap/MarkStack.cpp
 heap/MarkStackMergingConstraint.cpp
 heap/MarkedBlock.cpp
+heap/MarkedBlockCage.cpp @no-unify
 heap/MarkedSpace.cpp
 heap/MarkingConstraint.cpp
 heap/MarkingConstraintSet.cpp
@@ -1386,6 +1397,7 @@ yarr/YarrCanonicalizeUnicode.cpp
 runtime/InternalFieldTuple.cpp
 
 heap/BunV8HeapSnapshotBuilder.cpp
+heap/HeapCensus.cpp
 
 ffi/BunFFI.cpp
 ffi/FFICallHost.cpp

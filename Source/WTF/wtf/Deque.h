@@ -123,6 +123,9 @@ public:
         return findIf(predicate) != end();
     }
 
+    static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(Deque, m_start); }
+    static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(Deque, m_end); }
+
 private:
     friend class DequeIteratorBase<T, inlineCapacity>;
 

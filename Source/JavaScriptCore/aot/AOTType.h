@@ -291,14 +291,6 @@ inline Type typeAcceptedByMask(unsigned mask)
     return result;
 }
 
-inline Type typeProvingMask(unsigned mask)
-{
-    Type result = typeAcceptedByMask(mask);
-    if ((mask & (MaskFunction | MaskOtherObject)) != (MaskFunction | MaskOtherObject) || soundTypeMaskNamesTypedArray(mask))
-        result &= ~TOtherObject;
-    return result;
-}
-
 inline std::optional<JSType> typedArrayTypeOf(Type type)
 {
     if (!type || !isSubtype(type, TTypedArray) || !hasOneBitSet(static_cast<uint64_t>(type)))

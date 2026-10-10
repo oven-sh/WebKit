@@ -77,6 +77,12 @@ void Lowering::computeCatchEntrypoints(const Vector<BlockID>& order)
         handler.firstParameterWord = numberOfWords;
         numberOfWords += m_function.at(handler.block).parameters.size();
     }
+    if (m_function.has(FunctionUsesArgumentBuffer)) {
+        m_argumentCountVariable = m_proc.addVariable(Int32);
+        m_argumentBufferVariable = m_proc.addVariable(Int64);
+        m_firstArgumentWord = numberOfWords;
+        numberOfWords += 2;
+    }
     m_catchSpillSlotCount = numberOfWords;
 }
 
@@ -134,12 +140,45 @@ Operand Lowering::get(ValueID id)
         if (m_assumptions[i].value == id)
             return m_assumptions[i].operand;
     }
-    if (m_catchSpills.isEmpty())
-        return m_values[id.index()];
-    auto iterator = m_catchSpills.find(id.index());
-    if (iterator == m_catchSpills.end())
-        return m_values[id.index()];
-    return Operand(m_function.at(id).rep, m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), iterator->value.variable));
+    if (isFetchedWhereNeeded(id)) {
+        auto& fetched = m_fetchedLeaves.add(id.index(), std::pair<LBasicBlock, Operand> { }).iterator->value;
+        if (fetched.first != m_out.m_block) {
+            auto& value = m_function.at(id);
+            // The fetch may end the block.
+            CellPointer cell = value.opcode == Opcode::String ? stringConstant(value.string()) : value.opcode == Opcode::BuiltinFunction ? builtinCell(m_builtins.cellOf(value.builtin())) : concatenateWhereNeeded(value);
+            Operand operand = convert(cell, m_program.at(value.type), value.rep);
+            if (operand.rep == Rep::Cell)
+                m_typeOfCell.add(operand.value, value.type);
+            m_fetchedLeaves.set(id.index(), std::pair { m_out.m_block, operand });
+            return operand;
+        }
+        return fetched.second;
+    }
+    Operand operand = m_values[id.index()];
+    if (auto iterator = m_catchSpills.find(id.index()); iterator != m_catchSpills.end())
+        operand = Operand(m_function.at(id).rep, m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), iterator->value.variable));
+    // As typeOf() has it.
+    auto& declared = m_program.at(m_function.at(id).type);
+    if (!declared.mayBeUndefinedOrNull() || declared.isUndefinedOrNull() || !hasPassedNilTest(id))
+        return operand;
+    // It is kept as its type is: whoever goes by typeOf() finds what it expects.
+    if (operand.rep != Rep::JSValue) {
+        auto& narrowed = withoutNil(m_function.at(id).type);
+        return repOf(narrowed) == operand.rep ? operand : convert(operand, narrowed, repOf(narrowed));
+    }
+    if (Options::validateAOTTypedFacts()) [[unlikely]] {
+        LBasicBlock doesNotHold = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isUndefinedOrNull(operand.as<Boxed>()).value(), rarely(doesNotHold), usually(continuation));
+        m_out.appendTo(doesNotHold);
+        AOT_TYPED_OPERATION(FactDoesNotHold, operand.as<Boxed>(), word32(m_id.index()), word32(id.index()));
+        m_out.unreachable();
+        m_out.appendTo(continuation);
+    }
+    auto& narrowed = withoutNil(m_function.at(id).type);
+    if (repOf(narrowed) == Rep::Cell)
+        return asCell(operand.as<Boxed>());
+    return repOf(narrowed) == Rep::JSValue ? operand : convert(operand, narrowed, repOf(narrowed));
 }
 
 // Before what may throw: what the handler is passed if it does.
@@ -156,11 +195,16 @@ void Lowering::spillForCatch(const Target& target)
 void Lowering::lowerCatchEntrypoint(Handler& handler)
 {
     m_out.appendTo(handler.entry);
+    if (m_argumentCountVariable) {
+        m_out.m_block->appendNew<VariableValue>(m_proc, Set, m_out.origin(), m_argumentCountVariable, m_out.load32(catchSpillSlot(m_firstArgumentWord)));
+        m_out.m_block->appendNew<VariableValue>(m_proc, Set, m_out.origin(), m_argumentBufferVariable, m_out.load64(catchSpillSlot(m_firstArgumentWord + 1)));
+    }
     for (ValueID id : handler.liveIn) {
         auto& kept = m_catchSpills.find(id.index())->value;
         Operand value = loadFromCatchSpillSlot(kept.word, m_function.at(id).rep);
         m_out.m_block->appendNew<VariableValue>(m_proc, Set, m_out.origin(), kept.variable, value.value);
     }
+    restoreIterationsOfStrings();
     auto& parameters = m_function.at(handler.block).parameters;
     auto& phis = m_phis[handler.block.index()];
     for (unsigned i = 0; i < parameters.size(); ++i)

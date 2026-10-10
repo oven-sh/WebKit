@@ -33,6 +33,7 @@
 #include "ExceptionHelpers.h"
 #include "FFIContext.h"
 #include "FFIConversions.h"
+#include "FFIInvokeThunk.h"
 #include "FFISignature.h"
 #include "FFIType.h"
 #include "FrameTracers.h"
@@ -66,11 +67,21 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
     }
     slots[argumentCount] = 0;
 
-    CodePtr<JITThunkPtrTag> thunk = signature.invokeThunk();
-    if (!thunk) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
-        return { };
+    CodePtr<JITThunkPtrTag> thunk;
+    if (!FFI_INVOKE_WITHOUT_JIT_SUPPORTED || Options::useJIT()) [[likely]] {
+        thunk = signature.invokeThunk();
+        if (!thunk) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope, "bun:ffi failed to allocate executable memory for the invoke thunk"_s);
+            return { };
+        }
     }
+    auto invoke = [&] ALWAYS_INLINE_LAMBDA {
+#if FFI_INVOKE_WITHOUT_JIT_SUPPORTED
+        if (!thunk) [[unlikely]]
+            return invokeWithoutJIT(signature, function->target(), slots);
+#endif
+        thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+    };
 
     if (const CallHooks* hooks = function->hooks()) [[unlikely]] {
         Exception* pending = nullptr;
@@ -78,7 +89,7 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
             auto hookScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
             void* hookToken = hooks->before ? hooks->before(globalObject, callFrame) : nullptr;
             if (!hookScope.exception()) [[likely]]
-                thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+                invoke();
             pending = hookScope.exception(); // from a throwing before-hook or an in-call callback
             if (pending) [[unlikely]]
                 hookScope.clearException();
@@ -98,7 +109,7 @@ static ALWAYS_INLINE EncodedJSValue ffiCall(JSGlobalObject* globalObject, CallFr
             return { };
         }
     } else
-        thunk.taggedPtr<InvokeThunkFunction>()(function->target(), slots);
+        invoke();
     RETURN_IF_EXCEPTION(scope, { });
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsValueFromSlot(globalObject, context, signature.returnType(), slots[argumentCount])));

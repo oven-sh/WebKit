@@ -798,6 +798,11 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
+double Options::sizeClassProgressionWithAOT()
+{
+    return OptionsHelper::wasOverridden(sizeClassProgressionID) ? Options::sizeClassProgression() : 1.1;
+}
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 void Options::notifyOptionsChanged()
@@ -817,6 +822,7 @@ void Options::notifyOptionsChanged()
         Options::useMiniVMModeWithoutJIT() = false;
         if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
             Options::heapGrowthMaxIncrease() = 1;
+        Options::sizeClassProgression() = sizeClassProgressionWithAOT();
     }
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)

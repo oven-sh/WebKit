@@ -245,6 +245,8 @@ private:
     // cannot handle it being a reference.
     VM* const m_vm;
     AOT::Instance* m_aotInstance { nullptr };
+    // Of AOT::Typed::Closure: see AOT::Instance::typedClosureStructureIDs.
+    WriteBarrierStructureID m_aotClosureStructures[5];
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -253,7 +255,11 @@ private:
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger && m_microtaskRunnability == QueuedTaskResult::Executed;
+#else
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
+#endif
     }
 
 // Our hashtable code-generator tries to access these properties, so we make them public.
@@ -1158,8 +1164,12 @@ public:
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+    static constexpr ptrdiff_t offsetOfCanFastQueueMicrotask() { return OBJECT_OFFSETOF(JSGlobalObject, m_canFastQueueMicrotask); }
+    static constexpr ptrdiff_t offsetOfMicrotaskQueue() { return OBJECT_OFFSETOF(JSGlobalObject, m_microtaskQueue); }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    Structure* aotClosureStructure(unsigned which) const { return m_aotClosureStructures[which].get(); }
+    void setAOTClosureStructure(VM& vm, unsigned which, Structure* structure) { m_aotClosureStructures[which].set(vm, this, structure); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
@@ -1407,7 +1417,11 @@ public:
     ImportMap& importMap() { return m_importMap.get(); }
 
     QueuedTaskResult microtaskRunnability() const { return m_microtaskRunnability; }
-    void setMicrotaskRunnability(QueuedTaskResult runnability) { m_microtaskRunnability = runnability; }
+    void setMicrotaskRunnability(QueuedTaskResult runnability)
+    {
+        m_microtaskRunnability = runnability;
+        updateCanFastQueueMicrotask();
+    }
 
     void setAssociatedContextIsFullyActive(bool value)
     {

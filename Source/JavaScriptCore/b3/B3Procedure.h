@@ -74,6 +74,9 @@ class StackSlot;
 
 typedef void WasmBoundsCheckGeneratorFunction(CCallHelpers&, WasmBoundsCheckValue*, GPRReg);
 typedef SharedTask<WasmBoundsCheckGeneratorFunction> WasmBoundsCheckGenerator;
+class StackmapGenerationParams;
+typedef void StackmapGeneratorFunction(CCallHelpers&, const StackmapGenerationParams&);
+typedef SharedTask<StackmapGeneratorFunction> StackmapGenerator;
 
 // This represents B3's view of a piece of code. Note that this object must exist in a 1:1
 // relationship with Air::Code. B3::Procedure and Air::Code are just different facades of the B3
@@ -261,6 +264,19 @@ public:
 
     void setPositionIndependent(bool value = true) { m_positionIndependent = value; }
     bool positionIndependent() const { return m_positionIndependent; }
+    void setMaterializesConstantsByFrequency() { m_materializesConstantsByFrequency = true; }
+    bool materializesConstantsByFrequency() const { return m_materializesConstantsByFrequency; }
+    void setHoistsLoopInvariantValues(bool value) { m_hoistsLoopInvariantValues = value; }
+    bool hoistsLoopInvariantValues() const { return m_hoistsLoopInvariantValues; }
+    void setRotatesLoops() { m_rotatesLoops = true; }
+    bool rotatesLoops() const { return m_rotatesLoops; }
+    // The generator that the patchpoints of all loop polls share: a phase knows a poll by it.
+    void setLoopPollGenerator(RefPtr<StackmapGenerator> generator) { m_loopPollGenerator = WTF::move(generator); }
+    StackmapGenerator* loopPollGenerator() const { return m_loopPollGenerator.get(); }
+#if USE(BUN_JSC_ADDITIONS)
+    void setLastPhase(RefPtr<SharedTask<void(Procedure&)>> phase) { m_lastPhase = WTF::move(phase); }
+    SharedTask<void(Procedure&)>* lastPhase() const { return m_lastPhase.get(); }
+#endif
     void didDuplicateTail() { ++m_numberOfDuplicatedTails; }
     unsigned numberOfDuplicatedTails() const { return m_numberOfDuplicatedTails; }
     
@@ -366,6 +382,13 @@ private:
     unsigned m_numEntrypoints { 1 };
     unsigned m_optLevel { defaultOptLevel() };
     bool m_positionIndependent { false };
+    bool m_materializesConstantsByFrequency { false };
+    bool m_hoistsLoopInvariantValues { true };
+    bool m_rotatesLoops { false };
+    RefPtr<StackmapGenerator> m_loopPollGenerator;
+#if USE(BUN_JSC_ADDITIONS)
+    RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;
+#endif
     unsigned m_numberOfDuplicatedTails { 0 };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };

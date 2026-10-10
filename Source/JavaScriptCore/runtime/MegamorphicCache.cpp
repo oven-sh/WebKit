@@ -58,7 +58,7 @@ void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
     auto hasDied = [&](StructureID id) { return !heap.isMarked(id.decode()); };
     auto reconcileLoads = [&](auto& entries) {
         for (auto& entry : entries) {
-            if (entry.m_epoch != m_epoch)
+            if (entry.m_epoch != m_epoch && entry.m_epoch != permanentEpoch)
                 continue;
             bool hasHolder = entry.m_holder && entry.m_holder != JSCell::seenMultipleCalleeObjects();
             if (hasDied(entry.m_structureID) || (hasHolder && !heap.isMarked(entry.m_holder)))
@@ -98,7 +98,7 @@ void MegamorphicCache::age(CollectionScope collectionScope)
         if (collectionScope == CollectionScope::Full) {
             auto releaseNamesOfInvalidEntries = [&](auto& entries) {
                 for (auto& entry : entries) {
-                    if (entry.m_epoch != m_epoch)
+                    if (entry.m_epoch != m_epoch && entry.m_epoch != permanentEpoch)
                         entry.m_uid = nullptr;
                 }
             };
@@ -114,6 +114,9 @@ void MegamorphicCache::age(CollectionScope collectionScope)
         return;
     }
     ++m_epoch;
+    // Nobody has looked whether their Structures are alive.
+    if (std::exchange(m_hasPermanentEntries, false))
+        collectionScope = CollectionScope::Full;
     if (collectionScope == CollectionScope::Full || m_epoch == invalidEpoch) {
         for (auto& entry : m_loadCachePrimaryEntries) {
             entry.m_uid = nullptr;
@@ -150,7 +153,7 @@ void MegamorphicCache::age(CollectionScope collectionScope)
         for (auto& entry : m_constructionEntries)
             entry.m_epoch = invalidEpoch;
         if (m_epoch == invalidEpoch)
-            m_epoch = 1;
+            m_epoch = firstEpoch;
     }
 }
 
@@ -174,7 +177,8 @@ void MegamorphicCache::clearEntries()
         entry.m_epoch = invalidEpoch;
     for (auto& entry : m_constructionEntries)
         entry.m_epoch = invalidEpoch;
-    m_epoch = 1;
+    m_epoch = firstEpoch;
+    m_hasPermanentEntries = false;
 }
 
 } // namespace JSC

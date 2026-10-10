@@ -29,6 +29,8 @@
 
 #include "JSDollarVM.h"
 
+#include "AOTTypedCompactTable.h"
+#include "AOTTypedObject.h"
 #include "AOTTypedPasses.h"
 #include "AccessCase.h"
 #include "ArrayPrototype.h"
@@ -49,6 +51,7 @@
 #include "FrameTracers.h"
 #include "FunctionCodeBlock.h"
 #include "GetterSetter.h"
+#include "GlobalObjectMethodTable.h"
 #include "HeapProfiler.h"
 #include "HeapSnapshotBuilder.h"
 #include "InitializeThreading.h"
@@ -2322,6 +2325,12 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpAndResetPasDebugSpectrum);
 #if ENABLE(AOT)
 static JSC_DECLARE_HOST_FUNCTION(functionDumpAOTTypedProgram);
 static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches);
+static JSC_DECLARE_HOST_FUNCTION(functionAOTCompactTable);
+static JSC_DECLARE_HOST_FUNCTION(functionRequireBuiltinModule);
+static JSC_DECLARE_HOST_FUNCTION(functionPutPrivateGlobal);
+static JSC_DECLARE_HOST_FUNCTION(functionPutDirect);
+static JSC_DECLARE_HOST_FUNCTION(functionGetDirect);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionMonotonicTimeNow);
 static JSC_DECLARE_HOST_FUNCTION(functionWallTimeNow);
@@ -4887,26 +4896,188 @@ JSC_DEFINE_HOST_FUNCTION(functionDumpAOTTypedProgram, (JSGlobalObject* globalObj
     return JSValue::encode(jsString(vm, out.toString()));
 }
 
-// buildAOTImageOfTypedProgram(module: string, bytes: Uint8Array): the image of a module whose code is the front end's program, for
-// aotImagePath. Null: it could not be compiled.
+// buildAOTImageOfTypedProgram(modules: string | string[], bytes: Uint8Array, otherModules?: string[]): the image of modules in the place of
+// whose code the entry functions of the front end's program run, one each, for aotImagePath. Null: it could not be compiled.
+// otherModules are in the link too, in front of them.
 JSC_DEFINE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    String text = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    Vector<SourceCode, 1> sources;
+    auto add = [&](JSValue module) {
+        String text = module.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, void());
+        sources.append(makeSource(WTF::move(text), { }, SourceTaintedOrigin::Untainted, { }, { }, SourceProviderSourceType::Module));
+    };
+    if (auto* list = dynamicDowncast<JSArray>(callFrame->argument(2))) {
+        for (unsigned i = 0; i < list->length(); ++i) {
+            JSValue module = list->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, { });
+            add(module);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    }
+    unsigned numberOfModulesWithoutEntry = sources.size();
+    if (auto* list = dynamicDowncast<JSArray>(callFrame->argument(0))) {
+        for (unsigned i = 0; i < list->length(); ++i) {
+            JSValue module = list->getIndex(globalObject, i);
+            RETURN_IF_EXCEPTION(scope, { });
+            add(module);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+    } else {
+        add(callFrame->argument(0));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
     auto* bytes = dynamicDowncast<JSUint8Array>(callFrame->argument(1));
     if (!bytes)
         return throwVMTypeError(globalObject, scope, "Expected a Uint8Array"_s);
-    SourceCode source = makeSource(WTF::move(text), { }, SourceTaintedOrigin::Untainted, { }, { }, SourceProviderSourceType::Module);
-    Vector<uint8_t> file = buildAOTFile(vm, source, true, bytes->span());
+    Vector<uint8_t> file = buildAOTFile(vm, sources.span(), true, bytes->span(), numberOfModulesWithoutEntry);
     if (file.isEmpty())
         return JSValue::encode(jsNull());
     auto* result = JSUint8Array::createUninitialized(globalObject, globalObject->typedArrayStructureWithTypedArrayType<TypeUint8>(), file.size());
     RETURN_IF_EXCEPTION(scope, { });
     memcpySpan(result->typedSpan(), file.span());
     return JSValue::encode(result);
+}
+
+// aotTypedBuiltinMismatches(): an array of strings. See AOT::Typed::Builtins::mismatches().
+JSC_DEFINE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches, (JSGlobalObject* globalObject, CallFrame*))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* result = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, { });
+    for (auto& mismatch : AOT::Typed::Builtins::singleton().mismatches(globalObject)) {
+        result->push(globalObject, jsString(vm, mismatch));
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+    return JSValue::encode(result);
+}
+
+template<typename Traits>
+static EncodedJSValue aotCompactTable(JSGlobalObject* globalObject, CallFrame* callFrame, JSOrderedHashTable<Traits>* owner, StringView operation)
+{
+    using Table = AOT::Typed::CompactTable;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    Table* table = owner->m_compactTable ? uncheckedDowncast<Table>(owner->m_compactTable.get()) : nullptr;
+    if (operation == "kind"_s) {
+        if (!table)
+            return JSValue::encode(jsNontrivialString(vm, owner->m_storage ? "storage"_s : "none"_s));
+        return JSValue::encode(jsString(vm, makeString("compact "_s, static_cast<unsigned>(table->keyWidth()), ' ', static_cast<unsigned>(table->valueWidth()))));
+    }
+    if (operation == "capacity"_s)
+        return JSValue::encode(jsNumber(table ? table->capacity() : 0));
+    if (operation == "bytes"_s)
+        return JSValue::encode(jsNumber(table ? table->cellSize() : 0));
+    if (operation == "table"_s)
+        return JSValue::encode(table ? JSValue(table) : owner->m_storage ? JSValue(owner->m_storage.get()) : jsNull());
+    if (operation == "next"_s) {
+        JSValue from = callFrame->argument(2);
+        auto position = Table::next(vm, owner, from.isCell() ? from.asCell() : nullptr, callFrame->argument(3).asUInt32());
+        if (!position.table)
+            return JSValue::encode(jsNull());
+        JSArray* result = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, { });
+        for (JSValue element : { JSValue(position.table), jsNumber(position.entry), position.key, position.value ? position.value : jsUndefined() }) {
+            result->push(globalObject, element);
+            RETURN_IF_EXCEPTION(scope, { });
+        }
+        return JSValue::encode(result);
+    }
+    return throwVMTypeError(globalObject, scope, "No such operation"_s);
+}
+
+// aotCompactTable(operation, mapOrSet, ..), see AOT::Typed::CompactTable. "kind": "none", "storage", or "compact" with the widths of a key
+// and a value; "capacity"; "bytes"; "table": what an iteration starts at; "next", table or null, entry: null, or table, entry, key, value.
+JSC_DEFINE_HOST_FUNCTION(functionAOTCompactTable, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String operation = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    if (auto* map = dynamicDowncast<JSMap>(callFrame->argument(1)))
+        RELEASE_AND_RETURN(scope, aotCompactTable<MapTraits>(globalObject, callFrame, map, operation));
+    if (auto* set = dynamicDowncast<JSSet>(callFrame->argument(1)))
+        RELEASE_AND_RETURN(scope, aotCompactTable<SetTraits>(globalObject, callFrame, set, operation));
+    return throwVMTypeError(globalObject, scope, "Expected a Map or a Set"_s);
+}
+
+// requireBuiltinModule(id): what compiled code of the host's own modules gets for `require` of the module of this number.
+JSC_DEFINE_HOST_FUNCTION(functionRequireBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    uint32_t id = callFrame->argument(0).toUInt32(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    auto* require = globalObject->globalObjectMethodTable()->requireBuiltinModule;
+    if (!require)
+        return throwVMTypeError(globalObject, scope, "This global object has no builtin modules"_s);
+    RELEASE_AND_RETURN(scope, JSValue::encode(require(globalObject, id)));
+}
+
+// putPrivateGlobal(name, value): a property of the global object under the private name `@name`, which only builtin code can spell.
+JSC_DEFINE_HOST_FUNCTION(functionPutPrivateGlobal, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    String name = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    globalObject->putDirect(vm, AOT::Typed::enginePrivateName(vm, name), callFrame->argument(1), PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
+    return JSValue::encode(jsUndefined());
+}
+
+// putDirect(object, name, value, attributes = 0): as native code stores past the method table. A name that starts with "@" is a private one.
+static Identifier nameForDirectAccess(JSGlobalObject* globalObject, JSValue value)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (value.isSymbol())
+        return Identifier::fromUid(asSymbol(value)->privateName());
+    String name = value.toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, { });
+    return name.startsWith('@') ? AOT::Typed::enginePrivateName(vm, name.substring(1)) : Identifier::fromString(vm, name);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionPutDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "putDirect: no object"_s);
+    Identifier name = nameForDirectAccess(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    object->putDirect(vm, name, callFrame->argument(2), callFrame->argument(3).isInt32() ? callFrame->argument(3).asInt32() : 0);
+    return JSValue::encode(jsUndefined());
+}
+
+// getDirect(object, name): [value, attributes], or undefined.
+JSC_DEFINE_HOST_FUNCTION(functionGetDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object)
+        return throwVMTypeError(globalObject, scope, "getDirect: no object"_s);
+    Identifier name = nameForDirectAccess(globalObject, callFrame->argument(1));
+    RETURN_IF_EXCEPTION(scope, { });
+    unsigned attributes = 0;
+    JSValue value = object->getDirect(vm, name, attributes);
+    if (!value || value != object->getDirect(vm, name))
+        return JSValue::encode(jsUndefined());
+    MarkedArgumentBuffer list;
+    list.append(value);
+    list.append(jsNumber(attributes));
+    RELEASE_AND_RETURN(scope, JSValue::encode(constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), list)));
 }
 #endif
 
@@ -6134,6 +6305,12 @@ void JSDollarVM::finishCreation(VM& vm)
 #if ENABLE(AOT)
     addFunction(vm, allowIfNotFuzz, "dumpAOTTypedProgram"_s, functionDumpAOTTypedProgram, 2);
     addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageOfTypedProgram, 2);
+    addFunction(vm, allowIfNotFuzz, "aotTypedBuiltinMismatches"_s, functionAOTTypedBuiltinMismatches, 0);
+    addFunction(vm, allowIfNotFuzz, "aotCompactTable"_s, functionAOTCompactTable, 2);
+    addFunction(vm, allowIfNotFuzz, "requireBuiltinModule"_s, functionRequireBuiltinModule, 1);
+    addFunction(vm, allowIfNotFuzz, "putPrivateGlobal"_s, functionPutPrivateGlobal, 2);
+    addFunction(vm, allowIfNotFuzz, "putDirect"_s, functionPutDirect, 4);
+    addFunction(vm, allowIfNotFuzz, "getDirect"_s, functionGetDirect, 2);
 #endif
 
     addFunction(vm, alwaysAllow, "monotonicTimeNow"_s, functionMonotonicTimeNow, 0);

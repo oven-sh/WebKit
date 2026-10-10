@@ -27,6 +27,7 @@
 #include "config.h"
 #include "CachedCall.h"
 
+#include "AOTRuntime.h"
 #include "ExceptionHelpers.h"
 #include "Interpreter.h"
 #include "JSFunction.h"
@@ -40,7 +41,11 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
     , m_entryScope(m_vm, function->scope()->realm())
+#if ENABLE(AOT)
+    , m_functionExecutable(function->isHostFunction() ? nullptr : function->jsExecutable())
+#else
     , m_functionExecutable(function->jsExecutable())
+#endif
     , m_scope(function->scope())
 {
     VM& vm = m_vm;
@@ -50,7 +55,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         m_valid = !scope.exception();
     });
 #endif
-    ASSERT(!function->isHostFunctionNonInline());
+    ASSERT(!m_functionExecutable == function->isHostFunctionNonInline());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
@@ -67,6 +72,15 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         throwOutOfMemoryError(globalObject, scope);
         return;
     }
+
+#if ENABLE(AOT)
+    // See JSFunction::getCallDataInline(). The code is there, stays where it is, and takes any number of arguments.
+    if (!m_functionExecutable) {
+        m_addressForCall = AOT::closureEntrypoint().taggedPtr();
+        m_protoCallFrame.init(nullptr, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+        return;
+    }
+#endif
 
     auto* newCodeBlock = m_vm.interpreter.prepareForCachedCall(*this, function);
     if (scope.exception()) [[unlikely]]

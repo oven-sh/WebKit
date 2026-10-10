@@ -37,7 +37,17 @@ class UnlinkedFunctionExecutable;
 class VM;
 struct UnlinkedStringJumpTable;
 
+// Where a call site of a function compiled from types is in the source. `source` indexes the function's own list of source names.
+struct TypedSitePosition {
+    uint32_t line;
+    uint32_t column;
+    uint32_t source;
+    // The inline frame it is in. Of a call that was inlined: the frame the call stands in.
+    uint32_t frame;
+};
+
 struct FunctionReportableSites {
+    static constexpr uint32_t notTyped = UINT32_MAX;
     struct Construction {
         uint32_t offset;
         uint32_t linesUp;
@@ -49,12 +59,21 @@ struct FunctionReportableSites {
     Vector<uint32_t> typedIdentifierIndices;
     Vector<String> typedIdentifierNames;
     Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
+    // Of a function compiled from types: its number in Typed::Data, and its positions by call-site number. Entry 0 is the function's start.
+    uint32_t typedFunction { notTyped };
+    Vector<TypedSitePosition> typedPositions;
+    uint32_t numberOfSitesWithoutCode { 0 };
+    Vector<UTF8CString> typedSourceNames;
     Vector<uint32_t> constantIndices;
 };
 
 namespace AOT {
 
 struct FunctionInfo;
+namespace Typed {
+struct FunctionTables;
+void destroy(FunctionTables*);
+}
 struct ImageKey;
 
 struct ProgramModule {
@@ -126,7 +145,8 @@ struct ProgramData {
     inline const FunctionInfo* infos() const;
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
     const ExecutableRow& executableRow(uint32_t index) const { return at<ExecutableRow>(executableRowsOffset)[index]; }
-    uint64_t typedEntry(uint32_t function) const { return function < numberOfTypedEntries ? at<uint64_t>(typedEntriesOffset)[function] : 0; }
+    // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code.
+    const uint64_t* closureWords() const { return at<uint64_t>(typedEntriesOffset); }
     JS_EXPORT_PRIVATE const ExecutableRow& executableRowForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE uint32_t executableIndexForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE LineColumn functionStartPosition(uint32_t functionIndex) const;
@@ -172,6 +192,8 @@ public:
     ~VMProgram();
 
     const ProgramData& data() const { return m_data; }
+    // Made when first asked for: see Typed::FunctionTables::of().
+    Typed::FunctionTables* typedFunctionTables { nullptr };
 
     UniquedStringImpl* const* identifiers() const { return m_identifiers; }
     static constexpr uint32_t constantHashMultiplier = 2654435761u;
@@ -207,7 +229,6 @@ public:
     JS_EXPORT_PRIVATE void didLoadModule(SourceProvider&);
     const SourceCode& shortExecutableSource(uint32_t executableIndex);
 
-    JS_EXPORT_PRIVATE FunctionExecutable* builtinFunctionFor(uint32_t entryOffset, unsigned embedderStamp, const String& text, const SourceOrigin&, const String& sourceURL);
     FunctionExecutable* engineBuiltinFor(unsigned index, std::span<const Latin1Character> text);
 
     const UnlinkedStringJumpTable& stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which);

@@ -31,6 +31,7 @@
 #include "JSCJSValueInlines.h"
 #include "Parser.h"
 #include "SourceCharacters.h"
+#include "AOTFunction.h"
 #include "AOTProgramData.h"
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StdLibExtras.h>
@@ -335,6 +336,16 @@ std::span<const Latin1Character> BuiltinExecutables::textOf(unsigned index)
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
+{
+#if ENABLE(AOT)
+    return AOT::Typed::hasBuiltinFunction(m_vm, static_cast<uint32_t>(index));
+#else
+    UNUSED_PARAM(index);
+    return false;
+#endif
 }
 
 FunctionExecutable* BuiltinExecutables::programExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)

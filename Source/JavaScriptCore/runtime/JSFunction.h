@@ -52,6 +52,12 @@ class Signature;
 
 JS_EXPORT_PRIVATE JSC_DECLARE_HOST_FUNCTION(callHostFunctionAsConstructor);
 
+// What the function object of a builtin that is implemented in JavaScript is made from. Without an executable: the function of that number of the program that was compiled ahead of time.
+struct BuiltinCode {
+    FunctionExecutable* executable;
+    uint32_t id;
+};
+
 JS_EXPORT_PRIVATE String getCalculatedDisplayName(VM&, JSObject*);
 
 class JSFunction : public JSCallee {
@@ -96,6 +102,9 @@ public:
 
     JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*);
     static JSFunction* create(VM&, JSGlobalObject*, FunctionExecutable*, JSScope*, Structure*);
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*);
+    // Of the structure a compiled function takes the prototype.
+    JS_EXPORT_PRIVATE static JSFunction* create(VM&, JSGlobalObject*, BuiltinCode, JSScope*, Structure*);
 
     JS_EXPORT_PRIVATE String name(VM&);
     JS_EXPORT_PRIVATE String displayName(VM&);

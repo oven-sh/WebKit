@@ -1203,7 +1203,18 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void drainMicrotasksForGlobalObject(JSGlobalObject* globalObject);
 #endif
-    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func) { m_onEachMicrotaskTick = WTF::move(func); }
+    void setOnEachMicrotaskTick(WTF::Function<void(VM&)>&& func)
+    {
+        m_onEachMicrotaskTick = WTF::move(func);
+#if USE(BUN_JSC_ADDITIONS)
+        updateHostObservesMicrotaskBoundaries();
+#endif
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    // Something of the host runs between two microtasks, or goes with each of them.
+    void updateHostObservesMicrotaskBoundaries() { m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken; }
+    static constexpr ptrdiff_t offsetOfHostObservesMicrotaskBoundaries() { return OBJECT_OFFSETOF(VM, m_hostObservesMicrotaskBoundaries); }
+#endif
     void callOnEachMicrotaskTick()
     {
         if (m_onEachMicrotaskTick)
@@ -1495,6 +1506,7 @@ private:
 
     WTF::Function<void(VM&)> m_onEachMicrotaskTick;
 #if USE(BUN_JSC_ADDITIONS)
+    bool m_hostObservesMicrotaskBoundaries { false };
     ErrorInfoFunction m_onComputeErrorInfo;
     ErrorInfoFunctionJSValue m_onComputeErrorInfoJSValue;
     StackTraceAppenderFunction m_onAppendStackTrace;

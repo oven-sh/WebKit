@@ -35,6 +35,42 @@ void AssumptionWatchpoint::fireInternal(VM&, const FireDetail&)
     *m_flag = 0;
 }
 
+TransitionWatchpoint::TransitionWatchpoint()
+    : Watchpoint(Watchpoint::Type::AOTTransition)
+{
+}
+
+bool TransitionWatchpoint::install(JSObject* object, Callback callback, void* context)
+{
+    Structure* structure = object->structure();
+    if (structure->isDictionary() || structure->transitionWatchpointSetHasBeenInvalidated())
+        return false;
+    m_callback = callback;
+    m_context = context;
+    structure->addTransitionWatchpoint(this);
+    return true;
+}
+
+void TransitionWatchpoint::fireInternal(VM& vm, const FireDetail&)
+{
+    m_callback(vm, m_context);
+}
+
+void BufferAccessorWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Instance& instance, unsigned row)
+{
+    RELEASE_ASSERT(!m_instance);
+    m_instance = &instance;
+    m_row = row;
+    initialize(condition);
+    install(vm);
+}
+
+void BufferAccessorWatchpoint::handleFire(VM&, const FireDetail&)
+{
+    m_instance->bufferAccessorStructureIDs[m_row] = Instance::bufferAccessorIsNotLookedFor;
+    m_instance->bufferAccessors[m_row] = nullptr;
+}
+
 SlotWatchpoint::SlotWatchpoint()
     : Watchpoint(Watchpoint::Type::AOTSlot)
     , m_owner(nullptr)

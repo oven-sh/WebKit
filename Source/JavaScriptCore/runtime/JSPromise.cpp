@@ -26,6 +26,10 @@
 #include "config.h"
 #include "JSPromise.h"
 
+#if ENABLE(AOT)
+#include "AOTTypedObject.h"
+#endif
+
 #include "BuiltinNames.h"
 #include "DeferredWorkTimer.h"
 #include "ErrorInstance.h"
@@ -592,6 +596,15 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
         return false;
 
     auto* structure = object->structure();
+#if ENABLE(AOT)
+    // What a compiled object has is not in its structure: its fields are in its layout, of which the structure has one, and a bit in the
+    // object says whether it has anything besides.
+    bool isCompiledObject = structure->compiledLayout();
+    if (isCompiledObject && uncheckedDowncast<AOT::Typed::Object>(object)->hasExtraProperties())
+        return false;
+#else
+    constexpr bool isCompiledObject = false;
+#endif
     auto state = structure->definitelyNonThenableState();
     if (state == Structure::DefinitelyNonThenableState::NonThenable && structure->realm() == globalObject)
         return true;
@@ -601,8 +614,13 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
     bool result = true;
     auto* current = structure;
     while (current) {
+        bool absenceShows = !current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence();
+#if ENABLE(AOT)
+        if (isCompiledObject && current == structure)
+            absenceShows = !AOT::Typed::hasFieldNamedThen(structure);
+#endif
         if (current->hasSpecialProperties()
-            || current->typeInfo().getOwnPropertySlotIsImpureForPropertyAbsence()
+            || !absenceShows
             || current->typeInfo().overridesGetPrototype()
             || !current->hasMonoProto()) {
             result = false;

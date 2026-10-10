@@ -35,8 +35,6 @@ public:
     static void noteFunction(UnlinkedFunctionExecutable*, StringView source, unsigned parametersStart);
     static void noteCode(UnlinkedCodeBlock*, UnlinkedFunctionExecutable*);
     std::optional<uint32_t> numberOf(UnlinkedFunctionExecutable*) const;
-    std::optional<uint32_t> numberOfFunctionWithCode(UnlinkedCodeBlock*) const;
-    Vector<UnlinkedFunctionExecutable*, 1> executablesOf(uint32_t function) const;
 
     enum class SiteKind : uint32_t { None, Function, Class, Object, Array, New, Call, Read };
     enum class ShapeKind : uint32_t { None, Record, Instance, Function, Class, Prototype, Namespace, Native, Declared, Foreign, Bound };
@@ -102,9 +100,6 @@ public:
     UniquedStringImpl* name(uint32_t number) const { return number < m_names.size() ? m_names[number].impl() : nullptr; }
     const Field* field(uint32_t shape, UniquedStringImpl* name) const;
     uint32_t shapeOfInstancesOf(uint32_t constructor) const { return m_shapesOfInstances.get(constructor); }
-    void noteFieldInitializer(UnlinkedCodeBlock* initializer, uint32_t typeOfThis, uint32_t function, std::span<UnlinkedCodeBlock* const> constructors) const;
-    std::optional<uint32_t> typeOfThisInFieldInitializer(UnlinkedCodeBlock*) const;
-    uint32_t fieldInitializerCalledBy(UnlinkedCodeBlock* constructor) const;
 
 private:
     JS_EXPORT_PRIVATE static Facts* s_shared;

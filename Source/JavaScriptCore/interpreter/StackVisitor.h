@@ -96,6 +96,12 @@ public:
         AOT::FunctionRef aotFunction() const { return m_aotFunction; }
         CallFrame* aotAdapterFrame() const { return m_aotAdapterFrame; }
         bool isInlinedAOTFrame() const { return !!m_aotInlineFrame; }
+        // Code compiled from types: no CodeBlock and no executable, ever. aotFunction() is the function whose code is running, also for an
+        // inlined frame, and this is the function to report: see AOT::FunctionRef::Location::typedFunction.
+        bool isTypedAOTFrame() const { return m_aotFunction && m_typedAOTFunction != UINT32_MAX; }
+        uint32_t typedAOTFunction() const { return m_typedAOTFunction; }
+        // A frame that only exists because of how the code was compiled. Stack traces leave it out.
+        JS_EXPORT_PRIVATE bool isHiddenAOTFrame() const;
         JS_EXPORT_PRIVATE JSCell* aotCallee() const;
         bool isTailDeleted() const { return m_isTailDeleted; }
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
@@ -135,6 +141,10 @@ public:
 
 #if ENABLE(ASSEMBLER)
         const RegisterAtOffsetList* calleeSaveRegistersForUnwinding();
+#if ENABLE(AOT)
+        // Of a frame of compiled code, in the place of the list.
+        const AOT::ImageFunction* compiledFunctionForUnwinding() const;
+#endif
 #endif
 
         ClonedArguments* createArguments(VM&);
@@ -167,6 +177,7 @@ public:
         CallFrame* m_aotAdapterFrame { nullptr };
         AOT::FunctionRef m_frameAOTFunction;
         unsigned m_aotInlineFrame { 0 };
+        uint32_t m_typedAOTFunction { UINT32_MAX };
         bool m_isTailDeleted { false };
         void* m_returnPC { nullptr };
         void* m_callerReturnPC { nullptr };
@@ -190,7 +201,8 @@ public:
     template <EmptyEntryFrameAction action = ContinueIfTopEntryFrameIsEmpty, StackVisitorFunctor Functor>
     static void visit(CallFrame* startFrame, VM& vm, NOESCAPE const Functor& functor, bool skipFirstFrame = false)
     {
-        StackVisitor visitor(startFrame, vm, skipFirstFrame);
+        constexpr bool wantsOnlyHandlers = requires { Functor::wantsOnlyHandlers; };
+        StackVisitor visitor(startFrame, vm, skipFirstFrame, wantsOnlyHandlers);
         if constexpr (requires { functor.didSkipAOTAdapterAtTop(startFrame); }) {
             if (visitor.m_aotAdapterSkippedAtTop) [[unlikely]]
                 functor.didSkipAOTAdapterAtTop(visitor.m_aotAdapterSkippedAtTop);
@@ -212,7 +224,8 @@ public:
     bool topEntryFrameIsEmpty() const { return m_topEntryFrameIsEmpty; }
 
 private:
-    JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame);
+    // wantsOnlyHandlers: of a frame of AOT::FunctionInfo::hasNoHandlers only the function, the call frame and the caller are found out.
+    JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame, bool wantsOnlyHandlers = false);
 
     JS_EXPORT_PRIVATE void gotoNextFrame();
 
@@ -220,8 +233,11 @@ private:
     void readInlinableNativeCalleeFrame(CallFrame*);
     void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
     void findCaller(CallFrame*);
+    CallFrame* skipStubFrames(CallFrame*, EntryFrame*&, void*& returnPC, CallFrame*& adapter);
 #if ENABLE(AOT)
     void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
+    AOT::ImageAddressInfo classify(const void* address);
+    bool tryGotoCompiledCaller();
 #endif
 #if ENABLE(DFG_JIT)
     void readInlinedFrame(CallFrame*, CodeOrigin*);
@@ -230,10 +246,13 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
+    const void* m_classifiedAddress { nullptr };
+    AOT::ImageAddressInfo m_classification;
     AOT::Instance* m_aotInstance { nullptr };
     AOT::Instance* m_onlyAOTInstance { nullptr };
     CallFrame* m_aotAdapterSkippedAtTop { nullptr };
     bool m_topEntryFrameIsEmpty { false };
+    bool m_wantsOnlyHandlers { false };
 };
 
 class CallerFunctor {

@@ -142,7 +142,7 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSFunction* targetJSFunction = dynamicDowncast<JSFunction>(targetFunction);
-    if (targetJSFunction && targetJSFunction->getPrototypeDirect() == globalObject->functionPrototype()) [[likely]]
+    if (!targetFunction->structure()->typeInfo().overridesGetPrototype() && targetFunction->getPrototypeDirect() == globalObject->functionPrototype()) [[likely]]
         return globalObject->boundFunctionStructure();
 
     JSValue prototype = targetFunction->getPrototype(globalObject);

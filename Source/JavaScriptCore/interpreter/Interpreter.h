@@ -230,7 +230,11 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     protected:
         inline UnwindFunctorBase(VM&);
 
+#if ENABLE(AOT)
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&, bool leavesAdapter = true) const;
+#else
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
+#endif
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame*, const RegisterAtOffsetList*) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
