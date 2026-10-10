@@ -62,6 +62,9 @@ public:
     void NODELETE forceSlowPathConcurrently(); // If you use this, checkIfThresholdCrossedAndSet() may still return false.
     bool checkIfThresholdCrossedAndSet(CodeBlock*, double startupDeferralScale = 1); // See VM::startupJITDeferralScale(); when != 1 the counter is re-armed to re-check after at most one unscaled period.
     void setNewThreshold(int32_t threshold, CodeBlock* = nullptr);
+    // Makes the threshold at most this one, keeps the count, and sets the counter with no startup deferral.
+    // Returns false, and changes nothing, if the counter waits indefinitely.
+    bool lowerThreshold(int32_t threshold, CodeBlock*);
     void NODELETE deferIndefinitely();
     double count() const { return static_cast<double>(m_totalCount) + m_counter; }
     void dump(PrintStream&) const;

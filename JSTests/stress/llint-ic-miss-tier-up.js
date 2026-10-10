@@ -1,0 +1,440 @@
+//@ skip if not $jitTests
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=150", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=3", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=0", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntICs=0", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useLLIntUnsetCaching=1", "--useLLIntStringLengthFastPath=0", "--useLLIntPrototypeCacheRearming=1", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--useStartupJITDeferralAfterLLIntMisses=1")
+//@ runDefault("--useConcurrentJIT=0", "--useDFGJIT=0", "--thresholdForJITAfterWarmUp=100000", "--thresholdForJITSoon=30", "--missCountForLLIntTierUp=12", "--maximumBytecodeCostForLLIntMissTierUp=0", "--useStartupJITDeferralAfterLLIntMisses=0")
+//@ runDefault("--useJIT=0", "--missCountForLLIntTierUp=12")
+
+// A get_by_id or put_by_id site counts the calls of its slow path in the LLInt. The call that makes the count
+// Options::missCountForLLIntTierUp() lowers the threshold of the Baseline JIT for the function from
+// thresholdForJITAfterWarmUp to thresholdForJITSoon. The executions so far count. The startup deferral applies to
+// that threshold too, but not with --useStartupJITDeferralAfterLLIntMisses=0. A function with no such site waits
+// for thresholdForJITAfterWarmUp.
+//
+// An execution counts 15 (5 at the start of a call, 10 at the return), and 1 for each turn of a loop.
+// With thresholdForJITAfterWarmUp=100000, 200 calls are far from the Baseline JIT without the misses.
+
+function shouldBe(actual, expected, message) {
+    if (actual !== expected)
+        throw new Error((message ? message + ": " : "") + "expected " + String(expected) + " but got " + String(actual));
+}
+
+const options = jscOptions();
+const missCount = options.missCountForLLIntTierUp;
+const counts = missCount > 0;
+const expectTierUp = options.useJIT && options.useBaselineJIT && options.useLLIntICs && counts;
+const calls = 200;
+
+// Objects of this many structures, more than one cache entry can hold.
+function makeObjects(count) {
+    const objects = [];
+    for (let i = 0; i < count; ++i) {
+        const o = { };
+        for (let j = 0; j < i; ++j)
+            o["pad" + j] = j;
+        o.tag = i;
+        objects.push(o);
+    }
+    return objects;
+}
+
+// Returns the number of the call (from 1) in which the function first did not run in the LLInt, or 0.
+function firstCallOutOfLLInt(f, argumentFor) {
+    for (let i = 0; i < calls; ++i) {
+        if (!f(argumentFor(i)))
+            return i + 1;
+    }
+    return 0;
+}
+
+function expectEarly(name, call) {
+    if (!expectTierUp) {
+        shouldBe(call, 0, name + " must stay in the LLInt");
+        return;
+    }
+    if (!call)
+        throw new Error(name + " did not leave the LLInt in " + calls + " calls");
+    // The executions so far count, at 15 for each call. So the function waits for the last of the misses, or
+    // for thresholdForJITSoon from its first call, and not for thresholdForJITSoon from the last of the misses.
+    const latest = Math.max(missCount, Math.ceil(options.thresholdForJITSoon / 15)) + 2;
+    if (call > latest)
+        throw new Error(name + " left the LLInt in call " + call + ", expected call " + latest + " or earlier");
+    if (call < missCount)
+        throw new Error(name + " left the LLInt in call " + call + ", before " + missCount + " misses");
+}
+
+// get_by_id of an own property of receivers with many structures.
+{
+    function polymorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    expectEarly("polymorphicGet", firstCallOutOfLLInt(polymorphicGet, i => objects[i % objects.length]));
+    for (let i = 0; i < 100; ++i)
+        polymorphicGet(objects[i % objects.length]);
+}
+
+// The same site with one structure only: one miss, so no tier up.
+{
+    function monomorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const object = makeObjects(1)[0];
+    shouldBe(firstCallOutOfLLInt(monomorphicGet, i => object), 0, "monomorphicGet must stay in the LLInt");
+    if (options.useLLIntICs)
+        shouldBe($vm.llintGetByIdMissCounts(monomorphicGet)[0], counts ? 1 : 0, "the count of monomorphicGet");
+}
+
+// A getter is never cached in the LLInt.
+{
+    class WithGetter {
+        get tag() { return 1; }
+    }
+    function getterGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const object = new WithGetter;
+    expectEarly("getterGet", firstCallOutOfLLInt(getterGet, i => object));
+}
+
+// A read that throws counts too.
+{
+    class WithThrowingGetter {
+        get tag() { throw new Error("thrown by the getter"); }
+    }
+    function throwingGet(o) {
+        try {
+            const tag = o.tag;
+        } catch { }
+        return $vm.llintTrue();
+    }
+    const object = new WithThrowingGetter;
+    expectEarly("throwingGet", firstCallOutOfLLInt(throwingGet, i => object));
+}
+
+// A receiver that is not a cell is never cached in the LLInt.
+{
+    function numberGet(n) {
+        const f = n.toFixed;
+        return $vm.llintTrue();
+    }
+    expectEarly("numberGet", firstCallOutOfLLInt(numberGet, i => i));
+}
+
+// Instances of this many classes. Each class has its own prototype, with the methods on it.
+function makeInstances(count) {
+    const instances = [];
+    for (let i = 0; i < count; ++i) {
+        const C = class { method() { return i; } next() { return this.result; } };
+        C.prototype["uniqueToClass" + i] = true;
+        instances.push(new C);
+    }
+    return instances;
+}
+
+// get_by_id of a method of the prototype, for instances of many classes. The second result makes a prototype load
+// cache, so the site counts the misses after it in its entry of the watchpoint map.
+{
+    function megamorphicMethodGet(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const instances = makeInstances(16);
+    const call = firstCallOutOfLLInt(megamorphicMethodGet, i => instances[i % instances.length]);
+    if (options.useLLIntICs && missCount > 2) {
+        shouldBe($vm.llintGetByIdCaches(megamorphicMethodGet)[0], "proto", "the cache of megamorphicMethodGet");
+        shouldBe($vm.llintGetByIdMissCounts(megamorphicMethodGet)[0], missCount, "the count of megamorphicMethodGet");
+    }
+    expectEarly("megamorphicMethodGet", call);
+}
+
+// The same with one class: two misses, so no tier up.
+{
+    function monomorphicMethodGet(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const instance = makeInstances(1)[0];
+    shouldBe(firstCallOutOfLLInt(monomorphicMethodGet, i => instance), 0, "monomorphicMethodGet must stay in the LLInt");
+}
+
+// A site with a checkpoint: for-of reads "next" of the iterator in iterator_open. The iterators are instances of
+// many classes with "next" on the prototype, and nothing else in the function misses more than twice.
+{
+    function megamorphicIteratorNext(iterable) {
+        for (const value of iterable) { }
+        return $vm.llintTrue();
+    }
+    const end = { value: undefined, done: true };
+    const iterators = makeInstances(16);
+    for (const iterator of iterators)
+        iterator.result = end;
+    let next = 0;
+    const iterable = { [Symbol.iterator]() { return iterators[next++ % iterators.length]; } };
+    expectEarly("megamorphicIteratorNext", firstCallOutOfLLInt(megamorphicIteratorNext, i => iterable));
+}
+
+// A function with a bytecode cost above Options::maximumBytecodeCostForLLIntMissTierUp() gets nothing from the
+// misses: a large body that runs once is not compiled for a loop in it.
+{
+    const limit = options.maximumBytecodeCostForLLIntMissTierUp;
+    // A statement is more than 2 bytes of bytecode.
+    const statements = limit ? Math.ceil(limit / 2) : 5000;
+    const large = new Function("o", "p", "let t = o.tag;" + "t = p.a;".repeat(statements) + "return $vm.llintTrue();");
+    const padding = { a: 1 };
+    const objects = makeObjects(16);
+    let call = 0;
+    for (let i = 0; i < 40 && !call; ++i) {
+        if (!large(objects[i % objects.length], padding))
+            call = i + 1;
+    }
+    if (limit)
+        shouldBe(call, 0, "a function above the limit must stay in the LLInt");
+    else
+        expectEarly("a large function with no limit", call);
+
+    // The same function with 100 turns of a loop in one call: the loop does not enter the Baseline JIT code.
+    const largeWithLoop = new Function("objects", "p", "let t; for (let i = 0; i < 100; ++i) t = objects[i % objects.length].tag;" + "t = p.a;".repeat(statements) + "return $vm.llintTrue();");
+    if (limit)
+        shouldBe(largeWithLoop(objects, padding), true, "a body above the limit that runs once must stay in the LLInt");
+}
+
+// put_by_id that replaces a property of receivers with many structures.
+{
+    function polymorphicPut(o) {
+        o.tag = 1;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    expectEarly("polymorphicPut", firstCallOutOfLLInt(polymorphicPut, i => objects[i % objects.length]));
+}
+
+// put_by_id that adds a property to a new object each time: one transition, cached at the first visit.
+{
+    function transitionPut(o) {
+        o.added = 1;
+        return $vm.llintTrue();
+    }
+    shouldBe(firstCallOutOfLLInt(transitionPut, i => ({ })), 0, "transitionPut must stay in the LLInt");
+}
+
+// put_by_id through a setter is never cached in the LLInt.
+{
+    class WithSetter {
+        set tag(value) { }
+    }
+    function setterPut(o) {
+        o.tag = 1;
+        return $vm.llintTrue();
+    }
+    const object = new WithSetter;
+    expectEarly("setterPut", firstCallOutOfLLInt(setterPut, i => object));
+}
+
+// The misses of two sites do not add up: each site has its own count.
+{
+    const source = [];
+    for (let i = 0; i < 40; ++i)
+        source.push("t = o" + i + ".tag;");
+    const manySites = new Function(...Array.from({ length: 40 }, (_, i) => "o" + i), "let t;" + source.join("") + "return $vm.llintTrue();");
+    // Each of the 40 sites sees 4 structures once: 4 misses for each site, 160 in the function.
+    const rounds = [makeObjects(40), makeObjects(41).slice(1), makeObjects(42).slice(2), makeObjects(43).slice(3)];
+    if (missCount > 4 || !missCount) {
+        for (let round = 0; round < 4; ++round)
+            shouldBe(manySites(...rounds[round]), true, "manySites, round " + round);
+        shouldBe(manySites(...rounds[3]), true, "manySites");
+        // The site after these 40 is the read of llintTrue.
+        if (options.useLLIntICs)
+            shouldBe($vm.llintGetByIdMissCounts(manySites).slice(0, 40).join(), new Array(40).fill(counts ? 4 : 0).join(), "the counts of manySites");
+    }
+}
+
+// The count of a site goes with the site from one mode of its cache to the next.
+if (options.useLLIntICs && (missCount > 8 || !missCount)) {
+    class Base {
+        method() { }
+    }
+    Base.prototype.uniqueToThisTest = true;
+    class Derived extends Base { }
+    function modes(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const expectCount = (expected, what) => {
+        shouldBe($vm.llintGetByIdMissCounts(modes)[0], counts ? expected : 0, "the count of modes() " + what);
+    };
+    const first = new Derived;
+    // The second result from the prototype chain makes the cache. The third read is a hit.
+    for (let i = 0; i < 3; ++i)
+        shouldBe(modes(first), true);
+    shouldBe($vm.llintGetByIdCaches(modes)[0], "proto");
+    expectCount(2, "with a prototype load cache");
+    // A miss of that cache.
+    const second = new Derived;
+    second.own = 1;
+    shouldBe(modes(second), true);
+    shouldBe($vm.llintGetByIdCaches(modes)[0], "proto");
+    expectCount(3, "after a miss of the prototype load cache");
+    // A watchpoint clears the cache.
+    Derived.prototype.method = function () { };
+    shouldBe($vm.llintGetByIdCaches(modes)[0], "empty");
+    expectCount(3, "after the watchpoint");
+    // An own property.
+    const third = { method() { } };
+    shouldBe(modes(third), true);
+    shouldBe(modes(third), true);
+    shouldBe($vm.llintGetByIdCaches(modes)[0], "self");
+    expectCount(4, "with a cache of an own property");
+    // A collection clears the cache of a structure that is dead.
+    (function () {
+        const dies = { method() { }, onlyInThisObject: 1 };
+        shouldBe(modes(dies), true);
+    })();
+    expectCount(5, "after one more structure");
+    fullGC();
+    expectCount(5, "after a collection");
+}
+
+// The count stays with the site when an own property takes the place of a prototype load cache.
+if (options.useLLIntICs && (missCount > 8 || !missCount)) {
+    class WithMethod {
+        method() { }
+    }
+    WithMethod.prototype.alsoUniqueToThisTest = true;
+    function replaced(o) {
+        const method = o.method;
+        return $vm.llintTrue();
+    }
+    const viaPrototype = new WithMethod;
+    for (let i = 0; i < 3; ++i)
+        shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "proto");
+    const own = { method() { } };
+    shouldBe(replaced(own), true);
+    shouldBe($vm.llintGetByIdCaches(replaced)[0], "self");
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 3 : 0, "the count of replaced()");
+    shouldBe(replaced(viaPrototype), true);
+    shouldBe($vm.llintGetByIdMissCounts(replaced)[0], counts ? 4 : 0, "the count of replaced() after one more miss");
+}
+
+// A read that finds nothing does not count if the receiver is a global object or has one on its chain: the inline
+// cache of the JIT keeps "no such property" for a global object after a later script declares the variable. The
+// same read of other objects counts.
+{
+    function absentOnGlobalObject(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    shouldBe(firstCallOutOfLLInt(absentOnGlobalObject, i => globalThis), 0, "absentOnGlobalObject must stay in the LLInt");
+    if (options.useLLIntICs)
+        shouldBe($vm.llintGetByIdMissCounts(absentOnGlobalObject)[0], 0, "the count of absentOnGlobalObject");
+
+    function absentThroughGlobalObject(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    const inheritors = makeObjects(16).map(o => Object.setPrototypeOf(o, Object.create(globalThis)));
+    shouldBe(firstCallOutOfLLInt(absentThroughGlobalObject, i => inheritors[i % inheritors.length]), 0, "absentThroughGlobalObject must stay in the LLInt");
+    if (options.useLLIntICs)
+        shouldBe($vm.llintGetByIdMissCounts(absentThroughGlobalObject)[0], 0, "the count of absentThroughGlobalObject");
+
+    function absentOnObjects(o) {
+        const missing = o.notAPropertyOfAnyObjectHere;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    expectEarly("absentOnObjects", firstCallOutOfLLInt(absentOnObjects, i => objects[i % objects.length]));
+}
+
+// One call with a long loop: the loop enters the Baseline JIT code.
+{
+    function loop(objects, turns) {
+        for (let i = 0; i < turns; ++i) {
+            const tag = objects[i % objects.length].tag;
+            if (!$vm.llintTrue())
+                return i + 1;
+        }
+        return 0;
+    }
+    const objects = makeObjects(16);
+    const turn = loop(objects, 2000);
+    if (expectTierUp) {
+        if (!turn)
+            throw new Error("the loop did not leave the LLInt in 2000 turns");
+        if (turn > Math.max(missCount, options.thresholdForJITSoon) + 50)
+            throw new Error("the loop left the LLInt in turn " + turn);
+    } else
+        shouldBe(turn, 0, "the loop must stay in the LLInt");
+    shouldBe(loop(makeObjects(1), 2000) === 0 || expectTierUp, true);
+}
+
+// The startup deferral scale is not for a function with such a site. It is for the others.
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && !options.useStartupJITDeferralAfterLLIntMisses) {
+    $vm.setStartupJITDeferralScale(50);
+    function deferredPolymorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    function deferredMonomorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    const polymorphicCall = firstCallOutOfLLInt(deferredPolymorphicGet, i => objects[i % objects.length]);
+    const monomorphicCall = firstCallOutOfLLInt(deferredMonomorphicGet, i => objects[0]);
+    $vm.setStartupJITDeferralScale(1);
+    expectEarly("deferredPolymorphicGet", polymorphicCall);
+    shouldBe(monomorphicCall, 0, "deferredMonomorphicGet must stay in the LLInt");
+}
+
+// With Options::useStartupJITDeferralAfterLLIntMisses(), the scale is for the threshold that the misses lowered too.
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && options.useStartupJITDeferralAfterLLIntMisses) {
+    const scale = 4;
+    $vm.setStartupJITDeferralScale(scale);
+    function scaledPolymorphicGet(o) {
+        const tag = o.tag;
+        return $vm.llintTrue();
+    }
+    const objects = makeObjects(16);
+    const call = firstCallOutOfLLInt(scaledPolymorphicGet, i => objects[i % objects.length]);
+    $vm.setStartupJITDeferralScale(1);
+    // thresholdForJITSoon times the scale, at 15 for each call.
+    const expected = Math.ceil(options.thresholdForJITSoon * scale / 15);
+    if (call < Math.max(missCount, expected - 1) || call > Math.max(missCount, expected) + 2)
+        throw new Error("scaledPolymorphicGet left the LLInt in call " + call + ", expected call " + expected);
+}
+
+// The same code in two realms is two CodeBlocks with one counter. The function of one realm has the misses. The
+// function of the other realm brings the counter to the threshold, and its check does not put the deferral back.
+if (expectTierUp && typeof $vm.setStartupJITDeferralScale === "function" && !options.useStartupJITDeferralAfterLLIntMisses && options.thresholdForJITSoon > 100) {
+    const source = "(function inTwoRealms(objects) { for (let i = 0; i < objects.length; ++i) { const tag = objects[i].tag; } return $vm.llintTrue(); })";
+    const here = (0, eval)(source);
+    const there = createGlobalObject().eval(source);
+    const objects = makeObjects(16);
+    $vm.setStartupJITDeferralScale(50);
+    // One call with 16 structures: the site has its misses, and the counter is below thresholdForJITSoon.
+    shouldBe(here(objects), true, "the first call in this realm");
+    let callsThere = 0;
+    while (callsThere < calls && there([objects[0]]))
+        callsThere++;
+    let callsHere = 0;
+    while (callsHere < calls && here(objects))
+        callsHere++;
+    $vm.setStartupJITDeferralScale(1);
+    // After the compile for the other realm, the counter waits for thresholdForJITSoon again. Then this realm gets
+    // the code that the other realm has.
+    const latest = Math.ceil(options.thresholdForJITSoon / 15) + 2;
+    if (!callsThere)
+        throw new Error("the function of the other realm was not in the LLInt when the counter got to the threshold");
+    if (callsThere > latest)
+        throw new Error("the function of the other realm left the LLInt after " + callsThere + " calls, expected " + latest + " or fewer");
+    if (callsHere > latest)
+        throw new Error("the function of this realm left the LLInt after " + callsHere + " more calls, expected " + latest + " or fewer");
+}
