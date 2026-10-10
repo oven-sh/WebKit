@@ -236,7 +236,17 @@ public:
     ASCIICString m_dataLocaleWithExtensions;
     mutable String m_calendar;
     mutable String m_numberingSystem;
+#if USE(BUN_JSC_ADDITIONS)
+    // The name alone, which is all that is asked of it: a TimeZone is an index into a table of all time zones, and the first one
+    // that is made builds the table.
+    struct NameOfTimeZone {
+        const String& toICUString() const { return name; }
+        String name;
+    };
+    NameOfTimeZone m_timeZone;
+#else
     TimeZone m_timeZone;
+#endif
     // Time zone string returned by resolvedOptions().timeZone. Per spec this is
     // [[Identifier]] (the case-normalized accepted form, e.g. "Asia/Calcutta"),
     // not [[PrimaryIdentifier]] (e.g. "Asia/Kolkata"). For UTC offset inputs

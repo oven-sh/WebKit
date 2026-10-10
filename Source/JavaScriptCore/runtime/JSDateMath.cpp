@@ -106,7 +106,14 @@ class OpaqueICUTimeZone {
     WTF_MAKE_TZONE_ALLOCATED(OpaqueICUTimeZone);
 public:
     std::unique_ptr<UCalendar, ICUDeleter<ucal_close>> m_calendar;
+#if USE(BUN_JSC_ADDITIONS)
+    // A TimeZone is an index into a table of all time zones. Dates need the identifier, for ICU; the index is looked up when it is
+    // asked for: DateCache::defaultTimeZone().
+    String m_identifier;
+    std::optional<TimeZone> m_canonicalTimeZone;
+#else
     TimeZone m_canonicalTimeZone;
+#endif
 };
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(OpaqueICUTimeZone);
@@ -472,8 +479,24 @@ double DateCache::parseDate(JSGlobalObject* globalObject, VM& vm, const String& 
 // https://tc39.es/ecma402/#sec-defaulttimezone
 TimeZone DateCache::defaultTimeZone()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    auto& cache = *timeZoneCache();
+    if (!cache.m_canonicalTimeZone) {
+        auto id = intlResolveTimeZoneID(cache.m_identifier);
+        cache.m_canonicalTimeZone = id ? TimeZone::fromID(*id) : TimeZone();
+    }
+    return *cache.m_canonicalTimeZone;
+#else
     return timeZoneCache()->m_canonicalTimeZone;
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+String DateCache::defaultTimeZoneIdentifier()
+{
+    return timeZoneCache()->m_identifier;
+}
+#endif
 
 String DateCache::timeZoneDisplayName(bool isDST)
 {
@@ -507,11 +530,20 @@ DateCache::DateCache()
 }
 
 struct CachedHostTimeZone {
+#if USE(BUN_JSC_ADDITIONS)
+    String timeZone;
+#else
     TimeZone timeZone;
+#endif
     uint64_t timeZoneID { 0 };
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// The identifier.
+static String retrieveTimeZoneInformation()
+#else
 static TimeZone retrieveTimeZoneInformation()
+#endif
 {
     Locker locker { timeZoneCacheLock };
     static NeverDestroyed<CachedHostTimeZone> globalCache;
@@ -525,7 +557,11 @@ static TimeZone retrieveTimeZoneInformation()
     if (isCacheStale) {
         Vector<char16_t, 32> timeZoneID;
         getTimeZoneOverride(timeZoneID);
+#if USE(BUN_JSC_ADDITIONS)
+        String canonical = "UTC"_s;
+#else
         TimeZone canonical;
+#endif
         UErrorCode status = U_ZERO_ERROR;
         if (timeZoneID.isEmpty()) {
             status = callBufferProducingFunction(ucal_getHostTimeZone, timeZoneID);
@@ -535,14 +571,26 @@ static TimeZone retrieveTimeZoneInformation()
             // Resolve through intlResolveTimeZoneID so the host TZ collapses onto its IANA
             // primary identifier (e.g. "Asia/Calcutta" -> "Asia/Kolkata") and UTC-equivalent
             // names map to the UTC TimeZoneID.
+#if USE(BUN_JSC_ADDITIONS)
+            if (String known = intlPrimaryTimeZoneIdentifierWithoutTable(timeZoneID.span()); !known.isNull())
+                canonical = WTF::move(known);
+            else if (auto id = intlResolveTimeZoneID(toPrimaryIanaTimeZoneIdentifier(timeZoneID.span())))
+                canonical = intlTimeZoneIDToString(id.value());
+#else
             String primary = toPrimaryIanaTimeZoneIdentifier(timeZoneID.span());
             if (auto id = intlResolveTimeZoneID(primary))
                 canonical = TimeZone::fromID(id.value());
+#endif
         }
 
         globalCache.get() = CachedHostTimeZone { canonical, currentID };
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // Every VM's thread comes here.
+    return globalCache->timeZone.isolatedCopy();
+#else
     return globalCache->timeZone;
+#endif
 }
 
 DateCache::~DateCache() = default;
@@ -565,12 +613,20 @@ ALWAYS_INLINE LocalTimeOffset DateCache::localTimeOffset(int64_t millisecondsFro
 void DateCache::timeZoneCacheSlow()
 {
     ASSERT(!m_timeZoneCache);
+#if USE(BUN_JSC_ADDITIONS)
+    String timeZoneForICU = retrieveTimeZoneInformation();
+#else
     TimeZone canonical = retrieveTimeZoneInformation();
     String timeZoneForICU = canonical.toICUString();
+#endif
     StringView timeZoneView(timeZoneForICU);
     auto upconverted = timeZoneView.upconvertedCharacters();
     auto* cache = new OpaqueICUTimeZone;
+#if USE(BUN_JSC_ADDITIONS)
+    cache->m_identifier = timeZoneForICU;
+#else
     cache->m_canonicalTimeZone = canonical;
+#endif
     UErrorCode status = U_ZERO_ERROR;
     cache->m_calendar = std::unique_ptr<UCalendar, ICUDeleter<ucal_close>>(ucal_open(upconverted, timeZoneView.length(), "", UCAL_DEFAULT, &status));
     ASSERT_UNUSED(status, U_SUCCESS(status));

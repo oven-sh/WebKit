@@ -107,6 +107,10 @@ public:
     bool takeMayHaveCachedLocalGregorianDateTime() { return std::exchange(m_mayHaveCachedLocalGregorianDateTime, false); }
 
     TimeZone defaultTimeZone();
+#if USE(BUN_JSC_ADDITIONS)
+    // What defaultTimeZone().toString() and .toICUString() yield, without the table of all time zones that a TimeZone is an index into.
+    String defaultTimeZoneIdentifier();
+#endif
     String timeZoneDisplayName(bool isDST);
 
     // Whether to consult the cross-instance memo. It pays off for a Date built from a time value
