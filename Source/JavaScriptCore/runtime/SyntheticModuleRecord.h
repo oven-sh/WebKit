@@ -80,12 +80,19 @@ public:
 
     bool hasLazyExports() const { return !!m_lazyExportsSource; }
 
+    // What materializeLazyExport() does when the property it reads has become an accessor whose getter user code
+    // defined. A module that links cannot run user code: a getter that loads an ES module would start a link() inside
+    // the one in progress, which takes the records that are LINKING for linked. So only a read that no link() is
+    // waiting for calls such a getter. The others leave it alone, and the export is undefined.
+    enum class UserDefinedGetter : bool { Skip, Call };
+
     // No-op unless this record has lazy exports and localName is one of them that nobody has materialized (or
-    // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May run arbitrary JS and throw.
-    JS_EXPORT_PRIVATE void materializeLazyExport(JSGlobalObject*, PropertyName localName);
+    // overridden through JSModuleNamespaceObject::overrideExportValue) yet. May throw. Runs the code of whoever
+    // declared the lazy export, and user code only with UserDefinedGetter::Call.
+    JS_EXPORT_PRIVATE void materializeLazyExport(JSGlobalObject*, PropertyName localName, UserDefinedGetter = UserDefinedGetter::Skip);
 
     // Convenience for code holding a Resolution: materializes the binding if it points into a lazy synthetic module.
-    static void materializeLazyExport(JSGlobalObject*, AbstractModuleRecord*, PropertyName localName);
+    static void materializeLazyExport(JSGlobalObject*, AbstractModuleRecord*, PropertyName localName, UserDefinedGetter = UserDefinedGetter::Skip);
 #endif
 
 private:
