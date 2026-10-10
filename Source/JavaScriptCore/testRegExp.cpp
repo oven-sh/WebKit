@@ -24,6 +24,7 @@
 #include "InitializeThreading.h"
 #include "JSArrayBufferViewInlines.h"
 #include "JSCInlines.h"
+#include "TopExceptionScope.h"
 #include "YarrFlags.h"
 #include <stdio.h>
 #include <stdlib.h>
@@ -177,9 +178,16 @@ static bool testOneRegExp(JSGlobalObject* globalObject, RegExp* regexp, RegExpTe
     bool result = true;
     Vector<int> outVector;
     outVector.resize(regExpTest->expectVector.size());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
     int matchResult = regexp->match(globalObject, regExpTest->subject, regExpTest->offset, outVector);
 
-    if (matchResult != regExpTest->result) {
+    if (scope.exception()) [[unlikely]] {
+        // The search was abandoned: the test data has no result for that.
+        scope.clearException();
+        result = false;
+        if (verbose)
+            printf("Line %d: the search threw - expected %d\n", lineNumber, regExpTest->result);
+    } else if (matchResult != regExpTest->result) {
         result = false;
         if (verbose)
             printf("Line %d: results mismatch - expected %d got %d\n", lineNumber, regExpTest->result, matchResult);
