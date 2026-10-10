@@ -379,6 +379,9 @@ public:
 
     WTF_EXPORT_PRIVATE unsigned concurrentHash() const;
 
+    // StringHasher::computeStableHashAndMaskTop8Bits of the characters: for what a file or a generated table stores. Not cached.
+    WTF_EXPORT_PRIVATE unsigned stableHash() const;
+
     unsigned symbolAwareHash() const;
     unsigned existingSymbolAwareHash() const;
 
@@ -407,7 +410,8 @@ public:
         //    We also know that a StringImpl never changes from 8 bit to 16 bit because there
         //    is no way to set/clear the s_hashFlag8BitBuffer flag other than at construction.
         //
-        // 3. m_hashAndFlags will not be mutated by different threads because:
+        // 3. The only mutation of m_hashAndFlags is hashSlowCase() atomically adding the hash, which depends on this
+        //    process's HashSecrets and so cannot be set on construction. Every thread adds the same bits. Otherwise:
         //
         //    a. StaticStringImpl's constructor sets the s_hashFlagDidReportCost flag to ensure
         //       that StringImpl::cost() returns early.
@@ -417,9 +421,7 @@ public:
         //    b. setIsAtom() is never called on a StaticStringImpl.
         //       setIsAtom() asserts !isStatic().
         //    c. setHash() is never called on a StaticStringImpl.
-        //       StaticStringImpl's constructor sets the hash on construction.
-        //       StringImpl::hash() only sets a new hash iff !hasHash().
-        //       Additionally, StringImpl::setHash() asserts hasHash() and !isStatic().
+        //       StringImpl::setHash() asserts !isStatic().
 
         explicit constexpr StaticStringImpl(ASCIILiteral, StringKind = StringNormal);
         template<unsigned characterCount> explicit constexpr StaticStringImpl(const char16_t (&characters)[characterCount], StringKind = StringNormal);
@@ -1333,13 +1335,13 @@ inline void StringImpl::assertHashIsCorrect() const
 
 constexpr StringImpl::StaticStringImpl::StaticStringImpl(ASCIILiteral literal, StringKind stringKind)
     : StringImplShape(s_refCountFlagIsStaticString, literal,
-        s_hashFlag8BitBuffer | s_hashFlagDidReportCost | stringKind | BufferInternal | (StringHasher::computeLiteralHashAndMaskTop8Bits(literal) << s_flagCount), ConstructWithConstExpr)
+        s_hashFlag8BitBuffer | s_hashFlagDidReportCost | stringKind | BufferInternal, ConstructWithConstExpr)
 {
 }
 
 template<unsigned characterCount> constexpr StringImpl::StaticStringImpl::StaticStringImpl(const char16_t (&characters)[characterCount], StringKind stringKind)
     : StringImplShape(s_refCountFlagIsStaticString, characterCount - 1, characters,
-        s_hashFlagDidReportCost | stringKind | BufferInternal | (StringHasher::computeLiteralHashAndMaskTop8Bits(characters) << s_flagCount), ConstructWithConstExpr)
+        s_hashFlagDidReportCost | stringKind | BufferInternal, ConstructWithConstExpr)
 {
 }
 

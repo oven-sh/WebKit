@@ -2537,16 +2537,11 @@ void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvir
     ASSERT(symbolTable->scopeSize());
     ASSERT(loopScope);
 
-    struct SymbolTableNoLocks {
-        auto NODELETE begin() const { return symbolTable->begin(NoLockingNecessary); }
-        auto NODELETE end() const { return symbolTable->end(NoLockingNecessary); }
-        size_t NODELETE size() const { return symbolTable->scopeSize(); }
-        SymbolTable* symbolTable;
-    } symbolTableWithoutLocks { symbolTable };
-
-    auto activationValuesToCopyOver = WTF::compactMap(symbolTableWithoutLocks, [&](auto& pair) -> std::optional<std::pair<RegisterID*, Identifier>> {
+    Vector<std::pair<RegisterID*, Identifier>> activationValuesToCopyOver;
+    activationValuesToCopyOver.reserveInitialCapacity(symbolTable->scopeSize());
+    symbolTable->forEachInVarOffsetOrder(NoLockingNecessary, [&](auto& pair) {
         if (!pair.value.varOffset().isScope())
-            return std::nullopt;
+            return;
 
         RefPtr ident = pair.key;
         auto identifier = Identifier::fromUid(m_vm, ident.get());
@@ -2554,7 +2549,7 @@ void BytecodeGenerator::prepareLexicalScopeForNextForLoopIteration(VariableEnvir
         auto* transitionValue = newBlockScopeVariable();
         transitionValue->ref();
         emitGetFromScope(transitionValue, loopScope, variableForLocalEntry(identifier, pair.value, loopSymbolTable->index(), true), DoNotThrowIfNotFound);
-        return std::make_pair(transitionValue, identifier);
+        activationValuesToCopyOver.append(std::make_pair(transitionValue, identifier));
     });
 
     // We need this dynamic behavior of the executing code to ensure

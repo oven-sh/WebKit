@@ -7827,11 +7827,9 @@ uint64_t JSBigInt::toBigUInt64Heap(JSBigInt* bigInt)
 
 static ALWAYS_INLINE unsigned NODELETE computeHash(JSBigInt::Digit* digits, unsigned length, bool sign)
 {
-    Hasher hasher;
-    WTF::add(hasher, sign);
-    for (unsigned index = 0; index < length; ++index)
-        WTF::add(hasher, digits[index]);
-    return hasher.hash();
+    // A Map or Set key, so keyed like a string's: Hasher's collisions can be worked out ahead of time.
+    unsigned hash = StringHasher::computeHashAndMaskTop8Bits(byteCast<Latin1Character>(asByteSpan(std::span { digits, length })));
+    return hash | static_cast<unsigned>(sign) << (32 - StringHasher::flagCount);
 }
 
 std::optional<unsigned> JSBigInt::concurrentHash()

@@ -74,19 +74,18 @@ void JSLexicalEnvironment::getOwnSpecialPropertyNames(JSObject* object, JSGlobal
 
     {
         ConcurrentJSLocker locker(symbolTable->m_lock);
-        SymbolTable::Map::iterator end = symbolTable->end(locker);
         VM& vm = globalObject->vm();
-        for (SymbolTable::Map::iterator it = symbolTable->begin(locker); it != end; ++it) {
-            if (mode == DontEnumPropertiesMode::Exclude && it->value.isDontEnum())
-                continue;
-            if (!thisObject->isValidScopeOffset(it->value.scopeOffset()))
-                continue;
-            if (!propertyNames.includeSymbolProperties() && it->key->isSymbol())
-                continue;
-            if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(it->key))
-                continue;
-            propertyNames.add(Identifier::fromUid(vm, it->key.get()));
-        }
+        symbolTable->forEachInVarOffsetOrder(locker, [&](auto& entry) {
+            if (mode == DontEnumPropertiesMode::Exclude && entry.value.isDontEnum())
+                return;
+            if (!thisObject->isValidScopeOffset(entry.value.scopeOffset()))
+                return;
+            if (!propertyNames.includeSymbolProperties() && entry.key->isSymbol())
+                return;
+            if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(entry.key))
+                return;
+            propertyNames.add(Identifier::fromUid(vm, entry.key.get()));
+        });
     }
 }
 

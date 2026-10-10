@@ -670,11 +670,11 @@ TEST(WTF, StringImplStaticToAtomString)
 
 TEST(WTF, StringImplConstexprHasher)
 {
-    ASSERT_EQ(stringFromUTF8("")->hash(), StringHasher::computeLiteralHashAndMaskTop8Bits(""));
-    ASSERT_EQ(stringFromUTF8("A")->hash(), StringHasher::computeLiteralHashAndMaskTop8Bits("A"));
-    ASSERT_EQ(stringFromUTF8("AA")->hash(), StringHasher::computeLiteralHashAndMaskTop8Bits("AA"));
-    ASSERT_EQ(stringFromUTF8("Cocoa")->hash(), StringHasher::computeLiteralHashAndMaskTop8Bits("Cocoa"));
-    ASSERT_EQ(stringFromUTF8("Cappuccino")->hash(), StringHasher::computeLiteralHashAndMaskTop8Bits("Cappuccino"));
+    ASSERT_EQ(stringFromUTF8("")->stableHash(), StringHasher::computeStableHashAndMaskTop8Bits(""));
+    ASSERT_EQ(stringFromUTF8("A")->stableHash(), StringHasher::computeStableHashAndMaskTop8Bits("A"));
+    ASSERT_EQ(stringFromUTF8("AA")->stableHash(), StringHasher::computeStableHashAndMaskTop8Bits("AA"));
+    ASSERT_EQ(stringFromUTF8("Cocoa")->stableHash(), StringHasher::computeStableHashAndMaskTop8Bits("Cocoa"));
+    ASSERT_EQ(stringFromUTF8("Cappuccino")->stableHash(), StringHasher::computeStableHashAndMaskTop8Bits("Cappuccino"));
 }
 
 TEST(WTF, StringImplEmpty)

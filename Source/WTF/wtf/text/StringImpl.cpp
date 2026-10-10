@@ -1695,11 +1695,12 @@ UTF8CString StringImpl::utf8(ConversionMode mode) const
 
 NEVER_INLINE unsigned StringImpl::hashSlowCase() const
 {
-    if (is8Bit())
-        setHash(StringHasher::computeHashAndMaskTop8Bits(span8()));
+    unsigned hash = concurrentHash();
+    if (isStatic() || !canBecomeAtom()) [[unlikely]] // shared between threads
+        atomicExchangeOr(&m_hashAndFlags, hash << s_flagCount, std::memory_order_relaxed);
     else
-        setHash(StringHasher::computeHashAndMaskTop8Bits(span16()));
-    return existingHash();
+        setHash(hash);
+    return hash;
 }
 
 unsigned StringImpl::concurrentHash() const
@@ -1711,6 +1712,13 @@ unsigned StringImpl::concurrentHash() const
         hash = StringHasher::computeHashAndMaskTop8Bits(span16());
     ASSERT(((hash << s_flagCount) >> s_flagCount) == hash);
     return hash;
+}
+
+unsigned StringImpl::stableHash() const
+{
+    if (is8Bit())
+        return StringHasher::computeStableHashAndMaskTop8Bits(span8());
+    return StringHasher::computeStableHashAndMaskTop8Bits(span16());
 }
 
 SUPPRESS_NODELETE bool equalIgnoringNullity(std::span<const char16_t> a, StringImpl* b)

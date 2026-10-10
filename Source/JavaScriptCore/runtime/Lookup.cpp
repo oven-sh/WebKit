@@ -27,6 +27,32 @@
 
 namespace JSC {
 
+void HashTable::buildIndex() const
+{
+    static Lock lock;
+    Locker locker { lock };
+    if (hasIndex.load(std::memory_order_relaxed))
+        return;
+
+    int size = indexMask + 1;
+    std::span entries { index, static_cast<size_t>(size + numberOfValues) };
+    std::ranges::fill(entries, CompactHashIndex { -1, -1 });
+    for (int i = 0; i < numberOfValues; ++i) {
+        ASCIILiteral key = values[i].m_key;
+        if (key.isNull())
+            continue;
+        int entry = StringHasher::computeHashAndMaskTop8Bits(key.span8()) & indexMask;
+        if (entries[entry].value != -1) {
+            while (entries[entry].next != -1)
+                entry = entries[entry].next;
+            entries[entry].next = size;
+            entry = size++;
+        }
+        entries[entry].value = i;
+    }
+    hasIndex.store(true, std::memory_order_release);
+}
+
 void reifyStaticAccessor(VM& vm, const HashTableValue& value, JSObject& thisObject, PropertyName propertyName)
 {
     JSGlobalObject* globalObject = thisObject.realm();

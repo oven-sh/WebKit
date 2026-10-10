@@ -16756,8 +16756,8 @@ IGNORE_CLANG_WARNINGS_END
         // FTL-inlined hashes agree with the runtime hashers used by
         // operationMapHash and friends. B3 lowers UMulHigh to umulh on ARM64
         // and to the mulq rdx:rax sequence on x86-64.
-        auto secret1 = m_out.constInt64(0x2d358dccaa6c78a5ULL);
-        auto secret2 = m_out.constInt64(0x8bb84b93962eacc9ULL);
+        auto secret1 = m_out.constInt64(WTF::hashSecrets().secret[0]);
+        auto secret2 = m_out.constInt64(WTF::hashSecrets().secret[1]);
         auto a = m_out.bitXor(input, secret1);
         auto b = m_out.bitXor(input, secret2);
         auto lo = m_out.mul(a, b);

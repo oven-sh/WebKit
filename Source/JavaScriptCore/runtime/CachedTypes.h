@@ -130,7 +130,7 @@ public:
     // The atom for a slot EncoderStringTable::slotFor wrote, resolved as the Decoder resolves the same slot in a code
     // block; null for a malformed slot.
     JS_EXPORT_PRIVATE RefPtr<AtomStringImpl> atomForSlot(VM&, uint32_t slot);
-    // StringImpl::hash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
+    // StringImpl::stableHash() of the string atomForSlot(slot) would return, without creating it; nullopt where atomForSlot
     // returns null (a record with bad bounds crashes in both).
     std::optional<uint32_t> hashForSlot(uint32_t slot) const;
     // atomForSlot(vm, slot) would return `string`'s atom, decided without creating it (by the slot's cached pointer when
@@ -153,7 +153,7 @@ public:
     //   prefetchSlot   - the slot and its offsets[] entry; address arithmetic only, issue as early as the run is known;
     //   prefetchTarget - reads the slot: the StringImpl (For::Atom: or JSString) it holds, else (reads offsets[]) the record;
     //   prefetchLookup - For::Atom only; reads that: a cell's StringImpl header, or an empty slot's atom-table bucket
-    //                    by stored hash.
+    //                    by the record's hash, which it leaves in the slot for atomFor.
     // noOrdinal (CachedRefPtr::externalStringOrdinal() for a non-table string), or any ordinal out of range, is ignored
     // by all three. Defined in CachedTypes.cpp, their only user.
     enum class PrefetchFor : uint8_t { Atom, JSString }; // atomFor / jsStringFor: the latter touches neither a held cell nor the atom table
@@ -170,19 +170,21 @@ public:
     uint64_t orderHashFor(uint32_t ordinal) const;
 #endif
 private:
-    static constexpr size_t recordHashOffset = sizeof(uint32_t); // EncoderStringTable::serialize's record layout
     struct Record {
         const uint8_t* characters;
         uint32_t length;
-        uint32_t hash;
         bool is8Bit;
     };
     const uint32_t* offsets() const { return std::bit_cast<const uint32_t*>(m_bytes.data() + sizeof(uint32_t)); }
     Record record(uint32_t ordinal) const;
     static Ref<StringImpl> createImpl(const Record&);
-    // A slot is empty, a StringImpl* (+1 ref held by the table), or a JSString* tagged with cellTag whose value is that
-    // StringImpl. empty -> impl -> cell, never backwards.
+    static uint32_t hashOf(const Record&); // StringImpl::hash() of its string
+    // A slot is empty, hashOf(its record) tagged with hashTag, a StringImpl* (+1 ref held by the table), or a JSString*
+    // tagged with cellTag whose value is that StringImpl. empty -> hash -> impl -> cell, never backwards.
     static constexpr uintptr_t cellTag = 1;
+    static constexpr uintptr_t hashTag = 2;
+    static constexpr unsigned hashShift = 2;
+    static bool holdsString(uintptr_t slot) { return slot && !(slot & hashTag); }
     static bool isCell(uintptr_t slot) { return slot & cellTag; }
     static JSString* cell(uintptr_t slot) { return std::bit_cast<JSString*>(slot & ~cellTag); }
     static StringImpl* impl(uintptr_t slot);

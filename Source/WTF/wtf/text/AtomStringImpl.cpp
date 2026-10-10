@@ -310,7 +310,6 @@ Ref<AtomStringImpl> AtomStringImpl::addLiteral(std::span<const Latin1Character> 
 #if USE(BUN_JSC_ADDITIONS)
 Ref<AtomStringImpl> AtomStringImpl::addWithoutCopying(HashTranslatorCharBuffer<Latin1Character>& buffer)
 {
-    ASSERT(isValidPrecomputedHash(buffer.hash));
     if (buffer.characters.empty())
         return *uncheckedDowncast<AtomStringImpl>(StringImpl::empty());
     return addToStringTable<Latin1Buffer, BufferFromStaticDataTranslator<Latin1Character>>(buffer);
@@ -318,7 +317,6 @@ Ref<AtomStringImpl> AtomStringImpl::addWithoutCopying(HashTranslatorCharBuffer<L
 
 Ref<AtomStringImpl> AtomStringImpl::addWithoutCopying(HashTranslatorCharBuffer<char16_t>& buffer)
 {
-    ASSERT(isValidPrecomputedHash(buffer.hash));
     if (buffer.characters.empty())
         return *uncheckedDowncast<AtomStringImpl>(StringImpl::empty());
     return addToStringTable<UTF16Buffer, BufferFromStaticDataTranslator<char16_t>>(buffer);
