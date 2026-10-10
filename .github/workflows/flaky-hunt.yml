@@ -1,0 +1,159 @@
+name: Flaky test hunt
+
+# Not to be merged. Runs ci.yml's `test` job 30 times per tested lane, against the jsc shell of the published release
+# of SHA, to find the tests that fail intermittently. Nothing is built. Another round is a re-run of all jobs of the run.
+
+on:
+  pull_request:
+    paths:
+      - .github/workflows/flaky-hunt.yml
+
+permissions:
+  contents: read
+
+env:
+  # A commit of main; its release is autobuild-<SHA>, and the tests are checked out at it.
+  SHA: 000c48997255272cd7e3ae7047e87b955b38989b
+
+jobs:
+  test:
+    name: ${{ matrix.lane.label }} ${{ matrix.attempt }}
+    runs-on: ${{ matrix.lane.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The lanes marked `tested` in lanes.mjs.
+        lane:
+          - { label: bun-webkit-linux-amd64-lto, runner: linux-x64-gh }
+          - { label: bun-webkit-linux-arm64-lto, runner: linux-arm64-gh }
+        attempt: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30]
+    timeout-minutes: 90
+    env:
+      LABEL: ${{ matrix.lane.label }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.SHA }}
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /*
+            !/Websites/
+            !/ManualTests/
+            !/WebDriverTests/
+            !/Source/ThirdParty/
+            !/LayoutTests/*
+            /LayoutTests/jsc-layout-tests.yaml
+            /LayoutTests/resources/
+            /LayoutTests/js/
+            /LayoutTests/fast/regex/
+            /LayoutTests/imported/w3c/web-platform-tests/wasm/
+            /LayoutTests/imported/w3c/web-platform-tests/resources/
+      - name: Install what the test runner needs
+        run: |
+          set -euo pipefail
+          missing=()
+          for tool in perl ruby python3 make jq; do command -v "$tool" >/dev/null || missing+=("$tool"); done
+          if [ ${#missing[@]} -gt 0 ]; then
+            sudo apt-get update
+            sudo apt-get install -y "${missing[@]}"
+          fi
+          # A core file for every jsc that dies of a signal, for the `Backtraces` step.
+          mkdir -p "$RUNNER_TEMP/cores"
+          sudo sysctl -w kernel.core_pattern="$RUNNER_TEMP/cores/core.%e.%p"
+      - name: Download the jsc shell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          for attempt in 1 2 3 4 5; do
+            gh release download "autobuild-$SHA" --pattern "$LABEL.tar.gz" --clobber && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep $((attempt * 10))
+          done
+          tar -xzf "$LABEL.tar.gz" bun-webkit/bin
+          rm "$LABEL.tar.gz"
+          ls -la bun-webkit/bin
+      - name: testFFI
+        id: testffi
+        env: &test_env
+          ASAN_OPTIONS: detect_leaks=0:allocator_may_return_null=1:allow_user_segv_handler=1
+          UBSAN_OPTIONS: print_stacktrace=1
+          JSCTEST_memoryLimit: 4294967296
+        run: |
+          "$RUNNER_TEMP/bun-webkit/bin/testFFI" 2>&1 | tee "$RUNNER_TEMP/testffi.log"
+      - name: run-javascriptcore-tests
+        if: ${{ !cancelled() }}
+        env: *test_env
+        run: |
+          set +e -uo pipefail
+          ulimit -c unlimited
+          root="$RUNNER_TEMP/bun-webkit"
+          results="$RUNNER_TEMP/jsc-results.json"
+          echo "$(nproc) cores, $(free -g | awk '/^Mem:/ {print $2}')GB of memory"
+          # The same command as ci.yml's `test` job.
+          perl Tools/Scripts/run-javascriptcore-tests \
+            --no-build --root="$root" --release --jsc-only \
+            --no-testmasm --no-testair --no-testb3 --no-testdfg --no-testapi --no-testwasmdebugger --no-testlibjsctools \
+            --no-fail-fast --memory-limited \
+            --json-output="$results" 2>&1 | tee "$RUNNER_TEMP/jsc-tests.log" | awk '
+              results { print; next }
+              /^\*\* The following JSC stress test failures/ || /^Results for JSC / { results = 1; print; fflush(); next }
+              /^Running / { started = 1; if (++ran % 5000 == 0) { print ran " test runs started, " failed + 0 " failed"; fflush() } next }
+              /^FAIL: / { failed++; print; fflush(); next }
+              !started { print; fflush(); next }
+              { last[n++ % 40] = $0 }
+              END {
+                if (results) exit
+                print "run-jsc-stress-tests ended without printing results. The last lines of its output:"
+                for (i = (n > 40 ? n - 40 : 0); i < n; i++) print last[i % 40]
+              }'
+          status=${PIPESTATUS[0]}
+          echo "run-javascriptcore-tests exited with $status"
+          echo "$status" > "$RUNNER_TEMP/jsc-exit-status.txt"
+          awk '
+            FNR == NR { if ($0 ~ /^FAIL: /) { name = $2; failing[name] = 1; order[++n] = name } next }
+            { i = index($0, ": "); if (i > 0) { name = substr($0, 1, i - 1); if (name in failing) out[name] = out[name] substr($0, i + 2) "\n" } }
+            END { for (k = 1; k <= n; k++) { print "=== " order[k]; printf "%s\n", out[order[k]] } }
+          ' "$RUNNER_TEMP/jsc-tests.log" "$RUNNER_TEMP/jsc-tests.log" > "$RUNNER_TEMP/jsc-failures.log" || true
+          # Kept only when the runner died before its results: it is the only record of that.
+          [ ! -f "$results" ] || rm "$RUNNER_TEMP/jsc-tests.log"
+          exit "$status"
+      # Tests that crash on purpose leave cores too. Only the cores of glibc's assertion in __pthread_tpp_change_priority
+      # are looked at: the message abort() formatted is in the core's memory.
+      - name: Backtraces
+        if: always()
+        env:
+          DEBUGINFOD_URLS: https://debuginfod.ubuntu.com
+        run: |
+          set -uo pipefail
+          cd "$RUNNER_TEMP/cores"
+          mkdir -p ../backtraces
+          ls -la | tee ../backtraces/cores.txt | tail -n +2 | wc -l
+          for core in *; do
+            grep -qa "__pthread_tpp_change_priority: Assertion" "$core" 2>/dev/null || continue
+            command -v gdb >/dev/null || { sudo apt-get update; sudo apt-get install -y gdb; }
+            timeout 600 gdb -batch -iex "set debuginfod enabled on" -ex "info threads" -ex "thread apply all bt" -ex "bt full 12" \
+              "$RUNNER_TEMP/bun-webkit/bin/jsc" "$core" > "../backtraces/$core.txt" 2>&1
+            echo "##### $core"; cat "../backtraces/$core.txt"
+            zstd -q -T0 "$core" -o "../backtraces/$core.zst"
+          done
+          exit 0
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: results-${{ matrix.lane.label }}-${{ matrix.attempt }}
+          path: |
+            ${{ runner.temp }}/jsc-results.json
+            ${{ runner.temp }}/jsc-failures.log
+            ${{ runner.temp }}/jsc-tests.log
+            ${{ runner.temp }}/jsc-exit-status.txt
+            ${{ runner.temp }}/testffi.log
+            ${{ runner.temp }}/backtraces/
+          if-no-files-found: ignore
+          retention-days: 14
