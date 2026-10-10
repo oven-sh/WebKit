@@ -402,6 +402,13 @@ jobs:
           JSCTEST_memoryLimit: 4294967296
         run: |
           "$RUNNER_TEMP/bun-webkit/bin/testFFI"
+      # The release/LTO Unix lanes use the vendored allocator in the shell.
+      # Debug/ASan lanes disable mimalloc, and Windows has no pthread key.
+      - name: mimalloc exit lifetime
+        if: ${{ !cancelled() && steps.download.outcome == 'success' && runner.os != 'Windows' && !contains(matrix.label, '-debug') && !contains(matrix.label, '-asan') }}
+        run: |
+          "$RUNNER_TEMP/bun-webkit/bin/testMimallocExit"
+          "$RUNNER_TEMP/bun-webkit/bin/testMimallocExitInFlight"
       - name: run-javascriptcore-tests
         if: *have_jsc
         env: *test_env
