@@ -401,7 +401,8 @@ function main() {
     // ---- The single close() rule (SPEC section 9.1) as seen from JS: `ptr`
     // becomes null, close() is idempotent, the entry code stays alive with
     // the cell (a pointer captured before close() keeps working), and the
-    // $vm glue rejects the closed object wherever it takes a pointer.
+    // pointer conversion rejects the closed object ($vm converts through it;
+    // ffi-callback-closed-argument.js covers FFI call arguments).
     {
         const closed = callback(["i32"], "i32", x => x + 100);
         const entryBefore = closed.ptr;
@@ -420,8 +421,8 @@ function main() {
         check(callCbI32(entryBefore, 6), 106, "entry code alive after close");
         gc();
         check(callCbI32(entryBefore, 7), 107, "entry code alive after close and GC");
-        // The $vm glue rejects a closed callback wherever it converts it to
-        // a pointer (target of ffiFunction, ffiCString, ffiRead).
+        // A closed callback is rejected wherever $vm converts it to a
+        // pointer (target of ffiFunction, ffiCString, ffiRead).
         for (const [label, use] of [
             ["ffiFunction target", () => $vm.ffiFunction({ args: ["i32"], returns: "i32" }, closed, "closed target")],
             ["ffiCString", () => $vm.ffiCString(closed)],
