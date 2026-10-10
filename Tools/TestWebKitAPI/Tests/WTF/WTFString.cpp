@@ -576,6 +576,121 @@ TEST(WTF, StringUTF8ConversionStrictReplacingMode)
     EXPECT_EQ(UTF8CString { u8"ab\xEF\xBF\xBD" "c"_span }, result);
 }
 
+// What the conversion to UTF-8 has to give for these code units, written out without any of WTF's converters.
+static Vector<char8_t> referenceUTF8(std::span<const char16_t> characters, bool& hasUnpairedSurrogate)
+{
+    Vector<char8_t> result;
+    hasUnpairedSurrogate = false;
+    for (size_t i = 0; i < characters.size(); ++i) {
+        char32_t codePoint = characters[i];
+        if (U16_IS_LEAD(codePoint) && i + 1 < characters.size() && U16_IS_TRAIL(characters[i + 1]))
+            codePoint = U16_GET_SUPPLEMENTARY(codePoint, characters[++i]);
+        else if (U16_IS_SURROGATE(codePoint)) {
+            hasUnpairedSurrogate = true;
+            codePoint = 0xFFFD;
+        }
+        if (codePoint < 0x80)
+            result.append(codePoint);
+        else if (codePoint < 0x800) {
+            result.append(0xC0 | (codePoint >> 6));
+            result.append(0x80 | (codePoint & 0x3F));
+        } else if (codePoint < 0x10000) {
+            result.append(0xE0 | (codePoint >> 12));
+            result.append(0x80 | ((codePoint >> 6) & 0x3F));
+            result.append(0x80 | (codePoint & 0x3F));
+        } else {
+            result.append(0xF0 | (codePoint >> 18));
+            result.append(0x80 | ((codePoint >> 12) & 0x3F));
+            result.append(0x80 | ((codePoint >> 6) & 0x3F));
+            result.append(0x80 | (codePoint & 0x3F));
+        }
+    }
+    return result;
+}
+
+// Both forms of the conversion, in the three modes.
+static void expectUTF8Conversion(const String& string)
+{
+    SCOPED_TRACE(::testing::Message() << (string.is8Bit() ? "8-bit" : "16-bit") << " string of length " << string.length() << " that starts with code unit " << static_cast<unsigned>(string.length() ? string[0] : 0));
+
+    Vector<char16_t> codeUnits;
+    for (unsigned i = 0; i < string.length(); ++i)
+        codeUnits.append(string[i]);
+    bool hasUnpairedSurrogate;
+    auto expected = referenceUTF8(codeUnits.span(), hasUnpairedSurrogate);
+
+    for (auto mode : { LenientConversion, StrictConversion, StrictConversionReplacingUnpairedSurrogatesWithFFFD }) {
+        unsigned callbackCalls = 0;
+        auto fromCallback = string.tryGetUTF8([&](std::span<const char8_t> converted) {
+            ++callbackCalls;
+            EXPECT_TRUE(converted.data());
+            return Vector<char8_t> { converted };
+        }, mode);
+        auto cString = string.tryGetUTF8(mode);
+
+        if (mode == StrictConversion && hasUnpairedSurrogate) {
+            ASSERT_FALSE(fromCallback);
+            EXPECT_EQ(UTF8ConversionError::Invalid, fromCallback.error());
+            EXPECT_EQ(0u, callbackCalls);
+            ASSERT_FALSE(cString);
+            EXPECT_EQ(UTF8ConversionError::Invalid, cString.error());
+            continue;
+        }
+
+        ASSERT_TRUE(fromCallback);
+        EXPECT_EQ(1u, callbackCalls);
+        EXPECT_TRUE(equalSpans(expected.span(), fromCallback->span()));
+        ASSERT_TRUE(cString);
+        EXPECT_FALSE(cString->isNull());
+        EXPECT_TRUE(equalSpans(expected.span(), cString->span()));
+        EXPECT_EQ(0, cString->spanIncludingNullTerminator().back());
+    }
+}
+
+TEST(WTF, StringUTF8ConversionAroundBufferSizes)
+{
+    // The conversion has 1,024 bytes of inline scratch memory. The lengths are on both sides of what fills it with
+    // 3 bytes for each code unit (341), with 2 (512) and with 1 (1,024). 16 is where Latin-1 starts to use simdutf.
+    for (unsigned length : { 0, 1, 2, 15, 16, 17, 340, 341, 342, 343, 511, 512, 513, 1023, 1024, 1025, 5000 }) {
+        auto filled = [&](std::initializer_list<char16_t> pattern) {
+            Vector<char16_t> characters;
+            for (unsigned i = 0; i < length; ++i)
+                characters.append(std::data(pattern)[i % pattern.size()]);
+            return characters;
+        };
+
+        for (auto pattern : { std::initializer_list<char16_t> { 'a', 'b', ' ' }, { 0xE9 }, { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 0xE9 } }) {
+            auto characters = filled(pattern);
+            auto string8 = String::make8Bit(characters.span());
+            EXPECT_TRUE(string8.is8Bit());
+            expectUTF8Conversion(string8);
+            if (!length)
+                continue;
+            for (unsigned nonASCIIIndex : { 0u, length / 2, length - 1 }) {
+                auto withNonASCII = characters;
+                withNonASCII[nonASCIIIndex] = 0xFF;
+                expectUTF8Conversion(String::make8Bit(withNonASCII.span()));
+            }
+        }
+
+        for (auto pattern : { std::initializer_list<char16_t> { 'a', 'b', ' ' }, { 0x436, 0x438 }, { 0x65E5, 0x672C, 0x8A9E }, { 0xD83D, 0xDE00 }, { 'a', 0xE9, 0x65E5, 0xD83D, 0xDE00 } }) {
+            auto characters = filled(pattern);
+            auto string16 = String { characters.span() };
+            EXPECT_TRUE(string16.isEmpty() || !string16.is8Bit());
+            expectUTF8Conversion(string16);
+            if (!length)
+                continue;
+            for (char16_t surrogate : { 0xD800, 0xDBFF, 0xDC00, 0xDFFF }) {
+                for (unsigned surrogateIndex : { 0u, length / 2, length - 1 }) {
+                    auto withSurrogate = characters;
+                    withSurrogate[surrogateIndex] = surrogate;
+                    expectUTF8Conversion(String { withSurrogate.span() });
+                }
+            }
+        }
+    }
+}
+
 TEST(WTF, StringSimplifyWhiteSpace)
 {
     auto simplify = [](const String& string) {
