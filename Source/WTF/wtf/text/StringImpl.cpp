@@ -1627,6 +1627,84 @@ ASCIICString StringImpl::asciiForCharacters(std::span<const char16_t> characters
     return asciiForCharactersInternal(characters);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Upstream's two functions are under #else. Their UTF8CString crashes when it cannot allocate, and they convert every
+// string into scratch memory and copy the result.
+
+static ALWAYS_INLINE std::expected<UTF8CString, UTF8ConversionError> tryCopyToUTF8CString(std::span<const char8_t> converted)
+{
+    std::span<char8_t> destination;
+    auto result = UTF8CString::tryNewUninitialized(converted.size(), destination);
+    if (result.isNull()) [[unlikely]]
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+    memcpySpan(destination, converted);
+    return result;
+}
+
+// The empty string is the 17 bytes that upstream allocates, with the allocation that crashes when it fails:
+// a fallible one has a null check, and the conversion of an empty string has nothing else to pay for it.
+static ALWAYS_INLINE UTF8CString emptyUTF8CString()
+{
+    return UTF8CString { nonNullEmptyUTF8Span() };
+}
+
+std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const Latin1Character> source)
+{
+    if (source.empty())
+        return emptyUTF8CString();
+
+    auto result = tryGetUTF8ForCharacters([] (std::span<const char8_t> converted) {
+        return tryCopyToUTF8CString(converted);
+    }, source);
+    if (!result) [[unlikely]]
+        return makeUnexpected(result.error());
+    return WTF::move(*result);
+}
+
+// The steps of tryGetUTF8ForCharacters(), with one difference: a result that does not fit the inline scratch buffer
+// is converted straight into its UTF8CString, with no scratch allocation and no copy.
+std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const char16_t> characters, ConversionMode mode)
+{
+    if (characters.empty())
+        return emptyUTF8CString();
+
+    UTF8ConversionBuffer buffer;
+    std::span<char8_t> destination;
+    UTF8CString result;
+    if (characters.size() <= UTF8ConversionBuffer::inlineCapacity / 3)
+        destination = buffer.inlineSpan(characters.size() * 3);
+    else {
+        size_t utf8Length = utf8LengthFromUTF16(characters);
+        if (!isValidCapacityForVector<char8_t>(utf8Length)) [[unlikely]]
+            return makeUnexpected(UTF8ConversionError::OutOfMemory);
+        if (utf8Length <= UTF8ConversionBuffer::inlineCapacity)
+            destination = buffer.inlineSpan(utf8Length);
+        else {
+            result = UTF8CString::tryNewUninitialized(utf8Length, destination);
+            if (result.isNull()) [[unlikely]]
+                return makeUnexpected(UTF8ConversionError::OutOfMemory);
+        }
+    }
+
+    size_t convertedSize = tryConvertUTF16ToUTF8(characters, destination);
+    if (convertedSize != notFound) [[likely]] {
+        // The size is not the measured one only if the characters changed after they were measured.
+        if (!result.isNull() && convertedSize == destination.size())
+            return result;
+        return tryCopyToUTF8CString(destination.first(convertedSize));
+    }
+
+    if (!result.isNull() && destination.size() < characters.size() * 3) {
+        // utf8ForIllFormedCharacters() allocates, so free the string of the measured size first.
+        result = { };
+        destination = { };
+    }
+    auto replaced = utf8ForIllFormedCharacters(characters, mode, buffer, destination);
+    if (!replaced)
+        return makeUnexpected(replaced.error());
+    return tryCopyToUTF8CString(*replaced);
+}
+#else
 std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(std::span<const Latin1Character> source)
 {
     return tryGetUTF8ForCharacters([] (std::span<const char8_t> converted) {
@@ -1640,6 +1718,7 @@ std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(st
         return UTF8CString { converted };
     }, characters, mode);
 }
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
 // Upstream's utf8ForCharactersIntoBuffer() below gets a buffer that the caller grew with Vector::resize(),

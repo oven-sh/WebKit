@@ -52,6 +52,23 @@ Ref<CStringBuffer> CStringBuffer::createUninitialized(size_t length)
     return buffer;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+RefPtr<CStringBuffer> CStringBuffer::tryCreateUninitialized(size_t length)
+{
+    // The +1 is for the terminating null character.
+    auto size = CheckedSize { sizeof(CStringBuffer) } + length + 1U;
+    if (size.hasOverflowed()) [[unlikely]]
+        return nullptr;
+    auto* stringBuffer = CStringBufferMalloc::tryMalloc(size);
+    if (!stringBuffer) [[unlikely]]
+        return nullptr;
+
+    Ref buffer = adoptRef(*new (NotNull, stringBuffer) CStringBuffer(length));
+    buffer->mutableSpanIncludingNullTerminator()[length] = '\0';
+    return buffer;
+}
+#endif
+
 CStringBase::CStringBase(ASCIILiteral string)
 {
     if (string.isNull())
@@ -107,6 +124,14 @@ void CStringBase::allocateUninitialized(size_t length, std::span<char>& characte
     m_buffer = CStringBuffer::createUninitialized(length);
     characterBuffer = m_buffer->mutableSpan();
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void CStringBase::tryAllocateUninitialized(size_t length, std::span<char>& characterBuffer)
+{
+    m_buffer = CStringBuffer::tryCreateUninitialized(length);
+    characterBuffer = m_buffer ? m_buffer->mutableSpan() : std::span<char> { };
+}
+#endif
 
 void CStringBase::copyBufferIfNeeded()
 {

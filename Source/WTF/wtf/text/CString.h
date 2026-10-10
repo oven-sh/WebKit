@@ -63,6 +63,10 @@ private:
     friend class CStringBase;
 
     static Ref<CStringBuffer> createUninitialized(size_t length);
+#if USE(BUN_JSC_ADDITIONS)
+    // Null when the allocation fails. createUninitialized() crashes.
+    static RefPtr<CStringBuffer> tryCreateUninitialized(size_t length);
+#endif
 
     CStringBuffer(size_t length) : m_length(length) { }
     std::span<char> mutableSpan() LIFETIME_BOUND { return unsafeMakeSpan(m_data, m_length); }
@@ -120,6 +124,10 @@ protected:
     WTF_EXPORT_PRIVATE CStringBase(const char*);
 
     WTF_EXPORT_PRIVATE void allocateUninitialized(size_t length, std::span<char>& characterBuffer);
+#if USE(BUN_JSC_ADDITIONS)
+    // Leaves the string null and characterBuffer empty when the allocation fails.
+    WTF_EXPORT_PRIVATE void tryAllocateUninitialized(size_t length, std::span<char>& characterBuffer);
+#endif
 
     // Copy-on-write
     WTF_EXPORT_PRIVATE std::span<char> mutableSpan() LIFETIME_BOUND;
@@ -233,6 +241,18 @@ public:
         characterBuffer = byteCast<CharacterType>(bytes);
         return result;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    // newUninitialized() crashes when it cannot allocate. This returns the null string, with an empty characterBuffer.
+    static CString tryNewUninitialized(size_t length, std::span<CharacterType>& characterBuffer)
+    {
+        std::span<char> bytes;
+        CString result;
+        result.tryAllocateUninitialized(length, bytes);
+        characterBuffer = byteCast<CharacterType>(bytes);
+        return result;
+    }
+#endif
 
     // These hide the CStringBase versions so that the encoding survives into the pointer and span types.
     const CharacterType* data() const LIFETIME_BOUND { return byteCast<CharacterType>(CStringBase::data()); }
