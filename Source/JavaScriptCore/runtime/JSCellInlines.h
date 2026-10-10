@@ -224,6 +224,9 @@ inline TriState JSCell::isConstructorWithConcurrency()
         return (methodTable()->getConstructData(this).type != CallData::Type::None) ? TriState::True : TriState::False;
     // We know that both getConstructData of both types are concurrency aware. Plus, derived classes of JSFunction and InternalFunction
     // never override getConstructData (this is ensured by ASSERT in JSFunction and InternalFunction).
+#if USE(BUN_JSC_ADDITIONS)
+    // Bun: a derived class of InternalFunction can take JSCell::getConstructData, which is concurrency aware too.
+#endif
     if (type() == JSFunctionType || type() == InternalFunctionType)
         return (methodTable()->getConstructData(this).type != CallData::Type::None) ? TriState::True : TriState::False;
     return TriState::Indeterminate;
