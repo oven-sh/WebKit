@@ -36,7 +36,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
-const ASCIILiteral SymbolCoercionError { "Cannot convert a symbol to a string"_s };
+const ASCIILiteral SymbolCoercionError { "Cannot convert a Symbol value to a string"_s };
 
 static_assert(sizeof(JSCell) == sizeof(uint64_t), "jscell is eight bytes");
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSCell);
