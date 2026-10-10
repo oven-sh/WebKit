@@ -108,7 +108,7 @@ bool ImportDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
 
     auto phase = m_type == ImportType::Deferred ? AbstractModuleRecord::ModulePhase::Defer : AbstractModuleRecord::ModulePhase::Evaluation;
     auto moduleRequestType = result.value() ? result.value()->type() : ScriptFetchParameters::Type::JavaScript;
-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), phase);
+    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), attributesList(), phase);
     for (auto* specifier : m_specifierList->specifiers()) {
         analyzer.moduleRecord()->addImportEntry(JSModuleRecord::ImportEntry {
             specifier->importedName() == analyzer.vm().propertyNames->starNamespacePrivateName
@@ -132,7 +132,7 @@ bool ExportAllDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
     }
 
     auto moduleRequestType = result.value() ? result.value()->type() : ScriptFetchParameters::Type::JavaScript;
-    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
+    analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), attributesList());
     analyzer.moduleRecord()->addStarExportEntry(m_moduleName->moduleName(), moduleRequestType);
     return true;
 }
@@ -159,7 +159,7 @@ bool ExportNamedDeclarationNode::analyzeModule(ModuleAnalyzer& analyzer)
 
         if (result.value())
             moduleRequestType = result.value()->type();
-        analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()));
+        analyzer.appendRequestedModule(m_moduleName->moduleName(), WTF::move(result.value()), attributesList());
     }
 
     for (auto* specifier : m_specifierList->specifiers()) {
