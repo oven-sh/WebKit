@@ -26,6 +26,8 @@
 #include "config.h"
 #include "StackVisitor.h"
 
+#include "AOTRuntime.h"
+
 #include "ClonedArguments.h"
 #include "DebuggerPrimitives.h"
 #include "ExecutableBaseInlines.h"
@@ -40,8 +42,121 @@
 
 namespace JSC {
 
-StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
+static CallFrame* callerOf(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC)
 {
+    EntryFrame* calleeEntryFrame = entryFrame;
+    returnPC = callFrame->rawReturnPC();
+    CallFrame* caller = callFrame->callerFrame(entryFrame);
+#if ENABLE(AOT)
+    if (entryFrame != calleeEntryFrame && caller && AOT::hasCode())
+        returnPC = AOT::returnAddressForFrame(caller, calleeEntryFrame);
+#else
+    UNUSED_VARIABLE(calleeEntryFrame);
+#endif
+    return caller;
+}
+
+#if ENABLE(AOT)
+ALWAYS_INLINE AOT::ImageAddressInfo StackVisitor::classify(const void* address)
+{
+    if (address == m_classifiedAddress)
+        return m_classification;
+    m_classifiedAddress = address;
+    // What was asked about before is a return address into a function.
+    if (m_onlyAOTInstance && address) {
+        if (auto& asked = m_onlyAOTInstance->cachedAddressInfo(address); asked.address == address)
+            return m_classification = { AOT::ImageAddressInfo::Function, asked.function, 0 };
+    }
+    return m_classification = AOT::classifyAddress(address);
+}
+#endif
+
+ALWAYS_INLINE CallFrame* StackVisitor::skipStubFrames(CallFrame* callFrame, EntryFrame*& entryFrame, void*& returnPC, CallFrame*& adapter)
+{
+#if ENABLE(AOT)
+    while (callFrame) {
+        switch (classify(removeCodePtrTag(returnPC)).kind) {
+        case AOT::ImageAddressInfo::Stub:
+            if (callFrame->callerFrameOrEntryFrame() == entryFrame) {
+                returnPC = nullptr;
+                return callFrame;
+            }
+            returnPC = callFrame->rawReturnPC();
+            callFrame = callFrame->callerFrame();
+            continue;
+        case AOT::ImageAddressInfo::Adapter:
+            adapter = callFrame;
+            callFrame = callerOf(callFrame, entryFrame, returnPC);
+            continue;
+        case AOT::ImageAddressInfo::Function:
+        case AOT::ImageAddressInfo::NotInImage:
+            return callFrame;
+        }
+    }
+#else
+    UNUSED_PARAM(entryFrame);
+    UNUSED_PARAM(returnPC);
+    UNUSED_PARAM(adapter);
+#endif
+    return callFrame;
+}
+
+ALWAYS_INLINE void StackVisitor::findCaller(CallFrame* callFrame)
+{
+    EntryFrame* entryFrame = m_frame.m_entryFrame;
+    void* returnPC = nullptr;
+    CallFrame* adapter = nullptr;
+    CallFrame* caller;
+    if (m_frame.m_aotFunction) {
+        returnPC = callFrame->rawReturnPC();
+        caller = callFrame->callerFrame();
+    } else
+        caller = callerOf(callFrame, entryFrame, returnPC);
+    m_frame.m_callerFrame = skipStubFrames(caller, entryFrame, returnPC, adapter);
+    m_frame.m_callerReturnPC = returnPC;
+    m_frame.m_callerEntryFrame = entryFrame;
+    m_frame.m_callerIsEntryFrame = entryFrame != m_frame.m_entryFrame;
+    m_frame.m_aotAdapterFrame = adapter;
+}
+
+#if ENABLE(AOT)
+// What readFrame() and readAOTFrame() come to from a frame of compiled code to a caller that is one too, with no adapter between them, whose return address and call site were asked
+// about before, and whose function has no inlined frames. What readAOTFrame() gave the frame before and would give again is left as it is.
+ALWAYS_INLINE bool StackVisitor::tryGotoCompiledCaller()
+{
+    using Asked = AOT::Instance::CachedAddressInfo;
+    CallFrame* callFrame = m_frame.m_callerFrame;
+    if (!m_frame.m_aotFunction || !m_aotInstance || !callFrame || callFrame == m_frame.m_callFrame)
+        return false;
+    void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    auto& asked = m_aotInstance->cachedAddressInfo(returnPC);
+    if (!returnPC || asked.address != returnPC || asked.site >= Asked::hasNoSite || m_aotInstance->callSiteOverrides)
+        return false;
+    AOT::FunctionRef function { m_aotInstance, asked.function };
+    auto& info = function.info();
+    if (info.hasInlineFrames)
+        return false;
+    m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+    m_frame.m_callFrame = callFrame;
+    m_previousReturnPC = returnPC;
+    m_frame.m_returnPC = returnPC;
+    m_frame.m_frameAOTFunction = function;
+    m_frame.m_aotFunction = function;
+    m_frame.m_typedAOTFunction = info.isTyped ? info.typedFunction() : AOT::FunctionRef::none;
+    m_frame.m_bytecodeIndex = CallSiteIndex(asked.site).bytecodeIndex();
+    m_frame.m_codeBlock = function.codeBlockIfExists();
+    findCaller(callFrame);
+    if (m_frame.m_aotAdapterFrame)
+        m_aotInstance = nullptr;
+    return true;
+}
+#endif
+
+StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame, bool wantsOnlyHandlers)
+    : m_wantsOnlyHandlers(wantsOnlyHandlers)
+{
+    if (vm.m_aotInstances.size() == 1)
+        m_onlyAOTInstance = vm.m_aotInstances[0];
     CallFrame* topFrame = nullptr;
     if (startFrame) {
         ASSERT(!vm.topCallFrame || static_cast<void*>(vm.topCallFrame) != vm.topEntryFrame);
@@ -50,11 +165,39 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
         topFrame = vm.topCallFrame;
         if (topFrame) {
             m_previousReturnPC = vm.maybeReturnPC;
-            if (skipFirstFrame || topFrame->isZombieFrame()) {
-                m_previousReturnPC = topFrame->rawReturnPC();
-                topFrame = topFrame->callerFrame(m_frame.m_entryFrame);
+            bool isEngineFrame = true;
+#if ENABLE(AOT)
+            if (AOT::hasCode()) {
+                void* returnPC = AOT::returnAddressForFrame(topFrame, __builtin_frame_address(0));
+                if (returnPC && classify(returnPC).kind != AOT::ImageAddressInfo::NotInImage) {
+                    topFrame = skipStubFrames(topFrame, m_frame.m_entryFrame, returnPC, m_aotAdapterSkippedAtTop);
+                    m_topEntryFrameIsEmpty = m_frame.m_entryFrame != vm.topEntryFrame;
+                    m_previousReturnPC = returnPC;
+                    isEngineFrame = classify(removeCodePtrTag(returnPC)).kind == AOT::ImageAddressInfo::NotInImage;
+                    if (startFrame == vm.topCallFrame)
+                        startFrame = topFrame;
+                }
+            }
+#endif
+            if (topFrame && !isEngineFrame && skipFirstFrame) {
+                CallFrame* first = topFrame;
+                readFrame(first);
+                gotoNextFrame();
+                m_frame.m_index = 0;
                 m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
-                if (startFrame == vm.topCallFrame)
+                if (startFrame == first)
+                    startFrame = m_frame.callFrame();
+                while (m_frame.callFrame() && m_frame.callFrame() != startFrame)
+                    gotoNextFrame();
+                return;
+            }
+            if (topFrame && isEngineFrame && (skipFirstFrame || topFrame->isZombieFrame())) {
+                CallFrame* first = topFrame;
+                CallFrame* adapter = nullptr;
+                topFrame = callerOf(first, m_frame.m_entryFrame, m_previousReturnPC);
+                topFrame = skipStubFrames(topFrame, m_frame.m_entryFrame, m_previousReturnPC, adapter);
+                m_topEntryFrameIsEmpty = (m_frame.m_entryFrame != vm.topEntryFrame);
+                if (startFrame == first)
                     startFrame = topFrame;
             }
         }
@@ -69,6 +212,21 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame)
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;
+#if ENABLE(AOT)
+    if (m_frame.m_aotInlineFrame) {
+        auto location = m_frame.m_frameAOTFunction.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
+        m_frame.m_aotFunction = location.function;
+        m_frame.m_aotInlineFrame = location.inlineFrame;
+        m_frame.m_typedAOTFunction = location.typedFunction;
+        m_frame.m_isTailDeleted = location.isTailDeleted;
+        m_frame.m_bytecodeIndex = location.bytecodeIndex;
+        m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
+        return;
+    }
+    m_frame.m_isTailDeleted = false;
+    if (tryGotoCompiledCaller())
+        return;
+#endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {
         InlineCallFrame* inlineCallFrame = m_frame.inlineCallFrame();
@@ -105,7 +263,7 @@ inline CallFrame* StackVisitor::updatePreviousReturnPCIfNecessary(CallFrame* cal
 {
     if (m_frame.m_callFrame) {
         if (m_frame.m_callFrame != callFrame)
-            m_previousReturnPC = m_frame.m_callFrame->rawReturnPC();
+            m_previousReturnPC = m_frame.m_callerReturnPC;
     }
     return callFrame;
 }
@@ -116,6 +274,16 @@ void StackVisitor::readFrame(CallFrame* callFrame)
         m_frame.setToEnd();
         return;
     }
+
+#if ENABLE(AOT)
+    {
+        void* returnPC = m_frame.m_callFrame && m_frame.m_callFrame != callFrame ? m_frame.m_callerReturnPC : m_previousReturnPC;
+        if (AOT::ImageAddressInfo what = classify(removeCodePtrTag(returnPC)); what.kind == AOT::ImageAddressInfo::Function) {
+            readAOTFrame(callFrame, removeCodePtrTag(returnPC), what.index);
+            return;
+        }
+    }
+#endif
 
     if (callFrame->isNativeCalleeFrame()) {
         readInlinableNativeCalleeFrame(callFrame);
@@ -170,14 +338,56 @@ void StackVisitor::readFrame(CallFrame* callFrame)
 #endif // !ENABLE(DFG_JIT)
 }
 
+#if ENABLE(AOT)
+void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t index)
+{
+    bool calleeRuns = m_frame.m_callFrame && (m_frame.m_aotFunction || m_frame.m_isWasmFrame || (!m_frame.m_callee.isNativeCallee() && m_frame.m_callee.rawPtr() && m_frame.m_callee.asCell()->isCallable()));
+    m_frame.m_callFrame = callFrame;
+    m_previousReturnPC = returnPC;
+    m_frame.m_returnPC = returnPC;
+    m_frame.m_argumentCountIncludingThis = 0;
+    m_frame.m_isWasmFrame = false;
+    m_frame.m_callee = CalleeBits();
+#if ENABLE(DFG_JIT)
+    m_frame.m_inlineDFGCallFrame = nullptr;
+#endif
+    m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
+    if (!m_aotInstance)
+        m_aotInstance = m_onlyAOTInstance ? m_onlyAOTInstance : AOT::instanceForFrame(callFrame);
+    m_frame.m_frameAOTFunction = { m_aotInstance, index };
+    if (m_wantsOnlyHandlers && m_frame.m_frameAOTFunction.info().hasNoHandlers) {
+        m_frame.m_aotFunction = m_frame.m_frameAOTFunction;
+        m_frame.m_aotInlineFrame = 0;
+        m_frame.m_typedAOTFunction = 0;
+        m_frame.m_isTailDeleted = false;
+        m_frame.m_bytecodeIndex = BytecodeIndex();
+        m_frame.m_codeBlock = nullptr;
+        findCaller(callFrame);
+        if (m_frame.m_aotAdapterFrame)
+            m_aotInstance = nullptr;
+        return;
+    }
+    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC, callFrame);
+    m_frame.m_aotFunction = location.function;
+    m_frame.m_aotInlineFrame = location.inlineFrame;
+    m_frame.m_typedAOTFunction = location.typedFunction;
+    m_frame.m_isTailDeleted = location.isTailCall && calleeRuns;
+    m_frame.m_bytecodeIndex = location.bytecodeIndex;
+    m_frame.m_codeBlock = m_frame.m_aotFunction.codeBlockIfExists();
+    findCaller(callFrame);
+    if (m_frame.m_aotAdapterFrame)
+        m_aotInstance = nullptr;
+}
+#endif
+
 void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin)
 {
     m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
     m_frame.m_returnPC = m_previousReturnPC;
     m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-    m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
-    m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
-    m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+    m_frame.m_aotFunction = { };
+    m_frame.m_aotInlineFrame = 0;
+    findCaller(callFrame);
     m_frame.m_isWasmFrame = false;
     m_frame.m_callee = callFrame->callee();
 #if ENABLE(DFG_JIT)
@@ -186,7 +396,7 @@ void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOri
     m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
 
     m_frame.m_codeBlock = callFrame->isNativeCalleeFrame() ? nullptr : callFrame->codeBlock();
-    m_frame.m_bytecodeIndex = !m_frame.codeBlock() ? BytecodeIndex(0)
+    m_frame.m_bytecodeIndex = !m_frame.hasCode() ? BytecodeIndex(0)
         : codeOrigin ? codeOrigin->bytecodeIndex()
         : callFrame->bytecodeIndex();
 
@@ -206,9 +416,8 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_returnPC = m_previousReturnPC;
         m_frame.m_isWasmFrame = true;
         m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-        m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
-        m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
-        m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+        m_frame.m_aotFunction = { };
+        findCaller(callFrame);
         m_frame.m_callee = callFrame->callee();
         m_frame.m_codeBlock = nullptr;
         m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
@@ -255,9 +464,8 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
         m_frame.m_returnPC = m_previousReturnPC;
         m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-        m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
-        m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
-        m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+        m_frame.m_aotFunction = { };
+        findCaller(callFrame);
         m_frame.m_isWasmFrame = false;
         m_frame.m_callee = callFrame->callee();
 #if ENABLE(DFG_JIT)
@@ -299,6 +507,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
         else
             m_frame.m_argumentCountIncludingThis = inlineCallFrame->argumentCountIncludingThis;
         m_frame.m_codeBlock = inlineCallFrame->baselineCodeBlock.get();
+        m_frame.m_aotFunction = { };
         m_frame.m_bytecodeIndex = codeOrigin->bytecodeIndex();
 
         JSFunction* callee = inlineCallFrame->calleeForCallFrame(callFrame);
@@ -317,6 +526,63 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
 }
 #endif // ENABLE(DFG_JIT)
 
+CodeBlock* StackVisitor::Frame::makeCodeBlock() const
+{
+#if ENABLE(AOT)
+    if (isTypedAOTFrame())
+        return nullptr;
+    m_codeBlock = m_aotFunction.ensureData()->ensureCodeBlock();
+#endif
+    return m_codeBlock;
+}
+
+bool StackVisitor::Frame::isHiddenAOTFrame() const
+{
+#if ENABLE(AOT)
+    if (isTypedAOTFrame())
+        return AOT::typedFunctionIsHiddenInStackTraces(m_typedAOTFunction);
+    if (m_aotFunction)
+        return m_aotFunction.info().isHiddenInStackTraces;
+#endif
+    return false;
+}
+
+ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
+{
+#if ENABLE(AOT)
+    if (m_aotFunction)
+        return m_aotFunction.executable();
+#endif
+    return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
+}
+
+JSCell* StackVisitor::Frame::aotCallee() const
+{
+#if ENABLE(AOT)
+    if (m_aotFunction && !m_aotInlineFrame)
+        return m_frameAOTFunction.calleeInFrame(m_callFrame);
+#endif
+    return nullptr;
+}
+
+bool StackVisitor::Frame::isBuiltinFunction() const
+{
+#if ENABLE(AOT)
+    if (m_aotFunction)
+        return m_aotFunction.isBuiltinFunction();
+#endif
+    return m_codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
+}
+
+JSGlobalObject* StackVisitor::Frame::lexicalGlobalObject(VM& vm) const
+{
+#if ENABLE(AOT)
+    if (m_aotFunction)
+        return m_aotFunction.instance->globalObject;
+#endif
+    return m_callFrame->lexicalGlobalObject(vm);
+}
+
 StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
 {
     if (isNativeCalleeFrame()) {
@@ -330,10 +596,15 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
         return CodeType::Native;
     }
 
-    if (!codeBlock())
+    if (!hasCode())
         return CodeType::Native;
 
-    switch (codeBlock()->codeType()) {
+#if ENABLE(AOT)
+    JSC::CodeType type = isTypedAOTFrame() ? AOT::typedFunctionCodeType(m_typedAOTFunction) : m_aotFunction ? m_aotFunction.codeType() : m_codeBlock->codeType();
+#else
+    JSC::CodeType type = m_codeBlock->codeType();
+#endif
+    switch (type) {
     case EvalCode:
         return CodeType::Eval;
     case ModuleCode:
@@ -348,6 +619,13 @@ StackVisitor::Frame::CodeType StackVisitor::Frame::codeType() const
 }
 
 #if ENABLE(ASSEMBLER)
+#if ENABLE(AOT)
+const AOT::ImageFunction* StackVisitor::Frame::compiledFunctionForUnwinding() const
+{
+    return m_aotFunction ? m_frameAOTFunction.info().function() : nullptr;
+}
+#endif
+
 const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding()
 {
     if (!NUMBER_OF_CALLEE_SAVES_REGISTERS)
@@ -374,6 +652,10 @@ const RegisterAtOffsetList* StackVisitor::Frame::calleeSaveRegistersForUnwinding
         return nullptr;
     }
 
+#if ENABLE(AOT)
+    if (m_aotFunction)
+        return AOT::calleeSaveRegistersOf(*m_frameAOTFunction.info().function());
+#endif
     if (CodeBlock* codeBlock = this->codeBlock())
         return codeBlock->jitCode()->calleeSaveRegisters();
 
@@ -401,8 +683,17 @@ String StackVisitor::Frame::functionName() const
             traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(callee)).impl();
         break;
     }
-    case CodeType::Function: 
-        traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(this->callee().asCell())).impl();
+    case CodeType::Function:
+#if ENABLE(AOT)
+        if (isTypedAOTFrame()) {
+            traceLine = AOT::typedFunctionName(m_typedAOTFunction);
+            break;
+        }
+#endif
+        if (JSCell* callee = this->callee().asCell())
+            traceLine = getCalculatedDisplayName(callFrame()->deprecatedVM(), uncheckedDowncast<JSObject>(callee)).impl();
+        else if (auto* executable = dynamicDowncast<FunctionExecutable>(ownerExecutable()))
+            traceLine = executable->ecmaNameWithoutGC();
         break;
     case CodeType::Global:
         traceLine = "global code"_s;
@@ -420,7 +711,14 @@ String StackVisitor::Frame::sourceURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
-        String sourceURL = codeBlock()->ownerExecutable()->sourceURL();
+#if ENABLE(AOT)
+        if (isTypedAOTFrame()) {
+            if (auto position = m_aotFunction.reportedPositionFor(bytecodeIndex()); position && position->source)
+                traceLine = AOT::ProgramData::get()->sourceName(position->source);
+            break;
+        }
+#endif
+        String sourceURL = ownerExecutable()->sourceURL();
         if (!sourceURL.isEmpty())
             traceLine = sourceURL.impl();
         break;
@@ -444,7 +742,9 @@ String StackVisitor::Frame::preRedirectURL() const
     case CodeType::Module:
     case CodeType::Function:
     case CodeType::Global: {
-        String preRedirectURL = codeBlock()->ownerExecutable()->preRedirectURL();
+        if (isTypedAOTFrame())
+            break;
+        String preRedirectURL = ownerExecutable()->preRedirectURL();
         if (!preRedirectURL.isEmpty())
             traceLine = preRedirectURL.impl();
         break;
@@ -472,8 +772,8 @@ String StackVisitor::Frame::toString() const
 
 SourceID StackVisitor::Frame::sourceID()
 {
-    if (CodeBlock* codeBlock = this->codeBlock())
-        return codeBlock->ownerExecutable()->sourceID();
+    if (ScriptExecutable* executable = ownerExecutable())
+        return executable->sourceID();
     return noSourceID;
 }
 
@@ -502,18 +802,24 @@ ClonedArguments* StackVisitor::Frame::createArguments(VM& vm)
 
 bool StackVisitor::Frame::hasLineAndColumnInfo() const
 {
-    return !!codeBlock();
+    return hasCode();
 }
 
 LineColumn StackVisitor::Frame::computeLineAndColumn() const
 {
-    CodeBlock* codeBlock = this->codeBlock();
-    if (!codeBlock)
+    if (!hasCode())
         return { };
 
-    auto lineColumn = codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+    ScriptExecutable* executable = ownerExecutable();
+#if ENABLE(AOT)
+    auto lineColumn = m_aotFunction ? m_aotFunction.lineColumnFor(bytecodeIndex()) : m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+#else
+    auto lineColumn = m_codeBlock->lineColumnForBytecodeIndex(bytecodeIndex());
+#endif
 
-    if (std::optional<int> overrideLineNumber = codeBlock->ownerExecutable()->overrideLineNumber(codeBlock->vm()))
+    if (!executable)
+        return lineColumn;
+    if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(executable->vm()))
         lineColumn.line = overrideLineNumber.value();
 
     return lineColumn;
@@ -528,11 +834,29 @@ void StackVisitor::Frame::setToEnd()
     m_isWasmFrame = false;
 }
 
+bool StackVisitor::Frame::isFrameOf(JSCell* function) const
+{
+    if (callee().isNativeCallee())
+        return false;
+#if ENABLE(AOT)
+    if (isTypedAOTFrame())
+        return AOT::isClosureOfTypedFunction(function, m_typedAOTFunction);
+#endif
+    if (JSCell* callee = this->callee().asCell())
+        return callee == function;
+    if (JSCell* callee = aotCallee())
+        return callee == function;
+    auto* jsFunction = dynamicDowncast<JSFunction>(function);
+    return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();
+}
+
 bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
 {
+    if (isTypedAOTFrame())
+        return false;
     ImplementationVisibility implementationVisibility = [&] () -> ImplementationVisibility {
-        if (auto* codeBlock = this->codeBlock()) {
-            if (auto* executable = codeBlock->ownerExecutable())
+        if (hasCode()) {
+            if (auto* executable = ownerExecutable())
                 return executable->implementationVisibility();
             return ImplementationVisibility::Public;
         }
@@ -588,6 +912,13 @@ void StackVisitor::Frame::dump(PrintStream& out, Indenter indent, WTF::Function<
 {
     if (!this->callFrame()) {
         out.print(indent, "frame 0x0\n");
+        return;
+    }
+
+    if (m_aotFunction) {
+        out.print(indent);
+        prefix(out);
+        out.print("frame ", RawPointer(this->callFrame()), " { name: ", functionName(), " sourceURL: ", sourceURL(), " ", bytecodeIndex(), " }\n");
         return;
     }
 

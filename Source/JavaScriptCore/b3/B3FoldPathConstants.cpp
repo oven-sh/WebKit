@@ -125,12 +125,14 @@ public:
 
         // Install the constants in the override blocks. We use one-shot insertion sets because
         // each block will get at most one thing inserted into it anyway.
-        for (auto& entry : overrides) {
-            for (Override& override : entry.value) {
+        Vector<Value*> overridden = copyToVector(overrides.keys());
+        std::ranges::sort(overridden, { }, &Value::index);
+        for (Value* value : overridden) {
+            for (Override& override : overrides.find(value)->value) {
                 if (!override.hasValue)
                     continue;
                 override.valueNode =
-                    m_insertionSet.insertIntConstant(0, entry.key, override.value);
+                    m_insertionSet.insertIntConstant(0, value, override.value);
                 m_insertionSet.execute(override.block);
             }
         }

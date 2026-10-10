@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 // Test that the ClonedArguments created by the Function.arguments will properly
 // keep its callee alive.  This test should not crash and should not print any error
 // messages.

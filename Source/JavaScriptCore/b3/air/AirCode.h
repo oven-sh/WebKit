@@ -206,6 +206,7 @@ public:
     {
         return m_prologueGenerators[entrypointIndex];
     }
+    void setEpilogueGenerator(RefPtr<PrologueGenerator>&& generator) { m_epilogueGenerator = WTF::move(generator); }
 
     void setNumEntrypoints(unsigned);
 
@@ -357,6 +358,14 @@ public:
 
     RegisterSet mutableGPRs();
     ScalarRegisterSet pinnedRegisters() const { return m_pinnedRegs; }
+#if USE(BUN_JSC_ADDITIONS)
+    void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
+    const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
+    void setKeepsFastTmpsFastWhenCoalesced() { m_keepsFastTmpsFastWhenCoalesced = true; }
+    bool keepsFastTmpsFastWhenCoalesced() const { return m_keepsFastTmpsFastWhenCoalesced; }
+    void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
+    bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
+#endif
     
     void emitDefaultPrologue(CCallHelpers&);
     void emitEpilogue(CCallHelpers&);
@@ -390,6 +399,11 @@ private:
     Vector<Reg> m_fpRegsInPriorityOrder;
     ScalarRegisterSet m_mutableRegs;
     ScalarRegisterSet m_pinnedRegs;
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet m_unsavedCalleeSaves;
+    bool m_keepsFastTmpsFastWhenCoalesced { false };
+    bool m_chargesForCalleeSaves { false };
+#endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
     SparseCollection<Special> m_specials;
@@ -409,6 +423,7 @@ private:
     Vector<FrequentedBlock> m_entrypoints; // This is empty until after lowerEntrySwitch().
     Vector<MacroAssembler::Label> m_entrypointLabels; // This is empty until code generation.
     Vector<Ref<PrologueGenerator>, 1> m_prologueGenerators;
+    RefPtr<PrologueGenerator> m_epilogueGenerator;
     RefPtr<WasmBoundsCheckGenerator> m_wasmBoundsCheckGenerator;
     const char* m_lastPhaseName;
     std::unique_ptr<Disassembler> m_disassembler;

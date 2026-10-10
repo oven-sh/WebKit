@@ -26,6 +26,7 @@
 #include "config.h"
 #include "ShadowChicken.h"
 
+#include "AOTFunction.h"
 #include "CodeBlock.h"
 #include "ShadowChickenInlines.h"
 #include "VMTrapsInlines.h"
@@ -113,6 +114,12 @@ void ShadowChicken::log(VM& vm, CallFrame* callFrame, const Packet& packet)
 
 void ShadowChicken::update(VM& vm, CallFrame* callFrame)
 {
+#if ENABLE(AOT)
+    if (AOT::hasCode()) {
+        m_logCursor = m_log;
+        return;
+    }
+#endif
     if (ShadowChickenInternal::verbose) {
         dataLog("Running update on: ", *this, "\n");
         WTFReportBacktrace();

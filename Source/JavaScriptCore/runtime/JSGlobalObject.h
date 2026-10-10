@@ -183,7 +183,6 @@ constexpr bool typeExposedByDefault = true;
     macro(BigInt, bigInt, bigIntObject, BigIntObject, BigInt, object, typeExposedByDefault) \
     macro(Symbol, symbol, symbolObject, SymbolObject, Symbol, object, typeExposedByDefault) \
 
-
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
     macro(StringIterator, stringIterator, stringIterator, JSStringIterator, StringIterator, iterator, typeExposedByDefault) \
 
@@ -236,11 +235,18 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 #undef DECLARE_SIMPLE_BUILTIN_TYPE
 
+namespace AOT {
+struct Instance;
+}
+
 class JSGlobalObject : public JSSegmentedVariableObject {
 private:
     // m_vm must be a pointer (instead of a reference) because the JSCLLIntOffsetsExtractor
     // cannot handle it being a reference.
     VM* const m_vm;
+    AOT::Instance* m_aotInstance { nullptr };
+    // Of AOT::Typed::Closure: see AOT::Instance::typedClosureStructureIDs.
+    WriteBarrierStructureID m_aotClosureStructures[5];
     Debugger* m_debugger { nullptr };
     QueuedTaskResult m_microtaskRunnability { QueuedTaskResult::Executed };
     bool m_associatedContextIsFullyActive { true };
@@ -249,7 +255,11 @@ private:
 
     ALWAYS_INLINE void updateCanFastQueueMicrotask()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger && m_microtaskRunnability == QueuedTaskResult::Executed;
+#else
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
+#endif
     }
 
 // Our hashtable code-generator tries to access these properties, so we make them public.
@@ -699,10 +709,12 @@ public:
     bool m_webAssemblyEnabled { true };
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
+    bool m_isNumberingIntrinsics { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
     RuntimeFlags m_runtimeFlags;
+    Vector<EncodedJSValue> m_immutableIntrinsics;
     WeakPtr<ConsoleClient> m_consoleClient;
     Weak<FunctionExecutable> m_executableForCachedFunctionExecutableForFunctionConstructor;
     
@@ -1151,11 +1163,19 @@ public:
 
     static constexpr ptrdiff_t offsetOfGlobalThis() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalThis); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
+    static constexpr ptrdiff_t offsetOfCanFastQueueMicrotask() { return OBJECT_OFFSETOF(JSGlobalObject, m_canFastQueueMicrotask); }
+    static constexpr ptrdiff_t offsetOfMicrotaskQueue() { return OBJECT_OFFSETOF(JSGlobalObject, m_microtaskQueue); }
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    Structure* aotClosureStructure(unsigned which) const { return m_aotClosureStructures[which].get(); }
+    void setAOTClosureStructure(VM& vm, unsigned which, Structure* structure) { m_aotClosureStructures[which].set(vm, this, structure); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalEnvironment() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalEnvironment); }
     static constexpr ptrdiff_t offsetOfGlobalLexicalBindingEpoch() { return OBJECT_OFFSETOF(JSGlobalObject, m_globalLexicalBindingEpoch); }
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
     static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
+    static constexpr ptrdiff_t offsetOfOriginalArrayStructureForIndexingShape() { return OBJECT_OFFSETOF(JSGlobalObject, m_originalArrayStructureForIndexingShape); }
     static constexpr ptrdiff_t offsetOfStringIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_stringIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
@@ -1274,6 +1294,17 @@ public:
     bool stringPrototypeChainIsSaneConcurrently(Structure* stringPrototypeStructure, Structure* objectPrototypeStructure);
     bool objectPrototypeChainIsSane();
     bool arrayPrototypeChainIsSane();
+    // With VM::useImmutableIntrinsics. What the engine gives a realm stays what it is:
+    // - a prototype keeps its properties and gets no others;
+    // - any other object (a constructor, a namespace such as Math, a function) keeps its properties, and can be given others;
+    // - the properties of the global object that name them are read-only and non-configurable.
+    // What exists when the realm is made is dealt with then, anything else when it is made, and nothing is made for this but what
+    // ImmutableIntrinsics numbers.
+    JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
+    enum class IntrinsicKind : bool { Prototype, Other };
+    JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind);
+    void makeValueOfIntrinsicImmutable(JSObject& holder, PropertyName, JSValue, unsigned attributes);
+    std::span<const EncodedJSValue> immutableIntrinsics() const { return m_immutableIntrinsics.span(); }
     bool stringPrototypeChainIsSane();
 
     bool isRegExpRecompiled() const
@@ -1386,7 +1417,11 @@ public:
     ImportMap& importMap() { return m_importMap.get(); }
 
     QueuedTaskResult microtaskRunnability() const { return m_microtaskRunnability; }
-    void setMicrotaskRunnability(QueuedTaskResult runnability) { m_microtaskRunnability = runnability; }
+    void setMicrotaskRunnability(QueuedTaskResult runnability)
+    {
+        m_microtaskRunnability = runnability;
+        updateCanFastQueueMicrotask();
+    }
 
     void setAssociatedContextIsFullyActive(bool value)
     {

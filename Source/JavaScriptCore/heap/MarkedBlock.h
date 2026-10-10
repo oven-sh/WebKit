@@ -179,6 +179,9 @@ public:
         void resumeAllocating(FreeList&); // Call this if you canonicalized a block for some non-collection related purpose.
             
         size_t cellSize();
+#if USE(BUN_JSC_ADDITIONS)
+        static constexpr ptrdiff_t offsetOfAtomsPerCell() { return OBJECT_OFFSETOF(Handle, m_atomsPerCell); }
+#endif
         inline unsigned cellsPerBlock();
 
         CellAttributes attributes() const;
@@ -277,6 +280,10 @@ public:
         ~Header();
 
         static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Header, m_vm); }
+#if USE(BUN_JSC_ADDITIONS)
+        // The reference, which is the member ahead of m_vm.
+        static constexpr ptrdiff_t offsetOfHandle() { return offsetOfVM() - static_cast<ptrdiff_t>(sizeof(void*)); }
+#endif
 
         Handle* handlePointerForNullCheck()
         {

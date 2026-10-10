@@ -26,6 +26,10 @@
 #include "config.h"
 #include "B3AbstractHeapRepository.h"
 
+#include "AOTRuntime.h"
+#include "AOTTypedCompactTable.h"
+#include "AOTTypedObject.h"
+#include "CodeBlock.h"
 #if ENABLE(B3_JIT)
 
 #include "B3CCallValue.h"
@@ -47,6 +51,7 @@
 #include "JSArrayBufferView.h"
 #include "JSBoundFunction.h"
 #include "JSGlobalObject.h"
+#include "NativeExecutable.h"
 #include "JSGlobalProxy.h"
 #include "JSMap.h"
 #include "JSPromise.h"
@@ -125,6 +130,37 @@ AbstractHeapRepository::AbstractHeapRepository()
     VM_heap_barrierThreshold.changeParent(&VM_heapState);
     VM_heap_mutatorShouldBeFenced.changeParent(&VM_heapState);
 
+#if ENABLE(AOT)
+    // Last, and in this order: what a call writes, by AOT::Typed::Writes and whether it writes shape words, is then one range.
+    AOTTyped_slots.atAnyNumber().changeParent(&AOTTyped_fields);
+    AOTTyped_variables.atAnyNumber().changeParent(&AOTTyped_fields);
+    AOTTypedObject_orderWord.changeParent(&AOTTypedObject_words);
+    // Between the two: what writes shape words may make a plain object one of the program where it is: another header, other slots. What writes the heap and no shape word ends here.
+    JSCellHeaderAndNamedProperties.changeParent(&AOTTypedObject_words);
+    AOTTypedObject_shapeWord.changeParent(&AOTTypedObject_words);
+    AOTTyped_fields.changeParent(&root);
+    TypedArrayProperties.changeParent(&root);
+    AOTTyped_collectorState.changeParent(&root);
+    indexedContiguousProperties.atAnyIndex().changeParent(&root);
+    AOTTyped_runtimeState.changeParent(&root);
+    AOTTypedObject_extension.changeParent(&root);
+    AOTTypedObject_words.changeParent(&root);
+    // What compiled code reads in place of the state of the run time. A load from the rest of it is taken to be from any of these.
+    JSRopeString_fiber0.changeParent(&AOTTyped_runtimeState);
+    JSRopeString_fiber1.changeParent(&AOTTyped_runtimeState);
+    JSRopeString_fiber2.changeParent(&AOTTyped_runtimeState);
+    StringImpl_hashAndFlags.changeParent(&AOTTyped_runtimeState);
+    JSMap_storage.changeParent(&AOTTyped_runtimeState);
+    JSMap_compactTable.changeParent(&AOTTyped_runtimeState);
+    JSSet_compactTable.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_used.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_deleted.changeParent(&AOTTyped_runtimeState);
+    JSSet_storage.changeParent(&AOTTyped_runtimeState);
+    OrderedHashTableData.changeParent(&AOTTyped_runtimeState);
+    JSPromise_packed.changeParent(&AOTTyped_runtimeState);
+    JSPromise_slot.changeParent(&AOTTyped_runtimeState);
+#endif
+
     RELEASE_ASSERT(!JSCell_freeListNext.offset());
 }
 
@@ -153,6 +189,11 @@ void AbstractHeapRepository::decoratePatchpointRead(const AbstractHeap* heap, Va
 void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* heap, Value* value)
 {
     m_heapForPatchpointWrite.append(HeapForValue(heap, value));
+}
+
+void AbstractHeapRepository::decoratePatchpointWrite(const AbstractHeap* first, const AbstractHeap* last, Value* value)
+{
+    m_heapsForPatchpointWrite.append({ first, HeapForValue(last, value) });
 }
 
 void AbstractHeapRepository::decorateFenceRead(const AbstractHeap* heap, Value* value)
@@ -236,6 +277,8 @@ void AbstractHeapRepository::computeRangesAndDecorateInstructions()
         entry.value->as<PatchpointValue>()->effects.reads = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForPatchpointWrite)
         entry.value->as<PatchpointValue>()->effects.writes = rangeFor(entry.heap);
+    for (auto& [first, entry] : m_heapsForPatchpointWrite)
+        entry.value->as<PatchpointValue>()->effects.writes = HeapRange(first->range().begin(), entry.heap->range().end());
     for (HeapForValue entry : m_heapForFenceRead)
         entry.value->as<FenceValue>()->read = rangeFor(entry.heap);
     for (HeapForValue entry : m_heapForFenceWrite)

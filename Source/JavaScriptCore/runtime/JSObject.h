@@ -69,6 +69,7 @@ class PropertyNameArrayBuilder;
 class Structure;
 class ThrowScope;
 class VM;
+struct BuiltinCode;
 struct HashTable;
 struct HashTableValue;
 
@@ -77,6 +78,9 @@ extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineErr
 extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutablePropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldOfInheritorError;
+extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutableShapeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError;
@@ -361,6 +365,10 @@ public:
     bool hasOwnProperty(JSGlobalObject*, unsigned) const;
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE void evictTypedField(VM&, PropertyName);
+    JS_EXPORT_PRIVATE unsigned evictMistypedFields(VM&);
+#endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     bool deleteProperty(JSGlobalObject*, PropertyName);
     bool deleteProperty(JSGlobalObject*, uint32_t propertyName);
@@ -392,6 +400,10 @@ public:
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName);
         checkOffset(offset, structure->inlineCapacity());
+#if ENABLE(AOT)
+        if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
+            return getDirectOfCompiledObject(vm, propertyName, nullptr);
+#endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
     
@@ -400,6 +412,10 @@ public:
         Structure* structure = this->structure();
         PropertyOffset offset = structure->get(vm, propertyName, attributes);
         checkOffset(offset, structure->inlineCapacity());
+#if ENABLE(AOT)
+        if (offset == invalidOffset && structure->hasImmutableShape()) [[unlikely]]
+            return getDirectOfCompiledObject(vm, propertyName, &attributes);
+#endif
         return offset != invalidOffset ? getDirect(offset) : JSValue();
     }
 
@@ -489,7 +505,7 @@ public:
     bool putOwnDataProperty(VM&, PropertyName, JSValue, PutPropertySlot&);
     bool putOwnDataPropertyMayBeIndex(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
 
-    void putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
+    bool putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
 private:
     void validatePutOwnDataProperty(VM&, PropertyName, JSValue);
 public:
@@ -507,8 +523,8 @@ public:
     JS_EXPORT_PRIVATE bool putDirectNativeFunction(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, const DOMJIT::Signature*, unsigned attributes);
     JS_EXPORT_PRIVATE void putDirectNativeFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, unsigned functionLength, NativeFunction, ImplementationVisibility, Intrinsic, unsigned attributes);
 
-    JS_EXPORT_PRIVATE JSFunction* putDirectBuiltinFunction(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
-    JSFunction* putDirectBuiltinFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, FunctionExecutable*, unsigned attributes);
+    JS_EXPORT_PRIVATE JSFunction* putDirectBuiltinFunction(VM&, JSGlobalObject*, const PropertyName&, BuiltinCode, unsigned attributes);
+    JSFunction* putDirectBuiltinFunctionWithoutTransition(VM&, JSGlobalObject*, const PropertyName&, BuiltinCode, unsigned attributes);
 
     JS_EXPORT_PRIVATE static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
     bool createDataProperty(JSGlobalObject*, PropertyName, JSValue, bool shouldThrow);
@@ -574,13 +590,43 @@ public:
 
     inline void setStructure(VM&, Structure*); // Defined in StructureCreateInlines.h
 
+    // For the intrinsics (JSGlobalObject::makeIntrinsicsImmutable()). The properties the object has become non-configurable and, unless
+    // they are accessors, read-only; so does an entry of its class's static table when it is reified, and before that it is treated
+    // as if it were. Its prototype stays the one it has, and it gets no property under a name that it inherits from another such
+    // object. An object that inherits from it can still be assigned a property of its own under such a name.
+    enum class FixedObject : bool { StaysExtensible, BecomesNonExtensible };
+    JS_EXPORT_PRIVATE void fixProperties(VM&, FixedObject);
+    JS_EXPORT_PRIVATE bool inheritsImmutableProperty(VM&, PropertyName);
+    // With immutable intrinsics, ArrayType says that an array is as the engine makes them: it inherits from Array.prototype directly, has
+    // no property of its own under a name it inherits, and no element that is an accessor. One that is about to be given any of these
+    // is of DerivedArrayType from then on, as what a class that extends Array makes is from the start, and keeps its elements in
+    // ArrayStorage, which it never leaves: code that stores or reads elements in place by their shape does not take it for what it was.
+    JS_EXPORT_PRIVATE void becomeDerivedArray(VM&);
     JS_EXPORT_PRIVATE void convertToDictionary(VM&);
     JS_EXPORT_PRIVATE void convertToUncacheableDictionary(VM&);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE ASCIILiteral throwImmutableShapeError(VM&);
+#endif
+#if ENABLE(AOT)
+    // What getDirect() and putDirect() come to for an AOT::Typed::Object, whose properties its Structure does not list. For any other object
+    // of an immutable shape: nothing, and the error.
+    JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
+    JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
+#endif
 
     void flattenDictionaryObject(VM& vm)
     {
         structure()->flattenDictionaryStructure(vm, this);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    // What grows alone is a dictionary while it grows: Structure::growsAlone(). Whoever keeps something for a Structure and refuses a dictionary calls this first: nothing moves, and the StructureID stays.
+    void flattenIfCacheableDictionary(VM& vm)
+    {
+        Structure* structure = this->structure();
+        if (structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore() && !structure->hasUsedUpItsTurnsAlone()) [[unlikely]]
+            structure->flattenDictionaryStructure(vm, this);
+    }
+#endif
     void shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM&, Structure*, size_t outOfLineCapacityAfter);
 
     JSGlobalObject* realmMayBeNull() const
@@ -665,6 +711,8 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
+    bool isPrototypeUsedByMegamorphicCache() const;
+    void setIsPrototypeUsedByMegamorphicCache() { setPerCellBit(true); }
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 
@@ -1401,7 +1449,6 @@ bool setterThatIgnoresPrototypeProperties(JSGlobalObject*, JSValue thisValue, JS
 
 #define JSC_NATIVE_GETTER_WITHOUT_TRANSITION(jsName, cppName, attributes) \
     JSC_NATIVE_INTRINSIC_GETTER_WITHOUT_TRANSITION((jsName), (cppName), (attributes), JSC::NoIntrinsic)
-
 
 #define STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(DerivedClass, BaseClass) \
     static_assert(sizeof(DerivedClass) == sizeof(BaseClass)); \

@@ -375,6 +375,7 @@ namespace JSC {
         void emit_op_get_argument(const JSInstruction*);
         void emit_op_argument_count(const JSInstruction*);
         void emit_op_check_tdz(const JSInstruction*);
+        void emit_op_check_type(const JSInstruction*);
         void NODELETE emit_op_identity_with_profile(const JSInstruction*);
         void emit_op_debug(const JSInstruction*);
         void emit_op_del_by_id(const JSInstruction*);
@@ -449,6 +450,7 @@ namespace JSC {
         void emit_op_loop_hint(const JSInstruction*);
         void emit_op_check_traps(const JSInstruction*);
         void NODELETE emit_op_nop(const JSInstruction*);
+        void NODELETE emit_op_type_tag(const JSInstruction*);
         void emit_op_super_sampler_begin(const JSInstruction*);
         void emit_op_super_sampler_end(const JSInstruction*);
         void emit_op_lshift(const JSInstruction*);

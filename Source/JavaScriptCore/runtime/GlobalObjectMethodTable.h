@@ -92,6 +92,12 @@ struct GlobalObjectMethodTable {
     String (*codeForEval)(JSGlobalObject*, JSValue);
     bool (*canCompileStrings)(JSGlobalObject*, CompilationType, String, const ArgList&);
     Structure* (*trustedScriptStructure)(JSGlobalObject*);
+#if USE(BUN_JSC_ADDITIONS)
+    // For code of the host's own modules that is compiled ahead of time: the module of this number in the host's registry, and what the host
+    // has in native code under this number. Empty: it has thrown.
+    JSValue (*requireBuiltinModule)(JSGlobalObject*, uint32_t id);
+    JSValue (*nativeBinding)(JSGlobalObject*, uint32_t index);
+#endif
 };
 
 } // namespace JSC

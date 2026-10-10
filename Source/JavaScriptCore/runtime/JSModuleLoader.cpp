@@ -26,6 +26,7 @@
 
 #include "config.h"
 #include "JSModuleLoader.h"
+#include "AOTRuntime.h"
 #include "ProgramExecutable.h"
 
 #include "BuiltinNames.h"
@@ -256,6 +257,10 @@ JSModuleLoader* JSModuleLoader::create(JSGlobalObject* globalObject, VM& vm, JSS
 void JSModuleLoader::destroy(JSCell* cell)
 {
     SUPPRESS_MEMORY_UNSAFE_CAST auto* thisObject = static_cast<JSModuleLoader*>(cell);
+#if ENABLE(AOT)
+    if (thisObject->m_aotInstance)
+        AOT::Instance::destroy(thisObject->m_aotInstance);
+#endif
     thisObject->JSModuleLoader::~JSModuleLoader();
 }
 

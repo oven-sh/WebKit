@@ -193,6 +193,8 @@ namespace JSC {
     macro(moduleFailureKind) \
     macro(copyDataProperties) \
     macro(cloneObject) \
+    macro(noteClass) \
+    macro(typedLayoutsOfInheritors) \
     macro(meta) \
     macro(moduleLoader) \
     macro(instanceFieldInitializer) \
@@ -204,9 +206,11 @@ namespace JSC {
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \
     macro(sentinelString) \
+    macro(orderedHashTableSentinel) \
     macro(createRemoteFunction) \
     macro(isRemoteFunction) \
     macro(arrayFromFastWithoutMapFn) \
+    macro(arrayProtoValues) \
     macro(jsonParse) \
     macro(jsonStringify) \
     macro(String) \

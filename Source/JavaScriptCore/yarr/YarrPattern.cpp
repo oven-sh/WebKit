@@ -36,6 +36,8 @@
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
+#include <wtf/HashSet.h>
+#include <wtf/Hasher.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StackCheck.h>
@@ -556,6 +558,21 @@ private:
 
         m_characterWidths |= (U_IS_BMP(ch) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars);
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Tables come in ascending order. What the search below finds and does for a character behind the last one.
+        if (range) {
+            char32_t last = matches.last();
+            if (ch > last) {
+                if (ch == last + 1) {
+                    matches.removeLast();
+                    addSortedRange(isLatin1(ch) ? m_ranges8 : m_ranges32, last, ch);
+                } else
+                    matches.append(ch);
+                return;
+            }
+        }
+#endif
+
         // binary chop, find position to insert char.
         while (range) {
             unsigned index = range >> 1;
@@ -606,6 +623,13 @@ private:
         if (!U_IS_BMP(hi))
             m_characterWidths |= CharacterClassWidths::HasNonBMPChars;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (!ranges.isEmpty() && static_cast<uint64_t>(ranges.last().end) + 1 < lo) {
+            ranges.append(CharacterRange(lo, hi));
+            return;
+        }
+#endif
+
         auto iter = std::lower_bound(ranges.begin(), ranges.end(), lo,
             [](const CharacterRange& range, char32_t value) {
                 return static_cast<uint64_t>(range.end) + 1 < value;
@@ -636,7 +660,6 @@ private:
         iter->end = std::max(iter->end, hi);
         mergeRangesFrom(ranges, iter - ranges.begin());
     }
-
 
     void addSortedRange(char32_t lo, char32_t hi)
     {
@@ -1190,6 +1213,30 @@ private:
     Vector<CharacterRange> m_ranges32;
 };
 
+struct CharacterClassContentsHash {
+    static unsigned hash(const CharacterClass* characterClass)
+    {
+        Hasher hasher;
+        for (char32_t ch : characterClass->m_matches8)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges8)
+            add(hasher, range.begin, range.end);
+        for (char32_t ch : characterClass->m_matches32)
+            add(hasher, ch);
+        for (auto& range : characterClass->m_ranges32)
+            add(hasher, range.begin, range.end);
+        return hasher.hash();
+    }
+
+    static bool equal(const CharacterClass* a, const CharacterClass* b)
+    {
+        return a->m_matches8 == b->m_matches8 && a->m_ranges8 == b->m_ranges8 && a->m_matches32 == b->m_matches32 && a->m_ranges32 == b->m_ranges32
+            && a->m_characterWidths == b->m_characterWidths && a->m_anyCharacter == b->m_anyCharacter;
+    }
+
+    static constexpr bool safeToCompareToEmptyOrDeleted = false;
+};
+
 class YarrPatternConstructor {
     class UnresolvedForwardReference {
     public:
@@ -1260,6 +1307,10 @@ public:
         m_parenthesisContext.reset();
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
+        m_sharedCharacterClasses.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        m_characterClassesByText.clear();
+#endif
 
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1412,9 +1463,8 @@ public:
         }
 
         m_currentCharacterClassConstructor->putUnicodeIgnoreCase(ch, info);
-        auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
-        m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), false, m_flags, parenthesisMatchDirection()));
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+        auto* characterClass = addUserCharacterClass(m_currentCharacterClassConstructor->charClass());
+        m_alternative->m_terms.append(PatternTerm(characterClass, false, m_flags, parenthesisMatchDirection()));
     }
 
     // Case-insensitive Unicode property escapes.
@@ -1671,6 +1721,26 @@ public:
         m_invertCharacterClass = invert;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // What atomCharacterClassEnd() came to the first time, in a term of this place.
+    size_t atomCharacterClassSeenBefore(std::span<const uint8_t> rest)
+    {
+        size_t numberOfBytes = 0;
+        if (auto* seen = m_characterClassesByText.find(rest, ignoreCase(), numberOfBytes))
+            m_alternative->m_terms.append(PatternTerm(seen->characterClass, seen->invert, m_flags));
+        return numberOfBytes;
+    }
+
+    void rememberCharacterClass(std::span<const uint8_t> text)
+    {
+        if (hasError(m_error) || m_alternative->m_terms.isEmpty())
+            return;
+        auto& term = m_alternative->m_terms.last();
+        if (term.type == PatternTerm::Type::CharacterClass)
+            m_characterClassesByText.add(text, ignoreCase(), { term.characterClass, static_cast<bool>(term.m_invert) });
+    }
+#endif
+
     void atomCharacterClassEnd()
     {
         if (m_currentCharacterClassConstructor->hasInvertedStrings()) {
@@ -1688,7 +1758,7 @@ public:
                 return;
             }
 
-            m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), m_invertCharacterClass, m_flags));
+            m_alternative->m_terms.append(PatternTerm(addUserCharacterClass(WTF::move(newCharacterClass)), m_invertCharacterClass, m_flags));
         };
 
         if (!hasStrings)
@@ -1701,10 +1771,7 @@ public:
 
             m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
-            return;
         }
-
-        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
     }
 
     // A class that contains strings matches, at each position, its longest member that matches there
@@ -3631,10 +3698,44 @@ public:
             return false;
         };
 
+        auto tryExtractAnchoredWordList = [&]() -> bool {
+            auto& alternatives = m_pattern.m_body->m_alternatives;
+            if (alternatives.size() != 1)
+                return false;
+            auto& terms = alternatives[0]->m_terms;
+            if (terms.size() != 3 || terms[0].type != PatternTerm::Type::AssertionBOL || terms[2].type != PatternTerm::Type::AssertionEOL)
+                return false;
+            auto& group = terms[1];
+            if (group.type != PatternTerm::Type::ParenthesesSubpattern || group.capture() || group.invert())
+                return false;
+            if (group.quantityType != QuantifierType::FixedCount || group.quantityMaxCount != 1 || group.m_matchDirection != MatchDirection::Forward)
+                return false;
+            Vector<String> words;
+            for (auto& alternative : group.parentheses.disjunction->m_alternatives) {
+                if (alternative->m_terms.isEmpty())
+                    return false;
+                StringBuilder builder;
+                for (auto& term : alternative->m_terms) {
+                    if (term.type != PatternTerm::Type::PatternCharacter || term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1)
+                        return false;
+                    if (U16_LENGTH(term.patternCharacter) != 1 || term.m_matchDirection != MatchDirection::Forward)
+                        return false;
+                    builder.append(static_cast<char16_t>(term.patternCharacter));
+                }
+                words.append(builder.toString());
+            }
+            m_pattern.m_anchoredWords = WTF::move(words);
+            m_pattern.m_specificPattern = SpecificPattern::AnchoredWordList;
+            return true;
+        };
+
         if (tryExtractAtom())
             return;
 
         if (m_pattern.eitherUnicode())
+            return;
+
+        if (tryExtractAnchoredWordList())
             return;
 
         if (tryExtractSpaces())
@@ -3838,11 +3939,40 @@ private:
 
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
 
+    CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
+    {
+        ASSERT(!characterClass->hasStrings());
+        auto& userCharacterClasses = m_pattern.m_userCharacterClasses;
+        if (userCharacterClasses.size() >= minimumUserCharacterClassesToShare) {
+            if (m_sharedCharacterClasses.isEmpty()) {
+                for (auto& existing : userCharacterClasses) {
+                    if (!existing->hasStrings())
+                        m_sharedCharacterClasses.add(existing.get());
+                }
+            }
+            auto result = m_sharedCharacterClasses.add(characterClass.get());
+            if (!result.isNewEntry)
+                return *result.iterator;
+        }
+        userCharacterClasses.append(WTF::move(characterClass));
+        return userCharacterClasses.last().get();
+    }
+
+    static constexpr unsigned minimumUserCharacterClassesToShare = 16;
+
     YarrPattern& m_pattern;
     PatternAlternative* m_alternative;
     CharacterClassConstructor m_baseCharacterClassConstructor;
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
+    HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
+#if USE(BUN_JSC_ADDITIONS)
+    struct CharacterClassOfTerm {
+        CharacterClass* characterClass;
+        bool invert;
+    };
+    CharacterClassesByText<CharacterClassOfTerm> m_characterClassesByText;
+#endif
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
     ErrorCode m_error { ErrorCode::NoError };

@@ -21,7 +21,6 @@
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 # THE POSSIBILITY OF SUCH DAMAGE.
 
-
 # Utilities.
 macro storePC()
     storei PC, CallSiteIndex[cfr]
@@ -867,7 +866,6 @@ _llint_op_enter:
     callSlowPath(_slow_path_enter)
     jmp .opEnterDispatch
 
-
 llintOpWithProfile(op_get_argument, OpGetArgument, macro (size, get, dispatch, return)
     get(m_index, t2)
     loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t0
@@ -879,7 +877,6 @@ llintOpWithProfile(op_get_argument, OpGetArgument, macro (size, get, dispatch, r
     return(ValueUndefined)
 end)
 
-
 llintOpWithReturn(op_argument_count, OpArgumentCount, macro (size, get, dispatch, return)
     loadi LowWordOffset + ArgumentCountIncludingThis[cfr], t0
     subi 1, t0
@@ -887,13 +884,11 @@ llintOpWithReturn(op_argument_count, OpArgumentCount, macro (size, get, dispatch
     return(t0)
 end)
 
-
 llintOpWithReturn(op_get_scope, OpGetScope, macro (size, get, dispatch, return)
     loadp Callee[cfr], t0
     loadp JSCallee::m_scope[t0], t0
     return(t0)
 end)
-
 
 llintOpWithMetadata(op_to_this, OpToThis, macro (size, get, dispatch, metadata, return)
     get(m_srcDst, t0)
@@ -911,7 +906,6 @@ llintOpWithMetadata(op_to_this, OpToThis, macro (size, get, dispatch, metadata, 
     dispatch()
 end)
 
-
 llintOp(op_check_tdz, OpCheckTdz, macro (size, get, dispatch)
     get(m_targetVirtualRegister, t0)
     loadConstantOrVariable(size, t0, t1)
@@ -922,13 +916,53 @@ llintOp(op_check_tdz, OpCheckTdz, macro (size, get, dispatch)
     dispatch()
 end)
 
+llintOp(op_check_type, OpCheckType, macro (size, get, dispatch)
+    get(m_value, t0)
+    loadConstantOrVariable(size, t0, t1)
+    getu(size, OpCheckType, m_mask, t2)
+    bia t2, (constexpr SoundTypeAll), .opCheckTypeSlow
+    btqz t1, numberTag, .opCheckTypeNotNumber
+    move (constexpr SoundTypeNumber), t3
+    jmp .opCheckTypeTest
+
+.opCheckTypeNotNumber:
+    btqnz t1, notCellMask, .opCheckTypeNotCell
+    btqz t1, .opCheckTypeSlow
+    loadb JSCell::m_type[t1], t0
+    move (constexpr SoundTypeString), t3
+    bbeq t0, StringType, .opCheckTypeTest
+    move (constexpr SoundTypeOtherObject), t3
+    bbeq t0, FinalObjectType, .opCheckTypeTest
+    move (constexpr SoundTypeFunction), t3
+    bbeq t0, JSFunctionType, .opCheckTypeTest
+    move (constexpr SoundTypeArray), t3
+    bbeq t0, ArrayType, .opCheckTypeTest
+    jmp .opCheckTypeSlow
+
+.opCheckTypeNotCell:
+    move (constexpr SoundTypeUndefined), t3
+    bqeq t1, ValueUndefined, .opCheckTypeTest
+    move (constexpr SoundTypeNull), t3
+    bqeq t1, ValueNull, .opCheckTypeTest
+    move (constexpr SoundTypeBoolean), t3
+    xorq ValueFalse, t1
+    btqnz t1, ~1, .opCheckTypeSlow
+
+.opCheckTypeTest:
+    btinz t2, t3, .opCheckTypeDone
+
+.opCheckTypeSlow:
+    callSlowPath(_slow_path_check_type)
+
+.opCheckTypeDone:
+    dispatch()
+end)
 
 llintOpWithReturn(op_mov, OpMov, macro (size, get, dispatch, return)
     get(m_src, t1)
     loadConstantOrVariable(size, t1, t2)
     return(t2)
 end)
-
 
 llintOpWithReturn(op_not, OpNot, macro (size, get, dispatch, return)
     get(m_operand, t0)
@@ -942,7 +976,6 @@ llintOpWithReturn(op_not, OpNot, macro (size, get, dispatch, return)
     callSlowPath(_slow_path_not)
     dispatch()
 end)
-
 
 macro equalityComparisonOp(opcodeName, opcodeStruct, integerComparison)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
@@ -959,7 +992,6 @@ macro equalityComparisonOp(opcodeName, opcodeStruct, integerComparison)
         dispatch()
     end)
 end
-
 
 macro equalNullComparisonOp(opcodeName, opcodeStruct, fn)
     llintOpWithReturn(opcodeName, opcodeStruct, macro (size, get, dispatch, return)
@@ -987,10 +1019,8 @@ end
 equalNullComparisonOp(op_eq_null, OpEqNull,
     macro (value) orq ValueFalse, value end)
 
-
 equalNullComparisonOp(op_neq_null, OpNeqNull,
     macro (value) xorq ValueTrue, value end)
-
 
 llintOpWithReturn(op_is_undefined_or_null, OpIsUndefinedOrNull, macro (size, get, dispatch, return)
     get(m_operand, t1)
@@ -1000,7 +1030,6 @@ llintOpWithReturn(op_is_undefined_or_null, OpIsUndefinedOrNull, macro (size, get
     orq ValueFalse, t0
     return(t0)
 end)
-
 
 macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
@@ -1058,14 +1087,11 @@ macro strictEqOp(opcodeName, opcodeStruct, createBoolean)
     end)
 end
 
-
 strictEqOp(stricteq, OpStricteq,
     macro (operand) xorq ValueFalse, operand end)
 
-
 strictEqOp(nstricteq, OpNstricteq,
     macro (operand) xorq ValueTrue, operand end)
-
 
 macro strictEqualityJumpOp(opcodeName, opcodeStruct, jumpIfEqual, jumpIfNotEqual)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
@@ -1122,7 +1148,6 @@ macro strictEqualityJumpOp(opcodeName, opcodeStruct, jumpIfEqual, jumpIfNotEqual
     end)
 end
 
-
 strictEqualityJumpOp(jstricteq, OpJstricteq,
     macro (jump, targetLabel, dispatch) jump(targetLabel) end,
     macro (jump, targetLabel, dispatch) dispatch() end)
@@ -1177,7 +1202,6 @@ llintOpWithReturn(op_to_numeric, OpToNumeric, macro (size, get, dispatch, return
     dispatch()
 end)
 
-
 llintOpWithReturn(op_to_string, OpToString, macro (size, get, dispatch, return)
     get(m_operand, t1)
     loadConstantOrVariable(size, t1, t0)
@@ -1191,7 +1215,6 @@ llintOpWithReturn(op_to_string, OpToString, macro (size, get, dispatch, return)
     dispatch()
 end)
 
-
 llintOpWithProfile(op_to_object, OpToObject, macro (size, get, dispatch, return)
     get(m_operand, t0)
     loadConstantOrVariable(size, t0, t2)
@@ -1203,7 +1226,6 @@ llintOpWithProfile(op_to_object, OpToObject, macro (size, get, dispatch, return)
     callSlowPath(_slow_path_to_object)
     dispatch()
 end)
-
 
 llintOpWithMetadata(op_negate, OpNegate, macro (size, get, dispatch, metadata, return)
     get(m_operand, t0)
@@ -1224,7 +1246,6 @@ llintOpWithMetadata(op_negate, OpNegate, macro (size, get, dispatch, metadata, r
     callSlowPath(_slow_path_negate)
     dispatch()
 end)
-
 
 macro binaryOpCustomStore(opcodeName, opcodeStruct, integerOperationAndStore, doubleOperation)
     llintOpWithMetadata(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, metadata, return)
@@ -1305,7 +1326,6 @@ else
     slowPathOp(div)
 end
 
-
 binaryOpCustomStore(mul, OpMul,
     macro (lhs, rhs, slow, index)
         # Assume t3 is scratchable.
@@ -1320,7 +1340,6 @@ binaryOpCustomStore(mul, OpMul,
     end,
     macro (lhs, rhs) muld rhs, lhs end)
 
-
 macro binaryOp(opcodeName, opcodeStruct, integerOperation, doubleOperation)
     binaryOpCustomStore(opcodeName, opcodeStruct,
         macro (lhs, rhs, slow, index)
@@ -1334,7 +1353,6 @@ end
 binaryOp(add, OpAdd,
     macro (lhs, rhs, slow) baddio rhs, lhs, slow end,
     macro (lhs, rhs) addd rhs, lhs end)
-
 
 binaryOp(sub, OpSub,
     macro (lhs, rhs, slow) bsubio rhs, lhs, slow end,
@@ -1423,7 +1441,6 @@ llintOpWithReturn(op_unsigned, OpUnsigned, macro (size, get, dispatch, return)
     dispatch()
 end)
 
-
 macro commonBitOp(opKind, opcodeName, opcodeStruct, operation)
     opKind(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
         get(m_rhs, t0)
@@ -1475,7 +1492,6 @@ llintOpWithReturn(op_bitnot, OpBitnot, macro (size, get, dispatch, return)
     dispatch()
 end)
 
-
 llintOpWithReturn(op_is_empty, OpIsEmpty, macro (size, get, dispatch, return)
     get(m_operand, t1)
     loadConstantOrVariable(size, t1, t0)
@@ -1483,7 +1499,6 @@ llintOpWithReturn(op_is_empty, OpIsEmpty, macro (size, get, dispatch, return)
     orq ValueFalse, t3
     return(t3)
 end)
-
 
 llintOpWithReturn(op_typeof_is_undefined, OpTypeofIsUndefined, macro (size, get, dispatch, return)
     get(m_operand, t1)
@@ -1527,7 +1542,6 @@ llintOpWithReturn(op_is_boolean, OpIsBoolean, macro (size, get, dispatch, return
     return(t0)
 end)
 
-
 llintOpWithReturn(op_is_number, OpIsNumber, macro (size, get, dispatch, return)
     get(m_operand, t1)
     loadConstantOrVariable(size, t1, t0)
@@ -1569,7 +1583,6 @@ llintOpWithReturn(op_is_cell_with_type, OpIsCellWithType, macro (size, get, disp
     return(ValueFalse)
 end)
 
-
 llintOpWithReturn(op_has_structure_with_flags, OpHasStructureWithFlags, macro (size, get, dispatch, return)
     getu(size, OpHasStructureWithFlags, m_flags, t0)
     get(m_operand, t1)
@@ -1579,7 +1592,6 @@ llintOpWithReturn(op_has_structure_with_flags, OpHasStructureWithFlags, macro (s
     orq ValueFalse, t1
     return(t1)
 end)
-
 
 llintOpWithReturn(op_is_object, OpIsObject, macro (size, get, dispatch, return)
     get(m_operand, t1)
@@ -1592,12 +1604,10 @@ llintOpWithReturn(op_is_object, OpIsObject, macro (size, get, dispatch, return)
     return(ValueFalse)
 end)
 
-
 macro loadInlineOffset(propertyOffsetAsInt, objectAndStorage, value)
     addp sizeof JSObjectWithButterfly - (firstOutOfLineOffset - 2) * 8, objectAndStorage
     loadq (firstOutOfLineOffset - 2) * 8[objectAndStorage, propertyOffsetAsInt, 8], value
 end
-
 
 macro loadPropertyAtVariableOffset(propertyOffsetAsInt, objectAndStorage, value)
     bilt propertyOffsetAsInt, firstOutOfLineOffset, .isInline
@@ -1611,7 +1621,6 @@ macro loadPropertyAtVariableOffset(propertyOffsetAsInt, objectAndStorage, value)
     loadq (firstOutOfLineOffset - 2) * 8[objectAndStorage, propertyOffsetAsInt, 8], value
 end
 
-
 macro storePropertyAtVariableOffset(propertyOffsetAsInt, objectAndStorage, value)
     bilt propertyOffsetAsInt, firstOutOfLineOffset, .isInline
     loadp JSObjectWithButterfly::m_butterfly[objectAndStorage], objectAndStorage
@@ -1623,7 +1632,6 @@ macro storePropertyAtVariableOffset(propertyOffsetAsInt, objectAndStorage, value
 .ready:
     storeq value, (firstOutOfLineOffset - 2) * 8[objectAndStorage, propertyOffsetAsInt, 8]
 end
-
 
 llintOpWithMetadata(op_get_by_id_direct, OpGetByIdDirect, macro (size, get, dispatch, metadata, return)
     metadata(t2, t0)
@@ -1710,7 +1718,6 @@ llintOpWithMetadata(op_get_by_id, OpGetById, macro (size, get, dispatch, metadat
     return(r0)
 end)
 
-
 llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, metadata, return)
     get(m_base, t0)
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
@@ -1727,7 +1734,6 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     valueProfile(size, OpGetLength, m_valueProfile, r0, t2)
     return(r0)
 end)
-
 
 llintOpWithProfile(op_get_prototype_of, OpGetPrototypeOf, macro (size, get, dispatch, return)
     get(m_value, t1)
@@ -1751,7 +1757,6 @@ llintOpWithProfile(op_get_prototype_of, OpGetPrototypeOf, macro (size, get, disp
     loadInlineOffset(t1, t0, t3)
     return(t3)
 end)
-
 
 llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadata, return)
     get(m_base, t3)
@@ -1824,7 +1829,6 @@ llintOpWithMetadata(op_put_by_id, OpPutById, macro (size, get, dispatch, metadat
     dispatch()
 
 end)
-
 
 llintOpWithMetadata(op_get_by_val, OpGetByVal, macro (size, get, dispatch, metadata, return)
     macro finishGetByVal(result, scratch)
@@ -2202,7 +2206,6 @@ macro llintJumpTrueOrFalseOp(opcodeName, opcodeStruct, miscConditionOp, truthyCe
     end)
 end
 
-
 macro equalNullJumpOp(opcodeName, opcodeStruct, cellHandler, immediateHandler)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
         get(m_value, t1)
@@ -2231,7 +2234,6 @@ equalNullJumpOp(jeq_null, OpJeqNull,
 .notMasqueradesAsUndefined:
     end,
     macro (value, target) bqeq value, ValueNull, target end)
-
 
 equalNullJumpOp(jneq_null, OpJneqNull,
     macro (structure, value, target) 
@@ -2273,7 +2275,6 @@ llintOpWithReturn(op_jeq_ptr, OpJeqPtr, macro (size, get, dispatch, return)
     jumpImpl(dispatchIndirect, t0)
 end)
 
-
 llintOpWithMetadata(op_jneq_ptr, OpJneqPtr, macro (size, get, dispatch, metadata, return)
     get(m_value, t0)
     get(m_specialPointer, t1)
@@ -2287,7 +2288,6 @@ llintOpWithMetadata(op_jneq_ptr, OpJneqPtr, macro (size, get, dispatch, metadata
     get(m_targetLabel, t0)
     jumpImpl(dispatchIndirect, t0)
 end)
-
 
 macro compareJumpOp(opcodeName, opcodeStruct, integerCompare, doubleCompare)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
@@ -2332,7 +2332,6 @@ macro compareJumpOp(opcodeName, opcodeStruct, integerCompare, doubleCompare)
     end)
 end
 
-
 macro equalityJumpOp(opcodeName, opcodeStruct, integerComparison)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
         get(m_lhs, t2)
@@ -2351,7 +2350,6 @@ macro equalityJumpOp(opcodeName, opcodeStruct, integerComparison)
     end)
 end
 
-
 macro compareUnsignedJumpOp(opcodeName, opcodeStruct, integerCompareMacro)
     llintOpWithJump(op_%opcodeName%, opcodeStruct, macro (size, get, jump, dispatch)
         get(m_lhs, t2)
@@ -2365,7 +2363,6 @@ macro compareUnsignedJumpOp(opcodeName, opcodeStruct, integerCompareMacro)
         jump(m_targetLabel)
     end)
 end
-
 
 macro compareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAndSet)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
@@ -2412,7 +2409,6 @@ macro compareOp(opcodeName, opcodeStruct, integerCompareAndSet, doubleCompareAnd
     end)
 end
 
-
 macro compareUnsignedOp(opcodeName, opcodeStruct, integerCompareAndSet)
     llintOpWithReturn(op_%opcodeName%, opcodeStruct, macro (size, get, dispatch, return)
         get(m_lhs, t2)
@@ -2424,7 +2420,6 @@ macro compareUnsignedOp(opcodeName, opcodeStruct, integerCompareAndSet)
         return(t0)
     end)
 end
-
 
 llintOpWithJump(op_switch_imm, OpSwitchImm, macro (size, get, jump, dispatch)
     get(m_scrutinee, t2)
@@ -2461,7 +2456,6 @@ llintOpWithJump(op_switch_imm, OpSwitchImm, macro (size, get, jump, dispatch)
     callSlowPath(_llint_slow_path_switch_imm)
     nextInstruction()
 end)
-
 
 llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     get(m_scrutinee, t2)
@@ -2510,7 +2504,6 @@ llintOpWithJump(op_switch_char, OpSwitchChar, macro (size, get, jump, dispatch)
     callSlowPath(_llint_slow_path_switch_char)
     nextInstruction()
 end)
-
 
 # t3 is the callee frame and t5 the call site's CallSiteData, which we should not scratch
 macro arrayProfileForCall()
@@ -2687,7 +2680,6 @@ llintOp(op_ret, OpRet, macro (size, get, dispatch)
     doReturn()
 end)
 
-
 llintOpWithReturn(op_to_primitive, OpToPrimitive, macro (size, get, dispatch, return)
     get(m_src, t2)
     loadConstantOrVariable(size, t2, t0)
@@ -2700,7 +2692,6 @@ llintOpWithReturn(op_to_primitive, OpToPrimitive, macro (size, get, dispatch, re
     callSlowPath(_slow_path_to_primitive)
     dispatch()
 end)
-
 
 llintOpWithReturn(op_to_property_key, OpToPropertyKey, macro (size, get, dispatch, return)
     get(m_src, t2)
@@ -2734,7 +2725,6 @@ llintOpWithReturn(op_to_property_key_or_number, OpToPropertyKeyOrNumber, macro (
     callSlowPath(_slow_path_to_property_key_or_number)
     dispatch()
 end)
-
 
 commonOp(llint_op_catch, macro () end, macro (size)
     # This is where we end up from the JIT's throw trampoline (because the
@@ -2793,12 +2783,10 @@ op(llint_throw_from_slow_path_trampoline, macro ()
     end
 end)
 
-
 op(llint_throw_during_call_trampoline, macro ()
     preserveReturnAddressAfterCall(t2)
     jmp _llint_throw_from_slow_path_trampoline
 end)
-
 
 macro nativeCallTrampoline(executableOffsetToFunction)
     functionPrologue()
@@ -2969,7 +2957,6 @@ llintOpWithMetadata(op_resolve_scope, OpResolveScope, macro (size, get, dispatch
     dispatch()
 end)
 
-
 macro loadScopeWithStructureCheck(opcodeStruct, get, metadata, scope, scratch, slowPath)
     get(m_scope, scope)
     loadq [cfr, scope, 8], scope
@@ -3065,7 +3052,6 @@ llintOpWithMetadata(op_get_from_scope, OpGetFromScope, macro (size, get, dispatc
     callSlowPath(_llint_slow_path_get_from_scope)
     dispatch()
 end)
-
 
 llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, metadata, return)
     macro putProperty()
@@ -3197,14 +3183,12 @@ llintOpWithMetadata(op_put_to_scope, OpPutToScope, macro (size, get, dispatch, m
     dispatch()
 end)
 
-
 llintOpWithProfile(op_get_from_arguments, OpGetFromArguments, macro (size, get, dispatch, return)
     loadVariable(get, m_arguments, t0)
     getu(size, OpGetFromArguments, m_index, t1)
     loadq DirectArguments_storage[t0, t1, 8], t0
     return(t0)
 end)
-
 
 llintOp(op_put_to_arguments, OpPutToArguments, macro (size, get, dispatch)
     loadVariable(get, m_arguments, t0)
@@ -3215,7 +3199,6 @@ llintOp(op_put_to_arguments, OpPutToArguments, macro (size, get, dispatch)
     writeBarrierOnOperands(size, get, m_arguments, m_value)
     dispatch()
 end)
-
 
 llintOpWithReturn(op_get_parent_scope, OpGetParentScope, macro (size, get, dispatch, return)
     loadVariable(get, m_scope, t0)
@@ -3237,7 +3220,6 @@ llintOpWithMetadata(op_super_construct_varargs, OpSuperConstructVarargs, macro (
 .done:
     doCallVarargs(op_super_construct_varargs, size, get, OpSuperConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_super_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
-
 
 llintOpWithMetadata(op_profile_type, OpProfileType, macro (size, get, dispatch, metadata, return)
     loadp CodeBlock[cfr], t1
@@ -3279,7 +3261,6 @@ llintOpWithMetadata(op_profile_type, OpProfileType, macro (size, get, dispatch, 
 .opProfileTypeDone:
     dispatch()
 end)
-
 
 llintOpWithMetadata(op_profile_control_flow, OpProfileControlFlow, macro (size, get, dispatch, metadata, return)
     metadata(t5, t0)
@@ -3551,7 +3532,6 @@ llintOpWithMetadata(op_iterator_next, OpIteratorNext, macro (size, get, dispatch
         storeq t0, [cfr, t1, 8]
         jmp .getValueStart
     end
-
 
     loadVariable(get, m_value, t3)
     btqnz t3, notCellMask, .getDoneSlow
@@ -3917,7 +3897,6 @@ llintOp(op_put_internal_field, OpPutInternalField, macro (size, get, dispatch)
     dispatch()
 end)
 
-
 llintOp(op_log_shadow_chicken_prologue, OpLogShadowChickenPrologue, macro (size, get, dispatch)
     acquireShadowChickenPacket(.opLogShadowChickenPrologueSlow)
     storep cfr, ShadowChicken::Packet::frame[t0]
@@ -3932,7 +3911,6 @@ llintOp(op_log_shadow_chicken_prologue, OpLogShadowChickenPrologue, macro (size,
     callSlowPath(_llint_slow_path_log_shadow_chicken_prologue)
     dispatch()
 end)
-
 
 llintOp(op_log_shadow_chicken_tail, OpLogShadowChickenTail, macro (size, get, dispatch)
     acquireShadowChickenPacket(.opLogShadowChickenTailSlow)

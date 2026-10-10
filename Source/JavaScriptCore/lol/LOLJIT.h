@@ -228,6 +228,7 @@ namespace JSC::LOL {
     macro(op_nstricteq) \
     macro(op_get_prototype_of) \
     macro(op_check_tdz) \
+    macro(op_check_type) \
     macro(op_to_property_key) \
     macro(op_to_property_key_or_number) \
     macro(op_typeof_is_function) \

@@ -45,7 +45,11 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+#if USE(BUN_JSC_ADDITIONS)
+        // For VM::throwException(): it is being thrown now, so an unwinder comes next. See captureIsDeferred().
+        LeaveToUnwinder,
+#endif
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -72,6 +76,20 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
+#if USE(BUN_JSC_ADDITIONS)
+    // The stack was not captured at the throw: whoever unwinds and finds no handler does it, while the frames are there.
+    bool captureIsDeferred() const { return m_captureIsDeferred; }
+    void captureDeferredStack(VM&);
+    void cancelDeferredCapture() { m_captureIsDeferred = false; }
+    // Thrown again before any unwinder has seen it: by C++ that took it out of the VM.
+    void willBeThrown(VM& vm)
+    {
+        if (m_wasThrown && m_captureIsDeferred) [[unlikely]]
+            captureDeferredStack(vm);
+        m_wasThrown = true;
+    }
+#endif
+
     bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
     void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
 
@@ -93,6 +111,10 @@ private:
 #endif
     Vector<StackFrame> m_stack;
     bool m_didNotifyInspectorOfThrow { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_captureIsDeferred { false };
+    bool m_wasThrown { false };
+#endif
 
     friend class LLIntOffsetsExtractor;
 };

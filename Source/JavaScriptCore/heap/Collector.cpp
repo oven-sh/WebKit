@@ -127,7 +127,8 @@ Collector::Collector(Heap& heap)
     , m_threadLock(Box<Lock>::create())
     , m_threadCondition(AutomaticThreadCondition::create())
 {
-    for (unsigned i = 0, numberOfParallelThreads = heapHelperPool().numberOfThreads(); i < numberOfParallelThreads; ++i) {
+    // The pool may grow at any collection, of this heap or of another: a visitor for each thread it can ever have.
+    for (unsigned i = 0, numberOfParallelThreads = std::max(heapHelperPool().numberOfThreads(), Options::numberOfGCMarkers() - 1); i < numberOfParallelThreads; ++i) {
         std::unique_ptr<SlotVisitor> visitor = makeUnique<SlotVisitor>(*this, toASCIICString("P", i + 1));
         if (Options::optimizeParallelSlotVisitorsForStoppedMutator())
             visitor->optimizeForStoppedMutator();
@@ -401,6 +402,15 @@ NEVER_INLINE bool Collector::runBeginPhase(GCConductor conn)
     beginMarking(scope);
 
     m_parallelMarkersShouldExit = false;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (unsigned maxHelpers = Options::numberOfGCMarkers() - 1; maxHelpers && Options::useAOT()) {
+        constexpr size_t bytesPerHelper = 16 * MB;
+        size_t allocated = m_heap.totalBytesAllocatedThisCycle();
+        size_t bytesToVisit = scope == CollectionScope::Full ? m_heap.m_sizeAfterLastCollect + allocated : allocated / 2;
+        m_helperClient.pool().ensureThreads(std::clamp<size_t>(bytesToVisit / bytesPerHelper, 1, maxHelpers));
+    }
+#endif
 
     m_helperClient.setFunction(
         [this] () {

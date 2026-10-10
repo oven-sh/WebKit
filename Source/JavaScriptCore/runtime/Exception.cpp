@@ -26,8 +26,12 @@
 #include "config.h"
 #include "Exception.h"
 
+#include "AOTFunction.h"
+#include "CallFrameInlines.h"
+#include "Debugger.h"
 #include "Interpreter.h"
 #include "JSCJSValueInlines.h"
+#include "VMInlines.h"
 #include "JSObjectInlines.h"
 #include "StructureCreateInlines.h"
 #include "JSWebAssemblyException.h"
@@ -67,6 +71,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 #if USE(BUN_JSC_ADDITIONS)
     visitor.append(thisObject->m_asyncContext);
 #endif
+    Locker locker { thisObject->cellLock() };
     for (StackFrame& frame : thisObject->m_stack)
         frame.visitAggregate(visitor);
     visitor.reportExtraMemoryVisited(thisObject->m_stack.sizeInBytes());
@@ -92,6 +97,28 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
 {
     Base::finishCreation(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (action == StackCaptureAction::LeaveToUnwinder && vm.topCallFrame) {
+        bool hasDebugger = false;
+        vm.forEachDebugger([&](Debugger&) {
+            hasDebugger = true;
+        });
+        if (!hasDebugger) {
+            CallFrame* top = vm.topCallFrame;
+#if ENABLE(AOT)
+            if (AOT::topCallFrameIsAOTFrame(top))
+                m_captureIsDeferred = true;
+            else
+#endif
+                m_captureIsDeferred = !top->isNativeCalleeFrame() && (*top->addressOfCodeBlock() || top->callerFrameOrEntryFrame() != vm.topEntryFrame);
+        }
+        if (m_captureIsDeferred)
+            return;
+    }
+    if (action == StackCaptureAction::LeaveToUnwinder)
+        action = StackCaptureAction::CaptureStack;
+#endif
+
     Vector<StackFrame> stackTrace;
     if (action == StackCaptureAction::CaptureStack)
         vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
@@ -99,6 +126,23 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     m_stack = WTF::move(stackTrace);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Exception::captureDeferredStack(VM& vm)
+{
+    ASSERT(m_captureIsDeferred);
+    m_captureIsDeferred = false;
+    DeferGCForAWhile deferGC(vm);
+    Vector<StackFrame> stackTrace;
+    vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
+    {
+        Locker locker { cellLock() };
+        m_stack = WTF::move(stackTrace);
+    }
+    vm.writeBarrier(this);
+    vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+}
+#endif
 
 #if ENABLE(WEBASSEMBLY)
 

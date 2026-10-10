@@ -116,6 +116,10 @@ void Code::emitDefaultPrologue(CCallHelpers& jit)
 
 void Code::emitEpilogue(CCallHelpers& jit)
 {
+    if (m_epilogueGenerator) {
+        m_epilogueGenerator->run(jit, *this);
+        return;
+    }
     if (frameSize()) {
         // NOTE: on ARM64, if the callee saves have bigger offsets due to a potential tail call,
         // the macro assembler might assert scratch register usage on load operations emitted by emitRestore.

@@ -165,6 +165,29 @@ public:
 #endif
 };
 
+class AOTOperationPrologueCallFrameTracer {
+public:
+    ALWAYS_INLINE AOTOperationPrologueCallFrameTracer(VM& vm, CallFrame* callFrame)
+#if ASSERT_ENABLED
+        : m_vm(vm)
+#endif
+    {
+        ASSERT(callFrame);
+        ASSERT(reinterpret_cast<void*>(callFrame) < reinterpret_cast<void*>(vm.topEntryFrame));
+        assertStackPointerIsAligned();
+        vm.topCallFrame = callFrame;
+    }
+
+#if ASSERT_ENABLED
+    ~AOTOperationPrologueCallFrameTracer()
+    {
+        m_vm.topCallFrame = std::bit_cast<CallFrame*>(static_cast<uintptr_t>(0x0badbeef0badbeefULL));
+    }
+
+    VM& m_vm;
+#endif
+};
+
 class ICSlowPathCallFrameTracer {
 public:
     inline ICSlowPathCallFrameTracer(VM&, CallFrame*, PropertyInlineCache*);
@@ -179,6 +202,5 @@ public:
     VM& m_vm;
 #endif
 };
-
 
 } // namespace JSC

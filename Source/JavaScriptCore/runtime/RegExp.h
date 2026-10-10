@@ -96,6 +96,9 @@ public:
     {
         m_state = NotCompiled;
         m_minimumSize = 0;
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+        m_codeOfImage = { };
+#endif
         m_constructionErrorCode = Yarr::ErrorCode::NoError;
     }
 
@@ -211,6 +214,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
+    bool isAnchoredWord(StringView) const;
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
 
@@ -234,6 +238,9 @@ private:
 
     static RegExp* createWithoutCaching(VM&, const String&, OptionSet<Yarr::Flags>);
     void finishCreationFromCache(VM&, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    bool takeCodeFromImage(VM&);
+#endif
 
     enum RegExpState : uint8_t {
         ParseError,
@@ -249,6 +256,11 @@ private:
 
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
+
+    static constexpr uint16_t workBeforeJIT = 256;
+    static constexpr uint16_t jitWasConsidered = std::numeric_limits<uint16_t>::max();
+    bool startsInterpreted(std::optional<StringView> subject) const;
+    void noteWorkInInterpreter(unsigned subjectLength);
 
     static uint8_t currentUseEpoch(VM&);
     template<Yarr::MatchFrom> void noteUse(VM&);
@@ -271,6 +283,9 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
+
+        FixedVector<String> m_anchoredWords;
+        FixedVector<unsigned> m_firstLengthWord;
     };
 
     String m_patternString;
@@ -280,9 +295,18 @@ private:
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
+    uint16_t m_workInInterpreter { 0 };
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    // For 8-bit and for 16-bit subjects, with subpatterns: what m_regExpJITCode has from the image, while it has it, of an expression that is served by code. See matchInlineOnce().
+    std::array<const void*, 2> m_codeOfImage { };
+#endif
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
+#if USE(BUN_JSC_ADDITIONS)
+    // Of a long pattern, from its creation to its first match, so that it is parsed once.
+    std::unique_ptr<Yarr::YarrPattern> m_patternFromCreation;
+#endif
 #if ENABLE(YARR_JIT)
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 #endif

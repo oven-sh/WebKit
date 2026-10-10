@@ -261,6 +261,37 @@ bool SymbolTable::isCloneOfScopePartOf(SymbolTable& original)
     return m_map.size() == scopeEntries;
 }
 
+bool SymbolTable::hasSameScopePartAs(SymbolTable& other)
+{
+    if (m_usesSloppyEval != other.m_usesSloppyEval || m_nestedLexicalScope != other.m_nestedLexicalScope || m_scopeType != other.m_scopeType || m_maxScopeOffset != other.m_maxScopeOffset)
+        return false;
+    uint32_t argumentsLength = this->argumentsLength();
+    if (argumentsLength != other.argumentsLength() || !!m_arguments != !!other.m_arguments)
+        return false;
+    for (uint32_t i = 0; i < argumentsLength; ++i) {
+        if (m_arguments->get(i) != other.m_arguments->get(i))
+            return false;
+    }
+
+    ConcurrentJSLocker otherLocker(other.m_lock);
+    other.materializeCachedEntriesIfNeeded(otherLocker);
+    ConcurrentJSLocker locker(m_lock);
+    materializeCachedEntriesIfNeeded(locker);
+    unsigned scopeEntriesOfOther = 0;
+    for (auto& entry : other.m_map) {
+        if (!entry.value.varOffset().isScope())
+            continue;
+        scopeEntriesOfOther++;
+        auto iter = m_map.find(entry.key);
+        if (iter == m_map.end() || iter->value.varOffset() != entry.value.varOffset() || iter->value.getAttributes() != entry.value.getAttributes())
+            return false;
+    }
+    unsigned scopeEntries = 0;
+    for (auto& entry : m_map)
+        scopeEntries += entry.value.varOffset().isScope();
+    return scopeEntries == scopeEntriesOfOther;
+}
+
 void SymbolTable::adoptOriginal(VM& vm, SymbolTable& original)
 {
     m_clonedFrom.set(vm, this, &original);

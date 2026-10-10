@@ -1,0 +1,26 @@
+# The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
+
+replaceable console
+
+static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.info (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.warn (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.error (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.debug (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.trace (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.dir (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.dirxml (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.table (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.assert (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.group (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.groupCollapsed (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.groupEnd () -> undefined ; ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.clear () -> undefined ; ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.count (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.countReset (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.time (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.timeEnd (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.profile (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.profileEnd (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.timeStamp (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
+static console.timeLog (toString?, any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall

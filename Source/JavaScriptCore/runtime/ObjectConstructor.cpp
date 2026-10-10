@@ -21,6 +21,7 @@
 #include "config.h"
 #include "ObjectConstructor.h"
 
+#include "AOTTypedObject.h"
 #include "BuiltinNames.h"
 #include "JSArray.h"
 #include "JSCInlines.h"
@@ -326,6 +327,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorAssign, (JSGlobalObject* globalObject,
     // https://bugs.webkit.org/show_bug.cgi?id=185358
     JSFinalObject* targetObject = dynamicDowncast<JSFinalObject>(target);
     bool targetCanPerformFastPut = targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible();
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetCanPerformFastPut && (targetObject->structure()->hasImmutableShape() || ((targetObject->structure()->mayBePrototype() || targetObject->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields()))) [[unlikely]]
+        targetCanPerformFastPut = false;
+#endif
     unsigned argsCount = callFrame->argumentCount();
 
     // argsCount == 2 case does not need to use arguments' batching.
@@ -445,6 +450,18 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                 });
             }
         }
+#if ENABLE(AOT)
+        JSCellButterfly* keysOfTypedObject = nullptr;
+        if (!canUseFastPath && target->structure()->compiledLayout()) {
+            auto* typedObject = uncheckedDowncast<AOT::Typed::Object>(target);
+            keysOfTypedObject = typedObject->keys(vm);
+            canUseFastPath = typedObject->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+                properties.append(&name);
+                values.appendWithCrashOnOverflow(value);
+                return true;
+            });
+        }
+#endif
 
         if (canUseFastPath) {
             Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
@@ -463,6 +480,10 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorEntries, (JSGlobalObject* globalObject
                     if (butterfly->length() == properties.size())
                         cachedButterfly = butterfly;
                 }
+#if ENABLE(AOT)
+                else if (keysOfTypedObject && keysOfTypedObject->length() == properties.size())
+                    cachedButterfly = keysOfTypedObject;
+#endif
             }
 
             if (!cachedButterfly && properties.size() < MIN_SPARSE_ARRAY_INDEX && !globalObject->isHavingABadTime() && targetStructure->canCacheOwnPropertyNames()) {
@@ -590,6 +611,28 @@ JSValue objectValues(VM& vm, JSGlobalObject* globalObject, JSValue targetValue)
                     return true;
                 });
             }
+#if ENABLE(AOT)
+            else if (targetStructure->compiledLayout()) {
+                MarkedArgumentBuffer fields;
+                bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(target)->forEachFieldAsProperty([&](UniquedStringImpl&, JSValue value) {
+                    fields.appendWithCrashOnOverflow(value);
+                    return true;
+                });
+                if (hasOnlyFields) {
+                    // As below. (constructArray() without a profile starts from an array of undecided shape, which each new kind of value converts.)
+                    JSArray* result = JSArray::tryCreate(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous), fields.size());
+                    if (!result) [[unlikely]] {
+                        throwOutOfMemoryError(globalObject, scope);
+                        return { };
+                    }
+                    auto values = result->butterfly()->contiguous();
+                    for (unsigned index = 0; index < fields.size(); ++index)
+                        values.at(result, index).setWithoutWriteBarrier(fields.at(index));
+                    vm.writeBarrier(result);
+                    return result;
+                }
+            }
+#endif
         }
 
         if (canUseFastPath) {
@@ -1155,8 +1198,17 @@ JSObject* objectConstructorSeal(JSGlobalObject* globalObject, JSObject* object)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Sealed);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+#endif
+
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->seal(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 
@@ -1188,8 +1240,17 @@ JSObject* objectConstructorFreeze(JSGlobalObject* globalObject, JSObject* object
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout()) [[unlikely]] {
+        uncheckedDowncast<AOT::Typed::Object>(object)->setIntegrity(globalObject, AOT::Typed::Object::Integrity::Frozen);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return object;
+    }
+#endif
+
     if (is<JSFinalObject>(object) && !hasIndexedProperties(object->indexingType()) && !object->structure()->hasImmutableProperties()) {
         object->freeze(vm);
+        RETURN_IF_EXCEPTION(scope, nullptr);
         return object;
     }
 
@@ -1320,6 +1381,16 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(immutableButterfly->indexingMode());
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
+#if USE(BUN_JSC_ADDITIONS)
+        object->flattenIfCacheableDictionary(vm);
+#endif
+#if ENABLE(AOT)
+        // Without extra properties all its keys are strings, and all its properties are enumerable.
+        if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {
+            if (auto* keys = uncheckedDowncast<AOT::Typed::Object>(object)->keys(vm))
+                return JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly());
+        }
+#endif
     }
 
     PropertyNameArrayBuilder properties(vm, propertyNameMode, PrivateSymbolMode::Exclude);

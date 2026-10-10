@@ -753,6 +753,55 @@ void MacroAssemblerARM64::collectCPUFeatures()
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void MacroAssemblerARM64::useOnlyFeaturesOfBuildTarget()
+{
+    collectCPUFeatures();
+#if !HAVE(LSE_INSTRUCTION)
+    s_lseCheckState = CPUIDCheckState::Clear;
+#endif
+#if !HAVE(FJCVTZS_INSTRUCTION)
+    s_jscvtCheckState = CPUIDCheckState::Clear;
+#endif
+#if !HAVE(FLOAT16_INSTRUCTION)
+    s_float16CheckState = CPUIDCheckState::Clear;
+#endif
+#if !HAVE(FRINT_INSTRUCTION) && !OS(MACOS)
+    s_frintCheckState = CPUIDCheckState::Clear;
+#endif
+#if !HAVE(SHA3_INSTRUCTION)
+    s_sha3CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__ARM_FEATURE_DOTPROD)
+    s_dotProdCheckState = CPUIDCheckState::Clear;
+#endif
+}
+
+unsigned MacroAssemblerARM64::featuresOfBuildTarget()
+{
+    unsigned features = 0;
+#if HAVE(LSE_INSTRUCTION)
+    features |= 1 << 0;
+#endif
+#if HAVE(FJCVTZS_INSTRUCTION)
+    features |= 1 << 1;
+#endif
+#if HAVE(FLOAT16_INSTRUCTION)
+    features |= 1 << 2;
+#endif
+#if HAVE(FRINT_INSTRUCTION) || OS(MACOS)
+    features |= 1 << 3;
+#endif
+#if HAVE(SHA3_INSTRUCTION)
+    features |= 1 << 4;
+#endif
+#if defined(__ARM_FEATURE_DOTPROD)
+    features |= 1 << 5;
+#endif
+    return features;
+}
+#endif
+
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_lseCheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_jscvtCheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerARM64::CPUIDCheckState MacroAssemblerARM64::s_float16CheckState = CPUIDCheckState::NotChecked;

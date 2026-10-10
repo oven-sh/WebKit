@@ -101,6 +101,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
     case op_check_traps:
     case op_get_argument:
     case op_nop:
+    case op_type_tag:
     case op_unreachable:
     case op_super_sampler_begin:
     case op_super_sampler_end:
@@ -109,6 +110,7 @@ void computeUsesForBytecodeIndexImpl(const JSInstruction* instruction, Checkpoin
 
     USES(OpToThis, srcDst)
     USES(OpCheckTdz, targetVirtualRegister)
+    USES(OpCheckType, value)
     USES(OpIdentityWithProfile, srcDst)
     USES(OpProfileType, targetVirtualRegister);
     USES(OpThrow, value)
@@ -406,6 +408,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_throw:
     case op_throw_static_error:
     case op_check_tdz:
+    case op_check_type:
     case op_debug:
     case op_ret:
     case op_jmp:
@@ -462,6 +465,7 @@ void computeDefsForBytecodeIndexImpl(unsigned numVars, const JSInstruction* inst
     case op_log_shadow_chicken_tail:
     case op_yield:
     case op_nop:
+    case op_type_tag:
     case op_unreachable:
     case op_super_sampler_begin:
     case op_super_sampler_end:

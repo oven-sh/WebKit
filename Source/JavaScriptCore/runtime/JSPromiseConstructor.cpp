@@ -48,6 +48,8 @@
 namespace JSC {
 
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSPromiseConstructor);
+static JSC_DECLARE_HOST_FUNCTION(callPromise);
+static JSC_DECLARE_HOST_FUNCTION(constructPromise);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncResolve);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncReject);
 static JSC_DECLARE_HOST_FUNCTION(promiseConstructorFuncWithResolvers);
@@ -80,8 +82,14 @@ const ClassInfo JSPromiseConstructor::s_info = { "Function"_s, &Base::s_info, &p
 JSPromiseConstructor* JSPromiseConstructor::create(VM& vm, Structure* structure, JSPromisePrototype* promisePrototype)
 {
     JSGlobalObject* globalObject = structure->realm();
-    FunctionExecutable* executable = promiseConstructorPromiseConstructorCodeGenerator(vm);
-    JSPromiseConstructor* constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, executable, globalObject, structure);
+    JSPromiseConstructor* constructor;
+    if (vm.useImmutableIntrinsics) {
+        NativeExecutable* executable = vm.getHostFunction(callPromise, ImplementationVisibility::Public, NoIntrinsic, constructPromise, nullptr, 1, "Promise"_s);
+        constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, executable, globalObject, structure);
+    } else {
+        FunctionExecutable* executable = promiseConstructorPromiseConstructorCodeGenerator(vm).executable;
+        constructor = new (NotNull, allocateCell<JSPromiseConstructor>(vm)) JSPromiseConstructor(vm, executable, globalObject, structure);
+    }
     constructor->finishCreation(vm, promisePrototype);
 #if USE(BUN_JSC_ADDITIONS)
     constructor->addOwnInternalSlots(vm, globalObject);
@@ -97,6 +105,51 @@ Structure* JSPromiseConstructor::createStructure(VM& vm, JSGlobalObject* globalO
 JSPromiseConstructor::JSPromiseConstructor(VM& vm, FunctionExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
     : Base(vm, executable, globalObject, structure)
 {
+}
+
+JSPromiseConstructor::JSPromiseConstructor(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure)
+    : Base(vm, executable, globalObject, structure)
+{
+}
+
+JSC_DEFINE_HOST_FUNCTION(callPromise, (JSGlobalObject* globalObject, CallFrame*))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return throwVMTypeError(globalObject, scope, "Cannot call a constructor Promise without |new|"_s);
+}
+
+// `Promise` of builtins/PromiseConstructor.js.
+JSC_DEFINE_HOST_FUNCTION(constructPromise, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue executor = callFrame->argument(0);
+    auto callData = JSC::getCallData(executor);
+    if (callData.type == CallData::Type::None)
+        return throwVMTypeError(globalObject, scope, "Promise constructor takes a function argument"_s);
+
+    Structure* structure = JSC_GET_DERIVED_STRUCTURE(vm, promiseStructure, asObject(callFrame->newTarget()), globalObject->promiseConstructor());
+    RETURN_IF_EXCEPTION(scope, { });
+    JSPromise* promise = JSPromise::create(vm, structure);
+
+    auto [resolve, reject] = promise->createFirstResolvingFunctions(vm, globalObject);
+    MarkedArgumentBuffer arguments;
+    arguments.append(resolve);
+    arguments.append(reject);
+    ASSERT(!arguments.hasOverflowed());
+    {
+        auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        call(globalObject, executor, callData, jsUndefined(), arguments);
+        if (catchScope.exception()) [[unlikely]] {
+            JSValue error = catchScope.exception()->value();
+            if (!catchScope.clearExceptionExceptTermination()) [[unlikely]]
+                return { };
+            promise->reject(vm, error);
+        }
+    }
+    return JSValue::encode(promise);
 }
 
 void JSPromiseConstructor::finishCreation(VM& vm, JSPromisePrototype* promisePrototype)

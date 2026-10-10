@@ -29,6 +29,9 @@
 #include "config.h"
 #include "VM.h"
 
+#include "AOTTypedObject.h"
+
+#include "AOTRuntime.h"
 #include "AbortReason.h"
 #include "AccessCase.h"
 #include "AggregateError.h"
@@ -211,7 +214,7 @@ JSLock& VM::apiLock() { return m_apiLock.get(); }
 #if ENABLE(ASSEMBLER)
 static bool enableAssembler()
 {
-    if (!Options::useJIT())
+    if (!Options::useJIT() && !Options::useRegExpJIT())
         return false;
 
     auto canUseJITString = unsafeSpan(getenv("JavaScriptCoreUseJIT"));
@@ -302,7 +305,11 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
         });
 
         m_megamorphicCache.initLater([](VM&, auto& ref) {
+#if USE(BUN_JSC_ADDITIONS) && !USE(TZONE_MALLOC)
+            ref.set(UniqueRef<MegamorphicCache>(MegamorphicCache::create()));
+#else
             ref.set(makeUniqueRef<MegamorphicCache>());
+#endif
         });
 
         m_stringSplitCache.initLater([](VM&, auto& ref) {
@@ -373,6 +380,8 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     evalExecutableStructure.setWithoutWriteBarrier(EvalExecutable::createStructure(*this, nullptr, jsNull()));
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
+    m_structureIDBase = JSC::structureIDBase();
+    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createShortFormStructure(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -573,6 +582,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif // ENABLE(FTL_JIT)
         m_sharedJITStubs = makeUnique<SharedJITStubSet>();
         getBoundFunction(/* isJSFunction */ true, SourceTaintedOrigin::Untainted);
+    } else if (Options::useRegExpJIT()) {
+        jitStubs = makeUnique<JITThunks>();
     }
 #endif // ENABLE(JIT)
 
@@ -621,6 +632,9 @@ void waitForVMDestruction()
 void VM::setCrossTaskToken(RefPtr<CrossTaskToken>&& token)
 {
     m_crossTaskToken = WTF::move(token);
+#if USE(BUN_JSC_ADDITIONS)
+    updateHostObservesMicrotaskBoundaries();
+#endif
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -681,6 +695,9 @@ VM::~VM()
     smallStrings.setIsInitialized(false);
     if (m_persistentBytecodePayloads)
         m_persistentBytecodePayloads->clearChildExecutables();
+#if ENABLE(AOT)
+    AOT::Instance::destroyUnneededInstances(*this);
+#endif
     heap.shutDown();
 
     while (!m_microtaskQueues.isEmpty())
@@ -1318,6 +1335,9 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    exceptionToThrow->willBeThrown(*this);
+#endif
     CallFrame* throwOriginFrame = topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
@@ -1346,8 +1366,13 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
-    if (!exception)
+    if (!exception) {
+#if USE(BUN_JSC_ADDITIONS)
+        exception = Exception::create(*this, thrownValue, Exception::StackCaptureAction::LeaveToUnwinder);
+#else
         exception = Exception::create(*this, thrownValue);
+#endif
+    }
 
     return throwException(globalObject, exception);
 }
@@ -2098,6 +2123,18 @@ void VM::executeEntryScopeServicesOnExit()
     clearScratchBuffers();
 }
 
+JSGlobalObject* VM::topFrameGlobalObject()
+{
+    JSGlobalObject* globalObject = nullptr;
+    StackVisitor::visit(topCallFrame, *this, [&](StackVisitor& visitor) {
+        globalObject = visitor->lexicalGlobalObject(*this);
+        return IterationStatus::Done;
+    });
+    if (!globalObject && entryScope)
+        globalObject = entryScope->globalObject();
+    return globalObject;
+}
+
 JSGlobalObject* VM::deprecatedVMEntryGlobalObject(JSGlobalObject* globalObject) const
 {
     if (entryScope)
@@ -2198,6 +2235,7 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(evalExecutableStructure);
     visitor.append(programExecutableStructure);
     visitor.append(functionExecutableStructure);
+    visitor.append(shortFunctionExecutableStructure);
 #if ENABLE(WEBASSEMBLY)
     visitor.append(pinballCompletionStructure);
     visitor.append(webAssemblyCalleeGroupStructure);
@@ -2352,8 +2390,13 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
 
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
 {
-    if (auto* megamorphicCache = this->megamorphicCache())
-        megamorphicCache->bumpEpoch();
+    auto* megamorphicCache = this->megamorphicCache();
+    if (!megamorphicCache || !megamorphicCache->bumpEpoch()) [[likely]]
+        return;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->clearCachesValidatedByMegamorphicCacheEpoch();
+#endif
 }
 
 VM::DrainMicrotaskDelayScope::DrainMicrotaskDelayScope(VM& vm)

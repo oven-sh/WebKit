@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # Bun: asserts that the DFG compiled a function. These modes run with the JIT off.
 //@ defaultRun; run("eager-catch-liveness", "--useLazyCatchLiveness=false")
 
 // With Options::useLazyCatchLiveness() an op_catch's value-profile buffer is created at the first DFG tier-up

@@ -76,7 +76,6 @@ templates [
     :WriteBarrierBase,
 ]
 
-
 begin_section :Bytecode,
     emit_in_h_file: true,
     emit_in_structs_file: true,
@@ -522,7 +521,6 @@ op :async_iterator_next,
         callLinkInfo: LazyCallLinkInfo,
         iterationMetadata: IterationModeMetadata,
     }
-
 
 op :resolve_scope,
     args: {
@@ -1226,6 +1224,11 @@ op :put_internal_field,
 
 op :nop
 
+op :type_tag,
+    args: {
+        tag: unsigned,
+    }
+
 op :super_sampler_begin
 
 op :wide16
@@ -1281,6 +1284,12 @@ op :check_tdz,
     args: {
         targetVirtualRegister: VirtualRegister,
         identifier?: VirtualRegister,
+    }
+
+op :check_type,
+    args: {
+        value: VirtualRegister,
+        mask: unsigned,
     }
 
 op :new_array_with_spread,
@@ -1406,7 +1415,6 @@ op :not,
         dst: VirtualRegister,
         operand: VirtualRegister,
     }
-
 
 op :identity_with_profile,
     args: {

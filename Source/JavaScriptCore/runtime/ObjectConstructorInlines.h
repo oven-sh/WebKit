@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTTypedObject.h"
 #include "JSObjectInlines.h"
 #include "MarkedVector.h"
 #include "ObjectConstructor.h"
@@ -140,7 +141,6 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
     return true;
 }
 
-
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -150,6 +150,11 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetStructure->hasStableFields() || sourceStructure->hasStableFields())
+        return false;
+#endif
+
     if (targetStructure->seenProperties().bits()) {
         dataLogLnIf(verbose, "target already has properties");
         return false;
@@ -158,7 +163,12 @@ ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* sour
     if (!checkStructureForClone(targetStructure))
         return false;
 
-    if (targetStructure->transitionWatchpointSetIsStillValid()) {
+#if USE(BUN_JSC_ADDITIONS)
+    if (targetStructure->typedLayoutID() && targetStructure->typedLayoutID() != sourceStructure->typedLayoutID())
+        return false;
+#endif
+
+    if (!targetStructure->typedLayoutID() && targetStructure->transitionWatchpointSetIsStillValid()) {
         dataLogLnIf(verbose, "target transitionWatchpointSetIsStillValid");
         return false;
     }
@@ -231,9 +241,17 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
 {
     static constexpr bool verbose = false;
 
+#if USE(BUN_JSC_ADDITIONS)
+    source->flattenIfCacheableDictionary(vm);
+#endif
     Structure* sourceStructure = source->structure();
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (sourceStructure->hasStableFields())
+        return nullptr;
+#endif
 
     // If the sourceStructure is frozen, or has immutable properties, we retrieve the last one before that transition.
     if (sourceStructure->transitionKind() == TransitionKind::Freeze || sourceStructure->transitionKind() == TransitionKind::MakePropertiesImmutable) {
@@ -302,12 +320,33 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
     properties.shrink(0);
     values.clear();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (target->structure()->hasImmutableShape() || ((target->structure()->mayBePrototype() || target->structure()->typedLayoutID()) && TypedLayoutTable::hasTypedFields())) [[unlikely]]
+        return false;
+#endif
+
     if (source->hasNonReifiedStaticProperties())
         return false;
 
     Structure* sourceStructure = source->structure();
-    if (!sourceStructure->canPerformFastPropertyEnumerationCommon())
+    if (!sourceStructure->canPerformFastPropertyEnumerationCommon()) {
+#if ENABLE(AOT)
+        // The names live as long as the program.
+        if (sourceStructure->compiledLayout()) {
+            bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
+                properties.append(&name);
+                values.appendWithCrashOnOverflow(value);
+                return true;
+            });
+            if (!hasOnlyFields)
+                return false;
+            if (properties.size())
+                target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+            return true;
+        }
+#endif
         return false;
+    }
 
     if (objectCloneFast(vm, target, source))
         return true;
@@ -341,7 +380,6 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     return true;
 }
-
 
 } // namespace JSC
 

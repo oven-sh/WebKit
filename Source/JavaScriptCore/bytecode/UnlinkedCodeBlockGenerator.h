@@ -196,6 +196,9 @@ public:
 private:
     VM& m_vm;
     Strong<UnlinkedCodeBlock> m_codeBlock;
+public:
+    UnlinkedCodeBlock* codeBlock() const { return m_codeBlock.get(); }
+private:
     // In non-RareData.
     Vector<Identifier> m_identifiers;
     Vector<WriteBarrier<Unknown>> m_constantRegisters;

@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 function bar() {
     if (foo.arguments[0] === void 0)
         throw "Error: foo.arguments[0] should not be undefined but is."

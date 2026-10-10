@@ -17,6 +17,7 @@ set(JavaScriptCore_PRIVATE_INCLUDE_DIRECTORIES
     "${JAVASCRIPTCORE_DIR}"
     "${JAVASCRIPTCORE_DIR}/API"
     "${JAVASCRIPTCORE_DIR}/assembler"
+    "${JAVASCRIPTCORE_DIR}/aot"
     "${JAVASCRIPTCORE_DIR}/b3"
     "${JAVASCRIPTCORE_DIR}/b3/air"
     "${JAVASCRIPTCORE_DIR}/bindings"
@@ -665,6 +666,11 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     bytecode/BytecodeDumper.h
     bytecode/BytecodeGeneratorification.h
     bytecode/BytecodeGraph.h
+    aot/AOTFacts.h
+    aot/AOTFunction.h
+    aot/AOTProgramData.h
+    aot/AOTTypedBuiltins.h
+
     bytecode/BytecodeIndex.h
     bytecode/BytecodeIntrinsicRegistry.h
     bytecode/BytecodeLivenessAnalysis.h
@@ -916,6 +922,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     heap/MarkStack.h
     heap/MarkStackMergingConstraint.h
     heap/MarkedBlock.h
+    heap/MarkedBlockCage.h
     heap/MarkedBlockInlines.h
     heap/MarkedBlockSet.h
     heap/MarkedSpace.h
@@ -1235,6 +1242,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/ConcatKeyAtomStringCache.h
     runtime/ConcatKeyAtomStringCacheInlines.h
     runtime/Concurrency.h
+    runtime/CompilerHooks.h
     runtime/ConcurrentJSLock.h
     runtime/ConfigFile.h
     runtime/ConsoleClient.h

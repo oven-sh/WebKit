@@ -34,7 +34,53 @@
 
 namespace JSC::B3 {
 
+#if ENABLE(AOT)
+#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
+    macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
+    macro(AOTInstance_infos, AOT::Instance::offsetOfInfos(), Mutability::Immutable) \
+    macro(AOTInstance_sharedData, AOT::Instance::offsetOfSharedData(), Mutability::Immutable) \
+    macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
+    macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
+    macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
+    macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
+    macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
+    macro(AOTTypedClosure_entry, AOT::Typed::Closure::offsetOfEntry(), Mutability::Immutable) \
+    macro(AOTTypedObject_words, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
+    macro(AOTTypedObject_orderWord, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
+    macro(AOTTypedObject_shapeWord, AOT::Typed::offsetOfShapeWord, Mutability::Mutable) \
+    macro(AOTTypedObject_extension, AOT::Typed::offsetOfExtension, Mutability::Mutable) \
+    macro(AOTTypedExtension_size, AOT::Typed::offsetOfExtensionSize, Mutability::Immutable) \
+    macro(AOTTypedCompactTable_used, AOT::Typed::CompactTable::offsetOfUsed(), Mutability::Mutable) \
+    macro(AOTTypedCompactTable_deleted, AOT::Typed::CompactTable::offsetOfDeleted(), Mutability::Mutable) \
+    macro(JSMap_compactTable, (JSMap::offsetOfCompactTable()), Mutability::Mutable) \
+    macro(JSSet_compactTable, (JSSet::offsetOfCompactTable()), Mutability::Mutable) \
+    macro(AOTTyped_shapeSets, 0, Mutability::Immutable)
+#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTTyped_fields) \
+    macro(AOTTyped_collectorState) \
+    macro(AOTTyped_runtimeState) \
+    macro(AOTTyped_argumentBuffer) \
+    macro(AOTTyped_freshCell)
+#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTTyped_slots) \
+    macro(AOTTyped_variables) \
+    macro(AOTTyped_catchSpillSlots)
+#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
+    macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
+    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
+    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
+    macro(AOTIdentifiers, 0, sizeof(void*)) \
+    macro(AOTRuntimeTable, 0, sizeof(void*)) \
+    macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t))
+#else
+#define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
+#define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro)
+#define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro)
+#define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro)
+#endif
+
 #define FOR_EACH_ABSTRACT_HEAP(macro) \
+    FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(TypedArrayProperties) \
     macro(JSCellHeaderAndNamedProperties) \
     macro(OrderedHashTableData) \
@@ -42,6 +88,7 @@ namespace JSC::B3 {
 
 // macro(name, offset, mutability)
 #define FOR_EACH_ABSTRACT_FIELD(macro) \
+    FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
     macro(ArrayBuffer_data, ArrayBuffer::offsetOfData(), Mutability::Mutable) \
     macro(ArrayStorage_numValuesInVector, ArrayStorage::numValuesInVectorOffset(), Mutability::Mutable) \
     macro(Butterfly_arrayBuffer, Butterfly::offsetOfArrayBuffer(), Mutability::Mutable) \
@@ -49,6 +96,8 @@ namespace JSC::B3 {
     macro(Butterfly_vectorLength, Butterfly::offsetOfVectorLength(), Mutability::Mutable) \
     macro(CallFrame_callerFrame, CallFrame::callerFrameOffset(), Mutability::Mutable) \
     macro(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Mutability::Immutable) \
+    macro(CodeBlock_instructionsRawPointer, CodeBlock::offsetOfInstructionsRawPointer(), Mutability::Immutable) \
+    macro(CodeBlock_jitData, CodeBlock::offsetOfJITData(), Mutability::Immutable) \
     macro(ClonedArguments_callee, ClonedArguments::offsetOfCallee(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_key, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfKey(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_value, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfValue(), Mutability::Mutable) \
@@ -96,6 +145,8 @@ namespace JSC::B3 {
     macro(JSCell_typeInfoFlags, JSCell::typeInfoFlagsOffset(), Mutability::Mutable) \
     macro(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Mutability::Immutable) \
     macro(JSCell_usefulBytes, JSCell::indexingTypeAndMiscOffset(), Mutability::Mutable) \
+    macro(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch(), Mutability::Mutable) \
+    macro(NativeExecutable_function, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall), Mutability::Immutable) \
     macro(JSFunction_executableOrRareData, JSFunction::offsetOfExecutableOrRareData(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastRegExp, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastRegExp(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastInput, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastInput(), Mutability::Mutable) \
@@ -205,6 +256,7 @@ namespace JSC::B3 {
     macro(Symbol_string, Symbol::offsetOfString(), Mutability::Mutable) \
 
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP(macro) \
+    FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(ArrayStorage_vector, ArrayStorage::vectorOffset(), sizeof(WriteBarrier<Unknown>)) \
     macro(CompleteSubspace_allocatorForSizeStep, CompleteSubspace::offsetOfAllocatorForSizeStep(), sizeof(Allocator)) \
     macro(DirectArguments_storage, DirectArguments::storageOffset(), sizeof(EncodedJSValue)) \
@@ -231,6 +283,7 @@ namespace JSC::B3 {
     macro(WebAssemblyGCStructure_inlinedDisplay, WebAssemblyGCStructure::offsetOfInlinedDisplay(), sizeof(WriteBarrierStructureID)) \
 
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP(macro) \
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(properties) \
     /* WasmGC Struct access are analyzed via field index and field type. We can include Wasm type definition to further make alias analysis better. */ \
     macro(JSWebAssemblyStruct_fields) \
@@ -345,6 +398,8 @@ public:
     void decorateCCallWrite(const AbstractHeap*, Value*);
     void decoratePatchpointRead(const AbstractHeap*, Value*);
     void decoratePatchpointWrite(const AbstractHeap*, Value*);
+    // All from the first heap to the last, as they are numbered.
+    void decoratePatchpointWrite(const AbstractHeap* first, const AbstractHeap* last, Value*);
     void decorateFenceRead(const AbstractHeap*, Value*);
     void decorateFenceWrite(const AbstractHeap*, Value*);
     void decorateFencedAccess(const AbstractHeap*, Value*);
@@ -380,6 +435,7 @@ private:
     Vector<HeapForValue> m_heapForCCallWrite;
     Vector<HeapForValue> m_heapForPatchpointRead;
     Vector<HeapForValue> m_heapForPatchpointWrite;
+    Vector<std::pair<const AbstractHeap*, HeapForValue>> m_heapsForPatchpointWrite;
     Vector<HeapForValue> m_heapForFenceRead;
     Vector<HeapForValue> m_heapForFenceWrite;
     Vector<HeapForValue> m_heapForFencedAccess;

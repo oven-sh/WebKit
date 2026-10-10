@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): ahead-of-time compiled code calls the target of a bound function directly, so the bound function has no frame.
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplingProfiler.js", "caller relative");
 

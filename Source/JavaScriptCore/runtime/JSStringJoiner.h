@@ -246,6 +246,12 @@ public:
             if constexpr (indexingShape == ContiguousShape) {
                 if (value.isString())
                     return asString(value);
+#if USE(BUN_JSC_ADDITIONS)
+                if (auto int32Value = strictInt32Of(value)) {
+                    m_accumulatedStringsLength = WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
+                    return joinImpl<indexingShape>(globalObject, data, length);
+                }
+#endif
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -266,6 +272,12 @@ public:
                     m_isAll8Bit &= string->is8Bit();
                     continue;
                 }
+#if USE(BUN_JSC_ADDITIONS)
+                if (auto int32Value = strictInt32Of(value)) {
+                    m_accumulatedStringsLength += WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
+                    continue;
+                }
+#endif
                 if (!value.isInt32())
                     return nullptr;
             }
@@ -276,9 +288,32 @@ public:
         return joinImpl<indexingShape>(globalObject, data, length);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Of a double that is kept boxed.
+    static std::optional<int32_t> strictInt32Of(JSValue value)
+    {
+        return value.isDouble() ? tryConvertToStrictInt32(value.asDouble()) : std::nullopt;
+    }
+
+    // Of an ArrayWithDouble. Null unless every element is an int32.
+    JSString* tryJoin(JSGlobalObject* globalObject, const double* data, unsigned length)
+    {
+        for (size_t i = 0; i < length; ++i) {
+            auto int32Value = tryConvertToStrictInt32(data[i]);
+            if (!int32Value)
+                return nullptr;
+            m_accumulatedStringsLength += WTF::StringTypeAdapter<int32_t> { *int32Value }.length();
+        }
+        return joinImpl(globalObject, data, length);
+    }
+#endif
+
 private:
     template<IndexingType indexingShape>
     JSString* joinImpl(JSGlobalObject*, const WriteBarrier<Unknown>*, unsigned);
+#if USE(BUN_JSC_ADDITIONS)
+    JSString* joinImpl(JSGlobalObject*, const double*, unsigned);
+#endif
 
     StringView m_separator;
     CheckedUint32 m_accumulatedStringsLength;

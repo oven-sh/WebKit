@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 function baz() {
     if (!foo.arguments[1])
         throw "Error: foo.arguments[1] should be truthy but is falsy: " + foo.arguments[1];

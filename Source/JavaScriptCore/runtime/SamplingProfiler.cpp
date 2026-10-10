@@ -26,6 +26,8 @@
 #include "config.h"
 #include "SamplingProfiler.h"
 
+#include "AOTRuntime.h"
+
 #if ENABLE(SAMPLING_PROFILER)
 
 #include "CodeBlock.h"
@@ -83,9 +85,10 @@ ALWAYS_INLINE static void reportStats()
 
 class FrameWalker {
 public:
-    FrameWalker(VM& vm, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+    FrameWalker(VM& vm, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
         : m_vm(vm)
         , m_callFrame(callFrame)
+        , m_pc(pc)
         , m_entryFrame(vm.topEntryFrame)
         , m_codeBlockSetLocker(codeBlockSetLocker)
         , m_machineThreadsLocker(machineThreadsLocker)
@@ -122,6 +125,23 @@ protected:
         CallSiteIndex callSiteIndex;
         CalleeBits unsafeCallee = m_callFrame->unsafeCallee();
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
+#if ENABLE(AOT)
+        switch (m_pcInfo.kind) {
+        case AOT::ImageAddressInfo::Function: {
+            AOT::FunctionRef function { m_vm.m_aotInstances[0], m_pcInfo.index };
+            auto callSite = AOT::tryCallSiteAt(*function.info().function(), m_pcInfo.offset);
+            stackTrace[m_depth] = UnprocessedStackFrame(nullptr, CalleeBits(), CallSiteIndex(callSite.value_or(0)));
+            stackTrace[m_depth].aotFunction = function;
+            m_depth++;
+            return;
+        }
+        case AOT::ImageAddressInfo::Stub:
+        case AOT::ImageAddressInfo::Adapter:
+            return;
+        case AOT::ImageAddressInfo::NotInImage:
+            break;
+        }
+#endif
         if (unsafeCallee.isNativeCallee())
             codeBlock = nullptr;
         if (codeBlock) {
@@ -169,7 +189,21 @@ protected:
     SUPPRESS_ASAN
     void advanceToParentFrame()
     {
+#if ENABLE(AOT)
+        void* pc = removeCodePtrTag(m_callFrame->rawReturnPC());
+        if (m_pcInfo.kind == AOT::ImageAddressInfo::Function || m_pcInfo.kind == AOT::ImageAddressInfo::Stub) {
+            m_callFrame = m_callFrame->callerFrame();
+            m_pc = pc;
+            return;
+        }
+        EntryFrame* calleeEntryFrame = m_entryFrame;
         m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+        if (m_entryFrame != calleeEntryFrame && m_callFrame && AOT::hasCode())
+            pc = AOT::returnAddressForFrame(m_callFrame, calleeEntryFrame);
+        m_pc = pc;
+#else
+        m_callFrame = m_callFrame->unsafeCallerFrame(m_entryFrame);
+#endif
     }
 
     bool NODELETE isAtTop() const
@@ -190,6 +224,12 @@ protected:
                 sNumFailedWalks++;
             return;
         }
+
+#if ENABLE(AOT)
+        m_pcInfo = AOT::classifyAddress(m_pc);
+        if (m_pcInfo.kind != AOT::ImageAddressInfo::NotInImage)
+            return;
+#endif
 
         CodeBlock* codeBlock = m_callFrame->unsafeCodeBlock();
         if (!codeBlock || m_callFrame->unsafeCallee().isNativeCallee())
@@ -228,6 +268,10 @@ protected:
 
     VM& m_vm;
     CallFrame* m_callFrame;
+    void* m_pc;
+#if ENABLE(AOT)
+    AOT::ImageAddressInfo m_pcInfo { };
+#endif
     EntryFrame* m_entryFrame;
     const AbstractLocker& m_codeBlockSetLocker;
     const AbstractLocker& m_machineThreadsLocker;
@@ -239,8 +283,8 @@ class CFrameWalker : public FrameWalker {
 public:
     typedef FrameWalker Base;
 
-    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
-        : Base(vm, callFrame, codeBlockSetLocker, machineThreadsLocker)
+    CFrameWalker(VM& vm, void* machineFrame, CallFrame* callFrame, void* pc, const AbstractLocker& codeBlockSetLocker, const AbstractLocker& machineThreadsLocker)
+        : Base(vm, callFrame, pc, codeBlockSetLocker, machineThreadsLocker)
         , m_machineFrame(machineFrame)
     {
     }
@@ -395,6 +439,7 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
             void* machineFrame;
             CallFrame* callFrame;
             void* machinePC;
+            void* machineLinkRegister = nullptr;
             bool topFrameIsLLInt = false;
             RegExp* regExp = nullptr;
             void* llintPC;
@@ -408,6 +453,9 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     machinePC = instructionPointer->untaggedPtr();
                 else
                     machinePC = nullptr;
+#if OS(DARWIN) && CPU(ARM64)
+                machineLinkRegister = MachineContext::linkRegister(registers).untaggedPtr();
+#endif
                 llintPC = removeCodePtrTag(MachineContext::llintInstructionPointer(registers));
                 assertIsNotTagged(machinePC);
             }
@@ -423,6 +471,9 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                 topFrameIsLLInt = true;
                 // We're okay to take a normal stack trace when the PC
                 // is in LLInt code.
+#if ENABLE(AOT)
+            } else if (AOT::classifyAddress(machinePC).kind != AOT::ImageAddressInfo::NotInImage) {
+#endif
             } else {
                 // RegExp evaluation is leaf. So if RegExp evaluation exists, we can say it is RegExp evaluation is the top user-visible frame.
                 regExp = m_vm.m_executingRegExp;
@@ -433,15 +484,26 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
                     shouldAppendTopFrameAsCCode = true;
             }
 
+            void* framePC = machinePC;
+#if ENABLE(AOT)
+            if (AOT::hasCode() && (callFrame != machineFrame || AOT::classifyAddress(machinePC).kind == AOT::ImageAddressInfo::NotInImage)) {
+                if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
+                    callFrame = static_cast<CallFrame*>(innermost->frame);
+                    framePC = innermost->pc;
+                } else if (callFrame)
+                    framePC = m_jscExecutionThread->stack().contains(machineFrame) ? AOT::returnAddressForFrame(callFrame, machineFrame) : nullptr;
+            }
+#endif
+
             size_t walkSize;
             bool wasValidWalk;
             bool didRunOutOfVectorSpace;
             if (Options::sampleCCode()) {
-                CFrameWalker walker(m_vm, machineFrame, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                CFrameWalker walker(m_vm, machineFrame, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             } else {
-                FrameWalker walker(m_vm, callFrame, codeBlockSetLocker, machineThreadsLocker);
+                FrameWalker walker(m_vm, callFrame, framePC, codeBlockSetLocker, machineThreadsLocker);
                 walkSize = walker.walk(m_currentFrames, didRunOutOfVectorSpace);
                 wasValidWalk = walker.wasValidWalk();
             }
@@ -484,6 +546,43 @@ static ALWAYS_INLINE BytecodeIndex NODELETE tryGetBytecodeIndex(unsigned llintPC
     if (bytecodeOffset < codeBlock->instructionsSize())
         return BytecodeIndex(bytecodeOffset);
     return BytecodeIndex();
+}
+
+#if ENABLE(AOT)
+void SamplingProfiler::resolveAOTFrame(StackFrame& frame)
+{
+    AOT::FunctionRef function = std::exchange(frame.unresolvedAOTFunction, AOT::FunctionRef { });
+    auto& location = frame.semanticLocation;
+    BytecodeIndex bytecodeIndex = std::exchange(location.bytecodeIndex, BytecodeIndex());
+    if (!m_vm.m_aotInstances.contains(function.instance)) {
+        frame.frameType = FrameType::Unknown;
+        return;
+    }
+    ScriptExecutable* executable = function.executable();
+    frame.executable = executable;
+    m_liveCellPointers.add(executable);
+    if (bytecodeIndex.offset() < function.instructionsSize()) {
+        location.lineColumn = function.lineColumnFor(bytecodeIndex);
+        location.bytecodeIndex = bytecodeIndex;
+    }
+    location.codeBlockHash = CodeBlockHash(executable->source(), function.codeType() == FunctionCode ? function.info().kind() : CodeSpecializationKind::CodeForCall);
+    location.jitType = JITType::AOTJIT;
+}
+#endif
+
+void SamplingProfiler::resolveAOTFrames()
+{
+#if ENABLE(AOT)
+    if (!m_hasUnresolvedAOTFrames)
+        return;
+    for (StackTrace& stackTrace : m_stackTraces) {
+        for (StackFrame& frame : stackTrace.frames) {
+            if (frame.unresolvedAOTFunction)
+                resolveAOTFrame(frame);
+        }
+    }
+    m_hasUnresolvedAOTFrames = false;
+#endif
 }
 
 void SamplingProfiler::processUnverifiedStackTraces()
@@ -542,7 +641,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
             // Set the callee if it's a valid GC object.
             CalleeBits calleeBits = unprocessedStackFrame.unverifiedCallee;
             StackFrame& stackFrame = stackTrace.frames.last();
-            bool alreadyHasExecutable = !!stackFrame.executable;
+            bool alreadyHasExecutable = stackFrame.executable || stackFrame.unresolvedAOTFunction;
             if (calleeBits.isNativeCallee()) {
                 switch (unprocessedStackFrame.nativeCalleeCategory) {
                 case NativeCallee::Category::Wasm: {
@@ -597,6 +696,25 @@ void SamplingProfiler::processUnverifiedStackTraces()
 
             if (alreadyHasExecutable)
                 return;
+
+#if ENABLE(AOT)
+            if (auto* function = uncheckedDowncast<JSFunction>(calleeCell); function->hasAOTFunctionWord()) {
+                AOT::FunctionRef compiled;
+                if (!m_vm.m_aotInstances.isEmpty())
+                    compiled = AOT::FunctionRef { m_vm.m_aotInstances[0], function->aotFunctionIndex() };
+                if (!compiled || !compiled.hasExecutable()) {
+                    stackFrame.frameType = FrameType::Unknown;
+                    return;
+                }
+                stackFrame.frameType = FrameType::Executable;
+                stackFrame.unresolvedAOTFunction = compiled;
+                if (compiled.executableIfExists())
+                    resolveAOTFrame(stackFrame);
+                else
+                    m_hasUnresolvedAOTFrames = true;
+                return;
+            }
+#endif
 
             ExecutableBase* executable = uncheckedDowncast<JSFunction>(calleeCell)->executable();
             if (!executable) {
@@ -706,6 +824,19 @@ void SamplingProfiler::processUnverifiedStackTraces()
                     appendCodeBlockNoInlining();
 #else
                 appendCodeBlockNoInlining();
+#endif
+#if ENABLE(AOT)
+            } else if (AOT::FunctionRef function = unprocessedStackFrame.aotFunction; function && m_vm.m_aotInstances.contains(function.instance) && function.hasExecutable()) {
+                assertIsHeld(m_lock);
+                stackTrace.frames.append(StackFrame());
+                StackFrame& frame = stackTrace.frames.last();
+                frame.frameType = FrameType::Executable;
+                frame.unresolvedAOTFunction = function;
+                frame.semanticLocation.bytecodeIndex = unprocessedStackFrame.callSiteIndex.bytecodeIndex();
+                if (function.executableIfExists())
+                    resolveAOTFrame(frame);
+                else
+                    m_hasUnresolvedAOTFrames = true;
 #endif
             } else if (unprocessedStackFrame.cCodePC) {
                 appendEmptyFrame();
@@ -974,6 +1105,7 @@ Vector<SamplingProfiler::StackTrace> SamplingProfiler::releaseStackTraces()
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
+    resolveAOTFrames();
 
     Vector<StackTrace> result(WTF::move(m_stackTraces));
     clearData();
@@ -1095,6 +1227,7 @@ Ref<JSON::Value> SamplingProfiler::stackTracesAsJSON()
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
+    resolveAOTFrames();
 
     UncheckedKeyHashMap<SourceID, Ref<SourceProvider>> sources;
 
@@ -1240,6 +1373,7 @@ void SamplingProfiler::reportTopFunctions(PrintStream& out)
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
+    resolveAOTFrames();
 
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> functionCounts;
@@ -1306,6 +1440,7 @@ void SamplingProfiler::reportTopBytecodes(PrintStream& out)
         HeapIterationScope heapIterationScope(m_vm.heap);
         processUnverifiedStackTraces();
     }
+    resolveAOTFrames();
 
     size_t totalSamples = 0;
     UncheckedKeyHashMap<String, size_t> bytecodeCounts;

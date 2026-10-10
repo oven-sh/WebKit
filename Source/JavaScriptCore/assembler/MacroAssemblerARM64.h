@@ -2979,6 +2979,20 @@ public:
     // (specifically, in this case, 0).
     void branchConvertDoubleToInt32(FPRegisterID src, RegisterID dest, JumpList& failureCases, FPRegisterID, bool negZeroCheck = true)
     {
+        if (supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+            m_assembler.fjcvtzs(dest, src);
+            if (negZeroCheck) {
+                failureCases.append(makeBranch(ARM64Assembler::ConditionNE));
+                return;
+            }
+            Jump isInt32 = makeBranch(ARM64Assembler::ConditionEQ);
+            RegisterID scratch = getCachedMemoryTempRegisterIDAndInvalidate();
+            m_assembler.fmov<64>(scratch, src);
+            m_assembler.lsl<64>(scratch, scratch, 1);
+            failureCases.append(makeCompareAndBranch<64>(IsNonZero, scratch));
+            isInt32.link(this);
+            return;
+        }
         m_assembler.fcvtns<32, 64>(dest, src);
         if (supportsRoundFloatToIntegerFloat())
             m_assembler.frint32z<64>(fpTempRegister, src);
@@ -8273,6 +8287,12 @@ protected:
     }
 
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
+    JS_EXPORT_PRIVATE static unsigned featuresOfBuildTarget();
+protected:
+#endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_lseCheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_jscvtCheckState;

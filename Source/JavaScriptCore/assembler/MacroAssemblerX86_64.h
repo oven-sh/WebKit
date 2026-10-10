@@ -9907,6 +9907,10 @@ public:
     static CPUID getCPUID(unsigned level);
     static CPUID getCPUIDEx(unsigned level, unsigned count);
     JS_EXPORT_PRIVATE static void collectCPUFeatures();
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE static void useOnlyFeaturesOfBuildTarget();
+    JS_EXPORT_PRIVATE static unsigned featuresOfBuildTarget();
+#endif
 
     JS_EXPORT_PRIVATE static CPUIDCheckState s_sse3CheckState;
     JS_EXPORT_PRIVATE static CPUIDCheckState s_supplementalSSE3CheckState;

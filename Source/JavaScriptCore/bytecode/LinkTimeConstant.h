@@ -50,6 +50,7 @@ class JSGlobalObject;
     v(setPrototypeDirectOrThrow, nullptr) \
     v(copyDataProperties, nullptr) \
     v(cloneObject, nullptr) \
+    v(noteClass, nullptr) \
     v(resolvePromise, nullptr) \
     v(rejectPromise, nullptr) \
     v(fulfillPromise, nullptr) \
@@ -132,9 +133,11 @@ class JSGlobalObject;
     v(createPrivateSymbol, nullptr) \
     v(emptyPropertyNameEnumerator, nullptr) \
     v(sentinelString, nullptr) \
+    v(orderedHashTableSentinel, nullptr) \
     v(createRemoteFunction, nullptr) \
     v(isRemoteFunction, nullptr) \
     v(arrayFromFastWithoutMapFn, nullptr) \
+    v(arrayProtoValues, nullptr) \
     v(jsonParse, nullptr) \
     v(jsonStringify, nullptr) \
     v(String, nullptr) \

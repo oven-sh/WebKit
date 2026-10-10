@@ -26,6 +26,7 @@
 #include "config.h"
 #include "SlotVisitor.h"
 
+#include "AOTTypedData.h"
 #include "CellContainerInlines.h"
 #include "Collector.h"
 #include "ConservativeRoots.h"
@@ -36,6 +37,7 @@
 #include "JSArray.h"
 #include "JSCellInlines.h"
 #include "JSString.h"
+#include "MarkedBlockCage.h"
 #include "MarkingConstraintSolver.h"
 #include "SlotVisitorInlines.h"
 #include "StopIfNecessaryTimer.h"
@@ -398,6 +400,176 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
     }
 }
 
+#if ENABLE(AOT)
+class CompiledLayoutVisitor {
+public:
+    ALWAYS_INLINE explicit CompiledLayoutVisitor(SlotVisitor& visitor)
+        : m_visitor(visitor)
+        , m_structureIDBase(structureIDBase())
+        , m_cageBase(MarkedBlockCage::base())
+        , m_markingVersion(visitor.m_markingVersion)
+        , m_isEnabled(Options::useAOT() && !visitor.m_heapAnalyzer)
+    {
+    }
+
+    ALWAYS_INLINE ~CompiledLayoutVisitor()
+    {
+        m_visitor.m_visitCount += m_visitCount;
+        m_visitor.m_bytesVisited += m_bytesVisited;
+    }
+
+    // As AOT::Typed::Object::visitChildrenImpl(). False: the cell is for SlotVisitor::visitChildren().
+    ALWAYS_INLINE bool tryVisit(const JSCell* cell)
+    {
+        using namespace AOT::Typed;
+        if (!m_isEnabled)
+            return false;
+        if (cell->type() == ArrayType)
+            return tryVisitArray(cell);
+        if (!structureOf(cell)->isOfCompiledCells())
+            return false;
+
+        cell->setCellState(CellState::PossiblyBlack);
+        WTF::storeLoadFence();
+
+        Structure* structure = structureOf(cell);
+        const LayoutData* layout = structure->compiledLayout();
+        if (!layout)
+            layout = &layoutOfEnvironment(*structure->dataOfCompiledEnvironments(), structure->firstShapeOfCompiledEnvironments(), cell);
+        const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
+        if (isObjectLayout(layout->kind) && *reinterpret_cast<const uint32_t*>(fields + offsetOfOrderWord) & orderWordHasExtraProperties) [[unlikely]] {
+            structure->classInfoForCells()->methodTable.visitChildren(const_cast<JSCell*>(cell), m_visitor);
+            return true;
+        }
+        if (structure != m_lastStructure) {
+            append(structure);
+            m_lastStructure = structure;
+        }
+        if (!layout->referencesOffset)
+            return true;
+        const uint32_t* references = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(layout) + layout->referencesOffset);
+        const uint32_t* offset = references + 3;
+        for (const uint32_t* end = offset + references[0] + references[1]; offset != end; ++offset)
+            m_visitor.appendUnbarriered(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(fields + *offset)));
+        for (const uint32_t* end = offset + references[2]; offset != end; ++offset) {
+            if (uint32_t word = *reinterpret_cast<const uint32_t*>(fields + *offset); word > undefinedCell32)
+                append(std::bit_cast<JSCell*>(m_cageBase + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift)));
+        }
+        return true;
+    }
+
+private:
+    // As JSObjectWithButterfly::visitChildrenImpl(), for an array without properties, array storage or a butterfly it shares.
+    ALWAYS_INLINE bool tryVisitArray(const JSCell* cell)
+    {
+        cell->setCellState(CellState::PossiblyBlack);
+        WTF::storeLoadFence();
+
+        auto* array = static_cast<JSObjectWithButterfly*>(const_cast<JSCell*>(cell));
+        StructureID structureID = cell->structureID();
+        if (structureID.isNuked())
+            return false;
+        Structure* structure = std::bit_cast<Structure*>(m_structureIDBase + structureID.bits());
+        if (structure->maxOffset() != invalidOffset)
+            return false;
+        IndexingType indexingMode;
+        Dependency indexingModeDependency = structure->fencedIndexingMode(indexingMode);
+        if (indexingMode != ArrayWithContiguous && indexingMode != ArrayWithInt32 && indexingMode != ArrayWithDouble && indexingMode != ArrayWithUndecided)
+            return false;
+        Butterfly* butterfly;
+        Dependency butterflyDependency = indexingModeDependency.consume(array)->fencedButterfly(butterfly);
+        if (butterfly) {
+            if (butterflyDependency.consume(cell)->structureID() != structureID || butterflyDependency.consume(structure)->maxOffset() != invalidOffset)
+                return false;
+        }
+        if (structure != m_lastStructure) {
+            append(structure);
+            m_lastStructure = structure;
+        }
+        if (!butterfly)
+            return true;
+        markAuxiliary(static_cast<HeapCell*>(butterfly->base(0, 0)));
+        if (indexingMode != ArrayWithContiguous)
+            return true;
+        const WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
+        for (unsigned i = 0, length = butterfly->publicLength(); i < length; ++i) {
+            JSValue value = elements[i].get();
+            // A hole reads as no cell at all.
+            if (!value || !value.isCell())
+                continue;
+            if (value.asCell()->isPreciseAllocation()) [[unlikely]]
+                m_visitor.appendHiddenUnbarriered(value.asCell());
+            else
+                append(value.asCell());
+        }
+        return true;
+    }
+
+    ALWAYS_INLINE void markAuxiliary(HeapCell* cell)
+    {
+        if (cell->isPreciseAllocation()) [[unlikely]] {
+            m_visitor.markAuxiliary(cell);
+            return;
+        }
+        MarkedBlock& block = cell->markedBlock();
+        Dependency dependency = block.aboutToMark(m_markingVersion, cell);
+        if (block.testAndSetMarked(cell, dependency))
+            return;
+        block.noteMarked();
+        ++m_visitCount;
+        size_t size = block.cellSize();
+        m_bytesVisited += size;
+        m_visitor.m_nonCellVisitCount += size;
+    }
+
+    ALWAYS_INLINE Structure* structureOf(const JSCell* cell) const
+    {
+        return std::bit_cast<Structure*>(m_structureIDBase + cell->structureID().decontaminate().bits());
+    }
+
+    // The cell is in a MarkedBlock.
+    ALWAYS_INLINE void append(JSCell* cell)
+    {
+        MarkedBlock& block = cell->markedBlock();
+        HeapVersion version = block.markingVersion();
+        uintptr_t dependency = 0;
+#if CPU(ARM64)
+        // As Dependency::loadAndFence(): the marks are read after the version.
+        __asm__ volatile("eor %w[dependency], %w[version], %w[version]" : [dependency] "=r"(dependency), [version] "+r"(version));
+#else
+        WTF::loadLoadFence();
+#endif
+        if (version != m_markingVersion) [[unlikely]] {
+            m_visitor.appendUnbarriered(cell);
+            return;
+        }
+        using Word = uint64_t;
+        static_assert(std::is_same_v<std::remove_cvref_t<decltype(block.marks().storage()[0])>, Word>);
+        unsigned atom = block.atomNumber(cell);
+        auto* word = std::bit_cast<Atomic<Word>*>(std::bit_cast<uintptr_t>(block.marks().storage().data() + atom / 64) + dependency);
+        Word mask = static_cast<Word>(1) << (atom % 64);
+        if (word->loadRelaxed() & mask)
+            return;
+        if (word->exchangeOr(mask, std::memory_order_relaxed) & mask) [[unlikely]]
+            return;
+        cell->setCellState(CellState::PossiblyGrey);
+        block.noteMarked();
+        ++m_visitCount;
+        m_bytesVisited += block.cellSize();
+        m_visitor.m_collectorStack.append(cell);
+    }
+
+    SlotVisitor& m_visitor;
+    const uintptr_t m_structureIDBase;
+    const uintptr_t m_cageBase;
+    const HeapVersion m_markingVersion;
+    const bool m_isEnabled;
+    Structure* m_lastStructure { nullptr };
+    size_t m_visitCount { 0 };
+    size_t m_bytesVisited { 0 };
+};
+#endif // ENABLE(AOT)
+
 void SlotVisitor::visitAsConstraint(const JSCell* cell)
 {
     m_isFirstVisit = false;
@@ -438,6 +610,12 @@ void SlotVisitor::donateKnownParallel(MarkStackArray& from, MarkStackArray& to)
     // Otherwise, assume that a thread will go idle soon, and donate.
     from.donateSomeCellsTo(to);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (Options::useAOT()) {
+        collector().m_markingConditionVariable.notifyOne();
+        return;
+    }
+#endif
     collector().m_markingConditionVariable.notifyAll();
 }
 
@@ -502,6 +680,9 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 // one next cell while accessing the current cell to make memory fetching in flight while handling
                 // the current cell.
                 unsigned countdown = Options::minimumNumberOfScansBetweenRebalance();
+#if ENABLE(AOT)
+                CompiledLayoutVisitor compiledLayoutVisitor(*this);
+#endif
                 auto popAndPrefetch = [&] ALWAYS_INLINE_LAMBDA -> const JSCell* {
                     if (!countdown || !stack.canRemoveLast())
                         return nullptr;
@@ -511,6 +692,10 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 for (const JSCell* next = popAndPrefetch(); next;) {
                     const JSCell* cell = next;
                     next = popAndPrefetch();
+#if ENABLE(AOT)
+                    if (compiledLayoutVisitor.tryVisit(cell))
+                        continue;
+#endif
                     visitChildren(cell);
                 }
                 return IterationStatus::Done;
@@ -694,6 +879,10 @@ NEVER_INLINE SlotVisitor::SharedDrainResult SlotVisitor::drainFromShared(SharedD
                             collector().m_numberOfWaitingParallelMarkers);
                         return IterationStatus::Continue;
                     });
+#if USE(BUN_JSC_ADDITIONS)
+                if (Options::useAOT() && hasWork(locker))
+                    collector().m_markingConditionVariable.notifyOne();
+#endif
             }
 
             collector().m_numberOfActiveParallelMarkers++;

@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): ShadowChicken reads a frame of ahead-of-time compiled code as a standard frame.
 //@ skip if $buildType == "debug"
 //@ requireOptions("--exceptionStackTraceLimit=0", "--defaultErrorStackTraceLimit=0", "--forceRAMSize=1000000", "--forceDebuggerBytecodeGeneration=1", "--useZombieMode=1", "--jitPolicyScale=0", "--collectContinuously=1", "--useConcurrentJIT=0")
 

@@ -76,40 +76,64 @@ public:
 
     void add(MemoryValue* memory)
     {
-        Matches& matches = m_map.add(memory->lastChild(), Matches()).iterator->value;
+        Matches& matches = m_map.add(keyFor(memory->lastChild(), memory->offset()), Matches()).iterator->value;
         if (matches.contains(memory))
             return;
         matches.append(memory);
+
+        if (memory->readsMutability() == Mutability::Immutable)
+            return;
+        Clobberable entry { memory, keyFor(memory->lastChild(), memory->offset()), memory->range() };
+        if (entry.range.distance() == 1)
+            m_narrow.add(entry.range.begin(), Vector<Clobberable, 1>()).iterator->value.append(entry);
+        else
+            m_wide.append(entry);
     }
 
-    template<typename Functor>
-    void removeIf(NOESCAPE const Functor& functor)
+    // Bun: removes the values that a write to this range invalidates. It used to look at every value in the map, which is quadratic in
+    void clobber(HeapRange writes)
     {
-        m_map.removeIf(
-            [&] (UncheckedKeyHashMap<Value*, Matches>::KeyValuePairType& entry) -> bool {
-                entry.value.removeAllMatching(
-                    [&] (Value* value) -> bool {
-                        if (MemoryValue* memory = value->as<MemoryValue>())
-                            return functor(memory);
-                        return true;
-                    });
-                return entry.value.isEmpty();
+        auto remove = [&](const Clobberable& entry) {
+            auto iter = m_map.find(entry.key);
+            if (iter == m_map.end())
+                return;
+            iter->value.removeFirst(entry.value);
+            if (iter->value.isEmpty())
+                m_map.remove(iter);
+        };
+        if (writes.distance() == 1) {
+            for (auto& entry : m_narrow.take(writes.begin()))
+                remove(entry);
+        } else {
+            m_narrow.removeIf([&](auto& bucket) {
+                if (!HeapRange(bucket.key, bucket.key + 1).overlaps(writes))
+                    return false;
+                for (auto& entry : bucket.value)
+                    remove(entry);
+                return true;
             });
+        }
+        m_wide.removeAllMatching([&](const Clobberable& entry) {
+            if (!entry.range.overlaps(writes))
+                return false;
+            remove(entry);
+            return true;
+        });
     }
 
-    Matches* find(Value* ptr)
+    Matches* find(Value* ptr, int64_t offset)
     {
-        auto iter = m_map.find(ptr);
+        auto iter = m_map.find(keyFor(ptr, offset));
         if (iter == m_map.end())
             return nullptr;
         return &iter->value;
     }
 
     template<typename Functor>
-    MemoryValue* find(Value* ptr, NOESCAPE const Functor& functor)
+    MemoryValue* find(Value* ptr, int64_t offset, NOESCAPE const Functor& functor)
     {
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Looking for ", pointerDump(ptr), " in ", *this);
-        if (Matches* matches = find(ptr)) {
+        if (Matches* matches = find(ptr, offset)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Matches: ", pointerListDump(*matches));
             for (Value* candidateValue : *matches) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "        Having candidate: ", pointerDump(candidateValue));
@@ -127,16 +151,28 @@ public:
         out.print("{"_s);
         CommaPrinter comma;
         for (auto& entry : m_map)
-            out.print(comma, pointerDump(entry.key), "=>"_s, pointerListDump(entry.value));
+            out.print(comma, pointerDump(entry.key.first), "+"_s, entry.key.second, "=>"_s, pointerListDump(entry.value));
         out.print("}"_s);
     }
     
 private:
+    // Bun: keyed by the offset as well as the pointer. A lookup only accepts a value with the same offset, and code compiled ahead
+    using Key = std::pair<Value*, int64_t>;
+    static Key keyFor(Value* pointer, int64_t offset) { return { pointer, offset }; }
+
     // This uses Matches for two reasons:
     // - It cannot be a MemoryValue* because the key is imprecise. Many MemoryValues could have the
     //   same key while being unaliased.
     // - It can't be a MemoryMatches array because the MemoryValue*'s could be turned into Identity's.
-    UncheckedKeyHashMap<Value*, Matches> m_map;
+    UncheckedKeyHashMap<Key, Matches> m_map;
+
+    struct Clobberable {
+        Value* value;
+        Key key;
+        HeapRange range;
+    };
+    UncheckedKeyHashMap<uint64_t, Vector<Clobberable, 1>, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_narrow;
+    Vector<Clobberable> m_wide;
 };
 
 struct ImpureBlockData {
@@ -179,6 +215,15 @@ public:
         m_dominators = &m_proc.dominators();
         m_impureBlockData = IndexMap<BasicBlock*, ImpureBlockData>(m_proc.size());
         m_ssa = makeUnique<SSACalculator>(m_proc);
+        m_hasIndex = m_proc.size() > minBlocksForIndex;
+        if (m_hasIndex) {
+            for (BasicBlock* block : m_proc) {
+                if (!block->numSuccessors())
+                    m_blocksThatReachAnExit.push(block);
+            }
+            while (BasicBlock* block = m_blocksThatReachAnExit.pop())
+                m_blocksThatReachAnExit.pushAll(block->predecessors());
+        }
 
         // Summarize the impure effects of each block, and the impure values available at the end of
         // each block. This doesn't edit code yet.
@@ -201,8 +246,10 @@ public:
                     clobber(data, writes);
                 data.fence |= effects.fence;
 
-                if (memory)
+                if (memory) {
                     data.memoryValuesAtTail.add(memory);
+                    didAddMemoryValue(block, memory);
+                }
                 if (WasmAddressValue* wasmAddress = value->as<WasmAddressValue>())
                     data.m_candidateWasmAddressesAtTail.add(wasmAddress->child(0), wasmAddress);
 
@@ -429,13 +476,7 @@ private:
     {
         data.writes.add(writes);
 
-        data.memoryValuesAtTail.removeIf(
-            [&](MemoryValue* memory) {
-                // If memory reads is immutable, clobbering never changes the result.
-                if (memory->readsMutability() == Mutability::Immutable)
-                    return false;
-                return memory->range().overlaps(writes);
-            });
+        data.memoryValuesAtTail.clobber(writes);
     }
 
     void processMemoryAfterClobber(MemoryValue* memory)
@@ -650,12 +691,64 @@ private:
         }
 
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
+        didAddMemoryValue(m_block, m_value->as<MemoryValue>());
+    }
+
+    // Bun: by pointer and offset, the blocks that have ever had such a value in one of their maps, and the one store there is. Nothing is
+    // taken out, so this is a superset of what a search beyond the block at hand can find. Without it a search that finds nothing visits
+    // every block up to the root, or down to the exits, which is quadratic in the size of the procedure.
+    using MemoryKey = std::pair<Value*, int64_t>;
+
+    void didAddMemoryValue(BasicBlock* block, MemoryValue* memory)
+    {
+        if (!m_hasIndex)
+            return;
+        MemoryKey key { memory->lastChild(), memory->offset() };
+        auto& blocks = m_blocksWithMemoryValue.add(key, Vector<BasicBlock*, 2>()).iterator->value;
+        if (blocks.size() <= maxBlocksListed && !blocks.contains(block))
+            blocks.append(block);
+        if (!memory->isStore())
+            return;
+        auto result = m_storeWithKey.add(key, memory);
+        if (!result.isNewEntry && result.iterator->value != memory)
+            result.iterator->value = nullptr;
+    }
+
+    // Bun: matches come back only if they cut every path from the root to this block. On a simple one, no block is dominated by this block.
+    template<typename Filter>
+    bool mayFindMemoryValueInAnotherBlock(Value* ptr, int64_t offset, NOESCAPE const Filter& filter)
+    {
+        if (!m_hasIndex)
+            return true;
+        auto iter = m_blocksWithMemoryValue.find(MemoryKey { ptr, offset });
+        if (iter == m_blocksWithMemoryValue.end())
+            return false;
+        if (iter->value.size() > maxBlocksListed)
+            return true;
+        return iter->value.containsIf([&](BasicBlock* block) {
+            if (m_dominators->dominates(m_block, block))
+                return false;
+            MemoryValue* match = m_impureBlockData[block].memoryValuesAtTail.find(ptr, offset, filter);
+            return match && match != m_value;
+        });
+    }
+
+    // Bun: with no other store to find, the search says no at the first block that has no successors, if it gets that far.
+    bool mayFindAnotherStore(Value* ptr, int64_t offset)
+    {
+        if (!m_hasIndex || !m_blocksThatReachAnExit.saw(m_block))
+            return true;
+        auto iter = m_storeWithKey.find(MemoryKey { ptr, offset });
+        return iter != m_storeWithKey.end() && iter->value != m_value;
     }
 
     template<typename Filter>
     bool findStoreAfterClobber(Value* ptr, HeapRange range, NOESCAPE const Filter& filter)
     {
         if (m_value->as<MemoryValue>()->hasFence())
+            return false;
+
+        if (!mayFindAnotherStore(ptr, m_value->as<MemoryValue>()->offset()))
             return false;
         
         // We can eliminate a store if every forward path hits a store to the same location before
@@ -687,10 +780,17 @@ private:
         BlockWorklist worklist;
         worklist.pushAll(m_block->successorBlocks());
 
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned blocksSearched = 0;
+#endif
         while (BasicBlock* block = worklist.pop()) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (++blocksSearched > maxBlocksToSearch)
+                return false;
+#endif
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryStoresAtHead.find(ptr, filter);
+            MemoryValue* match = data.memoryStoresAtHead.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
             if (match && match != m_value)
                 continue;
 
@@ -711,10 +811,11 @@ private:
         Value* ptr, HeapRange range, NOESCAPE const Filter& filter, NOESCAPE const Replace& replace)
     {
         // FIXME: Currently we observed some performance regression in this case.
-        MemoryMatches matches = findMemoryValue(ptr, range, filter /* , m_value->as<MemoryValue>()->readsMutability() */);
+        MemoryMatches matches = findMemoryValue(ptr, range, filter, m_proc.positionIndependent() ? m_value->as<MemoryValue>()->readsMutability() : Mutability::Mutable);
         if (replaceMemoryValue(matches, replace))
             return;
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
+        didAddMemoryValue(m_block, m_value->as<MemoryValue>());
     }
 
     template<typename Replace>
@@ -745,7 +846,6 @@ private:
             }
             return true;
         }
-
 
         // addBottom creates a fresh Const; InsertionSet::insertBottom would
         // alias placeholders of the same type within one block.
@@ -788,7 +888,7 @@ private:
             return { };
         }
         
-        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, filter)) {
+        if (MemoryValue* match = m_data.memoryValuesAtTail.find(ptr, m_value->as<MemoryValue>()->offset(), filter)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found ", *match, " locally.");
             return { match };
         }
@@ -798,17 +898,29 @@ private:
             return { };
         }
 
+        if (!mayFindMemoryValueInAnotherBlock(ptr, m_value->as<MemoryValue>()->offset(), filter))
+            return { };
+
         BlockWorklist worklist;
         worklist.pushAll(m_block->predecessors());
 
         MemoryMatches matches;
+        constexpr unsigned maxBlocksWithWritesToSearch = 64;
+        unsigned blocksWithWritesSearched = 0;
 
+#if USE(BUN_JSC_ADDITIONS)
+        unsigned blocksSearched = 0;
+#endif
         while (BasicBlock* block = worklist.pop()) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Looking at ", *block);
+#if USE(BUN_JSC_ADDITIONS)
+            if (++blocksSearched > maxBlocksToSearch)
+                return { };
+#endif
 
             ImpureBlockData& data = m_impureBlockData[block];
 
-            MemoryValue* match = data.memoryValuesAtTail.find(ptr, filter);
+            MemoryValue* match = data.memoryValuesAtTail.find(ptr, m_value->as<MemoryValue>()->offset(), filter);
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Consdering match: ", pointerDump(match));
             if (match && match != m_value) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Found match: ", *match);
@@ -816,7 +928,7 @@ private:
                 continue;
             }
 
-            if (readsMutability != Mutability::Immutable && data.writes.overlaps(range)) {
+            if (data.writes.overlaps(range) && (readsMutability != Mutability::Immutable || ++blocksWithWritesSearched > maxBlocksWithWritesToSearch)) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
                 return { };
             }
@@ -897,6 +1009,19 @@ private:
 
     IndexMap<BasicBlock*, ImpureBlockData> m_impureBlockData;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A search for a memory value gives up beyond so many blocks. That keeps the phase linear in the size of the procedure.
+    static constexpr unsigned maxBlocksToSearch = 1024;
+#endif
+    static constexpr unsigned minBlocksForIndex = 64;
+    static constexpr unsigned maxBlocksListed = 4;
+    bool m_hasIndex { false };
+    // One more than maxBlocksListed: there are more.
+    UncheckedKeyHashMap<MemoryKey, Vector<BasicBlock*, 2>> m_blocksWithMemoryValue;
+    // Null: there are several.
+    UncheckedKeyHashMap<MemoryKey, MemoryValue*> m_storeWithKey;
+    BlockWorklist m_blocksThatReachAnExit;
+
     ImpureBlockData m_data;
 
     BasicBlock* m_block { nullptr };
@@ -937,4 +1062,3 @@ bool eliminateCommonSubexpressions(Procedure& proc)
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)
-

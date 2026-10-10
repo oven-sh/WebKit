@@ -73,9 +73,12 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
-const ASCIILiteral ImmutablePropertyDefineError { "Attempting to define property on object with immutable properties."_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of a built-in object: built-ins are immutable in compiled programs"_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
+const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
+const ASCIILiteral TypedFieldOfInheritorError { "Type check failed: a prototype of typed objects must be an ordinary object without a property named like one of their fields"_s };
+const ASCIILiteral ImmutableShapeError { "Attempting to change the shape of an object whose shape is immutable."_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -742,7 +745,7 @@ bool ordinarySetWithOwnDescriptor(JSGlobalObject* globalObject, JSObject* object
     // 9.1.9.1-4 If IsDataDescriptor(ownDesc) is true, then
     if (ownDescriptor.isDataDescriptor()) {
         // 9.1.9.1-4-a If ownDesc.[[Writable]] is false, return false.
-        if (!ownDescriptor.writable())
+        if (!ownDescriptor.writable() && (receiver == JSValue(current) || !current->structure()->inheritorsMayOverrideReadOnlyProperties()))
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         // 9.1.9.1-4-b If Type(Receiver) is not Object, return false.
@@ -878,12 +881,17 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
                 if (attributes & PropertyAttribute::CustomAccessorOrValue)
                     customSetter = entry->value->propertyPutter();
+                else if (!(attributes & PropertyAttribute::Accessor) && isFixedStaticProperty(vm, *obj, *entry->value)) [[unlikely]]
+                    attributes |= PropertyAttribute::ReadOnly;
             }
         }
 
         if (hasProperty) {
-            if (attributes & PropertyAttribute::ReadOnly)
-                return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+            if (attributes & PropertyAttribute::ReadOnly) {
+                if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                    return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+                break;
+            }
             if (attributes & PropertyAttribute::Accessor) {
                 ASSERT(isValidOffset(offset));
                 // We need to make sure that we decide to cache this property before we potentially execute aribitrary JS.
@@ -1040,6 +1048,8 @@ bool JSObject::putInlineFastReplacingStaticPropertyIfNeeded(JSGlobalObject* glob
                 if (customSetter)
                     RELEASE_AND_RETURN(scope, customSetter(structure->realm(), JSValue::encode(this), JSValue::encode(value), propertyName));
             }
+            if (isFixedStaticProperty(vm, *this, *entry->value)) [[unlikely]]
+                return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
             // Avoid PutModePut because it fails for non-extensible structures.
             putDirect(vm, propertyName, value, attributesForStructure(entry->value->attributes()) & ~PropertyAttribute::CustomValue, slot);
             return true;
@@ -1388,7 +1398,6 @@ Butterfly* JSObject::tryCreateArrayStorageButterfly(VM& vm, JSObject* intendedOw
 {
     return createArrayStorageButterflyImpl(vm, intendedOwner, structure, length, vectorLength, oldButterfly, AllocationFailureMode::ReturnNull);
 }
-
 
 ArrayStorage* JSObject::createArrayStorage(VM& vm, unsigned length, unsigned vectorLength)
 {
@@ -1923,7 +1932,7 @@ ContiguousJSValues JSObject::tryMakeWritableInt32Slow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousJSValues();
         return createInitialInt32(vm, 0);
         
@@ -1964,7 +1973,7 @@ ContiguousDoubles JSObject::tryMakeWritableDoubleSlow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousDoubles();
         return createInitialDouble(vm, 0);
         
@@ -2006,7 +2015,7 @@ ContiguousJSValues JSObject::tryMakeWritableContiguousSlow(VM& vm)
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES:
-        if (indexingShouldBeSparse() || needsSlowPutIndexing()) [[unlikely]]
+        if (indexingShouldBeSparse() || needsSlowPutIndexing() || structure()->hasImmutableShape()) [[unlikely]]
             return ContiguousJSValues();
         return createInitialContiguous(vm, 0);
         
@@ -2036,7 +2045,7 @@ ArrayStorage* JSObject::ensureArrayStorageSlow(VM& vm)
         return nullptr;
     ASSERT(inherits(info()));
 
-    if (structure()->hijacksIndexingHeader())
+    if (structure()->hijacksIndexingHeader() || structure()->hasImmutableShape())
         return nullptr;
 
     ensureWritable(vm);
@@ -2162,6 +2171,13 @@ void JSObject::switchToSlowPutArrayStorage(VM& vm)
 void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
 {
     ASSERT(prototype.isObject() || prototype.isNull());
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        if (getPrototypeDirect() != prototype)
+            throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     // (No result to give. setPrototypeWithCycleCheck() has refused before it comes here; this is for a caller that does not ask.)
     if (structure()->hasImmutableProperties()) [[unlikely]]
         return;
@@ -2170,6 +2186,9 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
     else if (!prototype.isNull()) [[unlikely]] // Conservative hardening.
         return;
 
+    if (vm.useImmutableIntrinsics && type() == ArrayType && getPrototypeDirect() != prototype) [[unlikely]]
+        becomeDerivedArray(vm);
+
     bool chainAlreadyMayInterceptIndexedAccesses = mayBePrototype() && anyObjectInChainMayInterceptIndexedAccesses();
 
     if (structure()->hasMonoProto()) {
@@ -2177,7 +2196,7 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         Structure* newStructure = Structure::changePrototypeTransition(vm, structure(), prototype, deferred);
         setStructure(vm, newStructure);
         // Prototype-chain gets changed for the already cached structures. Invalidate the cache.
-        if (mayBePrototype()) [[unlikely]]
+        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype);
     } else
         putDirectOffset(vm, knownPolyProtoOffset, prototype);
@@ -2205,7 +2224,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (this->structure()->isImmutablePrototypeExoticObject()) {
+    if (this->structure()->isImmutablePrototypeExoticObject() || this->structure()->inheritorsMayOverrideReadOnlyProperties()) {
         // This implements https://tc39.github.io/ecma262/#sec-set-immutable-prototype.
         if (this->getPrototype(globalObject) == prototype)
             return true;
@@ -2216,7 +2235,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
     if (this->structure()->hasImmutableProperties()) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
-        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
+        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of a built-in object: built-ins are immutable in compiled programs"_s);
     }
 
     // Default realm global objects should have mutable prototypes despite having
@@ -2225,6 +2244,13 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 
     if (this->getPrototypeDirect() == prototype)
         return true;
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return false;
+    }
+#endif
 
     bool isExtensible = this->isExtensible(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
@@ -2250,6 +2276,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
             break; // We're done. Set the prototype.
         nextPrototype = asObject(nextPrototype)->getPrototypeDirect();
     }
+#if USE(BUN_JSC_ADDITIONS)
+    if (TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::tryToChangePrototype(vm, this, prototype)) [[unlikely]]
+        return typeError(globalObject, scope, shouldThrowIfCantSet, TypedFieldOfInheritorError);
+#endif
     setPrototypeDirect(vm, prototype);
     return true;
 }
@@ -2449,7 +2479,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             // If the static table contains a non-configurable (DontDelete) property then we can return early;
             // if there is a property in the storage array it too must be non-configurable (the language does
             // not allow repacement of a non-configurable property with a configurable one).
-            if (entry->value->attributes() & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
+            if ((entry->value->attributes() & PropertyAttribute::DontDelete || isFixedStaticProperty(vm, *thisObject, *entry->value)) && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
                 ASSERT(!isValidOffset(thisObject->structure()->get(vm, propertyName, attributes)) || attributes & PropertyAttribute::DontDelete);
                 return false;
             }
@@ -2461,10 +2491,30 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 
     bool propertyIsPresent = isValidOffset(structure->get(vm, propertyName, attributes));
     if (propertyIsPresent) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (structure->hasStableFields() && (structure->hasImmutableShape() || structure->isStableField(structure->get(vm, propertyName)))) [[unlikely]] {
+            slot.setNonconfigurable();
+            thisObject->throwImmutableShapeError(vm);
+            return false;
+        }
+#endif
         if (attributes & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
             slot.setNonconfigurable();
             return false;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+            if (auto* field = TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
+                if (!TypedLayoutTable::isAuditing()) {
+                    auto scope = DECLARE_THROW_SCOPE(vm);
+                    slot.setNonconfigurable();
+                    throwTypeError(globalObject, scope, TypedFieldError);
+                    return false;
+                }
+                TypedLayoutTable::reportViolation("a field that has to be there is deleted"_s, typedLayoutID, thisObject);
+            }
+        }
+#endif
 
         PropertyOffset offset = invalidOffset;
         if (structure->isUncacheableDictionary()) {
@@ -2482,13 +2532,66 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             if (offset != invalidOffset)
                 thisObject->locationForOffset(offset)->clear();
         }
-        if (thisObject->mayBePrototype()) [[unlikely]]
+        if (thisObject->isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Remove);
     } else
         slot.setConfigurableMiss();
 
     return true;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
+{
+    Structure* structure = this->structure();
+    unsigned attributes;
+    PropertyOffset offset = structure->get(vm, propertyName, attributes);
+    if (!isValidOffset(offset) || !isInlineOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+        return;
+    if (!structure->isUncacheableDictionary()) {
+        DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
+        structure = Structure::toUncacheableDictionaryTransition(vm, structure, &deferredWatchpointFire);
+        setStructure(vm, structure);
+    }
+    JSValue value = getDirect(offset);
+    StructureID structureID = this->structureID();
+    PropertyOffset movedTo = invalidOffset;
+    structure->movePropertyOutOfLineWithoutTransition(vm, propertyName, [&](const GCSafeConcurrentJSLocker&, PropertyOffset newOffset, PropertyOffset newMaxOffset) {
+        unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
+        unsigned newOutOfLineCapacity = Structure::outOfLineCapacity(newMaxOffset);
+        if (newOutOfLineCapacity != oldOutOfLineCapacity) {
+            Butterfly* butterfly = allocateMoreOutOfLineStorage(vm, oldOutOfLineCapacity, newOutOfLineCapacity);
+            nukeStructureAndSetButterfly(vm, structureID, butterfly);
+            structure->setMaxOffset(vm, newMaxOffset);
+            WTF::storeStoreFence();
+            setStructureIDDirectly(structureID);
+        } else
+            structure->setMaxOffset(vm, newMaxOffset);
+        movedTo = newOffset;
+    });
+    putDirectOffset(vm, movedTo, value);
+    locationForOffset(offset)->clear();
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+#endif
+
+#if USE(BUN_JSC_ADDITIONS)
+unsigned JSObject::evictMistypedFields(VM& vm)
+{
+    uint16_t typedLayoutID = structure()->typedLayoutID();
+    Vector<UniquedStringImpl*, 4> names;
+    structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+        if (isInlineOffset(entry.offset()) && !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue)
+            && TypedLayoutTable::checkStore(typedLayoutID, entry.offset(), getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected)
+            names.append(entry.key());
+        return true;
+    });
+    for (UniquedStringImpl* name : names)
+        evictTypedField(vm, name);
+    return names.size();
+}
+#endif
 
 bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
@@ -2957,6 +3060,12 @@ void JSObject::seal(VM& vm)
         return;
     if (isSealed(vm))
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     {
@@ -2966,6 +3075,44 @@ void JSObject::seal(VM& vm)
     }
 }
 
+void JSObject::fixProperties(VM& vm, FixedObject kind)
+{
+    if (structure()->inheritorsMayOverrideReadOnlyProperties())
+        return;
+    if (structure()->isDictionary())
+        flattenDictionaryObject(vm);
+    Structure* oldStructure = structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
+}
+
+void JSObject::becomeDerivedArray(VM& vm)
+{
+    ASSERT(vm.useImmutableIntrinsics);
+    Structure* oldStructure = structure();
+    DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
+    setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::BecomeDerivedArray, &deferred));
+    ensureArrayStorage(vm);
+}
+
+bool JSObject::inheritsImmutableProperty(VM& vm, PropertyName propertyName)
+{
+    for (JSValue prototype = getPrototypeDirect(); prototype.isObject(); prototype = asObject(prototype)->getPrototypeDirect()) {
+        Structure* structure = asObject(prototype)->structure();
+        unsigned attributes;
+        if (!structure->inheritorsMayOverrideReadOnlyProperties())
+            continue;
+        if (isValidOffset(structure->get(vm, propertyName, attributes))) {
+            if (attributes & PropertyAttribute::DontDelete)
+                return true;
+        } else if (structure->hasNonReifiedStaticProperties() && structure->findPropertyHashEntry(propertyName))
+            return true;
+    }
+    return false;
+}
+
 void JSObject::freeze(VM& vm)
 {
     // The attributes do not change. Object.freeze() does not come here for such an object: it takes the generic path, which reports the refusal.
@@ -2973,13 +3120,19 @@ void JSObject::freeze(VM& vm)
         return;
     if (isFrozen(vm))
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasStableFields()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return;
+    }
+#endif
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     {
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
-        if (mayBePrototype()) [[unlikely]]
+        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     }
 }
@@ -3149,6 +3302,13 @@ bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
         return true;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (object->structure()->hasImmutableShape()) [[unlikely]] {
+        object->throwImmutableShapeError(vm);
+        return false;
+    }
+#endif
+
     object->enterDictionaryIndexingMode(vm);
     {
         Structure* oldStructure = object->structure();
@@ -3273,6 +3433,19 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
         RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));
 
     ASSERT(index <= MAX_ARRAY_INDEX);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return false;
+    }
+#endif
+
+    if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !hasIndexedProperties(indexingType())) [[unlikely]]
+        return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+
+    if (descriptor.isAccessorDescriptor() && vm.useImmutableIntrinsics && type() == ArrayType) [[unlikely]]
+        becomeDerivedArray(vm);
 
     ensureWritable(vm);
 
@@ -3628,7 +3801,20 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
     
     switch (indexingType()) {
     case ALL_BLANK_INDEXING_TYPES: {
+#if USE(BUN_JSC_ADDITIONS)
+        if (structure()->hasImmutableShape()) [[unlikely]] {
+            bool putResult = false;
+            bool isIntercepted = attemptToInterceptPutByIndexOnHole(globalObject, i, value, shouldThrow, putResult);
+            RETURN_IF_EXCEPTION(scope, false);
+            if (isIntercepted)
+                return putResult;
+            throwTypeError(globalObject, scope, ImmutableShapeError);
+            return false;
+        }
+#endif
         if (indexingShouldBeSparse()) {
+            if (structure()->inheritorsMayOverrideReadOnlyProperties() && !isStructureExtensible() && !needsSlowPutIndexing()) [[unlikely]]
+                return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
             auto* arrayStorage = ensureArrayStorageExistsAndEnterDictionaryIndexingMode(vm);
             if (!hasSlowPutArrayStorage(indexingType())) [[likely]]
                 RELEASE_AND_RETURN(scope, putByIndexBeyondVectorLengthWithArrayStorage(globalObject, i, value, shouldThrow, arrayStorage));
@@ -3783,6 +3969,13 @@ bool JSObject::putDirectIndexSlowOrBeyondVectorLength(JSGlobalObject* globalObje
     // i should be a valid array index that is outside of the current vector.
     ASSERT(i <= MAX_ARRAY_INDEX);
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure()->hasImmutableShape()) [[unlikely]] {
+        throwImmutableShapeError(vm);
+        return false;
+    }
+#endif
+
     if (attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor))
         notifyPresenceOfIndexedAccessors(vm);
     
@@ -3909,20 +4102,16 @@ void JSObject::putDirectNativeFunctionWithoutTransition(VM& vm, JSGlobalObject* 
     putDirectWithoutTransition(vm, propertyName, function, attributes);
 }
 
-JSFunction* JSObject::putDirectBuiltinFunction(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, FunctionExecutable* functionExecutable, unsigned attributes)
+JSFunction* JSObject::putDirectBuiltinFunction(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, BuiltinCode code, unsigned attributes)
 {
-    StringImpl* name = propertyName.publicName();
-    if (!name)
-        name = vm.propertyNames->anonymous.impl();
-    ASSERT(name);
-    JSFunction* function = JSFunction::create(vm, globalObject, static_cast<FunctionExecutable*>(functionExecutable), globalObject);
+    JSFunction* function = JSFunction::create(vm, globalObject, code, globalObject);
     putDirect(vm, propertyName, function, attributes);
     return function;
 }
 
-JSFunction* JSObject::putDirectBuiltinFunctionWithoutTransition(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, FunctionExecutable* functionExecutable, unsigned attributes)
+JSFunction* JSObject::putDirectBuiltinFunctionWithoutTransition(VM& vm, JSGlobalObject* globalObject, const PropertyName& propertyName, BuiltinCode code, unsigned attributes)
 {
-    JSFunction* function = JSFunction::create(vm, globalObject, static_cast<FunctionExecutable*>(functionExecutable), globalObject);
+    JSFunction* function = JSFunction::create(vm, globalObject, code, globalObject);
     putDirectWithoutTransition(vm, propertyName, function, attributes);
     return function;
 }
@@ -4230,17 +4419,27 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // Step 2.a
         if (!isExtensible)
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+        if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+            return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         ASSERT(!object || !object->structure()->hasImmutableProperties());
 
         if (object) {
+            bool isApplied;
             if (descriptor.isAccessorDescriptor()) {
                 unsigned attributes = (descriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly;
-                object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
+                isApplied = object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
             } else {
                 ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
                 JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
-                object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
+                isApplied = object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
             }
+            RETURN_IF_EXCEPTION(scope, false);
+            if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
+                return typeError(globalObject, scope, throwException, TypedFieldError);
+#if USE(BUN_JSC_ADDITIONS)
+            if (!isApplied && object->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+                return typeError(globalObject, scope, throwException, TypedFieldOfInheritorError);
+#endif
         }
 
         return true;
@@ -4312,17 +4511,21 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
     // Step 9.
     unsigned attributes = descriptor.attributesOverridingCurrent(current);
+    bool isApplied;
     if (descriptor.isAccessorDescriptor() || (current.isAccessorDescriptor() && !descriptor.isDataDescriptor())) {
         ASSERT(attributes & PropertyAttribute::Accessor);
         JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : (current.getterPresent() ? current.getterObject() : nullptr);
         JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : (current.setterPresent() ? current.setterObject() : nullptr);
         GetterSetter* getterSetter = GetterSetter::create(vm, globalObject, getter, setter);
-        object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
+        isApplied = object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
-        object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
+        isApplied = object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
+    RETURN_IF_EXCEPTION(scope, false);
+    if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
+        return typeError(globalObject, scope, throwException, TypedFieldError);
 
     return true;
 }
@@ -4356,6 +4559,16 @@ bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject,
     return object->defineOwnNonIndexProperty(globalObject, propertyName, descriptor, throwException);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ASCIILiteral JSObject::throwImmutableShapeError(VM& vm)
+{
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!scope.exception()) [[likely]]
+        throwTypeError(realm(), scope, ImmutableShapeError);
+    return ImmutableShapeError;
+}
+#endif
+
 void JSObject::convertToDictionary(VM& vm)
 {
     Structure* oldStructure = structure();
@@ -4370,10 +4583,9 @@ void JSObject::convertToUncacheableDictionary(VM& vm)
         return;
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
     setStructure(vm, Structure::toUncacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
-    if (mayBePrototype()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
-
 
 void JSObject::shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM& vm, Structure* structure, size_t outOfLineCapacityAfter)
 {
@@ -4525,11 +4737,11 @@ TransitionKind JSObject::suggestedArrayStorageTransition() const
     return TransitionKind::AllocateArrayStorage;
 }
 
-void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
+bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    if (!(structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
+    if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->hasImmutableShape() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);
 
@@ -4582,14 +4794,16 @@ void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
         // We fall through to the generic case and consume the rest of put operations if batching stopped in the middle.
         i = offsets.size();
 
-        if (mayBePrototype())
+        if (isPrototypeUsedByMegamorphicCache())
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     }
 
+    bool areAllApplied = true;
     for (; i < size; ++i) {
         PutPropertySlot putPropertySlot(this, true);
-        putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
+        areAllApplied &= putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
     }
+    return areAllApplied;
 }
 
 ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -4601,13 +4815,21 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return ReadonlyPropertyChangeError;
 
+        auto storeCheck = TypedLayoutTable::StoreCheck::Unconstrained;
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset))
+            storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+        if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+            evictTypedField(vm, propertyName);
+            return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+        }
         putDirectOffset(vm, offset, value);
         structure->didReplaceProperty(offset);
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
         ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-        slot.setExistingProperty(this, offset);
+        if (storeCheck == TypedLayoutTable::StoreCheck::Unconstrained)
+            slot.setExistingProperty(this, offset);
         return { };
     }
 

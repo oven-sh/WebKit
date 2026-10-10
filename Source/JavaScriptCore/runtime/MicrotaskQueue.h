@@ -207,6 +207,11 @@ public:
 
     DECLARE_VISIT_AGGREGATE;
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfStart(); }
+    static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(MarkedMicrotaskDeque, m_queue) + Deque<QueuedTask>::offsetOfEnd(); }
+#endif
+
 private:
     Deque<QueuedTask> m_queue;
     size_t m_markedBefore { 0 };
@@ -260,6 +265,11 @@ public:
     void setIsScheduledToRun(bool value) { m_isScheduledToRun = value; }
 
     bool isPerformingMicrotaskCheckpoint() const { return m_isPerformingMicrotaskCheckpoint; }
+
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfStart() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfStart(); }
+    static constexpr ptrdiff_t offsetOfEnd() { return OBJECT_OFFSETOF(MicrotaskQueue, m_queue) + MarkedMicrotaskDeque::offsetOfEnd(); }
+#endif
 
 protected:
     JS_EXPORT_PRIVATE MicrotaskQueue(VM&);

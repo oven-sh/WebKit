@@ -563,6 +563,73 @@ void MacroAssemblerX86_64::collectCPUFeatures()
     });
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void MacroAssemblerX86_64::useOnlyFeaturesOfBuildTarget()
+{
+    collectCPUFeatures();
+#if !defined(__SSE3__)
+    s_sse3CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__SSSE3__)
+    s_supplementalSSE3CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__SSE4_1__)
+    s_sse4_1CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__SSE4_2__)
+    s_sse4_2CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__POPCNT__)
+    s_popcntCheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__AVX__)
+    s_avxCheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__AVX2__)
+    s_avx2CheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__LZCNT__)
+    s_lzcntCheckState = CPUIDCheckState::Clear;
+#endif
+#if !defined(__BMI__)
+    s_bmi1CheckState = CPUIDCheckState::Clear;
+#endif
+}
+
+unsigned MacroAssemblerX86_64::featuresOfBuildTarget()
+{
+    unsigned features = 0;
+#if defined(__SSE3__)
+    features |= 1 << 0;
+#endif
+#if defined(__SSSE3__)
+    features |= 1 << 1;
+#endif
+#if defined(__SSE4_1__)
+    features |= 1 << 2;
+#endif
+#if defined(__SSE4_2__)
+    features |= 1 << 3;
+#endif
+#if defined(__POPCNT__)
+    features |= 1 << 4;
+#endif
+#if defined(__AVX__)
+    features |= 1 << 5;
+#endif
+#if defined(__AVX2__)
+    features |= 1 << 6;
+#endif
+#if defined(__LZCNT__)
+    features |= 1 << 7;
+#endif
+#if defined(__BMI__)
+    features |= 1 << 8;
+#endif
+    return features;
+}
+#endif
+
 MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse3CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_supplementalSSE3CheckState = CPUIDCheckState::NotChecked;
 MacroAssemblerX86_64::CPUIDCheckState MacroAssemblerX86_64::s_sse4_1CheckState = CPUIDCheckState::NotChecked;

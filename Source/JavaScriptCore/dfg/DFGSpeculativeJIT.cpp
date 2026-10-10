@@ -7914,7 +7914,6 @@ void SpeculativeJIT::compileGetTypedArrayByteOffset(Node* node)
     GPRReg baseGPR = base.gpr();
     GPRReg resultGPR = result.gpr();
 
-
     if (!m_graph.isNeverResizableOrGrowableSharedTypedArrayIncludingDataView(m_state.forNode(node->child1())))
         speculationCheck(UnexpectedResizableArrayBufferView, JSValueSource(baseGPR), node, branchTest8(NonZero, Address(baseGPR, JSArrayBufferView::offsetOfMode()), TrustedImm32(isResizableOrGrowableSharedMode)));
 
@@ -8523,7 +8522,6 @@ void SpeculativeJIT::compileLoadVarargs(Node* node)
         DFG_CRASH(m_graph, node, "Bad use kind"_s);
         break;
     }
-
 
 }
 
@@ -10619,7 +10617,6 @@ void SpeculativeJIT::compileCheckIsConstant(Node* node)
         speculationCheck(BadConstantValue, JSValueSource(valueGPR), node->child1(), branch64(NotEqual, valueGPR, TrustedImm64(JSValue::encode(node->constant()->value()))));
     }
 
-
     noResult(node);
 }
 
@@ -10628,6 +10625,50 @@ void SpeculativeJIT::compileCheckNotEmpty(Node* node)
     JSValueOperand operand(this, node->child1());
     GPRReg valueGPR = operand.gpr();
     speculationCheck(TDZFailure, JSValueSource(), nullptr, branchIfEmpty(valueGPR));
+    noResult(node);
+}
+
+void SpeculativeJIT::compileCheckSoundType(Node* node)
+{
+    JSValueOperand value(this, node->child1());
+    GPRTemporary scratch(this);
+    GPRReg valueGPR = value.gpr();
+    GPRReg scratchGPR = scratch.gpr();
+
+    unsigned mask = node->soundTypeMask();
+    if (soundTypeMaskNamesTypedArray(mask)) {
+        silentSpillAllRegisters(scratchGPR);
+        callOperationWithoutExceptionCheck(operationSoundTypeMaskAccepts, scratchGPR, valueGPR, TrustedImm32(mask));
+        silentFillAllRegisters();
+        speculationCheck(BadType, JSValueSource(), nullptr, branchTest32(Zero, scratchGPR));
+        noResult(node);
+        return;
+    }
+
+    SpeculatedType provenType = m_state.forNode(node->child1()).m_type;
+    for (unsigned tag = 1; tag < SoundTypeAll; tag <<= 1) {
+        if (!(provenType & speculationFromSoundTypeMask(tag)))
+            mask &= ~tag;
+    }
+    if (!mask) {
+        terminateSpeculativeExecution(BadType, JSValueSource(valueGPR), node->child1());
+        noResult(node);
+        return;
+    }
+
+    JumpList fail;
+    JumpList undecided;
+    emitSoundTypeCheck(valueGPR, scratchGPR, mask, fail, undecided);
+    speculationCheck(BadType, JSValueSource(valueGPR), node->child1(), fail);
+    if (!undecided.empty()) {
+        Jump done = jump();
+        undecided.link(this);
+        silentSpillAllRegisters(scratchGPR);
+        callOperationWithoutExceptionCheck(operationSoundTypeTag, scratchGPR, valueGPR);
+        silentFillAllRegisters();
+        speculationCheck(BadType, JSValueSource(valueGPR), node->child1(), branchTest32(Zero, scratchGPR, TrustedImm32(mask)));
+        done.link(this);
+    }
     noResult(node);
 }
 
@@ -11278,6 +11319,7 @@ void SpeculativeJIT::compileFunctionToString(Node* node)
 
     getExecutable(*this, function.gpr(), executable.gpr());
     Jump isNativeExecutable = branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(NativeExecutableType));
+    slowCases.append(branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(ShortFunctionExecutableType)));
 
     loadPtr(Address(executable.gpr(), FunctionExecutable::offsetOfRareData()), result.gpr());
     slowCases.append(branchTestPtr(Zero, result.gpr()));
@@ -11426,7 +11468,6 @@ void SpeculativeJIT::compileNewSymbol(Node* node)
         return;
     }
 
-
     if (node->child1().useKind() == StringUse) {
         SpeculateCellOperand operand(this, node->child1());
         GPRReg stringGPR = operand.gpr();
@@ -11465,6 +11506,9 @@ void SpeculativeJIT::compileNewMap(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSMap>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSMap), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSMap::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewMap, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));
@@ -11488,6 +11532,9 @@ void SpeculativeJIT::compileNewSet(Node* node)
     auto butterfly = TrustedImmPtr(nullptr);
     emitAllocateJSObjectWithKnownSize<JSSet>(resultGPR, TrustedImmPtr(structure), butterfly, scratch1GPR, scratch2GPR, slowCases, sizeof(JSSet), SlowAllocationResult::UndefinedBehavior);
     storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfStorage()));
+#if ENABLE(AOT)
+    storePtr(TrustedImmPtr(nullptr), Address(resultGPR, JSSet::offsetOfCompactTable()));
+#endif
     mutatorFence(vm());
 
     addSlowPathGenerator(slowPathCall(slowCases, this, operationNewSet, resultGPR, TrustedImmPtr(&vm()), TrustedImmPtr(structure)));
@@ -14710,7 +14757,6 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
         GPRTemporary newMode(this, Reuse, mode);
         GPRReg baseGPR = base.gpr();
 
-
         // Has the same structure as the enumerator.
         load32(Address(baseGPR, JSCell::structureIDOffset()), newIndex.gpr());
         speculationCheck(BadCache, JSValueSource(), node, branch32(NotEqual, newIndex.gpr(), Address(enumeratorGPR, JSPropertyNameEnumerator::cachedStructureIDOffset())));
@@ -14738,7 +14784,6 @@ void SpeculativeJIT::compileEnumeratorNextUpdateIndexAndMode(Node* node)
     JSValueOperand base(this, baseEdge);
     GPRTemporary newMode(this, Reuse, mode);
     GPRReg baseGPR = base.gpr();
-
 
     flushRegisters();
     GPRFlushedCallResult indexResult(this);
@@ -15868,8 +15913,6 @@ void SpeculativeJIT::compileCreateThis(Node* node)
 
     cellResult(resultGPR, node);
 }
-
-
 
 template<typename JSClass, typename Operation>
 void SpeculativeJIT::compileCreateInternalFieldObject(Node* node, Operation operation)
@@ -18499,7 +18542,6 @@ unsigned SpeculativeJIT::appendOSRExit(OSRExit&& exit, bool isExceptionHandler)
     m_osrExit.append(WTF::move(exit));
     return result;
 }
-
 
 } } // namespace JSC::DFG
 

@@ -22,8 +22,33 @@
 
 #include "Nodes.h"
 #include "Opcode.h"
+#include "SpeculatedType.h"
 
 namespace JSC {
+
+    inline ResultType resultTypeFromSoundTypeMask(unsigned mask)
+    {
+        switch (mask) {
+        case SoundTypeNull:
+            return ResultType::nullType();
+        case SoundTypeBoolean:
+            return ResultType::booleanType();
+        case SoundTypeNumber:
+            return ResultType::numberType();
+        case SoundTypeString:
+            return ResultType::stringType();
+        case SoundTypeBigInt:
+            return ResultType::bigIntType();
+        case SoundTypeNumber | SoundTypeString:
+            return ResultType::stringOrNumberType();
+        case SoundTypeNumber | SoundTypeBigInt:
+            return ResultType::bigIntOrNumberType();
+        case SoundTypeNumber | SoundTypeString | SoundTypeBigInt:
+            return ResultType::addResultType();
+        default:
+            return ResultType::unknownType();
+        }
+    }
 
     inline void* ParserArenaFreeable::operator new(size_t size, ParserArena& parserArena)
     {
@@ -528,6 +553,14 @@ namespace JSC {
     inline TypeOfValueNode::TypeOfValueNode(const JSTokenLocation& location, ExpressionNode* expr)
         : ExpressionNode(location, ResultType::stringType())
         , m_expr(expr)
+    {
+    }
+
+    inline SoundTypeCheckNode::SoundTypeCheckNode(const JSTokenLocation& location, ExpressionNode* expr, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd)
+        : ExpressionNode(location, resultTypeFromSoundTypeMask(mask))
+        , ThrowableExpressionData(divot, divotStart, divotEnd)
+        , m_expr(expr)
+        , m_mask(mask)
     {
     }
 

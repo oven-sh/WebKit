@@ -296,8 +296,8 @@ public:
     std::optional<JITFailureReason> failureReason() { return m_failureReason; }
 
     size_t codeSize() const { return m_ref8.size() + m_ref16.size() + m_matchOnly8.size() + m_matchOnly16.size(); }
-    bool has8BitCode() { return m_ref8.size(); }
-    bool has16BitCode() { return m_ref16.size(); }
+    bool has8BitCode() { return !!m_ref8; }
+    bool has16BitCode() { return !!m_ref16; }
     void set8BitCode(MacroAssemblerCodeRef<Yarr8BitPtrTag> ref, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_ref8 = ref;
@@ -309,8 +309,14 @@ public:
         saveMaps(WTF::move(maps));
     }
 
-    bool has8BitCodeMatchOnly() { return m_matchOnly8.size(); }
-    bool has16BitCodeMatchOnly() { return m_matchOnly16.size(); }
+    bool has8BitCodeMatchOnly() { return !!m_matchOnly8 || m_imageCodeOutputSize; }
+    bool has16BitCodeMatchOnly() { return !!m_matchOnly16 || m_imageCodeOutputSize; }
+    void setCodeFromImage(const void* for8Bit, const void* for16Bit, unsigned sizeOfOutput)
+    {
+        m_ref8 = MacroAssemblerCodeRef<Yarr8BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr8BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for8Bit)));
+        m_ref16 = MacroAssemblerCodeRef<Yarr16BitPtrTag>::createSelfManagedCodeRef(CodePtr<Yarr16BitPtrTag>::fromUntaggedPtr(const_cast<void*>(for16Bit)));
+        m_imageCodeOutputSize = sizeOfOutput;
+    }
     void set8BitCodeMatchOnly(MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag> matchOnly, Vector<UniqueRef<BoyerMooreBitmap::Map>> maps)
     {
         m_matchOnly8 = matchOnly;
@@ -358,6 +364,11 @@ public:
     MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCodeMatchOnly());
+        if (m_imageCodeOutputSize) {
+            Vector<int, 32> output;
+            output.grow(m_imageCodeOutputSize);
+            return execute(input, start, output.mutableSpan().data(), matchingContext);
+        }
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly8BitPtrTag, YarrEntryPtrTag>(m_matchOnly8.code().taggedPtr())));
@@ -368,6 +379,11 @@ public:
     MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCodeMatchOnly());
+        if (m_imageCodeOutputSize) {
+            Vector<int, 32> output;
+            output.grow(m_imageCodeOutputSize);
+            return execute(input, start, output.mutableSpan().data(), matchingContext);
+        }
 #if CPU(ARM64E)
         if (Options::useJITCage())
             return MatchResult(vmEntryToYarrJIT(input.data(), start, input.size(), nullptr, matchingContext, retagCodePtr<YarrMatchOnly16BitPtrTag, YarrEntryPtrTag>(m_matchOnly16.code().taggedPtr())));
@@ -421,6 +437,7 @@ public:
         m_matchOnly8 = MacroAssemblerCodeRef<YarrMatchOnly8BitPtrTag>();
         m_matchOnly16 = MacroAssemblerCodeRef<YarrMatchOnly16BitPtrTag>();
         m_failureReason = std::nullopt;
+        m_imageCodeOutputSize = 0;
         clearMaps();
     }
 
@@ -434,14 +451,25 @@ private:
     InlineStats m_matchOnly8Stats;
     InlineStats m_matchOnly16Stats;
     RegExp* m_regExp { nullptr };
+    unsigned m_imageCodeOutputSize { 0 };
 
     std::optional<JITFailureReason> m_failureReason;
 };
 
 void jitCompile(YarrPattern&, StringView patternString, CharSize, std::optional<StringView> sampleString, VM*, YarrCodeBlock& jitObject, ExecutionMode);
 
-#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
+struct YarrCodeForImage {
+    Vector<uint8_t> bytes;
+    struct TableReference {
+        uint32_t offset;
+        uint8_t reg;
+        std::span<const uint8_t> table;
+    };
+    Vector<TableReference> tables;
+};
+JS_EXPORT_PRIVATE std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern&, StringView patternString, CharSize, VM*, ExecutionMode);
 
+#if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 
 class YarrJITRegisters;
 

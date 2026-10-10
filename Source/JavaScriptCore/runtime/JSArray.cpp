@@ -297,7 +297,7 @@ bool JSArray::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     JSArray* thisObject = uncheckedDowncast<JSArray>(object);
     if (propertyName == vm.propertyNames->length) {
-        unsigned attributes = thisObject->isLengthWritable() ? PropertyAttribute::DontDelete | PropertyAttribute::DontEnum : PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        unsigned attributes = thisObject->isLengthWritable() && !thisObject->structure()->hasImmutableProperties() ? PropertyAttribute::DontDelete | PropertyAttribute::DontEnum : PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         slot.setValue(thisObject, attributes, jsNumber(thisObject->length()));
         return true;
     }
@@ -1260,6 +1260,19 @@ bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startI
 
     return true;
 }
+
+#if ENABLE(AOT)
+bool JSArray::tryPutIndexInPlace(VM& vm, unsigned index, JSValue value)
+{
+    IndexingType indexingType = this->indexingType();
+    if (!hasUndecided(indexingType) && !hasInt32(indexingType) && !hasDouble(indexingType) && !hasContiguous(indexingType))
+        return false;
+    if (index > MAX_STORAGE_VECTOR_INDEX || !ensureLength(vm, index + 1))
+        return false;
+    setIndexQuickly(vm, index, value);
+    return true;
+}
+#endif
 
 bool JSArray::appendMemcpy(JSGlobalObject* globalObject, VM& vm, unsigned startIndex, JSC::JSArray* otherArray)
 {

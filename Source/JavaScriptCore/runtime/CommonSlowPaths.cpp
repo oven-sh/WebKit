@@ -330,6 +330,27 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_tdz)
     }
 }
 
+JSC_DEFINE_COMMON_SLOW_PATH(slow_path_check_type)
+{
+    BEGIN();
+    auto bytecode = pc->as<OpCheckType>();
+    unsigned tag = soundTypeTag(GET_C(bytecode.m_value).jsValue());
+    if (soundTypeMaskAccepts(bytecode.m_mask, GET_C(bytecode.m_value).jsValue())) [[likely]]
+        END();
+    if (Options::reportSoundTypeViolations()) [[unlikely]] {
+        static Lock lock;
+        static NeverDestroyed<UncheckedKeyHashSet<std::pair<UnlinkedCodeBlock*, unsigned>>> reported;
+        Locker locker { lock };
+        BytecodeIndex index = codeBlock->bytecodeIndex(pc);
+        if (reported.get().add({ codeBlock->unlinkedCodeBlock(), index.offset() + 1 }).isNewEntry) {
+            auto lineColumn = codeBlock->lineColumnForBytecodeIndex(index);
+            dataLogLn("[sound-types] expected ", SoundTypeMaskDump(bytecode.m_mask), ", got ", SoundTypeMaskDump(tag), " in ", codeBlock->inferredName(), " at ", codeBlock->ownerExecutable()->sourceURL(), ":", lineColumn.line, ":", lineColumn.column);
+        }
+        END();
+    }
+    THROW(createTypeError(globalObject, makeString("Type check failed: expected "_s, toString(SoundTypeMaskDump(bytecode.m_mask)), ", got "_s, toString(SoundTypeMaskDump(tag)))));
+}
+
 JSC_DEFINE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error)
 {
     BEGIN();
@@ -1034,7 +1055,6 @@ ALWAYS_INLINE UGPRPair iteratorNextTryFastImpl(VM& vm, JSGlobalObject* globalObj
     JSObject* iterator = uncheckedDowncast<JSObject>(GET(bytecode.m_iterator).jsValue());;
     if (auto arrayIterator = dynamicDowncast<JSArrayIterator>(iterator)) {
         auto* array = downcast<JSArray>(arrayIterator->iteratedObject());
-        ASSERT(isJSArray(array));
         metadata.m_iterableProfile.observeStructureID(array->structureID());
 
         IterationKind kind = arrayIterator->kind();
@@ -1167,7 +1187,7 @@ ALWAYS_INLINE UGPRPair iteratorNextFastArrayImpl(VM& vm, JSGlobalObject* globalO
     ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
 
     JSValue iterable = GET(bytecode.m_iterable).jsValue();
-    RELEASE_ASSERT(isJSArray(iterable));
+    RELEASE_ASSERT(is<JSArray>(iterable));
     auto* array = asArray(iterable);
     metadata.m_iterableProfile.observeStructureID(array->structureID());
     metadata.m_iterationMetadata.seenModes = metadata.m_iterationMetadata.seenModes | IterationMode::FastArray;
@@ -1253,7 +1273,7 @@ JSC_DEFINE_COMMON_SLOW_PATH(slow_path_iterator_close_check)
     }
 
     ASSERT(GET(bytecode.m_iterator).jsValue() == vm.fastArraySentinel());
-    RELEASE_ASSERT(isJSArray(iterable));
+    RELEASE_ASSERT(is<JSArray>(iterable));
     auto* iterator = JSArrayIterator::create(vm, globalObject->arrayIteratorStructure(), asArray(iterable), IterationKind::Values);
     iterator->setIndex(GET(bytecode.m_next).jsValue().asAnyInt());
     GET(bytecode.m_iterator) = iterator;

@@ -47,6 +47,8 @@ public:
 
     void initializeProfile(VM&, JSGlobalObject*, JSCell* owner, JSObject* prototype, unsigned inferredInlineCapacity, JSFunction* constructor = nullptr, FunctionRareData* = nullptr);
 
+    void replaceStructure(VM&, JSCell* owner, Structure*);
+
     Structure* structure()
     {
         Structure* structure = m_structure.get();
@@ -125,7 +127,5 @@ public:
 private:
     WriteBarrier<JSObject> m_prototype;
 };
-
-
 
 } // namespace JSC

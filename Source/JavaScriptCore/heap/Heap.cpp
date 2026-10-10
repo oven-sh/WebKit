@@ -22,6 +22,9 @@
 #include "config.h"
 #include "Heap.h"
 
+#include "AOTRuntime.h"
+#include "AOTTypedObject.h"
+
 #include "JSCJSValueInlines.h"
 
 #include "BaselineJITCode.h"
@@ -83,6 +86,7 @@
 #include "JSWeakSet.h"
 #include "MachineStackMarker.h"
 #include "MarkStackMergingConstraint.h"
+#include "MarkedBlockCage.h"
 #include "MarkedSpaceInlines.h"
 #include "MarkingConstraintSet.h"
 #include "MegamorphicCache.h"
@@ -378,6 +382,9 @@ Heap::Heap(VM& vm, HeapType heapType)
     , auxiliarySpace("Auxiliary"_s, *this, auxiliaryHeapCellType, fastMallocAllocator.get()) // Hash:0x96255ba1
     , immutableButterflyAuxiliarySpace("ImmutableButterfly JSCellWithIndexingHeader"_s, *this, immutableButterflyHeapCellType, fastMallocAllocator.get()) // Hash:0xaadcb3c1
     , cellSpace("JSCell"_s, *this, cellHeapCellType, fastMallocAllocator.get()) // Hash:0xadfb5a79
+#if USE(BUN_JSC_ADDITIONS)
+    , aotClosureSpace("AOTClosure"_s, *this, cellHeapCellType, fastMallocAllocator.get())
+#endif
     , destructibleObjectSpace("JSDestructibleObject"_s, *this, destructibleObjectHeapCellType, fastMallocAllocator.get()) // Hash:0x4f5ed7a9
     FOR_EACH_JSC_COMMON_ISO_SUBSPACE(INIT_SERVER_ISO_SUBSPACE)
     FOR_EACH_JSC_STRUCTURE_ISO_SUBSPACE(INIT_SERVER_STRUCTURE_ISO_SUBSPACE)
@@ -570,7 +577,7 @@ void Heap::reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(const JSCell*
 
 void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext, const JSCell* cell, size_t size)
 {
-    didAllocate(size);
+    didAllocate(size, "extra", nullptr, 0, cell);
     if (cell) {
         if (isWithinThreshold(cell->cellState(), barrierThreshold())) [[unlikely]]
             reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(cell, size);
@@ -659,7 +666,7 @@ void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyRe
         collectIfNecessaryOrDefer();
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
-        didAllocate(size - std::min(size, bytesAlreadyReported));
+        didAllocate(size - std::min(size, bytesAlreadyReported), "buffer", nullptr, 0, cell);
     }
 }
 
@@ -679,6 +686,24 @@ void Heap::reconcileWeakReferencesInMarkedCells(CellSet& cellSet, CollectionScop
 void Heap::reconcileWeakReferencesAtGCEnd()
 {
     CollectionScope collectionScope = this->collectionScope().value_or(CollectionScope::Full);
+
+#if ENABLE(AOT)
+    vm().m_aotInstances.removeAllMatching([&](AOT::Instance* instance) {
+        if (!isMarked(instance->loader()))
+            return true;
+        if (!instance->loaderWasCleared() || isMarked(AOT::tokenOf(instance)))
+            return false;
+        instance->loader()->setAOTInstance(nullptr);
+        vm().m_aotInstancesToDestroy.append(instance);
+        return true;
+    });
+    for (AOT::Instance* instance : vm().m_aotInstances)
+        instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+    if (auto* program = vm().m_aotProgram.get())
+        program->didFinishCollection();
+    if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
+        cache->reconcileWeakReferencesAtGCEnd(vm());
+#endif
 
     {
         // Executables go before CodeBlock, since CodeBlock::reconcileWeakReferencesAtGCEnd looks at the owner executable's installed CodeBlock.
@@ -1176,7 +1201,13 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
             if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
                 return;
             auto* function = dynamicDowncast<JSFunction>(next);
-            if (!function || function->isHostOrBuiltinFunction())
+            if (!function)
+                return;
+#if ENABLE(AOT)
+            if (function->hasAOTFunctionWord() || function->executable()->isShortFunctionExecutable())
+                return;
+#endif
+            if (function->isHostOrBuiltinFunction())
                 return;
             suspended.add(function->jsExecutable()->unlinkedExecutable());
         };
@@ -1427,6 +1458,10 @@ static size_t liveCellCountOfSettledBlock(MarkedBlock::Handle& handle)
 // possibly shared) and for storage that is a precise allocation.
 static void* baseOfMovableStorage(JSObject* object)
 {
+#if ENABLE(AOT)
+    if (object->structure()->compiledLayout())
+        return nullptr;
+#endif
     Butterfly* butterfly = object->butterfly();
     if (!butterfly || isCopyOnWrite(object->indexingMode()))
         return nullptr;
@@ -2568,9 +2603,34 @@ void Heap::setGarbageCollectionTimerEnabled(bool enable)
         m_edenActivityCallback->setEnabled(enable);
 }
 
-constexpr size_t oversizedAllocationThreshold = 64 * KB;
 void Heap::didAllocate(size_t bytes)
 {
+    didAllocate(bytes, "other", nullptr, 0, nullptr);
+}
+
+void Heap::didAllocateInBlock(size_t bytes, const BlockDirectory& directory)
+{
+    didAllocate(bytes, "block", directory.subspace(), directory.cellSize(), nullptr);
+}
+
+void Heap::didAllocatePreciseAllocation(size_t bytes, const Subspace& subspace)
+{
+    didAllocate(bytes, "precise", &subspace, 0, nullptr);
+}
+
+constexpr size_t oversizedAllocationThreshold = 64 * KB;
+void Heap::didAllocate(size_t bytes, const char* kind, const Subspace* subspace, size_t cellSize, const JSCell* ownerOfExtraMemory)
+{
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::countAllocatedBytes(vm(), kind, subspace, cellSize, ownerOfExtraMemory, bytes);
+#else
+    UNUSED_PARAM(kind);
+    UNUSED_PARAM(subspace);
+    UNUSED_PARAM(cellSize);
+    UNUSED_PARAM(ownerOfExtraMemory);
+#endif
+
     if (bytes >= oversizedAllocationThreshold) {
         m_oversizedBytesAllocatedThisCycle += bytes;
         m_lastOversidedAllocationThisCycle = bytes;
@@ -2673,6 +2733,13 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         m_fullActivityCallback->setEnabled(false);
         m_reenableFullActivityCallback = true;
     }
+}
+
+bool Heap::isPastTypicalFirstCollection()
+{
+    if (m_sizeAfterLastCollect || m_lastCollectionScope || m_collectionScope || m_maxEdenSize <= m_minBytesPerCycle)
+        return false;
+    return totalBytesAllocatedThisCycle() > m_minBytesPerCycle;
 }
 #endif
 
@@ -3078,6 +3145,36 @@ void Heap::addCoreConstraints()
         ConstraintConcurrency::Concurrent,
         ConstraintParallelism::Sequential);
     
+#if ENABLE(AOT)
+    m_collector->addMarkingConstraint(
+        "Ao"_s, "Instances of Statically Compiled Code"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+            bool newOnly = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+            if (auto* program = vm().m_aotProgram.get())
+                program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
+            for (AOT::Instance* instance : vm().m_aotInstances) {
+                if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
+                    instance->visit(visitor, newOnly);
+            }
+        })),
+        ConstraintVolatility::GreyedByMarking,
+        ConstraintConcurrency::Concurrent,
+        ConstraintParallelism::Sequential);
+    m_collector->addMarkingConstraint(
+        "At"_s, "Static Variables of Compiled Code"_s,
+        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+            for (AOT::Instance* instance : vm().m_aotInstances) {
+                if (instance->typed)
+                    instance->typed->visit(visitor);
+            }
+        })),
+        ConstraintVolatility::GreyedByExecution,
+        ConstraintConcurrency::Concurrent,
+        ConstraintParallelism::Sequential);
+#endif
+
     m_collector->addMarkingConstraint(
         "D"_s, "Debugger"_s,
         MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
@@ -3281,6 +3378,12 @@ void Heap::setMutatorShouldBeFenced(bool value)
 {
     m_mutatorShouldBeFenced = value;
     m_barrierThreshold = value ? tautologicalThreshold : blackThreshold;
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm().m_aotInstances) {
+        instance->barrierThreshold = m_barrierThreshold;
+        instance->mutatorShouldBeFenced = value;
+    }
+#endif
 }
 
 void Heap::performIncrement(size_t bytes)
@@ -3381,6 +3484,12 @@ void Heap::verifyGC()
             visitor.dumpMarkerData(cell);
         RELEASE_ASSERT(this->isMarked(cell));
     });
+
+    if (MarkedBlockCage::isRequired()) {
+        m_objectSpace.forEachBlock([&](MarkedBlock::Handle* block) {
+            RELEASE_ASSERT(block->alignedMemoryAllocator() != fastMallocAllocator.get() || MarkedBlockCage::contains(&block->block()));
+        });
+    }
 
     if (!m_keepVerifierSlotVisitor)
         clearVerifierSlotVisitor();

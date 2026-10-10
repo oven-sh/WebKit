@@ -72,6 +72,7 @@ enum Scale { ScaleOne, ScaleTwo, ScaleFour, ScaleEight, ScalePtr };
 class Output : public CommonValues {
 public:
     Output(State&);
+    explicit Output(B3::Procedure&);
     ~Output();
 
     void NODELETE initialize(AbstractHeapRepository&);

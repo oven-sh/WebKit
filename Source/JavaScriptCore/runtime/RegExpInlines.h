@@ -86,7 +86,7 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return true;
+            return m_workInInterpreter != workBeforeJIT;
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCode()))
             return true;
@@ -112,6 +112,13 @@ ALWAYS_INLINE void RegExp::noteUse(VM& vm)
 {
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
         m_lastUseEpoch = currentUseEpoch(vm);
+}
+
+ALWAYS_INLINE void RegExp::noteWorkInInterpreter(unsigned subjectLength)
+{
+    if (m_workInInterpreter >= workBeforeJIT)
+        return;
+    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + subjectLength / 32, workBeforeJIT);
 }
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
@@ -162,6 +169,18 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
         return -1;
 
     noteUse<matchFrom>(vm);
+#if ENABLE(AOT) && ENABLE(YARR_JIT) && !CPU(ARM64E)
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+        if (const void* code = m_codeOfImage[!s.is8Bit()]) [[likely]] {
+            Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+            MatchResult found = s.is8Bit()
+                ? MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const Latin1Character*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span8().data(), startOffset, s.length(), ovector.data(), &regExpContext))
+                : MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const char16_t*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span16().data(), startOffset, s.length(), ovector.data(), &regExpContext));
+            if (found.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure)) [[likely]]
+                return static_cast<int>(found.start);
+        }
+    }
+#endif
     compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
@@ -183,6 +202,13 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     int* offsetVector = ovector.data();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+        if (m_specificPattern == Yarr::SpecificPattern::AnchoredWordList) {
+            if (startOffset || !isAnchoredWord(s))
+                return -1;
+            offsetVector[0] = 0;
+            offsetVector[1] = s.length();
+            return 0;
+        }
         if (hasValidAtom()) {
             size_t found = s.find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
             if (found == notFound)
@@ -236,6 +262,8 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     } else
 #endif
     {
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            noteWorkInInterpreter(s.length() - startOffset);
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }
@@ -254,12 +282,26 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     return result;
 }
 
+ALWAYS_INLINE bool RegExp::isAnchoredWord(StringView string) const
+{
+    ASSERT(m_specificPattern == Yarr::SpecificPattern::AnchoredWordList);
+    auto& firstLengthWord = m_rareData->m_firstLengthWord;
+    unsigned length = string.length();
+    if (length + 1 >= firstLengthWord.size())
+        return false;
+    for (unsigned i = firstLengthWord[length]; i < firstLengthWord[length + 1]; ++i) {
+        if (string == m_rareData->m_anchoredWords[i])
+            return true;
+    }
+    return false;
+}
+
 ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
 {
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return true;
+            return m_workInInterpreter != workBeforeJIT;
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCodeMatchOnly()))
             return true;
@@ -320,6 +362,19 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         return MatchResult::failed();
 
     noteUse<matchFrom>(vm);
+#if ENABLE(AOT) && ENABLE(YARR_JIT) && !CPU(ARM64E)
+    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+        if (const void* code = m_codeOfImage[!s.is8Bit()]; code && m_ovector.size() <= 32) [[likely]] {
+            std::array<int, 32> output;
+            Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
+            MatchResult found = s.is8Bit()
+                ? MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const Latin1Character*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span8().data(), startOffset, s.length(), output.data(), &regExpContext))
+                : MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const char16_t*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span16().data(), startOffset, s.length(), output.data(), &regExpContext));
+            if (found.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure)) [[likely]]
+                return found;
+        }
+    }
+#endif
     compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
@@ -338,6 +393,11 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         return throwError();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
+        if (m_specificPattern == Yarr::SpecificPattern::AnchoredWordList) {
+            if (startOffset || !isAnchoredWord(s))
+                return MatchResult::failed();
+            return MatchResult { 0, s.length() };
+        }
         if (hasValidAtom()) {
             size_t found = StringView(s).find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
             if (found == notFound)
@@ -387,6 +447,8 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     nonReturnedOvector.grow(offsetVectorSize());
     offsetVector = nonReturnedOvector.mutableSpan().data();
     {
+        if constexpr (matchFrom == Yarr::MatchFrom::VMThread)
+            noteWorkInInterpreter(s.length() - startOffset);
         Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
         result = Yarr::interpret(m_regExpBytecode.get(), s, startOffset, reinterpret_cast<unsigned*>(offsetVector));
     }

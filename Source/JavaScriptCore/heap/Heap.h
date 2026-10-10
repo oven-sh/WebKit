@@ -446,6 +446,7 @@ public:
     // early collections find nothing to free. Only widens the budget of the cycle in progress; once a collection has run,
     // sizing is back to the usual rules and minimums.
     JS_EXPORT_PRIVATE void setInitialAllocationBudget(size_t bytes);
+    JS_EXPORT_PRIVATE bool isPastTypicalFirstCollection();
 #endif
     
     JS_EXPORT_PRIVATE void collect(Synchronousness, GCRequest = GCRequest());
@@ -568,6 +569,9 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void didAllocate(size_t);
+    void didAllocateInBlock(size_t, const BlockDirectory&);
+    void didAllocatePreciseAllocation(size_t, const Subspace&);
+    void didAllocate(size_t, const char* kind, const Subspace*, size_t cellSize, const JSCell* ownerOfExtraMemory);
 
     const JITStubRoutineSet& jitStubRoutines() { return *m_jitStubRoutines; }
     
@@ -1158,6 +1162,9 @@ public:
     
     // Whenever possible, use subspaceFor<CellType>(vm) to get one of these subspaces.
     CompleteSubspace cellSpace;
+#if USE(BUN_JSC_ADDITIONS)
+    CompleteSubspace aotClosureSpace; // AOT::Typed::Closure and environments: as a rule they die young.
+#endif
     CompleteSubspace destructibleObjectSpace;
 
 #define DECLARE_ISO_SUBSPACE(name, heapCellType, type) \
@@ -1340,7 +1347,6 @@ private:
     IsoSubspace functionExecutableSpace;
     IsoSubspace programExecutableSpace;
     IsoSubspace unlinkedFunctionExecutableSpace;
-
 
     friend class JSC::VM;
 };

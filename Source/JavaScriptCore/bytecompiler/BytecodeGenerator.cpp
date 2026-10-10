@@ -31,6 +31,7 @@
 #include "config.h"
 #include "BytecodeGenerator.h"
 
+#include "AOTProgram.h"
 #include "AbstractModuleRecord.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -44,6 +45,7 @@
 #include "JSBigInt.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
+#include "JSModuleEnvironment.h"
 #include "JSTemplateObjectDescriptor.h"
 #include "Options.h"
 #include "PrivateFieldPutKind.h"
@@ -365,7 +367,6 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         m_codeBlock->addExceptionHandler(info);
     }
     
-
     if (shouldRunBytecodeOptimizer()) [[unlikely]]
         BytecodeOptimizer::run(*this);
 
@@ -376,6 +377,10 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
+#if ENABLE(AOT)
+    if (!m_functionAssignments.isEmpty()) [[unlikely]]
+        AOT::recordFunctionAssignments(m_codeBlock->codeBlock(), WTF::move(m_functionAssignments));
+#endif
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
     // Also, this allows us to use one bit of bytecode for some flag, including "ignore-result-flag".
@@ -390,7 +395,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(programNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -438,7 +443,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
 BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(functionNode)
     , m_codeType(FunctionCode)
@@ -816,7 +821,6 @@ IGNORE_GCC_WARNINGS_END
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }
 
-
     if (functionNode->needsNewTargetRegisterForThisScope() || isNewTargetUsedInInnerArrowFunction() || usesEval())
         m_newTargetRegister = addVar();
 
@@ -1011,7 +1015,7 @@ IGNORE_GCC_WARNINGS_END
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(evalNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -1079,7 +1083,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
 BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(moduleProgramNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -1146,9 +1150,12 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
 
     createVariable(m_vm.propertyNames->starNamespacePrivateName, VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
     createVariable(m_vm.propertyNames->builtinNames().moduleLoaderPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
+    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->starNamespacePrivateName.impl()).scopeOffset() == JSModuleEnvironment::starNamespaceScopeOffset());
+    RELEASE_ASSERT(moduleEnvironmentSymbolTable->get(NoLockingNecessary, m_vm.propertyNames->builtinNames().moduleLoaderPrivateName().impl()).scopeOffset() == JSModuleEnvironment::moduleLoaderScopeOffset());
     if (moduleProgramNode->features() & ImportMetaFeature)
         createVariable(m_vm.propertyNames->builtinNames().metaPrivateName(), VarKind::Scope, moduleEnvironmentSymbolTable, VerifyExisting);
 
+    unsigned firstVarScopeOffset = moduleEnvironmentSymbolTable->scopeSize();
     for (auto& entry : moduleProgramNode->varDeclarations()) {
         ASSERT(!entry.value.isLet() && !entry.value.isConst());
         if (!entry.value.isVar()) // This is either a parameter or callee.
@@ -1160,6 +1167,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
             continue;
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), lookUpVarKind(entry.key.get(), entry.value), moduleEnvironmentSymbolTable, IgnoreExisting);
     }
+    codeBlock->setVarScopeOffsets(firstVarScopeOffset, moduleEnvironmentSymbolTable->scopeSize() - firstVarScopeOffset);
 
     VariableEnvironment& lexicalVariables = moduleProgramNode->lexicalVariables();
     instantiateLexicalVariables(lexicalVariables, ScopeType::LetConstScope, moduleEnvironmentSymbolTable, ScopeRegisterType::Block, lookUpVarKind);
@@ -1261,6 +1269,10 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // cloned in the code block linking. After that, to create the module environment, we retrieve
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
+#if ENABLE(AOT)
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+        AOT::noteDeclaredNames(codeBlock, currentDeclaredNames());
+#endif
 }
 
 BytecodeGenerator::~BytecodeGenerator() = default;
@@ -2785,7 +2797,7 @@ bool BytecodeGenerator::isLazyModuleFunctionDeclaration(const Variable& variable
         && m_lazyModuleFunctionDeclarations.contains(variable.ident().impl());
 }
 
-RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable& variable, ResolveMode resolveMode)
+RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable& variable, ResolveMode resolveMode, uint32_t typeTag)
 {
     switch (variable.offset().kind()) {
     case VarKind::Stack:
@@ -2798,6 +2810,7 @@ RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* sco
         
     case VarKind::Scope:
     case VarKind::Invalid: {
+        emitTypeTag(typeTag);
         OpGetFromScope::emit(
             this,
             kill(dst),
@@ -3280,6 +3293,15 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
     if (!(isConstructor() || isDerivedConstructorContext()) || needsClassFieldInitializer() == NeedsClassFieldInitializer::No)
         return dst;
 
+    if (isConstructor() && m_scopeNode->isFunctionNode()) {
+        if (auto* names = static_cast<FunctionNode*>(m_scopeNode)->plainInstanceFieldNames(); names && !names->isEmpty()) {
+            RefPtr<RegisterID> value = emitLoad(newTemporary(), jsUndefined());
+            for (auto& name : *names)
+                emitDirectPutById(dst, name, value.get());
+            return dst;
+        }
+    }
+
     RefPtr<RegisterID> initializer = emitDirectGetById(newTemporary(), constructor, propertyNames().builtinNames().instanceFieldInitializerPrivateName());
     CallArguments args(*this, nullptr);
     emitMove(args.thisRegister(), dst);
@@ -3291,6 +3313,11 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
 void BytecodeGenerator::emitTDZCheck(RegisterID* target, const Variable& variable)
 {
     OpCheckTdz::emit(this, target, addConstantValue(addStringConstant(variable.ident())));
+}
+
+void BytecodeGenerator::emitCheckType(RegisterID* value, unsigned mask)
+{
+    OpCheckType::emit(this, value, mask);
 }
 
 void BytecodeGenerator::emitTDZCheck(RegisterID* target)
@@ -3453,16 +3480,17 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             continue;
         ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
         unsigned size = entry.m_symbolTable->size(locker);
-        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size) {
+        const void* identity = VirtualRegister(entry.m_symbolTableConstantIndex).isConstant() ? m_codeBlock->getConstant(VirtualRegister(entry.m_symbolTableConstantIndex)).asCell() : nullptr;
+        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size || node->identity != identity) {
             DeclaredNamesLink::Frame::Slots slots;
             for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
                 VarOffset offset = it->value.varOffset();
                 if (offset.isScope()) {
                     bool isLazyFunctionSlot = m_moduleEnvironmentSymbolTableConstantIndex && entry.m_symbolTableConstantIndex == *m_moduleEnvironmentSymbolTableConstantIndex && m_lazyModuleFunctionDeclarations.contains(it->key.get());
-                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0));
+                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0) | (it->value.isReadOnly() ? DeclaredNamesLink::Frame::readOnlySlotFlag : 0));
                 }
             }
-            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
+            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames, identity);
             m_frameSymbolTableSizes[i] = size;
         }
         frames = node;
@@ -3475,7 +3503,7 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
 
     // Functions created back to back in the same scope (the common case) share one link.
     if (!m_cachedDeclaredNames || m_cachedDeclaredNames->names() != names.get() || m_cachedDeclaredNames->frames() != frames.get())
-        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
+        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_codeType == ModuleCode || m_codeType == GlobalCode, m_parentDeclaredNames);
     return m_cachedDeclaredNames;
 }
 
@@ -3573,13 +3601,14 @@ RegisterID* BytecodeGenerator::addTemplateObjectConstant(Ref<TemplateObjectDescr
     return &m_constantPoolRegisters[index];
 }
 
-RegisterID* BytecodeGenerator::emitNewArrayBuffer(RegisterID* dst, JSCellButterfly* array, IndexingType recommendedIndexingType)
+RegisterID* BytecodeGenerator::emitNewArrayBuffer(RegisterID* dst, JSCellButterfly* array, IndexingType recommendedIndexingType, uint32_t typeTag)
 {
+    emitTypeTag(typeTag);
     OpNewArrayBuffer::emit(this, dst, addConstantValue(array), recommendedIndexingType);
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elements, unsigned length, IndexingType recommendedIndexingType)
+RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elements, unsigned length, IndexingType recommendedIndexingType, uint32_t typeTag)
 {
     Vector<RefPtr<RegisterID>, 16, UnsafeVectorOverflow> argv;
     for (ElementNode* n = elements; n; n = n->next()) {
@@ -3593,6 +3622,7 @@ RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elemen
         emitNode(argv.last().get(), n->value());
     }
     ASSERT(!length);
+    emitTypeTag(typeTag);
     OpNewArray::emit(this, dst, argv.size() ? argv[0].get() : VirtualRegister { 0 }, argv.size(), recommendedIndexingType);
     return dst;
 }
@@ -3612,7 +3642,7 @@ RegisterID* BytecodeGenerator::emitNewArrayByReversingArguments(RegisterID* dst,
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements)
+RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements, uint32_t typeTag)
 {
     BitVector bitVector;
     Vector<RefPtr<RegisterID>, 16> argv;
@@ -3646,6 +3676,7 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNo
     }
 
     unsigned bitVectorIndex = m_codeBlock->addBitVector(WTF::move(bitVector));
+    emitTypeTag(typeTag);
     OpNewArrayWithSpread::emit(this, dst, argv[0].get(), argv.size(), bitVectorIndex);
     return dst;
 }
@@ -3677,6 +3708,8 @@ RegisterID* BytecodeGenerator::emitNewRegExp(RegisterID* dst, RegExp* regExp)
 void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, FunctionMetadataNode* function)
 {
     unsigned index = m_codeBlock->addFunctionExpr(makeFunction(function));
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[unlikely]]
+        m_functionExprIndices.set(function, index);
 
     switch (function->parseMode()) {
     case SourceParseMode::GeneratorWrapperFunctionMode:
@@ -3696,6 +3729,30 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
         OpNewFuncExp::emit(this, dst, scopeRegister(), index);
         break;
     }
+}
+
+void BytecodeGenerator::recordFunctionAssignment(const Identifier& ident, const Variable& var, ExpressionNode* right)
+{
+    if (!m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[likely]]
+        return;
+    if (right->isClassExprNode())
+        right = static_cast<ClassExprNode*>(right)->constructorExpression();
+    if (!right || !right->isBaseFuncExprNode())
+        return;
+    auto it = m_functionExprIndices.find(static_cast<BaseFuncExprNode*>(right)->metadata());
+    if (it == m_functionExprIndices.end())
+        return;
+    FunctionAssignment note;
+    note.identifier = addConstant(ident);
+    note.functionExpr = it->value;
+    if (var.isResolved()) {
+        if (!var.offset().isScope())
+            return;
+        note.isOwn = true;
+        note.symbolTableConstantIndex = var.symbolTableConstantIndex();
+        note.scopeOffset = var.offset().scopeOffset().offset();
+    }
+    m_functionAssignments.append(note);
 }
 
 RegisterID* BytecodeGenerator::emitNewFunctionExpression(RegisterID* dst, FuncExprNode* func)
@@ -3752,6 +3809,8 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
+    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+        initializer->setParentDeclaredNames(currentDeclaredNames());
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);
     OpNewFuncExp::emit(this, dst, scopeRegister(), index);
@@ -4007,6 +4066,8 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
     // Emit call.
     ASSERT(dst);
     ASSERT(dst != ignoredResult());
+    if (callArguments.argumentsNode())
+        emitTypeTag(callArguments.argumentsNode()->typeTag());
     if constexpr (opcodeID == op_call_direct_eval)
         CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), thisRegister(), scopeRegister(), computeFeaturesForCallDirectEval(), nextValueProfileIndex());
     else if constexpr (opcodeID == op_call_ignore_result) {
@@ -4220,6 +4281,8 @@ RegisterID* BytecodeGenerator::emitConstructImpl(RegisterID* dst, RegisterID* fu
     Ref<Label> done = newLabel();
     expectedFunction = emitExpectedFunctionSnippet(dst, func, expectedFunction, callArguments, done.get());
 
+    if (callArguments.argumentsNode())
+        emitTypeTag(callArguments.argumentsNode()->typeTag());
     ConstructOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), nextValueProfileIndex());
 
     if (expectedFunction != NoExpectedFunction)
@@ -4811,11 +4874,11 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(NOESCAPE co
     Ref<Label> finallyLabel = newLabel();
     FinallyContext finallyContext(*this, finallyLabel.get());
     pushFinallyControlFlowScope(finallyContext);
-    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally);
+    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally, MayCompleteNormally::Yes);
     popFinallyControlFlowScope();
 }
 
-void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally)
+void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally mayCompleteNormally)
 {
     Ref<Label> tryStartLabel = newEmittedLabel();
     TryData* tryData = pushTry(tryStartLabel.get(), *finallyContext.finallyLabel(), HandlerType::SynthesizedFinally);
@@ -4836,7 +4899,7 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyCont
         Ref<Label> tryInFinallyEndLabel = newEmittedLabel();
         popTry(tryInFinallyData, tryInFinallyEndLabel.get());
 
-        emitFinallyCompletion(finallyContext, done.get());
+        emitFinallyCompletion(finallyContext, done.get(), mayCompleteNormally);
 
         // Catch block for exceptions that may be thrown while executing the finally block.
         // The only reason we need this catch block is because if the above finally block
@@ -5135,7 +5198,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
                 generator.emitJump(*scope->continueTarget());
             }, [&](BytecodeGenerator& generator) {
                 generator.emitIteratorGenericClose(iterator.get(), node, EmitAwait::Yes);
-            });
+            }, MayCompleteNormally::No);
 
             emitLabel(*scope->continueTarget());
             RELEASE_ASSERT(forLoopNode->isForOfNode());
@@ -5164,6 +5227,55 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
                 // IteratorClose sequence for break-ed control flow.
                 emitIteratorGenericClose(iterator.get(), node, EmitAwait::Yes);
             }
+        }
+        emitLabel(loopDone.get());
+        return;
+    }
+
+    if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray && m_vm.useImmutableIntrinsics) {
+        RefPtr<RegisterID> array = newTemporary();
+        emitNode(array.get(), subjectNode);
+        {
+            emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
+            RefPtr<RegisterID> iteratorSymbol = emitGetById(newTemporary(), array.get(), propertyNames().iteratorSymbol);
+            RefPtr<RegisterID> forAnyArray = moveLinkTimeConstant(nullptr, LinkTimeConstant::arrayProtoValues);
+            Ref<Label> appliesToAnyArray = newLabel();
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), iteratorSymbol.get(), forAnyArray.get()), appliesToAnyArray.get());
+            emitThrowTypeError("Type check failed: expected an array that is iterated over like any other"_s);
+            emitLabel(appliesToAnyArray.get());
+        }
+        RefPtr<RegisterID> index = newTemporary();
+        emitLoad(index.get(), jsNumber(0));
+
+        Ref<Label> loopDone = newLabel();
+        {
+            Ref<LabelScope> scope = newLabelScope(LabelScope::Loop);
+            RefPtr<RegisterID> value = newTemporary();
+
+            {
+                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
+                emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
+            }
+            Ref<Label> loopStart = newLabel();
+            emitLabel(loopStart.get());
+            emitLoopHint();
+
+            RELEASE_ASSERT(forLoopNode->isForOfNode());
+            prepareLexicalScopeForNextForLoopIteration(forLoopNode, forLoopSymbolTable);
+            emitDebugHook(forLoopNode->lexpr());
+
+            emitGetByVal(value.get(), array.get(), index.get());
+            emitInc(index.get());
+
+            callBack(*this, value.get());
+            emitLabel(*scope->continueTarget());
+            {
+                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
+                emitJumpIfTrue(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopStart.get());
+            }
+
+            if (scope->breakTargetMayBeBound())
+                emitLabel(scope->breakTarget());
         }
         emitLabel(loopDone.get());
         return;
@@ -5219,7 +5331,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             generator.emitJump(loopStart.get());
         }, [&](BytecodeGenerator& generator) {
             generator.emitIteratorClose(iterator.get(), nextOrIndex.get(), iterable.get(), node);
-        });
+        }, MayCompleteNormally::No);
 
         bool breakLabelIsBound = scope->breakTargetMayBeBound();
         if (breakLabelIsBound)
@@ -5282,6 +5394,21 @@ RegisterID* BytecodeGenerator::emitGetPropertyEnumerator(RegisterID* dst, Regist
     OpGetPropertyEnumerator::emit(this, dst, base);
     return dst;
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+RegisterID* BytecodeGenerator::emitIsCellWithTypeInRange(RegisterID* dst, RegisterID* src, JSType first, JSType last)
+{
+    ASSERT(dst != src && first <= last);
+    Ref<Label> done = newLabel();
+    for (unsigned type = first; type < last; ++type) {
+        emitIsCellWithType(dst, src, static_cast<JSType>(type));
+        emitJumpIfTrue(dst, done.get());
+    }
+    emitIsCellWithType(dst, src, last);
+    emitLabel(done.get());
+    return dst;
+}
+#endif
 
 RegisterID* BytecodeGenerator::emitIsCellWithType(RegisterID* dst, RegisterID* src, JSType type)
 {
@@ -5503,7 +5630,6 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
     Vector<TryContext> savedTryContextStack;
     m_tryContextStack.swap(savedTryContextStack);
 
-
     OpYield::emit(this, yieldPointIndex, argument);
 
     // Restore the try contexts, which start offset is updated to the merge point.
@@ -5662,11 +5788,18 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
     emitLabel(done.get());
 }
 
+void BytecodeGenerator::emitJumpIfFastArrayIteration(RegisterID* iterator, Label& target)
+{
+    emitJumpIfTrue(emitIsCellWithType(newTemporary(), iterator, SentinelType), target);
+}
 
 void BytecodeGenerator::emitIteratorClose(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
 {
     Ref<Label> done = newLabel();
-    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
+    if (m_vm.useImmutableIntrinsics)
+        emitJumpIfFastArrayIteration(iterator, done.get());
+    else
+        OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
     emitIteratorGenericClose(iterator, node);
     emitLabel(done.get());
 }
@@ -5876,10 +6009,11 @@ bool BytecodeGenerator::emitReturnViaFinallyIfNeeded(RegisterID* returnRegister)
     return true; // We'll be jumping to a finally block.
 }
 
-void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel)
+void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel, MayCompleteNormally mayCompleteNormally)
 {
     if (context.numberOfBreaksOrContinues() || context.handlesReturns()) {
-        emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
+        if (mayCompleteNormally == MayCompleteNormally::Yes)
+            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
 
         FinallyContext* outerContext = context.outerContext();
 
@@ -6018,7 +6152,8 @@ void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& no
     // By now, we've rule out all Break / Continue / Return completions above. The only remaining
     // possibilities are Normal or Throw.
 
-    emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
+    if (mayCompleteNormally == MayCompleteNormally::Yes)
+        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
 
     // We get here because we entered this finally context with Throw completionType (i.e. we have
     // an exception that we need to rethrow), and we didn't encounter a different abrupt completion

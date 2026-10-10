@@ -50,7 +50,7 @@ void breakCriticalEdges(Procedure& proc)
                 continue;
 
             BasicBlock* pad =
-                insertionSet.insertBefore(successor, successor->frequency());
+                insertionSet.insertBefore(successor, proc.positionIndependent() ? std::min(block->frequency(), successor->frequency()) : successor->frequency());
             pad->appendNew<Value>(proc, Jump, successor->at(0)->origin());
             pad->setSuccessors(FrequentedBlock(successor));
             pad->addPredecessor(block);

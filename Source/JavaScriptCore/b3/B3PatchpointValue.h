@@ -52,6 +52,12 @@ public:
     // of substitution could be made so long as there are no interfering writes.
     Effects effects;
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Not zero: the patchpoint has no effects and yields a function of this number alone, whatever children it has: any two of one type that have the same number yield the same value for as long as
+    // the code runs. It is their Value::key(), so that pure CSE takes one for the other.
+    uint64_t pureFunctionKey { 0 };
+#endif
+
     // The input representation (i.e. constraint) of the return value. This defaults to WarmAny if the
     // type is Void and it defaults to SomeRegister otherwise. It's illegal to mess with this if the type
     // is Void. Otherwise you can set this to any input constraint. If the type of the patchpoint is a tuple

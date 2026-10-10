@@ -54,6 +54,23 @@ class UniquedStringImpl;
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+struct Instance;
+namespace Typed {
+struct Data;
+struct LayoutData;
+}
+JS_EXPORT_PRIVATE JSCell* ownerOf(Instance*);
+JS_EXPORT_PRIVATE JSCell* tokenOf(Instance*);
+JS_EXPORT_PRIVATE void didClearLoaderOf(Instance*);
+JS_EXPORT_PRIVATE void noteDepartureFromFamily(VM&, uint16_t family, const char* road);
+JS_EXPORT_PRIVATE bool hasNotedDepartureFromFamily(VM&, uint16_t family);
+// Typed::ClassPrototype::becomeOrdinary().
+JS_EXPORT_PRIVATE bool becomesOrdinaryObject(const ClassInfo* from, const ClassInfo* to);
+}
+#endif
+
 class DeferGC;
 class DeferredStructureTransitionWatchpointFire;
 class LLIntOffsetsExtractor;
@@ -88,7 +105,6 @@ public:
     }
 
     const Structure* structure() const { return m_structure; }
-
 
 private:
     JS_EXPORT_PRIVATE void fireAllSlow();
@@ -182,7 +198,6 @@ private:
     uint8_t m_attributes { 0 };
 };
 
-
 inline CompactPropertyTableEntry::CompactPropertyTableEntry(const PropertyTableEntry& entry)
     : m_data(entry.key(), ((entry.offset() << 8) | entry.attributes()))
 {
@@ -199,6 +214,114 @@ private:
 
     const Structure* m_structure;
 };
+
+#if USE(BUN_JSC_ADDITIONS)
+struct TypedLayoutTable {
+    struct FieldType {
+        uint16_t kinds;
+        uint16_t first;
+        uint16_t last;
+        uint16_t nameHashPrefix;
+    };
+    static uint16_t nameHashPrefix(unsigned hash) { return hash >> 8; }
+    static constexpr unsigned stringsAreAtoms = 1u << 15;
+    static constexpr unsigned maxAtomizedStringLength = 40;
+    enum class StoreCheck : uint8_t { Unconstrained, Allowed, Rejected };
+    struct Field {
+        uint32_t identifier;
+        uint8_t slot;
+        uint8_t mayBeAbsent;
+        uint16_t id;
+    };
+    using ConvertFunction = bool (*)(VM&, JSObject*, uint16_t layoutID);
+
+    JS_EXPORT_PRIVATE static void setSlotTypes(std::span<const uint32_t> index, const FieldType*);
+    JS_EXPORT_PRIVATE static void setFields(const uint32_t* index, const Field*, const FieldType* fieldTypes, const uint16_t* fieldLayoutIDs, const uint8_t* inlineSlots, const uint32_t* fieldsStart, const uint32_t* fields, const uint16_t* layoutIDsByFieldID, ConvertFunction, bool isAuditing);
+    static constexpr uint8_t usesFieldIDsBit = 0x80;
+    static unsigned inlineSlots(uint16_t typedLayoutID) { return s_inlineSlots[typedLayoutID] & ~usesFieldIDsBit; }
+    static bool usesFieldIDs(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count && (s_inlineSlots[typedLayoutID] & usesFieldIDsBit); }
+    static const Field& fieldWithID(unsigned slot, uint16_t id) { return s_fields[s_fieldIndexByID[s_firstSlotFieldIndex[slot] + id]]; }
+    static const uint16_t* fieldLayoutIDsInSlot(unsigned slot) { return s_layoutIDByFieldID ? s_layoutIDByFieldID + static_cast<int32_t>(s_firstSlotFieldIndex[slot]) : nullptr; }
+    static uint16_t layoutIDOf(const Field& field) { return s_fieldLayoutID[&field - s_fields]; }
+    static const FieldType* fieldTypeOf(const Field& field)
+    {
+        const FieldType& fieldType = s_fieldType[&field - s_fields];
+        return fieldType.kinds ? &fieldType : nullptr;
+    }
+    static PropertyOffset offsetOfSlot(unsigned slot, unsigned inlineSlots) { return slot < inlineSlots ? static_cast<PropertyOffset>(slot) : firstOutOfLineOffset + static_cast<PropertyOffset>(slot - inlineSlots); }
+    static PropertyOffset offsetInLayout(uint16_t typedLayoutID, unsigned slot) { return offsetOfSlot(slot, inlineSlots(typedLayoutID)); }
+    static bool isAuditing() { return s_isAuditing; }
+    JS_EXPORT_PRIVATE static void reportViolation(ASCIILiteral what, uint16_t layoutID, JSValue);
+    JS_EXPORT_PRIVATE static String describeRejectedStore(VM&, Structure*, UniquedStringImpl* name, JSValue);
+    JS_EXPORT_PRIVATE static String describeMismatch(UniquedStringImpl* name, const FieldType&, JSValue);
+    JS_EXPORT_PRIVATE static ASCIILiteral s_lastConversionFailure;
+    static bool hasTypedFields() { return s_fields; }
+    JS_EXPORT_PRIVATE static const Field* findField(VM&, uint16_t typedLayoutID, UniquedStringImpl*);
+    static std::span<const Field> fieldsOf(uint16_t typedLayoutID) { return s_fields && typedLayoutID < s_count ? std::span { s_fields + (s_layoutFieldRange[typedLayoutID] >> 12), s_layoutFieldRange[typedLayoutID] & 0xfff } : std::span<const Field> { }; }
+    static bool hasLayouts() { return s_count; }
+    static const FieldType* fieldTypeInSlot(uint16_t typedLayoutID, unsigned slot)
+    {
+        if (typedLayoutID >= s_count)
+            return nullptr;
+        uint32_t word = s_index[typedLayoutID];
+        if (slot >= (word & 0xff))
+            return nullptr;
+        const FieldType& fieldType = s_slotType[((word & ~isInstanceLayoutBit) >> 8) + slot];
+        return fieldType.kinds ? &fieldType : nullptr;
+    }
+    static unsigned numberOfSlots(uint16_t typedLayoutID) { return typedLayoutID < s_count ? s_index[typedLayoutID] & 0xff : 0; }
+    static constexpr uint32_t isInstanceLayoutBit = 1u << 31;
+    static bool isInstanceLayout(uint16_t typedLayoutID) { return typedLayoutID < s_count && (s_index[typedLayoutID] & isInstanceLayoutBit); }
+    static bool isGivenOnlyAtBirth(uint16_t typedLayoutID) { return s_isGivenOnlyAtBirth[typedLayoutID / 64].load(std::memory_order_relaxed) & (1ull << (typedLayoutID % 64)); }
+    static void setIsGivenOnlyAtBirth(uint16_t typedLayoutID) { s_isGivenOnlyAtBirth[typedLayoutID / 64].fetch_or(1ull << (typedLayoutID % 64), std::memory_order_relaxed); }
+    static JSValue toFieldRepresentation(const FieldType* fieldType, JSValue value)
+    {
+        if (value.isInt32())
+            return fieldType ? JSValue(JSValue::EncodeAsDouble, value.asInt32()) : value;
+        if (value.isCell() && fieldType && (fieldType->kinds & stringsAreAtoms)) [[unlikely]]
+            atomizeIfString(value);
+        return value;
+    }
+    static JSValue toFieldRepresentation(uint16_t typedLayoutID, unsigned slot, JSValue value) { return toFieldRepresentation(fieldTypeInSlot(typedLayoutID, slot), value); }
+    static JSValue toFieldRepresentation(const Field& field, JSValue value) { return toFieldRepresentation(fieldTypeOf(field), value); }
+    JS_EXPORT_PRIVATE static void atomizeIfString(JSValue);
+    JS_EXPORT_PRIVATE static bool accepts(const FieldType&, JSValue);
+    static bool isValueOf(const FieldType&, JSValue);
+    static StoreCheck checkStore(uint16_t typedLayoutID, unsigned slot, JSValue value) { return checkStore(typedLayoutID, fieldTypeInSlot(typedLayoutID, slot), value); }
+    static StoreCheck checkStore(const Field& field, JSValue value) { return checkStore(layoutIDOf(field), fieldTypeOf(field), value); }
+    static StoreCheck checkStore(uint16_t typedLayoutID, const FieldType* fieldType, JSValue value)
+    {
+        if (!fieldType)
+            return StoreCheck::Unconstrained;
+        bool isAccepted = accepts(*fieldType, value);
+        if (!isAccepted && s_isAuditing) [[unlikely]] {
+            reportViolation("a slot is given what it does not hold"_s, typedLayoutID, value);
+            return StoreCheck::Unconstrained;
+        }
+        return isAccepted ? StoreCheck::Allowed : StoreCheck::Rejected;
+    }
+
+    JS_EXPORT_PRIVATE static bool tryToInheritFrom(VM&, uint16_t typedLayoutID, JSValue prototype);
+    JS_EXPORT_PRIVATE static bool tryToChangePrototype(VM&, JSObject*, JSValue prototype);
+    JS_EXPORT_PRIVATE static bool isFieldOfInheritor(VM&, JSObject* prototype, UniquedStringImpl*);
+
+private:
+    JS_EXPORT_PRIVATE static const uint32_t* s_index;
+    JS_EXPORT_PRIVATE static uint32_t s_count;
+    JS_EXPORT_PRIVATE static const FieldType* s_slotType;
+    JS_EXPORT_PRIVATE static const uint32_t* s_layoutFieldRange;
+    JS_EXPORT_PRIVATE static const Field* s_fields;
+    JS_EXPORT_PRIVATE static const FieldType* s_fieldType;
+    JS_EXPORT_PRIVATE static const uint16_t* s_fieldLayoutID;
+    JS_EXPORT_PRIVATE static const uint32_t* s_firstSlotFieldIndex;
+    JS_EXPORT_PRIVATE static const uint32_t* s_fieldIndexByID;
+    JS_EXPORT_PRIVATE static const uint16_t* s_layoutIDByFieldID;
+    JS_EXPORT_PRIVATE static const uint8_t* s_inlineSlots;
+    static ConvertFunction s_convert;
+    JS_EXPORT_PRIVATE static bool s_isAuditing;
+    JS_EXPORT_PRIVATE static std::atomic<uint64_t> s_isGivenOnlyAtBirth[(std::numeric_limits<uint16_t>::max() + 1) / 64];
+};
+#endif
 
 class Structure : public JSCell {
     static constexpr uint16_t shortInvalidOffset = std::numeric_limits<uint16_t>::max() - 1;
@@ -266,6 +389,12 @@ public:
         return transitionCountEstimate() > maxTransitionLength;
     }
 
+#if ENABLE(AOT)
+    static constexpr int s_minTransitionLengthToConvertFirstObjectToDictionary = 8;
+    JS_EXPORT_PRIVATE bool mayConvertFirstObjectToDictionaryForAdd(VM&);
+    JS_EXPORT_PRIVATE bool shouldConvertFirstObjectToDictionaryForAdd(VM&);
+#endif
+
     inline bool shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()
     {
         return transitionCountEstimate() > s_maxTransitionLengthForRemove || transitionCountHasOverflowed();
@@ -302,6 +431,7 @@ public:
     JS_EXPORT_PRIVATE static Structure* sealTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* freezeTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     JS_EXPORT_PRIVATE static Structure* makePropertiesImmutableTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
+    JS_EXPORT_PRIVATE static Structure* fixPropertiesTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* preventExtensionsTransition(VM&, Structure*, DeferredStructureTransitionWatchpointFire* = nullptr);
     static Structure* nonPropertyTransition(VM&, Structure*, TransitionKind, DeferredStructureTransitionWatchpointFire*);
     static Structure* setBrandTransitionFromExistingStructureConcurrently(Structure*, UniquedStringImpl*);
@@ -316,6 +446,51 @@ public:
 
     static constexpr DestructionMode needsDestruction = NeedsDestruction;
     static void destroy(JSCell*);
+
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
+    JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
+    JS_EXPORT_PRIVATE static Structure* createWithStableFields(VM&, JSGlobalObject*, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID = 0);
+    JS_EXPORT_PRIVATE static Structure* createWithImmutableShape(VM&, JSGlobalObject*, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID = 0);
+    JS_EXPORT_PRIVATE void makeFieldsStable();
+    unsigned numberOfStableFields() const { return m_numberOfStableFields; }
+    bool isStableField(PropertyOffset offset) const { return static_cast<unsigned>(offset) < m_numberOfStableFields; }
+    void copyAccessorAndReadOnlyFlagsFrom(const Structure& other)
+    {
+        setHasAnyKindOfGetterSetterProperties(other.hasAnyKindOfGetterSetterProperties());
+        setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());
+    }
+    PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
+    uint16_t knownShape() const { return m_knownShape; }
+    JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
+    static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
+    uint16_t family() const { return m_family; }
+    JS_EXPORT_PRIVATE bool setFamily(VM&, uint16_t);
+    const char* reasonToRefuseFamily(uint16_t) const;
+    JS_EXPORT_PRIVATE bool holdsFamily(VM&, std::span<UniquedStringImpl* const> namesInSlots);
+    void assertHandsFamilyOnTo(const Structure& next) const { RELEASE_ASSERT(!m_family || m_family == next.m_family, m_family, next.m_family); }
+    static constexpr ptrdiff_t offsetOfFamily() { return OBJECT_OFFSETOF(Structure, m_family); }
+    uint16_t typedLayoutID() const { return m_typedLayoutID; }
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layout);
+    bool recordsPropertyNames() const { return !m_typedLayoutID || !TypedLayoutTable::usesFieldIDs(m_typedLayoutID); }
+    static constexpr unsigned numberOfSlotsWithFieldIDs = 16;
+    static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 24;
+    static_assert(numberOfSlotsWithPropertyNameIDs >= numberOfSlotsWithFieldIDs);
+    static constexpr uint16_t ambiguousFieldID = 0xffff;
+    uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
+    static constexpr uint16_t noPropertyNameID = 0xfffe;
+    static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
+    void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
+    {
+        ASSERT(recordsPropertyNames() && ((!isUncacheableDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID));
+        m_fieldIDInSlot[slot] = id;
+    }
+    JS_EXPORT_PRIVATE void setTypedLayoutID(uint16_t layoutID, std::span<const uint16_t, numberOfSlotsWithFieldIDs>);
+    bool cannotConvertToTypedLayout() const { return !m_typedLayoutID && m_fieldIDInSlot[0] == ambiguousFieldID; }
+    JS_EXPORT_PRIVATE void setCannotConvertToTypedLayout();
+    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
+    template<typename Func> void movePropertyOutOfLineWithoutTransition(VM&, PropertyName, const Func&);
+    static constexpr ptrdiff_t offsetOfTypedLayoutID() { return OBJECT_OFFSETOF(Structure, m_typedLayoutID); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -667,6 +842,25 @@ public:
         return OBJECT_OFFSETOF(Structure, m_realm);
     }
 
+#if ENABLE(AOT)
+    AOT::Instance* aotInstance() const { return m_aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
+    bool isOfCompiledCells() const { return m_compiledLayoutOrData; }
+    const AOT::Typed::LayoutData* compiledLayout() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? nullptr : std::bit_cast<const AOT::Typed::LayoutData*>(m_compiledLayoutOrData); }
+    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { m_compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
+    // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::layoutOfEnvironment().
+    const AOT::Typed::Data* dataOfCompiledEnvironments() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? std::bit_cast<const AOT::Typed::Data*>(m_compiledLayoutOrData - isOfCompiledEnvironments) : nullptr; }
+    uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(m_pageOfEnvironmentShapes) << 16; }
+    void setCompiledEnvironments(const AOT::Typed::Data* data, uint16_t page)
+    {
+        m_compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | isOfCompiledEnvironments;
+        m_pageOfEnvironmentShapes = page;
+    }
+    // Of a cell of this Structure. Null: it is not laid out by the compiler.
+    JS_EXPORT_PRIVATE const AOT::Typed::LayoutData* compiledLayoutOf(const JSCell*) const;
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(Structure, m_aotInstance); }
+#endif
+
     static constexpr ptrdiff_t classInfoOffset()
     {
         return OBJECT_OFFSETOF(Structure, m_classInfo);
@@ -858,6 +1052,22 @@ public:
     DEFINE_BITFIELD(bool, hasUnderscoreProtoPropertyExcludingOriginalProto, HasUnderscoreProtoPropertyExcludingOriginalProto, 1, 28);
     DEFINE_BITFIELD(bool, hasNonConfigurableProperties, HasNonConfigurableProperties, 1, 29);
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
+#if USE(BUN_JSC_ADDITIONS)
+    DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
+    bool didConvertFirstObjectToDictionary() const { return m_didConvertFirstObjectToDictionary; }
+    void setDidConvertFirstObjectToDictionary(bool value) { m_didConvertFirstObjectToDictionary = value; }
+    // Each object of it is taken to be the only one of its kind: it takes properties in place, as a dictionary, until a cache flattens it. See JSObject::putDirectInternal().
+    bool growsAlone() const { return m_growsAlone; }
+    void setGrowsAlone(bool value) { m_growsAlone = value; }
+    // How often it has become a dictionary. Each time costs a Structure, as a transition does, and a copy of the table.
+    static constexpr unsigned maxNumberOfTurnsAlone = 7;
+    bool hasUsedUpItsTurnsAlone() const { return m_numberOfTurnsAlone == maxNumberOfTurnsAlone; }
+    DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
+    DEFINE_BITFIELD(bool, hasStableFields, HasStableFields, 1, 12);
+    static_assert(!((s_hasImmutableShapeBits | s_hasStableFieldsBits) & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
+    static_assert(!(s_hasImmutableShapeBits & s_hasStableFieldsBits));
+    static_assert(!(s_inheritorsMayOverrideReadOnlyPropertiesBits & s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits));
+#endif
 
     enum class StructureVariant : uint8_t {
         Normal,
@@ -1027,12 +1237,33 @@ private:
 
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_knownShape { 0 };
+    uint16_t m_typedLayoutID { 0 };
+    uint16_t m_family { 0 };
+#endif
 
     uint32_t m_propertyHash;
+#if USE(BUN_JSC_ADDITIONS)
+    uint8_t m_numberOfStableFields { 0 };
+    bool m_didConvertFirstObjectToDictionary : 1 { false };
+    bool m_growsAlone : 1 { false };
+    uint8_t m_numberOfTurnsAlone : 3 { 0 };
+    // Compiled code stores over properties of such objects and does not say so: see didCachePropertyReplacement().
+    bool m_isReplacedWithoutNotice { false };
+#endif
+#if ENABLE(AOT)
+    uint16_t m_pageOfEnvironmentShapes { 0 };
+#endif
     SeenProperties m_seenProperties;
 
-
     WriteBarrier<JSGlobalObject> m_realm;
+#if ENABLE(AOT)
+    AOT::Instance* m_aotInstance { nullptr };
+    // An AOT::Typed::LayoutData, or with the bit an AOT::Typed::Data.
+    static constexpr uintptr_t isOfCompiledEnvironments = 1;
+    uintptr_t m_compiledLayoutOrData { 0 };
+#endif
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
 
@@ -1049,6 +1280,18 @@ private:
     WriteBarrier<PropertyTable> m_propertyTableUnsafe;
 
     mutable InlineWatchpointSet m_transitionWatchpointSet;
+
+#if USE(BUN_JSC_ADDITIONS)
+    uint16_t m_fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
+    void forgetPropertyNameIDInSlot(PropertyOffset offset)
+    {
+        if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs && m_fieldIDInSlot[offset] != ambiguousFieldID)
+            m_fieldIDInSlot[offset] = 0;
+    }
+    void copyPropertyNameIDsFrom(const Structure&);
+    JS_EXPORT_PRIVATE void noteFieldAdded(UniquedStringImpl*, PropertyOffset, unsigned attributes);
+    JS_EXPORT_PRIVATE void forgetFieldsInSlots();
+#endif
 
     static_assert(firstOutOfLineOffset < 256);
 

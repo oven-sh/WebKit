@@ -68,6 +68,8 @@ struct CharacterRange {
         , end(end)
     {
     }
+
+    friend bool operator==(const CharacterRange&, const CharacterRange&) = default;
 };
 
 enum struct CharacterClassWidths : unsigned char {
@@ -733,6 +735,7 @@ struct YarrPattern {
     UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
     String m_atom;
+    Vector<String> m_anchoredWords;
 
 private:
     ErrorCode compile(StringView patternString);

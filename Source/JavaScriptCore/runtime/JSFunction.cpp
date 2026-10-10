@@ -26,6 +26,9 @@
 #include "config.h"
 #include "JSFunction.h"
 
+#include "AOTFunction.h"
+#include "AOTProgramData.h"
+#include "AOTTypedObject.h"
 #include "AsyncGeneratorPrototype.h"
 #include "BuiltinNames.h"
 #include "CallFrame.h"
@@ -98,6 +101,24 @@ JSFunction* JSFunction::create(VM& vm, JSGlobalObject*, FunctionExecutable* exec
     return result;
 }
 
+JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, BuiltinCode code, JSScope* scope)
+{
+#if ENABLE(AOT)
+    if (!code.executable)
+        return AOT::Typed::builtinFunction(globalObject, code.id);
+#endif
+    return create(vm, globalObject, code.executable, scope);
+}
+
+JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, BuiltinCode code, JSScope* scope, Structure* structure)
+{
+#if ENABLE(AOT)
+    if (!code.executable)
+        return AOT::Typed::builtinFunction(globalObject, code.id, structure->storedPrototypeObject());
+#endif
+    return create(vm, globalObject, code.executable, scope, structure);
+}
+
 JSFunction* JSFunction::create(VM& vm, JSGlobalObject* globalObject, unsigned length, const String& name, NativeFunction nativeFunction, ImplementationVisibility implementationVisibility, Intrinsic intrinsic, NativeFunction nativeConstructor, const DOMJIT::Signature* signature)
 {
     NativeExecutable* executable = vm.getHostFunction(nativeFunction, implementationVisibility, intrinsic, nativeConstructor, signature, length, name);
@@ -115,8 +136,28 @@ JSFunction::JSFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* glo
     ASSERT(structure->realm() == globalObject);
 }
 
+#if ENABLE(AOT)
+JSFunction* JSFunction::createWithAOTFunctionWord(VM& vm, JSScope* scope, Structure* structure, uintptr_t word)
+{
+    JSFunction* function = new (NotNull, allocateCell<JSFunction>(vm)) JSFunction(vm, std::bit_cast<FunctionExecutable*>(word), scope, structure);
+    function->finishCreation(vm);
+    return function;
+}
+
+ExecutableBase* JSFunction::materializeAOTExecutable()
+{
+    VM& vm = this->vm();
+    RELEASE_ASSERT(!vm.heap.isShuttingDown() && vm.heap.mutatorState() == MutatorState::Running && !vm.heap.worldIsStopped() && !vm.heap.objectSpace().isIterating());
+    FunctionExecutable* executable = AOT::VMProgram::of(vm)->executableForFunction(aotFunctionIndex());
+    m_executableOrRareData = std::bit_cast<uintptr_t>(executable);
+    vm.writeBarrier(this, executable);
+    return executable;
+}
+#endif
+
 FunctionRareData* JSFunction::allocateRareData(VM& vm)
 {
+    executable();
     uintptr_t executableOrRareData = m_executableOrRareData;
     ASSERT(!(executableOrRareData & rareDataTag));
     FunctionRareData* rareData = FunctionRareData::create(vm, std::bit_cast<ExecutableBase*>(executableOrRareData));
@@ -158,6 +199,7 @@ JSObject* JSFunction::prototypeForConstruction(VM& vm, JSGlobalObject* globalObj
 
 FunctionRareData* JSFunction::allocateAndInitializeRareData(JSGlobalObject* globalObject, size_t inlineCapacity)
 {
+    executable();
     uintptr_t executableOrRareData = m_executableOrRareData;
     ASSERT(!(executableOrRareData & rareDataTag));
     ASSERT(canUseAllocationProfiles());
@@ -195,6 +237,10 @@ String JSFunction::name(VM& vm)
         if (this->inherits<JSBoundFunction>())
             return uncheckedDowncast<JSBoundFunction>(this)->nameString(vm);
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
+#if ENABLE(AOT)
+        if (executable->isSharedByAOTTypedClosures())
+            return AOT::nameOfTypedClosure(this);
+#endif
         return executable->name();
     }
     const Identifier identifier = jsExecutable()->name();
@@ -210,6 +256,10 @@ String JSFunction::nameWithoutGC(VM& vm)
         if (this->inherits<JSBoundFunction>())
             return uncheckedDowncast<JSBoundFunction>(this)->nameStringWithoutGC(vm);
         NativeExecutable* executable = uncheckedDowncast<NativeExecutable>(this->executable());
+#if ENABLE(AOT)
+        if (executable->isSharedByAOTTypedClosures())
+            return AOT::nameOfTypedClosure(this);
+#endif
         return executable->name();
     }
     String name = jsExecutable()->nameWithoutGC();
@@ -259,6 +309,15 @@ JSString* JSFunction::toString(JSGlobalObject* globalObject)
         return asString(string);
     }
 
+#if ENABLE(AOT)
+    if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(this)) {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue string = closure->toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        return asString(string);
+    }
+#endif
+
     if (isHostFunction())
         return static_cast<NativeExecutable*>(executable())->toString(globalObject);
     return jsExecutable()->toString(globalObject);
@@ -278,7 +337,12 @@ void JSFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
-    visitor.appendUnbarriered(std::bit_cast<JSCell*>(std::bit_cast<uintptr_t>(thisObject->m_executableOrRareData) & ~rareDataTag));
+    uintptr_t executableOrRareData = thisObject->m_executableOrRareData;
+#if ENABLE(AOT)
+    if ((executableOrRareData & (rareDataTag | aotFunctionTag)) == aotFunctionTag)
+        return;
+#endif
+    visitor.appendUnbarriered(std::bit_cast<JSCell*>(executableOrRareData & ~rareDataTag));
 }
 
 DEFINE_VISIT_CHILDREN(JSFunction);
@@ -529,6 +593,8 @@ void JSFunction::reifyLength(VM& vm)
     double length = originalLength(vm);
     JSValue initialValue = jsNumber(length);
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+    if (structure()->hasImmutableProperties())
+        initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
     AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
@@ -557,6 +623,8 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     ASSERT(!hasReifiedName());
     ASSERT(!isHostFunction());
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+    if (structure()->hasImmutableProperties())
+        initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& propID = vm.propertyNames->name;
 
     if (jsExecutable()->isGetter())
@@ -686,8 +754,10 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
     } else {
         ASSERT(isNonBoundHostFunction());
         FunctionRareData* rareData = this->ensureRareData(vm);
-        JSString* name = uncheckedDowncast<NativeExecutable>(executable())->nameJSString(vm);
+        JSString* name = originalName(realm());
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        if (structure()->hasImmutableProperties())
+            initialAttributes |= PropertyAttribute::DontDelete;
         rareData->setHasReifiedName();
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         putDirect(vm, nameIdent, name, initialAttributes);

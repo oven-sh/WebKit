@@ -409,7 +409,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             result = offset;
         });
-    if (mayBePrototype()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return result;
 }
@@ -461,8 +461,17 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto error = putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot);
-    if (!error.isNull())
-        return typeError(globalObject, scope, slot.isStrictMode(), error);
+#if USE(BUN_JSC_ADDITIONS)
+    if (error.characters() == TypedFieldError.characters() && !error.isNull()) [[unlikely]]
+        return typeError(globalObject, scope, true, TypedLayoutTable::describeRejectedStore(vm, structure(), propertyName.uid(), value));
+#endif
+    if (!error.isNull()) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (error.characters() == ImmutableShapeError.characters())
+            RELEASE_AND_RETURN(scope, false);
+#endif
+        return typeError(globalObject, scope, slot.isStrictMode() || error.characters() == TypedFieldOfInheritorError.characters(), error);
+    }
     return true;
 }
 
@@ -504,6 +513,59 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!Heap::heap(value) || Heap::heap(value) == Heap::heap(this));
     ASSERT(!parseIndex(propertyName));
 
+    bool isTypedField = false;
+    uint32_t packedFieldType = 0;
+#if USE(BUN_JSC_ADDITIONS)
+    if (uint16_t typedLayoutID = this->structure()->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+        if (auto* field = TypedLayoutTable::usesFieldIDs(typedLayoutID) ? nullptr : TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid())) {
+            if (mode == PutModeDefineOwnProperty && newAttributes) {
+                if (!TypedLayoutTable::isAuditing())
+                    return TypedFieldError;
+                TypedLayoutTable::reportViolation("a field is made something other than a plain property"_s, typedLayoutID, this);
+            }
+            if (TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected) {
+                bool definesAbsentField = mode == PutModeDefineOwnProperty && !newAttributes && value.isUndefined() && this->structure()->get(vm, propertyName) == invalidOffset;
+                if (!definesAbsentField)
+                    return TypedFieldError;
+            }
+            isTypedField = true;
+            value = TypedLayoutTable::toFieldRepresentation(*field, value);
+            if (auto* fieldType = TypedLayoutTable::fieldTypeOf(*field))
+                packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
+        }
+    } else if constexpr (mode == PutModeDefineOwnProperty) {
+        if ((newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) && typedLayoutID && !this->structure()->hasStableFields()) [[unlikely]]
+            evictTypedField(vm, propertyName);
+    }
+    if (this->structure()->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
+        if (TypedLayoutTable::isFieldOfInheritor(vm, this, propertyName.uid()))
+            return TypedFieldOfInheritorError;
+    }
+    auto isRejectedAtOffset = [&](Structure* candidateStructure, PropertyOffset where) {
+        if (static_cast<unsigned>(where) >= Structure::numberOfSlotsWithFieldIDs || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            return false;
+        if (candidateStructure->recordsPropertyNames()) [[likely]]
+            return false;
+        uint16_t id = candidateStructure->fieldIDInSlot(where);
+        if (!id || id == Structure::ambiguousFieldID) [[likely]]
+            return false;
+        auto& field = TypedLayoutTable::fieldWithID(where, id);
+        if (TypedLayoutTable::checkStore(field, value) == TypedLayoutTable::StoreCheck::Rejected)
+            return true;
+        isTypedField = true;
+        value = TypedLayoutTable::toFieldRepresentation(field, value);
+        if (auto* fieldType = TypedLayoutTable::fieldTypeOf(field))
+            packedFieldType = fieldType->kinds | static_cast<uint32_t>(fieldType->first) << 16;
+        return false;
+    };
+    auto refusesAttributes = [&](Structure* candidateStructure, PropertyOffset where, unsigned currentAttributes) {
+        if (mode != PutModeDefineOwnProperty || (newAttributes == currentAttributes && !(newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) [[likely]]
+            return false;
+        if (!candidateStructure->hasStableFields()) [[likely]]
+            return false;
+        return candidateStructure->hasImmutableShape() || (candidateStructure->isStableField(where) && (newAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue));
+    };
+#endif
     StructureID structureID = this->structureID();
     Structure* structure = structureID.decode();
     // Refused, unless the engine is materializing a property the object logically already has (AllowLazyMaterializationOfImmutableProperties).
@@ -516,6 +578,12 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if constexpr (mode == PutModePut) {
             if (!isStructureExtensible()) [[unlikely]]
                 return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
+            if (structure->inheritorsMayOverrideReadOnlyProperties() && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+                return ReadonlyPropertyWriteError;
+        }
+        if (type() == ArrayType && structure->get(vm, propertyName) == invalidOffset && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+            becomeDerivedArray(vm);
+            return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
         }
 
         auto [offset, attributes, isAdded] = structure->addOrReplacePropertyWithoutTransition(vm, propertyName, newAttributes, [&](const GCSafeConcurrentJSLocker&, PropertyOffset offset, PropertyOffset newMaxOffset) {
@@ -541,6 +609,21 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                     return ReadonlyPropertyChangeError;
             }
 
+            bool slotIsTyped = false;
+#if USE(BUN_JSC_ADDITIONS)
+            if (refusesAttributes(structure, offset, attributes)) [[unlikely]]
+                return throwImmutableShapeError(vm);
+            if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
+                auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+                if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                    if (structure->hasStableFields())
+                        return TypedFieldError;
+                    evictTypedField(vm, propertyName);
+                    return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+                }
+                slotIsTyped = storeCheck == TypedLayoutTable::StoreCheck::Allowed;
+            }
+#endif
             putDirectOffset(vm, offset, value);
             structure->didReplaceProperty(offset);
 
@@ -549,9 +632,14 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if ((mode == PutModeDefineOwnProperty) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
-                if (mayBePrototype()) [[unlikely]]
+                if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-            } else {
+            } else if (isTypedField) {
+                if (packedFieldType)
+                    slot.setExistingTypedField(this, offset, packedFieldType);
+                else
+                    slot.setExistingProperty(this, offset);
+            } else if (!slotIsTyped) {
                 ASSERT(!(attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
                 slot.setExistingProperty(this, offset);
             }
@@ -560,10 +648,13 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 
         validateOffset(offset);
         putDirectOffset(vm, offset, value);
-        slot.setNewProperty(this, offset);
+        if (packedFieldType)
+            slot.setNewTypedField(this, offset, packedFieldType);
+        else
+            slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
-        if (mayBePrototype()) [[unlikely]]
+        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
         return { };
     }
@@ -572,6 +663,10 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         PropertyOffset offset;
         Structure* newStructure = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, newAttributes, offset);
         if (newStructure) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (isRejectedAtOffset(newStructure, offset)) [[unlikely]]
+                return TypedFieldError;
+#endif
             Butterfly* newButterfly = butterfly();
             if (structure->outOfLineCapacity() != newStructure->outOfLineCapacity()) {
                 ASSERT(newStructure != this->structure());
@@ -587,8 +682,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             putDirectOffset(vm, offset, value);
             setStructure(vm, newStructure);
-            slot.setNewProperty(this, offset);
-            if (mayBePrototype()) [[unlikely]]
+            if (packedFieldType)
+                slot.setNewTypedField(this, offset, packedFieldType);
+            else
+                slot.setNewProperty(this, offset);
+            if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
             return { };
         }
@@ -600,6 +698,23 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         if (mode == PutModePut && (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor))
             return ReadonlyPropertyChangeError;
 
+        bool slotIsTyped = false;
+#if USE(BUN_JSC_ADDITIONS)
+        if (refusesAttributes(structure, offset, currentAttributes)) [[unlikely]]
+            return throwImmutableShapeError(vm);
+        if (isRejectedAtOffset(structure, offset)) [[unlikely]]
+            return TypedFieldError;
+        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset)) {
+            auto storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
+            if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
+                if (structure->hasStableFields())
+                    return TypedFieldError;
+                evictTypedField(vm, propertyName);
+                return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+            }
+            slotIsTyped = storeCheck == TypedLayoutTable::StoreCheck::Allowed;
+        }
+#endif
         structure->didReplaceProperty(offset);
         putDirectOffset(vm, offset, value);
 
@@ -610,9 +725,14 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
-            if (mayBePrototype()) [[unlikely]]
+            if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-        } else {
+        } else if (isTypedField) {
+            if (packedFieldType)
+                slot.setExistingTypedField(this, offset, packedFieldType);
+            else
+                slot.setExistingProperty(this, offset);
+        } else if (!slotIsTyped) {
             ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
             slot.setExistingProperty(this, offset);
         }
@@ -620,15 +740,44 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         return { };
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]] {
+#if ENABLE(AOT)
+        if constexpr (mode == PutModeDefineOwnProperty)
+            return putDirectToCompiledObject(vm, propertyName, value, newAttributes);
+#endif
+        return throwImmutableShapeError(vm);
+    }
+#endif
+
     if constexpr (mode == PutModePut) {
         if (!isStructureExtensible()) [[unlikely]]
             return NonExtensibleObjectPropertyDefineError;
+        if (structure->inheritorsMayOverrideReadOnlyProperties() && inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
+            return ReadonlyPropertyWriteError;
     }
+    if (type() == ArrayType && inheritsImmutableProperty(vm, propertyName)) [[unlikely]] {
+        becomeDerivedArray(vm);
+        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+    }
+
+#if ENABLE(AOT)
+    if ((mode == PutModePut || newAttributes || structure->growsAlone()) && structure->shouldConvertFirstObjectToDictionaryForAdd(vm)) [[unlikely]] {
+        convertToDictionary(vm);
+        // Nobody can follow it from here.
+        this->structure()->setGrowsAlone(true);
+        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+    }
+#endif
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
     Structure* newStructure = Structure::addNewPropertyTransition(vm, structure, propertyName, newAttributes, offset, slot.context(), &deferredWatchpointFire);
+#if USE(BUN_JSC_ADDITIONS)
+    if (isRejectedAtOffset(newStructure, offset)) [[unlikely]]
+        return TypedFieldError;
+#endif
     
     validateOffset(offset);
     ASSERT(newStructure->isValidOffset(offset));
@@ -645,12 +794,20 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
     ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
     putDirectOffset(vm, offset, value);
     setStructure(vm, newStructure);
-    slot.setNewProperty(this, offset);
+    if (packedFieldType)
+        slot.setNewTypedField(this, offset, packedFieldType);
+    else
+        slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
-    if (mayBePrototype()) [[unlikely]]
+    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return { };
+}
+
+inline bool JSObject::isPrototypeUsedByMegamorphicCache() const
+{
+    return mayBePrototype() && perCellBit();
 }
 
 inline bool JSObject::mayBePrototype() const
@@ -1044,6 +1201,13 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
         throwTypeError(globalObject, scope, "Cannot add private method to a WebAssembly GC object"_s);
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->hasImmutableShape()) [[unlikely]] {
+        throwTypeError(globalObject, scope, ImmutableShapeError);
+        return;
+    }
+#endif
 
     if (structure->hasImmutableProperties()) [[unlikely]] {
         throwTypeError(globalObject, scope, "Cannot add private method to object with immutable properties"_s);
@@ -1659,6 +1823,5 @@ inline bool JSObject::tryMakeWritable(VM& vm)
 }
 
 } // namespace JSC
-
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

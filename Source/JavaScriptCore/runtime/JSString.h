@@ -663,6 +663,10 @@ public:
     // The rope value will remain a null string in that case.
     JS_EXPORT_PRIVATE const String& resolveRope(JSGlobalObject* nullOrGlobalObjectForOOM) const;
     JS_EXPORT_PRIVATE const String& resolveRopeWithoutGC() const;
+#if ENABLE(AOT)
+    // Of a substring. The StringImpl has the same characters, and is 8-bit if this is: ropes made of this were sized by that.
+    void resolveSubstringBySharing(StringImpl&) const;
+#endif
 
     template<typename CharacterType>
     static void resolveToBuffer(JSString*, JSString*, JSString*, std::span<CharacterType> buffer, uint8_t* stackLimit);

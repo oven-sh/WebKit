@@ -1,0 +1,28 @@
+# Tests that are skipped in the aot and aot-validate modes of run-jsc-stress-tests.
+#
+# A program that is compiled ahead of time has no source text, so Function.prototype.toString() says of its functions what it says of
+# native ones. Each test here depends on the text.
+#
+# How the list was made: Tools/Scripts/aot/list-tests-that-read-function-text.py. These pass with --useImmutableIntrinsics=1 --useJIT=0 and
+# fail with --hideFunctionSourceForTesting=1 as well, in the plain interpreter (no AOT).
+
+stress/8bit-resolve-can-encounter-16bit-string.js
+stress/arrowfunction-tostring.js
+stress/bytecode-optimizer-exceptions.js
+stress/bytecode-optimizer-scope-cache-control-flow.js
+stress/class-fields-anonymous-function-name-edge-cases.js
+stress/eval-func-decl-by-the-same-name-as-callee.js
+stress/eval-func-decl-within-eval-duplicate-declaration.js
+stress/ftl-osr-entry-order-reverse3.js
+stress/function-cache-with-parameters-end-position.js
+stress/function-constructor-name.js
+stress/function-to-string.js
+stress/hold-lock-when-resetting-structure-stub-info.js
+stress/jsc-read.js
+stress/lazy-function-executables.js
+stress/parse-regexp-as-token.js
+stress/proxy-with-unbalanced-getter-setter.js
+stress/regexp-bytecode-compilation-fail.js
+stress/regress-189571.js
+stress/regress-190186.js
+stress/string-substring-oom.js

@@ -2680,6 +2680,54 @@ void testEarlyAndLateUseOfSameTmp()
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+static size_t numberOfTrapsForTwoOops(bool isPositionIndependent, bool followsPatch)
+{
+    B3::Procedure proc;
+    proc.setPositionIndependent(isPositionIndependent);
+    Code& code = proc.code();
+
+    B3::Air::Special* patchpointSpecial = code.addSpecial(makeUniqueWithoutFastMallocCheck<B3::PatchpointSpecial>());
+
+    B3::BasicBlock* b3Root = proc.addBlock();
+    B3::PatchpointValue* patchpoint = b3Root->appendNew<B3::PatchpointValue>(proc, B3::Void, B3::Origin());
+    patchpoint->setGenerator(
+        [] (CCallHelpers& jit, const B3::StackmapGenerationParams&) {
+            jit.nop();
+        });
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* second = code.addBlock();
+    BasicBlock* firstOops = code.addBlock();
+    BasicBlock* secondOops = code.addBlock();
+    BasicBlock* done = code.addBlock();
+
+    root->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR0), Tmp(GPRInfo::argumentGPR0));
+    root->setSuccessors(firstOops, second);
+    second->append(BranchTest32, nullptr, Arg::resCond(MacroAssembler::NonZero), Tmp(GPRInfo::argumentGPR1), Tmp(GPRInfo::argumentGPR1));
+    second->setSuccessors(secondOops, done);
+    for (BasicBlock* block : { firstOops, secondOops }) {
+        if (followsPatch)
+            block->append(Patch, patchpoint, Arg::special(patchpointSpecial));
+        block->append(Oops, nullptr);
+    }
+    done->append(Move, nullptr, Arg::imm(42), Tmp(GPRInfo::returnValueGPR));
+    done->append(Ret32, nullptr, Tmp(GPRInfo::returnValueGPR));
+
+    auto compilation = compile(proc);
+    CHECK(invoke<int32_t>(*compilation, 0, 0) == 42);
+    return matchAll(compilation->disassembly(), std::regex(isARM64() ? "brk\\s" : "int3")).size();
+}
+
+void testOopsTraps()
+{
+    CHECK(numberOfTrapsForTwoOops(false, false) == 2);
+    CHECK(numberOfTrapsForTwoOops(false, true) == 2);
+    CHECK(numberOfTrapsForTwoOops(true, false) == 2);
+    CHECK(numberOfTrapsForTwoOops(true, true) < 2);
+}
+#endif
+
 void testEarlyClobberInterference()
 {
     WeakRandom weakRandom;
@@ -3442,6 +3490,9 @@ void run(const char* filter)
 
     RUN(testEarlyAndLateUseOfSameTmp());
     RUN(testEarlyClobberInterference());
+#if USE(BUN_JSC_ADDITIONS)
+    RUN(testOopsTraps());
+#endif
 
 #if CPU(ARM64)
     RUN(testStorePair());

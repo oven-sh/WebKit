@@ -31,6 +31,7 @@
 #include "Error.h"
 #include "FFICallHost.h"
 #include "FFIConversions.h"
+#include "FFIInvokeThunk.h"
 #include "FFISignature.h"
 #include "JITCode.h"
 #include "JSCInlines.h"
@@ -98,7 +99,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!Options::useJIT()) [[unlikely]] {
+    if (!FFI_INVOKE_WITHOUT_JIT_SUPPORTED && !Options::useJIT()) [[unlikely]] {
         throwTypeError(globalObject, scope, "bun:ffi requires the JIT"_s);
         return nullptr;
     }
@@ -122,7 +123,7 @@ JSFFIFunction* JSFFIFunction::create(VM& vm, JSGlobalObject* globalObject, Struc
 
     RefPtr<JITCode> stub;
 #if ENABLE(JIT)
-    if (Options::useFFIICStub() && !hooks)
+    if (Options::useJIT() && Options::useFFIICStub() && !hooks)
         stub = FFI::generateICStubCode(vm, globalObject, signature.get(), target);
 #endif
 

@@ -481,6 +481,10 @@ static JSArray* tryCreateArrayFromMapIterator(JSGlobalObject* globalObject, JSMa
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
+#if ENABLE(AOT)
+        if (mapIterator->isAtCompactTable()) [[unlikely]]
+            return nullptr;
+#endif
         storageCell = map->storageOrSentinel(vm);
         if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
@@ -605,6 +609,10 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
     if (storageCell == vm.orderedHashTableSentinel())
         RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));
     if (!storageCell) {
+#if ENABLE(AOT)
+        if (setIterator->isAtCompactTable()) [[unlikely]]
+            return nullptr;
+#endif
         storageCell = set->storageOrSentinel(vm);
         if (storageCell == vm.orderedHashTableSentinel())
             RELEASE_AND_RETURN(scope, constructEmptyArray(globalObject, nullptr));

@@ -41,9 +41,6 @@ const ClassInfo MapPrototype::s_info = { "Map"_s, &Base::s_info, nullptr, nullpt
 
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncClear);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncDelete);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGet);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncHas);
-static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncSet);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGetOrInsert);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncGetOrInsertComputed);
 static JSC_DECLARE_HOST_FUNCTION(mapProtoFuncValues);

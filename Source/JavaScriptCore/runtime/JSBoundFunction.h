@@ -27,6 +27,7 @@
 
 #include "JSFunction.h"
 #include "JSString.h"
+#include "SourceTaintedOrigin.h"
 
 namespace JSC {
 
@@ -48,6 +49,9 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, const SourceCode&);
+#if USE(BUN_JSC_ADDITIONS)
+    static JSBoundFunction* create(VM&, JSGlobalObject*, JSObject* targetFunction, JSValue boundThis, ArgList, double length, JSString* nameMayBeNull, SourceTaintedOrigin);
+#endif
     static JSBoundFunction* createRaw(VM&, JSGlobalObject*, JSFunction* targetFunction, unsigned boundArgsLength, JSValue boundThis, JSValue arg0, JSValue arg1, JSValue arg2, const SourceCode&);
     
     static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
@@ -94,6 +98,12 @@ public:
     static constexpr ptrdiff_t offsetOfBoundThis() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundThis); }
     static constexpr ptrdiff_t offsetOfBoundArgs() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundArgs); }
     static constexpr ptrdiff_t offsetOfBoundArgsLength() { return OBJECT_OFFSETOF(JSBoundFunction, m_boundArgsLength); }
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr ptrdiff_t offsetOfCachedStructureOfBoundThis() { return offsetOfBoundArgs() + sizeof(WriteBarrier<Unknown>); }
+    static constexpr ptrdiff_t offsetOfCachedLocationInBoundThis() { return offsetOfBoundArgs() + 2 * sizeof(WriteBarrier<Unknown>); }
+    void cachePropertyOfBoundThis(VM&, Structure*, int32_t location);
+    void clearCachedPropertyOfBoundThis();
+#endif
     static constexpr ptrdiff_t offsetOfNameMayBeNull() { return OBJECT_OFFSETOF(JSBoundFunction, m_nameMayBeNull); }
     static constexpr ptrdiff_t offsetOfLength() { return OBJECT_OFFSETOF(JSBoundFunction, m_length); }
     static constexpr ptrdiff_t offsetOfCanConstruct() { return OBJECT_OFFSETOF(JSBoundFunction, m_canConstruct); }
@@ -119,7 +129,7 @@ public:
     DECLARE_VISIT_CHILDREN;
 
 private:
-    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, const SourceCode&);
+    JSBoundFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, JSObject* targetFunction, JSValue boundThis, unsigned boundArgsLength, JSValue arg0, JSValue arg1, JSValue arg2, JSString* nameMayBeNull, double length, SourceTaintedOrigin);
 
     JSString* nameSlow(VM&);
     double NODELETE lengthSlow(VM&);

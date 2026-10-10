@@ -164,6 +164,11 @@ static ALWAYS_INLINE bool canPutDirectFast(VM& vm, Structure* structure, Propert
     if (!structure->isStructureExtensible())
         return false;
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (structure->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
+        return false;
+#endif
+
     unsigned currentAttributes = 0;
     structure->get(vm, propertyName, currentAttributes);
     if (currentAttributes & PropertyAttribute::DontDelete)
@@ -202,7 +207,7 @@ static ALWAYS_INLINE void putDirectWithReify(VM& vm, JSGlobalObject* globalObjec
 
     if (canPutDirectFast(vm, structure, propertyName, isJSFunction)) [[likely]] {
         bool success = baseObject->putDirect(vm, propertyName, value, 0, slot);
-        ASSERT_UNUSED(success, success);
+        ASSERT_UNUSED(success, success || scope.exception());
     } else {
         slot.disableCaching();
         scope.release();
@@ -264,6 +269,7 @@ JSC_DECLARE_COMMON_SLOW_PATH(slow_path_create_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_enter);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_to_this);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_tdz);
+JSC_DECLARE_COMMON_SLOW_PATH(slow_path_check_type);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_throw_strict_mode_readonly_property_write_error);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_not);
 JSC_DECLARE_COMMON_SLOW_PATH(slow_path_eq);

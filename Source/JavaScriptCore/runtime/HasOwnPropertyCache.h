@@ -99,6 +99,9 @@ public:
         if (!structure->typeInfo().prohibitsPropertyCaching()
             && structure->propertyAccessesAreCacheable()
             && (!slot.isUnset() || structure->propertyAccessesAreCacheableForAbsence())) {
+#if USE(BUN_JSC_ADDITIONS)
+            object->flattenIfCacheableDictionary(object->vm());
+#endif
             if (structure->isDictionary()) {
                 // FIXME: We should be able to flatten a dictionary object again.
                 // https://bugs.webkit.org/show_bug.cgi?id=163092

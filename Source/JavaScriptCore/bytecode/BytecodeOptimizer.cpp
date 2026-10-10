@@ -47,6 +47,8 @@ namespace {
 
 constexpr unsigned noTarget = UINT_MAX;
 
+static_assert(NUMBER_OF_BYTECODE_IDS == 198, "A new opcode has to be considered in allowsOperandSubstitution() and computeImplicitUses(), whose defaults are not the conservative answer");
+
 struct Insn {
     const JSInstruction* instruction { nullptr }; // Points into the original stream. Null for synthesized instructions.
     unsigned oldOffset { 0 };
@@ -1339,7 +1341,7 @@ bool BytecodeOptimizerAccess::resolveScopesStatically()
                     auto resolution = link->resolve(m_codeBlock->identifier(bytecode.m_var).impl());
                     // A slot past 255 would force the instruction wide (+8 bytes) just to save one link-time lookup;
                     // not worth the bytes unless the instruction is wide already.
-                    bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32();
+                    bool fits = resolution.offset <= UINT8_MAX || insn.instruction->isWide16() || insn.instruction->isWide32() || m_codeBlock->vm().bytecodeGenerationOptions.resolveAllScopeSlotsStatically;
                     if (resolution.kind == DeclaredNamesLink::Resolution::Slot && resolution.hops == it->value.hops && fits) {
                         insn.staticScopeOffset = resolution.offset;
                         insn.staticScopeOffsetIsLazyFunctionSlot = resolution.isLazyFunctionSlot;
@@ -1708,7 +1710,8 @@ bool BytecodeOptimizerAccess::eliminateRedundantTDZChecks()
                     auto bytecode = insn.instruction->as<OpResolveScope>();
                     ScopeValue base = scopeValueOf(mappedUse(insn, bytecode.m_scope));
                     bool singleDst = insn.defs.size() == 1 || (insn.defs.size() == 2 && insn.copyTo.isValid());
-                    bool resolvesToEnvironmentRecord = insn.staticOuterHops || (bytecode.m_resolveType == GlobalProperty && link && link->resolve(m_codeBlock->identifier(bytecode.m_var).impl()).kind != DeclaredNamesLink::Resolution::Dynamic);
+                    auto isInEnvironmentRecord = [](DeclaredNamesLink::Resolution::Kind kind) { return kind == DeclaredNamesLink::Resolution::Stable || kind == DeclaredNamesLink::Resolution::Slot; };
+                    bool resolvesToEnvironmentRecord = insn.staticOuterHops || (bytecode.m_resolveType == GlobalProperty && link && isInEnvironmentRecord(link->resolve(m_codeBlock->identifier(bytecode.m_var).impl()).kind));
                     if (base.via == UINT_MAX && singleDst && resolvesToEnvironmentRecord) {
                         unsigned via = insn.staticOuterHops ? environmentVia(bytecode.m_localScopeDepth, *insn.staticOuterHops) : bytecode.m_var;
                         newScope = { { insn.defs[0].offset(), ScopeValue { base.base, via } } };
@@ -2205,6 +2208,11 @@ void BytecodeOptimizerAccess::run()
         if (!changed)
             break;
     }
+    for (unsigned i = 0; i < m_insns.size(); ++i) {
+        auto& insn = m_insns[i];
+        if (insn.live && insn.kind == Insn::Original && insn.opcode == op_type_tag && (i + 1 == m_insns.size() || !m_insns[i + 1].live || m_insns[i + 1].kind != Insn::Original))
+            insn.live = false;
+    }
     // Blocks/liveness may be stale after the last DCE, but emission only needs per-instruction liveness flags
     // and reachability of handler targets, which DCE does not change.
     buildBlocks();
@@ -2241,6 +2249,5 @@ void BytecodeOptimizer::run(BytecodeGenerator& generator)
 {
     BytecodeOptimizerAccess::runIfAppropriate(generator);
 }
-
 
 } // namespace JSC

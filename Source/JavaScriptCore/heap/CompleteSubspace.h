@@ -52,6 +52,11 @@ public:
 
     void prepareAllAllocators();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A size that is rare owns no block: see sizeOfLargerCells().
+    void* tryAllocateInLargerCell(Heap&, BlockDirectory&, GCDeferralContext*);
+#endif
+
 private:
     JS_EXPORT_PRIVATE Allocator allocatorForSlow(size_t);
     

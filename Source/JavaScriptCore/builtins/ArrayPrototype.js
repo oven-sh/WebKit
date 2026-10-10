@@ -345,3 +345,129 @@ function at(index)
 
     return (k >= 0 && k < length) ? array[k] : @undefined;
 }
+
+@overriddenName="forEach"
+function forEachKnownArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="map"
+function mapKnownArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="filter"
+function filterKnownArrayForEffect(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        callback(value, i, this);
+    }
+}
+
+@overriddenName="map"
+function mapKnownArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(length, this);
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        @putByValDirect(result, i, callback(value, i, this));
+    }
+    return result;
+}
+
+@overriddenName="filter"
+function filterKnownArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    var result = @newArrayWithSpecies(0, this);
+    var nextIndex = 0;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this)) {
+            @putByValDirect(result, nextIndex, value);
+            ++nextIndex;
+        }
+    }
+    return result;
+}
+
+@overriddenName="some"
+function someKnownArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (callback(value, i, this))
+            return true;
+    }
+    return false;
+}
+
+@overriddenName="every"
+function everyKnownArray(callback)
+{
+    "use strict";
+
+    var length = this.length;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        if (!callback(value, i, this))
+            return false;
+    }
+    return true;
+}
+
+@overriddenName="reduce"
+function reduceKnownArray(callback, initialValue)
+{
+    "use strict";
+
+    var length = this.length;
+    var accumulator = initialValue;
+    for (var i = 0; i < length; i++) {
+        var value = this[i];
+        if (@isEmpty(value))
+            continue;
+        accumulator = callback(accumulator, value, i, this);
+    }
+    return accumulator;
+}

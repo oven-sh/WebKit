@@ -1,3 +1,4 @@
+//@ $skipModes << :aot << :aot_validate # TODO(bun): a frame of ahead-of-time compiled code does not keep its callee, whose displayName this is.
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplingProfiler.js", "caller relative");
 

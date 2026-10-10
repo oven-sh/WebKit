@@ -50,6 +50,12 @@ using Opcode = OpcodeID;
 
 class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
+namespace AOT {
+struct FunctionRef;
+}
+
+struct UnlinkedHandlerInfo;
+
 namespace Wasm {
 class Callee;
 struct HandlerInfo;
@@ -79,6 +85,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class ProgramExecutable;
     class ModuleProgramExecutable;
     class Register;
+    class RegisterAtOffsetList;
     class JSAsyncFunctionGenerator;
     class JSGenerator;
     class JSObject;
@@ -117,11 +124,15 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         CatchInfo() = default;
 
         CatchInfo(const HandlerInfo*, CodeBlock*);
+#if ENABLE(AOT)
+        CatchInfo(const UnlinkedHandlerInfo*, const AOT::FunctionRef&);
+#endif
 #if ENABLE(WEBASSEMBLY)
         CatchInfo(const Wasm::HandlerInfo*, const Wasm::Callee*);
 #endif
 
         bool m_valid { false };
+        bool m_isAOT { false };
         HandlerType m_type;
 #if ENABLE(JIT)
         CodePtr<ExceptionHandlerPtrTag> m_nativeCode;
@@ -171,6 +182,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         void notifyDebuggerOfExceptionToBeThrown(VM&, JSGlobalObject*, CallFrame*, Exception*);
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator*);
 
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
 
@@ -218,7 +230,12 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     protected:
         inline UnwindFunctorBase(VM&);
 
+#if ENABLE(AOT)
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&, bool leavesAdapter = true) const;
+#else
         void copyCalleeSavesToEntryFrameCalleeSavesBuffer(StackVisitor&) const;
+#endif
+        void copyCalleeSavesToEntryFrameCalleeSavesBuffer(CallFrame*, const RegisterAtOffsetList*) const;
         void notifyDebuggerOfUnwinding(JSGlobalObject*, CallFrame*) const;
 
         VM& m_vm;

@@ -89,8 +89,11 @@ UnlinkedCodeBlock::UnlinkedCodeBlock(VM& vm, Structure* structure, CodeType code
 void UnlinkedCodeBlock::initializeLoopHintExecutionCounter()
 {
     ASSERT(Options::returnEarlyFromInfiniteLoopsForFuzzing());
+    auto* instructions = m_instructions.get();
+    if (!instructions || m_hasNoInstructions)
+        return;
     VM& vm = this->vm();
-    for (const auto& instruction : instructions()) {
+    for (const auto& instruction : *instructions) {
         if (instruction->is<OpLoopHint>())
             vm.addLoopHintExecutionCounter(instruction.ptr());
     }
@@ -105,10 +108,14 @@ void UnlinkedCodeBlock::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Locker locker { thisObject->cellLock() };
     if (visitor.isFirstVisit())
         thisObject->m_age = std::min<unsigned>(static_cast<unsigned>(thisObject->m_age) + 1, maxAge);
-    for (auto& barrier : thisObject->m_functionDecls)
-        visitor.append(barrier);
-    for (auto& barrier : thisObject->m_functionExprs)
-        visitor.append(barrier);
+    for (auto& barrier : thisObject->m_functionDecls) {
+        if (!hasExecutableIndex(barrier)) [[likely]]
+            visitor.append(barrier);
+    }
+    for (auto& barrier : thisObject->m_functionExprs) {
+        if (!hasExecutableIndex(barrier)) [[likely]]
+            visitor.append(barrier);
+    }
     visitor.appendValues(thisObject->m_constantRegisters.span());
     // Borrowed (cache-backed) instruction streams and expression info count here as if generated, so the collector
     // paces a program the same whether or not its bytecode came from a cache; estimatedSize() below reports what is owned.
@@ -180,6 +187,16 @@ ExpressionInfo& UnlinkedCodeBlock::expressionInfoSlow()
         m_expressionInfo = WTF::move(expressionInfo);
     }
     return *m_expressionInfo;
+}
+
+FunctionExecutable* UnlinkedCodeBlock::executableAtIndexIn(const WriteBarrier<UnlinkedFunctionExecutable>& entry) const
+{
+#if ENABLE(AOT)
+    return AOT::VMProgram::of(vm())->executable(static_cast<uint32_t>(std::bit_cast<uintptr_t>(entry) >> 1));
+#else
+    UNUSED_PARAM(entry);
+    RELEASE_ASSERT_NOT_REACHED();
+#endif
 }
 
 ExpressionInfo::Entry UnlinkedCodeBlock::expressionInfoForBytecodeIndex(BytecodeIndex bytecodeIndex)
@@ -264,7 +281,7 @@ UnlinkedCodeBlock::~UnlinkedCodeBlock()
     }
 #endif
     if (Options::returnEarlyFromInfiniteLoopsForFuzzing()) [[unlikely]] {
-        if (auto* instructions = m_instructions.get()) {
+        if (auto* instructions = m_instructions.get(); instructions && !m_hasNoInstructions) {
             VM& vm = this->vm();
             for (const auto& instruction : *instructions) {
                 if (instruction->is<OpLoopHint>())

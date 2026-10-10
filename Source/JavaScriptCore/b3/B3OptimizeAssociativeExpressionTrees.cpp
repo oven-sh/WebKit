@@ -351,7 +351,9 @@ bool OptimizeAssociativeExpressionTrees::run()
     }
 
     InsertionSet insertionSet = InsertionSet(m_proc);
-    for (BasicBlock* block : rootOwners) {
+    for (BasicBlock* block : m_proc) {
+        if (!rootOwners.contains(block))
+            continue;
         for (unsigned index = 0; index < block->size(); ++index) {
             Value* value = block->at(index);
             if (expressionTreeRoots.contains(value))

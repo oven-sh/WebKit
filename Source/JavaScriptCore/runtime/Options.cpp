@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "Options.h"
+#include "CompilerHooks.h"
 
 #include "CPU.h"
 #include "JITOperationValidation.h"
@@ -728,6 +729,8 @@ static inline void NODELETE disableAllWasmOptions()
     Options::useWasmTailCalls() = false;
 }
 
+CompilerHooks g_compilerHooks;
+
 static inline void NODELETE disableAllJITOptions()
 {
 #if ENABLE(WEBASSEMBLY)
@@ -795,6 +798,10 @@ void Options::executeDumpOptions()
     dataLog(builder.toString());
 }
 
+double Options::sizeClassProgressionWithAOT()
+{
+    return OptionsHelper::wasOverridden(sizeClassProgressionID) ? Options::sizeClassProgression() : 1.1;
+}
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
@@ -805,6 +812,18 @@ void Options::notifyOptionsChanged()
     unsigned thresholdForGlobalLexicalBindingEpoch = Options::thresholdForGlobalLexicalBindingEpoch();
     if (thresholdForGlobalLexicalBindingEpoch == 0 || thresholdForGlobalLexicalBindingEpoch == 1)
         Options::thresholdForGlobalLexicalBindingEpoch() = UINT_MAX;
+
+    if (Options::aotImagePath())
+        Options::useAOT() = true;
+
+    if (Options::useAOT()) {
+        Options::useImmutableIntrinsics() = true;
+        Options::useJIT() = false;
+        Options::useMiniVMModeWithoutJIT() = false;
+        if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
+            Options::heapGrowthMaxIncrease() = 1;
+        Options::sizeClassProgression() = sizeClassProgressionWithAOT();
+    }
 
 #if !ENABLE(OFFLINE_ASM_ALT_ENTRY)
     if (Options::useGdbJITInfo())
@@ -877,8 +896,16 @@ void Options::notifyOptionsChanged()
     // At initialization time, we may decide that useJIT should be false for any
     // number of reasons (including failing to allocate JIT memory), and therefore,
     // will / should not be able to enable any JIT related services.
+#if USE(BUN_JSC_ADDITIONS)
+    if (!g_compilerHooks.areInstalled())
+        Options::useJIT() = false;
+    bool useRegExpJITWithoutJIT = Options::useAOT() && Options::useRegExpJIT() && g_compilerHooks.compileRegExp;
+#else
+    bool useRegExpJITWithoutJIT = false;
+#endif
     if (!Options::useJIT()) {
         disableAllJITOptions();
+        Options::useRegExpJIT() = useRegExpJITWithoutJIT;
 #if OS(DARWIN)
         // If we don't know what the sandbox policy is on mach exception handler use is, we'll
         // take the default behavior of blocking its use if the JIT is disabled. JIT disablement
@@ -1305,7 +1332,6 @@ static ASCIILiteral invertBoolOptionValue(const char* valueStr)
     return value.value() ? "false"_s : "true"_s;
 }
 
-
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool Options::setAliasedOption(const char* arg, bool verify)
@@ -1354,7 +1380,6 @@ bool Options::setOption(const char* arg, bool verify)
         return true;
     return setAliasedOption(arg, verify);
 }
-
 
 void Options::dumpAllOptions(StringBuilder& builder, DumpLevel level, ASCIILiteral title,
     ASCIILiteral separator, ASCIILiteral optionHeader, ASCIILiteral optionFooter, DumpDefaultsOption dumpDefaultsOption)

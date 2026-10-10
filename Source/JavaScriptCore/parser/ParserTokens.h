@@ -261,6 +261,7 @@ struct JSTokenLocation {
 
 struct JSToken {
     JSTokenType m_type { ERRORTOK };
+    uint32_t m_typeTag { 0 };
     JSTokenData m_data { { nullptr, nullptr, false } };
     JSTextPosition m_startPosition;
     JSTextPosition m_endPosition;

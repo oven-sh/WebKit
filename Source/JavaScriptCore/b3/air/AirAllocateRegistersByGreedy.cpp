@@ -777,6 +777,7 @@ struct TmpData {
     uint32_t spillSlotTableIndex { 0 };
     uint32_t splitAroundClobbersMetadataIndex : 31 { 0 };
     uint32_t hasColdUse : 1 { 0 };
+    bool paysForCalleeSave { false };
     Stage stage { Stage::New };
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
@@ -1068,6 +1069,24 @@ private:
             }
         });
         ASSERT(m_allAllowedRegisters == m_code.mutableRegs().toScalarRegisterSet());
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_code.chargesForCalleeSaves()) {
+            RegisterSet calleeSaves = RegisterSet::calleeSaveRegisters();
+            calleeSaves.exclude(m_code.unsavedCalleeSaves());
+            m_allAllowedRegisters.forEach([&](Reg reg) {
+                if (!calleeSaves.contains(reg, IgnoreVectors))
+                    return;
+                m_freshCalleeSaves.add(reg);
+                ++m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
+            });
+        }
+#endif
+    }
+
+    // The prologue saves, and every epilogue restores, a callee-saved register that anything is assigned to. The first to take it pays.
+    bool mayTake(const TmpData& tmpData, Reg reg) const
+    {
+        return tmpData.paysForCalleeSave || !m_freshCalleeSaves.contains(reg);
     }
 
     void NODELETE buildIndices()
@@ -2156,6 +2175,9 @@ private:
             UseDefCost cost(0);
             Reg preferred;
             bool hasColdUse = false;
+#if USE(BUN_JSC_ADDITIONS)
+            bool hasFastTmp = false;
+#endif
             for (Tmp member : group.members()) {
                 m_stats[bank].numGroupTmpsCoalesced++;
                 if (isConstDef<bank>(member))
@@ -2167,6 +2189,9 @@ private:
                 if (!preferred)
                     preferred = memberData.preferredReg;
                 hasColdUse |= memberData.hasColdUse;
+#if USE(BUN_JSC_ADDITIONS)
+                hasFastTmp |= memberData.spillability == TmpData::Spillability::FastTmp;
+#endif
                 memberData.stage = Stage::Coalesced;
             }
             m_tmpWidth.setWidths(representative, useWidth, defWidth);
@@ -2177,6 +2202,10 @@ private:
             representativeData.liveRange = group.buildLiveRange();
             representativeData.preferredReg = preferred;
             representativeData.hasColdUse = hasColdUse;
+#if USE(BUN_JSC_ADDITIONS)
+            if (hasFastTmp && m_code.keepsFastTmpsFastWhenCoalesced())
+                representativeData.spillability = TmpData::Spillability::FastTmp;
+#endif
             representativeData.validate();
 
             group.m_representative = representative;
@@ -2324,6 +2353,7 @@ private:
     {
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::allocateRegisters"_s);
 
+        m_calleeSaveCost = UseDefCost(2 * adjustedBlockFrequency(m_code[0]));
         for (Reg reg : m_allowedRegistersInPriorityOrder[bank])
             assign(Tmp(reg), m_map.get<bank>(Tmp(reg)), reg);
 
@@ -2388,6 +2418,8 @@ private:
     void doStageTryAllocate(Tmp tmp, TmpData& tmpData)
     {
         ASSERT(tmpData.stage == Stage::TryAllocate || tmpData.stage == Stage::Unspillable);
+        if (tmpData.spillability != TmpData::Spillability::Spillable)
+            tmpData.paysForCalleeSave = true;
         if (tryAllocate<bank>(tmp, tmpData))
             return;
         if (tryEvict<bank>(tmp, tmpData))
@@ -2420,8 +2452,19 @@ private:
             return;
         if (tryEvict<bank>(tmp, tmpData))
             return;
+        if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
+            return;
         ASSERT(queueContainsOnlySpills());
         spill(tmp, tmpData);
+    }
+
+    template <Bank bank>
+    bool tryAllocateFreshCalleeSave(Tmp tmp, TmpData& tmpData)
+    {
+        if (!m_numberOfFreshCalleeSaves[bank] || tmpData.paysForCalleeSave || tmpData.useDefCost <= m_calleeSaveCost)
+            return false;
+        tmpData.paysForCalleeSave = true;
+        return tryAllocate<bank>(tmp, tmpData);
     }
 
     template <Bank bank>
@@ -2433,6 +2476,8 @@ private:
         Width width = widthForConflicts<bank>(tmp);
 
         auto tryAllocateToReg = [&](Reg r) {
+            if (!mayTake(tmpData, r))
+                return false;
             LiveRange& liveRange = tmpData.liveRange;
             RegisterRange& regRanges = m_regRanges[r];
             if (!regRanges.hasConflict(liveRange, width)) {
@@ -2488,6 +2533,8 @@ private:
         LiveRange& liveRange = tmpData.liveRange;
         Width width = widthForConflicts<bank>(tmp);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
+            if (!mayTake(tmpData, r))
+                continue;
             SpillCost conflictsSpillCost(0);
             m_visited.clear();
             m_regRanges[r].forEachConflict(liveRange, width,
@@ -2554,6 +2601,10 @@ private:
     void assign(Tmp tmp, TmpData& tmpData, Reg reg)
     {
         ASSERT(m_allAllowedRegisters.contains(reg, IgnoreVectors));
+        if (m_freshCalleeSaves.contains(reg) && (!tmp.isReg() || tmpData.liveRange.size())) {
+            m_freshCalleeSaves.remove(reg);
+            --m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
+        }
         m_regRanges[reg].add(tmp, tmpData.liveRange);
         assignImpl(tmp, tmpData, reg);
     }
@@ -2582,6 +2633,8 @@ private:
     {
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
         if (trySplitAroundClobbers<bank>(tmp, tmpData))
+            return true;
+        if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
             return true;
         if (trySplitAroundLoop<bank>(tmp, tmpData))
             return true;
@@ -2827,10 +2880,14 @@ private:
         Reg bestSplitReg;
         constexpr UseDefCost invalidSplitCost(std::numeric_limits<float>::infinity());
         const float splitMultiplier = Options::airGreedyRegAllocSplitMultiplier();
-        const UseDefCost splitCostLimit = splitMultiplier > 0.0 ? tmpData.useDefCost / splitMultiplier : invalidSplitCost;
+        UseDefCost splitCostLimit = splitMultiplier > 0.0 ? tmpData.useDefCost / splitMultiplier : invalidSplitCost;
+        if (m_numberOfFreshCalleeSaves[bank] && !tmpData.paysForCalleeSave)
+            splitCostLimit = std::min(splitCostLimit, m_calleeSaveCost);
         UseDefCost minSplitCost = splitCostLimit;
         Width width = widthForConflicts<bank>(tmp);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
+            if (!mayTake(tmpData, r))
+                continue;
             UseDefCost splitCost(0);
             m_regRanges[r].forEachConflict(tmpData.liveRange, width,
                 [&](auto& conflict) -> IterationStatus {
@@ -3733,6 +3790,9 @@ private:
     Code& m_code;
     Vector<Reg> m_allowedRegistersInPriorityOrder[numBanks];
     ScalarRegisterSet m_allAllowedRegisters;
+    ScalarRegisterSet m_freshCalleeSaves;
+    std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
+    UseDefCost m_calleeSaveCost { 0 };
     IndexMap<BasicBlock*, Point> m_blockToHeadPoint;
     Vector<Point> m_tailPoints;
     TmpMap<TmpData> m_map;

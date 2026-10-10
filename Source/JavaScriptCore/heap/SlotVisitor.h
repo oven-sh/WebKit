@@ -55,6 +55,9 @@ class alignas(slotVisitorAlignment) SlotVisitor final : public AbstractSlotVisit
 
     friend class SetCurrentCellScope;
     friend class Heap;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class CompiledLayoutVisitor;
+#endif
 
 public:
     class ReferrerContext {

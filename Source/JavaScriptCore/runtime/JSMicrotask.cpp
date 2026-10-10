@@ -26,6 +26,9 @@
 #include "config.h"
 #include "JSMicrotask.h"
 
+#include "AOTTypedObject.h"
+#include "AOTFunction.h"
+#include "AOTRuntime.h"
 #include "AggregateError.h"
 #include "BuiltinNames.h"
 #include "Debugger.h"
@@ -87,6 +90,31 @@ static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
     return nullptr;
 }
 
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+extern "C" void* g_aotStaticFunctionEntrypoints[3];
+
+template<typename... Args>
+static ALWAYS_INLINE JSValue callStaticCode(void* entry, VM& vm, JSObject* function, JSValue thisValue, JSCell* context, Args... args)
+{
+    if constexpr (!sizeof...(args))
+        return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, nullptr, function, thisValue, context));
+    else if constexpr (sizeof...(args) == 1)
+        return JSValue::decode(vmEntryToJavaScriptWith1Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    else if constexpr (sizeof...(args) == 2)
+        return JSValue::decode(vmEntryToJavaScriptWith2Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    else if constexpr (sizeof...(args) == 3)
+        return JSValue::decode(vmEntryToJavaScriptWith3Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    else if constexpr (sizeof...(args) == 4)
+        return JSValue::decode(vmEntryToJavaScriptWith4Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    else if constexpr (sizeof...(args) == 5)
+        return JSValue::decode(vmEntryToJavaScriptWith5Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    else {
+        static_assert(sizeof...(args) == 6);
+        return JSValue::decode(vmEntryToJavaScriptWith6Arguments(entry, &vm, nullptr, function, thisValue, context, args...));
+    }
+}
+#endif
+
 template<typename... Args> requires (std::is_convertible_v<Args, JSValue> && ...)
 static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObject, JSValue thisValue, JSCell* context, ASCIILiteral message, MicrotaskCallCache* microtaskCallCache, Args... args)
 {
@@ -95,6 +123,27 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
+
+#if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
+    if (functionObject.isCell() && functionObject.asCell()->type() == JSFunctionType) [[likely]] {
+        if (auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell()); jsFunction->hasAOTFunctionWord()) {
+            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                return throwStackOverflowError(globalObject, scope);
+            if (Options::useAOTOperationCounters()) [[unlikely]]
+                AOT::countJobCall(vm, true);
+            scope.release();
+            return callStaticCode(g_aotStaticFunctionEntrypoints[0], vm, jsFunction, thisValue, context, args...);
+        }
+        if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
+            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                return throwStackOverflowError(globalObject, scope);
+            scope.release();
+            return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
+        }
+    }
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::countJobCall(vm, false);
+#endif
 
     if (microtaskCallCache) [[likely]] {
         if (auto* microtaskCall = microtaskCallCache->find(functionObject)) [[likely]] {
@@ -140,8 +189,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(functionObject.asCell()), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
+            if (newCodeBlock)
+                newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         if (microtaskCallCache) {
@@ -160,8 +209,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         }
 
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-        if ((sizeof...(args) + 1) >= newCodeBlock->numParameters()) [[likely]] {
-            auto* entry = functionExecutable->generatedJITCodeAddressForCall();
+        if ((sizeof...(args) + 1) >= (newCodeBlock ? newCodeBlock->numParameters() : functionExecutable->parameterCount() + 1)) [[likely]] {
+            auto* entry = newCodeBlock ? functionExecutable->generatedJITCodeAddressForCall() : functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
             auto* callee = asObject(functionObject.asCell());
             if constexpr (!sizeof...(args))
                 return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, newCodeBlock, callee, thisValue, context));
@@ -185,7 +234,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         calleeGlobalObject = functionScope->realm();
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = functionExecutable->generatedJITCodeForCall();
+            jitCode = functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall);
         }
     } else {
         ASSERT(callData.type == CallData::Type::Native);
@@ -202,8 +251,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     protoCallFrame.init(newCodeBlock, calleeGlobalObject, asObject(functionObject), thisValue, context, sizeof...(args) + 1, argArray.data());
 
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
-        return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
+        ASSERT(jitCode == functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall));
+        return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
     }
 
 #if ENABLE(WEBASSEMBLY)
@@ -799,15 +848,27 @@ static void asyncGeneratorDispatchSuspend(JSGlobalObject* globalObject, JSAsyncG
     int32_t state = generator->state();
     switch (static_cast<JSAsyncGenerator::AsyncGeneratorSuspendReason>(state & JSAsyncGenerator::reasonMask)) {
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::Await: {
+#if ENABLE(AOT)
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-await:synchronous" : "async-generator-await:job", value);
+#endif
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncGeneratorBodyCallNormal, generator);
         return;
     }
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::Yield: {
         generator->setState((state & ~JSAsyncGenerator::reasonMask) | static_cast<int32_t>(JSAsyncGenerator::AsyncGeneratorSuspendReason::Await));
+#if ENABLE(AOT)
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-yield:synchronous" : "async-generator-yield:job", value);
+#endif
         JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncGeneratorYieldAwaited, generator);
         return;
     }
     case JSAsyncGenerator::AsyncGeneratorSuspendReason::YieldNoAwait: {
+#if ENABLE(AOT)
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::countAwait(vm, microtaskCallCache == &vm.syncResumeCallCache() ? "async-generator-yield-without-await:synchronous" : "async-generator-yield-without-await:job", value);
+#endif
         asyncGeneratorYield(globalObject, generator, value, microtaskCallCache);
         return;
     }
@@ -1715,10 +1776,16 @@ static void webAssemblyInstantiateStreaming(JSGlobalObject* globalObject, VM& vm
 }
 #endif
 
-static void asyncFunctionArrangeAwaitResume(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value)
+static void asyncFunctionArrangeAwaitResume(JSGlobalObject* globalObject, VM& vm, JSAsyncFunctionGenerator* generator, JSValue value, bool isResumed)
 {
     if (value == vm.fastAsyncGeneratorSentinel())
         return;
+#if ENABLE(AOT)
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        AOT::countAwait(vm, isResumed ? "await:resumed" : "await:first-segment", value);
+#else
+    UNUSED_PARAM(isResumed);
+#endif
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, value, InternalMicrotask::AsyncFunctionResume, generator);
 }
 
@@ -1764,7 +1831,7 @@ static void asyncFunctionGeneratorBodyCall(JSGlobalObject* generatorGlobalObject
     // is already arranged by enqueuing this driver on the producer, so skip the normal
     // await-Promise attachment below.
     scope.release();
-    asyncFunctionArrangeAwaitResume(generatorGlobalObject, vm, generator, value);
+    asyncFunctionArrangeAwaitResume(generatorGlobalObject, vm, generator, value, true);
 }
 
 JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -1772,7 +1839,7 @@ JSC_DEFINE_HOST_FUNCTION(asyncFunctionDrive, (JSGlobalObject* globalObject, Call
     VM& vm = globalObject->vm();
     JSValue resolution = callFrame->uncheckedArgument(0);
     auto* generator = uncheckedDowncast<JSAsyncFunctionGenerator>(callFrame->uncheckedArgument(1));
-    asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution);
+    asyncFunctionArrangeAwaitResume(globalObject, vm, generator, resolution, false);
     return encodedJSUndefined();
 }
 
@@ -2054,6 +2121,27 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         asyncFunctionGeneratorBodyCall(generatorGlobalObject, vm, generator, resolution, resumeMode, microtaskCallCache);
         return;
     }
+
+#if ENABLE(AOT)
+    case InternalMicrotask::AOTAsyncFunctionResume: {
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+#endif
+        scope.release();
+        // Only MicrotaskQueue::drainImpl() brings a cache.
+        AOT::Typed::resumeAsyncFunction(globalObject, vm, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
+        return;
+    }
+
+    case InternalMicrotask::AOTAsyncGeneratorResume: {
+#if USE(BUN_JSC_ADDITIONS)
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+#endif
+        scope.release();
+        AOT::Typed::resumeAsyncGenerator(globalObject, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
+        return;
+    }
+#endif
 
     case InternalMicrotask::AsyncFromSyncIteratorContinue:
     case InternalMicrotask::AsyncFromSyncIteratorDone: {
