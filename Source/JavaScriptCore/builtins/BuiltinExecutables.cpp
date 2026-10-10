@@ -182,7 +182,8 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
     return createExecutable(vm, source, computeBuiltinSourceMetadata(view.span8()), name, implementationVisibility, constructorKind, constructAbility, inlineAttribute, needsClassFieldInitializer, privateBrandRequirement);
 }
 
-UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const SourceCode& source, const BuiltinSourceMetadata& scanned, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
+template<typename SourceDoesNotParse>
+ALWAYS_INLINE UnlinkedFunctionExecutable* BuiltinExecutables::createExecutableImpl(VM& vm, const SourceCode& source, const BuiltinSourceMetadata& scanned, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement, const SourceDoesNotParse& sourceDoesNotParse)
 {
     StringView view = source.view();
     RELEASE_ASSERT(scanned.sourceLength == view.length());
@@ -251,18 +252,39 @@ UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const S
             }
         } else {
             RELEASE_ASSERT(error.isValid());
-#if ASSERT_ENABLED
-            if (error.type() != ParserError::StackOverflow) {
-                WTFLogAlways("Error parsing builtin: %s\n", error.message().utf8().legacyCStringPointer());
-                CRASH();
-            }
-#endif
-            RELEASE_ASSERT(error.type() == ParserError::StackOverflow);
+            if (!sourceDoesNotParse(error))
+                return nullptr;
         }
     }
 
     UnlinkedFunctionExecutable* functionExecutable = UnlinkedFunctionExecutable::create(vm, source, &metadata, kind, constructAbility, inlineAttribute, JSParserScriptMode::Classic, nullptr, { }, std::nullopt, DerivedContextType::None, EvalContextType::FunctionEvalContext, needsClassFieldInitializer, privateBrandRequirement, isBuiltinDefaultClassConstructor);
     return functionExecutable;
+}
+
+UnlinkedFunctionExecutable* BuiltinExecutables::createExecutable(VM& vm, const SourceCode& source, const BuiltinSourceMetadata& scanned, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
+{
+    // A builtin of this build that does not parse is a mistake in the build.
+    return createExecutableImpl(vm, source, scanned, name, implementationVisibility, constructorKind, constructAbility, inlineAttribute, needsClassFieldInitializer, privateBrandRequirement, [&](const ParserError& error) {
+#if ASSERT_ENABLED
+        if (error.type() != ParserError::StackOverflow) {
+            WTFLogAlways("Error parsing builtin: %s on line %d for function %s.\n", error.message().utf8().legacyCStringPointer(), error.line(), name.utf8().legacyCStringPointer());
+            CRASH();
+        }
+#endif
+        RELEASE_ASSERT(error.type() == ParserError::StackOverflow);
+        return true;
+    });
+}
+
+UnlinkedFunctionExecutable* BuiltinExecutables::tryCreateExecutable(VM& vm, const SourceCode& source, const Identifier& name, ImplementationVisibility implementationVisibility, ConstructorKind constructorKind, ConstructAbility constructAbility, InlineAttribute inlineAttribute, ParserError& error)
+{
+    StringView view = source.view();
+    RELEASE_ASSERT(!view.isNull());
+    RELEASE_ASSERT(view.is8Bit());
+    return createExecutableImpl(vm, source, computeBuiltinSourceMetadata(view.span8()), name, implementationVisibility, constructorKind, constructAbility, inlineAttribute, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None, [&](const ParserError& parseError) {
+        error = parseError;
+        return false;
+    });
 }
 
 template<typename Visitor>

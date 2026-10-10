@@ -34,6 +34,13 @@
 
 namespace JSC {
 
+class ParserError;
+
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
+// For builtin source that this VM may not be able to parse: another build's, when an embedder generates bytecode for
+// another executable. createBuiltinExecutable crashes on a source that does not parse, in the builds and under the
+// option that make it parse the source (assertions on, validateBytecode). There this returns null and the error.
+// Elsewhere nothing is parsed here, and generating the code reports the error.
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* tryCreateBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, ParserError&);
 
 } // namespace JSC

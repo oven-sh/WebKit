@@ -41,10 +41,12 @@ namespace JSC {
     const JSC::Identifier& name##PrivateName() const { return m_##name##PrivateName; }
 
 class Identifier;
+class ParserError;
 class SourceCode;
 class UnlinkedFunctionExecutable;
 class VM;
 
 JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* createBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
+JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* tryCreateBuiltinExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, ParserError&);
     
 } // namespace JSC

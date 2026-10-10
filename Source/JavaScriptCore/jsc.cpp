@@ -2066,7 +2066,8 @@ JSC_DEFINE_HOST_FUNCTION(functionBytecodeCacheFor, (JSGlobalObject* globalObject
 
 // builtinFromBytecodeCache(source, roundTrip[, depth]) — what an embedder does with its JS builtins: create a builtin executable from
 // "(function (...) { ... })" source (private @names allowed); if roundTrip, generate all its code blocks, serialize it with
-// encodeBuiltinFunction, drop it, and decode it back from the bytes. Returns the resulting function.
+// encodeBuiltinFunction, drop it, and decode it back from the bytes. Returns the resulting function. The round trip is
+// also what an embedder does with the builtins of another build, so a source that this VM cannot parse is an error there.
 JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -2086,9 +2087,10 @@ JSC_DEFINE_HOST_FUNCTION(functionBuiltinFromBytecodeCache, (JSGlobalObject* glob
     else {
         RefPtr<CachedBytecode> bytes;
         {
-            UnlinkedFunctionExecutable* original = createBuiltinExecutable(vm, source, name, ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
             ParserError error;
-            recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error, depth);
+            UnlinkedFunctionExecutable* original = tryCreateBuiltinExecutable(vm, source, name, ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None, error);
+            if (original)
+                recursivelyGenerateUnlinkedCodeBlocksForFunction(vm, original, source, error, depth);
             if (error.isValid())
                 return throwVMError(globalObject, scope, error.toErrorObject(globalObject, source));
             bytes = encodeBuiltinFunction(vm, original, source, stamp);

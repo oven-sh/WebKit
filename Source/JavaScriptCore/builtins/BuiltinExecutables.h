@@ -37,6 +37,7 @@ namespace JSC {
 
 class UnlinkedFunctionExecutable;
 class Identifier;
+class ParserError;
 class VM;
 
 #define BUILTIN_NAME_ONLY(name, functionName, overriddenName, length) name,
@@ -80,6 +81,10 @@ SourceCode name##Source();
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);
+    // createExecutable for source that this VM may not be able to parse, such as the builtins of another build.
+    // createExecutable parses the source when builtins are validated (assertions on, or validateBytecode) and
+    // crashes if it does not parse. This parses it in the same cases, and then returns null and the error.
+    static UnlinkedFunctionExecutable* tryCreateExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, ParserError&);
 
     DECLARE_VISIT_AGGREGATE;
 
@@ -89,6 +94,9 @@ private:
     VM& m_vm;
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement);
+    // What createExecutable and tryCreateExecutable share. sourceDoesNotParse(error) says whether to go on.
+    template<typename SourceDoesNotParse>
+    static UnlinkedFunctionExecutable* createExecutableImpl(VM&, const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement, const SourceDoesNotParse&);
 
     UnlinkedFunctionExecutable* createBuiltinExecutable(const SourceCode&, const BuiltinSourceMetadata&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute);
 

@@ -966,7 +966,8 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
     if (isPrivateName)
         shift();
 
-    ASSERT(isIdentStart(m_current) || m_current == '\\');
+    // What follows the @ of a builtin name is looked up below, whatever it is.
+    ASSERT(isIdentStart(m_current) || m_current == '\\' || isBuiltinName);
 
     // Attempt SIMD scan first
     // caseFoldMask: OR-ing with 0x20 maps 'A'-'Z' to 'a'-'z', so one range check covers both cases.
@@ -1008,18 +1009,17 @@ template <bool shouldCreateIdentifier> ALWAYS_INLINE JSTokenType Lexer<Latin1Cha
     if (shouldCreateIdentifier || m_parsingBuiltinFunction) {
         const std::span<const Latin1Character> identifierSpan { identifierStart, static_cast<size_t>(currentSourcePtr() - identifierStart) };
         if (m_parsingBuiltinFunction && isBuiltinName) {
+            // Upstream gives the lookup to makeIdentifier untested and then tests the address of a reference. A name
+            // this VM does not have is an error of the source: an embedder generates bytecode for the builtins of
+            // another build, and exposePrivateIdentifiers gives this syntax to any script.
+            SymbolImpl* symbol = nullptr;
             if (isWellKnownSymbol)
-                ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpWellKnownSymbol(identifierSpan));
-            else {
-#if ASSERT_ENABLED
-                    auto *symbol = m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan);
-                    ASSERT_WITH_MESSAGE(symbol, "Private symbol not found: %s", identifierSpan.data());
-#endif
-
-                ident = &m_arena->makeIdentifier(m_vm, m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan));
-            }
-            if (!ident)
+                symbol = m_vm.propertyNames->builtinNames().lookUpWellKnownSymbol(identifierSpan);
+            else
+                symbol = m_vm.propertyNames->builtinNames().lookUpPrivateName(identifierSpan);
+            if (!symbol) [[unlikely]]
                 return INVALID_PRIVATE_NAME_ERRORTOK;
+            ident = &m_arena->makeIdentifier(m_vm, *symbol);
         } else {
             ident = makeIdentifier(identifierSpan);
             if (m_parsingBuiltinFunction) {
