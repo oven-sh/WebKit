@@ -1641,6 +1641,29 @@ std::expected<UTF8CString, UTF8ConversionError> StringImpl::utf8ForCharacters(st
     }, characters, mode);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// Upstream's utf8ForCharactersIntoBuffer() below gets a buffer that the caller grew with Vector::resize(),
+// and repeats the strict conversion before it replaces.
+std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForIllFormedCharacters(std::span<const char16_t> characters, ConversionMode mode, Vector<char8_t, 1024>& bufferVector)
+{
+    // No code unit takes more than 3 bytes, and U+FFFD takes 3.
+    if (productOverflows<size_t>(characters.size(), 3) || !isValidCapacityForVector<char8_t>(characters.size() * 3)) [[unlikely]]
+        return makeUnexpected(UTF8ConversionError::OutOfMemory);
+
+    // The strict conversion fails for an unpaired surrogate and for nothing else.
+    if (mode == StrictConversion)
+        return makeUnexpected(UTF8ConversionError::Invalid);
+
+    size_t bufferSize = characters.size() * 3;
+    if (bufferVector.capacity() < bufferSize) {
+        bufferVector.clear();
+        if (!bufferVector.tryReserveCapacity(bufferSize)) [[unlikely]]
+            return makeUnexpected(UTF8ConversionError::OutOfMemory);
+    }
+    bufferVector.resize(bufferSize);
+    return simdutf::convert_utf16le_to_utf8_with_replacement(characters, bufferVector.mutableSpan());
+}
+#else
 std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuffer(std::span<const char16_t> span, ConversionMode mode, Vector<char8_t, 1024>& bufferVector)
 {
     ASSERT(bufferVector.size() == span.size() * 3);
@@ -1665,6 +1688,7 @@ std::expected<size_t, UTF8ConversionError> StringImpl::utf8ForCharactersIntoBuff
         return makeUnexpected(UTF8ConversionError::Invalid);
     return result.buffer.size();
 }
+#endif
 
 size_t StringImpl::utf8LengthFromUTF16(std::span<const char16_t> characters)
 {
