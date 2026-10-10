@@ -156,7 +156,8 @@ static Vector<String, 4> stringListFromIterable(JSGlobalObject* globalObject, JS
         }
         String item = value.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, void());
-        result.append(item);
+        if (!result.tryAppend(WTF::move(item))) [[unlikely]]
+            throwOutOfMemoryError(globalObject, scope);
     });
     return result;
 }
