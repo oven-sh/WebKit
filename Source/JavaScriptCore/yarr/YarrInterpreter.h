@@ -29,6 +29,7 @@
 #include "YarrErrorCode.h"
 #include "YarrFlags.h"
 #include "YarrPattern.h"
+#include <wtf/FixedVector.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WTF {
@@ -120,6 +121,13 @@ struct ByteTerm {
     bool m_capture : 1;
     bool m_invert : 1;
     MatchDirection m_matchDirection : 1;
+    // Match memoization ("Match memoization" in YarrInterpreter.cpp). At most one of the first two is
+    // set, and says that the term has a cache point, which is in ByteDisjunction::memoTerms.
+    bool m_memoLoop : 1 { false };
+    bool m_memoExit : 1 { false };
+    // ParenthesesSubpattern, ParenthesesSubpatternOnceBegin / TerminalBegin: the group's body can
+    // match without consuming.
+    bool m_bodyCanBeEmpty : 1 { true };
     unsigned inputPosition { 0 };
 
     ByteTerm(char32_t ch, unsigned inputPos, unsigned frameLocation, Checked<unsigned> quantityCount, QuantifierType quantityType, OptionSet<Flags> flags)
@@ -471,11 +479,27 @@ public:
     {
     }
 
-    size_t estimatedSizeInBytes() const { return terms.capacity() * sizeof(ByteTerm); }
+    size_t estimatedSizeInBytes() const { return terms.capacity() * sizeof(ByteTerm) + memoTerms.size() * sizeof(MemoTerm); }
 
     Vector<ByteTerm> terms;
     unsigned m_numSubpatterns;
     unsigned m_frameSize;
+
+    // Match memoization (Options::useMemoizedRegExp(); "Match memoization" in YarrInterpreter.cpp).
+    struct MemoTerm {
+        static constexpr unsigned guardNone = std::numeric_limits<unsigned>::max();
+        static constexpr unsigned guardFromContext = guardNone - 1;
+
+        // Index of the term's cache point, relative to the first point of its disjunction.
+        unsigned point { 0 };
+        // Where the start of the innermost iteration around the term that has to consume is found:
+        // nowhere, in the DisjunctionContext, or at this location of the frame.
+        unsigned guard { guardNone };
+    };
+    // Parallel to terms; empty when no term has a cache point.
+    FixedVector<MemoTerm> memoTerms;
+    // Number of cache points. For the body of a ParenthesesSubpattern: of one iteration.
+    unsigned m_memoPointCount { 0 };
 };
 
 struct BytecodePattern {
@@ -542,6 +566,12 @@ public:
 
     std::unique_ptr<ByteDisjunction> m_body;
     OptionSet<Flags> m_flags;
+    // Match memoization: whether every part of the pattern has its cache points, which bounds a
+    // memoized match by its table.
+    bool m_memoizesWholePattern { false };
+    // Number of cache points; 0 without Options::useMemoizedRegExp(), and when the pattern cannot be
+    // memoized.
+    unsigned m_memoPointCount { 0 };
     // Each BytecodePattern is associated with a RegExp, each RegExp is associated
     // with a VM.  Cache a pointer to our VM's m_regExpAllocator.
     BumpPointerAllocator* m_allocator;
@@ -564,5 +594,14 @@ private:
 
 JS_EXPORT_PRIVATE std::unique_ptr<BytecodePattern> byteCompile(YarrPattern&, BumpPointerAllocator*, ErrorCode&, ConcurrentJSLock* = nullptr);
 JS_EXPORT_PRIVATE unsigned interpret(BytecodePattern*, StringView input, unsigned start, unsigned* output);
+
+// Match memoization (Options::useMemoizedRegExp()). The table has a bit per cache point and position of
+// the subject, and a match whose table would be larger than this is not memoized.
+static constexpr size_t maxMemoTableBytes = 64 * MB;
+// The number of cache points byteCompile() gives the pattern if it memoizes all of it, and 0 if it
+// memoizes none of it or leaves a group out. This is for the JIT, which only hands a match that
+// backtracks too much to the interpreter when that bounds it. (The bytecode of a match-only pattern is
+// compiled from the pattern with its captures, whose count can differ a little.)
+unsigned memoPointCountIfFullyMemoized(YarrPattern&);
 
 } } // namespace JSC::Yarr
