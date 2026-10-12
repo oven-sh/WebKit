@@ -60,9 +60,24 @@ public:
     static SyntheticModuleRecord* createTextModule(JSGlobalObject*, JSModuleLoader*, const Identifier& moduleKey, SourceCode&&);
 
     Synchronousness link(JSGlobalObject*, RefPtr<ScriptFetcher> = nullptr);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*);
+#else
     JS_EXPORT_PRIVATE JSValue NODELETE evaluate(JSGlobalObject*);
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
+    // The record's [[EvaluationSteps]] (https://tc39.es/ecma262/#sec-synthetic-module-records), for a record whose
+    // host has steps to run when the record is evaluated (Bun's node:vm SyntheticModule). evaluate() gives the owner
+    // to the host's Bun__runSyntheticModuleEvaluationSteps(), which may run arbitrary JS and throw. It does that once
+    // for every import edge to this record and for every read of a deferred namespace of it, so the host is what
+    // makes its steps run once. The record keeps the owner alive.
+    void setEvaluationStepsOwner(VM& vm, JSCell* owner)
+    {
+        ASSERT(owner);
+        internalField(evaluationStepsOwnerField).set(vm, this, owner);
+    }
+
     // Creates a record (reported as a JavaScript module, SourceProviderSourceType::Module) exporting exportValues
     // under exportNames. An empty JSValue in exportValues declares a lazy export: its binding is left uninitialized
     // and is filled in by materializeLazyExport(), which reads the property of the same name off lazyExportsSource.
@@ -102,6 +117,10 @@ private:
     void initializeExports(JSGlobalObject*, const Vector<Identifier, 4>& exportNames, ArgList exportValues, JSObject* lazyExportsSource);
 
 #if USE(BUN_JSC_ADDITIONS)
+    // A synthetic record has no bytecode, so nothing reads or writes the generator frame that every
+    // AbstractModuleRecord has an internal field for. It is undefined until a host sets an owner.
+    static constexpr Field evaluationStepsOwnerField = Field::Frame;
+
     WriteBarrier<JSObject> m_lazyExportsSource;
     RefPtr<SyntheticSourceProvider> m_deferredGenerator;
     WriteBarrier<Unknown> m_deferredGeneratorError;
