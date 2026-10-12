@@ -1560,8 +1560,21 @@ JSPromise* AbstractModuleRecord::evaluate(JSGlobalObject* globalObject)
 #else
         return wrap(cyclicRecord->evaluate(globalObject));
 #endif
-    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this))
+    if (auto* syntheticRecord = dynamicDowncast<SyntheticModuleRecord>(this)) {
+#if USE(BUN_JSC_ADDITIONS)
+        // https://tc39.es/ecma262/#sec-smr-Evaluate: what the record's evaluation steps throw rejects the promise.
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        JSValue value = syntheticRecord->evaluate(globalObject);
+        if (scope.exception()) [[unlikely]] {
+            JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+            promise->rejectWithCaughtException(vm, scope);
+            return promise;
+        }
+        RELEASE_AND_RETURN(scope, wrap(value));
+#else
         return wrap(syntheticRecord->evaluate(globalObject));
+#endif
+    }
     RELEASE_ASSERT_NOT_REACHED();
     return nullptr;
 }

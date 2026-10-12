@@ -139,8 +139,23 @@ void SyntheticModuleRecord::runDeferredGenerator(JSGlobalObject* globalObject)
 }
 #endif
 
-JSValue SyntheticModuleRecord::evaluate(JSGlobalObject*)
+#if USE(BUN_JSC_ADDITIONS)
+// The host has the definition that a link with it uses. This one is for jsc, where no record has an owner.
+extern "C" __attribute__((weak)) void Bun__runSyntheticModuleEvaluationSteps(JSGlobalObject*, JSCell*)
 {
+}
+#endif
+
+JSValue SyntheticModuleRecord::evaluate([[maybe_unused]] JSGlobalObject* globalObject)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    if (JSCell* owner = evaluationStepsOwner()) [[unlikely]] {
+        VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Bun__runSyntheticModuleEvaluationSteps(globalObject, owner);
+        RETURN_IF_EXCEPTION(scope, { });
+    }
+#endif
     return jsUndefined();
 }
 
