@@ -2224,6 +2224,10 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
 #endif
 
     case InternalMicrotask::AsyncModuleExecutionDone: {
+#if USE(BUN_JSC_ADDITIONS)
+        // CyclicModuleRecord::executeAsync() captured it.
+        AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
+#endif
         auto* module = uncheckedDowncast<JSModuleRecord>(argument2);
         RELEASE_AND_RETURN(scope, asyncModuleExecutionDone(module->realm(), module, argument1, static_cast<JSPromise::Status>(payload)));
     }
