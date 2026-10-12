@@ -241,9 +241,6 @@ ALWAYS_INLINE JSObject* tryCreateObjectViaCloning(VM& vm, JSGlobalObject* global
 {
     static constexpr bool verbose = false;
 
-#if USE(BUN_JSC_ADDITIONS)
-    source->flattenIfCacheableDictionary(vm);
-#endif
     Structure* sourceStructure = source->structure();
 
     ASSERT(sourceStructure->canPerformFastPropertyEnumerationCommon());

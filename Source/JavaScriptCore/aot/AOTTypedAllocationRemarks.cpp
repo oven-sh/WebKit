@@ -82,11 +82,30 @@ bool standsForOperand(const Value& value)
     return value.opcode == Opcode::Cast && value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce;
 }
 
+static ValueID operandThatIsResult(const Value& value)
+{
+    if (value.opcode != Opcode::CallBuiltin)
+        return { };
+    auto& builtin = Builtins::singleton().at(value.builtin());
+    if (builtin.result.kinds == BuiltinResult::This && !builtin.result.arguments)
+        return value.child(0);
+    if (builtin.result.kinds || !hasOneBitSet(builtin.result.arguments))
+        return { };
+    unsigned index = getLSBSet(builtin.result.arguments);
+    return index < value.arguments.size() ? value.arguments[index] : ValueID();
+}
+
 ValueID originOf(const Function& function, ValueID id)
 {
-    while (standsForOperand(function.at(id)))
-        id = function.at(id).child(0);
-    return id;
+    for (;;) {
+        auto& value = function.at(id);
+        if (standsForOperand(value))
+            id = value.child(0);
+        else if (ValueID operand = operandThatIsResult(value))
+            id = operand;
+        else
+            return id;
+    }
 }
 
 ASCIILiteral nameOf(TerminatorKind kind)
@@ -106,9 +125,31 @@ struct Use {
     uint32_t inlineFrame { 0 };
     uint32_t position { 0 };
     ASCIILiteral why;
+    BuiltinID builtin;
+    FunctionID callee;
+    uint32_t argument { 0 };
+    ValueID into;
 };
 
-enum class Need : uint8_t { None, Store, Read, Object };
+enum class Need : uint8_t { None, Store, Read, Held, Object };
+
+static bool isUsed(const Function& function, ValueID id)
+{
+    bool found = false;
+    for (auto& block : function.blocks) {
+        for (ValueID user : block.values) {
+            function.at(user).forEachChild([&](ValueID child) {
+                found |= child == id;
+            });
+        }
+        const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& child) {
+            found |= child == id;
+        });
+        if (found)
+            return true;
+    }
+    return false;
+}
 
 Need needOf(const Program& program, const Function& function, const Value& user, ValueID object)
 {
@@ -126,10 +167,25 @@ Need needOf(const Program& program, const Function& function, const Value& user,
     case Opcode::PutByVal:
         return is(user.child(1)) || is(user.child(2)) ? Need::Object : Need::Store;
     case Opcode::Operation:
-    case Opcode::CallBuiltin:
-        if (isOperation(program, user, LanguageOperation::DefineField) && user.arguments.size() == 3 && !is(user.arguments[1]) && !is(user.arguments[2]))
+    case Opcode::CallBuiltin: {
+        auto& builtins = Builtins::singleton();
+        BuiltinID entry = user.opcode == Opcode::CallBuiltin ? user.builtin() : builtins.find(BuiltinKind::Operation, { }, program.builtinName(user.string()));
+        if (!entry)
+            return Need::Object;
+        auto& builtin = builtins.at(entry);
+        uint16_t uses = builtin.takesReceiver() && is(user.child(0)) ? builtin.usesOfThis : 0;
+        for (unsigned i = 0; i < user.arguments.size(); ++i) {
+            if (is(user.arguments[i]))
+                uses |= builtin.usesOfArgument(i);
+        }
+        if (uses & OperandUse::MayBeResult && ((operandThatIsResult(user) && is(operandThatIsResult(user))) || !isUsed(function, ValueID(static_cast<unsigned>(&user - function.values.begin())))))
+            uses &= ~OperandUse::MayBeResult;
+        if (uses & (OperandUse::Keeps | OperandUse::Calls | OperandUse::MayBeResult | OperandUse::HandsToUserCode))
+            return Need::Object;
+        if (uses & (OperandUse::WritesProperties | OperandUse::WritesContents) && !(uses & OperandUse::KeepsWhatItHolds))
             return Need::Store;
-        return Need::Object;
+        return Need::Read;
+    }
     case Opcode::GetByVal:
     case Opcode::InByVal:
     case Opcode::IteratorHasNext:
@@ -153,6 +209,34 @@ Need needOf(const Program& program, const Function& function, const Value& user,
     default:
         return Need::Object;
     }
+}
+
+static ValueID operandThatHolds(const Function& function, const Value& call, ValueID object)
+{
+    auto& builtin = Builtins::singleton().at(call.builtin());
+    uint16_t usesOfObject = 0;
+    ValueID holder;
+    unsigned numberWritten = 0;
+    auto look = [&](ValueID operand, uint16_t uses) {
+        if (!operand)
+            return;
+        ValueID origin = originOf(function, operand);
+        if (origin == object) {
+            usesOfObject |= uses;
+            return;
+        }
+        if (uses == OperandUse::Everything || !(uses & (OperandUse::WritesProperties | OperandUse::WritesContents)))
+            return;
+        holder = origin;
+        ++numberWritten;
+    };
+    if (builtin.takesReceiver())
+        look(call.child(0), builtin.usesOfThis);
+    for (unsigned i = 0; i < call.arguments.size(); ++i)
+        look(call.arguments[i], builtin.usesOfArgument(i));
+    if (numberWritten != 1 || !(usesOfObject & OperandUse::Keeps) || usesOfObject & (OperandUse::Calls | OperandUse::MayBeResult | OperandUse::HandsToUserCode))
+        return { };
+    return holder;
 }
 
 // The operation on account of which the object is there: one that takes the object itself, else a read of it, else a store to it.
@@ -247,6 +331,8 @@ void printSite(PrintStream& out, const Program& program, Opcode opcode, LayoutID
     if (closureOf) {
         out.print(" ");
         printName(out, program, program.at(closureOf).name);
+        auto general = program.genericEntrypoints.find(closureOf.index());
+        out.print(" f", (general == program.genericEntrypoints.end() ? closureOf : general->value).index());
     }
 }
 
@@ -380,6 +466,7 @@ void concludeAllocationNotes(const Program& program, Function& function)
         Need elsewhere { Need::None };
         Use useInBirthBlock;
         Use useElsewhere;
+        Vector<ValueID, 2> holders;
     };
     Vector<Candidate> candidates;
     static constexpr unsigned none = UINT_MAX;
@@ -413,8 +500,29 @@ void concludeAllocationNotes(const Program& program, Function& function)
             auto& user = function.at(id);
             user.forEachChild([&](ValueID child) {
                 ValueID object = originOf(function, child);
-                if (candidateOf[object.index()] != none)
-                    see(object, needOf(program, function, user, object), Use { Typed::nameOf(user.opcode), user.inlineFrame, user.position, { } });
+                if (candidateOf[object.index()] == none)
+                    return;
+                Use use { Typed::nameOf(user.opcode), user.inlineFrame, user.position, { }, { }, { }, 0, { } };
+                if (user.opcode == Opcode::CallBuiltin) {
+                    use.builtin = user.builtin();
+                    use.into = operandThatHolds(function, user, object);
+                } else if (user.opcode == Opcode::PutField || user.opcode == Opcode::PutById || user.opcode == Opcode::PutByVal) {
+                    if (originOf(function, user.child(0)) != object)
+                        use.into = originOf(function, user.child(0));
+                } else if (user.opcode == Opcode::NewClosure || user.opcode == Opcode::NewClosureOnce || user.opcode == Opcode::NewArray || user.opcode == Opcode::NewObjectWithShape)
+                    use.into = id;
+                else if (user.opcode == Opcode::CallDirect) {
+                    use.callee = user.function();
+                    use.argument = user.arguments.find(child);
+                }
+                Need need = needOf(program, function, user, object);
+                if (need == Need::Object && use.into && candidateOf[use.into.index()] != none) {
+                    need = Need::Held;
+                    auto& holders = candidates[candidateOf[object.index()]].holders;
+                    if (!holders.contains(use.into))
+                        holders.append(use.into);
+                }
+                see(object, need, use);
             });
         }
         auto& terminator = block.terminator;
@@ -423,7 +531,7 @@ void concludeAllocationNotes(const Program& program, Function& function)
             if (candidateOf[object.index()] == none)
                 return;
             auto& last = function.at(block.values.isEmpty() ? object : block.values.last());
-            see(object, Need::Object, Use { nameOf(kind), last.inlineFrame, last.position, { } });
+            see(object, Need::Object, Use { nameOf(kind), last.inlineFrame, last.position, { }, { }, { }, 0, { } });
         };
         if (terminator.value && (terminator.kind == TerminatorKind::Return || terminator.kind == TerminatorKind::Throw))
             leave(terminator.value, terminator.kind);
@@ -442,6 +550,12 @@ void concludeAllocationNotes(const Program& program, Function& function)
         note.forcedBy = use.operation;
         note.forcedByInlineFrame = use.inlineFrame;
         note.forcedByPosition = use.position;
+        note.forcedByBuiltin = use.builtin;
+        note.forcedByCallee = use.callee;
+        note.forcedByArgument = use.argument;
+        note.forcedByInto = use.into;
+        if (greatest == Need::Held)
+            note.heldBy = candidate.holders;
         if (note.why.isNull())
             note.why = greatest == Need::Store ? "only stored to"_s : greatest == Need::Read ? "only read"_s : isInBirthBlock ? "in the block of its birth"_s : ASCIILiteral();
     }
@@ -472,6 +586,20 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
                 if (note.forcedBy) {
                     out.print(": ", note.forcedBy, " at ");
                     printPlace(out, program, function, note.forcedByInlineFrame, note.forcedByPosition);
+                    if (note.forcedByBuiltin) {
+                        auto& builtin = Builtins::singleton().at(note.forcedByBuiltin);
+                        out.print(" (of ", builtin.holder, builtin.holder.isEmpty() ? "" : ".", builtin.name, ")");
+                    } else if (note.forcedByCallee)
+                        out.print(" (to f", note.forcedByCallee.index(), " #", note.forcedByArgument, ")");
+                    if (!note.heldBy.isEmpty()) {
+                        out.print(" (held only by");
+                        for (ValueID holder : note.heldBy)
+                            out.print(" v", holder.index());
+                        out.print(")");
+                    } else if (note.forcedByInto) {
+                        auto& holder = function.at(note.forcedByInto);
+                        out.print(" (into v", note.forcedByInto.index(), " ", holder.opcode == Opcode::Parameter && holder.immediates[0] ? "BlockParameter"_s : Typed::nameOf(holder.opcode), ")");
+                    }
                 }
                 if (note.outcome != AllocationOutcome::BuiltLate && note.left.size() > 1)
                     out.print(" (", note.left.size(), " copies)");

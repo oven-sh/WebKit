@@ -5123,11 +5123,6 @@ void SpeculativeJIT::compile(Node* node)
         break;
     }
 
-    case CheckSoundType: {
-        compileCheckSoundType(node);
-        break;
-    }
-
     case AssertNotEmpty: {
         if (validationEnabled()) {
             JSValueOperand operand(this, node->child1());

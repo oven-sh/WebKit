@@ -56,6 +56,7 @@ void JSLexicalEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     ConcurrentJSLocker locker(thisObject->symbolTable()->m_lock);
 #if ENABLE(AOT)
     BitVector namedOffsets;
+    bool reportsUnnamedSlots = thisObject->vm().useImmutableIntrinsics;
 #endif
     SymbolTable::Map::iterator end = thisObject->symbolTable()->end(locker);
     for (SymbolTable::Map::iterator it = thisObject->symbolTable()->begin(locker); it != end; ++it) {
@@ -65,7 +66,8 @@ void JSLexicalEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
         if (!thisObject->isValidScopeOffset(offset))
             continue;
 #if ENABLE(AOT)
-        namedOffsets.set(offset.offset());
+        if (reportsUnnamedSlots)
+            namedOffsets.set(offset.offset());
 #endif
 
         JSValue toValue = thisObject->variableAt(offset).get();
@@ -73,7 +75,7 @@ void JSLexicalEnvironment::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
             analyzer.analyzeVariableNameEdge(thisObject, toValue.asCell(), it->key.get());
     }
 #if ENABLE(AOT)
-    for (unsigned i = 0; i < thisObject->symbolTable()->scopeSize(); ++i) {
+    for (unsigned i = 0; reportsUnnamedSlots && i < thisObject->symbolTable()->scopeSize(); ++i) {
         if (namedOffsets.get(i))
             continue;
         JSValue toValue = thisObject->variableAt(ScopeOffset(i)).get();

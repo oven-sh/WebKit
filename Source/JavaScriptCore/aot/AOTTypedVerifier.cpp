@@ -8,6 +8,9 @@
 
 #if ENABLE(AOT)
 
+#include "YarrErrorCode.h"
+#include "YarrFlags.h"
+#include "YarrSyntaxChecker.h"
 #include <wtf/StringPrintStream.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -49,6 +52,8 @@ public:
             for (ValueID id : block.values)
                 verify(id, m_function.at(id));
             verify(block.terminator);
+            if (block.terminator.kind == TerminatorKind::Invoke && block.values.isEmpty())
+                failAtEndOf(b, "ends in an Invoke and has no value for it to watch"_s);
         }
         verifyInitialStores(isReached);
         verifyDefinitions(isReached);
@@ -63,6 +68,13 @@ public:
 
 private:
     const Type& typeOf(ValueID id) const { return m_program.at(m_function.at(id).type); }
+
+    void failAtEndOf(unsigned block, ASCIILiteral what)
+    {
+        StringPrintStream out;
+        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: b", block, " ", what);
+        m_findings.append(out.toString());
+    }
 
     void fail(ValueID id, ASCIILiteral what)
     {
@@ -369,6 +381,9 @@ private:
         case Opcode::PutModuleVariable:
             need(id, value.child(0), m_program.variables[value.variable().index()].type, "what the variable holds"_s);
             break;
+        case Opcode::PutStaticField:
+            need(id, value.child(0), m_program.at(value.layout()).staticFields[value.immediates[1]].type, "what the static field holds"_s);
+            break;
         case Opcode::LogicalNot:
             need(id, value.child(0), m_program.types.boolean, "what is negated"_s);
             break;
@@ -401,7 +416,13 @@ private:
             if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsClosureMadeOnce)
                 need(id, value.child(1), m_program.at(m_program.types.undefined), "what a variable starts with that a closure that is made once is kept in"_s);
             break;
+        case Opcode::GetById:
+            if (value.isAtKnownPlace() && value.knownPlace() >= Value::numberOfKnownPlaces)
+                fail(id, "names a place that no object has in line"_s);
+            break;
         case Opcode::PutById:
+            if ((value.isAtKnownPlace() || value.isFirstStoreToThis()) && value.knownPlace() >= Value::numberOfKnownPlaces)
+                fail(id, "names a place that no object has in line"_s);
             if (auto access = fieldOf(m_program, typeOf(value.child(0)), value.string()))
                 need(id, value.child(1), m_program.at(access->layout).fields[access->field].type, "what the field holds"_s);
             break;
@@ -448,6 +469,7 @@ private:
         case Opcode::GetRestLength:
         case Opcode::GetMyArgumentByVal:
         case Opcode::CallForwardVarargs:
+        case Opcode::ConstructSuperForwardVarargs:
             if (!m_function.has(FunctionUsesArgumentBuffer))
                 fail(id, "is in a function that does not take its arguments in memory"_s);
             break;
@@ -540,6 +562,22 @@ private:
 void verify(const Program& program, FunctionID id, const Function& function, Vector<String>& findings)
 {
     Verifier(program, id, function, findings).run();
+}
+
+void verifyRegExpLiterals(const Program& program, Vector<String>& findings)
+{
+    for (auto [patternID, flagsID] : program.regExpLiterals) {
+        StringView flags { byteCast<Latin1Character>(program.string(flagsID)) };
+        String pattern = String::fromUTF8(program.string(patternID));
+        auto error = Yarr::parseFlags(flags) ? Yarr::ErrorCode::NoError : Yarr::ErrorCode::InvalidRegularExpressionFlags;
+        if (!Yarr::hasError(error) && !pattern.isNull())
+            error = Yarr::checkSyntax(pattern, flags);
+        if (!Yarr::hasError(error))
+            continue;
+        StringPrintStream out;
+        out.print("/", pattern, "/", flags, ": SyntaxError: ", Yarr::errorMessage(error));
+        findings.append(out.toString());
+    }
 }
 
 } } } // namespace JSC::AOT::Typed

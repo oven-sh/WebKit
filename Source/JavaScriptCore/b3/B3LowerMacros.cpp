@@ -1209,6 +1209,9 @@ private:
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 jit.farJump(params[0].gpr(), NoPtrTag);
                 CCallHelpers::Label tableLabel = jit.label();
+#if USE(BUN_JSC_ADDITIONS)
+                params.proc().code().noteTableInCode(tableLabel, tableSize);
+#endif
                 jit.emitNops(tableSize * sizeof(int32_t));
                 Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
                 jit.addLinkTask(

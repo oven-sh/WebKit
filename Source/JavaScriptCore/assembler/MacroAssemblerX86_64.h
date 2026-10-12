@@ -2711,7 +2711,15 @@ public:
     void move(TrustedImm64 imm, RegisterID dest)
     {
         if (!imm.m_value)
+#if USE(BUN_JSC_ADDITIONS)
+            m_assembler.xorl_rr(dest, dest);
+        else if (static_cast<uint64_t>(imm.m_value) <= std::numeric_limits<uint32_t>::max())
+            m_assembler.movl_i32r(static_cast<int32_t>(imm.m_value), dest);
+        else if (imm.m_value == static_cast<int32_t>(imm.m_value))
+            m_assembler.mov_i32r(static_cast<int32_t>(imm.m_value), dest);
+#else
             m_assembler.xorq_rr(dest, dest);
+#endif
         else
             m_assembler.movq_i64r(imm.m_value, dest);
     }
@@ -2853,7 +2861,13 @@ public:
     void signExtend32To64(TrustedImm32 imm, RegisterID dest)
     {
         if (!imm.m_value)
+#if USE(BUN_JSC_ADDITIONS)
+            m_assembler.xorl_rr(dest, dest);
+        else if (imm.m_value > 0)
+            m_assembler.movl_i32r(imm.m_value, dest);
+#else
             m_assembler.xorq_rr(dest, dest);
+#endif
         else
             m_assembler.mov_i32r(imm.m_value, dest);
     }
@@ -3259,7 +3273,11 @@ public:
     {
         if (mask.m_value == -1)
             m_assembler.testl_rr(reg, reg);
+#if USE(BUN_JSC_ADDITIONS)
+        else if (!(mask.m_value & ~0xff)) {
+#else
         else if (!(mask.m_value & ~0xff) && reg < X86Registers::esp) { // Using esp and greater as a byte register yields the upper half of the 16 bit registers ax, cx, dx and bx, e.g. esp, register 4, is actually ah.
+#endif
             if (mask.m_value == 0xff)
                 m_assembler.testb_rr(reg, reg);
             else

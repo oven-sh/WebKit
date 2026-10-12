@@ -529,7 +529,12 @@ CallData JSFunction::getConstructData(JSCell* cell)
 
 String getCalculatedDisplayName(VM& vm, JSObject* object)
 {
-    if (!is<JSFunction>(object) && !is<InternalFunction>(object))
+#if ENABLE(AOT)
+    bool isSlimClosure = isSlimClosureType(object->type());
+#else
+    constexpr bool isSlimClosure = false;
+#endif
+    if (!isSlimClosure && !is<JSFunction>(object) && !is<InternalFunction>(object))
         return emptyString();
 
     Structure* structure = object->structure();
@@ -542,6 +547,10 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
             return asString(displayName)->tryGetValueWithoutGC();
     }
 
+#if ENABLE(AOT)
+    if (isSlimClosure)
+        return AOT::nameOfSlimClosure(object);
+#endif
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
         String actualName = function->nameWithoutGC(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction())
@@ -593,7 +602,7 @@ void JSFunction::reifyLength(VM& vm)
     double length = originalLength(vm);
     JSValue initialValue = jsNumber(length);
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-    if (structure()->hasImmutableProperties())
+    if (structure()->hasImmutablePropertiesWithFixedAttributes())
         initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& identifier = vm.propertyNames->length;
     rareData->setHasReifiedLength();
@@ -623,7 +632,7 @@ JSFunction::PropertyStatus JSFunction::reifyName(VM& vm, JSGlobalObject* globalO
     ASSERT(!hasReifiedName());
     ASSERT(!isHostFunction());
     unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-    if (structure()->hasImmutableProperties())
+    if (structure()->hasImmutablePropertiesWithFixedAttributes())
         initialAttributes |= PropertyAttribute::DontDelete;
     const Identifier& propID = vm.propertyNames->name;
 
@@ -756,7 +765,7 @@ JSFunction::PropertyStatus JSFunction::reifyLazyBoundNameIfNeeded(VM& vm, JSGlob
         FunctionRareData* rareData = this->ensureRareData(vm);
         JSString* name = originalName(realm());
         unsigned initialAttributes = PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
-        if (structure()->hasImmutableProperties())
+        if (structure()->hasImmutablePropertiesWithFixedAttributes())
             initialAttributes |= PropertyAttribute::DontDelete;
         rareData->setHasReifiedName();
         AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);

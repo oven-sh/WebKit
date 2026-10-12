@@ -439,7 +439,7 @@ bool isFromJSCode(void* returnAddress)
         return true;
 #endif
 #if ENABLE(AOT)
-    if (AOT::classifyAddress(returnAddress).kind != AOT::ImageAddressInfo::NotInImage)
+    if (AOT::kindOfAddress(returnAddress) != AOT::ImageAddressInfo::NotInImage)
         return true;
 #endif
 #if ENABLE(C_LOOP)

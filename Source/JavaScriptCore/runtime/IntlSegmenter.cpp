@@ -54,59 +54,6 @@ IntlSegmenter::IntlSegmenter(VM& vm, Structure* structure)
 {
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-// A bit for each code unit, asked of ICU 256 at a time when the first of them is met, for the process.
-static std::array<std::atomic<uint64_t>, (1 << 16) / 64> s_joinsNoNeighbour;
-static std::array<std::atomic<bool>, 256> s_isAskedAbout;
-
-bool IntlSegmenter::joinsNoNeighbourByProperty(char16_t character)
-{
-    unsigned block = character >> 8;
-    if (!s_isAskedAbout[block].load(std::memory_order_acquire)) [[unlikely]] {
-        for (unsigned word = 0; word < 4; ++word) {
-            uint64_t bits = 0;
-            for (unsigned bit = 0; bit < 64; ++bit) {
-                UChar32 asked = block << 8 | word << 6 | bit;
-                if (U16_IS_SURROGATE(asked))
-                    continue;
-                int32_t property = u_getIntPropertyValue(asked, UCHAR_GRAPHEME_CLUSTER_BREAK);
-                if (property == U_GCB_OTHER || property == U_GCB_CONTROL)
-                    bits |= 1ull << bit;
-            }
-            s_joinsNoNeighbour[block * 4 + word].store(bits, std::memory_order_relaxed);
-        }
-        s_isAskedAbout[block].store(true, std::memory_order_release);
-    }
-    return s_joinsNoNeighbour[character >> 6].load(std::memory_order_relaxed) >> (character & 63) & 1;
-}
-
-// By the ICU that is loaded, which on some systems is the system's.
-static bool charactersBelowLimitJoinNothing()
-{
-    static const bool result = [] {
-        for (UChar32 character = 0; character < IntlSegmenter::firstCharacterThatMayJoin; ++character) {
-            switch (u_getIntPropertyValue(character, UCHAR_GRAPHEME_CLUSTER_BREAK)) {
-            case U_GCB_OTHER:
-            case U_GCB_CONTROL:
-                break;
-            case U_GCB_CR:
-                if (character != '\r')
-                    return false;
-                break;
-            case U_GCB_LF:
-                if (character != '\n')
-                    return false;
-                break;
-            default:
-                return false;
-            }
-        }
-        return true;
-    }();
-    return result;
-}
-#endif
-
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter
 void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue locales, JSValue optionsValue)
 {
@@ -159,30 +106,7 @@ void IntlSegmenter::initializeSegmenter(JSGlobalObject* globalObject, JSValue lo
         throwTypeError(globalObject, scope, "failed to initialize Segmenter"_s);
         return;
     }
-#if USE(BUN_JSC_ADDITIONS)
-    // The rules of the root: a locale with rules of its own is asked everything.
-    if (m_granularity == Granularity::Grapheme && charactersBelowLimitJoinNothing()) {
-        const char* actualLocale = ubrk_getLocaleByType(m_segmenter.get(), ULOC_ACTUAL_LOCALE, &status);
-        m_cutsSimpleGraphemesItself = U_SUCCESS(status) && actualLocale && !strcmp(actualLocale, "root");
-    }
-#endif
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> IntlSegmenter::takeBreakIterator(UErrorCode& status, bool& isClone) const
-{
-    isClone = m_spareBreakIterators.isEmpty();
-    if (!isClone)
-        return m_spareBreakIterators.takeLast();
-    return std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>(cloneUBreakIterator(m_segmenter.get(), &status));
-}
-
-void IntlSegmenter::giveBack(std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&& breakIterator) const
-{
-    if (m_spareBreakIterators.size() < m_spareBreakIterators.capacity())
-        m_spareBreakIterators.append(WTF::move(breakIterator));
-}
-#endif
 
 // https://tc39.es/proposal-intl-segmenter/#sec-intl.segmenter.prototype.segment
 JSValue IntlSegmenter::segment(JSGlobalObject* globalObject, JSValue stringValue) const
@@ -194,14 +118,6 @@ JSValue IntlSegmenter::segment(JSGlobalObject* globalObject, JSValue stringValue
     RETURN_IF_EXCEPTION(scope, { });
     auto string = jsString->value(globalObject);
     RETURN_IF_EXCEPTION(scope, { });
-#if USE(BUN_JSC_ADDITIONS)
-    // The characters are copied for ICU when it is asked: IntlSegments::ensureBuffer().
-    {
-        auto* segments = IntlSegments::create(vm, globalObject->segmentsStructure(), nullptr, { }, jsString, m_granularity);
-        segments->setSegmenter(vm, const_cast<IntlSegmenter*>(this));
-        return segments;
-    }
-#endif
     auto expectedCharacters = string->charactersWithoutNullTermination();
     if (!expectedCharacters) {
         throwOutOfMemoryError(globalObject, scope);

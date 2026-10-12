@@ -237,6 +237,7 @@ FOR_EACH_WEBASSEMBLY_CONSTRUCTOR_TYPE(DECLARE_SIMPLE_BUILTIN_TYPE)
 
 namespace AOT {
 struct Instance;
+JS_EXPORT_PRIVATE void microtaskQueueingDidChange(VM&);
 }
 
 class JSGlobalObject : public JSSegmentedVariableObject {
@@ -259,6 +260,9 @@ private:
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger && m_microtaskRunnability == QueuedTaskResult::Executed;
 #else
         m_canFastQueueMicrotask = m_associatedContextIsFullyActive && !m_debugger;
+#endif
+#if ENABLE(AOT)
+        AOT::microtaskQueueingDidChange(*m_vm);
 #endif
     }
 
@@ -1165,6 +1169,7 @@ public:
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(JSGlobalObject, m_vm); }
     static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(JSGlobalObject, m_aotInstance); }
     static constexpr ptrdiff_t offsetOfCanFastQueueMicrotask() { return OBJECT_OFFSETOF(JSGlobalObject, m_canFastQueueMicrotask); }
+    bool canFastQueueMicrotask() const { return m_canFastQueueMicrotask; }
     static constexpr ptrdiff_t offsetOfMicrotaskQueue() { return OBJECT_OFFSETOF(JSGlobalObject, m_microtaskQueue); }
     AOT::Instance* aotInstance() const { return m_aotInstance; }
     void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }

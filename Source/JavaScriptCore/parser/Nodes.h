@@ -205,7 +205,6 @@ namespace JSC {
         virtual bool isBoolean() const { return false; }
         virtual bool isThisNode() const { return false; }
         virtual bool isSpreadExpression() const { return false; }
-        virtual bool isSoundTypeCheckNode() const { return false; }
         virtual bool isSuperNode() const { return false; }
         virtual bool isRegExpNode() const { return false; }
         virtual bool isImportNode() const { return false; }
@@ -228,9 +227,6 @@ namespace JSC {
 
         ResultType resultDescriptor() const { return m_resultType; }
 
-        uint32_t typeTag() const { return m_typeTag; }
-        void setTypeTag(uint32_t tag) { m_typeTag = tag; }
-
         bool isOptionalChainBase() const { return m_isOptionalChainBase; }
         void setIsOptionalChainBase() { m_isOptionalChainBase = true; }
 
@@ -241,7 +237,6 @@ namespace JSC {
 
     private:
         ResultType m_resultType;
-        uint32_t m_typeTag { 0 };
         bool m_isOptionalChainBase { false };
         bool m_isParenthesized { false };
     };
@@ -941,12 +936,9 @@ namespace JSC {
         ArgumentsNode(ArgumentListNode*, bool hasAssignments);
 
         bool hasAssignments() const { return m_hasAssignments; }
-        uint32_t typeTag() const { return m_typeTag; }
-        void setTypeTag(uint32_t tag) { m_typeTag = tag; }
 
         ArgumentListNode* m_listNode;
     private:
-        uint32_t m_typeTag { 0 };
         bool m_hasAssignments { false };
     };
 
@@ -1193,21 +1185,6 @@ namespace JSC {
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
 
         ExpressionNode* m_expr;
-    };
-
-    class SoundTypeCheckNode final : public ExpressionNode, public ThrowableExpressionData {
-    public:
-        SoundTypeCheckNode(const JSTokenLocation&, ExpressionNode*, unsigned mask, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
-
-        unsigned mask() const { return m_mask; }
-
-    private:
-        bool isSoundTypeCheckNode() const final { return true; }
-        bool isFunctionCall() const final { return true; }
-        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
-
-        ExpressionNode* m_expr;
-        unsigned m_mask;
     };
 
     class PrefixNode : public ExpressionNode, public ThrowablePrefixedSubExpressionData {
@@ -2529,14 +2506,14 @@ namespace JSC {
             Element,
             RestElement
         };
-        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType, uint32_t typeTag = 0)
+        void appendEntry(const JSTokenLocation&, const Identifier& identifier, bool wasString, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType, typeTag });
+            m_targetPatterns.append(Entry{ identifier, nullptr, wasString, pattern, defaultValue, bindingType });  
         }
 
         void appendEntry(VM& vm, const JSTokenLocation&, ExpressionNode* propertyExpression, DestructuringPatternNode* pattern, ExpressionNode* defaultValue, BindingType bindingType)
         {
-            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType, 0 });
+            m_targetPatterns.append(Entry{ vm.propertyNames->nullIdentifier, propertyExpression, false, pattern, defaultValue, bindingType });
         }
         
         void setContainsRestElement(bool containsRestElement)
@@ -2560,7 +2537,6 @@ namespace JSC {
             DestructuringPatternNode* pattern;
             ExpressionNode* defaultValue;
             BindingType bindingType;
-            uint32_t typeTag;
         };
         bool m_containsRestElement { false };
         bool m_containsComputedProperty { false };

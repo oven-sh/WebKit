@@ -57,14 +57,6 @@ void Lowering::computeLoops(const Vector<BlockID>& order)
             m_innermostLoop[block] = m_loops.size();
         m_loops.append(WTF::move(loop));
     }
-    for (unsigned index = 0; index < m_loops.size(); ++index) {
-        auto& loop = m_loops[index];
-        for (size_t blockIndex : loop.blocks) {
-            auto& terminator = m_function.blocks[blockIndex].terminator;
-            if (terminator.kind == TerminatorKind::Invoke || terminator.kind == TerminatorKind::Throw)
-                loop.hasHandlerInside |= loop.blocks.get(terminator.targets.last().block.index());
-        }
-    }
 }
 
 bool Lowering::isLoopInvariant(const Loop& loop, ValueID id) const
@@ -98,8 +90,7 @@ bool Lowering::isGuaranteedToExecute(const Loop& loop) const
 bool Lowering::willHoistComputationOn(ValueID operand) const
 {
     unsigned index = m_innermostLoop[m_currentBlockID.index()];
-    // A handler is another way into the loop for the back end, which then takes it for none.
-    if (index == noLoop || m_loops[index].hasHandlerInside)
+    if (index == noLoop)
         return false;
     return isLoopInvariant(m_loops[index], operand) && isGuaranteedToExecute(m_loops[index]);
 }
@@ -166,6 +157,50 @@ std::optional<Word32> Lowering::lowerRelationalWithIntegerBound(const Value& val
     default:
         return greaterThanOrEqual(x, bound);
     }
+}
+
+std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& value)
+{
+    if (m_likelyIntegersOfNumbers.isEmpty())
+        return std::nullopt;
+    bool integerIsFirst = typeOf(value.child(0)).isInteger();
+    ValueID integerOperand = value.child(integerIsFirst ? 0 : 1);
+    ValueID numberOperand = value.child(integerIsFirst ? 1 : 0);
+    if (!typeOf(integerOperand).isInteger())
+        return std::nullopt;
+    auto found = m_likelyIntegersOfNumbers.find(numberOperand.index());
+    if (found == m_likelyIntegersOfNumbers.end() || get(numberOperand).value != found->value.number)
+        return std::nullopt;
+    Integer kept(found->value.integer);
+    bool keptIsNotNegative = found->value.least >= 0;
+    bool neitherIsNegative = keptIsNotNegative && typeOf(integerOperand).integers.least >= 0;
+    return either<Word32>(keptIsNotNegative ? greaterThanOrEqual(kept, integer(0)) : greaterThan(kept, integer(INT64_MIN)), [&] {
+        Integer x = integerIsFirst ? in<Integer>(integerOperand) : kept;
+        Integer y = integerIsFirst ? kept : in<Integer>(integerOperand);
+        switch (value.opcode) {
+        case Opcode::Less:
+            return neitherIsNegative ? below(x, y) : lessThan(x, y);
+        case Opcode::Greater:
+            return neitherIsNegative ? below(y, x) : greaterThan(x, y);
+        case Opcode::LessEq:
+            return neitherIsNegative ? belowOrEqual(x, y) : lessThanOrEqual(x, y);
+        default:
+            return neitherIsNegative ? belowOrEqual(y, x) : greaterThanOrEqual(x, y);
+        }
+    }, [&] {
+        Number x = asNumericOperand(value.child(0));
+        Number y = asNumericOperand(value.child(1));
+        switch (value.opcode) {
+        case Opcode::Less:
+            return lessThan(x, y);
+        case Opcode::Greater:
+            return greaterThan(x, y);
+        case Opcode::LessEq:
+            return lessThanOrEqual(x, y);
+        default:
+            return greaterThanOrEqual(x, y);
+        }
+    });
 }
 
 // ToInt32 of a sum or a difference of numbers of which one is kept as an integer. Where the other is an int32 too, -0 counting as 0, and a double stands for the result exactly, that is the low half of what integers come out with.

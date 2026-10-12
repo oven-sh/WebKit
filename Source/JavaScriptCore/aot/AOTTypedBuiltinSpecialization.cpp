@@ -75,7 +75,7 @@ public:
                     ++changed;
                     continue;
                 }
-                if (specialize(BlockID(b), i)) {
+                if ((m_mode == Mode::Speculation && takeTimeOfDates(BlockID(b), i)) || specialize(BlockID(b), i)) {
                     ++changed;
                     break;
                 }
@@ -101,9 +101,7 @@ private:
 
     ValueID originOf(ValueID value) const
     {
-        while (m_function.at(value).opcode == Opcode::Cast)
-            value = m_function.at(value).child(0);
-        return value;
+        return m_program.originOf(m_function, value);
     }
 
     // `o.m(..)`, or a call of what a GetById has read from `o` with `o` for `this`.
@@ -176,6 +174,73 @@ private:
         if (!speculated->canCheckOriginalStructure())
             return nullptr;
         return type.anyObject || type.engineClasses.contains(speculated->index) ? speculated : nullptr;
+    }
+
+    bool takeTimeOfDates(BlockID block, unsigned index)
+    {
+        if (m_holdsDatesAsTheyWere[block.index()])
+            return false;
+        ValueID id = m_function.at(block).values[index];
+        Vector<ValueID, 2> operands;
+        switch (m_function.at(id).opcode) {
+        case Opcode::ToNumber:
+            operands.append(m_function.at(id).child(0));
+            break;
+        case Opcode::Call:
+            if (m_function.at(id).arguments.size() != 1 || globalDefinedBy(m_function.at(id).child(0)) != m_builtins.nameOf("Number"_s.span8()))
+                return false;
+            operands.append(m_function.at(id).arguments[0]);
+            break;
+        case Opcode::Less:
+        case Opcode::LessEq:
+        case Opcode::Greater:
+        case Opcode::GreaterEq:
+            operands.append(m_function.at(id).child(0));
+            operands.append(m_function.at(id).child(1));
+            break;
+        default:
+            return false;
+        }
+        const EngineClass* dateClass = nullptr;
+        for (ValueID operand : operands) {
+            dateClass = typeOf(operand).onlyEngineClass();
+            if (TypeID prediction = m_function.at(operand).prediction; !dateClass && prediction && typeOf(operand).anyObject)
+                dateClass = m_program.at(prediction).onlyEngineClass();
+            if (!dateClass || dateClass->type != JSDateType || !dateClass->canCheckOriginalStructure())
+                return false;
+        }
+        BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, *dateClass, m_builtins.nameOf("getTime"_s.span8())), { });
+        TypeID typeOfClass = m_program.engineClassTypes[dateClass->index];
+        if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic || !typeOfClass)
+            return false;
+
+        Value original = m_function.at(id);
+        open(block, index);
+        Vector<BlockID, 2> otherwise;
+        Vector<ValueID, 2> times;
+        for (ValueID operand : operands) {
+            Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
+            guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), dateClass->index };
+            guard.arguments.append(operand);
+            otherwise.append(branch(append(WTF::move(guard))));
+            Value call = make(Opcode::CallBuiltin, m_program.types.number);
+            call.children[0] = held(operand, typeOfClass);
+            call.immediates[0] = entry.index();
+            times.append(appendThrowing(WTF::move(call)));
+        }
+        if (operands.size() == 1)
+            finish(held(times[0], original.type));
+        else {
+            Value comparison = original;
+            comparison.children = { times[0], times[1], ValueID() };
+            finish(appendThrowing(WTF::move(comparison)));
+        }
+        for (BlockID slow : otherwise) {
+            moveTo(slow);
+            m_holdsDatesAsTheyWere[slow.index()] = true;
+            finish(appendThrowing(Value { original }));
+        }
+        return true;
     }
 
     // Whether the value at the index was replaced: then the block ends before it.
@@ -267,7 +332,9 @@ private:
     {
         auto& receiver = typeOf(site.receiver);
         TypeID prediction = m_function.at(site.receiver).prediction;
-        if (!(receiver.primitives & Primitive::Number) || receiver.isNumber() || !prediction || !m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).isNumber())
+        Type withoutNil = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
+        bool isNumberOrNil = withoutNil.isNumber();
+        if (!(receiver.primitives & Primitive::Number) || receiver.isNumber() || !(isNumberOrNil || (prediction && m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull).isNumber())))
             return false;
         auto& numberClass = m_builtins.numberClass();
         if (auto& refuted = m_refuted[block.index()]; refuted.engineClass == numberClass.index && refuted.receiver == originOf(site.receiver))
@@ -278,6 +345,21 @@ private:
 
         Value original = m_function.at(m_function.at(block).values[index]);
         open(block, index);
+        if (isNumberOrNil) {
+            Value guard = make(Opcode::IsUndefinedOrNull, m_program.types.boolean);
+            guard.children[0] = site.receiver;
+            BlockID fast = branch(append(WTF::move(guard)));
+            m_refuted[m_block.index()] = { originOf(site.receiver), numberClass.index };
+            finish(appendThrowing(Value { original }));
+
+            moveTo(fast);
+            Value call = WTF::move(original);
+            call.opcode = Opcode::CallMethod;
+            call.children = { held(site.receiver, withoutNil.isInteger() && withoutNil.integers.isWithin(Range::int32()) ? m_program.types.int32 : m_program.types.number), ValueID(), ValueID() };
+            call.immediates = { site.name.index(), m_inliningDepth };
+            finish(appendThrowing(WTF::move(call)));
+            return true;
+        }
         Value guard = make(Opcode::TypeOfIs, m_program.types.boolean);
         guard.children[0] = site.receiver;
         guard.immediates[0] = static_cast<uint32_t>(TypeofType::Number);
@@ -362,6 +444,7 @@ private:
     void noteRefutedReceivers()
     {
         m_refuted.fill(Refuted { }, m_function.blocks.size());
+        m_holdsDatesAsTheyWere.fill(false, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
             if (block.terminator.kind != TerminatorKind::Branch)
                 continue;
@@ -405,6 +488,7 @@ private:
     {
         m_function.blocks.append(Block { });
         m_refuted.append(Refuted { });
+        m_holdsDatesAsTheyWere.append(false);
         return BlockID(m_function.blocks.size() - 1);
     }
 
@@ -530,6 +614,7 @@ private:
     StringID m_callIntrinsic;
     // By block.
     Vector<Refuted> m_refuted;
+    Vector<bool> m_holdsDatesAsTheyWere;
     // Of the value that is being replaced.
     uint32_t m_position { 0 };
     uint32_t m_inlineFrame { 0 };

@@ -60,6 +60,20 @@ void AbstractHeap::changeParent(AbstractHeap* parent)
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void AbstractHeap::forgetChildrenFrom(size_t first)
+{
+    for (size_t i = first; i < m_children.size(); ++i) {
+        AbstractHeap* child = m_children[i];
+        RELEASE_ASSERT(child->m_children.isEmpty());
+        child->m_parent = nullptr;
+        child->m_heapName = nullptr;
+        child->m_range = B3::HeapRange();
+    }
+    m_children.shrink(first);
+}
+#endif
+
 void AbstractHeap::compute(unsigned begin)
 {
     // This recursively computes the ranges of the tree. This solves the following constraints
@@ -139,6 +153,24 @@ IndexedAbstractHeap::IndexedAbstractHeap(AbstractHeap* parent, const char* heapN
 }
 
 IndexedAbstractHeap::~IndexedAbstractHeap() = default;
+
+#if USE(BUN_JSC_ADDITIONS)
+void IndexedAbstractHeap::keepHeapsMadeSoFar()
+{
+    RELEASE_ASSERT(m_largeIndices.isEmpty());
+    m_numberOfHeapsKept = m_heapForAnyIndex.numberOfChildren();
+    RELEASE_ASSERT(m_largeIndexNames.size() == m_numberOfHeapsKept);
+}
+
+void IndexedAbstractHeap::forgetOtherHeaps()
+{
+    if (m_heapForAnyIndex.numberOfChildren() == m_numberOfHeapsKept)
+        return;
+    m_heapForAnyIndex.forgetChildrenFrom(m_numberOfHeapsKept);
+    m_largeIndices.clear();
+    m_largeIndexNames.shrink(m_numberOfHeapsKept);
+}
+#endif
 
 const AbstractHeap& IndexedAbstractHeap::atSlow(ptrdiff_t index)
 {

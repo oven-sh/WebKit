@@ -45,19 +45,21 @@ namespace JSC::B3 {
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
     macro(AOTInstance_mutableFields, 0, Mutability::Mutable) \
     macro(AOTTypedClosure_entry, AOT::Typed::Closure::offsetOfEntry(), Mutability::Immutable) \
+    macro(AOTTypedSlimClosure_word, AOT::Typed::SlimClosure::offsetOfWord(), Mutability::Immutable) \
     macro(AOTTypedObject_words, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
     macro(AOTTypedObject_orderWord, AOT::Typed::offsetOfOrderWord, Mutability::Mutable) \
     macro(AOTTypedObject_shapeWord, AOT::Typed::offsetOfShapeWord, Mutability::Mutable) \
     macro(AOTTypedObject_extension, AOT::Typed::offsetOfExtension, Mutability::Mutable) \
     macro(AOTTypedExtension_size, AOT::Typed::offsetOfExtensionSize, Mutability::Immutable) \
     macro(AOTTypedCompactTable_used, AOT::Typed::CompactTable::offsetOfUsed(), Mutability::Mutable) \
-    macro(AOTTypedCompactTable_deleted, AOT::Typed::CompactTable::offsetOfDeleted(), Mutability::Mutable) \
+    macro(AOTTypedCompactTable_alive, AOT::Typed::CompactTable::offsetOfAlive(), Mutability::Mutable) \
     macro(JSMap_compactTable, (JSMap::offsetOfCompactTable()), Mutability::Mutable) \
     macro(JSSet_compactTable, (JSSet::offsetOfCompactTable()), Mutability::Mutable) \
     macro(AOTTyped_shapeSets, 0, Mutability::Immutable)
 #define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTTyped_fields) \
     macro(AOTTyped_collectorState) \
+    macro(AOTTyped_cards) \
     macro(AOTTyped_runtimeState) \
     macro(AOTTyped_argumentBuffer) \
     macro(AOTTyped_freshCell)
@@ -71,7 +73,8 @@ namespace JSC::B3 {
     macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
     macro(AOTIdentifiers, 0, sizeof(void*)) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \
-    macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t))
+    macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t)) \
+    macro(AOTTypedSlimClosure_captures, AOT::Typed::SlimClosure::offsetOfCaptures(), sizeof(uint64_t))
 #else
 #define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro)
 #define FOR_EACH_ABSTRACT_HEAP_OF_AOT(macro)
@@ -321,6 +324,11 @@ public:
     AbstractHeapRepository();
     ~AbstractHeapRepository();
 
+#if USE(BUN_JSC_ADDITIONS)
+    static std::unique_ptr<AbstractHeapRepository> takeFromThread();
+    static void giveBackToThread(std::unique_ptr<AbstractHeapRepository>&&);
+#endif
+
     AbstractHeap root;
 
 #define ABSTRACT_HEAP_DECLARATION(name) AbstractHeap name;
@@ -414,6 +422,12 @@ public:
     void computeRangesAndDecorateInstructions();
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    void forgetProcedure();
+#if ENABLE(AOT)
+    void reparentHeapsForAOT();
+#endif
+#endif
 
     struct HeapForValue {
         HeapForValue()

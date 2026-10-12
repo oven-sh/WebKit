@@ -52,6 +52,7 @@ class CallLinkInfo;
 #if ENABLE(WEBASSEMBLY)
 namespace AOT {
 struct FunctionRef;
+struct ReturnAddressTrace;
 }
 
 struct UnlinkedHandlerInfo;
@@ -87,6 +88,7 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     class Register;
     class RegisterAtOffsetList;
     class JSAsyncFunctionGenerator;
+    class JSPromise;
     class JSGenerator;
     class JSObject;
     class JSScope;
@@ -183,11 +185,27 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
         JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator*);
+#if ENABLE(AOT)
+        JS_EXPORT_PRIVATE static void appendAsyncStackFrame(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure);
+        JS_EXPORT_PRIVATE static JSCell* asyncFunctionIn(JSValue context);
+        JS_EXPORT_PRIVATE static JSPromise* promiseOfAsyncFunction(JSCell* generatorOrResumeClosure);
+        JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure, size_t maxStackSize);
+        std::unique_ptr<AOT::ReturnAddressTrace> tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames);
+#endif
 
-        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+        struct FramesAlreadyInTrace {
+            CallFrame* lastCallFrame { nullptr };
+            void* lastReturnPC { nullptr };
+            size_t numberShown { 0 };
+        };
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, const FramesAlreadyInTrace* = nullptr);
 
     private:
+#if ENABLE(AOT)
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* initialGeneratorOrResumeClosure, size_t maxStackSize);
+#else
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+#endif
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);

@@ -176,9 +176,6 @@ public:
     ALWAYS_INLINE bool isImportMeta(ExpressionType type) { return type == ImportMetaExpr; }
     ExpressionType createResolve(const JSTokenLocation&, const Identifier&, int, int, const bool = true) { return ResolveExpr; }
     ExpressionType createPrivateIdentifierNode(const JSTokenLocation&, const Identifier&) { return PrivateIdentifier; }
-    void setTypeTag(ExpressionType, uint32_t) { }
-    int withTypeTag(int arguments, uint32_t) { return arguments; }
-    void setClassTypeTag(ClassExpression, uint32_t) { }
     ExpressionType createObjectLiteral(const JSTokenLocation&) { return ObjectLiteralExpr; }
     ExpressionType createObjectLiteral(const JSTokenLocation&, int) { return ObjectLiteralExpr; }
     ExpressionType createArray(const JSTokenLocation&, int) { return ArrayLiteralExpr; }
@@ -374,7 +371,7 @@ public:
     {
         return ObjectDestructuring;
     }
-    void appendObjectPatternEntry(ObjectPattern, const JSTokenLocation&, bool, const Identifier&, DestructuringPattern, int, uint32_t)
+    void appendObjectPatternEntry(ObjectPattern, const JSTokenLocation&, bool, const Identifier&, DestructuringPattern, int)
     {
     }
     void appendObjectPatternEntry(VM&, ObjectPattern, const JSTokenLocation&, Expression, DestructuringPattern, Expression)

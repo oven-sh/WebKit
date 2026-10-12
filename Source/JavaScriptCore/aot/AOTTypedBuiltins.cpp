@@ -35,6 +35,15 @@ unsigned Builtin::numberOfRequiredParameters() const
     return result;
 }
 
+uint16_t Builtin::usesOfArgument(unsigned index) const
+{
+    if (index < parameters.size())
+        return parameters[index].uses;
+    if (!parameters.isEmpty() && parameters.last().mode == ParameterMode::Rest)
+        return parameters.last().uses;
+    return OperandUse::Everything;
+}
+
 bool Builtin::takes(unsigned numberOfArguments) const
 {
     if (numberOfArguments < numberOfRequiredParameters())
@@ -67,6 +76,7 @@ constexpr BuiltinParameter toString { ArgumentConversion::ToString };
 constexpr BuiltinParameter toPropertyKey { ArgumentConversion::ToPropertyKey };
 constexpr BuiltinParameter optional(BuiltinParameter parameter) { return { parameter.conversion, ParameterMode::Optional }; }
 constexpr BuiltinParameter rest(BuiltinParameter parameter) { return { parameter.conversion, ParameterMode::Rest }; }
+constexpr BuiltinParameter uses(BuiltinParameter parameter, uint16_t uses) { return { parameter.conversion, parameter.mode, uses }; }
 
 constexpr BuiltinImplementation generic { };
 constexpr BuiltinImplementation cell { BuiltinImplementation::Cell, BuiltinCallee::None };
@@ -509,6 +519,26 @@ std::expected<JSCell*, String> Builtins::lookUp(JSGlobalObject* globalObject, un
     return found->asCell();
 }
 
+BuiltinID Builtins::entryCarriedOutBy(PreludeFunction which) const
+{
+    for (unsigned index = 0; index < numberOfBuiltins; ++index) {
+        auto& implementation = builtinEntries[index].implementation;
+        if (implementation.kind == BuiltinImplementation::Prelude && implementation.prelude == which)
+            return BuiltinID(index);
+    }
+    return { };
+}
+
+bool Builtins::isHostFunctionInEngine(BuiltinID id) const
+{
+    auto& entry = at(id);
+    for (auto& sibling : builtinEntries) {
+        if (sibling.kind == entry.kind && sibling.holderName == entry.holderName && sibling.nameName == entry.nameName && sibling.implementation.kind == BuiltinImplementation::Call && sibling.implementation.callee != BuiltinCallee::Function)
+            return true;
+    }
+    return false;
+}
+
 // What is found cannot change, so it does not matter when this is asked.
 JSCell* Builtins::findCell(JSGlobalObject* globalObject, unsigned index) const
 {
@@ -528,6 +558,20 @@ JSCell* Builtins::captureCell(JSGlobalObject* globalObject, JSObject* holder, un
     DeferTerminationForAWhile deferTermination(globalObject->vm());
     auto found = lookUp(globalObject, index, holder);
     return found ? *found : globalObject->vm().structureStructure.get();
+}
+
+unsigned Builtins::cellOfGlobal(ASCIILiteral global) const
+{
+    BuiltinName name = nameOf(byteCast<uint8_t>(global.span8()));
+    RELEASE_ASSERT(isGlobal(name));
+    return cellOf(name);
+}
+
+unsigned Builtins::cellOfStaticFunction(ASCIILiteral global, ASCIILiteral name) const
+{
+    BuiltinID entry = findStatic(BuiltinKind::StaticFunction, nameOf(byteCast<uint8_t>(global.span8())), nameOf(byteCast<uint8_t>(name.span8())));
+    RELEASE_ASSERT(entry && hasCell(entry));
+    return cellOf(entry);
 }
 
 // Whether compiled code may ask for the cell.

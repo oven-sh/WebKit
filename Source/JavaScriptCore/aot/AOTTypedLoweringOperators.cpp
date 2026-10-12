@@ -127,7 +127,7 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
 
     OperationEffects effects { writesOfArithmetic(left, &right), true };
     // An object is asked for a primitive first, which is not what it is asked for to become a string.
-    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects()) {
+    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects() && !isCompact(4)) {
         if (left.isString() || right.isString()) {
             StringPart first = stringPartOf(a);
             return ensure(concatenate(first, stringPartOf(b)).string, m_program.at(m_program.types.string), type);
@@ -135,26 +135,26 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
         if (isStringOrNil(left) && isStringOrNil(right)) {
             Boxed x = in<Boxed>(a);
             Boxed y = in<Boxed>(b);
-            Boxed sum = either<Boxed>(logicalAnd(isCell(x), isCell(y)), [&] {
-                return box(concatenate(stringPartOf(asCell(x)), stringPartOf(asCell(y))).string);
+            bool areWhole = !indexOf(x.value()) && !indexOf(y.value()) && !m_decoded.contains(x.value()) && !m_decoded.contains(y.value());
+            Word32 areCells = areWhole ? Word32(m_out.testIsZero64(m_out.bitOr(x.value(), y.value()), m_out.constInt64(JSValue::OtherTag))) : logicalAnd(isCell(x, left), isCell(y, right));
+            return eitherOperand(areCells, joinedAs(type), [&] {
+                return ensure(concatenate(stringPartOf(asCell(x)), stringPartOf(asCell(y))).string, m_program.at(m_program.types.string), type);
             }, [&] {
-                return emitGenericArithmetic(Stub::Add, x, y, effects);
+                return ensure(emitGenericArithmetic(Stub::Add, x, y, effects), guaranteeOfStub(Opcode::Add), type);
             });
-            return ensure(sum, guaranteeOfStub(Opcode::Add), type);
         }
         // With a string the other, which is no object, becomes one.
         if (isStringOrNil(left) || isStringOrNil(right)) {
             bool isLeft = isStringOrNil(left);
             Boxed x = in<Boxed>(a);
             Boxed y = in<Boxed>(b);
-            Boxed sum = either<Boxed>(isCell(isLeft ? x : y), [&] {
+            return eitherOperand(isCell(isLeft ? x : y, isLeft ? left : right), joinedAs(type), [&] {
                 StringPart string = stringPartOf(asCell(isLeft ? x : y));
                 StringPart other = stringPartOf(isLeft ? b : a);
-                return box((isLeft ? concatenate(string, other) : concatenate(other, string)).string);
+                return ensure((isLeft ? concatenate(string, other) : concatenate(other, string)).string, m_program.at(m_program.types.string), type);
             }, [&] {
-                return emitGenericArithmetic(Stub::Add, x, y, effects);
+                return ensure(emitGenericArithmetic(Stub::Add, x, y, effects), guaranteeOfStub(Opcode::Add), type);
             });
-            return ensure(sum, guaranteeOfStub(Opcode::Add), type);
         }
     }
 
@@ -467,6 +467,7 @@ Word32 Lowering::naturalInt32OrElse(Number number, LBasicBlock otherwise)
         PatchpointValue* patchpoint = m_out.patchpoint(Int32);
         patchpoint->append(ConstrainedValue(number.value(), ValueRep::SomeRegister));
         patchpoint->effects = Effects::none();
+        patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::NaturalInt32);
         patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
             jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
             jit.m_assembler.csinv<32>(params[0].gpr(), params[0].gpr(), ARM64Registers::zr, ARM64Assembler::ConditionEQ);
@@ -492,6 +493,7 @@ Number Lowering::fmodOffTheUsualPath(Number x, Number y)
     patchpoint->append(ConstrainedValue(y.value(), ValueRep::reg(FPRInfo::argumentFPR1)));
     patchpoint->resultConstraints = { ValueRep::reg(FPRInfo::returnValueFPR) };
     patchpoint->effects = Effects::none();
+    patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::Fmod);
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -662,6 +664,8 @@ Word32 Lowering::lowerRelational(const Value& value)
             return greaterThanOrEqual(x, y);
         }
     }
+    if (auto answer = lowerRelationalWithLikelyInteger(value))
+        return *answer;
     if (auto answer = lowerRelationalWithIntegerBound(value))
         return *answer;
     if (isNumericOperand(left) && isNumericOperand(right)) {
@@ -693,6 +697,59 @@ Word32 Lowering::lowerRelational(const Value& value)
             return emitGenericCompare(Stub::GreaterEq, x, y, effects);
         }
     };
+    if (isCompact(4))
+        return generally();
+    for (unsigned i = 0; i < 2; ++i) {
+        auto text = constantASCIIText(value.child(i));
+        ValueID subject = value.child(1 - i);
+        if (!text || text->size() != 1 || !(typeOf(subject).primitives & Primitive::String) || !holdsCells(m_function.at(subject).rep))
+            continue;
+        Opcode opcode = value.opcode;
+        if (!i)
+            opcode = opcode == Opcode::Less ? Opcode::Greater : opcode == Opcode::Greater ? Opcode::Less : opcode == Opcode::LessEq ? Opcode::GreaterEq : Opcode::LessEq;
+        LBasicBlock otherwise = newColdBlock();
+        Join join(m_out, Rep::Int32, Int32);
+        StringReceiver receiver = stringReceiver(subject);
+        bool mayBeNoString = !typeOf(subject).hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+        if (mayBeNoString) {
+            receiver.flags = 0;
+            if (!receiver.isString && get(subject).rep != Rep::Cell)
+                receiver.isString = isCell(get(subject).as<Boxed>(), typeOf(subject));
+        }
+        if (receiver.isString)
+            orElse(receiver.isString, otherwise);
+        if (mayBeNoString)
+            orElse(equal(typeOfCell(receiver.string), word32(StringType)), otherwise);
+        Characters characters = charactersOf(receiver, otherwise);
+        orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
+        LBasicBlock isEmpty = m_out.newBlock();
+        LBasicBlock hasCharacter = m_out.newBlock();
+        m_out.branch(isZero(characters.length).value(), unsure(isEmpty), unsure(hasCharacter));
+        m_out.appendTo(isEmpty);
+        join.add(boolean(opcode == Opcode::Less || opcode == Opcode::LessEq));
+        m_out.appendTo(hasCharacter);
+        Word32 first(marked(m_out.load8ZeroExt32(m_out.address(m_heaps.characters8.atAnyIndex(), characters.data.value(), 0)), IsFixed));
+        ensureStillAliveHere(characters.owner);
+        Word32 character = word32((*text)[0]);
+        Word32 isOneCharacterLong = equal(characters.length, integer(1));
+        switch (opcode) {
+        case Opcode::Less:
+            join.add(below(first, character));
+            break;
+        case Opcode::GreaterEq:
+            join.add(aboveOrEqual(first, character));
+            break;
+        case Opcode::LessEq:
+            join.add(logicalOr(below(first, character), logicalAnd(equal(first, character), isOneCharacterLong)));
+            break;
+        default:
+            join.add(logicalOr(below(character, first), logicalAnd(equal(first, character), logicalNot(isOneCharacterLong))));
+            break;
+        }
+        m_out.appendTo(otherwise);
+        join.add(generally());
+        return join.finish().as<Word32>();
+    }
     if (!areExpectedToBeNumbers({ a, b }))
         return generally();
     return ifNumbersAsExpected({ a, b }, Rep::Int32, true, [&](LBasicBlock) {
@@ -724,9 +781,6 @@ unsigned Lowering::numberOfComparisonsWithIntegers(ValueID id)
 
 void Lowering::didDefineNumber(ValueID id, const Value& value, Number number)
 {
-    // What is defined before the entry of a handler is not there behind it.
-    if (!m_catchSpills.isEmpty())
-        return;
     // What was kept as an integer. `undefined` becomes what is not a number, `null` 0.
     // A read and a cast may have yielded a placeholder: see lowerFusedCast().
     if (value.opcode == Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::GetById) {
@@ -765,9 +819,11 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     if (!m_pinnedReads.isEmpty()) {
         for (auto [read, text] : { std::pair { a, b }, std::pair { b, a } }) {
             if (auto found = m_pinnedReads.find(read.index()); found != m_pinnedReads.end())
-                return isPinnedTo(found->value, m_function.at(text).string());
+                return isPinnedTo(found->value, text);
         }
     }
+    if (auto areEqual = areKeptCodeUnitsEqual(a, b))
+        return *areEqual;
     auto& left = typeOf(a);
     auto& right = typeOf(b);
     if (left.isInteger() && right.isInteger())
@@ -801,6 +857,10 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     // Equal bits are equal values and the other way round, unless both may be numbers, strings or big integers.
     if (!(both & (Primitive::Number | Primitive::String | Primitive::BigInt)))
         return equal(in<Boxed>(a), in<Boxed>(b));
+    if (isCompact(m_function.at(a).opcode == Opcode::String || m_function.at(b).opcode == Opcode::String ? 16 : 2)) {
+        Boxed first = in<Boxed>(a);
+        return emitGenericCompare(Stub::StrictEqual, first, in<Boxed>(b), OperationEffects { Writes::RuntimeState, true });
+    }
     if (isStringOrNil(left) && isStringOrNil(right))
         return areStringsEqual(a, b);
     // A string is the same as nothing but a string.
@@ -938,6 +998,8 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
     auto throughStub = [&] {
         return Word32(callICStub(Stub::ToBoolean, Int32, { { value.value(), firstStubOperandGPR } }, std::nullopt, { Writes::RuntimeState, false }));
     };
+    if (isCompact(3))
+        return throughStub();
     // `undefined` and `null` are an answer like any other here.
     auto expected = predictionOf(id, 0);
     // Whoever asks this of a value that may be anything asks, as a rule, whether there is something, or for an answer that was given.
@@ -969,7 +1031,19 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
         CellPointer cell = asCell(value);
         Word32 cellType = typeOfCell(cell);
         if (expected->hasObjects()) {
-            when(logicalAnd(aboveOrEqual(cellType, word32(ObjectType)), lacksBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), MasqueradesAsUndefined)), [&] {
+            Word32 isTruthyObject = aboveOrEqual(cellType, word32(ObjectType));
+            if (m_program.mayMeetMasquerader)
+                isTruthyObject = logicalAnd(isTruthyObject, lacksBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), MasqueradesAsUndefined));
+            when(isTruthyObject, [&] {
+                if (!m_program.mayMeetMasquerader && Options::validateAOTTypedFacts()) [[unlikely]] {
+                    LBasicBlock masquerades = newColdBlock();
+                    LBasicBlock continuation = m_out.newBlock();
+                    m_out.branch(lacksBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), MasqueradesAsUndefined).value(), usually(continuation), rarely(masquerades));
+                    m_out.appendTo(masquerades);
+                    AOT_TYPED_OPERATION(FactDoesNotHold, value, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+                    m_out.jump(continuation);
+                    m_out.appendTo(continuation);
+                }
                 return boolean(true);
             });
         }
@@ -982,14 +1056,13 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
         m_out.jump(otherwise);
         m_out.appendTo(isOtherCase);
     }
-    if (expected->primitives & Primitive::UndefinedOrNull) {
-        when(isUndefinedOrNull(value), [&] {
-            return boolean(false);
+    if (expected->primitives & (Primitive::UndefinedOrNull | Primitive::Boolean)) {
+        static_assert(JSValue::ValueNull < JSValue::ValueUndefined && JSValue::ValueFalse < JSValue::ValueUndefined && JSValue::ValueTrue < JSValue::ValueUndefined && JSValue::ValueUndefined < JSValue::DoubleEncodeOffset);
+        when(equal(value, boxedConstant(jsBoolean(true))), [&] {
+            return boolean(true);
         });
-    }
-    if (expected->primitives & Primitive::Boolean) {
-        when(isBoolean(value), [&] {
-            return unboxedBoolean(value);
+        when(belowOrEqual(value, undefined()), [&] {
+            return boolean(false);
         });
     }
     if (expected->primitives & Primitive::Number) {
@@ -1036,10 +1109,11 @@ CellPointer Lowering::toStringCell(ValueID id)
         }, generally);
     }
     auto prediction = predictionOf(id);
-    if (!prediction || !(prediction->isString() || prediction->isNumber()))
+    bool isNumberOrNil = type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+    if (!isNumberOrNil && (!prediction || !(prediction->isString() || prediction->isNumber())))
         return generally();
     // As a rule a number is an int32 where it is made a string of.
-    auto& expected = m_program.at(prediction->isString() ? m_program.types.string : m_program.types.int32);
+    auto& expected = m_program.at(!isNumberOrNil && prediction->isString() ? m_program.types.string : m_program.types.int32);
     return ifAsExpected({ { id, &expected } }, Rep::Cell, [&](LBasicBlock) {
         return toStringCell(id);
     }, generally).as<CellPointer>();

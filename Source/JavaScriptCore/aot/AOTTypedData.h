@@ -9,6 +9,7 @@
 
 #include <span>
 #include <wtf/StdLibExtras.h>
+#include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -97,6 +98,8 @@ static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
 
+inline bool isAbsentAsZero(Store store) { return store != Store::OptionalInt64 && store != Store::OptionalDouble && store != Store::Int32OrElsewhere; }
+
 // Instance::typedStrings: of the strings of the program those that have been asked for as values, found by their number. A table as long as the program costs a page for every
 // row that is looked at, and the rows that are looked at are spread over all of it. Open addressing, a word a slot: in the low half the key: the number + 1, 0: free; in the high half the
 // cell: a Cell32, with wide references its place in Instance::typedWideStrings. Slot 0 is no string's: its key is that of none, its high half the mask, so that who has the table has both.
@@ -124,24 +127,13 @@ static constexpr uint32_t offsetOfOrderWord = 8;
 static constexpr uint32_t offsetOfShapeWord = 12;
 static constexpr uint32_t offsetOfFirstField = 16;
 
-// Out-of-line slots. An object of a layout with LayoutData::hasExtension has a pointer to its extension at offsetOfExtension, and its
-// inline fields start behind it. The extension is a cell of its own:
-//      0  JSCell
-//      8  its size in bytes, 32 bits, this header included. It never changes.
-//     16  boxed slots (Store::JSValue), zero where nothing has been stored: absent
-// FieldData::offset of an out-of-line field is from the start of the extension.
-// An extension grows by need: it is at least as large as the farthest slot that has ever been created in it needs, and a slot that
-// does not lie within its size is absent. The pointer is never null. Until an out-of-line field is created it is the one empty
-// extension of the instance, of size offsetOfFirstExtensionSlot, which is never written. An extension of its own belongs to one object.
-// To make it larger the run time replaces it by a copy. Its size is that of the cell it got, so there may be room for more.
-//   read:  extension = object[offsetOfExtension]; offset + 8 <= extension->size ? extension[offset] : absent. Zero: absent.
-//   write: the slot reads absent: DidCreateField, which sees to it that the slot lies within the extension, then load the pointer
-//          again. Then extension[offset] = value, with the barrier on the extension. A slot that reads present is stored to in place.
-// The pointer changes whenever the run time creates a field. An extension never shrinks, and the pointer never goes back to the empty
-// one, also when every out-of-line field has been deleted: a slot that was once within the size stays so.
 static constexpr uint32_t offsetOfExtension = 16;
-static constexpr uint32_t offsetOfExtensionSize = 8;
-static constexpr uint32_t offsetOfFirstExtensionSlot = 16;
+static constexpr uint32_t sizeOfExtensionWord = 4;
+static constexpr uint32_t offsetOfExtensionSize = 0;
+static constexpr uint32_t offsetOfFirstExtensionSlot = 4;
+static constexpr uint32_t leastExtensionSize = 16;
+static constexpr uint32_t outOfLineSlotKey = 0x8000;
+static constexpr uint32_t slotKeyFor(uint32_t offset, bool isOutOfLine) { return offset < outOfLineSlotKey ? offset | (isOutOfLine ? outOfLineSlotKey : 0) : 0; }
 // The order in the low 16 bits, how far it has got in the next 12. Only what lists the keys looks at these.
 static constexpr uint32_t maxFieldsInOrder = (1 << 12) - 1;
 static constexpr uint32_t orderWordOf(uint32_t order, uint32_t count) { return order | count << 16; }
@@ -161,6 +153,7 @@ inline bool isPrivateName(std::span<const uint8_t> name) { return !name.empty() 
 // `@name` of JavaScriptCore's and Bun's builtin code, spelled `\xFDname` by the front end: what BuiltinNames::lookUpPrivateName() finds.
 inline bool isEnginePrivateName(std::span<const uint8_t> name) { return !name.empty() && name[0] == 0xfd; }
 
+static constexpr uint32_t nameMayBeOfOwnField = 1u << 31;
 static constexpr uint32_t fieldIsOptional = 1;
 // Only in FieldData::flags: the slot is in the extension.
 static constexpr uint32_t fieldIsOutOfLine = 2;
@@ -213,27 +206,69 @@ struct ViewField {
 };
 
 struct ViewFields {
-    uint32_t count;
-    std::span<const ViewField> span() const { return { reinterpret_cast<const ViewField*>(this + 1), count }; }
+    static void append(Vector<uint8_t>& bytes, uint32_t number)
+    {
+        for (; number >= 0x80; number >>= 7)
+            bytes.append(static_cast<uint8_t>(number | 0x80));
+        bytes.append(static_cast<uint8_t>(number));
+    }
+    Vector<ViewField> decode(const uint32_t* offsetsOfTypes) const
+    {
+        const uint8_t* at = reinterpret_cast<const uint8_t*>(this);
+        auto read = [&] {
+            uint32_t number = 0;
+            for (unsigned shift = 0;; shift += 7) {
+                uint8_t byte = *at++;
+                number |= static_cast<uint32_t>(byte & 0x7f) << shift;
+                if (!(byte & 0x80))
+                    return number;
+            }
+        };
+        return Vector<ViewField>(read(), [&](size_t) {
+            uint32_t nameAndIsOptional = read();
+            uint32_t type = offsetsOfTypes[read()];
+            return ViewField { nameAndIsOptional >> 1, type, nameAndIsOptional & 1, read() - 1 };
+        });
+    }
 };
 
 struct RuntimeType {
     uint16_t primitives; // Primitive::*
-    bool allowsAnyObject;
-    bool allowsAnyFunction;
+    uint8_t bits;
+    uint8_t jsTypesCount;
+    uint16_t viewsCount;
+    uint16_t unused;
+    static constexpr uint8_t allowsAnyObjectBit = 1;
+    static constexpr uint8_t allowsAnyFunctionBit = 2;
+    static constexpr uint8_t admitsForeignObjectsBit = 4;
+    static constexpr uint8_t hasElementsBit = 8;
+    static constexpr uint8_t hasOneIntegerBit = 16;
+    static constexpr uint8_t hasIntegersBit = 32;
+    bool allowsAnyObject() const { return bits & allowsAnyObjectBit; }
+    bool allowsAnyFunction() const { return bits & allowsAnyFunctionBit; }
     // One of the views does: any object is of the type. The views say which objects of the program are accessed in place, and what `as`
     // makes of a plain object. See Layout::admitsForeignObjects in AOTTypedIR.h.
-    bool admitsForeignObjects;
-    int64_t minInteger;
-    int64_t maxInteger;
-    uint32_t numberOfViews;
-    uint32_t numberOfJSTypes;
+    bool admitsForeignObjects() const { return bits & admitsForeignObjectsBit; }
+    uint32_t numberOfViews() const { return viewsCount; }
+    uint32_t numberOfJSTypes() const { return jsTypesCount; }
     // Of an array: the offset in Data of the RuntimeType its elements are expected to have. Zero: none.
-    uint32_t elements;
+    uint32_t elements() const { return bits & hasElementsBit ? *rest() : 0; }
+    int64_t minInteger() const { return integer(0, 1); }
+    int64_t maxInteger() const { return integer(2, 0); }
     // There is one RuntimeShapeTest per view. For each view of the type: how many bytes it lies from this record.
     const int32_t* distancesOfViews() const { return reinterpret_cast<const int32_t*>(this + 1); }
     const RuntimeShapeTest& view(uint32_t index) const { return *reinterpret_cast<const RuntimeShapeTest*>(reinterpret_cast<const uint8_t*>(this) + distancesOfViews()[index]); }
-    const uint32_t* jsTypes() const { return reinterpret_cast<const uint32_t*>(distancesOfViews() + numberOfViews); }
+    const uint32_t* jsTypes() const { return reinterpret_cast<const uint32_t*>(distancesOfViews() + numberOfViews()); }
+    const uint32_t* rest() const { return jsTypes() + numberOfJSTypes(); }
+    int64_t integer(unsigned word, int64_t ofNone) const
+    {
+        const uint32_t* words = rest() + !!(bits & hasElementsBit);
+        if (bits & hasOneIntegerBit)
+            return static_cast<int32_t>(words[0]);
+        if (bits & hasIntegersBit)
+            return static_cast<int64_t>(words[word] | static_cast<uint64_t>(words[word + 1]) << 32);
+        return ofNone;
+    }
 };
 
 // A string or a number that a literal type stands for.
@@ -243,11 +278,7 @@ struct LiteralData {
     double number;
 };
 
-struct FieldData {
-    uint32_t name;
-    uint32_t offset;
-    Store store;
-    uint32_t flags;
+struct FieldTypes {
     // The offsets of RuntimeTypes in Data. What the slot holds, which is the widest of the types of the fields that share it: no more than
     // that is ever in it.
     uint32_t type;
@@ -259,6 +290,29 @@ struct FieldData {
     uint32_t numberOfLiterals;
     uint32_t literalsOffset;
 };
+
+struct FieldData {
+    uint32_t name;
+    uint32_t flags;
+    uint32_t offset : 24;
+    uint32_t storeBits : 8;
+    int32_t distanceOfTypes;
+    Store store() const { return static_cast<Store>(storeBits); }
+    const FieldTypes& types() const { return *reinterpret_cast<const FieldTypes*>(reinterpret_cast<const uint8_t*>(this) + distanceOfTypes); }
+    uint32_t type() const { return types().type; }
+    uint32_t ownType() const { return types().ownType; }
+    uint32_t numberOfLiterals() const { return types().numberOfLiterals; }
+    uint32_t literalsOffset() const { return types().literalsOffset; }
+};
+static_assert(sizeof(FieldData) == 16);
+
+struct VariableData {
+    uint32_t name;
+    uint32_t offset : 24;
+    uint32_t storeBits : 8;
+    Store store() const { return static_cast<Store>(storeBits); }
+};
+static_assert(sizeof(VariableData) == 8);
 
 // The fixed fields of the frame of an async function. The arguments and the spill slots follow.
 namespace CoroutineFrame {
@@ -289,78 +343,69 @@ struct MethodData {
     uint32_t flags;
 };
 
+struct ClassData {
+    uint32_t base;
+    uint32_t classConstructor;
+    uint32_t environment;
+    uint32_t numberOfMethods;
+    uint32_t numberOfStaticMethods;
+    uint32_t numberOfStaticFields;
+    uint32_t numberOfVariables;
+    uint32_t firstStaticFieldPlace;
+};
+static_assert(sizeof(ClassData) == 32);
+
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
+    static constexpr uint32_t sizeOfEnvironment = 32;
 
     LayoutKind kind;
-    // Of the layout among all layouts, and among those that are allocated.
+    uint8_t mayBeFrozen : 1;
+    uint8_t mayGiveUp : 1;
+    uint8_t isLaidOut : 1;
+    uint8_t isEvaluatedOnce : 1;
+    uint8_t hasForeignRoot : 1;
+    uint8_t hasFixedMembers : 1;
+    uint8_t mayHaveOtherPrototype : 1;
+    uint8_t constructorTakesNewTarget : 1;
+    uint8_t makesMembersWhenLookedAt : 1;
+    uint8_t isAbstract : 1;
+    uint8_t hasExtension : 1;
+    uint8_t hasPrototypeAheadOfClassObject : 1;
+    uint8_t makesClassObjectWhenChanged : 1;
     uint32_t index;
     uint32_t shape;
     uint32_t name;
     uint32_t size;
-    // The largest `size` among the layout and all that an object of it may be turned into where it is. What the run time makes has that much room.
-    uint32_t sizeWithRoomToSpecialize;
-    uint32_t base;
-    bool mayBeFrozen;
-    // Of a class, see Format::ShapeFlag.
-    bool isLaidOut;
-    bool isEvaluatedOnce;
-    bool hasForeignRoot;
-    bool hasFixedMembers;
-    bool mayHaveOtherPrototype;
-    // The constructor is handed `new.target` before the arguments.
-    bool constructorTakesNewTarget;
-    // Of a class: a ClassPrototype finds the one class object there is. A computed name may be an index, and a lookup by index does not come through its hooks.
-    bool makesMembersWhenLookedAt;
-    // The orders the compiler expects: for each the offset in Data of a 16-bit length followed by that many 16-bit indexes into the fields.
-    uint32_t numberOfOrders;
-    uint32_t ordersOffset;
-    // The shapes `as` may turn an object of this one into where it is.
-    uint32_t numberOfSpecializations;
-    uint32_t specializationsOffset;
-    // Of a class: the generic entrypoint of the constructor, whose closure is the class object. Else noBase.
-    uint32_t classConstructor;
-    // Of a class that is not evaluated once: LayoutData::index of the environment the class object closes over, where the variables of the
-    // class are. noBase: they are among the module variables.
-    uint32_t environment;
-    // See Typed::Layout::discriminant and isAbstract. The field by its number among fields(). noBase: the layout is in no family.
-    uint32_t discriminant;
-    bool isAbstract;
-    // See offsetOfExtension. extensionSize: no out-of-line slot of this layout reaches beyond it. 0 if it has none.
-    bool hasExtension;
-    // Of a class. The class object of a class that extends something foreign is made at the declaration, and what its prototype inherits from is known there.
-    bool hasPrototypeAheadOfClassObject;
-    // Of a class: there is one class object, of it and of each class it extends. A computed name is evaluated at the declaration.
-    bool makesClassObjectWhenChanged;
-    uint32_t extensionSize;
-    // For the collector: the offsets in the object of the slots that hold references. Three 32-bit counts, then that many 32-bit offsets of
-    // boxed slots (Store::JSValue), of cell slots (Store::Cell), of 32-bit slots (Store::Cell32, Store::OptionalCell32), each run ascending. From the start of this LayoutData, negative:
-    // the list comes before it. 0: the layout has none. Out-of-line slots are not listed, offsetOfExtension is, as a cell slot.
-    int32_t referencesOffset;
     uint32_t numberOfFields;
-    // The offset in Data of the 16-bit numbers of the fields, ascending by FieldData::name and then by number. 0: there are few, which are gone through.
+    union {
+        uint32_t numberOfOrders;
+        uint32_t numberOfDescribedVariables;
+    };
+    int32_t referencesOffset;
+    uint32_t sizeWithRoomToSpecialize;
+    uint32_t ordersOffset;
+    uint32_t numberOfSpecializations;
+    uint32_t extensionSize;
+    uint32_t specializationsOffset;
+    uint32_t discriminant;
     uint32_t fieldsByNameOffset;
-    // For each field, like ViewField::typeText. Only error messages read this.
     uint32_t typeTextsOffset;
-    // Of a record: what its type declares, no code of the program stores, so that there is no field for it, and that lists strings or numbers: a discriminant that only ever comes out of parsed data. The offset in Data of their
-    // number and, for each, the name, the number of LiteralData and their offset. 0: none. See Coercion::distanceTo().
     uint32_t literalsWithoutFieldOffset;
-    // As in RuntimeShapeTest.
     uint32_t declaredPath;
     uint32_t declaredLine;
-    // What the prototype object has, then what the class object has.
-    uint32_t numberOfMethods;
-    uint32_t numberOfStaticMethods;
-    // The variables of the class that the run time has to do with: the static fields, then the computed names. The offset is from the
-    // start of the module variables, or of the environment.
-    uint32_t numberOfStaticFields;
-    uint32_t numberOfVariables;
+    bool isClass() const { return kind == LayoutKind::Instance; }
+    const ClassData& classData() const { return reinterpret_cast<const ClassData*>(this)[-1]; }
+    ClassData& classData() { return reinterpret_cast<ClassData*>(this)[-1]; }
+    uint32_t base() const { return isClass() ? classData().base : noBase; }
     const FieldData* fields() const { return reinterpret_cast<const FieldData*>(this + 1); }
-    std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fields() + numberOfFields), numberOfMethods }; }
-    std::span<const MethodData> staticMethods() const { return { methods().data() + numberOfMethods, numberOfStaticMethods }; }
-    const FieldData* variables() const { return reinterpret_cast<const FieldData*>(staticMethods().data() + numberOfStaticMethods); }
-    std::span<const FieldData> staticFields() const { return { variables(), numberOfStaticFields }; }
+    std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fields() + numberOfFields), isClass() ? classData().numberOfMethods : 0 }; }
+    std::span<const MethodData> staticMethods() const { return { methods().data() + methods().size(), isClass() ? classData().numberOfStaticMethods : 0 }; }
+    const FieldData* variables() const { return reinterpret_cast<const FieldData*>(staticMethods().data() + staticMethods().size()); }
+    std::span<const FieldData> staticFields() const { return { variables(), isClass() ? classData().numberOfStaticFields : 0 }; }
+    std::span<const VariableData> describedVariables() const { return { reinterpret_cast<const VariableData*>(reinterpret_cast<const uint8_t*>(this) + sizeOfEnvironment), numberOfDescribedVariables }; }
 };
+static_assert(sizeof(LayoutData) == 76 && offsetof(LayoutData, index) == 4 && offsetof(LayoutData, sizeWithRoomToSpecialize) == LayoutData::sizeOfEnvironment);
 
 struct AllocationData {
     uint32_t shape;
@@ -389,12 +434,20 @@ static constexpr uint8_t functionIsOfBuiltinModule = 128;
 // Which of Instance::typedClosureStructureIDs a closure of the function has.
 // Format::FunctionKind::Constructor.
 static constexpr uint8_t functionKindOfConstructors = 3;
+static constexpr uint8_t functionKindOfBodiesOfSeveralSites = 6;
+static constexpr uint8_t functionKindOfResumeFunctionsNamedByOthers = 7;
 static constexpr unsigned closureStructureOfClassObjects = 4;
 static constexpr unsigned closureStructureOf(uint8_t kindAndWhatItIsDeclaredAs)
 {
     if ((kindAndWhatItIsDeclaredAs & functionKindMask) == functionKindOfConstructors)
         return closureStructureOfClassObjects;
     return kindAndWhatItIsDeclaredAs / functionIsAsync & 3;
+}
+
+static constexpr unsigned numberOfSlimClosureKinds = 2;
+static constexpr unsigned slimClosureKindOf(uint8_t kindAndWhatItIsDeclaredAs)
+{
+    return !!(kindAndWhatItIsDeclaredAs & functionIsAsync);
 }
 
 // Where in the source an assertion stands. Only audit builds pass it: an audit line is printed without a stack walk, and most of the
@@ -450,6 +503,14 @@ struct Data {
     // Three words each, sorted: the general entry of a Format::FunctionKind::Bound, that of the function it binds, how many arguments it binds.
     uint32_t numberOfBoundFunctions;
     uint32_t boundFunctionsOffset;
+    uint32_t numberOfRows;
+    uint32_t rowsOffset;
+    uint32_t firstNumberOfRowsOfThis;
+    uint32_t numberOfRowsGrownInto;
+    uint32_t rowsGrownIntoOffset;
+    uint32_t displacementsOfNamesOffset;
+    uint32_t placesByNameAndRowOffset;
+    static constexpr uint32_t nameIsOnObjectPrototype = 1u << 31;
     // By EngineClass::index, in bytes: whether the front end has seen a class of the program extend the class.
     uint32_t extendedClassesOffset;
     // The bits of the tests that are no range, in 32-bit words: bit n is bit n % 32 of word n / 32.
@@ -463,12 +524,18 @@ struct Data {
     // In the statics, behind the variables.
     uint32_t numberOfGlobalPropertyCaches;
     uint32_t globalPropertyCachesOffset;
+    uint32_t staticFieldPlacesOffset;
     uint32_t numberOfRoots;
     uint32_t rootsOffset;
+    static constexpr unsigned cardShift = 8;
+    uint32_t numberOfCards;
+    uint32_t rootMasksOffset;
     uint32_t numberOfFunctions;
     uint32_t functionsOffset; // For each, the number of the string that is its name.
     uint32_t functionKindsOffset; // For each a byte: its Format::FunctionKind, with functionIsAsync and functionIsGenerator.
     uint32_t functionLengthsOffset; // For each, its `length` property, in 16 bits.
+    uint32_t moduleEvaluationsOffset;
+    uint32_t slimClosuresOffset;
     uint32_t closureCountsOffset; // For each two bytes: of its closures, how many words the collector follows, which come first, and how many words there are.
     // Ascending: the modules in whose place an entry function runs, by ProgramModule::entryOffset.
     uint32_t numberOfEntryPoints;
@@ -480,6 +547,7 @@ struct Data {
     // ImplementationVisibility. In the order of the first.
     uint32_t numberOfBuiltinFunctions;
     uint32_t builtinFunctionsOffset;
+    uint32_t preludeFunctionsOffset;
     // Pairs of the generic entrypoint of a generator function and the function that runs its body, in the order of the former. With generatorTakesItsClosure: see Typed::Function::takesItsClosure.
     static constexpr uint32_t generatorTakesItsClosure = 1u << 31;
     uint32_t numberOfGeneratorFunctions;
@@ -492,8 +560,7 @@ struct Data {
     // "absent" that the function does not store first, so `new` does not hand the function the object it has made of that shape.
     uint32_t numberOfRefusedFreshObjects;
     uint32_t refusedFreshObjectsOffset;
-    // Pairs of the generic entrypoint of a function and the number of properties that its text is seen to give to `this`, in the order of the
-    // former: those that give it more than an ordinary object has room for as the engine makes it. See State::structureForThis().
+    static constexpr uint32_t propertyCountIsOfWholeChain = 1u << 31;
     uint32_t numberOfPropertyCountsOfThis;
     uint32_t propertyCountsOfThisOffset;
     // Strings, ascending: the names of the fields of all object layouts, allocated or not, but for those the program is seen to define
@@ -526,20 +593,41 @@ struct Data {
     uint32_t allocationsByConstructorOffset;
     // A word per string: what is asked of its characters when a name or a constant is made of them.
     uint32_t stringFactsOffset;
+    uint32_t numberOfStringsOfIdentifiers;
+    uint32_t stringsOfIdentifiersOffset;
+    uint32_t hashesOfIdentifiersOffset;
     static constexpr uint32_t stringHashMask = (1u << 24) - 1;
     static constexpr uint32_t stringIsASCII = 1u << 24;
     static constexpr uint32_t stringIsPrivateName = 1u << 25;
     static constexpr uint32_t stringIsEnginePrivateName = 1u << 26;
+    static constexpr uint32_t stringHasIdentifierNumber = 1u << 27;
 
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
+    std::span<const uint32_t> row(uint32_t number) const
+    {
+        const uint32_t* starts = at<uint32_t>(rowsOffset);
+        return { starts + starts[number], starts[number + 1] - starts[number] };
+    }
     bool isEntryPoint(uint32_t entryOffsetOfModule) const { return std::ranges::binary_search(std::span { at<uint32_t>(entryPointsOffset), numberOfEntryPoints }, entryOffsetOfModule); }
     std::span<const uint8_t> string(uint32_t index) const
     {
         const uint32_t* pair = at<uint32_t>(stringsOffset) + 2 * index;
+        if (!pair[0]) [[unlikely]]
+            return encodedFormOfDecodedString(index);
         return { at<uint8_t>(pair[0]), pair[1] };
     }
+    std::span<const uint8_t> stringInImage(uint32_t index) const
+    {
+        const uint32_t* pair = at<uint32_t>(stringsOffset) + 2 * index;
+        return { at<uint8_t>(pair[0]), pair[1] };
+    }
+    bool hasOnlyDecodedForm(uint32_t index) const { return !at<uint32_t>(stringsOffset)[2 * index]; }
+    uint32_t sizeOfString(uint32_t index) const { return at<uint32_t>(stringsOffset)[2 * index + 1]; }
+    JS_EXPORT_PRIVATE std::span<const uint8_t> encodedFormOfDecodedString(uint32_t index) const;
     bool isAtomString(uint32_t index) const { return at<uint32_t>(atomStringsOffset)[index / 32] >> index % 32 & 1; }
     uint32_t stringFacts(uint32_t index) const { return at<uint32_t>(stringFactsOffset)[index]; }
+    uint32_t stringOfIdentifierPlusOne(uint32_t identifier) const { return identifier < numberOfStringsOfIdentifiers ? at<uint32_t>(stringsOfIdentifiersOffset)[identifier] : 0; }
+    uint32_t hashOfIdentifier(uint32_t identifier) const { return at<uint32_t>(hashesOfIdentifiersOffset)[identifier]; }
 };
 
 // An environment has no shape word. The low 16 bits of its shape are in the two bytes of its header that say nothing about a cell that is no object, JSCell::m_indexingTypeAndMisc and

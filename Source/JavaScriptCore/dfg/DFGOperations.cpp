@@ -3215,16 +3215,6 @@ JSC_DEFINE_JIT_OPERATION(operationObjectIsCallable, size_t, (JSGlobalObject* glo
     OPERATION_RETURN(scope, object->isCallable());
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeTag, size_t, (EncodedJSValue value))
-{
-    return soundTypeTag(JSValue::decode(value));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationSoundTypeMaskAccepts, size_t, (EncodedJSValue value, uint32_t mask))
-{
-    return soundTypeMaskAccepts(mask, JSValue::decode(value));
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationIsConstructor, size_t, (JSGlobalObject* globalObject, EncodedJSValue value))
 {
     VM& vm = globalObject->vm();

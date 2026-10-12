@@ -66,6 +66,7 @@ public:
         types.function = types.intern(Type::function());
         types.object = types.intern(Type::object());
         types.anything = types.intern(Type::anything());
+        types.integer = types.intern(Type::integer(Range::full()));
         for (auto& shape : section<Format::Shape>(m_header->shapes)) {
             Layout layout;
             layout.kind = static_cast<LayoutKind>(shape.kind);
@@ -88,6 +89,8 @@ public:
             layout.admitsForeignObjects = shape.flags & Format::ShapeAdmitsForeignObjects;
             for (uint32_t member : slice(m_words, shape.members))
                 layout.members.append(LayoutID(member));
+            for (uint32_t member : slice(m_words, shape.membersByFit))
+                layout.membersByFit.append(LayoutID(member));
             for (uint32_t specialization : slice(m_words, shape.specializations))
                 layout.specializations.append(LayoutID(specialization));
             for (auto& from : slice(m_fields, shape.fields)) {
@@ -154,9 +157,19 @@ public:
             }
             auto staticFields = slice(m_words, shape.staticFields);
             for (size_t i = 0; i + 1 < staticFields.size(); i += 2)
-                layout.staticFields.append(StaticField { StringID(staticFields[i]), staticFields[i + 1] & ~Format::StaticFieldIsAnnotated, !!(staticFields[i + 1] & Format::StaticFieldIsAnnotated) });
+                layout.staticFields.append(StaticField { StringID(staticFields[i]), typeReliedOn(staticFields[i + 1]) });
             layout.indexFields();
             m_program.layouts.append(WTF::move(layout));
+        }
+        for (auto& layout : m_program.layouts)
+            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !Options::auditAOTTypedAssertions();
+        for (auto& view : m_program.layouts) {
+            if (view.admitsForeignObjects)
+                continue;
+            for (LayoutID member : view.members) {
+                if (member.index() < m_program.layouts.size())
+                    m_program.layouts[member.index()].mayGiveUp = false;
+            }
         }
         // Every store goes by name through the run time then, which holds the value to the field of the object's own layout. Typed code
         // stores through a view what the field of the VIEW takes. An ordinary image has room for that, because the fields share a slot that
@@ -194,14 +207,17 @@ public:
             variable.onlyFunctionOrNil = variable.onlyFunction && from.onlyFunctionFlags & Format::OnlyFunctionOrNil;
             m_program.variables.append(WTF::move(variable));
         }
-        // The class object shows its static fields as properties, so whoever gets hold of it has the run time store to them.
-        for (unsigned i = 0; i < m_program.layouts.size(); ++i) {
-            LayoutID environment = m_program.layouts[i].environment;
-            for (auto& field : m_program.layouts[i].staticFields) {
-                if (field.variable >= (environment ? m_program.at(environment).fields.size() : m_program.variables.size()))
-                    return "a static field is no variable of its class"_s;
-                (environment ? m_program.at(environment).fields[field.variable].onlyFunctionIsFact : m_program.variables[field.variable].onlyFunctionIsFact) = false;
-                (environment ? m_program.at(environment).fields[field.variable].onlyFunctionOrNil : m_program.variables[field.variable].onlyFunctionOrNil) = false;
+        for (auto& layout : m_program.layouts) {
+            if (!layout.isEvaluatedOnce || !layout.hasFixedMembers || Options::auditAOTTypedAssertions() || layout.staticFields.size() + layout.staticMethods.size() > 100)
+                continue;
+            for (auto& field : layout.staticFields) {
+                if (!field.type)
+                    continue;
+                if (layout.classObjectPlace == Format::none) {
+                    layout.classObjectPlace = WTF::roundUpToMultipleOf<2>(m_program.numberOfStaticFieldPlaces);
+                    m_program.numberOfStaticFieldPlaces = layout.classObjectPlace + 2;
+                }
+                field.place = m_program.numberOfStaticFieldPlaces++;
             }
         }
         for (auto& from : section<Format::Module>(m_header->modules)) {
@@ -217,19 +233,24 @@ public:
             m_program.modules.append(WTF::move(module));
         }
         auto functions = section<Format::Function>(m_header->functions);
+        m_program.functions.reserveInitialCapacity(2 * functions.size());
         m_program.functions.grow(functions.size());
+        Vector<Vector<std::pair<LayoutID, uint32_t>>> closuresMadeOnce(functions.size());
         forEachIndexInParallel(functions.size(), [&](unsigned i) {
             m_program.functions[i] = read(functions[i]);
-        });
-        for (auto& function : m_program.functions) {
+            auto& function = m_program.functions[i];
             for (auto& value : function.values) {
                 if (value.opcode != Opcode::NewClosureOnce)
                     continue;
                 // In a block that is not reached the front end has nothing to name for the environment. What is reached is for the verifier.
                 LayoutID environment = value.child(0).index() < function.values.size() ? m_program.typeOf(function, value.child(0)).onlyView() : LayoutID();
                 if (environment && m_program.at(environment).kind == LayoutKind::Environment && value.field() < m_program.at(environment).fields.size())
-                    m_program.at(environment).fields[value.field()].flags |= fieldHoldsClosureMadeOnce;
+                    closuresMadeOnce[i].append({ environment, value.field() });
             }
+        });
+        for (auto& ofFunction : closuresMadeOnce) {
+            for (auto [environment, field] : ofFunction)
+                m_program.at(environment).fields[field].flags |= fieldHoldsClosureMadeOnce;
         }
         for (uint32_t index : slice(m_words, m_header->entries)) {
             if (index >= m_program.functions.size())
@@ -249,6 +270,14 @@ public:
             if (string >= m_program.strings.size())
                 return "a name defined on a prototype is no string of the program"_s;
             m_program.prototypePropertyNames.set(string);
+        }
+        auto regExpLiterals = slice(m_words, m_header->regExpLiterals);
+        if (regExpLiterals.size() % 2)
+            return "the list of regular expression literals is not one of pairs"_s;
+        for (size_t i = 0; i < regExpLiterals.size(); i += 2) {
+            if (regExpLiterals[i] >= m_program.strings.size() || regExpLiterals[i + 1] >= m_program.strings.size())
+                return "a regular expression literal is no pair of strings of the program"_s;
+            m_program.regExpLiterals.append({ StringID(regExpLiterals[i]), StringID(regExpLiterals[i + 1]) });
         }
         auto builtinModules = slice(m_words, m_header->builtinModules);
         if (builtinModules.size() % 2)
@@ -282,6 +311,10 @@ public:
                 return "a builtin function has no such visibility"_s;
             m_program.functions[index].flags |= Format::FunctionIsUsedAsValue;
             m_program.builtinFunctions.append({ id, FunctionID(index), visibility });
+        }
+        for (auto& function : m_program.functions) {
+            if (function.has(Format::FunctionIsOfBuiltinModule) && function.module && !m_program.modules[function.module.index()].initializer)
+                m_program.filesOfBuiltinFunctions.set(function.module.index());
         }
         auto functionsByKey = slice(m_words, m_header->functionsByKey);
         if (functionsByKey.size() % 3)
@@ -372,16 +405,9 @@ private:
             }
             if (capturesSomethingElse(constructor))
                 return "a constructor captures something else than the environment of its class"_s;
-            if (!layout.staticFields.isEmpty() && !layout.hasFixedMembers)
-                return "a class whose members are not fixed has static fields in variables"_s;
             for (auto& field : layout.staticFields) {
-                if (field.name.index() >= m_program.strings.size() || field.variable >= numberOfVariables)
-                    return "a static field has no name or no variable"_s;
-                // The run time reads and writes it for whoever has the class object, and tells by what it holds whether it is there yet.
-                if (layout.environment ? layouts[layout.environment.index()].fields[field.variable].flags & fieldIsNeverSeenUninitialized : m_program.variables[field.variable].isNeverSeenUninitialized)
-                    return "a static field is in a variable that is said never to be seen uninitialized"_s;
-                if (layout.environment && layouts[layout.environment.index()].fields[field.variable].flags & fieldIsImmutable)
-                    return "a static field is in a variable that is only stored to when the environment is made"_s;
+                if (field.name.index() >= m_program.strings.size())
+                    return "a static field has no name"_s;
             }
         }
         for (auto [id, key] : m_keysThatAreSymbols) {
@@ -780,6 +806,26 @@ private:
             for (unsigned i = 0; i < 3; ++i)
                 value.children[i] = ValueID(from.children[i]);
             value.immediates = { from.immediates[0], from.immediates[1] };
+            if ((value.opcode == Opcode::GetById || value.opcode == Opcode::PutById) && value.immediates[1] == Format::ReceiverIsOfOneRow) {
+                value.receiverIsExpectedOfOneRow = true;
+                value.immediates[1] = Format::none;
+            }
+            if (value.opcode == Opcode::Construct && value.immediates[0] != Format::none) {
+                m_failed = true;
+                break;
+            }
+            if (value.opcode == Opcode::StrictEq && value.immediates[0] != Format::none) {
+                m_failed = true;
+                break;
+            }
+            if (value.opcode == Opcode::GetById) {
+                if (value.immediates[1] != Format::none && value.immediates[1] != 1) {
+                    m_failed = true;
+                    break;
+                }
+                value.hasStringKeysByType = value.immediates[1] == 1;
+                value.immediates[1] = Format::none;
+            }
             readValues(from.arguments, value.arguments);
             value.type = typeReliedOn(from.type);
             if (!value.type) {
@@ -861,7 +907,13 @@ private:
 std::unique_ptr<Program> Program::tryRead(std::span<const uint8_t> bytes, ASCIILiteral& whyFailed)
 {
     auto program = makeUnique<Program>();
-    program->buffer.append(bytes);
+    program->buffer.grow(bytes.size());
+    constexpr size_t bytesAtATime = MB;
+    forEachIndexInParallel((bytes.size() + bytesAtATime - 1) / bytesAtATime, [&](unsigned i) {
+        size_t start = i * bytesAtATime;
+        size_t size = std::min(bytesAtATime, bytes.size() - start);
+        memcpySpan(program->buffer.mutableSpan().subspan(start, size), bytes.subspan(start, size));
+    });
     whyFailed = Reader(*program).run();
     if (!whyFailed.isNull())
         return nullptr;

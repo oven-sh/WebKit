@@ -9,9 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 #include "CodeBlockInlines.h"
 #include "JSCellInlines.h"
-#include "ObjectPropertyConditionSet.h"
 #include "StructureInlines.h"
 
 namespace JSC { namespace AOT {
@@ -86,15 +86,34 @@ void SlotWatchpoint::initialize(Data* owner, const ObjectPropertyCondition& key,
     m_slot = slot;
 }
 
-void SlotWatchpoint::install(VM&)
+static bool interceptsNoStore(const ObjectPropertyCondition& key)
 {
-    RELEASE_ASSERT(m_key.isWatchable(PropertyCondition::MakeNoChanges));
+    Structure* structure = key.object()->structure();
+    return !structure->isDictionary() && !structure->hasPolyProto() && structure->transitionWatchpointSetIsStillValid() && !structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto()
+        && !(structure->transitionPropertyAttributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue) && structure->storedPrototypeObject() == key.prototype();
+}
+
+static NEVER_INLINE bool isAbsenceDeterminedByStructure(const ObjectPropertyCondition& key)
+{
+    return key.kind() == PropertyCondition::Absence && Typed::closureLacksWhatItsStructureLacks(key.object()->vm(), key.object(), key.uid(), false);
+}
+
+static ALWAYS_INLINE bool isWatchable(const ObjectPropertyCondition& key, PropertyCondition::WatchabilityEffort effort)
+{
+    return key.isWatchable(effort) || (isAbsenceDeterminedByStructure(key) && key.isWatchableAssumingImpurePropertyWatchpoint(effort));
+}
+
+void SlotWatchpoint::install(VM& vm)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(vm).countOperation("SlotWatchpoint", "installed");
+    RELEASE_ASSERT(m_key.uid() ? isWatchable(m_key, PropertyCondition::MakeNoChanges) : interceptsNoStore(m_key));
     m_key.object()->structure()->addTransitionWatchpoint(this);
 }
 
 void SlotWatchpoint::fireInternal(VM& vm, const FireDetail&)
 {
-    if (m_key.isWatchable(PropertyCondition::EnsureWatchability)) {
+    if (m_key.uid() ? isWatchable(m_key, PropertyCondition::EnsureWatchability) : interceptsNoStore(m_key)) {
         install(vm);
         return;
     }
@@ -121,6 +140,11 @@ static bool hasPermanentOffset(VM& vm, Structure* structure, PropertyOffset offs
     return result;
 }
 
+static bool isImmutablePrototype(Structure* structure)
+{
+    return structure->inheritorsMayOverrideReadOnlyProperties() && !structure->isStructureExtensible() && structure->typeInfo().isImmutablePrototypeExoticObject();
+}
+
 static bool isPermanentlyValid(VM& vm, const ObjectPropertyCondition& condition)
 {
     Structure* structure = condition.object()->structure();
@@ -131,22 +155,26 @@ static bool isPermanentlyValid(VM& vm, const ObjectPropertyCondition& condition)
         return condition.attributes() & PropertyAttribute::DontDelete && condition.attributes() & (PropertyAttribute::ReadOnly | PropertyAttribute::AccessorOrCustomAccessorOrValue) && hasPermanentOffset(vm, structure, condition.offset());
     case PropertyCondition::Absence:
     case PropertyCondition::AbsenceOfSetEffect:
-        return !structure->isStructureExtensible() && structure->typeInfo().isImmutablePrototypeExoticObject();
+        return isImmutablePrototype(structure);
     default:
         return false;
     }
 }
 
-bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditionSet& conditions)
+bool watchConditions(VM& vm, Data* data, Slot* slot, std::span<const ObjectPropertyCondition> conditions)
 {
-    if (!conditions.isValid() || SharedData::contains(slot))
+    if (SharedData::contains(slot))
         return false;
-    Vector<ObjectPropertyCondition, 4> watchedConditions;
+    Vector<ObjectPropertyCondition, 16> watchedConditions;
     for (const ObjectPropertyCondition& condition : conditions) {
         if (isPermanentlyValid(vm, condition))
             continue;
-        if (!condition.isWatchable(PropertyCondition::MakeNoChanges))
-            return false;
+        if (!condition.isWatchable(PropertyCondition::MakeNoChanges)) {
+            if (auto* closure = dynamicDowncast<Typed::Closure>(condition.object()))
+                closure->ensureClassObject(vm);
+            if (!isAbsenceDeterminedByStructure(condition) || !condition.isWatchableAssumingImpurePropertyWatchpoint(PropertyCondition::MakeNoChanges))
+                return false;
+        }
         watchedConditions.append(condition);
     }
 
@@ -168,10 +196,44 @@ bool watchConditions(VM& vm, Data* data, Slot* slot, const ObjectPropertyConditi
     return true;
 }
 
+bool watchForStores(VM& vm, Data* data, Slot* slot, std::span<JSObject* const> prototypes)
+{
+    if (SharedData::contains(slot))
+        return false;
+    if (prototypes.empty()) {
+        stopWatching(data, slot);
+        return true;
+    }
+    auto keyAt = [&](size_t i) {
+        return ObjectPropertyCondition::absenceOfSetEffectWithoutBarrier(prototypes[i], nullptr, i + 1 < prototypes.size() ? prototypes[i + 1] : nullptr);
+    };
+    Vector<size_t, 4> watched;
+    for (size_t i = 0; i < prototypes.size(); ++i) {
+        if (!interceptsNoStore(keyAt(i)))
+            return false;
+        if (!isImmutablePrototype(prototypes[i]->structure()))
+            watched.append(i);
+    }
+    if (watched.isEmpty()) {
+        stopWatching(data, slot);
+        return true;
+    }
+    if (!data->watchpoints)
+        data->watchpoints = new SlotWatchpointMap;
+    FixedVector<SlotWatchpoint> watchpoints(watched.size());
+    for (size_t i = 0; i < watched.size(); ++i) {
+        watchpoints[i].initialize(data, keyAt(watched[i]), slot);
+        watchpoints[i].install(vm);
+    }
+    data->watchpoints->set(slot, WTF::move(watchpoints));
+    return true;
+}
+
 void stopWatching(Data* data, Slot* slot)
 {
-    if (data->watchpoints)
-        data->watchpoints->remove(slot);
+    bool wasWatched = data->watchpoints && data->watchpoints->remove(slot);
+    if (Options::validateAOTTypedFacts() && data->instance) [[unlikely]]
+        data->instance->didStopWatching(data, slot, wasWatched);
 }
 
 void moveWatching(Data* data, Slot* from, Slot* to)

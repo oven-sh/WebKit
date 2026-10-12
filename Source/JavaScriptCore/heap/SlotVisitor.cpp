@@ -322,6 +322,36 @@ void SlotVisitor::noteLiveAuxiliaryCell(HeapCell* cell)
     m_nonCellVisitCount += cellSize;
 }
 
+#if ENABLE(AOT)
+bool SlotVisitor::markLeafCell(JSCell* cell)
+{
+    ASSERT(cell->heap() == &m_collector.heap());
+
+    if (m_heapAnalyzer) [[unlikely]] {
+        appendUnbarriered(cell);
+        return false;
+    }
+
+    if (Heap::testAndSetMarked(m_markingVersion, cell))
+        return false;
+
+    cell->setCellState(CellState::PossiblyBlack);
+
+    CellContainer container = cell->cellContainer();
+    container.noteMarked();
+
+    m_visitCount++;
+    m_bytesVisited += container.cellSize();
+    return true;
+}
+
+void SlotVisitor::reportExtraMemoryVisitedOfLeafCell(size_t size)
+{
+    m_nonCellVisitCount += size;
+    m_extraMemorySize += size;
+}
+#endif
+
 class SetCurrentCellScope {
 public:
     SetCurrentCellScope(SlotVisitor& visitor, const JSCell* cell)
@@ -455,10 +485,33 @@ public:
             if (uint32_t word = *reinterpret_cast<const uint32_t*>(fields + *offset); word > undefinedCell32)
                 append(std::bit_cast<JSCell*>(m_cageBase + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift)));
         }
+        if (layout->hasExtension) {
+            if (uint32_t extensionWord = *reinterpret_cast<const uint32_t*>(fields + offsetOfExtension))
+                visitExtension(extensionWord, offset);
+        }
         return true;
     }
 
 private:
+    NEVER_INLINE void visitExtension(uint32_t extensionWord, const uint32_t* offset)
+    {
+        using namespace AOT::Typed;
+        const uint8_t* extension = std::bit_cast<const uint8_t*>(m_cageBase + (static_cast<uintptr_t>(extensionWord) << MarkedBlockCage::shift));
+        markAuxiliary(std::bit_cast<HeapCell*>(extension));
+        uint32_t size = *reinterpret_cast<const uint32_t*>(extension + offsetOfExtensionSize);
+        uint32_t numberOfBoxed = offset[0];
+        uint32_t numberOfNarrow = offset[1];
+        offset += 2;
+        const uint32_t* endOfBoxed = offset + numberOfBoxed;
+        for (; offset != endOfBoxed && *offset + sizeof(EncodedJSValue) <= size; ++offset)
+            m_visitor.appendUnbarriered(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(extension + *offset)));
+        offset = endOfBoxed;
+        for (const uint32_t* end = offset + numberOfNarrow; offset != end && *offset + sizeof(uint32_t) <= size; ++offset) {
+            if (uint32_t word = *reinterpret_cast<const uint32_t*>(extension + *offset); word > undefinedCell32)
+                append(std::bit_cast<JSCell*>(m_cageBase + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift)));
+        }
+    }
+
     // As JSObjectWithButterfly::visitChildrenImpl(), for an array without properties, array storage or a butterfly it shares.
     ALWAYS_INLINE bool tryVisitArray(const JSCell* cell)
     {

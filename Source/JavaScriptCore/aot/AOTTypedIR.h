@@ -7,6 +7,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTConvention.h"
 #include "AOTTypedBuiltins.h"
 #include "AOTTypedFormat.h"
 #include "AOTTypedID.h"
@@ -19,6 +20,7 @@
 #include <wtf/Lock.h>
 #include <wtf/PrintStream.h>
 #include <wtf/Vector.h>
+#include <wtf/text/WTFString.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -31,9 +33,12 @@ namespace JSC { namespace AOT { namespace Typed {
     v(CallForwardVarargs) \
     v(CreateThis) \
     v(ConstructSuper) \
+    v(ConstructSuperForwardVarargs) \
     v(CallBuiltin) \
     v(HasShapeOf) \
     v(IsClassObjectAsDeclared) \
+    v(GetStaticField) \
+    v(PutStaticField) \
     v(IsClosureOf) \
     v(IsBuiltinFunction) \
     v(BuiltinFunction) \
@@ -41,7 +46,13 @@ namespace JSC { namespace AOT { namespace Typed {
     v(Unspecified) \
     v(ResultAt) \
     v(TypeOfIs) \
-    v(AssertNotAllocated)
+    v(AssertNotAllocated) \
+    v(ModuleEvaluationWord) \
+    v(OffsetIndex) \
+    v(GetModuleVariableAt) \
+    v(PutModuleVariableAt) \
+    v(CallModuleFunction) \
+    v(JumpToModuleEvaluator)
 
 enum class Opcode : uint8_t {
 #define AOT_TYPED_DECLARE_OPCODE(name) name,
@@ -69,6 +80,9 @@ struct Value {
     Opcode opcode { Opcode::Undefined };
     // repOf(type).
     Rep rep { Rep::Void };
+    bool isInTailPosition { false };
+    bool hasStringKeysByType : 1 { false };
+    bool constructs : 1 { false };
     uint32_t position { 0 };
     // What the value is: given by the front end, or by the pass that made the value, which copies a type that is there. Whoever uses the
     // value relies on it. So the operation sees to it: where what it does by itself does not make sure of the type (a property read
@@ -91,6 +105,7 @@ struct Value {
     // Index into Function::inlineFrames: which inlined call this value was copied in by. 0: it belongs to the function itself.
     // `position` is an offset into the source of that frame's function.
     uint32_t inlineFrame { 0 };
+    bool receiverIsExpectedOfOneRow { false };
     std::array<ValueID, 3> children;
     std::array<uint32_t, 2> immediates { Format::none, Format::none };
     Arguments arguments;
@@ -119,10 +134,13 @@ struct Value {
     // Of ResultAt: which of Function::resultTypes of the function its operand calls.
     uint32_t resultIndex() const { return immediates[0]; }
     // THE SECOND IMMEDIATE OF A CallDirect, WHOSE NUMBERS ARE WHOSE. Format::none and small numbers: the inliner's: the depth of copying the call stands at. Marks of the
-    // inliner count DOWN from Format::none - 1. From jumpsToContinuation on, maxContinuations numbers: this is no call: SplitFunction::entry jumps to that continuation of
+    // inliner count DOWN from Format::none - 1: its head stands in front of it; the sixteen below: the copy was declined, less the licence it would have had. From jumpsToContinuation on, maxContinuations numbers: this is no call: SplitFunction::entry jumps to that continuation of
     // the function itself and returns what it returns: made behind all passes, read by the lowering alone. Whoever needs more numbers takes a range and writes it here.
     static constexpr uint32_t jumpsToContinuation = 1u << 30;
     static constexpr uint32_t maxContinuations = 16;
+    static constexpr uint32_t copyWasDeclined = Format::none - 2;
+    bool isCallWhoseCopyWasDeclined() const { return opcode == Opcode::CallDirect && copyWasDeclined - immediates[1] < 16; }
+    uint32_t licenceOfDeclinedCopy() const { return copyWasDeclined - immediates[1]; }
     bool isJumpToContinuation() const { return opcode == Opcode::CallDirect && immediates[1] - jumpsToContinuation < maxContinuations; }
     uint32_t continuation() const { return immediates[1] - jumpsToContinuation; }
     VariableID variable() const { return VariableID(immediates[0]); }
@@ -134,6 +152,7 @@ struct Value {
     // assignAllocations(): the name that goes with the first child, see Format::Value.
     uint32_t allocation() const { return immediates[1]; }
     CastReason castReason() const { return static_cast<CastReason>(immediates[1] & 0xff); }
+    void setCastReason(CastReason reason) { immediates[1] = (immediates[1] & ~0xffu) | static_cast<uint32_t>(reason); }
     // Of a Cast for the reason Coerce: see Format::CastReason.
     Format::Freshness freshness() const { return static_cast<Format::Freshness>(immediates[1] >> Format::freshnessShift); }
     bool coercesFreshData() const { return freshness() != Format::Freshness::None; }
@@ -146,6 +165,10 @@ struct Value {
     // Of NewArray, from placement on: where in the statics the site keeps something, or none. See Placement::placeArraySites().
     uint32_t vectorLengthHintOffset() const { return immediates[0]; }
     uint32_t copyOnWriteButterflyOffset() const { return immediates[1]; }
+    static constexpr uint32_t keyIsListed = 1;
+    static constexpr uint32_t isKeyOfForInList = 2;
+    bool readsListedKey() const { return opcode == Opcode::GetByVal && immediates[0] == keyIsListed; }
+    bool readsForInList() const { return opcode == Opcode::GetByVal && immediates[0] == isKeyOfForInList; }
     BlockID parameterBlock() const { return BlockID(immediates[0]); }
     uint32_t parameterIndex() const { return immediates[1]; }
     // Of CallBuiltin: the entry of the table that holds, and the class of the receiver or of what is made (EngineClass::index), if any.
@@ -157,9 +180,27 @@ struct Value {
     ValueID methodRead() const { return children[1]; }
     // Of GetById: it is the methodRead() of a CallBuiltin of this entry and has no other use. Where the receiver has its original
     // structure it reads nothing and yields the empty value, which stands for the entry's function.
-    BuiltinID readsMethodFor() const { return BuiltinID(immediates[1]); }
+    BuiltinID readsMethodFor() const { return hasWordOfKnownPlace() ? BuiltinID() : BuiltinID(immediates[1]); }
     // Of PutById: it stands for a pair of an `Initialize`, and for which. See initialStoresOf().
-    bool isInitialStore() const { return immediates[1] != Format::none; }
+    bool isInitialStore() const { return immediates[1] != Format::none && !hasWordOfKnownPlace(); }
+    static constexpr uint32_t atKnownPlace = 1u << 30;
+    static constexpr uint32_t numberOfKnownPlaces = 62;
+    static constexpr uint32_t isFirstStore = 0x200;
+    static constexpr uint32_t goesByName = 0x400;
+    static constexpr uint32_t receiverIsThis = 0x40;
+    bool hasWordOfKnownPlace() const { return (opcode == Opcode::GetById || opcode == Opcode::PutById) && immediates[1] >> 30 == 1; }
+    bool isAtKnownPlace() const { return hasWordOfKnownPlace() && !(immediates[1] & (goesByName | receiverIsThis)); }
+    bool isFirstStoreToThis() const { return opcode == Opcode::PutById && hasWordOfKnownPlace() && (immediates[1] & (isFirstStore | receiverIsThis)) == (isFirstStore | receiverIsThis); }
+    bool isStoreToObjectBornWhole() const { return opcode == Opcode::PutById && hasWordOfKnownPlace() && (immediates[1] & (isFirstStore | receiverIsThis)) == isFirstStore; }
+    uint32_t birthOfFirstStore() const { return immediates[1] >> 11 & 0x3ffff; }
+    void setBirthOfFirstStore(uint32_t birth) { immediates[1] = (immediates[1] & ~(0x3ffffu << 11)) | birth << 11; }
+    unsigned attributesOfFirstStore() const { return (immediates[1] & receiverIsThis ? 0 : (immediates[1] >> 7 & 1) << 1) | (immediates[1] >> 29 & 1) << 3; }
+    bool isDefinitionInRowOfThis() const { return isFirstStoreToThis() && immediates[1] & 0x80; }
+    bool hasRowOfBirth() const { return opcode == Opcode::NewObject && immediates[0] != Format::none; }
+    uint32_t rowOfBirth() const { return immediates[0]; }
+    uint32_t numberOfRowOfBirth() const { return opcode == Opcode::NewObject ? immediates[1] : Format::none; }
+    uint32_t knownPlace() const { return immediates[1] & 0x3f; }
+    bool receiverIsNeverNil() const { return immediates[1] & 0x100; }
     uint32_t initialStoreIndex() const { return immediates[1]; }
     // Of CreateRest, GetRestLength, GetMyArgumentByVal and CallForwardVarargs: how many arguments come before the first that counts.
     // GetMyArgumentByVal yields what the array CreateRest makes has under the key, or the `arguments` object made from that array.
@@ -233,6 +274,7 @@ static constexpr uint32_t closureIsAsMade = 1;
 static constexpr uint32_t FunctionUsesArgumentBuffer = 1 << 17;
 // Code outside the program may call it as it is, without a general entry in between.
 static constexpr uint32_t FunctionHasUnknownCallers = 1 << 18;
+static constexpr uint32_t FunctionIsHalfOfHiddenCoroutine = 1 << 19;
 
 // How objects come to be, at one or several places of the program.
 struct Allocation {
@@ -276,9 +318,11 @@ struct InlineFrame {
     uint32_t parent { 0 };
     // For the map of the image: what let the inliner take the body in. An index into licencesForMap.
     uint8_t licence { 0 };
+    bool isTailCall { false };
+    bool isConstruction { false };
 };
 
-static constexpr ASCIILiteral licencesForMap = "-pemscathfkobw"_s;
+static constexpr ASCIILiteral licencesForMap = "-pemscathfkobwr"_s;
 
 constexpr uint8_t licenceForMap(char letter)
 {
@@ -304,6 +348,11 @@ struct AllocationNote {
     ASCIILiteral forcedBy;
     uint32_t forcedByInlineFrame { 0 };
     uint32_t forcedByPosition { 0 };
+    BuiltinID forcedByBuiltin;
+    FunctionID forcedByCallee;
+    uint32_t forcedByArgument { 0 };
+    ValueID forcedByInto;
+    Vector<ValueID, 2> heldBy;
     ASCIILiteral why;
 };
 
@@ -322,6 +371,11 @@ struct Function {
     bool hasManyClosures { false };
     // Of the ramp of a generator function: its first parameter is the closure that was called, which what it makes inherits from the `prototype` of. Only the general entry calls it.
     bool takesItsClosure { false };
+    FunctionID rampForClosures;
+    bool isRampForClosures { false };
+    bool isUsedAsObject { false };
+    bool isBodyOfSeveralSites { false };
+    bool storesWereMovedByCleanUp { false };
     // Of a constructor, and of its general entry: the class.
     LayoutID constructedClass;
     // functionIsAsync, functionIsGenerator: what it is declared as, and so what its closures are as objects. Also of its general entry.
@@ -407,6 +461,7 @@ static constexpr uint32_t fieldMayBeSetAtCreation = 4096;
 static constexpr uint32_t fieldHoldsClosureMadeOnce = 16384;
 // See Format::FieldDoesNotAdmitUndefined.
 static constexpr uint32_t fieldDoesNotAdmitUndefined = 65536;
+static constexpr uint32_t fieldKeepsWideReference = 524288;
 // Those of AOTTypedData.h too: each has a bit of its own.
 static_assert((fieldIsOptional + fieldIsOutOfLine + fieldIsImmutable + fieldAllowsUndefined + fieldAllowsNull + fieldIsAnnotated + fieldIsMethod + fieldIsNeverSeenUninitialized
     + fieldIsStoredOnce + fieldIsNeverStored + fieldIsExpectedInt32 + fieldIsSetAtCreation + fieldMayBeSetAtCreation + fieldIsAbsentAtBirth + fieldHoldsClosureMadeOnce + fieldIsNeverSeenAbsent + fieldDoesNotAdmitUndefined
@@ -482,6 +537,7 @@ struct Field {
     // property somewhere else. Only the first stores to an object that has just been made of the layout go by such a field.
     bool isLackedBySomeMember { false };
     ShapeTest membersWithIt;
+    bool isElsewhereInSomeMember { false };
     // From placement on: see fieldIsPinned in AOTTypedData.h. Of a field of a layout that objects are made as.
     bool isPinned { false };
     // Of a field of a view: every object that gets there is of a member, and each member has it, pinned.
@@ -505,10 +561,8 @@ struct Method {
 
 struct StaticField {
     StringID name;
-    // A variable of the class, see Layout::environment.
-    uint32_t variable { Format::none };
-    // Of a module variable. Of a field of an environment, that field says so.
-    bool isAnnotated { false };
+    TypeID type;
+    uint32_t place { Format::none };
 };
 
 // Of the objects of a type of the program: an interface, a type alias, the type of a literal, a class. Also of environments, closures
@@ -530,9 +584,11 @@ struct Layout {
     FunctionID constructor;
     // Of a class that is evaluated once and whose declaration names the one closure of a constructor for what it extends, where `base` does not say it: see findDeclaredParents().
     FunctionID declaredParentConstructor;
+    bool isDeclaredToExtendGlobal { false };
     Vector<Method> methods;
     Vector<Method> staticMethods;
     Vector<StaticField> staticFields;
+    uint32_t classObjectPlace { Format::none };
     // Of a class that is not evaluated once: of the environment that its class object captures. A variable of the class is a field of that.
     // None: a variable of the class is a module variable. See Format::Shape::environment.
     LayoutID environment;
@@ -554,6 +610,7 @@ struct Layout {
     // The program is seen to freeze or seal objects that are looked at as a type this is a member of. A store to a field tests for that.
     // Freezing an object of any other layout is refused.
     bool mayBeFrozen { false };
+    bool mayGiveUp { false };
     // As a view. The checker has seen an object that the program has not laid out, which honestly is of the type, get into a place of the
     // type: an object of the host, of a class of a `.d.ts` file or of JavaScript. It can be neither copied nor turned away. So all that a
     // type with this view says of an object is that it is one: ANY object is of the type, also one of the program that is no member.
@@ -570,6 +627,7 @@ struct Layout {
     // The allocated layouts whose objects get into places of this type untested, itself among them if it is allocated. The front end
     // says which, from what the checker has found assignable. Not each has a field for every property: see Field::isLackedBySomeMember. Sorted.
     Vector<LayoutID> members;
+    Vector<LayoutID> membersByFit;
     // What `as` may turn an object into, where it is, that was allocated with this layout: layouts that have all its slots. Sorted.
     Vector<LayoutID> specializations;
     // Among Program::allocations: one of a record of the layout with Object.prototype, whatever it is born with. For a copy, which has its keys from what is copied.
@@ -639,6 +697,7 @@ struct Variable {
     bool isNeverSeenUninitialized { false };
     // And it has one store. To every function but the one with the store it never changes.
     bool isStoredOnce { false };
+    bool hasCard { false };
     // See Format::Initialization::Zero.
     bool startsZero { false };
     bool mayBeSeenUninitialized() const { return !startsUndefined && !isNeverSeenUninitialized && !startsZero; }
@@ -690,7 +749,26 @@ public:
     const Type& at(TypeID id) const { return types.at(id); }
     const Type& typeOf(const Function& function, ValueID value) const { return types.at(function.at(value).type); }
     // Its frames only exist because of how the code was compiled, or are those of a built-in. Stack traces leave them out.
-    bool isHiddenInStackTraces(const Function& function) const { return function.isGenericEntrypoint() || function.has(Format::FunctionIsHiddenInStackTraces) || function.resumeFunction || entries.containsIf([&](FunctionID entry) { return &function == &at(entry); }) || function.has(Format::FunctionIsBuiltin); }
+    bool isHiddenInStackTraces(const Function& function) const { return function.isGenericEntrypoint() || function.has(Format::FunctionIsHiddenInStackTraces | FunctionIsHalfOfHiddenCoroutine) || function.resumeFunction || function.isRampForClosures || entries.containsIf([&](FunctionID entry) { return &function == &at(entry); }) || (function.has(Format::FunctionIsBuiltin) && !isListedAsBuiltinInStackTraces(function)) || isPrivateBuiltinFunction(function); }
+    size_t preludeFunctionThatIs(const Function& function) const
+    {
+        if (!function.has(Format::FunctionIsBuiltin))
+            return notFound;
+        return preludeFunctions.findIf([&](FunctionID id) {
+            return id && &function == &at(id);
+        });
+    }
+    bool standsForBuiltin(const Function& function) const { return preludeFunctionThatIs(function) != notFound; }
+    bool isListedAsBuiltinInStackTraces(const Function& function) const
+    {
+        size_t which = preludeFunctionThatIs(function);
+        return which != notFound && !leavesNoFrameInStackTraces(static_cast<PreludeFunction>(which));
+    }
+    BuiltinID builtinCarriedOutBy(const Function& function) const
+    {
+        size_t which = preludeFunctionThatIs(function);
+        return which == notFound ? BuiltinID() : Builtins::singleton().entryCarriedOutBy(static_cast<PreludeFunction>(which));
+    }
     // It runs the body of a coroutine: what it captures is the frame.
     bool isResumeFunction(const Function& function) const
     {
@@ -700,6 +778,8 @@ public:
     // Whether an object that is looked at as the one layout says can be looked at as the other says: every member of the one is a member
     // of the other, and the other admits foreign objects if the one does. Then it takes any object.
     bool isUpcast(LayoutID, LayoutID) const;
+    ValueID constantOf(const Function&, ValueID) const;
+    ValueID originOf(const Function&, ValueID) const;
     // Whether a cast for the reason has nothing to do for a value of the one type: it may be left out. `as` and `!` make something of an
     // object that is of a type only because the type admits foreign objects. What they do goes by the value and by the type they cast
     // to, never by how much a pass has found out about the operand. Store and Claim take such an object as it is.
@@ -729,6 +809,7 @@ public:
     BitVector extendedGlobals;
     // By the index of the string. See Format::Header.
     BitVector prototypePropertyNames;
+    Vector<std::pair<StringID, StringID>> regExpLiterals;
     // See Format::Header.
     Vector<std::pair<uint32_t, FunctionID>> builtinModules;
     struct BuiltinFunction {
@@ -737,6 +818,39 @@ public:
         uint32_t visibility;
     };
     Vector<BuiltinFunction> builtinFunctions;
+    BitVector filesOfBuiltinFunctions;
+    bool isOfFileOfBuiltinFunctions(const Function& function) const { return function.module && filesOfBuiltinFunctions.get(function.module.index()); }
+    const BuiltinFunction* builtinFunctionAround(const Function& function) const
+    {
+        if (!isOfFileOfBuiltinFunctions(function))
+            return nullptr;
+        const BuiltinFunction* found = nullptr;
+        for (auto& builtin : builtinFunctions) {
+            auto& candidate = at(builtin.function);
+            if (candidate.module == function.module && candidate.position <= function.position && (!found || at(found->function).position < candidate.position))
+                found = &builtin;
+        }
+        return found;
+    }
+    bool isPrivateBuiltinFunction(const Function& function) const
+    {
+        if (!isOfFileOfBuiltinFunctions(function))
+            return false;
+        auto* around = builtinFunctionAround(function);
+        if (!around)
+            return true;
+        auto& builtin = at(around->function);
+        return builtin.position == function.position && (around->visibility || builtin.declaredAs & functionIsAsync || visibilityInEngine(around->id));
+    }
+    bool makesTailCallsAsBuiltin(const Function& function) const
+    {
+        if (function.isGenericEntrypoint() || function.resumeFunction || function.startFunction || function.declaredAs & (functionIsAsync | functionIsGenerator) || isResumeFunction(function))
+            return false;
+        if (standsForBuiltin(function))
+            return true;
+        auto* around = builtinFunctionAround(function);
+        return around && isStrictInEngine(around->id);
+    }
     struct FunctionByKey {
         StringID property;
         StringID key;
@@ -761,6 +875,8 @@ public:
     Vector<Variable> variables;
     Vector<Module> modules;
     Vector<Function> functions;
+    Vector<unsigned> sizesForInlining;
+    Vector<BitVector> blocksThatNeverReturn;
     // In the order of the entry points. Each is compiled in the place of the top-level code of a module.
     Vector<FunctionID, 1> entries;
     bool isEntry(FunctionID id) const { return entries.contains(id); }
@@ -780,6 +896,8 @@ public:
     uint32_t allocationOfClosure(unsigned numberOfCaptures) const { return closureAllocations[numberOfCaptures / 2]; }
     // Of the closures of the function, which is not a generic entrypoint: how many words the collector follows, and how many words there are.
     std::pair<unsigned, unsigned> referencesAndCapturesOfClosures(const Function&) const;
+    bool makesSlimClosures(const Function& function) const { return mayMakeSlimClosures(function) && function.captureTypes.size() <= ClosureRequest::maxNumberOfCaptures; }
+    bool mayMakeSlimClosures(const Function&) const;
     // By PreludeFunction. None: the program has no such function.
     Vector<FunctionID> preludeFunctions;
     // By EngineClass::index: an instance, and not `undefined` or `null`. Of the classes a receiver is tested for, and of strings.
@@ -824,6 +942,8 @@ public:
     uint32_t propertyOfGlobalThisCacheNumber(StringID name) const { return name.index() < propertyOfGlobalThisCacheNumbers.size() ? propertyOfGlobalThisCacheNumbers[name.index()] : 0; }
     uint32_t numberOfGlobalPropertyCaches { 0 };
     uint32_t globalPropertyCachesOffset { 0 };
+    uint32_t numberOfStaticFieldPlaces { 0 };
+    uint32_t staticFieldPlacesOffset { 0 };
     UncheckedKeyHashMap<uint32_t, FunctionID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> genericEntrypoints;
     // By the function and how many arguments are bound: see createBoundFunctions().
     static constexpr unsigned maxBoundArguments = 3;
@@ -839,17 +959,78 @@ public:
     };
     mutable std::array<AnswersByViewAndName, 64> whetherOnlyFieldsSupply;
     bool isHotByText(FunctionID id) const { return functionsHotByText.get(id.index()); }
+    BitVector functionsWarmByText;
+    bool isWarmByText(FunctionID id) const { return functionsWarmByText.get(id.index()); }
+    BitVector functionsCalledNearLoops;
+    bool isCalledNearLoops(FunctionID id) const { return functionsCalledNearLoops.get(id.index()); }
+    BitVector functionsRareByText;
+    bool isRareByText(FunctionID id) const { return functionsRareByText.get(id.index()); }
+    BitVector functionsColdByGraph;
+    BitVector functionsThatTakeNoCopies;
+    uint16_t licencesTheyAreNotGiven { 0 };
+    bool saysWhatTakesNoCopies { false };
+    bool takesNoCopy(FunctionID id, uint8_t licence) const { return licencesTheyAreNotGiven >> licence & 1 && functionsThatTakeNoCopies.get(id.index()); }
+    bool isColdByGraph(FunctionID id) const { return functionsColdByGraph.get(id.index()); }
+    Vector<String> heatLetters;
     // Those of them that have a loop, that no loop calls and that nothing hot makes: outside its loops such a function is like any that is not hot.
     BitVector functionsHotOnlyInTheirLoops;
+    BitVector functionsInCycles;
+    bool isInCycle(FunctionID id) const { return functionsInCycles.get(id.index()); }
     bool isHotOnlyInItsLoops(FunctionID id) const { return functionsHotOnlyInTheirLoops.get(id.index()); }
+    bool isHotOutsideItsLoops(FunctionID id) const { return isHotByText(id) && !isHotOnlyInItsLoops(id); }
+    bool mayMeetMasquerader { false };
     // By function: the direct calls of it in the program as read, that of its general entry not counted.
     Vector<uint32_t> numberOfDirectCalls;
     // From optimize() on: the functions that only direct calls reach and that no call is left of. They have no code.
     BitVector functionsWithoutCalls;
     bool hasCode(FunctionID id) const { return !functionsWithoutCalls.get(id.index()); }
+    struct ModuleEvaluation {
+        FunctionID function;
+        VariableID isEvaluated;
+        VariableID error;
+        Vector<FunctionID, 4> callees;
+    };
+    Vector<ModuleEvaluation> moduleEvaluations;
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> moduleEvaluationOfFunction;
+    FunctionID moduleEvaluator;
+    FunctionID moduleEvaluatorIfNeeded;
+    std::array<FunctionID, numberOfArgumentGPRs + 1> bodiesOfConstructions;
+    FunctionID bodyOfConstruction(const Value& construct) const { return construct.arguments.size() < bodiesOfConstructions.size() ? bodiesOfConstructions[construct.arguments.size()] : FunctionID(); }
+    static constexpr unsigned leverOfBodiesOfCasts = 17;
+    UncheckedKeyHashMap<uint64_t, uint32_t> bodiesOfCasts;
+    static bool mayHaveBody(const Value& cast) { return cast.opcode == Opcode::Cast && (cast.castReason() == CastReason::As || cast.castReason() == CastReason::Claim) && cast.immediates[0] == Format::none; }
+    static uint64_t keyOfBodyOfCast(const Value& cast) { return (static_cast<uint64_t>(cast.type.index()) + 1) << 32 | cast.immediates[1]; }
+    FunctionID bodyOfCast(const Value& cast) const
+    {
+        if (bodiesOfCasts.isEmpty() || !mayHaveBody(cast))
+            return FunctionID();
+        auto found = bodiesOfCasts.find(keyOfBodyOfCast(cast));
+        return found == bodiesOfCasts.end() ? FunctionID() : FunctionID(found->value);
+    }
     // From optimize() on: the code of a module, and a function that nothing reaches but one direct call in code that runs once, outside every loop: `(function (E) { .. })(E || (E = {}))`. For what pays only by being run again.
     BitVector functionsThatRunOnce;
     bool runsOnce(FunctionID id) const { return functionsThatRunOnce.get(id.index()); }
+    BitVector functionsReturningMapKeys;
+    BitVector stringsMadeOnce;
+    struct RowOfBirth {
+        uint32_t firstPlace { 0 };
+        Vector<StringID, 8> names;
+        bool isWhole { true };
+        bool isOfThis { false };
+        uint32_t number { Format::none };
+    };
+    Vector<RowOfBirth> rowsOfBirths;
+    struct NumberedRow {
+        Vector<StringID, 8> names;
+        uint8_t inlineCapacity { 0 };
+        bool hasNullPrototype { false };
+    };
+    Vector<NumberedRow> numberedRows;
+    uint32_t firstNumberOfRowsOfThis { Format::none };
+    Vector<std::array<uint32_t, 3>> rowsGrownInto;
+    UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>> numbersOfRowsByHash;
+    uint32_t numberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const;
+    uint32_t ensureNumberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype);
     bool hasAllocationAssertions { false };
     bool notesAllocations { false };
     // For dumpAtStage(.., "allocations"): by layout, the first thing that was seen to take an environment of it off the stack.

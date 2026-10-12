@@ -23,7 +23,6 @@
 #include "config.h"
 #include "Parser.h"
 
-#include "AOTFacts.h"
 #include "ASTBuilder.h"
 #include "BuiltinNames.h"
 #include "DebuggerParseData.h"
@@ -741,6 +740,7 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseSingleFu
     return sourceElements;
 }
 
+    
 template <typename LexerType>
 template <class TreeBuilder> TreeStatement Parser<LexerType>::parseStatementListItem(TreeBuilder& context, const Identifier*& directive, unsigned* directiveLiteralLength)
 {
@@ -1358,7 +1358,6 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
             TreeExpression propertyExpression = 0;
             TreeDestructuringPattern innerPattern = 0;
             JSTokenLocation location = m_token.location();
-            uint32_t typeTag = m_token.m_typeTag;
             bool escapedKeyword = match(ESCAPED_KEYWORD);
             if (escapedKeyword || matchSpecIdentifier()) {
                 bool letMatched = match(LET);
@@ -1431,7 +1430,7 @@ template <class TreeBuilder> TreeDestructuringPattern Parser<LexerType>::parseDe
                 context.setContainsComputedProperty(objectPattern, true);
             } else {
                 ASSERT(propertyName);
-                context.appendObjectPatternEntry(objectPattern, location, wasString, *propertyName, innerPattern, defaultValue, typeTag);
+                context.appendObjectPatternEntry(objectPattern, location, wasString, *propertyName, innerPattern, defaultValue);
             }
         } while (consume(COMMA));
 
@@ -1625,6 +1624,7 @@ template <class TreeBuilder> TreeStatement Parser<LexerType>::parseForStatement(
         failIfFalse(expr, "Expected expression to enumerate");
         recordPauseLocation(context.breakpointLocation(expr));
         JSTextPosition exprEnd = lastTokenEndPosition();
+        
         
         handleProductionOrFail(CLOSEPAREN, ")", "end", (isOfEnumeration ? "for-of header" : "for-in header"));
         
@@ -3110,7 +3110,6 @@ template <class TreeBuilder> TreeClassExpression Parser<LexerType>::parseClass(T
     const ConstructorKind constructorKind = parentClass ? ConstructorKind::Extends : ConstructorKind::Base;
 
     JSTextPosition classHeadEnd = lastTokenEndPosition();
-    uint32_t classTypeTag = m_token.m_typeTag;
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of a class body");
 
     AutoPopScope classScope(this, pushScope());
@@ -3387,9 +3386,7 @@ parseMethod:
     auto [classHeadEnvironment, classHeadFunctionDeclarations] = popScope(classHeadScope, TreeBuilder::NeedsFreeVariableInfo);
     ASSERT(functionDeclarations.isEmpty());
     ASSERT(classHeadFunctionDeclarations.isEmpty());
-    auto classExpression = context.createClassExpr(location, info, WTF::move(classHeadEnvironment), WTF::move(lexicalEnvironment), constructor, parentClass, classElements, start, divot, classHeadEnd);
-    context.setClassTypeTag(classExpression, classTypeTag);
-    return classExpression;
+    return context.createClassExpr(location, info, WTF::move(classHeadEnvironment), WTF::move(lexicalEnvironment), constructor, parentClass, classElements, start, divot, classHeadEnd);
 }
 
 template <typename LexerType>
@@ -3442,21 +3439,6 @@ template <class TreeBuilder> TreeSourceElements Parser<LexerType>::parseClassFie
                     loc.endOffset = (*initializerPosition);
                     restoreLexerState(LexerState { initializerPosition->offset, loc, hasLineTerminatorBeforeToken, ERRORTOK });
                 }
-#if ENABLE(AOT)
-                if ((Options::useTypeTags() || AOT::Facts::shared()) && initializerPosition->offset >= 7) [[unlikely]] {
-                    StringView text = m_source->provider()->source();
-                    unsigned at = initializerPosition->offset - 7;
-                    if (text[at] == 1) {
-                        uint64_t tag = 0;
-                        for (unsigned i = 1; i <= 6; ++i) {
-                            char16_t c = text[at + i];
-                            unsigned digit = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'Z' ? c - 'A' + 10 : c >= 'a' && c <= 'z' ? c - 'a' + 36 : c == '_' ? 62 : 63;
-                            tag = tag << 6 | digit;
-                        }
-                        m_token.m_typeTag = static_cast<uint32_t>(tag);
-                    }
-                }
-#endif
                 // parseExpression() is more permissive way to parse AssignmentExpression than parseAssignmentExpression() that is used in parseClass().
                 // This is very intentional: we need to fail for `foo = 1, 2` but support reparsing `foo = (1, 2)`, which is tricky because open paren
                 // is skipped (meaning start offset points to `1`) by parsePrimaryExpression().
@@ -4894,15 +4876,11 @@ template <typename LexerType>
 template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLiteral(TreeBuilder& context)
 {
     JSTokenLocation location(tokenLocation());
-    uint32_t typeTag = m_token.m_typeTag;
     consumeOrFail(OPENBRACE, "Expected opening '{' at the start of an object literal");
 
     SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
-    if (consume(CLOSEBRACE)) {
-        TreeExpression empty = context.createObjectLiteral(location);
-        context.setTypeTag(empty, typeTag);
-        return empty;
-    }
+    if (consume(CLOSEBRACE))
+        return context.createObjectLiteral(location);
     
     TreeProperty property = parseProperty(context);
     failIfFalse(property, "Cannot parse object literal property");
@@ -4927,9 +4905,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseObjectLitera
 
     handleProductionOrFail2(CLOSEBRACE, "}", "end", "object literal");
 
-    TreeExpression literal = context.createObjectLiteral(location, propertyList);
-    context.setTypeTag(literal, typeTag);
-    return literal;
+    return context.createObjectLiteral(location, propertyList);
 }
 
 template <typename LexerType>
@@ -5172,13 +5148,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         return parseClassExpression(context);
     case OPENBRACE:
         return parseObjectLiteral(context);
-    case OPENBRACKET: {
-        uint32_t typeTag = m_token.m_typeTag;
-        TreeExpression array = parseArrayLiteral(context);
-        if (typeTag && array) [[unlikely]]
-            context.setTypeTag(array, typeTag);
-        return array;
-    }
+    case OPENBRACKET:
+        return parseArrayLiteral(context);
     case OPENPAREN: {
         next();
         SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
@@ -5228,17 +5199,13 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parsePrimaryExpre
         if (*ident == m_vm.propertyNames->arguments) [[unlikely]]
             failIfTrue(closestScopeOwningArguments()->evalContextType() == EvalContextType::InstanceFieldEvalContext, "arguments is not valid in this context");
         JSTokenLocation location(tokenLocation());
-        uint32_t typeTag = m_token.m_typeTag;
         next();
 
         // Avoid using variable if it is an arrow function parameter
         if (match(ARROWFUNCTION)) [[unlikely]]
             return 0;
 
-        TreeExpression resolve = createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
-        if (typeTag) [[unlikely]]
-            context.setTypeTag(resolve, typeTag);
-        return resolve;
+        return createResolveAndUseVariable(context, ident, *ident == m_vm.propertyNames->eval, start, location);
     }
     case BIGINT: {
         const Identifier* ident = m_token.m_data.bigIntString;
@@ -5326,9 +5293,8 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
     consumeOrFailWithFlags(OPENPAREN, TreeBuilder::DontBuildStrings, "Expected opening '(' at start of argument list");
     JSTokenLocation location(tokenLocation());
     if (match(CLOSEPAREN)) {
-        uint32_t typeTag = m_token.m_typeTag;
         next();
-        return context.withTypeTag(context.createArguments(), typeTag);
+        return context.createArguments();
     }
     auto argumentsStart = m_token.m_startPosition;
     auto argumentsDivot = m_token.m_endPosition;
@@ -5362,14 +5328,13 @@ template <class TreeBuilder> TreeArguments Parser<LexerType>::parseArguments(Tre
         tail = context.createArgumentsList(argumentLocation, tail, arg);
     }
 
-    uint32_t typeTag = m_token.m_typeTag;
     handleProductionOrFail2(CLOSEPAREN, ")", "end", "argument list");
     if (hasSpread) {
         TreeExpression spreadArray = context.createSpreadExpression(location, context.createArray(location, context.createElementList(argList)), argumentsStart, argumentsDivot, lastTokenEndPosition());
-        return context.withTypeTag(context.createArguments(context.createArgumentsList(location, spreadArray), initialAssignments != m_parserState.assignmentCount), typeTag);
+        return context.createArguments(context.createArgumentsList(location, spreadArray), initialAssignments != m_parserState.assignmentCount);
     }
 
-    return context.withTypeTag(context.createArguments(argList, initialAssignments != m_parserState.assignmentCount), typeTag);
+    return context.createArguments(argList, initialAssignments != m_parserState.assignmentCount);
 }
 
 template <typename LexerType>
@@ -5642,7 +5607,6 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 }
                 matchOrFail(IDENT, "Expected a property name after ", optionalChainBase ? "'?.'" : "'.'");
                 base = context.createDotAccess(location, base, ident, type, expressionStart, expressionDivot, tokenEndPosition());
-                context.setTypeTag(base, m_token.m_typeTag);
                 if (baseIsSuper && currentScope()->isArrowFunction()) [[unlikely]]
                     currentFunctionScope()->setInnerArrowFunctionUsesSuperProperty();
                 next();

@@ -185,7 +185,6 @@ constexpr uint16_t traitsOf(OpcodeID opcode)
     case op_log_shadow_chicken_tail:
     case op_put_internal_field:
     case op_nop:
-    case op_type_tag:
     case op_super_sampler_begin:
     case op_wide16:
     case op_super_sampler_end:
@@ -195,7 +194,6 @@ constexpr uint16_t traitsOf(OpcodeID opcode)
     case op_new_promise:
     case op_new_generator:
     case op_new_async_function_generator:
-    case op_check_type:
     case op_new_array_with_spread:
     case op_new_reg_exp:
     case op_mov:

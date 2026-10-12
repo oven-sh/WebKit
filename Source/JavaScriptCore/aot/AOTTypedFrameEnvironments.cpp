@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedThreads.h"
 #include "Options.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -30,27 +31,28 @@ void findEnvironmentsInFrames(Program& program)
     enum : uint8_t { Unknown, No, Yes };
     Vector<uint8_t> admitsEnvironment;
     admitsEnvironment.fill(Unknown, program.types.size());
-    BitVector isMade(program.layouts.size());
-    BitVector leavesStack(program.layouts.size());
+    Vector<uint8_t> isMade(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
+    Vector<uint8_t> leavesStack(FillWith { }, program.layouts.size(), static_cast<uint8_t>(0));
 
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
+    auto scan = [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
-            continue;
+            return;
         auto& function = program.functions[i];
         auto keepOnHeap = [&](ValueID id, ASCIILiteral operation, const Value& at) {
             TypeID type = function.at(id).type;
             if (!type)
                 return;
-            uint8_t& known = admitsEnvironment[type.index()];
+            uint8_t known = WTF::atomicLoad(&admitsEnvironment[type.index()], std::memory_order_relaxed);
             if (known == Unknown) {
                 known = std::ranges::any_of(program.at(type).views, [&](LayoutID view) {
                     return program.at(view).kind == LayoutKind::Environment;
                 }) ? Yes : No;
+                WTF::atomicStore(&admitsEnvironment[type.index()], known, std::memory_order_relaxed);
             }
             if (known == No)
                 return;
             for (LayoutID view : program.at(type).views) {
-                if (!leavesStack.quickSet(view.index()) && program.notesAllocations)
+                if (!WTF::atomicLoad(&leavesStack[view.index()], std::memory_order_relaxed) && !WTF::atomicExchange(&leavesStack[view.index()], static_cast<uint8_t>(1), std::memory_order_relaxed) && program.notesAllocations)
                     program.whyEnvironmentsAreOnHeap.add(view.index(), Program::UseOfEnvironment { operation, FunctionID(i), at.inlineFrame, at.position });
             }
         };
@@ -67,7 +69,7 @@ void findEnvironmentsInFrames(Program& program)
                 };
                 switch (value.opcode) {
                 case Opcode::NewObjectWithShape:
-                    isMade.quickSet(value.layout().index());
+                    WTF::atomicStore(&isMade[value.layout().index()], static_cast<uint8_t>(1), std::memory_order_relaxed);
                     value.forEachChild(keep);
                     break;
                 case Opcode::GetField:
@@ -94,11 +96,16 @@ void findEnvironmentsInFrames(Program& program)
                     keepOnHeap(argument, "a block parameter"_s, function.at(argument));
             }
         }
-    }
+    };
+    if (program.notesAllocations) {
+        for (unsigned i = 0; i < program.functions.size(); ++i)
+            scan(i);
+    } else
+        forEachIndexInParallel(program.functions.size(), scan);
 
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& layout = program.layouts[i];
-        layout.isInFrame = layout.kind == LayoutKind::Environment && !layout.isCoroutineFrame && isMade.quickGet(i) && !leavesStack.quickGet(i) && layout.fields.size() <= maxFields;
+        layout.isInFrame = layout.kind == LayoutKind::Environment && isMade[i] && !leavesStack[i] && layout.fields.size() <= maxFields;
     }
 }
 

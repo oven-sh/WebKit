@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed { namespace Format {
 // The program as the front end hands it over: one buffer of 32-bit words, read in place. src/aot/format.rs in Bun mirrors this file.
 
 static constexpr uint32_t magic = 0x52495442;
-static constexpr uint32_t version = 26;
+static constexpr uint32_t version = 30;
 static constexpr uint32_t none = UINT32_MAX;
 
 struct Section {
@@ -224,6 +224,7 @@ struct Shape {
     uint32_t flags;
     // The allocated layouts whose objects get into places of this type untested. Sorted.
     Span members;
+    Span membersByFit;
     // What a cast may turn an object into that was allocated with this layout. Sorted.
     Span specializations;
     // Of a class that is not evaluated once: the layout of the environment of the class, one for each evaluation. The class object captures
@@ -231,18 +232,13 @@ struct Shape {
     // of it, by its index. What the members need from around the class is in fields of it that are immutable. None: a variable of the
     // class is a module variable.
     uint32_t environment;
-    // Of a class with fixed members, among the words: for each static field its name and the variable of the class that it is. The class
-    // object shows them as properties. `static #name` is not listed.
+    // Pairs of words: name, declared type or none. Only public static fields that have a type annotation.
     Span staticFields;
     // Where the type is declared, for error messages that name two types alike: a string spelled like Module::displayPath, or none, and
     // the line, from 1, or 0. None: an environment, a type that nothing declares, a declaration in a file whose text was not kept.
     uint32_t declaredPath;
     uint32_t declaredLine;
 };
-
-// In the word of Shape::staticFields that numbers a module variable: the type of the static field is written down. Of one that is a field of
-// an environment, that field says so.
-static constexpr uint32_t StaticFieldIsAnnotated = 1u << 31;
 
 // What a module variable holds before anything is stored to it.
 enum class Initialization : uint32_t {
@@ -314,6 +310,8 @@ enum FunctionFlag : uint32_t {
     FunctionIsOfBuiltinModule = 1 << 9,
     // Its frames only exist because of how the front end has compiled the code: what sees to it that a module is evaluated once.
     FunctionIsHiddenInStackTraces = 1 << 10,
+    FunctionNameIsGiven = 1 << 11,
+    FunctionIsCodeOfModule = 1 << 12,
 };
 
 // In Function::parameterTypes: the type of the parameter is written down, so what does not fit it is coerced as by `as`. The other bits
@@ -476,6 +474,7 @@ static constexpr unsigned freshnessShift = 8;
 static constexpr uint32_t PredictionIsClosure = 1u << 31;
 // Without that one, on a GetByVal: the other bits number a string. See Header::functionsByKey.
 static constexpr uint32_t PredictionIsByKey = 1u << 30;
+static constexpr uint32_t ReceiverIsOfOneRow = 1u << 29;
 
 // NewObjectWithShape: immediates[0] is the layout. children[0] and immediates[1] are both none, or a value and the name of a property:
 // of an object that `new` makes for a function it does not know. Then this is a fact. Every function of the program that declares a
@@ -560,6 +559,7 @@ struct Header {
     // Among the words: the entry functions, in the order of the entry points, at least one, each once. Each runs in the place of the
     // top-level code of a module. In an Instance one of them runs, once.
     Span entries;
+    Span regExpLiterals;
     uint32_t recordSizes[12];
 };
 

@@ -14,6 +14,7 @@
 #include <optional>
 #include <span>
 #include <wtf/StackBounds.h>
+#include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
 
 #if ENABLE(AOT)
@@ -41,6 +42,7 @@ struct FunctionMetadata;
 struct FunctionInfo;
 struct ProgramData;
 struct ImageFunction;
+class InlineFramesRead;
 struct Instance;
 struct Slot;
 
@@ -72,9 +74,9 @@ struct AllocationPlan {
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
     struct Location;
-    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame) const;
+    JS_EXPORT_PRIVATE Location locationForReturnAddress(const void* returnAddress, const void* frame, InlineFramesRead* = nullptr) const;
     JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress, const void* frame) const;
-    JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame) const;
+    JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame, InlineFramesRead&) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*);
     JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken);
     explicit operator bool() const { return index != none; }
@@ -129,6 +131,7 @@ struct FunctionRef::Location {
     unsigned inlineFrame { 0 };
     bool isTailDeleted { false };
     bool isTailCall { false };
+    bool isConstructed { false };
     // With FunctionInfo::isTyped: the function to report, by its number in Typed::Data. `function` stays the one whose code is running,
     // also for an inlined frame: positions and handlers are its own.
     uint32_t typedFunction { FunctionRef::none };
@@ -139,13 +142,26 @@ struct FunctionRef::Location {
 JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function);
 JS_EXPORT_PRIVATE CodeType typedFunctionCodeType(uint32_t function);
 JS_EXPORT_PRIVATE bool typedFunctionIsConstructor(uint32_t function);
+JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
+JS_EXPORT_PRIVATE bool typedFunctionHasGivenName(uint32_t function);
 // Generic entrypoints and coroutine ramps: another frame of the same name stands next to them.
 JS_EXPORT_PRIVATE bool typedFunctionIsHiddenInStackTraces(uint32_t function);
+JS_EXPORT_PRIVATE bool typedFunctionWraps(uint32_t wrapper, uint32_t function);
+JS_EXPORT_PRIVATE bool typedFunctionStandsForNoFunction(uint32_t function);
+JS_EXPORT_PRIVATE bool isEnteredByConstruction(const Instance*, const CallFrame* previousTopCallFrame);
+enum class BuiltinInTrace : uint8_t { None, WrittenInJavaScript, ConstructorWrittenInJavaScript, HostFunction };
+JS_EXPORT_PRIVATE BuiltinInTrace builtinThatTypedFunctionStandsFor(uint32_t function);
 // The general entry or the ramp of an async function, or what is bound to one: see UnwindFunctor::rejectsInFrame().
 JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
 // Of a closure, whose executable is NativeExecutable::isSharedByAOTTypedClosures(): what the executable of any other host function has.
 JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
+JS_EXPORT_PRIVATE String nameOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE unsigned lengthOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);
+JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(JSObject*, Structure*);
+JS_EXPORT_PRIVATE void* taggedSlimClosureEntrypoint();
+JS_EXPORT_PRIVATE JSValue textOfSlimClosure(JSGlobalObject*, JSObject*);
 // The ClosureWord of the function. `relative`: the EntryWord of its code, with the distance from the start of the code for an address.
 uint64_t closureWordOfTypedFunction(std::span<const uint8_t> image, uint32_t function, uint64_t relative);
 // Whether the cell is a closure of the function, whichever of its entrypoints each of the two goes by.
@@ -156,6 +172,8 @@ namespace Typed {
 // Whether an entry function of a program that was compiled from types runs in the place of the top-level code of the module, which is named
 // as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
+Identifier tryMakeIdentifier(VM&, uint32_t identifier);
+String tryGetTextOfIdentifier(uint32_t identifier);
 // For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
 // Runs the module, which the image has, and yields what it exports. Empty: it has thrown. Its top level is code that runs once: asked again,
@@ -181,6 +199,40 @@ JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
 } // namespace Typed
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
 
+struct FrameInTrace {
+    uint32_t function;
+    uint32_t typedFunction;
+    uint64_t callSiteAndRootOfConstructed;
+    static FrameInTrace create(uint32_t function, uint32_t typedFunction, BytecodeIndex callSite, bool isConstructed = false)
+    {
+        return { function, typedFunction, callSite.asBits() | static_cast<uint64_t>(isConstructed ? typedFunction + 1 : 0) << 32 };
+    }
+    BytecodeIndex callSite() const { return BytecodeIndex::fromBits(static_cast<uint32_t>(callSiteAndRootOfConstructed)); }
+    void setRootOfConstructed(uint32_t root)
+    {
+        if (!(callSiteAndRootOfConstructed >> 32))
+            callSiteAndRootOfConstructed |= static_cast<uint64_t>(root + 1) << 32;
+    }
+    bool isConstructed() const
+    {
+        uint32_t root = callSiteAndRootOfConstructed >> 32;
+        return root && (root - 1 == typedFunction || typedFunctionWraps(root - 1, typedFunction));
+    }
+};
+JS_EXPORT_PRIVATE void appendFramesInProfile(uint32_t function, uint32_t site, bool& nothingIsShownYet, Vector<FrameInTrace, 4>&);
+JS_EXPORT_PRIVATE std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t typedFunction);
+JS_EXPORT_PRIVATE uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc);
+
+struct ReturnAddressTrace {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_COMPACT_ALLOCATED(ReturnAddressTrace);
+    Instance* instance { nullptr };
+    size_t limit { 0 };
+    Vector<const void*> returnAddresses;
+    static constexpr uintptr_t isOfConstructed = static_cast<uintptr_t>(1) << 63;
+    static const void* ofConstructed(const void* address) { return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(address) | isOfConstructed); }
+    static const void* addressOf(const void* kept) { return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(kept) & ~isOfConstructed); }
+};
+
 struct ImageAddressInfo {
     enum Kind : uint8_t {
         NotInImage,
@@ -188,11 +240,13 @@ struct ImageAddressInfo {
         Stub,
         Adapter,
     };
+    static constexpr uint32_t frameMayBeOfHostFunction = 1;
     Kind kind { NotInImage };
     uint32_t index { 0 };
     uint32_t offset { 0 };
 };
 JS_EXPORT_PRIVATE ImageAddressInfo classifyAddress(const void* address);
+JS_EXPORT_PRIVATE ImageAddressInfo::Kind kindOfAddress(const void* address);
 JS_EXPORT_PRIVATE std::optional<uint32_t> imageCodeOffset(const void* address);
 JS_EXPORT_PRIVATE void* returnAddressForFrame(const void* frame, const void* startingFrom);
 struct FrameAndPC {
@@ -200,6 +254,7 @@ struct FrameAndPC {
     void* pc { nullptr };
 };
 JS_EXPORT_PRIVATE std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds&);
+JS_EXPORT_PRIVATE void* returnAddressOfTopWithoutFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* machineStackPointer, const StackBounds&);
 JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
 // What calleeSaveRegistersOf() says, without a list: by Reg::index(); they are saved in that order, a word each, the first that many words from the frame pointer.
@@ -209,15 +264,32 @@ struct SavedRegisters {
 };
 JS_EXPORT_PRIVATE SavedRegisters savedRegistersOf(const ImageFunction&);
 JS_EXPORT_PRIVATE bool hasCode();
-JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
+JS_EXPORT_PRIVATE std::optional<uint32_t> tryCallSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress, bool* constructs = nullptr);
 std::optional<uint32_t> spreadSite(const ImageFunction&, uint32_t callSite, unsigned item);
 struct ImageInlineFrame {
     uint32_t parent;
     uint32_t callSite;
     uint32_t function;
-    bool isTailCall;
+    uint8_t flags;
+    bool isTailCall() const { return flags & 1; }
+    bool isConstruction() const { return flags & 2; }
 };
 JS_EXPORT_PRIVATE ImageInlineFrame inlineFrameOf(const ImageFunction&, unsigned frame);
+class InlineFramesRead {
+public:
+    const ImageInlineFrame& at(const ImageFunction& function, unsigned frame)
+    {
+        if (m_function != &function || frame > m_frames.size())
+            read(function, frame);
+        return m_frames[frame - 1];
+    }
+
+private:
+    JS_EXPORT_PRIVATE void read(const ImageFunction&, unsigned last);
+
+    const ImageFunction* m_function { nullptr };
+    Vector<ImageInlineFrame, 32> m_frames;
+};
 // Of a function whose sites are numbered in the order of the code: the inline frame of number 1, 2, .. A number without code: a call that was
 // inlined is in the frame it stands in; whatever else has a number of that kind is in the function itself.
 class FramesOfSites {
@@ -253,12 +325,14 @@ private:
 };
 JS_EXPORT_PRIVATE Instance* instanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
+JS_EXPORT_PRIVATE Instance* tryInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
 JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&, bool entersStaticCode);
+void countMaterializationOfPropertyTable(VM&);
 void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);
 
 } } // namespace JSC::AOT

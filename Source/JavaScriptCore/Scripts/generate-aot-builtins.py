@@ -7,8 +7,8 @@ compiled:
   aot/AOTTypedBuiltinLists.h                     the X-macros (families, inline built-ins, language operations, run-time operations, prelude
                                                  functions, original structures), the sizes of the table, the numbers of the names, classes
                                                  and entries that C++ knows by name, and AOT_TYPED_BUILTINS_HASH
-  aot/AOTTypedBuiltinEntries.inc                 the table, as constant arrays: entries, parameters, names, classes, the index by (kind,
-                                                 holder, name); included by AOTTypedBuiltins.cpp
+  aot/AOTTypedBuiltinEntries.inc                 the table, as constant arrays: entries, parameters with what the entry does with each operand, names,
+                                                 classes, the index by (kind, holder, name); included by AOTTypedBuiltins.cpp
   aot/AOTTypedBuiltinOperations.inc              the declarations of the run-time operations, included by AOTTypedOperations.h
   aot/AOTTypedBuiltinMembers.inc                 includes the families' AOTTypedBuiltins<Family>Members.h in the body of class Lowering
   <bun>/src/sema/check/aot/builtins_generated.rs the names the checker trusts, and what each entry does with its operands
@@ -20,7 +20,7 @@ compiled:
                                                  then a tab and `hardened` if it is not only spelled `$NAME`
 
 --check writes nothing and fails if a file is not what would be written. --list prints the table, one normalized line per entry.
-The hash covers what the front end goes by (names, intrinsics, prelude functions, uses of operands). It is in the header of every program the front end
+The hash covers what the front end goes by (names, how many operands an operation takes, intrinsics, prelude functions, uses of operands). It is in the header of every program the front end
 writes, and Program::tryRead() refuses a program with another hash.
 
 A family is a file <family>.def. What is written in C++ for it is in files nobody else edits:
@@ -90,7 +90,8 @@ One declaration per line. `#` starts a comment.
   PARAMETERS comma-separated: PATTERN, PATTERN? (optional), PATTERN... (rest); after `any` and `TypedArray!` there may be /USES
   PATTERN    any | number! | int! | TypedArray! | toNumber | toString | toPropertyKey
              `x!`: the entry applies only if the static type of the argument is within x. `toX`: only if ToX of it runs no user code.
-  USES       What the built-in may do with the operand, for the checker's escape analysis. `-`: it only looks at it. Else letters:
+  USES       What the built-in may do with the operand, for the escape analyses of the checker and of the engine (OperandUse in
+             AOTTypedBuiltins.h). The checker is not told of an `operation`. `-`: it only looks at it. Else letters:
              W  creates, replaces or deletes own named properties of it, or makes one an accessor
              w  writes its elements, length, internal contents (the entries of a Map, the bytes of a buffer, lastIndex), prototype,
                 extensibility; freezes or seals it
@@ -415,6 +416,27 @@ for where, holder, is_of_prototype, name in twins:
     for entry in found:
         entry['has_private_twin'] = True
 
+PRIMITIVE_HOLDERS = ('String', 'Number', 'Boolean', 'Symbol', 'BigInt')
+GETS = 1 << USES.index('G')
+
+
+def uses_of_operands(entry):
+    effects = entry['effects']
+    yields_primitive = not any(alternative.strip().startswith(('new ', 'anything', 'this', 'arg')) for alternative in entry['result'].split('|'))
+    is_harmless = yields_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
+    takes_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
+    if entry['this'] is not None and not takes_this:
+        errors.append('%s: it takes no `this` that is an object' % entry['where'])
+    this = 0 if not takes_this else entry['this'] if entry['this'] is not None else (GETS if 'ReadsReceiver' in effects else 0) if is_harmless else EVERYTHING
+    parameters = []
+    for parameter, uses in zip(entry['parameters'], entry['uses']):
+        pattern = parameter.rstrip('?').rstrip('.')
+        if uses is None:
+            uses = (0 if pattern in ('number!', 'int!') else GETS) if pattern not in ('any', 'TypedArray!') else 0 if is_harmless and 'ReadsArguments' not in effects else EVERYTHING
+        parameters.append(uses)
+    return this, parameters
+
+
 KIND_NUMBERS = ['Function', 'Constructor', 'StaticFunction', 'Constant', 'Method', 'Getter', 'Setter', 'Operation']
 rows, listing, seen, previous, pool, runs = [], [], set(), None, [], {}
 for entry in entries:
@@ -425,14 +447,15 @@ for entry in entries:
     entry['is_first'] = key != previous
     seen.add(key)
     previous = key
-    parameters = tuple(cpp_parameter(entry['where'], parameter) for parameter in entry['parameters'])
+    entry['uses_of_this'], entry['uses_of_parameters'] = uses_of_operands(entry) if entry['kind'] != 'constant' else (0, [])
+    parameters = tuple('uses(%s, %d)' % (cpp_parameter(entry['where'], parameter), uses) for parameter, uses in zip(entry['parameters'], entry['uses_of_parameters']))
     if parameters not in runs:
         runs[parameters] = len(pool)
         pool.extend(parameters)
     result = cpp_result(entry['where'], entry['result'])
     if kind in ('Method', 'Getter', 'Setter'):
         engine_class(entry['holder'])
-    rows.append((entry, '{ %d, %d }, %s, %s, %s' % (runs[parameters], len(parameters), result, cpp_effects(entry['where'], entry['effects']), cpp_lowering(entry) + (', true' if entry.get('has_private_twin') else ''))))
+    rows.append((entry, '{ %d, %d }, %s, %s, %d, %s' % (runs[parameters], len(parameters), result, cpp_effects(entry['where'], entry['effects']), entry['uses_of_this'], cpp_lowering(entry) + (', true' if entry.get('has_private_twin') else ''))))
     listing.append('%s %s %s (%s) -> %s ; %s ; %s' % (kind, entry['holder'] or '-', entry['name'], ', '.join(entry['parameters']), entry['result'], ' '.join(entry['effects']), entry['lowering']))
 
 WELL_KNOWN_NAMES = ['TypedArray', 'prototype', 'call', 'apply', 'hasOwn', 'hasOwnProperty']
@@ -512,26 +535,16 @@ for where, path in predicted:
         names.pop(name, None)
 
 # What the checker is told of each entry.
-PRIMITIVE_HOLDERS = ('String', 'Number', 'Boolean', 'Symbol', 'BigInt')
 RUST_KINDS = {'function': 'Function', 'call': 'Call', 'construct': 'Construct', 'static': 'Static', 'method': 'Method', 'getter': 'Getter', 'setter': 'Setter', 'intrinsic': 'Intrinsic'}
 RUST_PATTERNS = {'any': 'Any', 'number!': 'Number', 'int!': 'Integer', 'TypedArray!': 'TypedArray', 'toNumber': 'ToNumber', 'toString': 'ToString', 'toPropertyKey': 'ToPropertyKey'}
-GETS = 1 << USES.index('G')
 uses_rows = []
 for entry in entries:
     if entry['kind'] not in RUST_KINDS:
         continue
-    effects = entry['effects']
-    yields_primitive = not any(alternative.strip().startswith(('new ', 'anything', 'this', 'arg')) for alternative in entry['result'].split('|'))
-    is_harmless = yields_primitive and not any(effect in effects for effect in ('CallsUserCode', 'WritesReceiver', 'WritesArguments', 'WritesRuntimeState'))
-    takes_this = entry['kind'] in ('method', 'getter', 'setter') and entry['holder'] not in PRIMITIVE_HOLDERS
-    if entry['this'] is not None and not takes_this:
-        errors.append('%s: it takes no `this` that is an object' % entry['where'])
-    this = 0 if not takes_this else entry['this'] if entry['this'] is not None else (GETS if 'ReadsReceiver' in effects else 0) if is_harmless else EVERYTHING
+    this = entry['uses_of_this']
     parameters = []
-    for parameter, uses in zip(entry['parameters'], entry['uses']):
+    for parameter, uses in zip(entry['parameters'], entry['uses_of_parameters']):
         pattern = parameter.rstrip('?').rstrip('.')
-        if uses is None:
-            uses = (0 if pattern in ('number!', 'int!') else GETS) if pattern not in ('any', 'TypedArray!') else 0 if is_harmless and 'ReadsArguments' not in effects else EVERYTHING
         parameters.append('(Pattern::%s, Arity::%s, %d)' % (RUST_PATTERNS.get(pattern, 'Any'), 'Optional' if parameter.endswith('?') else 'Rest' if parameter.endswith('...') else 'Required', uses))
     name = '$' + entry['name'][0].lower() + entry['name'][1:] if entry['kind'] == 'intrinsic' else entry['name']
     uses_rows.append('BuiltinEntry { kind: BuiltinKind::%s, holder: "%s", name: "%s", this: %d, parameters: &[%s], fresh: Fresh::%s }' % (
@@ -628,7 +641,7 @@ if '--list' in arguments:
 
 hashed = ''.join('%s %s\n' % (holder, name) for holder in sorted(names) for name in sorted(names[holder]))
 hashed += ''.join('%s %s\n' % (name, function) for function, family, name in prelude_functions)
-hashed += ''.join('%s\n' % entry['name'] for entry in entries if entry['kind'] == 'operation')
+hashed += ''.join('%s %d\n' % (entry['name'], len(entry['parameters'])) for entry in entries if entry['kind'] == 'operation')
 hashed += ''.join('%s\n' % row for row in uses_rows)
 hashed += ''.join('%d %s %s\n' % (number, file, function) for file, function, code, number in engine_functions)
 hashed += ''.join('$%s %s %s\n' % (name.decode(), position, variant) for (name, position), variant in intrinsic_rows)
@@ -668,6 +681,7 @@ lists += ''.join('#define AOT_TYPED_BUILTIN_%s %d\n' % (text, operation_numbers[
 trusted = '// %s\n\n' % NOTICE
 trusted += '/// Every built-in the engine\'s table has an entry for, by holder, the names separated by one space. `""`: global functions, constructors and the intrinsics of the prelude. `@@name`: a well-known symbol.\n'
 trusted += 'pub(super) const BUILTINS: &[(&str, &str)] = &[\n%s];\n' % ''.join('    ("%s", "%s"),\n' % (holder, ' '.join(sorted(names[holder]))) for holder in sorted(names))
+trusted += 'pub(super) const REPLACEABLE_GLOBALS: &[&str] = &[%s];\n' % ', '.join('"%s"' % name for name in sorted(replaceable))
 trusted += '''
 /// What a built-in may do with an operand. The letters of the header of generate-aot-builtins.py, in their order.
 #[allow(dead_code)]

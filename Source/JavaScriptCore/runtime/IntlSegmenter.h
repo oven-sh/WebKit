@@ -51,22 +51,6 @@ public:
     }
 
     enum class Granularity : uint8_t { Grapheme, Word, Sentence };
-#if USE(BUN_JSC_ADDITIONS)
-    // Of a clone, with its caches and its UText.
-    static constexpr size_t estimatedSizeOfBreakIterator = 2 * KB;
-    // For a text of its own. One that was given back, else a clone.
-    std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> takeBreakIterator(UErrorCode&, bool& isClone) const;
-    void giveBack(std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>&&) const;
-    // For whoever has to name one and does not look at it.
-    UBreakIterator& breakIterator() const { return *m_segmenter; }
-    // Between two code units below U+0300 one grapheme cluster ends and the next begins, whatever stands around them, but between CR and LF. What joins its neighbour begins at U+0300.
-    static constexpr char16_t firstCharacterThatMayJoin = 0x300;
-    // From there on the ICU that is loaded is asked for the property: Other or Control, and no surrogate.
-    static bool joinsNoNeighbour(char16_t character) { return character < firstCharacterThatMayJoin || joinsNoNeighbourByProperty(character); }
-    static bool areInDifferentGraphemeClustersForCertain(char16_t before, char16_t after) { return joinsNoNeighbour(before) && joinsNoNeighbour(after) && !(before == '\r' && after == '\n'); }
-    // It goes by graphemes, and the ICU that is loaded has it so: see initializeSegmenter().
-    bool cutsSimpleGraphemesItself() const { return m_cutsSimpleGraphemesItself; }
-#endif
 
     static IntlSegmenter* create(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
@@ -83,15 +67,8 @@ private:
     DECLARE_DEFAULT_FINISH_CREATION;
 
     static ASCIILiteral granularityString(Granularity);
-#if USE(BUN_JSC_ADDITIONS)
-    static bool joinsNoNeighbourByProperty(char16_t);
-#endif
 
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
-#if USE(BUN_JSC_ADDITIONS)
-    mutable Vector<std::unique_ptr<UBreakIterator, UBreakIteratorDeleter>, 2> m_spareBreakIterators;
-    bool m_cutsSimpleGraphemesItself { false };
-#endif
     String m_locale;
     Granularity m_granularity { Granularity::Grapheme };
 };

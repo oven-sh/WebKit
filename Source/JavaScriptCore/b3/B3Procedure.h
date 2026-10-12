@@ -270,6 +270,8 @@ public:
     bool hoistsLoopInvariantValues() const { return m_hoistsLoopInvariantValues; }
     void setRotatesLoops() { m_rotatesLoops = true; }
     bool rotatesLoops() const { return m_rotatesLoops; }
+    void setReachabilityIsFresh() { m_reachabilityIsFresh = true; }
+    bool takeReachabilityIsFresh() { return std::exchange(m_reachabilityIsFresh, false); }
     // The generator that the patchpoints of all loop polls share: a phase knows a poll by it.
     void setLoopPollGenerator(RefPtr<StackmapGenerator> generator) { m_loopPollGenerator = WTF::move(generator); }
     StackmapGenerator* loopPollGenerator() const { return m_loopPollGenerator.get(); }
@@ -334,8 +336,18 @@ public:
     void setIonGraphPasses(Ref<JSON::Array>&&);
     void appendIonGraphPass(ASCIILiteral);
 
+#if USE(BUN_JSC_ADDITIONS)
+    AbstractHeapRepository& heaps()
+    {
+        if (!m_heaps)
+            m_heaps = makeUnique<AbstractHeapRepository>();
+        return *m_heaps;
+    }
+    const AbstractHeapRepository& heaps() const { return const_cast<Procedure*>(this)->heaps(); }
+#else
     AbstractHeapRepository& heaps() { return m_heaps.get(); }
     const AbstractHeapRepository& heaps() const { return m_heaps.get(); }
+#endif
 
     void setIsWasm(bool flag) { m_isWasm = flag; }
     bool isWasm() const { return m_isWasm; }
@@ -373,7 +385,11 @@ private:
     const char* m_lastPhaseName;
     std::unique_ptr<OpaqueByproducts> m_byproducts;
     std::unique_ptr<Air::Code> m_code;
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<AbstractHeapRepository> m_heaps;
+#else
     UniqueRef<AbstractHeapRepository> m_heaps;
+#endif
     RefPtr<SharedTask<void(PrintStream&, Origin)>> m_originPrinter;
     const void* m_frontendData;
     String m_name;
@@ -385,6 +401,9 @@ private:
     bool m_materializesConstantsByFrequency { false };
     bool m_hoistsLoopInvariantValues { true };
     bool m_rotatesLoops { false };
+    Vector<BasicBlock*> m_blocksInPreOrder;
+    Vector<BasicBlock*> m_blocksInPostOrder;
+    bool m_reachabilityIsFresh { false };
     RefPtr<StackmapGenerator> m_loopPollGenerator;
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;

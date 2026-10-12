@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Checks that the stubs of an ARM64 image change no register that they are not declared to change.
 
-  check-stub-clobbers.py <jsc>
   check-stub-clobbers.py --image <image or executable> --map <map>
   check-stub-clobbers.py ... --print [--stub <name>]...
 
@@ -11,7 +10,8 @@ another register may change besides. A stub that changes another register, on ho
 
 Follows every path from the entry of each declared stub, of each variant of it for a register, and of each thunk that names an
 operation and jumps to it, through branches and through jumps to other stubs, and keeps for every register whether it still holds
-the caller's value. A register that is stored to the stack while it holds the caller's value, and loaded back from that place, holds it again. A
+the caller's value. A register that is stored to the stack while it holds the caller's value, and loaded back from that place, holds it again. So
+does one that is copied to another register (MOV, or FMOV between the two kinds) and copied back while that one is untouched. A
 BLR, or a BL that leaves the stubs, is a call by the C convention: it changes x0 to x17, d0 to d7 and d16 to d31. (x18 is the
 platform's, x30 is the return address: neither is ever allocated, so neither is looked at.) A BL to another stub changes what that
 stub changes.
@@ -19,34 +19,24 @@ stub changes.
 A path ends
   - in RET: what is changed there has to be declared, and the stack pointer has to be the caller's;
   - in the jump to the entry for exceptions: nothing counts, since a handler reads its state from the frame;
+  - at the entry of a stub that never returns (HandleException, HandleExceptionAtPrologue, ThrowStackOverflow, ThrowStackOverflowAtPrologue: none may hold a RET): likewise;
   - in BRK;
   - in any other BR, or a jump that leaves the stubs: a tail jump, after which nothing is known. A declared stub must not have one.
 Fails also on an instruction it does not know, and, so that it cannot pass for want of stubs to look at, if the map declares nothing.
 
 With --print it checks nothing and prints what each stub changes, on paths without a call and on any path, and how else it leaves.
 
-With <jsc> it compiles an empty program and looks at that image. The image is only read, so an executable that holds one can be
+The image is only read, so an executable that holds one can be
 given as it is, with the map that was written when it was built (--aotMapFilePath).
 """
-import argparse, bisect, collections, os, re, struct, subprocess, sys, tempfile
+import argparse, bisect, collections, os, re, struct, sys
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument('jsc', nargs='?', type=os.path.abspath)
-parser.add_argument('--image', type=os.path.abspath)
-parser.add_argument('--map', type=os.path.abspath)
+parser.add_argument('--image', type=os.path.abspath, required=True)
+parser.add_argument('--map', type=os.path.abspath, required=True)
 parser.add_argument('--print', action='store_true', dest='prints')
 parser.add_argument('--stub', action='append', default=[])
 args = parser.parse_args()
-if bool(args.jsc) == bool(args.image) or bool(args.image) != bool(args.map):
-    parser.error('give either <jsc>, or both --image and --map')
-
-if args.jsc:
-    directory = tempfile.TemporaryDirectory()
-    args.image, args.map, program = (os.path.join(directory.name, name) for name in ('image', 'map', 'empty.js'))
-    open(program, 'w').close()
-    subprocess.run([args.jsc, '--useJIT=false', '--useDollarVM=true', '--writeAOTImageTo=' + args.image, '--aotMapFilePath=' + args.map, program], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
-    if not os.path.exists(args.image) or not os.path.exists(args.map):
-        sys.exit('%s wrote no image' % args.jsc)
 
 data = open(args.image, 'rb').read()
 start = data.find(b'BUNAOT01')
@@ -110,6 +100,13 @@ entries_for_exceptions.discard(None)
 if not entries_for_exceptions:
     sys.exit('cannot tell the entry for exceptions: OperationVoid and OperationValue do not jump through the table')
 
+entries_that_never_return = set()
+for (offset, name), (end, _) in zip(names, names[1:]):
+    if name in ('HandleException', 'HandleExceptionAtPrologue', 'ThrowStackOverflow', 'ThrowStackOverflowAtPrologue'):
+        if any(is_ret(words[index]) for index in range(offset // 4, end // 4)):
+            sys.exit('%s is taken never to return and holds a RET' % name)
+        entries_that_never_return.add(offset // 4)
+
 
 class UnknownInstruction(Exception):
     pass
@@ -158,6 +155,19 @@ def effects_of(word):
     raise UnknownInstruction
 
 
+def copy_of(word):
+    """(to, from) if the instruction copies all 64 bits of one register to another."""
+    if word & 0xffe0ffe0 == 0xaa0003e0:
+        return word & 31, word >> 16 & 31
+    if word & 0xfffffc00 == 0x9e660000:
+        return word & 31, float_register(word >> 5 & 31)
+    if word & 0xfffffc00 == 0x9e670000:
+        return float_register(word & 31), word >> 5 & 31
+    if word & 0xfffffc00 == 0x1e604000:
+        return float_register(word & 31), float_register(word >> 5 & 31)
+    return None
+
+
 Result = collections.namedtuple('Result', 'changed exits problems')
 results = {}
 
@@ -175,7 +185,7 @@ def follow(entry, stops_at_calls=False):
             exits[how] += 1
 
     place = lambda index: '%s+%d' % stub_at(4 * index)
-    states, work = {}, [(entry // 4, (frozenset(), 0, frozenset(), None))]
+    states, work = {}, [(entry // 4, (frozenset(), 0, frozenset(), None, frozenset()))]
     while work:
         index, state = work.pop()
         if index in states:
@@ -183,11 +193,14 @@ def follow(entry, stops_at_calls=False):
             if earlier[1] != state[1]:
                 problems.append('%s is reached with two depths of the stack' % place(index))
                 continue
-            state = (earlier[0] | state[0], earlier[1], earlier[2] & state[2], earlier[3] if earlier[3] == state[3] else None)
+            state = (earlier[0] | state[0], earlier[1], earlier[2] & state[2], earlier[3] if earlier[3] == state[3] else None, earlier[4] & state[4])
             if state == earlier:
                 continue
         states[index] = state
-        changed, depth, saved, frame = state
+        changed, depth, saved, frame, kept = state
+        if index in entries_that_never_return and index != entry // 4:
+            leaves_by('exception', index)
+            continue
         word = words[index] if 0 <= index < len(words) else None
         leaves = word is None or is_br(word) and table_offset_of_br(index) not in entries_for_exceptions or is_b(word) and not 0 <= index + signed(word & 0x3ffffff, 26) < len(words)
         if leaves:
@@ -218,7 +231,7 @@ def follow(entry, stops_at_calls=False):
             else:
                 leaves_by('call', index)
                 changed = changed | CHANGED_BY_CALLS
-            work.append((index + 1, (frozenset(changed), depth, saved, frame)))
+            work.append((index + 1, (frozenset(changed), depth, saved, frame, frozenset(pair for pair in kept if pair[0] not in changed))))
             continue
         if word >> 24 == 0x54 or word & 0x7e000000 == 0x34000000:
             work += [(index + signed(word >> 5 & 0x7ffff, 19), state), (index + 1, state)]
@@ -232,6 +245,9 @@ def follow(entry, stops_at_calls=False):
             problems.append('%s is an instruction I do not know: %08x' % (place(index), word))
             continue
         changed, saved = set(changed), set(saved)
+        copy = copy_of(word)
+        comes_back = copy and (copy[1], copy[0]) in kept
+        is_kept = copy and copy[1] not in changed
         immediate = (word >> 10 & 0xfff) << (12 if word & 0x400000 else 0)
         if word & 0xff8003ff == 0xd10003ff:
             depth, written = depth - immediate, []
@@ -270,7 +286,12 @@ def follow(entry, stops_at_calls=False):
             changed.update(register for register in written if register != STACK_POINTER)
             if access and not access[0] and access[1] in (STACK_POINTER, FRAME_POINTER):
                 saved = set()
-        work.append((index + 1, (frozenset(changed), depth, frozenset(other for other in saved if other[0] >= depth), frame)))
+        kept = {pair for pair in kept if pair[0] not in written}
+        if comes_back:
+            changed.discard(copy[0])
+        elif is_kept:
+            kept.add(copy)
+        work.append((index + 1, (frozenset(changed), depth, frozenset(other for other in saved if other[0] >= depth), frame, frozenset(kept))))
     result = Result(changed_at_return, exits, problems)
     if not stops_at_calls:
         results[entry] = result

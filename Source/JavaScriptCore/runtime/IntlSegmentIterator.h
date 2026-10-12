@@ -52,11 +52,6 @@ public:
 
     DECLARE_INFO;
 
-#if USE(BUN_JSC_ADDITIONS)
-    void setSegmenter(VM& vm, IntlSegmenter* segmenter) { m_owner.set(vm, this, segmenter); }
-    // Of a Segmenter that cuts simple graphemes itself: the data object of the next one. None: it is over, or something was thrown.
-    JSObject* nextGrapheme(JSGlobalObject*);
-#endif
     JSObject* next(JSGlobalObject*);
 
     DECLARE_VISIT_CHILDREN;
@@ -69,14 +64,6 @@ private:
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
     Box<Vector<char16_t>> m_buffer;
     WriteBarrier<JSString> m_string;
-#if USE(BUN_JSC_ADDITIONS)
-    WriteBarrier<IntlSegmenter> m_owner;
-    // What the break iterator holds, and the buffer if it is not that of the Segments, for the collector.
-    size_t m_extraMemory { 0 };
-    // Of graphemes: where the next one begins; where the break iterator stands.
-    unsigned m_position { 0 };
-    unsigned m_positionOfBreakIterator { 0 };
-#endif
     IntlSegmenter::Granularity m_granularity;
 };
 

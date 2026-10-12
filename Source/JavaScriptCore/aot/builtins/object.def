@@ -19,6 +19,7 @@ runtime HasOwnProperty : Heap size_t (EncodedJSValue object, EncodedJSValue key)
 runtime HasOwnPropertyOfName : Heap size_t (EncodedJSValue object, uint32_t name)
 runtime OwnPropertyKeys : Heap JSCell* (EncodedJSValue object, uint32_t which)
 runtime ObjectValues : Heap JSCell* (EncodedJSValue object)
+runtime ObjectEntries : RuntimeState JSCell* (EncodedJSValue object) noexcept
 runtime ObjectAssignFrom : Heap void (JSCell* target, EncodedJSValue source)
 runtime ObjectAssignToNew : Heap JSCell* (EncodedJSValue source)
 runtime GetOwnPropertyDescriptor : Heap EncodedJSValue (EncodedJSValue object, EncodedJSValue key)

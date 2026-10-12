@@ -36,13 +36,8 @@ class MegamorphicCache {
     WTF_MAKE_TZONE_ALLOCATED(MegamorphicCache);
     WTF_MAKE_NONCOPYABLE(MegamorphicCache);
 public:
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr uint32_t loadCachePrimarySize = 8192;
-    static constexpr uint32_t loadCacheSecondarySize = 2048;
-#else
     static constexpr uint32_t loadCachePrimarySize = 2048;
     static constexpr uint32_t loadCacheSecondarySize = 512;
-#endif
     static_assert(hasOneBitSet(loadCachePrimarySize), "size should be a power of two.");
     static_assert(hasOneBitSet(loadCacheSecondarySize), "size should be a power of two.");
     static constexpr uint32_t loadCachePrimaryMask = loadCachePrimarySize - 1;
@@ -116,6 +111,7 @@ public:
         static constexpr ptrdiff_t offsetOfReallocating() { return OBJECT_OFFSETOF(StoreEntry, m_reallocating); }
         static constexpr uint8_t reallocates = 1;
         static constexpr uint8_t allocatesInitialOutOfLineStorage = 2;
+        static constexpr uint8_t addsLazyClosure = 4;
 
         void init(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t epoch, uint16_t offset, uint8_t reallocating)
         {
@@ -178,8 +174,6 @@ public:
     static constexpr ptrdiff_t offsetOfConstructionEntries() { return OBJECT_OFFSETOF(MegamorphicCache, m_constructionEntries); }
     void initAsConstruction(StructureID first, StructureID last, const void* site)
     {
-        if (!noteDependenceOnPrototypes(first))
-            return;
         auto& entry = m_constructionEntries[constructionHash(first, site) & constructionCacheMask];
         entry.m_firstStructureID = first;
         entry.m_lastStructureID = last;
@@ -209,17 +203,6 @@ public:
     static constexpr ptrdiff_t offsetOfEpoch() { return OBJECT_OFFSETOF(MegamorphicCache, m_epoch); }
 
     MegamorphicCache() = default;
-
-#if USE(BUN_JSC_ADDITIONS) && !USE(TZONE_MALLOC)
-    // The empty cache is all zero but for the epoch. Memory that comes zeroed is not written: a page of it costs nothing until an entry in it is looked at.
-    static MegamorphicCache& create()
-    {
-        static_assert(!invalidEpoch);
-        auto* cache = static_cast<MegamorphicCache*>(fastZeroedMalloc(sizeof(MegamorphicCache)));
-        cache->m_epoch = firstEpoch;
-        return *cache;
-    }
-#endif
 
 #if CPU(ADDRESS64)
     // Because Structure is allocated with 16-byte alignment, we should assume that StructureID's lower 4 bits are zeros.
@@ -274,6 +257,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE void age(CollectionScope);
+    JS_EXPORT_PRIVATE void takeOutDead(Heap&);
 
     bool isLiveLoad(const LoadEntry& entry) const { return entry.m_epoch == m_epoch || entry.m_epoch == permanentEpoch; }
 
@@ -289,15 +273,11 @@ public:
 
     void initAsMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (!noteDependenceOnPrototypes(structureID))
-            return;
         makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, m_epoch);
     }
 
     void initAsHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        if (!ownProperty && !noteDependenceOnPrototypes(structureID, holder))
-            return;
         makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, m_epoch, holder, offset, ownProperty);
     }
 
@@ -308,17 +288,14 @@ public:
         makeRoomForLoad(structureID, uid).initAsMiss(structureID, uid, permanentEpoch);
     }
 
-    // Every object of the Structure, which is no dictionary, has the property itself, or finds it in the holder, and nothing on their prototype chain up to the holder can change.
-    void initAsPermanentHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
+    void initAsPermanentHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset)
     {
         m_hasPermanentEntries = true;
-        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, ownProperty);
+        makeRoomForLoad(structureID, uid).initAsHit(structureID, uid, permanentEpoch, holder, offset, false);
     }
 
     void initAsGetterHit(StructureID structureID, UniquedStringImpl* uid, JSCell* holder, uint16_t offset, bool ownProperty)
     {
-        if (!ownProperty && !noteDependenceOnPrototypes(structureID, holder))
-            return;
         uint32_t primaryIndex = MegamorphicCache::primaryHash(structureID, uid) & getterCachePrimaryMask;
         auto& entry = m_getterCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -330,8 +307,6 @@ public:
 
     void initAsTransition(StructureID oldStructureID, StructureID newStructureID, UniquedStringImpl* uid, uint16_t offset, uint8_t reallocating)
     {
-        if (!noteDependenceOnPrototypes(oldStructureID))
-            return;
         uint32_t primaryIndex = MegamorphicCache::storeCachePrimaryHash(oldStructureID, uid) & storeCachePrimaryMask;
         auto& entry = m_storeCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -354,8 +329,6 @@ public:
 
     void initAsHasHit(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (!noteDependenceOnPrototypes(structureID))
-            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -367,8 +340,6 @@ public:
 
     void initAsHasMiss(StructureID structureID, UniquedStringImpl* uid)
     {
-        if (!noteDependenceOnPrototypes(structureID))
-            return;
         uint32_t primaryIndex = MegamorphicCache::hasCachePrimaryHash(structureID, uid) & hasCachePrimaryMask;
         auto& entry = m_hasCachePrimaryEntries[primaryIndex];
         if (entry.m_epoch == m_epoch) {
@@ -379,8 +350,6 @@ public:
     }
 
     uint16_t epoch() const { return m_epoch; }
-
-    JS_EXPORT_PRIVATE static bool NODELETE noteDependenceOnPrototypes(StructureID, JSCell* lastPrototype = nullptr);
 
     const LoadEntry* findLoad(StructureID structureID, UniquedStringImpl* uid) const
     {
@@ -409,8 +378,6 @@ public:
         return true;
     }
 
-    JS_EXPORT_PRIVATE void reconcileWeakReferencesAtGCEnd(VM&);
-
 private:
     JS_EXPORT_PRIVATE void NODELETE clearEntries();
 
@@ -424,7 +391,6 @@ private:
     std::array<GetterEntry, getterCacheSecondarySize> m_getterCacheSecondaryEntries { };
     std::array<ConstructionEntry, constructionCacheSize> m_constructionEntries { };
     uint16_t m_epoch { firstEpoch };
-    bool m_hasBeenReconciled { false };
     bool m_hasPermanentEntries { false };
 };
 

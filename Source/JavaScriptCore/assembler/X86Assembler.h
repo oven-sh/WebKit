@@ -34,6 +34,9 @@
 #include "JITCompilationEffort.h"
 #include "RegisterInfo.h"
 #include "SIMDInfo.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include <algorithm>
+#endif
 #include <limits.h>
 #include <stdint.h>
 #include <wtf/Assertions.h>
@@ -65,6 +68,162 @@ enum XMMRegisterID : int8_t {
 
 } // namespace X86Registers
 
+#if USE(BUN_JSC_ADDITIONS)
+struct X86LinkedJump {
+    uint32_t from;
+    uint32_t to;
+};
+
+struct X86JumpShift {
+    uint32_t from;
+    uint32_t shift;
+};
+
+template<typename Shifts>
+inline uint32_t shiftOfShortenedJumpsAt(const Shifts& shifts, uint32_t offset)
+{
+    auto* begin = shifts.begin();
+    auto* found = std::upper_bound(begin, shifts.end(), offset, [](uint32_t offset, const X86JumpShift& entry) {
+        return offset < entry.from;
+    });
+    return found == begin ? 0 : found[-1].shift;
+}
+
+template<typename Jumps, typename Shifts, typename Numbers, typename Bytes>
+inline size_t shortenX86Jumps(uint8_t* code, size_t size, Jumps& jumps, Shifts& shifts, Numbers& numberOfJumpsUpToTarget, Numbers& shiftAhead, Numbers& undecided, Numbers& firstShiftBehind, Bytes& saving, Bytes& isShort)
+{
+    constexpr uint8_t savingOfConditionalJump = 4;
+    constexpr uint8_t savingOfJump = 3;
+    constexpr uint32_t farthestThatMayComeWithinReach = 384;
+    constexpr unsigned stretchShift = 6;
+    auto savingOf = [&](uint32_t from) -> uint8_t {
+        if (from >= 6 && code[from - 6] == 0x0f && (code[from - 5] & 0xf0) == 0x80)
+            return savingOfConditionalJump;
+        if (from >= 5 && code[from - 5] == 0xe9)
+            return savingOfJump;
+        return 0;
+    };
+    uint32_t all = jumps.size();
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < all; ++i) {
+        X86LinkedJump jump = jumps[i];
+        uint32_t distance = jump.to > jump.from ? jump.to - jump.from : jump.from - jump.to;
+        if (distance > farthestThatMayComeWithinReach || !savingOf(jump.from))
+            continue;
+        jumps[i] = jumps[count];
+        jumps[count++] = jump;
+    }
+    std::sort(jumps.begin(), jumps.begin() + count, [](const X86LinkedJump& a, const X86LinkedJump& b) {
+        return a.from < b.from;
+    });
+    for (uint32_t i = 0; i < count; ++i) {
+        saving[i] = savingOf(jumps[i].from);
+        isShort[i] = 1;
+        uint32_t to = jumps[i].to;
+        uint32_t upTo = i + 1;
+        if (to >= jumps[i].from) {
+            while (upTo < count && jumps[upTo].from <= to)
+                ++upTo;
+        } else {
+            while (upTo && jumps[upTo - 1].from > to)
+                --upTo;
+        }
+        numberOfJumpsUpToTarget[i] = upTo;
+    }
+    auto sumUp = [&] {
+        uint32_t sum = 0;
+        for (uint32_t i = 0; i < count; ++i) {
+            shiftAhead[i] = sum;
+            if (isShort[i])
+                sum += saving[i];
+        }
+        shiftAhead[count] = sum;
+    };
+    auto displacement = [&](uint32_t i, bool asShort) {
+        uint32_t own = asShort ? saving[i] : 0;
+        int64_t from = static_cast<int64_t>(jumps[i].from) - shiftAhead[i] - own;
+        uint32_t upTo = numberOfJumpsUpToTarget[i];
+        int64_t to = static_cast<int64_t>(jumps[i].to) - shiftAhead[upTo] - (upTo > i && !isShort[i] ? own : 0);
+        return to - from;
+    };
+    sumUp();
+    uint32_t numberUndecided = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        int64_t nearest = displacement(i, true);
+        if (nearest >= -128 && nearest <= 127)
+            undecided[numberUndecided++] = i;
+    }
+    for (uint32_t i = 0; i < count; ++i)
+        isShort[i] = 0;
+    for (bool changed = numberUndecided; changed;) {
+        changed = false;
+        sumUp();
+        uint32_t left = 0;
+        for (uint32_t k = 0; k < numberUndecided; ++k) {
+            uint32_t i = undecided[k];
+            int64_t distance = displacement(i, true);
+            if (distance < -128 || distance > 127) {
+                undecided[left++] = i;
+                continue;
+            }
+            isShort[i] = 1;
+            changed = true;
+        }
+        numberUndecided = left;
+    }
+    sumUp();
+    if (!shiftAhead[count])
+        return size;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (isShort[i])
+            shifts.append(X86JumpShift { jumps[i].from, shiftAhead[i + 1] });
+    }
+    uint32_t numberOfShifts = shifts.size();
+    uint32_t numberOfStretches = (size >> stretchShift) + 2;
+    for (uint32_t stretch = 0, next = 0; stretch < numberOfStretches; ++stretch) {
+        while (next < numberOfShifts && shifts[next].from < stretch << stretchShift)
+            ++next;
+        firstShiftBehind[stretch] = next;
+    }
+    auto shiftAt = [&](uint32_t offset) -> uint32_t {
+        uint32_t next = firstShiftBehind[offset >> stretchShift];
+        while (next < numberOfShifts && shifts[next].from <= offset)
+            ++next;
+        return next ? shifts[next - 1].shift : 0;
+    };
+    auto setDisplacement = [&](uint32_t from, int64_t distance) {
+        int32_t narrow = static_cast<int32_t>(distance);
+        memcpy(code + from - 4, &narrow, 4);
+    };
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!isShort[i])
+            setDisplacement(jumps[i].from, displacement(i, false));
+    }
+    for (uint32_t i = count; i < all; ++i) {
+        X86LinkedJump jump = jumps[i];
+        setDisplacement(jump.from, (static_cast<int64_t>(jump.to) - shiftAt(jump.to)) - (static_cast<int64_t>(jump.from) - shiftAt(jump.from)));
+    }
+    size_t in = 0;
+    size_t out = 0;
+    for (uint32_t i = 0; i < count; ++i) {
+        if (!isShort[i])
+            continue;
+        uint32_t from = jumps[i].from;
+        size_t start = from - (saving[i] == savingOfConditionalJump ? 6 : 5);
+        if (out != in)
+            memmove(code + out, code + in, start - in);
+        out += start - in;
+        int64_t distance = displacement(i, true);
+        code[out] = saving[i] == savingOfConditionalJump ? 0x70 | (code[from - 5] & 0x0f) : 0xeb;
+        code[out + 1] = static_cast<uint8_t>(static_cast<int8_t>(distance));
+        out += 2;
+        in = from;
+    }
+    memmove(code + out, code + in, size - in);
+    return out + size - in;
+}
+
+#endif
 class X86Assembler {
 public:
     typedef X86Registers::RegisterID RegisterID;
@@ -6384,7 +6543,40 @@ public:
         char* code = static_cast<char*>(m_formatter.data());
         ASSERT(!WTF::unalignedLoad<int32_t>(std::bit_cast<int32_t*>(code + from.offset()) - 1));
         setRel32(code + from.offset(), code + to.offset());
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_notesLinkedJumps) [[unlikely]]
+            m_linkedJumps.append(X86LinkedJump { from.offset(), to.offset() });
+#endif
     }
+#if USE(BUN_JSC_ADDITIONS)
+
+    void noteLinkedJumps() { m_notesLinkedJumps = true; }
+
+    void shortenLinkedJumps()
+    {
+        unsigned count = m_linkedJumps.size();
+        if (!count)
+            return;
+        Vector<uint32_t> numberOfJumpsUpToTarget;
+        numberOfJumpsUpToTarget.fill(0, count);
+        Vector<uint32_t> shiftAhead;
+        shiftAhead.fill(0, count + 1);
+        Vector<uint32_t> undecided;
+        undecided.fill(0, count);
+        Vector<uint32_t> firstShiftBehind;
+        firstShiftBehind.fill(0, (codeSize() >> 6) + 2);
+        Vector<uint8_t> saving;
+        saving.fill(0, count);
+        Vector<uint8_t> isShort;
+        isShort.fill(0, count);
+        size_t size = shortenX86Jumps(static_cast<uint8_t*>(m_formatter.data()), codeSize(), m_linkedJumps, m_shiftsOfShortenedJumps, numberOfJumpsUpToTarget, shiftAhead, undecided, firstShiftBehind, saving, isShort);
+        m_formatter.m_buffer.setCodeSize(size);
+        m_linkedJumps.clear();
+        m_notesLinkedJumps = false;
+    }
+
+    Vector<X86JumpShift> takeShiftsOfShortenedJumps() { return std::exchange(m_shiftsOfShortenedJumps, { }); }
+#endif
     
     static void linkJump(void* code, AssemblerLabel from, void* to)
     {
@@ -7489,6 +7681,11 @@ private:
     } m_formatter;
     int m_indexOfLastWatchpoint;
     int m_indexOfTailOfLastWatchpoint;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_notesLinkedJumps { false };
+    Vector<X86LinkedJump> m_linkedJumps;
+    Vector<X86JumpShift> m_shiftsOfShortenedJumps;
+#endif
 };
 
 } // namespace JSC

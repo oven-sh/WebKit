@@ -10,8 +10,16 @@
         ValueID keys;
         Word32 structureID;
         Word32 orderWord;
+        Word32 finalStructureID;
+        Integer inlineCapacity;
     };
     Vector<ForInStamp, 2> m_forInStamps;
+    bool isForInKeys(const Value&) const;
+    bool isTestOfForInStamp(const Value&) const;
+    bool isAskedForFinalObject(ValueID keys) const;
+    void branchOnForInStamp(const Value&, LBasicBlock isAsListed, LBasicBlock isNot);
+    const ForInStamp* forInStampOf(ValueID object, ValueID key) const;
+    CellPointer isAsListedOrElse(const ForInStamp&, Boxed object, LBasicBlock otherwise);
     ValueID originOf(ValueID) const;
     Operand lowerForInKeys(ValueID result, const Value&);
     Operand lowerHasEnumerableProperty(ValueID result, const Value&);

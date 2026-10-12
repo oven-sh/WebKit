@@ -1381,9 +1381,6 @@ static JSArray* getPropertyKeys(JSGlobalObject* globalObject, JSObject* object, 
             Structure* arrayStructure = globalObject->originalArrayStructureForIndexingType(immutableButterfly->indexingMode());
             return JSArray::createWithButterfly(vm, nullptr, arrayStructure, immutableButterfly->toButterfly());
         }
-#if USE(BUN_JSC_ADDITIONS)
-        object->flattenIfCacheableDictionary(vm);
-#endif
 #if ENABLE(AOT)
         // Without extra properties all its keys are strings, and all its properties are enumerable.
         if (!Inherit && propertyNameMode != PropertyNameMode::Symbols && object->structure()->compiledLayout()) [[unlikely]] {

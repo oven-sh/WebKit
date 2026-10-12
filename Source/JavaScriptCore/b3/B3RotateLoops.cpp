@@ -22,16 +22,19 @@ namespace {
 
 class RotateLoops {
 public:
-    RotateLoops(Procedure& proc)
+    RotateLoops(Procedure& proc, const Vector<BasicBlock*>* onlyWithTheseHeaders)
         : m_proc(proc)
+        , m_onlyWithTheseHeaders(onlyWithTheseHeaders)
     {
     }
 
     bool run()
     {
         NaturalLoops& loops = m_proc.naturalLoops();
-        for (unsigned loopIndex = loops.numLoops(); loopIndex--;)
-            considerLoop(loops, loops.loop(loopIndex));
+        for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
+            if (!m_onlyWithTheseHeaders || m_onlyWithTheseHeaders->contains(loops.loop(loopIndex).header()))
+                considerLoop(loops, loops.loop(loopIndex));
+        }
         if (m_rotations.isEmpty())
             return false;
 
@@ -75,6 +78,23 @@ private:
         return true;
     }
 
+    static bool isTestedAtTheBottom(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* latch)
+    {
+        BasicBlock* block = latch;
+        for (unsigned i = 0; i < maxNumberOfRareBlocks; ++i) {
+            if (block->last()->opcode() == Branch)
+                return !loops.belongsTo(block->successorBlock(0), loop) || !loops.belongsTo(block->successorBlock(1), loop);
+            if (block->last()->opcode() != Jump || block->numPredecessors() != 1 || block == loop.header())
+                return false;
+            for (Value* value : *block) {
+                if (takesInstructions(value))
+                    return false;
+            }
+            block = block->predecessor(0);
+        }
+        return false;
+    }
+
     void considerLoop(NaturalLoops& loops, const NaturalLoop& loop)
     {
         Rotation rotation;
@@ -84,6 +104,12 @@ private:
         }
         if (rotation.latches.isEmpty())
             return;
+        if (m_onlyWithTheseHeaders) {
+            for (BasicBlock* latch : rotation.latches) {
+                if (isTestedAtTheBottom(loops, loop, latch))
+                    return;
+            }
+        }
         for (const NaturalLoop* outer = loops.innerMostOuterLoop(loop); outer; outer = loops.innerMostOuterLoop(*outer))
             ++rotation.depth;
 
@@ -190,6 +216,7 @@ private:
     }
 
     Procedure& m_proc;
+    const Vector<BasicBlock*>* m_onlyWithTheseHeaders;
     Vector<Rotation> m_rotations;
     IndexSet<BasicBlock*> m_testBlocks;
 };
@@ -214,10 +241,10 @@ bool simplifyTerminals(Procedure& proc)
     return changed;
 }
 
-bool rotateLoops(Procedure& proc)
+bool rotateLoops(Procedure& proc, const Vector<BasicBlock*>* onlyWithTheseHeaders)
 {
     PhaseScope phaseScope(proc, "rotateLoops"_s);
-    RotateLoops rotateLoops(proc);
+    RotateLoops rotateLoops(proc, onlyWithTheseHeaders);
     return rotateLoops.run();
 }
 

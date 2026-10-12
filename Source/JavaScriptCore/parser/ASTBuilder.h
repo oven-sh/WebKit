@@ -60,6 +60,7 @@ class ASTBuilder {
         bool hasAssignment;
     };
     
+    
     struct AssignmentInfo {
         AssignmentInfo() {}
         AssignmentInfo(ExpressionNode* node, const JSTextPosition& start, const JSTextPosition& divot, int initAssignments, Operator op)
@@ -130,7 +131,6 @@ public:
 
     ExpressionNode* makeBinaryNode(const JSTokenLocation&, int token, std::pair<ExpressionNode*, BinaryOpInfo>, std::pair<ExpressionNode*, BinaryOpInfo>);
     ExpressionNode* makeStaticBlockFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
-    std::optional<unsigned> soundTypeCheckMask(const Identifier& callee, ArgumentsNode*);
     ExpressionNode* makeFunctionCallNode(const JSTokenLocation&, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall);
 
     JSC::SourceElements* createSourceElements() { return new (m_parserArena) JSC::SourceElements(); }
@@ -213,13 +213,6 @@ public:
     ExpressionNode* createPrivateIdentifierNode(const JSTokenLocation& location, const Identifier& ident)
     {
         return new (m_parserArena) PrivateIdentifierNode(location, ident);
-    }
-    void setTypeTag(ExpressionNode* node, uint32_t tag) { node->setTypeTag(tag); }
-    void setClassTypeTag(ClassExprNode* node, uint32_t tag) { node->setTypeTag(tag); }
-    ArgumentsNode* withTypeTag(ArgumentsNode* node, uint32_t tag)
-    {
-        node->setTypeTag(tag);
-        return node;
     }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location) { return new (m_parserArena) ObjectLiteralNode(location); }
     ExpressionNode* createObjectLiteral(const JSTokenLocation& location, PropertyListNode* properties) { return new (m_parserArena) ObjectLiteralNode(location, properties); }
@@ -1046,9 +1039,9 @@ public:
         return new (m_parserArena) ObjectPatternNode();
     }
 
-    void appendObjectPatternEntry(ObjectPattern node, const JSTokenLocation& location, bool wasString, const Identifier& identifier, DestructuringPattern pattern, ExpressionNode* defaultValue, uint32_t typeTag)
+    void appendObjectPatternEntry(ObjectPattern node, const JSTokenLocation& location, bool wasString, const Identifier& identifier, DestructuringPattern pattern, ExpressionNode* defaultValue)
     {
-        node->appendEntry(location, identifier, wasString, pattern, defaultValue, ObjectPatternNode::BindingType::Element, typeTag);
+        node->appendEntry(location, identifier, wasString, pattern, defaultValue, ObjectPatternNode::BindingType::Element);
         tryInferNameInPattern(pattern, defaultValue);
     }
 
@@ -1468,31 +1461,6 @@ ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocatio
     return new (m_parserArena) StaticBlockFunctionCallNode(location, func, divot, divotStart, divotEnd);
 }
 
-inline std::optional<unsigned> ASTBuilder::soundTypeCheckMask(const Identifier& callee, ArgumentsNode* args)
-{
-    if (!m_vm.bytecodeGenerationOptions.useSoundTypes)
-        return std::nullopt;
-    if (callee.length() != 3 || callee.string() != "$$t"_s)
-        return std::nullopt;
-    ArgumentListNode* first = args->m_listNode;
-    if (!first || first->m_expr->isSpreadExpression())
-        return std::nullopt;
-    ArgumentListNode* second = first->m_next;
-    if (!second || !second->m_expr->isNumber() || !static_cast<NumberNode*>(second->m_expr)->isIntegerNode())
-        return std::nullopt;
-    if (ArgumentListNode* third = second->m_next) {
-        if (third->m_next || !third->m_expr->isNumber() || !static_cast<NumberNode*>(third->m_expr)->isIntegerNode())
-            return std::nullopt;
-        double type = static_cast<NumberNode*>(third->m_expr)->value();
-        if (!(type >= 0 && type <= std::numeric_limits<uint32_t>::max()))
-            return std::nullopt;
-    }
-    double mask = static_cast<NumberNode*>(second->m_expr)->value();
-    if (!(mask >= 1 && mask < SoundTypeMaskEnd) || mask != static_cast<unsigned>(mask) || !isValidSoundTypeMask(static_cast<unsigned>(mask)))
-        return std::nullopt;
-    return static_cast<unsigned>(mask);
-}
-
 ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall)
 {
     if (func->isSuperNode())
@@ -1523,17 +1491,7 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
             usesEval();
             return new (m_parserArena) EvalFunctionCallNode(location, args, divot, divotStart, divotEnd);
         }
-        if (!isOptionalCall) {
-            if (auto mask = soundTypeCheckMask(identifier, args)) {
-                auto* check = new (m_parserArena) SoundTypeCheckNode(location, args->m_listNode->m_expr, *mask, divot, divotStart, divotEnd);
-                if (ArgumentListNode* type = args->m_listNode->m_next->m_next)
-                    check->setTypeTag(static_cast<uint32_t>(static_cast<NumberNode*>(type->m_expr)->value()));
-                return check;
-            }
-        }
-        auto* call = new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
-        call->setTypeTag(resolve->typeTag());
-        return call;
+        return new (m_parserArena) FunctionCallResolveNode(location, identifier, args, divot, divotStart, divotEnd, isOptionalCall);
     }
     if (func->isBracketAccessorNode()) {
         BracketAccessorNode* bracket = static_cast<BracketAccessorNode*>(func);
@@ -1573,7 +1531,6 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
     if (!node)
         node = new (m_parserArena) FunctionCallDotNode(location, dot->base(), dot->identifier(), dot->type(), args, divot, divotStart, divotEnd, isOptionalCall);
     node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
-    node->setTypeTag(dot->typeTag());
     return node;
 }
 
@@ -1722,21 +1679,16 @@ ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, Expr
     ASSERT(loc->isDotAccessorNode());
     DotAccessorNode* dot = static_cast<DotAccessorNode*>(loc);
 
-    if (op == Operator::Equal) {
-        auto* assign = new (m_parserArena) AssignDotNode(location, dot->base(), dot->identifier(), dot->type(), expr, exprHasAssignments, dot->divot(), start, end);
-        assign->setTypeTag(dot->typeTag());
-        return assign;
-    }
+    if (op == Operator::Equal)
+        return new (m_parserArena) AssignDotNode(location, dot->base(), dot->identifier(), dot->type(), expr, exprHasAssignments, dot->divot(), start, end);
 
     if (op == Operator::CoalesceEq || op == Operator::OrEq || op == Operator::AndEq) {
         auto* node = new (m_parserArena) ShortCircuitReadModifyDotNode(location, dot->base(), dot->identifier(), dot->type(), op, expr, exprHasAssignments, divot, start, end);
-        node->setTypeTag(dot->typeTag());
         node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
         return node;
     }
 
     ReadModifyDotNode* node = new (m_parserArena) ReadModifyDotNode(location, dot->base(), dot->identifier(), dot->type(), op, expr, exprHasAssignments, divot, start, end);
-    node->setTypeTag(dot->typeTag());
     node->setSubexpressionInfo(dot->divot(), dot->divotEnd().offset);
     return node;
 }

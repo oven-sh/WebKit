@@ -76,6 +76,7 @@ FunctionExecutable* FunctionExecutable::createInShortForm(VM& vm, const uint64_t
 
 extern "C" {
 JS_EXPORT_PRIVATE void* g_aotStaticFunctionEntrypoints[3] { };
+JS_EXPORT_PRIVATE void* g_aotSlimClosureEntrypoint { nullptr };
 }
 
 CodePtr<JSEntryPtrTag> ExecutableBase::staticCodeEntrypoint(CodeSpecializationKind kind) const

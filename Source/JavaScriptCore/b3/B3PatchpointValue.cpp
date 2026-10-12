@@ -46,6 +46,8 @@ void PatchpointValue::dumpMeta(CommaPrinter& comma, PrintStream& out) const
 #if USE(BUN_JSC_ADDITIONS)
     if (pureFunctionKey)
         out.print(comma, "pureFunctionKey = "_s, pureFunctionKey);
+    if (pureFunctionOfChildrenKey)
+        out.print(comma, "pureFunctionOfChildrenKey = "_s, pureFunctionOfChildrenKey);
 #endif
     if (numGPScratchRegisters)
         out.print(comma, "numGPScratchRegisters = "_s, numGPScratchRegisters);

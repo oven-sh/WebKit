@@ -17,6 +17,7 @@
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
+#include <wtf/IndexMap.h>
 
 namespace JSC { namespace B3 {
 
@@ -38,11 +39,12 @@ public:
         if (!loops.numLoops())
             return false;
         m_proc.resetValueOwners();
+        m_numberOfUses.resize(m_proc.values().size());
         for (Value* value : m_proc.values()) {
             for (Value* child : value->children())
-                m_numberOfUses.add(child, 0).iterator->value++;
+                m_numberOfUses[child]++;
         }
-        UpsilonsByPhi upsilonsByPhi = collectUpsilonsByPhi(m_proc);
+        UpsilonsByPhi upsilonsByPhi(m_proc);
         Vector<std::pair<CountedLoop, Poll>> countedLoops;
         for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
             const NaturalLoop& loop = loops.loop(loopIndex);
@@ -92,13 +94,13 @@ private:
                 result.limit = value;
             }
         }
-        if (!result.limit || m_numberOfUses.get(result.limit) != 1)
+        if (!result.limit || m_numberOfUses[result.limit] != 1)
             return std::nullopt;
         result.block = result.limit->owner;
         if (result.block->last()->opcode() != Branch)
             return std::nullopt;
         result.condition = result.block->last()->child(0);
-        if (result.condition->owner != result.block || m_numberOfUses.get(result.condition) != 1 || result.condition->numChildren() != 2)
+        if (result.condition->owner != result.block || m_numberOfUses[result.condition] != 1 || result.condition->numChildren() != 2)
             return std::nullopt;
         unsigned indexOfLimit = result.condition->child(0) == result.limit ? 0 : 1;
         if (result.condition->child(indexOfLimit) != result.limit || !result.condition->child(1 - indexOfLimit)->hasInt64())
@@ -118,7 +120,7 @@ private:
                 return std::nullopt;
             result.handler = value;
         }
-        if (!result.handler || result.handler == result.slowPath->last() || m_numberOfUses.get(result.handler))
+        if (!result.handler || result.handler == result.slowPath->last() || m_numberOfUses[result.handler])
             return std::nullopt;
         for (Value* child : result.handler->children()) {
             if (loops.belongsTo(child->owner, loop) && !child->isConstant())
@@ -196,7 +198,7 @@ private:
     }
 
     Procedure& m_proc;
-    UncheckedKeyHashMap<Value*, unsigned> m_numberOfUses;
+    IndexMap<Value*, unsigned> m_numberOfUses;
 };
 
 } // anonymous namespace

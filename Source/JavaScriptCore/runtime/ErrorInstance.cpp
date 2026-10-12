@@ -160,6 +160,7 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
 
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
+    m_returnAddresses = nullptr;
     // A collection may already have formatted the frames these replace.
     m_stackString = String();
     m_hasErrorInfo = false;
@@ -178,6 +179,8 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
         Locker locker { errorInstance->cellLock() };
         if (errorInstance->m_stackTrace)
             size += errorInstance->m_stackTrace->sizeInBytes();
+        if (errorInstance->m_returnAddresses)
+            size += errorInstance->m_returnAddresses->returnAddresses.sizeInBytes();
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
     }
@@ -185,8 +188,27 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
     return Base::estimatedSize(cell, vm) + size;
 }
 
+void ErrorInstance::materializeStackTrace()
+{
+    auto stackTrace = makeUnique<Vector<StackFrame>>();
+    StackFrame::appendTypedFrames(*m_returnAddresses, *stackTrace);
+    if (m_stackTrace)
+        stackTrace->appendVector(*m_stackTrace);
+    Locker locker { cellLock() };
+    m_stackTrace = WTF::move(stackTrace);
+    m_returnAddresses = nullptr;
+}
+
 void ErrorInstance::captureStackTrace(VM& vm, JSGlobalObject* globalObject, size_t framesToSkip, bool append)
 {
+    if (m_returnAddresses) {
+        if (append)
+            materializeStackTrace();
+        else {
+            Locker locker { cellLock() };
+            m_returnAddresses = nullptr;
+        }
+    }
     {
         Locker locker { cellLock() };
 
@@ -222,16 +244,29 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     m_sourceAppender = appender;
     m_runtimeTypeForCause = type;
 
-    std::unique_ptr<Vector<StackFrame>> stackTrace = getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller);
+    std::unique_ptr<Vector<StackFrame>> stackTrace;
+    std::unique_ptr<AOT::ReturnAddressTrace> returnAddresses;
+#if ENABLE(AOT)
+    if (vm.useImmutableIntrinsics) [[unlikely]] {
+        static const bool keepsReturnAddresses = getenv("BUN_AOT_SWITCH_LAZY_TRACES");
+        if (keepsReturnAddresses && useCurrentFrame && !subclassCaller) {
+            if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
+                returnAddresses = vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
+        }
+    }
+#endif
+    if (!returnAddresses)
+        stackTrace = getStackTrace(vm, this, useCurrentFrame, nullptr, nullptr, subclassCaller);
     {
         Locker locker { cellLock() };
         m_stackTrace = WTF::move(stackTrace);
+        m_returnAddresses = WTF::move(returnAddresses);
     }
     vm.writeBarrier(this);
 
     String messageWithSource = message;
 
-    if (m_stackTrace && !m_stackTrace->isEmpty() && hasSourceAppender()) {
+    if (hasSourceAppender() && (m_returnAddresses || (m_stackTrace && !m_stackTrace->isEmpty()))) {
         if (auto quote = quoteSourceWithoutText(vm, vm.topCallFrame)) {
             ErrorInstance::SourceAppender appender = sourceAppender();
             clearSourceAppender();
@@ -316,6 +351,7 @@ void ErrorInstance::setErrorInfoForEmbedderError(LineColumn lineColumn, String&&
     {
         Locker locker { cellLock() };
         m_stackTrace = nullptr;
+        m_returnAddresses = nullptr;
     }
     m_lineColumn = lineColumn;
     m_sourceURL = WTF::move(sourceURL);
@@ -431,6 +467,12 @@ void ErrorInstance::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope)
         m_capturedStackTrace->clear();
     }
 
+#if ENABLE(AOT)
+    if (m_returnAddresses && !vm.heap.isMarked(AOT::tokenOf(m_returnAddresses->instance))) {
+        computeErrorInfo(vm, false);
+        return;
+    }
+#endif
     if (m_stackTrace && hasUnmarkedFrame(vm, *m_stackTrace))
         computeErrorInfo(vm, false);
 }
@@ -442,6 +484,8 @@ void ErrorInstance::computeErrorInfo(VM& vm, bool allocationAllowed)
     // that case, DeferGC's destructor might trigger another GC cycle which is unexpected.
     DeferGCForAWhile deferGC(vm);
     UNUSED_PARAM(allocationAllowed);
+    if (m_returnAddresses)
+        materializeStackTrace();
 
     if (m_stackTrace && !m_stackTrace->isEmpty()) {
         auto& fn = vm.onComputeErrorInfo();
@@ -498,6 +542,8 @@ bool ErrorInstance::materializeErrorInfoIfNeeded(VM& vm)
     bool materializedCapturedStackProperty = materializeCapturedStackPropertyIfSaved(vm);
     if (m_errorInfoMaterialized)
         return materializedCapturedStackProperty;
+    if (m_returnAddresses)
+        materializeStackTrace();
 
 #if USE(BUN_JSC_ADDITIONS)
 

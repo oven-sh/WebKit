@@ -83,7 +83,18 @@ void Structure::forEachPropertyConcurrently(NOESCAPE const Functor& functor)
     UncheckedKeyHashSet<UniquedStringImpl*> seenProperties;
 
     for (auto* structure : structures) {
-        if (!structure->m_transitionPropertyName || seenProperties.contains(structure->m_transitionPropertyName.get()))
+        if (!structure->m_transitionPropertyName) {
+            int number = 0;
+            for (UniquedStringImpl* name : structure->namesIfNumbered()) {
+                PropertyOffset offset = offsetForPropertyNumber(number++, structure->m_inlineCapacity);
+                if (!seenProperties.add(name).isNewEntry)
+                    continue;
+                if (!functor(PropertyTableEntry(name, offset, 0)))
+                    return;
+            }
+            continue;
+        }
+        if (seenProperties.contains(structure->m_transitionPropertyName.get()))
             continue;
 
         seenProperties.add(structure->m_transitionPropertyName.get());
@@ -247,6 +258,13 @@ inline PropertyOffset Structure::nextOffsetFor(PropertyTable* table, UniquedStri
             return table->nextOffset(m_inlineCapacity, false, false);
     }
     return table->nextOffset(m_inlineCapacity, !m_typedLayoutID);
+}
+
+inline unsigned Structure::numberOfPropertiesOfDictionary() const
+{
+    ASSERT(isDictionary());
+    PropertyTable* table = m_propertyTableUnsafe.get();
+    return table ? table->size() : std::numeric_limits<unsigned>::max();
 }
 
 template<Structure::ShouldPin shouldPin, typename Func>

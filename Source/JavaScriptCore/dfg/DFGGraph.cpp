@@ -308,8 +308,6 @@ void Graph::dump(PrintStream& out, const char* prefixStr, Node* node, DumpContex
             }
         }
     }
-    if (node->hasSoundTypeMask())
-        out.print(comma, SoundTypeMaskDump(node->soundTypeMask()));
     if (node->hasQueriedType()) {
         JSTypeRange range = node->queriedType();
         if (range.first == range.last)

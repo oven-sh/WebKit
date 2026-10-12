@@ -63,11 +63,17 @@ ALWAYS_INLINE AOT::ImageAddressInfo StackVisitor::classify(const void* address)
         return m_classification;
     m_classifiedAddress = address;
     // What was asked about before is a return address into a function.
-    if (m_onlyAOTInstance && address) {
-        if (auto& asked = m_onlyAOTInstance->cachedAddressInfo(address); asked.address == address)
-            return m_classification = { AOT::ImageAddressInfo::Function, asked.function, 0 };
+    if (AOT::Instance* instance = m_onlyAOTInstance ? m_onlyAOTInstance : m_aotInstance; instance && address) {
+        if (auto* asked = instance->findCachedReturnAddress(address))
+            return m_classification = { AOT::ImageAddressInfo::Function, asked->function, 0 };
     }
     return m_classification = AOT::classifyAddress(address);
+}
+
+static NEVER_INLINE bool isFrameOfHostFunction(CallFrame* callFrame)
+{
+    JSValue callee = callFrame->guaranteedJSValueCallee();
+    return callee.isCell() && callee.asCell()->type() != JSFunctionType && !isSlimClosureType(callee.asCell()->type()) && !callFrame->isZombieFrame();
 }
 #endif
 
@@ -77,6 +83,10 @@ ALWAYS_INLINE CallFrame* StackVisitor::skipStubFrames(CallFrame* callFrame, Entr
     while (callFrame) {
         switch (classify(removeCodePtrTag(returnPC)).kind) {
         case AOT::ImageAddressInfo::Stub:
+            if (m_classification.index == AOT::ImageAddressInfo::frameMayBeOfHostFunction && isFrameOfHostFunction(callFrame)) [[unlikely]] {
+                returnPC = nullptr;
+                return callFrame;
+            }
             if (callFrame->callerFrameOrEntryFrame() == entryFrame) {
                 returnPC = nullptr;
                 return callFrame;
@@ -120,8 +130,6 @@ ALWAYS_INLINE void StackVisitor::findCaller(CallFrame* callFrame)
 }
 
 #if ENABLE(AOT)
-// What readFrame() and readAOTFrame() come to from a frame of compiled code to a caller that is one too, with no adapter between them, whose return address and call site were asked
-// about before, and whose function has no inlined frames. What readAOTFrame() gave the frame before and would give again is left as it is.
 ALWAYS_INLINE bool StackVisitor::tryGotoCompiledCaller()
 {
     using Asked = AOT::Instance::CachedAddressInfo;
@@ -129,23 +137,320 @@ ALWAYS_INLINE bool StackVisitor::tryGotoCompiledCaller()
     if (!m_frame.m_aotFunction || !m_aotInstance || !callFrame || callFrame == m_frame.m_callFrame)
         return false;
     void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
-    auto& asked = m_aotInstance->cachedAddressInfo(returnPC);
-    if (!returnPC || asked.address != returnPC || asked.site >= Asked::hasNoSite || m_aotInstance->callSiteOverrides)
+    const Asked* found = returnPC ? m_aotInstance->findCachedReturnAddress(returnPC) : nullptr;
+    if (!found || found->site >= Asked::hasNoSite || m_aotInstance->callSiteOverrides)
         return false;
+    auto& asked = *found;
     AOT::FunctionRef function { m_aotInstance, asked.function };
     auto& info = function.info();
-    if (info.hasInlineFrames)
-        return false;
+    uint32_t site = asked.site;
+    unsigned inlineFrame = 0;
+    uint32_t typedFunction = info.isTyped ? info.typedFunction() : AOT::FunctionRef::none;
+    if (info.hasInlineFrames) {
+        if (!info.isTyped)
+            return false;
+        if (!m_wantsOnlyHandlers || !info.hasNoHandlers)
+            inlineFrame = AOT::PackedSite::inlineFrame(site);
+        site = AOT::PackedSite::bits(site);
+        if (inlineFrame)
+            typedFunction = m_inlineFramesRead.at(*info.function(), inlineFrame).function;
+    }
     m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
     m_frame.m_callFrame = callFrame;
     m_previousReturnPC = returnPC;
     m_frame.m_returnPC = returnPC;
     m_frame.m_frameAOTFunction = function;
     m_frame.m_aotFunction = function;
-    m_frame.m_typedAOTFunction = info.isTyped ? info.typedFunction() : AOT::FunctionRef::none;
-    m_frame.m_bytecodeIndex = CallSiteIndex(asked.site).bytecodeIndex();
+    m_frame.m_aotInlineFrame = inlineFrame;
+    m_frame.m_typedAOTFunction = typedFunction;
+    m_frame.m_bytecodeIndex = CallSiteIndex(site).bytecodeIndex();
     m_frame.m_codeBlock = function.codeBlockIfExists();
     findCaller(callFrame);
+    if (m_frame.m_aotAdapterFrame)
+        m_aotInstance = nullptr;
+    return true;
+}
+
+static ALWAYS_INLINE bool entryIsOfConstruction(AOT::Instance* instance, CallFrame* frameUnderEntryFrame, EntryFrame* entryFrame)
+{
+    return AOT::isEnteredByConstruction(instance, vmEntryRecord(entryFrame)->prevTopCallFrame()) && frameUnderEntryFrame && frameUnderEntryFrame->callerFrameOrEntryFrame() == entryFrame;
+}
+
+NEVER_INLINE bool StackVisitor::isEnteredByConstruction()
+{
+    return entryIsOfConstruction(m_frame.m_aotFunction.instance, m_frame.m_aotAdapterFrame ? m_frame.m_aotAdapterFrame : m_frame.m_callerFrame, m_frame.m_entryFrame);
+}
+
+bool StackVisitor::isAtConstructedCompiledFrame()
+{
+    if (!m_frame.isTypedAOTFrame() || !m_frame.m_aotFunction.instance)
+        return false;
+    if (m_frame.m_aotInlineFrame) [[unlikely]]
+        return isAtConstructedInlineFrame();
+    return isCalledByConstruction();
+}
+
+NEVER_INLINE bool StackVisitor::isAtConstructedInlineFrame()
+{
+    auto& info = m_frame.m_aotFunction.info();
+    for (unsigned frame = m_frame.m_aotInlineFrame; frame;) {
+        auto& inlineFrame = m_inlineFramesRead.at(*info.function(), frame);
+        if (inlineFrame.isConstruction())
+            return true;
+        frame = inlineFrame.parent;
+        if (!AOT::typedFunctionWraps(frame ? m_inlineFramesRead.at(*info.function(), frame).function : info.typedFunction(), m_frame.m_typedAOTFunction))
+            return false;
+    }
+    return isCalledByConstruction();
+}
+
+ALWAYS_INLINE bool StackVisitor::isCalledByConstruction()
+{
+    using Place = AOT::Instance::PlaceInTrace;
+    AOT::Instance* instance = m_frame.m_aotFunction.instance;
+    void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    if (m_frame.m_aotAdapterFrame || !returnPC)
+        return isEnteredByConstruction();
+    auto* found = instance->findCachedReturnAddress(returnPC);
+    if (!found) [[unlikely]]
+        found = instance->resolveReturnAddress(returnPC);
+    if (!found)
+        return false;
+    size_t index = found - instance->cachedReturnAddresses;
+    const Place& place = instance->placesInTraces()[index];
+    if (place.kind == Place::IsShown)
+        return false;
+    if (place.kind == Place::IsHidden) {
+        auto* above = instance->findCachedReturnAddress(removeCodePtrTag(m_frame.m_callerFrame->rawReturnPC()));
+        if (above && instance->placesInTraces()[above - instance->cachedReturnAddresses].kind == Place::IsShown)
+            return false;
+    } else if (instance->placesInUnwinding()[index].siteIsInShownFunction && !place.calleeIsConstructed())
+        return false;
+    return isCalledByConstructionOrConstructedWrapper();
+}
+
+NEVER_INLINE bool StackVisitor::isCalledByConstructionOrConstructedWrapper()
+{
+    using Place = AOT::Instance::PlaceInTrace;
+    AOT::Instance* instance = m_frame.m_aotFunction.instance;
+    EntryFrame* entryFrame = m_frame.m_callerEntryFrame;
+    CallFrame* callFrame = m_frame.m_callerFrame;
+    void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    while (callFrame && returnPC) {
+        auto* found = instance->findCachedReturnAddress(returnPC);
+        if (!found)
+            break;
+        size_t index = found - instance->cachedReturnAddresses;
+        const Place& place = instance->placesInTraces()[index];
+        if (place.kind == Place::IsShown || (instance->placesInUnwinding()[index].siteIsInShownFunction && !place.calleeIsConstructed()))
+            return false;
+        if (place.kind != Place::IsHidden)
+            break;
+        CallFrame* adapter = nullptr;
+        returnPC = callFrame->rawReturnPC();
+        callFrame = skipStubFrames(callFrame->callerFrame(), entryFrame, returnPC, adapter);
+        returnPC = removeCodePtrTag(returnPC);
+        if (adapter)
+            break;
+    }
+    entryFrame = m_frame.m_callerEntryFrame;
+    callFrame = m_frame.m_callerFrame;
+    returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    while (callFrame && returnPC) {
+        auto* found = instance->resolveReturnAddress(returnPC);
+        if (!found)
+            return false;
+        if (instance->placesInTraces()[found - instance->cachedReturnAddresses].calleeIsConstructed())
+            return true;
+        AOT::FunctionRef function { instance, found->function };
+        if (!function.info().isTyped)
+            return false;
+        auto location = function.locationForReturnAddress(returnPC, callFrame, &m_inlineFramesRead);
+        if (!AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction)) {
+            if (auto* again = instance->findCachedReturnAddress(returnPC))
+                instance->placesInUnwinding()[again - instance->cachedReturnAddresses].siteIsInShownFunction = true;
+            return false;
+        }
+        for (;; location = function.inlineCallSiteLocation(location.inlineFrame, m_inlineFramesRead)) {
+            if (!AOT::typedFunctionWraps(location.typedFunction, m_frame.m_typedAOTFunction))
+                return false;
+            if (!location.inlineFrame)
+                break;
+            if (location.isConstructed)
+                return true;
+        }
+        CallFrame* adapter = nullptr;
+        EntryFrame* entryFrameOfCallee = entryFrame;
+        returnPC = callFrame->rawReturnPC();
+        callFrame = skipStubFrames(callFrame->callerFrame(), entryFrame, returnPC, adapter);
+        returnPC = removeCodePtrTag(returnPC);
+        if (adapter)
+            return entryIsOfConstruction(instance, adapter, entryFrameOfCallee);
+    }
+    return !returnPC && entryIsOfConstruction(instance, callFrame, entryFrame);
+}
+
+static NEVER_INLINE void markAsConstructed(AOT::FrameInTrace& lastShown, AOT::Instance* instance, const void* returnAddressInCallee)
+{
+    lastShown.setRootOfConstructed(AOT::FunctionRef { instance, AOT::classifyAddress(returnAddressInCallee).index }.info().typedFunction());
+}
+
+unsigned StackVisitor::gotoLastOfPlainCompiledCallers(std::span<AOT::FrameInTrace> shown)
+{
+    using Asked = AOT::Instance::CachedAddressInfo;
+    using Place = AOT::Instance::PlaceInTrace;
+    AOT::Instance* instance = m_aotInstance;
+    CallFrame* callFrame = m_frame.m_callerFrame;
+    if (!m_frame.m_aotFunction || m_frame.m_aotInlineFrame || !instance || instance->callSiteOverrides || callFrame == m_frame.m_callFrame)
+        return 0;
+    void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    const Place* places = instance->placesInTraces();
+    CallFrame* last = nullptr;
+    void* lastReturnPC = nullptr;
+    BytecodeIndex bytecodeIndexOfRoot;
+    unsigned numberOfFrames = 0;
+    unsigned numberShown = 0;
+    while (callFrame && returnPC) {
+        const Asked* found = instance->findCachedReturnAddress(returnPC);
+        if (!found) [[unlikely]] {
+            found = instance->resolveReturnAddress(returnPC);
+            if (!found)
+                break;
+        }
+        auto& asked = *found;
+        const Place& place = places[found - instance->cachedReturnAddresses];
+        uint32_t kind = place.kind;
+        uint32_t callSiteBits = place.callSiteBits;
+        if (kind == Place::IsNotPlain) [[unlikely]] {
+            if (!(callSiteBits & Place::hasConstructedCallee))
+                break;
+            if (numberShown)
+                markAsConstructed(shown[numberShown - 1], instance, lastReturnPC);
+            kind = place.withoutConstructedCallee().kind;
+            callSiteBits = place.withoutConstructedCallee().callSiteBits;
+            if (kind == Place::IsNotPlain)
+                break;
+        }
+        unsigned numberOfLogicalFrames = 1;
+        if (kind == Place::IsInInlinedBody) {
+            if (callSiteBits & Place::hasConstructedCallee && numberShown) [[unlikely]]
+                markAsConstructed(shown[numberShown - 1], instance, lastReturnPC);
+            AOT::FunctionRef function { instance, asked.function };
+            unsigned numberShownBefore = numberShown;
+            bool fits = true;
+            numberOfLogicalFrames = 0;
+            for (auto location = function.locationForReturnAddress(returnPC, callFrame, &m_inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, m_inlineFramesRead)) {
+                ++numberOfLogicalFrames;
+                if (!location.isTailDeleted && !AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction)) {
+                    if (numberShown == shown.size()) {
+                        fits = false;
+                        break;
+                    }
+                    shown[numberShown++] = AOT::FrameInTrace::create(asked.function, location.typedFunction, location.bytecodeIndex, location.isConstructed);
+                } else if (location.isConstructed && numberShown) [[unlikely]]
+                    shown[numberShown - 1].setRootOfConstructed(location.typedFunction);
+                if (!location.inlineFrame) {
+                    bytecodeIndexOfRoot = location.bytecodeIndex;
+                    break;
+                }
+            }
+            if (!fits) {
+                numberShown = numberShownBefore;
+                break;
+            }
+        } else if (kind == Place::IsShown) {
+            if (numberShown == shown.size())
+                break;
+            auto& frame = shown[numberShown++];
+            frame.function = asked.function;
+            frame.typedFunction = place.typedFunction;
+            frame.callSiteAndRootOfConstructed = CallSiteIndex(callSiteBits).bytecodeIndex().asBits();
+        }
+        numberOfFrames += numberOfLogicalFrames;
+        last = callFrame;
+        lastReturnPC = returnPC;
+        returnPC = removeCodePtrTag(callFrame->rawReturnPC());
+        callFrame = callFrame->callerFrame();
+    }
+    if (!last)
+        return 0;
+    const Asked* found = instance->findCachedReturnAddress(lastReturnPC);
+    if (!found) [[unlikely]]
+        found = instance->resolveReturnAddress(lastReturnPC);
+    Place place = places[found - instance->cachedReturnAddresses].ofSite();
+    AOT::FunctionRef function { instance, found->function };
+    m_frame.m_index += numberOfFrames;
+    m_frame.m_isTailDeleted = false;
+    m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+    m_frame.m_callFrame = last;
+    m_previousReturnPC = lastReturnPC;
+    m_frame.m_returnPC = m_previousReturnPC;
+    m_frame.m_frameAOTFunction = function;
+    m_frame.m_aotFunction = function;
+    m_frame.m_typedAOTFunction = place.typedFunction;
+    m_frame.m_bytecodeIndex = place.kind == Place::IsInInlinedBody ? bytecodeIndexOfRoot : CallSiteIndex(place.callSiteBits).bytecodeIndex();
+    m_frame.m_codeBlock = function.codeBlockIfExists();
+    findCaller(last);
+    if (numberShown && removeCodePtrTag(m_frame.m_callerReturnPC) != returnPC && (m_frame.m_aotAdapterFrame ? isEnteredByConstruction() : isAtConstructedCompiledFrame())) [[unlikely]]
+        shown[numberShown - 1].setRootOfConstructed(place.typedFunction);
+    if (m_frame.m_aotAdapterFrame)
+        m_aotInstance = nullptr;
+    return numberShown;
+}
+
+bool StackVisitor::gotoLastOfCompiledCallersWithoutHandlers(CPURegister* calleeSaveRegistersBuffer, std::span<const int8_t> bufferSlotsByRegIndex)
+{
+    using Asked = AOT::Instance::CachedAddressInfo;
+    using Place = AOT::Instance::PlaceInUnwinding;
+    AOT::Instance* instance = m_aotInstance;
+    CallFrame* callFrame = m_frame.m_callerFrame;
+    if (!m_frame.m_aotFunction || m_frame.m_aotInlineFrame || !instance || callFrame == m_frame.m_callFrame)
+        return false;
+    void* returnPC = removeCodePtrTag(m_frame.m_callerReturnPC);
+    const Place* places = instance->placesInUnwinding();
+    CallFrame* last = nullptr;
+    void* lastReturnPC = nullptr;
+    uint32_t lastFunction = 0;
+    unsigned numberOfFrames = 0;
+    while (callFrame && returnPC) {
+        const Asked* found = instance->findCachedReturnAddress(returnPC);
+        if (!found) [[unlikely]] {
+            found = instance->resolveReturnAddress(returnPC);
+            if (!found)
+                break;
+        }
+        const Place* place = &places[found - instance->cachedReturnAddresses];
+        if (place->state != Place::IsLeftByWhateverIsThrown) [[unlikely]] {
+            if (place->state == Place::IsNotKnown)
+                place = &instance->findPlaceInUnwinding(*found);
+            if (place->state != Place::IsLeftByWhateverIsThrown)
+                break;
+        }
+        const CPURegister* slot = reinterpret_cast<const CPURegister*>(callFrame->registers()) - place->savedRegistersStart;
+        for (uint64_t mask = AOT::ImageFunction::unpackRegisters(place->savedRegisters); mask; mask &= mask - 1, ++slot)
+            calleeSaveRegistersBuffer[bufferSlotsByRegIndex[WTF::ctz(mask)]] = *slot;
+        ++numberOfFrames;
+        last = callFrame;
+        lastReturnPC = returnPC;
+        lastFunction = found->function;
+        returnPC = removeCodePtrTag(callFrame->rawReturnPC());
+        callFrame = callFrame->callerFrame();
+    }
+    if (!last)
+        return false;
+    AOT::FunctionRef function { instance, lastFunction };
+    m_frame.m_index += numberOfFrames;
+    m_frame.m_isTailDeleted = false;
+    m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
+    m_frame.m_callFrame = last;
+    m_previousReturnPC = lastReturnPC;
+    m_frame.m_returnPC = lastReturnPC;
+    m_frame.m_frameAOTFunction = function;
+    m_frame.m_aotFunction = function;
+    m_frame.m_typedAOTFunction = 0;
+    m_frame.m_bytecodeIndex = BytecodeIndex();
+    m_frame.m_codeBlock = nullptr;
+    findCaller(last);
     if (m_frame.m_aotAdapterFrame)
         m_aotInstance = nullptr;
     return true;
@@ -209,12 +514,26 @@ StackVisitor::StackVisitor(CallFrame* startFrame, VM& vm, bool skipFirstFrame, b
         gotoNextFrame();
 }
 
+#if ENABLE(AOT)
+StackVisitor::StackVisitor(VM& vm, CallFrame* compiledFrame, void* returnPC)
+{
+    if (vm.m_aotInstances.size() == 1)
+        m_onlyAOTInstance = vm.m_aotInstances[0];
+    m_frame.m_entryFrame = vm.topEntryFrame;
+    m_previousReturnPC = returnPC;
+    readFrame(compiledFrame);
+    while (m_frame.m_aotInlineFrame)
+        gotoNextFrame();
+    gotoNextFrame();
+}
+#endif
+
 void StackVisitor::gotoNextFrame()
 {
     m_frame.m_index++;
 #if ENABLE(AOT)
     if (m_frame.m_aotInlineFrame) {
-        auto location = m_frame.m_frameAOTFunction.inlineCallSiteLocation(m_frame.m_aotInlineFrame);
+        auto location = m_frame.m_frameAOTFunction.inlineCallSiteLocation(m_frame.m_aotInlineFrame, m_inlineFramesRead);
         m_frame.m_aotFunction = location.function;
         m_frame.m_aotInlineFrame = location.inlineFrame;
         m_frame.m_typedAOTFunction = location.typedFunction;
@@ -367,7 +686,7 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
             m_aotInstance = nullptr;
         return;
     }
-    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC, callFrame);
+    auto location = m_frame.m_frameAOTFunction.locationForReturnAddress(returnPC, callFrame, &m_inlineFramesRead);
     m_frame.m_aotFunction = location.function;
     m_frame.m_aotInlineFrame = location.inlineFrame;
     m_frame.m_typedAOTFunction = location.typedFunction;
@@ -536,13 +855,15 @@ CodeBlock* StackVisitor::Frame::makeCodeBlock() const
     return m_codeBlock;
 }
 
-bool StackVisitor::Frame::isHiddenAOTFrame() const
+bool StackVisitor::Frame::isHiddenAOTFrame(bool isAtTheTop) const
 {
 #if ENABLE(AOT)
     if (isTypedAOTFrame())
-        return AOT::typedFunctionIsHiddenInStackTraces(m_typedAOTFunction);
+        return isAtTheTop ? AOT::typedFunctionStandsForNoFunction(m_typedAOTFunction) : AOT::typedFunctionIsHiddenInStackTraces(m_typedAOTFunction);
     if (m_aotFunction)
-        return m_aotFunction.info().isHiddenInStackTraces;
+        return !isAtTheTop && m_aotFunction.info().isHiddenInStackTraces;
+#else
+    UNUSED_PARAM(isAtTheTop);
 #endif
     return false;
 }

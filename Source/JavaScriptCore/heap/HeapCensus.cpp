@@ -257,7 +257,7 @@ void HeapCensus::visit(HeapCell* heapCell, HeapCell::Kind kind, size_t cellSize)
     }
     JSObject* object = asObject(cell);
 #if ENABLE(AOT)
-    if (classInfo == AOT::Typed::Extension::info())
+    if (isSlimClosureType(cell->type()))
         return;
 #endif
     visitStorage(object, classInfo);
@@ -452,7 +452,7 @@ void HeapCensus::print(bool collected)
         for (uint32_t i = 0; i < layout->numberOfFields; ++i) {
             const FieldData& field = layout->fields()[i];
             if (!(field.flags & fieldIsOutOfLine))
-                m_out.print(" ", field.offset, ":", static_cast<unsigned>(field.store));
+                m_out.print(" ", field.offset, ":", static_cast<unsigned>(field.store()));
         }
         m_out.println();
     }

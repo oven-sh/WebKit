@@ -34,6 +34,7 @@
 #include "B3Dominators.h"
 #include "B3HeapRange.h"
 #include "B3InsertionSetInlines.h"
+#include "B3LoopUtilities.h"
 #include "B3MemoryValue.h"
 #include "B3MemoryValueInlines.h"
 #include "B3NaturalLoops.h"
@@ -188,9 +189,20 @@ struct ImpureBlockData {
     RangeSet<HeapRange> writes; // This gets used for both load and store elimination.
     bool fence { false };
     bool writesPinned { false };
+    bool hasCall { false };
 
     MemoryValueMap memoryStoresAtHead;
     MemoryValueMap memoryValuesAtTail;
+
+    struct ForwardedLoad {
+        Value* ptr;
+        int64_t offset;
+        HeapRange range;
+        Opcode opcode;
+        Type type;
+        Value* value;
+    };
+    Vector<ForwardedLoad> forwardedLoadsAtTail;
 
     // This Maps x->y in "y = WasmAddress(@x)"
     UncheckedKeyHashMap<Value*, Value*> m_candidateWasmAddressesAtTail;
@@ -231,6 +243,7 @@ public:
             ImpureBlockData& data = m_impureBlockData[block];
             for (Value* value : *block) {
                 Effects effects = value->effects();
+                data.hasCall |= m_proc.positionIndependent() && isCall(value);
                 MemoryValue* memory = value->as<MemoryValue>();
 
                 if (memory) {
@@ -314,8 +327,8 @@ private:
 
         m_ssa->computePhis(
             [&] (SSACalculator::Variable* var, BasicBlock*) -> Value* {
-                const auto& resolution = m_pendingResolutions[var->index()];
-                return m_proc.add<Value>(Phi, resolution.placeholder->type(), resolution.placeholder->origin());
+                Value* placeholder = m_placeholderOfVariable[var->index()];
+                return m_proc.add<Value>(Phi, placeholder->type(), placeholder->origin());
             });
 
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
@@ -347,7 +360,7 @@ private:
                             upsilonChild = reaching->value()->foldIdentity();
                         else {
                             // Predecessor reaches the Phi on a path with no def.
-                            upsilonChild = m_insertionSet.insertBottom(upsilonIndex, upsilonOrigin, m_pendingResolutions[var->index()].placeholder->type());
+                            upsilonChild = m_insertionSet.insertBottom(upsilonIndex, upsilonOrigin, m_placeholderOfVariable[var->index()]->type());
                         }
                         m_insertionSet.insert<UpsilonValue>(upsilonIndex, upsilonOrigin, upsilonChild, phiDef->value());
                     }
@@ -377,6 +390,7 @@ private:
     void process()
     {
         m_value->performSubstitution();
+        m_data.hasCall |= m_proc.positionIndependent() && isCall(m_value);
 
         if (m_pureCSE.process(m_value, *m_dominators)) {
             ASSERT(!m_value->effects().readsPinned || !m_data.writesPinned);
@@ -477,6 +491,9 @@ private:
         data.writes.add(writes);
 
         data.memoryValuesAtTail.clobber(writes);
+        data.forwardedLoadsAtTail.removeAllMatching([&](const ImpureBlockData::ForwardedLoad& load) {
+            return load.range.overlaps(writes);
+        });
     }
 
     void processMemoryAfterClobber(MemoryValue* memory)
@@ -811,7 +828,8 @@ private:
         Value* ptr, HeapRange range, NOESCAPE const Filter& filter, NOESCAPE const Replace& replace)
     {
         // FIXME: Currently we observed some performance regression in this case.
-        MemoryMatches matches = findMemoryValue(ptr, range, filter, m_proc.positionIndependent() ? m_value->as<MemoryValue>()->readsMutability() : Mutability::Mutable);
+        bool mayReloadInRareBlocks = m_proc.positionIndependent() && !m_value->traps() && m_value->as<MemoryValue>()->readsMutability() != Mutability::Immutable;
+        MemoryMatches matches = findMemoryValue(ptr, range, filter, m_proc.positionIndependent() ? m_value->as<MemoryValue>()->readsMutability() : Mutability::Mutable, m_proc.positionIndependent(), mayReloadInRareBlocks);
         if (replaceMemoryValue(matches, replace))
             return;
         m_data.memoryValuesAtTail.add(m_value->as<MemoryValue>());
@@ -821,14 +839,20 @@ private:
     template<typename Replace>
     bool replaceMemoryValue(const MemoryMatches& matches, NOESCAPE const Replace& replace)
     {
-        if (matches.isEmpty())
+        if (matches.isEmpty() && m_forwardedMatches.isEmpty())
             return false;
 
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "Eliminating ", *m_value, " due to ", pointerListDump(matches));
         
         m_changed = true;
 
-        if (matches.size() == 1) {
+        if (matches.isEmpty() && m_forwardedMatches.size() == 1) {
+            RELEASE_ASSERT(m_dominators->dominates(m_forwardedMatches[0].first, m_block));
+            m_value->replaceWithIdentity(m_forwardedMatches[0].second);
+            return true;
+        }
+
+        if (matches.size() == 1 && m_forwardedMatches.isEmpty()) {
             MemoryValue* dominatingMatch = matches[0];
             RELEASE_ASSERT(m_dominators->dominates(dominatingMatch->owner, m_block));
             
@@ -849,13 +873,39 @@ private:
 
         // addBottom creates a fresh Const; InsertionSet::insertBottom would
         // alias placeholders of the same type within one block.
-        SSACalculator::Variable* var = m_ssa->newVariable();
+        Vector<Value*, 4> sources;
+        for (MemoryValue* match : matches)
+            sources.append(match);
+        for (auto& match : m_forwardedMatches)
+            sources.append(match.second);
+        std::ranges::sort(sources, { }, &Value::index);
+        SSACalculator::Variable* var = nullptr;
+        auto& variablesWithFirstSource = m_sharedVariables.add(sources[0], Vector<SharedVariable, 1>()).iterator->value;
+        for (auto& shared : variablesWithFirstSource) {
+            if (shared.opcode == m_value->opcode() && shared.type == m_value->type() && shared.sources == sources)
+                var = shared.variable;
+        }
+        bool isNewVariable = !var;
+        if (isNewVariable) {
+            var = m_ssa->newVariable();
+            variablesWithFirstSource.append({ m_value->opcode(), m_value->type(), sources, var });
+        }
         Value* placeholder = m_proc.addBottom(m_value->origin(), m_value->type());
         m_insertionSet.insertValue(m_index, placeholder);
+        if (isNewVariable)
+            m_placeholderOfVariable.append(placeholder);
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Inserting placeholder for value: ", *placeholder);
+        if (m_proc.positionIndependent()) {
+            MemoryValue* memory = m_value->as<MemoryValue>();
+            HeapRange range = memory->readsMutability() == Mutability::Immutable ? HeapRange() : memory->range();
+            m_data.forwardedLoadsAtTail.append({ memory->lastChild(), memory->offset(), range, memory->opcode(), memory->type(), placeholder });
+            placeholder->owner = m_block;
+        }
         m_value->replaceWithIdentity(placeholder);
 
         for (MemoryValue* match : matches) {
+            if (!isNewVariable)
+                break;
             m_blocksWithSets.add(match->owner);
             auto& extras = m_sets.add(match, Vector<Value*>()).iterator->value;
             m_matched.add(match);
@@ -870,14 +920,19 @@ private:
             m_ssa->newDef(var, match->owner, value);
         }
 
+        if (isNewVariable) {
+            for (auto& [block, value] : m_forwardedMatches)
+                m_ssa->newDef(var, block, value);
+        }
+
         m_pendingResolutions.append({ placeholder, m_block, var });
-        ASSERT(var->index() == m_pendingResolutions.size() - 1);
         return true;
     }
 
     template<typename Filter>
-    MemoryMatches findMemoryValue(Value* ptr, HeapRange range, NOESCAPE const Filter& filter, Mutability readsMutability = Mutability::Mutable)
+    MemoryMatches findMemoryValue(Value* ptr, HeapRange range, NOESCAPE const Filter& filter, Mutability readsMutability = Mutability::Mutable, bool mayUseForwardedLoads = false, bool mayReloadInRareBlocks = false)
     {
+        m_forwardedMatches.shrink(0);
         if constexpr (B3EliminateCommonSubexpressionsInternal::verbose) {
             dataLogLn(*m_value, ": looking backward for ", *ptr, "...");
             dataLogLn("    Full value: ", deepDump(m_value));
@@ -893,6 +948,13 @@ private:
             return { match };
         }
 
+        if (mayUseForwardedLoads) {
+            if (Value* forwarded = findForwardedLoad(m_data, ptr)) {
+                m_forwardedMatches.append({ m_block, forwarded });
+                return { };
+            }
+        }
+
         if (readsMutability != Mutability::Immutable && m_data.writes.overlaps(range)) {
             dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
             return { };
@@ -906,6 +968,9 @@ private:
 
         MemoryMatches matches;
         constexpr unsigned maxBlocksWithWritesToSearch = 64;
+        Vector<std::pair<BasicBlock*, Value*>, 1> forwardedMatches;
+        Vector<BasicBlock*, 2> blocksToReloadIn;
+        Vector<BasicBlock*, 4> blocksWithCallsOnTheWay;
         unsigned blocksWithWritesSearched = 0;
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -928,10 +993,24 @@ private:
                 continue;
             }
 
+            if (mayUseForwardedLoads) {
+                if (Value* forwarded = findForwardedLoad(data, ptr)) {
+                    forwardedMatches.append({ block, forwarded });
+                    continue;
+                }
+            }
+
             if (data.writes.overlaps(range) && (readsMutability != Mutability::Immutable || ++blocksWithWritesSearched > maxBlocksWithWritesToSearch)) {
+                if (mayReloadInRareBlocks && canReloadAtTail(block, ptr, range)) {
+                    blocksToReloadIn.append(block);
+                    continue;
+                }
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because of writes.");
                 return { };
             }
+
+            if (mayReloadInRareBlocks && data.hasCall)
+                blocksWithCallsOnTheWay.append(block);
 
             if (!block->numPredecessors()) {
                 dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Giving up because it's live at root.");
@@ -943,8 +1022,87 @@ private:
             worklist.pushAll(block->predecessors());
         }
 
+        if (!blocksToReloadIn.isEmpty()) {
+            if (matches.isEmpty() && forwardedMatches.isEmpty())
+                return { };
+            if (m_data.hasCall)
+                return { };
+            for (BasicBlock* block : blocksWithCallsOnTheWay) {
+                if (m_likelyBlocks.saw(block))
+                    return { };
+            }
+            auto isFollowedByCall = [&](BasicBlock* block, Value* source) {
+                if (!m_impureBlockData[block].hasCall || !m_likelyBlocks.saw(block))
+                    return false;
+                for (unsigned index = block->size(); index--;) {
+                    if (block->at(index) == source)
+                        return false;
+                    if (isCall(block->at(index)))
+                        return true;
+                }
+                return true;
+            };
+            for (MemoryValue* match : matches) {
+                if (isFollowedByCall(match->owner, match))
+                    return { };
+            }
+            for (auto& match : forwardedMatches) {
+                if (isFollowedByCall(match.first, match.second))
+                    return { };
+            }
+            if (m_value->effects().controlDependent) {
+                for (BasicBlock* block : blocksToReloadIn) {
+                    bool isAccessedOnEveryWayHere = matches.containsIf([&](MemoryValue* match) {
+                        return m_dominators->dominates(match->owner, block);
+                    }) || forwardedMatches.containsIf([&](auto& match) {
+                        return m_dominators->dominates(match.first, block);
+                    });
+                    if (!isAccessedOnEveryWayHere)
+                        return { };
+                }
+            }
+            for (BasicBlock* block : blocksToReloadIn) {
+                MemoryValue* reload = m_proc.clone(m_value)->as<MemoryValue>();
+                block->appendNonTerminal(reload);
+                m_impureBlockData[block].memoryValuesAtTail.add(reload);
+                m_impureBlockData[block].reads.add(range);
+                didAddMemoryValue(block, reload);
+                matches.append(reload);
+            }
+        }
+        m_forwardedMatches = WTF::move(forwardedMatches);
+
         dataLogLnIf(B3EliminateCommonSubexpressionsInternal::verbose, "    Got matches: ", pointerListDump(matches));
         return matches;
+    }
+
+    Value* findForwardedLoad(ImpureBlockData& data, Value* ptr)
+    {
+        MemoryValue* memory = m_value->as<MemoryValue>();
+        for (auto& load : data.forwardedLoadsAtTail) {
+            if (load.ptr == ptr && load.offset == memory->offset() && load.opcode == memory->opcode() && load.type == memory->type())
+                return load.value;
+        }
+        return nullptr;
+    }
+
+    bool canReloadAtTail(BasicBlock* block, Value* ptr, HeapRange range)
+    {
+        if (!m_hasFoundLikelyBlocks) {
+            m_hasFoundLikelyBlocks = true;
+            m_likelyBlocks.push(m_proc[0]);
+            while (BasicBlock* likelyBlock = m_likelyBlocks.pop()) {
+                for (FrequentedBlock successor : likelyBlock->successors()) {
+                    if (!successor.isRare())
+                        m_likelyBlocks.push(successor.block());
+                }
+            }
+        }
+        if (m_likelyBlocks.saw(block) || !m_likelyBlocks.saw(m_block))
+            return false;
+        if (!ptr->owner || !m_dominators->dominates(ptr->owner, block))
+            return false;
+        return !block->last()->effects().writes.overlaps(range);
     }
 
     void processWasmAddressValue(WasmAddressValue* wasmAddress)
@@ -1021,6 +1179,9 @@ private:
     // Null: there are several.
     UncheckedKeyHashMap<MemoryKey, MemoryValue*> m_storeWithKey;
     BlockWorklist m_blocksThatReachAnExit;
+    BlockWorklist m_likelyBlocks;
+    bool m_hasFoundLikelyBlocks { false };
+    Vector<std::pair<BasicBlock*, Value*>, 1> m_forwardedMatches;
 
     ImpureBlockData m_data;
 
@@ -1045,6 +1206,15 @@ private:
         SSACalculator::Variable* var;
     };
     Vector<PendingResolution> m_pendingResolutions;
+    Vector<Value*> m_placeholderOfVariable;
+
+    struct SharedVariable {
+        Opcode opcode;
+        Type type;
+        Vector<Value*, 4> sources;
+        SSACalculator::Variable* variable;
+    };
+    UncheckedKeyHashMap<Value*, Vector<SharedVariable, 1>> m_sharedVariables;
 
     bool m_changed { false };
 };

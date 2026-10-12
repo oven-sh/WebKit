@@ -224,18 +224,6 @@ public:
     }
     ALWAYS_INLINE static constexpr TableSize tableSizeSlow(TableSize capacity) { return dataTableEndIndex(capacity) + 1 + iterationSentinelSlots; }
 
-#if USE(BUN_JSC_ADDITIONS)
-    // The DataTable also takes what would be left over of the size class, so dataCapacity(capacity) is the least a table holds.
-    ALWAYS_INLINE static TableSize fittedTableSize(TableSize capacity)
-    {
-        TableSize length = tableSize(capacity);
-        size_t size = JSCellButterfly::allocationSize(length);
-        size_t spareEntries = (MarkedSpace::optimalSizeFor(size) - size) / (EntrySize * sizeof(JSValue));
-        return length + std::min<size_t>(spareEntries, bucketCount(capacity) - dataCapacity(capacity)) * EntrySize;
-    }
-    ALWAYS_INLINE static TableSize dataCapacity(Storage& storage) { return (storage.length() - dataTableStartIndex(capacity(storage)) - iterationSentinelSlots) / EntrySize; }
-#endif
-
     /* -------------------------------- Obsolete table -------------------------------- */
     ALWAYS_INLINE static constexpr bool isObsolete(Storage& storage) { return !!nextTable(storage); }
     ALWAYS_INLINE static constexpr Storage* nextTable(Storage& storage)
@@ -267,11 +255,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         ASSERT(!(capacity & (capacity - 1)));
 
-#if USE(BUN_JSC_ADDITIONS)
-        TableSize length = fittedTableSize(capacity);
-#else
         TableSize length = tableSize(capacity);
-#endif
         if (length > IndexingHeader::maximumLength) [[unlikely]] {
             throwOutOfMemoryError(globalObject, scope);
             return nullptr;
@@ -373,10 +357,6 @@ public:
 
     ALWAYS_INLINE static void clear(JSGlobalObject* globalObject, HashTable* owner, Storage& base)
     {
-#if USE(BUN_JSC_ADDITIONS)
-        if (!usedCapacity(base))
-            return;
-#endif
         VM& vm = getVM(globalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -436,20 +416,12 @@ public:
         TableSize deletedEntryCount = Helper::deletedEntryCount(base);
         TableSize usedCapacity = Helper::aliveEntryCount(base) + deletedEntryCount;
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (entryDataStartIndex(dataTableStartIndex(capacity), usedCapacity) + iterationSentinelSlots < base.length())
-            return nullptr;
-
-        TableSize dataCapacity = Helper::dataCapacity(base);
-        TableSize expansionFactor = 2;
-#else
         TableSize dataCapacity = Helper::dataCapacity(capacity);
         if (usedCapacity < dataCapacity)
             return nullptr;
 
         bool isSmallCapacity = capacity < LargeCapacity;
         TableSize expansionFactor = isSmallCapacity ? 4 : 2;
-#endif
         TableSize newCapacity = Checked<TableSize>(capacity) * expansionFactor;
         if (deletedEntryCount >= (dataCapacity / 2)) {
             // No need to expand. Just clear the deleted entries.
@@ -637,11 +609,7 @@ public:
         ASSERT(!isObsolete(candidate));
         TableSize capacity = Helper::capacity(candidate);
         TableIndex entryKeyIndex = entryDataStartIndex(dataTableStartIndex(capacity), from);
-#if USE(BUN_JSC_ADDITIONS)
-        ASSERT(from <= dataCapacity(candidate));
-#else
         ASSERT_UNUSED(capacity, from <= dataCapacity(capacity));
-#endif
         for (Entry entry = from;; ++entry, entryKeyIndex += EntrySize) {
             JSValue key = get(candidate, entryKeyIndex);
             if (!key)

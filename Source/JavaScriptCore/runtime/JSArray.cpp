@@ -297,7 +297,7 @@ bool JSArray::getOwnPropertySlot(JSObject* object, JSGlobalObject* globalObject,
     VM& vm = globalObject->vm();
     JSArray* thisObject = uncheckedDowncast<JSArray>(object);
     if (propertyName == vm.propertyNames->length) {
-        unsigned attributes = thisObject->isLengthWritable() && !thisObject->structure()->hasImmutableProperties() ? PropertyAttribute::DontDelete | PropertyAttribute::DontEnum : PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
+        unsigned attributes = thisObject->isLengthWritable() && !thisObject->structure()->inheritorsMayOverrideReadOnlyProperties() ? PropertyAttribute::DontDelete | PropertyAttribute::DontEnum : PropertyAttribute::DontDelete | PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly;
         slot.setValue(thisObject, attributes, jsNumber(thisObject->length()));
         return true;
     }

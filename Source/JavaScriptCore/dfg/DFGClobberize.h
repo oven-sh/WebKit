@@ -567,10 +567,6 @@ void clobberize(Graph& graph, Node* node, NOESCAPE const ReadFunctor& read, NOES
         def(PureValue(CheckNotEmpty, AdjacencyList(AdjacencyList::Fixed, node->child1())));
         return;
 
-    case CheckSoundType:
-        def(PureValue(node, node->soundTypeMask()));
-        return;
-
     case AssertInBounds:
     case AssertNotEmpty:
         write(SideState);

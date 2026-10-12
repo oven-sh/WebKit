@@ -94,7 +94,9 @@ enum class SpecificPattern : uint8_t {
     TrailingSpacesStar,
     TrailingSpacesPlus,
     Newlines,
+#if USE(BUN_JSC_ADDITIONS)
     AnchoredWordList,
+#endif
 };
 
 enum class ExecutionMode : uint8_t {

@@ -14,6 +14,7 @@
 #include "IntlCollator.h"
 #include "IntlObjectInlines.h"
 #include "JSCInlines.h"
+#include "NumberPrototype.h"
 #include "ParseInt.h"
 #include <wtf/text/AdaptiveStringSearcher.h>
 
@@ -40,7 +41,35 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringFind8, size_t, (Instanc
 // A text of the program that is all ASCII, by its number: no string is made of it.
 static ALWAYS_INLINE StringView textOfProgram(Instance* instance, uint32_t text)
 {
-    return StringView { byteCast<Latin1Character>(instance->typed->data.string(text)) };
+    return StringView { byteCast<Latin1Character>(instance->typed->data.stringInImage(text)) };
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringPart, JSCell*, (Instance* instance, JSCell* string, uint64_t startAndCount))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    int32_t count = static_cast<int32_t>(startAndCount >> 32);
+    if (count <= 0)
+        OPERATION_RETURN(scope, jsEmptyString(vm));
+    OPERATION_RETURN(scope, jsSubstring(globalObject, uncheckedDowncast<JSString>(string), static_cast<uint32_t>(startAndCount), count));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringTrim, JSCell*, (Instance* instance, JSCell* cell, uint32_t ends))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* string = uncheckedDowncast<JSString>(cell);
+    auto view = string->view(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    unsigned start = 0;
+    unsigned end = view->length();
+    if (ends & 1) {
+        while (start < end && isStrWhiteSpace(view[start]))
+            ++start;
+    }
+    if (ends & 2) {
+        while (end > start && isStrWhiteSpace(view[end - 1]))
+            --end;
+    }
+    OPERATION_RETURN(scope, jsSubstring(globalObject, string, start, end - start));
 }
 
 // What Stub::StringStartsWithText and Stub::StringEndsWithText leave: a rope, which is made flat, and 16 bits.
@@ -89,13 +118,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringIndexOfText, size_t, (Instance* 
 // The searches of operationAOTTypedStringFind8 and operationAOTTypedStringReverseFind8 for a text of the program, by its number.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringFindText8, size_t, (Instance* instance, const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start))
 {
-    auto other = instance->typed->data.string(text);
+    auto other = instance->typed->data.stringInImage(text);
     return operationAOTTypedStringFind8(instance, characters, length, byteCast<Latin1Character>(other.data()), other.size(), start);
 }
 
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringReverseFindText8, size_t, (Instance* instance, const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position))
 {
-    auto other = instance->typed->data.string(text);
+    auto other = instance->typed->data.stringInImage(text);
     return operationAOTTypedStringReverseFind8(instance, characters, length, byteCast<Latin1Character>(other.data()), other.size(), position);
 }
 
@@ -131,7 +160,28 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringLastIndexOfText, size_t, (Instan
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsText, size_t, (Instance* instance, JSCell* cell, uint32_t text))
 {
     auto* string = uncheckedDowncast<JSString>(cell);
-    auto expected = byteCast<Latin1Character>(instance->typed->data.string(text));
+    auto expected = byteCast<Latin1Character>(instance->typed->data.stringInImage(text));
+    if (string->length() != expected.size())
+        return false;
+    if (!string->isRope())
+        return StringView { *string->tryGetValueImpl() } == StringView { expected };
+    if (string->is8Bit()) {
+        Vector<Latin1Character, 64> characters(expected.size());
+        string->resolveToBuffer(characters.mutableSpan());
+        return equalSpans(characters.span(), expected);
+    }
+    Vector<char16_t, 64> characters(expected.size());
+    string->resolveToBuffer(characters.mutableSpan());
+    return StringView { characters.span() } == StringView { expected };
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsBytes, size_t, (Instance*, JSCell* cell, uint64_t bytes, uint32_t length))
+{
+    auto* string = uncheckedDowncast<JSString>(cell);
+    std::array<Latin1Character, 8> text;
+    for (unsigned i = 0; i < text.size(); ++i)
+        text[i] = static_cast<Latin1Character>(bytes >> (8 * i));
+    auto expected = std::span<const Latin1Character> { text }.first(length);
     if (string->length() != expected.size())
         return false;
     if (!string->isRope())
@@ -163,21 +213,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringsAreEqual, size_t, (Ins
         return StringView { buffer.span() };
     };
     return viewOf(a, buffers[0]) == viewOf(b, buffers[1]);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringTrimmedStart16, size_t, (Instance*, const char16_t* characters, uint32_t length))
-{
-    uint32_t start = 0;
-    while (start < length && isStrWhiteSpace(characters[start]))
-        ++start;
-    return start;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringTrimmedEnd16, size_t, (Instance*, const char16_t* characters, uint32_t start, uint32_t length))
-{
-    while (length > start && isStrWhiteSpace(characters[length - 1]))
-        --length;
-    return length;
 }
 
 // The position may be any int32: the search starts at the last place with room, or at the position if that comes first, and no earlier than at the first place.
@@ -328,6 +363,73 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringRepeat, JSCell*, (Instance* inst
     OPERATION_RETURN(scope, result);
 }
 
+static uint32_t stringBuilderLengthBias(unsigned prefixLength)
+{
+    constexpr unsigned unbiasedLimit = JSString::MaxLength - Typed::stringBuilderCapacity;
+    return prefixLength > unbiasedLimit ? prefixLength - unbiasedLimit : 0;
+}
+
+static JSString* concatenateStringBuilder(JSGlobalObject* globalObject, JSCell* prefixCell, const Latin1Character* buffer, uint32_t length, JSValue operand)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::array<JSString*, 3> strings;
+    unsigned count = 0;
+    uint32_t bias = 0;
+    if (prefixCell) {
+        auto* prefix = uncheckedDowncast<JSString>(prefixCell);
+        bias = stringBuilderLengthBias(prefix->length());
+        if (prefix->length())
+            strings[count++] = prefix;
+    }
+    bool isWholeString = !count && !operand;
+    std::span characters { buffer + bias, length - bias };
+    if (characters.size() == 1)
+        strings[count++] = jsSingleCharacterString(vm, characters[0]);
+    else if (!characters.empty()) {
+        uint32_t integer = 0;
+        bool isInteger = isWholeString && characters.size() <= 9 && characters[0] != '0';
+        for (size_t i = 0; i < characters.size() && isInteger; ++i) {
+            isInteger = isASCIIDigit(characters[i]);
+            integer = integer * 10 + (characters[i] - '0');
+        }
+        JSString* string = isInteger ? int32ToString(vm, static_cast<int32_t>(integer), 10) : jsNontrivialString(vm, String(characters));
+        if (isWholeString)
+            string->tryGetValueImpl()->hash();
+        strings[count++] = string;
+    }
+    if (operand) {
+        JSString* string = operand.toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (string->length())
+            strings[count++] = string;
+    }
+    switch (count) {
+    case 0:
+        return jsEmptyString(vm);
+    case 1:
+        return strings[0];
+    case 2:
+        RELEASE_AND_RETURN(scope, jsString(globalObject, strings[0], strings[1]));
+    default:
+        RELEASE_AND_RETURN(scope, jsString(globalObject, strings[0], strings[1], strings[2]));
+    }
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringBuilderFlush, void*, (Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length, EncodedJSValue operand))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSString* result = concatenateStringBuilder(globalObject, prefix, buffer, length, JSValue::decode(operand));
+    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    OPERATION_RETURN(scope, std::bit_cast<void*>(std::bit_cast<uintptr_t>(result) | static_cast<uintptr_t>(stringBuilderLengthBias(result->length())) << 48));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringBuilderFinish, JSCell*, (Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, concatenateStringBuilder(globalObject, prefix, buffer, length, { }));
+}
+
 // Of padString(): the length is above the string's and at most Typed::maxLengthOfStringMadeInOnePiece.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringPad, JSCell*, (Instance* instance, JSCell* cell, uint32_t length, JSCell* filler, uint32_t isAtStart))
 {
@@ -451,87 +553,6 @@ std::optional<Writes> writesOfInlineString(InlineBuiltin which, std::span<const 
     }
 }
 
-// Ends the block. WhiteSpace and LineTerminator among the first 256 code points.
-void Lowering::branchOnLatin1WhiteSpace(Word32 character, LBasicBlock isWhiteSpace, LBasicBlock isNot)
-{
-    LBasicBlock isAtMostSpace = m_out.newBlock();
-    LBasicBlock isAboveSpace = m_out.newBlock();
-    LBasicBlock isBelowSpace = m_out.newBlock();
-    m_out.branch(belowOrEqual(character, word32(' ')).value(), unsure(isAtMostSpace), unsure(isAboveSpace));
-    m_out.appendTo(isAboveSpace);
-    m_out.branch(equal(character, word32(0xa0)).value(), rarely(isWhiteSpace), usually(isNot));
-    m_out.appendTo(isAtMostSpace);
-    m_out.branch(equal(character, word32(' ')).value(), usually(isWhiteSpace), rarely(isBelowSpace));
-    m_out.appendTo(isBelowSpace);
-    m_out.branch(belowOrEqual(add(character, word32(-'\t')), word32('\r' - '\t')).value(), unsure(isWhiteSpace), unsure(isNot));
-}
-
-// What is left without the white space at the ends that are asked for. 8-bit characters are looked at in place.
-std::pair<Integer, Integer> Lowering::trimmedRange(const Characters& characters, bool trimsStart, bool trimsEnd)
-{
-    LBasicBlock narrow = m_out.newBlock();
-    LBasicBlock wide = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    m_out.branch(hasBits(characters.flags, StringImpl::flagIs8Bit()).value(), unsure(narrow), unsure(wide));
-    m_out.appendTo(wide);
-    Integer wideFrom = trimsStart ? zeroExtended(AOT_TYPED_OPERATION(StringTrimmedStart16, characters.data, low32(characters.length))) : integer(0);
-    Integer wideTo = trimsEnd ? zeroExtended(AOT_TYPED_OPERATION(StringTrimmedEnd16, characters.data, low32(wideFrom), low32(characters.length))) : characters.length;
-    ValueFromBlock fromOfWide = m_out.anchor(wideFrom.value());
-    ValueFromBlock toOfWide = m_out.anchor(wideTo.value());
-    m_out.jump(continuation);
-    m_out.appendTo(narrow);
-    auto characterAt = [&](LValue index) {
-        return Word32(marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(characters.data.value(), index))), IsFixed));
-    };
-    Integer from = integer(0);
-    if (trimsStart) {
-        LBasicBlock loop = m_out.newBlock();
-        LBasicBlock look = m_out.newBlock();
-        LBasicBlock next = m_out.newBlock();
-        LBasicBlock done = m_out.newBlock();
-        ValueFromBlock first = m_out.anchor(m_out.int64Zero);
-        m_out.jump(loop);
-        m_out.appendTo(loop);
-        LValue index = m_out.phi(Int64, first);
-        m_out.branch(m_out.below(index, characters.length.value()), usually(look), rarely(done));
-        m_out.appendTo(look);
-        branchOnLatin1WhiteSpace(characterAt(index), next, done);
-        m_out.appendTo(next);
-        m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.constInt64(1))));
-        m_out.jump(loop);
-        m_out.appendTo(done);
-        from = Integer(index);
-    }
-    Integer to = characters.length;
-    if (trimsEnd) {
-        LBasicBlock loop = m_out.newBlock();
-        LBasicBlock look = m_out.newBlock();
-        LBasicBlock next = m_out.newBlock();
-        LBasicBlock done = m_out.newBlock();
-        ValueFromBlock last = m_out.anchor(characters.length.value());
-        m_out.jump(loop);
-        m_out.appendTo(loop);
-        LValue end = m_out.phi(Int64, last);
-        m_out.branch(m_out.above(end, from.value()), usually(look), rarely(done));
-        m_out.appendTo(look);
-        LValue before = m_out.sub(end, m_out.constInt64(1));
-        branchOnLatin1WhiteSpace(characterAt(before), next, done);
-        m_out.appendTo(next);
-        m_out.addIncomingToPhi(end, m_out.anchor(before));
-        m_out.jump(loop);
-        m_out.appendTo(done);
-        to = Integer(end);
-    }
-    ValueFromBlock fromOfNarrow = m_out.anchor(from.value());
-    ValueFromBlock toOfNarrow = m_out.anchor(to.value());
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-    from = Integer(m_out.phi(Int64, fromOfNarrow, fromOfWide));
-    to = Integer(m_out.phi(Int64, toOfNarrow, toOfWide));
-    ensureStillAliveHere(characters.owner);
-    return { from, to };
-}
-
 // Whether the characters of the string from the place on are those of the other, which has room there.
 Word32 Lowering::hasStringAt(const Characters& characters, Integer place, const Characters& other)
 {
@@ -571,7 +592,7 @@ Word32 Lowering::lowerStartsOrEndsWith(bool isAtEnd, const StringReceiver& recei
         m_out.appendTo(isTooShort);
         join.add(boolean(false));
         m_out.appendTo(byStub);
-        LValue number = m_out.constInt64(m_function.at(originOf(other)).string().index());
+        LValue number = m_out.constInt64(m_function.at(stringConstantOf(other)).string().index());
         auto effects = isAtEnd ? effectsOfOperation<operationAOTTypedStringEndsWithText>() : effectsOfOperation<operationAOTTypedStringStartsWithText>();
         join.add(Word32(m_out.castToInt32(callAllocationStub(isAtEnd ? Stub::StringEndsWithText : Stub::StringStartsWithText, { { number, stubTemporaryGPRs[0] }, { receiver.string.value(), stubTemporaryGPRs[2] } }, effects, true))));
         Word32 has = join.finish().as<Word32>();
@@ -625,7 +646,7 @@ Word32 Lowering::lowerStringSearch(InlineBuiltin which, const StringReceiver& re
     if (auto text = constantASCIIText(other); text && !text->empty() && !m_isInLoop) {
         LBasicBlock otherwise = newColdBlock();
         Join join(m_out, Rep::Int32, Int32);
-        Word32 number = word32(m_function.at(originOf(other)).string().index());
+        Word32 number = word32(m_function.at(stringConstantOf(other)).string().index());
         Characters characters = charactersOf(receiver, otherwise);
         orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
         Pointer data = characters.data;
@@ -688,7 +709,7 @@ std::optional<Operand> Lowering::lowerInlineString(InlineBuiltin which, ValueID 
 {
     Operand yielded = lowerStringBuiltin(which, result, value);
     // What the table says is a string is neither `undefined` nor `null`, whatever the type of the value admits. Not where this is one arm of a test on what is expected.
-    if (&value == &m_function.at(result) && m_builtins.at(value.builtin()).result.kinds == BuiltinResult::String && !m_builtins.at(value.builtin()).result.arguments)
+    if (isOnTrunk() && m_builtins.at(value.builtin()).result.kinds == BuiltinResult::String && !m_builtins.at(value.builtin()).result.arguments)
         m_passedNilTestIn.add(result.index(), Vector<BlockID, 1> { }).iterator->value.append(m_currentBlockID);
     return yielded;
 }
@@ -714,8 +735,7 @@ std::optional<Integer> Lowering::lengthReadBefore(ValueID string) const
 
 void Lowering::didReadLength(ValueID string, Integer length)
 {
-    // What is defined before the entry of a handler is not there behind it.
-    if (!m_catchSpills.isEmpty())
+    if (m_watchingHandler)
         return;
     m_lengthsOfStrings.add(stringDefinedBy(string).index(), Vector<LengthOfString, 1> { }).iterator->value.append(LengthOfString { m_currentBlockID, length.value() });
 }
@@ -725,14 +745,14 @@ void Lowering::didMakeStringOfCodeUnit(ValueID id, Operand string, const Vector<
     m_codeUnitsOfStrings.set(id.index(), CodeUnitOfString { string.value, m_out.phi(Int64, codeUnits) });
 }
 
-std::optional<Integer> Lowering::codeUnitOfString(ValueID id)
+std::optional<Integer> Lowering::codeUnitOfString(ValueID id, bool mayBeNotKept)
 {
     if (m_codeUnitsOfStrings.isEmpty())
         return std::nullopt;
     id = stringDefinedBy(id);
     auto found = m_codeUnitsOfStrings.find(id.index());
     // Where a test has shown more of the value it stands for something else.
-    if (found == m_codeUnitsOfStrings.end() || m_values[id.index()].value != found->value.string)
+    if (found == m_codeUnitsOfStrings.end() || m_values[id.index()].value != found->value.string || found->value.mayBeNotKept != mayBeNotKept)
         return std::nullopt;
     return Integer(found->value.codeUnit);
 }
@@ -742,8 +762,6 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
     auto& type = typeOf(result);
     auto& arguments = value.arguments;
     auto& stringType = m_program.at(m_program.types.string);
-    // Not in an arm of a test on what is expected: what is defined there is not there behind it.
-    bool isOnTrunk = &value == &m_function.at(result);
     auto generally = [&] {
         return asCell(callBuiltinFunction(value, effectsOfBuiltinCall(value)));
     };
@@ -770,6 +788,12 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         break;
     }
 
+    if (which == InlineBuiltin::StringLength) {
+        if (auto text = constantASCIIText(value.child(0))) {
+            int64_t length = text->size();
+            return ensure(integer(length), Type::integer({ length, length }), type);
+        }
+    }
     StringReceiver receiver = stringReceiver(nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
     receiver.id = value.child(0);
     switch (which) {
@@ -777,7 +801,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         if (auto length = lengthReadBefore(value.child(0)))
             return ensure(*length, Type::integer(Range::length()), type);
         Integer length = stringLength(receiver);
-        if (isOnTrunk)
+        if (isOnTrunk())
             didReadLength(value.child(0), length);
         return ensure(length, Type::integer(Range::length()), type);
     }
@@ -792,14 +816,14 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         Characters characters = charactersOf(receiver);
         if (auto length = lengthReadBefore(value.child(0)))
             characters.length = *length;
-        else if (isOnTrunk)
+        else if (isOnTrunk())
             didReadLength(value.child(0), characters.length);
         Integer index = positionOf(arguments[0]);
         if (which == InlineBuiltin::StringAt && !isIntegerWithin(arguments[0], Range::length()))
             index = select(lessThan(index, integer(0)), add(index, characters.length), index);
         orElse(below(index, characters.length), outside);
-        bool keepsCodeUnit = ((which == InlineBuiltin::StringCharCodeAt && rep == Rep::Double) || (which == InlineBuiltin::StringCodePointAt && rep == Rep::OptionalInt64)) && isOnTrunk && m_catchSpills.isEmpty();
-        bool keepsCodeUnitOfString = (which == InlineBuiltin::StringCharAt || which == InlineBuiltin::StringAt) && isOnTrunk && keepsCodeUnitsOfStrings();
+        bool keepsCodeUnit = ((which == InlineBuiltin::StringCharCodeAt && rep == Rep::Double) || (which == InlineBuiltin::StringCodePointAt && rep == Rep::OptionalInt64)) && isOnTrunk();
+        bool keepsCodeUnitOfString = (which == InlineBuiltin::StringCharAt || which == InlineBuiltin::StringAt) && isOnTrunk();
         Vector<ValueFromBlock, 2> codeUnits;
         if (which == InlineBuiltin::StringCharCodeAt) {
             Integer codeUnit = zeroExtended(codeUnitAt(characters, index));
@@ -852,7 +876,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             length = *known;
         else {
             length = stringLength(receiver);
-            if (isOnTrunk)
+            if (isOnTrunk())
                 didReadLength(value.child(0), length);
         }
         Integer from = placeInString(arguments[0], length, which != InlineBuiltin::StringSubstring);
@@ -914,9 +938,50 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
     case InlineBuiltin::StringTrim:
     case InlineBuiltin::StringTrimStart:
     case InlineBuiltin::StringTrimEnd: {
-        Characters characters = charactersOf(receiver);
-        auto [from, to] = trimmedRange(characters, which != InlineBuiltin::StringTrimEnd, which != InlineBuiltin::StringTrimStart);
-        return ensure(partOfString(receiver, characters.length, from, to), stringType, type);
+        bool trimsStart = which != InlineBuiltin::StringTrimEnd;
+        bool trimsEnd = which != InlineBuiltin::StringTrimStart;
+        LBasicBlock isFlat = m_out.newBlock();
+        LBasicBlock byStub = m_out.newBlock();
+        LBasicBlock byStubForFlat8 = m_out.newBlock();
+        Stub generalStub = trimsStart && trimsEnd ? Stub::StringTrim : trimsStart ? Stub::StringTrimStart : Stub::StringTrimEnd;
+        Stub stubForFlat8 = trimsStart && trimsEnd ? Stub::StringTrimFlat8 : trimsStart ? Stub::StringTrimStartFlat8 : Stub::StringTrimEndFlat8;
+        Join join(m_out, Rep::Cell, pointerType());
+        Pointer fiberAtFirst = fiberOf(receiver);
+        LBasicBlock isRope = newColdBlock();
+        ValueFromBlock wasFlat = m_out.anchor(fiberAtFirst.value());
+        m_out.branch(lacksBits(fiberAtFirst, JSString::isRopeInPointer).value(), usually(isFlat), rarely(isRope));
+        m_out.appendTo(isFlat);
+        Pointer fiber(m_out.phi(pointerType(), wasFlat));
+        orElse(hasBits(loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()), byStub);
+        Word32 length = loadField<Word32>(fiber, m_heaps.StringImpl_length);
+        orElse(Word32(m_out.notZero32(length.value())), byStub);
+        LValue data = loadField<Pointer>(fiber, m_heaps.StringImpl_data).value();
+        auto isPrintableASCII = [&](LValue address) {
+            Word32 character(marked(m_out.load8ZeroExt32(TypedPointer(m_heaps.characters8.atAnyIndex(), address)), IsFixed));
+            return belowOrEqual(add(character, word32(-0x21)), word32(0x7e - 0x21));
+        };
+        LValue wideLength = m_out.zeroExtPtr(length.value());
+        if (trimsStart)
+            orElse(isPrintableASCII(data), byStubForFlat8);
+        if (trimsEnd)
+            orElse(isPrintableASCII(m_out.add(data, m_out.sub(wideLength, m_out.constIntPtr(1)))), byStubForFlat8);
+        ensureStillAliveHere(receiver.string);
+        join.add(receiver.string);
+        m_out.appendTo(byStubForFlat8);
+        join.add(CellPointer(callAllocationStub(stubForFlat8, { { receiver.string.value(), stubTemporaryGPRs[2] }, { data, stubTemporaryGPRs[3] }, { wideLength, stubTemporaryGPRs[4] } }, effectsOfOperation<operationAOTTypedStringPart>(), true)));
+        m_out.appendTo(isRope);
+        LBasicBlock isNoPart = newColdBlock();
+        LBasicBlock isStillRope = newColdBlock();
+        Pointer current = loadField<Pointer>(CellPointer(m_out.opaque(receiver.string.value())), m_heaps.JSRopeString_fiber0);
+        m_out.branch(lacksBits(current, JSRopeString::isSubstringInPointer).value(), unsure(isNoPart), unsure(byStub));
+        m_out.appendTo(isNoPart);
+        m_out.branch(lacksBits(current, JSString::isRopeInPointer).value(), unsure(byStub), unsure(isStillRope));
+        m_out.appendTo(isStillRope);
+        m_out.addIncomingToPhi(fiber.value(), m_out.anchor(AOT_TYPED_OPERATION(Flatten, receiver.string).value()));
+        m_out.jump(isFlat);
+        m_out.appendTo(byStub);
+        join.add(CellPointer(callAllocationStub(generalStub, { { receiver.string.value(), stubTemporaryGPRs[2] } }, effectsOfOperation<operationAOTTypedStringTrim>(), true)));
+        return ensure(join.finish().as<CellPointer>(), stringType, type);
     }
 
     // No surrogate has 8 bits, and every text of the first 256 code points is in Normalization Form C.

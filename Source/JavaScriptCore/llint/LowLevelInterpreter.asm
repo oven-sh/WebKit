@@ -627,6 +627,7 @@ const ObjectType = constexpr ObjectType
 const FinalObjectType = constexpr FinalObjectType
 const JSFunctionType = constexpr JSFunctionType
 const InternalFunctionType = constexpr InternalFunctionType
+const SlimClosureType = constexpr SlimClosureType
 const ArrayType = constexpr ArrayType
 const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
@@ -2489,9 +2490,6 @@ llintOp(op_nop, OpNop, macro (unused, unused, dispatch)
     dispatch()
 end)
 
-llintOp(op_type_tag, OpTypeTag, macro (unused, unused, dispatch)
-    dispatch()
-end)
 
 # we can't use callOp because we can't pass `call` as the opcode name, since it's an instruction name
 commonCallOp(op_call, OpCall, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, prepareCallSiteForRegularCall, macro (getu, metadata)
@@ -2708,7 +2706,7 @@ end
 
 # t0 is callee
 # t2 is CallLinkInfo*
-macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, slowCase)
+macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, notFunctionCase, slowCase)
     btqnz t0, NotCellMask, slowCase
     bbneq JSCell::m_type[t0], JSFunctionType, .notJSFunction
     loadp JSFunction::m_executableOrRareData[t0], t5
@@ -2739,8 +2737,19 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
     loadp 16[t1], t1
     jmp .callCode
 .notJSFunction:
-    bbneq JSCell::m_type[t0], InternalFunctionType, slowCase
+    bbneq JSCell::m_type[t0], InternalFunctionType, notFunctionCase
     jmp internalFunctionTrampoline
+end
+
+macro callSlimClosure(slowCase)
+    loadb JSCell::m_type[t0], t5
+    subi SlimClosureType, t5
+    bia t5, 1, slowCase
+    leap _g_aotSlimClosureEntrypoint, t1
+    loadp [t1], t1
+    move 0, t0
+    storep t0, CodeBlock - PrologueStackPointerDelta[sp]
+    jmp t1, JSEntryPtrTag
 end
 
 # t0 is callee
@@ -2758,7 +2767,9 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_call_trampoline, macro ()
-    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
+.notFunction:
+    callSlimClosure(.slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2766,7 +2777,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_construct_trampoline, macro ()
-    virtualThunkFor(1, ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase)
+    virtualThunkFor(1, ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2774,7 +2785,9 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_tail_call_trampoline, macro ()
-    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .slowCase)
+    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
+.notFunction:
+    callSlimClosure(.slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)

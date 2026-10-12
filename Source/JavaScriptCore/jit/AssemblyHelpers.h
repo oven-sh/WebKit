@@ -1607,8 +1607,6 @@ public:
     }
 
     enum LazyGlobalObjectLoadTag { LazyBaselineGlobalObject };
-    void emitSoundTypeCheck(GPRReg valueGPR, GPRReg scratchGPR, unsigned mask, JumpList& fail, JumpList& undecided);
-
     JumpList branchIfValue(VM&, GPRReg, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg, FPRReg, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag>, bool negateResult);
     JumpList branchIfTruthy(VM& vm, GPRReg value, GPRReg scratch, GPRReg scratchIfShouldCheckMasqueradesAsUndefined, FPRReg scratchFPR0, FPRReg scratchFPR1, bool shouldCheckMasqueradesAsUndefined, Variant<JSGlobalObject*, GPRReg, LazyGlobalObjectLoadTag> globalObject)
     {

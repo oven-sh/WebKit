@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "AOTFunction.h"
 #include "CallLinkInfo.h"
 #include "ErrorInstance.h"
 #include "ErrorInstanceInlines.h"
@@ -164,6 +165,26 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
 
             return codePtr.taggedPtr();
         }
+#if ENABLE(AOT)
+        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
+            auto codePtr = CodePtr<JSEntryPtrTag>::fromTaggedPtr(AOT::taggedSlimClosureEntrypoint());
+            switch (callLinkInfo->mode()) {
+            case CallLinkInfo::Mode::Init:
+                if (!callLinkInfo->seenOnce())
+                    callLinkInfo->setSeen();
+                else
+                    linkMonomorphicCall(vm, owner, *callLinkInfo, nullptr, asObject(calleeAsValue), codePtr);
+                break;
+            case CallLinkInfo::Mode::Monomorphic:
+            case CallLinkInfo::Mode::Polymorphic:
+                callLinkInfo->setVirtualCall(vm);
+                break;
+            case CallLinkInfo::Mode::Virtual:
+                break;
+            }
+            return codePtr.taggedPtr();
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(vm, owner, calleeFrame, calleeAsValue, callLinkInfo));
     }
 
@@ -242,6 +263,12 @@ ALWAYS_INLINE void* virtualForWithFunction(VM& vm, JSCell* owner, CallFrame* cal
             ASSERT(!!codePtr);
             return codePtr.taggedPtr();
         }
+#if ENABLE(AOT)
+        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
+            calleeAsFunctionCell = calleeAsValue.asCell();
+            return AOT::taggedSlimClosureEntrypoint();
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(vm, owner, calleeFrame, calleeAsValue, callLinkInfo));
     }
 

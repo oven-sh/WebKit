@@ -234,6 +234,31 @@ void Code::setCalleeSaveRegisterAtOffsetList(RegisterAtOffsetList&& registerAtOf
     m_calleeSaveStackSlot = slot;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Code::tryToPlaceSpillsAboveFrameRecord()
+{
+    constexpr unsigned maxBytesAbove = 480;
+    constexpr unsigned maxBytesBelow = 240;
+    if (!isARM64() || !m_mayPlaceSpillsAboveFrameRecord || m_callArgAreaSize || !m_frameSize)
+        return;
+    unsigned saved = m_calleeSaveStackSlot ? m_calleeSaveStackSlot->byteSize() : 0;
+    bool savesAreOnTop = saved && m_calleeSaveStackSlot->offsetFromFP() == -static_cast<intptr_t>(saved);
+    unsigned above = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(m_frameSize - (savesAreOnTop ? saved : 0));
+    unsigned below = WTF::roundUpToMultipleOf<stackAlignmentBytes()>(saved);
+    if (above > maxBytesAbove || below > maxBytesBelow)
+        return;
+    for (StackSlot* slot : m_stackSlots) {
+        if (slot != m_calleeSaveStackSlot)
+            slot->setOffsetFromFP(slot->offsetFromFP() + m_frameSize + sizeof(CallerFrameAndPC));
+    }
+    if (saved)
+        m_calleeSaveStackSlot->setOffsetFromFP(-static_cast<intptr_t>(below));
+    m_placesSpillsAboveFrameRecord = true;
+    m_bytesAboveFrameRecord = above;
+    m_frameSize = above + below;
+}
+#endif
+
 RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
 {
     RegisterAtOffsetList result = m_uncorrectedCalleeSaveRegisterAtOffsetList;
@@ -418,6 +443,13 @@ void Code::appendIonGraphPass(ASCIILiteral passName)
 }
 
 
+#if USE(BUN_JSC_ADDITIONS)
+void Code::noteTableInCode(MacroAssembler::Label table, unsigned numberOfEntries)
+{
+    m_tablesInCode.append({ table, numberOfEntries });
+}
+
+#endif
 } } } // namespace JSC::B3::Air
 
 #endif // ENABLE(B3_JIT)

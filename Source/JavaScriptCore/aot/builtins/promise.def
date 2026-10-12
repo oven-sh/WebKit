@@ -7,13 +7,33 @@ inline AwaitedValue
 inline SuspendAsyncFunction
 inline PromiseResolve
 inline PromiseThen
+inline IsAsyncIteratorDriven
+inline GetAsyncIteratorNext
+inline AsyncIteratorNext
+inline GetIteratorNext
+inline GeneratorResume
+inline GeneratorIsDone
+inline AsyncGeneratorYield
 
 runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
 runtime PromiseThen : RuntimeState void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived)
+runtime GetAsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
+runtime AsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator, EncodedJSValue sent)
+runtime GetIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
+runtime GeneratorResume : Heap EncodedJSValue (JSCell* generator, EncodedJSValue mode, EncodedJSValue value)
+runtime GeneratorIsDone : Nothing size_t (JSCell* generator) noexcept
+runtime AsyncGeneratorYield : Heap void (JSCell* resumeClosure, EncodedJSValue operand)
 
 operation AwaitMayContinue (any/-, any/-) -> boolean ; ReadsRuntimeState ; Inline(AwaitMayContinue)
 operation AwaitedValue (any/P) -> anything ; ReadsRuntimeState WritesRuntimeState ; Inline(AwaitedValue)
 operation SuspendAsyncFunction (any/K, any/KGP) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(SuspendAsyncFunction)
+operation AsyncGeneratorYield (any/K, any/KGP) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(AsyncGeneratorYield)
+operation GetAsyncIteratorNext (any) -> anything ; CallsUserCode ; Inline(GetAsyncIteratorNext)
+operation GetIteratorNext (any) -> anything ; CallsUserCode ; Inline(GetIteratorNext)
+operation GeneratorResume (any, any, any) -> anything ; CallsUserCode ; Inline(GeneratorResume)
+operation GeneratorIsDone (any/-) -> boolean ; ReadsRuntimeState ; Inline(GeneratorIsDone)
+operation IsAsyncIteratorDriven (any/-) -> boolean ; Pure ; Inline(IsAsyncIteratorDriven)
+operation AsyncIteratorNext (any, any?) -> anything ; CallsUserCode ; Inline(AsyncIteratorNext)
 
 static Array.fromAsync (any/KGP?, any/KC?, any/KA?, any/-...) -> new Promise/N ; CallsUserCode ; Call
 

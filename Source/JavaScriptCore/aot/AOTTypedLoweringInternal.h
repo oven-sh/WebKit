@@ -13,6 +13,7 @@
 #include "AOTTypedPasses.h"
 #include "B3PatchpointValue.h"
 #include "B3ValueInlines.h"
+#include <wtf/Box.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -130,6 +131,7 @@ template<> struct ParameterOfOperation<int32_t> { using Type = Word32; };
 template<> struct ParameterOfOperation<uint64_t> { using Type = Integer; };
 template<> struct ParameterOfOperation<double> { using Type = Number; };
 template<> struct ParameterOfOperation<const EncodedJSValue*> { using Type = Pointer; };
+template<> struct ParameterOfOperation<EncodedJSValue*> { using Type = Pointer; };
 template<> struct ParameterOfOperation<AOT::Slot*> { using Type = Pointer; };
 
 template<typename T> struct ResultOfOperation;
@@ -168,6 +170,21 @@ struct OperationSignature<Result(Parameters...)> {
 
 struct LoweringContext {
     StubCalls stubCalls;
+    bool notesCode { false };
+    struct NotedData {
+        CCallHelpers::Label start;
+        unsigned numberOfWords;
+    };
+    Vector<NotedData> dataInCode;
+    void noteDataInCode(CCallHelpers& jit, size_t numberOfWords)
+    {
+        if (!notesCode)
+            return;
+        dataInCode.append({ jit.labelIgnoringWatchpoints(), static_cast<unsigned>(numberOfWords) });
+    }
+    RefPtr<B3::StackmapGenerator> numberBoxingGenerator;
+    RefPtr<B3::StackmapGenerator> slotBlockFetchGenerator;
+    unsigned numberOfSlotBlockFetches { 0 };
     Vector<ImageKey> knownCallees;
     UncheckedKeyHashMap<uint32_t, uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> calleeIndices;
     IntegersThatLookLikeAddresses wideIntegerConstants;
@@ -179,19 +196,26 @@ struct LoweringContext {
     Vector<uint32_t> plans;
     // (slot, where its row starts): CompiledFunctionInfo::siteConstantIsPlan.
     Vector<std::pair<uint32_t, uint32_t>> rowsOfSlots;
-    // The calls that a handler of the function watches, in the order of their numbers, each with the number of the handler.
-    Vector<std::pair<uint32_t, uint32_t>> catchEntrypointsForCallSites;
     // By call-site number minus one: where the call is in the source, for stack traces.
     struct SitePosition {
         uint32_t position;
         uint32_t inlineFrame;
+        bool constructs { false };
     };
     Vector<SitePosition> sitePositions;
     // By inline frame: the number that stands for the inlined call. No machine call has it. Entry 0 is unused.
     Vector<uint32_t> inlineCallSites;
+    Vector<uint32_t, 2> framesLeftByTailCalls;
     // The numbers from 1 that Lowering::run() gives out ahead of the blocks: a position, and no return address: the calls that were inlined.
     uint32_t numberOfSitesWithoutCode { 0 };
-    unsigned numberOfCatchEntrypoints { 0 };
+    unsigned numberOfEmptyArrayLiteralsMadeInPlace { 0 };
+    unsigned numberOfEmptyArrayLiteralsMadeByStub { 0 };
+    unsigned numberOfEmptyArrayLiteralsLeftToStubBySwitch { 0 };
+    unsigned numberOfReadsOfExpectedLeftToGeneralWayBySwitch { 0 };
+    bool unwindsToLandingPads { false };
+    Vector<Box<CCallHelpers::Label>> landingPads;
+    UncheckedKeyHashMap<CCallHelpers::Label*, uint32_t> landingPadsByHandler;
+    Vector<std::pair<uint32_t, uint32_t>> landingPadsForCallSites;
     // See useFaultsForNilTests().
     struct NilTest {
         ThrowKind kind;
@@ -207,6 +231,11 @@ struct LoweringContext {
         uint32_t nilTest;
     };
     Vector<FaultingAccess> faultingAccesses;
+    struct TrapAtThrowSite {
+        CCallHelpers::Label instruction;
+        uint32_t callSite;
+    };
+    Vector<TrapAtThrowSite> trapsAtThrowSites;
     // But for the calls that bring a frame of their own if the function has none: see Lowering::callEntry().
     bool emitsCalls { false };
     // The blocks of the function that it does so for.
@@ -215,18 +244,30 @@ struct LoweringContext {
 
     bool hasNoFrame(B3::Air::Code& code) const
     {
-        return !numberOfCatchEntrypoints && !code.frameSize() && !code.calleeSaveRegisterAtOffsetList().registerCount() && !emitsCalls && !readsCallerFrame;
+        return !code.frameSize() && !code.calleeSaveRegisterAtOffsetList().registerCount() && !emitsCalls && !readsCallerFrame;
     }
 
     void emitFrameTeardown(CCallHelpers& jit, B3::Air::Code& code) const
     {
         if (hasNoFrame(code))
             return;
+#if CPU(ARM64)
+        if (code.placesSpillsAboveFrameRecord()) {
+            popCalleeSaves(jit, code.calleeSaveRegisterAtOffsetList());
+            jit.m_assembler.ldp<64>(GPRInfo::callFrameRegister, CCallHelpers::linkRegister, CCallHelpers::stackPointerRegister, PairPostIndex(static_cast<int>(code.bytesAboveFrameRecord() + sizeof(CallerFrameAndPC))));
+            return;
+        }
+#endif
         jit.emitRestore(code.calleeSaveRegisterAtOffsetList());
-        if (code.frameSize())
-            jit.emitFunctionEpilogue();
-        else
+        if (!code.frameSize()) {
             jit.emitFunctionEpilogueWithEmptyFrame();
+            return;
+        }
+#if CPU(X86_64)
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xc9));
+#else
+        jit.emitFunctionEpilogue();
+#endif
     }
 };
 
@@ -234,6 +275,9 @@ Vector<uint32_t, 3> throwSiteWords(ThrowKind, Rep, unsigned registerNumber, uint
 // An access through nil hits memory that is never mapped, up to this many bytes from the pointer.
 static constexpr int64_t reachOfFaultingAccess = 16000;
 void useFaultsForNilTests(B3::Procedure&, LoweringContext&);
+void splitBranchConditions(B3::Procedure&);
+void foldNumberBoxings(B3::Procedure&, LoweringContext&);
+void placeSlotBlockFetches(B3::Procedure&, LoweringContext&);
 
 // What the back end is told of a call.
 struct OperationEffects {
@@ -298,22 +342,13 @@ private:
     bool lowerEntryParameters();
 
     // Exceptions.
-    struct Handler {
-        BlockID block;
-        Vector<ValueID> liveIn;
-        unsigned firstParameterWord;
-        LBasicBlock entry;
-    };
-    struct CatchSpill {
-        B3::Variable* variable;
-        unsigned word;
-    };
-    void computeCatchEntrypoints(const Vector<BlockID>& order);
-    TypedPointer catchSpillSlot(unsigned);
-    void storeToCatchSpillSlot(unsigned word, Operand);
-    Operand loadFromCatchSpillSlot(unsigned word, Rep);
-    void spillForCatch(const Target&);
-    void lowerCatchEntrypoint(Handler&);
+    void unwindToLandingPad(B3::PatchpointValue*, CallSite);
+    void branchToLandingPad(B3::PatchpointValue*, std::optional<GPRReg> exception);
+    Boxed catchException();
+    void didLowerWatchedOperation();
+    LBasicBlock landingPadFor(const Target&);
+    void findHandlersEnteredByBranch(const Vector<BlockID>& order);
+    LBasicBlock handlerEnteredByBranch() const;
     void lowerBlock(BlockID);
     void lowerTerminator(const Terminator&);
     // Of a Branch on whether a reference is nil: which of the two targets is for nil.
@@ -325,6 +360,8 @@ private:
     Operand lowerLanguageOperation(ValueID result, const Value&);
     CellPointer lowerNewPromise();
     void lowerResolvePromise(const Value&);
+    bool isPromiseOfUnsuspendedFunction(ValueID) const;
+    bool lacksThenUnlessMarked(const Type&) const;
 
     template<typename Functor> void require(Word32 condition, const Functor& otherwise);
     template<typename T, typename Fast, typename Slow> T either(Word32 condition, const Fast&, const Slow&);
@@ -440,6 +477,7 @@ private:
     static int64_t bitsOfMarker(uint16_t kind, Rep);
     Word32 isMarker(Operand);
     Number purified(Number);
+    enum class PureFunctionOfChildren : int32_t { TruncateToInteger = 1, BoxNumber, ToInt32, NaturalInt32, Fmod, FirstOperation };
     Integer truncateToInteger(Number);
     Word32 naturalInt32OrElse(Number, LBasicBlock otherwise);
     Number remainder(ValueID dividend, ValueID divisor);
@@ -480,7 +518,7 @@ private:
     // Jumps to `miss` unless the GlobalPropertyCache holds for the global object as it is. Yields where the value is.
     TypedPointer globalPropertyOrElse(uint32_t cacheNumber, LBasicBlock miss);
     LValue wordOfGlobalPropertyCache(uint32_t cacheNumber, size_t offset);
-    Boxed valueOfGlobalPropertyOrElse(uint32_t cacheNumber, LBasicBlock miss);
+    Boxed valueOfGlobalPropertyOrElse(StringID, uint32_t cacheNumber, LBasicBlock miss);
     Boxed lowerGetGlobal(const Value&);
     // Nothing: the base is not written as the global object's `this`.
     std::optional<Boxed> getPropertyOfGlobalThis(ValueID base, StringID name);
@@ -493,7 +531,7 @@ private:
     Word32 isCell(Boxed value)
     {
         if (auto found = m_decoded.find(value.value()); found != m_decoded.end())
-            return Word32(m_answerIsValue ? m_out.aboveOrEqual(found->value.loaded, m_out.constInt64(firstCellWord)) : m_out.isZero64(found->value.isNoCell));
+            return Word32(m_answerIsValue || isX86() ? m_out.aboveOrEqual(found->value.loaded, m_out.constInt64(firstCellWord)) : m_out.isZero64(found->value.isNoCell));
         return Word32(Emitter::isCell(value.value()));
     }
     // Of a value of the type. What is neither a cell nor a number has JSValue::OtherTag, and no pointer has it: one bit to branch on.
@@ -504,7 +542,7 @@ private:
     Word32 isUndefinedOrNull(Boxed value)
     {
         if (auto found = m_decoded.find(value.value()); found != m_decoded.end())
-            return Word32(m_answerIsValue ? m_out.below(found->value.loaded, m_out.constInt64(firstCellWord)) : m_out.notZero64(found->value.isNoCell));
+            return Word32(m_answerIsValue || isX86() ? m_out.below(found->value.loaded, m_out.constInt64(firstCellWord)) : m_out.notZero64(found->value.isNoCell));
         return Word32(isOther(value.value()));
     }
     Word32 typeOfCell(CellPointer);
@@ -529,11 +567,26 @@ private:
     void branchOnPassingOneOf(Word32 shapeWord, const Vector<ShapeTest, 4>&, FTL::WeightedTarget passing, FTL::WeightedTarget failing);
     Word32 lowerHasShapeOf(const Value&);
     Word32 lowerIsClassObjectAsDeclared(const Value&);
+    void accessStaticField(const Value&, const Invocable<void(CellPointer classObject, TypedPointer slot)> auto& inPlace, const Invocable<void(Word32 ofClass, Word32 field)> auto& generally);
+    Operand lowerGetStaticField(ValueID result, const Value&);
+    void lowerPutStaticField(const Value&);
     Word32 isClosureOf(CellPointer, FunctionID, bool mustBeAsMade = false);
     Word32 lowerIsClosureOf(const Value&);
-    Word32 functionOfClosure(CellPointer);
+    Word32 functionOfClosure(CellPointer, bool isSlim);
+    ptrdiff_t offsetOfStructureIDOfClosuresOf(const Function&);
+    Word32 isUnreifiedSlimClosure(CellPointer);
+    Word32 hasTypeOfFunctionFlag(CellPointer cell) { return hasBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), TypeOfYieldsFunction); }
     void closureOfOrElse(CellPointer, FunctionID, bool mustBeAsMade, LBasicBlock otherwise);
     void branchOnClosureOf(const Value&, LBasicBlock isOne, LBasicBlock isNone);
+    bool isAwaitMayContinue(const Value&) const;
+    bool isOnlyAwaited(ValueID);
+    bool isGuardOfReceiver(const Value&) const;
+    ValueID receiverBehindCasts(ValueID) const;
+    void branchOnOriginalStructure(const Value&, const Terminator&, LBasicBlock isOriginal, LBasicBlock hasChanged);
+    enum class AskedFor : uint8_t { Class, Structure };
+    std::optional<bool> answerOfGuardAhead(ValueID receiver, const EngineClass&, AskedFor);
+    void branchOnAwaitMayContinue(const Value&, BlockID goesOn, LBasicBlock mayContinue, LBasicBlock mustSuspend);
+    CellPointer objectAwaitedOrElse(ValueID awaited, LBasicBlock isNoObject);
     void findClosureTestsCarriedOutByBranches();
 
     // Holding values to types. A test reads the type and the shape word of a cell at most and writes nothing. Where one fails and a
@@ -547,6 +600,7 @@ private:
     Operand ensure(Boxed value, const Type& type) { return ensure(value, m_program.at(m_program.types.anything), type); }
     // The same for array[index] of a contiguous array. A plain-data element is converted on the slow path, stored back, and the read goes on.
     Operand ensureElement(CellPointer array, Integer index, Boxed element, const Type&);
+    void validateOnlyFunction(Operand stored, ValueID, FunctionID, bool mayBeNil);
     // Goes on where the operand, of type `from`, is of type `to`, with it in repOf(to). Where it is not, goes to the block.
     Operand fitOrElse(Operand, const Type& from, const Type& to, LBasicBlock otherwise);
     // The same as a boolean.
@@ -574,7 +628,24 @@ private:
     Operand fitBoxedToIntegerOrElse(Boxed, const Type& from, const Type& to, LBasicBlock otherwise);
     Integer integralOrElse(Number, Range, LBasicBlock otherwise);
     using Emitter::orElse;
-    void orElse(Word32 condition, LBasicBlock otherwise) { Emitter::orElse(condition.value(), otherwise); }
+    bool dropsGuardAt(const char* file, unsigned line) const { return !m_isValidatingFact && isDroppedForTesting(file, line); }
+    void orElse(Word32 condition, LBasicBlock otherwise, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
+    {
+        if (!m_isValidatingFact && isForcedForTesting(file, line)) [[unlikely]] {
+            Emitter::orElse(m_out.constInt32(0), otherwise);
+            return;
+        }
+        if (!dropsGuardAt(file, line)) [[likely]]
+            Emitter::orElse(condition.value(), otherwise);
+    }
+    FTL::WeightedTarget rarely(LBasicBlock block, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE())
+    {
+        if (dropsGuardAt(file, line)) [[unlikely]]
+            m_out.dropNextGuardForTesting();
+        if (!m_isValidatingFact && isForcedForTesting(file, line)) [[unlikely]]
+            m_out.forceNextGuardForTesting();
+        return FTL::rarely(block);
+    }
     Operand coerce(Operand, const Type& from, const Value& cast);
     bool mayPass(const Type&, const ShapeTest&) const;
     Operand lowerCoercion(ValueID result, const Value& cast);
@@ -586,9 +657,12 @@ private:
     Word32 auditLineAndColumn();
     ValueID receiverOfNextStore(ValueID stored) const;
     Operand lowerCast(ValueID result, const Value&);
+    std::optional<Operand> castByBody(const Value& cast, Operand, const Type& from, const Type& to);
     Word32 typeAndReason(TypeID, CastReason);
     // Casts that are carried out in the arms of the read they come behind: see lowerFusedCast().
     unsigned numberOfUsesOf(ValueID);
+    bool isErrorThrownWhereMade(const Block&, ValueID);
+    void throwNewError(const Value&);
     // Fields that are pinned to a string: see fieldIsPinned in AOTTypedData.h.
     struct PinnedRead {
         CellPointer cell;
@@ -597,11 +671,14 @@ private:
         Word32 isAltered;
         LayoutID view;
         StringID name;
+        Word32 index;
+        Vector<StringID, 4> texts;
     };
     // Of the value at the current index: nothing is done with it but to ask whether it is this string or that, and on no way from here to there may a field be stored to.
-    bool isOnlyComparedWithTextsBeforeAnyStore(ValueID read);
+    bool isOnlyComparedWithTextsBeforeAnyStore(ValueID read, Vector<ValueID, 4>& textsOfIndex);
     TypedPointer guardOfPinnedFields(SlotID);
-    Word32 isPinnedTo(const PinnedRead&, StringID text);
+    Word32 hasShapePinnedTo(const PinnedRead&, StringID text);
+    Word32 isPinnedTo(const PinnedRead&, ValueID constant);
     // In front of a store to the field of an object that is of a member of `holder`, or of anything if that is none.
     void guardPinnedFields(LayoutID holder, const Field&, ValueID stored);
     bool mayFuseWithRead(size_t indexOfRead);
@@ -651,6 +728,7 @@ private:
     Word32 lowerRelational(const Value&);
     Integer integerBound(Opcode, Number);
     std::optional<Word32> lowerRelationalWithIntegerBound(const Value&);
+    std::optional<Word32> lowerRelationalWithLikelyInteger(const Value&);
     Integer clampToMaximum(Integer, int64_t limit);
     Integer clampToMinimum(Integer, int64_t limit);
     Word32 lowerStrictEq(ValueID a, ValueID b);
@@ -741,6 +819,8 @@ private:
     const B3::AbstractHeap& heapOf(SlotID slot) { return m_heaps.AOTTyped_slots[slot.index()]; }
     void barrier(CellPointer owner);
     bool isFollowedByStoreWithBarrier(ValueID environment) const;
+    static bool leavesBarriersToParks();
+    bool leavesBarrierToPark(ValueID frame) const;
     // A store of a cell to it has left its barrier to a later store. Until that one nothing may collect garbage: see applyEffects().
     ValueID m_environmentAwaitingBarrier;
     // Behind stores of the values into the elements of the array: see State::rememberElement().
@@ -789,6 +869,8 @@ private:
         Vector<size_t, 6> fields;
         // The first of the slots of the site: two, and a third for a CreateThis.
         unsigned slot { 0 };
+        uint32_t row { Format::none };
+        unsigned roomInLine { 0 };
         // Of a CreateThis: its operands. The constructor that runs is new.target where only that is given.
         ValueID newTarget { };
         ValueID constructor { };
@@ -797,6 +879,11 @@ private:
         // That call, which stands here as a literal without fields: where the allocation of its descriptor is. See lowerPropertyDefinition().
         std::optional<size_t> descriptor;
     };
+    bool isFilledByKeyInLoop(ValueID object) const;
+    std::optional<InlineBuiltin> builtinThatListed(ValueID list) const;
+    ValueID listReadBy(ValueID element, bool mustBeFirstElement) const;
+    bool isKeyEnumeratedFromObject(ValueID key, unsigned depth = 0) const;
+    unsigned kindOfFirstKeyStoredInLoopThatIsNotEnumerated(ValueID object) const;
     bool isDefineProperty(const Value&) const;
     std::optional<size_t> definitionDescribedBy(const ObjectLiteral&);
     void lowerPropertyDefinition(const ObjectLiteral&);
@@ -835,16 +922,37 @@ private:
     Operand lowerCloneGroup(CloneGroup);
     CellPointer copyRecord(CellPointer, Word32 orderWord, const Layout&, const Vector<StringID, 4>& overwritten);
     std::optional<CloneGroup> m_cloneGroup;
+    struct MergeGroup {
+        size_t first;
+        LayoutID layout;
+        bool beginsWithClone;
+    };
+    std::optional<MergeGroup> findMergeGroup(size_t indexOfFirstMember);
+    Operand lowerMergeGroup(MergeGroup);
+    std::optional<MergeGroup> m_mergeGroup;
+    bool m_isCarryingOutMergeGroup { false };
     bool isExpectedToBeSymbol(const Function&, ValueID) const;
     void lowerObjectLiteral(const ObjectLiteral&);
     // 0 stays 0: the engine's default.
     static unsigned capacityThatFillsTheCell(unsigned inlineCapacity);
+    static unsigned roomInLineOfLiteral(const Program&, const Function&, ValueID birth, bool hasFields);
+    static void numberRowsOfBirths(Program&);
+    friend void numberRowsOfBirths(Program&);
     // `stores`: a bit for each that is stored and not defined. Then `group` says where each stands.
-    CellPointer newObjectWithProperties(unsigned slot, bool hasNullPrototype, ValueID newTarget, ValueID constructor, unsigned inlineCapacity, std::span<const StringID> names, std::span<const Boxed> values, uint64_t stores = 0, const ObjectLiteral* group = nullptr);
+    CellPointer newObjectWithProperties(unsigned slot, bool hasNullPrototype, ValueID newTarget, ValueID constructor, unsigned inlineCapacity, std::span<const StringID> names, std::span<const Boxed> values, uint64_t stores = 0, const ObjectLiteral* group = nullptr, uint32_t row = Format::none);
+    uint32_t numberOfRowFor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const;
+    void findRowOf(ObjectLiteral&) const;
     CellPointer newObjectLiteral(std::span<const StringID> names, std::span<const Boxed> values);
     uint32_t rowOfNames(std::span<const StringID>);
     uint32_t rowOf(std::span<const uint32_t>);
-    CellPointer cloneObject(ValueID source, bool keepsLayout);
+    struct DefinedOnCopy {
+        uint64_t more;
+        Vector<ValueID, 2> values;
+    };
+    CellPointer cloneObject(ValueID source, bool keepsLayout, const DefinedOnCopy& = { });
+    DefinedOnCopy whatIsDefinedOnCopy(ValueID object, bool mayCarryOut);
+    const Block* m_blockOfDefinitionsMadeWithCopy { nullptr };
+    Vector<size_t, 2> m_definitionsMadeWithCopy;
     Vector<LayoutID, 2> layoutsClonedInPlace(const Type&) const;
     bool makesItsFirstArgument(const Value&) const;
     std::optional<size_t> indexOfUseThatMakes(ValueID) const;
@@ -869,12 +977,22 @@ private:
     };
     struct PropertyRun {
         Vector<StoreInPropertyRun, 8> stores;
+        Vector<size_t, 8> elementStores;
+        bool mayBePrototype { false };
+        bool mayReplace { false };
         // The first of the slots of the site: one, and one for each key; without keys a second one: see cachePropertyRunWithStorage().
         unsigned slot { 0 };
     };
     ValueID withoutUpcasts(ValueID) const;
+    bool isLazyClosureStore(const Value& closure, const Value& store);
+    void putLazyClosure(Boxed holder, StringID, FunctionID);
+    std::optional<FunctionID> lazyClosureStoredBy(const Value& store);
+    bool isStoredAsLazyClosure(ValueID closure);
+    const Value* lazyClosureStoreBehindJump(const Block& from);
+    bool mayBeStoredAheadOfJump(const Value& store);
     std::optional<StoreInPropertyRun> storeInPropertyRunAt(size_t index);
     bool maySeparateStoresOfPropertyRun(size_t index);
+    std::optional<FunctionID> functionWhosePrototypeIsRead(ValueID) const;
     const PropertyRun* propertyRunAt(size_t index);
     void lowerPropertyRun(const PropertyRun&);
     Operand readInt32OrElsewhere(CellPointer, const Field&, const Type&);
@@ -886,9 +1004,12 @@ private:
     void didCreateFieldInCell(CellPointer, const Field&, OperationEffects, const ScopedLambda<void()>& unlessAsked);
     void writeField(CellPointer, ValueID object, const Field&, ValueID stored);
     bool isAllocatedAsMemberOf(ValueID object, LayoutID view) const;
+    bool mayGiveUp(LayoutID view) const;
     // Of an object that is looked at as the view says: one of its members may have no such field, and where the view admits foreign objects
     // it may be any object. `lacks` is for all that is not known to have the field.
     template<typename Has, typename Lacks> Operand throughView(CellPointer, ValueID object, LayoutID view, const Field&, Joined, const Has&, const Lacks&);
+    static constexpr unsigned maxMembersServedByTheirOwnField = 4;
+    template<typename InOwnField, typename Otherwise> Operand byOwnFieldOfMember(CellPointer, LayoutID view, const Field&, Joined, const InOwnField&, const Otherwise&);
     // What goes by the members of the view: `inPlace`. Where the view admits foreign objects, that is only for an object of a member, and
     // `generally` asks any other.
     template<typename InPlace, typename Generally> Operand ifOfMember(CellPointer, ValueID object, LayoutID view, Joined, const InPlace&, const Generally&);
@@ -903,44 +1024,51 @@ private:
     Operand lowerNewObject(ValueID, const Value&);
     CellPointer cellInFrame(size_t);
     // Reloaded at every use: the run time replaces the extension when it creates a field or makes a shape transition.
-    CellPointer extensionOf(CellPointer cell) { return loadField<CellPointer>(cell, m_heaps.AOTTypedObject_extension); }
-    TypedPointer fieldAt(CellPointer cell, const Field& field) { return m_out.address(heapOf(field.slot), (field.isOutOfLine ? extensionOf(cell) : cell).value(), field.offset); }
+    Word32 extensionWordOf(CellPointer cell) { return loadField<Word32>(cell, m_heaps.AOTTypedObject_extension); }
+    Pointer extensionAt(Word32 word) { return Pointer(decodeCell32(m_out.zeroExtPtr(word.value()))); }
+    Word32 extensionCovers(CellPointer, const Field&);
+    TypedPointer fieldAt(CellPointer cell, const Field& field) { return m_out.address(heapOf(field.slot), field.isOutOfLine ? extensionAt(extensionWordOf(cell)).value() : cell.value(), field.offset); }
 
     // Calls.
     uint32_t nextSite()
     {
-        if (m_currentCatchEntrypoint)
-            m_context.catchEntrypointsForCallSites.append({ m_nextSite, *m_currentCatchEntrypoint });
+        if (m_watchingHandler)
+            ++m_callSitesAwaitingLandingPad;
         // Before the first block: the prologue. A terminator goes by the last value of its block.
         LoweringContext::SitePosition where { m_function.position, 0 };
         if (m_currentBlock && !m_currentBlock->values.isEmpty()) {
             auto& value = m_function.at(m_currentBlock->values[std::min<size_t>(m_currentIndexInBlock, m_currentBlock->values.size() - 1)]);
-            where = { value.position, value.inlineFrame };
+            where = { value.position, value.inlineFrame, value.opcode == Opcode::CallDirect && value.constructs };
+            if (value.isInTailPosition) {
+                if (size_t index = m_context.framesLeftByTailCalls.find(value.inlineFrame); index != notFound)
+                    where.inlineFrame = static_cast<uint32_t>(m_context.inlineCallSites.size() - m_context.framesLeftByTailCalls.size() + index);
+            }
         }
         m_context.sitePositions.append(where);
         uint32_t bits = CallSiteIndex(BytecodeIndex(m_nextSite++)).bits();
-        return m_function.inlineFrames.isEmpty() ? bits : PackedSite::pack(where.inlineFrame, bits);
+        return m_context.inlineCallSites.isEmpty() ? bits : PackedSite::pack(where.inlineFrame, bits);
     }
     LValue callEntry(Entry, LType, bool mayThrow, OperationEffects, const Vector<LValue, 8>& arguments);
     // It does not come back: m_out.unreachable() follows, as behind an operation that throws. The operand is taken as it is kept, in whatever register it is in.
     // Yields the call site.
-    uint32_t throwAt(ThrowKind, std::optional<Operand>, uint32_t a, std::optional<uint32_t> b = std::nullopt);
+    uint32_t throwAt(ThrowKind, std::optional<Operand>, uint32_t a, std::optional<uint32_t> b = std::nullopt, unsigned classOfNewErrorPlusOne = 0);
+    void requireOrThrowAt(Word32 condition, ThrowKind, std::optional<Operand>, uint32_t a);
     OperationEffects effectsOfBuiltinCall(const Value&);
     // Every call says what it may change through this, and every store that others can see through didEmitWrite.
     void applyEffects(B3::PatchpointValue*, OperationEffects);
     void didEmitWrite(Writes, bool writesShapeWords = false);
     template<auto operation, typename... Arguments> auto callOperation(Entry, OperationEffects, Arguments...);
-    LValue callFunction(FunctionID, LType, const Vector<LValue, 8>& arguments);
+    LValue callFunction(FunctionID, LType, const Vector<LValue, 8>& arguments, FunctionID summedUpAs = { });
     // Off the usual path, of a function that takes nothing and yields nothing: every register is kept, and a function without a frame stays without.
     void callFunctionFromColdBlock(FunctionID);
     uint32_t indexOfCallee(FunctionID);
     bool mayJumpTo(FunctionID, const Vector<LValue, 8>& arguments) const;
     void jumpToFunction(uint32_t indexOfCallee, const Vector<LValue, 8>& arguments);
     Operand jumpToContinuation(const Value&);
-    Boxed callValue(Stub, const Vector<LValue, 8>& operands, OperationEffects = { });
+    Boxed callValue(Stub, const Vector<LValue, 8>& operands, OperationEffects = { }, LValue word = nullptr);
     Boxed callValueWithArray(Stub, Boxed callee, Boxed thisValue, Boxed list);
     Boxed lowerGetNewTarget();
-    Boxed callValueWithList(Boxed callee, Boxed thisValue, Word32 count, Pointer list);
+    Boxed callValueWithList(Boxed callee, Boxed thisValue, Word32 count, Pointer list, LValue wordOfConstructor = nullptr);
     // The general entry of a function with a rest parameter, if that has the body of the function: it makes the array only where it is needed.
     FunctionID listEntryFor(FunctionID);
     Boxed callListEntry(FunctionID entry, LValue closure, Boxed thisValue, const Arguments&);
@@ -954,28 +1082,39 @@ private:
     CellPointer allocate(uint32_t site, Integer number, FieldInit);
     // Yields the cell. The stub keeps whatever the site holds in registers, where it can.
     LValue callAllocationStub(Stub, const Vector<std::pair<LValue, GPRReg>, 4>& operands, OperationEffects, bool mayThrow);
+    struct CharactersOfSubstring {
+        LValue data;
+        LValue flags;
+        LValue length;
+    };
+    CharactersOfSubstring charactersOfSubstring(CellPointer);
     Integer allocationFor(const Value& newObject);
     std::optional<uint32_t> constantAllocation(const Value& newObject) const;
     bool layoutVariesByDiscriminant(const Allocation&) const;
     CellPointer stringConstant(StringID);
     // A leaf that stands for a cell of a lazily filled table, and that is lowered where it is asked for: see get() and findLeavesFetchedLate().
     bool isFetchedWhereNeeded(ValueID id) const { return m_isFetchedLate.get(id.index()); }
+    bool m_isCompact { false };
+    unsigned m_compactLevers { 0 };
+    bool isCompactFunction(unsigned lever) const { return m_isCompact && (m_compactLevers >> lever & 1); }
+    bool isCompact(unsigned lever) const { return isCompactFunction(lever) && m_currentBlock && !m_isInLoop; }
     void poll();
     std::pair<Word32, Pointer> argumentBuffer(const Arguments&);
+    LValue transientBuffer(size_t bytes);
+    B3::Air::StackSlot* m_transientBuffer { nullptr };
     std::pair<CellPointer, Pointer> allocateArray(Word32 length, Word32 vectorLength, LBasicBlock slowPath);
     CellPointer newArray(const Arguments&);
     CellPointer newArrayFromBuffer(Word32 count, Pointer buffer);
     // Of a function that takes its arguments in memory.
-    Word32 argumentCount();
-    Pointer argumentBuffer();
     Word32 restLength(uint32_t numberOfArgumentsToSkip);
     CellPointer createRest(uint32_t numberOfArgumentsToSkip);
     Boxed lowerGetMyArgumentByVal(const Value&);
     Boxed lowerCallForwardVarargs(const Value&);
     Integer entryWordIfClosure(CellPointer);
-    CellPointer createThis(CellPointer constructor, CellPointer newTarget);
-    Boxed constructClosure(CellPointer constructor, CellPointer newTarget, const Arguments&);
-    Boxed constructDerivedClosure(CellPointer constructor, Boxed newTarget, const Arguments&);
+    std::optional<Pointer> cacheOfCreateThis();
+    CellPointer createThis(CellPointer constructor, CellPointer newTarget, std::optional<Pointer> cacheOfSite = std::nullopt);
+    Boxed constructClosure(CellPointer constructor, Integer word, CellPointer newTarget, const Arguments&, std::optional<Pointer> cacheOfSite = std::nullopt, std::optional<uint32_t> numberOfArgumentsToSkip = std::nullopt);
+    Boxed constructDerivedClosure(CellPointer constructor, Integer word, Boxed newTarget, const Arguments&);
     Operand lowerConstructSuper(ValueID, const Value&);
     CellPointer lowerCreateThis(const Value&);
     struct Argument {
@@ -986,7 +1125,7 @@ private:
     Argument argumentFor(const Function& callee, unsigned parameter, ValueID);
     const Type& typePassedAs(const Function& callee, unsigned index) const;
     // The arguments as the entry block of the function takes them. One that is missing is `undefined`.
-    Operand callCompiled(FunctionID, const Vector<Argument, 8>&, const Type& result);
+    Operand callCompiled(FunctionID, const Vector<Argument, 8>&, const Type& result, LValue* callWithSeveralResults = nullptr);
     struct MethodTarget {
         // None: the object has a field of the name, which holds what is called.
         FunctionID function;
@@ -1011,11 +1150,11 @@ private:
     Operand lowerResultAt(const Value&);
     // By call of such a function.
     UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_callsWithSeveralResults;
-    LValue m_lastCallWithSeveralResults { nullptr };
     bool isGuardedCallee(ValueID);
     Operand lowerIndirectCall(ValueID callee, ValueID thisValue, const Arguments&, const Type& result, StringID nameOfMethod = { });
     Word32 lowerIsBuiltinFunction(const Value&);
-    Boxed getCallOrApply(Boxed base, StringID, BuiltinID);
+    const Function* functionDefining(ValueID) const;
+    Boxed getCallOrApply(Boxed base, StringID, BuiltinID, const Function* definedAs);
     std::optional<Operand> lowerCallOrApply(ValueID result, ValueID function, StringID, std::optional<Boxed> method, const Arguments&);
     Operand lowerApply(ValueID callee, ValueID thisValue, ValueID list, const Type& result, LanguageOperation = LanguageOperation::Apply);
     Operand lowerCall(ValueID result, const Value&);
@@ -1033,13 +1172,36 @@ private:
     // The generic tier.
     LValue loadICData();
     std::optional<unsigned> allocateSite(StringID name, unsigned extra);
-    void findICData();
+    struct RunOfAccesses {
+        B3::Variable* verdict { nullptr };
+        unsigned header { 0 };
+        uint32_t stored { 0 };
+        Vector<StringID, 8> names;
+    };
+    void findRunsOfAccesses(const Vector<BlockID>& order);
+    void didDefineReceiverOfRun(ValueID);
+    void forgetVerdictsOfRuns();
+    const RunOfAccesses* runOfCurrentAccess(StringID);
+    LValue placeByRun(const RunOfAccesses&, Boxed base, StringID, LBasicBlock own);
+    Boxed emitCachedGetByIdOnItsOwn(Boxed base, StringID);
     enum class SlotAddressIsFor : bool { UsualPath, ColdBlock };
     Pointer slotAddress(unsigned slot, SlotAddressIsFor = SlotAddressIsFor::UsualPath);
     LValue callICStub(Stub, LType, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate = std::nullopt, OperationEffects = { });
     // `isCalled`: it is the read of `o.m` in `o.m(..)`.
-    Boxed emitGetById(Boxed base, StringID, bool isCalled = false);
+    Boxed emitGetById(Boxed base, StringID, bool isCalled = false, const Function* definedAs = nullptr);
     Boxed emitCachedGetById(Boxed base, StringID, bool isCalled = false);
+    CellPointer newEmptyObject(unsigned numberOfNames);
+    UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_slotsOfWholeBirths;
+    TypedPointer knownPlaceIn(CellPointer, const Value&);
+    CellPointer receiverAtKnownPlace(const Value&, Boxed base);
+    LValue checkedKnownPlace(const Value&, Boxed base);
+    void reportUnlessAtKnownPlace(LValue found, LValue expected, Boxed base);
+    Boxed getAtKnownPlace(const Value&, Boxed base);
+    void putAtKnownPlace(const Value&, Boxed base, Boxed value);
+    LValue isOfNumberedRow(LValue structureID, unsigned row);
+    void giveThisItsRow(const Value& store, Boxed self);
+    bool isStillAsBorn(const Value& store);
+    Vector<uint32_t> m_onlyPredecessors;
     Boxed emitGetLength(Boxed base);
     void emitPutById(Boxed base, StringID, Boxed value);
     // `mayBeName`: the key is not expected to be a number. Then the site remembers one key and where it is in objects of one structure.
@@ -1092,15 +1254,16 @@ private:
     bool isExpectedToBeNumber(ValueID element);
     Operand getArrayElement(CellPointer array, ValueID key, const Type&, LBasicBlock otherwise = nullptr, bool expectsNumbers = true);
     Word32 isBeyondBarrierThreshold(CellPointer owner);
-    template<typename Functor> void storeBoxedArrayElement(CellPointer array, std::optional<Integer> index, Boxed stored, LBasicBlock otherwise, const Functor& afterwards);
-    template<typename Functor> void storeArrayElement(CellPointer array, std::optional<Integer> index, ValueID stored, LBasicBlock otherwise, const Functor& afterwards);
+    template<typename Functor> void storeBoxedArrayElement(CellPointer array, Integer index, Boxed stored, LBasicBlock otherwise, const Functor& afterwards);
+    template<typename Functor> void storeArrayElement(CellPointer array, Integer index, ValueID stored, LBasicBlock otherwise, const Functor& afterwards);
     void putArrayElement(CellPointer array, ValueID key, ValueID stored, LBasicBlock otherwise = nullptr);
     Word32 tryStoreArrayElement(CellPointer array, Integer index, ValueID stored);
     Operand pushArrayElement(CellPointer array, ValueID receiver, ValueID pushed, const Type&);
-    Operand pushArrayElements(CellPointer array, ValueID receiver, const Arguments& pushed, StringID name, const Type&);
+    Operand pushArrayElements(CellPointer array, const Value&, const Type&);
     void ensureStillAliveHere(CellPointer owner, const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
     // Options::aotGuardToDropForTesting() names the place in the source of the compiler.
     static bool isDroppedForTesting(const char* file = __builtin_FILE(), unsigned line = __builtin_LINE());
+    static bool isForcedForTesting(const char* file, unsigned line);
     struct TypedArrayReceiver {
         // What mode, length and vector are loaded from, with these LoadFlags.
         CellPointer view;
@@ -1163,7 +1326,7 @@ private:
     Word32 codePointAt(const Characters&, Integer index);
     CellPointer stringOfCodeUnit(Word32);
     CellPointer singleCharacterStringAt(const Characters&, Integer index, Word32* codeUnit = nullptr);
-    Operand getStringElement(const StringReceiver&, ValueID key, const Type&, LBasicBlock otherwise = nullptr);
+    Operand getStringElement(const StringReceiver&, ValueID key, const Type&, LBasicBlock otherwise = nullptr, B3::Variable* codeUnitIfKept = nullptr);
     Integer positionOf(ValueID);
     Integer placeInString(ValueID, Integer length, bool isRelativeToEnd);
     CellPointer allocateRope(LBasicBlock slowPath);
@@ -1184,18 +1347,29 @@ private:
     Boxed mapKey(ValueID);
     Word32 hashOfMapKey(Boxed);
     Pointer findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word32 hash, LBasicBlock absent);
-    Integer sizeOfMapOrSet(CellPointer, bool isMap);
+    Integer sizeOfMapOrSet(CellPointer, bool isMap, bool hasStringKeysByType);
     Operand lowerMapOrSetBuiltin(InlineBuiltin, ValueID result, const Value&, Writes inPlace);
 
     // The table.
     CellPointer builtinCell(unsigned);
     Word32 hasOriginalStructure(CellPointer, const EngineClass&);
     Boxed callBuiltinFunction(const Value&, OperationEffects, std::optional<Boxed> calledOn = std::nullopt);
+    bool makesTableWithStringKeys(const Value&);
+    bool m_isMakingTableGenerally { false };
     Operand lowerGenericFallback(const Value&, CellPointer receiver, const Type&);
     Boxed lowerMethodRead(const Value&);
     Operand lowerCallBuiltin(ValueID result, const Value&);
     Operand lowerResolvedBuiltin(ValueID result, const Value&);
     Operand lowerIndexIntrinsic(InlineBuiltin, const Value&, const Type&);
+    struct ElementFound {
+        LValue object { nullptr };
+        LValue key { nullptr };
+        LValue element { nullptr };
+        bool isAlwaysThere { false };
+    };
+    bool standsInLoopOfItsOwnFunction(const Value&) const;
+    ValueID getIndexBehindBranchOn(const Value& hasIndex);
+    UncheckedKeyHashMap<uint32_t, ElementFound, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsFoundByHasIndex;
     // What a built-in yields, as the type of the value that stands for the call.
     Operand yieldNumber(Number, const Type&);
     Operand yieldBoolean(Word32, const Type&);
@@ -1230,6 +1404,15 @@ private:
     const Builtins& m_builtins;
     Vector<Operand> m_values;
     Vector<Assumption, 4> m_assumptions;
+    struct ElementLoadedAhead {
+        ValueID array;
+        ValueID index;
+        LValue element { nullptr };
+    };
+    UncheckedKeyHashMap<uint32_t, ElementLoadedAhead, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsLoadedAhead;
+    LValue elementLoadedAhead(ValueID array, ValueID index);
+    bool m_isInArm { false };
+    bool isOnTrunk() const { return !m_isInArm; }
     struct FusedCasts {
         size_t indexOfRead;
         unsigned count;
@@ -1250,7 +1433,20 @@ private:
     BitVector m_hasTruthinessPhi;
     BitVector m_isFetchedLate;
     BitVector m_isCarriedOutByBranch;
-    UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_truthinessPhis;
+    BitVector m_isUsedOtherwiseThanAwaited;
+    bool m_didFindWhatIsUsedOtherwiseThanAwaited { false };
+    struct ReceiverAsked {
+        ValueID receiver;
+        uint32_t engineClass { 0 };
+        bool isOriginal { false };
+    };
+    UncheckedKeyHashMap<uint32_t, ReceiverAsked, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_receiversAsked;
+    UncheckedKeyHashMap<const Block*, std::pair<ValueID, LValue>> m_valuesAwaitedInPlace;
+    struct Truthiness {
+        LValue value { nullptr };
+        LValue isTruthy { nullptr };
+    };
+    UncheckedKeyHashMap<uint32_t, Truthiness, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_truthinessPhis;
     // By block parameter that is passed in parts: the phi of the cell. That of the word is in m_phis. See findParametersJoinedInParts().
     BitVector m_isJoinedInParts;
     UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_cellPhis;
@@ -1272,26 +1468,36 @@ private:
         LValue loaded;
         bool absentReadsUndefined;
     };
-    // For a boxed value that boxDecoded() made. The index is only ever compared with constants: it keeps nothing alive. Also for what readField() has made of a 64-bit slot: there the index
+    // For a boxed value that boxDecoded() made. Also for what readField() has made of a 64-bit slot: there the index
     // is the boxed value and the cell is what was loaded.
     UncheckedKeyHashMap<LValue, Decoded> m_decoded;
-    // For a cell that load() has decoded: the word of the slot. It keeps nothing alive: it is compared, no more: see isTheClosure().
+    // For a cell that load() has decoded: the word of the slot.
     UncheckedKeyHashMap<LValue, LValue> m_indexOfCell;
     StringID m_length;
-    LValue m_icData { nullptr };
-    // See slotAddress().
-    B3::Variable* m_icDataAsOfLastHint { nullptr };
-    LBasicBlock m_blockOfICData { nullptr };
+    UncheckedKeyHashMap<uint32_t, RunOfAccesses, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_runsOfAccesses;
+    UncheckedKeyHashSet<uint64_t> m_accessesThatFollowAnother;
+    UncheckedKeyHashSet<uint64_t> m_accessesThatAnotherDominates;
+    UncheckedKeyHashSet<B3::Value*> m_storesThatKeepStructures;
+    static uint64_t keyOfAccessInRun(BlockID block, unsigned index) { return (static_cast<uint64_t>(block.index()) << 32 | index) + 1; }
     BitVector m_loopBlocks;
-    Vector<Handler> m_catchEntrypoints;
-    UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_catchEntrypointForBlock;
-    UncheckedKeyHashMap<uint32_t, CatchSpill, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_catchSpills;
-    unsigned m_catchSpillSlotCount { 0 };
-    LValue m_catchSpillArea { nullptr };
-    std::optional<unsigned> m_currentCatchEntrypoint;
+    BitVector m_handlersEnteredByBranch;
+    const Target* m_watchingHandler { nullptr };
+    LBasicBlock m_currentLandingPad { nullptr };
+    bool m_isCurrentLandingPadShared { false };
+    UncheckedKeyHashMap<uint32_t, LValue, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_caughtValues;
+    UncheckedKeyHashMap<uint32_t, LBasicBlock, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_blocksThatCatch;
+    struct LandingPad {
+        BlockID source;
+        const Target* handler;
+        LBasicBlock block;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<LandingPad, 2>, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_landingPads;
+    unsigned m_callSitesAwaitingLandingPad { 0 };
+    BuiltinID m_expectedMethodThatWasRead;
     // By layout.
     mutable UncheckedKeyHashMap<uint32_t, uint32_t, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_leastSizes;
     mutable UncheckedKeyHashMap<uint32_t, bool, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_viewsThatMayBeFrozen;
+    mutable UncheckedKeyHashMap<uint32_t, bool, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_viewsThatMayGiveUp;
     // See findStoresToVariables(). A field goes by the number of its layout and its own.
     bool m_didFindStoresToVariables { false };
     BitVector m_variablesStoredTo;
@@ -1315,6 +1521,13 @@ private:
         std::optional<int64_t> least { };
     };
     UncheckedKeyHashMap<uint32_t, IntegerOfNumber, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_integersOfNumbers;
+    struct IntegerMadeNumber {
+        LValue number { nullptr };
+        LValue integer { nullptr };
+        int64_t least { 0 };
+    };
+    IntegerMadeNumber m_lastIntegerMadeNumber;
+    UncheckedKeyHashMap<uint32_t, IntegerMadeNumber, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_likelyIntegersOfNumbers;
     bool m_isLoweringInitialStoresOneByOne { false };
     // While a value is fitted that something is made of where it does not fit (`as`, `!`): an object fits a view only if it is of a member,
     // also where the view admits foreign objects.
@@ -1356,7 +1569,6 @@ private:
     struct Loop {
         BlockID header;
         BitVector blocks;
-        bool hasHandlerInside { false };
     };
     static constexpr unsigned noLoop = UINT_MAX;
     Vector<Loop> m_loops;
@@ -1370,13 +1582,10 @@ private:
     // Of a general entry that takes a list.
     Word32 m_argumentCount;
     Pointer m_argumentBuffer;
-    // Where there are handlers: these two are kept for them as what is live into them is. See computeCatchEntrypoints().
-    B3::Variable* m_argumentCountVariable { nullptr };
-    B3::Variable* m_argumentBufferVariable { nullptr };
-    unsigned m_firstArgumentWord { 0 };
     bool m_isInLoop { false };
     // In the general arm of a site that has tested its operands for int32 in line.
     bool m_hasFailedInt32Test { false };
+    bool m_asksOperandsAnew { false };
     uint32_t m_nextSite { 1 };
     ASCIILiteral m_whyFailed;
     uint8_t m_genericEntrypointParameterCount { 0 };
@@ -1501,6 +1710,33 @@ Operand Lowering::byShape(CellPointer cell, const ShapeTest& test, Joined joined
     return join.finish();
 }
 
+template<typename InOwnField, typename Otherwise>
+Operand Lowering::byOwnFieldOfMember(CellPointer cell, LayoutID view, const Field& field, Joined joined, const InOwnField& inOwnField, const Otherwise& otherwise)
+{
+    Vector<std::pair<LayoutID, const Field*>, maxMembersServedByTheirOwnField> members;
+    for (LayoutID member : m_program.at(view).membersByFit) {
+        auto& layout = m_program.at(member);
+        auto found = layout.fieldNamed(field.name);
+        if (!found || layout.fields[*found].slot == field.slot || !layout.fields[*found].slot)
+            continue;
+        if (members.size() == maxMembersServedByTheirOwnField)
+            return otherwise();
+        members.append({ member, &layout.fields[*found] });
+    }
+    OperandJoin join(*this, joined);
+    Word32 shapeWord = shapeWordOf(cell);
+    for (auto& [member, own] : members) {
+        LBasicBlock isOfMember = m_out.newBlock();
+        LBasicBlock isOfAnother = m_out.newBlock();
+        m_out.branch(equal(shapeWord, word32(Typed::shapeWordOf(m_program.at(member).shape))).value(), unsure(isOfMember), unsure(isOfAnother));
+        m_out.appendTo(isOfMember);
+        join.add(inOwnField(member, *own));
+        m_out.appendTo(isOfAnother);
+    }
+    join.add(otherwise());
+    return join.finish();
+}
+
 template<typename Has, typename Lacks>
 Operand Lowering::throughView(CellPointer cell, ValueID object, LayoutID view, const Field& field, Joined joined, const Has& has, const Lacks& lacks)
 {
@@ -1508,7 +1744,7 @@ Operand Lowering::throughView(CellPointer cell, ValueID object, LayoutID view, c
     if (field.isLackedBySomeMember) {
         // Placement has seen this access: see Field::slot. Otherwise a member has the property in a field this one is not tied to, and
         // what is done for an object that lacks the field would go past it.
-        RELEASE_ASSERT(!field.membersWithIt.passesNothing() || !hasMemberWithField(view, field.name));
+        RELEASE_ASSERT(!field.membersWithIt.passesNothing() || field.isElsewhereInSomeMember || !hasMemberWithField(view, field.name));
         return byShape(cell, field.membersWithIt, joined, has, lacks, mostMembersLack(view, field));
     }
     return ifOfMember(cell, object, view, joined, has, lacks);
@@ -1556,6 +1792,7 @@ Operand Lowering::ifAsExpected(const Vector<Expectation, 4>& expectations, Rep r
             continue;
         m_assumptions.append(Assumption { expectation.value, expectOrElse(expectation, otherwise), expectation.type });
     }
+    SetForScope isInArm(m_isInArm, true);
     join.add(inPlace(otherwise));
     m_assumptions.shrink(numberOfAssumptions);
     m_out.appendTo(otherwise);
@@ -1590,16 +1827,30 @@ Operand Lowering::ifNumbersAsExpected(std::initializer_list<ValueID> operands, R
                 m_assumptions.append(Assumption { id, expectOrElse(Expectation { id, &type }, whereNot), &type });
         }
     };
+    SetForScope isInArm(m_isInArm, true);
+    unsigned numberOfWaysIn = 0;
     if (mayAllBeInt32) {
+        LBasicBlock first = m_out.m_block;
         LBasicBlock next = mayBeOtherNumbers ? m_out.newBlock() : otherwise;
         expect(int32Type, next);
         join.add(onInt32(next));
         m_assumptions.shrink(numberOfAssumptions);
-        if (mayBeOtherNumbers)
+        if (mayBeOtherNumbers) {
+            auto count = [&](LBasicBlock block) {
+                for (LBasicBlock successor : block->successorBlocks())
+                    numberOfWaysIn += successor == next;
+            };
+            count(first);
+            for (unsigned i = next->index() + 1; i < m_proc.size(); ++i)
+                count(m_proc[i]);
             m_out.appendTo(next);
+        }
     }
     if (!mayAllBeInt32 || mayBeOtherNumbers) {
-        expect(numberType, otherwise);
+        {
+            SetForScope asksOperandsAnew(m_asksOperandsAnew, numberOfWaysIn > 1);
+            expect(numberType, otherwise);
+        }
         join.add(onNumbers());
         m_assumptions.shrink(numberOfAssumptions);
     }
@@ -1615,10 +1866,11 @@ Operand Lowering::lowerExpectedBuiltin(ValueID result, const ExpectedBuiltin& ex
     ValueID receiver = expected.receiver.isNever() ? ValueID() : expected.call.child(0);
     InlineBuiltin which = m_builtins.at(expected.call.builtin()).implementation.inlined;
     Vector<Expectation, 4> expectations;
-    // What has been read from the receiver under the name is looked at itself. Otherwise the receiver has to be one that finds what its class
+    // What has been read from the receiver under the name is looked at itself. Otherwise, and where the function asks it for more than that name, the receiver has to be one that finds what its class
     // has. Its length every array has itself, and keeps.
+    bool asksReceiverForMore = m_builtins.at(expected.call.builtin()).usesOfThis & OperandUse::Gets && familyOf(which) != BuiltinFamily::Array;
     if (receiver)
-        expectations.append(Expectation { receiver, &expected.receiver, !callee && which != InlineBuiltin::ArrayLength });
+        expectations.append(Expectation { receiver, &expected.receiver, (!callee || asksReceiverForMore) && which != InlineBuiltin::ArrayLength });
     for (unsigned i = 0; i < expected.arguments.size(); ++i)
         expectations.append(Expectation { expected.call.arguments[i], &expected.arguments[i] });
     // All of them boxed as int32: the form for integers. Else as numbers.
@@ -1648,6 +1900,7 @@ Operand Lowering::lowerExpectedBuiltin(ValueID result, const ExpectedBuiltin& ex
             if (get(argument).rep == Rep::JSValue)
                 m_assumptions.append(Assumption { argument, expectOrElse(Expectation { argument, &int32Type }, numbers), &int32Type });
         }
+        SetForScope isInArm(m_isInArm, true);
         join.add(*lowerInline(which, result, call));
         m_assumptions.shrink(numberOfAssumptions);
         m_out.appendTo(numbers);
@@ -1662,6 +1915,7 @@ Operand Lowering::lowerExpectedBuiltin(ValueID result, const ExpectedBuiltin& ex
         // It takes the place of that value.
         Value call = expected.call;
         call.type = m_function.at(result).type;
+        SetForScope expectedMethodThatWasRead(m_expectedMethodThatWasRead, receiver && callee ? expected.call.builtin() : BuiltinID());
         return *lowerInline(which, result, call);
     }, generally);
 }
@@ -1690,8 +1944,11 @@ T Lowering::lazilyInitialized(Stub stub, ptrdiff_t table, uint64_t indexAndMore,
 {
     uint32_t index = static_cast<uint32_t>(indexAndMore);
     // In a loop the load and the test are in place.
-    if (!m_isInLoop)
-        return T(callAllocationStub(stub, { { m_out.constInt64(indexAndMore), stubTemporaryGPRs[0] } }, { Writes::RuntimeState, false }, false));
+    if (!m_isInLoop) {
+        LValue entry = callAllocationStub(stub, { { m_out.constInt64(indexAndMore), stubTemporaryGPRs[0] } }, { Writes::RuntimeState, false }, false);
+        entry->as<B3::PatchpointValue>()->pureFunctionKey = (static_cast<uint64_t>(stub) + 2) << 32 | index;
+        return T(entry);
+    }
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     // What fills it writes the state of the run time: a load that was moved out of a loop would find it empty every time around.

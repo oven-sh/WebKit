@@ -16,9 +16,10 @@
 #include "AirCode.h"
 #include "AirGenerate.h"
 #include "AirInstInlines.h"
+#include "AssemblyHelpersSpoolers.h"
 #include "B3BasicBlockInlines.h"
+#include "B3CycleForest.h"
 #include "B3Generate.h"
-#include "B3NaturalLoops.h"
 #include "B3Procedure.h"
 #include "B3ValueInlines.h"
 #include "CCallHelpers.h"
@@ -44,7 +45,8 @@ void estimateFrequencies(B3::Procedure& proc)
 {
     constexpr double coldFrequency = 1.0 / 1024;
     proc.resetReachability();
-    auto& loops = proc.naturalLoops();
+    proc.setReachabilityIsFresh();
+    B3::CycleForest cycles(proc);
     constexpr double iterations = 10;
     constexpr double leastFrequency = 1e-6;
     constexpr double mostFrequency = 1e6;
@@ -55,24 +57,37 @@ void estimateFrequencies(B3::Procedure& proc)
         weight[block] = std::clamp(block->frequency(), coldFrequency, 1.0);
 
     IndexMap<B3::BasicBlock*, double> incoming(proc.size(), 0.0);
+    Vector<double, 16> entering(FillWith { }, cycles.size(), 0.0);
     incoming[proc[0]] = 1;
-    Vector<B3::BasicBlock*> postOrder = proc.blocksInPostOrder();
+    for (unsigned cycle = cycles.innermost(proc[0]); cycle != B3::CycleForest::none; cycle = cycles[cycle].parent)
+        entering[cycle] = 1;
+    auto& postOrder = cycles.blocksInPostOrder();
     for (unsigned index = postOrder.size(); index--;) {
         B3::BasicBlock* block = postOrder[index];
-        double frequency = incoming[block];
-        if (loops.headerOf(block))
-            frequency *= iterations;
+        unsigned cycleOfBlock = cycles.innermost(block);
+        double frequency = cycles.isHeader(block) ? entering[cycleOfBlock] * iterations : incoming[block];
         block->setFrequency(static_cast<float>(std::clamp(frequency, leastFrequency, mostFrequency)));
+
+        auto send = [&](B3::BasicBlock* successor, double amount) {
+            unsigned cycle = cycles.innermost(successor);
+            unsigned common = cycles.nearestCommon(cycleOfBlock, cycle);
+            if (cycle == common) {
+                incoming[successor] += amount;
+                return;
+            }
+            for (; cycle != common; cycle = cycles[cycle].parent)
+                entering[cycle] += amount;
+        };
 
         if (block->last()->opcode() == B3::EntrySwitch) {
             for (unsigned i = 0; i < block->numSuccessors(); ++i)
-                incoming[block->successorBlock(i)] += i ? frequency * coldFrequency : frequency;
+                send(block->successorBlock(i), i ? frequency * coldFrequency : frequency);
             continue;
         }
 
         auto shareIfLeavingLoops = [&](B3::BasicBlock* successor) {
             double share = 1;
-            for (auto* loop = loops.innerMostLoopOf(block); loop && !loops.belongsTo(successor, *loop); loop = loops.innerMostOuterLoop(*loop))
+            for (unsigned left = cycles.depth(cycleOfBlock) - cycles.depth(cycles.nearestCommon(cycleOfBlock, cycles.innermost(successor))); left--;)
                 share /= iterations;
             return share;
         };
@@ -101,22 +116,23 @@ void estimateFrequencies(B3::Procedure& proc)
                 share *= scaleOfLeaving * (1 - rare);
             else
                 share = (1 - rare) * (1 - leaving * scaleOfLeaving) * weight[successor.block()] / weightStaying;
-            incoming[successor.block()] += frequency * share;
+            send(successor.block(), frequency * share);
         }
     }
 }
 
 // After the frame pointer is set. Leaves the stack pointer at the bottom of the frame. The test falls through: where the frame does not fit it goes to what emitStackOverflow() puts behind the code.
+static constexpr unsigned maxFrameSizeToMoveFirst = 4 * KB;
+
 CCallHelpers::JumpList emitStackCheck(CCallHelpers& jit, unsigned frameSize)
 {
     // Below the limit lies the reserved zone, so for a frame much smaller than that the stack pointer may move before the test.
-    constexpr unsigned maxFrameSizeToMoveFirst = 4 * KB;
     static_assert(maxFrameSizeToMoveFirst < minimumReservedZoneSize);
     CCallHelpers::Address limit(instanceGPR, Instance::offsetOfSoftStackLimit());
     if (frameSize <= maxFrameSizeToMoveFirst) {
         if (frameSize)
             jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(frameSize), CCallHelpers::stackPointerRegister);
-        return jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, limit);
+        return jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, CCallHelpers::Address(instanceGPR, Instance::offsetOfTrapAwareSoftStackLimit()));
     }
 #if CPU(X86_64)
     constexpr GPRReg newStackPointer = CCallHelpers::s_scratchRegister;
@@ -131,12 +147,76 @@ CCallHelpers::JumpList emitStackCheck(CCallHelpers& jit, unsigned frameSize)
     return doesNotFit;
 }
 
-void emitStackOverflow(CCallHelpers& jit, StubCalls& stubCalls, const CCallHelpers::JumpList& doesNotFit)
+#if CPU(ARM64)
+static unsigned numberOfSavesMovedWithStackPointer(const RegisterAtOffsetList& list)
+{
+    return list.registerCount() > 1 && list.at(0).reg().isGPR() == list.at(1).reg().isGPR() ? 2 : 1;
+}
+
+void pushCalleeSaves(CCallHelpers& jit, const RegisterAtOffsetList& list)
+{
+    size_t count = list.registerCount();
+    if (!count)
+        return;
+    constexpr auto sp = CCallHelpers::stackPointerRegister;
+    int size = -static_cast<int>(list.at(0).offset());
+    RELEASE_ASSERT(size > 0 && !(size % stackAlignmentBytes()));
+    Reg first = list.at(0).reg();
+    size_t i = numberOfSavesMovedWithStackPointer(list);
+    if (i == 2 && first.isGPR())
+        jit.m_assembler.stp<64>(first.gpr(), list.at(1).reg().gpr(), sp, PairPreIndex(-size));
+    else if (i == 2)
+        jit.m_assembler.stp<64>(first.fpr(), list.at(1).reg().fpr(), sp, PairPreIndex(-size));
+    else if (first.isGPR())
+        jit.m_assembler.str<64>(first.gpr(), sp, PreIndex(-size));
+    else
+        jit.m_assembler.str<64>(first.fpr(), sp, PreIndex(-size));
+    AssemblyHelpers::StoreRegSpooler spooler(jit, GPRInfo::callFrameRegister);
+    for (; i < count && list.at(i).reg().isGPR(); ++i)
+        spooler.storeGPR(list.at(i));
+    spooler.finalizeGPR();
+    for (; i < count; ++i)
+        spooler.storeFPR(list.at(i));
+    spooler.finalizeFPR();
+}
+
+void popCalleeSaves(CCallHelpers& jit, const RegisterAtOffsetList& list)
+{
+    size_t count = list.registerCount();
+    if (!count)
+        return;
+    constexpr auto sp = CCallHelpers::stackPointerRegister;
+    int size = -static_cast<int>(list.at(0).offset());
+    Reg first = list.at(0).reg();
+    size_t moved = numberOfSavesMovedWithStackPointer(list);
+    size_t i = moved;
+    AssemblyHelpers::LoadRegSpooler spooler(jit, GPRInfo::callFrameRegister);
+    for (; i < count && list.at(i).reg().isGPR(); ++i)
+        spooler.loadGPR(list.at(i));
+    spooler.finalizeGPR();
+    for (; i < count; ++i)
+        spooler.loadFPR(list.at(i));
+    spooler.finalizeFPR();
+    if (moved == 2 && first.isGPR())
+        jit.m_assembler.ldp<64>(first.gpr(), list.at(1).reg().gpr(), sp, PairPostIndex(size));
+    else if (moved == 2)
+        jit.m_assembler.ldp<64>(first.fpr(), list.at(1).reg().fpr(), sp, PairPostIndex(size));
+    else if (first.isGPR())
+        jit.m_assembler.ldr<64>(first.gpr(), sp, PostIndex(size));
+    else
+        jit.m_assembler.ldr<64>(first.fpr(), sp, PostIndex(size));
+}
+#endif
+
+void emitStackOverflow(CCallHelpers& jit, StubCalls& stubCalls, const CCallHelpers::JumpList& doesNotFit, unsigned frameSize)
 {
     if (doesNotFit.empty())
         return;
     doesNotFit.link(&jit);
-    stubCalls.tailCall(jit, Stub::ThrowStackOverflowAtPrologue);
+    if (frameSize <= maxFrameSizeToMoveFirst)
+        stubCalls.call(jit, Stub::PollAtPrologue, CallSite { });
+    else
+        stubCalls.tailCall(jit, Stub::ThrowStackOverflowAtPrologue);
 }
 
 // What branch compaction saved is left behind the code as nops: see LinkBuffer::copyCompactAndLinkCode(). A breakpoint at the end that no call comes back to is not reached.
@@ -149,7 +229,7 @@ void dropPaddingAtEnd(CompiledFunctionInfo& info, const void* start, B3::Air::Co
         info.codeSize -= sizeof(uint32_t);
     unsigned minimumSize = sizeof(uint32_t);
     for (auto& call : info.stubCalls) {
-        if (!call.isTailCall)
+        if (!call.isTailCall && call.stub != Stub::PollAtPrologue)
             minimumSize = std::max<unsigned>(minimumSize, call.offset + 2 * sizeof(uint32_t));
     }
     auto dropBreakpointAtEnd = [&] {

@@ -40,6 +40,7 @@
 #include "B3NaturalLoops.h"
 #include "B3PhaseScope.h"
 #include "B3PhiChildren.h"
+#include <wtf/IndexMap.h>
 #include "B3ProcedureInlines.h"
 #include "B3SwitchValue.h"
 #include "B3ValueKeyInlines.h"
@@ -643,7 +644,11 @@ public:
                 // A second value walk is only worthwhile when the CFG/SSA cleanup above exposed
                 // new opportunities: merged blocks enabling Check CSE, or a folded Phi turning
                 // Branch(Phi) into Branch(Identity).
+#if USE(BUN_JSC_ADDITIONS)
+                if (m_changed && !(m_proc.positionIndependent() && m_pass == ReduceStrengthPass::Initial)) {
+#else
                 if (m_changed) {
+#endif
                     m_valueForConstant.clear();
                     reduceAllBlocksStrength();
                     m_changedCFG = false;
@@ -659,6 +664,10 @@ public:
             simplifyCFG();
             handleChangedCFGIfNecessary();
             result |= m_changed;
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_numbersMemory && result)
+                eliminateDeadCodeImpl(m_proc);
+#endif
         }
 
         return result;
@@ -716,6 +725,13 @@ public:
 
         m_dominators = &m_proc.dominators(); // Recompute if necessary.
         m_layeredCSE.clear();
+#if USE(BUN_JSC_ADDITIONS)
+        m_numbersMemory = m_proc.optLevel() >= 1 && m_proc.positionIndependent();
+        if (m_numbersMemory) {
+            m_heapEpochs.clear();
+            m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
+        }
+#endif
         reduceAllBlocksStrengthInDominatorPreOrder();
 
         handleChangedCFGIfNecessary();
@@ -758,6 +774,10 @@ public:
             // A null entry closes the layer that the block pushing it opened.
             if (!block) {
                 m_layeredCSE.dropLastLayer();
+#if USE(BUN_JSC_ADDITIONS)
+                if (m_numbersMemory)
+                    m_heapEpochs.dropLastLayer();
+#endif
                 if (m_trackWasmGCAccesses)
                     m_wasmGCMap.dropLastLayer();
                 continue;
@@ -765,6 +785,10 @@ public:
             stack.append(nullptr);
 
             m_layeredCSE.startLayer();
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_numbersMemory)
+                beginMemoryNumbering(block);
+#endif
 
             if (m_trackWasmGCAccesses) {
                 m_wasmGCMap.startLayer();
@@ -772,6 +796,10 @@ public:
             }
 
             reduceBlockStrength(block);
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_numbersMemory)
+                m_memoryStateAtTail[block->index()] = m_memoryState;
+#endif
 
             if (m_trackWasmGCAccesses)
                 endWasmGCBlock(block);
@@ -803,6 +831,9 @@ private:
             // becomes Add(x, c1 + c2)), and the result may match another rule. Without fixpoint
             // iteration we re-run reductions on the same value until it stops changing or gets
             // replaced (Identity) / erased (Nop).
+#if USE(BUN_JSC_ADDITIONS)
+            Opcode opcodeBeforeReduction = m_value->opcode();
+#endif
             constexpr unsigned maxReductionAttempts = 8;
             bool reduced = false;
             for (unsigned attempt = 0; attempt < maxReductionAttempts; ++attempt) {
@@ -817,6 +848,11 @@ private:
                 if (opcode == Identity || opcode == Nop)
                     break;
             }
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_numbersMemory)
+                numberValue(opcodeBeforeReduction);
+            else
+#endif
             if (m_proc.optLevel() >= 2)
                 replaceIfRedundant();
 
@@ -3424,6 +3460,17 @@ private:
                     m_changedCFG = true;
                 }
             }
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_numbersMemory && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
+                Value* condition = representativeOfCondition(m_value->child(0), false);
+                bool isZero = !!m_layeredCSE.find(ValueKey(Check, Void, condition));
+                if (isZero || m_layeredCSE.find(ValueKey(Branch, Void, condition))) {
+                    (isZero ? m_block->taken() : m_block->notTaken()).block()->removePredecessor(m_block);
+                    m_value->replaceWithJump(m_block, isZero ? m_block->notTaken() : m_block->taken());
+                    m_changedCFG = true;
+                }
+            }
+#endif
             break;
         }
 
@@ -4701,6 +4748,210 @@ private:
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    struct MemoryState {
+        unsigned epoch { 0 };
+        unsigned id { 0 };
+        unsigned callEpoch { 0 };
+        BasicBlock* owner { nullptr };
+    };
+
+    void beginMemoryNumbering(BasicBlock* block)
+    {
+        m_heapEpochs.startLayer();
+
+        MemoryState state;
+        unsigned callEpoch = 0;
+        bool isFirst = true;
+        for (BasicBlock* predecessor : block->predecessors()) {
+            MemoryState atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : MemoryState { };
+            if (isFirst) {
+                state = atTail;
+                callEpoch = atTail.callEpoch;
+                isFirst = false;
+                continue;
+            }
+            if (state.id != atTail.id)
+                state = { };
+            if (callEpoch != atTail.callEpoch)
+                callEpoch = 0;
+        }
+        if (!state.id || !m_dominators->dominates(state.owner, block)) {
+            state.id = ++m_lastMemoryStateID;
+            state.epoch = state.id;
+            state.owner = block;
+        }
+        state.callEpoch = callEpoch ? callEpoch : ++m_lastMemoryStateID;
+        m_memoryState = state;
+
+        if (block->numPredecessors() != 1)
+            return;
+        BasicBlock* predecessor = block->predecessor(0);
+        Value* branch = predecessor->last();
+        if (branch->opcode() != Branch || predecessor->taken().block() == predecessor->notTaken().block())
+            return;
+        m_layeredCSE.add(ValueKey(predecessor->taken().block() == block ? Branch : Check, Void, representativeOfCondition(branch->child(0), true)), branch);
+    }
+
+    Value* representativeOfCondition(Value* condition, bool mayAdd)
+    {
+        ValueKey key = condition->key();
+        if (!key || condition->isConstant())
+            return condition;
+        return (mayAdd ? m_layeredCSE.findOrAdd(key, condition) : m_layeredCSE.find(key)).value_or(condition);
+    }
+
+    static bool isCheapToRecompute(Value* value)
+    {
+        switch (value->opcode()) {
+        case Add:
+        case Sub:
+        case Mul:
+        case Neg:
+        case BitAnd:
+        case BitOr:
+        case BitXor:
+        case Shl:
+        case SShr:
+        case ZShr:
+        case SExt8:
+        case SExt16:
+        case SExt32:
+        case ZExt32:
+        case Trunc:
+        case BitwiseCast:
+        case IToD:
+        case Equal:
+        case NotEqual:
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    static bool clobbersLikeCall(Value* value)
+    {
+        if (value->opcode() == CCall)
+            return true;
+        if (value->opcode() != Patchpoint)
+            return false;
+        const RegisterSet& clobbered = value->as<PatchpointValue>()->lateClobbered();
+        return clobbered.contains(GPRInfo::argumentGPR0, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR1, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR2, IgnoreVectors) && clobbered.contains(GPRInfo::argumentGPR3, IgnoreVectors);
+    }
+
+    void didWriteMemory(HeapRange writes)
+    {
+        m_memoryState.id = ++m_lastMemoryStateID;
+        m_memoryState.owner = m_block;
+        if (writes.distance() == 1)
+            m_heapEpochs.overlay(writes.begin(), m_memoryState.id);
+        else
+            m_memoryState.epoch = m_memoryState.id;
+    }
+
+    ValueKey keyForLoad(Kind kind, Type type, MemoryValue* memory)
+    {
+        v128_t bits;
+        bits.u32x4[0] = memory->lastChild()->index();
+        bits.u32x4[1] = static_cast<uint32_t>(memory->offset());
+        if (memory->isLoad() && memory->readsMutability() == Mutability::Immutable)
+            bits.u32x4[2] = 0;
+        else if (memory->range().distance() == 1)
+            bits.u32x4[2] = std::max(m_memoryState.epoch, m_heapEpochs.find(memory->range().begin()).value_or(0));
+        else
+            bits.u32x4[2] = m_memoryState.id;
+        bits.u32x4[3] = m_memoryState.callEpoch;
+        return ValueKey(kind, type, bits);
+    }
+
+    void numberValue(Opcode opcodeBeforeReduction)
+    {
+        if (m_value->opcode() != opcodeBeforeReduction && (m_value->opcode() == Nop || m_value->opcode() == Identity)) {
+            switch (opcodeBeforeReduction) {
+            case Store8:
+            case Store16:
+            case Store:
+            case AtomicWeakCAS:
+            case AtomicStrongCAS:
+            case AtomicXchgAdd:
+            case AtomicXchgAnd:
+            case AtomicXchgOr:
+            case AtomicXchgSub:
+            case AtomicXchgXor:
+            case AtomicXchg:
+            case MemoryCopy:
+            case MemoryFill:
+            case Fence:
+            case CCall:
+            case Patchpoint:
+                didWriteMemory(HeapRange::top());
+                break;
+            default:
+                break;
+            }
+        }
+        replaceIfRedundantInMemoryState();
+        if (clobbersLikeCall(m_value))
+            m_memoryState.callEpoch = ++m_lastMemoryStateID;
+    }
+
+    void replaceIfRedundantInMemoryState()
+    {
+        Value* value = m_value->opcode() == Identity ? m_value->child(0) : m_value;
+        if (value->opcode() == Identity || value->isConstant())
+            return;
+
+        ValueKey key = value->key();
+        if (!key) {
+            if (value != m_value)
+                return;
+            MemoryValue* memory = m_value->as<MemoryValue>();
+            if (!memory || memory->isExotic()) {
+                Effects effects = m_value->effects();
+                if (effects.fence)
+                    didWriteMemory(HeapRange::top());
+                else if (effects.writes)
+                    didWriteMemory(effects.writes);
+                return;
+            }
+            if (memory->isStore()) {
+                didWriteMemory(memory->range());
+                if (memory->opcode() == Store)
+                    m_layeredCSE.add(keyForLoad(Load, memory->child(0)->type(), memory), memory->child(0));
+                return;
+            }
+            key = keyForLoad(memory->kind(), memory->type(), memory);
+        } else if (isCheapToRecompute(value)) {
+            v128_t bits;
+            for (unsigned i = 0; i < 3; ++i)
+                bits.u32x4[i] = key.childIndex(i);
+            bits.u32x4[3] = m_memoryState.callEpoch;
+            key = ValueKey(key.kind(), key.type(), bits);
+        }
+
+        std::optional<Value*> match = m_layeredCSE.findOrAdd(key, value);
+        if (!match && m_value->opcode() == Patchpoint) {
+            if (HeapRange writes = m_value->as<PatchpointValue>()->effects.writes)
+                didWriteMemory(writes);
+        }
+        if (!match || *match == value)
+            return;
+        if (value == m_value)
+            m_value->replaceWithIdentity(*match);
+        else
+            m_value->child(0) = *match;
+        m_changed = true;
+    }
+#endif
+
     // Each slot has an epoch in m_wasmGCEpochs, and a write bumps the epochs of the slots it may touch.
     // Slot 0 is the struct catch-all, 1..8 one per array element type, 9 the array catch-all, and
     // the rest one per mutable struct field some WasmStructSet writes. A key carries the epochs of
@@ -5210,7 +5461,7 @@ private:
         // Bun: merging is a loop of its own, in pre-order, in which the head of a chain of blocks absorbs all of it. In the post-order loop
         for (BasicBlock* block : m_proc.blocksInPreOrder()) {
             // Finally handle jumps to a block with one predecessor.
-            while (block->numSuccessors() == 1) {
+            while (block->numSuccessors() == 1 && block->last()->opcode() == Jump) {
                 BasicBlock* successor = block->successorBlock(0);
                 if (successor == block || successor->numPredecessors() != 1)
                     break;
@@ -5302,6 +5553,43 @@ private:
         // of block merging per ReduceStrength fixpoint iteration, so it's OK for this to only do one
         // round of Phi merging - since Phis are the value analogue of blocks.
 
+#if USE(BUN_JSC_ADDITIONS)
+        IndexMap<Value*, Value*> onlyChild(m_proc.values().size(), nullptr);
+        Vector<Value*, 32> phis;
+        for (Value* value : m_proc.values()) {
+            UpsilonValue* upsilon = value->as<UpsilonValue>();
+            if (!upsilon)
+                continue;
+            Value* phi = upsilon->phi();
+            Value* child = upsilon->child(0);
+            Value*& only = onlyChild[phi];
+            if (child == phi || child == only || only == phi)
+                continue;
+            if (only) {
+                only = phi;
+                continue;
+            }
+            only = child;
+            phis.append(phi);
+        }
+        bool found = false;
+        for (Value* phi : phis)
+            found |= onlyChild[phi] != phi;
+        if (!found)
+            return;
+        m_changed = true;
+        for (Value* value : m_proc.values()) {
+            if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
+                Value* only = onlyChild[upsilon->phi()];
+                if (only && only != upsilon->phi())
+                    upsilon->replaceWithNop();
+            }
+        }
+        for (Value* phi : phis) {
+            if (onlyChild[phi] != phi)
+                phi->replaceWithIdentity(onlyChild[phi]);
+        }
+#else
         PhiChildren phiChildren(m_proc);
 
         for (Value* phi : phiChildren.phis()) {
@@ -5334,6 +5622,7 @@ private:
                 upsilon->replaceWithNop();
             phi->replaceWithIdentity(otherChild);
         }
+#endif
     }
 
     Procedure& m_proc;
@@ -5346,6 +5635,13 @@ private:
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
     LayeredHashMap<ValueKey, Value*> m_layeredCSE;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_numbersMemory { false };
+    MemoryState m_memoryState;
+    unsigned m_lastMemoryStateID { 0 };
+    Vector<MemoryState> m_memoryStateAtTail;
+    LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
+#endif
 
     bool m_trackWasmGCAccesses { false };
     LayeredHashMap<WasmGCAccessKey, WasmGCAvailableValue, DefaultHash<WasmGCAccessKey>, WasmGCAccessKeyTraits> m_wasmGCMap;

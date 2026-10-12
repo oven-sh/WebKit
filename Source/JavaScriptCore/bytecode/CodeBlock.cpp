@@ -1121,7 +1121,7 @@ void CodeBlock::releaseAOTData()
 {
     if (vm().heap.collectionScope())
         return;
-    if (auto* data = aotData(); data && data->codeBlock == this) {
+    if (auto* data = aotData(); data && data->codeBlock() == this) {
 #if ENABLE(SAMPLING_PROFILER)
         if (SamplingProfiler* profiler = vm().samplingProfiler()) [[unlikely]] {
             DeferGCForAWhile deferGC(vm());

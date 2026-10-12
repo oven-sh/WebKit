@@ -181,6 +181,24 @@ using namespace B3;
 FOR_EACH_AOT_TYPED_ENGINE_BUILTIN_FUNCTION(ASSERT_NUMBER)
 #undef ASSERT_NUMBER
 
+uint32_t visibilityInEngine(uint32_t builtinFunction)
+{
+    switch (builtinFunction) {
+#define VISIBILITY_OF(name, functionName, overriddenName, length) \
+    case static_cast<uint32_t>(BuiltinCodeIndex::name): \
+        return static_cast<uint32_t>(s_##name##ImplementationVisibility);
+    JSC_FOREACH_BUILTIN_CODE(VISIBILITY_OF)
+#undef VISIBILITY_OF
+    default:
+        return static_cast<uint32_t>(ImplementationVisibility::Public);
+    }
+}
+
+bool isStrictInEngine(uint32_t builtinFunction)
+{
+    return builtinFunction >= numberOfBuiltinCodes || s_JSCBuiltinSourceMetadata[builtinFunction].isInStrictContext;
+}
+
 #define AOT_TYPED_CHECK_CONSTANT(number, expression) static_assert(static_cast<int64_t>(expression) == number);
 FOR_EACH_AOT_TYPED_ENGINE_CONSTANT(AOT_TYPED_CHECK_CONSTANT)
 #undef AOT_TYPED_CHECK_CONSTANT

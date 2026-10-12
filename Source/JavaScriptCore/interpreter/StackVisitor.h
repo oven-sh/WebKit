@@ -101,7 +101,7 @@ public:
         bool isTypedAOTFrame() const { return m_aotFunction && m_typedAOTFunction != UINT32_MAX; }
         uint32_t typedAOTFunction() const { return m_typedAOTFunction; }
         // A frame that only exists because of how the code was compiled. Stack traces leave it out.
-        JS_EXPORT_PRIVATE bool isHiddenAOTFrame() const;
+        JS_EXPORT_PRIVATE bool isHiddenAOTFrame(bool isAtTheTop = false) const;
         JS_EXPORT_PRIVATE JSCell* aotCallee() const;
         bool isTailDeleted() const { return m_isTailDeleted; }
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
@@ -217,8 +217,27 @@ public:
         }
     }
 
+#if ENABLE(AOT)
+    template <StackVisitorFunctor Functor>
+    static void visitCallersOfCompiledFrame(VM& vm, CallFrame* compiledFrame, void* returnPC, NOESCAPE const Functor& functor)
+    {
+        StackVisitor visitor(vm, compiledFrame, returnPC);
+        while (visitor->callFrame()) {
+            IterationStatus status = functor(visitor);
+            if (status != IterationStatus::Continue)
+                break;
+            visitor.gotoNextFrame();
+        }
+    }
+#endif
+
     Frame& operator*() { return m_frame; }
     ALWAYS_INLINE Frame* operator->() { return &m_frame; }
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE unsigned gotoLastOfPlainCompiledCallers(std::span<AOT::FrameInTrace>);
+    JS_EXPORT_PRIVATE bool isAtConstructedCompiledFrame();
+    JS_EXPORT_PRIVATE bool gotoLastOfCompiledCallersWithoutHandlers(CPURegister* calleeSaveRegistersBuffer, std::span<const int8_t> bufferSlotsByRegIndex);
+#endif
     void unwindToMachineCodeBlockFrame();
 
     bool topEntryFrameIsEmpty() const { return m_topEntryFrameIsEmpty; }
@@ -226,6 +245,9 @@ public:
 private:
     // wantsOnlyHandlers: of a frame of AOT::FunctionInfo::hasNoHandlers only the function, the call frame and the caller are found out.
     JS_EXPORT_PRIVATE StackVisitor(CallFrame* startFrame, VM&, bool skipFirstFrame, bool wantsOnlyHandlers = false);
+#if ENABLE(AOT)
+    JS_EXPORT_PRIVATE StackVisitor(VM&, CallFrame* compiledFrame, void* returnPC);
+#endif
 
     JS_EXPORT_PRIVATE void gotoNextFrame();
 
@@ -236,6 +258,10 @@ private:
     CallFrame* skipStubFrames(CallFrame*, EntryFrame*&, void*& returnPC, CallFrame*& adapter);
 #if ENABLE(AOT)
     void readAOTFrame(CallFrame*, void* returnPC, uint32_t index);
+    bool isAtConstructedInlineFrame();
+    bool isCalledByConstruction();
+    bool isCalledByConstructionOrConstructedWrapper();
+    bool isEnteredByConstruction();
     AOT::ImageAddressInfo classify(const void* address);
     bool tryGotoCompiledCaller();
 #endif
@@ -246,6 +272,7 @@ private:
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };
+    AOT::InlineFramesRead m_inlineFramesRead;
     const void* m_classifiedAddress { nullptr };
     AOT::ImageAddressInfo m_classification;
     AOT::Instance* m_aotInstance { nullptr };

@@ -701,8 +701,6 @@ void Heap::reconcileWeakReferencesAtGCEnd()
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
     if (auto* program = vm().m_aotProgram.get())
         program->didFinishCollection();
-    if (auto* cache = vm().megamorphicCache(); cache && !vm().m_aotInstances.isEmpty())
-        cache->reconcileWeakReferencesAtGCEnd(vm());
 #endif
 
     {
@@ -2272,8 +2270,14 @@ void Heap::runCollectionEpilogue()
     
     if (HasOwnPropertyCache* cache = vm().hasOwnPropertyCache())
         cache->clear();
-    if (auto* cache = vm().megamorphicCache())
-        cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
+    if (auto* cache = vm().megamorphicCache()) {
+#if ENABLE(AOT)
+        if (!vm().m_aotInstances.isEmpty())
+            cache->takeOutDead(*this);
+        else
+#endif
+            cache->age(m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full ? CollectionScope::Full : CollectionScope::Eden);
+    }
 
     if (m_lastCollectionScope && m_lastCollectionScope.value() == CollectionScope::Full) {
         vm().jsonCache().clearStrings();
@@ -3146,33 +3150,35 @@ void Heap::addCoreConstraints()
         ConstraintParallelism::Sequential);
     
 #if ENABLE(AOT)
-    m_collector->addMarkingConstraint(
-        "Ao"_s, "Instances of Statically Compiled Code"_s,
-        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
-            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
-            bool newOnly = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
-            if (auto* program = vm().m_aotProgram.get())
-                program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
-            for (AOT::Instance* instance : vm().m_aotInstances) {
-                if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
-                    instance->visit(visitor, newOnly);
-            }
-        })),
-        ConstraintVolatility::GreyedByMarking,
-        ConstraintConcurrency::Concurrent,
-        ConstraintParallelism::Sequential);
-    m_collector->addMarkingConstraint(
-        "At"_s, "Static Variables of Compiled Code"_s,
-        MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
-            SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
-            for (AOT::Instance* instance : vm().m_aotInstances) {
-                if (instance->typed)
-                    instance->typed->visit(visitor);
-            }
-        })),
-        ConstraintVolatility::GreyedByExecution,
-        ConstraintConcurrency::Concurrent,
-        ConstraintParallelism::Sequential);
+    if (vm().useImmutableIntrinsics) {
+        m_collector->addMarkingConstraint(
+            "Ao"_s, "Instances of Statically Compiled Code"_s,
+            MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+                bool newOnly = m_collectionScope && m_collectionScope.value() == CollectionScope::Eden;
+                if (auto* program = vm().m_aotProgram.get())
+                    program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
+                for (AOT::Instance* instance : vm().m_aotInstances) {
+                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
+                        instance->visit(visitor, newOnly);
+                }
+            })),
+            ConstraintVolatility::GreyedByMarking,
+            ConstraintConcurrency::Concurrent,
+            ConstraintParallelism::Sequential);
+        m_collector->addMarkingConstraint(
+            "At"_s, "Static Variables of Compiled Code"_s,
+            MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
+                SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
+                for (AOT::Instance* instance : vm().m_aotInstances) {
+                    if (instance->typed)
+                        instance->typed->visit(visitor);
+                }
+            })),
+            ConstraintVolatility::GreyedByExecution,
+            ConstraintConcurrency::Concurrent,
+            ConstraintParallelism::Sequential);
+    }
 #endif
 
     m_collector->addMarkingConstraint(

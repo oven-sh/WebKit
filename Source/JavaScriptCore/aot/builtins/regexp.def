@@ -47,6 +47,7 @@ call RegExp (toString?, toString?) -> new RegExp/N ; MayThrow Allocates ; Inline
 call RegExp (any/GR?, any/G?, any/-...) -> anything ; CallsUserCode ; HostCall
 construct RegExp (toString?, toString?) -> new RegExp/N ; MayThrow Allocates ; Inline(RegExpNew)
 construct RegExp (any/GR?, any/G?, any/-...) -> new RegExp/N ; CallsUserCode ; HostCall
+operation RegExpLiteral (toString, toString) -> new RegExp/N ; MayThrow Allocates ; Inline(RegExpNew)
 
 static RegExp.escape (any) -> string ; MayThrow ; HostCall
 

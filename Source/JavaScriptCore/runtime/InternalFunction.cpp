@@ -23,6 +23,7 @@
 #include "config.h"
 #include "InternalFunction.h"
 
+#include "AOTFunction.h"
 #include "Debugger.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -143,6 +144,17 @@ String InternalFunction::calculatedDisplayName(VM& vm)
     return name();
 }
 
+static ALWAYS_INLINE bool keepsInternalFunctionAllocationStructure(JSFunction* function)
+{
+    if (function->canUseAllocationProfiles())
+        return true;
+#if ENABLE(AOT)
+    return AOT::isCompiledClassObject(function);
+#else
+    return false;
+#endif
+}
+
 Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObject, JSObject* newTarget, Structure* baseClass)
 {
     VM& vm = globalObject->vm();
@@ -154,7 +166,7 @@ Structure* InternalFunction::createSubclassStructure(JSGlobalObject* globalObjec
     // newTarget may be an InternalFunction if we were called from Reflect.construct.
     JSFunction* targetFunction = dynamicDowncast<JSFunction>(newTarget);
 
-    if (!targetFunction || !targetFunction->canUseAllocationProfiles()) [[unlikely]] {
+    if (!targetFunction || !keepsInternalFunctionAllocationStructure(targetFunction)) [[unlikely]] {
         JSValue prototypeValue = newTarget->get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, nullptr);
         // .prototype getter could have triggered having a bad time so need to recheck array structures.

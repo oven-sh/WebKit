@@ -66,6 +66,16 @@ LValue Emitter::changing32(ptrdiff_t offset)
     return notControlDependent(m_out.load32(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset)));
 }
 
+LValue Emitter::fixed64(ptrdiff_t offset)
+{
+    return notControlDependent(m_out.load64(m_out.address(m_heaps.AOTInstance_fixedFields, m_instance, offset)));
+}
+
+LValue Emitter::changing64(ptrdiff_t offset)
+{
+    return notControlDependent(m_out.load64(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, offset)));
+}
+
 LValue Emitter::structureWithID(LValue structureID)
 {
     return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
@@ -99,19 +109,32 @@ void Emitter::forEachUpTo(LValue count, const Functor& body)
 LValue Emitter::allocateHeapCell(LValue allocator, LBasicBlock slowPath)
 {
     orElse(m_out.notNull(allocator), slowPath);
+    return allocateHeapCell(allocator, std::nullopt, slowPath);
+}
+
+LValue Emitter::allocateHeapCell(LValue allocator, std::optional<size_t> cellSize, LBasicBlock slowPath)
+{
+    LBasicBlock continuation = m_out.newBlock();
     PatchpointValue* allocation = m_out.patchpoint(pointerType());
+    allocation->effects.terminal = true;
     allocation->append(ConstrainedValue(allocator, ValueRep::SomeRegister));
     allocation->numGPScratchRegisters = 1;
     allocation->resultConstraints = { ValueRep::SomeEarlyRegister };
     allocation->clobber(RegisterSet::macroClobberedGPRs());
-    allocation->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    m_out.appendSuccessor(usually(continuation));
+    m_out.appendSuccessor(rarely(slowPath));
+    allocation->setGenerator([cellSize](CCallHelpers& jit, const StackmapGenerationParams& params) {
         // AssemblyHelpers::emitAllocateWithNonNullAllocator(), with what comes behind the bump out of line.
         AllowMacroScratchRegisterUsage allowScratch(jit);
         GPRReg result = params[0].gpr();
         GPRReg allocator = params[1].gpr();
         GPRReg scratch = params.gpScratch(0);
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
         if (Options::forceGCSlowPaths()) {
-            jit.move(CCallHelpers::TrustedImmPtr(nullptr), result);
+            CCallHelpers::Jump toSlowPath = jit.jump();
+            params.addLatePath([=](CCallHelpers& jit) {
+                toSlowPath.linkTo(*labels[1], &jit);
+            });
             return;
         }
         constexpr int32_t intervalStart = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfIntervalStart();
@@ -124,18 +147,28 @@ LValue Emitter::allocateHeapCell(LValue allocator, LBasicBlock slowPath)
         jit.loadPairPtr(allocator, CCallHelpers::TrustedImm32(intervalStart), result, scratch);
         CCallHelpers::Jump intervalIsUsedUp = jit.branchPtr(CCallHelpers::AboveOrEqual, result, scratch);
         CCallHelpers::Label bump = jit.label();
-        jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
-        jit.addPtr(result, scratch);
+        if (cellSize)
+            jit.addPtr(CCallHelpers::TrustedImm32(static_cast<int32_t>(*cellSize)), result, scratch);
+        else {
+            jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
+            jit.addPtr(result, scratch);
+        }
         jit.storePtr(scratch, CCallHelpers::Address(allocator, intervalStart));
 #else
         constexpr int32_t secret = LocalAllocator::offsetOfFreeList() + FreeList::offsetOfSecret();
         jit.loadPtr(CCallHelpers::Address(allocator, intervalStart), result);
         CCallHelpers::Jump intervalIsUsedUp = jit.branchPtr(CCallHelpers::AboveOrEqual, result, CCallHelpers::Address(allocator, intervalEnd));
         CCallHelpers::Label bump = jit.label();
-        jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
-        jit.add64(scratch, CCallHelpers::Address(allocator, intervalStart));
+        if (cellSize)
+            jit.add64(CCallHelpers::TrustedImm32(static_cast<int32_t>(*cellSize)), CCallHelpers::Address(allocator, intervalStart));
+        else {
+            jit.load32(CCallHelpers::Address(allocator, LocalAllocator::offsetOfCellSize()), scratch);
+            jit.add64(scratch, CCallHelpers::Address(allocator, intervalStart));
+        }
 #endif
-        CCallHelpers::Label done = jit.label();
+        CCallHelpers::Jump done;
+        if (!params.fallsThroughToSuccessor(0))
+            done = jit.jump();
         params.addLatePath([=](CCallHelpers& jit) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             intervalIsUsedUp.link(&jit);
@@ -160,12 +193,12 @@ LValue Emitter::allocateHeapCell(LValue allocator, LBasicBlock slowPath)
             jit.storePtr(scratch, CCallHelpers::Address(allocator, intervalEnd));
 #endif
             jit.jump().linkTo(bump, &jit);
-            thereIsNone.link(&jit);
-            jit.move(CCallHelpers::TrustedImm32(0), result);
-            jit.jump().linkTo(done, &jit);
+            thereIsNone.linkTo(*labels[1], &jit);
+            if (done.isSet())
+                done.linkTo(*labels[0], &jit);
         });
     });
-    orElse(m_out.notNull(allocation), slowPath);
+    m_out.appendTo(continuation);
     return allocation;
 }
 
@@ -184,10 +217,10 @@ LValue Emitter::allocatorForSize(LValue subspace, size_t size)
     return m_out.loadPtr(subspace, m_heaps.CompleteSubspace_allocatorForSizeStep[MarkedSpace::sizeClassToIndex(size)]);
 }
 
-void Emitter::storeHeader(LValue cell, LValue structureID, uint32_t typeInfoBlob)
+void Emitter::storeHeader(LValue cell, LValue header)
 {
-    m_out.store32(structureID, cell, m_heaps.JSCell_structureID);
-    m_out.store32(m_out.constInt32(typeInfoBlob), cell, m_heaps.JSCell_usefulBytes);
+    static_assert(!JSCell::structureIDOffset());
+    m_out.store64(header, cell, m_heaps.JSCell_header);
 }
 
 void Emitter::storeStructure(LValue cell, LValue structure)
@@ -218,6 +251,9 @@ void Emitter::splatWords(LValue base, LValue begin, LValue end, LValue value, co
 
 void Emitter::mutatorFence()
 {
+#if CPU(X86_64)
+    m_out.fence(&m_heaps.root, nullptr);
+#else
     LBasicBlock fence = m_out.newBlock();
     LBasicBlock done = m_out.newBlock();
     m_out.branch(m_out.load8ZeroExt32(vm(), m_heaps.VM_heap_mutatorShouldBeFenced), rarely(fence), usually(done));
@@ -225,6 +261,7 @@ void Emitter::mutatorFence()
     m_out.fence(&m_heaps.root, nullptr);
     m_out.jump(done);
     m_out.appendTo(done);
+#endif
 }
 
 uint32_t Emitter::arrayTypeInfoBlob(IndexingType indexingType)
@@ -232,17 +269,17 @@ uint32_t Emitter::arrayTypeInfoBlob(IndexingType indexingType)
     return TypeInfoBlob(indexingType, TypeInfo(ArrayType, JSArray::StructureFlags)).blob();
 }
 
-Emitter::ArrayValues Emitter::allocateJSArray(LValue publicLength, LValue vectorLength, LValue structureID, uint32_t typeInfoBlob, LBasicBlock slowPath)
+Emitter::ArrayValues Emitter::allocateJSArray(LValue publicLength, LValue vectorLength, LValue header, LBasicBlock slowPath)
 {
-    orElse(m_out.notZero32(structureID), slowPath);
+    orElse(m_out.notZero64(header), slowPath);
     LValue size = m_out.add(m_out.shl(m_out.zeroExtPtr(vectorLength), m_out.constInt32(3)), m_out.constIntPtr(sizeof(IndexingHeader)));
     LValue startOfStorage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size, slowPath), slowPath);
     LValue butterfly = m_out.add(startOfStorage, m_out.constIntPtr(sizeof(IndexingHeader)));
     m_out.store32(publicLength, butterfly, m_heaps.Butterfly_publicLength);
     m_out.store32(vectorLength, butterfly, m_heaps.Butterfly_vectorLength);
     splatWords(butterfly, publicLength, vectorLength, m_out.int64Zero, m_heaps.indexedContiguousProperties.atAnyIndex());
-    LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), slowPath);
-    storeHeader(array, structureID, typeInfoBlob);
+    LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), slowPath);
+    storeHeader(array, header);
     m_out.storePtr(butterfly, array, m_heaps.JSObject_butterfly);
     return { array, butterfly };
 }
@@ -255,8 +292,7 @@ static LValue vectorLengthFor(FTL::Output& out, LValue count)
 
 LValue Emitter::newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp)
 {
-    LValue structureID = changing32(areInt32 ? Instance::offsetOfNewArrayWithInt32StructureID() : Instance::offsetOfNewArrayWithContiguousStructureID());
-    auto [array, butterfly] = allocateJSArray(count, vectorLengthFor(m_out, count), structureID, arrayTypeInfoBlob(areInt32 ? ArrayWithInt32 : ArrayWithContiguous), giveUp);
+    auto [array, butterfly] = allocateJSArray(count, vectorLengthFor(m_out, count), changing64(Instance::offsetOfNewArrayHeader(areInt32 ? ArrayWithInt32 : ArrayWithContiguous)), giveUp);
     LValue elements = butterfly;
     forEachUpTo(count, [&](LValue index) {
         m_out.store64(m_out.load64(m_out.baseIndex(m_heaps.variables, values, index)), m_out.baseIndex(m_heaps.indexedContiguousProperties, elements, index));
@@ -270,13 +306,11 @@ LValue Emitter::newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giv
     LValue mode = m_out.load8ZeroExt32(immutableButterfly, m_heaps.JSCell_indexingTypeAndMisc);
     LValue which = m_out.lShr(m_out.sub(m_out.bitAnd(mode, m_out.constInt32(IndexingShapeMask)), m_out.constInt32(Int32Shape)), m_out.constInt32(IndexingShapeShift));
     orElse(m_out.below(which, m_out.constInt32(3)), giveUp);
-    LValue structureID = m_out.load32(TypedPointer(m_heaps.AOTInstance_mutableFields,
-        m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(which), m_out.constInt32(2)), m_out.constIntPtr(Instance::offsetOfNewCopyOnWriteArrayStructureIDs())))));
-    orElse(m_out.notZero32(structureID), giveUp);
-    LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), giveUp);
-    m_out.store32(structureID, array, m_heaps.JSCell_structureID);
-    static_assert(!TypeInfoBlob::indexingModeIncludingHistoryOffset());
-    m_out.store32(m_out.bitOr(m_out.bitAnd(mode, m_out.constInt32(AllArrayTypesAndHistory)), m_out.constInt32(arrayTypeInfoBlob(NonArray))), array, m_heaps.JSCell_usefulBytes);
+    LValue header = m_out.load64(TypedPointer(m_heaps.AOTInstance_mutableFields,
+        m_out.add(m_instance, m_out.add(m_out.shl(m_out.zeroExtPtr(which), m_out.constInt32(3)), m_out.constIntPtr(Instance::offsetOfNewCopyOnWriteArrayHeaders())))));
+    orElse(m_out.notZero64(header), giveUp);
+    LValue array = allocateHeapCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), giveUp);
+    storeHeader(array, header);
     m_out.storePtr(m_out.add(immutableButterfly, m_out.constIntPtr(JSCellButterfly::offsetOfData())), array, m_heaps.JSObject_butterfly);
     mutatorFence();
     return array;
@@ -284,11 +318,11 @@ LValue Emitter::newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giv
 
 LValue Emitter::newActivation(LValue scope, LValue symbolTable, LValue initialValue, LValue count, LBasicBlock giveUp)
 {
-    LValue structureID = fixed32(Instance::offsetOfActivationStructureID());
-    orElse(m_out.notZero32(structureID), giveUp);
+    LValue header = fixed64(Instance::offsetOfActivationHeader());
+    orElse(m_out.notZero64(header), giveUp);
     LValue size = m_out.add(m_out.shl(m_out.zeroExtPtr(count), m_out.constInt32(3)), m_out.constIntPtr(JSLexicalEnvironment::offsetOfVariables()));
     LValue result = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfActivationSpace()), size, giveUp), giveUp);
-    storeHeader(result, structureID, TypeInfoBlob(NonArray, TypeInfo(LexicalEnvironmentType, JSLexicalEnvironment::StructureFlags)).blob());
+    storeHeader(result, header);
     m_out.storePtr(m_out.intPtrZero, result, m_heaps.JSObject_butterfly);
     m_out.storePtr(scope, result, m_heaps.JSScope_next);
     m_out.storePtr(symbolTable, result, m_heaps.JSSymbolTableObject_symbolTable);
@@ -409,7 +443,7 @@ LValue Emitter::newArrayWithSpread(LValue values, LValue count, LValue spreadMas
     m_out.appendTo(measured);
     orElse(m_out.below(lengthSoFar, m_out.constIntPtr(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))), giveUp);
     LValue length = m_out.castToInt32(lengthSoFar);
-    auto [array, butterfly] = allocateJSArray(length, vectorLengthFor(m_out, length), changing32(Instance::offsetOfNewArrayWithContiguousStructureID()), arrayTypeInfoBlob(ArrayWithContiguous), giveUp);
+    auto [array, butterfly] = allocateJSArray(length, vectorLengthFor(m_out, length), changing64(Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), giveUp);
     LValue elements = butterfly;
 
     LBasicBlock fill = m_out.newBlock();
@@ -476,7 +510,7 @@ LValue Emitter::newArrayWithSize(LValue length, LBasicBlock giveUp)
     orElse(isInt32(length), giveUp);
     LValue count = unboxInt32(length);
     orElse(m_out.below(count, m_out.constInt32(MarkedSpace::largeCutoff / sizeof(EncodedJSValue))), giveUp);
-    auto [result, butterfly] = allocateJSArray(m_out.int32Zero, vectorLengthFor(m_out, count), changing32(Instance::offsetOfNewArrayWithContiguousStructureID()), arrayTypeInfoBlob(ArrayWithContiguous), giveUp);
+    auto [result, butterfly] = allocateJSArray(m_out.int32Zero, vectorLengthFor(m_out, count), changing64(Instance::offsetOfNewArrayHeader(ArrayWithContiguous)), giveUp);
     m_out.store32(count, butterfly, m_heaps.Butterfly_publicLength);
     mutatorFence();
     return result;
@@ -565,8 +599,8 @@ LValue Emitter::substringOf(LValue string, const StringParts& pieces, LValue fro
 
     m_out.appendTo(isPartial);
     orElse(m_out.notEqual(span, m_out.constInt32(2)), giveUp);
-    LValue rope = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), giveUp);
-    storeHeader(rope, fixed32(Instance::offsetOfStringStructureID()), TypeInfoBlob(NonArray, TypeInfo(StringType, JSString::StructureFlags)).blob());
+    LValue rope = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), giveUp);
+    storeHeader(rope, fixed64(Instance::offsetOfStringHeader()));
     LValue baseIs8BitFlag = m_out.bitAnd(flags, m_out.constInt32(StringImpl::flagIs8Bit()));
     static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
     m_out.storePtr(m_out.bitOr(m_out.constIntPtr(JSString::isRopeInPointer | JSRopeString::isSubstringInPointer), m_out.zeroExtPtr(baseIs8BitFlag)), rope, m_heaps.JSRopeString_fiber0);
@@ -658,8 +692,8 @@ LValue Emitter::makeRope(LValue first, LValue second, LValue third, LBasicBlock 
     }
 
     m_out.appendTo(make);
-    LValue result = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), giveUp);
-    storeHeader(result, fixed32(Instance::offsetOfStringStructureID()), TypeInfoBlob(NonArray, TypeInfo(StringType, JSString::StructureFlags)).blob());
+    LValue result = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), giveUp);
+    storeHeader(result, fixed64(Instance::offsetOfStringHeader()));
     m_out.storePtr(m_out.bitOr(m_out.bitOr(first, m_out.constIntPtr(JSString::isRopeInPointer)), m_out.bitAnd(m_out.constIntPtr(JSRopeString::is8BitInPointer), m_out.zeroExtPtr(flags))), result, m_heaps.JSRopeString_fiber0);
     m_out.storePtr(m_out.bitOr(m_out.zeroExtPtr(length), m_out.shl(second, m_out.constInt32(32))), result, m_heaps.JSRopeString_fiber1);
     if (!third)
@@ -688,8 +722,8 @@ LValue Emitter::int32ToString(LValue value, LBasicBlock giveUp)
 
     m_out.appendTo(intCacheCase);
     LValue wide = m_out.zeroExt(value, Int64);
-    LValue first = m_out.bitXor(wide, m_out.constInt64(0x2d358dccaa6c78a5ULL));
-    LValue second = m_out.bitXor(wide, m_out.constInt64(0x8bb84b93962eacc9ULL));
+    LValue first = m_out.bitXor(wide, fixed64(Instance::offsetOfHashSecrets()));
+    LValue second = m_out.bitXor(wide, fixed64(Instance::offsetOfHashSecrets() + sizeof(uint64_t)));
     LValue hash = m_out.castToInt32(m_out.bitXor(m_out.mul(first, second), m_out.uMulHigh(first, second)));
     LValue index = m_out.zeroExtPtr(m_out.bitAnd(hash, m_out.constInt32(NumericStrings::cacheSize - 1)));
     LValue cache = fixedPointer(Instance::offsetOfIntStrings());

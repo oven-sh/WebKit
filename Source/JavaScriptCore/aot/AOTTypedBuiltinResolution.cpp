@@ -91,15 +91,36 @@ KeyedAccess keyedAccessOf(const Program& program, const Function& function, cons
         auto* engineClass = program.typeOf(function, id).onlyEngineClass();
         return engineClass && engineClass->type == ArrayType;
     };
+    auto isTypedArray = [&](ValueID id) {
+        auto* engineClass = program.typeOf(function, id).onlyEngineClass();
+        if (!engineClass)
+            return false;
+        switch (engineClass->typedArrayType) {
+        case TypeInt8:
+        case TypeUint8:
+        case TypeUint8Clamped:
+        case TypeInt16:
+        case TypeUint16:
+        case TypeInt32:
+        case TypeUint32:
+        case TypeFloat32:
+        case TypeFloat64:
+            return true;
+        default:
+            return false;
+        }
+    };
+    auto accessForIterable = [&](ValueID iterable) {
+        return isArray(iterable) ? KeyedAccess::Array : isTypedArray(iterable) ? KeyedAccess::TypedArray : KeyedAccess::Generic;
+    };
     switch (value.opcode) {
     case Opcode::IteratorOpen:
-        return isArray(value.child(0)) ? KeyedAccess::Array : KeyedAccess::Generic;
-    // An array stands for its own iterator. That it is one shows where the iterator is made.
+        return accessForIterable(value.child(0));
     case Opcode::IteratorHasNext:
     case Opcode::IteratorValue:
     case Opcode::IteratorClose: {
         auto& iterator = function.at(value.child(0));
-        return iterator.opcode == Opcode::IteratorOpen && isArray(iterator.child(0)) ? KeyedAccess::Array : KeyedAccess::Generic;
+        return iterator.opcode == Opcode::IteratorOpen ? accessForIterable(iterator.child(0)) : KeyedAccess::Generic;
     }
     case Opcode::GetByVal:
     case Opcode::PutByVal:
@@ -207,6 +228,8 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::BigInt:
     case Opcode::FunctionReference:
     case Opcode::PutModuleVariable:
+    case Opcode::GetStaticField:
+    case Opcode::PutStaticField:
     case Opcode::PutGlobal:
     case Opcode::NewObjectWithShape:
     case Opcode::PutField:
@@ -298,6 +321,7 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
         return tableVouchesFor(program, function, value, type);
     case Opcode::Construct:
     case Opcode::ConstructSuper:
+    case Opcode::ConstructSuperForwardVarargs:
         return Type::object().isWithin(type, program);
 
     // It is what code that is not known, or a container, comes up with.
@@ -350,6 +374,7 @@ public:
     {
         countUses();
         retypeReadsOfPrototypes();
+        typeElementsAsClaimed();
         for (auto& block : m_function.blocks) {
             for (ValueID id : block.values)
                 resolve(m_function.at(id));
@@ -376,9 +401,7 @@ private:
 
     const Value& definitionOf(ValueID id) const
     {
-        while (m_function.at(id).opcode == Opcode::Cast)
-            id = m_function.at(id).child(0);
-        return m_function.at(id);
+        return m_function.at(m_program.originOf(m_function, id));
     }
 
     // The global object of the table that the value is, going by how it is defined. A class that the program may have extended is
@@ -463,6 +486,29 @@ private:
 
     // `Map.prototype` is declared to be a Map and is none, so that to hold it to its type would throw. Where nothing goes by the type, as in
     // `Map.prototype.get.call(map, key)`, it is read as anything, and so is what hands it back.
+    void typeElementsAsClaimed()
+    {
+        if (Options::auditAOTTypedAssertions())
+            return;
+        for (auto& block : m_function.blocks) {
+            for (size_t index = 0; index + 1 < block.values.size(); ++index) {
+                ValueID id = block.values[index];
+                auto& read = m_function.at(id);
+                auto& cast = m_function.at(block.values[index + 1]);
+                if (read.opcode != Opcode::IteratorValue || keyedAccessOf(m_program, m_function, read) != KeyedAccess::Array || m_uses[id.index()] != 1)
+                    continue;
+                if (cast.opcode != Opcode::Cast || cast.child(0) != id || cast.castReason() != CastReason::Claim || cast.string() || cast.accessedName())
+                    continue;
+                auto& claimed = m_program.at(cast.type);
+                if (claimed.hasObjects() || !claimed.isWithin(m_program.at(read.type), m_program))
+                    continue;
+                read.type = cast.type;
+                read.rep = repOf(claimed);
+                cast.setCastReason(CastReason::Upcast);
+            }
+        }
+    }
+
     void retypeReadsOfPrototypes()
     {
         Vector<ValueID, 4> reads;
@@ -575,6 +621,8 @@ private:
     bool resolveForReceiver(Value& value, BuiltinKind kind, ValueID receiver, BuiltinName name, Arguments&& arguments, ValueID methodRead = { })
     {
         const EngineClass* engineClass = classOfReceiver(typeOf(receiver));
+        if (!engineClass && !typeOf(receiver).hasObjects() && typeOf(receiver).mayBeUndefinedOrNull())
+            engineClass = classOf(typeOf(receiver).withoutPrimitives(Primitive::UndefinedOrNull));
         if (!engineClass)
             return false;
         BuiltinID entry = applicableEntry(m_builtins.findForInstance(kind, *engineClass, name), typesOf(arguments.span()).span());
@@ -673,13 +721,31 @@ private:
         case Opcode::PutById:
             resolveForReceiver(value, BuiltinKind::Setter, value.child(0), nameOf(value), { value.child(1) });
             return;
+        case Opcode::IteratorValue:
+            if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::TypedArray) {
+                Type element = elementTypeOf(typeOf(m_function.at(value.child(0)).child(0)).onlyEngineClass()->typedArrayType);
+                TypeID narrowed = element.isWithin(m_program.at(m_program.types.int32), m_program) ? m_program.types.int32 : m_program.types.number;
+                if (m_program.at(narrowed).isWithin(m_program.at(value.type), m_program)) {
+                    value.type = narrowed;
+                    value.rep = repOf(m_program.at(narrowed));
+                }
+            }
+            return;
         case Opcode::CallMethod:
             if (BuiltinName holder = globalDefinedBy(value.child(0))) {
                 resolveForHolder(value, holder, nameOf(value));
                 return;
             }
-            if (nameOf(value) != m_builtins.callName() || !resolveCallOfPrototypeMethod(value, value.child(0)))
-                resolveForReceiver(value, BuiltinKind::Method, value.child(0), nameOf(value), Arguments(value.arguments));
+            if (nameOf(value) == m_builtins.callName() && isFunctionOfTable(value.child(0)) && !value.arguments.isEmpty()) {
+                if (!resolveCallOfPrototypeMethod(value, value.child(0))) {
+                    value.opcode = Opcode::Call;
+                    value.children = { value.child(0), value.arguments[0], ValueID() };
+                    value.immediates[0] = Format::none;
+                    value.arguments.removeAt(0);
+                }
+                return;
+            }
+            resolveForReceiver(value, BuiltinKind::Method, value.child(0), nameOf(value), Arguments(value.arguments));
             return;
         case Opcode::Call:
             if (resolveCallOfRead(value))
@@ -703,6 +769,8 @@ private:
             // Asked for by name it is about the class its operand is of by type. Of none by now, or of one that cannot be asked: then it does not hold.
             if (entry == m_builtins.hasOriginalStructureOperation()) {
                 auto* engineClass = typeOf(value.arguments[0]).onlyEngineClass();
+                if (TypeID prediction = m_function.at(value.arguments[0]).prediction; !engineClass && prediction)
+                    engineClass = m_program.at(prediction).onlyEngineClass();
                 become(value, entry, engineClass && engineClass->canCheckOriginalStructure() ? engineClass : nullptr, { }, Arguments(value.arguments));
                 return;
             }

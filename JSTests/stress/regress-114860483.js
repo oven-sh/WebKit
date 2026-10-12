@@ -1,4 +1,3 @@
-//@ $skipModes << :aot << :aot_validate # TODO(bun): f.arguments and f.caller are null while f runs ahead-of-time compiled code.
 function assertArgumentsContent() {
     const str = [...arguments].join();
     if (str !== `,1.1,1.1,1.1,1.1,1.1`)

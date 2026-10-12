@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedThreads.h"
 #include "Options.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -107,7 +108,8 @@ void setBornFields(const Layout& layout, Allocation& allocation)
 
 void assignAllocations(Program& program)
 {
-    for (auto& function : program.functions) {
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
         for (auto& block : function.blocks) {
             for (size_t at = 0; at < block.values.size(); ++at) {
                 ValueID object = block.values[at];
@@ -139,7 +141,7 @@ void assignAllocations(Program& program)
                 function.at(object).immediates[1] = function.allocationOf(WTF::move(allocation));
             }
         }
-    }
+    });
 }
 
 // Casts.
@@ -425,8 +427,15 @@ public:
         unsigned numberOfFunctions = m_program.functions.size();
         m_effects.fill({ }, 2 * numberOfFunctions);
         m_dependents.fill({ }, 2 * numberOfFunctions);
-        for (unsigned i = 0; i < numberOfFunctions; ++i)
-            sumUpBody(FunctionID(i));
+        Vector<Vector<std::pair<unsigned, unsigned>>> partsOf(numberOfFunctions);
+        forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
+            FunctionID id(i);
+            EffectSummaries(m_program).sumUpBody(id, m_effects[ofAnyCall(id)], m_effects[ofCallThatReturns(id)], partsOf[i]);
+        });
+        for (auto& parts : partsOf) {
+            for (auto [dependent, summary] : parts)
+                dependsOn(dependent, summary);
+        }
 
         Vector<unsigned> worklist;
         for (unsigned summary = 0; summary < m_effects.size(); ++summary) {
@@ -484,7 +493,7 @@ private:
     {
         m_program.castsMayRetag = false;
         for (auto& layout : m_program.layouts)
-            m_program.castsMayRetag |= !layout.specializations.isEmpty();
+            m_program.castsMayRetag |= !layout.specializations.isEmpty() || layout.mayGiveUp;
     }
 
     // The slow path converts a plain-data element as an `As` cast would, stores it back and rejoins.
@@ -536,11 +545,9 @@ private:
     }
 
     // Without what the functions it calls by name change: what is summed up for those is noted to be part of it.
-    void sumUpBody(FunctionID id)
+    void sumUpBody(FunctionID id, Effects& ofAny, Effects& ofReturning, Vector<std::pair<unsigned, unsigned>>& parts)
     {
         auto& function = m_program.at(id);
-        auto& ofAny = m_effects[ofAnyCall(id)];
-        auto& ofReturning = m_effects[ofCallThatReturns(id)];
         Effects most = changes(Writes::Heap);
         if (function.blocks.isEmpty()) {
             ofAny = most;
@@ -560,17 +567,17 @@ private:
                     continue;
                 }
                 FunctionID callee = value.function();
-                dependsOn(ofAnyCall(id), ofAnyCall(callee));
+                parts.append({ ofAnyCall(id), ofAnyCall(callee) });
                 if (block.terminator.kind != TerminatorKind::Invoke) {
                     if (mayReturn.get(b))
-                        dependsOn(ofCallThatReturns(id), ofCallThatReturns(callee));
+                        parts.append({ ofCallThatReturns(id), ofCallThatReturns(callee) });
                     continue;
                 }
                 // A handler watches. Where that leads to a Return, this function comes back from a call that does not.
                 if (mayReturn.get(block.terminator.targets[0].block.index()))
-                    dependsOn(ofCallThatReturns(id), ofCallThatReturns(callee));
+                    parts.append({ ofCallThatReturns(id), ofCallThatReturns(callee) });
                 if (mayReturn.get(block.terminator.targets[1].block.index()))
-                    dependsOn(ofCallThatReturns(id), ofAnyCall(callee));
+                    parts.append({ ofCallThatReturns(id), ofAnyCall(callee) });
             }
             if (ofReturning == most)
                 return;
@@ -653,15 +660,26 @@ private:
             return changes(Writes::RuntimeState);
         // Where the host has no record of the module it is required: its code runs.
         case Opcode::GetExternalModule:
+        case Opcode::CallModuleFunction:
+        case Opcode::JumpToModuleEvaluator:
             return changes(Writes::Heap);
+        case Opcode::ModuleEvaluationWord:
+        case Opcode::OffsetIndex:
+        case Opcode::GetModuleVariableAt:
+            return changes(Writes::Nothing);
+        case Opcode::PutModuleVariableAt:
+            return changes(Writes::Fields);
         case Opcode::PutModuleVariable:
             return changes(Writes::Fields);
+        case Opcode::GetStaticField:
+        case Opcode::PutStaticField:
+            return changes(Writes::Heap);
         // Nobody who was running before can have looked into what was made since.
         case Opcode::PutField:
             return changes(isLocalAllocation(function, value.child(0)) ? Writes::RuntimeState : Writes::Fields);
         case Opcode::GetById:
         case Opcode::InById:
-            return changes(isAccessToField(function, value) ? Writes::Nothing : Writes::Heap);
+            return changes(isAccessToField(function, value) || (value.isAtKnownPlace() && !Options::validateAOTTypedFacts()) ? Writes::Nothing : Writes::Heap);
         case Opcode::PutById:
             if (isInitializingStore(m_program, function, block, index))
                 return changes(Writes::RuntimeState);
@@ -695,8 +713,11 @@ private:
         case Opcode::IteratorValue:
             if (keyedAccessOf(m_program, function, value) == KeyedAccess::Array)
                 return ofElementRead(value);
-            [[fallthrough]];
+            return changes(keyedAccessOf(m_program, function, value) == KeyedAccess::Generic ? Writes::Heap : Writes::Nothing);
         case Opcode::IteratorOpen:
+            if (keyedAccessOf(m_program, function, value) == KeyedAccess::TypedArray)
+                return changes(Writes::RuntimeState);
+            [[fallthrough]];
         case Opcode::IteratorHasNext:
         case Opcode::IteratorClose:
             return changes(keyedAccessOf(m_program, function, value) == KeyedAccess::Generic ? Writes::Heap : Writes::Nothing);
@@ -743,6 +764,7 @@ private:
         case Opcode::CallMethod:
         case Opcode::CallForwardVarargs:
         case Opcode::ConstructSuper:
+        case Opcode::ConstructSuperForwardVarargs:
         case Opcode::Operation:
             return changes(Writes::Heap);
         case Opcode::CallDirect:

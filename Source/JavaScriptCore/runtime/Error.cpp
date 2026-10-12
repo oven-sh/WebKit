@@ -226,6 +226,8 @@ std::tuple<CodeBlock*, BytecodeIndex> getBytecodeIndex(VM& vm, CallFrame* startC
 std::optional<SourceQuote> quoteSourceWithoutText(VM& vm, CallFrame* startCallFrame)
 {
 #if ENABLE(AOT)
+    if (!vm.useImmutableIntrinsics) [[likely]]
+        return std::nullopt;
     auto functor = findFirstCallerFrameWithCode(vm, startCallFrame);
     if (!functor.aotFunction())
         return std::nullopt;
@@ -252,6 +254,15 @@ bool getLineColumnAndSource(VM& vm, Vector<StackFrame>* stackTrace, LineColumn& 
     
     for (unsigned i = 0 ; i < stackTrace->size(); ++i) {
         StackFrame& frame = stackTrace->at(i);
+#if ENABLE(AOT)
+        if (!frame.codeBlockIfExists() && frame.isTypedAOTFrame()) {
+            lineColumn = frame.computeLineAndColumn();
+            if (!lineColumn.line)
+                continue;
+            sourceURL = frame.sourceURLStripped(vm);
+            return true;
+        }
+#endif
         if (frame.hasLineAndColumnInfo()) {
             lineColumn = frame.computeLineAndColumn();
             sourceURL = frame.sourceURLStripped(vm);

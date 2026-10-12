@@ -61,6 +61,7 @@ struct FunctionReportableSites {
     Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
     // Of a function compiled from types: its number in Typed::Data, and its positions by call-site number. Entry 0 is the function's start.
     uint32_t typedFunction { notTyped };
+    uint32_t stateNumber { 0 };
     Vector<TypedSitePosition> typedPositions;
     uint32_t numberOfSitesWithoutCode { 0 };
     Vector<UTF8CString> typedSourceNames;
@@ -128,6 +129,7 @@ struct ProgramData {
         Function<bool(uint32_t moduleEntryOffset, LineColumn inModule, UTF8CString& sourceName, LineColumn& inSource)> find;
     };
     JS_EXPORT_PRIVATE static Vector<uint8_t> build(VM&, std::span<const uint8_t> strings, std::span<const uint8_t> payload, std::span<const uint32_t> moduleEntryOffsets, std::span<const uint8_t> codeImage, const RetainedPositions&, std::span<const FunctionReportableSites>, std::span<const std::optional<Vector<uint32_t>>> variablesExportedByModules);
+    JS_EXPORT_PRIVATE static void release(Vector<FunctionReportableSites>&);
 
     static const ProgramData* tryUse(std::span<const uint8_t>);
     JS_EXPORT_PRIVATE static const ProgramData* get();
@@ -165,6 +167,7 @@ struct ProgramData {
     uint32_t numberOfModules;
     uint32_t infosOffset;
     uint32_t numberOfFunctions;
+    uint32_t numberOfStates;
     uint32_t functionMetadataTableOffset;
     uint32_t executableRowsOffset;
     uint32_t numberOfExecutables;
@@ -196,6 +199,7 @@ public:
     Typed::FunctionTables* typedFunctionTables { nullptr };
 
     UniquedStringImpl* const* identifiers() const { return m_identifiers; }
+    const uint16_t* identifierPlaces() const { return m_identifierPlaces; }
     static constexpr uint32_t constantHashMultiplier = 2654435761u;
     static constexpr unsigned constantHashShift = 15;
     static uint32_t constantHash(uint32_t index)
@@ -209,10 +213,33 @@ public:
 
     JS_EXPORT_PRIVATE JSValue constant(uint32_t index);
     JSValue createTransientConstant(uint32_t index);
-    JS_EXPORT_PRIVATE UniquedStringImpl* identifier(uint32_t index);
-    const Identifier& identifierAsIdentifier(uint32_t index);
+    ALWAYS_INLINE UniquedStringImpl* identifier(uint32_t index)
+    {
+        RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+        if (uint16_t place = m_identifierPlaces[index]; isPlaceOfIdentifier(place)) [[likely]]
+            return m_identifiers[place];
+        return identifierSlow(index);
+    }
+    ALWAYS_INLINE const Identifier& identifierAsIdentifier(uint32_t index)
+    {
+        static_assert(sizeof(Identifier) == sizeof(UniquedStringImpl*));
+        if (!index) [[unlikely]]
+            return *reinterpret_cast<const Identifier*>(&m_identifiers[0]);
+        RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+        if (uint16_t place = m_identifierPlaces[index]; isPlaceOfIdentifier(place)) [[likely]]
+            return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
+        return identifierAsIdentifierSlow(index);
+    }
+    ALWAYS_INLINE const Identifier* identifierIfMade(uint32_t index) const
+    {
+        RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
+        uint16_t place = m_identifierPlaces[index];
+        return isPlaceOfIdentifier(place) ? reinterpret_cast<const Identifier*>(&m_identifiers[place]) : nullptr;
+    }
     String identifierWithoutGC(uint32_t index);
     const Identifier* tryGetIdentifierConcurrently(uint32_t index) const;
+    bool isIdentifierKept(uint32_t index) const { return m_identifierPlaces[index]; }
+    JS_EXPORT_PRIVATE const Identifier& keepIdentifier(uint32_t index, Identifier&&);
     JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t index);
     FunctionExecutable* executableIfExists(uint32_t index) const
     {
@@ -250,6 +277,12 @@ private:
     uint32_t m_constantMask { 0 };
     uint32_t m_numberOfMaterializedConstants { 0 };
     UniquedStringImpl** m_identifiers;
+    uint16_t* m_identifierPlaces;
+    static constexpr uint16_t placeOfIdentifiersKeptElsewhere = UINT16_MAX;
+    static constexpr bool isPlaceOfIdentifier(uint16_t place) { return static_cast<uint16_t>(place - 1) < placeOfIdentifiersKeptElsewhere - 1; }
+    JS_EXPORT_PRIVATE UniquedStringImpl* identifierSlow(uint32_t index);
+    JS_EXPORT_PRIVATE const Identifier& identifierAsIdentifierSlow(uint32_t index);
+    uint32_t m_numberOfIdentifiersInPlaces { 0 };
     static constexpr uint32_t executablesPerChunk = 64;
     FunctionExecutable*** m_executableChunks;
     std::unique_ptr<Impl> m_impl;

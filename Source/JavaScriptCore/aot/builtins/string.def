@@ -34,8 +34,8 @@ runtime StringFindCharacter8 : Pure size_t (const Latin1Character* characters, u
 runtime StringFind8 : Pure size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, uint32_t start) noexcept
 runtime StringReverseFindCharacter8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t character, int32_t position) noexcept
 runtime StringReverseFind8 : Pure size_t (const Latin1Character* characters, uint32_t length, const Latin1Character* other, uint32_t otherLength, int32_t position) noexcept
-runtime StringTrimmedStart16 : Pure size_t (const char16_t* characters, uint32_t length) noexcept
 runtime StringIsText : Nothing size_t (JSCell* string, uint32_t text) noexcept
+runtime StringIsBytes : Nothing size_t (JSCell* string, uint64_t bytes, uint32_t length) noexcept
 runtime StringStartsWithText : RuntimeState size_t (JSCell* string, uint32_t text)
 runtime StringEndsWithText : RuntimeState size_t (JSCell* string, uint32_t text)
 runtime StringIndexOfText : RuntimeState size_t (JSCell* string, uint32_t text, int32_t position)
@@ -43,12 +43,15 @@ runtime StringLastIndexOfText : RuntimeState size_t (JSCell* string, uint32_t te
 runtime StringFindText8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, uint32_t start) noexcept
 runtime StringReverseFindText8 : Pure size_t (const Latin1Character* characters, uint32_t length, uint32_t text, int32_t position) noexcept
 runtime StringsAreEqual : Nothing size_t (JSCell* first, JSCell* second) noexcept
-runtime StringTrimmedEnd16 : Pure size_t (const char16_t* characters, uint32_t start, uint32_t length) noexcept
+runtime StringPart : RuntimeState JSCell* (JSCell* string, uint64_t startAndCount)
+runtime StringTrim : RuntimeState JSCell* (JSCell* string, uint32_t ends)
 runtime StringLastIndexOf : RuntimeState size_t (JSCell* string, JSCell* other, int32_t position)
 runtime StringLocaleCompare : RuntimeState size_t (JSCell* string, JSCell* other)
 runtime StringToLowerCase : RuntimeState JSCell* (JSCell* string)
 runtime StringToUpperCase : RuntimeState JSCell* (JSCell* string)
 runtime StringRepeat : RuntimeState JSCell* (JSCell* string, uint32_t count)
+runtime StringBuilderFlush : RuntimeState void* (JSCell* prefix, const Latin1Character* buffer, uint32_t length, EncodedJSValue operand)
+runtime StringBuilderFinish : RuntimeState JSCell* (JSCell* prefix, const Latin1Character* buffer, uint32_t length)
 runtime StringPad : RuntimeState JSCell* (JSCell* string, uint32_t length, JSCell* filler, uint32_t isAtStart)
 
 call String (any/G?) -> string ; ReadsArguments ; Inline(CallStringConstructor)

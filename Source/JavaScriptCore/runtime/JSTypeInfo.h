@@ -45,6 +45,7 @@ static constexpr unsigned OverridesGetCallData = 1 << 2; // Need this flag if yo
 static constexpr unsigned OverridesGetOwnPropertySlot = 1 << 3;
 static constexpr unsigned OverridesGetPrototype = 1 << 4;
 static constexpr unsigned HasStaticPropertyTable = 1 << 5;
+static constexpr unsigned TypeOfYieldsFunction = 1 << 6;
 static constexpr unsigned TypeInfoPerCellBit = 1 << 7; // Unlike other inline flags, this will only be set on the cell itself and will not be set on the Structure.
 
 // Out of line flags.

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Checks that the stubs of an ARM64 image return the way the processor predicts.
 
-  check-paired-returns.py <jsc>
   check-paired-returns.py --image <image or executable> --map <map>
 
 The processor predicts the target of a RET from a stack of the addresses that BL and BLR left behind. A stub that computes a return
@@ -14,26 +13,15 @@ Reads the machine code of every copy of the stubs, and fails on a stub that
 So that it cannot pass for want of stubs to look at, it also fails unless the stub that calls return to after a call with an
 argument list starts with a BLR, and the stubs for cold operations of functions without a frame return with RET through a register.
 
-With <jsc> it compiles an empty program and looks at that image. The image is only read, so an executable that holds one can be
+The image is only read, so an executable that holds one can be
 given as it is, with the map that was written when it was built (--aotMapFilePath).
 """
-import argparse, bisect, os, struct, subprocess, sys, tempfile
+import argparse, bisect, os, struct, sys
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument('jsc', nargs='?', type=os.path.abspath)
-parser.add_argument('--image', type=os.path.abspath)
-parser.add_argument('--map', type=os.path.abspath)
+parser.add_argument('--image', type=os.path.abspath, required=True)
+parser.add_argument('--map', type=os.path.abspath, required=True)
 args = parser.parse_args()
-if bool(args.jsc) == bool(args.image) or bool(args.image) != bool(args.map):
-    parser.error('give either <jsc>, or both --image and --map')
-
-if args.jsc:
-    directory = tempfile.TemporaryDirectory()
-    args.image, args.map, program = (os.path.join(directory.name, name) for name in ('image', 'map', 'empty.js'))
-    open(program, 'w').close()
-    subprocess.run([args.jsc, '--useJIT=false', '--useDollarVM=true', '--writeAOTImageTo=' + args.image, '--aotMapFilePath=' + args.map, program], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=600)
-    if not os.path.exists(args.image) or not os.path.exists(args.map):
-        sys.exit('%s wrote no image' % args.jsc)
 
 data = open(args.image, 'rb').read()
 start = data.find(b'BUNAOT01')

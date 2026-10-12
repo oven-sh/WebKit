@@ -22,6 +22,63 @@ namespace JSC { namespace AOT {
 
 using Typed::CompactTable;
 
+static JSArray* arrayWithValuesInPlace(JSValue value, unsigned leastLength)
+{
+    JSArray* array = value.isCell() ? dynamicDowncast<JSArray>(value.asCell()) : nullptr;
+    if (!array || (array->indexingType() & IndexingShapeMask) != ContiguousShape || array->butterfly()->publicLength() < leastLength)
+        return nullptr;
+    return array;
+}
+
+template<typename Table>
+static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure* structure, JSValue given)
+{
+    constexpr bool isMap = std::is_same_v<Table, JSMap>;
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSArray* list = arrayWithValuesInPlace(given, 1);
+    if (!list || !list->isIteratorProtocolFastAndNonObservable())
+        return nullptr;
+    unsigned length = list->butterfly()->publicLength();
+    if (length > CompactTable::maxCapacity)
+        return nullptr;
+    auto entryAt = [&](unsigned i) -> std::pair<JSValue, JSValue> {
+        JSValue element = list->butterfly()->contiguous().at(list, i).get();
+        if constexpr (!isMap)
+            return { element, JSValue() };
+        JSArray* pair = element ? arrayWithValuesInPlace(element, 2) : nullptr;
+        if (!pair || !globalObject->isOriginalArrayStructure(pair->structure()))
+            return { };
+        return { pair->butterfly()->contiguous().at(pair, 0).get(), pair->butterfly()->contiguous().at(pair, 1).get() };
+    };
+    for (unsigned i = 0; i < length; ++i) {
+        auto [key, value] = entryAt(i);
+        if (!key || !key.isString() || (isMap && !value))
+            return nullptr;
+    }
+    Table* table = Table::create(vm, structure);
+    for (unsigned i = 0; i < length; ++i) {
+        auto [key, value] = entryAt(i);
+        bool isAdded = CompactTable::tryAdd(globalObject, table, key, value, CompactTable::CreateIfNeeded::Yes, length);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (!isAdded)
+            return nullptr;
+    }
+    return table;
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewSetOfStrings, JSCell*, (Instance* instance, EncodedJSValue list))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSSet>(globalObject, globalObject->setStructure(), JSValue::decode(list)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryNewMapWithStringKeys, JSCell*, (Instance* instance, EncodedJSValue list))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, tryNewTableWithStringKeys<JSMap>(globalObject, globalObject->mapStructure(), JSValue::decode(list)));
+}
+
 template<typename Traits>
 static size_t nextEntry(Instance* instance, JSCell* collection, EncodedJSValue encodedTable, uint32_t entry)
 {
@@ -107,6 +164,82 @@ static ALWAYS_INLINE void writeAsDecimal(uint32_t value, Latin1Character* end)
         *--end = pairs[value * 2];
     } else
         *--end = '0' + value;
+}
+
+static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer)
+{
+    Latin1Character* cursor = buffer.data();
+    size_t room = buffer.size();
+    for (uint32_t i = 0; i < count; ++i) {
+        JSValue part = JSValue::decode(parts[i]);
+        size_t length;
+        if (part.isInt32()) {
+            int32_t integer = part.asInt32();
+            uint32_t magnitude = integer < 0 ? 0u - static_cast<uint32_t>(integer) : integer;
+            length = lengthAsDecimal(magnitude) + (integer < 0);
+            if (length > room)
+                return std::nullopt;
+            if (integer < 0)
+                *cursor = '-';
+            writeAsDecimal(magnitude, cursor + length);
+        } else {
+            const StringImpl* impl = part.isString() ? asString(part)->tryGetValueImpl() : nullptr;
+            if (!impl || !impl->is8Bit() || impl->length() > room)
+                return std::nullopt;
+            length = impl->length();
+            memcpy(cursor, impl->span8().data(), length);
+        }
+        cursor += length;
+        room -= length;
+    }
+    return std::span<const Latin1Character> { buffer.data(), cursor };
+}
+
+static constexpr size_t maxSunkKeyLength = 64;
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryGetByValWithKeyParts, EncodedJSValue, (Instance* instance, EncodedJSValue encodedBase, uint32_t count, const EncodedJSValue* parts))
+{
+    VM& vm = *instance->vm;
+    JSValue base = JSValue::decode(encodedBase);
+    auto isOrdinary = [](JSObject* object) {
+        Structure* structure = object->structure();
+        return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !structure->typedLayoutID() && !structure->compiledLayout();
+    };
+    if (!base.isObject() || !isOrdinary(asObject(base)))
+        return encodedJSValue();
+    std::array<Latin1Character, maxSunkKeyLength> buffer;
+    auto text = flattenKeyParts(count, parts, buffer);
+    if (!text || (!text->empty() && isASCIIDigit(text->front()) && parseIndex(*text)))
+        return encodedJSValue();
+    if (RefPtr name = AtomStringImpl::lookUp(*text)) {
+        unsigned attributes;
+        PropertyOffset offset = asObject(base)->structure()->get(vm, name.get(), attributes);
+        if (offset == invalidOffset || attributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue))
+            return encodedJSValue();
+        return JSValue::encode(asObject(base)->getDirect(offset));
+    }
+    for (JSObject* holder = asObject(base); isOrdinary(holder) && !TypeInfo::hasStaticPropertyTable(holder->inlineTypeFlags());) {
+        JSValue prototype = holder->getPrototypeDirect();
+        if (!prototype.isObject())
+            return JSValue::encode(jsUndefined());
+        holder = asObject(prototype);
+    }
+    return encodedJSValue();
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts, EncodedJSValue, (Instance*, JSCell* collection, uint32_t yieldsValue, uint32_t count, const EncodedJSValue* parts))
+{
+    JSCell* table = collection->type() == JSMapType ? uncheckedDowncast<JSMap>(collection)->m_compactTable.get() : uncheckedDowncast<JSSet>(collection)->m_compactTable.get();
+    if (!table)
+        return encodedJSValue();
+    std::array<Latin1Character, maxSunkKeyLength> buffer;
+    auto text = flattenKeyParts(count, parts, buffer);
+    if (!text)
+        return encodedJSValue();
+    auto entry = uncheckedDowncast<CompactTable>(table)->find(*text);
+    if (!yieldsValue)
+        return JSValue::encode(jsBoolean(!!entry));
+    return JSValue::encode(entry ? uncheckedDowncast<CompactTable>(table)->valueAt(*entry) : jsUndefined());
 }
 
 // The parts are strings and integers: `a.id + "," + b.id`, the key of a Map more often than not. Where the result is short it is made in
@@ -247,10 +380,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         return m_out.loadPtr(owner.value(), m_heaps.JSMap_compactTable);
     };
     auto keysOf = [&](LValue table) {
-        LValue bits = m_out.load8ZeroExt32(fieldOf(table, CompactTable::offsetOfIndexBits()));
-        LValue hasShortSlots = m_out.belowOrEqual(m_out.load32(fieldOf(table, CompactTable::offsetOfCapacity())), m_out.constInt32(CompactTable::maxCapacityWithShortSlots));
-        LValue sizeOfSlots = m_out.shl(m_out.select(hasShortSlots, m_out.constInt32(sizeof(uint16_t)), m_out.constInt32(sizeof(uint32_t))), bits);
-        LValue sizeOfIndex = m_out.select(m_out.isZero32(bits), m_out.constInt32(CompactTable::maxCapacityWithTags), sizeOfSlots);
+        LValue sizeOfIndex = m_out.shl(m_out.constInt32(2), m_out.load8ZeroExt32(fieldOf(table, CompactTable::offsetOfKeysShift())));
         return m_out.add(table, m_out.add(m_out.zeroExtPtr(sizeOfIndex), m_out.constIntPtr(CompactTable::offsetOfIndex())));
     };
     auto at = [&](LValue base, LValue index, unsigned shift) {
@@ -436,8 +566,9 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         m_out.branch(m_out.testIsZero32(kinds, m_out.constInt32(static_cast<int32_t>(0xff0000ff))), usually(isReset), rarely(generally));
         m_out.appendTo(isReset);
         didEmitWrite(Writes::RuntimeState);
-        m_out.store32(m_out.int32Zero, compactTable, m_heaps.AOTTypedCompactTable_used);
-        m_out.store32(m_out.int32Zero, compactTable, m_heaps.AOTTypedCompactTable_deleted);
+        static_assert(CompactTable::offsetOfAlive() == CompactTable::offsetOfUsed() + 4 && !(CompactTable::offsetOfUsed() % 8));
+        m_out.store64(m_out.int64Zero, compactTable, m_heaps.AOTTypedCompactTable_used);
+        m_out.store64(m_out.int64Zero, fieldOf(compactTable, CompactTable::offsetOfIndex()));
         join.add({ });
         m_out.appendTo(generally);
         if (isMap)

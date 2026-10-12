@@ -1601,7 +1601,12 @@ LLINT_SLOW_PATH_DECL(slow_path_set_private_brand)
     baseObject->setPrivateBrand(globalObject, brand);
     LLINT_CHECK_EXCEPTION();
 
-    if (Options::useLLIntICs() && !oldStructure->isDictionary()) {
+#if ENABLE(AOT)
+    bool isOneTransition = oldStructure == baseObject->structure()->previousID();
+#else
+    constexpr bool isOneTransition = true;
+#endif
+    if (Options::useLLIntICs() && !oldStructure->isDictionary() && isOneTransition) {
         GCSafeConcurrentJSLocker locker(codeBlock->m_lock, vm);
         Structure* newStructure = baseObject->structure();
 
@@ -2230,6 +2235,12 @@ static inline UGPRPair setUpCall(CallFrame* calleeFrame, CodeSpecializationKind 
             auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
             LLINT_CALL_RETURN(globalObject, callerSP, codePtr.taggedPtr(), JSEntryPtrTag);
         }
+#if ENABLE(AOT)
+        if (kind == CodeSpecializationKind::CodeForCall && calleeAsValue.isCell() && isSlimClosureType(calleeAsValue.asCell()->type())) {
+            auto* callerSP = calleeFrame + CallerFrameAndPC::sizeInRegisters;
+            LLINT_CALL_RETURN(globalObject, callerSP, AOT::taggedSlimClosureEntrypoint(), JSEntryPtrTag);
+        }
+#endif
         RELEASE_AND_RETURN(throwScope, handleHostCall(calleeFrame, calleeAsValue, kind));
     }
     JSFunction* callee = uncheckedDowncast<JSFunction>(calleeAsFunctionCell);

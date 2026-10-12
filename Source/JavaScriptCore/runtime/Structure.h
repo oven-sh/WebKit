@@ -389,12 +389,6 @@ public:
         return transitionCountEstimate() > maxTransitionLength;
     }
 
-#if ENABLE(AOT)
-    static constexpr int s_minTransitionLengthToConvertFirstObjectToDictionary = 8;
-    JS_EXPORT_PRIVATE bool mayConvertFirstObjectToDictionaryForAdd(VM&);
-    JS_EXPORT_PRIVATE bool shouldConvertFirstObjectToDictionaryForAdd(VM&);
-#endif
-
     inline bool shouldDoCacheableDictionaryTransitionForRemoveAndAttributeChange()
     {
         return transitionCountEstimate() > s_maxTransitionLengthForRemove || transitionCountHasOverflowed();
@@ -448,6 +442,8 @@ public:
     static void destroy(JSCell*);
 
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const>);
+    JS_EXPORT_PRIVATE static Structure* createOfRow(VM&, Structure* empty, std::span<UniquedStringImpl* const>, uint16_t numberOfRowPlusOne);
+    JS_EXPORT_PRIVATE Vector<UniquedStringImpl*, 16> namesIfNumbered() const;
     JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
     JS_EXPORT_PRIVATE static Structure* createWithProperties(VM&, Structure* empty, std::span<UniquedStringImpl* const> names, std::span<const uint16_t> slots, unsigned reserved = 0, unsigned inlineSlots = std::numeric_limits<unsigned>::max(), std::span<const unsigned> attributes = { });
     JS_EXPORT_PRIVATE static Structure* createWithStableFields(VM&, JSGlobalObject*, JSValue prototype, std::span<UniquedStringImpl* const> namesInSlotOrder, uint16_t typedLayoutID = 0);
@@ -491,6 +487,8 @@ public:
     static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
     template<typename Func> void movePropertyOutOfLineWithoutTransition(VM&, PropertyName, const Func&);
     static constexpr ptrdiff_t offsetOfTypedLayoutID() { return OBJECT_OFFSETOF(Structure, m_typedLayoutID); }
+    inline unsigned numberOfPropertiesOfDictionary() const;
+    PropertyTable* materializedPropertyTable() const { return m_propertyTableUnsafe.get(); }
 
     // Versions that take a func will call it after making the change but while still holding
     // the lock. The callback is not called if there is no change being made, like if you call
@@ -851,6 +849,13 @@ public:
     // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::layoutOfEnvironment().
     const AOT::Typed::Data* dataOfCompiledEnvironments() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? std::bit_cast<const AOT::Typed::Data*>(m_compiledLayoutOrData - isOfCompiledEnvironments) : nullptr; }
     uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(m_pageOfEnvironmentShapes) << 16; }
+    uint16_t numberOfRowPlusOne() const { return m_compiledLayoutOrData ? 0 : m_pageOfEnvironmentShapes; }
+    void setNumberOfRowPlusOne(uint16_t number)
+    {
+        RELEASE_ASSERT(!m_compiledLayoutOrData && !m_pageOfEnvironmentShapes);
+        m_pageOfEnvironmentShapes = number;
+    }
+    static constexpr ptrdiff_t offsetOfNumberOfRowPlusOne() { return OBJECT_OFFSETOF(Structure, m_pageOfEnvironmentShapes); }
     void setCompiledEnvironments(const AOT::Typed::Data* data, uint16_t page)
     {
         m_compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | isOfCompiledEnvironments;
@@ -1054,14 +1059,7 @@ public:
     DEFINE_BITFIELD(bool, hasNonConfigurableReadOnlyOrGetterSetterProperties, HasNonConfigurableReadOnlyOrGetterSetterProperties, 1, 30);
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
-    bool didConvertFirstObjectToDictionary() const { return m_didConvertFirstObjectToDictionary; }
-    void setDidConvertFirstObjectToDictionary(bool value) { m_didConvertFirstObjectToDictionary = value; }
-    // Each object of it is taken to be the only one of its kind: it takes properties in place, as a dictionary, until a cache flattens it. See JSObject::putDirectInternal().
-    bool growsAlone() const { return m_growsAlone; }
-    void setGrowsAlone(bool value) { m_growsAlone = value; }
-    // How often it has become a dictionary. Each time costs a Structure, as a transition does, and a copy of the table.
-    static constexpr unsigned maxNumberOfTurnsAlone = 7;
-    bool hasUsedUpItsTurnsAlone() const { return m_numberOfTurnsAlone == maxNumberOfTurnsAlone; }
+    bool hasImmutablePropertiesWithFixedAttributes() const { return hasImmutableProperties() && inheritorsMayOverrideReadOnlyProperties(); }
     DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
     DEFINE_BITFIELD(bool, hasStableFields, HasStableFields, 1, 12);
     static_assert(!((s_hasImmutableShapeBits | s_hasStableFieldsBits) & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
@@ -1160,7 +1158,7 @@ private:
     {
         if (PropertyTable* result = m_propertyTableUnsafe.get())
             return result;
-        if (!previousID())
+        if (!previousID() && (maxOffset() == invalidOffset || !numberOfRowPlusOne()))
             return nullptr;
         return materializePropertyTable(vm);
     }
@@ -1246,9 +1244,6 @@ private:
     uint32_t m_propertyHash;
 #if USE(BUN_JSC_ADDITIONS)
     uint8_t m_numberOfStableFields { 0 };
-    bool m_didConvertFirstObjectToDictionary : 1 { false };
-    bool m_growsAlone : 1 { false };
-    uint8_t m_numberOfTurnsAlone : 3 { 0 };
     // Compiled code stores over properties of such objects and does not say so: see didCachePropertyReplacement().
     bool m_isReplacedWithoutNotice { false };
 #endif

@@ -5,6 +5,7 @@
 
 #include "config.h"
 #include "AOTTypedLoweringInternal.h"
+#include "AOTTypedThreads.h"
 
 #if ENABLE(AOT)
 
@@ -169,7 +170,7 @@ bool onlyFieldsSupply(const Program& program, LayoutID view, StringID name, bool
 }
 
 // No object of the view has the property but as an extra property.
-static bool onlyExtraPropertiesSupply(const Program& program, LayoutID view, StringID name)
+bool onlyExtraPropertiesSupply(const Program& program, LayoutID view, StringID name)
 {
     if (!onlyFieldsSupply(program, view, name))
         return false;
@@ -383,7 +384,7 @@ void Lowering::validateCell32(LValue index, LValue stored, bool mayBeNil)
     m_out.branch(isExact, usually(continuation), rarely(isLost));
     m_out.appendTo(isLost);
     AOT_TYPED_OPERATION(FactDoesNotHold, Boxed(stored), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
-    m_out.unreachable();
+    m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
 
@@ -416,16 +417,25 @@ void Lowering::store(Store store, Operand operand, TypedPointer pointer)
     case Store::Cell32:
     case Store::OptionalCell32: {
         bool mayBeNil = store == Store::OptionalCell32 && !m_typeOfCell.contains(operand.value);
-        LValue index = m_out.lShr(operand.value, m_out.constInt32(cell32Shift));
-        if (mayBeNil)
-            index = m_out.select(m_out.belowOrEqual(operand.value, m_out.constInt64(undefinedCell32)), operand.value, index);
+        LValue index = nullptr;
+        LValue kept = operand.value;
+        if (auto decoded = m_decoded.find(operand.value); decoded != m_decoded.end() && m_indexOfCell.contains(decoded->value.cell)) {
+            index = decoded->value.index;
+            kept = decoded->value.cell;
+        } else if (auto found = m_indexOfCell.find(operand.value); found != m_indexOfCell.end())
+            index = found->value;
+        if (!index) {
+            index = m_out.lShr(operand.value, m_out.constInt32(cell32Shift));
+            if (mayBeNil)
+                index = m_out.select(m_out.belowOrEqual(operand.value, m_out.constInt64(undefinedCell32)), operand.value, index);
+        }
         index = m_out.castToInt32(index);
         if (Options::validateAOTTypedFacts()) [[unlikely]]
             validateCell32(index, operand.value, mayBeNil);
         m_out.store32(index, pointer);
         // The back end may compute the index earlier, before calls that collect: with that of an earlier store, or ahead of a loop. Until here the pointer is what keeps the cell alive.
-        if (!operand.value->hasInt64())
-            ensureStillAliveHere(CellPointer(operand.value));
+        if (!kept->hasInt64())
+            ensureStillAliveHere(CellPointer(kept));
         return;
     }
     case Store::OptionalBoolean:
@@ -445,6 +455,72 @@ void Lowering::store(Store store, Operand operand, TypedPointer pointer)
 // The threshold changes, and with the usual one the state of a cell, only while this thread is in a call. See applyEffects().
 void Lowering::barrier(CellPointer owner)
 {
+    if (!m_isInLoop) {
+#if !CPU(X86_64)
+        LValue threshold = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfBarrierThreshold()));
+        LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, owner.value(), JSCell::cellStateOffset()));
+#endif
+        PatchpointValue* patchpoint = m_out.patchpoint(Void);
+        applyEffects(patchpoint, effectsOfOperation<operationAOTTypedBarrierSlow>());
+        patchpoint->append(ConstrainedValue(owner.value(), ValueRep::SomeRegister));
+#if !CPU(X86_64)
+        patchpoint->append(ConstrainedValue(state, ValueRep::SomeRegister));
+        patchpoint->append(ConstrainedValue(threshold, ValueRep::SomeRegister));
+#endif
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        if (!hasStubsForFunctionsWithoutFrame) {
+            m_context.emitsCalls = true;
+            patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        }
+        uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(Entry::operationAOTTypedBarrierSlow) * sizeof(void*));
+        patchpoint->setGenerator([context = &m_context, immediate](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg owner = params[0].gpr();
+#if CPU(X86_64)
+            jit.load8(CCallHelpers::Address(owner, JSCell::cellStateOffset()), jit.scratchRegister());
+            CCallHelpers::Jump isSlow = jit.branch32(CCallHelpers::BelowOrEqual, jit.scratchRegister(), CCallHelpers::Address(instanceGPR, Instance::offsetOfBarrierThreshold()));
+#else
+            CCallHelpers::Jump isSlow = jit.branch32(CCallHelpers::BelowOrEqual, params[1].gpr(), params[2].gpr());
+#endif
+            CCallHelpers::Label done = jit.label();
+            Vector<GPRReg, 4> saved;
+            for (GPRReg reg : { GPRInfo::returnValueGPR, operationArgumentGPR(1), stubTemporaryGPRs[0], stubTemporaryGPRs[1] }) {
+                bool isTemporary = reg == stubTemporaryGPRs[0] || reg == stubTemporaryGPRs[1];
+                if (isTemporary && !registersChangedBy(Stub::ColdPlainOperation)->contains(reg, IgnoreVectors))
+                    continue;
+                if (params.usedRegisters().contains(reg, IgnoreVectors) && !(reg == operationArgumentGPR(1) && reg == owner))
+                    saved.append(reg);
+            }
+            if (saved.size() & 1)
+                saved.append(jit.scratchRegister());
+            bool isLeaf = hasStubsForFunctionsWithoutFrame && context->hasNoFrame(params.proc().code());
+            bool holdsFPR = false;
+            RegisterSet::registersToSaveForCCall(params.usedRegisters()).forEach([&](Reg reg) {
+                holdsFPR |= reg.isFPR();
+            });
+            params.addLatePath([=](CCallHelpers& jit) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                isSlow.link(&jit);
+                for (unsigned i = 0; i < saved.size(); i += 2)
+                    jit.pushPair(saved[i], saved[i + 1]);
+                jit.move(owner, operationArgumentGPR(1));
+#if CPU(ARM64)
+                if (isLeaf)
+                    jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
+                unsigned stub = static_cast<unsigned>(Stub::ColdPlainOperation);
+                if (!holdsFPR)
+                    stub += 2;
+                if (isLeaf)
+                    ++stub;
+                context->stubCalls.call(jit, static_cast<Stub>(stub), immediate, CallSite { });
+                for (unsigned i = saved.size(); i; i -= 2)
+                    jit.popPair(saved[i - 2], saved[i - 1]);
+                jit.jump().linkTo(done, &jit);
+            });
+        });
+        return;
+    }
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     LValue threshold = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfBarrierThreshold()));
@@ -504,8 +580,19 @@ void Lowering::didLowerInitializingStore()
     auto& store = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
     if (store.opcode == Opcode::PutField && m_program.at(store.layout()).isInFrame)
         return;
-    if (next >= m_currentBlock->values.size() || !isInitializingStore(m_program, m_function, *m_currentBlock, next))
-        fenceAfterInitialization();
+    if (next < m_currentBlock->values.size() && isInitializingStore(m_program, m_function, *m_currentBlock, next))
+        return;
+    if (store.opcode == Opcode::PutField && m_program.at(store.layout()).isCoroutineFrame && next < m_currentBlock->values.size()) {
+        auto& following = m_function.at(m_currentBlock->values[next]);
+        if (following.opcode == Opcode::NewClosure && m_program.isResumeFunction(m_program.at(following.function())) && following.arguments[0] == store.child(0)) {
+            PatchpointValue* line = m_out.patchpoint(Void);
+            line->effects = Effects::none();
+            line->effects.fence = true;
+            line->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+            return;
+        }
+    }
+    fenceAfterInitialization();
 }
 
 const Field* Lowering::fieldFor(const Type& receiver, StringID name) const
@@ -527,6 +614,19 @@ bool Lowering::mostMembersLack(LayoutID view, const Field& field) const
     return lack >= 4 * have;
 }
 
+bool Lowering::mayGiveUp(LayoutID view) const
+{
+    return m_viewsThatMayGiveUp.ensure(view.index(), [&] {
+        if (m_program.at(view).mayGiveUp)
+            return true;
+        for (LayoutID member : m_program.at(view).members) {
+            if (m_program.at(member).mayGiveUp)
+                return true;
+        }
+        return false;
+    }).iterator->value;
+}
+
 bool Lowering::mayBeFrozen(LayoutID view) const
 {
     return m_viewsThatMayBeFrozen.ensure(view.index(), [&] {
@@ -538,25 +638,57 @@ bool Lowering::mayBeFrozen(LayoutID view) const
     }).iterator->value;
 }
 
-// What the slot holds. An out-of-line slot beyond the size of the extension is absent: see offsetOfExtension in AOTTypedData.h.
+Word32 Lowering::extensionCovers(CellPointer cell, const Field& field)
+{
+    Word32 word = extensionWordOf(cell);
+    if (field.offset + sizeOf(field.store) <= leastExtensionSize)
+        return logicalNot(isZero(word));
+    LBasicBlock hasExtension = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 2> answers;
+    answers.append(m_out.anchor(m_out.int32Zero));
+    m_out.branch(isZero(word).value(), unsure(continuation), unsure(hasExtension));
+    m_out.appendTo(hasExtension);
+    Word32 size = loadField<Word32>(extensionAt(word), m_heaps.AOTTypedExtension_size, IsFixed);
+    answers.append(m_out.anchor(aboveOrEqual(size, word32(field.offset + sizeOf(field.store))).value()));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return Word32(m_out.phi(Int32, answers));
+}
+
 Operand Lowering::loadSlot(CellPointer cell, const Field& field, unsigned flags)
 {
     if (!field.isOutOfLine)
         return load(field.store, fieldAt(cell, field), flags, cell.value());
-    RELEASE_ASSERT(field.store == Store::JSValue);
-    CellPointer extension = extensionOf(cell);
-    // The pointer is never null, and the size of one extension never changes: a larger copy takes its place.
-    Word32 size = loadField<Word32>(extension, m_heaps.AOTTypedExtension_size, IsFixed | IsSafe);
-    LBasicBlock within = m_out.newBlock();
-    LBasicBlock beyond = m_out.newBlock();
-    Join join(m_out, Rep::JSValue, b3TypeOf(Rep::JSValue));
-    m_out.branch(aboveOrEqual(size, word32(field.offset + sizeof(EncodedJSValue))).value(), unsure(within), unsure(beyond));
-    m_out.appendTo(within);
-    // Only the test keeps the load within the cell.
-    join.add(load(field.store, m_out.address(heapOf(field.slot), extension.value(), field.offset), 0));
-    m_out.appendTo(beyond);
-    join.add(Boxed(m_out.int64Zero));
-    return join.finish();
+    RELEASE_ASSERT(isAbsentAsZero(field.store) && repOf(field.store) == Rep::JSValue);
+    Word32 word = extensionWordOf(cell);
+    LBasicBlock hasExtension = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 3> words;
+    words.append(m_out.anchor(m_out.int64Zero));
+    m_out.branch(isZero(word).value(), unsure(continuation), unsure(hasExtension));
+    m_out.appendTo(hasExtension);
+    Pointer extension = extensionAt(word);
+    if (field.offset + sizeOf(field.store) > leastExtensionSize) {
+        LBasicBlock within = m_out.newBlock();
+        Word32 size = loadField<Word32>(extension, m_heaps.AOTTypedExtension_size, IsFixed);
+        words.append(m_out.anchor(m_out.int64Zero));
+        m_out.branch(aboveOrEqual(size, word32(field.offset + sizeOf(field.store))).value(), unsure(within), unsure(continuation));
+        m_out.appendTo(within);
+    }
+    TypedPointer slot = m_out.address(heapOf(field.slot), extension.value(), field.offset);
+    words.append(m_out.anchor(sizeOf(field.store) == 8 ? m_out.load64(slot) : m_out.zeroExtPtr(sizeOf(field.store) == 4 ? m_out.load32(slot) : m_out.load8ZeroExt32(slot))));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    LValue raw = m_out.phi(Int64, words);
+    ensureStillAliveHere(cell);
+    if (field.store != Store::OptionalCell32)
+        return Boxed(raw);
+    LValue decoded = decodeCell32(raw);
+    if (!isDroppedForTesting()) [[likely]]
+        decoded = m_out.opaque(decoded);
+    m_indexOfCell.add(decoded, raw);
+    return boxDecoded(raw, decoded);
 }
 
 // One load. The slot holds what the widest of the types says that share it: where that is more than the type of the value, a test follows.
@@ -833,11 +965,37 @@ bool Lowering::collectorMayHaveRunSinceBirth(ValueID object) const
 // `unlessAsked`: emitted where the words of the object are not those of the last time, which have none of the bits 28 to 31.
 void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, OperationEffects effects, const ScopedLambda<void()>& unlessAsked)
 {
+    uint32_t slotKey = slotKeyFor(field.offset, field.isOutOfLine);
+    auto ensureStorage = [&] {
+        if (!field.isOutOfLine)
+            return;
+        LBasicBlock lacksStorage = m_out.newBlock();
+        LBasicBlock hasNoExtension = m_out.newBlock();
+        LBasicBlock slowPath = newColdBlock();
+        LBasicBlock hasStorage = m_out.newBlock();
+        m_out.branch(extensionCovers(cell, field).value(), unsure(hasStorage), unsure(lacksStorage));
+        m_out.appendTo(lacksStorage);
+        m_out.branch(isZero(extensionWordOf(cell)).value(), usually(hasNoExtension), rarely(slowPath));
+        m_out.appendTo(hasNoExtension);
+        size_t size = WTF::roundUpToMultipleOf<leastExtensionSize>(field.offset + sizeOf(field.store));
+        LValue storage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size), slowPath);
+        applyEffects(storage->as<PatchpointValue>(), { Writes::RuntimeState, false });
+        static_assert(!offsetOfExtensionSize);
+        for (size_t offset = 0; offset < size; offset += sizeof(uint64_t))
+            m_out.store64(m_out.constInt64(offset ? 0 : size), TypedPointer(m_heaps.root, m_out.add(storage, m_out.constIntPtr(offset))));
+        fenceAfterInitialization();
+        storeField(cell, m_heaps.AOTTypedObject_extension, Word32(m_out.castToInt32(m_out.lShr(storage, m_out.constInt32(cell32Shift)))));
+        barrier(cell);
+        m_out.jump(hasStorage);
+        m_out.appendTo(slowPath);
+        AOT_TYPED_OPERATION_WITH_EFFECTS(EnsureStorage, effects, cell, word32(field.name.index()));
+        m_out.jump(hasStorage);
+        m_out.appendTo(hasStorage);
+    };
     auto throughStub = [&](LValue cache) {
         unlessAsked();
-        // The stub goes by where the slot is in the cell.
-        if (field.isOutOfLine)
-            AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateFieldOutOfLine, effects, cell, word32(field.name.index()), Pointer(cache));
+        if (!slotKey)
+            AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(field.name.index()));
         else if (isARM64()) {
             // The stub keeps whatever the site holds in registers but its own temporaries: see generateDidCreateTypedField().
             PatchpointValue* patchpoint = m_out.patchpoint(Void);
@@ -853,7 +1011,7 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
                 m_context.emitsCalls = true;
                 patchpoint->clobberLate(RegisterSet { callMarkerGPR });
             }
-            patchpoint->setGenerator([context = &m_context, offset = field.offset](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            patchpoint->setGenerator([context = &m_context, offset = slotKey](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 bool isLeaf = context->hasNoFrame(params.proc().code());
 #if CPU(ARM64)
@@ -864,10 +1022,11 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
                 context->stubCalls.call(jit, isLeaf ? Stub::LeafDidCreateTypedField : Stub::DidCreateTypedField, CallSite { });
             });
         } else
-            callICStub(Stub::DidCreateTypedField, Void, { { cell.value(), GPRInfo::argumentGPR1 }, { cache, GPRInfo::argumentGPR3 } }, std::pair { GPRInfo::argumentGPR2, field.offset }, effects);
+            callICStub(Stub::DidCreateTypedField, Void, { { cell.value(), GPRInfo::argumentGPR1 }, { cache, GPRInfo::argumentGPR3 } }, std::pair { GPRInfo::argumentGPR2, slotKey }, effects);
     };
     if (m_context.sites.size() >= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots)) {
         throughStub(m_out.constIntPtr(0));
+        ensureStorage();
         return;
     }
     m_context.sites.append(Site { });
@@ -882,9 +1041,6 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
     static_assert(offsetOfOrderWord + sizeof(uint32_t) == offsetOfShapeWord && !(offsetOfOrderWord % sizeof(uint64_t)));
     LValue words = m_out.load64(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(offsetOfOrderWord))));
     Word32 isHit(m_out.equal(words, m_out.load64(inCache(OBJECT_OFFSETOF(AOT::Slot, pointer)))));
-    // Else a longer extension takes its place.
-    if (field.isOutOfLine)
-        isHit = logicalAnd(isHit, aboveOrEqual(loadField<Word32>(extensionOf(cell), m_heaps.AOTTypedExtension_size, IsFixed | IsSafe), word32(field.offset + sizeof(EncodedJSValue))));
     m_out.branch(isHit.value(), usually(hit), rarely(miss));
     m_out.appendTo(hit);
     m_out.store32(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, offset))), cell.value(), m_heaps.AOTTypedObject_orderWord);
@@ -893,9 +1049,10 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
     throughStub(cache.value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
+    ensureStorage();
 }
 
-bool Lowering::isOnlyComparedWithTextsBeforeAnyStore(ValueID read)
+bool Lowering::isOnlyComparedWithTextsBeforeAnyStore(ValueID read, Vector<ValueID, 4>& textsOfIndex)
 {
     auto mayStoreToField = [&](const Block& block, size_t index) {
         auto& value = m_function.at(block.values[index]);
@@ -942,21 +1099,56 @@ bool Lowering::isOnlyComparedWithTextsBeforeAnyStore(ValueID read)
         auto& block = m_function.blocks[next];
         leave(block, isEnteredAfterStore.get(next) || storesIn(block, 0, block.values.size()));
     }
-    unsigned numberOfComparisons = 0;
-    for (size_t number = 0; number < m_function.blocks.size(); ++number) {
-        auto& block = m_function.blocks[number];
-        for (size_t index = 0; index < block.values.size(); ++index) {
-            auto& value = m_function.at(block.values[index]);
-            if (value.opcode != Opcode::StrictEq || (value.child(0) != read && value.child(1) != read))
-                continue;
-            if (m_function.at(value.child(value.child(0) == read)).opcode != Opcode::String)
-                return false;
-            if (number == blockOfRead ? storesIn(block, m_currentIndexInBlock + 1, index) : isEnteredAfterStore.get(number) || storesIn(block, 0, index))
-                return false;
-            ++numberOfComparisons;
+    Vector<ValueID, 4> same { read };
+    auto countComparisons = [&]() -> std::optional<unsigned> {
+        unsigned numberOfComparisons = 0;
+        textsOfIndex.clear();
+        for (size_t number = 0; number < m_function.blocks.size(); ++number) {
+            auto& block = m_function.blocks[number];
+            for (size_t index = 0; index < block.values.size(); ++index) {
+                auto& value = m_function.at(block.values[index]);
+                if (value.opcode != Opcode::StrictEq || (!same.contains(value.child(0)) && !same.contains(value.child(1))))
+                    continue;
+                ValueID text = value.child(same.contains(value.child(0)));
+                if (m_function.at(text).opcode != Opcode::String)
+                    return std::nullopt;
+                if (number == blockOfRead ? storesIn(block, m_currentIndexInBlock + 1, index) : isEnteredAfterStore.get(number) || storesIn(block, 0, index))
+                    return std::nullopt;
+                ++numberOfComparisons;
+                bool isKnown = std::ranges::any_of(textsOfIndex, [&](ValueID known) {
+                    return m_function.at(known).string() == m_function.at(text).string();
+                });
+                if (!isKnown)
+                    textsOfIndex.append(text);
+            }
+        }
+        return numberOfComparisons;
+    };
+    auto ofRead = countComparisons();
+    if (!ofRead)
+        return false;
+    unsigned numberOfUses = numberOfUsesOf(read);
+    if (*ofRead == numberOfUses) {
+        if (*ofRead <= textsOfIndex.size() || *ofRead < textsOfIndex.size() * textsOfIndex.size())
+            textsOfIndex.clear();
+        return numberOfUses;
+    }
+    for (size_t known = 0; known != same.size();) {
+        known = same.size();
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = m_function.at(id);
+                if (value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast && same.contains(value.child(0)) && !same.contains(id))
+                    same.append(id);
+            }
         }
     }
-    return numberOfComparisons && numberOfComparisons == numberOfUsesOf(read);
+    for (size_t i = 1; i < same.size(); ++i)
+        numberOfUses += numberOfUsesOf(same[i]);
+    if (same.size() == 1)
+        return false;
+    auto ofAll = countComparisons();
+    return ofAll && *ofAll && *ofAll + same.size() - 1 == numberOfUses;
 }
 
 TypedPointer Lowering::guardOfPinnedFields(SlotID slot)
@@ -964,7 +1156,7 @@ TypedPointer Lowering::guardOfPinnedFields(SlotID slot)
     return m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfTypedAlteredLiterals() + slot.index() % numberOfGuardsOfPinnedFields);
 }
 
-Word32 Lowering::isPinnedTo(const PinnedRead& read, StringID text)
+Word32 Lowering::hasShapePinnedTo(const PinnedRead& read, StringID text)
 {
     Vector<LayoutID, 1> withText;
     for (LayoutID member : m_program.at(read.view).members) {
@@ -974,10 +1166,36 @@ Word32 Lowering::isPinnedTo(const PinnedRead& read, StringID text)
         if (field.literals[0].string == text)
             withText.append(member);
     }
+    return withText.isEmpty() ? boolean(false) : passesOneOf(read.shapeWord, withText);
+}
+
+Word32 Lowering::isPinnedTo(const PinnedRead& read, ValueID constant)
+{
+    StringID text = m_function.at(constant).string();
+    if (read.index) {
+        size_t which = read.texts.find(text);
+        RELEASE_ASSERT(which != notFound);
+        return equal(read.index, word32(which));
+    }
     return either<Word32>(isZero(read.isAltered), [&] {
-        return withText.isEmpty() ? boolean(false) : passesOneOf(read.shapeWord, withText);
+        return hasShapePinnedTo(read, text);
     }, [&] {
         // Nothing has been stored to a field since the read: what the field holds now is what it held then.
+        auto& view = m_program.at(read.view);
+        auto& field = view.fields[*view.fieldNamed(read.name)];
+        auto ascii = constantASCIIText(constant);
+        auto& stored = m_program.at(field.stored);
+        if (stored.primitives & Primitive::String && stored.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull) && !field.isLackedBySomeMember && !field.isElsewhereInSomeMember && ascii && !ascii->empty()) {
+            Operand held = readField(read.cell, field, stored);
+            if (held.rep == Rep::Cell)
+                return isTextByStub(held.as<CellPointer>(), constant);
+            Boxed value = held.as<Boxed>();
+            return either<Word32>(isCell(value, stored), [&] {
+                return isTextByStub(asCell(value), constant);
+            }, [&] {
+                return boolean(false);
+            });
+        }
         return Word32(m_out.castToInt32(AOT_TYPED_OPERATION(FieldHasText, read.cell, word32(read.name.index()), word32(text.index())).value()));
     });
 }
@@ -986,8 +1204,8 @@ void Lowering::guardPinnedFields(LayoutID holder, const Field& field, ValueID st
 {
     if (!field.slot || !m_program.at(field.slot).hasPinnedFields)
         return;
-    while (m_function.at(stored).opcode == Opcode::Cast)
-        stored = m_function.at(stored).child(0);
+    if (ValueID constant = m_program.constantOf(m_function, stored))
+        stored = constant;
     // The string that every pinned field it can get to is pinned to.
     bool keepsThem = holder && m_function.at(stored).opcode == Opcode::String;
     if (keepsThem) {
@@ -1039,7 +1257,7 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
         Boxed current = readField(cell, field, m_program.at(m_program.types.anything)).as<Boxed>();
         m_out.branch(equal(current, in<Boxed>(stored)).value(), usually(done), rarely(differs));
         m_out.appendTo(differs);
-        OperationEffects effects { Writes::Fields, true, false };
+        OperationEffects effects { Writes::Fields, true, view && mayGiveUp(view) };
         AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effects, box(cell), word32(field.name.index()), in<Boxed>(stored));
         m_out.jump(done);
     };
@@ -1094,8 +1312,10 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
         m_out.appendTo(continuation);
     }
     put();
+    if (field.isOutOfLine)
+        ensureStillAliveHere(cell);
     if (holdsCells(field.store) && typeOf(stored).hasCells())
-        barrier(field.isOutOfLine ? extensionOf(cell) : cell);
+        barrier(cell);
     if (isInitializing)
         didLowerInitializingStore();
     if (done) {
@@ -1152,6 +1372,54 @@ bool Lowering::hasMemberThatKeepsField(LayoutID view, StringID name) const
     return false;
 }
 
+static bool isUnescapedAllocation(const Program& program, const Function& function, const Block& block, size_t index, ValueID allocation)
+{
+    if (function.at(allocation).opcode != Opcode::NewObjectWithShape)
+        return false;
+    auto& layout = program.at(function.at(allocation).layout());
+    if (!layout.mayGiveUp)
+        return true;
+    auto isAllocation = [&](ValueID id) {
+        while (function.at(id).opcode == Opcode::Cast)
+            id = function.at(id).child(0);
+        return id == allocation;
+    };
+    auto doesNotEscape = [&](const Value& value) {
+        switch (value.opcode) {
+        case Opcode::Cast:
+            return value.castReason() != CastReason::As && value.castReason() != CastReason::Coerce;
+        case Opcode::GetField:
+            return true;
+        case Opcode::GetById:
+        case Opcode::InById:
+            return layout.fieldNamed(value.string()) && !mayInheritAtBirth(program, function, allocation, value.string());
+        case Opcode::PutField:
+            return !isAllocation(value.child(1));
+        case Opcode::PutById: {
+            auto field = layout.fieldNamed(value.string());
+            if (!field || *field == layout.discriminant || isAllocation(value.child(1)) || mayInheritAtBirth(program, function, allocation, value.string()))
+                return false;
+            TypeID type = layout.fields[*field].type;
+            return !type || program.typeOf(function, value.child(1)).isWithin(program.at(type), program);
+        }
+        default:
+            return false;
+        }
+    };
+    for (size_t i = index; i--;) {
+        if (block.values[i] == allocation)
+            return true;
+        auto& value = function.at(block.values[i]);
+        bool usesAllocation = false;
+        value.forEachChild([&](ValueID child) {
+            usesAllocation |= isAllocation(child);
+        });
+        if (usesAllocation && !doesNotEscape(value))
+            return false;
+    }
+    return false;
+}
+
 // Whether this function has allocated the object, with a member of the view: then it is not for a test to tell it from a foreign one.
 // A cast leaves such an object where it is, and what it may turn it into is a member of every view that its layout is a member of.
 bool Lowering::isAllocatedAsMemberOf(ValueID object, LayoutID view) const
@@ -1159,18 +1427,27 @@ bool Lowering::isAllocatedAsMemberOf(ValueID object, LayoutID view) const
     while (m_function.at(object).opcode == Opcode::Cast)
         object = m_function.at(object).child(0);
     auto& made = m_function.at(object);
-    return made.opcode == Opcode::NewObjectWithShape && std::ranges::binary_search(m_program.at(view).members, made.layout());
+    return made.opcode == Opcode::NewObjectWithShape && std::ranges::binary_search(m_program.at(view).members, made.layout()) && isUnescapedAllocation(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, object);
 }
 
 // GetField and PutField name a field of the layout the object was allocated with.
 
+static ValueID withoutCasts(const Function& function, ValueID id)
+{
+    while (function.at(id).opcode == Opcode::Cast)
+        id = function.at(id).child(0);
+    return id;
+}
+
 Operand Lowering::lowerGetField(ValueID result, const Value& value)
 {
+    RELEASE_ASSERT_WITH_MESSAGE(!mayGiveUp(value.layout()) || isUnescapedAllocation(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, withoutCasts(m_function, value.child(0))), "AOT: GetField on an allocation that may have given up its layout");
     return readField(in<CellPointer>(value.child(0)), m_program.at(value.layout()).fields[value.field()], typeOf(result));
 }
 
 void Lowering::lowerPutField(ValueID, const Value& value)
 {
+    RELEASE_ASSERT_WITH_MESSAGE(!mayGiveUp(value.layout()) || isUnescapedAllocation(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, withoutCasts(m_function, value.child(0))), "AOT: PutField on an allocation that may have given up its layout");
     writeField(in<CellPointer>(value.child(0)), value.child(0), m_program.at(value.layout()).fields[value.field()], value.child(1));
 }
 
@@ -1192,7 +1469,11 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
     // The casts behind it are carried out in its arms, where the last of them is lowered: see lowerFusedCast().
     if (!m_fusedCasts && (numberOfCastsFusedWithRead(m_currentIndexInBlock) || indexOfUseFusedWithRead(m_currentIndexInBlock, 0)))
         return placeholder(value.rep);
+    if (asksReadForText(result, value))
+        return placeholder(value.rep);
     auto& type = m_fusedCasts ? m_fusedCasts->type : typeOf(result);
+    if (value.isAtKnownPlace())
+        return ensure(getAtKnownPlace(value, in<Boxed>(object)), type);
     LayoutID view = receiver.onlyView();
     const Field* field = fieldFor(receiver, name);
     if (!field) {
@@ -1220,11 +1501,45 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         auto generally = [&] {
             if (auto property = getPropertyOfGlobalThis(object, name))
                 return ensure(*property, type);
-            return ensure(emitGetById(in<Boxed>(object), name), type);
+            return ensure(emitGetById(in<Boxed>(object), name, false, functionDefining(object)), type);
+        };
+        if (static const BuiltinName length = Builtins::singleton().nameOf("length"_s.span8()); length && m_program.builtinName(name) == length && receiver == Type::function()) {
+            CellPointer closure = get(object).rep == Rep::JSValue ? asCell(in<Boxed>(object)) : in<CellPointer>(object);
+            return eitherOperand(isUnreifiedSlimClosure(closure), repOf(type), [&] {
+                LValue data = fixedPointer(Instance::offsetOfTypedData());
+                LValue lengths = m_out.add(data, m_out.zeroExtPtr(marked(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, data, OBJECT_OFFSETOF(Data, functionLengthsOffset))), IsFixed)));
+                LValue address = m_out.add(lengths, m_out.shl(m_out.zeroExtPtr(functionOfClosure(closure, true).value()), m_out.constInt32(1)));
+                return ensure(Word32(marked(m_out.load16ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, address, 0)), IsFixed)), Type::integer({ 0, UINT16_MAX }), type);
+            }, generally);
+        }
+        if (receiver == Type::function() && equalSpans(m_program.string(name), "name"_s.span8())) {
+            CellPointer closure = get(object).rep == Rep::JSValue ? asCell(in<Boxed>(object)) : in<CellPointer>(object);
+            return eitherOperand(isUnreifiedSlimClosure(closure), repOf(type), [&] {
+                LValue data = fixedPointer(Instance::offsetOfTypedData());
+                LValue names = m_out.add(data, m_out.zeroExtPtr(marked(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, data, OBJECT_OFFSETOF(Data, functionsOffset))), IsFixed)));
+                LValue address = m_out.add(names, m_out.shl(m_out.zeroExtPtr(functionOfClosure(closure, true).value()), m_out.constInt32(2)));
+                LValue key = m_out.zeroExtPtr(m_out.add(marked(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, address, 0)), IsFixed), m_out.constInt32(1)));
+                return ensure(CellPointer(callAllocationStub(Stub::TypedString, { { key, stubTemporaryGPRs[0] } }, { Writes::RuntimeState, false }, false)), m_program.at(m_program.types.string), type);
+            }, generally);
+        }
+        auto isLeftToGeneralWay = [&] {
+            auto left = readsOfExpectedLeftToGeneralWay();
+            if (left == ReadsOfExpectedLeftToGeneralWay::None) [[likely]]
+                return false;
+            bool goesByGraph = left == ReadsOfExpectedLeftToGeneralWay::LengthWhereColdByGraph || left == ReadsOfExpectedLeftToGeneralWay::AllWhereColdByGraph;
+            if (goesByGraph ? !m_program.isColdByGraph(m_id) : m_isInLoop || m_program.isHotByText(m_id))
+                return false;
+            bool isForLengthAlone = left == ReadsOfExpectedLeftToGeneralWay::Length || left == ReadsOfExpectedLeftToGeneralWay::LengthWhereColdByGraph;
+            if (static const BuiltinName length = Builtins::singleton().nameOf("length"_s.span8()); isForLengthAlone && (!length || m_program.builtinName(name) != length))
+                return false;
+            ++m_context.numberOfReadsOfExpectedLeftToGeneralWayBySwitch;
+            return true;
         };
         // A primitive that the receiver is expected to be besides takes the general way.
         if (auto expectedObject = predictionOf(object, Primitive::All)) {
             if (const Field* expectedField = fieldExpectedFor(*expectedObject, name)) {
+                if (isLeftToGeneralWay())
+                    return generally();
                 return ifAsExpected({ { object, &*expectedObject } }, repOf(type), [&](LBasicBlock otherwise) {
                     return readField(withFieldOrElse(object, expectedObject->onlyView(), *expectedField, otherwise), *expectedField, type);
                 }, generally);
@@ -1234,11 +1549,13 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         if (!expected)
             return generally();
         if (auto builtin = expectedBuiltin(BuiltinKind::Getter, object, name, { }))
-            return lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
+            return isLeftToGeneralWay() ? generally() : lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
         // A method: what a string or a number finds under a name cannot change.
         if (BuiltinName known = m_program.builtinName(name); known && (expected->isString() || expected->isNumber())) {
             BuiltinID method = m_builtins.findForInstance(BuiltinKind::Method, expected->isString() ? m_builtins.stringClass() : m_builtins.numberClass(), known);
             if (method && m_builtins.hasCell(method)) {
+                if (isLeftToGeneralWay())
+                    return generally();
                 return ifAsExpected({ { object, &m_program.at(expected->isString() ? m_program.types.string : m_program.types.number) } }, repOf(type), [&](LBasicBlock) {
                     return ensure(builtinCell(m_builtins.cellOf(method)), m_program.at(m_program.types.function), type);
                 }, generally);
@@ -1248,8 +1565,30 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
     }
     CellPointer cell = nonNil(object, name);
     // The shape says what it holds, unless the byte is set: see lowerStrictEq(). There is no value.
-    if (field->isPinnedInEveryMember && !m_fusedCasts && isOnlyComparedWithTextsBeforeAnyStore(result)) {
-        m_pinnedReads.set(result.index(), PinnedRead { cell, shapeWordOf(cell), Word32(m_out.load8ZeroExt32(guardOfPinnedFields(field->slot))), view, name });
+    Vector<ValueID, 4> textsOfIndex;
+    if (field->isPinnedInEveryMember && !m_fusedCasts && isOnlyComparedWithTextsBeforeAnyStore(result, textsOfIndex)) {
+        PinnedRead read { cell, shapeWordOf(cell), Word32(m_out.load8ZeroExt32(guardOfPinnedFields(field->slot))), view, name, { }, { } };
+        if (!textsOfIndex.isEmpty()) {
+            auto indexBy = [&](auto holds) {
+                LValue index = m_out.constInt32(textsOfIndex.size());
+                for (size_t i = textsOfIndex.size(); i--;)
+                    index = m_out.select(holds(textsOfIndex[i]).value(), m_out.constInt32(i), index);
+                return Word32(index);
+            };
+            Word32 index = either<Word32>(isZero(read.isAltered), [&] {
+                return indexBy([&](ValueID text) {
+                    return hasShapePinnedTo(read, m_function.at(text).string());
+                });
+            }, [&] {
+                return indexBy([&](ValueID text) {
+                    return isPinnedTo(read, text);
+                });
+            });
+            read.index = index;
+            for (ValueID text : textsOfIndex)
+                read.texts.append(m_function.at(text).string());
+        }
+        m_pinnedReads.set(result.index(), WTF::move(read));
         return placeholder(repOf(type));
     }
     auto has = [&] {
@@ -1259,6 +1598,18 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         bool suppliesAlone = onlyFieldsSupply(m_program, view, name);
         if (!suppliesAlone && !onlyFieldsSupply(m_program, view, name, true))
             return ensure(emitGetById(box(cell), name), type);
+        if (field->isElsewhereInSomeMember) {
+            auto ask = [&] {
+                return ensure(AOT_TYPED_OPERATION(GetExtra, cell, word32(name.index() | nameMayBeOfOwnField)), type);
+            };
+            return byOwnFieldOfMember(cell, view, *field, joinedAs(type), [&](LayoutID, const Field& own) {
+                if (!(m_program.at(own.stored).primitives & Primitive::Absent))
+                    return readField(cell, own, type);
+                return eitherOperand(hasField(cell, own), joinedAs(type), [&] {
+                    return readField(cell, own, type);
+                }, ask);
+            }, ask);
+        }
         return eitherOperand(lacksBits(orderWordOf(cell), orderWordHasExtraProperties), joinedAs(type), [&] {
             return ensure(undefined(), m_program.at(m_program.types.undefined), type);
         }, [&] {
@@ -1490,6 +1841,8 @@ std::optional<size_t> Lowering::definitionDescribedBy(const ObjectLiteral& liter
     bool isAccessor = false;
     for (size_t index : literal.fields) {
         auto& field = m_function.at(values[index]);
+        if (field.opcode == Opcode::PutById)
+            return std::nullopt;
         auto name = m_program.string(m_function.at(field.arguments[1]).string());
         bool isFlag = equalSpans(name, "writable"_s.span8()) || equalSpans(name, "enumerable"_s.span8()) || equalSpans(name, "configurable"_s.span8());
         if (isFlag && m_function.at(field.arguments[2]).opcode != Opcode::Boolean)
@@ -1565,11 +1918,14 @@ void Lowering::lowerPropertyDefinition(const ObjectLiteral& definition)
     define(id, ensure(object, typeOf(id)));
 }
 
+uint32_t maxSlotsOfFunction()
+{
+    return std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots);
+}
+
 // The literal that the allocation or the DefineField at the index is part of.
 Lowering::ObjectLiteral* Lowering::objectLiteralAt(size_t index)
 {
-    // See `stores` of newObjectWithProperties().
-    static constexpr unsigned maxFields = 64;
     // There every value is looked at by itself, where it is defined.
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
         return nullptr;
@@ -1587,45 +1943,24 @@ Lowering::ObjectLiteral* Lowering::objectLiteralAt(size_t index)
             if (isCreateThis)
                 literal.newTarget = m_function.at(values[i]).child(0);
                 literal.constructor = m_function.at(values[i]).child(1) ? m_function.at(values[i]).child(1) : literal.newTarget;
-            for (size_t k = i + 1; k < values.size() && literal.fields.size() < maxFields; ++k) {
-                auto& value = m_function.at(values[k]);
-                auto nameOfMember = [&](const Value& member) {
-                    return member.opcode == Opcode::PutById ? member.string() : m_function.at(member.arguments[1]).string();
-                };
-                bool isDefinition = isDefineField(value) && value.arguments[0] == values[i] && value.arguments[2] != values[i] && m_function.at(value.arguments[1]).opcode == Opcode::String;
-                // `this.name = value`. It asks the prototype chain: see newObjectWithProperties().
-                bool isStore = isCreateThis && value.opcode == Opcode::PutById && !value.isInitialStore() && value.child(0) == values[i] && value.child(1) != values[i];
-                if (isDefinition || isStore) {
-                    // The second time it is no new property, and the structure would not say where the value goes.
-                    bool isThereAlready = std::ranges::any_of(literal.fields, [&](size_t earlier) {
-                        return nameOfMember(m_function.at(values[earlier])) == nameOfMember(value);
-                    });
-                    if (isThereAlready)
-                        break;
-                    literal.fields.append(k);
-                    continue;
-                }
-                // `prototype` is read where the CreateThis stands; and on a miss what stands between runs ahead of the stores, which may find a setter.
-                bool dependsOnNothing = value.opcode == Opcode::Undefined || value.opcode == Opcode::Null || value.opcode == Opcode::Boolean || value.opcode == Opcode::Integer || value.opcode == Opcode::Double || value.opcode == Opcode::String
-                    || value.opcode == Opcode::NewArray || value.opcode == Opcode::FunctionReference || (value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast);
-                if (isCreateThis && !dependsOnNothing)
-                    break;
-                bool usesObject = false;
-                value.forEachChild([&](ValueID child) {
-                    usesObject |= child == values[i];
-                });
-                if (usesObject)
-                    break;
-            }
-            // What a handler watches is carried out where it stands.
-            if (m_currentBlock->terminator.kind == TerminatorKind::Invoke && !literal.fields.isEmpty() && literal.fields.last() + 1 == values.size())
-                literal.fields.removeLast();
+            literal.fields = fieldsMadeWithAllocation(m_program, m_function, *m_currentBlock, i, isCreateThis, hasNullPrototype);
             if (auto call = definitionDescribedBy(literal)) {
                 literal.describes = call;
                 ObjectLiteral definition { *call, false, { } };
                 definition.descriptor = i;
                 m_objectLiterals.append(WTF::move(literal));
                 m_objectLiterals.append(WTF::move(definition));
+                continue;
+            }
+            if (!isCreateThis)
+                findRowOf(literal);
+            if (literal.row != Format::none) {
+                m_objectLiterals.append(WTF::move(literal));
+                continue;
+            }
+            if (auto reserved = m_slotsOfWholeBirths.find(values[i].index()); reserved != m_slotsOfWholeBirths.end()) {
+                literal.slot = reserved->value;
+                m_objectLiterals.append(WTF::move(literal));
                 continue;
             }
             unsigned numberOfSlots = isCreateThis ? 3 : 2;
@@ -1644,13 +1979,57 @@ Lowering::ObjectLiteral* Lowering::objectLiteralAt(size_t index)
     return nullptr;
 }
 
+uint32_t Lowering::numberOfRowFor(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const
+{
+    if (names.size() > maxPropertiesNamedBySite)
+        return Format::none;
+    for (size_t i = 0; i < names.size(); ++i) {
+        auto text = m_program.string(names[i]);
+        if ((!text.empty() && isASCIIDigit(text[0])) || std::ranges::any_of(names.first(i), [&](StringID earlier) { return earlier == names[i]; }))
+            return Format::none;
+    }
+    return m_program.numberOfRow(names, inlineCapacity, hasNullPrototype);
+}
+
+void Lowering::findRowOf(ObjectLiteral& literal) const
+{
+    auto& block = m_currentBlock->values;
+    ValueID id = block[literal.allocation];
+    Vector<StringID, 8> names;
+    for (size_t index : literal.fields) {
+        auto& field = m_function.at(block[index]);
+        names.append(field.opcode == Opcode::PutById ? field.string() : m_function.at(field.arguments[1]).string());
+    }
+    if (m_function.at(id).hasRowOfBirth()) {
+        auto& row = m_program.rowsOfBirths[m_function.at(id).rowOfBirth()];
+        if (row.isWhole && names.size() < row.firstPlace)
+            return;
+        for (size_t i = names.size() - row.firstPlace; row.isWhole && i < row.names.size(); ++i)
+            names.append(row.names[i]);
+    }
+    uint32_t numberByPass = m_function.at(id).numberOfRowOfBirth();
+    literal.roomInLine = numberByPass != Format::none ? m_program.numberedRows[numberByPass].inlineCapacity : roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty());
+    literal.row = numberOfRowFor(names.span(), literal.roomInLine, literal.hasNullPrototype);
+}
+
 // An ordinary object with the properties, allocated from the cache of a site, of which `slot` is the first slot. The site remembers the structure such an object ends up with: then the object is allocated with it, and the values are
 // stored one after the other. `newTarget`: of a CreateThis, else nothing.
-CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototype, ValueID newTargetID, ValueID constructorID, unsigned inlineCapacity, std::span<const StringID> names, std::span<const Boxed> values, uint64_t stores, const ObjectLiteral* group)
+CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototype, ValueID newTargetID, ValueID constructorID, unsigned inlineCapacity, std::span<const StringID> names, std::span<const Boxed> values, uint64_t stores, const ObjectLiteral* group, uint32_t row)
 {
     RELEASE_ASSERT(!stores || (newTargetID && group));
     unsigned count = names.size();
     RELEASE_ASSERT(count == values.size());
+    if (row != Format::none) {
+        RELEASE_ASSERT(!newTargetID && numberOfRowFor(names, inlineCapacity, hasNullPrototype) == row);
+        unsigned inRegisters = std::min(count, maxLiteralPropertiesInRegisters);
+        Vector<std::pair<LValue, GPRReg>, 4> operands { { m_out.constInt64(row), GPRInfo::argumentGPR1 } };
+        for (unsigned i = 0; i < inRegisters; ++i)
+            operands.append({ values[i].value(), GPRInfo::toArgumentRegister(2 + i) });
+        LValue made = callICStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectOfRow0) + inRegisters), Int64, operands, std::nullopt, { Writes::RuntimeState, false });
+        for (unsigned i = inRegisters; i < count; ++i)
+            m_out.store64(values[i].value(), m_out.address(m_heaps.properties.atAnyNumber(), made, JSObject::offsetOfInlineStorage() + i * sizeof(EncodedJSValue)));
+        return CellPointer(made);
+    }
     Pointer cache = slotAddress(slot);
     auto cellOf = [&](ValueID id) {
         Operand operand = get(id);
@@ -1679,12 +2058,14 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
     auto generally = [&] {
         if (stores) {
             // All at once where nothing on the prototype chain has a say: the object is born with the structure that has all the names, and none is made for the steps between.
-            LValue buffer = m_out.lockedStackSlot(2 * count * sizeof(EncodedJSValue));
+            CellPointer constructorCell = constructor();
+            CellPointer newTargetCell = newTarget();
+            LValue buffer = transientBuffer(2 * count * sizeof(EncodedJSValue));
             for (unsigned i = 0; i < count; ++i) {
                 m_out.store64(values[i].value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
                 m_out.store64(integer(names[i].index() | (stores >> i & 1) << 32).value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, (count + i) * sizeof(EncodedJSValue)));
             }
-            CellPointer made = AOT_TYPED_OPERATION(TryCreateThisWithStores, cache, constructor(), newTarget(), word32(count), word32(inlineCapacity), Pointer(buffer));
+            CellPointer made = AOT_TYPED_OPERATION(TryCreateThisWithStores, cache, constructorCell, newTargetCell, word32(count), word32(inlineCapacity), Pointer(buffer));
             LBasicBlock isMade = newColdBlock();
             LBasicBlock isNotMade = newColdBlock();
             LBasicBlock done = newColdBlock();
@@ -1698,23 +2079,32 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
             m_out.appendTo(done);
             return CellPointer(m_out.phi(Int64, atOnce, bySteps));
         }
-        LValue buffer = m_out.lockedStackSlot(std::max(count, 1u) * sizeof(EncodedJSValue));
+        std::optional<CellPointer> constructorCell;
+        std::optional<CellPointer> newTargetCell;
+        if (newTargetID) {
+            constructorCell = constructor();
+            newTargetCell = newTarget();
+        }
+        LValue buffer = transientBuffer(std::max(count, 1u) * sizeof(EncodedJSValue));
         for (unsigned i = 0; i < count; ++i)
             m_out.store64(values[i].value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
         Word32 row = word32(rowOfNames(names));
         if (!newTargetID)
             return AOT_TYPED_OPERATION(NewObjectLiteral, cache, word32(count), word32(hasNullPrototype | inlineCapacity << 1), Pointer(buffer), row);
-        return AOT_TYPED_OPERATION(CreateThisWithFields, cache, constructor(), newTarget(), word32(count), word32(inlineCapacity), Pointer(buffer), row);
+        return AOT_TYPED_OPERATION(CreateThisWithFields, cache, *constructorCell, *newTargetCell, word32(count), word32(inlineCapacity), Pointer(buffer), row);
     };
-    auto bySlot = [&] {
-        unsigned inRegisters = std::min(count, maxLiteralPropertiesInRegisters);
+    auto bySlot = [&](unsigned given) {
+        unsigned inRegisters = std::min(given, maxLiteralPropertiesInRegisters);
         Vector<std::pair<LValue, GPRReg>, 4> operands { { cache.value(), GPRInfo::argumentGPR1 } };
         for (unsigned i = 0; i < inRegisters; ++i)
             operands.append({ values[i].value(), GPRInfo::toArgumentRegister(2 + i) });
         LValue made = callICStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectLiteral0) + inRegisters), Int64, operands, std::nullopt, { Writes::RuntimeState, false });
         // The stub has cleared the other slots, all of which are in the object. Nothing has looked at it yet.
-        for (unsigned i = inRegisters; i < count; ++i)
+        for (unsigned i = inRegisters; i < count; ++i) {
+            if (values[i].value()->hasInt64() && !values[i].value()->asInt64())
+                continue;
             m_out.store64(values[i].value(), m_out.address(m_heaps.properties.atAnyNumber(), made, JSObject::offsetOfInlineStorage() + i * sizeof(EncodedJSValue)));
+        }
         return made;
     };
     // The stub asks the slot itself. What it calls where that is empty finds the names by the site, and leaves the object as the stub does: see newObjectLiteralAtSite(). Nothing stands here for that case.
@@ -1722,17 +2112,19 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
         auto text = m_program.string(name);
         return !text.empty() && isASCIIDigit(text[0]);
     });
-    // The structure with a null prototype has room for so many in the object and no more: see emptyStructureOfLiteral().
-    bool areAllInObject = !hasNullPrototype || count <= JSFinalObject::defaultInlineCapacity;
     bool areDistinct = true;
     for (unsigned i = 0; i < count; ++i)
         areDistinct = areDistinct && std::ranges::none_of(names.first(i), [&](StringID earlier) { return earlier == names[i]; });
-    if (!newTargetID && count <= maxPropertiesNamedBySite && inlineCapacity < 1u << 15 && !mayBeIndex && areAllInObject && areDistinct) {
+    if (!newTargetID && count <= maxPropertiesNamedBySite && inlineCapacity < 1u << 15 && !mayBeIndex && areDistinct) {
         Vector<uint32_t, 16> row { count | inlineCapacity << 16 | static_cast<uint32_t>(hasNullPrototype) << 31 };
         for (StringID name : names)
             row.append(name.index());
+        row.append(m_program.numberOfRow(names, inlineCapacity, hasNullPrototype) + 1);
         m_context.rowsOfSlots.append({ slot + 1, rowOf(row.span()) });
-        return CellPointer(bySlot());
+        unsigned given = count;
+        while (given && values[given - 1].value()->hasInt64() && !values[given - 1].value()->asInt64())
+            --given;
+        return CellPointer(bySlot(given));
     }
     LBasicBlock isFilled = m_out.newBlock();
     LBasicBlock isEmpty = newColdBlock();
@@ -1751,7 +2143,7 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
     }
     m_out.branch(isValid, usually(isFilled), rarely(isEmpty));
     m_out.appendTo(isFilled);
-    ValueFromBlock fast = m_out.anchor(bySlot());
+    ValueFromBlock fast = m_out.anchor(bySlot(count));
     m_out.jump(continuation);
     m_out.appendTo(isEmpty);
     ValueFromBlock slow = m_out.anchor(generally().value());
@@ -1785,7 +2177,7 @@ uint32_t Lowering::rowOf(std::span<const uint32_t> row)
 CellPointer Lowering::newObjectLiteral(std::span<const StringID> names, std::span<const Boxed> values)
 {
     if (m_context.sites.size() + 2 > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots)) {
-        CellPointer object = AOT_TYPED_OPERATION(NewObject);
+        CellPointer object = newEmptyObject(names.size());
         for (unsigned i = 0; i < names.size(); ++i)
             AOT_TYPED_OPERATION(DefineByName, box(object), word32(names[i].index()), values[i]);
         return object;
@@ -1804,12 +2196,312 @@ bool Lowering::isExpectedToBeSymbol(const Function& function, ValueID id) const
 }
 
 // A cell is of a size class: what room it has beyond what was asked for is asked for too. So fewer capacities meet the rows of names, and there are fewer structures.
+static size_t cellSizeInCompiledProgram(size_t size)
+{
+    static LazyNeverDestroyed<Vector<size_t>> sizeClasses;
+    static std::once_flag onceFlag;
+    std::call_once(onceFlag, [] {
+        sizeClasses.construct(MarkedSpace::sizeClassesFor(Options::sizeClassProgressionWithAOT()));
+    });
+    auto sizeClass = std::ranges::lower_bound(sizeClasses.get(), size);
+    return sizeClass == sizeClasses->end() ? WTF::roundUpToMultipleOf<MarkedSpace::sizeStep>(size) : *sizeClass;
+}
+
 unsigned Lowering::capacityThatFillsTheCell(unsigned inlineCapacity)
 {
     if (!inlineCapacity)
         return 0;
-    size_t size = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(inlineCapacity));
+    size_t size = cellSizeInCompiledProgram(JSFinalObject::allocationSize(inlineCapacity));
     return std::min<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
+}
+
+unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& function, ValueID id, bool hasFields)
+{
+    auto& builtins = Builtins::singleton();
+    auto withoutUpcasts = [&](ValueID value) {
+        while (function.at(value).opcode == Opcode::Cast && function.at(value).castReason() == CastReason::Upcast)
+            value = function.at(value).child(0);
+        return value;
+    };
+    auto makesItsFirstArgument = [&](const Value& user) {
+        if (user.opcode != Opcode::CallBuiltin)
+            return false;
+        auto& implementation = builtins.at(user.builtin()).implementation;
+        if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ObjectAssign)
+            return true;
+        return implementation.kind == BuiltinImplementation::Operation && implementation.operation == LanguageOperation::CopyDataProperties;
+    };
+    Vector<StringID, 16> names;
+    unsigned numberOfKeys = 0;
+    collectPropertiesGivenTo(program, function, id, 3, names, numberOfKeys);
+    unsigned inlineCapacity = std::min<unsigned>(names.size() + numberOfKeys, JSFinalObject::maxInlineCapacity);
+    if (inlineCapacity <= JSFinalObject::defaultInlineCapacity) {
+        bool isStoredToByKey = false;
+        bool isCopiedInto = false;
+        for (auto& other : function.blocks) {
+            for (ValueID user : other.values) {
+                auto& value = function.at(user);
+                isStoredToByKey |= value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == id;
+                isCopiedInto |= makesItsFirstArgument(value) && !value.arguments.isEmpty() && withoutUpcasts(value.arguments[0]) == id;
+            }
+        }
+        if (isCopiedInto || (isStoredToByKey && !hasFields))
+            inlineCapacity = 0;
+    }
+    if (auto& birth = function.at(id); birth.hasRowOfBirth() && !program.rowsOfBirths[birth.rowOfBirth()].isWhole) {
+        auto& row = program.rowsOfBirths[birth.rowOfBirth()];
+        inlineCapacity = std::max<unsigned>(inlineCapacity, row.firstPlace + row.names.size());
+    }
+    return capacityThatFillsTheCell(inlineCapacity);
+}
+
+void Lowering::numberRowsOfBirths(Program& program)
+{
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        for (auto& value : program.functions[i].values) {
+            if (value.opcode == Opcode::NewObject)
+                value.immediates[1] = Format::none;
+        }
+    });
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return;
+    auto& builtins = Builtins::singleton();
+    struct Birth {
+        ValueID id;
+        unsigned room;
+        bool hasNullPrototype;
+        unsigned numberOfNamesAtBirth;
+        Vector<StringID, 8> names;
+        Vector<unsigned> blocksOfStores;
+    };
+    Vector<Vector<Birth>> birthsOfFunctions(program.functions.size());
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
+        for (auto& block : function.blocks) {
+            for (size_t index = 0; index < block.values.size(); ++index) {
+                ValueID id = block.values[index];
+                auto& value = function.at(id);
+                bool hasNullPrototype = false;
+                if (value.opcode == Opcode::CallBuiltin && value.arguments.size() == 1 && function.at(value.arguments[0]).opcode == Opcode::Null) {
+                    auto& builtin = builtins.at(value.builtin());
+                    hasNullPrototype = builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
+                }
+                if (value.opcode != Opcode::NewObject && !hasNullPrototype)
+                    continue;
+                auto fields = fieldsMadeWithAllocation(program, function, block, index, false, hasNullPrototype);
+                Vector<StringID, 8> names;
+                for (size_t field : fields) {
+                    auto& member = function.at(block.values[field]);
+                    names.append(member.opcode == Opcode::PutById ? member.string() : function.at(member.arguments[1]).string());
+                }
+                if (value.hasRowOfBirth()) {
+                    auto& row = program.rowsOfBirths[value.rowOfBirth()];
+                    for (size_t i = names.size() - std::min<size_t>(names.size(), row.firstPlace); row.isWhole && names.size() >= row.firstPlace && i < row.names.size(); ++i)
+                        names.append(row.names[i]);
+                }
+                bool isNamedBySite = names.size() <= maxPropertiesNamedBySite;
+                for (size_t i = 0; isNamedBySite && i < names.size(); ++i) {
+                    auto text = program.string(names[i]);
+                    isNamedBySite = (text.empty() || !isASCIIDigit(text[0])) && names.find(names[i]) == i;
+                }
+                if (!isNamedBySite)
+                    continue;
+                unsigned room = roomInLineOfLiteral(program, function, id, !fields.isEmpty());
+                unsigned numberOfNamesAtBirth = names.size();
+                size_t roomForNames = std::max<size_t>(names.size(), room);
+                Vector<unsigned> blocksOfStores;
+                for (unsigned other = 0; other < function.blocks.size() && !hasNullPrototype; ++other) {
+                    for (ValueID user : function.blocks[other].values) {
+                        auto& store = function.at(user);
+                        if (store.opcode != Opcode::PutById || store.isInitialStore() || store.hasWordOfKnownPlace() || names.size() >= std::min<size_t>(roomForNames, maxPropertiesNamedBySite) || names.contains(store.string()))
+                            continue;
+                        ValueID receiver = store.child(0);
+                        while (function.at(receiver).opcode == Opcode::Cast && function.at(receiver).castReason() == CastReason::Upcast)
+                            receiver = function.at(receiver).child(0);
+                        auto text = program.string(store.string());
+                        if (receiver != id || (!text.empty() && isASCIIDigit(text[0])) || equalSpans(text, "__proto__"_s.span8()))
+                            continue;
+                        names.append(store.string());
+                        blocksOfStores.append(other);
+                    }
+                }
+                birthsOfFunctions[i].append(Birth { id, room, hasNullPrototype, numberOfNamesAtBirth, WTF::move(names), WTF::move(blocksOfStores) });
+            }
+        }
+    });
+    unsigned births = 0;
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        auto& function = program.functions[i];
+        for (auto& birth : birthsOfFunctions[i]) {
+            ++births;
+            uint32_t number = program.ensureNumberOfRow(birth.names.span().first(birth.numberOfNamesAtBirth), birth.room, birth.hasNullPrototype);
+            if (function.at(birth.id).opcode == Opcode::NewObject)
+                function.values[birth.id.index()].immediates[1] = number;
+            unsigned block = UINT_MAX;
+            for (unsigned k = 0; k < birth.blocksOfStores.size(); ++k) {
+                if (birth.blocksOfStores[k] != block) {
+                    if (program.numberedRows.size() > 60000)
+                        break;
+                    block = birth.blocksOfStores[k];
+                }
+                uint32_t grown = program.ensureNumberOfRow(birth.names.span().first(birth.numberOfNamesAtBirth + k + 1), birth.room, false);
+                program.rowsGrownInto.append({ number, birth.names[birth.numberOfNamesAtBirth + k].index(), grown });
+                number = grown;
+            }
+        }
+    }
+    program.firstNumberOfRowsOfThis = program.numberedRows.size();
+    for (auto& row : program.rowsOfBirths) {
+        bool isNumbered = row.isOfThis && row.isWhole && row.names.size() <= maxPropertiesNamedBySite;
+        for (size_t i = 0; isNumbered && i < row.names.size(); ++i) {
+            auto text = program.string(row.names[i]);
+            isNumbered = text.empty() || !isASCIIDigit(text[0]);
+        }
+        if (isNumbered)
+            row.number = program.ensureNumberOfRow(row.names.span(), 0xff, false);
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT passes: rows by number: ", program.numberedRows.size(), " rows of ", births, " births; of them rows of this: ", program.numberedRows.size() - program.firstNumberOfRowsOfThis);
+}
+
+void numberRowsOfBirths(Program& program)
+{
+    Lowering::numberRowsOfBirths(program);
+}
+
+CellPointer Lowering::newEmptyObject(unsigned numberOfNames)
+{
+    if (numberOfNames <= JSFinalObject::defaultInlineCapacity)
+        return AOT_TYPED_OPERATION(NewObject);
+    return AOT_TYPED_OPERATION(NewObjectWithRoom, word32(capacityThatFillsTheCell(std::min<unsigned>(numberOfNames, JSFinalObject::maxInlineCapacity))));
+}
+
+std::optional<InlineBuiltin> Lowering::builtinThatListed(ValueID list) const
+{
+    const Value* listing = &m_function.at(withoutUpcasts(list));
+    if (listing->opcode == Opcode::CallDirect) {
+        auto& callee = m_program.at(listing->function());
+        if (callee.blocks.size() != 1 || callee.blocks[0].terminator.kind != TerminatorKind::Return || !callee.blocks[0].terminator.value)
+            return std::nullopt;
+        listing = &callee.at(callee.blocks[0].terminator.value);
+    }
+    if (listing->opcode != Opcode::CallBuiltin)
+        return std::nullopt;
+    auto& implementation = m_builtins.at(listing->builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline)
+        return std::nullopt;
+    return implementation.inlined;
+}
+
+ValueID Lowering::listReadBy(ValueID element, bool mustBeFirstElement) const
+{
+    auto& value = m_function.at(withoutUpcasts(element));
+    ValueID list;
+    if (value.opcode == Opcode::GetByVal)
+        list = value.child(0);
+    else if (value.opcode == Opcode::IteratorValue && m_function.at(withoutUpcasts(value.child(0))).opcode == Opcode::IteratorOpen)
+        list = m_function.at(withoutUpcasts(value.child(0))).child(0);
+    else
+        return { };
+    if (mustBeFirstElement) {
+        auto& place = m_function.at(withoutUpcasts(value.child(1)));
+        if (place.opcode != Opcode::Integer || place.integer())
+            return { };
+    }
+    return list;
+}
+
+bool Lowering::isKeyEnumeratedFromObject(ValueID key, unsigned depth) const
+{
+    key = withoutUpcasts(key);
+    if (m_function.at(key).opcode == Opcode::Parameter) {
+        if (depth == 2)
+            return false;
+        bool isAnyEnumerated = false;
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                size_t place = m_function.at(target.block).parameters.find(key);
+                if (place == notFound)
+                    continue;
+                if (place >= target.arguments.size())
+                    return false;
+                ValueID arriving = target.arguments[place];
+                if (m_function.at(withoutUpcasts(arriving)).opcode == Opcode::Undefined)
+                    continue;
+                if (!isKeyEnumeratedFromObject(arriving, depth + 1))
+                    return false;
+                isAnyEnumerated = true;
+            }
+        }
+        return isAnyEnumerated;
+    }
+    if (ValueID list = listReadBy(key, false)) {
+        if (auto builtin = builtinThatListed(list); builtin && (*builtin == InlineBuiltin::ForInKeys || *builtin == InlineBuiltin::ObjectKeys || *builtin == InlineBuiltin::ObjectGetOwnPropertyNames || *builtin == InlineBuiltin::ReflectOwnKeys))
+            return true;
+    }
+    if (ValueID pair = listReadBy(key, true)) {
+        if (ValueID list = listReadBy(pair, false))
+            return builtinThatListed(list) == InlineBuiltin::ObjectEntries;
+    }
+    return false;
+}
+
+unsigned Lowering::kindOfFirstKeyStoredInLoopThatIsNotEnumerated(ValueID object) const
+{
+    for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
+        if (!m_loopBlocks.get(i))
+            continue;
+        for (ValueID user : m_function.blocks[i].values) {
+            auto& value = m_function.at(user);
+            if (value.opcode != Opcode::PutByVal || withoutUpcasts(value.child(0)) != object || typeOf(value.child(1)).isNumber() || isKeyEnumeratedFromObject(value.child(1)))
+                continue;
+            switch (m_function.at(withoutUpcasts(value.child(1))).opcode) {
+            case Opcode::GetById:
+                return 1;
+            case Opcode::GetByVal:
+            case Opcode::IteratorValue:
+                return 2;
+            case Opcode::Parameter:
+                return 3;
+            case Opcode::Add:
+                return 4;
+            default:
+                return 5;
+            }
+        }
+    }
+    return 0;
+}
+
+static NEVER_INLINE void countBirthForKeys(unsigned kindOfFirstKeyThatIsNotEnumerated)
+{
+    static std::array<std::atomic<uint64_t>, 7> counts { };
+    static std::once_flag once;
+    std::call_once(once, [] {
+        atexit([] {
+            dataLogLn("keys: empty literals filled by key in a loop: ", counts[6].load(), " | every key enumerated from an object: ", counts[0].load());
+            dataLogLn("keys:    the first key that is not: a read by name ", counts[1].load(), " | an element of another list ", counts[2].load(), " | a parameter ", counts[3].load(), " | put together ", counts[4].load(), " | another ", counts[5].load());
+        });
+    });
+    counts[6]++;
+    counts[kindOfFirstKeyThatIsNotEnumerated]++;
+}
+
+bool Lowering::isFilledByKeyInLoop(ValueID object) const
+{
+    static const char* const atBirth = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH");
+    static const bool isSwitchedOff = atBirth && !(atBirth[0] == '2' && !atBirth[1]);
+    if (m_isInLoop || isSwitchedOff)
+        return false;
+    for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
+        if (!m_loopBlocks.get(i))
+            continue;
+        for (ValueID user : m_function.blocks[i].values) {
+            auto& value = m_function.at(user);
+            if (value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == object && !typeOf(value.child(1)).isNumber())
+                return true;
+        }
+    }
+    return false;
 }
 
 // Where the last of the DefineFields stands, or the allocation if there is none. Until here nothing has the object, so nobody can tell that it did not exist.
@@ -1821,10 +2513,15 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
         return lowerPropertyDefinition(literal);
     auto& block = m_currentBlock->values;
     ValueID id = block[literal.allocation];
-    // There is one, and it is made to be filled.
-    if (literal.fields.isEmpty() && !literal.newTarget && m_program.runsOnce(m_id) && !m_isInLoop) {
-        defineObjectMadeLater(id, AOT_TYPED_OPERATION(NewObjectThatGrowsAlone, word32(literal.hasNullPrototype)));
-        return;
+    if (literal.fields.isEmpty() && !literal.newTarget && !m_function.at(id).hasRowOfBirth() && isFilledByKeyInLoop(id)) {
+        const char* atBirth = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH");
+        const char* counts = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH_COUNT");
+        if (counts && counts[0] == '1' && !counts[1])
+            countBirthForKeys(kindOfFirstKeyStoredInLoopThatIsNotEnumerated(id));
+        if (!atBirth || kindOfFirstKeyStoredInLoopThatIsNotEnumerated(id)) {
+            defineObjectMadeLater(id, countPlainAllocation(PlainAllocationKind::Object, id, AOT_TYPED_OPERATION(NewObjectForKeys, word32(literal.hasNullPrototype))));
+            return;
+        }
     }
     Vector<StringID, 6> names;
     Vector<Boxed, 6> values;
@@ -1832,25 +2529,39 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
     for (size_t index : literal.fields) {
         auto& field = m_function.at(block[index]);
         bool isStore = field.opcode == Opcode::PutById;
-        stores |= static_cast<uint64_t>(isStore) << names.size();
+        if (isStore && literal.newTarget)
+            stores |= 1ull << names.size();
         names.append(isStore ? field.string() : m_function.at(field.arguments[1]).string());
         values.append(in<Boxed>(isStore ? field.child(1) : field.arguments[2]));
     }
+    if (m_function.at(id).hasRowOfBirth()) {
+        auto& row = m_program.rowsOfBirths[m_function.at(id).rowOfBirth()];
+        bool isGapless = row.isWhole && names.size() >= row.firstPlace;
+        for (size_t i = 0; isGapless && i < row.names.size(); ++i)
+            isGapless = row.firstPlace + i < names.size() ? names[row.firstPlace + i] == row.names[i] : !names.contains(row.names[i]);
+        if (!isGapless && row.isWhole)
+            fail("a birth that was settled to be whole is not"_s);
+        for (size_t i = names.size() - row.firstPlace; isGapless && i < row.names.size(); ++i) {
+            names.append(row.names[i]);
+            values.append(Boxed(m_out.constInt64(0)));
+        }
+    }
     // Room for what is seen to be given to the object. Of a literal: zero: nothing is seen, and the engine has its default.
     unsigned inlineCapacity = 0;
-    {
+    if (literal.row != Format::none)
+        inlineCapacity = literal.roomInLine;
+    else if (!literal.newTarget)
+        inlineCapacity = roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty());
+    else {
         Vector<StringID, 16> names;
         unsigned numberOfKeys = 0;
         collectPropertiesGivenTo(m_program, m_function, id, 3, names, numberOfKeys);
         inlineCapacity = std::min<unsigned>(names.size() + numberOfKeys, JSFinalObject::maxInlineCapacity);
-        if (literal.newTarget && !inlineCapacity)
+        if (!inlineCapacity)
             inlineCapacity = JSFinalObject::defaultInlineCapacity;
-        // `{}` is filled by somebody: what is seen here need not be all. It never gets less than the engine would give it.
-        if (!literal.newTarget && literal.fields.isEmpty() && inlineCapacity <= JSFinalObject::defaultInlineCapacity)
-            inlineCapacity = 0;
         inlineCapacity = capacityThatFillsTheCell(inlineCapacity);
     }
-    defineObjectMadeLater(id, countPlainAllocation(literal.newTarget ? PlainAllocationKind::This : PlainAllocationKind::Object, id, newObjectWithProperties(literal.slot, literal.hasNullPrototype, literal.newTarget, literal.constructor, inlineCapacity, names.span(), values.span(), stores, &literal)));
+    defineObjectMadeLater(id, countPlainAllocation(literal.newTarget ? PlainAllocationKind::This : PlainAllocationKind::Object, id, newObjectWithProperties(literal.slot, literal.hasNullPrototype, literal.newTarget, literal.constructor, inlineCapacity, names.span(), values.span(), stores, &literal, literal.row)));
 }
 
 CellPointer Lowering::countPlainAllocation(PlainAllocationKind kind, ValueID id, CellPointer cell)
@@ -1927,6 +2638,64 @@ CellPointer Lowering::copyRecord(CellPointer cell, Word32 orderWord, const Layou
     return copy;
 }
 
+std::optional<Lowering::MergeGroup> Lowering::findMergeGroup(size_t indexOfFirstMember)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
+        return std::nullopt;
+    auto& values = m_currentBlock->values;
+    if (indexOfFirstMember + 2 >= values.size())
+        return std::nullopt;
+    auto& first = m_function.at(values[indexOfFirstMember]);
+    auto& second = m_function.at(values[indexOfFirstMember + 1]);
+    auto& cast = m_function.at(values[indexOfFirstMember + 2]);
+    bool beginsWithClone = m_builtins.at(first.builtin()).implementation.operation == LanguageOperation::CloneObject;
+    ValueID object = beginsWithClone ? values[indexOfFirstMember] : first.arguments[0];
+    ValueID firstSource = first.arguments[beginsWithClone ? 0 : 1];
+    bool isSpread = second.opcode == Opcode::CallBuiltin && m_builtins.at(second.builtin()).implementation.kind == BuiltinImplementation::Operation && m_builtins.at(second.builtin()).implementation.operation == LanguageOperation::CopyDataProperties;
+    if (!isSpread || second.arguments.size() != 2 || second.arguments[0] != object || second.arguments[1] == object || firstSource == object)
+        return std::nullopt;
+    if (cast.opcode != Opcode::Cast || cast.castReason() != CastReason::As || cast.child(0) != object || numberOfUsesOf(object) != (beginsWithClone ? 2 : 3))
+        return std::nullopt;
+    LayoutID view = typeOf(values[indexOfFirstMember + 2]).onlyView();
+    if (!view || m_program.at(view).kind != LayoutKind::Record || !m_program.at(view).shape || !m_program.at(view).members.contains(view))
+        return std::nullopt;
+    if (!typeOf(firstSource).onlyView() || !typeOf(second.arguments[1]).onlyView())
+        return std::nullopt;
+    if (beginsWithClone && typeOf(firstSource).onlyView() != typeOf(second.arguments[1]).onlyView())
+        return std::nullopt;
+    return MergeGroup { indexOfFirstMember, view, beginsWithClone };
+}
+
+Operand Lowering::lowerMergeGroup(MergeGroup group)
+{
+    auto& values = m_currentBlock->values;
+    auto& first = m_function.at(values[group.first]);
+    auto& second = m_function.at(values[group.first + 1]);
+    Rep rep = m_function.at(values[group.first + 2]).rep;
+    auto& layout = m_program.at(group.layout);
+    LBasicBlock isMerged = m_out.newBlock();
+    LBasicBlock isNotMerged = newColdBlock();
+    Join join(m_out, rep, b3TypeOf(rep));
+    CellPointer merged = AOT_TYPED_OPERATION(TryMergeRecordsAs, word32(layout.shape), in<Boxed>(first.arguments[group.beginsWithClone ? 0 : 1]), in<Boxed>(second.arguments[1]));
+    m_out.branch(m_out.notZero64(merged.value()), usually(isMerged), rarely(isNotMerged));
+    m_out.appendTo(isMerged);
+    join.add(convert(Operand(merged), m_program.at(layout.type), rep));
+    m_out.appendTo(isNotMerged);
+    Operand result;
+    {
+        SetForScope isCarryingOut(m_isCarryingOutMergeGroup, true);
+        SetForScope isInArm(m_isInArm, true);
+        SetForScope indexInBlock(m_currentIndexInBlock, m_currentIndexInBlock);
+        for (size_t k = group.first; k <= group.first + 2; ++k) {
+            m_currentIndexInBlock = k;
+            result = lower(values[k], m_function.at(values[k]));
+            define(values[k], result);
+        }
+    }
+    join.add(result);
+    return join.finish();
+}
+
 std::optional<Lowering::CloneGroup> Lowering::findCloneGroup(size_t indexOfClone)
 {
     // There every value is looked at by itself, where it is defined. What a handler watches is carried out where it stands.
@@ -1979,8 +2748,8 @@ std::optional<Lowering::CloneGroup> Lowering::findCloneGroup(size_t indexOfClone
             // See fieldIsPinned: nothing but the string it is pinned to is stored past the guard.
             if (field.isPinned) {
                 ValueID stored = store.child(1);
-                while (m_function.at(stored).opcode == Opcode::Cast)
-                    stored = m_function.at(stored).child(0);
+                if (ValueID constant = m_program.constantOf(m_function, stored))
+                    stored = constant;
                 if (m_function.at(stored).opcode != Opcode::String || m_function.at(stored).string() != field.literals[0].string)
                     return true;
             }
@@ -2117,6 +2886,7 @@ Operand Lowering::lowerCloneGroup(CloneGroup group)
     Operand result;
     {
         SetForScope indexInBlock(m_currentIndexInBlock, m_currentIndexInBlock);
+        SetForScope isInArm(m_isInArm, true);
         auto carryOut = [&](size_t k) {
             m_currentIndexInBlock = k;
             result = lower(values[k], m_function.at(values[k]));
@@ -2140,10 +2910,43 @@ Operand Lowering::lowerCloneGroup(CloneGroup group)
 }
 
 // `{ ...source }`. See operationAOTTypedCloneObject, and Typed::Object::clone() for what is done in place.
-CellPointer Lowering::cloneObject(ValueID sourceID, bool keepsLayout)
+Lowering::DefinedOnCopy Lowering::whatIsDefinedOnCopy(ValueID object, bool mayCarryOut)
+{
+    DefinedOnCopy result { 0, { } };
+    auto& values = m_currentBlock->values;
+    m_blockOfDefinitionsMadeWithCopy = m_currentBlock;
+    m_definitionsMadeWithCopy.clear();
+    for (size_t index = m_currentIndexInBlock + 1; mayCarryOut && index < values.size() && result.values.size() < 2; ++index) {
+        auto& user = m_function.at(values[index]);
+        if (user.opcode == Opcode::String)
+            continue;
+        if (!isDefineField(user) || user.arguments.size() != 3 || user.arguments[0] != object || objectLiteralAt(index) || propertyRunAt(index))
+            break;
+        auto& key = m_function.at(user.arguments[1]);
+        size_t whereMade = values.find(user.arguments[2]);
+        if (key.opcode != Opcode::String || key.string().index() + 1 >= (1u << 24) || user.arguments[2] == object || (whereMade != notFound && whereMade > m_currentIndexInBlock))
+            break;
+        result.more |= static_cast<uint64_t>(key.string().index() + 1) << (24 * result.values.size());
+        result.values.append(user.arguments[2]);
+        m_definitionsMadeWithCopy.append(index);
+    }
+    uint64_t others = 0;
+    for (auto& block : m_function.blocks) {
+        for (size_t index = 0; index < block.values.size(); ++index) {
+            auto& user = m_function.at(block.values[index]);
+            if (&block == m_currentBlock && m_definitionsMadeWithCopy.contains(index))
+                continue;
+            others += (user.opcode == Opcode::PutByVal && withoutUpcasts(user.child(0)) == object) || (isDefineField(user) && !user.arguments.isEmpty() && withoutUpcasts(user.arguments[0]) == object);
+        }
+    }
+    result.more |= std::min<uint64_t>(others, 255) << 48;
+    return result;
+}
+
+CellPointer Lowering::cloneObject(ValueID sourceID, bool keepsLayout, const DefinedOnCopy& defined)
 {
     if (!keepsLayout)
-        return cloneAsPlainObject(sourceID);
+        return cloneAsPlainObject(sourceID, defined);
     Boxed source = in<Boxed>(sourceID);
     auto outOfLine = [&] {
         return AOT_TYPED_OPERATION(CloneObject, source, word32(keepsLayout));
@@ -2201,6 +3004,8 @@ std::optional<size_t> Lowering::indexOfUseThatMakes(ValueID id) const
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
         return std::nullopt;
     if (m_function.at(id).opcode != Opcode::NewObject)
+        return std::nullopt;
+    if (m_function.at(id).hasRowOfBirth() && m_program.rowsOfBirths[m_function.at(id).rowOfBirth()].isWhole)
         return std::nullopt;
     auto& block = m_currentBlock->values;
     size_t index = block.find(id);
@@ -2313,13 +3118,115 @@ ValueID Lowering::withoutUpcasts(ValueID id) const
     return id;
 }
 
+bool Lowering::isLazyClosureStore(const Value& closure, const Value& store)
+{
+    if (store.opcode != Opcode::PutById || store.isInitialStore() || store.isAtKnownPlace() || Options::auditAOTTypedAssertions() || closure.opcode != Opcode::NewClosure || closure.arguments.size() != 1)
+        return false;
+    if (withoutUpcasts(closure.arguments[0]) != withoutUpcasts(store.child(0)) || !typeOf(store.child(0)).anyObject || fieldFor(typeOf(store.child(0)), store.string()))
+        return false;
+    auto& callee = m_program.at(closure.function());
+    if (callee.kind == FunctionKind::Constructor || m_program.isResumeFunction(callee) || m_program.referencesAndCapturesOfClosures(callee) != std::pair(1u, 1u))
+        return false;
+    return !isPrivateName(m_program.string(store.string()));
+}
+
+void Lowering::putLazyClosure(Boxed holder, StringID name, FunctionID function)
+{
+    constexpr unsigned isDirect = 1;
+    constexpr unsigned isStrict = 2;
+    auto slot = allocateSite(name, isDirect | isStrict | AOT::Site::storesLazyClosure);
+    if (!slot) {
+        AOT_TYPED_OPERATION(PutLazyClosure, holder, word32(genericEntrypointFor(function).index()), word32(name.index()));
+        return;
+    }
+    Boxed cell = [&] {
+        SetForScope fetchesInLine(m_isInLoop, true);
+        return box(closureConstant(function));
+    }();
+    Pointer address = slotAddress(*slot);
+    LBasicBlock isCellCase = m_out.newBlock();
+    LBasicBlock hit = m_out.newBlock();
+    LBasicBlock miss = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(holder).value(), usually(isCellCase), rarely(miss));
+    m_out.appendTo(isCellCase);
+    CellPointer object = asCell(holder);
+    TypedPointer structureID(m_heaps.root, m_out.add(object.value(), m_out.constIntPtr(JSCell::structureIDOffset())));
+    Integer word(m_out.load64(TypedPointer(m_heaps.root, address.value())));
+    static_assert(OBJECT_OFFSETOF(AOT::Slot, newStructureID) == sizeof(uint64_t));
+    LValue newStructureID = m_out.load32(TypedPointer(m_heaps.root, m_out.add(address.value(), m_out.constIntPtr(sizeof(uint64_t)))));
+    m_out.branch(equal(low32(word), Word32(m_out.load32(structureID))).value(), usually(hit), rarely(miss));
+    m_out.appendTo(hit);
+    LValue location = m_out.aShr(m_out.shl(word.value(), m_out.constInt32(32 - AOT::Slot::offsetBits)), m_out.constInt32(64 - AOT::Slot::offsetBits));
+    LValue storage = m_out.select(m_out.lessThan(location, m_out.constInt64(0)), m_out.load64(TypedPointer(m_heaps.root, m_out.add(object.value(), m_out.constIntPtr(JSObject::butterflyOffset())))), object.value());
+    m_out.store64(cell.value(), TypedPointer(m_heaps.root, m_out.add(storage, m_out.shl(location, m_out.constInt32(3)))));
+    m_out.store32(newStructureID, structureID);
+    m_out.jump(continuation);
+    inColdBlock(miss, [&] {
+        callICStub(Stub::PutById, Void, { { holder.value(), firstStubOperandGPR }, { cell.value(), GPRInfo::argumentGPR1 }, { slotAddress(*slot, SlotAddressIsFor::ColdBlock).value(), GPRInfo::argumentGPR2 } });
+        m_out.jump(continuation);
+    });
+    m_out.appendTo(continuation);
+}
+
+std::optional<FunctionID> Lowering::lazyClosureStoredBy(const Value& store)
+{
+    if (store.opcode != Opcode::PutById)
+        return std::nullopt;
+    ValueID stored = store.child(1);
+    auto& closure = m_function.at(stored);
+    if (!isLazyClosureStore(closure, store) || numberOfUsesOf(stored) != 1 || !m_currentBlock->values.contains(stored))
+        return std::nullopt;
+    return closure.function();
+}
+
+const Value* Lowering::lazyClosureStoreBehindJump(const Block& from)
+{
+    if (from.terminator.kind != TerminatorKind::Jump || from.values.isEmpty())
+        return nullptr;
+    ValueID closure = from.values.last();
+    auto& target = from.terminator.targets[0];
+    size_t index = target.arguments.find(closure);
+    if (m_function.at(closure).opcode != Opcode::NewClosure || numberOfUsesOf(closure) != 1 || index == notFound)
+        return nullptr;
+    auto& to = m_function.at(target.block);
+    if (to.values.isEmpty() || (to.terminator.kind == TerminatorKind::Invoke && to.values.size() == 1) || numberOfUsesOf(to.parameters[index]) != 1)
+        return nullptr;
+    auto& store = m_function.at(to.values.first());
+    return store.opcode == Opcode::PutById && store.child(1) == to.parameters[index] && !to.parameters.contains(withoutUpcasts(store.child(0))) && isLazyClosureStore(m_function.at(closure), store) ? &store : nullptr;
+}
+
+bool Lowering::mayBeStoredAheadOfJump(const Value& store)
+{
+    if (store.opcode != Opcode::PutById || m_currentBlock->values.isEmpty() || &m_function.at(m_currentBlock->values.first()) != &store || !m_currentBlock->parameters.contains(store.child(1)))
+        return false;
+    for (auto& from : m_function.blocks) {
+        if (lazyClosureStoreBehindJump(from) == &store)
+            return true;
+    }
+    return false;
+}
+
+bool Lowering::isStoredAsLazyClosure(ValueID closure)
+{
+    if (numberOfUsesOf(closure) != 1)
+        return false;
+    auto& values = m_currentBlock->values;
+    for (size_t i = m_currentIndexInBlock + 1; i < values.size(); ++i) {
+        auto& user = m_function.at(values[i]);
+        if (user.opcode == Opcode::PutById && user.child(1) == closure)
+            return !!lazyClosureStoredBy(user);
+    }
+    return false;
+}
+
 std::optional<Lowering::StoreInPropertyRun> Lowering::storeInPropertyRunAt(size_t index)
 {
     auto& value = m_function.at(m_currentBlock->values[index]);
     StoreInPropertyRun store;
     switch (value.opcode) {
     case Opcode::PutById:
-        if (value.isInitialStore())
+        if (value.isInitialStore() || value.isAtKnownPlace() || value.isFirstStoreToThis() || lazyClosureStoredBy(value) || mayBeStoredAheadOfJump(value))
             return std::nullopt;
         store = { index, value.child(0), value.string(), { }, value.child(1), false };
         break;
@@ -2412,12 +3319,24 @@ bool Lowering::maySeparateStoresOfPropertyRun(size_t index)
     }
 }
 
+std::optional<FunctionID> Lowering::functionWhosePrototypeIsRead(ValueID id) const
+{
+    auto& value = m_function.at(withoutUpcasts(id));
+    if (!m_program.runsOnce(m_id) || m_isInLoop || value.opcode != Opcode::GetById || !equalSpans(m_program.string(value.string()), "prototype"_s.span8()))
+        return std::nullopt;
+    auto& function = m_function.at(withoutUpcasts(value.child(0)));
+    if (function.opcode != Opcode::FunctionReference)
+        return std::nullopt;
+    return function.function();
+}
+
 const Lowering::PropertyRun* Lowering::propertyRunAt(size_t index)
 {
     // Fewer are not worth the code.
     static constexpr unsigned minStores = 3;
     // operationAOTTypedTryPutProperties has a bit for each.
     static constexpr unsigned maxStores = 64;
+    static constexpr unsigned maxStoresThatReplace = 32;
     if (m_blockOfPropertyRuns != m_currentBlock) {
         m_blockOfPropertyRuns = m_currentBlock;
         m_propertyRuns.clear();
@@ -2425,11 +3344,16 @@ const Lowering::PropertyRun* Lowering::propertyRunAt(size_t index)
         PropertyRun open;
         auto& stores = open.stores;
         auto close = [&] {
+            while (!open.elementStores.isEmpty() && (stores.isEmpty() || open.elementStores.last() > stores.last().index))
+                open.elementStores.removeLast();
             unsigned numberOfSlots = 1;
             for (auto& store : stores)
                 numberOfSlots += !!store.key;
+            open.mayReplace = numberOfSlots == 1 && open.elementStores.isEmpty() && !open.mayBePrototype && !stores.isEmpty() && stores.size() <= maxStoresThatReplace && (m_isInLoop || m_program.isHotOutsideItsLoops(m_id));
             if (numberOfSlots == 1)
                 numberOfSlots = 2;
+            if (open.mayReplace)
+                numberOfSlots += (stores.size() - 1) / sizeof(void*);
             if (stores.size() >= minStores && m_context.sites.size() + numberOfSlots <= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots)) {
                 open.slot = m_context.sites.size();
                 for (unsigned k = 0; k < numberOfSlots; ++k)
@@ -2437,11 +3361,24 @@ const Lowering::PropertyRun* Lowering::propertyRunAt(size_t index)
                 m_propertyRuns.append(open);
             }
             stores.clear();
+            open.elementStores.clear();
+            open.mayBePrototype = false;
         };
         auto isSameValueOrVariable = [&](ValueID a, ValueID b) {
             auto& first = m_function.at(withoutUpcasts(a));
             auto& second = m_function.at(withoutUpcasts(b));
-            return &first == &second || (first.opcode == Opcode::GetModuleVariable && second.opcode == Opcode::GetModuleVariable && first.variable() == second.variable());
+            if (&first == &second || (first.opcode == Opcode::GetModuleVariable && second.opcode == Opcode::GetModuleVariable && first.variable() == second.variable()))
+                return true;
+            auto function = functionWhosePrototypeIsRead(a);
+            return function && function == functionWhosePrototypeIsRead(b);
+        };
+        bool defersElementStores = m_program.runsOnce(m_id) && !m_isInLoop;
+        auto isElementStoreTo = [&](size_t i, ValueID object) {
+            auto& value = m_function.at(values[i]);
+            if (!defersElementStores || value.opcode != Opcode::PutByVal || !isSameValueOrVariable(value.child(0), object))
+                return false;
+            auto& key = m_function.at(withoutUpcasts(value.child(1)));
+            return key.opcode == Opcode::Integer && key.integer() >= 0 && key.integer() <= static_cast<int64_t>(MAX_ARRAY_INDEX);
         };
         // What a handler watches ends its block.
         for (size_t i = 0; i < values.size() && m_currentBlock->terminator.kind != TerminatorKind::Invoke; ++i) {
@@ -2454,15 +3391,20 @@ const Lowering::PropertyRun* Lowering::propertyRunAt(size_t index)
                 if (!goesOn)
                     close();
                 stores.append(*store);
+                open.mayBePrototype |= !!functionWhosePrototypeIsRead(store->object);
                 continue;
             }
-            if (!maySeparateStoresOfPropertyRun(i))
+            if (!stores.isEmpty() && isElementStoreTo(i, stores.first().object)) {
+                open.elementStores.append(i);
+                continue;
+            }
+            if (!maySeparateStoresOfPropertyRun(i) && !functionWhosePrototypeIsRead(values[i]))
                 close();
         }
         close();
     }
     for (auto& run : m_propertyRuns) {
-        bool hasIt = run.stores.containsIf([&](auto& store) {
+        bool hasIt = run.elementStores.contains(index) || run.stores.containsIf([&](auto& store) {
             return store.index == index;
         });
         if (hasIt)
@@ -2502,10 +3444,69 @@ void Lowering::lowerPropertyRun(const PropertyRun& run)
 
     static_assert(!OBJECT_OFFSETOF(AOT::Slot, structureID) && OBJECT_OFFSETOF(AOT::Slot, offset) == sizeof(uint32_t));
     Integer word(m_out.load64(inCache(0)));
+    bool hasElementStores = !run.elementStores.isEmpty();
+    if (hasElementStores || run.mayBePrototype)
+        orElse(boolean(false), miss);
     if (get(stores[0].object).rep != Rep::Cell)
         orElse(isCell(base), miss);
     CellPointer cell = asCell(base);
-    orElse(equal(low32(word), loadField<Word32>(cell, m_heaps.JSCell_structureID)), miss);
+    auto* slotOfBuffer = m_out.m_proc.addStackSlot(2 * count * sizeof(EncodedJSValue));
+    auto addressOfBuffer = [&]() -> LValue {
+        return m_out.m_block->appendNew<B3::SlotBaseValue>(m_out.m_proc, m_out.origin(), slotOfBuffer);
+    };
+    LValue buffer = nullptr;
+    auto inBuffer = [&](unsigned i) {
+        return m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue));
+    };
+    auto writeValuesToBuffer = [&] {
+        buffer = addressOfBuffer();
+        for (unsigned i = 0; i < count; ++i) {
+            m_out.store64(values[i].value(), inBuffer(i));
+            if (keys[i])
+                m_out.store64(keys[i].value(), inBuffer(count + i));
+        }
+    };
+    LBasicBlock isNotKnown = newColdBlock();
+    auto putWithStorage = [&] {
+        LBasicBlock areStored = newColdBlock();
+        LValue isDone = callICStub(Stub::PutPropertiesWithStorage, Int64, { { cell.value(), GPRInfo::argumentGPR1 }, { m_out.add(cache.value(), m_out.constIntPtr(sizeof(AOT::Slot))), GPRInfo::argumentGPR2 }, { buffer, GPRInfo::argumentGPR3 } }, std::pair { stubTemporaryGPRs[0], count }, { Writes::Heap, false });
+        m_out.branch(m_out.notZero64(isDone), usually(areStored), rarely(isNotKnown));
+        m_out.appendTo(areStored);
+        if (storesCells)
+            barrier(cell);
+        m_out.jump(continuation);
+    };
+    if (run.mayReplace) {
+        LBasicBlock adds = m_out.newBlock();
+        LBasicBlock isNotFirst = newUnlikelyBlock();
+        LBasicBlock isKnown = newUnlikelyBlock();
+        LBasicBlock replaces = newUnlikelyBlock();
+        LBasicBlock hasStorage = newColdBlock();
+        Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID);
+        m_out.branch(equal(low32(word), structureID).value(), unsure(adds), unsure(isNotFirst));
+        m_out.appendTo(isNotFirst);
+        Integer second(m_out.load64(inCache(sizeof(AOT::Slot))));
+        m_out.branch(equal(low32(second), structureID).value(), unsure(isKnown), rarely(miss));
+        m_out.appendTo(isKnown);
+        m_out.branch(m_out.testNonZero64(second.value(), m_out.constInt64(static_cast<uint64_t>(AOT::Slot::pointerIsNotCell) << 32)), usually(replaces), rarely(hasStorage));
+        m_out.appendTo(replaces);
+        didEmitWrite(Writes::Heap);
+        LValue places = nullptr;
+        for (unsigned i = 0; i < count; ++i) {
+            if (!(i % sizeof(void*)))
+                places = m_out.load64(inCache((1 + i / sizeof(void*)) * sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, pointer)));
+            LValue place = m_out.bitAnd(m_out.lShr(places, m_out.constInt32(i % sizeof(void*) * 8)), m_out.constInt64(0xff));
+            m_out.store64(values[i].value(), TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(cell.value(), m_out.shl(place, m_out.constInt32(3)))));
+        }
+        if (storesCells)
+            barrier(cell);
+        m_out.jump(continuation);
+        m_out.appendTo(hasStorage);
+        writeValuesToBuffer();
+        putWithStorage();
+        m_out.appendTo(adds);
+    } else
+        orElse(equal(low32(word), loadField<Word32>(cell, m_heaps.JSCell_structureID)), miss);
     unsigned numberOfKeys = 0;
     for (unsigned i = 0; i < count; ++i) {
         if (keys[i])
@@ -2524,33 +3525,21 @@ void Lowering::lowerPropertyRun(const PropertyRun& run)
 
     m_out.appendTo(miss);
     // The values, then the keys and the numbers of the names.
-    LValue buffer = m_out.lockedStackSlot(2 * count * sizeof(EncodedJSValue));
-    auto inBuffer = [&](unsigned i) {
-        return m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue));
-    };
-    for (unsigned i = 0; i < count; ++i) {
-        m_out.store64(values[i].value(), inBuffer(i));
-        if (keys[i])
-            m_out.store64(keys[i].value(), inBuffer(count + i));
-    }
+    writeValuesToBuffer();
     // They do not all fit in the object, and the site knows where they go in one of this structure.
-    if (!keyed) {
+    if (!keyed && !hasElementStores && !run.mayBePrototype && !run.mayReplace) {
         LBasicBlock isObject = newColdBlock();
         LBasicBlock isKnown = newColdBlock();
-        LBasicBlock areStored = newColdBlock();
-        LBasicBlock isNotKnown = newColdBlock();
         m_out.branch(isCell(base).value(), unsure(isObject), unsure(isNotKnown));
         m_out.appendTo(isObject);
         m_out.branch(equal(Word32(m_out.load32(inCache(sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, structureID)))), loadField<Word32>(cell, m_heaps.JSCell_structureID)).value(), unsure(isKnown), unsure(isNotKnown));
         m_out.appendTo(isKnown);
-        LValue isDone = callICStub(Stub::PutPropertiesWithStorage, Int64, { { cell.value(), GPRInfo::argumentGPR1 }, { m_out.add(cache.value(), m_out.constIntPtr(sizeof(AOT::Slot))), GPRInfo::argumentGPR2 }, { buffer, GPRInfo::argumentGPR3 } }, std::pair { stubTemporaryGPRs[0], count }, { Writes::Heap, false });
-        m_out.branch(m_out.notZero64(isDone), usually(areStored), rarely(isNotKnown));
-        m_out.appendTo(areStored);
-        if (storesCells)
-            barrier(cell);
-        m_out.jump(continuation);
-        m_out.appendTo(isNotKnown);
-    }
+        putWithStorage();
+    } else
+        m_out.jump(isNotKnown);
+    m_out.appendTo(isNotKnown);
+    if (run.mayReplace)
+        buffer = addressOfBuffer();
     // The run time has refused too often: an empty slot that says so. See operationAOTTypedTryPutProperties.
     constexpr uint64_t refusesForNow = static_cast<uint64_t>(AOT::Slot::attemptsMask | AOT::Slot::isGetter) << 32;
     m_out.branch(equal(Integer(m_out.bitAnd(word.value(), integer(refusesForNow | UINT32_MAX).value())), integer(refusesForNow)).value(), rarely(oneByOne), usually(ask));
@@ -2559,8 +3548,18 @@ void Lowering::lowerPropertyRun(const PropertyRun& run)
         if (!keys[i])
             m_out.store64(m_out.constInt64(stores[i].name.index()), inBuffer(count + i));
     }
-    Word32 isDone = AOT_TYPED_OPERATION(TryPutProperties, cache, base, word32(count), integer(keyed), Pointer(buffer));
-    m_out.branch(isDone.value(), usually(continuation), rarely(oneByOne));
+    Word32 isDone = AOT_TYPED_OPERATION(TryPutProperties, cache, base, word32(count | (hasElementStores ? 1u << 31 : 0) | (run.mayBePrototype ? 1u << 30 : 0) | (run.mayReplace ? 1u << 29 : 0)), integer(keyed), Pointer(buffer));
+    LBasicBlock namesAreStored = hasElementStores ? m_out.newBlock() : continuation;
+    m_out.branch(isDone.value(), usually(namesAreStored), rarely(oneByOne));
+    if (hasElementStores) {
+        m_out.appendTo(namesAreStored);
+        for (size_t index : run.elementStores) {
+            SetForScope currentIndex(m_currentIndexInBlock, index);
+            auto& store = m_function.at(block[index]);
+            emitPutByVal(base, in<Boxed>(store.child(1)), in<Boxed>(store.child(2)), false);
+        }
+        m_out.jump(continuation);
+    }
 
     m_out.appendTo(oneByOne);
     Vector<std::pair<ValueID, Boxed>, 4> readAgain;
@@ -2586,6 +3585,16 @@ void Lowering::lowerPropertyRun(const PropertyRun& run)
             readAgain.append({ block[index], convertTo<Boxed>(lowerGetModuleVariable(block[index], value), typeOf(block[index])) });
             continue;
         }
+        if (run.mayBePrototype && functionWhosePrototypeIsRead(block[index])) {
+            readAgain.append({ block[index], emitGetById(in<Boxed>(value.child(0)), value.string()) });
+            continue;
+        }
+        if (run.elementStores.contains(index)) {
+            Boxed receiver = readAgainAs(value.child(0));
+            Boxed stored = readAgainAs(value.child(2));
+            emitPutByVal(receiver ? receiver : base, in<Boxed>(value.child(1)), stored ? stored : in<Boxed>(value.child(2)), false);
+            continue;
+        }
         if (index != stores[next].index)
             continue;
         auto& store = stores[next];
@@ -2607,6 +3616,21 @@ void Lowering::lowerPropertyRun(const PropertyRun& run)
 
 void Lowering::lowerPutById(ValueID, const Value& value)
 {
+    if (auto function = lazyClosureStoredBy(value)) {
+        putLazyClosure(in<Boxed>(value.child(0)), value.string(), *function);
+        return;
+    }
+    if (mayBeStoredAheadOfJump(value)) {
+        LBasicBlock isNotStoredYet = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Boxed stored = in<Boxed>(value.child(1));
+        m_out.branch(m_out.isZero64(stored.value()), unsure(continuation), unsure(isNotStoredYet));
+        m_out.appendTo(isNotStoredYet);
+        emitPutById(in<Boxed>(value.child(0)), value.string(), stored);
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return;
+    }
     if (m_cloneGroup && m_cloneGroup->stores.contains(m_currentIndexInBlock)) {
         if (m_currentIndexInBlock == m_cloneGroup->last())
             lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
@@ -2642,6 +3666,24 @@ void Lowering::lowerPutById(ValueID, const Value& value)
             emitPutById(in<Boxed>(object), name, in<Boxed>(stored));
             return { };
         };
+        if (value.isFirstStoreToThis() && value.birthOfFirstStore() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions()) {
+            if (!value.knownPlace())
+                giveThisItsRow(value, in<Boxed>(object));
+            if (!value.isDefinitionInRowOfThis())
+                emitCachedPutByIdOnItsOwn(in<Boxed>(object), name, in<Boxed>(stored), false, AOT::Site::isOfRowOfThis);
+            else if (!emitDefineByName(in<Boxed>(object), name, in<Boxed>(stored)))
+                AOT_TYPED_OPERATION(DefineByName, in<Boxed>(object), word32(name.index()), in<Boxed>(stored));
+            return;
+        }
+        if (value.isDefinitionInRowOfThis()) {
+            if (!emitDefineByName(in<Boxed>(object), name, in<Boxed>(stored)))
+                AOT_TYPED_OPERATION(DefineByName, in<Boxed>(object), word32(name.index()), in<Boxed>(stored));
+            return;
+        }
+        if (value.isAtKnownPlace() && !(value.isStoreToObjectBornWhole() && value.birthOfFirstStore() && !m_program.rowsOfBirths[value.birthOfFirstStore() - 1].isWhole)) {
+            putAtKnownPlace(value, in<Boxed>(object), in<Boxed>(stored));
+            return;
+        }
         auto expected = predictionOf(object);
         const Field* expectedField = expected ? fieldExpectedFor(*expected, name) : nullptr;
         if (!expectedField || hasMemberThatKeepsField(expected->onlyView(), name) || m_program.at(expectedField->slot).isDiscriminant) {
@@ -2699,15 +3741,22 @@ void Lowering::lowerPutById(ValueID, const Value& value)
     throughView(cell, object, view, *field, Rep::Void, [&]() -> Operand {
         // `#name` is no property: it stays writable.
         if (mayBeFrozen(view) && !isPrivateName(m_program.string(name))) {
-            LBasicBlock isFrozen = newColdBlock();
+            LBasicBlock asks = newColdBlock();
+            LBasicBlock stores = m_out.newBlock();
             LBasicBlock continuation = m_out.newBlock();
-            m_out.branch(lacksBits(orderWordOf(cell), orderWordIsFrozen).value(), usually(continuation), rarely(isFrozen));
-            m_out.appendTo(isFrozen);
-            // The object turns the store away.
-            OperationEffects effects { Writes::Nothing, true };
-            AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effects, box(cell), word32(name.index()), in<Boxed>(stored));
-            m_out.unreachable();
+            m_out.branch(lacksBits(orderWordOf(cell), orderWordIsFrozen).value(), usually(stores), rarely(asks));
+            m_out.appendTo(asks);
+            {
+                SetForScope isLocal(m_isStoringToLocalAllocation, isLocalAllocation(m_function, object));
+                OperationEffects effects { Writes::Fields, true };
+                AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effects, box(cell), word32(name.index()), in<Boxed>(stored));
+            }
+            m_out.jump(continuation);
+            m_out.appendTo(stores);
+            writeField(cell, object, *field, stored);
+            m_out.jump(continuation);
             m_out.appendTo(continuation);
+            return { };
         }
         writeField(cell, object, *field, stored);
         return { };
@@ -2824,6 +3873,13 @@ Word32 Lowering::lowerInById(const Value& value)
         bool suppliesAlone = onlyFieldsSupply(m_program, view, name);
         if (!suppliesAlone && !onlyFieldsSupply(m_program, view, name, true))
             return AOT_TYPED_OPERATION(HasName, box(cell), word32(name.index()));
+        if (field->isElsewhereInSomeMember) {
+            return byOwnFieldOfMember(cell, view, *field, Rep::Int32, [&](LayoutID, const Field& own) -> Operand {
+                return hasField(cell, own);
+            }, [&]() -> Operand {
+                return AOT_TYPED_OPERATION(HasExtra, cell, word32(name.index() | nameMayBeOfOwnField));
+            });
+        }
         return either<Word32>(lacksBits(orderWordOf(cell), orderWordHasExtraProperties), [&] {
             return boolean(false);
         }, [&] {
@@ -2870,8 +3926,8 @@ std::optional<uint32_t> Lowering::constantAllocation(const Value& value) const
     if (!child || !site.numberOfLiterals)
         return value.allocation();
     ValueID origin = child;
-    while (m_function.at(origin).opcode == Opcode::Cast)
-        origin = m_function.at(origin).child(0);
+    if (ValueID constant = m_program.constantOf(m_function, child))
+        origin = constant;
     auto& type = typeOf(child);
     std::optional<int64_t> constant;
     if (m_function.at(origin).opcode == Opcode::Integer)
@@ -2942,10 +3998,12 @@ Operand Lowering::lowerNewObject(ValueID, const Value& value)
         m_layoutOfFieldsAwaitingFirstStore = allocation.layout;
     }
     if (layout.hasExtension)
-        storeField(cell, m_heaps.AOTTypedObject_extension, CellPointer(fixedPointer(Instance::offsetOfTypedEmptyExtension())));
+        storeField(cell, m_heaps.AOTTypedObject_extension, word32(0));
     for (uint32_t i = 0; i < layout.fields.size() && !fromTemplate; ++i) {
         auto& field = layout.fields[i];
         if (storedNext.get(i) || field.isOutOfLine || field.flags & fieldIsNeverStored)
+            continue;
+        if (layout.isCoroutineFrame && !holdsCells(field.store))
             continue;
         uint16_t primitives = m_program.at(field.stored).primitives;
         bool startsAbsent = primitives & Primitive::Absent && !born.get(i);

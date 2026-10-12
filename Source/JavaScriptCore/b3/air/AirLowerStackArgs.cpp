@@ -54,6 +54,9 @@ void lowerStackArgs(Code& code)
     }
 
     code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
+#if USE(BUN_JSC_ADDITIONS)
+    code.tryToPlaceSpillsAboveFrameRecord();
+#endif
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless
     // transformation since we can search the StackSlots array to figure out which StackSlot any
@@ -78,10 +81,29 @@ void lowerStackArgs(Code& code)
                     return Arg::extendedOffsetAddr(offsetFromFP);
                 }
 
+#if USE(BUN_JSC_ADDITIONS) && CPU(X86_64)
+                if (code.proc().positionIndependent() && offsetFromFP < -128 && offsetFromSP >= 0 && offsetFromSP <= 127)
+                    return Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
+#endif
                 Arg result = Arg::addr(Air::Tmp(GPRInfo::callFrameRegister), offsetFromFP);
                 if (result.isValidForm(Move, width))
                     return result;
 
+#if USE(BUN_JSC_ADDITIONS)
+#if CPU(ARM64)
+                if (code.placesSpillsAboveFrameRecord()) {
+                    if (inst.kind.opcode == Patch)
+                        return Arg::extendedOffsetAddr(offsetFromFP);
+                    RELEASE_ASSERT(!extendedOffsetAddrRegInUse && Arg::isValidImmForm(offsetFromFP));
+                    Air::Tmp tmp = Air::Tmp(extendedOffsetAddrRegister());
+                    extendedOffsetAddrRegInUse = true;
+                    insertionSet.insert(insertionIndex, Add64, inst.origin, Arg::imm(offsetFromFP), Air::Tmp(GPRInfo::callFrameRegister), tmp);
+                    return Arg::addr(tmp, 0);
+                }
+#else
+                RELEASE_ASSERT(!code.placesSpillsAboveFrameRecord());
+#endif
+#endif
                 result = Arg::addr(Air::Tmp(MacroAssembler::stackPointerRegister), offsetFromSP);
                 if (result.isValidForm(Move, width))
                     return result;

@@ -12,7 +12,9 @@
 #include "CodeSpecializationKind.h"
 #include "YarrFlags.h"
 #include "YarrJIT.h"
+#include <wtf/Condition.h>
 #include <wtf/Lock.h>
+#include <wtf/PageBlock.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -26,11 +28,14 @@ class VM;
 namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
-static constexpr size_t imagePageSize = 16 * KB;
+static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
+static constexpr size_t sizeOfZeroesInImage = 128 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
-static constexpr unsigned numberOfAdapters = 8;
+static constexpr unsigned numberOfAdapters = 9;
+static constexpr unsigned numberOfStubsThatFindTargets = 5;
+static constexpr unsigned maxReturnsIntoFramesOfHostFunctions = numberOfStubsThatFindTargets + 1;
 
 struct ImageHeader {
     uint64_t magic;
@@ -83,7 +88,6 @@ struct ImageHeader {
     uint32_t regExpsOffset;
     uint32_t numberOfRegExps;
     uint32_t regExpTextOffset;
-    uint32_t functionNumbersOffset;
     uint32_t functionStartsOffset;
     uint32_t codeGranulesOffset;
     uint32_t callSitesOffset;
@@ -91,17 +95,21 @@ struct ImageHeader {
     uint32_t faultingAccessesOffset;
     uint32_t numberOfFaultingAccesses;
     uint32_t numberOfFaultingAccessesWithWideName;
+    uint32_t numberOfTrapsAtThrowSites;
     uint32_t framesOffset;
     uint32_t typedDataOffset;
     uint32_t typedDataSize;
     uint32_t staticsOffset;
     uint32_t staticsSize;
+    uint32_t zeroesOffset;
     uint32_t functionsEnd;
     uint32_t stubsSize;
     uint32_t numberOfStubCopies;
     uint32_t stubCopies[maxStubCopiesPerImage];
     uint32_t returnsIntoAdapters[numberOfAdapters];
+    uint32_t returnsFromFindingTargets[maxReturnsIntoFramesOfHostFunctions];
     uint32_t stubOffsets[numberOfStubs];
+    uint32_t codeGranuleShift;
 };
 
 struct ImageRegExp {
@@ -120,7 +128,12 @@ struct ImageRegExp {
     uint32_t minimumSize;
     uint8_t specificPattern;
     uint8_t keepsMoreOfPattern;
-    uint16_t unused;
+    uint8_t hasNoCode;
+    uint8_t sourceIsPattern;
+
+    static constexpr unsigned maxLengthWithCode = 65536;
+    static constexpr unsigned minLengthKeptAsTextOfImage = 4096;
+    static constexpr unsigned maxParenthesesDepthWithoutPattern = 64;
 };
 
 struct ImageShape {
@@ -156,8 +169,17 @@ struct ImageEnvironment {
     uint32_t size;
 };
 
+struct DataInCode {
+    uint32_t offset;
+    uint32_t numberOfWords : 31;
+    uint32_t isTable : 1;
+};
+
 struct CompiledCode {
     Vector<uint8_t> bytes;
+    Vector<uint8_t> instructions;
+    Vector<DataInCode> dataInCode;
+    uint32_t startOfGuests { std::numeric_limits<uint32_t>::max() };
     CompiledFunctionInfo info;
     Vector<String> remarks;
     Vector<CoveredOperation> coverage;
@@ -165,6 +187,11 @@ struct CompiledCode {
     // For the map of the image: kinds of operations and the bytes of code that come from each, separated by tabs.
     String bytesByOperation;
     bool mayBeDumped { true };
+    bool isRewritten { false };
+    bool hasNotes { false };
+    bool stubCallsAreCleared { false };
+    uint8_t regionsForOutlining { 0 };
+    uint32_t startOfRareCode { std::numeric_limits<uint32_t>::max() };
     // See Typed::SplitFunction.
     Vector<CompiledCode> continuations;
 };
@@ -179,6 +206,10 @@ public:
     ImageBuilder() = default;
 
     void add(ImageKey, uint64_t rank, CompiledCode&&, String&& nameForMap = { });
+    static void clearStubCalls(CompiledCode&);
+    void reserveFunctions(size_t number) { m_functions.reserveCapacity(m_functions.size() + number); }
+    size_t growFunctions(size_t number);
+    void set(size_t place, ImageKey, uint64_t rank, CompiledCode&&, String&& nameForMap);
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); }
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
@@ -190,7 +221,10 @@ public:
     }
     void setNumberOfProgramConstants(uint32_t number) { m_numberOfProgramConstants = number; }
     void setTypedData(Vector<uint8_t>&& data) { m_typedData = WTF::move(data); }
-    bool addRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>);
+    void requestRegExp(VM&, const String& pattern, OptionSet<Yarr::Flags>, bool isFoundByEvaluator = false);
+    bool compileOneRequestedRegExp();
+    void didRequestAllRegExps();
+    void compileRegExpsUntilAllAreRequested();
     Vector<uint8_t> finish();
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
 
@@ -216,14 +250,33 @@ private:
         unsigned minimumSize { 0 };
         Yarr::SpecificPattern specificPattern { Yarr::SpecificPattern::None };
         bool keepsMoreOfPattern { false };
+        bool hasNoCode { false };
+        bool sourceIsPattern { false };
+        bool isFoundByEvaluator { false };
     };
+    struct RegExpRequest {
+        String pattern;
+        OptionSet<Yarr::Flags> flags;
+        bool isFoundByEvaluator { false };
+    };
+    static std::optional<RegExpCode> compileRegExp(VM&, const RegExpRequest&, bool& isLeftToInterpreter);
+    bool takeAndCompileOneRegExp();
+    void compileRegExpsThatAreLeft();
     uint32_t m_numberOfProgramIdentifiers { 0 };
     const IdentifierIndices* m_programIdentifierIndices { nullptr };
     uint32_t m_numberOfProgramConstants { 0 };
     Vector<uint8_t> m_typedData;
     Vector<RegExpCode> m_regExps;
     unsigned m_numberOfRegExpsNotCompiled { 0 };
-    UncheckedKeyHashMap<String, bool> m_requestedRegExps;
+    UncheckedKeyHashSet<String> m_requestedRegExps;
+    Vector<RegExpRequest> m_regExpRequests;
+    size_t m_nextRegExpRequest { 0 };
+    std::atomic<size_t> m_numberOfRegExpsWaiting { 0 };
+    bool m_didRequestAllRegExps { false };
+    Condition m_regExpIsRequested;
+    VM* m_vmOfRegExps { nullptr };
+    Seconds m_timeInRegExpCompiler;
+    UncheckedKeyHashSet<const Thread*> m_threadsThatCompiledRegExps;
 };
 
 class Image {
@@ -234,11 +287,28 @@ public:
 
     static bool hasAny();
     static bool containsCode(const void*);
+    JS_EXPORT_PRIVATE static bool containsCharactersOf(const StringImpl&);
+    static bool isBackedByStaticData(const StringImpl& string)
+    {
+        switch (string.bufferOwnership()) {
+        case StringImpl::BufferInternal:
+            if (string.is8Bit())
+                return std::bit_cast<uintptr_t>(string.span8().data()) != std::bit_cast<uintptr_t>(&string) + StringImpl::headerSize<Latin1Character>();
+            return std::bit_cast<uintptr_t>(string.span16().data()) != std::bit_cast<uintptr_t>(&string) + StringImpl::headerSize<char16_t>();
+        case StringImpl::BufferSubstring:
+            return containsCharactersOf(string);
+        case StringImpl::BufferOwned:
+        case StringImpl::BufferExternal:
+            break;
+        }
+        return false;
+    }
     static Image* withCode();
     // Whether a realm has to have its intrinsics numbered: see ImageHeader::intrinsicHash. Also where there is no image: the compiler.
     JS_EXPORT_PRIVATE static bool usesNumberedIntrinsics();
     const void* code() const { return m_code; }
     void* mapPrivately(uint32_t offset, size_t) const;
+    static void* mapZeroes(size_t);
     static void unmap(void*, size_t);
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctions();
@@ -255,6 +325,9 @@ public:
         unsigned minimumSize;
         Yarr::SpecificPattern specificPattern;
         bool keepsMoreOfPattern;
+        bool hasCode;
+        bool sourceIsPattern;
+        StringView text;
     };
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
 
@@ -351,6 +424,10 @@ ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlo
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> jitCodeForImageFunction(ImageCode, CodeSpecializationKind);
+enum class EmptyArrayLiteralsLeftToStub : uint8_t { WhereTextSays, OutsideLoops, All };
+EmptyArrayLiteralsLeftToStub emptyArrayLiteralsLeftToStub();
+enum class ReadsOfExpectedLeftToGeneralWay : uint8_t { None, Length, All, LengthWhereColdByGraph, AllWhereColdByGraph };
+ReadsOfExpectedLeftToGeneralWay readsOfExpectedLeftToGeneralWay();
 
 } } // namespace JSC::AOT
 

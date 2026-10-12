@@ -778,6 +778,9 @@ struct TmpData {
     uint32_t splitAroundClobbersMetadataIndex : 31 { 0 };
     uint32_t hasColdUse : 1 { 0 };
     bool paysForCalleeSave { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool goesRoundAStretch { false };
+#endif
     Stage stage { Stage::New };
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
@@ -2353,7 +2356,7 @@ private:
     {
         CompilerTimingScope timingScope("Air"_s, "GreedyRegAlloc::allocateRegisters"_s);
 
-        m_calleeSaveCost = UseDefCost(2 * adjustedBlockFrequency(m_code[0]));
+        m_calleeSaveCost = UseDefCost((isX86_64() ? 3 : 2) * adjustedBlockFrequency(m_code[0]));
         for (Reg reg : m_allowedRegistersInPriorityOrder[bank])
             assign(Tmp(reg), m_map.get<bank>(Tmp(reg)), reg);
 
@@ -2425,6 +2428,14 @@ private:
         if (tryEvict<bank>(tmp, tmpData))
             return;
         RELEASE_ASSERT(tmpData.stage == Stage::TryAllocate); // Unspillable must have succeeded
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_code.chargesForCalleeSaves()) {
+            if (trySplitAroundClobbers<bank>(tmp, tmpData, true))
+                return;
+            if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
+                return;
+        }
+#endif
         // If we couldn't allocate tmp, allow it to split next time.
         Stage nextStage = Stage::TrySplit;
         // If we already know splitting won't be profitable, skip it.
@@ -2632,10 +2643,12 @@ private:
     bool trySplit(Tmp tmp, TmpData& tmpData)
     {
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
-        if (trySplitAroundClobbers<bank>(tmp, tmpData))
-            return true;
-        if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
-            return true;
+        if (!m_code.chargesForCalleeSaves()) {
+            if (trySplitAroundClobbers<bank>(tmp, tmpData))
+                return true;
+            if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
+                return true;
+        }
         if (trySplitAroundLoop<bank>(tmp, tmpData))
             return true;
         return trySplitIntraBlock<bank>(tmp, tmpData);
@@ -2845,10 +2858,14 @@ private:
     }
 
     template<Bank bank>
-    bool trySplitAroundClobbers(Tmp tmp, TmpData& tmpData)
+    bool trySplitAroundClobbers(Tmp tmp, TmpData& tmpData, bool mayEvict = false)
     {
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false; // Already split around clobbers
+#if USE(BUN_JSC_ADDITIONS)
+        if (tmpData.goesRoundAStretch)
+            return false;
+#endif
         if (tmpData.liveRange.size() < splitMinRangeSize)
             return false; // Not enough instructions to be worthwhile
 
@@ -2876,6 +2893,24 @@ private:
             return site;
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
+#if USE(BUN_JSC_ADDITIONS)
+        static const char* const goesRoundAsked = getenv("BUN_AOT_SWITCH_SPLIT_ROUND_BOTH");
+        static const char whichGoRound = goesRoundAsked ? goesRoundAsked[0] : 0;
+        const bool takesEarlyAndLate = whichGoRound >= '1' && whichGoRound <= '3' && m_code.chargesForCalleeSaves();
+        auto isClobber = [&](Reg reg, Interval interval) {
+            if (interval.distance() == 1)
+                return true;
+            if (!takesEarlyAndLate || interval != earlyAndLateInterval(positionOfEarly(interval)))
+                return false;
+            return whichGoRound == '1' || RegisterSet::macroClobberedGPRs().contains(reg, IgnoreVectors) == (whichGoRound == '3');
+        };
+        static const char* const unsoundGapsAsked = getenv("BUN_AOT_SWITCH_UNSOUND_SHORT_GAPS");
+        static const char unsoundGaps = unsoundGapsAsked ? unsoundGapsAsked[0] : 0;
+        const bool goesRoundStretches = m_code.chargesForCalleeSaves();
+        const bool minds = takesEarlyAndLate || goesRoundStretches;
+        const bool coversWholeSites = minds && unsoundGaps != '1' && unsoundGaps != '2';
+        const bool gapIsTheHole = minds && unsoundGaps == '2';
+#endif
 
         Reg bestSplitReg;
         constexpr UseDefCost invalidSplitCost(std::numeric_limits<float>::infinity());
@@ -2884,16 +2919,29 @@ private:
         if (m_numberOfFreshCalleeSaves[bank] && !tmpData.paysForCalleeSave)
             splitCostLimit = std::min(splitCostLimit, m_calleeSaveCost);
         UseDefCost minSplitCost = splitCostLimit;
+        Reg bestSplitRegWithEviction;
+        UseDefCost minSplitCostWithEviction = splitCostLimit;
         Width width = widthForConflicts<bank>(tmp);
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!mayTake(tmpData, r))
                 continue;
             UseDefCost splitCost(0);
+            unsigned numberOfClobbers = 0;
+            SpillCost evictionCost(0);
+            bool evicts = false;
+            if (mayEvict) {
+                m_visited.resize(m_code.numTmps(bank));
+                m_visited.clear();
+            }
             m_regRanges[r].forEachConflict(tmpData.liveRange, width,
                 [&](auto& conflict) -> IterationStatus {
+#if USE(BUN_JSC_ADDITIONS)
+                    if (conflict.tmp.isReg() && isClobber(conflict.tmp.reg(), conflict.interval)) {
+#else
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
+#endif
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
-                        if (site.usesOrDefsTmp) {
+                        if (site.usesOrDefsTmp || ++numberOfClobbers > 32) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
                             // can't split the tmp around this clobber.
                             // FIXME: could allow uses, but then we'd have to make split tmp conflict with any
@@ -2903,18 +2951,42 @@ private:
                         }
                         // Times 2 for 'MOV tmp, gapTmp' and 'MOV gapTmp, tmp'
                         splitCost += UseDefCost(adjustedBlockFrequency(site.block) * 2);
-                        if (splitCost >= minSplitCost)
+                        if (splitCost >= (evicts ? minSplitCostWithEviction : mayEvict ? std::max(minSplitCost, minSplitCostWithEviction) : minSplitCost))
                             return IterationStatus::Done; // Not the best or already over limit, exit early.
                         return IterationStatus::Continue;
+                    }
+                    if (mayEvict && !conflict.tmp.isReg()) {
+                        evicts = true;
+                        unsigned conflictTmpIndex = conflict.tmp.tmpIndex(bank);
+                        if (m_visited.contains(conflictTmpIndex))
+                            return IterationStatus::Continue;
+                        m_visited.add(conflictTmpIndex);
+                        auto cost = m_map.get<bank>(conflict.tmp).spillCost();
+                        if (cost != unspillableCost && cost != maxSpillableSpillCost) {
+                            evictionCost += cost;
+                            if (evictionCost < tmpData.spillCost())
+                                return IterationStatus::Continue;
+                        }
                     }
                     // Conflicts with another Tmp already assigned to this register so splitting around the clobbers won't help.
                     splitCost = invalidSplitCost;
                     return IterationStatus::Done;
                 });
+            if (evicts) {
+                if (UseDefCost(0) < splitCost && splitCost < minSplitCostWithEviction) {
+                    minSplitCostWithEviction = splitCost;
+                    bestSplitRegWithEviction = r;
+                }
+                continue;
+            }
             if (splitCost < minSplitCost) {
                 minSplitCost = splitCost;
                 bestSplitReg = r;
             }
+        }
+        if (minSplitCost >= splitCostLimit && bestSplitRegWithEviction) {
+            minSplitCost = minSplitCostWithEviction;
+            bestSplitReg = bestSplitRegWithEviction;
         }
         if (minSplitCost >= splitCostLimit)
             return false; // No register found or better to spill than to split
@@ -2923,7 +2995,13 @@ private:
         LiveRange holeRange;
         m_regRanges[bestSplitReg].forEachConflict(tmpData.liveRange, width,
             [&](auto& conflict) -> IterationStatus {
-                ASSERT(conflict.tmp.isReg() && conflict.interval.distance() == 1);
+                if (!conflict.tmp.isReg())
+                    return IterationStatus::Continue;
+#if USE(BUN_JSC_ADDITIONS)
+                ASSERT(isClobber(conflict.tmp.reg(), conflict.interval));
+#else
+                ASSERT(conflict.interval.distance() == 1);
+#endif
                 // Punched hole should always include the instructions late interval so the
                 // split tmp won't be modeled as conflicting with late defs.
                 Interval hole = conflict.interval | lateInterval(positionOfEarly(conflict.interval));
@@ -2931,6 +3009,55 @@ private:
                 holeRange.append(hole);
                 return IterationStatus::Continue;
             });
+#if USE(BUN_JSC_ADDITIONS)
+        if (goesRoundStretches && holeRange.intervals().size() > 1) {
+            LiveRange stretches;
+            Interval stretch;
+            unsigned sitesInStretch = 0;
+            size_t liveIndex = 0;
+            auto& liveIntervals = tmpData.liveRange.intervals();
+            auto joins = [&](Interval hole) {
+                BasicBlock* block = findBlockContainingPoint(stretch.begin());
+                if (hole.end() - 1 > positionOfTail(block))
+                    return false;
+                while (liveIndex < liveIntervals.size() && liveIntervals[liveIndex].end() <= stretch.begin())
+                    ++liveIndex;
+                if (liveIndex == liveIntervals.size() || liveIntervals[liveIndex].begin() > stretch.begin() || liveIntervals[liveIndex].end() < hole.end())
+                    return false;
+                Point head = positionOfHead(block);
+                size_t site = instIndex(head, hole.begin());
+                for (size_t index = instIndex(head, stretch.end() - 1) + 1; index < site; ++index) {
+                    bool namesIt = false;
+                    block->at(index).forEachTmpFast([&](Tmp& named) {
+                        namesIt |= named == tmp;
+                    });
+                    if (namesIt)
+                        return false;
+                }
+                return true;
+            };
+            auto finish = [&] {
+                stretches.append(stretch);
+                if (sitesInStretch > 1) {
+                    m_stats[bank].numSplitAroundClobberStretches++;
+                    m_stats[bank].numSplitAroundClobberSitesInStretches += sitesInStretch;
+                }
+            };
+            for (Interval hole : holeRange.intervals()) {
+                if (sitesInStretch && joins(hole)) {
+                    stretch |= hole;
+                    ++sitesInStretch;
+                    continue;
+                }
+                if (sitesInStretch)
+                    finish();
+                stretch = hole;
+                sitesInStretch = 1;
+            }
+            finish();
+            holeRange = WTF::move(stretches);
+        }
+#endif
 
         tmpData.liveRange = LiveRange::subtract(tmpData.liveRange, holeRange);
         tmpData.splitAroundClobbersMetadataIndex = m_aroundClobbersMetadata.size();
@@ -2952,9 +3079,20 @@ private:
             // An alternative would be to use the Shuffle opcode (which can handle that
             // rotation of register assignments) but that would trigger an extra liveness
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
+#if USE(BUN_JSC_ADDITIONS)
             Interval gapInterval = hole | Interval(hole.begin() - 1);
+            if (coversWholeSites)
+                gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
+            else if (gapIsTheHole)
+                gapInterval = hole;
+#else
+            Interval gapInterval = hole | Interval(hole.begin() - 1);
+#endif
             Tmp gapTmp = addSplitTmp(tmp, UseDefCost(freq), gapInterval);
             metadata.splits.append({ gapTmp });
+#if USE(BUN_JSC_ADDITIONS)
+            m_map.get<bank>(gapTmp).goesRoundAStretch = hole.distance() > 2;
+#endif
             setStageAndEnqueue(gapTmp, m_map.get<bank>(gapTmp), Stage::TryAllocate);
         }
         dataLogLnIf(verbose(), "Split (clobbers): reg = ", bestSplitReg, " spillCost = ", m_map.get<bank>(tmp).spillCost().value(), " splitCost = ", minSplitCost.value(), " split tmp = ", metadata);
@@ -3050,6 +3188,10 @@ private:
     {
         if (tmpData.splitAroundClobbersMetadataIndex)
             return false;
+#if USE(BUN_JSC_ADDITIONS)
+        if (tmpData.goesRoundAStretch)
+            return false;
+#endif
 
         if (isConstDef<bank>(tmp))
             return false; // Constant will be rematerialized instead
@@ -3493,11 +3635,41 @@ private:
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void validateMovesRoundClobbers()
+    {
+        auto& moves = m_movesRoundClobbers;
+        std::ranges::sort(moves, [](const MoveRoundClobber& a, const MoveRoundClobber& b) {
+            return std::tuple(a.blockIndex, a.index, a.isBehind) < std::tuple(b.blockIndex, b.index, b.isBehind);
+        });
+        bool anyFailures = false;
+        for (size_t begin = 0, end; begin < moves.size(); begin = end) {
+            for (end = begin + 1; end < moves.size() && moves[end].blockIndex == moves[begin].blockIndex && moves[end].index == moves[begin].index && moves[end].isBehind == moves[begin].isBehind; ++end) { }
+            for (size_t i = begin; i < end; ++i) {
+                for (size_t j = begin; j < end; ++j) {
+                    if (i == j || !moves[i].source || moves[i].source != moves[j].destination)
+                        continue;
+                    dataLogLn("AIR GREEDY REGISTER ALLOCATION VALIDATION FAILURE: MOVES ROUND A CLOBBER");
+                    dataLogLn("   In BB#", moves[i].blockIndex, moves[i].isBehind ? " behind" : " ahead of", " index ", moves[i].index, ": ", moves[i].source, " -> ", moves[i].destination, " and ", moves[j].source, " -> ", moves[j].destination);
+                    anyFailures = true;
+                }
+            }
+        }
+        if (anyFailures) {
+            dataLogLn("IR:\n", m_code);
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+#endif
     void insertFixupCode()
     {
         // Skip index 0 which is sacrificed so that splitAroundClobbersMetadataIndex == 0 means "none".
         for (size_t i = 1; i < m_aroundClobbersMetadata.size(); i++)
             insertSplitAroundClobbersFixupCode(m_aroundClobbersMetadata[i]);
+#if USE(BUN_JSC_ADDITIONS)
+        validateMovesRoundClobbers();
+#endif
         for (auto& metadata : m_intraBlockMetadata)
             insertSplitIntraBlockFixupCode(metadata);
 
@@ -3540,7 +3712,11 @@ private:
             Tmp gapTmp = split.tmp;
             TmpData& gapData = m_map[gapTmp];
             for (auto& interval : gapData.liveRange.intervals()) {
+#if USE(BUN_JSC_ADDITIONS)
+                ASSERT(interval.distance() >= 1);
+#else
                 ASSERT(interval.distance() == 2);
+#endif
                 Point lastPoint = interval.end() - 1;
                 BasicBlock* block = findBlockContainingPoint(lastPoint);
                 unsigned instIndex = this->instIndex(positionOfHead(block), lastPoint);
@@ -3551,8 +3727,25 @@ private:
                 if (spilled)
                     arg = Arg::stack(spilled);
                 Opcode move = moveOpcode(gapTmp);
+#if USE(BUN_JSC_ADDITIONS)
+                unsigned indexAhead = this->instIndex(positionOfHead(block), interval.begin());
+                if (Options::airValidateGreedRegAlloc()) [[unlikely]] {
+                    Reg home = assignedReg(metadata.originalTmp);
+                    Reg away = spilled ? Reg() : assignedReg(gapTmp);
+                    m_movesRoundClobbers.append({ block->index(), indexAhead, false, home, away });
+                    m_movesRoundClobbers.append({ block->index(), instIndex + 1, true, away, home });
+                }
+                m_insertionSets[block].insert(indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+#else
                 m_insertionSets[block].insert(instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+#endif
                 m_insertionSets[block].insert(instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
+#if USE(BUN_JSC_ADDITIONS)
+                if (spilled)
+                    m_stats[gapTmp.bank()].numSplitAroundClobberStackMoves += 2;
+                else
+                    m_stats[gapTmp.bank()].numSplitAroundClobberRegisterMoves += 2;
+#endif
                 dataLogLnIf(verbose(), "Inserted Moves around clobber tmp=", metadata.originalTmp, " gapTmp=", gapTmp, " gapReg = ", assignedReg(gapTmp), " block=", *block, " index=", instIndex, " inst = ", inst);
             }
         }
@@ -3798,6 +3991,16 @@ private:
     TmpMap<TmpData> m_map;
     TmpMap<UseDefList> m_useDefLists;
     Vector<AroundClobbersSplitMetadata> m_aroundClobbersMetadata;
+#if USE(BUN_JSC_ADDITIONS)
+    struct MoveRoundClobber {
+        unsigned blockIndex;
+        unsigned index;
+        bool isBehind;
+        Reg source;
+        Reg destination;
+    };
+    Vector<MoveRoundClobber> m_movesRoundClobbers;
+#endif
     Vector<IntraBlockSplitMetadata> m_intraBlockMetadata;
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
     Vector<StackSlot*> m_spillSlotTable;

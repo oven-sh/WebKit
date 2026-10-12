@@ -101,20 +101,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#if ENABLE(AOT)
-#if OS(WINDOWS)
-#include <process.h>
-#else
-#include <spawn.h>
+#if ENABLE(AOT) && !OS(WINDOWS)
 #include <sys/mman.h>
-#include <sys/wait.h>
-#endif
-#if OS(DARWIN)
-#include <mach-o/dyld.h>
-#endif
-#if OS(FREEBSD)
-#include <sys/sysctl.h>
-#endif
 #endif
 #include <sys/types.h>
 #include <type_traits>
@@ -546,22 +534,7 @@ static JSC_DECLARE_HOST_FUNCTION(functionNoFTL);
 static JSC_DECLARE_HOST_FUNCTION(functionNoOSRExitFuzzing);
 static JSC_DECLARE_HOST_FUNCTION(functionOptimizeNextInvocation);
 static JSC_DECLARE_HOST_FUNCTION(functionNumberOfDFGCompiles);
-static JSC_DECLARE_HOST_FUNCTION(functionIsAOTCompiled);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTFunctionsNamed);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTRemarks);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTOperationCount);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTTypeCoverage);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTSetFamily);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTFamilyOf);
-static JSC_DECLARE_HOST_FUNCTION(functionAOTHasDepartedFamily);
-static JSC_DECLARE_HOST_FUNCTION(functionObjectWithStableFields);
-static JSC_DECLARE_HOST_FUNCTION(functionObjectWithImmutableShape);
-static JSC_DECLARE_HOST_FUNCTION(functionMakeFieldsStable);
-static JSC_DECLARE_HOST_FUNCTION(functionHasStableFields);
-static JSC_DECLARE_HOST_FUNCTION(functionHasImmutableShape);
-static JSC_DECLARE_HOST_FUNCTION(functionSetLayoutIsGivenOnlyAtBirth);
-static JSC_DECLARE_HOST_FUNCTION(functionHasExecutable);
-static JSC_DECLARE_HOST_FUNCTION(functionImportInNewLoader);
 static JSC_DECLARE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled);
 static JSC_DECLARE_HOST_FUNCTION(functionJSCOptions);
 static JSC_DECLARE_HOST_FUNCTION(functionReoptimizationRetryCount);
@@ -936,22 +909,7 @@ private:
         addFunction(vm, "noFTL"_s, functionNoFTL, 1);
         addFunction(vm, "noOSRExitFuzzing"_s, functionNoOSRExitFuzzing, 1);
         addFunction(vm, "numberOfDFGCompiles"_s, functionNumberOfDFGCompiles, 1);
-        addFunction(vm, "isAOTCompiled"_s, functionIsAOTCompiled, 1);
-        addFunction(vm, "aotFunctionsNamed"_s, functionAOTFunctionsNamed, 1);
-        addFunction(vm, "aotRemarks"_s, functionAOTRemarks, 1);
         addFunction(vm, "aotOperationCount"_s, functionAOTOperationCount, 1);
-        addFunction(vm, "aotTypeCoverage"_s, functionAOTTypeCoverage, 1);
-        addFunction(vm, "aotSetFamily"_s, functionAOTSetFamily, 2);
-        addFunction(vm, "aotFamilyOf"_s, functionAOTFamilyOf, 1);
-        addFunction(vm, "aotHasDepartedFamily"_s, functionAOTHasDepartedFamily, 1);
-        addFunction(vm, "objectWithStableFields"_s, functionObjectWithStableFields, 2);
-        addFunction(vm, "objectWithImmutableShape"_s, functionObjectWithImmutableShape, 2);
-        addFunction(vm, "makeFieldsStable"_s, functionMakeFieldsStable, 1);
-        addFunction(vm, "hasStableFields"_s, functionHasStableFields, 1);
-        addFunction(vm, "hasImmutableShape"_s, functionHasImmutableShape, 1);
-        addFunction(vm, "setLayoutIsGivenOnlyAtBirth"_s, functionSetLayoutIsGivenOnlyAtBirth, 1);
-        addFunction(vm, "hasExecutable"_s, functionHasExecutable, 1);
-        addFunction(vm, "importInNewLoader"_s, functionImportInNewLoader, 1);
         addFunction(vm, "callerIsBBQOrOMGCompiled"_s, functionCallerIsBBQOrOMGCompiled, 0);
         addFunction(vm, "jscOptions"_s, functionJSCOptions, 0);
         addFunction(vm, "optimizeNextInvocation"_s, functionOptimizeNextInvocation, 1);
@@ -1706,12 +1664,6 @@ static inline SourceCode jscSource(const String& source, const SourceOrigin& sou
 static SourceCode programSource(JSGlobalObject* globalObject, SourceCode&& source, bool isModule)
 {
     VM& vm = globalObject->vm();
-    if (const char* path = byteCast<char>(Options::writeAOTImageTo())) {
-        Vector<uint8_t> file = buildAOTFile(vm, singleElementSpan(source), isModule);
-        FILE* output = fopen(path, "wb");
-        bool ok = output && fwrite(file.span().data(), 1, file.size(), output) == file.size() && !fclose(output);
-        jscExit(ok ? EXIT_SUCCESS : EXIT_FAILURE);
-    }
     const AOT::ProgramData* data = AOT::ProgramData::get();
     if (!data)
         return WTF::move(source);
@@ -3131,54 +3083,6 @@ JSC_DEFINE_HOST_FUNCTION(functionNumberOfDFGCompiles, (JSGlobalObject* globalObj
     return JSValue::encode(numberOfDFGCompiles(globalObject, callFrame));
 }
 
-JSC_DEFINE_HOST_FUNCTION(functionImportInNewLoader, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    String specifier = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    JSModuleLoader* loader = JSModuleLoader::create(globalObject, vm, globalObject->globalLexicalEnvironment());
-    Identifier key = loader->resolve(globalObject, Identifier::fromString(vm, specifier), Identifier(), nullptr, false);
-    RETURN_IF_EXCEPTION(scope, { });
-    RELEASE_AND_RETURN(scope, JSValue::encode(loader->requestImportModule(globalObject, key, Identifier(), nullptr, nullptr)));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTRemarks, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-#if ENABLE(AOT)
-    const char* path = byteCast<char>(Options::aotRemarksPath());
-    if (!path || !AOT::ProgramData::get())
-        return JSValue::encode(jsNull());
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    Vector<char> buffer;
-    FILE* file = fopen(path, "rb");
-    bool isRead = file && fillBufferWithContentsOfFile(file, buffer);
-    if (file)
-        fclose(file);
-    if (!isRead)
-        return throwVMError(globalObject, scope, "Could not read the remarks."_s);
-    String text = String::fromUTF8(buffer.span());
-    JSArray* result = constructEmptyArray(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, { });
-    for (auto line : StringView(text).split('\n')) {
-        size_t tab = line.find('\t');
-        if (tab == notFound || line.left(tab) != name)
-            continue;
-        auto remark = line.substring(tab + 1);
-        result->push(globalObject, jsString(vm, remark.left(remark.find('\t')).toString()));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    return JSValue::encode(result);
-#else
-    UNUSED_PARAM(callFrame);
-    UNUSED_PARAM(scope);
-    return JSValue::encode(jsNull());
-#endif
-}
-
 JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
@@ -3194,226 +3098,6 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTOperationCount, (JSGlobalObject* globalObjec
     UNUSED_PARAM(scope);
     return JSValue::encode(jsNull());
 #endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTSetFamily, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-#if ENABLE(AOT)
-    VM& vm = globalObject->vm();
-    JSObject* object = callFrame->argument(0).getObject();
-    uint32_t family = callFrame->argument(1).isUInt32() ? callFrame->argument(1).asUInt32() : 0;
-    if (!object || !family || family > UINT16_MAX || object->structure()->isDictionary())
-        return JSValue::encode(jsBoolean(false));
-    Structure* structure = object->structure();
-    Vector<UniquedStringImpl*, 16> namesInSlots;
-    namesInSlots.fill(nullptr, structure->inlineCapacity());
-    bool areAllInline = true;
-    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        areAllInline &= isInlineOffset(entry.offset());
-        if (areAllInline)
-            namesInSlots[entry.offset()] = entry.key();
-        return true;
-    });
-    return JSValue::encode(jsBoolean(areAllInline && structure->holdsFamily(vm, namesInSlots.span()) && structure->setFamily(vm, static_cast<uint16_t>(family))));
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNull());
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTFamilyOf, (JSGlobalObject*, CallFrame* callFrame))
-{
-#if ENABLE(AOT)
-    JSObject* object = callFrame->argument(0).getObject();
-    return JSValue::encode(jsNumber(object ? object->structure()->family() : 0));
-#else
-    UNUSED_PARAM(callFrame);
-    return JSValue::encode(jsNull());
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTHasDepartedFamily, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-#if ENABLE(AOT)
-    if (JSValue family = callFrame->argument(0); AOT::ProgramData::get() && family.isUInt32() && AOT::Instance::hasByteForFamily(family.asUInt32()))
-        return JSValue::encode(jsBoolean(AOT::Instance::ensure(globalObject).departedFamilies[family.asUInt32()]));
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-#endif
-    return JSValue::encode(jsNull());
-}
-
-static EncodedJSValue copyWithShape(JSGlobalObject* globalObject, CallFrame* callFrame, Structure* (*createStructure)(VM&, JSGlobalObject*, JSValue, std::span<UniquedStringImpl* const>, uint16_t))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSObject* source = callFrame->argument(0).getObject();
-    JSValue prototype = callFrame->argumentCount() > 1 ? callFrame->uncheckedArgument(1) : JSValue(globalObject->objectPrototype());
-    if (!source || (!prototype.isObject() && !prototype.isNull()))
-        return throwVMTypeError(globalObject, scope, "Expected an object, and an object or null as its prototype"_s);
-    PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    source->methodTable()->getOwnPropertyNames(source, globalObject, properties, DontEnumPropertiesMode::Exclude);
-    RETURN_IF_EXCEPTION(scope, { });
-    Vector<UniquedStringImpl*, 16> names;
-    MarkedArgumentBuffer values;
-    for (auto& property : properties) {
-        if (parseIndex(property))
-            return throwVMTypeError(globalObject, scope, "An index is not the name of a field"_s);
-        names.append(property.impl());
-        values.append(source->get(globalObject, property));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    Structure* structure = createStructure(vm, globalObject, prototype, names.span(), 0);
-    if (!structure)
-        return throwVMTypeError(globalObject, scope, "Too many fields"_s);
-    JSObject* result = JSFinalObject::create(vm, structure);
-    for (unsigned slot = 0; slot < names.size(); ++slot)
-        result->putDirectOffset(vm, slot, values.at(slot));
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionObjectWithStableFields, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    return copyWithShape(globalObject, callFrame, Structure::createWithStableFields);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionObjectWithImmutableShape, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    return copyWithShape(globalObject, callFrame, Structure::createWithImmutableShape);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionMakeFieldsStable, (JSGlobalObject*, CallFrame* callFrame))
-{
-    JSObject* object = callFrame->argument(0).getObject();
-    if (!object || object->type() != FinalObjectType)
-        return JSValue::encode(jsBoolean(false));
-    Structure* structure = object->structure();
-    if (structure->isDictionary() || structure->hasStableFields() || (structure->maxOffset() != invalidOffset && !isInlineOffset(structure->maxOffset())))
-        return JSValue::encode(jsBoolean(false));
-    structure->makeFieldsStable();
-    return JSValue::encode(jsBoolean(true));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionHasStableFields, (JSGlobalObject*, CallFrame* callFrame))
-{
-    JSObject* object = callFrame->argument(0).getObject();
-    return JSValue::encode(jsBoolean(object && object->structure()->hasStableFields()));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionHasImmutableShape, (JSGlobalObject*, CallFrame* callFrame))
-{
-    JSObject* object = callFrame->argument(0).getObject();
-    return JSValue::encode(jsBoolean(object && object->structure()->hasImmutableShape()));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionSetLayoutIsGivenOnlyAtBirth, (JSGlobalObject*, CallFrame* callFrame))
-{
-    JSValue layoutID = callFrame->argument(0);
-    if (!layoutID.isUInt32() || layoutID.asUInt32() > std::numeric_limits<uint16_t>::max())
-        return JSValue::encode(jsBoolean(false));
-    TypedLayoutTable::setIsGivenOnlyAtBirth(layoutID.asUInt32());
-    return JSValue::encode(jsBoolean(true));
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTTypeCoverage, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-#if ENABLE(AOT)
-    const char* path = byteCast<char>(Options::aotTypeCoveragePath());
-    if (!path || !AOT::ProgramData::get())
-        return JSValue::encode(jsNull());
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    Vector<char> buffer;
-    FILE* file = fopen(path, "rb");
-    bool isRead = file && fillBufferWithContentsOfFile(file, buffer);
-    if (file)
-        fclose(file);
-    if (!isRead)
-        return throwVMError(globalObject, scope, "Could not read the type coverage."_s);
-    String text = String::fromUTF8(buffer.span());
-    JSArray* result = constructEmptyArray(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, { });
-    for (auto line : StringView(text).split('\n')) {
-        Vector<StringView, 14> fields;
-        for (auto field : line.splitAllowingEmptyEntries('\t'))
-            fields.append(field);
-        if (fields.size() != 14 || fields[0] != "O"_s || fields[8] != name)
-            continue;
-        uint64_t timesRun = 0;
-        uint64_t stubCalls = 0;
-        uint64_t runtimeCalls = 0;
-        if (auto counter = parseInteger<uint32_t>(fields[13])) {
-            if (uint32_t* counters = AOT::Instance::ensure(globalObject).typeCoverageCounters) {
-                timesRun = counters[*counter];
-                stubCalls = counters[*counter + AOT::CoveredOperation::stubCallsCounter];
-                runtimeCalls = counters[*counter + AOT::CoveredOperation::runtimeCallsCounter];
-            }
-        }
-        result->push(globalObject, jsString(vm, makeString(fields[2], ':', fields[3], ' ', fields[4], ' ', fields[5], ' ', timesRun, ' ', stubCalls, ' ', runtimeCalls, ' ', fields[7], ' ', fields[9])));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-    return JSValue::encode(result);
-#else
-    UNUSED_PARAM(callFrame);
-    UNUSED_PARAM(scope);
-    return JSValue::encode(jsNull());
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionHasExecutable, (JSGlobalObject*, CallFrame* callFrame))
-{
-    auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0));
-    if (!function)
-        return JSValue::encode(jsUndefined());
-#if ENABLE(AOT)
-    return JSValue::encode(jsBoolean(!function->hasAOTFunctionWord()));
-#else
-    return JSValue::encode(jsBoolean(true));
-#endif
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionAOTFunctionsNamed, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-    VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSArray* result = constructEmptyArray(globalObject, nullptr);
-    RETURN_IF_EXCEPTION(scope, { });
-#if ENABLE(AOT)
-    String name = callFrame->argument(0).toWTFString(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
-    const AOT::ProgramData* data = AOT::ProgramData::get();
-    for (uint32_t index = 0; data && index < data->numberOfExecutables; ++index) {
-        AOT::Instance& instance = AOT::Instance::ensure(globalObject);
-        const AOT::ExecutableRow& row = data->executableRow(index);
-        if (row.isShort ? !row.name || name != String { instance.program->identifier(row.name) } : name != instance.program->unlinkedFunction(row.unlinkedFunction, false)->ecmaName().string())
-            continue;
-        if (JSFunction* function = instance.tryMakeFunctionWithoutExecutable(index, globalObject)) {
-            result->push(globalObject, function);
-            RETURN_IF_EXCEPTION(scope, { });
-        }
-        result->push(globalObject, JSFunction::create(vm, globalObject, instance.program->executable(index), globalObject));
-        RETURN_IF_EXCEPTION(scope, { });
-    }
-#else
-    UNUSED_PARAM(callFrame);
-#endif
-    return JSValue::encode(result);
-}
-
-JSC_DEFINE_HOST_FUNCTION(functionIsAOTCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
-{
-#if ENABLE(AOT)
-    if (auto* function = dynamicDowncast<JSFunction>(callFrame->argument(0)); function && !function->isHostFunction())
-        return JSValue::encode(jsBoolean(function->jsExecutable()->hasAOTEntry() || !!AOT::FunctionRef::of(globalObject->vm(), function->jsExecutable(), CodeSpecializationKind::CodeForCall, nullptr)));
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(callFrame);
-#endif
-    return JSValue::encode(jsBoolean(false));
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionCallerIsBBQOrOMGCompiled, (JSGlobalObject* globalObject, CallFrame* callFrame))
@@ -5642,151 +5326,6 @@ extern const JITOperationAnnotation startOfJITOperationsInShell __asm__("section
 extern const JITOperationAnnotation endOfJITOperationsInShell __asm__("section$end$__DATA_CONST$__jsc_ops");
 #endif
 
-#if ENABLE(AOT) && OS(WINDOWS)
-[[noreturn]] static void compileAOTAndRerun(int argc, char** argv)
-{
-    char executable[MAX_PATH];
-    RELEASE_ASSERT(GetModuleFileNameA(nullptr, executable, sizeof(executable)));
-    char directory[MAX_PATH];
-    RELEASE_ASSERT(GetTempPathA(sizeof(directory), directory));
-    char path[MAX_PATH];
-    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, path));
-    char remarksPath[MAX_PATH];
-    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, remarksPath));
-    char coveragePath[MAX_PATH];
-    RELEASE_ASSERT(GetTempFileNameA(directory, "aot", 0, coveragePath));
-    _putenv_s("JSC_compileMainScriptAheadOfTime", "");
-
-    char coverageOption[MAX_PATH + 32];
-    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=%s", coveragePath);
-    auto run = [&](std::initializer_list<const char*> added) {
-        Vector<const char*> arguments { argv[0] };
-        for (const char* argument : added)
-            arguments.append(argument);
-        for (int i = 1; i < argc; ++i) {
-            if (!strcmp(argv[i], "--aotTypeCoveragePath="))
-                arguments.append(coverageOption);
-            else if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
-                arguments.append(argv[i]);
-        }
-        arguments.append(nullptr);
-        return _spawnv(_P_WAIT, executable, arguments.span().data());
-    };
-
-    char remarksOption[MAX_PATH + 32];
-    snprintf(remarksOption, sizeof(remarksOption), "--aotRemarksPath=%s", remarksPath);
-    char buildOption[MAX_PATH + 32];
-    snprintf(buildOption, sizeof(buildOption), "--writeAOTImageTo=%s", path);
-    intptr_t buildStatus = run({ buildOption, remarksOption });
-    if ((static_cast<uint32_t>(buildStatus) & 0xC0000000u) == 0xC0000000u) {
-        DeleteFileA(path);
-        DeleteFileA(remarksPath);
-        DeleteFileA(coveragePath);
-        fprintf(stderr, "The process that compiles ahead of time was terminated with status 0x%08x\n", static_cast<uint32_t>(buildStatus));
-        exit(static_cast<int>(buildStatus));
-    }
-    bool isBuilt = !buildStatus;
-    struct _stat64 written;
-    isBuilt = isBuilt && !_stat64(path, &written) && written.st_size;
-
-    char useOption[MAX_PATH + 32];
-    snprintf(useOption, sizeof(useOption), "--aotImagePath=%s", path);
-    intptr_t status = run({ isBuilt ? useOption : "--useAOT=1", remarksOption });
-    DeleteFileA(path);
-    DeleteFileA(remarksPath);
-    DeleteFileA(coveragePath);
-    exit(static_cast<int>(status));
-}
-#elif ENABLE(AOT)
-extern char** environ;
-
-[[noreturn]] static void compileAOTAndRerun(int argc, char** argv)
-{
-#if OS(DARWIN)
-    char executable[PATH_MAX * 2];
-    uint32_t sizeOfPath = sizeof(executable);
-    RELEASE_ASSERT(!_NSGetExecutablePath(executable, &sizeOfPath));
-#elif OS(FREEBSD)
-    char executable[PATH_MAX];
-    size_t sizeOfPath = sizeof(executable);
-    int name[] = { CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1 };
-    RELEASE_ASSERT(!sysctl(name, std::size(name), executable, &sizeOfPath, nullptr, 0));
-#else
-    const char* executable = "/proc/self/exe";
-#endif
-    const char* directory = getenv("TMPDIR");
-    char path[PATH_MAX];
-    snprintf(path, sizeof(path), "%s/jsc-aot-XXXXXX", directory ? directory : "/tmp");
-    int fileDescriptor = mkstemp(path);
-    RELEASE_ASSERT(fileDescriptor >= 0);
-    char remarksPath[PATH_MAX];
-    snprintf(remarksPath, sizeof(remarksPath), "%s/jsc-aot-remarks-XXXXXX", directory ? directory : "/tmp");
-    int remarksFileDescriptor = mkstemp(remarksPath);
-    RELEASE_ASSERT(remarksFileDescriptor >= 0);
-    char coveragePath[PATH_MAX];
-    snprintf(coveragePath, sizeof(coveragePath), "%s/jsc-aot-coverage-XXXXXX", directory ? directory : "/tmp");
-    int coverageFileDescriptor = mkstemp(coveragePath);
-    RELEASE_ASSERT(coverageFileDescriptor >= 0);
-    unsetenv("JSC_compileMainScriptAheadOfTime");
-
-    char coverageOption[PATH_MAX + 32];
-    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=%s", coveragePath);
-    auto argumentsPlus = [&](std::initializer_list<const char*> added) {
-        Vector<char*> result { argv[0] };
-        for (const char* argument : added)
-            result.append(const_cast<char*>(argument));
-        for (int i = 1; i < argc; ++i) {
-            if (!strcmp(argv[i], "--aotTypeCoveragePath="))
-                result.append(coverageOption);
-            else if (strncmp(argv[i], "--compileMainScriptAheadOfTime", strlen("--compileMainScriptAheadOfTime")))
-                result.append(argv[i]);
-        }
-        result.append(nullptr);
-        return result;
-    };
-
-    char pathBuffer[PATH_MAX + 32];
-    snprintf(pathBuffer, sizeof(pathBuffer), "--writeAOTImageTo=%s", path);
-    char remarksPathBuffer[PATH_MAX + 32];
-    snprintf(remarksPathBuffer, sizeof(remarksPathBuffer), "--aotRemarksPath=%s", remarksPath);
-    pid_t builder;
-    RELEASE_ASSERT(!posix_spawn(&builder, executable, nullptr, nullptr, argumentsPlus({ pathBuffer, remarksPathBuffer }).mutableSpan().data(), environ));
-    int status = 0;
-    while (waitpid(builder, &status, 0) < 0 && errno == EINTR) { }
-    if (WIFSIGNALED(status)) {
-        unlink(path);
-        unlink(remarksPath);
-        unlink(coveragePath);
-        fprintf(stderr, "The process that compiles ahead of time was terminated by signal %d\n", WTERMSIG(status));
-        exit(128 + WTERMSIG(status));
-    }
-    struct stat written;
-    bool isBuilt = WIFEXITED(status) && !WEXITSTATUS(status) && !fstat(fileDescriptor, &written) && written.st_size;
-#if OS(FREEBSD)
-    snprintf(pathBuffer, sizeof(pathBuffer), "--aotImagePath=%s", path);
-    pid_t runner;
-    RELEASE_ASSERT(!posix_spawn(&runner, executable, nullptr, nullptr, argumentsPlus({ isBuilt ? pathBuffer : "--useAOT=1", remarksPathBuffer }).mutableSpan().data(), environ));
-    while (waitpid(runner, &status, 0) < 0 && errno == EINTR) { }
-    unlink(path);
-    unlink(remarksPath);
-    unlink(coveragePath);
-    exit(WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status));
-#else
-    unlink(path);
-    unlink(remarksPath);
-    unlink(coveragePath);
-    snprintf(coverageOption, sizeof(coverageOption), "--aotTypeCoveragePath=/dev/fd/%d", coverageFileDescriptor);
-    char optionBuffer[64];
-    snprintf(optionBuffer, sizeof(optionBuffer), "--aotImagePath=/dev/fd/%d", fileDescriptor);
-    char remarksOptionBuffer[64];
-    snprintf(remarksOptionBuffer, sizeof(remarksOptionBuffer), "--aotRemarksPath=/dev/fd/%d", remarksFileDescriptor);
-    auto arguments = argumentsPlus({ isBuilt ? optionBuffer : "--useAOT=1", remarksOptionBuffer });
-    execv(executable, arguments.mutableSpan().data());
-    RELEASE_ASSERT_NOT_REACHED();
-#endif
-}
-#endif
-
 int jscmain(int argc, char** argv)
 {
     // Need to override and enable restricted options before we start parsing options below.
@@ -5825,8 +5364,6 @@ int jscmain(int argc, char** argv)
 #endif
 
 #if ENABLE(AOT)
-    if (Options::compileMainScriptAheadOfTime())
-        compileAOTAndRerun(argc, argv);
 #if OS(WINDOWS)
     if (const char* path = byteCast<char>(Options::aotImagePath())) {
         AOTFileUse use { "cannot read it", "cannot read it" };

@@ -86,6 +86,10 @@ for (let o of [Math, JSON, Reflect, Atomics, Intl, Object, Function, Array, Stri
     for (let k of Reflect.ownKeys(o)) {
         if (o === Error && k === "stackTraceLimit")
             continue;
+        if (typeof o === "function" && (k === "name" || k === "length")) {
+            check(Object.getOwnPropertyDescriptor(o, k).configurable, true, String(k) + " of a function is configurable");
+            continue;
+        }
         let d = Object.getOwnPropertyDescriptor(o, k);
         check(d.configurable, false, String(k) + " is not configurable"); check(d.writable === true && o !== RegExp, false, String(k) + " is not writable");
     }
@@ -106,12 +110,12 @@ for (let o of [Object, Function, Array, String, Number, Boolean, Symbol, BigInt,
 check("return" in [][Symbol.iterator](), false, "an iterator of the engine has no return"); check("return" in ""[Symbol.iterator](), false, "nor has that of a string");
 
 // ---- The variables, made or not.
-for (let k of ["Object", "Array", "Math", "Atomics", "Intl", "Iterator", "BigInt", "Int16Array", "Float32Array", "FinalizationRegistry", "WebAssembly", "console", "escape", "unescape", "eval", "parseInt", "globalThis"]) {
+for (let k of ["Object", "Array", "Math", "Atomics", "Intl", "Iterator", "BigInt", "Int16Array", "Float32Array", "FinalizationRegistry", "WebAssembly", "escape", "unescape", "eval", "parseInt", "globalThis"]) {
     throwsTypeError(() => { "use strict"; global[k] = 1; }, "assigning to " + k); check(Reflect.deleteProperty(global, k), false, "deleting " + k);
     let d = Object.getOwnPropertyDescriptor(global, k);
     check(d.writable, false, k + " is not writable"); check(d.configurable, false, k + " is not configurable"); check(d.enumerable, false, k + " is not enumerable");
 }
-console.somethingNew = 1; check(delete console.somethingNew, true, "console itself is as any other object");
+{ let d = Object.getOwnPropertyDescriptor(global, "console"); check(d.writable, true, "console is for a host to replace"); check(d.configurable, true, "or to take away"); }
 
 // ---- An array can be given all an object can. It is no longer what the engine takes for a plain array then, and goes on working.
 {
@@ -126,9 +130,9 @@ console.somethingNew = 1; check(delete console.somethingNew, true, "console itse
         ["another prototype", (a) => { Object.setPrototypeOf(a, { __proto__: Array.prototype, push() { return "inherited"; } }); }, (a) => a.push(4) === "inherited" && a.length === 3],
         ["another prototype by __proto__", (a) => { a.__proto__ = Object.create(Array.prototype); }, (a) => a.push(4) === 4 && a.pop() === 4],
     ]) {
-        let a = [1, , 3];
+        let a = [1, , 3]; check(isPlain(a) !== false, true, "plain before " + what);
         for (let i = 0; i < 200; ++i) check(sum(a), expected, "before " + what);
-        check(isPlain(a) !== false, true, "plain before " + what); change(a); check(isPlain(a) !== true, true, "not after " + what);
+        change(a); check(isPlain(a) !== true, true, "not after " + what);
         check(Array.isArray(a), true, "an array after " + what); check(afterwards(a), true, what);
         for (let i = 0; i < 200; ++i) check(sum(a), expected, "after " + what);
         a[5] = 6; check(a.length, 6, "it grows after " + what); a.length = 3; check(sum(a), expected, "and shrinks");

@@ -6,7 +6,6 @@
 // Members of class Lowering: included in its body.
 
     IndexingType indexingTypeAtBirth(const Type& array) const;
-    LValue originalArrayStructureID(IndexingType);
     static int64_t holeIn(IndexingType);
     const B3::AbstractHeap& elementsOf(IndexingType);
     LValue allocateStorage(LValue size, LBasicBlock slowPath);
@@ -15,13 +14,36 @@
     LValue allocateArrayOfNumbers(IndexingType, LValue lengthAndCapacity, LBasicBlock slowPath);
     CellPointer newArrayOfType(const Arguments& elements, const Type&);
     CellPointer newArrayLiteral(ValueID);
+    CellPointer newArrayLiteralWithAllocationSite(ValueID);
+    bool isAvailableAtCurrentValue(ValueID) const;
+    struct CountedLoop {
+        unsigned index;
+        ValueID counter;
+        size_t position;
+        ValueID bound;
+        ValueID iteratedArray;
+    };
+    std::optional<CountedLoop> countedLoopContaining(BlockID) const;
+    Integer arrayLengthOrBail(ValueID array, LBasicBlock otherwise);
+    struct InitialCapacity {
+        Vector<ValueID, 2> arrays;
+        ValueID count;
+        int64_t constant { 0 };
+    };
+    std::optional<InitialCapacity> inferInitialCapacity(ValueID literal);
+    BitVector m_literalsWithRoomForAllSpreads;
+    UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_spreadsCarriedOutAtBirth;
+    bool m_isFillingArrayAtBirth { false };
     void updateVectorLengthHint(CellPointer array, ValueID receiver);
     Type arrayTypeAtBirth(ValueID) const;
     ValueID emptyLiteralBehind(ValueID receiver);
     Word32 turnsLeftInLoop();
     unsigned numberOfElementsPushedTo(ValueID array);
     LBasicBlock appendSpread(const Value&);
+    LBasicBlock appendSpreadOfTypedArray(const Value&);
+    Boxed callArrayMethodOnSlowPath(const Value&, CellPointer array);
     Operand lowerArrayConcat(const Value&, const Type&);
+    Operand lowerArrayFromTypedArray(ValueID result, const Value&, const Type&);
     Operand lowerArrayShift(const Value&, const Type&);
     void addIfNumber(Join&, Boxed element, const Type&);
     Operand elementOfDoubles(Number, const Type&);

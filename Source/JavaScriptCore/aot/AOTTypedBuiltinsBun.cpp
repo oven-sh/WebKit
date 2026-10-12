@@ -209,7 +209,7 @@ std::optional<Operand> Lowering::lowerInlineBun(InlineBuiltin which, ValueID res
     // What is no function of the engine and does not say for itself whether it can be called cannot. A function of the program says so.
     case InlineBuiltin::IsCallable:
         return ofCell([&](CellPointer cell) {
-            return either<Word32>(equal(typeOfCell(cell), word32(JSFunctionType)), [&] {
+            return either<Word32>(hasTypeOfFunctionFlag(cell), [&] {
                 return boolean(true);
             }, [&] {
                 Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags, IsFixed | safeIfReaches(cell, sizeof(JSCell)));

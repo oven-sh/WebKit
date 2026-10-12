@@ -84,9 +84,23 @@ enum class ParameterMode : uint8_t {
     Rest,
 };
 
+namespace OperandUse {
+static constexpr uint16_t WritesProperties = 1 << 0;
+static constexpr uint16_t WritesContents = 1 << 1;
+static constexpr uint16_t Keeps = 1 << 2;
+static constexpr uint16_t Calls = 1 << 3;
+static constexpr uint16_t Gets = 1 << 4;
+static constexpr uint16_t MayBeResult = 1 << 5;
+static constexpr uint16_t KeepsWhatItHolds = 1 << 6;
+static constexpr uint16_t HandsToUserCode = 1 << 7;
+static constexpr uint16_t OfAllItReaches = 1 << 8;
+static constexpr uint16_t Everything = (1 << 9) - 1;
+}
+
 struct BuiltinParameter {
     ArgumentConversion conversion { ArgumentConversion::None };
     ParameterMode mode { ParameterMode::Required };
+    uint16_t uses { OperandUse::Everything };
 };
 
 extern const BuiltinParameter builtinParameterPool[];
@@ -205,6 +219,10 @@ static constexpr unsigned numberOfPreludeFunctions = 0
 #undef AOT_TYPED_COUNT_PRELUDE_FUNCTION
     ;
 
+static constexpr bool leavesNoFrameInStackTraces(PreludeFunction which) { return which == PreludeFunction::ArrayFlatMap; }
+uint32_t visibilityInEngine(uint32_t builtinFunction);
+bool isStrictInEngine(uint32_t builtinFunction);
+
 // What the engine's function is. Builtins::findCell() asserts it, and Builtins::mismatches() lists where it is something else.
 enum class BuiltinCallee : uint8_t {
     // There is no function: a number, a symbol, an operation, an own property of every instance (the length of an array).
@@ -246,6 +264,7 @@ struct Builtin {
     BuiltinParameters parameters;
     BuiltinResult result;
     uint16_t effects;
+    uint16_t usesOfThis;
     BuiltinImplementation implementation;
     // The holder has the function under the private name of the same spelling too.
     bool hasPrivateTwin { false };
@@ -254,6 +273,7 @@ struct Builtin {
     bool takesReceiver() const { return kind == BuiltinKind::Method || kind == BuiltinKind::Getter || kind == BuiltinKind::Setter; }
     unsigned numberOfRequiredParameters() const;
     bool takes(unsigned numberOfArguments) const;
+    uint16_t usesOfArgument(unsigned index) const;
 };
 
 class BuiltinID {
@@ -369,6 +389,8 @@ public:
     // do not count). A receiver of unknown type is speculated to be of it.
     const EngineClass* classSpeculatedFor(BuiltinName method) const;
     std::optional<PreludeFunction> preludeFunctionNamed(std::span<const uint8_t>) const;
+    BuiltinID entryCarriedOutBy(PreludeFunction) const;
+    bool isHostFunctionInEngine(BuiltinID) const;
     // The operations that passes create or rewrite.
     BuiltinID hasOriginalStructureOperation() const { return BuiltinID(AOT_TYPED_BUILTIN_HasOriginalStructure); }
     BuiltinID callIntrinsic() const { return BuiltinID(AOT_TYPED_BUILTIN_Call); }
@@ -386,6 +408,8 @@ public:
     unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
     unsigned cellOfOriginalStructure(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }
     JSCell* findCell(JSGlobalObject*, unsigned) const;
+    unsigned cellOfGlobal(ASCIILiteral) const;
+    unsigned cellOfStaticFunction(ASCIILiteral global, ASCIILiteral name) const;
     // Compiled code does not test whether these are there.
     std::array<unsigned, 2> cellsFilledFromStart() const { return { cellOf(callOrApply(callName())), cellOf(callOrApply(applyName())) }; }
     // The cells of the functions of replaceable globals. Those of one object are filled in when the host makes the object, which is before

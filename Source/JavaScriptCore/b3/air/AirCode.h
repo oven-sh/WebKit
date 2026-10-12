@@ -364,6 +364,14 @@ public:
     void setKeepsFastTmpsFastWhenCoalesced() { m_keepsFastTmpsFastWhenCoalesced = true; }
     bool keepsFastTmpsFastWhenCoalesced() const { return m_keepsFastTmpsFastWhenCoalesced; }
     void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
+    void setLaysRareBlocksInGaps() { m_laysRareBlocksInGaps = true; }
+    bool laysRareBlocksInGaps() const { return m_laysRareBlocksInGaps; }
+    void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
+    bool mayPlaceSpillsAboveFrameRecord() const { return m_mayPlaceSpillsAboveFrameRecord; }
+    void tryToPlaceSpillsAboveFrameRecord();
+    bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
+    unsigned bytesAboveFrameRecord() const { return m_bytesAboveFrameRecord; }
+    unsigned bytesBelowFrameRecord() const { return m_frameSize - m_bytesAboveFrameRecord; }
     bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
 #endif
     
@@ -403,6 +411,10 @@ private:
     RegisterSet m_unsavedCalleeSaves;
     bool m_keepsFastTmpsFastWhenCoalesced { false };
     bool m_chargesForCalleeSaves { false };
+    bool m_laysRareBlocksInGaps { false };
+    bool m_mayPlaceSpillsAboveFrameRecord { false };
+    bool m_placesSpillsAboveFrameRecord { false };
+    unsigned m_bytesAboveFrameRecord { 0 };
 #endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
@@ -429,6 +441,28 @@ private:
     std::unique_ptr<Disassembler> m_disassembler;
     const Ref<PrologueGenerator> m_defaultPrologueGenerator;
     RefPtr<JSON::Array> m_ionGraphPasses;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_notesStartOfRareCode { false };
+    unsigned m_numberOfBlocksInChains { std::numeric_limits<unsigned>::max() };
+    MacroAssembler::Label m_startOfRareCode;
+
+public:
+    void setNotesStartOfRareCode() { m_notesStartOfRareCode = true; }
+    bool notesStartOfRareCode() const { return m_notesStartOfRareCode; }
+    void setNumberOfBlocksInChains(unsigned number) { m_numberOfBlocksInChains = number; }
+    unsigned numberOfBlocksInChains() const { return m_numberOfBlocksInChains; }
+    void noteStartOfRareCode(MacroAssembler::Label label) { m_startOfRareCode = label; }
+    MacroAssembler::Label startOfRareCode() const { return m_startOfRareCode; }
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+
+public:
+    void noteTableInCode(MacroAssembler::Label, unsigned numberOfEntries);
+    const Vector<std::pair<MacroAssembler::Label, unsigned>>& tablesInCode() const { return m_tablesInCode; }
+
+private:
+    Vector<std::pair<MacroAssembler::Label, unsigned>> m_tablesInCode;
+#endif
 };
 
 } } } // namespace JSC::B3::Air

@@ -135,6 +135,8 @@ private:
         }
         if (value.inlineFrame)
             m_out.print(" frame ", value.inlineFrame);
+        if (value.isInTailPosition)
+            m_out.print(" tail");
     }
 
     void onlyFunction(FunctionID function, bool isFact)
@@ -179,7 +181,7 @@ private:
             index(layout.environment.index());
             m_out.print(layout.isLaidOut ? " laid out" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasForeignRoot ? " foreign root" : "", layout.hasFixedMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasStaticMemberOfUnknownName ? " unknown static names" : "");
         }
-        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", "\n");
+        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {
             if (list.isEmpty())
                 return;
@@ -189,6 +191,7 @@ private:
             m_out.print("\n");
         };
         layouts("members"_s, layout.members);
+        layouts("members by fit"_s, layout.membersByFit);
         layouts("specializations"_s, layout.specializations);
         for (auto& field : layout.fields) {
             m_out.print("  field ");
@@ -227,7 +230,9 @@ private:
         for (auto& field : layout.staticFields) {
             m_out.print("  static field ");
             quoted(field.name);
-            m_out.print(" variable ", field.variable, field.isAnnotated ? " annotated\n" : "\n");
+            m_out.print(" ");
+            type(field.type);
+            m_out.print("\n");
         }
     }
 
@@ -284,6 +289,16 @@ private:
                 m_out.print(" unless original");
             if (value.opcode == Opcode::PutById && value.isInitialStore())
                 m_out.print(" initial ", value.initialStoreIndex());
+            if (value.isAtKnownPlace())
+                m_out.print(" at place ", value.knownPlace(), value.receiverIsNeverNil() ? ", never nil" : "");
+            if (value.isStoreToObjectBornWhole() && value.isAtKnownPlace())
+                m_out.print(", born whole");
+            else if (value.isStoreToObjectBornWhole())
+                m_out.print(" born whole with place ", value.knownPlace(), ", goes by the name");
+            if (value.isStoreToObjectBornWhole() && value.birthOfFirstStore())
+                m_out.print(", row ", value.birthOfFirstStore() - 1);
+            if (value.isFirstStoreToThis())
+                m_out.print(value.isDefinitionInRowOfThis() ? " a definition" : "", " of the row of this, place ", value.knownPlace(), ", row ", static_cast<int>(value.birthOfFirstStore()) - 1);
             break;
         case Opcode::FunctionReference:
         case Opcode::NewClosure:
@@ -295,6 +310,12 @@ private:
             break;
         case Opcode::TypeOfIs:
             m_out.print(" ", value.typeofType());
+            break;
+        case Opcode::GetByVal:
+            if (value.readsListedKey())
+                m_out.print(" listed");
+            if (value.readsForInList())
+                m_out.print(" of the list");
             break;
         case Opcode::ResultAt:
             m_out.print(" ", value.resultIndex());
@@ -309,12 +330,18 @@ private:
         case Opcode::PutModuleVariable:
             m_out.print(" variable ", value.variable().index());
             break;
+        case Opcode::GetStaticField:
+        case Opcode::PutStaticField:
+            m_out.print(" ", value.immediates[0], " ");
+            quoted(m_program.at(value.layout()).staticFields[value.immediates[1]].name);
+            break;
         case Opcode::NewObjectWithShape:
         case Opcode::IsInstanceOfClass:
         case Opcode::GetArgument:
         case Opcode::CreateRest:
         case Opcode::GetRestLength:
         case Opcode::CallForwardVarargs:
+        case Opcode::ConstructSuperForwardVarargs:
             m_out.print(" ", value.immediates[0]);
             break;
         case Opcode::GetMyArgumentByVal:
@@ -451,6 +478,10 @@ private:
         type(function.resultType);
         if (function.takesItsClosure)
             m_out.print(" takes its closure");
+        if (function.isUsedAsObject)
+            m_out.print(" used as an object");
+        if (m_program.genericEntrypoints.contains(static_cast<uint32_t>(&function - m_program.functions.span().data())))
+            m_out.print(m_program.makesSlimClosures(function) ? " slim closures" : " full closures");
         m_out.print("\n");
         for (size_t b = 0; b < function.blocks.size(); ++b) {
             auto& block = function.blocks[b];
@@ -472,6 +503,42 @@ private:
 };
 
 } // anonymous namespace
+
+static uint64_t hashOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
+{
+    uint64_t hash = inlineCapacity << 1 | hasNullPrototype;
+    for (StringID name : names) {
+        hash = (hash + name.index() + 1) * 0x9e3779b97f4a7c15ull;
+        hash ^= hash >> 32;
+    }
+    return hash >> 1 | 1;
+}
+
+uint32_t Program::numberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const
+{
+    auto found = numbersOfRowsByHash.find(hashOfRow(names, inlineCapacity, hasNullPrototype));
+    if (found == numbersOfRowsByHash.end())
+        return Format::none;
+    for (uint32_t number : found->value) {
+        auto& row = numberedRows[number];
+        if (row.inlineCapacity == inlineCapacity && row.hasNullPrototype == hasNullPrototype && std::ranges::equal(row.names, names))
+            return number;
+    }
+    return Format::none;
+}
+
+uint32_t Program::ensureNumberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype)
+{
+    if (uint32_t number = numberOfRow(names, inlineCapacity, hasNullPrototype); number != Format::none)
+        return number;
+    NumberedRow row;
+    row.names.append(names);
+    row.inlineCapacity = inlineCapacity;
+    row.hasNullPrototype = hasNullPrototype;
+    numbersOfRowsByHash.add(hashOfRow(names, inlineCapacity, hasNullPrototype), Vector<uint32_t, 1>()).iterator->value.append(numberedRows.size());
+    numberedRows.append(WTF::move(row));
+    return numberedRows.size() - 1;
+}
 
 void Program::dump(PrintStream& out) const
 {

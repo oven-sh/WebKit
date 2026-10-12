@@ -49,6 +49,7 @@ public:
     static ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_storage); }
 #if ENABLE(AOT)
     static ptrdiff_t offsetOfCompactTable() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_compactTable); }
+    static constexpr ptrdiff_t offsetOfAliveInCompactTable = 12;
 #endif
 
     void finishCreation(VM& vm) { Base::finishCreation(vm); }
@@ -90,7 +91,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-        if (!m_storage) [[unlikely]] {
+        if (m_compactTable) [[unlikely]] {
             bool isAdded = tryAddToCompactTable(globalObject, key, value);
             RETURN_IF_EXCEPTION(scope, void());
             if (isAdded)
@@ -108,7 +109,7 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
 
 #if ENABLE(AOT)
-        if (!m_storage) [[unlikely]] {
+        if (m_compactTable) [[unlikely]] {
             bool isAdded = tryAddToCompactTable(globalObject, key, value);
             RETURN_IF_EXCEPTION(scope, void());
             if (isAdded)
@@ -147,8 +148,8 @@ public:
         if (m_storage)
             return Helper::aliveEntryCount(storageRef());
 #if ENABLE(AOT)
-        if (m_compactTable) [[unlikely]]
-            return sizeOfCompactTable();
+        if (JSCell* table = m_compactTable.get()) [[unlikely]]
+            return *std::bit_cast<const uint32_t*>(std::bit_cast<uintptr_t>(table) + offsetOfAliveInCompactTable);
 #endif
         return 0;
     }
@@ -226,7 +227,6 @@ public:
     // The value of the entry, or the key in a set. Empty: there is none.
     JS_EXPORT_PRIVATE JSValue findInCompactTable(JSGlobalObject*, JSValue key);
     JS_EXPORT_PRIVATE bool removeFromCompactTable(JSGlobalObject*, JSValue key);
-    // There is no Storage. False: there has to be one, or an exception was thrown.
     JS_EXPORT_PRIVATE bool tryAddToCompactTable(JSGlobalObject*, JSValue key, JSValue);
 #endif
 };

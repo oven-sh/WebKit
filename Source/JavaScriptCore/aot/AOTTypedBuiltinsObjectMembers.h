@@ -35,7 +35,7 @@
     };
     Vector<KeyOrder, 2> keyOrdersExpectedOf(ValueID) const;
     template<typename InPlace, typename Generally> void byKeyOrder(ValueID object, const Vector<KeyOrder, 2>&, const InPlace&, const Generally&);
-    CellPointer cloneAsPlainObject(ValueID source);
+    CellPointer cloneAsPlainObject(ValueID source, const DefinedOnCopy&);
     CellPointer newArrayOf(std::span<const Boxed>);
     CellPointer lowerValuesOrEntries(InlineBuiltin, const Value&);
     bool isNewPlainObject(ValueID) const;

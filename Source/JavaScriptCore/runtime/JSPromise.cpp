@@ -610,6 +610,12 @@ bool isDefinitelyNonThenable(JSObject* object, JSGlobalObject* globalObject)
         return true;
     if (state == Structure::DefinitelyNonThenableState::MaybeThenable)
         return false;
+#if ENABLE(AOT)
+    if (state == Structure::DefinitelyNonThenableState::NotComputed && globalObject->vm().useImmutableIntrinsics && structure->realm() == globalObject && AOT::Typed::neverHasThen(structure)) {
+        structure->setDefinitelyNonThenableState(Structure::DefinitelyNonThenableState::NonThenable);
+        return true;
+    }
+#endif
 
     bool result = true;
     auto* current = structure;

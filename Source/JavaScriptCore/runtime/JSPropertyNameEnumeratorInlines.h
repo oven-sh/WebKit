@@ -57,9 +57,6 @@ inline JSPropertyNameEnumerator* propertyNameEnumerator(JSGlobalObject* globalOb
         }
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    base->flattenIfCacheableDictionary(vm);
-#endif
     uint32_t numberStructureProperties = 0;
     PropertyNameArrayBuilder propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
     getEnumerablePropertyNames(globalObject, base, propertyNames, indexedLength, numberStructureProperties);

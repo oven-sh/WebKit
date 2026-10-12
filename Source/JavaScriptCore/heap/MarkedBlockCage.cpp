@@ -9,6 +9,7 @@
 #include "MarkedBlock.h"
 #include "Options.h"
 #include <wtf/BitVector.h>
+#include <wtf/CryptographicallyRandomNumber.h>
 #include <wtf/DataLog.h>
 #include <wtf/Lock.h>
 #include <wtf/MathExtras.h>
@@ -47,6 +48,11 @@ public:
         g_jscConfig.startOfMarkedBlockCage = start;
         g_jscConfig.sizeOfMarkedBlockCage = size;
         m_blockCount = size / MarkedBlock::blockSize;
+        if (m_blockCount > 1) {
+            uint64_t random = Options::seedOfVMRandomForFuzzer() ? Options::seedOfVMRandomForFuzzer() : cryptographicallyRandomNumber<uint64_t>();
+            m_placeOfFirstBlock = 1 + random % (m_blockCount - 1);
+            m_firstWrappedBlock = m_blockCount - m_placeOfFirstBlock + 1;
+        }
     }
 
     void* tryAllocateBlock()
@@ -68,10 +74,11 @@ public:
     void freeBlock(void* block)
     {
         uintptr_t offset = std::bit_cast<uintptr_t>(block) - g_jscConfig.startOfMarkedBlockCage;
-        size_t index = offset / MarkedBlock::blockSize;
+        size_t place = offset / MarkedBlock::blockSize;
+        size_t index = place >= m_placeOfFirstBlock ? place - m_placeOfFirstBlock + 1 : place + m_firstWrappedBlock - 1;
 
         Locker locker { m_lock };
-        RELEASE_ASSERT(index && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
+        RELEASE_ASSERT(place && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
         RELEASE_ASSERT(!m_committedFreeBlocks.get(index) && !m_decommittedFreeBlocks.get(index), offset);
         addCommittedFreeBlocks(index, index + 1);
     }
@@ -90,7 +97,9 @@ public:
 
         for (size_t begin = first; begin != notFound;) {
             size_t end = blocks.findBit(begin, false);
-            OSAllocator::decommit(blockAt(begin), (end - begin) * MarkedBlock::blockSize);
+            forEachRun(begin, end, [](void* address, size_t bytes) {
+                OSAllocator::decommit(address, bytes);
+            });
             begin = findBlock(blocks, end);
         }
 
@@ -113,7 +122,21 @@ private:
             return 0;
         return address;
 #else
-        void* address = OSAllocator::tryReserveUncommittedAligned(size, MarkedBlockCage::maxSize, OSAllocator::FastMallocPages);
+        void* address = nullptr;
+#if OS(LINUX)
+        for (unsigned attempt = 0; attempt < 16 && !address; ++attempt) {
+            void* wanted = std::bit_cast<void*>((128 + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % 1024)) * MarkedBlockCage::maxSize);
+            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, wanted);
+            if (!reserved)
+                return 0;
+            if (reserved == wanted)
+                address = reserved;
+            else
+                OSAllocator::releaseDecommitted(reserved, size, 0);
+        }
+#endif
+        if (!address)
+            address = OSAllocator::tryReserveUncommittedAligned(size, MarkedBlockCage::maxSize, OSAllocator::FastMallocPages);
 #if OS(UNIX)
         // What `undefined` and `null` are decoded to is in the first block: see AOT::prepareFaultingAccesses().
         if (address)
@@ -139,9 +162,20 @@ private:
 #endif
     }
 
-    static void* blockAt(size_t index)
+    void* blockAt(size_t index) const
     {
-        return std::bit_cast<void*>(g_jscConfig.startOfMarkedBlockCage + index * MarkedBlock::blockSize);
+        size_t place = index < m_firstWrappedBlock ? m_placeOfFirstBlock + index - 1 : index - m_firstWrappedBlock + 1;
+        return std::bit_cast<void*>(g_jscConfig.startOfMarkedBlockCage + place * MarkedBlock::blockSize);
+    }
+
+    template<typename Functor>
+    void forEachRun(size_t begin, size_t end, const Functor& functor) const
+    {
+        size_t middle = std::clamp(m_firstWrappedBlock, begin, end);
+        if (begin < middle)
+            functor(blockAt(begin), (middle - begin) * MarkedBlock::blockSize);
+        if (middle < end)
+            functor(blockAt(middle), (end - middle) * MarkedBlock::blockSize);
     }
 
     static size_t findBlock(const BitVector& blocks, size_t start)
@@ -171,7 +205,9 @@ private:
         for (size_t index = begin; index < end; ++index)
             m_decommittedFreeBlocks.quickClear(index);
         m_firstDecommittedFreeBlock = end;
-        OSAllocator::commit(blockAt(begin), (end - begin) * MarkedBlock::blockSize, true, false);
+        forEachRun(begin, end, [](void* address, size_t bytes) {
+            OSAllocator::commit(address, bytes, true, false);
+        });
         addCommittedFreeBlocks(begin, end);
         return begin;
     }
@@ -179,6 +215,8 @@ private:
     bool mapMoreBlocks()
     {
         size_t count = std::min(std::clamp(m_mappedBlockCount / 4, minBlocksPerMapping, maxBlocksPerMapping), m_blockCount - m_mappedBlockCount);
+        if (m_mappedBlockCount < m_firstWrappedBlock)
+            count = std::min(count, m_firstWrappedBlock - m_mappedBlockCount);
         if (!count || !tryMap(blockAt(m_mappedBlockCount), count * MarkedBlock::blockSize))
             return false;
         m_mappedBlockCount += count;
@@ -190,6 +228,8 @@ private:
     // The first block of the cage is not used: no cell has offset zero.
     size_t m_firstUnusedBlock { 1 };
     size_t m_mappedBlockCount { 1 };
+    size_t m_placeOfFirstBlock { 1 };
+    size_t m_firstWrappedBlock { std::numeric_limits<size_t>::max() };
     BitVector m_committedFreeBlocks;
     BitVector m_decommittedFreeBlocks;
     // No block below these is in the respective set.

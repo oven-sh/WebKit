@@ -56,6 +56,18 @@ static constexpr GPRReg stubTemporaryGPRs[] = { InvalidGPRReg };
 static constexpr unsigned numberOfOperationArgumentGPRs = GPRInfo::numberOfArgumentRegisters;
 constexpr GPRReg operationArgumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #endif
+#if CPU(X86_64)
+static constexpr unsigned numberOfDirectArgumentGPRs = GPRInfo::numberOfArgumentRegisters + 2;
+constexpr GPRReg directArgumentGPR(unsigned index)
+{
+    if (index < GPRInfo::numberOfArgumentRegisters)
+        return GPRInfo::toArgumentRegister(index);
+    return index == GPRInfo::numberOfArgumentRegisters ? X86Registers::eax : X86Registers::r10;
+}
+#else
+static constexpr unsigned numberOfDirectArgumentGPRs = numberOfArgumentGPRs;
+constexpr GPRReg directArgumentGPR(unsigned index) { return argumentGPR(index); }
+#endif
 static constexpr GPRReg stubImmediateGPR = countGPR;
 static constexpr GPRReg firstStubOperandGPR = GPRInfo::returnValueGPR;
 static_assert(stubTemporaryGPRs[0] == stubImmediateGPR);
@@ -161,6 +173,7 @@ struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits;
     static constexpr unsigned allocationShift = 32;
     static constexpr unsigned countShift = 56;
+    static constexpr unsigned isSlimBit = 63;
 #if CPU(ARM64)
     static constexpr unsigned maxNumberOfCaptures = 4;
 #else
@@ -175,7 +188,8 @@ struct ClosureRequest {
     static constexpr uint32_t functionOf(uint64_t request) { return request & ClosureWord::functionMask; }
     static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & 0xff; }
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
-    static constexpr unsigned countOf(uint64_t request) { return request >> countShift; }
+    static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x7f; }
+    static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit; }
 };
 
 } } // namespace JSC::AOT

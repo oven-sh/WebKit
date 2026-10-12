@@ -9,6 +9,8 @@
 #if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
 
 #include "B3BasicBlockInlines.h"
+#include "B3InsertionSetInlines.h"
+#include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3UpsilonValue.h"
 #include "B3ValueInlines.h"
@@ -65,14 +67,27 @@ Opcode flippedRelation(Opcode relation)
 
 } // anonymous namespace
 
-UpsilonsByPhi collectUpsilonsByPhi(Procedure& proc)
+const Vector<UpsilonValue*, 2>* UpsilonsByPhi::find(Value* phi) const
 {
-    UpsilonsByPhi result;
-    for (Value* value : proc.values()) {
-        if (auto* upsilon = value->as<UpsilonValue>())
-            result.add(upsilon->phi(), Vector<UpsilonValue*, 2>()).iterator->value.append(upsilon);
+    if (!m_map.size()) {
+        m_map.resize(m_proc.values().size());
+        for (Value* value : m_proc.values()) {
+            if (auto* upsilon = value->as<UpsilonValue>())
+                m_map[upsilon->phi()].append(upsilon);
+        }
     }
-    return result;
+    auto& upsilons = m_map[phi];
+    return upsilons.isEmpty() ? nullptr : &upsilons;
+}
+
+static Value* lastValueHandedTo(BasicBlock* block, Value* phi)
+{
+    for (unsigned index = block->size(); index--;) {
+        auto* upsilon = block->at(index)->as<UpsilonValue>();
+        if (upsilon && upsilon->phi() == phi)
+            return upsilon->child(0);
+    }
+    return nullptr;
 }
 
 std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const NaturalLoop& loop, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant)
@@ -89,7 +104,7 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
             return std::nullopt;
         slot = predecessor;
     }
-    if (!result.preHeader || result.preHeader->numSuccessors() != 1 || !result.latch || result.latch->numSuccessors() != 1 || result.latch->numPredecessors() != 1)
+    if (!result.preHeader || result.preHeader->last()->opcode() != Jump || !result.latch || result.latch->last()->opcode() != Jump || result.latch->numPredecessors() != 1)
         return std::nullopt;
     result.test = result.latch->predecessor(0);
     if (result.test->last()->opcode() != Branch)
@@ -118,22 +133,18 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
         if (upsilon && upsilon->child(0) == result.next && upsilon->phi()->owner == loop.header())
             result.inductionVariable = upsilon->phi();
     }
-    if (!result.inductionVariable)
+    if (!result.inductionVariable || lastValueHandedTo(result.latch, result.inductionVariable) != result.next)
         return std::nullopt;
-    for (UpsilonValue* upsilon : upsilonsByPhi.get(result.inductionVariable)) {
-        if (upsilon->owner == result.preHeader)
-            result.start = upsilon->child(0);
-        else if (upsilon->owner != result.latch)
-            return std::nullopt;
-    }
-    if (!result.start)
+    result.start = lastValueHandedTo(result.preHeader, result.inductionVariable);
+    if (!result.start || lastValueHandedTo(loop.header(), result.inductionVariable))
         return std::nullopt;
 
     Value* increment = result.next;
     if (increment->opcode() == Phi) {
-        auto upsilons = upsilonsByPhi.get(increment);
-        if (upsilons.size() != 2)
+        auto* found = upsilonsByPhi.find(increment);
+        if (!found || found->size() != 2)
             return std::nullopt;
+        auto& upsilons = *found;
         unsigned indexOfConstant = upsilons[0]->child(0)->hasInt64() ? 0 : 1;
         if (!upsilons[indexOfConstant]->child(0)->hasInt64())
             return std::nullopt;
@@ -150,6 +161,56 @@ std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops& loops, const Natural
     if (!result.step || result.step > maxIterationsPerStrip || result.step < -maxIterationsPerStrip || (result.step > 0) != result.increases())
         return std::nullopt;
     if (result.saturation && (result.isUnsigned() || *result.saturation == std::numeric_limits<int64_t>::min() || *result.saturation == std::numeric_limits<int64_t>::max()))
+        return std::nullopt;
+    return result;
+}
+
+std::optional<CountedLoop> analyzeCountedLoopTestedAtTheTop(NaturalLoops& loops, const NaturalLoop& loop, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi& upsilonsByPhi, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut)
+{
+    CountedLoop result;
+    result.header = loop.header();
+    result.preHeader = preHeader;
+    result.test = test;
+    bool firstStays = loops.belongsTo(test->successorBlock(0), loop);
+    if (test->last()->opcode() != Branch || firstStays == loops.belongsTo(test->successorBlock(1), loop))
+        return std::nullopt;
+    result.indexOfLatchInSuccessors = firstStays ? 0 : 1;
+    result.latch = test->successorBlock(result.indexOfLatchInSuccessors);
+    if (result.latch == loop.header() || condition->numChildren() != 2 || condition->child(0)->type() != Int64)
+        return std::nullopt;
+    auto inverted = invertedRelation(condition->opcode());
+    if (!inverted)
+        return std::nullopt;
+    result.relation = result.indexOfLatchInSuccessors ? *inverted : condition->opcode();
+    bool boundIsFirst = isInvariant(condition->child(0));
+    result.bound = condition->child(boundIsFirst ? 0 : 1);
+    result.inductionVariable = condition->child(boundIsFirst ? 1 : 0);
+    if (boundIsFirst)
+        result.relation = flippedRelation(result.relation);
+    if (!isInvariant(result.bound) || result.inductionVariable->opcode() != Phi || result.inductionVariable->owner != loop.header())
+        return std::nullopt;
+    auto* upsilons = upsilonsByPhi.find(result.inductionVariable);
+    if (!upsilons)
+        return std::nullopt;
+    for (UpsilonValue* upsilon : *upsilons) {
+        if (upsilon->owner == preHeader) {
+            result.start = upsilon->child(0);
+            continue;
+        }
+        if (!loops.belongsTo(upsilon->owner, loop))
+            return std::nullopt;
+        if (isLeftOut(upsilon->owner))
+            continue;
+        if (result.next && result.next != upsilon->child(0))
+            return std::nullopt;
+        result.next = upsilon->child(0);
+    }
+    if (!result.start || !result.next)
+        return std::nullopt;
+    if (result.next->opcode() != Add || result.next->child(0) != result.inductionVariable || !result.next->child(1)->hasInt64())
+        return std::nullopt;
+    result.step = result.next->child(1)->asInt64();
+    if (!result.step || result.step > maxIterationsPerStrip || result.step < -maxIterationsPerStrip || (result.step > 0) != result.increases())
         return std::nullopt;
     return result;
 }
@@ -176,6 +237,56 @@ bool relationHoldsOnEntry(const CountedLoop& loop)
         block = predecessor;
     }
     return false;
+}
+
+std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop& loop, Opcode opcode, Value* left, Value* right, Value* bound)
+{
+    if (!invertedRelation(opcode))
+        return std::nullopt;
+    if (left == bound && right == loop.inductionVariable)
+        opcode = flippedRelation(opcode);
+    else if (left != loop.inductionVariable || right != bound)
+        return std::nullopt;
+    if (opcode == loop.relation)
+        return true;
+    if (*invertedRelation(opcode) == loop.relation)
+        return false;
+    return std::nullopt;
+}
+
+bool foldComparisonsWithBounds(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "foldComparisonsWithBounds"_s);
+    NaturalLoops& loops = proc.naturalLoops();
+    if (!loops.numLoops())
+        return false;
+    proc.resetValueOwners();
+    UpsilonsByPhi upsilonsByPhi(proc);
+    InsertionSet insertionSet(proc);
+    bool changed = false;
+    for (unsigned loopIndex = loops.numLoops(); loopIndex--;) {
+        const NaturalLoop& loop = loops.loop(loopIndex);
+        auto countedLoop = analyzeCountedLoop(loops, loop, upsilonsByPhi, [&](Value* value) {
+            return !loops.belongsTo(value->owner, loop);
+        });
+        if (!countedLoop || !relationHoldsOnEntry(*countedLoop))
+            continue;
+        for (unsigned i = loop.size(); i--;) {
+            BasicBlock* block = loop.at(i);
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Value* value = block->at(index);
+                if (value->numChildren() != 2)
+                    continue;
+                auto outcome = outcomeOfComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
+                if (!outcome)
+                    continue;
+                value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));
+                changed = true;
+            }
+            insertionSet.execute(block);
+        }
+    }
+    return changed;
 }
 
 Value* appendEndOfStrip(Procedure& proc, BasicBlock* block, const CountedLoop& loop, Value* from, Value* bound, bool relationMayNotHold)

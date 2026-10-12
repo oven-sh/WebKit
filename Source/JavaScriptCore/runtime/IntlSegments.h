@@ -51,12 +51,6 @@ public:
 
     DECLARE_INFO;
 
-#if USE(BUN_JSC_ADDITIONS)
-    void setSegmenter(VM& vm, IntlSegmenter* segmenter) { m_owner.set(vm, this, segmenter); }
-    bool cutsSimpleGraphemesItself() const { return m_owner->cutsSimpleGraphemesItself(); }
-    // None, and something thrown: there is no room.
-    static Box<Vector<char16_t>> copyCharactersOf(JSGlobalObject*, JSString*);
-#endif
     JSValue containing(JSGlobalObject*, JSValue indexValue);
     JSObject* createSegmentIterator(JSGlobalObject*);
 
@@ -70,12 +64,6 @@ private:
     std::unique_ptr<UBreakIterator, UBreakIteratorDeleter> m_segmenter;
     Box<Vector<char16_t>> m_buffer;
     WriteBarrier<JSString> m_string;
-#if USE(BUN_JSC_ADDITIONS)
-    WriteBarrier<IntlSegmenter> m_owner;
-    // What the buffer and the break iterator hold, for the collector.
-    size_t m_extraMemory { 0 };
-    bool ensureBuffer(JSGlobalObject*);
-#endif
     IntlSegmenter::Granularity m_granularity;
 };
 

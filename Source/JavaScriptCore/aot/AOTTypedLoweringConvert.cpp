@@ -24,6 +24,7 @@ Integer Lowering::truncateToInteger(Number value)
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     patchpoint->append(value.value(), ValueRep::SomeRegister);
     patchpoint->effects = Effects::none();
+    patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::TruncateToInteger);
     patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
         jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
     });
@@ -114,6 +115,36 @@ Number Lowering::purified(Number value)
 // number, that it is an int32, keeps passing for what a division or a rounding has come out with.
 Boxed Lowering::boxNumber(Number value)
 {
+#if CPU(ARM64)
+    if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics()) {
+        if (value.value()->hasDouble())
+            return boxedConstant(jsNumber(purifyNaN(value.value()->asDouble())));
+        if (value.value()->opcode() == B3::IToD && value.value()->child(0)->type() == Int32)
+            return boxInt32(Word32(value.value()->child(0)));
+        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+        patchpoint->append(ConstrainedValue(value.value(), ValueRep::SomeRegister));
+        patchpoint->numGPScratchRegisters = 1;
+        patchpoint->effects = Effects::none();
+        patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::BoxNumber);
+        if (!m_context.numberBoxingGenerator) {
+            m_context.numberBoxingGenerator = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                GPRReg result = params[0].gpr();
+                FPRReg value = params[1].fpr();
+                GPRReg boxedDouble = params.gpScratch(0);
+                jit.moveDoubleTo64(value, boxedDouble);
+                jit.sub64(GPRInfo::numberTagRegister, boxedDouble);
+                jit.move(CCallHelpers::TrustedImm64(JSValue::encode(jsNaN())), result);
+                jit.compareOnFlagsDouble(value, value);
+                jit.m_assembler.csel<64>(boxedDouble, boxedDouble, result, ARM64Assembler::ConditionEQ);
+                jit.convertDoubleToInt32UsingJavaScriptSemantics(value, result);
+                jit.addZeroExtend64(GPRInfo::numberTagRegister, result, result);
+                jit.m_assembler.csel<64>(result, result, boxedDouble, ARM64Assembler::ConditionEQ);
+            });
+        }
+        patchpoint->setGenerator(m_context.numberBoxingGenerator);
+        return Boxed(patchpoint);
+    }
+#endif
     Word32 low = low32(truncateToInteger(value));
     // By the bits: negative zero is no int32, nor is what is not a number.
     return select(equal(bitsOf(toNumber(low)), bitsOf(value)), boxInt32(low), box(purified(value)));
@@ -121,7 +152,12 @@ Boxed Lowering::boxNumber(Number value)
 
 Word32 Lowering::isWithin(Integer value, Range range)
 {
-    return logicalAnd(greaterThanOrEqual(value, integer(range.least)), lessThanOrEqual(value, integer(range.most)));
+    if (range.least > range.most)
+        return word32(0);
+    if (range.least == range.most)
+        return equal(value, integer(range.least));
+    Integer fromLeast = range.least ? Integer(m_out.sub(value.value(), integer(range.least).value())) : value;
+    return Word32(m_out.belowOrEqual(fromLeast.value(), integer(static_cast<int64_t>(static_cast<uint64_t>(range.most) - static_cast<uint64_t>(range.least))).value()));
 }
 
 // Between representations of which at least one has room for `undefined` and `null` beside a number.
@@ -197,8 +233,12 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
         Integer value = operand.as<Integer>();
         if (to == Rep::Int32)
             return low32(value);
-        if (to == Rep::Double)
-            return toNumber(value);
+        if (to == Rep::Double) {
+            Number number = toNumber(value);
+            if (type.isInteger() && number.value()->opcode() == B3::IToD && number.value()->child(0) == value.value())
+                m_lastIntegerMadeNumber = { number.value(), value.value(), type.integers.least };
+            return number;
+        }
         if (to == Rep::JSValue) {
             Word32 low = low32(value);
             if (type.primitives & Primitive::Int && type.integers.isWithin(Range::int32()))
@@ -246,6 +286,7 @@ Word32 Lowering::toInt32(Number value)
         PatchpointValue* patchpoint = m_out.patchpoint(Int32);
         patchpoint->append(ConstrainedValue(value.value(), ValueRep::SomeRegister));
         patchpoint->effects = Effects::none();
+        patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::ToInt32);
         patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
             jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
         });

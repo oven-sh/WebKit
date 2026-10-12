@@ -70,11 +70,28 @@ std::optional<Operand> Lowering::lowerBind(ValueID function, StringID name, std:
     if (functionType.primitives & ~(Primitive::String | Primitive::Symbol | Primitive::BigInt))
         orElse(isCell(callee, functionType), generally);
     CellPointer target = asCell(callee);
-    orElse(equal(loadField<Word32>(target, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID()))), generally);
-    auto& definition = m_function.at(originOf(function));
-    bool isDefinedAsNoClass = (definition.opcode == Opcode::FunctionReference || definition.opcode == Opcode::NewClosure) && m_program.at(definition.function()).kind != FunctionKind::Constructor;
-    if (!isDefinedAsNoClass)
-        orElse(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), generally);
+    const Function* definedAs = functionDefining(function);
+    auto hasStructureIDAt = [&](ptrdiff_t offset) {
+        return equal(loadField<Word32>(target, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(offset)));
+    };
+    auto isFullClosureThatIsCalledOrElse = [&] {
+        orElse(hasStructureIDAt(Instance::offsetOfTypedClosureStructureID()), generally);
+        if (!definedAs || definedAs->kind == FunctionKind::Constructor)
+            orElse(isZero(bitAnd(loadField<Integer>(target, m_heaps.AOTTypedClosure_entry), integer(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit)))), generally);
+    };
+    if (definedAs && m_program.makesSlimClosures(*definedAs))
+        orElse(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)), generally);
+    else if (definedAs)
+        isFullClosureThatIsCalledOrElse();
+    else {
+        LBasicBlock isClosureThatIsCalled = m_out.newBlock();
+        LBasicBlock isNotSlim = m_out.newBlock();
+        m_out.branch(hasStructureIDAt(Instance::offsetOfTypedSlimClosureHeader(0)).value(), usually(isClosureThatIsCalled), rarely(isNotSlim));
+        m_out.appendTo(isNotSlim);
+        isFullClosureThatIsCalledOrElse();
+        m_out.jump(isClosureThatIsCalled);
+        m_out.appendTo(isClosureThatIsCalled);
+    }
     // Null until the general path has been taken once.
     LValue allocator = m_out.loadPtr(m_out.address(m_heaps.AOTInstance_mutableFields, m_instance, Instance::offsetOfAllocatorFor(kind)));
     orElse(m_out.notNull(allocator), generally);

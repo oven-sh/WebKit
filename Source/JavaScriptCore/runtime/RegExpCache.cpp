@@ -65,7 +65,7 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
 
     {
         Locker locker { m_lock };
-        weakAdd(m_weakCache, key, Weak<RegExp>(regExp, this));
+        weakAdd(m_weakCache, regExp->key(), Weak<RegExp>(regExp, this));
         return regExp;
     }
 }

@@ -98,7 +98,7 @@ inline CallFrame* VM::topJSCallFrame() const
     EntryFrame* entryFrame = topEntryFrame;
     do {
 #if ENABLE(AOT)
-        if (AOT::classifyAddress(removeCodePtrTag(frame->rawReturnPC())).kind != AOT::ImageAddressInfo::NotInImage) [[unlikely]]
+        if (AOT::kindOfAddress(removeCodePtrTag(frame->rawReturnPC())) != AOT::ImageAddressInfo::NotInImage) [[unlikely]]
             return nullptr;
 #endif
         frame = frame->callerFrame(entryFrame);

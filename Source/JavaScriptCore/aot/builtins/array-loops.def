@@ -21,8 +21,11 @@ inline IsPlainArrayLike
 runtime NewArrayWithHoles : RuntimeState JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity)
 runtime GrowNewArray : Heap void (JSCell* array, uint64_t length)
 runtime TruncateNewArray : Heap JSCell* (JSCell* array, uint32_t length)
+runtime ArrayGetDirectIndex : Nothing EncodedJSValue (JSCell* array, uint64_t index) noexcept
+runtime ArrayGetDirectDoubleIndex : Nothing double (JSCell* array, uint64_t index) noexcept
+runtime ArrayPutDirectIndex : RuntimeState void (JSCell* array, uint64_t index, EncodedJSValue value) noexcept
 
-# Of the prelude. An array operand is a cell. An index is within the length, which the caller has looked at since anything else ran.
+# Of the prelude. An array operand is a cell. An index is within the length, which the caller has looked at since anything else ran. How the array keeps its elements is looked at here.
 intrinsic CallNoInline (any/C, any/A, any/A...) -> anything ; CallsUserCode ; Inline(Call)
 intrinsic IsOriginalArray (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsOriginalArray)
 intrinsic IsDoubleArray (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsDoubleArray)
@@ -44,7 +47,7 @@ intrinsic IsPlainArrayLike (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsPla
 
 static Object.groupBy (any/GP?, any/C?, any/-...) -> new Object/N ; CallsUserCode ; Call
 
-static Array.from (any/GP) -> new Array/N ; MayThrow Allocates ReadsArguments ; Call
+static Array.from (any/GP) -> new Array/N ; MayThrow Allocates ReadsArguments ; Inline(ArrayFrom, Call)
 static Array.from (any/GP, any/C, any/A?) -> new Array/N ; CallsUserCode ; Prelude(Array$from)
 static Array.from (any/GP?, any/C?, any/A?, any/-...) -> new Array/N ; CallsUserCode ; Call
 

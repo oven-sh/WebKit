@@ -216,7 +216,17 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         //     Into this: RotR(value, M)
         //
         // And replace leaf with RotR.
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<Value*, 4> shlBases;
+        for (Value* leaf : leaves) {
+            if (leaf->opcode() == Shl && leaf->child(1)->hasInt32() && !shlBases.contains(leaf->child(0)))
+                shlBases.append(leaf->child(0));
+        }
+        for (Value* shlBase : shlBases) {
+            auto& shlEntry = *shlIndicesByBase.find(shlBase);
+#else
         for (auto& shlEntry : shlIndicesByBase) {
+#endif
             auto zshrIter = zshrIndicesByBase.find(shlEntry.key);
             if (zshrIter == zshrIndicesByBase.end())
                 continue;

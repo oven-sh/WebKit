@@ -75,6 +75,8 @@ enum class TransitionKind : uint8_t {
 
     // With immutable intrinsics: an array of ArrayType is of DerivedArrayType from here on. See JSObject::becomeDerivedArray().
     BecomeDerivedArray = 20,
+
+    FixAndMakePropertiesImmutable = 21,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -124,6 +126,7 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
     case TransitionKind::AddIndexedAccessors:
         return oldType | MayHaveIndexedAccessors;
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FixAndMakePropertiesImmutable:
         // A JSArray that still has Int32, Double or Contiguous elements here keeps its shape and becomes copy-on-write:
         // JSObject::makePropertiesImmutable() has moved them to such storage. Every other object with elements has been given dictionary indexing first.
         if ((oldType & IsArray) && (hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType)))
@@ -141,10 +144,16 @@ inline bool preventsExtensions(TransitionKind transition)
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
     case TransitionKind::MakePropertiesImmutable:
+    case TransitionKind::FixAndMakePropertiesImmutable:
         return true;
     default:
         return false;
     }
+}
+
+inline bool makesPropertiesImmutable(TransitionKind transition)
+{
+    return transition == TransitionKind::MakePropertiesImmutable || transition == TransitionKind::FixAndMakePropertiesImmutable;
 }
 
 inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
@@ -152,8 +161,8 @@ inline bool setsDontDeleteOnAllProperties(TransitionKind transition)
     switch (transition) {
     case TransitionKind::Seal:
     case TransitionKind::Freeze:
-    case TransitionKind::MakePropertiesImmutable:
     case TransitionKind::FixProperties:
+    case TransitionKind::FixAndMakePropertiesImmutable:
         return true;
     default:
         return false;
@@ -164,8 +173,8 @@ inline bool setsReadOnlyOnNonAccessorProperties(TransitionKind transition)
 {
     switch (transition) {
     case TransitionKind::Freeze:
-    case TransitionKind::MakePropertiesImmutable:
     case TransitionKind::FixProperties:
+    case TransitionKind::FixAndMakePropertiesImmutable:
         return true;
     default:
         return false;

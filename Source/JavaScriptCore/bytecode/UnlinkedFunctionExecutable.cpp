@@ -26,7 +26,6 @@
 #include "config.h"
 #include "UnlinkedFunctionExecutable.h"
 
-#include "AOTFacts.h"
 #include "AOTProgram.h"
 #include "BuiltinExecutables.h"
 #include "BytecodeGenerator.h"
@@ -90,10 +89,6 @@ static UnlinkedFunctionCodeBlock* generateUnlinkedFunctionCodeBlock(
 
     if (error.isValid())
         return nullptr;
-#if ENABLE(AOT)
-    if (AOT::Facts::shared()) [[unlikely]]
-        AOT::Facts::noteCode(result, executable);
-#endif
     vm.codeCache()->updateCache(executable, source, kind, result);
     return result;
 }
@@ -156,10 +151,6 @@ UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(VM& vm, Structure* struct
         ensureRareData().m_generatorOrAsyncWrapperFunctionParameterNames = FixedVector<Identifier>(WTF::move(generatorOrAsyncWrapperFunctionParameterNames));
     if (parentPrivateNameEnvironment)
         ensureRareData().m_parentPrivateNameEnvironment = WTF::move(*parentPrivateNameEnvironment);
-#if ENABLE(AOT)
-    if (AOT::Facts::shared()) [[unlikely]]
-        AOT::Facts::noteFunction(this, parentSource.provider()->source(), node->parametersStart());
-#endif
 }
 
 const Identifier& UnlinkedFunctionExecutable::name() const

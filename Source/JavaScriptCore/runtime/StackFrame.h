@@ -79,7 +79,18 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex, bool isAsyncFrame);
     StackFrame(VM&, JSCell* owner, CodeBlock*, BytecodeIndex);
     StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken, BytecodeIndex, bool isAsyncFrame = false);
-    StackFrame(VM&, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite);
+    StackFrame(VM&, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite, bool isAsyncFrame = false);
+    StackFrame(JSCell* instanceToken, const AOT::FrameInTrace& frame)
+        : m_frameData(JSFrameData { { }, { }, frame.callSite(), false, frame.isConstructed() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), frame.function, frame.typedFunction })
+    {
+    }
+    static void appendTypedFrames(VM&, JSCell* owner, JSCell* instanceToken, std::span<const AOT::FrameInTrace>, Vector<StackFrame>&, bool mayBeFollowedByMore);
+    static void appendTypedFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
+    enum SuspendedTag { Suspended };
+    StackFrame(SuspendedTag, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite)
+        : m_frameData(JSFrameData { { }, { }, callSite, true, CodeSpecializationKind::CodeForCall, { }, WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), typedCode, typedFunction })
+    {
+    }
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
     StackFrame(Wasm::IndexOrName);
     StackFrame(Wasm::IndexOrName, size_t functionIndex);
@@ -88,7 +99,7 @@ public:
     bool hasLineAndColumnInfo() const
     {
         if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
-            return jsFrame->codeBlock || jsFrame->aotExecutable || jsFrame->isTyped();
+            return jsFrame->codeBlock || jsFrame->aotExecutable || (jsFrame->isTyped() && !standsForHostFunction());
         return false;
     }
 
@@ -120,7 +131,9 @@ public:
     JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
+    void setIsConstructed() { std::get<JSFrameData>(m_frameData).aotKind = CodeSpecializationKind::CodeForConstruct; }
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
+    JS_EXPORT_PRIVATE bool standsForHostFunction() const;
     JS_EXPORT_PRIVATE JSGlobalObject* codeGlobalObject() const;
 
     JSCell* callee() const

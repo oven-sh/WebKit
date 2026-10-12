@@ -26,6 +26,9 @@
 #include "config.h"
 #include "B3MoveConstants.h"
 
+#include "AirArg.h"
+#include <wtf/Scope.h>
+
 #if ENABLE(B3_JIT)
 
 #include "B3Dominators.h"
@@ -79,17 +82,57 @@ private:
             BasicBlock* block;
             Value** child;
         };
+        auto isTakenAsImmediate = [](const Value* user, const Value* child) {
+            if (!child->hasInt() || user->numChildren() != 2 || (user->child(0)->hasInt() && user->child(1)->hasInt()))
+                return false;
+            switch (user->opcode()) {
+            case Sub:
+            case Equal:
+            case NotEqual:
+            case LessThan:
+            case GreaterThan:
+            case LessEqual:
+            case GreaterEqual:
+            case Above:
+            case Below:
+            case AboveEqual:
+            case BelowEqual:
+                if (child != user->child(1))
+                    return false;
+                [[fallthrough]];
+            case Add:
+                return Air::Arg::isValidImmForm(child->asInt());
+            case BitAnd:
+            case BitOr:
+            case BitXor:
+                return user->type() == Int64 ? Air::Arg::isValidBitImm64Form(child->asInt()) : Air::Arg::isValidBitImmForm(child->asInt());
+            case Shl:
+            case SShr:
+            case ZShr:
+            case RotR:
+            case RotL:
+                return child == user->child(1);
+            default:
+                return false;
+            }
+        };
         UncheckedKeyHashMap<ValueKey, unsigned> indexForConstant;
+        auto take = [&](Value* original) {
+            return materializationBlocks.contains(original) ? m_proc.clone(original) : original;
+        };
         Vector<Vector<Use, 2>> usesOfConstants;
+        Vector<Vector<Use, 2>> usesAsImmediates;
         for (BasicBlock* block : m_proc) {
             for (Value* value : *block) {
                 for (Value*& child : value->children()) {
                     if (!filter(child))
                         continue;
                     auto result = indexForConstant.add(child->key(), usesOfConstants.size());
-                    if (result.isNewEntry)
+                    if (result.isNewEntry) {
                         usesOfConstants.append(Vector<Use, 2> { });
-                    usesOfConstants[result.iterator->value].append(Use { block, &child });
+                        usesAsImmediates.append(Vector<Use, 2> { });
+                    }
+                    (isTakenAsImmediate(value, child) ? usesAsImmediates : usesOfConstants)[result.iterator->value].append(Use { block, &child });
                 }
             }
         }
@@ -122,13 +165,44 @@ private:
         IndexMap<BasicBlock*, Candidate> data(m_proc.size());
         Vector<BasicBlock*> candidates;
         unsigned epoch = 0;
-        for (auto& uses : usesOfConstants) {
+        for (unsigned constant = 0; constant < usesOfConstants.size(); ++constant) {
+            auto& uses = usesOfConstants[constant];
+            Vector<Value*, 4> placed;
+            auto placeImmediates = makeScopeExit([&] {
+                BasicBlock* top = nullptr;
+                Vector<Use*, 4> left;
+                for (Use& use : usesAsImmediates[constant]) {
+                    size_t index = placed.findIf([&](Value* value) {
+                        return dominators.dominates(materializationBlocks.get(value), use.block);
+                    });
+                    if (index != notFound) {
+                        *use.child = placed[index];
+                        continue;
+                    }
+                    left.append(&use);
+                    if (!top)
+                        top = use.block;
+                    while (top != m_proc.at(0) && !dominators.dominates(top, use.block))
+                        top = dominators.idom(top) ? dominators.idom(top) : m_proc.at(0);
+                }
+                if (left.isEmpty())
+                    return;
+                Value* value = take(*left[0]->child);
+                value->owner = top;
+                materializations[top].append(value);
+                materializationBlocks.add(value, top);
+                for (Use* use : left)
+                    *use->child = value;
+            });
+            if (uses.isEmpty())
+                continue;
             bool isUsedInOneBlock = std::ranges::all_of(uses, [&](Use& use) {
                 return use.block == uses[0].block;
             });
             if (BasicBlock* where = isUsedInOneBlock ? leastFrequentDominator[uses[0].block] : nullptr) {
-                Value* value = *uses[0].child;
+                Value* value = take(*uses[0].child);
                 value->owner = where;
+                placed.append(value);
                 valuesForConstant.add(value->key(), Vector<Value*, 1> { }).iterator->value.append(value);
                 materializations[where].append(value);
                 materializationBlocks.add(value, where);
@@ -207,7 +281,8 @@ private:
                 BasicBlock* where = data[use.block].where;
                 Value*& value = data[where].value;
                 if (!value) {
-                    value = values.isEmpty() ? original : m_proc.clone(original);
+                    value = take(original);
+                    placed.append(value);
                     value->owner = where;
                     values.append(value);
                     materializations[where].append(value);

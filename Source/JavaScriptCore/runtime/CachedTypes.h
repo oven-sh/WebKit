@@ -557,6 +557,7 @@ JS_EXPORT_PRIVATE bool isAOTImagePC(const void*);
 JS_EXPORT_PRIVATE std::optional<std::pair<size_t, size_t>> aotImageCodeRange(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE std::optional<size_t> aotImageSize(std::span<const uint8_t> image);
 JS_EXPORT_PRIVATE std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t> image);
+JS_EXPORT_PRIVATE size_t aotImageAlignment();
 #endif
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM&, const SourceCodeKey&, Ref<CachedBytecode>, Decoder::RecoverableCode = Decoder::RecoverableCode::Yes);

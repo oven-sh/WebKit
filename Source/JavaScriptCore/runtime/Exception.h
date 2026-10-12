@@ -27,6 +27,7 @@
 
 #include "JSDestructibleObject.h"
 #include "StackFrame.h"
+#include <wtf/CompactPointerTuple.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -45,11 +46,7 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack,
-#if USE(BUN_JSC_ADDITIONS)
-        // For VM::throwException(): it is being thrown now, so an unwinder comes next. See captureIsDeferred().
-        LeaveToUnwinder,
-#endif
+        DoNotCaptureStack
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -65,7 +62,12 @@ public:
     }
 
     JSValue value() const { return m_value.get(); }
-    const Vector<StackFrame>& stack() const LIFETIME_BOUND { return m_stack; }
+    const Vector<StackFrame>& stack() const LIFETIME_BOUND
+    {
+        if (m_returnAddressesAndDidNotifyInspectorOfThrow.pointer()) [[unlikely]]
+            const_cast<Exception*>(this)->materializeStack();
+        return m_stack;
+    }
     static size_t estimatedSize(JSCell*, VM&);
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -76,22 +78,8 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
-#if USE(BUN_JSC_ADDITIONS)
-    // The stack was not captured at the throw: whoever unwinds and finds no handler does it, while the frames are there.
-    bool captureIsDeferred() const { return m_captureIsDeferred; }
-    void captureDeferredStack(VM&);
-    void cancelDeferredCapture() { m_captureIsDeferred = false; }
-    // Thrown again before any unwinder has seen it: by C++ that took it out of the VM.
-    void willBeThrown(VM& vm)
-    {
-        if (m_wasThrown && m_captureIsDeferred) [[unlikely]]
-            captureDeferredStack(vm);
-        m_wasThrown = true;
-    }
-#endif
-
-    bool didNotifyInspectorOfThrow() const { return m_didNotifyInspectorOfThrow; }
-    void setDidNotifyInspectorOfThrow() { m_didNotifyInspectorOfThrow = true; }
+    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndDidNotifyInspectorOfThrow.type(); }
+    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndDidNotifyInspectorOfThrow.setType(true); }
 
 #if ENABLE(WEBASSEMBLY)
     void tryUnwrapValueForJSTag(VM&);
@@ -103,6 +91,8 @@ public:
 private:
     Exception(VM&, JSValue thrownValue);
     void finishCreation(VM&, StackCaptureAction);
+    bool tryKeepReturnAddresses(VM&);
+    JS_EXPORT_PRIVATE void materializeStack();
     static void destroy(JSCell*);
 
     WriteBarrier<Unknown> m_value;
@@ -110,11 +100,7 @@ private:
     WriteBarrier<Unknown> m_asyncContext;
 #endif
     Vector<StackFrame> m_stack;
-    bool m_didNotifyInspectorOfThrow { false };
-#if USE(BUN_JSC_ADDITIONS)
-    bool m_captureIsDeferred { false };
-    bool m_wasThrown { false };
-#endif
+    CompactPointerTuple<AOT::ReturnAddressTrace*, bool> m_returnAddressesAndDidNotifyInspectorOfThrow;
 
     friend class LLIntOffsetsExtractor;
 };

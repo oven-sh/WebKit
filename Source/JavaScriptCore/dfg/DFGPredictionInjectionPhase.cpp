@@ -47,16 +47,6 @@ public:
         ASSERT(m_graph.m_unificationState == GloballyUnified);
         
         ASSERT(codeBlock()->numParameters() >= 1);
-
-        Vector<SpeculatedType, 8> argumentBounds(FillWith { }, codeBlock()->numParameters(), SpecFullTop);
-        for (Node* node : *m_graph.block(0)) {
-            if (node->op() != CheckSoundType || node->child1()->op() != GetLocal)
-                continue;
-            Operand operand = node->child1()->operand();
-            if (operand.isArgument())
-                argumentBounds[operand.toArgument()] &= speculationFromSoundTypeMask(node->soundTypeMask());
-        }
-
         {
             // We only do this for the arguments at the first block. The arguments from
             // other entrypoints have already been populated with their predictions.
@@ -64,12 +54,7 @@ public:
 
             for (size_t arg = 0; arg < static_cast<size_t>(codeBlock()->numParameters()); ++arg) {
                 ArgumentValueProfile& profile = profiledBlock()->valueProfileForArgument(arg);
-                SpeculatedType prediction = profile.computeUpdatedPrediction();
-                if (Options::ignoreArgumentProfilesForTesting()) [[unlikely]]
-                    prediction = SpecNone;
-                if (SpeculatedType bound = argumentBounds[arg]; bound != SpecFullTop)
-                    prediction = (prediction & bound) ? (prediction & bound) : bound;
-                arguments[arg]->variableAccessData()->predict(prediction);
+                arguments[arg]->variableAccessData()->predict(profile.computeUpdatedPrediction());
             }
         }
         
@@ -87,16 +72,11 @@ public:
                 std::optional<JSValue> value = mustHandleValues[i];
                 if (!value)
                     continue;
-                if (operand.isArgument() && Options::ignoreArgumentProfilesForTesting()) [[unlikely]]
-                    continue;
                 Node* node = block->variablesAtHead.operand(operand);
                 if (!node)
                     continue;
                 ASSERT(node->accessesStack(m_graph));
-                SpeculatedType prediction = speculationFromValue(value.value());
-                if (!blockIndex && operand.isArgument())
-                    prediction &= argumentBounds[operand.toArgument()];
-                node->variableAccessData()->predict(prediction);
+                node->variableAccessData()->predict(speculationFromValue(value.value()));
             }
         }
         
@@ -112,3 +92,4 @@ bool performPredictionInjection(Graph& graph)
 } } // namespace JSC::DFG
 
 #endif // ENABLE(DFG_JIT)
+

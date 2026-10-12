@@ -140,6 +140,7 @@ public:
 
     // Returns the number of values in the hashtable.
     unsigned size() const;
+    static constexpr ptrdiff_t offsetOfKeyCount() { return OBJECT_OFFSETOF(PropertyTable, m_keyCount); }
 
     // Checks if there are any values in the hashtable.
     bool isEmpty() const;

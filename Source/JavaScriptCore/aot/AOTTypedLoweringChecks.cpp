@@ -9,9 +9,11 @@
 #if ENABLE(AOT)
 
 #include "B3BasicBlockInlines.h"
+#include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
 #include "B3MemoryValueInlines.h"
 #include "B3StackmapGenerationParams.h"
+#include "B3UseCounts.h"
 #include "JSCInlines.h"
 #include <wtf/SetForScope.h>
 
@@ -220,6 +222,54 @@ Word32 Lowering::lowerIsClassObjectAsDeclared(const Value& value)
     return isZero(Word32(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedAlteredClassObjects()), value.layout().index()))));
 }
 
+void Lowering::accessStaticField(const Value& value, const Invocable<void(CellPointer classObject, TypedPointer slot)> auto& inPlace, const Invocable<void(Word32 ofClass, Word32 field)> auto& generally)
+{
+    auto& layout = m_program.at(value.layout());
+    uint32_t place = layout.staticFields[value.immediates[1]].place;
+    auto word = [&](uint32_t number) {
+        return m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedStatics()), m_program.staticFieldPlacesOffset + number * sizeof(int32_t));
+    };
+    LBasicBlock isReady = m_out.newBlock();
+    LBasicBlock asks = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    LValue distance = m_out.load32(word(place));
+    m_out.branch(m_out.notZero32(distance), usually(isReady), rarely(asks));
+    m_out.appendTo(isReady);
+    CellPointer classObject(m_out.load64(word(layout.classObjectPlace)));
+    LValue butterfly = m_out.loadPtr(classObject.value(), m_heaps.JSObject_butterfly);
+    inPlace(classObject, TypedPointer(m_heaps.properties.atAnyNumber(), m_out.add(butterfly, m_out.signExt32ToPtr(distance))));
+    m_out.jump(continuation);
+    m_out.appendTo(asks);
+    generally(word32(value.layout().index()), word32(place - layout.classObjectPlace - 2));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+Operand Lowering::lowerGetStaticField(ValueID result, const Value& value)
+{
+    Rep rep = repOf(typeOf(result));
+    Vector<ValueFromBlock, 2> found;
+    accessStaticField(value, [&](CellPointer, TypedPointer slot) {
+        found.append(m_out.anchor(ensure(Boxed(m_out.load64(slot)), typeOf(result)).value));
+    }, [&](Word32 ofClass, Word32 field) {
+        found.append(m_out.anchor(ensure(AOT_TYPED_OPERATION(GetStaticField, ofClass, field), typeOf(result)).value));
+    });
+    return Operand(rep, m_out.phi(b3TypeOf(rep), found));
+}
+
+void Lowering::lowerPutStaticField(const Value& value)
+{
+    Boxed stored = in<Boxed>(value.child(0));
+    accessStaticField(value, [&](CellPointer classObject, TypedPointer slot) {
+        didEmitWrite(Writes::Heap);
+        m_out.store64(stored.value(), slot);
+        if (typeOf(value.child(0)).hasCells())
+            barrier(classObject);
+    }, [&](Word32 ofClass, Word32 field) {
+        AOT_TYPED_OPERATION(SetStaticField, ofClass, field, stored);
+    });
+}
+
 // immediates[1]: the object was allocated with the layout itself. Otherwise: with a member of it.
 Word32 Lowering::lowerHasShapeOf(const Value& value)
 {
@@ -249,21 +299,22 @@ Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeA
         return boolean(false);
     uint32_t general = entrypoint->value.index();
     // Which Structure its closures are born with. A class object has one of its own.
-    unsigned which = m_program.at(function).kind == FunctionKind::Constructor ? 0 : closureStructureOf(m_program.at(function).declaredAs);
+    ptrdiff_t structureID = offsetOfStructureIDOfClosuresOf(m_program.at(function));
+    bool isSlim = m_program.makesSlimClosures(m_program.at(function));
     // One object, if it has been asked for yet.
     if (m_program.at(function).captureTypes.isEmpty() && !m_program.at(function).hasManyClosures) {
         Word32 isTheOne = isTheClosure(cell, general);
         if (!mustBeAsMade)
             return isTheOne;
         return either<Word32>(isTheOne, [&] {
-            return equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID(which))));
+            return equal(loadField<Word32>(cell, m_heaps.JSCell_structureID), Word32(loadRuntimeState32(structureID)));
         }, [&] {
             return boolean(false);
         });
     }
-    Word32 isAsAllocated = equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID(which))));
+    Word32 isAsAllocated = equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(structureID)));
     return either<Word32>(isAsAllocated, [&] {
-        return equal(functionOfClosure(cell), word32(general));
+        return equal(functionOfClosure(cell, isSlim), word32(general));
     }, [&] {
         // A closure that was given properties has another Structure. The test is a guard: it is taken for none, and goes the way that is right for every value. A class object has a Structure of its own from the start.
         if (mustBeAsMade || m_program.at(function).kind != FunctionKind::Constructor)
@@ -276,9 +327,22 @@ Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeA
 }
 
 // ClosureWord::functionOf().
-Word32 Lowering::functionOfClosure(CellPointer closure)
+ptrdiff_t Lowering::offsetOfStructureIDOfClosuresOf(const Function& function)
 {
-    LValue upperHalf = m_out.castToInt32(m_out.lShr(loadField<Integer>(closure, m_heaps.AOTTypedClosure_entry).value(), m_out.constInt32(ClosureWord::functionShift)));
+    if (m_program.makesSlimClosures(function))
+        return Instance::offsetOfTypedSlimClosureHeader(slimClosureKindOf(static_cast<uint8_t>(function.kind) | function.declaredAs));
+    return Instance::offsetOfTypedClosureStructureID(function.kind == FunctionKind::Constructor ? 0 : closureStructureOf(function.declaredAs));
+}
+
+Word32 Lowering::isUnreifiedSlimClosure(CellPointer cell)
+{
+    static_assert(SlimClosureWithPropertiesType == SlimClosureType + 1);
+    return equal(typeOfCell(cell), word32(SlimClosureType));
+}
+
+Word32 Lowering::functionOfClosure(CellPointer closure, bool isSlim)
+{
+    LValue upperHalf = m_out.castToInt32(m_out.lShr(loadField<Integer>(closure, isSlim ? m_heaps.AOTTypedSlimClosure_word : m_heaps.AOTTypedClosure_entry).value(), m_out.constInt32(ClosureWord::functionShift)));
     return Word32(m_out.bitAnd(upperHalf, m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
 }
 
@@ -291,8 +355,8 @@ void Lowering::closureOfOrElse(CellPointer cell, FunctionID function, bool mustB
         orElse(isClosureOf(cell, function, mustBeAsMade), otherwise);
         return;
     }
-    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID(closureStructureOf(callee.declaredAs))))), otherwise);
-    orElse(equal(functionOfClosure(cell), word32(entrypoint->value.index())), otherwise);
+    orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(offsetOfStructureIDOfClosuresOf(callee)))), otherwise);
+    orElse(equal(functionOfClosure(cell, m_program.makesSlimClosures(callee)), word32(entrypoint->value.index())), otherwise);
 }
 
 // Ends the block.
@@ -327,7 +391,10 @@ void Lowering::findClosureTestsCarriedOutByBranches()
             isLookedAtOtherwise.set(block.terminator.value.index());
     }
     for (auto& block : m_function.blocks) {
-        if (block.terminator.kind == TerminatorKind::Branch && m_function.at(block.terminator.value).opcode == Opcode::IsClosureOf && !isLookedAtOtherwise.get(block.terminator.value.index()))
+        if (block.terminator.kind != TerminatorKind::Branch || isLookedAtOtherwise.get(block.terminator.value.index()))
+            continue;
+        auto& condition = m_function.at(block.terminator.value);
+        if (condition.opcode == Opcode::IsClosureOf || isAwaitMayContinue(condition) || isGuardOfReceiver(condition) || isTestOfForInStamp(condition))
             m_isCarriedOutByBranch.set(block.terminator.value.index());
     }
 }
@@ -351,7 +418,7 @@ Word32 Lowering::lowerIsClosureOf(const Value& value)
 // As a rule what is called is a closure of the program or a function of the engine.
 Word32 Lowering::isCallable(CellPointer cell)
 {
-    return either<Word32>(equal(typeOfCell(cell), word32(JSFunctionType)), [&] {
+    return either<Word32>(hasTypeOfFunctionFlag(cell), [&] {
         return boolean(true);
     }, [&] {
         return AOT_TYPED_OPERATION(IsCallable, cell);
@@ -411,9 +478,11 @@ Word32 Lowering::lowerTypeOfIs(const Value& value)
     auto is = [&](TypeofType what) {
         return boolean(what == wanted);
     };
-    when(equal(type, word32(JSFunctionType)), is(TypeofType::Function));
-    when(below(type, word32(ObjectType)), boolean(false));
-    when(lacksBits(loadByte(cell, m_heaps.JSCell_typeInfoFlags), MasqueradesAsUndefined | OverridesGetCallData), is(TypeofType::Object));
+    Word32 flags = loadByte(cell, m_heaps.JSCell_typeInfoFlags);
+    when(hasBits(flags, TypeOfYieldsFunction), is(TypeofType::Function));
+    if (wanted != TypeofType::Function)
+        when(below(type, word32(ObjectType)), boolean(false));
+    when(lacksBits(flags, MasqueradesAsUndefined | OverridesGetCallData), is(TypeofType::Object));
     join.add(equal(AOT_TYPED_OPERATION(TypeOfObject, cell), word32(static_cast<int32_t>(wanted))));
     return join.finish().as<Word32>();
 }
@@ -445,9 +514,9 @@ Word32 Lowering::cellFits(CellPointer cell, const Type& from, const Type& to, LB
     if (to.anyFunction && (from.anyFunction || mayBeAnyObject))
         result = logicalOr(result, isCallable(cell));
     for (uint16_t index : to.engineClasses) {
-        if (!mayBeAnyObject && !from.engineClasses.contains(index))
-            continue;
         JSType itsType = m_builtins.classes()[index].type;
+        if (!mayBeAnyObject && !std::ranges::any_of(from.engineClasses, [&](uint16_t other) { return m_builtins.classes()[other].type == itsType; }))
+            continue;
         result = logicalOr(result, equal(type(), word32(itsType)));
         if (itsType != ArrayType)
             continue;
@@ -533,6 +602,35 @@ Word32 Lowering::nonCellFits(Boxed value, const Type& from, const Type& to)
 // The number as an integer of the range.
 Integer Lowering::integralOrElse(Number number, Range range, LBasicBlock otherwise)
 {
+#if CPU(ARM64)
+    if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics() && range.isWithin(Range::int32())) {
+        LBasicBlock continuation = m_out.newBlock();
+        PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+        patchpoint->effects = Effects::none();
+        patchpoint->effects.terminal = true;
+        patchpoint->append(ConstrainedValue(number.value(), ValueRep::SomeRegister));
+        m_out.appendSuccessor(rarely(otherwise));
+        m_out.appendSuccessor(usually(continuation));
+        patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.convertDoubleToInt32UsingJavaScriptSemantics(params[1].fpr(), params[0].gpr());
+            CCallHelpers::Jump isNoInt32 = jit.branchOnFlags(CCallHelpers::NotEqual);
+            CCallHelpers::Jump isInt32;
+            if (!params.fallsThroughToSuccessor(1))
+                isInt32 = jit.jump();
+            Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+            params.addLatePath([=](CCallHelpers& jit) {
+                isNoInt32.linkTo(*labels[0], &jit);
+                if (isInt32.isSet())
+                    isInt32.linkTo(*labels[1], &jit);
+            });
+        });
+        m_out.appendTo(continuation);
+        Integer exact = signExtended(Word32(patchpoint));
+        if (!Range::int32().isWithin(range))
+            orElse(isWithin(exact, range), otherwise);
+        return exact;
+    }
+#endif
     Integer truncated = truncateToInteger(number);
     // By the bits: negative zero is no integer, nor is what is not a number.
     orElse(equal(bitsOf(convertToNumber(truncated)), bitsOf(number)), otherwise);
@@ -574,7 +672,6 @@ Operand Lowering::fitBoxedToIntegerOrElse(Boxed value, const Type& from, const T
     }
     if (mayBeNumber) {
         // The engine may keep an integral number as a double.
-        orElse(isNumber(value), otherwise);
         results.append(m_out.anchor(integralOrElse(unboxedDouble(value), to.integers, otherwise).value()));
         m_out.jump(continuation);
     } else
@@ -828,7 +925,10 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
     }
     LBasicBlock continuation = m_out.m_block;
     m_out.appendTo(mismatch);
-    throwTypeMismatch(operand, guarantee, type);
+    if (LBasicBlock handler = handlerEnteredByBranch())
+        m_out.jump(handler);
+    else
+        throwTypeMismatch(operand, guarantee, type);
     m_out.appendTo(continuation);
     return result;
 }
@@ -911,9 +1011,50 @@ void Lowering::auditResult(Operand operand, const Value& value)
     m_out.appendTo(continuation);
 }
 
+void Lowering::validateOnlyFunction(Operand stored, ValueID id, FunctionID function, bool mayBeNil)
+{
+    if ((stored.rep != Rep::Cell && stored.rep != Rep::JSValue) || m_function.at(id).opcode == Opcode::Unspecified)
+        return;
+    if (stored.value->hasInt64() && !stored.value->asInt64())
+        return;
+    Boxed boxed(stored.value);
+    LBasicBlock isNotEmpty = m_out.newBlock();
+    LBasicBlock cellCase = m_out.newBlock();
+    LBasicBlock notCellCase = m_out.newBlock();
+    LBasicBlock doesNotHold = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.notZero64(boxed.value()), unsure(isNotEmpty), unsure(continuation));
+    m_out.appendTo(isNotEmpty);
+    m_out.branch(isCell(boxed).value(), unsure(cellCase), unsure(notCellCase));
+    m_out.appendTo(notCellCase);
+    if (mayBeNil)
+        m_out.branch(isUndefinedOrNull(boxed).value(), unsure(continuation), rarely(doesNotHold));
+    else
+        m_out.jump(doesNotHold);
+    m_out.appendTo(cellCase);
+    auto entrypoint = m_program.genericEntrypoints.find(function.index());
+    if (entrypoint == m_program.genericEntrypoints.end())
+        m_out.jump(doesNotHold);
+    else {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        Integer word(callAllocationStub(Stub::TypedClosureEntry, { { boxed.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));
+        Word32 functionOfWord(m_out.bitAnd(m_out.castToInt32(m_out.lShr(word.value(), m_out.constInt32(ClosureWord::functionShift))), m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
+        m_out.branch(logicalAnd(logicalNot(isZero(word)), equal(functionOfWord, word32(entrypoint->value.index()))).value(), unsure(continuation), rarely(doesNotHold));
+    }
+    m_out.appendTo(doesNotHold);
+    AOT_TYPED_OPERATION(FactDoesNotHold, boxed, word32(m_id.index()), word32(id.index()));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
 void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
 {
-    if (type.isNever())
+    if (type.isNever() || operand.value == placeholder(operand.rep).value)
+        return;
+    ValueID source = id;
+    while (m_function.at(source).opcode == Opcode::Cast && m_function.at(source).castReason() == CastReason::Upcast)
+        source = m_function.at(source).child(0);
+    if (m_entriesMadeAsRecords.get(source.index()))
         return;
     // An environment and the frame of a coroutine have no shape word to look at.
     for (LayoutID view : type.views) {
@@ -937,11 +1078,11 @@ void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
         held = Type::ofPrimitives(Primitive::Number);
         break;
     case Rep::Cell:
-        held = Type::object();
-        held.anyFunction = true;
-        held.primitives |= Primitive::String | Primitive::Symbol | Primitive::BigInt;
-        break;
+        operand = Operand(Rep::JSValue, operand.value);
+        [[fallthrough]];
     case Rep::JSValue:
+        if (operand.value->hasInt64() && !operand.value->asInt64())
+            return;
         held = Type::anything();
         break;
     }
@@ -952,12 +1093,15 @@ void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
     LBasicBlock doesNotHold = newColdBlock();
     {
         SetForScope isValidatingFact(m_isValidatingFact, true);
+        if (operand.rep == Rep::JSValue)
+            Emitter::orElse(m_out.notZero64(operand.value), doesNotHold);
         fitOrElse(operand, held, type, doesNotHold);
     }
-    LBasicBlock continuation = m_out.m_block;
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.jump(continuation);
     m_out.appendTo(doesNotHold);
     AOT_TYPED_OPERATION(FactDoesNotHold, convertTo<Boxed>(operand, held), word32(m_id.index()), word32(id.index()));
-    m_out.unreachable();
+    m_out.jump(continuation);
     m_out.appendTo(continuation);
 }
 
@@ -966,8 +1110,7 @@ void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
 // cage), where nothing is mapped. A boxed number is not: ARM64 ignores the top byte of an address, so one in 512 doubles is a low address that may be mapped. What may be a number keeps its test.
 bool Lowering::markNilTest(CellPointer accessed)
 {
-    // What a handler of this function needs is in memory only where a call is expected to throw.
-    if (!accessed || m_currentCatchEntrypoint)
+    if (!accessed || m_watchingHandler)
         return false;
     LValue number = m_out.constInt32(m_context.nilTests.size());
     PatchpointValue* marker = m_out.patchpoint(Void);
@@ -1068,6 +1211,133 @@ static void emitAccess(CCallHelpers& jit, B3::Opcode opcode, B3::Type type, bool
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
+}
+
+void foldNumberBoxings(Procedure& proc, LoweringContext& context)
+{
+    if (!context.numberBoxingGenerator)
+        return;
+    InsertionSet insertionSet(proc);
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            auto* boxing = block->at(index)->as<PatchpointValue>();
+            if (!boxing || boxing->generator() != context.numberBoxingGenerator.get() || !boxing->child(0)->hasDouble())
+                continue;
+            boxing->replaceWithIdentity(insertionSet.insert<Const64Value>(index, boxing->origin(), JSValue::encode(jsNumber(purifyNaN(boxing->child(0)->asDouble())))));
+        }
+        insertionSet.execute(block);
+    }
+}
+
+#if CPU(ARM64)
+static bool joinsCompareChain(B3::Value* value)
+{
+    switch (value->opcode()) {
+    case B3::BitAnd:
+    case B3::BitOr:
+        return joinsCompareChain(value->child(0)) && joinsCompareChain(value->child(1));
+    case B3::Equal:
+    case B3::NotEqual:
+        if (value->child(1)->isInt(0) && value->child(0)->opcode() == B3::BitAnd && value->child(0)->child(1)->hasInt() && hasOneBitSet(static_cast<uint64_t>(value->child(0)->child(1)->asInt())))
+            return false;
+        return true;
+    case B3::LessThan:
+    case B3::GreaterThan:
+    case B3::LessEqual:
+    case B3::GreaterEqual:
+    case B3::Above:
+    case B3::Below:
+    case B3::AboveEqual:
+    case B3::BelowEqual:
+        return true;
+    default:
+        return false;
+    }
+}
+#endif
+
+static bool comparesWithConstant(B3::Value* value)
+{
+    return (value->opcode() == B3::Equal || value->opcode() == B3::NotEqual) && value->child(1)->hasInt();
+}
+
+void splitBranchConditions(Procedure& proc)
+{
+    Vector<B3::BasicBlock*> worklist;
+    for (B3::BasicBlock* block : proc) {
+        B3::Value* last = block->last();
+        if (last->opcode() == B3::Branch && (last->child(0)->opcode() == B3::BitAnd || last->child(0)->opcode() == B3::BitOr))
+            worklist.append(block);
+    }
+    if (worklist.isEmpty())
+        return;
+    B3::UseCountsWithoutUsingInstructions useCounts(proc);
+    bool changed = false;
+    while (!worklist.isEmpty()) {
+        B3::BasicBlock* block = worklist.takeLast();
+        B3::Value* branch = block->last();
+        if (branch->opcode() != B3::Branch)
+            continue;
+        B3::Value* condition = branch->child(0);
+        if ((condition->opcode() != B3::BitAnd && condition->opcode() != B3::BitOr) || condition->owner != block || useCounts.numUses(condition) != 1)
+            continue;
+        B3::Value* first = condition->child(0);
+        B3::Value* second = condition->child(1);
+        if (!first->returnsBool() || !second->returnsBool() || first->isConstant() || second->isConstant() || first == second)
+            continue;
+        if (useCounts.numUses(first) != 1 || useCounts.numUses(second) != 1)
+            continue;
+#if CPU(ARM64)
+        if (joinsCompareChain(condition))
+            continue;
+#endif
+        if (comparesWithConstant(first) && comparesWithConstant(second) && first->child(0) == second->child(0))
+            continue;
+
+        UncheckedKeyHashMap<B3::Value*, unsigned> usesThatSink;
+        usesThatSink.add(second, 1);
+        Vector<B3::Value*, 8> sunk;
+        bool crossesWrite = false;
+        auto& values = block->values();
+        for (unsigned i = values.size() - 1; i--;) {
+            B3::Value* value = values[i];
+            if (value == condition)
+                continue;
+            B3::Effects effects = value->effects();
+            auto found = usesThatSink.find(value);
+            bool reads = effects.reads || effects.readsPinned;
+            if (found != usesThatSink.end() && found->value == useCounts.numUses(value) && !effects.mustExecute() && !effects.readsLocalState && !(reads && crossesWrite)) {
+                sunk.append(value);
+                for (B3::Value* child : value->children())
+                    usesThatSink.add(child, 0).iterator->value++;
+                continue;
+            }
+            crossesWrite |= effects.isWrite();
+        }
+
+        B3::FrequentedBlock taken = block->taken();
+        B3::FrequentedBlock notTaken = block->notTaken();
+        B3::BasicBlock* next = proc.addBlock(std::max(taken.block()->frequency(), notTaken.block()->frequency()));
+        B3::FrequentedBlock toNext(next, taken.isRare() && notTaken.isRare() ? B3::FrequencyClass::Rare : B3::FrequencyClass::Normal);
+        values.removeAllMatching([&](B3::Value* value) {
+            return value == condition || sunk.contains(value);
+        });
+        for (unsigned i = sunk.size(); i--;)
+            next->append(sunk[i]);
+        next->appendNew<B3::Value>(proc, B3::Branch, branch->origin(), second);
+        next->setSuccessors(taken, notTaken);
+        branch->child(0) = first;
+        if (condition->opcode() == B3::BitAnd)
+            block->setSuccessors(toNext, notTaken);
+        else
+            block->setSuccessors(taken, toNext);
+        proc.deleteValue(condition);
+        worklist.append(next);
+        worklist.append(block);
+        changed = true;
+    }
+    if (changed)
+        proc.invalidateCFG();
 }
 
 // A test for nil whose failure throws, followed by an access through the pointer with nothing in between that anybody could see: the access is the test.
@@ -1600,6 +1870,7 @@ std::optional<Operand> Lowering::lowerFusedUse(size_t index)
 Operand Lowering::carryOutFusedCasts(Operand operand, const Type& from)
 {
     SetForScope areBeingCarriedOut(m_fusedCasts->areBeingCarriedOut, true);
+    SetForScope isInArm(m_isInArm, true);
     // What is laid down in an arm that is rarely run is rarely run: whoever asks the block whether a call may take the form for cold code is told so.
     SetForScope frequency(m_out.m_frequency, m_out.m_block->frequency() ? m_out.m_frequency : 0);
     auto& values = m_currentBlock->values;
@@ -1818,6 +2089,7 @@ Operand Lowering::lowerCastBehindCoercion(ValueID result, const Value& cast, con
     }
     m_out.appendTo(otherwise);
     SetForScope isCarryingOut(m_isCarryingOutSunkCoercion, true);
+    SetForScope isInArm(m_isInArm, true);
     {
         // It changes the object where it is: what it yields is what it was given.
         SetForScope currentIndex(m_currentIndexInBlock, m_currentIndexInBlock - 1);
@@ -1827,10 +2099,36 @@ Operand Lowering::lowerCastBehindCoercion(ValueID result, const Value& cast, con
     return join.finish();
 }
 
+std::optional<Operand> Lowering::castByBody(const Value& cast, Operand operand, const Type& from, const Type& to)
+{
+    if (!isCompact(Program::leverOfBodiesOfCasts) || (operand.rep != Rep::JSValue && operand.rep != Rep::Cell) || m_program.isHeldAlready(from, to, cast.castReason()))
+        return std::nullopt;
+    if (m_environmentAwaitingBarrier || m_isFillingArrayAtBirth || !m_fieldsAwaitingFirstStore.isEmpty())
+        return std::nullopt;
+    FunctionID body = m_program.bodyOfCast(cast);
+    if (!body)
+        return std::nullopt;
+    auto& callee = m_program.at(body);
+    if (callee.writes > m_function.writes || (callee.writesShapeWords && !m_function.writesShapeWords))
+        return std::nullopt;
+    return callCompiled(body, { Argument { operand, &from } }, to);
+}
+
 Operand Lowering::lowerCast(ValueID result, const Value& value)
 {
+    if (value.castReason() == CastReason::Upcast) {
+        if (auto found = m_pinnedReads.find(value.child(0).index()); found != m_pinnedReads.end()) {
+            PinnedRead read = found->value;
+            m_pinnedReads.set(result.index(), read);
+            return placeholder(repOf(typeOf(result)));
+        }
+    }
+    if (handlerEnteredByBranch())
+        return ensure(get(value.child(0)), typeOf(value.child(0)), typeOf(result));
     if (m_cloneGroup && m_cloneGroup->cast == m_currentIndexInBlock)
         return lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
+    if (m_mergeGroup && m_mergeGroup->first + 2 == m_currentIndexInBlock)
+        return lowerMergeGroup(*std::exchange(m_mergeGroup, std::nullopt));
     if (auto fused = lowerFusedCast(m_currentIndexInBlock))
         return *fused;
     // But for what stands for the access of a property, which throws as the access does.
@@ -1847,6 +2145,8 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     case CastReason::Upcast:
         return convert(operand, from, repOf(to));
     case CastReason::As:
+        if (auto called = castByBody(value, operand, from, to))
+            return *called;
         return coerce(operand, from, value);
     case CastReason::Coerce:
         return lowerCoercion(result, value);
@@ -1866,9 +2166,22 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     // The receiver of a call that was resolved, with the name of what is called: what is left of the read of the property. See resolveCalls() and resolveBuiltins().
     if (StringID name = value.string(); name && !(from.primitives & ~(cellPrimitives | Primitive::UndefinedOrNull)) && from.withoutPrimitives(Primitive::UndefinedOrNull).isWithin(to, m_program))
         return convert(nonNil(operand, from, name), to, repOf(to));
+    if (StringID name = value.string(); name && !from.hasObjects() && from.mayBeUndefinedOrNull() && from.primitives & (Primitive::Number | Primitive::Boolean)) {
+        LBasicBlock isNil = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(lowerIsUndefinedOrNull(value.child(0)).value(), rarely(isNil), usually(continuation));
+        m_out.appendTo(isNil);
+        throwNullish(in<Boxed>(value.child(0)), name, { });
+        m_out.appendTo(continuation);
+        return ensure(operand, from, to);
+    }
+    if (auto* engineClass = to.hasOnlyPrimitives(Primitive::String) ? &m_builtins.stringClass() : to.onlyEngineClass(); engineClass && !value.string() && answerOfGuardAhead(value.child(0), *engineClass, AskedFor::Class).value_or(false))
+        return convert(operand, to, repOf(to));
     // What was made here is an object, whatever its type says: in a JavaScript function that is anything.
     if (Opcode madeBy = m_function.at(value.child(0)).opcode; to.anyObject && !value.string() && (madeBy == Opcode::NewObject || madeBy == Opcode::NewObjectWithShape || madeBy == Opcode::NewArray))
         return convert(operand, to, repOf(to));
+    if (auto called = castByBody(value, operand, from, to))
+        return *called;
     return ensure(operand, from, to);
 }
 
@@ -1987,7 +2300,7 @@ void Lowering::findLeavesFetchedLate()
             case Opcode::CallBuiltin:
                 if (isDefineField(user) || isAccessorDefinition(user))
                     late = user.arguments[1];
-                else if (looksForConstantWithoutItsCell(user))
+                else if (looksForConstantWithoutItsCell(user) || isErrorThrownWhereMade(block, id))
                     late = user.arguments[0];
                 break;
             default:
@@ -2011,7 +2324,7 @@ void Lowering::findLeavesFetchedLate()
     }
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
-            if (isLeaf(id) && !hasOtherUse.get(id.index()) && !m_catchSpills.contains(id.index()))
+            if (isLeaf(id) && !hasOtherUse.get(id.index()))
                 m_isFetchedLate.set(id.index());
         }
     }
@@ -2019,9 +2332,6 @@ void Lowering::findLeavesFetchedLate()
 
 void Lowering::findTruthinessPhis()
 {
-    // A handler is passed its parameters through memory.
-    if (!m_catchEntrypoints.isEmpty())
-        return;
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
             if (m_function.at(id).opcode != Opcode::ToBoolean)
@@ -2055,9 +2365,6 @@ void Lowering::findTruthinessPhis()
 // A box behind the join is paid for on every path. Ahead of it, only on the paths with a read.
 void Lowering::findParametersJoinedInParts()
 {
-    // A handler is passed its parameters through memory.
-    if (!m_catchEntrypoints.isEmpty())
-        return;
     BitVector isNeverBoxed;
     for (unsigned i = 1; i < m_function.blocks.size(); ++i) {
         for (ValueID id : m_function.blocks[i].parameters) {
@@ -2136,8 +2443,8 @@ Word32 Lowering::lowerToBoolean(ValueID id)
     auto& type = typeOf(id);
     Operand operand = get(id);
     // Unless a test has shown more of the value.
-    if (LValue phi = m_truthinessPhis.get(id.index()); phi && operand.value == m_values[id.index()].value)
-        return Word32(phi);
+    if (auto known = m_truthinessPhis.get(id.index()); known.isTruthy && operand.value == known.value)
+        return Word32(known.isTruthy);
     // A cast that converts nothing has boxed what was kept some other way: `a && b` passes `a` on as `false|number`. A read and a cast may have yielded a placeholder: see
     // lowerFusedCast().
     if (auto& value = m_function.at(id); operand.rep == Rep::JSValue && value.opcode == Opcode::Cast && value.castReason() != CastReason::Coerce) {

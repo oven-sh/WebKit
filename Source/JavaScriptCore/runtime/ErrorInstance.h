@@ -120,7 +120,12 @@ public:
     
     JS_EXPORT_PRIVATE String tryGetMessageForDebugging();
 
-    Vector<StackFrame>* stackTrace() LIFETIME_BOUND { return m_stackTrace.get(); }
+    Vector<StackFrame>* stackTrace() LIFETIME_BOUND
+    {
+        if (m_returnAddresses) [[unlikely]]
+            materializeStackTrace();
+        return m_stackTrace.get();
+    }
 
     bool materializeErrorInfoIfNeeded(VM&);
     bool materializeErrorInfoIfNeeded(VM&, PropertyName);
@@ -160,11 +165,13 @@ protected:
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
 
     void computeErrorInfo(VM&, bool allocationAllowed);
+    JS_EXPORT_PRIVATE void materializeStackTrace();
     bool materializeCapturedStackPropertyIfSaved(VM&);
 
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
+    std::unique_ptr<AOT::ReturnAddressTrace> m_returnAddresses;
     // Frames captured by Error.captureStackTrace()
     std::unique_ptr<Vector<StackFrame>> m_capturedStackTrace;
 

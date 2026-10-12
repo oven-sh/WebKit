@@ -745,25 +745,19 @@ namespace JSC {
         RegisterID* emitCreateAsyncGenerator(RegisterID* dst, RegisterID* newTarget);
         RegisterID* emitInstanceFieldInitializationIfNeeded(RegisterID* dst, RegisterID* constructor, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd);
         void emitTDZCheck(RegisterID* target);
-        void emitCheckType(RegisterID* value, unsigned soundTypeMask);
         void emitTDZCheck(RegisterID* target, const Variable&);
         bool needsTDZCheck(const Variable&);
         void emitTDZCheckIfNecessary(const Variable&, RegisterID* target, RegisterID* scope);
         void liftTDZCheckIfPossible(const Variable&);
         RegisterID* emitNewObject(RegisterID* dst);
-        void emitTypeTag(uint32_t tag)
-        {
-            if (tag) [[unlikely]]
-                OpTypeTag::emit(this, tag);
-        }
         RegisterID* emitNewPromise(RegisterID* dst);
         RegisterID* emitNewGenerator(RegisterID* dst);
         RegisterID* emitNewAsyncFunctionGenerator(RegisterID* dst);
-        RegisterID* emitNewArray(RegisterID* dst, ElementNode*, unsigned length, IndexingType recommendedIndexingType, uint32_t typeTag = 0); // stops at first elision
+        RegisterID* emitNewArray(RegisterID* dst, ElementNode*, unsigned length, IndexingType recommendedIndexingType); // stops at first elision
         RegisterID* emitNewArrayByReversingArguments(RegisterID* dst, CallArguments&);
-        RegisterID* emitNewArrayBuffer(RegisterID* dst, JSCellButterfly*, IndexingType recommendedIndexingType, uint32_t typeTag = 0);
+        RegisterID* emitNewArrayBuffer(RegisterID* dst, JSCellButterfly*, IndexingType recommendedIndexingType);
         // FIXME: new_array_with_spread should use an array allocation profile and take a recommendedIndexingType
-        RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*, uint32_t typeTag = 0);
+        RegisterID* emitNewArrayWithSpread(RegisterID* dst, ElementNode*);
         RegisterID* emitNewArrayWithSize(RegisterID* dst, RegisterID* length);
         RegisterID* emitNewArrayWithSpecies(RegisterID* dst, RegisterID* length, RegisterID* array);
 
@@ -912,7 +906,7 @@ namespace JSC {
         ResolveType NODELETE resolveType();
         RegisterID* emitResolveConstantLocal(RegisterID* dst, const Variable&);
         RegisterID* emitResolveScope(RegisterID* dst, const Variable&);
-        RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode, uint32_t typeTag = 0);
+        RegisterID* emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable&, ResolveMode);
         bool isLazyModuleFunctionDeclaration(const Variable&) const;
         RegisterID* emitPutToScope(RegisterID* scope, const Variable&, RegisterID* value, ResolveMode, InitializationMode);
         RegisterID* emitPutToScopeDynamic(RegisterID* scope, const Identifier&, RegisterID* value, ResolveMode, InitializationMode);

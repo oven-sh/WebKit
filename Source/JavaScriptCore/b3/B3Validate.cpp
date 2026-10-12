@@ -987,7 +987,11 @@ public:
                 break;
             }
 
+#if USE(BUN_JSC_ADDITIONS)
+            VALIDATE(!(value->effects().writes && value->key()) || value->opcode() == Patchpoint, ("At ", *value));
+#else
             VALIDATE(!(value->effects().writes && value->key()), ("At ", *value));
+#endif
             // Conceptually, if you exit sideways, you will almost certainly read Top or (AbstractHeapRepository) root. 
             // Since we can't easily find out what root is here, we settle for checking that you at least read *something*.
             // This is technically overly strict, but in practice violating this is almost certainly a bug.

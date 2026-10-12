@@ -34,6 +34,7 @@
 #include "AOTCompiler.h"
 #include "AOTTypeTable.h"
 #include "AOTTypedPasses.h"
+#include "AOTTypedThreads.h"
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
@@ -6164,11 +6165,20 @@ struct BytecodeLinkEncoder::Impl {
         unsigned numberOfThreads = Options::numberOfAOTCompilerThreads() ? Options::numberOfAOTCompilerThreads() : WTF::numberOfProcessorCores();
         DeferGC deferGC(vm);
         MonotonicTime phaseStart = MonotonicTime::now();
+        MonotonicTime stepStart = phaseStart;
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
             if (Options::verboseAOTCompilation()) [[unlikely]]
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
+            stepStart = now;
+        };
+        auto endStep = [&](ASCIILiteral name) {
+            if (!Options::verboseAOTCompilation()) [[likely]]
+                return;
+            MonotonicTime now = MonotonicTime::now();
+            dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
+            stepStart = now;
         };
         AOT::ImageBuilder builder;
         builder.setEnvironments(WTF::move(linkEnvironments), safeCast<uint32_t>(linkEnvironmentsSize));
@@ -6220,7 +6230,6 @@ struct BytecodeLinkEncoder::Impl {
             if (typedProgram) {
                 for (AOT::Typed::StringID name : typedProgram->genericAccessIdentifiers()) {
                     Identifier identifier = Identifier::fromString(vm, String::fromUTF8(typedProgram->string(name)));
-                    strings->ordinalFor(*identifier.impl());
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
                     typedIdentifiers.append({ name, WTF::move(identifier) });
                 }
@@ -6246,6 +6255,7 @@ struct BytecodeLinkEncoder::Impl {
             }
         }
 
+        endStep("numbering the identifiers"_s);
         AOT::ConstantIndices constantIndices;
         if (AOT::programIdentifierIndices()) {
             UncheckedKeyHashMap<String, uint32_t> strings;
@@ -6314,6 +6324,7 @@ struct BytecodeLinkEncoder::Impl {
             builder.setNumberOfProgramConstants(next);
         }
 
+        endStep("numbering the constants"_s);
         if (typedProgram) {
             // Compiled on all threads, and added in order, so that the image does not depend on who was first.
             struct TypedResult {
@@ -6337,17 +6348,23 @@ struct BytecodeLinkEncoder::Impl {
             uint32_t numberOfTypedFunctions = typedProgram->functions.size();
             Vector<std::unique_ptr<TypedResult>> typedResults(numberOfTypedFunctions);
             std::atomic<uint32_t> nextTypedFunction { 0 };
-            Vector<uint32_t> largestFirst(numberOfTypedFunctions, [](size_t index) {
-                return static_cast<uint32_t>(index);
+            Vector<uint64_t> sizesAndNumbers(numberOfTypedFunctions, [&](size_t index) {
+                return static_cast<uint64_t>(UINT32_MAX - typedProgram->functions[index].values.size()) << 32 | index;
             });
-            std::ranges::stable_sort(largestFirst, [&](uint32_t a, uint32_t b) {
-                return typedProgram->functions[a].values.size() > typedProgram->functions[b].values.size();
+            std::ranges::sort(sizesAndNumbers);
+            Vector<uint32_t> largestFirst(numberOfTypedFunctions, [&](size_t index) {
+                return static_cast<uint32_t>(sizesAndNumbers[index]);
             });
             auto nameOf = [&](AOT::Typed::FunctionID id) {
                 return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
             };
             auto compileTypedFunctions = [&] {
-                for (uint32_t next = nextTypedFunction++; next < numberOfTypedFunctions; next = nextTypedFunction++) {
+                for (;;) {
+                    if (builder.compileOneRequestedRegExp())
+                        continue;
+                    uint32_t next = nextTypedFunction++;
+                    if (next >= numberOfTypedFunctions)
+                        break;
                     uint32_t function = largestFirst[next];
                     AOT::Typed::FunctionID id(function);
                     // An entry is compiled in the place of the code of its module.
@@ -6357,9 +6374,13 @@ struct BytecodeLinkEncoder::Impl {
                     if (Options::aotFunctionToDump()) [[unlikely]]
                         result->code.mayBeDumped = nameOf(id) == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
                     result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
+                    if (result->isCompiled)
+                        AOT::ImageBuilder::clearStubCalls(result->code);
                     typedResults[function] = WTF::move(result);
                 }
+                builder.compileRegExpsUntilAllAreRequested();
             };
+            endStep("the entries, and the functions by size"_s);
             for (uint32_t module : typedModules)
                 typedProgram->modulesOfEntries.append(modules[module].entryOffset);
             {
@@ -6367,14 +6388,23 @@ struct BytecodeLinkEncoder::Impl {
                 for (unsigned i = 1; i < numberOfThreads; ++i)
                     threads.append(Thread::create("AOT compiler"_s, [&compileTypedFunctions] { compileTypedFunctions(); }));
                 // Neither asks anything of the code.
-                builder.setTypedData(AOT::Typed::encodeData(*typedProgram));
-                endPhase("encoding the typed data"_s);
+                Vector<uint8_t> typedData;
+                Ref encoder = Thread::create("AOT data encoder"_s, [&] {
+                    typedData = AOT::Typed::encodeData(*typedProgram);
+                });
+                endStep("starting the threads"_s);
                 AOT::Typed::addRegExpLiterals(vm, *typedProgram, builder);
+                endStep("addRegExpLiterals"_s);
                 endPhase("regular expressions of the typed program"_s);
                 compileTypedFunctions();
+                endStep("the share of this thread in the code generation"_s);
+                encoder->waitForCompletion();
+                endStep("waiting for the data encoder"_s);
+                builder.setTypedData(WTF::move(typedData));
                 for (auto& thread : threads)
                     thread->waitForCompletion();
             }
+            endStep("waiting for the other threads"_s);
             endPhase("code generation"_s);
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 uint64_t total = 0;
@@ -6406,26 +6436,45 @@ struct BytecodeLinkEncoder::Impl {
                 if (function)
                     placeOfTypedFunction[entry.index()] = (static_cast<uint64_t>(function) << 2) - 1;
             }
+            Vector<size_t> placesInBuilder(numberOfTypedFunctions);
+            size_t numberToAdd = 0;
             for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
-                auto result = WTF::move(typedResults[function]);
+                auto& result = typedResults[function];
+                placesInBuilder[function] = numberToAdd;
                 if (!result)
                     continue;
                 AOT::Typed::FunctionID id(function);
                 if (!result->isCompiled) {
                     // All of them are reported, so that one build shows everything that is missing.
-                    dataLogLn("AOT: `", nameOf(id), "` was not compiled: ", result->code.whyDeclined);
+                    auto& declined = typedProgram->at(id);
+                    LineColumn position = typedProgram->lineColumnFor(declined.module, declined.position);
+                    String path = declined.module ? String::fromUTF8(typedProgram->string(typedProgram->modules[declined.module.index()].displayPath)) : String();
+                    dataLogLn("AOT: `", nameOf(id), "` (", path, ":", position.line, ":", position.column, ") was not compiled: ", result->code.whyDeclined);
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
-                String nameForMap = typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]);
-                auto continuations = WTF::move(result->code.continuations);
-                for (unsigned index = 0; index < continuations.size(); ++index)
-                    builder.add(AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
-                builder.add(AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
+                numberToAdd += result->code.continuations.size() + 1;
             }
             if (numberOfDeclinedFunctions)
                 return { };
+            size_t firstPlaceInBuilder = builder.growFunctions(numberToAdd);
+            AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
+                auto result = WTF::move(typedResults[function]);
+                if (!result)
+                    return;
+                AOT::Typed::FunctionID id(function);
+                size_t place = firstPlaceInBuilder + placesInBuilder[function];
+                String nameForMap = typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]);
+                auto continuations = WTF::move(result->code.continuations);
+                for (unsigned index = 0; index < continuations.size(); ++index)
+                    builder.set(place++, AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
+                builder.set(place, AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
+            });
             endPhase("adding the functions to the image"_s);
+            AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
+                typedProgram->functions[function] = AOT::Typed::Function();
+            });
+            endPhase("freeing the typed functions"_s);
         }
         AOT::forgetDeclaredNames();
         AOT::setProgramIdentifierIndices(nullptr);
@@ -6433,7 +6482,7 @@ struct BytecodeLinkEncoder::Impl {
         for (auto& job : jobs) {
             for (auto& constant : job.codeBlock->constantRegisters()) {
                 if (auto* regExp = constant.get().isCell() ? dynamicDowncast<RegExp>(constant.get().asCell()) : nullptr)
-                    builder.addRegExp(vm, regExp->pattern(), regExp->flags());
+                    builder.requestRegExp(vm, regExp->pattern(), regExp->flags());
             }
         }
         endPhase("regular expressions"_s);
@@ -6629,7 +6678,8 @@ auto BytecodeLinkEncoder::finish() -> Result
             result.entryOffsets.append(module.entryOffset);
         result.moduleEntryOffsets.append(module.entryOffset);
 #if ENABLE(AOT)
-        result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
+        if (m_impl->compilesAheadOfTime)
+            result.variablesExportedByModules.append(m_impl->variablesExportedBy(index));
 #endif
     }
     m_impl->modules.clear();

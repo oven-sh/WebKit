@@ -36,8 +36,10 @@
 #include <limits>
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
+#if USE(BUN_JSC_ADDITIONS)
 #include <wtf/HashSet.h>
 #include <wtf/Hasher.h>
+#endif
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/StackCheck.h>
@@ -558,21 +560,6 @@ private:
 
         m_characterWidths |= (U_IS_BMP(ch) ? CharacterClassWidths::HasBMPChars : CharacterClassWidths::HasNonBMPChars);
 
-#if USE(BUN_JSC_ADDITIONS)
-        // Tables come in ascending order. What the search below finds and does for a character behind the last one.
-        if (range) {
-            char32_t last = matches.last();
-            if (ch > last) {
-                if (ch == last + 1) {
-                    matches.removeLast();
-                    addSortedRange(isLatin1(ch) ? m_ranges8 : m_ranges32, last, ch);
-                } else
-                    matches.append(ch);
-                return;
-            }
-        }
-#endif
-
         // binary chop, find position to insert char.
         while (range) {
             unsigned index = range >> 1;
@@ -623,13 +610,6 @@ private:
         if (!U_IS_BMP(hi))
             m_characterWidths |= CharacterClassWidths::HasNonBMPChars;
 
-#if USE(BUN_JSC_ADDITIONS)
-        if (!ranges.isEmpty() && static_cast<uint64_t>(ranges.last().end) + 1 < lo) {
-            ranges.append(CharacterRange(lo, hi));
-            return;
-        }
-#endif
-
         auto iter = std::lower_bound(ranges.begin(), ranges.end(), lo,
             [](const CharacterRange& range, char32_t value) {
                 return static_cast<uint64_t>(range.end) + 1 < value;
@@ -661,6 +641,10 @@ private:
         mergeRangesFrom(ranges, iter - ranges.begin());
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+#else
+
+#endif
     void addSortedRange(char32_t lo, char32_t hi)
     {
         if (lo == hi) {
@@ -1213,6 +1197,7 @@ private:
     Vector<CharacterRange> m_ranges32;
 };
 
+#if USE(BUN_JSC_ADDITIONS)
 struct CharacterClassContentsHash {
     static unsigned hash(const CharacterClass* characterClass)
     {
@@ -1237,6 +1222,7 @@ struct CharacterClassContentsHash {
     static constexpr bool safeToCompareToEmptyOrDeleted = false;
 };
 
+#endif
 class YarrPatternConstructor {
     class UnresolvedForwardReference {
     public:
@@ -1279,11 +1265,20 @@ class YarrPatternConstructor {
     };
 
 public:
+#if USE(BUN_JSC_ADDITIONS)
+    YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags, StackCheck* stackCheckOfCaller)
+        : m_pattern(pattern)
+        , m_baseCharacterClassConstructor(pattern.ignoreCase(), pattern.compileMode())
+        , m_stackCheckOfCaller(stackCheckOfCaller)
+        , m_initialFlags(flags)
+    {
+#else
     YarrPatternConstructor(YarrPattern& pattern, OptionSet<Flags> flags)
         : m_pattern(pattern)
         , m_baseCharacterClassConstructor(pattern.ignoreCase(), pattern.compileMode())
         , m_initialFlags(flags)
     {
+#endif
         m_currentCharacterClassConstructor = &m_baseCharacterClassConstructor;
         auto body = makeUnique<PatternDisjunction>();
         m_pattern.m_body = body.get();
@@ -1307,9 +1302,8 @@ public:
         m_parenthesisContext.reset();
         m_parenthesisContext.setFlags(m_flags);
         m_forwardReferencesInLookbehind.clear();
-        m_sharedCharacterClasses.clear();
 #if USE(BUN_JSC_ADDITIONS)
-        m_characterClassesByText.clear();
+        m_sharedCharacterClasses.clear();
 #endif
 
         auto body = makeUnique<PatternDisjunction>();
@@ -1463,8 +1457,14 @@ public:
         }
 
         m_currentCharacterClassConstructor->putUnicodeIgnoreCase(ch, info);
+#if USE(BUN_JSC_ADDITIONS)
         auto* characterClass = addUserCharacterClass(m_currentCharacterClassConstructor->charClass());
         m_alternative->m_terms.append(PatternTerm(characterClass, false, m_flags, parenthesisMatchDirection()));
+#else
+        auto newCharacterClass = m_currentCharacterClassConstructor->charClass();
+        m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), false, m_flags, parenthesisMatchDirection()));
+        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+#endif
     }
 
     // Case-insensitive Unicode property escapes.
@@ -1721,26 +1721,6 @@ public:
         m_invertCharacterClass = invert;
     }
 
-#if USE(BUN_JSC_ADDITIONS)
-    // What atomCharacterClassEnd() came to the first time, in a term of this place.
-    size_t atomCharacterClassSeenBefore(std::span<const uint8_t> rest)
-    {
-        size_t numberOfBytes = 0;
-        if (auto* seen = m_characterClassesByText.find(rest, ignoreCase(), numberOfBytes))
-            m_alternative->m_terms.append(PatternTerm(seen->characterClass, seen->invert, m_flags));
-        return numberOfBytes;
-    }
-
-    void rememberCharacterClass(std::span<const uint8_t> text)
-    {
-        if (hasError(m_error) || m_alternative->m_terms.isEmpty())
-            return;
-        auto& term = m_alternative->m_terms.last();
-        if (term.type == PatternTerm::Type::CharacterClass)
-            m_characterClassesByText.add(text, ignoreCase(), { term.characterClass, static_cast<bool>(term.m_invert) });
-    }
-#endif
-
     void atomCharacterClassEnd()
     {
         if (m_currentCharacterClassConstructor->hasInvertedStrings()) {
@@ -1758,7 +1738,11 @@ public:
                 return;
             }
 
+#if USE(BUN_JSC_ADDITIONS)
             m_alternative->m_terms.append(PatternTerm(addUserCharacterClass(WTF::move(newCharacterClass)), m_invertCharacterClass, m_flags));
+#else
+            m_alternative->m_terms.append(PatternTerm(newCharacterClass.get(), m_invertCharacterClass, m_flags));
+#endif
         };
 
         if (!hasStrings)
@@ -1771,7 +1755,14 @@ public:
 
             m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
             expandClassWithStrings(m_pattern.m_userCharacterClasses.last().get());
+#if USE(BUN_JSC_ADDITIONS)
         }
+#else
+            return;
+        }
+
+        m_pattern.m_userCharacterClasses.append(WTF::move(newCharacterClass));
+#endif
     }
 
     // A class that contains strings matches, at each position, its longest member that matches there
@@ -2463,6 +2454,39 @@ public:
     //     matched string alternative, without jumping to backtracking doe to fixup offests.
     //     Instead we fixup the offsets, if needed, at the top of the next alternative's
     //     matching JIT code.
+#if USE(BUN_JSC_ADDITIONS)
+    void findBackReferencesToWhatWasJustCaptured(PatternDisjunction* disjunction)
+    {
+        for (auto& alternative : disjunction->m_alternatives) {
+            auto& terms = alternative->m_terms;
+            for (size_t i = 0; i < terms.size(); ++i) {
+                auto& term = terms[i];
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) {
+                    findBackReferencesToWhatWasJustCaptured(term.parentheses.disjunction);
+                    continue;
+                }
+                if (term.type == PatternTerm::Type::NamedBackReference)
+                    m_pattern.m_comparesBackreferences = true;
+                if (term.type != PatternTerm::Type::NumberedBackReference)
+                    continue;
+                auto isOnce = [](const PatternTerm& one) {
+                    return one.quantityType == QuantifierType::FixedCount && one.quantityMinCount == 1 && one.quantityMaxCount == 1;
+                };
+                bool isKnown = false;
+                if (i && isOnce(term) && term.matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups) {
+                    auto& previous = terms[i - 1];
+                    if (previous.type == PatternTerm::Type::ParentheticalAssertion && !previous.invert() && previous.matchDirection() == Forward && isOnce(previous) && previous.parentheses.disjunction->m_alternatives.size() == 1) {
+                        auto& inner = previous.parentheses.disjunction->m_alternatives[0]->m_terms;
+                        isKnown = inner.size() == 1 && inner[0].type == PatternTerm::Type::ParenthesesSubpattern && inner[0].capture() && inner[0].parentheses.subpatternId == term.backReferenceSubpatternId && isOnce(inner[0]);
+                    }
+                }
+                term.m_matchesWhatWasJustCaptured = isKnown;
+                m_pattern.m_comparesBackreferences |= !isKnown;
+            }
+        }
+    }
+
+#endif
     void checkForTerminalParentheses()
     {
         // For match-only patterns capture results are never observed, so the string-list optimization
@@ -3698,6 +3722,7 @@ public:
             return false;
         };
 
+#if USE(BUN_JSC_ADDITIONS)
         auto tryExtractAnchoredWordList = [&]() -> bool {
             auto& alternatives = m_pattern.m_body->m_alternatives;
             if (alternatives.size() != 1)
@@ -3729,13 +3754,16 @@ public:
             return true;
         };
 
+#endif
         if (tryExtractAtom())
             return;
 
         if (m_pattern.eitherUnicode())
+#if USE(BUN_JSC_ADDITIONS)
             return;
 
         if (tryExtractAnchoredWordList())
+#endif
             return;
 
         if (tryExtractSpaces())
@@ -3937,8 +3965,13 @@ private:
         return m_flags.contains(Flags::DotAll);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    inline bool isSafeToRecurse() { return m_stackCheckOfCaller ? m_stackCheckOfCaller->isSafeToRecurse() : m_stackCheck.isSafeToRecurse(); }
+#else
     inline bool isSafeToRecurse() { return m_stackCheck.isSafeToRecurse(); }
+#endif
 
+#if USE(BUN_JSC_ADDITIONS)
     CharacterClass* addUserCharacterClass(std::unique_ptr<CharacterClass>&& characterClass)
     {
         ASSERT(!characterClass->hasStrings());
@@ -3960,21 +3993,20 @@ private:
 
     static constexpr unsigned minimumUserCharacterClassesToShare = 16;
 
+#endif
     YarrPattern& m_pattern;
     PatternAlternative* m_alternative;
     CharacterClassConstructor m_baseCharacterClassConstructor;
     CharacterClassConstructor* m_currentCharacterClassConstructor;
     Vector<CharacterClassConstructor> m_characterClassStack;
-    HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
 #if USE(BUN_JSC_ADDITIONS)
-    struct CharacterClassOfTerm {
-        CharacterClass* characterClass;
-        bool invert;
-    };
-    CharacterClassesByText<CharacterClassOfTerm> m_characterClassesByText;
+    HashSet<CharacterClass*, CharacterClassContentsHash> m_sharedCharacterClasses;
 #endif
     Vector<UnresolvedForwardReference> m_forwardReferencesInLookbehind;
     StackCheck m_stackCheck;
+#if USE(BUN_JSC_ADDITIONS)
+    StackCheck* m_stackCheckOfCaller;
+#endif
     ErrorCode m_error { ErrorCode::NoError };
     bool m_invertCharacterClass;
     ParenthesisContext m_parenthesisContext;
@@ -3984,9 +4016,15 @@ private:
 };
 static_assert(YarrSyntaxCheckable<YarrPatternConstructor>);
 
+#if USE(BUN_JSC_ADDITIONS)
+ErrorCode YarrPattern::compile(StringView patternString, StackCheck* stackCheckOfCaller)
+{
+    YarrPatternConstructor constructor(*this, m_flags, stackCheckOfCaller);
+#else
 ErrorCode YarrPattern::compile(StringView patternString)
 {
     YarrPatternConstructor constructor(*this, m_flags);
+#endif
 
     {
         ErrorCode error = parse(constructor, patternString, compileMode());
@@ -4003,6 +4041,10 @@ ErrorCode YarrPattern::compile(StringView patternString)
     constructor.optimizeBOL();
     constructor.factorAndWrapAlternatives();
     constructor.optimizePossessiveQuantifiers();
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_containsBackreferences)
+        constructor.findBackReferencesToWhatWasJustCaptured(m_body);
+#endif
 
     if (hasError(constructor.error()))
         return constructor.error();
@@ -4024,7 +4066,11 @@ ErrorCode YarrPattern::compile(StringView patternString)
     return ErrorCode::NoError;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode, StackCheck* stackCheckOfCaller)
+#else
 YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& error, ExecutionMode executionMode)
+#endif
     : m_containsBackreferences(false)
     , m_containsBOL(false)
     , m_containsLookbehinds(false)
@@ -4037,7 +4083,11 @@ YarrPattern::YarrPattern(StringView pattern, OptionSet<Flags> flags, ErrorCode& 
     , m_flags(flags)
 {
     ASSERT(m_flags != Flags::DeletedValue);
+#if USE(BUN_JSC_ADDITIONS)
+    error = compile(pattern, stackCheckOfCaller);
+#else
     error = compile(pattern);
+#endif
 }
 
 void indentForNestingLevel(PrintStream& out, unsigned nestingDepth)

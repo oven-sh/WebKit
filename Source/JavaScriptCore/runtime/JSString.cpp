@@ -23,6 +23,7 @@
 #include "config.h"
 #include "JSString.h"
 
+#include "AOTImage.h"
 #include "JSGlobalObjectFunctions.h"
 #include "JSGlobalObjectInlines.h"
 #include "JSObjectInlines.h"
@@ -135,8 +136,13 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         }
         return;
     }
-    if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer))
+    if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
+#if ENABLE(AOT)
+        if (Options::excludeAOTImageTextFromExtraMemory() && AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
+            return;
+#endif
         visitor.reportExtraMemoryVisited(impl->costDuringGC());
+    }
 }
 
 DEFINE_VISIT_CHILDREN(JSString);

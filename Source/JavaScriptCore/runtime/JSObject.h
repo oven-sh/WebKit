@@ -547,6 +547,8 @@ public:
     // Returns false, and changes nothing, for a class with write hooks of its own that do not check for this: ProxyObject, typed
     // arrays, DirectArguments and ScopedArguments, and any class outside JavaScriptCore that overrides a write hook.
     JS_EXPORT_PRIVATE bool makePropertiesImmutable(VM&);
+    JS_EXPORT_PRIVATE bool fixAndMakePropertiesImmutable(VM&);
+    bool makePropertiesImmutable(VM&, TransitionKind);
     JS_EXPORT_PRIVATE bool hasImmutableProperties() const;
     void materializeLazyOwnProperties(VM&);
     JS_EXPORT_PRIVATE static bool preventExtensions(JSObject*, JSGlobalObject*);
@@ -612,21 +614,13 @@ public:
     // of an immutable shape: nothing, and the error.
     JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
+    JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
 #endif
 
     void flattenDictionaryObject(VM& vm)
     {
         structure()->flattenDictionaryStructure(vm, this);
     }
-#if USE(BUN_JSC_ADDITIONS)
-    // What grows alone is a dictionary while it grows: Structure::growsAlone(). Whoever keeps something for a Structure and refuses a dictionary calls this first: nothing moves, and the StructureID stays.
-    void flattenIfCacheableDictionary(VM& vm)
-    {
-        Structure* structure = this->structure();
-        if (structure->isDictionary() && !structure->isUncacheableDictionary() && !structure->hasBeenFlattenedBefore() && !structure->hasUsedUpItsTurnsAlone()) [[unlikely]]
-            structure->flattenDictionaryStructure(vm, this);
-    }
-#endif
     void shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM&, Structure*, size_t outOfLineCapacityAfter);
 
     JSGlobalObject* realmMayBeNull() const
@@ -711,8 +705,6 @@ public:
 
     bool mayBePrototype() const;
     void didBecomePrototype(VM&);
-    bool isPrototypeUsedByMegamorphicCache() const;
-    void setIsPrototypeUsedByMegamorphicCache() { setPerCellBit(true); }
 
     std::optional<Structure::PropertyHashEntry> findPropertyHashEntry(PropertyName) const;
 

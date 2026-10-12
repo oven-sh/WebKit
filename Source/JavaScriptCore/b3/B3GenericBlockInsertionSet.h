@@ -83,6 +83,13 @@ public:
         // We allow insertions to be given to us in any order. So, we need to sort them before
         // running WTF::executeInsertions. We strongly prefer a stable sort and we want it to be
         // fast, so we use bubble sort.
+#if USE(BUN_JSC_ADDITIONS)
+        constexpr size_t maxSizeToBubbleSort = 16;
+        if (m_insertions.size() > maxSizeToBubbleSort) {
+            if (!std::is_sorted(m_insertions.begin(), m_insertions.end()))
+                std::stable_sort(m_insertions.begin(), m_insertions.end());
+        } else
+#endif
         bubbleSort(m_insertions.mutableSpan());
         
         executeInsertions(m_blocks, m_insertions);

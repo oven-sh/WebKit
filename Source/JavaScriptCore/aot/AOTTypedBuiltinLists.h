@@ -59,6 +59,7 @@
     v(ArrayConcat, Array, true) \
     v(ArrayShift, Array, true) \
     v(ArrayEntries, Array, false) \
+    v(ArrayFrom, Array, false) \
     v(DataViewGetInt8, Buffer, false) \
     v(DataViewGetUint8, Buffer, false) \
     v(DataViewGetInt16, Buffer, false) \
@@ -184,6 +185,13 @@
     v(SuspendAsyncFunction, Promise, false) \
     v(PromiseResolve, Promise, false) \
     v(PromiseThen, Promise, false) \
+    v(IsAsyncIteratorDriven, Promise, false) \
+    v(GetAsyncIteratorNext, Promise, false) \
+    v(AsyncIteratorNext, Promise, false) \
+    v(GetIteratorNext, Promise, false) \
+    v(GeneratorResume, Promise, false) \
+    v(GeneratorIsDone, Promise, false) \
+    v(AsyncGeneratorYield, Promise, false) \
     v(RegExpExec, RegExp, false) \
     v(RegExpTest, RegExp, false) \
     v(RegExpNew, RegExp, false) \
@@ -233,12 +241,16 @@
     v(operationAOTTypedNewArrayWithHoles) \
     v(operationAOTTypedGrowNewArray) \
     v(operationAOTTypedTruncateNewArray) \
+    v(operationAOTTypedArrayGetDirectIndex) \
+    v(operationAOTTypedArrayGetDirectDoubleIndex) \
+    v(operationAOTTypedArrayPutDirectIndex) \
     v(operationAOTTypedArraySplice) \
     v(operationAOTTypedArrayGrow) \
     v(operationAOTTypedAllocateStorage) \
     v(operationAOTTypedArrayUnshift) \
     v(operationAOTTypedArrayJoin) \
     v(operationAOTTypedNewEntriesOfArray) \
+    v(operationAOTTypedArrayFromTypedArray) \
     v(operationAOTTypedArrayIndexOfDouble) \
     v(operationAOTTypedArrayIndexOfInt32) \
     v(operationAOTTypedNewArrayBuffer) \
@@ -311,12 +323,19 @@
     v(operationAOTTypedHasOwnPropertyOfName) \
     v(operationAOTTypedOwnPropertyKeys) \
     v(operationAOTTypedObjectValues) \
+    v(operationAOTTypedObjectEntries) \
     v(operationAOTTypedObjectAssignFrom) \
     v(operationAOTTypedObjectAssignToNew) \
     v(operationAOTTypedGetOwnPropertyDescriptor) \
     v(operationAOTTypedObjectCreate) \
     v(operationAOTTypedSuspendAsyncFunction) \
     v(operationAOTTypedPromiseThen) \
+    v(operationAOTTypedGetAsyncIteratorNext) \
+    v(operationAOTTypedAsyncIteratorNext) \
+    v(operationAOTTypedGetIteratorNext) \
+    v(operationAOTTypedGeneratorResume) \
+    v(operationAOTTypedGeneratorIsDone) \
+    v(operationAOTTypedAsyncGeneratorYield) \
     v(operationAOTTypedRegExpExec) \
     v(operationAOTTypedRegExpTest) \
     v(operationAOTTypedNewRegExpLiteral) \
@@ -337,8 +356,8 @@
     v(operationAOTTypedStringFind8) \
     v(operationAOTTypedStringReverseFindCharacter8) \
     v(operationAOTTypedStringReverseFind8) \
-    v(operationAOTTypedStringTrimmedStart16) \
     v(operationAOTTypedStringIsText) \
+    v(operationAOTTypedStringIsBytes) \
     v(operationAOTTypedStringStartsWithText) \
     v(operationAOTTypedStringEndsWithText) \
     v(operationAOTTypedStringIndexOfText) \
@@ -346,12 +365,15 @@
     v(operationAOTTypedStringFindText8) \
     v(operationAOTTypedStringReverseFindText8) \
     v(operationAOTTypedStringsAreEqual) \
-    v(operationAOTTypedStringTrimmedEnd16) \
+    v(operationAOTTypedStringPart) \
+    v(operationAOTTypedStringTrim) \
     v(operationAOTTypedStringLastIndexOf) \
     v(operationAOTTypedStringLocaleCompare) \
     v(operationAOTTypedStringToLowerCase) \
     v(operationAOTTypedStringToUpperCase) \
     v(operationAOTTypedStringRepeat) \
+    v(operationAOTTypedStringBuilderFlush) \
+    v(operationAOTTypedStringBuilderFinish) \
     v(operationAOTTypedStringPad)
 
 #define FOR_EACH_AOT_TYPED_LANGUAGE_OPERATION(v) \
@@ -407,12 +429,14 @@
     v(ToESM) \
     v(MakeModuleNamespace) \
     v(ParseJSON) \
+    v(DirectEval) \
     v(RequireExternalModule) \
     v(GetRequireFunction) \
     v(GetTemplateObject) \
     v(GetImportMeta) \
     v(GetNewTarget) \
     v(ImportExternalModule) \
+    v(ImportWithOptions) \
     v(Await)
 
 #define FOR_EACH_AOT_TYPED_PRELUDE_FUNCTION(v) \
@@ -566,56 +590,56 @@
     v(34, typedArrayStructure(TypeBigUint64, true))
 
 #define FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR(v) \
-    v(readInt8, 434, false, 1, Signed, true) \
-    v(readUInt8, 439, false, 1, Unsigned, true) \
-    v(readUint8, 444, false, 1, Unsigned, true) \
-    v(readInt16LE, 431, false, 2, Signed, true) \
-    v(readInt16BE, 430, false, 2, Signed, false) \
-    v(readUInt16LE, 436, false, 2, Unsigned, true) \
-    v(readUInt16BE, 435, false, 2, Unsigned, false) \
-    v(readUint16LE, 441, false, 2, Unsigned, true) \
-    v(readUint16BE, 440, false, 2, Unsigned, false) \
-    v(readInt32LE, 433, false, 4, Signed, true) \
-    v(readInt32BE, 432, false, 4, Signed, false) \
-    v(readUInt32LE, 438, false, 4, Unsigned, true) \
-    v(readUInt32BE, 437, false, 4, Unsigned, false) \
-    v(readUint32LE, 443, false, 4, Unsigned, true) \
-    v(readUint32BE, 442, false, 4, Unsigned, false) \
-    v(readFloatLE, 429, false, 4, Float, true) \
-    v(readFloatBE, 428, false, 4, Float, false) \
-    v(readDoubleLE, 427, false, 8, Float, true) \
-    v(readDoubleBE, 426, false, 8, Float, false) \
-    v(readBigInt64LE, 421, false, 8, Signed, true) \
-    v(readBigInt64BE, 420, false, 8, Signed, false) \
-    v(readBigUInt64LE, 423, false, 8, Unsigned, true) \
-    v(readBigUInt64BE, 422, false, 8, Unsigned, false) \
-    v(readBigUint64LE, 425, false, 8, Unsigned, true) \
-    v(readBigUint64BE, 424, false, 8, Unsigned, false) \
-    v(writeInt8, 593, true, 1, Signed, true) \
-    v(writeUInt8, 598, true, 1, Unsigned, true) \
-    v(writeUint8, 603, true, 1, Unsigned, true) \
-    v(writeInt16LE, 590, true, 2, Signed, true) \
-    v(writeInt16BE, 589, true, 2, Signed, false) \
-    v(writeUInt16LE, 595, true, 2, Unsigned, true) \
-    v(writeUInt16BE, 594, true, 2, Unsigned, false) \
-    v(writeUint16LE, 600, true, 2, Unsigned, true) \
-    v(writeUint16BE, 599, true, 2, Unsigned, false) \
-    v(writeInt32LE, 592, true, 4, Signed, true) \
-    v(writeInt32BE, 591, true, 4, Signed, false) \
-    v(writeUInt32LE, 597, true, 4, Unsigned, true) \
-    v(writeUInt32BE, 596, true, 4, Unsigned, false) \
-    v(writeUint32LE, 602, true, 4, Unsigned, true) \
-    v(writeUint32BE, 601, true, 4, Unsigned, false) \
-    v(writeFloatLE, 588, true, 4, Float, true) \
-    v(writeFloatBE, 587, true, 4, Float, false) \
-    v(writeDoubleLE, 586, true, 8, Float, true) \
-    v(writeDoubleBE, 585, true, 8, Float, false) \
-    v(writeBigInt64LE, 580, true, 8, Signed, true) \
-    v(writeBigInt64BE, 579, true, 8, Signed, false) \
-    v(writeBigUInt64LE, 582, true, 8, Unsigned, true) \
-    v(writeBigUInt64BE, 581, true, 8, Unsigned, false) \
-    v(writeBigUint64LE, 584, true, 8, Unsigned, true) \
-    v(writeBigUint64BE, 583, true, 8, Unsigned, false)
+    v(readInt8, 444, false, 1, Signed, true) \
+    v(readUInt8, 449, false, 1, Unsigned, true) \
+    v(readUint8, 454, false, 1, Unsigned, true) \
+    v(readInt16LE, 441, false, 2, Signed, true) \
+    v(readInt16BE, 440, false, 2, Signed, false) \
+    v(readUInt16LE, 446, false, 2, Unsigned, true) \
+    v(readUInt16BE, 445, false, 2, Unsigned, false) \
+    v(readUint16LE, 451, false, 2, Unsigned, true) \
+    v(readUint16BE, 450, false, 2, Unsigned, false) \
+    v(readInt32LE, 443, false, 4, Signed, true) \
+    v(readInt32BE, 442, false, 4, Signed, false) \
+    v(readUInt32LE, 448, false, 4, Unsigned, true) \
+    v(readUInt32BE, 447, false, 4, Unsigned, false) \
+    v(readUint32LE, 453, false, 4, Unsigned, true) \
+    v(readUint32BE, 452, false, 4, Unsigned, false) \
+    v(readFloatLE, 439, false, 4, Float, true) \
+    v(readFloatBE, 438, false, 4, Float, false) \
+    v(readDoubleLE, 437, false, 8, Float, true) \
+    v(readDoubleBE, 436, false, 8, Float, false) \
+    v(readBigInt64LE, 431, false, 8, Signed, true) \
+    v(readBigInt64BE, 430, false, 8, Signed, false) \
+    v(readBigUInt64LE, 433, false, 8, Unsigned, true) \
+    v(readBigUInt64BE, 432, false, 8, Unsigned, false) \
+    v(readBigUint64LE, 435, false, 8, Unsigned, true) \
+    v(readBigUint64BE, 434, false, 8, Unsigned, false) \
+    v(writeInt8, 603, true, 1, Signed, true) \
+    v(writeUInt8, 608, true, 1, Unsigned, true) \
+    v(writeUint8, 613, true, 1, Unsigned, true) \
+    v(writeInt16LE, 600, true, 2, Signed, true) \
+    v(writeInt16BE, 599, true, 2, Signed, false) \
+    v(writeUInt16LE, 605, true, 2, Unsigned, true) \
+    v(writeUInt16BE, 604, true, 2, Unsigned, false) \
+    v(writeUint16LE, 610, true, 2, Unsigned, true) \
+    v(writeUint16BE, 609, true, 2, Unsigned, false) \
+    v(writeInt32LE, 602, true, 4, Signed, true) \
+    v(writeInt32BE, 601, true, 4, Signed, false) \
+    v(writeUInt32LE, 607, true, 4, Unsigned, true) \
+    v(writeUInt32BE, 606, true, 4, Unsigned, false) \
+    v(writeUint32LE, 612, true, 4, Unsigned, true) \
+    v(writeUint32BE, 611, true, 4, Unsigned, false) \
+    v(writeFloatLE, 598, true, 4, Float, true) \
+    v(writeFloatBE, 597, true, 4, Float, false) \
+    v(writeDoubleLE, 596, true, 8, Float, true) \
+    v(writeDoubleBE, 595, true, 8, Float, false) \
+    v(writeBigInt64LE, 590, true, 8, Signed, true) \
+    v(writeBigInt64BE, 589, true, 8, Signed, false) \
+    v(writeBigUInt64LE, 592, true, 8, Unsigned, true) \
+    v(writeBigUInt64BE, 591, true, 8, Unsigned, false) \
+    v(writeBigUint64LE, 594, true, 8, Unsigned, true) \
+    v(writeBigUint64BE, 593, true, 8, Unsigned, false)
 
 #define FOR_EACH_AOT_TYPED_JS_TYPE_NAME(v) \
     v(ArrayType) \
@@ -701,18 +725,18 @@
     v(0, (JSWrapForValidIterator::Field::IteratedIterator)) \
     v(1, (JSWrapForValidIterator::Field::IteratedNextMethod))
 
-#define AOT_TYPED_NUMBER_OF_BUILTINS 846
-#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 607
+#define AOT_TYPED_NUMBER_OF_BUILTINS 856
+#define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 617
 #define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES 37
 #define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES 35
-#define AOT_TYPED_BUILTINS_HASH 0xd8b35a37u
+#define AOT_TYPED_BUILTINS_HASH 0x76035d32u
 
-#define AOT_TYPED_BUILTIN_NAME_TypedArray 181
-#define AOT_TYPED_BUILTIN_NAME_prototype 414
-#define AOT_TYPED_BUILTIN_NAME_call 224
-#define AOT_TYPED_BUILTIN_NAME_apply 204
-#define AOT_TYPED_BUILTIN_NAME_hasOwn 347
-#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 348
+#define AOT_TYPED_BUILTIN_NAME_TypedArray 191
+#define AOT_TYPED_BUILTIN_NAME_prototype 424
+#define AOT_TYPED_BUILTIN_NAME_call 234
+#define AOT_TYPED_BUILTIN_NAME_apply 214
+#define AOT_TYPED_BUILTIN_NAME_hasOwn 357
+#define AOT_TYPED_BUILTIN_NAME_hasOwnProperty 358
 #define AOT_TYPED_ENGINE_CLASS_Array 0
 #define AOT_TYPED_ENGINE_CLASS_Promise 10
 #define AOT_TYPED_ENGINE_CLASS_String 35
@@ -722,5 +746,5 @@
 #define AOT_TYPED_ENGINE_CLASS_BigInt 34
 #define AOT_TYPED_ENGINE_CLASS_Function 25
 #define AOT_TYPED_ENGINE_CLASS_Object 24
-#define AOT_TYPED_BUILTIN_HasOriginalStructure 394
-#define AOT_TYPED_BUILTIN_Call 397
+#define AOT_TYPED_BUILTIN_HasOriginalStructure 396
+#define AOT_TYPED_BUILTIN_Call 399

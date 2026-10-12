@@ -254,7 +254,7 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             continue;
 
 #if USE(BUN_JSC_ADDITIONS)
-        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && code.findNextBlock(block) && block->size() >= 2 && block->at(block->size() - 2).kind.opcode == Patch)
+        if (block->last().kind.opcode == Oops && code.proc().positionIndependent() && !Options::validateAOTTypedFacts() && !Options::validateGraphAtEachPhase() && code.findNextBlock(block) && block->size() >= 2 && block->at(block->size() - 2).kind.opcode == Patch)
             continue;
 #endif
 
@@ -297,6 +297,16 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     context.currentBlock = nullptr;
     context.indexInBlock = UINT_MAX;
     
+#if USE(BUN_JSC_ADDITIONS)
+    if (code.notesStartOfRareCode()) [[unlikely]] {
+        CCallHelpers::Label startOfRareCode = jit.labelIgnoringWatchpoints();
+        for (unsigned index = code.size(); index-- > code.numberOfBlocksInChains();) {
+            if (BasicBlock* block = code.at(index))
+                startOfRareCode = *context.blockLabels[block];
+        }
+        code.noteStartOfRareCode(startOfRareCode);
+    }
+#endif
     Vector<CCallHelpers::Label> entrypointLabels(code.numEntrypoints());
     for (unsigned i = code.numEntrypoints(); i--;)
         entrypointLabels[i] = *context.blockLabels[code.entrypoint(i).block()];

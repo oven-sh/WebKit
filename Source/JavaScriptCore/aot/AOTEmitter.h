@@ -7,7 +7,6 @@
 
 #if ENABLE(AOT)
 
-#include "AOTFacts.h"
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "AOTStubs.h"
@@ -65,9 +64,15 @@ public:
             jump(taken.weight().value() ? taken.target() : notTaken.target());
             return;
         }
+        if (m_forcesNextGuard) [[unlikely]] {
+            m_forcesNextGuard = false;
+            jump(taken.weight().value() ? notTaken.target() : taken.target());
+            return;
+        }
         FTL::Output::branch(condition, taken, notTaken);
     }
     void dropNextGuardForTesting() { m_dropsNextGuard = true; }
+    void forceNextGuardForTesting() { m_forcesNextGuard = true; }
 
     // What is made off the usual path is off it: whoever asks how often a block runs (Typed::Lowering::callEntry()) is told so behind a test or a join in a cold arm too.
     LBasicBlock newBlock()
@@ -94,6 +99,7 @@ private:
 
     IntegersThatLookLikeAddresses* m_foldedConstants { nullptr };
     bool m_dropsNextGuard { false };
+    bool m_forcesNextGuard { false };
 };
 
 class Emitter {
@@ -101,8 +107,15 @@ class Emitter {
 protected:
     explicit Emitter(B3::Procedure& proc)
         : m_proc(proc)
+        , m_heapsOfThread(B3::AbstractHeapRepository::takeFromThread())
+        , m_heaps(*m_heapsOfThread)
         , m_out(proc)
     {
+    }
+
+    ~Emitter()
+    {
+        B3::AbstractHeapRepository::giveBackToThread(WTF::move(m_heapsOfThread));
     }
 
     void findPinnedRegisters();
@@ -137,11 +150,14 @@ protected:
     LValue vm() { return m_out.loadPtr(m_instance, m_heaps.AOTInstance_vm); }
     LValue fixed32(ptrdiff_t offset);
     LValue changing32(ptrdiff_t offset);
+    LValue fixed64(ptrdiff_t offset);
+    LValue changing64(ptrdiff_t offset);
 
     LValue allocateHeapCell(LValue allocator, LBasicBlock slowPath);
+    LValue allocateHeapCell(LValue nonNullAllocator, std::optional<size_t> cellSize, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, LValue size, LBasicBlock slowPath);
     LValue allocatorForSize(LValue subspace, size_t);
-    void storeHeader(LValue cell, LValue structureID, uint32_t typeInfoBlob);
+    void storeHeader(LValue cell, LValue header);
     void storeStructure(LValue cell, LValue structure);
     void splatWords(LValue base, LValue begin, LValue end, LValue, const B3::AbstractHeap&);
     void mutatorFence();
@@ -149,7 +165,7 @@ protected:
         LValue array;
         LValue butterfly;
     };
-    ArrayValues allocateJSArray(LValue publicLength, LValue vectorLength, LValue structureID, uint32_t typeInfoBlob, LBasicBlock slowPath);
+    ArrayValues allocateJSArray(LValue publicLength, LValue vectorLength, LValue header, LBasicBlock slowPath);
     static uint32_t arrayTypeInfoBlob(IndexingType);
 
     LValue isRopeString(LValue string) { return m_out.testNonZeroPtr(m_out.loadPtr(string, m_heaps.JSString_value), m_out.constIntPtr(JSString::isRopeInPointer)); }
@@ -188,7 +204,8 @@ protected:
     LValue isOriginalArray(LValue cell);
 
     B3::Procedure& m_proc;
-    B3::AbstractHeapRepository m_heaps;
+    std::unique_ptr<B3::AbstractHeapRepository> m_heapsOfThread;
+    B3::AbstractHeapRepository& m_heaps;
     Output m_out;
     LValue m_instance { nullptr };
     LValue m_vm { nullptr };

@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInlineCaches.h"
 #include "AOTOperations.h"
 #include "AOTRuntime.h"
 #include "CCallHelpers.h"
@@ -112,10 +113,15 @@ void tailCall(CCallHelpers& jit, Entry operation, Restores restores = Restores::
 
 void mutatorFence(CCallHelpers& jit, GPRReg scratch)
 {
+#if CPU(X86_64)
+    UNUSED_PARAM(jit);
+    UNUSED_PARAM(scratch);
+#else
     loadVM(jit, scratch);
     Jump notNeeded = jit.branchTest8(CCallHelpers::Zero, Address(scratch, VM::offsetOfHeapMutatorShouldBeFenced()));
     jit.storeFence();
     notNeeded.link(&jit);
+#endif
 }
 
 void returnValue(CCallHelpers& jit, GPRReg value)
@@ -149,8 +155,10 @@ void branchIfNotObjectValue(CCallHelpers& jit, GPRReg value, JumpList& slowCases
 
 void loadIdentifier(CCallHelpers& jit, GPRReg index, GPRReg result)
 {
-    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifiers()), result);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifierPlaces()), result);
     jit.zeroExtend32ToWord(index, scratch4);
+    jit.load16(BaseIndex(result, scratch4, CCallHelpers::TimesTwo), scratch4);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfProgramIdentifiers()), result);
     jit.loadPtr(BaseIndex(result, scratch4, CCallHelpers::TimesEight), result);
 }
 
@@ -191,6 +199,7 @@ void emitMegamorphicStore(CCallHelpers& jit, GPRReg base, GPRReg uid, GPRReg val
     returnVoid(jit);
 
     reallocating.link(&jit);
+    slowCases.append(jit.branchTest8(CCallHelpers::NonZero, Address(scratch3, MegamorphicCache::StoreEntry::offsetOfReallocating()), TrustedImm32(MegamorphicCache::StoreEntry::addsLazyClosure)));
     jit.move(value, scratch1);
     jit.move(base, argument1);
     jit.move(scratch1, argument2);
@@ -399,6 +408,11 @@ static void emitFillAndReturnObject(CCallHelpers& jit, GPRReg values, GPRReg cou
     jit.store64(TrustedImm32(0), BaseIndex(scratch3, scratch0, CCallHelpers::TimesEight, JSObject::offsetOfInlineStorage()));
     jit.jump().linkTo(clear, &jit);
     cleared.link(&jit);
+    if (Options::validateAOTTypedFacts()) [[unlikely]] {
+        Jump isNotEmpty = jit.branchTest32(CCallHelpers::NonZero, count);
+        jit.breakpoint();
+        isNotEmpty.link(&jit);
+    }
     auto copy = jit.label();
     jit.sub32(TrustedImm32(1), count);
     jit.load64(BaseIndex(values, count, CCallHelpers::TimesEight), scratch0);
@@ -589,6 +603,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
     };
 #define AOT_INSTALL_FRONT_END(name) install(Entry::operationAOT##name, Entry::Raw##name, Stub::FrontEnd##name);
     entries[static_cast<unsigned>(Entry::MegamorphicCache)] = &vm.ensureMegamorphicCache();
+    entries[static_cast<unsigned>(Entry::UndefinedHolder)] = const_cast<EncodedJSValue*>(undefinedValueHolder());
     AOT_INSTALL_FRONT_END(GetById)
     AOT_INSTALL_FRONT_END(GetByVal)
     AOT_INSTALL_FRONT_END(PutById)

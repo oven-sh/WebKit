@@ -26,7 +26,11 @@ struct CompiledCode;
 
 void estimateFrequencies(B3::Procedure&);
 CCallHelpers::JumpList emitStackCheck(CCallHelpers&, unsigned frameSize);
-void emitStackOverflow(CCallHelpers&, StubCalls&, const CCallHelpers::JumpList&);
+void emitStackOverflow(CCallHelpers&, StubCalls&, const CCallHelpers::JumpList&, unsigned frameSize);
+#if CPU(ARM64)
+void pushCalleeSaves(CCallHelpers&, const RegisterAtOffsetList&);
+void popCalleeSaves(CCallHelpers&, const RegisterAtOffsetList&);
+#endif
 void dropPaddingAtEnd(CompiledFunctionInfo&, const void* start, B3::Air::Code&);
 void usePinnedRegistersDirectly(B3::Air::Code&);
 

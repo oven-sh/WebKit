@@ -132,6 +132,12 @@ void linkPolymorphicCall(VM& vm, JSCell* owner, CallFrame* callFrame, CallLinkIn
         callLinkInfo.setVirtualCall(vm);
         return;
     }
+#if ENABLE(AOT)
+    if (JSObject* oldCallee = callLinkInfo.stub() ? nullptr : callLinkInfo.callee(); isSlimClosureType(newVariant.rawCalleeCell()->type()) || (oldCallee && isSlimClosureType(oldCallee->type()))) {
+        callLinkInfo.setVirtualCall(vm);
+        return;
+    }
+#endif
 
     CodeBlock* callerCodeBlock = dynamicDowncast<CodeBlock>(owner); // WebAssembly -> JS stubs don't have a valid CodeBlock.
     ASSERT(owner);

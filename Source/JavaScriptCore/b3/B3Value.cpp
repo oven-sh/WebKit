@@ -1152,6 +1152,14 @@ ValueKey Value::key() const
     case Patchpoint:
         if (uint64_t key = as<PatchpointValue>()->pureFunctionKey)
             return ValueKey(kind(), type(), static_cast<int64_t>(key));
+        if (int32_t key = as<PatchpointValue>()->pureFunctionOfChildrenKey) {
+            RELEASE_ASSERT(numChildren() <= 3);
+            v128_t bits;
+            for (unsigned i = 0; i < numChildren(); ++i)
+                bits.u32x4[i] = child(i)->index() + 1;
+            bits.u32x4[3] = key;
+            return ValueKey(kind(), type(), bits);
+        }
         return ValueKey();
 #endif
     }

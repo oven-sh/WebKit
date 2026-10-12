@@ -130,7 +130,22 @@ AbstractHeapRepository::AbstractHeapRepository()
     VM_heap_barrierThreshold.changeParent(&VM_heapState);
     VM_heap_mutatorShouldBeFenced.changeParent(&VM_heapState);
 
+    RELEASE_ASSERT(!JSCell_freeListNext.offset());
+
+#if USE(BUN_JSC_ADDITIONS)
+#define KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP(name, offset, size) name.keepHeapsMadeSoFar();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP)
+#undef KEEP_HEAPS_OF_INDEXED_ABSTRACT_HEAP
+#define KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP(name) name.keepHeapsMadeSoFar();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP)
+#undef KEEP_HEAPS_OF_NUMBERED_ABSTRACT_HEAP
+    absolute.keepHeapsMadeSoFar();
+#endif
+}
+
 #if ENABLE(AOT)
+void AbstractHeapRepository::reparentHeapsForAOT()
+{
     // Last, and in this order: what a call writes, by AOT::Typed::Writes and whether it writes shape words, is then one range.
     AOTTyped_slots.atAnyNumber().changeParent(&AOTTyped_fields);
     AOTTyped_variables.atAnyNumber().changeParent(&AOTTyped_fields);
@@ -154,17 +169,69 @@ AbstractHeapRepository::AbstractHeapRepository()
     JSMap_compactTable.changeParent(&AOTTyped_runtimeState);
     JSSet_compactTable.changeParent(&AOTTyped_runtimeState);
     AOTTypedCompactTable_used.changeParent(&AOTTyped_runtimeState);
-    AOTTypedCompactTable_deleted.changeParent(&AOTTyped_runtimeState);
+    AOTTypedCompactTable_alive.changeParent(&AOTTyped_runtimeState);
     JSSet_storage.changeParent(&AOTTyped_runtimeState);
     OrderedHashTableData.changeParent(&AOTTyped_runtimeState);
     JSPromise_packed.changeParent(&AOTTyped_runtimeState);
     JSPromise_slot.changeParent(&AOTTyped_runtimeState);
+}
 #endif
 
-    RELEASE_ASSERT(!JSCell_freeListNext.offset());
+AbstractHeapRepository::~AbstractHeapRepository() = default;
+
+#if USE(BUN_JSC_ADDITIONS)
+static std::unique_ptr<AbstractHeapRepository>& repositoryOfThread()
+{
+    static thread_local std::unique_ptr<AbstractHeapRepository> repository;
+    return repository;
 }
 
-AbstractHeapRepository::~AbstractHeapRepository() = default;
+std::unique_ptr<AbstractHeapRepository> AbstractHeapRepository::takeFromThread()
+{
+    if (auto repository = std::exchange(repositoryOfThread(), nullptr))
+        return repository;
+    auto repository = makeUnique<AbstractHeapRepository>();
+#if ENABLE(AOT)
+    repository->reparentHeapsForAOT();
+#endif
+    return repository;
+}
+
+void AbstractHeapRepository::giveBackToThread(std::unique_ptr<AbstractHeapRepository>&& repository)
+{
+    if (repositoryOfThread())
+        return;
+    repository->forgetProcedure();
+    repositoryOfThread() = WTF::move(repository);
+}
+
+void AbstractHeapRepository::forgetProcedure()
+{
+#define FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP(name, offset, size) name.forgetOtherHeaps();
+    FOR_EACH_INDEXED_ABSTRACT_HEAP(FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP)
+#undef FORGET_HEAPS_OF_INDEXED_ABSTRACT_HEAP
+#define FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP(name) name.forgetOtherHeaps();
+    FOR_EACH_NUMBERED_ABSTRACT_HEAP(FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP)
+#undef FORGET_HEAPS_OF_NUMBERED_ABSTRACT_HEAP
+    absolute.forgetOtherHeaps();
+    m_heapForMemory.shrink(0);
+    m_heapForCCallRead.shrink(0);
+    m_heapForCCallWrite.shrink(0);
+    m_heapForPatchpointRead.shrink(0);
+    m_heapForPatchpointWrite.shrink(0);
+    m_heapsForPatchpointWrite.shrink(0);
+    m_heapForFenceRead.shrink(0);
+    m_heapForFenceWrite.shrink(0);
+    m_heapForFencedAccess.shrink(0);
+    m_heapForWasmStructGet.shrink(0);
+    m_heapForWasmStructSet.shrink(0);
+    m_heapForWasmStructNew.shrink(0);
+    m_heapForWasmArrayGet.shrink(0);
+    m_heapForWasmArraySet.shrink(0);
+    m_heapForWasmArrayNew.shrink(0);
+    m_heapForWasmArrayLength.shrink(0);
+}
+#endif
 
 void AbstractHeapRepository::decorateMemory(const AbstractHeap* heap, Value* value)
 {

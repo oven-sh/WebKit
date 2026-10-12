@@ -40,13 +40,16 @@ namespace JSC {
 CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int argumentCount)
     : CallLinkInfoBase(CallSiteType::CachedCall)
     , m_vm(globalObject->vm())
-    , m_entryScope(m_vm, function->scope()->realm())
 #if ENABLE(AOT)
-    , m_functionExecutable(function->isHostFunction() ? nullptr : function->jsExecutable())
+    // function may be an AOT::Typed::SlimClosure, which is not a JSFunction.
+    , m_entryScope(m_vm, function->type() == JSFunctionType ? function->scope()->realm() : function->realm())
+    , m_functionExecutable(function->type() != JSFunctionType || function->isHostFunction() ? nullptr : function->jsExecutable())
+    , m_scope(function->type() == JSFunctionType ? function->scope() : nullptr)
 #else
+    , m_entryScope(m_vm, function->scope()->realm())
     , m_functionExecutable(function->jsExecutable())
-#endif
     , m_scope(function->scope())
+#endif
 {
     VM& vm = m_vm;
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -55,7 +58,7 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
         m_valid = !scope.exception();
     });
 #endif
-    ASSERT(!m_functionExecutable == function->isHostFunctionNonInline());
+    ASSERT(isSlimClosureType(function->type()) || !m_functionExecutable == function->isHostFunctionNonInline());
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
         return;
@@ -76,8 +79,8 @@ CachedCall::CachedCall(JSGlobalObject* globalObject, JSFunction* function, int a
 #if ENABLE(AOT)
     // See JSFunction::getCallDataInline(). The code is there, stays where it is, and takes any number of arguments.
     if (!m_functionExecutable) {
-        m_addressForCall = AOT::closureEntrypoint().taggedPtr();
-        m_protoCallFrame.init(nullptr, function->realm(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
+        m_addressForCall = (function->type() == JSFunctionType ? AOT::closureEntrypoint() : AOT::slimClosureEntrypoint()).taggedPtr();
+        m_protoCallFrame.init(nullptr, m_entryScope.globalObject(), function, jsUndefined(), nullptr, argumentCount + 1, const_cast<EncodedJSValue*>(m_arguments.data()));
         return;
     }
 #endif

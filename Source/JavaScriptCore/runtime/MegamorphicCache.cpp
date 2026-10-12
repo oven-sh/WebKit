@@ -26,7 +26,6 @@
 #include "config.h"
 #include "MegamorphicCache.h"
 
-#include "JSObjectInlines.h"
 #include "ProgramExecutable.h"
 
 #include <wtf/TZoneMallocInlines.h>
@@ -36,83 +35,62 @@ namespace JSC {
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MegamorphicCache);
 
-bool MegamorphicCache::noteDependenceOnPrototypes(StructureID structureID, JSCell* lastPrototype)
+void MegamorphicCache::takeOutDead(Heap& heap)
 {
-    for (Structure* structure = structureID.decode();;) {
-        if (!structure->hasMonoProto())
-            return false;
-        JSValue prototype = structure->storedPrototype();
-        if (!prototype.isObject())
-            return true;
-        JSObject* object = asObject(prototype);
-        object->setIsPrototypeUsedByMegamorphicCache();
-        if (object == lastPrototype)
-            return true;
-        structure = object->structure();
-    }
-}
-
-void MegamorphicCache::reconcileWeakReferencesAtGCEnd(VM& vm)
-{
-    Heap& heap = vm.heap;
-    auto hasDied = [&](StructureID id) { return !heap.isMarked(id.decode()); };
-    auto reconcileLoads = [&](auto& entries) {
+    auto isDead = [&](StructureID structureID) {
+        return structureID && !heap.isMarked(structureID.decode());
+    };
+    auto takeOutLoads = [&](auto& entries) {
         for (auto& entry : entries) {
-            if (entry.m_epoch != m_epoch && entry.m_epoch != permanentEpoch)
+            if (entry.m_epoch == invalidEpoch)
                 continue;
-            bool hasHolder = entry.m_holder && entry.m_holder != JSCell::seenMultipleCalleeObjects();
-            if (hasDied(entry.m_structureID) || (hasHolder && !heap.isMarked(entry.m_holder)))
+            JSCell* holder = entry.m_holder;
+            bool isOwn = holder == JSCell::seenMultipleCalleeObjects();
+            if (!isLiveLoad(entry) || isDead(entry.m_structureID) || (holder && !isOwn && !heap.isMarked(holder))) {
+                entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
+                continue;
+            }
+            if (Options::validateAOTTypedFacts() && isOwn) [[unlikely]]
+                RELEASE_ASSERT_WITH_MESSAGE(entry.m_structureID.decode()->getConcurrently(entry.m_uid.get()) == static_cast<PropertyOffset>(entry.m_offset), "AOT: the megamorphic cache says where every object of a Structure has a property itself, and the Structure says otherwise");
         }
     };
-    auto reconcileStores = [&](auto& entries) {
+    takeOutLoads(m_loadCachePrimaryEntries);
+    takeOutLoads(m_loadCacheSecondaryEntries);
+    takeOutLoads(m_getterCachePrimaryEntries);
+    takeOutLoads(m_getterCacheSecondaryEntries);
+    auto takeOutStores = [&](auto& entries) {
         for (auto& entry : entries) {
-            if (entry.m_epoch == m_epoch && (hasDied(entry.m_oldStructureID) || hasDied(entry.m_newStructureID)))
+            if (entry.m_epoch == invalidEpoch)
+                continue;
+            if (entry.m_epoch != m_epoch || isDead(entry.m_oldStructureID) || isDead(entry.m_newStructureID)) {
+                entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
+            }
         }
     };
-    auto reconcileHas = [&](auto& entries) {
+    takeOutStores(m_storeCachePrimaryEntries);
+    takeOutStores(m_storeCacheSecondaryEntries);
+    auto takeOutAnswers = [&](auto& entries) {
         for (auto& entry : entries) {
-            if (entry.m_epoch == m_epoch && hasDied(entry.m_structureID))
+            if (entry.m_epoch == invalidEpoch)
+                continue;
+            if (entry.m_epoch != m_epoch || isDead(entry.m_structureID)) {
+                entry.m_uid = nullptr;
                 entry.m_epoch = invalidEpoch;
+            }
         }
     };
-    reconcileLoads(m_loadCachePrimaryEntries);
-    reconcileLoads(m_loadCacheSecondaryEntries);
-    reconcileLoads(m_getterCachePrimaryEntries);
-    reconcileLoads(m_getterCacheSecondaryEntries);
-    reconcileStores(m_storeCachePrimaryEntries);
-    reconcileStores(m_storeCacheSecondaryEntries);
-    reconcileHas(m_hasCachePrimaryEntries);
-    reconcileHas(m_hasCacheSecondaryEntries);
+    takeOutAnswers(m_hasCachePrimaryEntries);
+    takeOutAnswers(m_hasCacheSecondaryEntries);
     for (auto& entry : m_constructionEntries) {
-        if (entry.m_epoch == m_epoch && (hasDied(entry.m_firstStructureID) || hasDied(entry.m_lastStructureID)))
+        if (entry.m_epoch != invalidEpoch && (entry.m_epoch != m_epoch || isDead(entry.m_firstStructureID) || isDead(entry.m_lastStructureID)))
             entry.m_epoch = invalidEpoch;
     }
-    m_hasBeenReconciled = true;
 }
 
 void MegamorphicCache::age(CollectionScope collectionScope)
 {
-    if (std::exchange(m_hasBeenReconciled, false)) {
-        if (collectionScope == CollectionScope::Full) {
-            auto releaseNamesOfInvalidEntries = [&](auto& entries) {
-                for (auto& entry : entries) {
-                    if (entry.m_epoch != m_epoch && entry.m_epoch != permanentEpoch)
-                        entry.m_uid = nullptr;
-                }
-            };
-            releaseNamesOfInvalidEntries(m_loadCachePrimaryEntries);
-            releaseNamesOfInvalidEntries(m_loadCacheSecondaryEntries);
-            releaseNamesOfInvalidEntries(m_storeCachePrimaryEntries);
-            releaseNamesOfInvalidEntries(m_storeCacheSecondaryEntries);
-            releaseNamesOfInvalidEntries(m_hasCachePrimaryEntries);
-            releaseNamesOfInvalidEntries(m_hasCacheSecondaryEntries);
-            releaseNamesOfInvalidEntries(m_getterCachePrimaryEntries);
-            releaseNamesOfInvalidEntries(m_getterCacheSecondaryEntries);
-        }
-        return;
-    }
     ++m_epoch;
     // Nobody has looked whether their Structures are alive.
     if (std::exchange(m_hasPermanentEntries, false))

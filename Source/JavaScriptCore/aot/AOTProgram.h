@@ -34,7 +34,6 @@ struct CoveredOperation {
     static constexpr uint8_t isInLoop = 4;
     static constexpr uint8_t isInlined = 8;
     static constexpr uint8_t isElided = 16;
-    static constexpr uint8_t hasTypeTag = 32;
     static constexpr uint8_t isNotInGraph = 64;
     static constexpr uint32_t noReason = UINT32_MAX;
     static constexpr uint32_t noCounter = UINT32_MAX;

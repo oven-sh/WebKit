@@ -2797,7 +2797,7 @@ bool BytecodeGenerator::isLazyModuleFunctionDeclaration(const Variable& variable
         && m_lazyModuleFunctionDeclarations.contains(variable.ident().impl());
 }
 
-RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable& variable, ResolveMode resolveMode, uint32_t typeTag)
+RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* scope, const Variable& variable, ResolveMode resolveMode)
 {
     switch (variable.offset().kind()) {
     case VarKind::Stack:
@@ -2810,7 +2810,6 @@ RegisterID* BytecodeGenerator::emitGetFromScope(RegisterID* dst, RegisterID* sco
         
     case VarKind::Scope:
     case VarKind::Invalid: {
-        emitTypeTag(typeTag);
         OpGetFromScope::emit(
             this,
             kill(dst),
@@ -3315,11 +3314,6 @@ void BytecodeGenerator::emitTDZCheck(RegisterID* target, const Variable& variabl
     OpCheckTdz::emit(this, target, addConstantValue(addStringConstant(variable.ident())));
 }
 
-void BytecodeGenerator::emitCheckType(RegisterID* value, unsigned mask)
-{
-    OpCheckType::emit(this, value, mask);
-}
-
 void BytecodeGenerator::emitTDZCheck(RegisterID* target)
 {
     OpCheckTdz::emit(this, target, addConstantValue(jsUndefined()));
@@ -3601,14 +3595,13 @@ RegisterID* BytecodeGenerator::addTemplateObjectConstant(Ref<TemplateObjectDescr
     return &m_constantPoolRegisters[index];
 }
 
-RegisterID* BytecodeGenerator::emitNewArrayBuffer(RegisterID* dst, JSCellButterfly* array, IndexingType recommendedIndexingType, uint32_t typeTag)
+RegisterID* BytecodeGenerator::emitNewArrayBuffer(RegisterID* dst, JSCellButterfly* array, IndexingType recommendedIndexingType)
 {
-    emitTypeTag(typeTag);
     OpNewArrayBuffer::emit(this, dst, addConstantValue(array), recommendedIndexingType);
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elements, unsigned length, IndexingType recommendedIndexingType, uint32_t typeTag)
+RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elements, unsigned length, IndexingType recommendedIndexingType)
 {
     Vector<RefPtr<RegisterID>, 16, UnsafeVectorOverflow> argv;
     for (ElementNode* n = elements; n; n = n->next()) {
@@ -3622,7 +3615,6 @@ RegisterID* BytecodeGenerator::emitNewArray(RegisterID* dst, ElementNode* elemen
         emitNode(argv.last().get(), n->value());
     }
     ASSERT(!length);
-    emitTypeTag(typeTag);
     OpNewArray::emit(this, dst, argv.size() ? argv[0].get() : VirtualRegister { 0 }, argv.size(), recommendedIndexingType);
     return dst;
 }
@@ -3642,7 +3634,7 @@ RegisterID* BytecodeGenerator::emitNewArrayByReversingArguments(RegisterID* dst,
     return dst;
 }
 
-RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements, uint32_t typeTag)
+RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNode* elements)
 {
     BitVector bitVector;
     Vector<RefPtr<RegisterID>, 16> argv;
@@ -3676,7 +3668,6 @@ RegisterID* BytecodeGenerator::emitNewArrayWithSpread(RegisterID* dst, ElementNo
     }
 
     unsigned bitVectorIndex = m_codeBlock->addBitVector(WTF::move(bitVector));
-    emitTypeTag(typeTag);
     OpNewArrayWithSpread::emit(this, dst, argv[0].get(), argv.size(), bitVectorIndex);
     return dst;
 }
@@ -4066,8 +4057,6 @@ RegisterID* BytecodeGenerator::emitCall(RegisterID* dst, RegisterID* func, Expec
     // Emit call.
     ASSERT(dst);
     ASSERT(dst != ignoredResult());
-    if (callArguments.argumentsNode())
-        emitTypeTag(callArguments.argumentsNode()->typeTag());
     if constexpr (opcodeID == op_call_direct_eval)
         CallOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), thisRegister(), scopeRegister(), computeFeaturesForCallDirectEval(), nextValueProfileIndex());
     else if constexpr (opcodeID == op_call_ignore_result) {
@@ -4281,8 +4270,6 @@ RegisterID* BytecodeGenerator::emitConstructImpl(RegisterID* dst, RegisterID* fu
     Ref<Label> done = newLabel();
     expectedFunction = emitExpectedFunctionSnippet(dst, func, expectedFunction, callArguments, done.get());
 
-    if (callArguments.argumentsNode())
-        emitTypeTag(callArguments.argumentsNode()->typeTag());
     ConstructOp::emit(this, dst, func, callArguments.argumentCountIncludingThis(), callArguments.stackOffset(), nextValueProfileIndex());
 
     if (expectedFunction != NoExpectedFunction)
@@ -5227,55 +5214,6 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
                 // IteratorClose sequence for break-ed control flow.
                 emitIteratorGenericClose(iterator.get(), node, EmitAwait::Yes);
             }
-        }
-        emitLabel(loopDone.get());
-        return;
-    }
-
-    if (forLoopNode && subjectNode->isSoundTypeCheckNode() && static_cast<SoundTypeCheckNode*>(subjectNode)->mask() == SoundTypeArray && m_vm.useImmutableIntrinsics) {
-        RefPtr<RegisterID> array = newTemporary();
-        emitNode(array.get(), subjectNode);
-        {
-            emitExpressionInfo(node->divot(), node->divotStart(), node->divotEnd());
-            RefPtr<RegisterID> iteratorSymbol = emitGetById(newTemporary(), array.get(), propertyNames().iteratorSymbol);
-            RefPtr<RegisterID> forAnyArray = moveLinkTimeConstant(nullptr, LinkTimeConstant::arrayProtoValues);
-            Ref<Label> appliesToAnyArray = newLabel();
-            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), iteratorSymbol.get(), forAnyArray.get()), appliesToAnyArray.get());
-            emitThrowTypeError("Type check failed: expected an array that is iterated over like any other"_s);
-            emitLabel(appliesToAnyArray.get());
-        }
-        RefPtr<RegisterID> index = newTemporary();
-        emitLoad(index.get(), jsNumber(0));
-
-        Ref<Label> loopDone = newLabel();
-        {
-            Ref<LabelScope> scope = newLabelScope(LabelScope::Loop);
-            RefPtr<RegisterID> value = newTemporary();
-
-            {
-                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
-                emitJumpIfFalse(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopDone.get());
-            }
-            Ref<Label> loopStart = newLabel();
-            emitLabel(loopStart.get());
-            emitLoopHint();
-
-            RELEASE_ASSERT(forLoopNode->isForOfNode());
-            prepareLexicalScopeForNextForLoopIteration(forLoopNode, forLoopSymbolTable);
-            emitDebugHook(forLoopNode->lexpr());
-
-            emitGetByVal(value.get(), array.get(), index.get());
-            emitInc(index.get());
-
-            callBack(*this, value.get());
-            emitLabel(*scope->continueTarget());
-            {
-                RefPtr<RegisterID> length = emitGetLength(newTemporary(), array.get());
-                emitJumpIfTrue(emitBinaryOp<OpLess>(newTemporary(), index.get(), length.get(), OperandTypes(ResultType::numberTypeIsInt32(), ResultType::numberType())), loopStart.get());
-            }
-
-            if (scope->breakTargetMayBeBound())
-                emitLabel(scope->breakTarget());
         }
         emitLabel(loopDone.get());
         return;

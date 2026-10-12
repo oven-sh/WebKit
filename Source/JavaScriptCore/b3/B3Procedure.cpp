@@ -55,7 +55,9 @@ Procedure::Procedure(bool usesSIMD)
     : m_cfg(new CFG(*this))
     , m_lastPhaseName("initial")
     , m_byproducts(makeUnique<OpaqueByproducts>())
+#if !USE(BUN_JSC_ADDITIONS)
     , m_heaps(makeUniqueRef<AbstractHeapRepository>())
+#endif
 {
     if (usesSIMD)
         setUsesSIMD();
@@ -211,6 +213,10 @@ void Procedure::resetValueOwners()
 
 void Procedure::resetReachability()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+#endif
     recomputePredecessors(m_blocks);
     
     // The common case is that this does not find any dead blocks.
@@ -224,6 +230,25 @@ void Procedure::resetReachability()
     if (!foundDead)
         return;
     
+#if USE(BUN_JSC_ADDITIONS)
+    IndexSet<Value*> deadPhis;
+    for (auto& block : m_blocks) {
+        if (!isBlockDead(block.get()))
+            continue;
+        for (Value* value : *block) {
+            if (value->opcode() == Phi)
+                deadPhis.add(value);
+        }
+    }
+    if (!deadPhis.isEmpty()) {
+        for (Value* value : values()) {
+            if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
+                if (deadPhis.contains(upsilon->phi()))
+                    upsilon->replaceWithNop();
+            }
+        }
+    }
+#else
     resetValueOwners();
 
     for (Value* value : values()) {
@@ -232,6 +257,7 @@ void Procedure::resetReachability()
                 upsilon->replaceWithNop();
         }
     }
+#endif
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get())) {
@@ -244,6 +270,10 @@ void Procedure::resetReachability()
 
 void Procedure::invalidateCFG()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_blocksInPreOrder.shrink(0);
+    m_blocksInPostOrder.shrink(0);
+#endif
     m_dominators = nullptr;
     m_naturalLoops = nullptr;
     m_backwardsCFG = nullptr;
@@ -287,6 +317,15 @@ void Procedure::dump(PrintStream& out) const
 
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent()) {
+        if (m_blocksInPreOrder.isEmpty()) {
+            m_blocksInPreOrder.reserveCapacity(size());
+            appendNodesInOrder(cfg(), GraphOrder::PreOrder, m_blocksInPreOrder);
+        }
+        return m_blocksInPreOrder;
+    }
+#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PreOrder, result);
@@ -295,6 +334,15 @@ Vector<BasicBlock*> Procedure::blocksInPreOrder()
 
 Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent()) {
+        if (m_blocksInPostOrder.isEmpty()) {
+            m_blocksInPostOrder.reserveCapacity(size());
+            appendNodesInOrder(cfg(), GraphOrder::PostOrder, m_blocksInPostOrder);
+        }
+        return m_blocksInPostOrder;
+    }
+#endif
     Vector<BasicBlock*> result;
     result.reserveInitialCapacity(size());
     appendNodesInOrder(cfg(), GraphOrder::PostOrder, result);

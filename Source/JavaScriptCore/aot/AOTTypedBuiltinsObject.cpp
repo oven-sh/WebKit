@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTInlineCaches.h"
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTTypedObject.h"
@@ -23,6 +24,33 @@
 namespace JSC { namespace AOT {
 
 enum class OwnKeys : uint32_t { ObjectKeys, ObjectGetOwnPropertyNames, ObjectGetOwnPropertySymbols, ReflectOwnKeys };
+
+enum class FunctionInEngine : uint32_t { Keys, GetOwnPropertyNames, GetOwnPropertySymbols, OwnKeys, Values, GetOwnPropertyDescriptor };
+static_assert(static_cast<uint32_t>(FunctionInEngine::Keys) == static_cast<uint32_t>(OwnKeys::ObjectKeys) && static_cast<uint32_t>(FunctionInEngine::GetOwnPropertyNames) == static_cast<uint32_t>(OwnKeys::ObjectGetOwnPropertyNames));
+static_assert(static_cast<uint32_t>(FunctionInEngine::GetOwnPropertySymbols) == static_cast<uint32_t>(OwnKeys::ObjectGetOwnPropertySymbols) && static_cast<uint32_t>(FunctionInEngine::OwnKeys) == static_cast<uint32_t>(OwnKeys::ReflectOwnKeys));
+
+static NEVER_INLINE JSValue callInEngine(Instance* instance, FunctionInEngine which, JSValue first, JSValue second = JSValue())
+{
+    static constexpr unsigned count = static_cast<unsigned>(FunctionInEngine::GetOwnPropertyDescriptor) + 1;
+    static constexpr std::array<std::array<ASCIILiteral, 2>, count> names { {
+        { "Object"_s, "keys"_s }, { "Object"_s, "getOwnPropertyNames"_s }, { "Object"_s, "getOwnPropertySymbols"_s }, { "Reflect"_s, "ownKeys"_s }, { "Object"_s, "values"_s }, { "Object"_s, "getOwnPropertyDescriptor"_s },
+    } };
+    static const std::array<std::array<unsigned, 2>, count> cells = [] {
+        auto& builtins = Typed::Builtins::singleton();
+        std::array<std::array<unsigned, 2>, count> result;
+        for (unsigned i = 0; i < count; ++i)
+            result[i] = { builtins.cellOfGlobal(names[i][0]), builtins.cellOfStaticFunction(names[i][0], names[i][1]) };
+        return result;
+    }();
+    unsigned index = static_cast<unsigned>(which);
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        runtimeTable(*instance->vm).countOperation("called in the engine", names[index][1].characters());
+    MarkedArgumentBuffer list;
+    list.append(first);
+    if (second)
+        list.append(second);
+    return callBuiltinInEngine(instance, cells[index][1], typedBuiltinCell(instance, cells[index][0]), list);
+}
 
 // See Lowering::lowerOwnPropertyKeys().
 static void noteKeyList(Instance* instance, VM& vm, JSObject* object)
@@ -42,12 +70,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedOwnPropertyKeys, JSCell*, (Instance* i
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue value = JSValue::decode(encodedValue);
     OwnKeys keys = static_cast<OwnKeys>(which);
-    if (keys == OwnKeys::ReflectOwnKeys && !value.isObject()) [[unlikely]] {
-        throwTypeError(globalObject, scope, ReflectOwnKeysNonObjectArgumentError);
-        OPERATION_RETURN(scope, nullptr);
+    JSObject* object;
+    if (value.isObject()) [[likely]]
+        object = asObject(value);
+    else {
+        if (keys == OwnKeys::ReflectOwnKeys || value.isUndefinedOrNull()) {
+            JSValue list = callInEngine(instance, static_cast<FunctionInEngine>(which), value);
+            OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+            OPERATION_RETURN(scope, list.asCell());
+        }
+        object = value.toObject(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     }
-    JSObject* object = value.toObject(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+    if (object->structure()->isDictionary()) [[unlikely]]
+        flattenOnce(vm, object);
     if (keys != OwnKeys::ObjectGetOwnPropertySymbols)
         noteKeyList(instance, vm, object);
     switch (keys) {
@@ -69,12 +105,64 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectValues, JSCell*, (Instance* inst
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull()) [[unlikely]] {
-        throwTypeError(globalObject, scope, "Object.values requires that input parameter not be null or undefined"_s);
-        OPERATION_RETURN(scope, nullptr);
+        JSValue list = callInEngine(instance, FunctionInEngine::Values, value);
+        OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
+        OPERATION_RETURN(scope, list.asCell());
     }
     JSValue values = objectValues(vm, globalObject, value);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, values.asCell());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedObjectEntries, JSCell*, (Instance* instance, EncodedJSValue encodedValue))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue value = JSValue::decode(encodedValue);
+    if (!value.isObject() || globalObject->isHavingABadTime())
+        return nullptr;
+    JSObject* target = asObject(value);
+    Structure* structure = target->structure();
+    if (!target->staticPropertiesReified() || target->canHaveExistingOwnIndexedProperties() || target->hasNonReifiedStaticProperties() || !structure->canPerformFastPropertyEnumerationCommon())
+        return nullptr;
+    JSCellButterfly* names = structure->cachedPropertyNames(CachedPropertyNamesKind::EnumerableStrings);
+    if (!names)
+        return nullptr;
+    Vector<std::pair<UniquedStringImpl*, PropertyOffset>, 16> properties;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        if (!(entry.attributes() & PropertyAttribute::DontEnum) && !entry.key()->isSymbol())
+            properties.append({ entry.key(), entry.offset() });
+        return true;
+    });
+    unsigned count = properties.size();
+    if (names->length() != count)
+        return nullptr;
+    for (unsigned i = 0; i < count; ++i) {
+        if (asString(names->get(i))->tryGetValueImpl() != properties[i].first)
+            return nullptr;
+    }
+    Structure* arrayStructure = globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous);
+    JSArray* entries = JSArray::tryCreate(vm, arrayStructure, count);
+    if (!entries)
+        return nullptr;
+    for (unsigned i = 0; i < count; ++i) {
+        JSArray* entry;
+        {
+            ObjectInitializationScope initializationScope(vm);
+            entry = JSArray::tryCreateUninitializedRestricted(initializationScope, nullptr, arrayStructure, 2);
+            if (!entry)
+                return nullptr;
+            entry->initializeIndex(initializationScope, 0, names->get(i));
+            entry->initializeIndex(initializationScope, 1, target->getDirect(properties[i].second));
+        }
+        entries->butterfly()->contiguous().at(entries, i).set(vm, entries, entry);
+    }
+    ensureStillAliveHere(names);
+    return entries;
+}
+
+static bool mayHaveIndexThatAStoreDoesNotDefine(JSObject* target)
+{
+    return (hasAnyArrayStorage(target->indexingType()) && target->butterfly()->arrayStorage()->m_sparseMap) || target->structure()->holesMustForwardToPrototype(target);
 }
 
 // As operationObjectAssignUntyped().
@@ -86,7 +174,7 @@ static void assignFrom(JSGlobalObject* globalObject, JSObject* target, JSValue s
         return;
     JSObject* source = sourceValue.toObject(globalObject);
     RETURN_IF_EXCEPTION(scope, void());
-    if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible()) {
+    if (auto* targetObject = dynamicDowncast<JSFinalObject>(target); targetObject && targetObject->canPerformFastPutInlineExcludingProto() && targetObject->isStructureExtensible() && !(source->canHaveExistingOwnIndexedProperties() && mayHaveIndexThatAStoreDoesNotDefine(targetObject))) {
         if (!source->staticPropertiesReified()) {
             source->reifyAllStaticProperties(globalObject);
             RETURN_IF_EXCEPTION(scope, void());
@@ -133,9 +221,8 @@ static bool holdsForEveryObjectWithStructure(const PropertySlot& slot, JSObject*
 {
     if (parseIndex(name) || (!slot.isCacheable() && !slot.isUnset()) || object->type() == GlobalProxyType)
         return false;
-    object->flattenIfCacheableDictionary(object->vm());
     Structure* structure = object->structure();
-    return !structure->typeInfo().prohibitsPropertyCaching() && structure->propertyAccessesAreCacheable() && (!slot.isUnset() || structure->propertyAccessesAreCacheableForAbsence()) && !structure->isDictionary();
+    return !structure->typeInfo().prohibitsPropertyCaching() && structure->propertyAccessesAreCacheable() && (!slot.isUnset() || (structure->propertyAccessesAreCacheableForAbsence() && !structure->isDictionary()));
 }
 
 // Of an object of a compiled layout no slot is cacheable, and much is known all the same: see Instance::OwnPropertyPlace::isCompiledField. Yields whether every object of the structure has an own property of the name, where they are all alike in that.
@@ -159,7 +246,7 @@ static std::optional<bool> notePlaceInCompiledObject(Instance* instance, JSObjec
         return std::nullopt;
     unsigned width = 0;
     unsigned marker = 0;
-    switch (field->store) {
+    switch (field->store()) {
     case Store::JSValue:
     case Store::Cell:
         width = 8;
@@ -221,10 +308,14 @@ static void notePlaceOfOwnProperty(Instance* instance, const PropertySlot& slot,
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnProperty, size_t, (Instance* instance, EncodedJSValue encodedBase, EncodedJSValue encodedKey))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (Options::validateAOTTypedFacts()) [[unlikely]]
+        instance->validateKeyedTables();
     JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
+    if (object->structure()->isDictionary()) [[unlikely]]
+        flattenOnce(vm, object);
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     bool result = object->hasOwnProperty(globalObject, name, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -268,8 +359,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, EncodedJSVal
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     prepareDataPropertyDescriptorAllocation(instance);
-    JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    JSValue base = JSValue::decode(encodedBase);
+    JSObject* object;
+    if (base.isObject()) [[likely]]
+        object = asObject(base);
+    else {
+        if (base.isUndefinedOrNull())
+            OPERATION_RETURN(scope, JSValue::encode(callInEngine(instance, FunctionInEngine::GetOwnPropertyDescriptor, base, JSValue::decode(encodedKey))));
+        object = base.toObject(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    }
     auto name = JSValue::decode(encodedKey).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     // What asking an ordinary object comes to is not seen by anybody.
@@ -289,6 +388,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasOwnPropertyOfName, size_t, (Instanc
     JSObject* object = JSValue::decode(encodedBase).toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
     const Identifier& identifier = instance->typed->name(vm, name);
+    if (object->structure()->isDictionary()) [[unlikely]]
+        flattenOnce(vm, object);
     PropertySlot slot(object, PropertySlot::InternalMethodType::GetOwnProperty);
     bool result = object->hasOwnProperty(globalObject, identifier, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, false);
@@ -389,10 +490,10 @@ CellPointer Lowering::newCopyOnWriteArray(LValue list, LBasicBlock slowPath)
 {
     static_assert(sizeof(JSArray) <= MarkedSpace::preciseCutoff && !(sizeof(JSArray) % MarkedSpace::sizeStep));
     // Zero once arrays are no longer allocated with this structure.
-    LValue structureID = changing32(Instance::offsetOfNewCopyOnWriteArrayStructureIDs() + 2 * sizeof(uint32_t));
-    orElse(m_out.notZero32(structureID), slowPath);
+    LValue header = changing64(Instance::offsetOfNewCopyOnWriteArrayHeaders() + 2 * sizeof(uint64_t));
+    orElse(m_out.notZero64(header), slowPath);
     CellPointer array = allocateCell(fixedPointer(Instance::offsetOfArrayAllocator()), sizeof(JSArray), slowPath);
-    storeHeader(array.value(), structureID, arrayTypeInfoBlob(CopyOnWriteArrayWithContiguous));
+    storeHeader(array.value(), header);
     m_out.storePtr(m_out.add(list, m_out.constIntPtr(JSCellButterfly::offsetOfData())), array.value(), m_heaps.JSObject_butterfly);
     fenceAfterInitialization();
     return array;
@@ -540,6 +641,12 @@ Word32 Lowering::lowerHasOwnProperty(ValueID object, ValueID key)
             return AOT_TYPED_OPERATION(HasOwnProperty, in<Boxed>(object), in<Boxed>(key));
         LBasicBlock slowPath = newColdBlock();
         Join join(m_out, Rep::Int32, Int32);
+        if (auto* stamp = forInStampOf(object, key)) {
+            LBasicBlock hasChanged = newColdBlock();
+            isAsListedOrElse(*stamp, in<Boxed>(object), hasChanged);
+            join.add(boolean(true));
+            m_out.appendTo(hasChanged);
+        }
         CellPointer cell = objectOrElse(object, slowPath);
         join.add(hasOwnPropertyAt(cell, placeOfOwnPropertyOrElse(cell, key, slowPath)));
         m_out.appendTo(slowPath);
@@ -851,7 +958,7 @@ void Lowering::byKeyOrder(ValueID object, const Vector<KeyOrder, 2>& orders, con
 }
 
 // `{ ...source }` where the copy is an ordinary object.
-CellPointer Lowering::cloneAsPlainObject(ValueID source)
+CellPointer Lowering::cloneAsPlainObject(ValueID source, const DefinedOnCopy& defined)
 {
     auto& anything = m_program.at(m_program.types.anything);
     Join made(m_out, Rep::Cell, b3TypeOf(Rep::Cell));
@@ -865,7 +972,10 @@ CellPointer Lowering::cloneAsPlainObject(ValueID source)
         }
         made.add(newObjectLiteral(names.span(), values.span()));
     }, [&] {
-        made.add(AOT_TYPED_OPERATION(CloneObject, in<Boxed>(source), word32(false)));
+        if (defined.more)
+            made.add(AOT_TYPED_OPERATION(CloneObjectForMore, in<Boxed>(source), integer(static_cast<int64_t>(defined.more)), defined.values.size() > 0 ? in<Boxed>(defined.values[0]) : undefined(), defined.values.size() > 1 ? in<Boxed>(defined.values[1]) : undefined()));
+        else
+            made.add(AOT_TYPED_OPERATION(CloneObject, in<Boxed>(source), word32(false)));
     });
     return made.finish().as<CellPointer>();
 }
@@ -890,7 +1000,7 @@ CellPointer Lowering::newArrayOf(std::span<const Boxed> elements)
     ValueFromBlock fast = m_out.anchor(array.value());
     m_out.jump(continuation);
     m_out.appendTo(slowPath);
-    LValue buffer = m_out.lockedStackSlot(length * sizeof(EncodedJSValue));
+    LValue buffer = transientBuffer(length * sizeof(EncodedJSValue));
     for (unsigned i = 0; i < length; ++i)
         m_out.store64(elements[i].value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
     ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArray, word32(length), Pointer(buffer)).value());
@@ -920,8 +1030,16 @@ CellPointer Lowering::lowerValuesOrEntries(InlineBuiltin which, const Value& val
     }, [&] {
         if (which == InlineBuiltin::ObjectValues)
             join.add(AOT_TYPED_OPERATION(ObjectValues, in<Boxed>(object)));
-        else
+        else {
+            CellPointer made = AOT_TYPED_OPERATION(ObjectEntries, in<Boxed>(object));
+            LBasicBlock isMade = m_out.newBlock();
+            LBasicBlock isNotMade = newColdBlock();
+            m_out.branch(m_out.notNull(made.value()), usually(isMade), rarely(isNotMade));
+            m_out.appendTo(isMade);
+            join.add(made);
+            m_out.appendTo(isNotMade);
             join.add(convert(callBuiltinFunction(value, effectsOfBuiltinCall(value)), Type::engineClass(m_builtins.arrayClass()), Rep::Cell));
+        }
     });
     return join.finish().as<CellPointer>();
 }
@@ -1034,8 +1152,12 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
 {
     auto& type = typeOf(result);
     switch (which) {
-    case InlineBuiltin::ObjectHasOwn:
-        return yieldBoolean(lowerHasOwnProperty(value.arguments[0], value.arguments[1]), type);
+    case InlineBuiltin::ObjectHasOwn: {
+        Word32 answer = lowerHasOwnProperty(value.arguments[0], value.arguments[1]);
+        Operand yielded = yieldBoolean(answer, type);
+        m_truthinessPhis.add(result.index(), Truthiness { yielded.value, answer.value() });
+        return yielded;
+    }
     case InlineBuiltin::ObjectKeys:
     case InlineBuiltin::ObjectGetOwnPropertyNames:
     case InlineBuiltin::ObjectGetOwnPropertySymbols:

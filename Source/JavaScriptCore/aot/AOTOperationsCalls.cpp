@@ -82,35 +82,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorOpenTryFast, EncodedJSValue, (Insta
     OPERATION_RETURN(scope, encodedJSValue());
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorOpenTryFast, EncodedJSValue, (Instance* instance, EncodedJSValue encodedIterable, EncodedJSValue encodedSymbolIterator, EncodedJSValue* next))
-{
-    AOT_OPERATION_BEGIN(instance);
-    JSValue iterable = JSValue::decode(encodedIterable);
-    JSValue symbolIterator = JSValue::decode(encodedSymbolIterator);
-    bool promiseSpeciesIsPrimordial = globalObject->promiseSpeciesWatchpointSet().state() == IsWatched;
-
-    if (symbolIterator.isUndefinedOrNull()) {
-        JSAsyncFromSyncIterator* wrapper = createAsyncFromSyncIteratorForIterable(globalObject, iterable);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        *next = JSValue::encode(promiseSpeciesIsPrimordial ? JSValue(vm.fastAsyncGeneratorSentinel()) : JSValue(globalObject->asyncFromSyncIteratorPrototypeNextFunction()));
-        OPERATION_RETURN(scope, JSValue::encode(wrapper));
-    }
-
-    if (promiseSpeciesIsPrimordial && iterable.isCell() && iterable.asCell()->type() == JSAsyncGeneratorType
-        && symbolIterator == globalObject->linkTimeConstant(LinkTimeConstant::asyncIteratorPrototypeSymbolAsyncIterator)) {
-        JSObject* iterableObject = asObject(iterable);
-        PropertySlot slot(iterableObject, PropertySlot::InternalMethodType::VMInquiry, &vm);
-        bool found = iterableObject->getPropertySlot(globalObject, vm.propertyNames->next, slot);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-        if (found && slot.isValue() && slot.getValue(globalObject, vm.propertyNames->next) == globalObject->linkTimeConstant(LinkTimeConstant::asyncGeneratorPrototypeNext)) {
-            *next = JSValue::encode(vm.fastAsyncGeneratorSentinel());
-            OPERATION_RETURN(scope, encodedIterable);
-        }
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    }
-    OPERATION_RETURN(scope, encodedJSValue());
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextTryFast, EncodedJSValue, (Instance* instance, JSObject* iterator))
 {
     AOT_OPERATION_BEGIN(instance);
@@ -162,12 +133,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTIteratorNextWithIndex, EncodedJSValue, (Ins
     *encodedIndex = JSValue::encode(index);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     OPERATION_RETURN(scope, hasNext ? JSValue::encode(value) : encodedJSValue());
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTAsyncIteratorNextWithDriver, EncodedJSValue, (Instance* instance, JSObject* iterator, JSObject* driver, EncodedJSValue resumeValue))
-{
-    AOT_OPERATION_BEGIN(instance);
-    OPERATION_RETURN(scope, JSValue::encode(asyncIteratorNextWithDriver(globalObject, iterator, driver, JSValue::decode(resumeValue), &vm.syncResumeCallCache())));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTMaterializeArrayIterator, JSObject*, (Instance* instance, EncodedJSValue iterable, EncodedJSValue index))
@@ -360,13 +325,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLinkFunction, void, (Instance* ins
     RELEASE_ASSERT(Data::create(*instance, executable, nullptr, code.get()));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilled, void, (Data* data))
-{
-    countOperationNamed(data->instance, __func__);
-    if (!data->hasBeenFilledSinceLastCollection)
-        data->noteFilled();
-}
-
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTCacheCallee, void, (Instance* instance, Slot* cache, JSCell* callee, uint64_t entryWord, uint32_t count))
 {
     countOperationNamed(instance, __func__);
@@ -483,21 +441,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, 
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwTypeError(globalObject, scope, makeString("The function '"_s, uncheckedDowncast<JSFunction>(JSValue::decode(callee).asCell())->jsExecutable()->ecmaName().string(), "' was compiled for direct calls only"_s));
-}
-
-JSC_DEFINE_JIT_OPERATION(operationAOTCallDirectEval, EncodedJSValue, (Instance* instance, EncodedJSValue callee, uint32_t count, EncodedJSValue firstArgument, JSScope* callerScopeChain, EncodedJSValue thisValue, uint32_t bytecodeIndexBits, uint32_t lexicallyScopedFeatures))
-{
-    AOT_OPERATION_BEGIN(instance);
-    uint64_t words[CallFrame::headerSizeInRegisters + 2] { };
-    Register* frame = std::bit_cast<Register*>(&words[0]);
-    CallFrame* calleeFrame = CallFrame::create(frame);
-    frame[0] = callFrame;
-    *std::bit_cast<void**>(&frame[1]) = __builtin_return_address(0);
-    frame[static_cast<int>(CallFrameSlot::callee)] = JSValue::decode(callee);
-    frame[static_cast<int>(CallFrameSlot::argumentCountIncludingThis)].lowWord() = std::min(count, 1u) + 1;
-    frame[static_cast<int>(CallFrameSlot::thisArgument)] = JSValue::decode(thisValue);
-    frame[static_cast<int>(CallFrameSlot::firstArgument)] = JSValue::decode(firstArgument);
-    OPERATION_RETURN(scope, JSValue::encode(eval(calleeFrame, JSValue::decode(thisValue), callerScopeChain, caller(instance, callFrame).ensureData()->ensureCodeBlock(), BytecodeIndex::fromBits(bytecodeIndexBits), static_cast<LexicallyScopedFeatures>(lexicallyScopedFeatures))));
 }
 
 } } // namespace JSC::AOT

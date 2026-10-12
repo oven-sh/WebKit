@@ -433,8 +433,8 @@ private:
         auto& type = typeOf(value);
         if (!type.isInteger())
             return false;
-        auto& origin = m_function.at(originOf(value));
-        Range range = origin.opcode == Opcode::Integer ? Range::one(origin.integer()) : type.integers;
+        ValueID constant = m_program.constantOf(m_function, value);
+        Range range = constant && m_function.at(constant).opcode == Opcode::Integer ? Range::one(m_function.at(constant).integer()) : type.integers;
         if (static_cast<uint64_t>(range.most) - static_cast<uint64_t>(range.least) >= field.literals.size())
             return false;
         for (int64_t number = range.least; number <= range.most; ++number) {

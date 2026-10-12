@@ -26,6 +26,7 @@
 #include "config.h"
 #include "JSBoundFunction.h"
 
+#include "AOTFunction.h"
 #include "DeferTermination.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionPrototype.h"
@@ -60,11 +61,12 @@ JSC_DEFINE_HOST_FUNCTION(boundThisNoArgsFunctionCall, (JSGlobalObject* globalObj
         RELEASE_ASSERT(!args.hasOverflowed());
     }
 
-    JSFunction* targetFunction = uncheckedDowncast<JSFunction>(boundFunction->targetFunction());
-    ExecutableBase* executable = targetFunction->executable();
-    if (executable->hasJITCodeForCall()) {
-        // Force the executable to cache its arity entrypoint.
-        executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+    JSObject* targetFunction = boundFunction->targetFunction();
+    if (!isSlimClosureType(targetFunction->type())) {
+        ExecutableBase* executable = uncheckedDowncast<JSFunction>(targetFunction)->executable();
+        if (executable->hasJITCodeForCall()) {
+            executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+        }
     }
     auto callData = JSC::getCallDataInline(targetFunction);
     ASSERT(callData.type != CallData::Type::None);
@@ -155,6 +157,13 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
         if (structure && structure->storedPrototype() == prototype && structure->realm() == globalObject)
             return structure;
     }
+#if ENABLE(AOT)
+    if (isSlimClosureType(targetFunction->type())) {
+        Structure* structure = AOT::cachedBoundFunctionStructure(targetFunction);
+        if (structure && structure->storedPrototype() == prototype && structure->realm() == globalObject)
+            return structure;
+    }
+#endif
 
     Structure* result = globalObject->boundFunctionStructure();
 
@@ -169,6 +178,10 @@ inline Structure* getBoundFunctionStructure(VM& vm, JSGlobalObject* globalObject
 
     if (targetJSFunction)
         targetJSFunction->ensureRareData(vm)->setBoundFunctionStructure(vm, result);
+#if ENABLE(AOT)
+    else if (isSlimClosureType(targetFunction->type()))
+        AOT::setCachedBoundFunctionStructure(targetFunction, result);
+#endif
 
     return result;
 }
@@ -273,6 +286,12 @@ JSString* JSBoundFunction::nameSlow(VM& vm)
     JSObject* cursor = m_targetFunction.get();
     JSString* terminal = nullptr;
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            terminal = jsString(vm, AOT::nameOfSlimClosure(cursor));
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.
         if (!cursor->inherits<JSBoundFunction>()) {
             terminal = uncheckedDowncast<JSFunction>(cursor)->originalName(globalObject);
@@ -326,6 +345,12 @@ String JSBoundFunction::nameStringWithoutGCSlow(VM& vm)
     JSObject* cursor = m_targetFunction.get();
     String terminal;
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            terminal = AOT::nameOfSlimClosure(cursor);
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the name.
         if (!cursor->inherits<JSBoundFunction>()) {
             terminal = uncheckedDowncast<JSFunction>(cursor)->nameWithoutGC(vm);
@@ -358,6 +383,12 @@ double JSBoundFunction::lengthSlow(VM& vm)
     unsigned numBoundArgs = boundArgsLength();
     JSObject* cursor = m_targetFunction.get();
     while (true) {
+#if ENABLE(AOT)
+        if (isSlimClosureType(cursor->type())) {
+            length = AOT::lengthOfSlimClosure(cursor);
+            break;
+        }
+#endif
         ASSERT(cursor->inherits<JSFunction>()); // If this is not JSFunction, we eagerly materialized the length already.
         if (!cursor->inherits<JSBoundFunction>()) {
             length = uncheckedDowncast<JSFunction>(cursor)->originalLength(vm);

@@ -80,56 +80,6 @@ template <class T> concept YarrSyntaxCheckable = requires (T& checker, Vector<Ve
     { checker.resetForReparsing() } -> std::same_as<void>;
 };
 
-#if USE(BUN_JSC_ADDITIONS)
-// The texts of the character classes that a parse has seen, which lie in the pattern, each with what a delegate wants to know of it. `variant`: what else tells two classes of one text apart.
-template<typename T>
-class CharacterClassesByText {
-public:
-    // `rest`: the pattern from a `[` on. The class whose whole text stands there, if it has been seen: the parser would read the same characters and stop at the same `]`.
-    const T* find(std::span<const uint8_t> rest, unsigned variant, size_t& numberOfBytes) const
-    {
-        if (rest.size() < minNumberOfBytes)
-            return nullptr;
-        uint64_t start = startOf(rest);
-        for (auto& entry : m_entries) {
-            if (entry.start == start && entry.variant == variant && entry.text.size() <= rest.size() && equalSpans(entry.text, rest.first(entry.text.size()))) {
-                numberOfBytes = entry.text.size();
-                return &entry.value;
-            }
-        }
-        return nullptr;
-    }
-
-    void add(std::span<const uint8_t> text, unsigned variant, T value)
-    {
-        if (text.size() >= minNumberOfBytes && m_entries.size() < maxNumberOfClasses)
-            m_entries.append(Entry { text, startOf(text), variant, value });
-    }
-
-    void clear() { m_entries.clear(); }
-
-private:
-    static constexpr unsigned maxNumberOfClasses = 256;
-    // A shorter class is as soon parsed as found.
-    static constexpr size_t minNumberOfBytes = 16;
-
-    static uint64_t startOf(std::span<const uint8_t> text)
-    {
-        uint64_t start;
-        memcpySpan(asMutableByteSpan(start), text.first(sizeof(start)));
-        return start;
-    }
-
-    struct Entry {
-        std::span<const uint8_t> text;
-        uint64_t start;
-        unsigned variant;
-        T value;
-    };
-    Vector<Entry> m_entries;
-};
-#endif
-
 // The Parser class should not be used directly - only via the Yarr::parse() method.
 template<YarrSyntaxCheckable Delegate, typename CharType>
 class Parser {
@@ -1355,17 +1305,6 @@ private:
     {
         ASSERT(!hasError(m_errorCode));
         ASSERT(peek() == '[');
-#if USE(BUN_JSC_ADDITIONS)
-        // A long pattern is written by a program, which writes the same few classes out thousands of times.
-        unsigned startOfClass = m_index;
-        bool remembersClasses = m_size > minLengthOfPatternThatRemembersClasses;
-        if (remembersClasses) {
-            if (size_t numberOfBytes = m_delegate.atomCharacterClassSeenBefore(asBytes(unsafeMakeSpan(m_data + m_index, m_size - m_index)))) {
-                m_index += numberOfBytes / sizeof(CharType);
-                return;
-            }
-        }
-#endif
         consume();
 
         CharacterClassParserDelegate characterClassConstructor(m_delegate, m_errorCode, m_compileMode);
@@ -1377,10 +1316,6 @@ private:
             case ']':
                 consume();
                 characterClassConstructor.end();
-#if USE(BUN_JSC_ADDITIONS)
-                if (remembersClasses && !hasError(m_errorCode) && isPlainCharacterClass(startOfClass, m_index))
-                    m_delegate.rememberCharacterClass(asBytes(unsafeMakeSpan(m_data + startOfClass, m_index - startOfClass)));
-#endif
                 return;
 
             case '\\':
@@ -1397,27 +1332,6 @@ private:
 
         m_errorCode = ErrorCode::CharacterClassUnmatched;
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    static constexpr unsigned minLengthOfPatternThatRemembersClasses = 4096;
-
-    // Of a class that has been parsed, from its `[` to behind its `]`: nothing but its text, the mode and whether case is ignored says what it means.
-    bool isPlainCharacterClass(unsigned start, unsigned end)
-    {
-        for (unsigned index = start + 1; index + 1 < end; ++index) {
-            if (m_data[index] != '\\')
-                continue;
-            switch (m_data[++index]) {
-            case 'u': case 'x': case 'p': case 'P': case 'd': case 'D': case 'w': case 'W': case 's': case 'S': case 'b': case 'n': case 'r': case 't': case 'f': case 'v':
-            case '-': case ']': case '[': case '\\': case '^': case '$': case '/': case '.': case '*': case '+': case '?': case '(': case ')': case '{': case '}': case '|':
-                break;
-            default:
-                return false;
-            }
-        }
-        return true;
-    }
-#endif
 
     /*
      * parseClassSet():

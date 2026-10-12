@@ -141,6 +141,12 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
         }
     }
+    if (functionObject.isCell() && isSlimClosureType(functionObject.asCell()->type())) {
+        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+            return throwStackOverflowError(globalObject, scope);
+        scope.release();
+        return callStaticCode(AOT::slimClosureEntrypoint().taggedPtr(), vm, asObject(functionObject.asCell()), thisValue, context, args...);
+    }
     if (Options::useAOTOperationCounters()) [[unlikely]]
         AOT::countJobCall(vm, false);
 #endif
@@ -1457,6 +1463,17 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 resultPromise->rejectWithCaughtException(vm, scope);
                 return;
             }
+#if ENABLE(AOT)
+            if (JSObject* import = AOT::Instance::importOfCompiledEntryPoint(record)) {
+                JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
+                if (scope.exception()) [[unlikely]] {
+                    resultPromise->rejectWithCaughtException(vm, scope);
+                    return;
+                }
+                if (auto* importPromise = dynamicDowncast<JSPromise>(imported))
+                    evaluatePromise = importPromise;
+            }
+#endif
             // Chain: when evaluation completes, resolve resultPromise with record
             evaluatePromise->performPromiseThenWithInternalMicrotask(vm, InternalMicrotask::ModuleLoadReturnRecord, resultPromise, record);
         } else
@@ -1659,6 +1676,17 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
     auto* module = uncheckedDowncast<AbstractModuleRecord>(arguments[2]);
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
+#if ENABLE(AOT)
+        if (JSObject* import = AOT::Instance::importOfCompiledEntryPoint(module)) {
+            JSValue promise = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
+            if (scope.exception()) [[unlikely]] {
+                capabilityPromise->rejectWithCaughtException(vm, scope);
+                return;
+            }
+            capabilityPromise->resolve(globalObject, vm, promise);
+            return;
+        }
+#endif
         // 6.d.i. Let namespace be GetModuleNamespace(module).
         JSModuleNamespaceObject* moduleNamespace = module->getModuleNamespace(globalObject);
         if (scope.exception()) [[unlikely]] {
@@ -1697,8 +1725,7 @@ static void importModuleNamespace(JSGlobalObject* globalObject, VM& vm, ThrowSco
         // ContinueDynamicImport https://tc39.es/ecma262/#sec-ContinueDynamicImport
         // Step 6.d.ii: Call(promiseCapability.[[Resolve]], undefined, « namespace »).
         // A module namespace that exports "then" is a thenable per spec.
-        auto* moduleNamespace = downcast<JSModuleNamespaceObject>(arguments[1]);
-        resultPromise->resolve(globalObject, vm, moduleNamespace);
+        resultPromise->resolve(globalObject, vm, arguments[1]);
     } else
         resultPromise->reject(vm, arguments[1]);
     return;
@@ -1863,6 +1890,13 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
         asyncGeneratorBodyCall(generator->realm(), generator, resolution, static_cast<int32_t>(resumeMode), microtaskCallCache);
         return;
     }
+
+#if ENABLE(AOT)
+    if (context.inherits<AOT::Typed::Closure>() || context.inherits<AOT::Typed::AsyncGenerator>()) {
+        AOT::Typed::resumeDriver(vm, asObject(context), resolution, status == JSPromise::Status::Rejected, !!microtaskCallCache);
+        return;
+    }
+#endif
 
     // The only remaining for-await driver kind is a top-level-await module. Any other context type
     // reaching here means a new driver was wired up without a branch above.

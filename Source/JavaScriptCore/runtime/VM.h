@@ -186,6 +186,7 @@ namespace AOT {
 class VMProgram;
 class RuntimeTable;
 struct Instance;
+JS_EXPORT_PRIVATE void microtaskQueueingDidChange(VM&);
 }
 namespace FTL {
 class Thunks;
@@ -515,7 +516,6 @@ public:
     std::unique_ptr<AOT::VMProgram> m_aotProgram;
 
     struct BytecodeGenerationOptions {
-        bool useSoundTypes { Options::useSoundTypes() };
         bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
         bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
         bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
@@ -1212,7 +1212,14 @@ public:
     }
 #if USE(BUN_JSC_ADDITIONS)
     // Something of the host runs between two microtasks, or goes with each of them.
-    void updateHostObservesMicrotaskBoundaries() { m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken; }
+    void updateHostObservesMicrotaskBoundaries()
+    {
+        m_hostObservesMicrotaskBoundaries = m_onEachMicrotaskTick || m_crossTaskToken;
+#if ENABLE(AOT)
+        AOT::microtaskQueueingDidChange(*this);
+#endif
+    }
+    bool hostObservesMicrotaskBoundaries() const { return m_hostObservesMicrotaskBoundaries; }
     static constexpr ptrdiff_t offsetOfHostObservesMicrotaskBoundaries() { return OBJECT_OFFSETOF(VM, m_hostObservesMicrotaskBoundaries); }
 #endif
     void callOnEachMicrotaskTick()

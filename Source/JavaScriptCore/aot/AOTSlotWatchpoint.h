@@ -17,7 +17,6 @@
 namespace JSC {
 
 class CodeBlock;
-class ObjectPropertyConditionSet;
 
 namespace AOT {
 
@@ -83,7 +82,8 @@ private:
 
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;
 
-bool watchConditions(VM&, Data*, Slot*, const ObjectPropertyConditionSet&);
+bool watchConditions(VM&, Data*, Slot*, std::span<const ObjectPropertyCondition>);
+bool watchForStores(VM&, Data*, Slot*, std::span<JSObject* const> prototypes);
 void stopWatching(Data*, Slot*);
 void moveWatching(Data*, Slot* from, Slot* to);
 

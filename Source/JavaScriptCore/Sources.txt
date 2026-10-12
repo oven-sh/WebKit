@@ -48,12 +48,12 @@ aot/AOTCompiler.cpp
 aot/AOTImage.cpp
 aot/AOTInlineCaches.cpp
 aot/AOTEmitter.cpp @no-unify
-aot/AOTFacts.cpp @no-unify
 aot/AOTOperationsBuiltins.cpp @no-unify
 aot/AOTTypeTable.cpp @no-unify
 aot/AOTOperations.cpp
 aot/AOTOperationsCalls.cpp
 aot/AOTOperationsObjects.cpp
+aot/AOTOutliner.cpp @no-unify
 aot/AOTProgram.cpp
 aot/AOTProgramData.cpp
 aot/AOTRuntime.cpp
@@ -90,6 +90,7 @@ aot/AOTTypedCoroutineSplitting.cpp @no-unify
 aot/AOTTypedEffects.cpp @no-unify
 aot/AOTTypedFrameEnvironments.cpp @no-unify
 aot/AOTTypedFunctionSplitting.cpp @no-unify
+aot/AOTTypedGeneratorLoopFusion.cpp @no-unify
 aot/AOTTypedCleanup.cpp @no-unify
 aot/AOTTypedIR.cpp @no-unify
 aot/AOTTypedInlining.cpp @no-unify
@@ -111,8 +112,10 @@ aot/AOTTypedPlacement.cpp @no-unify
 aot/AOTTypedPreparation.cpp @no-unify
 aot/AOTTypedReader.cpp @no-unify
 aot/AOTTypedRegExpLiterals.cpp @no-unify
+aot/AOTTypedThreads.cpp @no-unify
 aot/AOTTypedType.cpp @no-unify
 aot/AOTTypedVerifier.cpp @no-unify
+aot/AOTTypedObjectAllocationSinking.cpp @no-unify
 
 assembler/AbstractMacroAssembler.cpp
 assembler/AssemblerBuffer.cpp
@@ -202,6 +205,7 @@ b3/B3ConstDoubleValue.cpp
 b3/B3ConstFloatValue.cpp
 b3/B3ConstrainedValue.cpp
 b3/B3CountedLoops.cpp @no-unify
+b3/B3CycleForest.cpp @no-unify
 b3/B3DataSection.cpp
 b3/B3DuplicateTails.cpp
 b3/B3Effects.cpp
@@ -242,6 +246,7 @@ b3/B3ReduceDoubleToFloat.cpp
 b3/B3ReduceStrength.cpp
 b3/B3RotateLoops.cpp @no-unify
 b3/B3SIMDValue.cpp
+b3/B3SinkValues.cpp @no-unify
 b3/B3SlotBaseValue.cpp
 b3/B3SpecializeSelect.cpp
 b3/B3StackmapGenerationParams.cpp

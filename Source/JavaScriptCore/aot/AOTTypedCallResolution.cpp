@@ -9,7 +9,9 @@
 #if ENABLE(AOT)
 
 #include "AOTConvention.h"
+#include "AOTTypedThreads.h"
 #include <wtf/BitVector.h>
+#include <wtf/Scope.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -102,6 +104,35 @@ public:
         }
     }
 
+    void expandDisposableStacks()
+    {
+        StringID newDisposableStack = m_program.find("NewDisposableStack"_s.span8()).value_or(StringID());
+        bool didLookUp = false;
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            for (unsigned i = 0; i < m_function.blocks[b].values.size(); ++i) {
+                ValueID id = m_function.blocks[b].values[i];
+                if (m_function.at(id).opcode != Opcode::Operation || m_function.at(id).string() != newDisposableStack)
+                    continue;
+                if (!std::exchange(didLookUp, true)) {
+                    auto& builtins = Builtins::singleton();
+                    m_addDisposableResource = m_program.find("AddDisposableResource"_s.span8()).value_or(StringID());
+                    m_disposeResources = m_program.find("DisposeResources"_s.span8()).value_or(StringID());
+                    m_usingTakesObjects = m_program.find("The value of a using declaration must be an object, null or undefined"_s.span8()).value_or(StringID());
+                    m_usingTakesDisposables = m_program.find("The value of a using declaration has no callable dispose method"_s.span8()).value_or(StringID());
+                    m_isCallable = builtins.find(BuiltinKind::Operation, { }, builtins.nameOf("IsCallable"_s.span8()));
+                    m_symbol = m_program.find("Symbol"_s.span8()).value_or(StringID());
+                    m_dispose = m_program.find("dispose"_s.span8()).value_or(StringID());
+                    m_typeError = m_program.find("TypeError"_s.span8()).value_or(StringID());
+                    m_suppressedError = m_program.find("SuppressedError"_s.span8()).value_or(StringID());
+                    countUsesAndFindUnreachedBlocks();
+                }
+                if (!m_addDisposableResource || !m_disposeResources || !m_usingTakesObjects || !m_usingTakesDisposables || !m_isObject || !m_isCallable || !m_symbol || !m_dispose || !m_typeError || !m_suppressedError)
+                    return;
+                expandDisposableStack(BlockID(b), id);
+            }
+        }
+    }
+
     unsigned run()
     {
         noteRefutedCallees();
@@ -147,6 +178,7 @@ private:
     };
 
     using Refuted = std::pair<ValueID, FunctionID>;
+    using RefutedShape = std::pair<ValueID, LayoutID>;
 
     enum class Yields : uint8_t {
         Result,
@@ -174,7 +206,7 @@ private:
         case Opcode::PutById:
             return resolveByShape(block, index, MethodKind::Setter) || resolveOnClassObject(block, index);
         case Opcode::Call:
-            return resolveCall(block, index) || resolveCallOfMethodRead(block, index) || resolveCallOrApply(block, index);
+            return resolveCallOfExpectedMethod(block, index) || resolveCall(block, index) || resolveCallOfMethodRead(block, index) || resolveCallOrApply(block, index);
         case Opcode::Operation:
             return resolveConstruct(block, index) || resolveSuper(block, index) || resolveCallNoInline(block, index);
         case Opcode::Construct:
@@ -195,6 +227,7 @@ private:
         m_function.blocks.append(Block { });
         m_refuted.append(Refuted { });
         m_asksClassObject.append(LayoutID());
+        m_refutedShapes.append(RefutedShape { });
         return BlockID(m_function.blocks.size() - 1);
     }
 
@@ -204,6 +237,7 @@ private:
         value.opcode = opcode;
         value.position = m_position;
         value.inlineFrame = m_inlineFrame;
+        value.isInTailPosition = m_isInTailPosition && (opcode == Opcode::Call || opcode == Opcode::CallMethod || opcode == Opcode::CallDirect);
         value.type = type;
         value.rep = repOf(m_program.at(type));
         return value;
@@ -222,6 +256,7 @@ private:
         ValueID id = m_function.at(block).values[index];
         m_position = m_function.at(id).position;
         m_inlineFrame = m_function.at(id).inlineFrame;
+        m_isInTailPosition = m_function.at(id).isInTailPosition;
         bool hasDepth = m_function.at(id).opcode == Opcode::CallMethod || m_function.at(id).opcode == Opcode::Call || m_function.at(id).opcode == Opcode::Operation;
         m_inliningDepth = hasDepth ? m_function.at(id).immediates[1] : Format::none;
         m_castOfResult = std::nullopt;
@@ -328,6 +363,379 @@ private:
         terminator.targets.append(m_handler);
     }
 
+    void jumpTo(BlockID block, Arguments&& arguments)
+    {
+        auto& terminator = m_function.at(m_block).terminator;
+        terminator.kind = m_lastMayThrow ? TerminatorKind::Invoke : TerminatorKind::Jump;
+        terminator.targets.append(Target { block, WTF::move(arguments) });
+        if (m_lastMayThrow)
+            terminator.targets.append(m_handler);
+        m_lastMayThrow = false;
+    }
+
+    void finishByThrowing(ValueID thrown)
+    {
+        endBlockAfterWatchedValue();
+        auto& terminator = m_function.at(m_block).terminator;
+        terminator.kind = TerminatorKind::Throw;
+        terminator.value = thrown;
+        if (m_isWatched)
+            terminator.targets.append(m_handler);
+    }
+
+    ValueID appendGlobal(StringID name)
+    {
+        Value global = make(Opcode::GetGlobal, m_program.types.anything);
+        global.immediates[0] = name.index();
+        return appendThrowing(WTF::move(global));
+    }
+
+    ValueID appendConstructOfGlobal(StringID name, Arguments&& arguments)
+    {
+        Value construct = make(Opcode::Construct, m_program.types.anything);
+        construct.children[0] = appendGlobal(name);
+        construct.arguments = WTF::move(arguments);
+        return appendThrowing(WTF::move(construct));
+    }
+
+    void finishByThrowingTypeError(StringID message)
+    {
+        Value text = make(Opcode::String, m_program.types.string);
+        text.immediates[0] = message.index();
+        finishByThrowing(appendConstructOfGlobal(m_typeError, Arguments { append(WTF::move(text)) }));
+    }
+
+    ValueID addParameterTo(BlockID block, TypeID type)
+    {
+        Value parameter = make(Opcode::Parameter, type);
+        parameter.immediates = { block.index(), static_cast<uint32_t>(m_function.at(block).parameters.size()) };
+        ValueID id = addValue(WTF::move(parameter));
+        m_function.at(block).parameters.append(id);
+        return id;
+    }
+
+    ValueID undefinedAtHeadOf(BlockID block)
+    {
+        ValueID id = addValue(make(Opcode::Undefined, m_program.types.undefined));
+        auto& values = m_function.at(block).values;
+        values.insert(!values.isEmpty() && m_function.at(values[0]).opcode == Opcode::CatchValue, id);
+        return id;
+    }
+
+    ValueID appendTest(BuiltinID test, ValueID operand)
+    {
+        Value value = make(Opcode::CallBuiltin, m_program.types.boolean);
+        value.immediates[0] = test.index();
+        value.arguments.append(operand);
+        return append(WTF::move(value));
+    }
+
+    void countUsesAndFindUnreachedBlocks()
+    {
+        m_numberOfUses.fill(0, m_function.values.size());
+        auto count = [&](ValueID child) {
+            if (child)
+                ++m_numberOfUses[child.index()];
+        };
+        for (auto& block : m_function.blocks) {
+            block.terminator.forEachChild(count);
+            for (ValueID id : block.values)
+                m_function.at(id).forEachChild(count);
+        }
+        m_numberOfBlocksAsRead = m_function.blocks.size();
+        Vector<unsigned, 16> worklist { 0u };
+        m_isReached.set(0);
+        while (!worklist.isEmpty()) {
+            for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
+                if (!m_isReached.set(target.block.index()))
+                    worklist.append(target.block.index());
+            }
+        }
+        for (unsigned b = 0; b < m_numberOfBlocksAsRead; ++b) {
+            if (m_isReached.get(b))
+                continue;
+            for (auto& target : m_function.blocks[b].terminator.targets)
+                m_unreachedPredecessors.add(target.block.index(), Vector<unsigned, 1>()).iterator->value.append(b);
+        }
+    }
+
+    bool expandDisposableStack(BlockID definedIn, ValueID stack)
+    {
+        static constexpr unsigned maxResources = 4;
+        static constexpr uint8_t isNotAdded = 1;
+        static constexpr uint8_t isAdded = 2;
+        static constexpr uint8_t mayBeAdded = isNotAdded | isAdded;
+        struct Resource {
+            ValueID method;
+            ValueID value;
+            BlockID addedIn;
+            Vector<uint8_t> atEntryOf;
+            Vector<ValueID> parametersOf;
+        };
+        if (definedIn.index() < m_numberOfBlocksAsRead && !m_isReached.get(definedIn.index()))
+            return false;
+        while (m_indexInRegion.size() < m_function.blocks.size())
+            m_indexInRegion.append(UINT_MAX);
+        Vector<unsigned, 32> region { definedIn.index() };
+        m_indexInRegion[definedIn.index()] = 0;
+        auto forgetRegion = makeScopeExit([&] {
+            for (unsigned block : region)
+                m_indexInRegion[block] = UINT_MAX;
+        });
+        Vector<Resource, maxResources> resources;
+        ValueID dispose;
+        BlockID disposedIn;
+        unsigned numberOfUsesSeen = 0;
+        for (unsigned next = 0; next < region.size(); ++next) {
+            unsigned b = region[next];
+            auto& block = m_function.blocks[b];
+            bool isUsedOtherwise = false;
+            block.terminator.forEachChild([&](ValueID child) {
+                isUsedOtherwise |= child == stack;
+            });
+            for (unsigned i = 0; i < block.values.size() && !isUsedOtherwise; ++i) {
+                auto& value = m_function.at(block.values[i]);
+                unsigned uses = 0;
+                value.forEachChild([&](ValueID child) {
+                    uses += child == stack;
+                });
+                if (!uses)
+                    continue;
+                numberOfUsesSeen += uses;
+                if (uses > 1 || value.opcode != Opcode::Operation || value.arguments.size() != 3 || value.arguments[0] != stack) {
+                    isUsedOtherwise = true;
+                    continue;
+                }
+                if (value.string() == m_disposeResources && !dispose) {
+                    dispose = block.values[i];
+                    disposedIn = BlockID(b);
+                    continue;
+                }
+                auto& isAsync = m_function.at(value.arguments[2]);
+                bool isWatched = i + 1 == block.values.size() && block.terminator.kind == TerminatorKind::Invoke;
+                if (value.string() != m_addDisposableResource || isAsync.opcode != Opcode::Boolean || isAsync.boolean() || !isWatched || resources.size() == maxResources) {
+                    isUsedOtherwise = true;
+                    continue;
+                }
+                resources.append(Resource { block.values[i], value.arguments[1], BlockID(b), { }, { } });
+            }
+            if (isUsedOtherwise)
+                return false;
+            if (dispose && disposedIn == BlockID(b))
+                continue;
+            for (auto& target : block.terminator.targets) {
+                unsigned to = target.block.index();
+                if (m_indexInRegion[to] != UINT_MAX)
+                    continue;
+                m_indexInRegion[to] = 0;
+                region.append(to);
+            }
+        }
+        if (numberOfUsesSeen != m_numberOfUses[stack.index()] || !dispose || disposedIn == definedIn)
+            return false;
+        for (auto& resource : resources) {
+            if (m_numberOfUses[resource.method.index()])
+                return false;
+        }
+        std::ranges::sort(region);
+        unsigned sizeOfRegion = region.size();
+        for (unsigned i = 0; i < sizeOfRegion; ++i)
+            m_indexInRegion[region[i]] = i;
+        std::ranges::sort(resources, { }, [](const Resource& resource) {
+            return resource.addedIn.index();
+        });
+        unsigned disposal = m_indexInRegion[disposedIn.index()];
+
+        auto atExitOf = [&](const Resource& resource, unsigned block, unsigned target) -> uint8_t {
+            if (BlockID(block) == resource.addedIn && !target)
+                return isAdded;
+            if (BlockID(block) == definedIn)
+                return isNotAdded;
+            unsigned index = m_indexInRegion[block];
+            return index == UINT_MAX ? 0 : resource.atEntryOf[index];
+        };
+        for (auto& resource : resources) {
+            if (resource.addedIn == disposedIn)
+                return false;
+            resource.atEntryOf.fill(0, sizeOfRegion);
+            Vector<unsigned, 16> worklist { definedIn.index() };
+            while (!worklist.isEmpty()) {
+                unsigned block = worklist.takeLast();
+                if (BlockID(block) == disposedIn)
+                    continue;
+                auto& targets = m_function.blocks[block].terminator.targets;
+                for (unsigned t = 0; t < targets.size(); ++t) {
+                    unsigned to = targets[t].block.index();
+                    uint8_t& atEntry = resource.atEntryOf[m_indexInRegion[to]];
+                    uint8_t joined = atEntry | atExitOf(resource, block, t);
+                    if (std::exchange(atEntry, joined) != joined)
+                        worklist.append(to);
+                }
+            }
+            if (!resource.atEntryOf[disposal])
+                return false;
+            if (resource.addedIn != definedIn && resource.atEntryOf[m_indexInRegion[resource.addedIn.index()]] != isNotAdded)
+                return false;
+        }
+        Vector<unsigned, maxResources> inOrderOfAdding;
+        inOrderOfAdding.fill(UINT_MAX, resources.size());
+        for (unsigned later = 0; later < resources.size(); ++later) {
+            unsigned numberAddedBefore = 0;
+            for (unsigned earlier = 0; earlier < resources.size(); ++earlier) {
+                if (earlier == later)
+                    continue;
+                uint8_t state = resources[later].addedIn == definedIn ? isNotAdded : resources[earlier].atEntryOf[m_indexInRegion[resources[later].addedIn.index()]];
+                if (state == mayBeAdded)
+                    return false;
+                numberAddedBefore += state == isAdded;
+            }
+            if (inOrderOfAdding[numberAddedBefore] != UINT_MAX)
+                return false;
+            inOrderOfAdding[numberAddedBefore] = later;
+        }
+
+        BitVector reachesDisposal(sizeOfRegion);
+        {
+            Vector<Vector<unsigned, 2>> predecessors(sizeOfRegion);
+            for (unsigned b : region) {
+                for (auto& target : m_function.blocks[b].terminator.targets) {
+                    if (unsigned to = m_indexInRegion[target.block.index()]; to != UINT_MAX)
+                        predecessors[to].append(b);
+                }
+            }
+            Vector<unsigned, 16> worklist { disposedIn.index() };
+            reachesDisposal.set(disposal);
+            while (!worklist.isEmpty()) {
+                unsigned block = worklist.takeLast();
+                if (BlockID(block) == definedIn)
+                    continue;
+                for (unsigned predecessor : predecessors[m_indexInRegion[block]]) {
+                    if (!reachesDisposal.set(m_indexInRegion[predecessor]))
+                        worklist.append(predecessor);
+                }
+            }
+        }
+
+        m_position = m_function.at(stack).position;
+        m_inlineFrame = m_function.at(stack).inlineFrame;
+        m_isInTailPosition = false;
+        TypeID anything = m_program.types.anything;
+        Vector<unsigned, 32> sources(region);
+        for (auto& resource : resources) {
+            resource.parametersOf.fill(ValueID(), 2 * sizeOfRegion);
+            for (unsigned i = 0; i < sizeOfRegion; ++i) {
+                unsigned b = region[i];
+                if (BlockID(b) == definedIn || resource.atEntryOf[i] != mayBeAdded || !reachesDisposal.get(i))
+                    continue;
+                resource.parametersOf[2 * i] = addParameterTo(BlockID(b), anything);
+                resource.parametersOf[2 * i + 1] = addParameterTo(BlockID(b), anything);
+                if (auto unreached = m_unreachedPredecessors.find(b); unreached != m_unreachedPredecessors.end())
+                    sources.appendVector(unreached->value);
+            }
+        }
+        if (sources.size() > sizeOfRegion) {
+            std::ranges::sort(sources);
+            sources.shrink(std::ranges::unique(sources).begin() - sources.begin());
+        }
+        for (unsigned b : sources) {
+            ValueID nothing;
+            unsigned from = m_indexInRegion[b];
+            auto& targets = m_function.blocks[b].terminator.targets;
+            for (unsigned t = 0; t < targets.size(); ++t) {
+                unsigned to = m_indexInRegion[targets[t].block.index()];
+                if (to == UINT_MAX)
+                    continue;
+                for (auto& resource : resources) {
+                    if (!resource.parametersOf[2 * to])
+                        continue;
+                    uint8_t state = atExitOf(resource, b, t);
+                    RELEASE_ASSERT(state != mayBeAdded || resource.parametersOf[2 * from]);
+                    if (state != isAdded && state != mayBeAdded && !nothing)
+                        nothing = undefinedAtHeadOf(BlockID(b));
+                    targets[t].arguments.append(state == isAdded ? resource.value : state == mayBeAdded ? resource.parametersOf[2 * from] : nothing);
+                    targets[t].arguments.append(state == isAdded ? resource.method : state == mayBeAdded ? resource.parametersOf[2 * from + 1] : nothing);
+                }
+            }
+        }
+
+        for (auto& resource : resources) {
+            open(resource.addedIn, m_function.at(resource.addedIn).values.size() - 1);
+            m_function.at(resource.method).type = anything;
+            m_function.at(resource.method).rep = repOf(m_program.at(anything));
+            BlockID isNoObject = branch(appendTest(m_isObject, resource.value));
+            Value symbol = make(Opcode::GetById, anything);
+            symbol.children[0] = appendGlobal(m_symbol);
+            symbol.immediates[0] = m_dispose.index();
+            Value read = make(Opcode::GetByVal, anything);
+            read.children = { resource.value, appendThrowing(WTF::move(symbol)) };
+            ValueID method = appendThrowing(WTF::move(read));
+            BlockID isNotCallable = branch(appendTest(m_isCallable, method));
+            finish(method);
+            moveTo(isNotCallable);
+            finishByThrowingTypeError(m_usingTakesDisposables);
+            moveTo(isNoObject);
+            Value isNil = make(Opcode::IsUndefinedOrNull, m_program.types.boolean);
+            isNil.children[0] = resource.value;
+            BlockID isNeither = branch(append(WTF::move(isNil)));
+            finish(append(make(Opcode::Undefined, m_program.types.undefined)));
+            moveTo(isNeither);
+            finishByThrowingTypeError(m_usingTakesObjects);
+        }
+
+        ValueID hasError = m_function.at(dispose).arguments[1];
+        ValueID error = m_function.at(dispose).arguments[2];
+        open(disposedIn, m_function.at(disposedIn).values.find(dispose));
+        Value truth = make(Opcode::Boolean, m_program.types.boolean);
+        truth.immediates[0] = 1;
+        ValueID yes = append(WTF::move(truth));
+        Value falsehood = make(Opcode::Boolean, m_program.types.boolean);
+        falsehood.immediates[0] = 0;
+        ValueID hasNewError = append(WTF::move(falsehood));
+        for (unsigned i = resources.size(); i--;) {
+            auto& resource = resources[inOrderOfAdding[i]];
+            uint8_t state = resource.atEntryOf[disposal];
+            if (state == isNotAdded)
+                continue;
+            ValueID value = state == isAdded ? resource.value : resource.parametersOf[2 * disposal];
+            ValueID method = state == isAdded ? resource.method : resource.parametersOf[2 * disposal + 1];
+            BlockID next = addBlock();
+            ValueID hasErrorBehind = addParameterTo(next, m_program.types.boolean);
+            ValueID errorBehind = addParameterTo(next, anything);
+            ValueID hasNewErrorBehind = addParameterTo(next, m_program.types.boolean);
+            Value isNone = make(Opcode::StrictEq, m_program.types.boolean);
+            isNone.children = { method, append(make(Opcode::Undefined, m_program.types.undefined)) };
+            BlockID isSome = branch(append(WTF::move(isNone)));
+            jumpTo(next, Arguments { hasError, error, hasNewError });
+            moveTo(isSome);
+            BlockID caught = addBlock();
+            Value call = make(Opcode::Call, anything);
+            call.children = { method, value };
+            call.immediates[1] = m_inliningDepth;
+            m_function.at(m_block).values.append(addValue(WTF::move(call)));
+            auto& invoke = m_function.at(m_block).terminator;
+            invoke.kind = TerminatorKind::Invoke;
+            invoke.targets.append(Target { next, Arguments { hasError, error, hasNewError } });
+            invoke.targets.append(Target { caught, { } });
+            moveTo(caught);
+            ValueID thrown = append(make(Opcode::CatchValue, anything));
+            BlockID isFirst = branch(hasError);
+            ValueID suppressing = appendConstructOfGlobal(m_suppressedError, Arguments { thrown, error });
+            jumpTo(next, Arguments { yes, suppressing, yes });
+            moveTo(isFirst);
+            jumpTo(next, Arguments { yes, thrown, yes });
+            moveTo(next);
+            hasError = hasErrorBehind;
+            error = errorBehind;
+            hasNewError = hasNewErrorBehind;
+        }
+        BlockID hasNoNewError = branch(hasNewError);
+        finishByThrowing(error);
+        moveTo(hasNoNewError);
+        finish(append(make(Opcode::Undefined, m_program.types.undefined)));
+        m_function.at(stack) = make(Opcode::Undefined, m_program.types.undefined);
+        return true;
+    }
+
     // `new F() as T`, after open(): the cast is what comes after the value, and nothing else uses the value. From here on the cast is what
     // is replaced, and each way carries it out on what it yields: see finishWithCast().
     void takeCastOfResult(ValueID id)
@@ -376,7 +784,13 @@ private:
     bool mayBeCalledDirectly(FunctionID id) const
     {
         auto& callee = m_program.at(id);
-        if (callee.blocks.isEmpty() || callee.isGenericEntrypoint() || callee.takesItsClosure)
+        return !callee.takesItsClosure && !callee.rampForClosures && mayBeCalledDirectlyWithClosure(id);
+    }
+
+    bool mayBeCalledDirectlyWithClosure(FunctionID id) const
+    {
+        auto& callee = m_program.at(id);
+        if (callee.blocks.isEmpty() || callee.isGenericEntrypoint())
             return false;
         // [[Call]] of a class throws.
         if (callee.kind == FunctionKind::Constructor || callee.kind == FunctionKind::Module)
@@ -576,16 +990,84 @@ private:
         return true;
     }
 
+    LayoutID viewExpectedOf(BlockID block, ValueID object) const
+    {
+        if (!m_mayGuess || !typeOf(object).anyObject)
+            return { };
+        TypeID prediction = m_function.at(object).prediction ? m_function.at(object).prediction : m_function.at(originOf(object)).prediction;
+        if (!prediction)
+            return { };
+        LayoutID view = m_program.at(prediction).onlyView();
+        if (!view || m_refutedShapes[block.index()] == RefutedShape { originOf(object), view })
+            return { };
+        return view;
+    }
+
+    BlockID testShape(ValueID object, LayoutID view)
+    {
+        Value test = make(Opcode::HasShapeOf, m_program.types.boolean);
+        test.children[0] = object;
+        test.immediates = { view.index(), 0u };
+        BlockID otherwise = branch(append(WTF::move(test)));
+        m_refutedShapes[otherwise.index()] = RefutedShape { originOf(object), view };
+        return otherwise;
+    }
+
+    bool resolveCallOfExpectedMethod(BlockID block, unsigned index)
+    {
+        if (!m_mayGuess)
+            return false;
+        ValueID id = m_function.at(block).values[index];
+        ValueID read = m_function.at(id).child(0);
+        if (m_function.at(read).opcode != Opcode::GetById)
+            return false;
+        ValueID object = m_function.at(read).child(0);
+        if (typeOf(object).onlyView() || originOf(object) != originOf(m_function.at(id).child(1)))
+            return false;
+        LayoutID view = viewExpectedOf(block, object);
+        if (!view || !isObjectLayout(m_program.at(view).kind) || !isUsedOnlyBy(read, id))
+            return false;
+        Value original = m_function.at(id);
+        auto cases = casesOf(view, m_function.at(read).string(), MethodKind::Method);
+        if (!cases || !orderCases(*cases, view) || !cases->last().callee)
+            return false;
+        unsigned indexOfRead = index;
+        while (indexOfRead && m_function.at(block).values[indexOfRead - 1] != read) {
+            Opcode between = m_function.at(m_function.at(block).values[--indexOfRead]).opcode;
+            if (between != Opcode::Undefined && between != Opcode::Null && between != Opcode::Boolean && between != Opcode::Integer && between != Opcode::Double && between != Opcode::String)
+                return false;
+        }
+        if (!indexOfRead)
+            return false;
+        m_function.at(block).values.removeAt(indexOfRead - 1);
+        open(block, index - 1);
+        BlockID otherwise = testShape(object, view);
+        Value cast = make(Opcode::Cast, m_program.at(view).type);
+        cast.children[0] = object;
+        cast.immediates = { m_function.at(read).immediates[0], static_cast<uint32_t>(CastReason::Flow) };
+        ValueID receiver = appendThrowing(WTF::move(cast));
+        dispatch(*cases, view, receiver, original.arguments.span(), original, Yields::Result);
+        moveTo(otherwise);
+        m_function.at(read).predictedClosure = { };
+        place(read);
+        m_lastMayThrow = m_isWatched;
+        finish(appendThrowing(WTF::move(original)));
+        return true;
+    }
+
     bool resolveByShape(BlockID block, unsigned index, MethodKind kind)
     {
         Value original = m_function.at(m_function.at(block).values[index]);
         ValueID object = original.child(0);
         StringID name = original.string();
         LayoutID view = typeOf(object).onlyView();
+        bool isExpected = !view;
+        if (isExpected)
+            view = viewExpectedOf(block, object);
         if (!view || !isObjectLayout(m_program.at(view).kind))
             return false;
         auto cases = casesOf(view, name, kind);
-        if (!cases || !orderCases(*cases, view))
+        if (!cases || !orderCases(*cases, view) || (isExpected && !cases->last().callee))
             return false;
         Arguments given;
         if (kind == MethodKind::Method)
@@ -595,14 +1077,24 @@ private:
 
         open(block, index);
         ValueID receiver = object;
+        BlockID otherwise;
+        if (isExpected)
+            otherwise = testShape(object, view);
         // The read of a field sees to it itself.
-        if ((*cases)[0].callee && typeOf(object).mayBeUndefinedOrNull()) {
+        if ((*cases)[0].callee && (isExpected || typeOf(object).mayBeUndefinedOrNull())) {
             Value cast = make(Opcode::Cast, m_program.at(view).type);
             cast.children[0] = object;
             cast.immediates = { name.index(), static_cast<uint32_t>(CastReason::Flow) };
             receiver = appendThrowing(WTF::move(cast));
         }
         dispatch(*cases, view, receiver, given.span(), original, kind == MethodKind::Setter ? Yields::Undefined : Yields::Result);
+        if (otherwise) {
+            moveTo(otherwise);
+            ValueID result = appendThrowing(Value(original));
+            if (kind == MethodKind::Setter)
+                result = held(append(make(Opcode::Undefined, m_program.types.undefined)), original.type, CastReason::Claim);
+            finish(result);
+        }
         return true;
     }
 
@@ -805,6 +1297,70 @@ private:
         return true;
     }
 
+    bool resolveCallOfStaticMethodRead(BlockID block, unsigned index, FunctionID method, ValueID classObject, LayoutID ofClass)
+    {
+        if (!mayBeCalledWithoutEnvironment(method))
+            return false;
+        auto& values = m_function.at(block).values;
+        ValueID read = values[index];
+        unsigned indexOfCall = index + 1;
+        for (; indexOfCall < values.size(); ++indexOfCall) {
+            Opcode between = m_function.at(values[indexOfCall]).opcode;
+            if (between != Opcode::Undefined && between != Opcode::Null && between != Opcode::Boolean && between != Opcode::Integer && between != Opcode::Double && between != Opcode::String)
+                break;
+        }
+        if (indexOfCall == values.size())
+            return false;
+        ValueID id = values[indexOfCall];
+        Value original = m_function.at(id);
+        if (original.opcode != Opcode::Call || original.child(0) != read || originOf(original.child(1)) != originOf(classObject) || !isUsedOnlyBy(read, id))
+            return false;
+        values.removeAt(index);
+        open(block, indexOfCall - 1);
+        Value test = make(Opcode::IsClassObjectAsDeclared, m_program.types.boolean);
+        test.immediates[0] = ofClass.index();
+        BlockID asks = branch(append(WTF::move(test)));
+        BlockID isAsDeclared = m_block;
+        m_asksClassObject[asks.index()] = ofClass;
+        moveTo(asks);
+        Value call = original;
+        if (m_function.at(classObject).opcode == Opcode::FunctionReference && original.child(1) == classObject) {
+            ValueID again = append(Value(m_function.at(classObject)));
+            m_function.at(read).children[0] = again;
+            call.children[1] = again;
+        }
+        place(read);
+        m_lastMayThrow = m_isWatched;
+        finish(appendThrowing(WTF::move(call)));
+        moveTo(isAsDeclared);
+        callAndFinish(method, { }, classObject, original.arguments.span(), original.type, Yields::Result);
+        return true;
+    }
+
+    bool accessStaticField(BlockID block, unsigned index, LayoutID ofClass)
+    {
+        Value& access = m_function.at(m_function.at(block).values[index]);
+        auto& fields = m_program.at(ofClass).staticFields;
+        size_t field = fields.findIf([&](auto& field) {
+            return field.name == access.string();
+        });
+        if (field == notFound || fields[field].place == Format::none)
+            return false;
+        bool isStore = access.opcode == Opcode::PutById;
+        if (isStore && !m_program.isHeldAlready(typeOf(access.child(1)), m_program.at(fields[field].type), CastReason::Claim))
+            return false;
+        if (Value& receiver = m_function.at(access.child(0)); receiver.opcode == Opcode::FunctionReference && isUsedOnlyBy(access.child(0), m_function.at(block).values[index])) {
+            receiver.opcode = Opcode::Undefined;
+            receiver.type = m_program.types.undefined;
+            receiver.rep = repOf(m_program.at(receiver.type));
+            receiver.immediates = { Format::none, Format::none };
+        }
+        access.children = { isStore ? access.child(1) : ValueID(), ValueID(), ValueID() };
+        access.opcode = isStore ? Opcode::PutStaticField : Opcode::GetStaticField;
+        access.immediates = { ofClass.index(), static_cast<uint32_t>(field) };
+        return true;
+    }
+
     // `C.name(..)`, `C.name`, `C.name = value`
     bool resolveOnClassObject(BlockID block, unsigned index)
     {
@@ -813,11 +1369,15 @@ private:
         LayoutID ofClass = classDefinedBy(classObject);
         if (!ofClass || m_asksClassObject[block.index()] == ofClass)
             return false;
+        if ((original.opcode == Opcode::GetById || original.opcode == Opcode::PutById) && accessStaticField(block, index, ofClass))
+            return false;
         auto member = memberFoundFrom(ofClass, original.string(), true);
         if (!member)
             return false;
         switch (original.opcode) {
         case Opcode::GetById:
+            if (member->method && resolveCallOfStaticMethodRead(block, index, member->method, classObject, ofClass))
+                return true;
             return readMember(block, index, *member, classObject, original.type, ofClass);
         case Opcode::PutById:
             return storeToMember(block, index, *member, classObject, original.child(1), original.type, ofClass);
@@ -841,8 +1401,12 @@ private:
         if ((!isGet && original.string() != m_superSet) || original.arguments.size() != (isGet ? 4u : 5u))
             return false;
         LayoutID around = classDefinedBy(original.arguments[0]);
-        auto& key = m_function.at(originOf(original.arguments[1]));
-        auto& isStatic = m_function.at(originOf(original.arguments.last()));
+        ValueID keyID = m_program.constantOf(m_function, original.arguments[1]);
+        ValueID isStaticID = m_program.constantOf(m_function, original.arguments.last());
+        if (!keyID || !isStaticID)
+            return false;
+        auto& key = m_function.at(keyID);
+        auto& isStatic = m_function.at(isStaticID);
         if (!around || key.opcode != Opcode::String || isStatic.opcode != Opcode::Boolean || (isStatic.boolean() && m_asksClassObject[block.index()] == m_program.at(around).base))
             return false;
         // What the search starts behind keeps its prototype.
@@ -892,8 +1456,8 @@ private:
                 predicted = m_program.functionByKey(definition.predictedByKey, definition.string());
             break;
         case Opcode::GetByVal:
-            if (auto& key = m_function.at(originOf(definition.child(1))); definition.predictedByKey && key.opcode == Opcode::String)
-                predicted = m_program.functionByKey(definition.predictedByKey, key.string());
+            if (ValueID key = m_program.constantOf(m_function, definition.child(1)); definition.predictedByKey && key && m_function.at(key).opcode == Opcode::String)
+                predicted = m_program.functionByKey(definition.predictedByKey, m_function.at(key).string());
             break;
         default:
             break;
@@ -931,6 +1495,7 @@ private:
     {
         m_refuted.fill(Refuted { }, m_function.blocks.size());
         m_asksClassObject.fill(LayoutID(), m_function.blocks.size());
+        m_refutedShapes.fill(RefutedShape { }, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
             if (block.terminator.kind != TerminatorKind::Branch)
                 continue;
@@ -939,6 +1504,8 @@ private:
                 m_refuted[block.terminator.targets[1].block.index()] = Refuted { originOf(condition.child(0)), condition.function() };
             if (condition.opcode == Opcode::IsClassObjectAsDeclared)
                 m_asksClassObject[block.terminator.targets[1].block.index()] = condition.layout();
+            if (condition.opcode == Opcode::HasShapeOf && !condition.immediates[1])
+                m_refutedShapes[block.terminator.targets[1].block.index()] = RefutedShape { originOf(condition.child(0)), condition.layout() };
             // It is a closure of no function there.
             if (condition.opcode == Opcode::IsUndefinedOrNull)
                 m_refuted[block.terminator.targets[0].block.index()] = Refuted { originOf(condition.child(0)), FunctionID() };
@@ -983,7 +1550,7 @@ private:
             if (FunctionID method = methodExpectedOf(originOf(original.child(0))); method && m_program.boundFunction(method, 0))
                 known = KnownCallee { method, originOf(original.child(0)), { }, false };
         }
-        if (!known || !mayBeCalledDirectly(known->function) || isRefuted(block, *known))
+        if (!known || !mayBeCalledDirectlyWithClosure(known->function) || isRefuted(block, *known))
             return false;
         if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNil)
             return false;
@@ -995,7 +1562,12 @@ private:
             takeCastOfResult(id);
             otherwise = testClosure(original.child(0), *known);
         }
-        callAndFinish(known->function, capturesOf(*known, original.child(0)).span(), original.child(1), original.arguments.span(), original.type, Yields::Result);
+        FunctionID called = m_program.at(known->function).rampForClosures ? m_program.at(known->function).rampForClosures : known->function;
+        Arguments given;
+        if (m_program.at(called).takesItsClosure)
+            given.append(original.child(0));
+        given.append(original.arguments.span());
+        callAndFinish(called, capturesOf(*known, original.child(0)).span(), original.child(1), given.span(), original.type, Yields::Result);
         if (otherwise) {
             moveTo(otherwise);
             // What is expected to be the function may be the function bound.
@@ -1241,7 +1813,7 @@ private:
             return false;
         // It reads `new.target` from where only the run time puts it.
         if (callee.kind == FunctionKind::Plain)
-            return !callee.has(Format::FunctionHasNewTarget) && mayBeCalledDirectly(id);
+            return !callee.has(Format::FunctionHasNewTarget) && mayBeCalledDirectly(id) && !m_program.mayMakeSlimClosures(callee);
         if (callee.kind != FunctionKind::Constructor || callee.blocks.isEmpty() || callee.isGenericEntrypoint() || !callee.constructedClass || !mayBeHandedRest(callee))
             return false;
         auto& ofClass = m_program.at(callee.constructedClass);
@@ -1282,6 +1854,7 @@ private:
             given.append(original.child(0));
         given.appendVector(original.arguments);
         ValueID returned = call(known.function, passedTo(known.function, captures.span(), made, given.span()));
+        m_function.at(returned).constructs = true;
         if (isMadeBySuperclass)
             made = returned;
         else if (mayReturnObject(callee)) {
@@ -1405,6 +1978,7 @@ private:
             given.append(newTarget);
         given.appendVector(original.arguments);
         ValueID returned = call(parent, passedTo(parent, { }, made, given.span()));
+        m_function.at(returned).constructs = true;
         if (isMadeBySuperclass)
             made = returned;
         else if (mayReturnObject(callee)) {
@@ -1546,14 +2120,30 @@ private:
     BuiltinID m_apply;
     BuiltinID m_isObject;
     BuiltinID m_callNoInline;
+    StringID m_addDisposableResource;
+    StringID m_disposeResources;
+    StringID m_usingTakesObjects;
+    StringID m_usingTakesDisposables;
+    StringID m_symbol;
+    StringID m_dispose;
+    StringID m_typeError;
+    StringID m_suppressedError;
+    BuiltinID m_isCallable;
+    Vector<uint32_t> m_numberOfUses;
+    unsigned m_numberOfBlocksAsRead { 0 };
+    BitVector m_isReached;
+    UncheckedKeyHashMap<unsigned, Vector<unsigned, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_unreachedPredecessors;
+    Vector<unsigned> m_indexInRegion;
     // By block: the value, by its definition, that is known there not to be a closure of the function.
     Vector<Refuted> m_refuted;
     // By block: the class, where it is the arm of askClassObjectUnlessAsDeclared() that asks.
     Vector<LayoutID> m_asksClassObject;
+    Vector<RefutedShape> m_refutedShapes;
 
     // Of the value that is being replaced.
     uint32_t m_position { 0 };
     uint32_t m_inlineFrame { 0 };
+    bool m_isInTailPosition { false };
     // See inlineCalls().
     uint32_t m_inliningDepth { Format::none };
     bool m_isWatched { false };
@@ -1578,7 +2168,8 @@ unsigned resolveCalls(const Program& program, Function& function, bool mayGuess)
 // which has made `this` and passes `new.target` for the first argument if the constructor takes it: see State::createThis().
 static Function createGenericEntrypoint(const Program& program, FunctionID id)
 {
-    auto& callee = program.at(id);
+    FunctionID called = program.at(id).rampForClosures ? program.at(id).rampForClosures : id;
+    auto& callee = program.at(called);
     auto& types = program.types;
     Function entry;
     entry.name = callee.name;
@@ -1664,7 +2255,7 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id)
         all.append(held(given[i], callee.parameterTypes[first + i], isMadeHere ? TypeID() : callee.assertedTypeOfParameter(first + i), callee.reasonToHoldParameter(first + i)));
     }
     Value call = make(Opcode::CallDirect, callee.resultType ? callee.resultType : types.anything);
-    call.immediates[0] = id.index();
+    call.immediates[0] = called.index();
     call.arguments = WTF::move(all);
     entry.blocks[0].terminator.kind = TerminatorKind::Return;
     entry.blocks[0].terminator.value = append(WTF::move(call));
@@ -1676,10 +2267,16 @@ void findDeclaredParents(Program& program)
     auto makeClass = program.find("MakeClass"_s.span8());
     if (!makeClass)
         return;
-    for (auto& function : program.functions) {
-        auto constantClosure = [&](ValueID id) {
+    Vector<Vector<std::pair<LayoutID, FunctionID>>> found(program.functions.size());
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
+        auto withoutCasts = [&](ValueID id) {
             while (function.at(id).opcode == Opcode::Cast)
                 id = function.at(id).child(0);
+            return id;
+        };
+        auto constantClosure = [&](ValueID id) {
+            id = withoutCasts(id);
             return function.at(id).opcode == Opcode::FunctionReference ? function.at(id).function() : FunctionID();
         };
         for (auto& value : function.values) {
@@ -1687,10 +2284,20 @@ void findDeclaredParents(Program& program)
                 continue;
             FunctionID constructor = constantClosure(value.arguments[0]);
             FunctionID parent = constantClosure(value.arguments[1]);
+            if (constructor && program.at(constructor).constructedClass && function.at(withoutCasts(value.arguments[1])).opcode == Opcode::GetGlobal)
+                found[i].append({ program.at(constructor).constructedClass, FunctionID() });
             if (!constructor || !parent || program.at(parent).kind != FunctionKind::Constructor)
                 continue;
             if (LayoutID ofClass = program.at(constructor).constructedClass; ofClass && program.at(ofClass).isEvaluatedOnce && !program.at(ofClass).base)
+                found[i].append({ ofClass, parent });
+        }
+    });
+    for (auto& ofFunction : found) {
+        for (auto [ofClass, parent] : ofFunction) {
+            if (parent)
                 program.at(ofClass).declaredParentConstructor = parent;
+            else
+                program.at(ofClass).isDeclaredToExtendGlobal = true;
         }
     }
 }
@@ -1701,12 +2308,12 @@ void createGenericEntrypoints(Program& program)
         if (!program.layouts[i].type)
             program.layouts[i].type = program.types.intern(Type::view(LayoutID(i)));
     }
-    for (unsigned i = 0; i < program.functions.size(); ++i) {
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         for (auto& value : program.functions[i].values) {
             if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
-                program.at(value.function()).hasManyClosures = true;
+                WTF::atomicStore(&program.at(value.function()).hasManyClosures, true, std::memory_order_relaxed);
         }
-    }
+    });
     for (auto& layout : program.layouts) {
         bool mayBecomeRecord = layout.kind == LayoutKind::Instance && layout.specializations.containsIf([&](LayoutID specialization) {
             return program.at(specialization).kind != LayoutKind::Instance;
@@ -1732,13 +2339,18 @@ void createGenericEntrypoints(Program& program)
                 isValue.set(method.function.index());
         }
     }
+    Vector<unsigned> entered;
     for (unsigned i : isValue) {
-        if (program.functions[i].isGenericEntrypoint() || program.genericEntrypoints.contains(i))
-            continue;
-        Function entry = createGenericEntrypoint(program, FunctionID(i));
-        program.genericEntrypoints.add(i, FunctionID(program.functions.size()));
-        program.functions.append(WTF::move(entry));
+        if (!program.functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i))
+            entered.append(i);
     }
+    unsigned firstEntry = program.functions.size();
+    program.functions.grow(firstEntry + entered.size());
+    forEachIndexInParallel(entered.size(), [&](unsigned k) {
+        program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]));
+    });
+    for (unsigned k = 0; k < entered.size(); ++k)
+        program.genericEntrypoints.add(entered[k], FunctionID(firstEntry + k));
 }
 
 // It takes what the function captures, `this` where the function takes one, the arguments that are bound, and the parameters that are left, each as the function declares it.
@@ -1806,13 +2418,26 @@ static Function createBoundFunction(const Program& program, FunctionID id, unsig
     return bound;
 }
 
+void expandDisposableStacks(Program& program)
+{
+    if (!program.find("NewDisposableStack"_s.span8()))
+        return;
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        CallResolution(program, program.functions[i]).expandDisposableStacks();
+    });
+}
+
 void createBoundFunctions(Program& program)
 {
-    Vector<uint64_t> wanted;
-    for (auto& function : program.functions) {
+    Vector<Vector<uint64_t>> wantedBy(program.functions.size());
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
         if (!function.isGenericEntrypoint())
-            CallResolution(program, function).collectBoundFunctions(wanted);
-    }
+            CallResolution(program, function).collectBoundFunctions(wantedBy[i]);
+    });
+    Vector<uint64_t> wanted;
+    for (auto& ofFunction : wantedBy)
+        wanted.appendVector(ofFunction);
     // In the order of the program, whatever the table makes of them.
     for (uint64_t key : wanted) {
         if (program.boundFunctions.contains(key))

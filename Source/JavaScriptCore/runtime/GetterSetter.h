@@ -120,7 +120,7 @@ public:
     uintptr_t getterShortcut() const { return m_getterShortcut; }
     bool getterReturnsVariable() const { return m_getterShortcut && !(m_getterShortcut & getterShortcutIsCode); }
     void setVariableReturnedByGetter(WriteBarrierBase<Unknown>* variable) { m_getterShortcut = std::bit_cast<uintptr_t>(variable); }
-    void setCodeOfGetter(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }
+    void setCodeOfGetter(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) & getterShortcutIsCode ? 0 : std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }
 #endif
 
     static constexpr ptrdiff_t offsetOfSetter()

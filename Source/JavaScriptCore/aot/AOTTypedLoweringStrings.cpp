@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypedCompactTable.h"
+#include "AOTTypedThreads.h"
 #include "B3BasicBlockInlines.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
@@ -21,6 +22,8 @@
 namespace JSC { namespace AOT { namespace Typed {
 
 using namespace B3;
+
+template<> struct ParameterOfOperation<const Latin1Character*> { using Type = Pointer; };
 
 // Strings, maps and sets.
 //
@@ -40,9 +43,6 @@ using namespace B3;
 // as it is when the rope is made flat.
 //
 // A substring is looked at where its characters are, in the string it is a part of. It is not made flat for that.
-
-// As long as the text of a comparison that is carried out by loads and immediates.
-static constexpr size_t maxLengthOfTextComparedInPlace = 32;
 
 Lowering::StringReceiver Lowering::stringReceiver(CellPointer string)
 {
@@ -86,8 +86,7 @@ void Lowering::turnAwayNil(const StringReceiver& receiver, StringID name)
 // The strings that loops read and do not define. Each is opened in front of the outermost loop that does not define it, by every block that enters that loop.
 void Lowering::findStringsReadInLoops()
 {
-    // What is defined ahead of the entry of a handler is not there behind it.
-    if (m_loops.isEmpty() || !m_catchEntrypoints.isEmpty())
+    if (m_loops.isEmpty())
         return;
     for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
         if (m_innermostLoop[b] == noLoop)
@@ -114,6 +113,8 @@ void Lowering::findStringsReadInLoops()
             } else if (value.opcode != Opcode::GetByVal || keyedAccessOf(m_program, m_function, value) != KeyedAccess::String)
                 continue;
             ValueID string = stringDefinedBy(value.child(0));
+            if (isResidentInStringBuilder(string))
+                continue;
             auto& type = m_program.at(m_function.at(string).type);
             if (!(type.primitives & Primitive::String) || !type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull))
                 continue;
@@ -148,15 +149,20 @@ void Lowering::openStringsInFrontOfLoopsEnteredBy(const Terminator& terminator)
             for (auto& opened : m_stringsOpenedInFrontOfLoops[i]) {
                 StringReceiver receiver = stringReceiver(opened.string);
                 LBasicBlock continuation = m_out.newBlock();
+                auto set = [&](B3::Variable* variable, LValue value) {
+                    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
+                };
                 // The read in the loop turns `undefined` and `null` away before it looks at any of this.
                 if (receiver.isString) {
+                    set(opened.length, m_out.int64Zero);
+                    if (opened.isOpened) {
+                        set(opened.data, m_out.int64Zero);
+                        set(opened.flags, m_out.int32Zero);
+                    }
                     LBasicBlock isString = m_out.newBlock();
                     m_out.branch(receiver.isString.value(), usually(isString), rarely(continuation));
                     m_out.appendTo(isString);
                 }
-                auto set = [&](B3::Variable* variable, LValue value) {
-                    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), variable, value);
-                };
                 Pointer fiber = fiberOf(receiver);
                 if (!opened.isOpened) {
                     set(opened.length, zeroExtended(either<Word32>(lacksBits(fiber, JSString::isRopeInPointer), [&] {
@@ -269,14 +275,8 @@ Lowering::Characters Lowering::charactersOf(const StringReceiver& receiver, LBas
 
     // Nothing comes between these loads and the look at the characters that could make the substring flat, and so let go of its base.
     m_out.appendTo(substring);
-    LValue lengthAndBaseLow = m_out.load64(string.value(), m_heaps.JSRopeString_fiber1);
-    LValue baseHighAndOffset = m_out.load64(string.value(), m_heaps.JSRopeString_fiber2);
-    CellPointer base(m_out.bitOr(m_out.lShr(lengthAndBaseLow, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(baseHighAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32))));
-    Integer offset(m_out.lShr(baseHighAndOffset, m_out.constInt32(16)));
-    Pointer baseImpl = loadField<Pointer>(base, m_heaps.JSRopeString_fiber0);
-    Word32 width = bitAnd(loadField<Word32>(baseImpl, m_heaps.StringImpl_hashAndFlags, IsFixed), word32(StringImpl::flagIs8Bit()));
-    LValue offsetInBytes = m_out.shl(offset.value(), select(isZero(width), word32(1), word32(0)).value());
-    yield(Pointer(m_out.add(loadField<Pointer>(baseImpl, m_heaps.StringImpl_data).value(), offsetInBytes)), width, Word32(m_out.castToInt32(lengthAndBaseLow)));
+    CharactersOfSubstring part = charactersOfSubstring(receiver.string);
+    yield(Pointer(part.data), Word32(part.flags), Word32(part.length));
 
     m_out.appendTo(notSubstring);
     Word32 isFlatByNow = lacksBits(current, JSString::isRopeInPointer);
@@ -387,7 +387,7 @@ CellPointer Lowering::singleCharacterStringAt(const Characters& characters, Inte
     return string;
 }
 
-Operand Lowering::getStringElement(const StringReceiver& receiver, ValueID key, const Type& type, LBasicBlock otherwise)
+Operand Lowering::getStringElement(const StringReceiver& receiver, ValueID key, const Type& type, LBasicBlock otherwise, B3::Variable* codeUnitIfKept)
 {
     Rep rep = repOf(type);
     LBasicBlock outside = otherwise ? otherwise : newColdBlock();
@@ -398,9 +398,11 @@ Operand Lowering::getStringElement(const StringReceiver& receiver, ValueID key, 
     Characters characters = charactersOf(receiver);
     orElse(below(index, characters.length), outside);
     // Not in an arm of a test on what is expected: what is defined there is not there behind it.
-    bool keepsCodeUnit = !otherwise && keepsCodeUnitsOfStrings();
+    bool keepsCodeUnit = !otherwise;
     Word32 codeUnit;
-    CellPointer string = singleCharacterStringAt(characters, index, keepsCodeUnit ? &codeUnit : nullptr);
+    CellPointer string = singleCharacterStringAt(characters, index, keepsCodeUnit || codeUnitIfKept ? &codeUnit : nullptr);
+    if (codeUnitIfKept)
+        m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), codeUnitIfKept, zeroExtended(codeUnit).value());
     Vector<ValueFromBlock, 2> codeUnits;
     if (keepsCodeUnit)
         codeUnits.append(m_out.anchor(zeroExtended(codeUnit).value()));
@@ -472,9 +474,9 @@ Integer Lowering::placeInString(ValueID id, Integer length, bool isRelativeToEnd
 // With its header. The three words that make it a rope are for whoever asks to store, followed by fenceAfterInitialization().
 CellPointer Lowering::allocateRope(LBasicBlock slowPath)
 {
-    LValue cell = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), slowPath);
+    LValue cell = allocateHeapCell(fixedPointer(Instance::offsetOfRopeStringAllocator()), sizeof(JSRopeString), slowPath);
     applyEffects(cell->as<PatchpointValue>(), { Writes::RuntimeState, false });
-    storeHeader(cell, fixed32(Instance::offsetOfStringStructureID()), TypeInfoBlob(NonArray, TypeInfo(StringType, JSString::StructureFlags)).blob());
+    storeHeader(cell, fixed64(Instance::offsetOfStringHeader()));
     return CellPointer(cell);
 }
 
@@ -577,20 +579,718 @@ bool Lowering::looksForConstantWithoutItsCell(const Value& value) const
     }
 }
 
+ValueID Lowering::stringConstantOf(ValueID id) const
+{
+    while (m_function.at(id).opcode == Opcode::Cast && typeOf(id).primitives & Primitive::String)
+        id = m_function.at(id).child(0);
+    return m_function.at(id).opcode == Opcode::String ? id : ValueID();
+}
+
 std::optional<std::span<const uint8_t>> Lowering::constantASCIIText(ValueID id) const
 {
-    while (m_function.at(id).opcode == Opcode::Cast)
-        id = m_function.at(id).child(0);
-    auto& value = m_function.at(id);
-    if (value.opcode != Opcode::String)
+    ValueID constant = stringConstantOf(id);
+    if (!constant)
         return std::nullopt;
-    auto text = m_program.string(value.string());
+    auto text = m_program.string(m_function.at(constant).string());
     if (!charactersAreAllASCII(byteCast<Latin1Character>(text)))
         return std::nullopt;
     return text;
 }
 
+std::optional<char16_t> Lowering::constantCodeUnit(ValueID id) const
+{
+    ValueID constant = stringConstantOf(id);
+    if (!constant)
+        return std::nullopt;
+    auto text = m_program.string(m_function.at(constant).string());
+    if (text.size() == 1 && isASCII(text[0]))
+        return text[0];
+    if (text.size() == 2 && (text[0] & 0xe0) == 0xc0 && (text[1] & 0xc0) == 0x80)
+        return (text[0] & 0x1f) << 6 | (text[1] & 0x3f);
+    if (text.size() == 3 && (text[0] & 0xf0) == 0xe0 && (text[1] & 0xc0) == 0x80 && (text[2] & 0xc0) == 0x80)
+        return (text[0] & 0x0f) << 12 | (text[1] & 0x3f) << 6 | (text[2] & 0x3f);
+    return std::nullopt;
+}
+
+std::optional<Word32> Lowering::areKeptCodeUnitsEqual(ValueID a, ValueID b)
+{
+    for (auto [constant, other] : { std::pair { a, b }, std::pair { b, a } }) {
+        auto unit = constantCodeUnit(constant);
+        if (!unit)
+            continue;
+        if (auto kept = codeUnitOfString(other))
+            return equal(*kept, integer(*unit));
+    }
+    return std::nullopt;
+}
+
 // Concatenation.
+
+BitVector computeMapKeyValues(const Program& program, FunctionID id, const Function& function)
+{
+    BitVector keys;
+    auto& builtins = Builtins::singleton();
+    bool returnsMapKeys = program.functionsReturningMapKeys.get(id.index());
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            if (value.opcode == Opcode::GetByVal || value.opcode == Opcode::PutByVal) {
+                keys.set(value.child(1).index());
+                continue;
+            }
+            if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
+                continue;
+            auto& implementation = builtins.at(value.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Inline)
+                continue;
+            switch (implementation.inlined) {
+            case InlineBuiltin::MapGet:
+            case InlineBuiltin::MapSet:
+            case InlineBuiltin::MapHas:
+            case InlineBuiltin::MapDelete:
+            case InlineBuiltin::SetAdd:
+            case InlineBuiltin::SetHas:
+            case InlineBuiltin::SetDelete:
+                keys.set(value.arguments[0].index());
+                break;
+            default:
+                break;
+            }
+        }
+        if (returnsMapKeys && block.terminator.kind == TerminatorKind::Return && block.terminator.value)
+            keys.set(block.terminator.value.index());
+    }
+    for (bool changed = !keys.isEmpty(); changed;) {
+        changed = false;
+        for (size_t b = function.blocks.size(); b--;) {
+            auto& block = function.blocks[b];
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = function.at(target.block).parameters;
+                for (unsigned i = 0; i < std::min(parameters.size(), target.arguments.size()); ++i) {
+                    if (keys.get(parameters[i].index()))
+                        changed |= !keys.set(target.arguments[i].index());
+                }
+            }
+            for (size_t i = block.values.size(); i--;) {
+                ValueID id = block.values[i];
+                if (!keys.get(id.index()))
+                    continue;
+                auto& value = function.at(id);
+                if (value.opcode == Opcode::Cast || value.opcode == Opcode::ToString)
+                    changed |= !keys.set(value.child(0).index());
+                else if (value.opcode == Opcode::Add && program.at(value.type).isString()) {
+                    changed |= !keys.set(value.child(0).index());
+                    changed |= !keys.set(value.child(1).index());
+                } else if (value.opcode == Opcode::Strcat) {
+                    for (ValueID operand : value.arguments)
+                        changed |= !keys.set(operand.index());
+                }
+            }
+        }
+    }
+    return keys;
+}
+
+void computeFunctionsReturningMapKeys(Program& program)
+{
+    unsigned count = program.functions.size();
+    program.functionsReturningMapKeys = BitVector(count);
+    Vector<unsigned> worklist;
+    for (unsigned i = 0; i < count; ++i) {
+        if (program.hasCode(FunctionID(i)))
+            worklist.append(i);
+    }
+    while (!worklist.isEmpty()) {
+        Vector<Vector<unsigned>> callees(worklist.size());
+        forEachIndexInParallel(worklist.size(), [&](unsigned k) {
+            unsigned i = worklist[k];
+            auto& function = program.functions[i];
+            for (size_t index : computeMapKeyValues(program, FunctionID(i), function)) {
+                auto& value = function.values[index];
+                if (value.opcode != Opcode::CallDirect || value.isJumpToContinuation() || program.at(value.function()).has(Format::FunctionIsHiddenInStackTraces))
+                    continue;
+                callees[k].append(value.function().index());
+            }
+        });
+        worklist.shrink(0);
+        for (auto& ofFunction : callees) {
+            for (unsigned callee : ofFunction) {
+                if (!program.functionsReturningMapKeys.set(callee))
+                    worklist.append(callee);
+            }
+        }
+    }
+}
+
+StringBuilderAnalysis analyzeStringBuilders(const Program& program, FunctionID functionID, const Function& function)
+{
+    StringBuilderAnalysis result;
+    const Function* whole = &function == &program.at(functionID) ? nullptr : &program.at(functionID);
+    unsigned numberOfValues = function.values.size();
+    unsigned numberOfBlocks = function.blocks.size();
+    auto typeOf = [&](ValueID id) -> const Type& {
+        return program.typeOf(function, id);
+    };
+    auto isStringOrNumber = [&](ValueID id) {
+        return typeOf(id).isString() || typeOf(id).isNumber();
+    };
+    auto mayBeBuilderState = [&](ValueID id) {
+        auto& type = typeOf(id);
+        return holdsCells(function.at(id).rep) && type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+    };
+    auto isNumberOrNil = [&](ValueID id) {
+        auto& type = typeOf(id);
+        return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+    };
+    auto isAppendable = [&](ValueID id) {
+        return typeOf(id).isString() || isNumberOrNil(id) || mayBeBuilderState(id);
+    };
+    auto isConcatenation = [&](const Value& value, bool allowsStateAsFirstOperand) {
+        if (!holdsCells(value.rep) || !program.at(value.type).isString())
+            return false;
+        if (value.opcode == Opcode::Add) {
+            bool leftIsString = typeOf(value.child(0)).isString() || (allowsStateAsFirstOperand && mayBeBuilderState(value.child(0)));
+            return (leftIsString && isAppendable(value.child(1))) || (typeOf(value.child(1)).isString() && isAppendable(value.child(0)));
+        }
+        if (value.opcode != Opcode::Strcat || value.arguments.isEmpty())
+            return false;
+        for (ValueID operand : value.arguments) {
+            if (!isAppendable(operand))
+                return false;
+        }
+        return true;
+    };
+    auto hasBoundedLength = [&](auto& hasBoundedLength, ValueID id) -> bool {
+        auto& value = function.at(id);
+        switch (value.opcode) {
+        case Opcode::String:
+            return true;
+        case Opcode::ToString:
+            return hasBoundedLength(hasBoundedLength, value.child(0));
+        case Opcode::Add:
+            return isConcatenation(value, false) && hasBoundedLength(hasBoundedLength, value.child(0)) && hasBoundedLength(hasBoundedLength, value.child(1));
+        case Opcode::Strcat:
+            if (!isConcatenation(value, false))
+                return false;
+            for (ValueID operand : value.arguments) {
+                if (!hasBoundedLength(hasBoundedLength, operand))
+                    return false;
+            }
+            return true;
+        default:
+            return isNumberOrNil(id);
+        }
+    };
+    bool hasConcatenation = false;
+    for (auto& block : function.blocks) {
+        if (block.terminator.kind == TerminatorKind::Invoke || (block.terminator.kind == TerminatorKind::Throw && !block.terminator.targets.isEmpty()))
+            return result;
+        for (ValueID id : block.values)
+            hasConcatenation |= isConcatenation(function.at(id), true);
+    }
+    if (!hasConcatenation)
+        return result;
+
+    Vector<uint32_t> useCounts;
+    useCounts.fill(0, numberOfValues);
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            function.at(id).forEachChild([&](ValueID child) {
+                ++useCounts[child.index()];
+            });
+        }
+        if (block.terminator.value)
+            ++useCounts[block.terminator.value.index()];
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                ++useCounts[argument.index()];
+        }
+    }
+
+    UncheckedKeyHashMap<uint32_t, StringBuilderAnalysis::Operands, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> foldedValuesForAppend;
+    BitVector isFolded(numberOfValues);
+    BitVector isInBlock(numberOfValues);
+    Vector<unsigned> indexInBlock;
+    indexInBlock.fill(0, numberOfValues);
+    Vector<unsigned> observableBefore;
+    Vector<ValueID> appends;
+    for (auto& block : function.blocks) {
+        isInBlock.clearAll();
+        observableBefore.shrink(0);
+        observableBefore.append(0);
+        for (unsigned i = 0; i < block.values.size(); ++i) {
+            ValueID id = block.values[i];
+            isInBlock.set(id.index());
+            indexInBlock[id.index()] = i;
+            auto& value = function.at(id);
+            bool isObservable;
+            switch (value.opcode) {
+            case Opcode::String:
+            case Opcode::Integer:
+            case Opcode::Double:
+            case Opcode::Boolean:
+            case Opcode::Undefined:
+            case Opcode::Null:
+                isObservable = false;
+                break;
+            case Opcode::ToString:
+                isObservable = !isAppendable(value.child(0));
+                break;
+            default:
+                isObservable = !isConcatenation(value, true);
+                break;
+            }
+            observableBefore.append(observableBefore.last() + isObservable);
+        }
+        for (size_t i = block.values.size(); i--;) {
+            ValueID root = block.values[i];
+            if (isFolded.get(root.index()) || !isConcatenation(function.at(root), true))
+                continue;
+            StringBuilderAnalysis::Operands operands;
+            StringBuilderAnalysis::Operands folded;
+            auto collect = [&](auto& collect, ValueID id) -> void {
+                auto& value = function.at(id);
+                if (id != root) {
+                    bool canFold = isInBlock.get(id.index()) && useCounts[id.index()] == 1;
+                    if (canFold && value.opcode == Opcode::ToString)
+                        canFold = isAppendable(value.child(0));
+                    else if (canFold)
+                        canFold = isConcatenation(value, false) && (observableBefore[i] == observableBefore[indexInBlock[id.index()] + 1] || hasBoundedLength(hasBoundedLength, id));
+                    if (!canFold) {
+                        operands.append(id);
+                        return;
+                    }
+                    folded.append(id);
+                    isFolded.set(id.index());
+                }
+                if (value.opcode == Opcode::Strcat) {
+                    for (ValueID operand : value.arguments)
+                        collect(collect, operand);
+                    return;
+                }
+                collect(collect, value.child(0));
+                if (value.opcode == Opcode::Add)
+                    collect(collect, value.child(1));
+            };
+            collect(collect, root);
+            result.appendOperands.add(root.index(), WTF::move(operands));
+            foldedValuesForAppend.add(root.index(), WTF::move(folded));
+            appends.append(root);
+        }
+    }
+
+    Vector<uint32_t> parent(numberOfValues);
+    for (unsigned i = 0; i < numberOfValues; ++i)
+        parent[i] = i;
+    auto find = [&](uint32_t i) {
+        while (parent[i] != i)
+            i = parent[i] = parent[parent[i]];
+        return i;
+    };
+    BitVector isCandidate(numberOfValues);
+    for (ValueID id : appends)
+        isCandidate.set(id.index());
+    for (unsigned b = 1; b < numberOfBlocks; ++b) {
+        for (ValueID parameter : function.blocks[b].parameters) {
+            if (mayBeBuilderState(parameter))
+                isCandidate.set(parameter.index());
+        }
+    }
+    for (ValueID id : appends) {
+        ValueID first = result.appendOperands.get(id.index())[0];
+        if (isCandidate.get(first.index()))
+            parent[find(id.index())] = find(first.index());
+    }
+    for (auto& block : function.blocks) {
+        for (auto& target : block.terminator.targets) {
+            auto& parameters = function.at(target.block).parameters;
+            for (unsigned i = 0; i < std::min(parameters.size(), target.arguments.size()); ++i) {
+                if (isCandidate.get(parameters[i].index()) && isCandidate.get(target.arguments[i].index()))
+                    parent[find(parameters[i].index())] = find(target.arguments[i].index());
+            }
+        }
+    }
+    UncheckedKeyHashMap<uint32_t, ASCIILiteral, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> rejectionReasons;
+    auto reject = [&](ValueID id, ASCIILiteral why) {
+        rejectionReasons.add(find(id.index()), why);
+    };
+    auto isSameBuilder = [&](ValueID a, ValueID b) {
+        return isCandidate.get(a.index()) && isCandidate.get(b.index()) && find(a.index()) == find(b.index());
+    };
+
+    auto isShortASCII = [&](StringID string) {
+        auto text = program.string(string);
+        return text.size() <= maxStringBuilderInlineConstantLength && charactersAreAllASCII(byteCast<Latin1Character>(text));
+    };
+    auto shortConstantLength = [&](ValueID id) -> std::optional<size_t> {
+        auto& value = function.at(id);
+        if (value.opcode != Opcode::String || !isShortASCII(value.string()))
+            return std::nullopt;
+        return program.string(value.string()).size();
+    };
+    struct InitialValue {
+        bool isString { false };
+        StringID text;
+    };
+    auto initialValueForContinuation = [&](const Target& target, unsigned index) -> InitialValue {
+        ValueID argument = target.arguments[index];
+        if (!whole || argument.index() < whole->values.size() || function.at(argument).opcode != Opcode::Parameter || whole->blocks.size() != numberOfBlocks)
+            return { };
+        InitialValue result;
+        bool isFirst = true;
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            if (b && (!function.blocks[b].values.isEmpty() || !function.blocks[b].terminator.targets.isEmpty() || function.blocks[b].terminator.kind != TerminatorKind::Unreachable))
+                continue;
+            for (auto& edge : whole->blocks[b].terminator.targets) {
+                if (edge.block != target.block)
+                    continue;
+                if (index >= edge.arguments.size() || !program.typeOf(*whole, edge.arguments[index]).isString())
+                    return { };
+                auto& incoming = whole->at(edge.arguments[index]);
+                StringID text = incoming.opcode == Opcode::String && isShortASCII(incoming.string()) ? incoming.string() : StringID();
+                if (isFirst)
+                    result = { true, text };
+                else if (result.text != text)
+                    result.text = { };
+                isFirst = false;
+            }
+        }
+        return result;
+    };
+
+    BitVector isConsumed(numberOfValues);
+    BitVector escapes(numberOfValues);
+    BitVector startsEmpty(numberOfValues);
+    BitVector hasNumber(numberOfValues);
+    BitVector hasAppendToState(numberOfValues);
+    BitVector hasStringOperand(numberOfValues);
+    Vector<std::pair<ValueID, unsigned>> escapeSites;
+    Vector<std::pair<ValueID, unsigned>> initializationSites;
+    auto& builtins = Builtins::singleton();
+    for (unsigned b = 0; b < numberOfBlocks; ++b) {
+        auto& block = function.blocks[b];
+        auto escape = [&](ValueID id) {
+            escapes.set(id.index());
+            escapeSites.append({ id, b });
+        };
+        for (ValueID id : block.values) {
+            if (isFolded.get(id.index()))
+                continue;
+            auto& value = function.at(id);
+            if (auto found = result.appendOperands.find(id.index()); found != result.appendOperands.end()) {
+                auto& operands = found->value;
+                uint32_t builder = find(id.index());
+                for (unsigned i = 0; i < operands.size(); ++i) {
+                    ValueID operand = operands[i];
+                    if (!i && isSameBuilder(operand, id)) {
+                        isConsumed.set(operand.index());
+                        hasAppendToState.set(builder);
+                        continue;
+                    }
+                    if (!i && !isConcatenation(value, false))
+                        reject(id, "first operand may not be a string"_s);
+                    if (isSameBuilder(operand, id))
+                        reject(id, "state is appended to another string"_s);
+                    if (isCandidate.get(operand.index()))
+                        escape(operand);
+                    if (isNumberOrNil(operand))
+                        hasNumber.set(builder);
+                    else if (!shortConstantLength(operand))
+                        hasStringOperand.set(builder);
+                }
+                continue;
+            }
+            bool readsLength = false;
+            if (value.opcode == Opcode::CallBuiltin) {
+                auto& implementation = builtins.at(value.builtin()).implementation;
+                readsLength = implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::StringLength;
+            }
+            value.forEachChild([&](ValueID child) {
+                if (!isCandidate.get(child.index()) || (readsLength && child == value.child(0)))
+                    return;
+                escape(child);
+            });
+        }
+        auto& terminator = block.terminator;
+        if (terminator.value && isCandidate.get(terminator.value.index()))
+            escape(terminator.value);
+        for (auto& target : terminator.targets) {
+            auto& parameters = function.at(target.block).parameters;
+            for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                ValueID argument = target.arguments[i];
+                bool targetIsCandidate = i < parameters.size() && isCandidate.get(parameters[i].index());
+                if (targetIsCandidate && isCandidate.get(argument.index())) {
+                    isConsumed.set(argument.index());
+                    continue;
+                }
+                if (isCandidate.get(argument.index()))
+                    escape(argument);
+                if (!targetIsCandidate)
+                    continue;
+                InitialValue initial;
+                if (shortConstantLength(argument))
+                    initial = { true, function.at(argument).string() };
+                else if (typeOf(argument).isString())
+                    initial.isString = true;
+                else if (!b)
+                    initial = initialValueForContinuation(target, i);
+                if (!initial.isString) {
+                    reject(parameters[i], "initial value may not be a string"_s);
+                    continue;
+                }
+                initializationSites.append({ parameters[i], b });
+                if (initial.text)
+                    result.initialText.add(argument.index(), initial.text);
+                else
+                    hasStringOperand.set(find(parameters[i].index()));
+                if (!initial.text || program.string(initial.text).empty())
+                    startsEmpty.set(find(parameters[i].index()));
+            }
+        }
+    }
+    BitVector isViable(numberOfValues);
+    for (ValueID id : appends) {
+        uint32_t builder = find(id.index());
+        if (hasAppendToState.get(builder) && hasNumber.get(builder) && !rejectionReasons.contains(builder))
+            isViable.set(builder);
+    }
+    if (!isViable.isEmpty()) {
+        Vector<uint32_t> residents;
+        UncheckedKeyHashMap<uint32_t, unsigned, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> residentNumbers;
+        for (size_t i : isCandidate) {
+            if (isViable.get(find(i)))
+                residentNumbers.add(i, residents.size()), residents.append(i);
+        }
+        auto numberOfResident = [&](ValueID id) -> std::optional<unsigned> {
+            if (!isCandidate.get(id.index()) || !isConsumed.get(id.index()))
+                return std::nullopt;
+            auto found = residentNumbers.find(id.index());
+            return found == residentNumbers.end() ? std::nullopt : std::optional<unsigned>(found->value);
+        };
+        struct Event {
+            std::optional<unsigned> defined;
+            Vector<unsigned, 2> used;
+        };
+        Vector<Vector<Event, 0>> events(numberOfBlocks);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            for (ValueID id : function.blocks[b].values) {
+                Event event;
+                if (auto found = residentNumbers.find(id.index()); found != residentNumbers.end())
+                    event.defined = found->value;
+                if (!isFolded.get(id.index())) {
+                    auto use = [&](ValueID operand) {
+                        if (auto number = numberOfResident(operand))
+                            event.used.append(*number);
+                    };
+                    if (auto found = result.appendOperands.find(id.index()); found != result.appendOperands.end()) {
+                        for (ValueID operand : found->value)
+                            use(operand);
+                    } else
+                        function.at(id).forEachChild(use);
+                }
+                if (event.defined || !event.used.isEmpty())
+                    events[b].append(WTF::move(event));
+            }
+        }
+        Vector<BitVector> liveAtHead(numberOfBlocks);
+        auto walkBackward = [&](unsigned b, const auto& onDefinition) {
+            auto& block = function.blocks[b];
+            BitVector live(residents.size());
+            if (block.terminator.value) {
+                if (auto number = numberOfResident(block.terminator.value))
+                    live.set(*number);
+            }
+            for (auto& target : block.terminator.targets) {
+                live.merge(liveAtHead[target.block.index()]);
+                for (ValueID argument : target.arguments) {
+                    if (auto number = numberOfResident(argument))
+                        live.set(*number);
+                }
+            }
+            for (size_t i = events[b].size(); i--;) {
+                auto& event = events[b][i];
+                if (event.defined) {
+                    onDefinition(*event.defined, live);
+                    live.clear(*event.defined);
+                }
+                for (unsigned number : event.used)
+                    live.set(number);
+            }
+            for (ValueID parameter : block.parameters) {
+                if (auto found = residentNumbers.find(parameter.index()); found != residentNumbers.end())
+                    onDefinition(found->value, live);
+            }
+            for (ValueID parameter : block.parameters) {
+                if (auto found = residentNumbers.find(parameter.index()); found != residentNumbers.end())
+                    live.clear(found->value);
+            }
+            return live;
+        };
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (unsigned b = numberOfBlocks; b--;) {
+                BitVector live = walkBackward(b, [](unsigned, const BitVector&) { });
+                if (live != liveAtHead[b]) {
+                    liveAtHead[b] = WTF::move(live);
+                    changed = true;
+                }
+            }
+        }
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            walkBackward(b, [&](unsigned defined, const BitVector& live) {
+                for (size_t other : live) {
+                    if (other != defined && find(residents[other]) == find(residents[defined]))
+                        reject(ValueID(residents[defined]), "two states are live at once"_s);
+                }
+            });
+        }
+    }
+
+    BitVector isLoopCarried(numberOfValues);
+    UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> loopBlocks;
+    if (!isViable.isEmpty()) {
+        Vector<unsigned> place;
+        place.fill(0, numberOfBlocks);
+        BitVector seen(numberOfBlocks);
+        Vector<std::pair<unsigned, unsigned>> stack;
+        unsigned next = numberOfBlocks;
+        seen.set(0);
+        stack.append({ 0, 0 });
+        while (!stack.isEmpty()) {
+            auto& [block, index] = stack.last();
+            auto& targets = function.blocks[block].terminator.targets;
+            if (index < targets.size()) {
+                unsigned successor = targets[index++].block.index();
+                if (!seen.set(successor))
+                    stack.append({ successor, 0 });
+                continue;
+            }
+            place[block] = --next;
+            stack.removeLast();
+        }
+        Vector<Vector<unsigned, 2>> predecessors(numberOfBlocks);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            for (auto& target : function.blocks[b].terminator.targets)
+                predecessors[target.block.index()].append(b);
+        }
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            for (auto& target : function.blocks[b].terminator.targets) {
+                if (!seen.get(b) || place[target.block.index()] > place[b])
+                    continue;
+                Vector<uint32_t, 2> carried;
+                auto& parameters = function.at(target.block).parameters;
+                for (unsigned i = 0; i < std::min(parameters.size(), target.arguments.size()); ++i) {
+                    if (isSameBuilder(parameters[i], target.arguments[i]))
+                        carried.append(find(parameters[i].index()));
+                }
+                if (carried.isEmpty())
+                    continue;
+                BitVector body(numberOfBlocks);
+                body.set(target.block.index());
+                Vector<unsigned, 16> worklist;
+                if (!body.set(b))
+                    worklist.append(b);
+                while (!worklist.isEmpty()) {
+                    for (unsigned predecessor : predecessors[worklist.takeLast()]) {
+                        if (!body.set(predecessor))
+                            worklist.append(predecessor);
+                    }
+                }
+                for (uint32_t builder : carried) {
+                    isLoopCarried.set(builder);
+                    loopBlocks.add(builder, BitVector(numberOfBlocks)).iterator->value.merge(body);
+                }
+            }
+        }
+    }
+    for (auto [state, block] : escapeSites) {
+        if (!isViable.get(find(state.index())))
+            continue;
+        auto loop = loopBlocks.find(find(state.index()));
+        if (loop == loopBlocks.end() ? isConsumed.get(state.index()) : loop->value.get(block))
+            reject(state, "intermediate value escapes"_s);
+    }
+    for (auto [parameter, block] : initializationSites) {
+        if (auto loop = loopBlocks.find(find(parameter.index())); loop != loopBlocks.end() && loop->value.get(block))
+            reject(parameter, "reinitialized in the loop"_s);
+    }
+    std::optional<BitVector> keys;
+    BitVector isKey(numberOfValues);
+    for (unsigned i = 0; i < numberOfValues; ++i) {
+        if (!isCandidate.get(i) || !escapes.get(i) || !hasNumber.get(find(i)) || (isLoopCarried.get(find(i)) && !hasStringOperand.get(find(i))))
+            continue;
+        if (!keys)
+            keys = computeMapKeyValues(program, functionID, function);
+        if (keys->get(i))
+            isKey.set(find(i));
+    }
+    for (ValueID id : appends) {
+        uint32_t builder = find(id.index());
+        if (!hasAppendToState.get(builder))
+            reject(id, "single concatenation"_s);
+        else if (!hasNumber.get(builder))
+            reject(id, "no numeric operand"_s);
+        else if (!isLoopCarried.get(builder) && !isKey.get(builder))
+            reject(id, "not in a loop and not a map key"_s);
+        else if (hasStringOperand.get(builder) && !isKey.get(builder))
+            reject(id, "string operand and not a map key"_s);
+    }
+
+    result.builderForValue.fill(StringBuilderAnalysis::invalidBuilder, numberOfValues);
+    result.isFinalState.ensureSize(numberOfValues);
+    result.isFoldedIntoAppend.ensureSize(numberOfValues);
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> builderIndices;
+    for (ValueID id : appends) {
+        uint32_t builder = find(id.index());
+        if (auto why = rejectionReasons.find(builder); why != rejectionReasons.end()) {
+            result.rejections.append({ id, why->value });
+            result.appendOperands.remove(id.index());
+            continue;
+        }
+        builderIndices.add(builder, builderIndices.size());
+        for (ValueID operand : foldedValuesForAppend.get(id.index()))
+            result.isFoldedIntoAppend.set(operand.index());
+    }
+    result.builderCount = builderIndices.size();
+    result.mayBeEmpty.ensureSize(result.builderCount);
+    for (unsigned i = 0; i < numberOfValues; ++i) {
+        if (!isCandidate.get(i))
+            continue;
+        auto number = builderIndices.find(find(i));
+        if (number == builderIndices.end())
+            continue;
+        result.builderForValue[i] = number->value;
+        if (!isConsumed.get(i) && useCounts[i])
+            result.isFinalState.set(i);
+        if (startsEmpty.get(find(i)))
+            result.mayBeEmpty.set(number->value);
+    }
+    return result;
+}
+
+void dumpStringBuilderRemarks(const Program& program, PrintStream& out)
+{
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        if (!program.hasCode(FunctionID(i)))
+            continue;
+        auto& function = program.functions[i];
+        StringBuilderAnalysis analysis = analyzeStringBuilders(program, FunctionID(i), function);
+        auto dumpRemark = [&](ValueID id, ASCIILiteral outcome, ASCIILiteral why) {
+            out.print(function.name ? StringView(byteCast<Latin1Character>(program.string(function.name))) : StringView("-"_s), " f", i, " v", id.index(), ": ", nameOf(function.at(id).opcode), ": ", outcome);
+            if (why)
+                out.print(": ", why);
+            out.print("\n");
+        };
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (analysis.appendOperands.contains(id.index()))
+                    dumpRemark(id, "stack"_s, analysis.isFinalState.get(id.index()) ? "materialized here"_s : ASCIILiteral());
+            }
+        }
+        for (auto& [id, why] : analysis.rejections)
+            dumpRemark(id, "rejected"_s, why);
+    }
+}
 
 Lowering::StringPart Lowering::stringPartOf(CellPointer string)
 {
@@ -655,7 +1355,8 @@ Lowering::StringPart Lowering::concatenate(const StringPart& first, const String
         if (second.mayBeEmpty)
             whereEmpty(second.length, first.string);
     }
-    orElse(belowOrEqual(length, integer(JSString::MaxLength)), slowPath);
+    static_assert(JSString::MaxLength == std::numeric_limits<int32_t>::max());
+    orElse(isZero(bitAnd(length, integer(~static_cast<int64_t>(JSString::MaxLength)))), slowPath);
     CellPointer rope = allocateRope(slowPath);
     LValue mark = m_out.bitOr(m_out.constInt64(JSString::isRopeInPointer), zeroExtended(bitAnd(flags, word32(StringImpl::flagIs8Bit()))).value());
     m_out.store64(m_out.bitOr(first.string.value(), mark), rope.value(), m_heaps.JSRopeString_fiber0);
@@ -691,6 +1392,15 @@ CellPointer Lowering::concatenateAsRopes(std::span<const ValueID> parts)
 
 CellPointer Lowering::lowerStrcat(const Value& value)
 {
+    if (isCompact(15) && !value.arguments.isEmpty()) {
+        Vector<CellPointer, 8> parts;
+        for (ValueID part : value.arguments)
+            parts.append(toStringCell(part));
+        CellPointer result = parts[0];
+        for (unsigned i = 1; i < parts.size(); ++i)
+            result = AOT_TYPED_OPERATION(Concat, result, parts[i]);
+        return result;
+    }
     return concatenateAsRopes(value.arguments.span());
 }
 
@@ -721,7 +1431,7 @@ bool Lowering::isConcatenation(const Value& value) const
 bool Lowering::collectPartsOfConcatenation(const BitVector& isInBlock, ValueID id, bool isLast, PartsOfConcatenation& parts, PartsOfConcatenation& lookedThrough)
 {
     auto& value = m_function.at(id);
-    if (isLast || (isInBlock.get(id.index()) && numberOfUsesOf(id) == 1 && isConcatenation(value))) {
+    if (isLast || (isInBlock.get(id.index()) && numberOfUsesOf(id) == 1 && isConcatenation(value) && !m_stringBuilderAnalysis.isState(id))) {
         size_t numberOfParts = parts.size();
         size_t numberLookedThrough = lookedThrough.size();
         if (!isLast)
@@ -749,63 +1459,10 @@ bool Lowering::collectPartsOfConcatenation(const BitVector& isInBlock, ValueID i
 }
 
 // `a.id + "," + b.id`: the parts of the last Add or Strcat are what stands behind the ToString, Add and Strcat of its block that nothing else uses. Those are lowered nowhere, like a constant that is fetched where it is needed.
-// What a Map, a Set or an object is asked by in this function, and what is handed on to that through casts and the parameters of blocks.
-BitVector Lowering::valuesUsedAsKeys() const
-{
-    BitVector keys;
-    for (auto& block : m_function.blocks) {
-        for (ValueID id : block.values) {
-            auto& value = m_function.at(id);
-            if (value.opcode == Opcode::GetByVal || value.opcode == Opcode::PutByVal) {
-                keys.set(value.child(1).index());
-                continue;
-            }
-            if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
-                continue;
-            auto& implementation = m_builtins.at(value.builtin()).implementation;
-            if (implementation.kind != BuiltinImplementation::Inline)
-                continue;
-            switch (implementation.inlined) {
-            case InlineBuiltin::MapGet:
-            case InlineBuiltin::MapSet:
-            case InlineBuiltin::MapHas:
-            case InlineBuiltin::MapDelete:
-            case InlineBuiltin::SetAdd:
-            case InlineBuiltin::SetHas:
-            case InlineBuiltin::SetDelete:
-                keys.set(value.arguments[0].index());
-                break;
-            default:
-                break;
-            }
-        }
-    }
-    for (bool changed = !keys.isEmpty(); changed;) {
-        changed = false;
-        for (auto& block : m_function.blocks) {
-            for (ValueID id : block.values) {
-                auto& value = m_function.at(id);
-                if (value.opcode == Opcode::Cast && keys.get(id.index()))
-                    changed |= !keys.set(value.child(0).index());
-            }
-            for (auto& target : block.terminator.targets) {
-                auto& parameters = m_function.at(target.block).parameters;
-                for (unsigned i = 0; i < std::min(parameters.size(), target.arguments.size()); ++i) {
-                    if (keys.get(parameters[i].index()))
-                        changed |= !keys.set(target.arguments[i].index());
-                }
-            }
-        }
-    }
-    return keys;
-}
-
 // Made in one piece a text costs a malloc, a hash and a destructor, which pays where it is looked up by at once, and nowhere else: a rope is cheaper to make.
 void Lowering::findConcatenationsWithNumbers()
 {
-    // A handler may ask for whatever is defined ahead of it.
-    if (!m_catchEntrypoints.isEmpty())
-        return;
+    prepareStringBuilders();
     std::optional<BitVector> keys;
     BitVector isInBlock;
     for (auto& block : m_function.blocks) {
@@ -823,10 +1480,10 @@ void Lowering::findConcatenationsWithNumbers()
         for (size_t i = block.values.size(); i--;) {
             ValueID id = block.values[i];
             auto& value = m_function.at(id);
-            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isFetchedWhereNeeded(id) || !isConcatenation(value))
+            if ((value.opcode != Opcode::Add && value.opcode != Opcode::Strcat) || value.rep != Rep::Cell || isFetchedWhereNeeded(id) || m_stringBuilderAnalysis.isState(id) || !isConcatenation(value))
                 continue;
             if (!keys)
-                keys = valuesUsedAsKeys();
+                keys = computeMapKeyValues(m_program, m_id, m_function);
             if (!keys->get(id.index()))
                 continue;
             PartsOfConcatenation parts;
@@ -837,13 +1494,358 @@ void Lowering::findConcatenationsWithNumbers()
             for (ValueID part : lookedThrough)
                 m_isFetchedLate.set(part.index());
             m_partsOfConcatenations.add(id.index(), WTF::move(parts));
+            if (numberOfUsesOf(id) == 1) {
+                for (size_t j = i + 1; j < block.values.size(); ++j) {
+                    auto& user = m_function.at(block.values[j]);
+                    bool isLookupKey = user.opcode == Opcode::GetByVal && user.child(1) == id && user.child(0) != id;
+                    if (user.opcode == Opcode::CallBuiltin && user.arguments.size() == 1 && user.arguments[0] == id && user.child(0) != id) {
+                        auto& implementation = m_builtins.at(user.builtin()).implementation;
+                        isLookupKey = implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::MapGet || implementation.inlined == InlineBuiltin::MapHas || implementation.inlined == InlineBuiltin::SetHas);
+                    }
+                    if (isLookupKey) {
+                        m_sunkKeyConcatenations.set(id.index());
+                        m_isFetchedLate.set(id.index());
+                    }
+                }
+            }
         }
     }
 }
 
+void Lowering::prepareStringBuilders()
+{
+    m_stringBuilderAnalysis = analyzeStringBuilders(m_program, m_id, m_function);
+    if (!m_stringBuilderAnalysis.builderCount)
+        return;
+    for (unsigned i = 0; i < m_function.values.size(); ++i) {
+        if (m_stringBuilderAnalysis.isFoldedIntoAppend.get(i) || isResidentInStringBuilder(ValueID(i)))
+            m_isFetchedLate.set(i);
+    }
+    for (unsigned i = 0; i < m_stringBuilderAnalysis.builderCount; ++i)
+        m_stringBuilders.append(StackStringBuilder { m_proc.addVariable(Int64), m_proc.addVariable(Int64), m_proc.addStackSlot(stringBuilderCapacity + maxStringBuilderAppendRun) });
+}
+
+Integer Lowering::stringBuilderLength(const StackStringBuilder& builder)
+{
+    return Integer(m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), builder.length));
+}
+
+void Lowering::setStringBuilderLength(const StackStringBuilder& builder, Integer length)
+{
+    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), builder.length, length.value());
+}
+
+LValue Lowering::stringBuilderPrefix(const StackStringBuilder& builder)
+{
+    return m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), builder.prefix);
+}
+
+Pointer Lowering::stringBuilderBuffer(const StackStringBuilder& builder)
+{
+    return Pointer(m_out.m_block->appendNew<SlotBaseValue>(m_proc, m_out.origin(), builder.buffer));
+}
+
+void Lowering::resetStringBuilder(const StackStringBuilder& builder)
+{
+    setStringBuilderLength(builder, Integer(m_out.int64Zero));
+    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), builder.prefix, m_out.int64Zero);
+}
+
+void Lowering::flushStringBuilder(const StackStringBuilder& builder, Boxed operand)
+{
+    Pointer prefixAndLength = AOT_TYPED_OPERATION(StringBuilderFlush, CellPointer(stringBuilderPrefix(builder)), stringBuilderBuffer(builder), low32(stringBuilderLength(builder)), operand);
+    m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), builder.prefix, m_out.bitAnd(prefixAndLength.value(), m_out.constInt64((1ll << 48) - 1)));
+    setStringBuilderLength(builder, Integer(m_out.lShr(prefixAndLength.value(), m_out.constInt32(48))));
+}
+
+void Lowering::flushStringBuilderIfOverCapacity(const StackStringBuilder& builder)
+{
+    LBasicBlock overCapacity = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(belowOrEqual(stringBuilderLength(builder), integer(stringBuilderCapacity)).value(), usually(continuation), rarely(overCapacity));
+    m_out.appendTo(overCapacity);
+    flushStringBuilder(builder, Boxed(m_out.int64Zero));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::appendConstantToStringBuilder(const StackStringBuilder& builder, std::span<const uint8_t> text)
+{
+    if (text.empty())
+        return;
+    Integer length = stringBuilderLength(builder);
+    LValue cursor = m_out.add(stringBuilderBuffer(builder).value(), length.value());
+    for (size_t offset = 0; offset < text.size();) {
+        size_t remaining = text.size() - offset;
+        unsigned width = remaining >= 8 ? 8 : remaining >= 4 ? 4 : remaining >= 2 ? 2 : 1;
+        uint64_t bits = 0;
+        for (unsigned i = 0; i < width; ++i)
+            bits |= static_cast<uint64_t>(text[offset + i]) << (8 * i);
+        TypedPointer pointer = m_out.address(m_heaps.AOTTyped_argumentBuffer, cursor, offset);
+        switch (width) {
+        case 8:
+            m_out.store64(integer(static_cast<int64_t>(bits)).value(), pointer);
+            break;
+        case 4:
+            m_out.store32(m_out.constInt32(static_cast<int32_t>(bits)), pointer);
+            break;
+        case 2:
+            m_out.store32As16(m_out.constInt32(static_cast<int32_t>(bits)), pointer);
+            break;
+        default:
+            m_out.store32As8(m_out.constInt32(static_cast<int32_t>(bits)), pointer);
+            break;
+        }
+        offset += width;
+    }
+    setStringBuilderLength(builder, add(length, integer(text.size())));
+}
+
+void Lowering::appendNumberToStringBuilder(const StackStringBuilder& builder, ValueID id)
+{
+    static_assert(maxStringBuilderInlineDigits == sizeof(uint64_t));
+    auto& type = typeOf(id);
+    Operand operand = get(id);
+    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock digitLoop = m_out.newBlock();
+    LBasicBlock store = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    bool isDouble = operand.rep == Rep::Double || operand.rep == Rep::OptionalDouble;
+    RELEASE_ASSERT(isDouble || operand.rep == Rep::Int64 || operand.rep == Rep::OptionalInt64);
+    Integer integer = isDouble ? integralOrElse(Number(operand.value), Range::int32(), slowPath) : Integer(operand.value);
+    ValueFromBlock initialRemaining = m_out.anchor(integer.value());
+    ValueFromBlock initialDigits = m_out.anchor(m_out.int64Zero);
+    ValueFromBlock initialCount = m_out.anchor(m_out.int64Zero);
+    m_out.branch(below(integer, this->integer(100000000)).value(), usually(digitLoop), rarely(slowPath));
+
+    m_out.appendTo(digitLoop);
+    LValue remaining = m_out.phi(Int64, initialRemaining);
+    LValue digits = m_out.phi(Int64, initialDigits);
+    LValue count = m_out.phi(Int64, initialCount);
+    LValue quotient = m_out.lShr(m_out.mul(remaining, this->integer(0xcccccccdll).value()), m_out.constInt32(35));
+    LValue digit = m_out.sub(remaining, m_out.mul(quotient, m_out.constInt64(10)));
+    LValue nextDigits = m_out.bitOr(m_out.shl(digits, m_out.constInt32(8)), digit);
+    LValue nextCount = m_out.add(count, m_out.constInt64(1));
+    m_out.addIncomingToPhi(remaining, m_out.anchor(quotient));
+    m_out.addIncomingToPhi(digits, m_out.anchor(nextDigits));
+    m_out.addIncomingToPhi(count, m_out.anchor(nextCount));
+    m_out.branch(m_out.isZero64(quotient), unsure(store), unsure(digitLoop));
+
+    m_out.appendTo(store);
+    Integer length = stringBuilderLength(builder);
+    m_out.store64(m_out.bitOr(nextDigits, this->integer(0x3030303030303030ll).value()), m_out.address(m_heaps.AOTTyped_argumentBuffer, m_out.add(stringBuilderBuffer(builder).value(), length.value()), 0));
+    setStringBuilderLength(builder, add(length, Integer(nextCount)));
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowPath);
+    flushStringBuilder(builder, convertTo<Boxed>(operand, type));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::copyLatin1Characters(Pointer destination, Pointer source, Integer length)
+{
+    LBasicBlock shortCopy = m_out.newBlock();
+    LBasicBlock wordLoop = m_out.newBlock();
+    LBasicBlock lastWord = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    auto from = [&](LValue offset) {
+        return TypedPointer(m_heaps.characters8.atAnyIndex(), m_out.add(source.value(), offset));
+    };
+    auto to = [&](LValue offset) {
+        return TypedPointer(m_heaps.AOTTyped_argumentBuffer, m_out.add(destination.value(), offset));
+    };
+    ValueFromBlock initialOffset = m_out.anchor(m_out.int64Zero);
+    m_out.branch(below(length, integer(8)).value(), unsure(shortCopy), unsure(wordLoop));
+
+    m_out.appendTo(wordLoop);
+    LValue offset = m_out.phi(Int64, initialOffset);
+    m_out.store64(marked(m_out.load64(from(offset)), IsFixed), to(offset));
+    LValue nextOffset = m_out.add(offset, m_out.constInt64(8));
+    m_out.addIncomingToPhi(offset, m_out.anchor(nextOffset));
+    m_out.branch(m_out.belowOrEqual(m_out.add(nextOffset, m_out.constInt64(8)), length.value()), unsure(wordLoop), unsure(lastWord));
+
+    m_out.appendTo(lastWord);
+    LValue lastOffset = m_out.sub(length.value(), m_out.constInt64(8));
+    m_out.store64(marked(m_out.load64(from(lastOffset)), IsFixed), to(lastOffset));
+    m_out.jump(continuation);
+
+    m_out.appendTo(shortCopy);
+    auto copyIfBitSet = [&](int64_t bit, LValue offset, auto&& copy) {
+        LBasicBlock isSet = m_out.newBlock();
+        LBasicBlock next = m_out.newBlock();
+        m_out.branch(m_out.testNonZero64(length.value(), m_out.constInt64(bit)), unsure(isSet), unsure(next));
+        m_out.appendTo(isSet);
+        copy(offset);
+        m_out.jump(next);
+        m_out.appendTo(next);
+    };
+    copyIfBitSet(4, m_out.int64Zero, [&](LValue offset) {
+        m_out.store32(marked(m_out.load32(from(offset)), IsFixed), to(offset));
+    });
+    copyIfBitSet(2, m_out.bitAnd(length.value(), m_out.constInt64(4)), [&](LValue offset) {
+        m_out.store32As16(marked(m_out.load16ZeroExt32(from(offset)), IsFixed), to(offset));
+    });
+    copyIfBitSet(1, m_out.bitAnd(length.value(), m_out.constInt64(6)), [&](LValue offset) {
+        m_out.store32As8(marked(m_out.load8ZeroExt32(from(offset)), IsFixed), to(offset));
+    });
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::appendStringToStringBuilder(const StackStringBuilder& builder, CellPointer string)
+{
+    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    Pointer impl = fiberOf(stringReceiver(string));
+    orElse(lacksBits(impl, JSString::isRopeInPointer), slowPath);
+    orElse(hasBits(loadField<Word32>(impl, m_heaps.StringImpl_hashAndFlags, IsFixed), StringImpl::flagIs8Bit()), slowPath);
+    Integer length = stringBuilderLength(builder);
+    Integer newLength = add(length, zeroExtended(loadField<Word32>(impl, m_heaps.StringImpl_length)));
+    orElse(belowOrEqual(newLength, integer(stringBuilderCapacity)), slowPath);
+    copyLatin1Characters(Pointer(m_out.add(stringBuilderBuffer(builder).value(), length.value())), loadField<Pointer>(impl, m_heaps.StringImpl_data), sub(newLength, length));
+    ensureStillAliveHere(string);
+    setStringBuilderLength(builder, newLength);
+    m_out.jump(continuation);
+
+    m_out.appendTo(slowPath);
+    flushStringBuilder(builder, box(string));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::appendStringOrNilToStringBuilder(const StackStringBuilder& builder, Boxed value)
+{
+    LBasicBlock isString = m_out.newBlock();
+    LBasicBlock isNil = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isCell(value).value(), usually(isString), rarely(isNil));
+    m_out.appendTo(isString);
+    appendStringToStringBuilder(builder, asCell(value));
+    m_out.jump(continuation);
+    m_out.appendTo(isNil);
+    flushStringBuilder(builder, value);
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::appendToStringBuilder(const StackStringBuilder& builder, std::span<const ValueID> operands, bool isFinal)
+{
+    unsigned uncheckedLength = 0;
+    for (ValueID operand : operands) {
+        bool isNumber = typeOf(operand).primitives & Primitive::Number;
+        auto text = isNumber ? std::nullopt : constantASCIIText(operand);
+        if (!isNumber && (!text || text->size() > maxStringBuilderInlineConstantLength)) {
+            if (typeOf(operand).isString())
+                appendStringToStringBuilder(builder, in<CellPointer>(operand));
+            else
+                appendStringOrNilToStringBuilder(builder, in<Boxed>(operand));
+            uncheckedLength = 0;
+            continue;
+        }
+        unsigned maxLength = isNumber ? maxStringBuilderInlineDigits : text->size();
+        if (uncheckedLength + maxLength > maxStringBuilderAppendRun) {
+            flushStringBuilderIfOverCapacity(builder);
+            uncheckedLength = 0;
+        }
+        uncheckedLength += maxLength;
+        if (isNumber)
+            appendNumberToStringBuilder(builder, operand);
+        else
+            appendConstantToStringBuilder(builder, *text);
+    }
+    if (uncheckedLength && !isFinal)
+        flushStringBuilderIfOverCapacity(builder);
+}
+
+CellPointer Lowering::finishStringBuilder(const StackStringBuilder& builder, bool mayBeEmpty)
+{
+    auto finish = [&] {
+        return AOT_TYPED_OPERATION(StringBuilderFinish, CellPointer(stringBuilderPrefix(builder)), stringBuilderBuffer(builder), low32(stringBuilderLength(builder)));
+    };
+    if (!mayBeEmpty)
+        return finish();
+    return either<CellPointer>(Word32(m_out.isZero64(m_out.bitOr(stringBuilderPrefix(builder), stringBuilderLength(builder).value()))), [&] {
+        return CellPointer(emptyString());
+    }, finish);
+}
+
+void Lowering::initializeStringBuildersOnEdge(const Target& target)
+{
+    if (!m_stringBuilderAnalysis.builderCount)
+        return;
+    auto& parameters = m_function.at(target.block).parameters;
+    for (unsigned i = 0; i < target.arguments.size(); ++i) {
+        ValueID argument = target.arguments[i];
+        if (!m_stringBuilderAnalysis.isState(parameters[i]) || m_stringBuilderAnalysis.isState(argument))
+            continue;
+        auto& builder = stringBuilderFor(parameters[i]);
+        resetStringBuilder(builder);
+        if (auto text = m_stringBuilderAnalysis.initialText.find(argument.index()); text != m_stringBuilderAnalysis.initialText.end())
+            appendConstantToStringBuilder(builder, m_program.string(text->value));
+        else
+            appendStringToStringBuilder(builder, typeOf(argument).isString() ? in<CellPointer>(argument) : asCell(in<Boxed>(argument)));
+    }
+}
+
+void Lowering::materializeFinalStringBuilderStates(const Block& block)
+{
+    if (!m_stringBuilderAnalysis.builderCount)
+        return;
+    for (ValueID parameter : block.parameters) {
+        if (!m_stringBuilderAnalysis.isState(parameter) || isResidentInStringBuilder(parameter))
+            continue;
+        CellPointer string = finishStringBuilder(stringBuilderFor(parameter), stringBuilderMayBeEmpty(parameter));
+        define(parameter, convert(string, m_program.at(m_program.types.string), m_function.at(parameter).rep));
+    }
+}
+
+std::optional<Operand> Lowering::tryLowerWithStringBuilder(ValueID id, const Value& value)
+{
+    if (!m_stringBuilderAnalysis.builderCount)
+        return std::nullopt;
+    if (value.opcode == Opcode::CallBuiltin) {
+        if (!value.child(0) || !isResidentInStringBuilder(value.child(0)))
+            return std::nullopt;
+        auto& implementation = m_builtins.at(value.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::StringLength)
+            return std::nullopt;
+        auto& builder = stringBuilderFor(value.child(0));
+        LValue prefix = stringBuilderPrefix(builder);
+        Integer length = stringBuilderLength(builder);
+        LBasicBlock hasPrefix = newColdBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        ValueFromBlock withoutPrefix = m_out.anchor(length.value());
+        m_out.branch(m_out.isZero64(prefix), usually(continuation), rarely(hasPrefix));
+        m_out.appendTo(hasPrefix);
+        Integer prefixLength = stringLength(stringReceiver(CellPointer(prefix)));
+        Integer unbiasedLimit = integer(JSString::MaxLength - stringBuilderCapacity);
+        ValueFromBlock withPrefix = m_out.anchor(add(length, select(greaterThan(prefixLength, unbiasedLimit), unbiasedLimit, prefixLength)).value());
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return ensure(Integer(m_out.phi(Int64, withoutPrefix, withPrefix)), Type::integer(Range::length()), typeOf(id));
+    }
+    auto found = m_stringBuilderAnalysis.appendOperands.find(id.index());
+    if (found == m_stringBuilderAnalysis.appendOperands.end())
+        return std::nullopt;
+    auto& builder = stringBuilderFor(id);
+    std::span<const ValueID> operands = found->value.span();
+    if (isResidentInStringBuilder(operands[0]) && &stringBuilderFor(operands[0]) == &builder)
+        operands = operands.subspan(1);
+    else
+        resetStringBuilder(builder);
+    bool isFinal = !isResidentInStringBuilder(id);
+    appendToStringBuilder(builder, operands, isFinal);
+    if (!isFinal)
+        return Operand(value.rep, nullptr);
+    return convert(finishStringBuilder(builder, false), typeOf(id), value.rep);
+}
+
 std::optional<Operand> Lowering::lowerAsPartOfConcatenation(ValueID id, const Value& value)
 {
-    if (m_partsOfConcatenations.isEmpty() || (value.opcode != Opcode::Add && value.opcode != Opcode::Strcat && value.opcode != Opcode::ToString))
+    if (auto result = tryLowerWithStringBuilder(id, value))
+        return result;
+    if ((m_partsOfConcatenations.isEmpty() && !m_stringBuilderAnalysis.builderCount) || (value.opcode != Opcode::Add && value.opcode != Opcode::Strcat && value.opcode != Opcode::ToString))
         return std::nullopt;
     if (isFetchedWhereNeeded(id))
         return Operand(value.rep, nullptr);
@@ -853,9 +1855,48 @@ std::optional<Operand> Lowering::lowerAsPartOfConcatenation(ValueID id, const Va
     return convert(concatenateInOnePiece(found->value), typeOf(id), value.rep);
 }
 
+std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& type, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath)
+{
+    if (!m_sunkKeyConcatenations.get(key.index()) || m_keyBeingMaterialized == key)
+        return std::nullopt;
+    auto& parts = m_partsOfConcatenations.find(key.index())->value;
+    LValue buffer = m_out.lockedStackSlot(parts.size() * sizeof(EncodedJSValue));
+    for (unsigned i = 0; i < parts.size(); ++i) {
+        auto& typeOfPart = typeOf(parts[i]);
+        Operand operand = get(parts[i]);
+        Boxed boxed;
+        if (typeOfPart.isNumber() && operand.rep == Rep::Double) {
+            Number number = operand.as<Number>();
+            Word32 low = low32(truncateToInteger(number));
+            boxed = select(equal(toNumber(low), number), boxInt32(low), box(purified(number)));
+        } else
+            boxed = convertTo<Boxed>(operand, typeOfPart);
+        m_out.store64(boxed.value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+    }
+    Rep rep = repOf(type);
+    LBasicBlock hit = m_out.newBlock();
+    LBasicBlock miss = newColdBlock();
+    Join join(m_out, rep, b3TypeOf(rep));
+    Boxed answer = ask(word32(parts.size()), Pointer(buffer));
+    m_out.branch(m_out.notZero64(answer.value()), usually(hit), rarely(miss));
+    m_out.appendTo(hit);
+    join.add(ensure(answer, type));
+    m_out.appendTo(miss);
+    SetForScope keyBeingMaterialized(m_keyBeingMaterialized, key);
+    auto& typeOfKey = typeOf(key);
+    m_assumptions.append(Assumption { key, convert(AOT_TYPED_OPERATION(ConcatenateWithIntegers, word32(parts.size()), Pointer(buffer)), typeOfKey, m_function.at(key).rep), &typeOfKey });
+    join.add(slowPath());
+    m_assumptions.removeLast();
+    return join.finish();
+}
+
 // For get(): one that was looked through, by itself.
 CellPointer Lowering::concatenateWhereNeeded(const Value& value)
 {
+    if (ValueID id(static_cast<uint32_t>(&value - m_function.values.span().data())); isResidentInStringBuilder(id))
+        return finishStringBuilder(stringBuilderFor(id), stringBuilderMayBeEmpty(id));
+    if (size_t index = &value - m_function.values.span().data(); m_sunkKeyConcatenations.get(index))
+        return concatenateInOnePiece(m_partsOfConcatenations.find(index)->value);
     if (value.opcode == Opcode::ToString)
         return toStringCell(value.child(0));
     if (value.opcode == Opcode::Strcat)
@@ -927,7 +1968,7 @@ CellPointer Lowering::concatenateInOnePiece(const PartsOfConcatenation& parts)
         if (numberOfNumbers <= 1 && !hasConstant)
             require(logicalNot(isZero(lengthOfOtherStrings)));
     }
-    LValue buffer = m_out.lockedStackSlot(passed.size() * sizeof(EncodedJSValue));
+    LValue buffer = transientBuffer(passed.size() * sizeof(EncodedJSValue));
     for (unsigned i = 0; i < passed.size(); ++i)
         m_out.store64(passed[i].value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
     join.add(AOT_TYPED_OPERATION(ConcatenateWithIntegers, word32(passed.size()), Pointer(buffer)));
@@ -1062,14 +2103,14 @@ Word32 Lowering::areBytesEqual(Pointer p, Pointer q, Integer length)
 // The text is all ASCII and not empty. A few instructions at the site, and no cell for the text; what is in place is some sixty, and five fewer where it runs.
 Word32 Lowering::isTextByStub(CellPointer string, ValueID constant)
 {
-    while (m_function.at(constant).opcode == Opcode::Cast)
-        constant = m_function.at(constant).child(0);
+    constant = stringConstantOf(constant);
+    RELEASE_ASSERT(constant);
     LValue number = m_out.constInt64(m_function.at(constant).string().index());
     return Word32(m_out.castToInt32(callAllocationStub(Stub::StringIsText, { { number, stubTemporaryGPRs[0] }, { string.value(), stubTemporaryGPRs[2] } }, { Writes::Nothing, false }, false)));
 }
 
 // The opening of a string that is wanted only if it is so long. The length is looked at first, of whatever kind the string is: it tells most strings from a text, and nothing else of them is loaded. Then a flat
-// string, and a part of one of 8 bits, which is a rope by its bit and not rare (what slice, substring and trim yield), go one way. Any other rope goes to `otherwise`, and what is flat by now with it.
+// string goes on. A rope that is as long goes to `otherwise`.
 Lowering::Characters Lowering::charactersOfStringOfLength(const StringReceiver& receiver, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise)
 {
     // Goes on where the string is as long.
@@ -1082,38 +2123,23 @@ Lowering::Characters Lowering::charactersOfStringOfLength(const StringReceiver& 
         look(low32(characters->length), false);
         return *characters;
     }
-    static_assert(StringImpl::flagIs8Bit() == JSRopeString::is8BitInPointer);
     LBasicBlock isFlat = m_out.newBlock();
     LBasicBlock isRope = newColdBlock();
-    LBasicBlock isPart = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     Pointer fiber = fiberOf(receiver);
     m_out.branch(lacksBits(fiber, JSString::isRopeInPointer).value(), usually(isFlat), rarely(isRope));
     m_out.appendTo(isFlat);
     look(loadField<Word32>(fiber, m_heaps.StringImpl_length), false);
-    ValueFromBlock flatData = m_out.anchor(loadField<Pointer>(fiber, m_heaps.StringImpl_data).value());
-    ValueFromBlock flatFlags = m_out.anchor(loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed).value());
+    Pointer data = loadField<Pointer>(fiber, m_heaps.StringImpl_data);
+    Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
     m_out.jump(continuation);
 
     m_out.appendTo(isRope);
     look(loadField<Word32>(receiver.string, m_heaps.JSRopeString_length), true);
-    // Through a pointer of its own: a load is taken for an earlier one from the same place that is said never to change.
-    CellPointer string(m_out.opaque(receiver.string.value()));
-    Pointer current = loadField<Pointer>(string, m_heaps.JSRopeString_fiber0);
-    constexpr uintptr_t isPartOf8Bits = JSRopeString::isSubstringInPointer | JSRopeString::is8BitInPointer;
-    m_out.branch(m_out.equal(m_out.bitAnd(current.value(), m_out.constIntPtr(isPartOf8Bits)), m_out.constIntPtr(isPartOf8Bits)), unsure(isPart), unsure(otherwise));
-    // Nothing comes between these loads and the look at the characters that could make the substring flat, and so let go of its base.
-    m_out.appendTo(isPart);
-    LValue lengthAndBaseLow = m_out.load64(string.value(), m_heaps.JSRopeString_fiber1);
-    LValue baseHighAndOffset = m_out.load64(string.value(), m_heaps.JSRopeString_fiber2);
-    CellPointer base(m_out.bitOr(m_out.lShr(lengthAndBaseLow, m_out.constInt32(32)), m_out.shl(m_out.bitAnd(baseHighAndOffset, m_out.constInt64(0xffff)), m_out.constInt32(32))));
-    LValue offset = m_out.lShr(baseHighAndOffset, m_out.constInt32(16));
-    ValueFromBlock dataOfPart = m_out.anchor(m_out.add(loadField<Pointer>(loadField<Pointer>(base, m_heaps.JSRopeString_fiber0), m_heaps.StringImpl_data).value(), offset));
-    ValueFromBlock flagsOfPart = m_out.anchor(m_out.castToInt32(current.value()));
-    m_out.jump(continuation);
+    m_out.jump(otherwise);
 
     m_out.appendTo(continuation);
-    return { Pointer(m_out.phi(pointerType(), flatData, dataOfPart)), Word32(m_out.phi(Int32, flatFlags, flagsOfPart)), integer(length), receiver.string };
+    return { data, flags, integer(length), receiver.string };
 }
 
 // The ways that are taken stand at the site as they do in a loop: the length, a flat string and a part of one, 8 bits, the characters against immediates. Any other rope and 16 bits are one call of the stub; so is a
@@ -1216,11 +2242,21 @@ std::optional<Lowering::ComparisonWithText> Lowering::comparisonWithTextBranched
     constexpr uint16_t either = Primitive::True | Primitive::False;
     if (condition.opcode != Opcode::StrictEq || (m_program.at(condition.type).primitives & either) != either)
         return std::nullopt;
+    auto isOneCodeUnitBeyondLatin1 = [&](ValueID id) {
+        if (m_function.at(id).opcode != Opcode::String)
+            return false;
+        auto bytes = m_program.string(m_function.at(id).string());
+        return (bytes.size() == 2 && bytes[0] >= 0xc4 && bytes[0] < 0xe0) || (bytes.size() == 3 && bytes[0] >= 0xe0 && bytes[0] < 0xf0);
+    };
     for (unsigned i = 0; i < 2; ++i) {
         ValueID constant = condition.child(i);
         ValueID subject = condition.child(1 - i);
         auto text = constantASCIIText(constant);
-        if (!text || text->empty() || text->size() > maxLengthOfTextComparedInPlace || m_function.at(constant).opcode != Opcode::String || !isFetchedWhereNeeded(constant))
+        if (text && text->empty())
+            continue;
+        if (!text && isOneCodeUnitBeyondLatin1(constant))
+            text = std::span<const uint8_t> { };
+        if (!text || text->size() > maxLengthOfTextComparedInPlace || m_function.at(constant).opcode != Opcode::String || !isFetchedWhereNeeded(constant))
             continue;
         // There is no value: the shape says what the field holds. See lowerStrictEq().
         if (m_pinnedReads.contains(subject.index()))
@@ -1239,6 +2275,10 @@ std::optional<Operand> Lowering::deferToBranchOnText(ValueID id, const Value& va
 {
     if (value.opcode != Opcode::StrictEq || m_currentBlock->terminator.value != id)
         return std::nullopt;
+    if (m_readAskedForText) {
+        m_isFetchedLate.set(id.index());
+        return Operand(value.rep, nullptr);
+    }
     // There every value is looked at by itself.
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
         return std::nullopt;
@@ -1246,7 +2286,7 @@ std::optional<Operand> Lowering::deferToBranchOnText(ValueID id, const Value& va
     if (!comparison || successorsOf(m_currentBlock->terminator).size() != 2)
         return std::nullopt;
     // Then it is a comparison of two integers.
-    if (comparison->text.size() == 1 && codeUnitOfString(comparison->subject))
+    if (constantCodeUnit(comparison->constant) && codeUnitOfString(comparison->subject))
         return std::nullopt;
     m_isFetchedLate.set(id.index());
     return Operand(value.rep, nullptr);
@@ -1262,8 +2302,10 @@ void Lowering::lowerBranchOnText()
         LBasicBlock taken;
     };
     Vector<Case, 8> cases;
+    SetForScope isInArm(m_isInArm, true);
     const Block* block = m_currentBlock;
     ValueID subject = comparisonWithTextBranchedOn(*block)->subject;
+    bool makesRopesFlat = m_isInLoop;
     for (;;) {
         auto comparison = *comparisonWithTextBranchedOn(*block);
         // The first block's own terminator has been seen to: see lowerTerminator().
@@ -1287,6 +2329,28 @@ void Lowering::lowerBranchOnText()
     }
     LBasicBlock otherwise = edgeTo(block->terminator.targets[1], true);
 
+    std::optional<SetForScope<double>> frequencyWithoutCodeUnit;
+    if (auto codeUnit = codeUnitOfString(subject, true)) {
+        Vector<FTL::SwitchCase, 8> byCodeUnit;
+        BitVector unitsSeen;
+        bool areAllOneCodeUnit = true;
+        for (auto& one : cases) {
+            auto unit = constantCodeUnit(one.constant);
+            areAllOneCodeUnit &= !!unit;
+            if (unit && !unitsSeen.set(*unit))
+                byCodeUnit.append(FTL::SwitchCase(m_out.constInt64(*unit), one.taken, FTL::Weight()));
+        }
+        if (areAllOneCodeUnit) {
+            LBasicBlock isKept = m_out.newBlock();
+            LBasicBlock isNotKept = newColdBlock();
+            m_out.branch(notEqual(*codeUnit, integer(codeUnitIsNotKept)).value(), usually(isKept), rarely(isNotKept));
+            m_out.appendTo(isKept);
+            m_out.switchInstruction(codeUnit->value(), byCodeUnit, otherwise, FTL::Weight());
+            m_out.appendTo(isNotKept);
+            frequencyWithoutCodeUnit.emplace(m_out.m_frequency, 0);
+        }
+    }
+
     StringReceiver receiver = stringReceiver(subject);
     bool mayBeNoString = !typeOf(subject).hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
     if (mayBeNoString) {
@@ -1304,16 +2368,30 @@ void Lowering::lowerBranchOnText()
         m_out.branch(equal(typeOfCell(receiver.string), word32(StringType)).value(), unsure(isString), unsure(otherwise));
         m_out.appendTo(isString);
     }
+    auto lengthOf = [](const Case& one) -> size_t {
+        return one.text.empty() ? 1 : one.text.size();
+    };
     Vector<size_t, 8> lengths;
     for (auto& one : cases) {
-        if (!lengths.contains(one.text.size()))
-            lengths.append(one.text.size());
+        if (!lengths.contains(lengthOf(one)))
+            lengths.append(lengthOf(one));
     }
     // Outside loops, where all texts are as long as each other: the length first, of whatever kind the string is: nothing else of a string of another length is loaded.
-    bool looksAtLengthFirst = !m_isInLoop && lengths.size() == 1;
+    bool looksAtLengthFirst = !makesRopesFlat && lengths.size() == 1;
     LBasicBlock wide = newColdBlock();
-    // Outside loops a rope that is no part of a string is not made flat: it goes with 16 bits, through the texts that are as long by the stub.
-    Characters characters = m_isInLoop ? charactersOf(receiver) : looksAtLengthFirst ? charactersOfStringOfLength(receiver, lengths[0], otherwise, wide) : charactersOf(receiver, wide);
+    // Outside loops no rope is opened or made flat: it goes with 16 bits, through the texts that are as long by the stub, which compares a part of a flat string itself.
+    auto charactersOfFlatString = [&]() -> Characters {
+        if (auto opened = charactersOfOpenedString(receiver))
+            return *opened;
+        LBasicBlock isFlat = m_out.newBlock();
+        Pointer fiber = fiberOf(receiver);
+        m_out.branch(lacksBits(fiber, JSString::isRopeInPointer).value(), usually(isFlat), rarely(wide));
+        m_out.appendTo(isFlat);
+        Pointer data = loadField<Pointer>(fiber, m_heaps.StringImpl_data);
+        Word32 flags = loadField<Word32>(fiber, m_heaps.StringImpl_hashAndFlags, IsFixed);
+        return { data, flags, zeroExtended(loadField<Word32>(fiber, m_heaps.StringImpl_length)), receiver.string };
+    };
+    Characters characters = makesRopesFlat ? charactersOf(receiver) : looksAtLengthFirst ? charactersOfStringOfLength(receiver, lengths[0], otherwise, wide) : charactersOfFlatString();
     orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), wide);
 
     Vector<LBasicBlock, 8> blocksByLength;
@@ -1333,6 +2411,8 @@ void Lowering::lowerBranchOnText()
         unsigned left = 0;
         for (auto& one : cases)
             left += one.text.size() == lengths[i];
+        if (!left)
+            m_out.jump(otherwise);
         for (auto& one : cases) {
             if (one.text.size() != lengths[i])
                 continue;
@@ -1346,7 +2426,43 @@ void Lowering::lowerBranchOnText()
     }
 
     m_out.appendTo(wide);
-    if (!m_isInLoop) {
+    if (!makesRopesFlat) {
+        const char* asksOnce = getenv("BUN_AOT_SWITCH_LADDER");
+        bool mayAskOnce = asksOnce && asksOnce[0] == '1' && cases.size() >= (looksAtLengthFirst ? 2 : 3) && cases.size() <= 12;
+        uint64_t lengthsOfTexts = 0;
+        constexpr uint64_t noText = 0x1fffff;
+        std::array<uint64_t, 4> words;
+        words.fill(noText | noText << 21 | noText << 42);
+        for (unsigned i = 0; mayAskOnce && i < cases.size(); ++i) {
+            ValueID constant = cases[i].text.empty() ? ValueID() : stringConstantOf(cases[i].constant);
+            uint64_t number = constant ? m_function.at(constant).string().index() : noText;
+            mayAskOnce = number < noText && cases[i].text.size() < 64;
+            lengthsOfTexts |= 1ull << (cases[i].text.size() & 63);
+            words[i / 3] &= ~(noText << (i % 3 * 21));
+            words[i / 3] |= number << (i % 3 * 21);
+        }
+        if (mayAskOnce) {
+            if (!looksAtLengthFirst) {
+                LBasicBlock isShort = newColdBlock();
+                LBasicBlock isAsLongAsOne = newColdBlock();
+                Integer lengthOfSubject = stringLength(receiver);
+                m_out.branch(below(lengthOfSubject, integer(64)).value(), unsure(isShort), unsure(otherwise));
+                m_out.appendTo(isShort);
+                m_out.branch(m_out.testNonZero64(m_out.lShr(integer(static_cast<int64_t>(lengthsOfTexts)).value(), m_out.castToInt32(lengthOfSubject.value())), m_out.constInt64(1)), unsure(isAsLongAsOne), unsure(otherwise));
+                m_out.appendTo(isAsLongAsOne);
+            }
+            auto word = [&](unsigned i) {
+                return integer(static_cast<int64_t>(words[i]));
+            };
+            Word32 index = cases.size() <= 3 ? AOT_TYPED_OPERATION(IndexAmongTexts3, receiver.string, word(0))
+                : cases.size() <= 6 ? AOT_TYPED_OPERATION(IndexAmongTexts6, receiver.string, word(0), word(1))
+                : AOT_TYPED_OPERATION(IndexAmongTexts12, receiver.string, word(0), word(1), word(2), word(3));
+            Vector<FTL::SwitchCase, 8> byIndex;
+            for (unsigned i = 0; i < cases.size(); ++i)
+                byIndex.append(FTL::SwitchCase(m_out.constInt32(i), cases[i].taken, FTL::Weight()));
+            m_out.switchInstruction(index.value(), byIndex, otherwise, FTL::Weight());
+            return;
+        }
         Integer length;
         if (!looksAtLengthFirst)
             length = stringLength(receiver);
@@ -1354,10 +2470,11 @@ void Lowering::lowerBranchOnText()
             LBasicBlock next = i + 1 < cases.size() ? newColdBlock() : otherwise;
             if (!looksAtLengthFirst) {
                 LBasicBlock isAsLong = newColdBlock();
-                m_out.branch(equal(length, integer(cases[i].text.size())).value(), unsure(isAsLong), unsure(next));
+                m_out.branch(equal(length, integer(lengthOf(cases[i]))).value(), unsure(isAsLong), unsure(next));
                 m_out.appendTo(isAsLong);
             }
-            m_out.branch(isTextByStub(receiver.string, cases[i].constant).value(), unsure(cases[i].taken), unsure(next));
+            Word32 isSame = cases[i].text.empty() ? Word32(AOT_TYPED_OPERATION(StringEq, receiver.string, in<CellPointer>(cases[i].constant))) : isTextByStub(receiver.string, cases[i].constant);
+            m_out.branch(isSame.value(), unsure(cases[i].taken), unsure(next));
             if (i + 1 < cases.size())
                 m_out.appendTo(next);
         }
@@ -1366,7 +2483,7 @@ void Lowering::lowerBranchOnText()
     for (unsigned i = 0; i < cases.size(); ++i) {
         LBasicBlock isAsLong = newColdBlock();
         LBasicBlock next = i + 1 < cases.size() ? newColdBlock() : otherwise;
-        m_out.branch(equal(characters.length, integer(cases[i].text.size())).value(), unsure(isAsLong), unsure(next));
+        m_out.branch(equal(characters.length, integer(lengthOf(cases[i]))).value(), unsure(isAsLong), unsure(next));
         m_out.appendTo(isAsLong);
         m_out.branch(AOT_TYPED_OPERATION(StringHasAt, receiver.string, in<CellPointer>(cases[i].constant), word32(0)).value(), unsure(cases[i].taken), unsure(next));
         if (i + 1 < cases.size())
@@ -1440,11 +2557,8 @@ Boxed Lowering::mapKey(ValueID id)
     Operand operand = get(id);
     if (operand.rep != Rep::Double)
         return convertTo<Boxed>(operand, typeOf(id));
-    Number number = operand.as<Number>();
-    Integer whole = truncateToInteger(number);
-    Word32 low = low32(whole);
-    Word32 isInt32 = logicalAnd(equal(signExtended(low), whole), equal(convertToNumber(whole), number));
-    return select(isInt32, boxInt32(low), box(purified(number)));
+    Number key = operand.as<Number>();
+    return select(equal(key, number(0)), boxInt32(word32(0)), boxNumber(key));
 }
 
 // Whether two keys of the type, as mapKey() yields them, are one key exactly if they are the same bits. A number that is kept boxed, or
@@ -1460,8 +2574,8 @@ static bool isComparedByBits(const Type& key)
 // Of a key that is compared by its bits: rapidHashMix64().
 Word32 Lowering::hashOfMapKey(Boxed key)
 {
-    LValue a = m_out.bitXor(key.value(), integer(static_cast<int64_t>(0x2d358dccaa6c78a5ULL)).value());
-    LValue b = m_out.bitXor(key.value(), integer(static_cast<int64_t>(0x8bb84b93962eacc9ULL)).value());
+    LValue a = m_out.bitXor(key.value(), fixed64(Instance::offsetOfHashSecrets()));
+    LValue b = m_out.bitXor(key.value(), fixed64(Instance::offsetOfHashSecrets() + sizeof(uint64_t)));
     return Word32(m_out.castToInt32(m_out.bitXor(m_out.mul(a, b), m_out.uMulHigh(a, b))));
 }
 
@@ -1506,19 +2620,28 @@ Pointer Lowering::findInMapOrSet(CellPointer table, bool isMap, Boxed key, Word3
     return entry;
 }
 
-Integer Lowering::sizeOfMapOrSet(CellPointer table, bool isMap)
+Integer Lowering::sizeOfMapOrSet(CellPointer table, bool isMap, bool hasStringKeysByType)
 {
     static_assert(JSMap::Helper::aliveEntryCountIndex() == JSSet::Helper::aliveEntryCountIndex());
-    Pointer storage = loadField<Pointer>(table, isMap ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
-    Integer size = either<Integer>(Word32(m_out.notNull(storage.value())), [&] {
-        return zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.OrderedHashTableData, storage.value(), JSMap::Helper::offsetOfAliveEntryCount()))));
-    }, [&] {
+    auto none = [&] {
+        return integer(0);
+    };
+    auto inStorage = [&](auto otherwise) {
+        Pointer storage = loadField<Pointer>(table, isMap ? m_heaps.JSMap_storage : m_heaps.JSSet_storage);
+        return either<Integer>(Word32(m_out.notNull(storage.value())), [&] {
+            return zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.OrderedHashTableData, storage.value(), JSMap::Helper::offsetOfAliveEntryCount()))));
+        }, otherwise);
+    };
+    auto inCompactTable = [&](auto otherwise) {
         Pointer compactTable = loadField<Pointer>(table, isMap ? m_heaps.JSMap_compactTable : m_heaps.JSSet_compactTable);
         return either<Integer>(Word32(m_out.notNull(compactTable.value())), [&] {
-            return zeroExtended(Word32(m_out.sub(m_out.load32(compactTable.value(), m_heaps.AOTTypedCompactTable_used), m_out.load32(compactTable.value(), m_heaps.AOTTypedCompactTable_deleted))));
-        }, [&] {
-            return integer(0);
-        });
+            return zeroExtended(Word32(m_out.load32(m_out.address(m_heaps.AOTTypedCompactTable_used, compactTable.value(), m_heaps.AOTTypedCompactTable_alive.offset()))));
+        }, otherwise);
+    };
+    Integer size = hasStringKeysByType ? inCompactTable([&] {
+        return inStorage(none);
+    }) : inStorage([&] {
+        return inCompactTable(none);
     });
     ensureStillAliveHere(table);
     return size;
@@ -1535,10 +2658,18 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
     CellPointer table = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
     bool isMap = which != InlineBuiltin::SetAdd && which != InlineBuiltin::SetHas && which != InlineBuiltin::SetSize;
     if (which == InlineBuiltin::MapSize || which == InlineBuiltin::SetSize)
-        return ensure(sizeOfMapOrSet(table, isMap), Type::integer(Range::length()), type);
+        return ensure(sizeOfMapOrSet(table, isMap, value.hasStringKeysByType), Type::integer(Range::length()), type);
     auto yieldsTable = [&] {
         return ensure(table, typeOf(value.child(0)).withoutPrimitives(Primitive::UndefinedOrNull), type);
     };
+    if (which == InlineBuiltin::MapGet || which == InlineBuiltin::MapHas || which == InlineBuiltin::SetHas) {
+        if (auto answer = tryLookupWithSunkKey(arguments[0], type, [&](Word32 count, Pointer parts) -> Boxed {
+            return AOT_TYPED_OPERATION(TryMapOrSetLookupWithKeyParts, table, word32(which == InlineBuiltin::MapGet), count, parts);
+        }, [&]() -> Operand {
+            return lowerMapOrSetBuiltin(which, result, value, inPlace);
+        }))
+            return *answer;
+    }
     Boxed key = mapKey(arguments[0]);
 
     // The stubs do strings in place that are no ropes and have been hashed, and leave big integers and doubles to the engine.
@@ -1549,18 +2680,23 @@ Operand Lowering::lowerMapOrSetBuiltin(InlineBuiltin which, ValueID result, cons
                 operands.append(std::pair { in<Boxed>(arguments[1]).value(), argumentGPR(1) });
             return Boxed(callICStub(stub, Int64, operands, std::nullopt, OperationEffects { inPlace, inPlace != Writes::Nothing }));
         };
+        auto& keyType = typeOf(arguments[0]);
+        bool keyIsStringByType = keyType.primitives & Primitive::String && keyType.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
         switch (which) {
         case InlineBuiltin::MapGet:
-            return ensure(callStub(Stub::MapGet), type);
+            return ensure(callStub(keyIsStringByType ? Stub::MapGetWithStringKey : Stub::MapGet), type);
         case InlineBuiltin::MapHas:
-            return ensure(unboxedBoolean(callStub(Stub::MapHas)), booleanType, type);
+            return ensure(unboxedBoolean(callStub(keyIsStringByType ? Stub::MapHasWithStringKey : Stub::MapHas)), booleanType, type);
         case InlineBuiltin::SetHas:
-            return ensure(unboxedBoolean(callStub(Stub::SetHas)), booleanType, type);
+            return ensure(unboxedBoolean(callStub(keyIsStringByType ? Stub::SetHasWithStringKey : Stub::SetHas)), booleanType, type);
         default:
             break;
         }
 
-        callStub(isMap ? Stub::MapSet : Stub::SetAdd);
+        if (keyIsStringByType)
+            callStub(isMap ? Stub::MapSetWithStringKey : Stub::SetAddWithStringKey);
+        else
+            callStub(isMap ? Stub::MapSet : Stub::SetAdd);
         return yieldsTable();
     }
 

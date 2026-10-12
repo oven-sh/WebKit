@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedCompactTable.h"
 #include "JSCInlines.h"
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -90,10 +91,124 @@ Word32 Lowering::hasOriginalStructure(CellPointer cell, const EngineClass& engin
     });
 }
 
+bool Lowering::isGuardOfReceiver(const Value& value) const
+{
+    return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.hasOriginalStructureOperation() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts();
+}
+
+ValueID Lowering::receiverBehindCasts(ValueID id) const
+{
+    while (m_function.at(id).opcode == Opcode::Cast && m_function.at(id).castReason() != CastReason::As && m_function.at(id).castReason() != CastReason::Coerce)
+        id = m_function.at(id).child(0);
+    return id;
+}
+
+void Lowering::branchOnOriginalStructure(const Value& value, const Terminator& terminator, LBasicBlock isOriginal, LBasicBlock hasChanged)
+{
+    Operand operand = get(value.arguments[0]);
+    if (value.engineClass() == Format::none || (operand.rep != Rep::Cell && operand.rep != Rep::JSValue) || isCompact(14)) {
+        m_out.jump(hasChanged);
+        return;
+    }
+    CellPointer cell;
+    if (operand.rep == Rep::Cell)
+        cell = operand.as<CellPointer>();
+    else {
+        Boxed boxed = operand.as<Boxed>();
+        LBasicBlock isCellCase = m_out.newBlock();
+        m_out.branch(isCell(boxed).value(), unsure(isCellCase), unsure(hasChanged));
+        m_out.appendTo(isCellCase);
+        cell = asCell(boxed);
+    }
+    m_out.branch(hasOriginalStructure(cell, m_builtins.classes()[value.engineClass()]).value(), unsure(isOriginal), unsure(hasChanged));
+    if (terminator.targets[0].block == terminator.targets[1].block)
+        return;
+    for (unsigned i = 0; i < 2; ++i) {
+        BlockID target = terminator.targets[i].block;
+        if (target.index() && numberOfPredecessorsOf(target) == 1)
+            m_receiversAsked.set(target.index(), ReceiverAsked { receiverBehindCasts(value.arguments[0]), value.engineClass(), !i });
+    }
+}
+
+std::optional<bool> Lowering::answerOfGuardAhead(ValueID receiver, const EngineClass& engineClass, AskedFor askedFor)
+{
+    if (m_receiversAsked.isEmpty() || !m_currentBlock)
+        return std::nullopt;
+    auto found = m_receiversAsked.find(m_currentBlockID.index());
+    if (found == m_receiversAsked.end() || found->value.engineClass != engineClass.index || found->value.receiver != receiverBehindCasts(receiver))
+        return std::nullopt;
+    if (askedFor == AskedFor::Structure) {
+        for (size_t i = 0; i < m_currentIndexInBlock; ++i) {
+            switch (m_function.at(m_currentBlock->values[i]).opcode) {
+            case Opcode::CallDirect:
+            case Opcode::Await:
+            case Opcode::Yield:
+            case Opcode::GetResumeMode:
+                return std::nullopt;
+            default:
+                break;
+            }
+            if (writesOf(m_program, m_function, *m_currentBlock, i) == Writes::Heap)
+                return std::nullopt;
+        }
+    }
+    return found->value.isOriginal;
+}
+
 // Calls the engine's function. A host function or an InternalFunction is entered through its native call trampoline.
 // `calledOn`: what `this` is, where the function was not come by through a receiver or a holder.
+bool Lowering::makesTableWithStringKeys(const Value& value)
+{
+    if (m_builtins.at(value.builtin()).kind != BuiltinKind::Constructor || value.arguments.size() != 1 || value.engineClass() == Format::none)
+        return false;
+    JSType made = m_builtins.classes()[value.engineClass()].type;
+    if (made != JSSetType)
+        return false;
+    auto elementsOfArray = [&](const Type& type) -> const Type* {
+        auto* engineClass = type.onlyEngineClass();
+        return engineClass && engineClass->type == ArrayType && type.elements ? &m_program.at(type.elements) : nullptr;
+    };
+    auto isStringOrNil = [](const Type& type) {
+        return type.primitives & Primitive::String && type.hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull);
+    };
+    ValueID given = value.arguments[0];
+    auto& list = m_function.at(originOf(given));
+    if (list.opcode == Opcode::NewArray && !list.arguments.isEmpty()) {
+        for (ValueID item : list.arguments) {
+            if (made == JSSetType) {
+                if (!isStringOrNil(typeOf(item)))
+                    return false;
+                continue;
+            }
+            auto& pair = m_function.at(originOf(item));
+            if (pair.opcode != Opcode::NewArray || pair.arguments.size() < 2 || !isStringOrNil(typeOf(pair.arguments[0])))
+                return false;
+        }
+        return true;
+    }
+    for (TypeID type : { m_function.at(given).type, m_function.at(given).prediction, list.prediction }) {
+        auto* elements = type ? elementsOfArray(m_program.at(type)) : nullptr;
+        if (made == JSMapType && elements)
+            elements = elementsOfArray(*elements);
+        if (elements && isStringOrNil(*elements))
+            return true;
+    }
+    return false;
+}
+
 Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects, std::optional<Boxed> calledOn)
 {
+    if (!m_isMakingTableGenerally && makesTableWithStringKeys(value)) {
+        Boxed list = in<Boxed>(value.arguments[0]);
+        bool isSet = m_builtins.classes()[value.engineClass()].type == JSSetType;
+        LValue made = isSet ? AOT_TYPED_OPERATION(TryNewSetOfStrings, list).value() : AOT_TYPED_OPERATION(TryNewMapWithStringKeys, list).value();
+        return either<Boxed>(Word32(m_out.notZero64(made)), [&] {
+            return box(CellPointer(made));
+        }, [&] {
+            SetForScope isMakingTableGenerally(m_isMakingTableGenerally, true);
+            return callBuiltinFunction(value, effects, calledOn);
+        });
+    }
     auto& builtin = m_builtins.at(value.builtin());
     // The typed arrays have their functions in common. Which of them one was found on is what it goes by.
     auto globalOr = [&](BuiltinName name) {
@@ -213,20 +328,53 @@ Boxed Lowering::lowerMethodRead(const Value& value)
 
 Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
 {
+    if (auto& builtin = m_builtins.at(value.builtin()); builtin.takesReceiver()) {
+        auto& receiver = typeOf(value.child(0));
+        if (!receiver.hasObjects() && receiver.mayBeUndefinedOrNull() && receiver.primitives & (Primitive::Number | Primitive::Boolean)) {
+            Type withoutNil = receiver.withoutPrimitives(Primitive::UndefinedOrNull);
+            Rep rep = repOf(typeOf(result));
+            return ifAsExpected({ { value.child(0), &withoutNil } }, rep, [&](LBasicBlock) {
+                return lowerResolvedBuiltin(result, value);
+            }, [&] {
+                throwAt(ThrowKind::NullishRead, Operand(thrownNil(in<Boxed>(value.child(0)))), m_program.stringOf(builtin.nameName).index());
+                return placeholder(rep);
+            });
+        }
+    }
     if (!hasGenericFallback(m_program, m_function, value))
+        return lowerResolvedBuiltin(result, value);
+    auto answer = answerOfGuardAhead(value.child(0), *typeOf(value.child(0)).onlyEngineClass(), AskedFor::Structure);
+    if (answer.value_or(false))
         return lowerResolvedBuiltin(result, value);
     auto& type = typeOf(result);
     Rep rep = repOf(type);
     CellPointer receiver = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+    auto kindOfResolvedWay = m_builtins.at(value.builtin()).implementation.kind;
+    if (answer || isCompact(kindOfResolvedWay == BuiltinImplementation::Call || kindOfResolvedWay == BuiltinImplementation::Prelude ? 5 : 14))
+        return lowerGenericFallback(value, receiver, type);
     LBasicBlock isOriginal = m_out.newBlock();
     LBasicBlock hasChanged = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     m_out.branch(hasOriginalStructure(receiver, *typeOf(value.child(0)).onlyEngineClass()).value(), usually(isOriginal), rarely(hasChanged));
     m_out.appendTo(isOriginal);
-    join.add(lowerResolvedBuiltin(result, value));
+    SetForScope isInArm(m_isInArm, true);
+    Operand resolved = lowerResolvedBuiltin(result, value);
+    if (rep != Rep::Double || m_lastIntegerMadeNumber.number != resolved.value) {
+        join.add(resolved);
+        m_out.appendTo(hasChanged);
+        join.add(lowerGenericFallback(value, receiver, type));
+        return join.finish();
+    }
+    int64_t least = m_lastIntegerMadeNumber.least;
+    ValueFromBlock integerInPlace = m_out.anchor(m_lastIntegerMadeNumber.integer);
+    join.add(resolved);
     m_out.appendTo(hasChanged);
-    join.add(lowerGenericFallback(value, receiver, type));
-    return join.finish();
+    Operand general = lowerGenericFallback(value, receiver, type);
+    ValueFromBlock noInteger = m_out.anchor(integer(INT64_MIN).value());
+    join.add(general);
+    Operand joined = join.finish();
+    m_likelyIntegersOfNumbers.add(result.index(), IntegerMadeNumber { joined.value, m_out.phi(Int64, integerInPlace, noInteger), least });
+    return joined;
 }
 
 Operand Lowering::lowerResolvedBuiltin(ValueID result, const Value& value)

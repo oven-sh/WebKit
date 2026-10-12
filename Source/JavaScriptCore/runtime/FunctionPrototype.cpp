@@ -99,6 +99,10 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncToString, (JSGlobalObject* globalObjec
     if (thisValue.isObject()) {
         JSObject* object = asObject(thisValue);
         Integrity::auditStructureID(object->structureID());
+#if ENABLE(AOT)
+        if (isSlimClosureType(object->type()))
+            RELEASE_AND_RETURN(scope, JSValue::encode(AOT::textOfSlimClosure(globalObject, object)));
+#endif
         if (object->isCallable())
             RELEASE_AND_RETURN(scope, JSValue::encode(jsMakeNontrivialString(globalObject, "function "_s, object->classInfo()->className, "() { [native code] }"_s)));
     }
@@ -164,7 +168,7 @@ JSC_DEFINE_HOST_FUNCTION(functionProtoFuncBind, (JSGlobalObject* globalObject, C
     double length = 0;
     JSString* name = nullptr;
     JSFunction* function = dynamicDowncast<JSFunction>(target);
-    if (function && function->canAssumeNameAndLengthAreOriginal(vm)) [[likely]] {
+    if ((function && function->canAssumeNameAndLengthAreOriginal(vm)) || target->type() == SlimClosureType) [[likely]] {
         // Do nothing! 'length' and 'name' computation are lazily done.
         // And this is totally OK since we know that wrapped functions have canAssumeNameAndLengthAreOriginal condition
         // at the time of creation of JSBoundFunction.

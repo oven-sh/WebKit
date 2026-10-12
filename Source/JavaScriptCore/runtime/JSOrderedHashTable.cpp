@@ -67,13 +67,28 @@ void JSOrderedHashTable<Traits>::clearCompactTable()
 }
 
 template<typename Traits>
-JSValue JSOrderedHashTable<Traits>::findInCompactTable(JSGlobalObject* globalObject, JSValue key)
+static NEVER_INLINE JSValue findInCompactTableGenerally(JSGlobalObject* globalObject, CompactTable* table, JSValue key)
 {
-    auto* table = uncheckedDowncast<CompactTable>(m_compactTable.get());
     auto entry = table->find(globalObject, key);
     if (!entry)
         return { };
     return Traits::hasValueData ? table->valueAt(*entry) : key;
+}
+
+template<typename Traits>
+JSValue JSOrderedHashTable<Traits>::findInCompactTable(JSGlobalObject* globalObject, JSValue key)
+{
+    auto* table = uncheckedDowncast<CompactTable>(m_compactTable.get());
+    uint32_t found;
+    switch (table->tryFindQuickly(key, found)) {
+    case CompactTable::Quickly::Found:
+        return Traits::hasValueData ? table->valueAt(found) : key;
+    case CompactTable::Quickly::Absent:
+        return { };
+    case CompactTable::Quickly::Unknown:
+        break;
+    }
+    return findInCompactTableGenerally<Traits>(globalObject, table, key);
 }
 
 template<typename Traits>

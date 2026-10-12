@@ -71,6 +71,7 @@
 #include "JSString.h"
 #include "LinkBuffer.h"
 #include "MarkedSpaceInlines.h"
+#include "MicrotaskQueue.h"
 #include "NativeCallee.h"
 #include "ObjectConstructor.h"
 #include "ObjectPropertyCondition.h"
@@ -2327,6 +2328,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionDumpAOTTypedProgram);
 static JSC_DECLARE_HOST_FUNCTION(functionBuildAOTImageOfTypedProgram);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTTypedBuiltinMismatches);
 static JSC_DECLARE_HOST_FUNCTION(functionAOTCompactTable);
+static JSC_DECLARE_HOST_FUNCTION(functionSetOnEachMicrotaskTick);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHasDebugger);
+static JSC_DECLARE_HOST_FUNCTION(functionSetHasOwnMicrotaskQueue);
 static JSC_DECLARE_HOST_FUNCTION(functionRequireBuiltinModule);
 static JSC_DECLARE_HOST_FUNCTION(functionPutPrivateGlobal);
 static JSC_DECLARE_HOST_FUNCTION(functionPutDirect);
@@ -3271,7 +3275,7 @@ JSC_DEFINE_HOST_FUNCTION(functionIsHavingABadTime, (JSGlobalObject* globalObject
 }
 
 // Calls JSObject::makePropertiesImmutable() and returns the object. Throws a TypeError for an object of a class that does not support it.
-// Usage: $vm.makePropertiesImmutable(object)
+// Usage: $vm.makePropertiesImmutable(object, fixAttributes = false)
 JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     DollarVMAssertScope assertScope;
@@ -3280,7 +3284,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMakePropertiesImmutable, (JSGlobalObject* globa
     JSObject* object = callFrame->argument(0).getObject();
     if (!object)
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable expects an object"_s);
-    if (!object->makePropertiesImmutable(vm))
+    if (!(callFrame->argument(1).toBoolean(globalObject) ? object->fixAndMakePropertiesImmutable(vm) : object->makePropertiesImmutable(vm)))
         return throwVMTypeError(globalObject, scope, "makePropertiesImmutable: objects of this class do not support it"_s);
     return JSValue::encode(object);
 }
@@ -5007,6 +5011,44 @@ JSC_DEFINE_HOST_FUNCTION(functionAOTCompactTable, (JSGlobalObject* globalObject,
     return throwVMTypeError(globalObject, scope, "Expected a Map or a Set"_s);
 }
 
+JSC_DEFINE_HOST_FUNCTION(functionSetOnEachMicrotaskTick, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (callFrame->argument(0).toBoolean(globalObject))
+        vm.setOnEachMicrotaskTick([](VM&) { });
+    else
+        vm.setOnEachMicrotaskTick(nullptr);
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetHasDebugger, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    bool isRequested = callFrame->argument(0).toBoolean(globalObject);
+    if (isRequested == globalObject->hasDebugger())
+        return JSValue::encode(jsUndefined());
+    if (isRequested) {
+        globalObject->setDebugger(new DoNothingDebugger(globalObject->vm()));
+        return JSValue::encode(jsUndefined());
+    }
+    Debugger* debugger = globalObject->debugger();
+    globalObject->setDebugger(nullptr);
+    delete debugger;
+    return JSValue::encode(jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionSetHasOwnMicrotaskQueue, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (callFrame->argument(0).toBoolean(globalObject))
+        globalObject->setMicrotaskQueue(MicrotaskQueue::create(vm));
+    else
+        globalObject->setMicrotaskQueue(Ref { vm.defaultMicrotaskQueue() });
+    return JSValue::encode(jsUndefined());
+}
+
 // requireBuiltinModule(id): what compiled code of the host's own modules gets for `require` of the module of this number.
 JSC_DEFINE_HOST_FUNCTION(functionRequireBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
@@ -6307,6 +6349,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, allowIfNotFuzz, "buildAOTImageOfTypedProgram"_s, functionBuildAOTImageOfTypedProgram, 2);
     addFunction(vm, allowIfNotFuzz, "aotTypedBuiltinMismatches"_s, functionAOTTypedBuiltinMismatches, 0);
     addFunction(vm, allowIfNotFuzz, "aotCompactTable"_s, functionAOTCompactTable, 2);
+    addFunction(vm, allowIfNotFuzz, "setOnEachMicrotaskTick"_s, functionSetOnEachMicrotaskTick, 1);
+    addFunction(vm, allowIfNotFuzz, "setHasDebugger"_s, functionSetHasDebugger, 1);
+    addFunction(vm, allowIfNotFuzz, "setHasOwnMicrotaskQueue"_s, functionSetHasOwnMicrotaskQueue, 1);
     addFunction(vm, allowIfNotFuzz, "requireBuiltinModule"_s, functionRequireBuiltinModule, 1);
     addFunction(vm, allowIfNotFuzz, "putPrivateGlobal"_s, functionPutPrivateGlobal, 2);
     addFunction(vm, allowIfNotFuzz, "putDirect"_s, functionPutDirect, 4);

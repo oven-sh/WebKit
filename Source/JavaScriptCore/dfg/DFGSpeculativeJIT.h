@@ -1592,7 +1592,6 @@ public:
     void compileTypeOf(Node*);
     void compileCheckIsConstant(Node*);
     void compileCheckNotEmpty(Node*);
-    void compileCheckSoundType(Node*);
     void compileCheckStructure(Node*);
     void emitStructureCheck(Node*, GPRReg cellGPR, GPRReg tempGPR);
     void compilePutAccessorById(Node*);

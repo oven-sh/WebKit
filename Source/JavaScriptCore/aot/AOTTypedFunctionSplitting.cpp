@@ -390,7 +390,7 @@ private:
             Rep rep = repOf(m_program.at(function.at(parameter).type));
             ++(rep == Rep::Double || rep == Rep::OptionalDouble ? numberOfFPRs : numberOfGPRs);
         }
-        return numberOfGPRs <= numberOfArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
+        return numberOfGPRs <= numberOfDirectArgumentGPRs && numberOfFPRs <= FPRInfo::numberOfArgumentRegisters;
     }
 
     Function makeEntry(const BitVector& staysBehind, const Vector<unsigned>& cuts, const Vector<Arguments>& liveInto) const

@@ -14,6 +14,7 @@
 #include "Options.h"
 #include <wtf/DataLog.h>
 #include <numeric>
+#include <wtf/HashMap.h>
 #include <wtf/MathExtras.h>
 #include <wtf/MonotonicTime.h>
 #include <wtf/NumberOfCores.h>
@@ -1191,6 +1192,9 @@ private:
     void findAccessedFields()
     {
         m_isAccessed.ensureSize(m_firstField.last());
+        m_isStoredThrough.ensureSize(m_firstField.last());
+        static constexpr uint32_t isStoredThrough = 1u << 31;
+        static constexpr uint32_t isNotAccessed = 1u << 30;
         forEachFunctionInOrder<Vector<uint32_t>>([&](Function& function) {
             Vector<uint32_t> accessed;
             for (auto& block : function.blocks) {
@@ -1203,11 +1207,19 @@ private:
                         [[fallthrough]];
                     case Opcode::GetById:
                     case Opcode::InById:
+                    case Opcode::DeleteById:
                     case Opcode::CallMethod: {
                         auto isAccessedThrough = [&](const Type& type) {
                             LayoutID view = type.onlyView();
-                            if (auto found = view ? m_program.at(view).fieldNamed(value.string()) : std::nullopt)
-                                accessed.append(m_firstField[view.index()] + *found);
+                            auto found = view ? m_program.at(view).fieldNamed(value.string()) : std::nullopt;
+                            if (!found)
+                                return;
+                            uint32_t field = m_firstField[view.index()] + *found;
+                            if (value.opcode == Opcode::DeleteById)
+                                field |= isStoredThrough | isNotAccessed;
+                            else if (value.opcode == Opcode::PutById || value.opcode == Opcode::CallMethod)
+                                field |= isStoredThrough;
+                            accessed.append(field);
                         };
                         isAccessedThrough(m_program.typeOf(function, value.child(0)));
                         if (TypeID prediction = function.at(value.child(0)).prediction)
@@ -1218,7 +1230,7 @@ private:
                     case Opcode::PutField: {
                         auto& object = function.at(value.child(0));
                         if (isObjectLayout(m_program.at(value.layout()).kind) && (object.opcode != Opcode::NewObjectWithShape || object.layout() != value.layout()))
-                            accessed.append(m_firstField[value.layout().index()] + value.field());
+                            accessed.append((m_firstField[value.layout().index()] + value.field()) | (value.opcode == Opcode::PutField ? isStoredThrough : 0));
                         break;
                     }
                     default:
@@ -1228,8 +1240,12 @@ private:
             }
             return accessed;
         }, [&](Vector<uint32_t>&& accessed) {
-            for (uint32_t field : accessed)
-                m_isAccessed.quickSet(field);
+            for (uint32_t field : accessed) {
+                if (!(field & isNotAccessed))
+                    m_isAccessed.quickSet(field & ~(isStoredThrough | isNotAccessed));
+                if (field & isStoredThrough)
+                    m_isStoredThrough.quickSet(field & ~(isStoredThrough | isNotAccessed));
+            }
         });
     }
 
@@ -1263,15 +1279,30 @@ private:
                     representative[std::max(own, other)] = std::min(own, other);
                     own = std::min(own, other);
                 };
-                Fingerprint membersWithIt;
                 if (m_isAccessed.quickGet(fields[place].field)) {
-                    forEachMemberWithField(table, fields, layouts[fields[place].layout], [&](uint32_t other) {
-                        membersWithIt.add(m_hashOfLayout[fields[other].layout]);
-                        share(other);
+                    auto& view = layouts[fields[place].layout];
+                    bool mayPart = !view.membersByFit.isEmpty() && !m_isStoredThrough.quickGet(fields[place].field);
+                    forEachMemberWithField(table, fields, view, [&](uint32_t other) {
+                        auto& ofView = fieldAt(fields[place]);
+                        auto& own = fieldAt(fields[other]);
+                        bool saysTheSame = own.type == ofView.type && !((own.flags ^ ofView.flags) & fieldIsOptional);
+                        if (!mayPart || saysTheSame || !std::ranges::binary_search(view.membersByFit, LayoutID(fields[other].layout)))
+                            share(other);
                     });
                 }
                 // What an object is turned into has its fields where they are.
                 forEachWithField(table, fields, layouts[fields[place].layout].specializations, share);
+            }
+            for (uint32_t place = 0; place < fields.size(); ++place) {
+                Fingerprint membersWithIt;
+                if (m_isAccessed.quickGet(fields[place].field)) {
+                    forEachMemberWithField(table, fields, layouts[fields[place].layout], [&](uint32_t other) {
+                        if (representativeOf(other) == representativeOf(place))
+                            membersWithIt.add(m_hashOfLayout[fields[other].layout]);
+                        else
+                            fieldAt(fields[place]).isElsewhereInSomeMember = true;
+                    });
+                }
                 m_membersWith[fields[place].field] = membersWithIt;
             }
             for (uint32_t place = 0; place < fields.size(); ++place)
@@ -1363,7 +1394,7 @@ private:
             }
             m_lackedFields[index].membersWithIt = m_setsOfMembers.size() - 1;
         }
-        m_listedMembers.grow(numberOfMembers);
+        m_listedMembers.fill(none, numberOfMembers);
         forEachName([&](FieldsOfOneName& table, std::span<const NamedField> fields) {
             for (auto& field : fields) {
                 uint32_t lacked = m_lackedFieldOfField[field.field];
@@ -1371,8 +1402,11 @@ private:
                     continue;
                 uint32_t next = m_setsOfMembers[m_lackedFields[lacked].membersWithIt].firstMember;
                 forEachMemberWithField(table, fields, layouts[field.layout], [&](uint32_t place) {
-                    m_listedMembers[next++] = fields[place].layout;
+                    if (fieldAt(fields[place]).slot == fieldAt(field).slot)
+                        m_listedMembers[next++] = fields[place].layout;
                 });
+                auto& listed = m_setsOfMembers[m_lackedFields[lacked].membersWithIt];
+                RELEASE_ASSERT(next == listed.firstMember + listed.numberOfMembers);
             }
         });
         // An object of a class has methods and accessors on its prototype, and any object has those of Object.prototype. Anything else is a fault of the front end.
@@ -1391,7 +1425,7 @@ private:
                     ++next;
                     continue;
                 }
-                if (m_program.at(member).kind != LayoutKind::Record)
+                if (m_program.at(member).kind != LayoutKind::Record || std::ranges::binary_search(view.membersByFit, member))
                     continue;
                 report("view ", lacked.layout, " ", nameOf(view), " requires ", nameOf(field.name), ", for which its member ", member.index(), " ", nameOf(m_program.at(member)), ", a record, has no field");
                 break;
@@ -1935,7 +1969,8 @@ private:
         unsigned numberOfActivations = 0;
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
-            if (layout.kind != LayoutKind::Environment || layout.isCoroutineFrame || !m_numberOfBirths[i] || (m_isMadeOften.quickGet(i) && !layout.isInFrame))
+            RELEASE_ASSERT(!layout.isInFrame || m_numberOfBirths[i]);
+            if (layout.kind != LayoutKind::Environment || (layout.isCoroutineFrame && !layout.isInFrame) || !m_numberOfBirths[i] || (m_isMadeOften.quickGet(i) && !layout.isInFrame))
                 continue;
             ++numberOfActivations;
             for (auto& field : layout.fields) {
@@ -1943,6 +1978,12 @@ private:
                     m_keepsWideReferences.quickSet(field.slot.index());
                 if (exists(field) && layout.isInFrame)
                     m_isExpectedInt32.quickClear(field.slot.index());
+            }
+        }
+        for (auto& layout : layouts) {
+            for (auto& field : layout.fields) {
+                if (exists(field) && field.flags & fieldKeepsWideReference)
+                    m_keepsWideReferences.quickSet(field.slot.index());
             }
         }
         report(numberOfActivations, " activations of top-level functions keep wide references");
@@ -1964,6 +2005,12 @@ private:
                 return Store::OptionalCell32;
         }
         return store;
+    }
+
+    Store storeOutOfLineFor(uint32_t slot, TypeID type) const
+    {
+        Store store = storeFor(m_program.at(type), false, m_keepsWideReferences.quickGet(slot));
+        return isAbsentAsZero(store) && repOf(store) == Rep::JSValue ? store : Store::JSValue;
     }
 
     void typeSlots()
@@ -2045,7 +2092,7 @@ private:
             return isObjectLayout(layout.kind) && layout.isAllocated;
         };
         auto bytesNeededBy = [&](const Layout& layout) {
-            uint32_t needed = offsetOfFirstField + (layout.hasExtension ? sizeof(void*) : 0);
+            uint32_t needed = offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0);
             for (auto& field : layout.fields) {
                 if (exists(field) && !m_program.at(field.slot).isOutOfLine)
                     needed += sizeOf(m_program.at(field.slot).store);
@@ -2067,7 +2114,7 @@ private:
             auto& layout = layouts[i];
             if (!hasObjects(layout))
                 continue;
-            occupancies[i].words.append((1ull << (offsetOfFirstField + (layout.hasExtension ? sizeof(void*) : 0))) - 1);
+            occupancies[i].words.append((1ull << (offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0))) - 1);
             uint32_t needed = bytesNeededBy(layout);
             for (auto& field : layout.fields) {
                 if (!exists(field))
@@ -2115,6 +2162,15 @@ private:
                     mayBeOutOfLine.quickClear(field.slot.index());
             }
         }
+        BitVector mayBeNil;
+        mayBeNil.ensureSize(slots.size());
+        for (auto& layout : layouts) {
+            for (auto& field : layout.fields) {
+                if (hasObjects(layout) && exists(field) && (field.flags & fieldIsOptional || !(field.flags & fieldDoesNotAdmitUndefined)))
+                    mayBeNil.quickSet(field.slot.index());
+            }
+        }
+        mayBeOutOfLine.filter(mayBeNil);
         for (auto& allocation : m_program.allocations) {
             for (uint16_t field : allocation.order.span().first(allocation.born)) {
                 if (auto& born = m_program.at(allocation.layout).fields[field]; exists(born))
@@ -2248,11 +2304,10 @@ private:
                     continue;
                 if (slot.isOutOfLine || !mayBeOutOfLine.quickGet(index) || word * 64 + WTF::ctz(room) + size <= cap)
                     break;
-                // No room under the cap: boxed, in the extension, from its start.
                 m_slotsPutOutOfLine.append({ index, slot.store, slot.type });
                 slot.isOutOfLine = true;
-                slot.store = Store::JSValue;
                 slot.type = withAbsent(slot.type);
+                slot.store = storeOutOfLineFor(index, slot.type);
                 size = sizeOf(slot.store);
                 logSize = WTF::ctz(size);
                 space = &extensions;
@@ -2277,7 +2332,7 @@ private:
         for (auto& layout : layouts) {
             if (!isObjectLayout(layout.kind))
                 continue;
-            uint32_t end = offsetOfFirstField + (layout.hasExtension ? sizeof(void*) : 0);
+            uint32_t end = offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0);
             layout.extensionSize = 0;
             for (auto& field : layout.fields) {
                 if (!exists(field))
@@ -2318,6 +2373,8 @@ private:
     // of placeObjects(). That bounds what an object loses to fields it never gets. What it gets beyond them costs it an extension.
     void capLayouts()
     {
+        if (Options::useAOTWideReferences())
+            return;
         auto& layouts = m_program.layouts;
         // By group: the cell of its largest layout.
         auto largestCells = [&](const Invocable<uint32_t(const Layout&)> auto& bytesOf) {
@@ -2340,7 +2397,7 @@ private:
             makeRoomToSpecialize();
         };
 
-        static constexpr uint32_t endOfExtensionPointer = offsetOfExtension + sizeof(void*);
+        static constexpr uint32_t endOfExtensionPointer = offsetOfExtension + sizeOfExtensionWord;
         // As yet everything is inline.
         auto withEverything = largestCells(bytesAllocated);
         auto atCreation = largestCells([](const Layout& layout) {
@@ -2356,16 +2413,25 @@ private:
         });
         auto withTheLeast = largestCells(bytesAllocated);
 
-        uint32_t bytesBeyondCreation = referencesBeyondCreation * sizeOf(Options::useAOTWideReferences() ? Store::Cell : Store::Cell32);
+        uint32_t bytesBeyondCreation = referencesBeyondCreation * sizeOf(Store::Cell32);
         Vector<uint32_t> caps(FillWith { }, layouts.size(), noCap);
         for (unsigned i = 0; i < layouts.size(); ++i) {
             uint32_t cap = std::max<uint32_t>(withTheLeast[i], cellSizeFor(atCreation[i] + bytesBeyondCreation));
             if (withEverything[i] > cap)
                 caps[i] = cap;
         }
-        placeWith([&](uint32_t group) {
-            return caps[group];
-        });
+        for (bool fits = false; !fits;) {
+            placeWith([&](uint32_t group) {
+                return caps[group];
+            });
+            fits = true;
+            for (unsigned i = 0; i < layouts.size(); ++i) {
+                if (layouts[i].extensionSize <= MarkedSpace::largeCutoff || caps[m_group[i]] == noCap)
+                    continue;
+                caps[m_group[i]] = noCap;
+                fits = false;
+            }
+        }
         placeEnvironments();
         makeRoomToSpecialize();
 
@@ -3034,6 +3100,22 @@ private:
             if (variable.mayBeSeenUninitialized())
                 type.primitives |= Primitive::Absent;
             variable.store = storeOf(type);
+            variable.hasCard = true;
+        }
+        Vector<unsigned> timesStoredLater;
+        timesStoredLater.fill(0, variables.size());
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned index) {
+            auto& function = m_program.functions[index];
+            if ((function.kind == FunctionKind::Module && function.parameterTypes.isEmpty()) || (function.module && m_program.modules[function.module.index()].initializer == FunctionID(index)))
+                return;
+            for (auto& value : function.values) {
+                if (value.opcode == Opcode::PutModuleVariable)
+                    WTF::atomicExchangeAdd(&timesStoredLater[value.variable().index()], 1u, std::memory_order_relaxed);
+            }
+        });
+        for (unsigned index = 0; index < variables.size(); ++index) {
+            if (timesStoredLater[index])
+                variables[index].hasCard = false;
         }
         Vector<unsigned> order(variables.size(), [](size_t index) {
             return static_cast<unsigned>(index);
@@ -3052,24 +3134,30 @@ private:
         for (auto& numbers : m_program.globalPropertyCacheNumbers)
             numbers.fill(0, m_program.strings.size());
         m_program.propertyOfGlobalThisCacheNumbers.fill(0, m_program.strings.size());
-        for (auto& function : m_program.functions) {
+        Vector<Vector<std::pair<uint8_t, uint32_t>>> freeNamesOfFunctions(m_program.functions.size());
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            auto& function = m_program.functions[i];
             for (auto& value : function.values) {
                 if (value.opcode == Opcode::GetById) {
-                    if (auto& base = function.at(value.child(0)); base.opcode == Opcode::GetGlobal && m_program.isNameOfGlobalThis(base.string())) {
-                        if (uint32_t& number = m_program.propertyOfGlobalThisCacheNumbers[value.string().index()]; !number)
-                            number = ++m_program.numberOfGlobalPropertyCaches;
-                    }
+                    if (auto& base = function.at(value.child(0)); base.opcode == Opcode::GetGlobal && m_program.isNameOfGlobalThis(base.string()))
+                        freeNamesOfFunctions[i].append({ static_cast<uint8_t>(2), value.string().index() });
                     continue;
                 }
                 if (value.opcode != Opcode::GetGlobal && value.opcode != Opcode::GetGlobalForTypeOf && value.opcode != Opcode::PutGlobal)
                     continue;
                 if (BuiltinName name = m_program.builtinName(value.string()); builtins.isGlobal(name) && !m_program.isExtended(name))
                     continue;
-                if (uint32_t& number = m_program.globalPropertyCacheNumbers[value.opcode == Opcode::PutGlobal][value.string().index()]; !number)
+                freeNamesOfFunctions[i].append({ static_cast<uint8_t>(value.opcode == Opcode::PutGlobal), value.string().index() });
+            }
+        });
+        for (auto& freeNames : freeNamesOfFunctions) {
+            for (auto [table, name] : freeNames) {
+                if (uint32_t& number = table == 2 ? m_program.propertyOfGlobalThisCacheNumbers[name] : m_program.globalPropertyCacheNumbers[table][name]; !number)
                     number = ++m_program.numberOfGlobalPropertyCaches;
             }
         }
-        m_program.sizeOfStatics = m_program.globalPropertyCachesOffset + m_program.numberOfGlobalPropertyCaches * sizeof(GlobalPropertyCache);
+        m_program.staticFieldPlacesOffset = m_program.globalPropertyCachesOffset + m_program.numberOfGlobalPropertyCaches * sizeof(GlobalPropertyCache);
+        m_program.sizeOfStatics = m_program.staticFieldPlacesOffset + m_program.numberOfStaticFieldPlaces * sizeof(int32_t);
         report(m_program.numberOfGlobalPropertyCaches, " caches of free names");
     }
 
@@ -3459,6 +3547,11 @@ private:
                 uint32_t numberOfMembersWithIt = 0;
                 forEachMemberWithField(table, fields, layouts[named.layout], [&](uint32_t place) {
                     auto& own = fieldAt(fields[place]);
+                    if (own.slot != field.slot) {
+                        RELEASE_ASSERT(std::ranges::binary_search(layouts[named.layout].membersByFit, LayoutID(fields[place].layout)) && !m_isStoredThrough.quickGet(named.field));
+                        RELEASE_ASSERT(field.isLackedBySomeMember && !m_program.passes(field.membersWithIt, layouts[fields[place].layout].shape));
+                        return;
+                    }
                     RELEASE_ASSERT(own.slot == field.slot && own.offset == field.offset && own.store == field.store && own.stored == field.stored && own.isOutOfLine == field.isOutOfLine);
                     RELEASE_ASSERT(!field.isLackedBySomeMember || m_program.passes(field.membersWithIt, layouts[fields[place].layout].shape));
                     ++numberOfMembersWithIt;
@@ -3500,7 +3593,7 @@ private:
                 auto& slot = m_program.at(field.slot);
                 RELEASE_ASSERT(field.stored == slot.type && field.store == slot.store && field.offset == slot.offset && field.isOutOfLine == slot.isOutOfLine);
                 if (field.isOutOfLine) {
-                    RELEASE_ASSERT(isObjectLayout(layout.kind) && field.store == Store::JSValue && m_program.at(field.stored).primitives & Primitive::Absent && !slot.isDiscriminant && !(field.flags & fieldIsImmutable));
+                    RELEASE_ASSERT(isObjectLayout(layout.kind) && field.store == storeOutOfLineFor(field.slot.index(), field.stored) && m_program.at(field.stored).primitives & Primitive::Absent && !slot.isDiscriminant && !(field.flags & fieldIsImmutable));
                     RELEASE_ASSERT(field.offset >= offsetOfFirstExtensionSlot && (!layout.isAllocated || (layout.hasExtension && field.offset + sizeOf(field.store) <= layout.extensionSize)));
                 } else
                     RELEASE_ASSERT(field.store == storeFor(m_program.at(field.stored), m_isExpectedInt32.quickGet(field.slot.index()), m_keepsWideReferences.quickGet(field.slot.index())));
@@ -3514,7 +3607,7 @@ private:
                 continue;
             RELEASE_ASSERT(layout.shape && layout.shape <= m_program.numberOfShapes);
             std::ranges::sort(extents);
-            uint32_t end = isObjectLayout(layout.kind) ? offsetOfFirstField + (layout.hasExtension ? sizeof(void*) : 0) : static_cast<uint32_t>(sizeof(JSCell));
+            uint32_t end = isObjectLayout(layout.kind) ? offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0) : static_cast<uint32_t>(sizeof(JSCell));
             for (auto [first, last] : extents) {
                 RELEASE_ASSERT(first >= end);
                 end = last;
@@ -3566,6 +3659,7 @@ private:
     Vector<std::array<uint64_t, 2>> m_hashOfLayout;
     // By field.
     BitVector m_isAccessed;
+    BitVector m_isStoredThrough;
     Vector<uint32_t> m_lackedFieldOfField;
     Vector<Fingerprint> m_membersWith;
     Vector<uint32_t> m_numberOfBirthsInitializing;
@@ -3638,29 +3732,208 @@ public:
         Data header { };
         header.magic = Data::expectedMagic;
         header.numberOfStrings = m_program.strings.size();
+        auto& strings = m_program.strings;
+        Vector<unsigned> timesConstant;
+        timesConstant.fill(0, strings.size());
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            for (auto& value : m_program.functions[i].values) {
+                if (value.opcode == Opcode::String)
+                    WTF::atomicExchangeAdd(&timesConstant[value.string().index()], 1u, std::memory_order_relaxed);
+            }
+        });
+        BitVector isConstant(strings.size());
+        for (uint32_t index = 0; index < strings.size(); ++index) {
+            if (timesConstant[index])
+                isConstant.set(index);
+        }
+        auto hasOnlyDecodedForm = [&](uint32_t index) {
+            return isConstant.get(index) && !charactersAreAllASCII(byteCast<Latin1Character>(strings[index])) && !isPrivateName(strings[index]) && !isEnginePrivateName(strings[index]);
+        };
+        Vector<uint32_t> byLastCharacters;
+        for (uint32_t index = 0; index < strings.size(); ++index) {
+            if (!hasOnlyDecodedForm(index))
+                byLastCharacters.append(index);
+        }
+        std::ranges::sort(byLastCharacters, [&](uint32_t a, uint32_t b) {
+            auto [endOfA, endOfB] = std::mismatch(strings[a].rbegin(), strings[a].rend(), strings[b].rbegin(), strings[b].rend());
+            if (endOfA == strings[a].rend() || endOfB == strings[b].rend())
+                return strings[a].size() != strings[b].size() ? strings[a].size() < strings[b].size() : a < b;
+            return *endOfA < *endOfB;
+        });
+        Vector<uint32_t> holders(strings.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        for (size_t i = byLastCharacters.size(); i-- > 1;) {
+            auto tail = strings[byLastCharacters[i - 1]];
+            auto whole = strings[byLastCharacters[i]];
+            if (tail.size() <= whole.size() && equalSpans(tail, whole.last(tail.size())))
+                holders[byLastCharacters[i - 1]] = holders[byLastCharacters[i]];
+        }
+        Vector<uint32_t> gaps(FillWith { }, strings.size(), 0);
+        static const char* const sharesTextsInside = getenv("AOT_SWITCH_TEXTS_INSIDE");
+        if (sharesTextsInside && sharesTextsInside[0] == '1') {
+            MonotonicTime startOfSearch = MonotonicTime::now();
+            constexpr size_t sizeOfHead = sizeof(uint32_t);
+            constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+            auto headAt = [](std::span<const uint8_t> text, size_t at) {
+                uint32_t head;
+                memcpy(&head, text.data() + at, sizeOfHead);
+                return static_cast<uint64_t>(head) + 1;
+            };
+            auto beginsWith = [](std::span<const uint8_t> text, std::span<const uint8_t> head) {
+                return head.size() <= text.size() && equalSpans(head, text.first(head.size()));
+            };
+            Vector<uint32_t> inOrder;
+            for (uint32_t index : byLastCharacters) {
+                if (holders[index] == index && strings[index].size() >= sizeOfHead)
+                    inOrder.append(index);
+            }
+            std::ranges::sort(inOrder, [&](uint32_t a, uint32_t b) {
+                return std::ranges::lexicographical_compare(strings[a], strings[b]);
+            });
+            Vector<uint32_t> longestHeads(FillWith { }, inOrder.size(), none);
+            Vector<uint32_t> open;
+            UncheckedKeyHashMap<uint64_t, std::pair<uint32_t, uint32_t>> rangesOfHeads;
+            for (uint32_t place = 0; place < inOrder.size(); ++place) {
+                auto text = strings[inOrder[place]];
+                while (!open.isEmpty() && !beginsWith(text, strings[inOrder[open.last()]]))
+                    open.removeLast();
+                if (!open.isEmpty())
+                    longestHeads[place] = open.last();
+                open.append(place);
+                rangesOfHeads.add(headAt(text, 0), std::pair { place, place }).iterator->value.second = place + 1;
+            }
+            Vector<uint32_t> fromLongest = inOrder;
+            std::ranges::sort(fromLongest, [&](uint32_t a, uint32_t b) {
+                return strings[a].size() != strings[b].size() ? strings[a].size() > strings[b].size() : a < b;
+            });
+            uint64_t placesSearched = 0;
+            uint64_t stepsOnChains = 0;
+            uint64_t numberHeld = 0;
+            uint64_t bytesHeld = 0;
+            for (uint32_t whole : fromLongest) {
+                if (holders[whole] != whole)
+                    continue;
+                auto text = strings[whole];
+                for (size_t at = 0; at + sizeOfHead <= text.size(); ++at) {
+                    auto found = rangesOfHeads.find(headAt(text, at));
+                    if (found == rangesOfHeads.end())
+                        continue;
+                    ++placesSearched;
+                    auto rest = text.subspan(at);
+                    auto [first, behindLast] = found->value;
+                    uint32_t low = first;
+                    for (uint32_t high = behindLast; low < high;) {
+                        uint32_t middle = low + (high - low) / 2;
+                        if (std::ranges::lexicographical_compare(rest, strings[inOrder[middle]]))
+                            high = middle;
+                        else
+                            low = middle + 1;
+                    }
+                    for (uint32_t place = low == first ? none : low - 1; place != none; place = longestHeads[place]) {
+                        ++stepsOnChains;
+                        uint32_t part = inOrder[place];
+                        auto inner = strings[part];
+                        if (inner.size() >= text.size() || !beginsWith(rest, inner))
+                            continue;
+                        if (holders[part] != part)
+                            break;
+                        holders[part] = whole;
+                        gaps[part] = safeCast<uint32_t>(rest.size() - inner.size());
+                        ++numberHeld;
+                        bytesHeld += inner.size();
+                    }
+                }
+            }
+            for (uint32_t index = 0; index < strings.size(); ++index) {
+                uint32_t holder = holders[index];
+                if (holders[holder] == holder)
+                    continue;
+                gaps[index] = gaps[holder];
+                holders[index] = holders[holder];
+            }
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: texts inside longer texts: ", numberHeld, " of ", inOrder.size(), " texts, ", bytesHeld, " bytes; ", placesSearched, " places searched, ", stepsOnChains, " steps on chains, ", (MonotonicTime::now() - startOfSearch).milliseconds(), " ms");
+        }
+        Vector<uint32_t> ends(FillWith { }, strings.size(), 0);
+        auto layText = [&](uint32_t index) {
+            if (index >= strings.size() || hasOnlyDecodedForm(index))
+                return;
+            uint32_t holder = holders[index];
+            if (ends[holder] || hasOnlyDecodedForm(holder))
+                return;
+            m_result.append(strings[holder]);
+            ends[holder] = safeCast<uint32_t>(m_result.size());
+        };
+        Vector<std::array<uint32_t, 3>> placesAndNumbers(m_program.functions.size(), [&](size_t index) {
+            auto& function = m_program.functions[index];
+            return std::array<uint32_t, 3> { function.module ? function.module.index() : UINT32_MAX, function.position, static_cast<uint32_t>(index) };
+        });
+        std::ranges::sort(placesAndNumbers);
+        Vector<uint32_t> functionsInSourceOrder(m_program.functions.size(), [&](size_t index) {
+            return placesAndNumbers[index][2];
+        });
+        std::array<std::atomic<int8_t>, 256> namesString { };
+        Vector<Vector<uint32_t>> textsOfFunctions(m_program.functions.size());
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            for (auto& value : m_program.functions[i].values) {
+                int8_t names = namesString[static_cast<uint8_t>(value.opcode)].load(std::memory_order_relaxed);
+                if (!names) {
+                    StringView name { nameOf(value.opcode) };
+                    names = value.opcode == Opcode::String || name.find("ById"_s) != notFound || name.find("Method"_s) != notFound || name.find("Global"_s) != notFound ? 1 : -1;
+                    namesString[static_cast<uint8_t>(value.opcode)].store(names, std::memory_order_relaxed);
+                }
+                if (names > 0)
+                    textsOfFunctions[i].append(value.immediates[0]);
+            }
+        });
+        for (uint32_t functionIndex : functionsInSourceOrder) {
+            auto& function = m_program.functions[functionIndex];
+            if (function.name)
+                layText(function.name.index());
+            for (uint32_t text : textsOfFunctions[functionIndex])
+                layText(text);
+        }
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            textsOfFunctions[i].clear();
+        });
+        for (uint32_t index = 0; index < strings.size(); ++index)
+            layText(index);
         Vector<uint32_t> pairs;
-        for (auto string : m_program.strings) {
-            pairs.append(append(string));
-            pairs.append(string.size());
+        for (uint32_t index = 0; index < strings.size(); ++index) {
+            RELEASE_ASSERT(hasOnlyDecodedForm(index) || ends[holders[index]] > gaps[index] + strings[index].size());
+            pairs.append(hasOnlyDecodedForm(index) ? 0 : ends[holders[index]] - gaps[index] - strings[index].size());
+            pairs.append(strings[index].size());
         }
         header.stringsOffset = append(pairs);
         Vector<uint32_t> stringFacts;
         for (auto string : m_program.strings) {
             auto characters = byteCast<Latin1Character>(string);
             uint32_t facts = isPrivateName(string) ? Data::stringIsPrivateName : isEnginePrivateName(string) ? Data::stringIsEnginePrivateName : 0;
+            uint32_t identifier = stringFacts.size() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[stringFacts.size()] : 0;
+            RELEASE_ASSERT(identifier <= Data::stringHashMask);
             if (charactersAreAllASCII(characters))
-                facts |= Data::stringIsASCII | StringHasher::computeHashAndMaskTop8Bits(characters);
+                facts |= Data::stringIsASCII | (identifier ? 0 : StringHasher::computeHashAndMaskTop8Bits(characters));
+            if (identifier)
+                facts |= Data::stringHasIdentifierNumber | identifier;
             stringFacts.append(facts);
         }
         header.stringFactsOffset = append(stringFacts);
-        // What is among the strings and is no constant of the program need not be a text.
-        BitVector isConstant;
-        for (auto& function : m_program.functions) {
-            for (auto& value : function.values) {
-                if (value.opcode == Opcode::String)
-                    isConstant.set(value.string().index());
+        uint32_t greatestIdentifier = 0;
+        for (uint32_t identifier : m_program.identifierNumbers)
+            greatestIdentifier = std::max(greatestIdentifier, identifier);
+        Vector<uint32_t> stringsOfIdentifiers(FillWith { }, greatestIdentifier + 1, 0);
+        Vector<uint32_t> hashesOfIdentifiers(FillWith { }, greatestIdentifier + 1, 0);
+        for (uint32_t index = 0; index < m_program.identifierNumbers.size(); ++index) {
+            if (uint32_t identifier = m_program.identifierNumbers[index]) {
+                stringsOfIdentifiers[identifier] = index + 1;
+                if (auto characters = byteCast<Latin1Character>(m_program.strings[index]); charactersAreAllASCII(characters))
+                    hashesOfIdentifiers[identifier] = StringHasher::computeHashAndMaskTop8Bits(characters);
             }
         }
+        header.numberOfStringsOfIdentifiers = stringsOfIdentifiers.size();
+        header.stringsOfIdentifiersOffset = append(stringsOfIdentifiers);
+        header.hashesOfIdentifiersOffset = append(hashesOfIdentifiers);
+        // What is among the strings and is no constant of the program need not be a text.
         Vector<uint32_t> decodedStrings;
         for (uint32_t index = 0; index < m_program.strings.size(); ++index) {
             auto bytes = m_program.strings[index];
@@ -3698,12 +3971,13 @@ public:
         header.numberOfDecodedStrings = decodedStrings.size() / 3;
         header.decodedStringsOffset = append(decodedStrings);
         Vector<uint32_t> atomStrings(FillWith { }, (m_program.strings.size() + 31) / 32, 0);
-        for (auto& function : m_program.functions) {
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            auto& function = m_program.functions[i];
             auto note = [&](ValueID id) {
                 while (id && function.at(id).opcode == Opcode::Cast)
                     id = function.at(id).child(0);
                 if (id && function.at(id).opcode == Opcode::String)
-                    atomStrings[function.at(id).string().index() / 32] |= 1u << function.at(id).string().index() % 32;
+                    WTF::atomicExchangeOr(&atomStrings[function.at(id).string().index() / 32], 1u << function.at(id).string().index() % 32, std::memory_order_relaxed);
             };
             for (auto& block : function.blocks) {
                 for (ValueID id : block.values) {
@@ -3728,7 +4002,7 @@ public:
                     }
                 }
             }
-        }
+        });
         header.atomStringsOffset = append(atomStrings);
 
         size_t sizeBeforeTypes = m_result.size();
@@ -3776,6 +4050,122 @@ public:
             boundFunctionsAndWhatTheyBind.append(std::span { entry });
         header.numberOfBoundFunctions = boundFunctions.size();
         header.boundFunctionsOffset = append(boundFunctionsAndWhatTheyBind);
+        Vector<uint32_t> rows;
+        uint32_t startOfRow = m_program.numberedRows.size() + 1;
+        for (auto& row : m_program.numberedRows) {
+            rows.append(startOfRow);
+            startOfRow += 1 + row.names.size();
+        }
+        rows.append(startOfRow);
+        for (auto& row : m_program.numberedRows) {
+            rows.append(row.names.size() | row.inlineCapacity << 8 | row.hasNullPrototype << 16);
+            for (StringID name : row.names)
+                rows.append(name.index());
+        }
+        header.numberOfRows = m_program.numberedRows.size();
+        header.rowsOffset = append(rows);
+        header.firstNumberOfRowsOfThis = std::min<uint32_t>(m_program.firstNumberOfRowsOfThis, m_program.numberedRows.size());
+        {
+            Vector<std::array<uint32_t, 3>> grown;
+            for (auto& [from, name, to] : m_program.rowsGrownInto) {
+                if (uint32_t identifier = name < m_program.identifierNumbers.size() ? m_program.identifierNumbers[name] : 0)
+                    grown.append({ from, identifier, to });
+            }
+            std::ranges::sort(grown);
+            Vector<uint32_t> words;
+            for (size_t i = 0; i < grown.size(); ++i) {
+                if (i && grown[i][0] == grown[i - 1][0] && grown[i][1] == grown[i - 1][1])
+                    continue;
+                words.append(std::span { grown[i] });
+            }
+            header.numberOfRowsGrownInto = words.size() / 3;
+            header.rowsGrownIntoOffset = append(words);
+        }
+        {
+            uint32_t greatest = 0;
+            for (uint32_t identifier : m_program.identifierNumbers)
+                greatest = std::max(greatest, identifier);
+            Vector<Vector<std::pair<uint32_t, uint8_t>, 1>> cellsOfNames;
+            cellsOfNames.grow(greatest + 1);
+            uint32_t greatestCell = 0;
+            for (uint32_t number = 0; number < m_program.numberedRows.size(); ++number) {
+                auto& row = m_program.numberedRows[number];
+                uint32_t cell = number + 1;
+                greatestCell = std::max(greatestCell, cell);
+                for (unsigned place = 0; place < row.names.size(); ++place) {
+                    uint32_t index = row.names[place].index();
+                    if (uint32_t identifier = index < m_program.identifierNumbers.size() ? m_program.identifierNumbers[index] : 0)
+                        cellsOfNames[identifier].append({ cell, static_cast<uint8_t>(place) });
+                }
+            }
+            Vector<uint32_t> order;
+            for (uint32_t identifier = 0; identifier <= greatest; ++identifier) {
+                if (!cellsOfNames[identifier].isEmpty())
+                    order.append(identifier);
+            }
+            std::ranges::stable_sort(order, [&](uint32_t a, uint32_t b) {
+                return cellsOfNames[a].size() > cellsOfNames[b].size();
+            });
+            Vector<uint32_t> displacements(FillWith { }, greatest + 1, 0);
+            Vector<uint32_t> places(FillWith { }, greatestCell + 1, 0);
+            Vector<uint64_t> isTaken;
+            auto bitsFrom = [&](size_t position) -> uint64_t {
+                size_t word = position / 64;
+                unsigned shift = position % 64;
+                uint64_t bits = word < isTaken.size() ? isTaken[word] >> shift : 0;
+                if (shift && word + 1 < isTaken.size())
+                    bits |= isTaken[word + 1] << (64 - shift);
+                return bits;
+            };
+            uint32_t firstFree = 0;
+            for (uint32_t identifier : order) {
+                auto& cells = cellsOfNames[identifier];
+                while (firstFree < places.size() && places[firstFree])
+                    ++firstFree;
+                uint32_t displacement = firstFree > cells[0].first ? firstFree - cells[0].first : 0;
+                for (;; displacement += 64) {
+                    uint64_t collides = 0;
+                    for (auto& [cell, place] : cells) {
+                        collides |= bitsFrom(static_cast<size_t>(displacement) + cell);
+                        if (!~collides)
+                            break;
+                    }
+                    if (~collides) {
+                        displacement += std::countr_one(collides);
+                        break;
+                    }
+                }
+                while (places.size() < displacement + greatestCell + 1)
+                    places.append(0);
+                while (isTaken.size() * 64 < places.size())
+                    isTaken.append(0);
+                for (auto& [cell, place] : cells) {
+                    places[displacement + cell] = identifier << 8 | place;
+                    isTaken[(displacement + cell) / 64] |= 1ULL << (displacement + cell) % 64;
+                }
+                RELEASE_ASSERT(identifier && identifier < 1u << 24);
+                displacements[identifier] = displacement;
+            }
+            static constexpr ASCIILiteral namesOnObjectPrototype[] = { "constructor"_s, "toString"_s, "toLocaleString"_s, "valueOf"_s, "hasOwnProperty"_s, "propertyIsEnumerable"_s, "isPrototypeOf"_s, "__proto__"_s, "__defineGetter__"_s, "__defineSetter__"_s, "__lookupGetter__"_s, "__lookupSetter__"_s };
+            for (uint32_t index = 0; index < m_program.identifierNumbers.size(); ++index) {
+                uint32_t identifier = m_program.identifierNumbers[index];
+                if (!identifier)
+                    continue;
+                for (auto name : namesOnObjectPrototype) {
+                    if (equalSpans(m_program.strings[index], name.span8()))
+                        displacements[identifier] |= Data::nameIsOnObjectPrototype;
+                }
+                if (isPrivateName(m_program.strings[index]) || isEnginePrivateName(m_program.strings[index]))
+                    displacements[identifier] |= Data::nameIsOnObjectPrototype;
+            }
+            for (uint32_t& entry : places) {
+                if (!entry)
+                    entry = UINT32_MAX;
+            }
+            header.displacementsOfNamesOffset = append(displacements);
+            header.placesByNameAndRowOffset = append(places);
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT image: places by name and row: ", order.size(), " names in rows, ", places.size(), " entries, ", displacements.size(), " displacements");
+        }
         Vector<uint8_t> extendedClasses;
         for (auto& engineClass : Builtins::singleton().classes())
             extendedClasses.append(m_program.isExtended(engineClass.name));
@@ -3863,33 +4253,68 @@ public:
         header.staticsRunsOffset = append(staticsRuns);
         header.numberOfGlobalPropertyCaches = m_program.numberOfGlobalPropertyCaches;
         header.globalPropertyCachesOffset = m_program.globalPropertyCachesOffset;
+        header.staticFieldPlacesOffset = m_program.staticFieldPlacesOffset;
         Vector<uint32_t> roots;
+        static_assert(sizeof(EncodedJSValue) * 32 == 1 << Data::cardShift);
+        Vector<uint32_t> rootMasks;
+        rootMasks.fill(0, (m_program.sizeOfStatics + (1 << Data::cardShift) - 1) >> Data::cardShift);
+        auto addRootWithCard = [&](uint32_t offset) {
+            RELEASE_ASSERT(!(offset % sizeof(EncodedJSValue)) && offset + sizeof(EncodedJSValue) <= m_program.sizeOfStatics);
+            rootMasks[offset >> Data::cardShift] |= 1u << (offset / sizeof(EncodedJSValue) % 32);
+        };
         for (uint32_t i = 0; i < m_program.numberOfGlobalPropertyCaches; ++i)
-            roots.append(m_program.globalPropertyCachesOffset + i * sizeof(GlobalPropertyCache) + OBJECT_OFFSETOF(GlobalPropertyCache, value));
+            addRootWithCard(m_program.globalPropertyCachesOffset + i * sizeof(GlobalPropertyCache) + OBJECT_OFFSETOF(GlobalPropertyCache, value));
         for (auto& variable : m_program.variables) {
-            if (holdsCells(variable.store))
+            if (!holdsCells(variable.store))
+                continue;
+            if (variable.hasCard)
+                addRootWithCard(variable.offset);
+            else
                 roots.append(variable.offset);
         }
         for (uint32_t i = 0; i < m_program.numberOfCopyOnWriteButterflies; ++i)
-            roots.append(m_program.copyOnWriteButterfliesOffset + i * sizeof(JSCell*));
+            addRootWithCard(m_program.copyOnWriteButterfliesOffset + i * sizeof(JSCell*));
         for (uint32_t i = 0; i < m_program.offsetsOfSharedRegExpObjects.size(); ++i)
-            roots.append(m_program.sharedRegExpObjectsOffset + i * sizeof(JSCell*));
+            addRootWithCard(m_program.sharedRegExpObjectsOffset + i * sizeof(JSCell*));
         header.numberOfRoots = roots.size();
         header.rootsOffset = append(roots);
+        header.numberOfCards = rootMasks.size();
+        header.rootMasksOffset = append(rootMasks);
 
         header.numberOfFunctions = m_program.functions.size();
         Vector<uint32_t> names;
         Vector<uint8_t> kinds;
         Vector<uint16_t> lengths;
         for (auto& function : m_program.functions) {
-            names.append(function.name.index());
-            static_assert(static_cast<uint8_t>(FunctionKind::Bound) <= functionKindMask);
-            kinds.append(static_cast<uint8_t>(function.kind) | function.declaredAs | (m_program.isHiddenInStackTraces(function) ? functionIsHiddenInStackTraces : 0));
+            BuiltinID builtin = m_program.builtinCarriedOutBy(function);
+            StringID nameOfBuiltin = builtin ? m_program.stringOf(Builtins::singleton().at(builtin).nameName) : StringID();
+            names.append((nameOfBuiltin ? nameOfBuiltin : function.name).index());
+            static_assert(static_cast<uint8_t>(FunctionKind::Bound) < functionKindOfBodiesOfSeveralSites && functionKindOfBodiesOfSeveralSites <= functionKindMask);
+            kinds.append(kindByteOf(m_program, function));
             lengths.append(static_cast<uint16_t>(function.length));
         }
         header.functionsOffset = append(names);
         header.functionKindsOffset = append(kinds);
         header.functionLengthsOffset = append(lengths);
+        uint32_t numberOfModuleEvaluations = m_program.moduleEvaluations.size();
+        Vector<uint32_t> moduleEvaluations(2 * numberOfModuleEvaluations);
+        auto offsetOf = [&](VariableID variable) {
+            return m_program.variables[variable.index()].offset;
+        };
+        for (uint32_t row = 0; row < numberOfModuleEvaluations; ++row) {
+            auto& evaluation = m_program.moduleEvaluations[row];
+            moduleEvaluations[row] = offsetOf(evaluation.isEvaluated);
+            moduleEvaluations[numberOfModuleEvaluations + row] = moduleEvaluations.size();
+            moduleEvaluations.append(evaluation.error ? offsetOf(evaluation.error) : std::numeric_limits<uint32_t>::max());
+            moduleEvaluations.append(moduleEvaluations.size() + 1 + 2 * evaluation.callees.size());
+            for (FunctionID callee : evaluation.callees) {
+                auto other = m_program.moduleEvaluationOfFunction.find(callee.index());
+                bool isRow = other != m_program.moduleEvaluationOfFunction.end();
+                moduleEvaluations.append(isRow ? offsetOf(m_program.moduleEvaluations[other->value].isEvaluated) : std::numeric_limits<uint32_t>::max());
+                moduleEvaluations.append(isRow ? other->value : callee.index());
+            }
+        }
+        header.moduleEvaluationsOffset = append(moduleEvaluations);
         Vector<std::array<uint8_t, 2>> closureCounts;
         closureCounts.fill({ 0, 0 }, m_program.functions.size());
         auto setCounts = [&](FunctionID closuresGoBy, const Function& function) {
@@ -3903,6 +4328,13 @@ public:
                 setCounts(FunctionID(i), m_program.functions[i]);
         }
         header.closureCountsOffset = append(closureCounts);
+        Vector<uint8_t> slimClosures;
+        slimClosures.fill(0, (m_program.functions.size() + 7) / 8);
+        for (auto& [function, entrypoint] : m_program.genericEntrypoints) {
+            if (m_program.makesSlimClosures(m_program.functions[function]))
+                slimClosures[entrypoint.index() / 8] |= 1 << entrypoint.index() % 8;
+        }
+        header.slimClosuresOffset = append(slimClosures);
         RELEASE_ASSERT(m_program.modulesOfEntries.size() == m_program.entries.size());
         Vector<uint32_t> entryPoints(m_program.modulesOfEntries.span());
         std::ranges::sort(entryPoints);
@@ -3918,12 +4350,16 @@ public:
             builtinFunctions.appendList({ id, entrypointOf(function), visibility });
         header.numberOfBuiltinFunctions = m_program.builtinFunctions.size();
         header.builtinFunctionsOffset = append(builtinFunctions);
+        Vector<uint32_t> preludeFunctions;
+        for (unsigned which = 0; which < numberOfPreludeFunctions; ++which)
+            preludeFunctions.append(which < m_program.preludeFunctions.size() && m_program.preludeFunctions[which] ? m_program.preludeFunctions[which].index() : UINT32_MAX);
+        header.preludeFunctionsOffset = append(preludeFunctions);
         // One that is never a value has no closure to ask for its `prototype`.
         Vector<std::pair<uint32_t, uint32_t>> generatorFunctions;
         for (unsigned i = 0; i < m_program.functions.size(); ++i) {
             auto& function = m_program.functions[i];
             if (function.declaredAs & functionIsGenerator && function.resumeFunction && m_program.genericEntrypoints.contains(i))
-                generatorFunctions.append({ entrypointOf(FunctionID(i)), function.resumeFunction.index() | (function.takesItsClosure ? Data::generatorTakesItsClosure : 0) });
+                generatorFunctions.append({ entrypointOf(FunctionID(i)), function.resumeFunction.index() | (function.takesItsClosure || function.rampForClosures ? Data::generatorTakesItsClosure : 0) });
         }
         std::ranges::sort(generatorFunctions);
         Vector<uint32_t> generatorAndResumeFunctions;
@@ -3972,15 +4408,25 @@ public:
         header.numberOfRefusedFreshObjects = refusedFreshObjects.size();
         header.refusedFreshObjectsOffset = append(refusedFunctionsAndShapes);
         Vector<std::pair<uint32_t, uint32_t>> propertyCountsOfThis;
-        for (auto& [index, entrypoint] : m_program.genericEntrypoints) {
+        Vector<std::pair<uint32_t, uint32_t>> functionsAndEntrypoints;
+        for (auto& [index, entrypoint] : m_program.genericEntrypoints)
+            functionsAndEntrypoints.append({ index, entrypoint.index() });
+        Vector<uint32_t> countsOfThis;
+        countsOfThis.fill(0, functionsAndEntrypoints.size());
+        forEachIndexInParallel(functionsAndEntrypoints.size(), [&](unsigned i) {
+            uint32_t index = functionsAndEntrypoints[i].first;
             auto& function = m_program.functions[index];
-            if ((function.kind != FunctionKind::Plain && function.kind != FunctionKind::Constructor) || function.blocks.isEmpty() || function.blocks[0].parameters.size() <= function.captureTypes.size())
-                continue;
+            if (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Constructor)
+                return;
             Vector<StringID, 16> names;
             unsigned numberOfKeys = 0;
-            collectPropertiesGivenTo(m_program, function, function.blocks[0].parameters[function.captureTypes.size()], 3, names, numberOfKeys);
-            if (names.size() + numberOfKeys > JSFinalObject::defaultInlineCapacity)
-                propertyCountsOfThis.append({ entrypoint.index(), names.size() + numberOfKeys });
+            bool isOfWholeChain = collectPropertiesGivenToThis(m_program, FunctionID(index), names, numberOfKeys);
+            if (names.size() + numberOfKeys)
+                countsOfThis[i] = (names.size() + numberOfKeys) | (isOfWholeChain ? Data::propertyCountIsOfWholeChain : 0);
+        });
+        for (unsigned i = 0; i < countsOfThis.size(); ++i) {
+            if (countsOfThis[i])
+                propertyCountsOfThis.append({ functionsAndEntrypoints[i].second, countsOfThis[i] });
         }
         std::ranges::sort(propertyCountsOfThis);
         Vector<uint32_t> functionsAndPropertyCountsOfThis;
@@ -4029,10 +4475,34 @@ public:
                 return static_cast<uint32_t>(index);
             });
             for (unsigned i = 0; i < m_program.functions.size(); ++i) {
-                if (FunctionID resume = m_program.functions[i].resumeFunction)
+                if (FunctionID resume = m_program.functions[i].resumeFunction; resume && !m_program.functions[i].isRampForClosures)
                     owner[resume.index()] = i;
                 if (FunctionID start = m_program.functions[i].startFunction)
                     owner[start.index()] = i;
+            }
+            Vector<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>> entries;
+            for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+                const Function& function = m_program.functions[i];
+                if (function.has(Format::FunctionIsHiddenInStackTraces) && !function.isGenericEntrypoint())
+                    entries.append({ function.module.index(), function.position, function.name.index(), i });
+            }
+            std::ranges::sort(entries);
+            for (unsigned i = 1; i < entries.size(); ++i) {
+                auto& [module, position, name, function] = entries[i];
+                auto& first = entries[i - 1];
+                if (std::get<0>(first) != module || std::get<1>(first) != position || std::get<2>(first) != name)
+                    continue;
+                if (owner[function] == function)
+                    owner[function] = owner[std::get<3>(first)];
+            }
+            for (unsigned i = 0; i < m_program.functions.size() && !entries.isEmpty(); ++i) {
+                const Function& function = m_program.functions[i];
+                if (function.has(Format::FunctionIsHiddenInStackTraces) || function.isGenericEntrypoint() || owner[i] != i)
+                    continue;
+                std::tuple<uint32_t, uint32_t, uint32_t, uint32_t> key { function.module.index(), function.position, function.name.index(), 0 };
+                auto found = std::ranges::lower_bound(entries, key);
+                if (found != entries.end() && std::get<0>(*found) == std::get<0>(key) && std::get<1>(*found) == std::get<1>(key) && std::get<2>(*found) == std::get<2>(key))
+                    owner[i] = owner[std::get<3>(*found)];
             }
             for (auto& [function, entrypoint] : m_program.genericEntrypoints)
                 owner[entrypoint.index()] = owner[function];
@@ -4095,21 +4565,25 @@ public:
                 return offset ? &at<LayoutData>(offset) : nullptr;
             };
             auto baseOf = [&](const LayoutData& layout) -> LayoutData* {
-                return layout.base == LayoutData::noBase ? nullptr : classWithIndex(layout.base);
+                return layout.base() == LayoutData::noBase ? nullptr : classWithIndex(layout.base());
             };
-            auto hasComputedName = [](auto& method) {
-                return method.flags & methodHasComputedName;
+            auto isFoundByNoName = [&](auto& method) {
+                return method.flags & methodHasComputedName || parseIndex(m_program.string(StringID(method.name)));
+            };
+            auto isAskedOfTheFunction = [&](auto& method) {
+                auto name = m_program.string(StringID(method.name));
+                return !(method.flags & methodHasComputedName) && (equalSpans(name, "name"_s.span8()) || equalSpans(name, "length"_s.span8()));
             };
             for (uint32_t index = 0; index < data.numberOfLayoutIndices; ++index) {
                 LayoutData* ofClass = classWithIndex(index);
                 if (!ofClass)
                     continue;
-                ofClass->makesMembersWhenLookedAt = ofClass->isEvaluatedOnce && std::ranges::none_of(ofClass->methods(), hasComputedName);
+                ofClass->makesMembersWhenLookedAt = ofClass->isEvaluatedOnce && std::ranges::none_of(ofClass->methods(), isFoundByNoName);
                 bool isAhead = ofClass->makesMembersWhenLookedAt;
                 for (const LayoutData* next = ofClass; next; next = baseOf(*next))
                     isAhead &= next->isEvaluatedOnce && !next->hasForeignRoot;
                 ofClass->hasPrototypeAheadOfClassObject = isAhead;
-                bool isMadeWhenChanged = ofClass->makesMembersWhenLookedAt && std::ranges::none_of(ofClass->staticMethods(), hasComputedName);
+                bool isMadeWhenChanged = ofClass->makesMembersWhenLookedAt && std::ranges::none_of(ofClass->staticMethods(), isFoundByNoName) && std::ranges::none_of(ofClass->staticMethods(), isAskedOfTheFunction);
                 for (const LayoutData* next = baseOf(*ofClass); next; next = baseOf(*next))
                     isMadeWhenChanged &= next->isEvaluatedOnce;
                 ofClass->makesClassObjectWhenChanged = isMadeWhenChanged;
@@ -4128,13 +4602,34 @@ private:
         return offset;
     }
 
+    uint32_t allocateWords(size_t size)
+    {
+        uint32_t offset = WTF::roundUpToMultipleOf<4>(m_result.size());
+        m_result.insertFill(m_result.size(), 0, offset + size - m_result.size());
+        return offset;
+    }
+
     template<typename T>
     T& at(uint32_t offset) { return *reinterpret_cast<T*>(m_result.mutableSpan().subspan(offset, sizeof(T)).data()); }
 
+    static uint64_t hashOf(std::span<const uint8_t> bytes)
+    {
+        uint64_t hash = 1469598103934665603ull;
+        for (uint8_t byte : bytes)
+            hash = (hash ^ byte) * 1099511628211ull;
+        return hash | 1;
+    }
+
     uint32_t append(std::span<const uint8_t> bytes)
     {
+        auto& withHash = m_copies.add(hashOf(bytes), Vector<std::pair<uint32_t, uint32_t>, 1> { }).iterator->value;
+        for (auto [offset, size] : withHash) {
+            if (size == bytes.size() && equalSpans(m_result.span().subspan(offset, size), bytes))
+                return offset;
+        }
         uint32_t offset = allocate(bytes.size());
         memcpySpan(m_result.mutableSpan().subspan(offset), bytes);
+        withHash.append({ offset, safeCast<uint32_t>(bytes.size()) });
         return offset;
     }
 
@@ -4156,6 +4651,7 @@ private:
         auto classes = Builtins::singleton().classes();
         Vector<std::pair<uint32_t, LayoutID>> viewsWithoutLayoutData;
         Vector<uint32_t> offsetOfView(FillWith { }, m_program.layouts.size(), 0);
+        UncheckedKeyHashMap<uint64_t, Vector<std::pair<Vector<uint64_t, 16>, uint32_t>, 1>> typesThatSay;
         for (unsigned i = 0; i < m_program.types.size(); ++i) {
             auto& type = m_program.at(TypeID(i));
             // What an array holds is interned before the array.
@@ -4169,17 +4665,36 @@ private:
                 if (isObjectLayout(view.kind) && !view.shape)
                     viewsWithoutLayoutData.append({ test, id });
             }
-            uint32_t offset = allocate(sizeof(RuntimeType) + type.views.size() * sizeof(int32_t) + type.engineClasses.size() * sizeof(uint32_t));
+            Vector<uint64_t, 16> said { type.primitives, type.anyObject, type.anyFunction, type.admitsForeignObjects(m_program), static_cast<uint64_t>(type.integers.least), static_cast<uint64_t>(type.integers.most), type.views.size(), type.elements ? m_offsetOfType[type.elements.index()] : 0 };
+            for (LayoutID id : type.views)
+                said.append(offsetOfView[id.index()]);
+            for (uint16_t index : type.engineClasses)
+                said.append(classes[index].type);
+            auto& typesWithHash = typesThatSay.add(hashOf(asBytes(said.span())), Vector<std::pair<Vector<uint64_t, 16>, uint32_t>, 1> { }).iterator->value;
+            if (size_t same = typesWithHash.findIf([&](auto& entry) { return entry.first == said; }); same != notFound) {
+                m_offsetOfType.append(typesWithHash[same].second);
+                continue;
+            }
+            int64_t least = type.integers.least;
+            int64_t most = type.integers.most;
+            bool hasNoInteger = least == 1 && !most;
+            bool hasOneInteger = least == most && least == static_cast<int32_t>(least);
+            Vector<uint32_t, 5> rest;
+            if (type.elements)
+                rest.append(m_offsetOfType[type.elements.index()]);
+            if (hasOneInteger)
+                rest.append(static_cast<uint32_t>(least));
+            else if (!hasNoInteger)
+                rest.appendList({ static_cast<uint32_t>(least), static_cast<uint32_t>(static_cast<uint64_t>(least) >> 32), static_cast<uint32_t>(most), static_cast<uint32_t>(static_cast<uint64_t>(most) >> 32) });
+            RELEASE_ASSERT(type.views.size() <= UINT16_MAX && type.engineClasses.size() <= UINT8_MAX);
+            uint32_t offset = allocateWords(sizeof(RuntimeType) + type.views.size() * sizeof(int32_t) + type.engineClasses.size() * sizeof(uint32_t) + rest.sizeInBytes());
+            typesWithHash.append({ said, offset });
             auto& runtimeType = at<RuntimeType>(offset);
             runtimeType.primitives = type.primitives;
-            runtimeType.allowsAnyObject = type.anyObject;
-            runtimeType.allowsAnyFunction = type.anyFunction;
-            runtimeType.admitsForeignObjects = type.admitsForeignObjects(m_program);
-            runtimeType.minInteger = type.integers.least;
-            runtimeType.maxInteger = type.integers.most;
-            runtimeType.numberOfViews = type.views.size();
-            runtimeType.numberOfJSTypes = type.engineClasses.size();
-            runtimeType.elements = type.elements ? m_offsetOfType[type.elements.index()] : 0;
+            runtimeType.bits = (type.anyObject ? RuntimeType::allowsAnyObjectBit : 0) | (type.anyFunction ? RuntimeType::allowsAnyFunctionBit : 0) | (type.admitsForeignObjects(m_program) ? RuntimeType::admitsForeignObjectsBit : 0)
+                | (type.elements ? RuntimeType::hasElementsBit : 0) | (hasOneInteger ? RuntimeType::hasOneIntegerBit : hasNoInteger ? 0 : RuntimeType::hasIntegersBit);
+            runtimeType.viewsCount = type.views.size();
+            runtimeType.jsTypesCount = type.engineClasses.size();
             uint32_t next = offset + sizeof(RuntimeType);
             for (LayoutID id : type.views) {
                 at<int32_t>(next) = static_cast<int32_t>(offsetOfView[id.index()]) - static_cast<int32_t>(offset);
@@ -4189,20 +4704,30 @@ private:
                 at<uint32_t>(next) = classes[index].type;
                 next += sizeof(uint32_t);
             }
+            for (uint32_t word : rest) {
+                at<uint32_t>(next) = word;
+                next += sizeof(uint32_t);
+            }
             m_offsetOfType.append(offset);
         }
         // ViewFields, once per view. They name types, so they come after all types.
         UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> offsetOfFields;
         for (auto [test, id] : viewsWithoutLayoutData) {
             uint32_t offset = offsetOfFields.ensure(id.index(), [&] {
-                Vector<uint32_t> words { 0u };
+                Vector<uint8_t> bytes;
+                auto isListed = [&](auto& field) {
+                    return exists(field) && field.name;
+                };
+                ViewFields::append(bytes, std::ranges::count_if(m_program.at(id).fields, isListed));
                 for (auto& field : m_program.at(id).fields) {
-                    if (!exists(field) || !field.name)
+                    if (!isListed(field))
                         continue;
-                    ++words[0];
-                    words.appendList({ field.name.index(), m_offsetOfType[(field.type ? field.type : m_program.types.anything).index()], field.flags & fieldIsOptional ? 1u : 0u, field.typeText.index() });
+                    RELEASE_ASSERT(!(field.name.index() >> 31));
+                    ViewFields::append(bytes, field.name.index() << 1 | (field.flags & fieldIsOptional ? 1 : 0));
+                    ViewFields::append(bytes, (field.type ? field.type : m_program.types.anything).index());
+                    ViewFields::append(bytes, field.typeText.index() + 1);
                 }
-                return append(words);
+                return append(bytes);
             }).iterator->value;
             at<RuntimeShapeTest>(test).fields = offset;
         }
@@ -4214,8 +4739,17 @@ private:
         // By field: its number among those that exist, which are the fields the run time knows.
         Vector<uint32_t> numberOfField;
         uint32_t numberOfFields = 0;
-        for (auto& field : layout.fields)
-            numberOfField.append(exists(field) ? numberOfFields++ : UINT32_MAX);
+        bool isObject = isObjectLayout(layout.kind);
+        auto isDescribed = [&](unsigned i) {
+            auto& field = layout.fields[i];
+            if (!exists(field))
+                return false;
+            if (layout.isCoroutineFrame)
+                return i < CoroutineFrame::firstArgumentField;
+            return isObject || holdsCells(field.store) || !isAbsentAsZero(field.store);
+        };
+        for (unsigned i = 0; i < layout.fields.size(); ++i)
+            numberOfField.append(isDescribed(i) ? numberOfFields++ : UINT32_MAX);
         Vector<uint32_t> orders;
         for (auto& order : layout.orders) {
             Vector<uint16_t> list;
@@ -4224,25 +4758,25 @@ private:
                 list.append(static_cast<uint16_t>(numberOfField[field]));
             orders.append(append(list));
         }
-        uint32_t ordersOffset = append(orders);
+        uint32_t ordersOffset = orders.isEmpty() ? 0 : append(orders);
         Vector<uint32_t> specializations;
         for (LayoutID specialization : layout.specializations)
             specializations.append(m_program.at(specialization).shape);
         std::ranges::sort(specializations);
-        uint32_t specializationsOffset = append(specializations);
+        uint32_t specializationsOffset = specializations.isEmpty() ? 0 : append(specializations);
         Vector<uint32_t> literalsOffsets;
         for (auto& field : layout.fields) {
             Vector<LiteralData> literals;
             for (auto& literal : field.literals)
                 literals.append(LiteralData { !literal.string, literal.string ? literal.string.index() : 0, literal.number });
-            literalsOffsets.append(literals.isEmpty() ? 0 : append(literals));
+            literalsOffsets.append(literals.isEmpty() || !isObjectLayout(layout.kind) ? 0 : append(literals));
         }
         Vector<uint32_t> typeTexts;
-        for (auto& field : layout.fields) {
-            if (exists(field))
-                typeTexts.append(field.typeText.index());
+        for (unsigned i = 0; i < layout.fields.size(); ++i) {
+            if (isObject && isDescribed(i))
+                typeTexts.append(layout.fields[i].typeText.index());
         }
-        uint32_t typeTextsOffset = append(typeTexts);
+        uint32_t typeTextsOffset = typeTexts.isEmpty() ? 0 : append(typeTexts);
         Vector<uint32_t> literalsWithoutField { 0u };
         for (unsigned i = 0; i < layout.fields.size() && layout.kind == LayoutKind::Record; ++i) {
             auto& field = layout.fields[i];
@@ -4254,18 +4788,25 @@ private:
         uint32_t literalsWithoutFieldOffset = literalsWithoutField[0] ? append(literalsWithoutField) : 0;
         static constexpr unsigned fewFields = 8;
         Vector<std::pair<uint32_t, uint16_t>> fieldsByName;
-        for (unsigned i = 0; i < layout.fields.size() && numberOfFields > fewFields; ++i) {
-            if (exists(layout.fields[i]))
+        for (unsigned i = 0; i < layout.fields.size() && isObject && numberOfFields > fewFields; ++i) {
+            if (isDescribed(i))
                 fieldsByName.append({ (layout.fields[i].name ? layout.fields[i].name : m_program.emptyString).index(), static_cast<uint16_t>(numberOfField[i]) });
         }
         std::ranges::sort(fieldsByName);
         uint32_t fieldsByNameOffset = fieldsByName.isEmpty() ? 0 : append(fieldsByName.map([](auto& entry) {
             return entry.second;
         }));
-        // The variables of a class that the run time has to do with: the static fields, then the computed names.
-        Vector<std::pair<StringID, uint32_t>> variables;
-        for (auto& field : layout.staticFields)
-            variables.append({ field.name, field.variable });
+        struct Variable {
+            StringID name;
+            uint32_t number;
+            TypeID typeOfStaticField;
+        };
+        Vector<Variable> variables;
+        for (auto& field : layout.staticFields) {
+            if (field.type)
+                variables.append({ field.name, 0, field.type });
+        }
+        unsigned numberOfStaticFields = variables.size();
         Vector<MethodData> methods;
         // What a Record lists is for the compiler alone: see Layout::methods.
         bool isClass = layout.kind == LayoutKind::Instance;
@@ -4280,7 +4821,7 @@ private:
                 if (!method.name) {
                     flags |= methodHasComputedName;
                     name = variables.size();
-                    variables.append({ m_program.emptyString, method.key });
+                    variables.append({ m_program.emptyString, method.key, { } });
                 }
                 methods.append(MethodData { name, entrypointOf(method.function), static_cast<uint32_t>(method.kind), flags });
             }
@@ -4294,8 +4835,6 @@ private:
             if (exists(field) && holdsCells(field.store) && !field.isOutOfLine)
                 (sizeOf(field.store) == 4 ? narrowSlots : field.store == Store::JSValue ? boxedSlots : cellSlots).append(field.offset);
         }
-        if (layout.hasExtension)
-            cellSlots.append(offsetOfExtension);
         std::ranges::sort(boxedSlots);
         std::ranges::sort(cellSlots);
         std::ranges::sort(narrowSlots);
@@ -4303,9 +4842,64 @@ private:
         references.appendVector(boxedSlots);
         references.appendVector(cellSlots);
         references.appendVector(narrowSlots);
+        if (layout.hasExtension) {
+            Vector<uint32_t> boxedOutOfLine;
+            Vector<uint32_t> narrowOutOfLine;
+            for (auto& field : layout.fields) {
+                if (exists(field) && holdsCells(field.store) && field.isOutOfLine)
+                    (sizeOf(field.store) == 4 ? narrowOutOfLine : boxedOutOfLine).append(field.offset);
+            }
+            std::ranges::sort(boxedOutOfLine);
+            std::ranges::sort(narrowOutOfLine);
+            references.appendList({ static_cast<uint32_t>(boxedOutOfLine.size()), static_cast<uint32_t>(narrowOutOfLine.size()) });
+            references.appendVector(boxedOutOfLine);
+            references.appendVector(narrowOutOfLine);
+        }
         uint32_t referencesOffset = references.size() > 3 ? append(references) : 0;
 
-        uint32_t offset = allocate(sizeof(LayoutData) + (numberOfFields + variables.size()) * sizeof(FieldData) + methods.sizeInBytes());
+        if (!isObject) {
+            uint32_t offset = allocate(sizeof(LayoutData));
+            auto& data = at<LayoutData>(offset);
+            data.kind = layout.kind;
+            data.index = id.index();
+            data.shape = layout.shape;
+            data.name = (layout.name ? layout.name : m_program.emptyString).index();
+            data.size = layout.size;
+            data.numberOfDescribedVariables = numberOfFields;
+            data.referencesOffset = referencesOffset ? static_cast<int32_t>(referencesOffset) - static_cast<int32_t>(offset) : 0;
+            RELEASE_ASSERT(!layout.hasExtension && layout.sizeWithRoomToSpecialize == layout.size && orders.isEmpty() && variables.isEmpty() && methods.isEmpty());
+            m_result.shrink(offset + LayoutData::sizeOfEnvironment);
+            for (unsigned i = 0; i < layout.fields.size(); ++i) {
+                if (!isDescribed(i))
+                    continue;
+                auto& field = layout.fields[i];
+                RELEASE_ASSERT(!field.isOutOfLine && field.offset < 1u << 24);
+                uint32_t next = m_result.size();
+                m_result.insertFill(next, 0, sizeof(VariableData));
+                auto& variable = at<VariableData>(next);
+                variable.name = (field.name ? field.name : m_program.emptyString).index();
+                variable.offset = field.offset;
+                variable.storeBits = static_cast<uint8_t>(field.store);
+            }
+            return offset;
+        }
+        Vector<uint32_t> typesOfFields;
+        auto appendTypesOfField = [&](TypeID stored, TypeID own, uint32_t numberOfLiterals, uint32_t literalsOffset) {
+            typesOfFields.append(append(Vector<uint32_t> { m_offsetOfType[stored.index()], m_offsetOfType[(own ? own : m_program.types.anything).index()], numberOfLiterals, literalsOffset }));
+        };
+        for (unsigned i = 0; i < layout.fields.size(); ++i) {
+            if (isDescribed(i))
+                appendTypesOfField(layout.fields[i].stored, layout.fields[i].type, layout.fields[i].literals.size(), literalsOffsets[i]);
+        }
+        for (auto [name, number, typeOfStaticField] : variables) {
+            if (typeOfStaticField)
+                appendTypesOfField(typeOfStaticField, typeOfStaticField, 0, 0);
+            else if (layout.environment)
+                appendTypesOfField(m_program.at(layout.environment).fields[number].stored, m_program.at(layout.environment).fields[number].type, 0, 0);
+            else
+                appendTypesOfField(m_program.variables[number].type ? m_program.variables[number].type : m_program.types.anything, m_program.variables[number].type, 0, 0);
+        }
+        uint32_t offset = allocate((isClass ? sizeof(ClassData) : 0) + sizeof(LayoutData) + (numberOfFields + variables.size()) * sizeof(FieldData) + methods.sizeInBytes()) + (isClass ? sizeof(ClassData) : 0);
         auto& data = at<LayoutData>(offset);
         data.kind = layout.kind;
         data.index = id.index();
@@ -4315,8 +4909,8 @@ private:
         data.declaredLine = layout.declaredLine;
         data.size = layout.size;
         data.sizeWithRoomToSpecialize = layout.sizeWithRoomToSpecialize;
-        data.base = layout.base ? layout.base.index() : LayoutData::noBase;
         data.mayBeFrozen = layout.mayBeFrozen;
+        data.mayGiveUp = layout.mayGiveUp;
         data.isLaidOut = layout.isLaidOut;
         data.isEvaluatedOnce = layout.isEvaluatedOnce;
         data.hasForeignRoot = layout.hasForeignRoot;
@@ -4327,8 +4921,6 @@ private:
         data.ordersOffset = ordersOffset;
         data.numberOfSpecializations = specializations.size();
         data.specializationsOffset = specializationsOffset;
-        data.classConstructor = entrypointOf(layout.constructor);
-        data.environment = layout.environment ? layout.environment.index() : LayoutData::noBase;
         data.numberOfFields = numberOfFields;
         data.typeTextsOffset = typeTextsOffset;
         data.literalsWithoutFieldOffset = literalsWithoutFieldOffset;
@@ -4338,47 +4930,55 @@ private:
         data.referencesOffset = referencesOffset ? static_cast<int32_t>(referencesOffset) - static_cast<int32_t>(offset) : 0;
         data.hasExtension = layout.hasExtension;
         data.extensionSize = layout.extensionSize;
-        data.numberOfMethods = isClass ? layout.methods.size() : 0;
-        data.numberOfStaticMethods = layout.staticMethods.size();
-        data.numberOfStaticFields = layout.staticFields.size();
-        data.numberOfVariables = variables.size();
+        if (isClass) {
+            auto& ofClass = data.classData();
+            ofClass.base = layout.base ? layout.base.index() : LayoutData::noBase;
+            ofClass.classConstructor = entrypointOf(layout.constructor);
+            ofClass.environment = layout.environment ? layout.environment.index() : LayoutData::noBase;
+            ofClass.numberOfMethods = layout.methods.size();
+            ofClass.numberOfStaticMethods = layout.staticMethods.size();
+            ofClass.numberOfStaticFields = numberOfStaticFields;
+            ofClass.numberOfVariables = variables.size();
+            static_assert(Format::none == LayoutData::noBase);
+            ofClass.firstStaticFieldPlace = layout.classObjectPlace;
+        } else
+            RELEASE_ASSERT(!layout.base && variables.isEmpty() && methods.isEmpty());
         uint32_t next = offset + sizeof(LayoutData);
-        auto appendField = [&](StringID name, uint32_t offsetOfField, Store store, uint32_t flags, TypeID stored, TypeID own) {
+        unsigned numberOfFieldsAppended = 0;
+        auto appendField = [&](StringID name, uint32_t offsetOfField, Store store, uint32_t flags, TypeID stored) {
             uint16_t primitives = m_program.at(stored).primitives;
             auto& fieldData = at<FieldData>(next);
+            RELEASE_ASSERT(offsetOfField < 1u << 24);
             fieldData.name = (name ? name : m_program.emptyString).index();
             fieldData.offset = offsetOfField;
-            fieldData.store = store;
+            fieldData.storeBits = static_cast<uint8_t>(store);
             fieldData.flags = flags;
             if (primitives & Primitive::Undefined)
                 fieldData.flags |= fieldAllowsUndefined;
             if (primitives & Primitive::Null)
                 fieldData.flags |= fieldAllowsNull;
-            fieldData.type = m_offsetOfType[stored.index()];
-            fieldData.ownType = m_offsetOfType[(own ? own : m_program.types.anything).index()];
+            fieldData.distanceOfTypes = static_cast<int32_t>(typesOfFields[numberOfFieldsAppended++]) - static_cast<int32_t>(next);
             next += sizeof(FieldData);
         };
         for (unsigned i = 0; i < layout.fields.size(); ++i) {
             auto& field = layout.fields[i];
-            if (!exists(field))
+            if (!isDescribed(i))
                 continue;
-            auto& fieldData = at<FieldData>(next);
-            fieldData.numberOfLiterals = field.literals.size();
-            fieldData.literalsOffset = literalsOffsets[i];
             uint32_t pinned = field.isPinned ? fieldIsPinned | field.slot.index() % numberOfGuardsOfPinnedFields << guardOfPinnedFieldShift : 0;
-            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.stored, field.type);
+            appendField(field.name, field.offset, field.store, field.flags | (field.isOutOfLine ? fieldIsOutOfLine : 0) | pinned, field.stored);
         }
         memcpySpan(m_result.mutableSpan().subspan(next), asBytes(methods.span()));
         next += methods.sizeInBytes();
         for (unsigned i = 0; i < variables.size(); ++i) {
-            auto [name, number] = variables[i];
-            if (layout.environment) {
+            auto [name, number, typeOfStaticField] = variables[i];
+            if (typeOfStaticField)
+                appendField(name, 0, Store::JSValue, fieldIsAnnotated, typeOfStaticField);
+            else if (layout.environment) {
                 auto& field = m_program.at(layout.environment).fields[number];
-                appendField(name, field.offset, field.store, field.flags, field.stored, field.type);
+                appendField(name, field.offset, field.store, field.flags, field.stored);
             } else {
                 auto& variable = m_program.variables[number];
-                bool isAnnotated = i < layout.staticFields.size() && layout.staticFields[i].isAnnotated;
-                appendField(name, variable.offset, variable.store, isAnnotated ? fieldIsAnnotated : 0, variable.type ? variable.type : m_program.types.anything, variable.type);
+                appendField(name, variable.offset, variable.store, 0, variable.type ? variable.type : m_program.types.anything);
             }
         }
         return offset;
@@ -4388,6 +4988,7 @@ private:
     Vector<uint8_t> m_result;
     // By TypeID.
     Vector<uint32_t> m_offsetOfType;
+    UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_copies;
 };
 
 } // anonymous namespace
@@ -4395,6 +4996,11 @@ private:
 void place(Program& program)
 {
     Placement(program).run();
+}
+
+uint8_t kindByteOf(const Program& program, const Function& function)
+{
+    return (function.isBodyOfSeveralSites ? functionKindOfBodiesOfSeveralSites : function.has(Format::FunctionIsCodeOfModule) ? static_cast<uint8_t>(FunctionKind::Module) : function.flags & Format::FunctionNameIsGiven && !function.suspensionPositions.isEmpty() ? functionKindOfResumeFunctionsNamedByOthers : static_cast<uint8_t>(function.kind)) | function.declaredAs | (program.isHiddenInStackTraces(function) ? functionIsHiddenInStackTraces : 0);
 }
 
 Vector<uint8_t> encodeData(const Program& program)

@@ -149,6 +149,7 @@ public:
     TypeID undefined;
     TypeID boolean;
     TypeID int32;
+    TypeID integer;
     TypeID number;
     TypeID string;
     TypeID function;

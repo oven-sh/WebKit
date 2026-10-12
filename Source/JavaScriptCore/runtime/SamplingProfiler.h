@@ -109,6 +109,10 @@ public:
         const void* cCodePC { nullptr };
         ExecutableBase* executable { nullptr };
         AOT::FunctionRef unresolvedAOTFunction;
+        uint32_t compiledCode { AOT::FunctionRef::none };
+        uint32_t compiledFunction { AOT::FunctionRef::none };
+        bool isCompiled() const { return compiledFunction != AOT::FunctionRef::none; }
+        static constexpr SourceID firstSourceIDOfCompiledCode = 1 << 30;
         JSObject* callee { nullptr };
         RegExp* regExp { nullptr };
 #if ENABLE(WEBASSEMBLY)

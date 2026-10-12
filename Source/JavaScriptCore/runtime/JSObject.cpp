@@ -73,7 +73,7 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
-const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of a built-in object: built-ins are immutable in compiled programs"_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of this object: built-ins and the prototype objects of compiled classes are immutable in compiled programs"_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
 const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
@@ -531,6 +531,10 @@ String JSObject::calculatedClassName(JSObject* object)
                     constructorFunctionName = constructorFunction->calculatedDisplayName(vm);
                 else if (InternalFunction* constructorFunction = dynamicDowncast<InternalFunction>(ctorObject))
                     constructorFunctionName = constructorFunction->calculatedDisplayName(vm);
+#if ENABLE(AOT)
+                else if (String name = isSlimClosureType(ctorObject->type()) ? getCalculatedDisplayName(vm, ctorObject) : String(); !name.isEmpty())
+                    constructorFunctionName = name;
+#endif
             }
         }
     }
@@ -555,6 +559,10 @@ String JSObject::calculatedClassName(JSObject* object)
                                 constructorFunctionName = constructorFunction->calculatedDisplayName(vm);
                             else if (InternalFunction* constructorFunction = dynamicDowncast<InternalFunction>(ctorObject))
                                 constructorFunctionName = constructorFunction->calculatedDisplayName(vm);
+#if ENABLE(AOT)
+                            else if (String name = isSlimClosureType(ctorObject->type()) ? getCalculatedDisplayName(vm, ctorObject) : String(); !name.isEmpty())
+                                constructorFunctionName = name;
+#endif
                         }
                     }
                 }
@@ -2196,7 +2204,7 @@ void JSObject::setPrototypeDirect(VM& vm, JSValue prototype)
         Structure* newStructure = Structure::changePrototypeTransition(vm, structure(), prototype, deferred);
         setStructure(vm, newStructure);
         // Prototype-chain gets changed for the already cached structures. Invalidate the cache.
-        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        if (mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Prototype);
     } else
         putDirectOffset(vm, knownPolyProtoOffset, prototype);
@@ -2532,7 +2540,7 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             if (offset != invalidOffset)
                 thisObject->locationForOffset(offset)->clear();
         }
-        if (thisObject->isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        if (thisObject->mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Remove);
     } else
         slot.setConfigurableMiss();
@@ -2571,7 +2579,7 @@ void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
     });
     putDirectOffset(vm, movedTo, value);
     locationForOffset(offset)->clear();
-    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+    if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 #endif
@@ -3083,8 +3091,8 @@ void JSObject::fixProperties(VM& vm, FixedObject kind)
         flattenDictionaryObject(vm);
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred));
-    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+    setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::FixAndMakePropertiesImmutable, &deferred));
+    if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
@@ -3132,7 +3140,7 @@ void JSObject::freeze(VM& vm)
         Structure* oldStructure = structure();
         DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
         setStructure(vm, Structure::freezeTransition(vm, oldStructure, &deferred));
-        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        if (mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
     }
 }
@@ -3227,13 +3235,26 @@ static JSCellButterfly* tryCreateCopyOnWriteButterfly(VM& vm, JSObject* object)
 
 bool JSObject::makePropertiesImmutable(VM& vm)
 {
+    return makePropertiesImmutable(vm, TransitionKind::MakePropertiesImmutable);
+}
+
+bool JSObject::fixAndMakePropertiesImmutable(VM& vm)
+{
+    return makePropertiesImmutable(vm, TransitionKind::FixAndMakePropertiesImmutable);
+}
+
+bool JSObject::makePropertiesImmutable(VM& vm, TransitionKind transitionKind)
+{
+    ASSERT(makesPropertiesImmutable(transitionKind));
     if (structure()->hasImmutableProperties())
         return true;
     // `globalThis` may be the proxy in front of the global object: act on the object behind it.
     if (type() == GlobalProxyType)
-        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm);
+        return uncheckedDowncast<JSGlobalProxy>(this)->target()->makePropertiesImmutable(vm, transitionKind);
     if (!canMakePropertiesImmutable(this))
         return false;
+    if (structure()->inheritorsMayOverrideReadOnlyProperties())
+        transitionKind = TransitionKind::FixAndMakePropertiesImmutable;
     // The global object keeps top-level `var` and function declarations in its symbol table, and compiled code writes those slots
     // directly, past every property check. Make each one read-only and fire the watchpoint that makes such code look again: the
     // same two steps JSGlobalObject::defineOwnProperty takes when a script freezes the global.
@@ -3282,7 +3303,7 @@ bool JSObject::makePropertiesImmutable(VM& vm)
     Structure* oldStructure = oldStructureID.decode();
     // Deferred, so adaptive watchpoints on this object see the new structure and re-install instead of firing their sets.
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    Structure* newStructure = Structure::makePropertiesImmutableTransition(vm, oldStructure, &deferred);
+    Structure* newStructure = Structure::nonPropertyTransition(vm, oldStructure, transitionKind, &deferred);
     RELEASE_ASSERT(isCopyOnWrite(newStructure->indexingMode()) == (copyOnWriteButterfly || isCopyOnWrite(oldStructure->indexingMode())));
     if (copyOnWriteButterfly)
         nukeStructureAndSetButterfly(vm, oldStructureID, copyOnWriteButterfly->toButterfly());
@@ -4583,7 +4604,7 @@ void JSObject::convertToUncacheableDictionary(VM& vm)
         return;
     DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, oldStructure);
     setStructure(vm, Structure::toUncacheableDictionaryTransition(vm, oldStructure, &deferredWatchpointFire));
-    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+    if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
 
@@ -4794,7 +4815,7 @@ bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
         // We fall through to the generic case and consume the rest of put operations if batching stopped in the middle.
         i = offsets.size();
 
-        if (isPrototypeUsedByMegamorphicCache())
+        if (mayBePrototype())
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     }
 

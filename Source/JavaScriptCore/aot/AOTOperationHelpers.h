@@ -15,6 +15,11 @@
 namespace JSC { namespace AOT {
 
 ALWAYS_INLINE FunctionRef caller(Instance* instance, CallFrame* callFrame) { return FunctionRef::at(instance, removeCodePtrTag(callFrame->rawReturnPC())); }
+ALWAYS_INLINE CallFrame* frameOfSite(Instance* instance, CallFrame* callFrame)
+{
+    FunctionRef function = caller(instance, callFrame);
+    return function.info().isTyped && typedFunctionStandsForNoFunction(function.info().typedFunction()) ? callFrame->callerFrame() : callFrame;
+}
 ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame)
 {
     FunctionRef function = caller(instance, callFrame);
@@ -43,7 +48,7 @@ struct NamedAccess {
     ASCIILiteral className;
 };
 
-inline NamedAccess classifyNamedAccess(VM& vm, JSValue base, JSValue key, UniquedStringImpl* name)
+inline NamedAccess classifyNamedAccess(JSValue base, JSValue key, UniquedStringImpl* name)
 {
     const char* keyKind = "key-is-constant";
     if (!name) {
@@ -75,7 +80,7 @@ inline NamedAccess classifyNamedAccess(VM& vm, JSValue base, JSValue key, Unique
             : structure->inlineSize() > namedSlots ? "receiver-has-properties-beyond-named-slots" : "receiver-is-all-in-named-slots";
         if (name) {
             unsigned attributes = 0;
-            PropertyOffset offset = structure->get(vm, name, attributes);
+            PropertyOffset offset = structure->getConcurrently(name, attributes);
             auto inSlot = [&] {
                 uint16_t id = structure->fieldIDInSlot(offset);
                 return !id ? "property-is-in-slot-not-known-yet" : id == Structure::noPropertyNameID ? "property-is-in-slot-marked-nameless" : id == Structure::ambiguousFieldID ? "property-is-in-slot-of-structure-that-records-nothing" : "property-has-id-in-slot";
@@ -89,7 +94,7 @@ inline NamedAccess classifyNamedAccess(VM& vm, JSValue base, JSValue key, Unique
                     if (holder->type() == ProxyObjectType || holderStructure->typeInfo().overridesGetOwnPropertySlot() || (holderStructure->typeInfo().hasStaticPropertyTable() && !holderStructure->staticPropertiesReified()))
                         return "property-may-be-on-prototype-that-cannot-be-asked";
                     unsigned holderAttributes = 0;
-                    if (holderStructure->get(vm, name, holderAttributes) == invalidOffset)
+                    if (holderStructure->getConcurrently(name, holderAttributes) == invalidOffset)
                         continue;
                     if (holderAttributes & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
                         return depth == 1 ? "property-is-inherited-accessor-at-depth-1" : depth == 2 ? "property-is-inherited-accessor-at-depth-2" : "property-is-inherited-accessor-deeper";
@@ -105,16 +110,20 @@ inline NamedAccess classifyNamedAccess(VM& vm, JSValue base, JSValue key, Unique
     return { keyKind, receiver, place, className };
 }
 
-inline void noteNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
+inline NEVER_INLINE void countNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name)
 {
-    if (!Options::useAOTOperationCounters()) [[likely]]
-        return;
     VM& vm = *instance->vm;
-    NamedAccess access = classifyNamedAccess(vm, base, key, name);
+    NamedAccess access = classifyNamedAccess(base, key, name);
     auto& table = runtimeTable(vm);
     for (const char* detail : { access.key, access.receiver, access.place })
         table.countOperation(operation, detail);
     table.noteGuest("named-access", makeString(StringView::fromLatin1(operation), ' ', StringView::fromLatin1(access.key), ' ', StringView::fromLatin1(access.receiver), access.className.isEmpty() ? ""_s : ":"_s, access.className, ' ', StringView::fromLatin1(access.place)), { });
+}
+
+ALWAYS_INLINE void noteNamedAccess(Instance* instance, const char* operation, JSValue base, JSValue key, UniquedStringImpl* name = nullptr)
+{
+    if (Options::useAOTOperationCounters()) [[unlikely]]
+        countNamedAccess(instance, operation, base, key, name);
 }
 
 ALWAYS_INLINE void countOperationBySlotState(Instance* instance, const char* name, const Slot* slot)
@@ -140,7 +149,11 @@ ALWAYS_INLINE void countOperationFor(Instance* instance, CallFrame* callFrame)
     static_assert(samplingInterval == 1u << 3);
     if (instance->operationSamplingState >> (32 - 3)) [[likely]]
         return;
+    if (Options::validateAOTTypedFacts()) [[unlikely]]
+        instance->validateKeyedTables();
     FunctionRef function = caller(instance, callFrame);
+    if (!function.instance->infos[function.index].stateNumber)
+        return;
     if (!function.instance->dataIfExists(function.index)) [[unlikely]]
         function.instance->countMisses(function.index, samplingInterval);
 }
@@ -160,7 +173,6 @@ ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const S
     VM& vm = *(instance)->vm; \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    ++(instance)->effectEpoch; \
     countOperationFor(instance, callFrame); \
     countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
@@ -172,7 +184,6 @@ ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const S
     VM& vm = *(instance)->vm; \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    ++(instance)->effectEpoch; \
     countMissAt(instance, callFrame, cache); \
     countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
@@ -184,7 +195,6 @@ ALWAYS_INLINE void countMissAt(Instance* instance, CallFrame* callFrame, const S
     VM& vm = *(instance)->vm; \
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm); \
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame); \
-    ++(instance)->effectEpoch; \
     countOperationNamed(instance, __func__); \
     auto scope = DECLARE_THROW_SCOPE(vm); \
     UNUSED_VARIABLE(scope)
@@ -194,6 +204,17 @@ ALWAYS_INLINE Data* callerData(Instance* instance, CallFrame* callFrame)
     FunctionRef function = caller(instance, callFrame);
     Data* data = function.instance->dataIfExists(function.index);
     return data ? data : function.instance->sharedData;
+}
+ALWAYS_INLINE Data* dataWithSlot(Instance* instance, CallFrame* callFrame, const Slot* slot)
+{
+    const void* returnAddress = removeCodePtrTag(callFrame->rawReturnPC());
+    if (auto& asked = instance->cachedAddressInfo(returnAddress); asked.address == returnAddress) [[likely]] {
+        Data* data = instance->dataIfExists(asked.function);
+        return data ? data : instance->sharedData;
+    }
+    if (Data* data = instance->dataWithSlot(slot, returnAddress))
+        return data;
+    return callerData(instance, callFrame);
 }
 ALWAYS_INLINE UnlinkedCodeBlock* callerCode(Instance* instance, CallFrame* callFrame) { return callerBytecodeOwner(instance, callFrame).ensureUnlinkedCodeBlock(); }
 
@@ -206,14 +227,6 @@ ALWAYS_INLINE void didFillSlot(VM&, Data* data)
         data->noteFilled();
 }
 ALWAYS_INLINE const Identifier& identifierAt(Instance* instance, CallFrame* callFrame, unsigned index) { UNUSED_PARAM(callFrame); return instance->program->identifierAsIdentifier(index); }
-ALWAYS_INLINE FunctionRef callerBytecodeOwner(Instance* instance, CallFrame* callFrame, uint32_t whose)
-{
-    FunctionRef function = caller(instance, callFrame);
-    if (!whose) [[likely]]
-        return function;
-    return { function.instance, function.info().function()->knownCallees()[whose - 1] };
-}
-
 template<typename CellType>
 ALWAYS_INLINE void prepareInlineAllocation(Instance* instance, Instance::InlineAllocation kind, Structure* structure)
 {

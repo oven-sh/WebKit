@@ -10,6 +10,7 @@
 
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 #include "ErrorInstance.h"
 #include "JSCInlines.h"
 
@@ -23,6 +24,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewError, JSCell*, (Instance* instance
     ErrorType errorType = static_cast<ErrorType>(type);
     constexpr bool useCurrentFrame = true;
     OPERATION_RETURN(scope, ErrorInstance::create(globalObject, globalObject->errorStructure(errorType), JSValue::decode(message), JSValue::decode(options), nullptr, TypeNothing, errorType, useCurrentFrame));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowNewError, void, (Instance* instance, uint32_t type, uint32_t message))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    ErrorType errorType = static_cast<ErrorType>(type);
+    constexpr bool useCurrentFrame = true;
+    auto* error = ErrorInstance::create(globalObject, globalObject->errorStructure(errorType), instance->typed->string(vm, message), jsUndefined(), nullptr, TypeNothing, errorType, useCurrentFrame);
+    OPERATION_RETURN_IF_EXCEPTION(scope);
+    throwException(globalObject, scope, error);
+    OPERATION_RETURN(scope);
 }
 
 namespace Typed {
@@ -70,12 +82,45 @@ std::optional<Operand> Lowering::lowerInlineErrorJSONGlobal(InlineBuiltin which,
     Type errorClass = Type::engineClass(m_builtins.classes()[m_builtins.at(value.builtin()).result.engineClass]);
     // A frame that stacks leave out is listed where it is at the very top. Under the frame of the engine's function it is not.
     uint32_t inlineFrame = m_function.at(result).inlineFrame;
-    if (m_program.isHiddenInStackTraces(inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function))
+    auto& maker = inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function;
+    if (m_program.isHiddenInStackTraces(maker) && !m_program.standsForBuiltin(maker))
         return ensure(asCell(callBuiltinFunction(value, effects)), errorClass, typeOf(result));
+    if (isErrorThrownWhereMade(*m_currentBlock, result) && isFetchedWhereNeeded(arguments[0])) {
+        m_isFetchedLate.set(result.index());
+        return Operand(value.rep, nullptr);
+    }
     auto argument = [&](unsigned i) {
         return i < arguments.size() ? in<Boxed>(arguments[i]) : undefined();
     };
     return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(NewError, effects, word32(static_cast<int32_t>(errorTypeOf(which))), argument(0), argument(1)), errorClass, typeOf(result));
+}
+
+bool Lowering::isErrorThrownWhereMade(const Block& block, ValueID id)
+{
+    auto& value = m_function.at(id);
+    if (value.opcode != Opcode::CallBuiltin || block.terminator.kind != TerminatorKind::Throw || !block.terminator.targets.isEmpty() || block.terminator.value != id || block.values.last() != id || numberOfUsesOf(id) != 1)
+        return false;
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline || familyOf(implementation.inlined) != BuiltinFamily::ErrorJSONGlobal)
+        return false;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
+        return false;
+    auto& maker = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+    if (m_program.isHiddenInStackTraces(maker) && !m_program.standsForBuiltin(maker))
+        return false;
+    return value.arguments.size() == 1 && m_function.at(value.arguments[0]).opcode == Opcode::String;
+}
+
+void Lowering::throwNewError(const Value& error)
+{
+    RELEASE_ASSERT(error.opcode == Opcode::CallBuiltin);
+    ErrorType type = errorTypeOf(m_builtins.at(error.builtin()).implementation.inlined);
+    static const bool isThrowSite = getenv("AOT_SWITCH_THROW_NEW_ERROR");
+    if (isThrowSite) {
+        throwAt(ThrowKind::TypeMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
+        return;
+    }
+    AOT_TYPED_OPERATION(ThrowNewError, word32(static_cast<int32_t>(type)), word32(m_function.at(error.arguments[0]).string().index()));
 }
 
 } } } // namespace JSC::AOT::Typed

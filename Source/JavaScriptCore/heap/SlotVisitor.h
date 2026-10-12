@@ -159,6 +159,10 @@ public:
     // This informs the GC about auxiliary of some size that we are keeping alive. If you don't do
     // this then the space will be freed at end of GC.
     void markAuxiliary(const void* base) final;
+#if ENABLE(AOT)
+    bool markLeafCell(JSCell*);
+    void reportExtraMemoryVisitedOfLeafCell(size_t);
+#endif
 
     void reportExtraMemoryVisited(size_t) final;
 #if ENABLE(RESOURCE_USAGE)

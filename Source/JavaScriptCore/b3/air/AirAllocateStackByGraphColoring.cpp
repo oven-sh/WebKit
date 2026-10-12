@@ -584,6 +584,10 @@ private:
         // StackSlot we just want to find the offsetFromFP that is least negative while ensuring no
         // overlap with other StackSlots that this overlaps with.
         Vector<StackSlot*> otherSlots;
+#if USE(BUN_JSC_ADDITIONS)
+        constexpr size_t bytesPerWord = 8;
+        Vector<unsigned> markOfWord;
+#endif
         for (StackSlot* slot : m_code.stackSlots()) {
             if (isRemappedSlotIndex(slot->index()))
                 continue;
@@ -592,6 +596,36 @@ private:
                 // Already assigned an offset.
                 continue;
             }
+
+#if USE(BUN_JSC_ADDITIONS)
+            if (!(slot->byteSize() % bytesPerWord) && slot->alignment() == bytesPerWord) {
+                unsigned mark = slot->index() + 1;
+                auto markWordsOf = [&](StackSlot* otherSlot) {
+                    size_t below = -otherSlot->offsetFromFP();
+                    size_t first = (below - otherSlot->byteSize()) / bytesPerWord;
+                    size_t last = (below - 1) / bytesPerWord;
+                    while (markOfWord.size() <= last)
+                        markOfWord.append(0);
+                    for (size_t word = first; word <= last; ++word)
+                        markOfWord[word] = mark;
+                };
+                for (StackSlot* otherSlot : assignedEscapedStackSlots)
+                    markWordsOf(otherSlot);
+                for (unsigned otherSlotIndex : m_interference[slot->index()]) {
+                    if (isRemappedSlotIndex(otherSlotIndex))
+                        continue;
+                    StackSlot* otherSlot = m_code.stackSlots()[otherSlotIndex];
+                    if (otherSlot->offsetFromFP())
+                        markWordsOf(otherSlot);
+                }
+                size_t wordsNeeded = slot->byteSize() / bytesPerWord;
+                size_t end = 0;
+                for (size_t wordsFound = 0; wordsFound < wordsNeeded; ++end)
+                    wordsFound = end < markOfWord.size() && markOfWord[end] == mark ? 0 : wordsFound + 1;
+                slot->setOffsetFromFP(-static_cast<intptr_t>(end * bytesPerWord));
+                continue;
+            }
+#endif
 
             otherSlots.shrink(0);
             otherSlots.appendVector(assignedEscapedStackSlots);

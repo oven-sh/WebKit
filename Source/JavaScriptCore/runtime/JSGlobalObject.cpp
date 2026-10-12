@@ -2873,6 +2873,13 @@ void JSGlobalObject::fireWatchpointAndMakeAllArrayStructuresSlowPut(VM& vm)
     if (isHavingABadTime())
         return;
 
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm.m_aotInstances) {
+        if (instance->globalObject == this)
+            instance->didHaveBadTime();
+    }
+#endif
+
     // This must happen first, because the compiler thread may race with haveABadTime.
     // Let R_BT, W_BT <- Read/Fire the watchpoint, R_SC, W_SC <- Read/clear the structure cache.
     // The possible interleavings are:
@@ -2925,13 +2932,6 @@ void JSGlobalObject::haveABadTime(VM& vm)
 
     if (isHavingABadTime())
         return;
-
-#if ENABLE(AOT)
-    for (AOT::Instance* instance : vm.m_aotInstances) {
-        if (instance->globalObject == this)
-            instance->didHaveBadTime();
-    }
-#endif
 
     DeferGC deferGC(vm);
 
@@ -4007,6 +4007,9 @@ FFI::FFIContext& JSGlobalObject::ffiContext()
 void JSGlobalObject::setMicrotaskQueue(Ref<MicrotaskQueue>&& queue)
 {
     m_microtaskQueue = WTF::move(queue);
+#if ENABLE(AOT)
+    AOT::microtaskQueueingDidChange(vm());
+#endif
 }
 
 void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPromise* promise, JSPromiseRejectionOperation operation)

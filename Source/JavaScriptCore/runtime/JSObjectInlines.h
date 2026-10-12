@@ -409,7 +409,7 @@ ALWAYS_INLINE PropertyOffset JSObject::prepareToPutDirectWithoutTransition(VM& v
             ASSERT(!getDirect(offset) || !JSValue::encode(getDirect(offset)));
             result = offset;
         });
-    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+    if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return result;
 }
@@ -632,7 +632,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             if ((mode == PutModeDefineOwnProperty) && (newAttributes != attributes || (newAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))) {
                 DeferredStructureTransitionWatchpointFire deferred(vm, structure);
                 setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferred));
-                if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+                if (mayBePrototype()) [[unlikely]]
                     vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
             } else if (isTypedField) {
                 if (packedFieldType)
@@ -654,7 +654,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             slot.setNewProperty(this, offset);
         if (attributes & PropertyAttribute::ReadOnly)
             this->structure()->setContainsReadOnlyProperties();
-        if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+        if (mayBePrototype()) [[unlikely]]
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
         return { };
     }
@@ -686,7 +686,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
                 slot.setNewTypedField(this, offset, packedFieldType);
             else
                 slot.setNewProperty(this, offset);
-            if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+            if (mayBePrototype()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
             return { };
         }
@@ -725,7 +725,7 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
             // This allows adaptive watchpoints to observe if the new structure is the one we want.
             DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
             setStructure(vm, Structure::attributeChangeTransition(vm, structure, propertyName, newAttributes, &deferredWatchpointFire));
-            if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+            if (mayBePrototype()) [[unlikely]]
                 vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
         } else if (isTypedField) {
             if (packedFieldType)
@@ -743,6 +743,11 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
 #if USE(BUN_JSC_ADDITIONS)
     if (structure->hasImmutableShape()) [[unlikely]] {
 #if ENABLE(AOT)
+        if (reifyIfSlimClosure(vm)) {
+            ASCIILiteral error = putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
+            slot.disableCaching();
+            return error;
+        }
         if constexpr (mode == PutModeDefineOwnProperty)
             return putDirectToCompiledObject(vm, propertyName, value, newAttributes);
 #endif
@@ -761,14 +766,6 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
     }
 
-#if ENABLE(AOT)
-    if ((mode == PutModePut || newAttributes || structure->growsAlone()) && structure->shouldConvertFirstObjectToDictionaryForAdd(vm)) [[unlikely]] {
-        convertToDictionary(vm);
-        // Nobody can follow it from here.
-        this->structure()->setGrowsAlone(true);
-        return putDirectInternal<mode>(vm, propertyName, value, newAttributes, slot);
-    }
-#endif
     
     // We want the structure transition watchpoint to fire after this object has switched structure.
     // This allows adaptive watchpoints to observe if the new structure is the one we want.
@@ -800,14 +797,9 @@ ALWAYS_INLINE ASCIILiteral JSObject::putDirectInternal(VM& vm, PropertyName prop
         slot.setNewProperty(this, offset);
     if (newAttributes & PropertyAttribute::ReadOnly)
         newStructure->setContainsReadOnlyProperties();
-    if (isPrototypeUsedByMegamorphicCache()) [[unlikely]]
+    if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     return { };
-}
-
-inline bool JSObject::isPrototypeUsedByMegamorphicCache() const
-{
-    return mayBePrototype() && perCellBit();
 }
 
 inline bool JSObject::mayBePrototype() const
@@ -949,10 +941,25 @@ inline bool JSObject::putOwnDataPropertyMayBeIndex(JSGlobalObject* globalObject,
     return putDirectInternal<PutModePut>(vm, propertyName, value, 0, slot).isNull();
 }
 
+#if ENABLE(AOT)
+ALWAYS_INLINE CallData slimClosureCallData(JSCell* cell)
+{
+    CallData callData;
+    callData.type = CallData::Type::JS;
+    callData.js.functionExecutable = nullptr;
+    callData.js.scope = std::bit_cast<JSScope*>(cell->structure()->realm());
+    return callData;
+}
+#endif
+
 ALWAYS_INLINE CallData getCallData(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallData(cell);
+#if ENABLE(AOT)
+    if (isSlimClosureType(cell->type()))
+        return slimClosureCallData(cell);
+#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -969,6 +976,10 @@ ALWAYS_INLINE CallData getCallDataInline(JSCell* cell)
 {
     if (cell->type() == JSFunctionType)
         return JSFunction::getCallDataInline(cell);
+#if ENABLE(AOT)
+    if (isSlimClosureType(cell->type()))
+        return slimClosureCallData(cell);
+#endif
     CallData result = cell->methodTable()->getCallData(cell);
     ASSERT(result.type == CallData::Type::None || cell->isValidCallee());
     return result;
@@ -1204,6 +1215,10 @@ inline void JSObject::setPrivateBrand(JSGlobalObject* globalObject, JSValue bran
 
 #if USE(BUN_JSC_ADDITIONS)
     if (structure->hasImmutableShape()) [[unlikely]] {
+#if ENABLE(AOT)
+        if (reifyIfSlimClosure(vm))
+            RELEASE_AND_RETURN(scope, setPrivateBrand(globalObject, brand));
+#endif
         throwTypeError(globalObject, scope, ImmutableShapeError);
         return;
     }

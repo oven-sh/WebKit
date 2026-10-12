@@ -22,7 +22,7 @@ namespace JSC { namespace AOT {
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedNumberToStringWithRadix, JSCell*, (Instance* instance, double value, int32_t radix))
 {
     VM& vm = *instance->vm;
-    if (int32_t integer = static_cast<int32_t>(value); integer == value)
+    if (int32_t integer = truncateDoubleToInt32(value); integer == value)
         return int32ToString(vm, integer, radix);
     return numberToString(vm, value, radix);
 }
@@ -243,9 +243,6 @@ std::optional<Word32> Lowering::compareWithIntegerConstant(const Value& value)
 
 void Lowering::findNumbersJoinedWithIntegers(const Vector<BlockID>& order)
 {
-    // A handler is passed its parameters through memory.
-    if (!m_catchEntrypoints.isEmpty())
-        return;
     UncheckedKeyHashMap<uint32_t, Vector<ValueID, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> passedTo;
     for (auto& block : m_function.blocks) {
         for (auto& target : block.terminator.targets) {
@@ -287,9 +284,6 @@ void Lowering::findNumbersJoinedWithIntegers(const Vector<BlockID>& order)
 
 void Lowering::findNumbersJoinedWithInt32(const Vector<BlockID>& order)
 {
-    // A handler is passed its parameters through memory.
-    if (!m_catchEntrypoints.isEmpty())
-        return;
     auto note = [&](ValueID operand) {
         if (m_function.at(operand).opcode == Opcode::Parameter && m_function.at(operand).rep == Rep::Double)
             m_hasInt32Phi.set(operand.index());
@@ -410,7 +404,10 @@ Number Lowering::minOrMaxOfElements(bool isMax, CellPointer array, Pointer butte
 
 std::optional<Number> Lowering::powerWithConstantExponent(Number base, ValueID exponent)
 {
-    auto& constant = m_function.at(originOf(exponent));
+    ValueID constantID = m_program.constantOf(m_function, exponent);
+    if (!constantID)
+        return std::nullopt;
+    auto& constant = m_function.at(constantID);
     double y;
     if (constant.opcode == Opcode::Integer)
         y = static_cast<double>(constant.integer());
@@ -463,7 +460,7 @@ Integer Lowering::divide(Integer x, Range dividends, Integer y, Range divisors)
 // Math.floor, ceil, trunc or round of x / y. The double nearest to x / y is on the same side of every integer as x / y itself up to 2^53, and of every integer and a half up to 2^51.
 std::optional<Integer> Lowering::roundedQuotient(InlineBuiltin which, ValueID argument, bool yieldsInteger)
 {
-    auto& quotient = m_function.at(originOf(argument));
+    auto& quotient = m_function.at(m_program.originOf(m_function, argument));
     if (quotient.opcode != Opcode::Div)
         return std::nullopt;
     int64_t limit = which == InlineBuiltin::MathRound ? maxExactInteger >> 2 : maxExactInteger;
@@ -667,7 +664,7 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         auto& receiver = typeOf(value.child(0));
         auto yield = [&](CellPointer string) {
             // What the table says is a string is neither `undefined` nor `null`, whatever the type of the value admits. Not where this is one arm of a test on what is expected.
-            if (&value == &m_function.at(result))
+            if (isOnTrunk())
                 m_passedNilTestIn.add(result.index(), Vector<BlockID, 1> { }).iterator->value.append(m_currentBlockID);
             return ensure(string, stringType, type);
         };

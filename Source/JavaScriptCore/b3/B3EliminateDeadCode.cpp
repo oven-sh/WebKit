@@ -44,7 +44,27 @@ namespace JSC { namespace B3 {
 bool eliminateDeadCodeImpl(Procedure& proc)
 {
     bool changed = false;
+#if USE(BUN_JSC_ADDITIONS)
+    struct {
+        bool push(Value* value)
+        {
+            uint8_t& byte = seen[value->index()];
+            if (byte)
+                return false;
+            byte = 1;
+            stack.append(value);
+            return true;
+        }
+        Value* pop() { return stack.isEmpty() ? nullptr : stack.takeLast(); }
+        bool saw(Value* value) const { return seen[value->index()]; }
+
+        Vector<uint8_t, 1024> seen;
+        Vector<Value*, 256> stack;
+    } worklist;
+    worklist.seen.fill(0, proc.values().size());
+#else
     GraphNodeWorklist<Value*, IndexSet<Value*>> worklist;
+#endif
     Vector<UpsilonValue*, 128> upsilons;
     for (BasicBlock* block : proc) {
         for (Value* value : *block) {

@@ -36,8 +36,11 @@ Vector<String> optimize(Program&);
 
 // The strings by their text, the layout of closures.
 void prepare(Program&);
+void expandDisposableStacks(Program&);
 // Splits each async function and generator into a ramp and a resume function with a coroutine frame.
 void splitCoroutines(Program&);
+BitVector blocksInLoops(const Function&);
+bool mayLeaveConstructionToBody(const Program&, FunctionID, const Function&, const Value&);
 // For every function that is used as a value, every method and every constructor of a class: what someone calls who does not know the
 // function. It holds the arguments to the types of the parameters (Cast: As where the type is written down, else Store) and calls the function.
 void createGenericEntrypoints(Program&);
@@ -66,9 +69,13 @@ Vector<uint8_t> encodeData(const Program&);
 // Every operand is of the type its operation needs, every argument of the type of the parameter, every value stored of the type of the
 // place. Appends what is not.
 void verify(const Program&, FunctionID, const Function&, Vector<String>& findings);
+void verifyRegExpLiterals(const Program&, Vector<String>& findings);
 void cleanUp(const Program&, Function&);
+void cleanUpIfAnythingFolds(const Program&, Function&);
+bool threadOwnKeysOfForIn(const Program&, Function&);
 // Behind all passes on the function, once: the birth that a wrapper (Function::worker) has brought along and that is still there goes from the block where the ways out of the worker meet into each of them.
 void moveBirthsIntoArms(const Program&, Function&);
+void removeTrivialParameters(const Program&, Function&);
 // AssertNotAllocated: at that point of the program the operand is no allocated object. It is no use of the operand: a pass that does away with the allocation on the ways that lead
 // there takes the assertion out. Under Options::useDollarVM() a call of `function assertNotAllocated(_: unknown): void {}` is one. What is left of them in a function that has code is a finding.
 void convertAllocationAssertions(Program&, Vector<String>& findings);
@@ -78,17 +85,47 @@ void noteAllocation(const Program&, Function&, const Value& site, AllocationOutc
 void noteAllocationSites(const Program&, Function&);
 void concludeAllocationNotes(const Program&, Function&);
 void printAllocationRemarks(const Program&, PrintStream&);
+
+static constexpr unsigned stringBuilderCapacity = 128;
+static constexpr unsigned maxStringBuilderAppendRun = 64;
+static constexpr size_t maxStringBuilderInlineConstantLength = 16;
+
+struct StringBuilderAnalysis {
+    static constexpr uint32_t invalidBuilder = UINT32_MAX;
+    using Operands = Vector<ValueID, 8>;
+
+    bool isState(ValueID id) const { return id.index() < builderForValue.size() && builderForValue[id.index()] != invalidBuilder; }
+
+    Vector<uint32_t> builderForValue;
+    BitVector isFinalState;
+    UncheckedKeyHashMap<uint32_t, Operands, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> appendOperands;
+    BitVector isFoldedIntoAppend;
+    BitVector mayBeEmpty;
+    UncheckedKeyHashMap<uint32_t, StringID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> initialText;
+    unsigned builderCount { 0 };
+    Vector<std::pair<ValueID, ASCIILiteral>> rejections;
+};
+StringBuilderAnalysis analyzeStringBuilders(const Program&, FunctionID, const Function&);
+void dumpStringBuilderRemarks(const Program&, PrintStream&);
+BitVector computeMapKeyValues(const Program&, FunctionID, const Function&);
+void computeFunctionsReturningMapKeys(Program&);
 void findEnvironmentsInFrames(Program&);
 // `===` or `==` of two constants: nil, booleans, numbers, strings. Nothing: one is no constant, or it is not told here.
 std::optional<bool> areEqualConstants(const Program&, const Value&, const Value&, bool isStrict);
 // Part of cleanUp(): a read of a field or a variable that repeats one whose outcome still holds becomes an Upcast of that one. Yields whether there was one.
 bool eliminateRedundantReads(const Program&, Function&);
+enum class AllocationSinkingPolicy : uint8_t { EliminateOnly, AllowMaterialization };
+bool sinkObjectAllocations(const Program&, Function&, AllocationSinkingPolicy);
+BlockID splitEdge(Function&, BlockID from, unsigned targetIndex);
 // A call of a method, an accessor or a constructor through a view becomes a call of the function, or a choice among the functions by
 // shape. So does an access to a static method or accessor on the class object of a class that is evaluated once, and one through `super`
 // in such a class. Yields how much it changed.
 unsigned resolveCalls(const Program&, Function&, bool mayGuess);
 // By size. Yields how much it changed.
 unsigned inlineCalls(const Program&, FunctionID, Function&);
+void internNamesForGeneratorLoopFusion(Program&);
+unsigned fuseGeneratorLoops(const Program&, Function&);
+void prepareForInlining(Program&);
 // A cast whose operand is of the type goes. An object that is made, stored to and then cast to a specialization of its layout before
 // anyone has seen it is made with that. Yields how much it changed.
 unsigned simplifyCasts(const Program&, Function&);
@@ -101,6 +138,7 @@ unsigned resolvePreludeCalls(const Program&, Function&);
 unsigned speculateOnReceivers(const Program&, Function&);
 // What comes down to one entry of the table of built-ins says so from here on.
 void resolveBuiltins(const Program&, Function&);
+void sinkEmptyArrayLiterals(Function&);
 // `$call(f, thisValue, ..)` of the prelude, an Operation, becomes a Call.
 void convertCallIntrinsicToCall(Value&);
 
@@ -124,6 +162,7 @@ std::optional<FieldAccess> fieldOf(const Program&, const Type& receiver, StringI
 // Whether an object of a member of the view that has no own property of the name may inherit one, whether or not its layout has a field of
 // the name. Then a read, `in` and [[Set]] ask the prototype chain where the field is absent.
 bool mayInherit(const Program&, LayoutID view, StringID name);
+bool onlyExtraPropertiesSupply(const Program&, LayoutID view, StringID name);
 // The part of that which holds of every such object: the prototype that its layout says may supply the name. For the rest, a member with
 // Layout::mayHaveOtherPrototype, the object says whether to ask: orderWordHasExtraProperties, see Typed::Object::noteWhetherToAsk().
 bool inheritsByItsLayout(const Program&, LayoutID view, StringID name);
@@ -184,6 +223,7 @@ Writes writesOf(const Program&, const Function&, const Block&, size_t index);
 std::optional<LanguageOperation> languageOperationOf(const Program&, const Value&);
 // The names that are seen to be stored to the object or defined on it, and how many stores there are under symbols: in the function, and in those it calls by name with the object for `this` or for an argument, `depth` calls deep.
 void collectPropertiesGivenTo(const Program&, const Function&, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys);
+bool collectPropertiesGivenToThis(const Program&, FunctionID, Vector<StringID, 16>& names, unsigned& numberOfKeys);
 // What carrying out a Cast may change, from the effect summaries on. A test changes nothing, and where it fails and that is the end
 // nothing is changed either. As and Coerce go on: a plain object is copied (RuntimeState), and where Coerce converts an object to a
 // primitive its methods run (Heap). No cast walks a container.
@@ -200,6 +240,7 @@ bool narrowingMayRetag(const Program&, const Type&);
 bool castWritesShapeWords(const Program&, const Function&, const Value&);
 // Of a CallBuiltin: whether it tests that the receiver has its original structure, and is carried out by name where it has not.
 bool hasGenericFallback(const Program&, const Function&, const Value&);
+static constexpr size_t maxLengthOfTextComparedInPlace = 32;
 // What carrying out a CallBuiltin may change.
 Writes writesOfBuiltinCall(const Program&, const Function&, const Value&);
 // The same without the generic fallback.
@@ -241,6 +282,7 @@ BuiltinID applicableEntry(BuiltinID first, std::span<const Type> arguments);
 
 // How a function hands back what it yields. Void: that is only ever `undefined`.
 Rep resultRepOf(const Program&, FunctionID);
+uint8_t kindByteOf(const Program&, const Function&);
 
 // A function in parts, for the back end alone. The entry part has what the entry reaches without a call that needs a frame. Where it would
 // go on to such a call it jumps to a continuation, which takes what is live and never comes back. Values and blocks keep their numbers.
@@ -250,6 +292,10 @@ struct SplitFunction {
 };
 // False: it stays whole.
 bool splitFunction(const Program&, FunctionID, const Function&, const BitVector& blocksThatEmitCalls, SplitFunction&);
+Vector<size_t, 6> fieldsMadeWithAllocation(const Program&, const Function&, const Block&, size_t allocation, bool isCreateThis, bool hasNullPrototype);
+bool isBornByItsRow(const Program&, const Function&, const Block&, size_t allocation);
+void numberRowsOfBirths(Program&);
+uint32_t maxSlotsOfFunction();
 
 ImageKey keyOf(FunctionID);
 ImageKey keyOfContinuation(FunctionID, unsigned index);

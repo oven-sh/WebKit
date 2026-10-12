@@ -67,6 +67,9 @@ public:
     static GCClient::IsoSubspace* subspaceFor(VM&); // Defined in RegExpInlines.h
 
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    static RegExp* tryCreateFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>);
+#endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
     static void destroy(JSCell*);
@@ -77,6 +80,12 @@ public:
 
     static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(RegExp, m_flags); }
     static constexpr ptrdiff_t offsetOfMinimumSize() { return OBJECT_OFFSETOF(RegExp, m_minimumSize); }
+    static constexpr ptrdiff_t offsetOfState() { return OBJECT_OFFSETOF(RegExp, m_state); }
+    static constexpr uint8_t stateWithJITCode() { return JITCode; }
+    static constexpr ptrdiff_t offsetOfOvector() { return OBJECT_OFFSETOF(RegExp, m_ovector); }
+#if ENABLE(YARR_JIT)
+    static constexpr ptrdiff_t offsetOfRegExpJITCode() { return OBJECT_OFFSETOF(RegExp, m_regExpJITCode); }
+#endif
     static constexpr uint16_t globalOrStickyFlagsMask = OptionSet<Yarr::Flags> { Yarr::Flags::Global, Yarr::Flags::Sticky }.toRaw();
 
     OptionSet<Yarr::Flags> flags() const { return m_flags; }
@@ -96,9 +105,6 @@ public:
     {
         m_state = NotCompiled;
         m_minimumSize = 0;
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-        m_codeOfImage = { };
-#endif
         m_constructionErrorCode = Yarr::ErrorCode::NoError;
     }
 
@@ -195,6 +201,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
     RegExpKey key() { return RegExpKey(m_flags, m_patternString); }
 
     String escapedPattern() const;
+    static bool sourceIsPattern(const String& pattern);
 
     String toSourceString() const;
 
@@ -257,8 +264,9 @@ private:
     void compileMatchOnly(VM*, Yarr::CharSize, std::optional<StringView> sampleString);
     void compileIfNecessaryMatchOnly(VM&, Yarr::CharSize, std::optional<StringView> sampleString);
 
-    static constexpr uint16_t workBeforeJIT = 256;
+    static constexpr unsigned maxPatternLengthForJITAfterInterpreter = 65536;
     static constexpr uint16_t jitWasConsidered = std::numeric_limits<uint16_t>::max();
+    uint16_t workBeforeJIT() const { return 256 + std::min(m_patternString.length(), maxPatternLengthForJITAfterInterpreter) / 64; }
     bool startsInterpreted(std::optional<StringView> subject) const;
     void noteWorkInInterpreter(unsigned subjectLength);
 
@@ -291,22 +299,19 @@ private:
     String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    Yarr::SpecificPattern m_specificPattern : 7 { Yarr::SpecificPattern::None };
+    bool m_sourceIsPattern : 1 { false };
+#else
     Yarr::SpecificPattern m_specificPattern { Yarr::SpecificPattern::None };
+#endif
     OptionSet<Yarr::Flags> m_flags;
     Yarr::ErrorCode m_constructionErrorCode { Yarr::ErrorCode::NoError };
     uint8_t m_lastUseEpoch { 0 }; // The low bits of the heap's marking version (one per full collection) at the last match.
     uint16_t m_workInInterpreter { 0 };
     unsigned m_numSubpatterns { 0 };
     unsigned m_minimumSize { 0 };
-#if ENABLE(AOT) && ENABLE(YARR_JIT)
-    // For 8-bit and for 16-bit subjects, with subpatterns: what m_regExpJITCode has from the image, while it has it, of an expression that is served by code. See matchInlineOnce().
-    std::array<const void*, 2> m_codeOfImage { };
-#endif
     std::unique_ptr<Yarr::BytecodePattern> m_regExpBytecode;
-#if USE(BUN_JSC_ADDITIONS)
-    // Of a long pattern, from its creation to its first match, so that it is parsed once.
-    std::unique_ptr<Yarr::YarrPattern> m_patternFromCreation;
-#endif
 #if ENABLE(YARR_JIT)
     std::unique_ptr<Yarr::YarrCodeBlock> m_regExpJITCode;
 #endif

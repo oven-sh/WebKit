@@ -20,6 +20,7 @@ inline ArrayToString exact
 inline ArrayConcat exact
 inline ArrayShift exact
 inline ArrayEntries
+inline ArrayFrom
 
 runtime ArraySplice : Heap EncodedJSValue (JSCell* array, int32_t start, int32_t deleteCount, uint32_t count, const EncodedJSValue* items, uint32_t isUsed)
 runtime ArrayGrow : Heap size_t (JSCell* array, uint32_t length) noexcept
@@ -27,6 +28,7 @@ runtime AllocateStorage : RuntimeState void* (uint64_t size) noexcept
 runtime ArrayUnshift : Heap EncodedJSValue (JSCell* array, EncodedJSValue item)
 runtime ArrayJoin : RuntimeState JSCell* (JSCell* array, JSCell* separator)
 runtime NewEntriesOfArray : RuntimeState JSCell* (JSCell* array)
+runtime ArrayFromTypedArray : RuntimeState JSCell* (JSCell* view, uint32_t indexingType)
 runtime ArrayIndexOfDouble : Nothing size_t (JSCell* array, double searched) noexcept
 runtime ArrayIndexOfInt32 : Nothing size_t (JSCell* array, EncodedJSValue searched) noexcept
 runtime NewArrayBuffer : RuntimeState JSCell* (uint32_t offset, uint32_t count, const EncodedJSValue* values, uint32_t indexingType)

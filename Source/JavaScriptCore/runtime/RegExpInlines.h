@@ -86,7 +86,7 @@ ALWAYS_INLINE bool RegExp::hasCodeFor(Yarr::CharSize charSize)
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return m_workInInterpreter != workBeforeJIT;
+            return m_workInInterpreter != workBeforeJIT();
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCode()))
             return true;
@@ -116,9 +116,10 @@ ALWAYS_INLINE void RegExp::noteUse(VM& vm)
 
 ALWAYS_INLINE void RegExp::noteWorkInInterpreter(unsigned subjectLength)
 {
-    if (m_workInInterpreter >= workBeforeJIT)
+    unsigned limit = workBeforeJIT();
+    if (m_workInInterpreter >= limit || m_patternString.length() > maxPatternLengthForJITAfterInterpreter)
         return;
-    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + subjectLength / 32, workBeforeJIT);
+    m_workInInterpreter = std::min<unsigned>(m_workInInterpreter + 1 + subjectLength / 32, limit);
 }
 
 ALWAYS_INLINE void RegExp::compileIfNecessary(VM& vm, Yarr::CharSize charSize, std::optional<StringView> sampleString)
@@ -169,18 +170,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
         return -1;
 
     noteUse<matchFrom>(vm);
-#if ENABLE(AOT) && ENABLE(YARR_JIT) && !CPU(ARM64E)
-    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (const void* code = m_codeOfImage[!s.is8Bit()]) [[likely]] {
-            Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-            MatchResult found = s.is8Bit()
-                ? MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const Latin1Character*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span8().data(), startOffset, s.length(), ovector.data(), &regExpContext))
-                : MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const char16_t*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span16().data(), startOffset, s.length(), ovector.data(), &regExpContext));
-            if (found.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure)) [[likely]]
-                return static_cast<int>(found.start);
-        }
-    }
-#endif
     compileIfNecessary(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {
@@ -301,7 +290,7 @@ ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
     if (hasCode()) {
 #if ENABLE(YARR_JIT)
         if (m_state != JITCode)
-            return m_workInInterpreter != workBeforeJIT;
+            return m_workInInterpreter != workBeforeJIT();
         ASSERT(m_regExpJITCode);
         if ((charSize == Yarr::CharSize::Char8) && (m_regExpJITCode->has8BitCodeMatchOnly()))
             return true;
@@ -362,19 +351,6 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         return MatchResult::failed();
 
     noteUse<matchFrom>(vm);
-#if ENABLE(AOT) && ENABLE(YARR_JIT) && !CPU(ARM64E)
-    if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (const void* code = m_codeOfImage[!s.is8Bit()]; code && m_ovector.size() <= 32) [[likely]] {
-            std::array<int, 32> output;
-            Yarr::MatchingContextHolder regExpContext(vm, this, matchFrom);
-            MatchResult found = s.is8Bit()
-                ? MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const Latin1Character*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span8().data(), startOffset, s.length(), output.data(), &regExpContext))
-                : MatchResult(reinterpret_cast<UGPRPair SYSV_ABI (*)(const char16_t*, UCPURegister, UCPURegister, int*, Yarr::MatchingContextHolder*)>(const_cast<void*>(code))(s.span16().data(), startOffset, s.length(), output.data(), &regExpContext));
-            if (found.start != static_cast<size_t>(Yarr::JSRegExpResult::JITCodeFailure)) [[likely]]
-                return found;
-        }
-    }
-#endif
     compileIfNecessaryMatchOnly(vm, s.is8Bit() ? Yarr::CharSize::Char8 : Yarr::CharSize::Char16, s);
 
     auto throwError = [&] {

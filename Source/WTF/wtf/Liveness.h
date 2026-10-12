@@ -632,7 +632,11 @@ protected:
             worklist.append(blockIndex);
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        SparseBitVector<> delta;
+#else
         Vector<unsigned, 64> delta;
+#endif
         while (!worklist.isEmpty()) {
             unsigned blockIndex = worklist.takeLast();
             bool cleared = dirtyBlocks.quickClear(blockIndex);
@@ -641,11 +645,15 @@ protected:
             auto block = m_cfg.node(blockIndex);
             ASSERT(block);
 
+#if USE(BUN_JSC_ADDITIONS)
+            m_workset.copyFromSparse(sparseTail(blockIndex));
+#else
             m_workset.clear();
             sparseTail(blockIndex).forEachSetBit(
                 [&] (unsigned index) {
                     m_workset.add(index);
                 });
+#endif
             // The uses at the tail boundary are already in the tail set, so re-adding them here is a
             // no-op and needs no special case.
             Adapter::forEachActionGroupDescending(block,
@@ -654,6 +662,15 @@ protected:
                     Adapter::forEachDefInGroup(group, [&] (unsigned index) { m_workset.remove(index); });
                 });
 
+#if USE(BUN_JSC_ADDITIONS)
+            if (!sparseHead(blockIndex).merge(m_workset.sparse(), &delta))
+                continue;
+
+            for (auto predecessor : m_cfg.predecessors(block)) {
+                if (sparseTail(predecessor->index()).merge(delta) && !dirtyBlocks.quickSet(predecessor->index()))
+                    worklist.append(predecessor->index());
+            }
+#else
             auto& liveAtHead = sparseHead(blockIndex);
             delta.shrink(0);
             m_workset.sparse().forEachSetBit([&] (unsigned index) {
@@ -674,6 +691,7 @@ protected:
                 if (changed && !dirtyBlocks.quickSet(predecessor->index()))
                     worklist.append(predecessor->index());
             }
+#endif
         }
 
 #if ASSERT_ENABLED
@@ -716,11 +734,18 @@ private:
 
     void forEachInSparseDifference(const SparseBitVector<>& a, const SparseBitVector<>& b, NOESCAPE const Invocable<void(const Thing&)> auto& func)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        a.forEachSetBitNotIn(b,
+            [&](auto index) {
+                func(this->indexToValue(static_cast<unsigned>(index)));
+            });
+#else
         a.forEachSetBit(
             [&](auto index) {
                 if (!b.contains(index))
                     func(this->indexToValue(static_cast<unsigned>(index)));
             });
+#endif
     }
 
     size_t denseHalfWords() const { return m_denseStore.size() / 2; }

@@ -1,0 +1,711 @@
+/*
+ * Copyright (C) 2026 Oven, Inc. All rights reserved.
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include "config.h"
+#include "AOTTypedPasses.h"
+
+#if ENABLE(AOT)
+
+#include "AOTTypedData.h"
+#include "JSCInlines.h"
+
+namespace JSC { namespace AOT { namespace Typed {
+
+namespace {
+
+class GeneratorLoopFusion {
+public:
+    GeneratorLoopFusion(const Program& program, Function& function)
+        : m_program(program)
+        , m_function(function)
+    {
+    }
+
+    unsigned run()
+    {
+        Vector<ValueID> opens;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                if (at(id).opcode == Opcode::IteratorOpen)
+                    opens.append(id);
+            }
+        }
+        unsigned changed = 0;
+        for (ValueID open : opens)
+            changed += fuse(open);
+        Vector<ValueID> calls;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                if (at(id).opcode == Opcode::CallDirect && !at(id).isJumpToContinuation() && m_program.at(at(id).function()).resumeFunction)
+                    calls.append(id);
+            }
+        }
+        for (ValueID call : calls)
+            changed += fuseSteps(call) || fuseSpread(call);
+        return changed;
+    }
+
+private:
+    static constexpr int64_t resumeModeNext = 0;
+    static constexpr int64_t resumeModeReturn = 2;
+
+    struct Site {
+        BlockID block;
+        unsigned index { 0 };
+    };
+
+    struct Cut {
+        Target after;
+        std::optional<Target> handler;
+    };
+
+    struct Loop {
+        ValueID made;
+        Vector<ValueID, 2> casts;
+        ValueID hasNext;
+        ValueID value;
+        Vector<ValueID, 4> closes;
+    };
+
+    struct Frame {
+        ValueID allocation;
+        Vector<std::pair<uint32_t, uint32_t>, 8> arguments;
+    };
+
+    Value& at(ValueID id) { return m_function.at(id); }
+    Block& at(BlockID id) { return m_function.at(id); }
+
+    std::optional<Loop> loopOver(ValueID open)
+    {
+        Loop loop;
+        loop.made = at(open).child(0);
+        while (at(loop.made).opcode == Opcode::Cast) {
+            if (!m_program.at(at(loop.made).type).anyObject)
+                return std::nullopt;
+            loop.casts.append(loop.made);
+            loop.made = at(loop.made).child(0);
+        }
+        if (at(loop.made).opcode != Opcode::CallDirect || at(loop.made).isJumpToContinuation())
+            return std::nullopt;
+        if (!frameMadeBy(m_program.at(at(loop.made).function())))
+            return std::nullopt;
+        bool isOnlyIterated = true;
+        auto isGenerator = [&](ValueID id) {
+            return id == loop.made || loop.casts.contains(id);
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                user.forEachChild([&](ValueID& child) {
+                    if (isGenerator(child)) {
+                        isOnlyIterated &= id == open || loop.casts.contains(id);
+                        return;
+                    }
+                    if (child != open)
+                        return;
+                    isOnlyIterated &= &child == &user.children[0];
+                    if (user.opcode == Opcode::IteratorHasNext && !loop.hasNext)
+                        loop.hasNext = id;
+                    else if (user.opcode == Opcode::IteratorValue && !loop.value)
+                        loop.value = id;
+                    else if (user.opcode == Opcode::IteratorClose)
+                        loop.closes.append(id);
+                    else
+                        isOnlyIterated = false;
+                });
+            }
+            block.terminator.forEachChild([&](ValueID& child) {
+                isOnlyIterated &= child != open && !isGenerator(child);
+            });
+        }
+        if (!isOnlyIterated || !loop.hasNext || (loop.value && !m_program.at(at(loop.value).type).isAnything()))
+            return std::nullopt;
+        return loop;
+    }
+
+    std::optional<Frame> frameMadeBy(const Function& ramp) const
+    {
+        if (!ramp.resumeFunction || ramp.startFunction || (ramp.declaredAs & (functionIsAsync | functionIsGenerator)) != functionIsGenerator || ramp.blocks.size() != 1)
+            return std::nullopt;
+        auto newGenerator = m_program.find("NewGenerator"_s.span8());
+        Frame frame;
+        for (ValueID id : ramp.blocks[0].values) {
+            auto& value = ramp.at(id);
+            switch (value.opcode) {
+            case Opcode::Integer:
+                break;
+            case Opcode::NewObjectWithShape:
+                if (frame.allocation)
+                    return std::nullopt;
+                frame.allocation = id;
+                break;
+            case Opcode::PutField: {
+                auto& stored = ramp.at(value.child(1));
+                if (value.child(0) != frame.allocation)
+                    return std::nullopt;
+                if (stored.opcode == Opcode::Parameter)
+                    frame.arguments.append({ value.field(), stored.parameterIndex() });
+                else if (value.field() != CoroutineFrame::stateField && value.field() != CoroutineFrame::resumeClosureField)
+                    return std::nullopt;
+                break;
+            }
+            case Opcode::NewClosure:
+                if (value.function() != ramp.resumeFunction)
+                    return std::nullopt;
+                break;
+            case Opcode::Operation:
+                if (!newGenerator || value.string() != *newGenerator)
+                    return std::nullopt;
+                break;
+            default:
+                return std::nullopt;
+            }
+        }
+        if (!frame.allocation || ramp.blocks[0].terminator.kind != TerminatorKind::Return)
+            return std::nullopt;
+        return frame;
+    }
+
+    bool mayRunAgainWithoutBirth(ValueID use, ValueID birth)
+    {
+        BlockID from = siteOf(use).block;
+        BlockID born = siteOf(birth).block;
+        if (from == born)
+            return false;
+        BitVector seen(m_function.blocks.size());
+        Vector<BlockID, 16> worklist { from };
+        while (!worklist.isEmpty()) {
+            for (auto& target : at(worklist.takeLast()).terminator.targets) {
+                if (target.block == from)
+                    return true;
+                if (target.block != born && !seen.set(target.block.index()))
+                    worklist.append(target.block);
+            }
+        }
+        return false;
+    }
+
+    Site siteOf(ValueID id)
+    {
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            size_t index = m_function.blocks[b].values.find(id);
+            if (index != notFound)
+                return { BlockID(b), static_cast<unsigned>(index) };
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    Value make(Opcode opcode, TypeID type, const Value& like) const
+    {
+        Value value;
+        value.opcode = opcode;
+        value.type = type;
+        value.rep = repOf(m_program.at(type));
+        value.position = like.position;
+        value.inlineFrame = like.inlineFrame;
+        return value;
+    }
+
+    ValueID append(BlockID block, Value&& value)
+    {
+        ValueID id(m_function.values.size());
+        m_function.values.append(WTF::move(value));
+        at(block).values.append(id);
+        return id;
+    }
+
+    ValueID appendInteger(BlockID block, int64_t number, TypeID type, const Value& like)
+    {
+        Value value = make(Opcode::Integer, type, like);
+        value.setBits(static_cast<uint64_t>(number));
+        return append(block, WTF::move(value));
+    }
+
+    ValueID appendState(BlockID block, const Value& like)
+    {
+        Value value = make(Opcode::GetField, m_program.at(m_layout).fields[CoroutineFrame::stateField].type, like);
+        value.children[0] = m_frame;
+        value.immediates = { m_layout.index(), CoroutineFrame::stateField };
+        return append(block, WTF::move(value));
+    }
+
+    ValueID appendCompare(BlockID block, Opcode opcode, ValueID left, ValueID right, const Value& like)
+    {
+        Value value = make(opcode, m_program.types.boolean, like);
+        value.children[0] = left;
+        value.children[1] = right;
+        return append(block, WTF::move(value));
+    }
+
+    ValueID appendResume(BlockID block, int64_t mode, const Value& like, ValueID sent = { })
+    {
+        auto& resume = m_program.at(m_resume);
+        ValueID modeValue = appendInteger(block, mode, resume.at(resume.blocks[0].parameters[1]).type, like);
+        if (!sent)
+            sent = append(block, make(Opcode::Undefined, m_program.types.undefined, like));
+        Value call = make(Opcode::CallDirect, resume.resultType ? resume.resultType : m_program.types.anything, like);
+        call.immediates = { m_resume.index(), m_inliningDepth };
+        call.arguments = { m_frame, modeValue, sent };
+        return append(block, WTF::move(call));
+    }
+
+    BlockID addBlock()
+    {
+        m_function.blocks.append(Block { });
+        return BlockID(m_function.blocks.size() - 1);
+    }
+
+    void jump(BlockID block, const Target& target, const std::optional<Target>& handler = std::nullopt)
+    {
+        auto& terminator = at(block).terminator;
+        terminator = Terminator { };
+        terminator.kind = handler ? TerminatorKind::Invoke : TerminatorKind::Jump;
+        terminator.targets.append(target);
+        if (handler)
+            terminator.targets.append(*handler);
+    }
+
+    Cut cutAt(Site site)
+    {
+        Cut cut;
+        if (site.index + 1 == at(site.block).values.size() && at(site.block).terminator.kind == TerminatorKind::Invoke) {
+            cut.after = at(site.block).terminator.targets[0];
+            cut.handler = at(site.block).terminator.targets[1];
+        } else {
+            BlockID rest = addBlock();
+            auto& from = at(site.block);
+            auto& to = at(rest);
+            for (unsigned i = site.index + 1; i < from.values.size(); ++i)
+                to.values.append(from.values[i]);
+            to.terminator = std::exchange(from.terminator, Terminator { });
+            cut.after = Target { rest, { } };
+        }
+        at(site.block).values.shrink(site.index);
+        at(site.block).terminator = Terminator { };
+        return cut;
+    }
+
+    void remove(ValueID id)
+    {
+        Site site = siteOf(id);
+        auto& block = at(site.block);
+        block.values.removeAt(site.index);
+        if (site.index == block.values.size() && block.terminator.kind == TerminatorKind::Invoke) {
+            block.terminator.kind = TerminatorKind::Jump;
+            block.terminator.targets.shrink(1);
+        }
+        at(id) = make(Opcode::Undefined, m_program.types.undefined, Value(at(id)));
+    }
+
+    void makeFrame(const Function& ramp, const Frame& frame)
+    {
+        Site site = siteOf(m_frame);
+        Value call = at(m_frame);
+        Cut cut = cutAt(site);
+        ValueID notStarted = appendInteger(site.block, 0, m_program.types.int32, call);
+        Value allocation = make(Opcode::NewObjectWithShape, ramp.at(frame.allocation).type, call);
+        allocation.immediates = { m_layout.index(), m_function.allocationOf(Allocation(ramp.allocations[ramp.at(frame.allocation).allocation()])) };
+        at(m_frame) = WTF::move(allocation);
+        at(site.block).values.append(m_frame);
+        auto store = [&](uint32_t field, ValueID stored) {
+            Value value = make(Opcode::PutField, m_program.types.undefined, call);
+            value.children[0] = m_frame;
+            value.children[1] = stored;
+            value.immediates = { m_layout.index(), field };
+            append(site.block, WTF::move(value));
+        };
+        store(CoroutineFrame::stateField, notStarted);
+        for (auto [field, parameter] : frame.arguments)
+            store(field, call.arguments[parameter]);
+        jump(site.block, cut.after);
+    }
+
+    ValueID step(ValueID hasNext)
+    {
+        Site site = siteOf(hasNext);
+        Value like = at(hasNext);
+        Cut cut = cutAt(site);
+        ValueID yielded = appendResume(site.block, resumeModeNext, like);
+        BlockID resumed = addBlock();
+        jump(site.block, Target { resumed, { } }, cut.handler);
+        ValueID state = appendState(resumed, like);
+        ValueID isDone = appendCompare(resumed, Opcode::StrictEq, state, appendInteger(resumed, CoroutineFrame::completedState, m_program.types.int32, like), like);
+        Value isNotDone = make(Opcode::LogicalNot, m_program.types.boolean, like);
+        isNotDone.children[0] = isDone;
+        at(hasNext) = WTF::move(isNotDone);
+        at(resumed).values.append(hasNext);
+        jump(resumed, cut.after);
+        return yielded;
+    }
+
+    void close(ValueID id)
+    {
+        Site site = siteOf(id);
+        Value like = at(id);
+        Cut cut = cutAt(site);
+        ValueID state = appendState(site.block, like);
+        ValueID isSuspended = appendCompare(site.block, Opcode::Greater, state, appendInteger(site.block, 0, m_program.types.int32, like), like);
+        BlockID returns = addBlock();
+        auto& branch = at(site.block).terminator;
+        branch.kind = TerminatorKind::Branch;
+        branch.value = isSuspended;
+        branch.targets.append(Target { returns, { } });
+        branch.targets.append(cut.after);
+        appendResume(returns, resumeModeReturn, like);
+        if (like.immediates[0]) {
+            BlockID dropped = addBlock();
+            append(dropped, make(Opcode::CatchValue, m_program.types.anything, like));
+            jump(dropped, cut.after);
+            cut.handler = Target { dropped, { } };
+        }
+        jump(returns, cut.after, cut.handler);
+        at(id) = make(Opcode::Undefined, m_program.types.undefined, like);
+    }
+
+    struct Steps {
+        Vector<ValueID, 4> calls;
+        ValueID merged;
+        Vector<ValueID, 4> readsOfDone;
+        Vector<ValueID, 4> readsOfValue;
+    };
+
+    std::optional<Steps> stepsOf(ValueID made)
+    {
+        auto next = m_program.find("next"_s.span8());
+        auto done = m_program.find("done"_s.span8());
+        auto value = m_program.find("value"_s.span8());
+        if (!next || !done || !value)
+            return std::nullopt;
+        Steps steps;
+        bool isOnlyStepped = true;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                user.forEachChild([&](ValueID& child) {
+                    if (child != made)
+                        return;
+                    isOnlyStepped &= user.opcode == Opcode::CallMethod && &child == &user.children[0] && user.string() == *next && user.arguments.size() <= 1;
+                    steps.calls.append(id);
+                });
+            }
+            block.terminator.forEachChild([&](ValueID& child) {
+                isOnlyStepped &= child != made;
+            });
+        }
+        if (!isOnlyStepped || steps.calls.isEmpty())
+            return std::nullopt;
+        for (auto& block : m_function.blocks) {
+            if (block.terminator.value)
+                isOnlyStepped &= !steps.calls.contains(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                    if (!steps.calls.contains(target.arguments[i]))
+                        continue;
+                    ValueID parameter = at(target.block).parameters[i];
+                    isOnlyStepped &= !steps.merged || steps.merged == parameter;
+                    steps.merged = parameter;
+                }
+            }
+        }
+        if (steps.merged) {
+            BlockID mergeBlock = at(steps.merged).parameterBlock();
+            unsigned index = at(steps.merged).parameterIndex();
+            for (auto& block : m_function.blocks) {
+                for (auto& target : block.terminator.targets) {
+                    if (target.block == mergeBlock)
+                        isOnlyStepped &= index < target.arguments.size() && steps.calls.contains(target.arguments[index]);
+                }
+            }
+        }
+        auto isResult = [&](ValueID id) {
+            return id == steps.merged || steps.calls.contains(id);
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                user.forEachChild([&](ValueID& child) {
+                    if (!isResult(child))
+                        return;
+                    if (user.opcode == Opcode::GetById && user.string() == *done)
+                        steps.readsOfDone.append(id);
+                    else if (user.opcode == Opcode::GetById && user.string() == *value)
+                        steps.readsOfValue.append(id);
+                    else
+                        isOnlyStepped = false;
+                });
+            }
+            block.terminator.forEachChild([&](ValueID& child) {
+                isOnlyStepped &= child != steps.merged;
+            });
+        }
+        if (!isOnlyStepped)
+            return std::nullopt;
+        return steps;
+    }
+
+    ValueID addParameter(BlockID block, TypeID type, const Value& like)
+    {
+        Value parameter = make(Opcode::Parameter, type, like);
+        parameter.immediates = { block.index(), static_cast<uint32_t>(at(block).parameters.size()) };
+        ValueID id(m_function.values.size());
+        m_function.values.append(WTF::move(parameter));
+        at(block).parameters.append(id);
+        return id;
+    }
+
+    std::pair<ValueID, ValueID> stepByHand(ValueID call)
+    {
+        Site site = siteOf(call);
+        Value like = at(call);
+        Cut cut = cutAt(site);
+        BlockID runs = addBlock();
+        BlockID resumed = addBlock();
+        BlockID isOver = addBlock();
+        BlockID stepped = addBlock();
+        ValueID value = addParameter(stepped, m_program.types.anything, like);
+        ValueID isDone = addParameter(stepped, m_program.types.boolean, like);
+        auto appendIsCompleted = [&](BlockID block) {
+            ValueID state = appendState(block, like);
+            return appendCompare(block, Opcode::StrictEq, state, appendInteger(block, CoroutineFrame::completedState, m_program.types.int32, like), like);
+        };
+        ValueID wasCompleted = appendIsCompleted(site.block);
+        auto& branch = at(site.block).terminator;
+        branch.kind = TerminatorKind::Branch;
+        branch.value = wasCompleted;
+        branch.targets.append(Target { isOver, { } });
+        branch.targets.append(Target { runs, { } });
+
+        ValueID nothing = append(isOver, make(Opcode::Undefined, m_program.types.undefined, like));
+        Value yes = make(Opcode::Boolean, m_program.types.boolean, like);
+        yes.immediates[0] = 1;
+        ValueID over = append(isOver, WTF::move(yes));
+        jump(isOver, Target { stepped, { nothing, over } });
+
+        ValueID yielded = appendResume(runs, resumeModeNext, like, like.arguments.isEmpty() ? ValueID() : like.arguments[0]);
+        if (cut.handler) {
+            BlockID failed = addBlock();
+            jump(runs, Target { resumed, { } }, Target { failed, { } });
+            ValueID error = append(failed, make(Opcode::CatchValue, m_program.types.anything, like));
+            Value store = make(Opcode::PutField, m_program.types.undefined, like);
+            store.children[0] = m_frame;
+            store.children[1] = appendInteger(failed, CoroutineFrame::completedState, m_program.types.int32, like);
+            store.immediates = { m_layout.index(), CoroutineFrame::stateField };
+            append(failed, WTF::move(store));
+            auto& rethrow = at(failed).terminator;
+            rethrow.kind = TerminatorKind::Throw;
+            rethrow.value = error;
+            rethrow.targets.append(*cut.handler);
+        } else
+            jump(runs, Target { resumed, { } });
+        ValueID isCompleted = appendIsCompleted(resumed);
+        jump(resumed, Target { stepped, { yielded, isCompleted } });
+
+        at(call) = make(Opcode::Undefined, m_program.types.undefined, like);
+        at(stepped).values.append(call);
+        jump(stepped, cut.after);
+        return { value, isDone };
+    }
+
+    bool fuseSteps(ValueID made)
+    {
+        if (at(made).opcode != Opcode::CallDirect)
+            return false;
+        auto& ramp = m_program.at(at(made).function());
+        auto frame = frameMadeBy(ramp);
+        if (!frame || at(made).arguments.size() != ramp.blocks[0].parameters.size())
+            return false;
+        auto steps = stepsOf(made);
+        if (!steps)
+            return false;
+        m_frame = made;
+        m_layout = ramp.at(frame->allocation).layout();
+        m_resume = ramp.resumeFunction;
+        m_inliningDepth = at(made).immediates[1];
+        makeFrame(ramp, *frame);
+        UncheckedKeyHashMap<uint32_t, std::pair<ValueID, ValueID>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> parts;
+        for (ValueID call : steps->calls)
+            parts.add(call.index(), stepByHand(call));
+        if (steps->merged) {
+            BlockID mergeBlock = at(steps->merged).parameterBlock();
+            unsigned index = at(steps->merged).parameterIndex();
+            Value like = at(steps->merged);
+            ValueID value = addParameter(mergeBlock, m_program.types.anything, like);
+            ValueID isDone = addParameter(mergeBlock, m_program.types.boolean, like);
+            for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+                for (unsigned t = 0; t < m_function.blocks[b].terminator.targets.size(); ++t) {
+                    if (m_function.blocks[b].terminator.targets[t].block != mergeBlock)
+                        continue;
+                    auto [stepValue, stepIsDone] = parts.get(m_function.blocks[b].terminator.targets[t].arguments[index].index());
+                    auto& arguments = m_function.blocks[b].terminator.targets[t].arguments;
+                    arguments.append(stepValue);
+                    arguments.append(stepIsDone);
+                }
+            }
+            parts.add(steps->merged.index(), std::pair { value, isDone });
+        }
+        for (ValueID read : steps->readsOfDone) {
+            ValueID isDone = parts.get(at(read).child(0).index()).second;
+            auto replace = [&](ValueID& child) {
+                if (child == read)
+                    child = isDone;
+            };
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values)
+                    at(id).forEachChild(replace);
+                block.terminator.forEachChild(replace);
+            }
+            remove(read);
+        }
+        for (ValueID read : steps->readsOfValue) {
+            Value cast = make(Opcode::Cast, at(read).type, Value(at(read)));
+            cast.children[0] = parts.get(at(read).child(0).index()).first;
+            cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+            cast.takePredictionOf(at(read));
+            at(read) = WTF::move(cast);
+        }
+        return true;
+    }
+
+    bool fuseSpread(ValueID made)
+    {
+        auto appendSpread = m_program.find("AppendSpread"_s.span8());
+        auto push = m_program.find("push"_s.span8());
+        if (at(made).opcode != Opcode::CallDirect || !appendSpread || !push)
+            return false;
+        auto& ramp = m_program.at(at(made).function());
+        auto frame = frameMadeBy(ramp);
+        if (!frame || at(made).arguments.size() != ramp.blocks[0].parameters.size())
+            return false;
+        Vector<ValueID, 2> aliases { made };
+        for (bool isGrowing = true; isGrowing;) {
+            isGrowing = false;
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    if (at(id).opcode == Opcode::Cast && m_program.at(at(id).type).anyObject && aliases.contains(at(id).child(0)) && !aliases.contains(id)) {
+                        aliases.append(id);
+                        isGrowing = true;
+                    }
+                }
+            }
+        }
+        ValueID spread;
+        bool isOnlySpread = true;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& user = at(id);
+                user.forEachChild([&](ValueID& child) {
+                    if (!aliases.contains(child) || aliases.contains(id))
+                        return;
+                    if (user.opcode == Opcode::Operation && user.string() == *appendSpread && user.arguments.size() == 2 && &child == &user.arguments[1] && !spread)
+                        spread = id;
+                    else
+                        isOnlySpread = false;
+                });
+            }
+            block.terminator.forEachChild([&](ValueID& child) {
+                isOnlySpread &= !aliases.contains(child);
+            });
+        }
+        if (!isOnlySpread || !spread || mayRunAgainWithoutBirth(spread, made))
+            return false;
+        m_frame = made;
+        m_layout = ramp.at(frame->allocation).layout();
+        m_resume = ramp.resumeFunction;
+        m_inliningDepth = at(made).immediates[1];
+        makeFrame(ramp, *frame);
+        for (unsigned i = 1; i < aliases.size(); ++i)
+            remove(aliases[i]);
+        Site site = siteOf(spread);
+        Value like = at(spread);
+        Cut cut = cutAt(site);
+        BlockID header = addBlock();
+        BlockID resumed = addBlock();
+        BlockID pushes = addBlock();
+        BlockID exit = addBlock();
+        jump(site.block, Target { header, { } });
+        append(header, make(Opcode::LoopHint, m_program.types.undefined, like));
+        ValueID yielded = appendResume(header, resumeModeNext, like);
+        jump(header, Target { resumed, { } }, cut.handler);
+        ValueID state = appendState(resumed, like);
+        ValueID isDone = appendCompare(resumed, Opcode::StrictEq, state, appendInteger(resumed, CoroutineFrame::completedState, m_program.types.int32, like), like);
+        auto& branch = at(resumed).terminator;
+        branch.kind = TerminatorKind::Branch;
+        branch.value = isDone;
+        branch.targets.append(Target { exit, { } });
+        branch.targets.append(Target { pushes, { } });
+        Value call = make(Opcode::CallMethod, m_program.types.anything, like);
+        call.children[0] = like.arguments[0];
+        call.immediates = { push->index(), m_inliningDepth };
+        call.arguments = { yielded };
+        append(pushes, WTF::move(call));
+        jump(pushes, Target { header, { } }, cut.handler);
+        Value array = make(Opcode::Cast, like.type, like);
+        array.children[0] = like.arguments[0];
+        array.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+        at(spread) = WTF::move(array);
+        at(exit).values.append(spread);
+        jump(exit, cut.after, cut.handler);
+        return true;
+    }
+
+    bool fuse(ValueID open)
+    {
+        auto loop = loopOver(open);
+        if (!loop)
+            return false;
+        auto& ramp = m_program.at(at(loop->made).function());
+        auto frame = frameMadeBy(ramp);
+        if (!frame || at(loop->made).arguments.size() != ramp.blocks[0].parameters.size() || mayRunAgainWithoutBirth(open, loop->made))
+            return false;
+        m_frame = loop->made;
+        m_layout = ramp.at(frame->allocation).layout();
+        m_resume = ramp.resumeFunction;
+        m_inliningDepth = at(loop->made).immediates[1];
+        makeFrame(ramp, *frame);
+        for (ValueID cast : loop->casts)
+            remove(cast);
+        remove(open);
+        ValueID yielded = step(loop->hasNext);
+        if (loop->value) {
+            auto replace = [&](ValueID& child) {
+                if (child == loop->value)
+                    child = yielded;
+            };
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values)
+                    at(id).forEachChild(replace);
+                block.terminator.forEachChild(replace);
+            }
+            remove(loop->value);
+        }
+        for (ValueID id : loop->closes)
+            close(id);
+        return true;
+    }
+
+    const Program& m_program;
+    Function& m_function;
+    ValueID m_frame;
+    LayoutID m_layout;
+    FunctionID m_resume;
+    uint32_t m_inliningDepth { Format::none };
+};
+
+} // anonymous namespace
+
+void internNamesForGeneratorLoopFusion(Program& program)
+{
+    if (program.find("AppendSpread"_s.span8()))
+        program.intern("push"_s.span8());
+}
+
+unsigned fuseGeneratorLoops(const Program& program, Function& function)
+{
+    return GeneratorLoopFusion(program, function).run();
+}
+
+} } } // namespace JSC::AOT::Typed
+
+#endif // ENABLE(AOT)

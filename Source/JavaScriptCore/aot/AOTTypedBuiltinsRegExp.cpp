@@ -76,6 +76,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSharedRegExpLiteral, JSCell*, (Instanc
     // The collector may read the statics while this runs.
     vm.mutatorFence();
     *reinterpret_cast<JSCell**>(instance->typedStatics + offset) = object;
+    instance->didStoreRootInStatics(offset);
     OPERATION_RETURN(scope, object);
 }
 
@@ -215,7 +216,7 @@ std::optional<uint64_t> keyOfRegExpLiteral(const Program& program, const Functio
     if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::RegExpNew)
         return std::nullopt;
     auto textOf = [&](ValueID id) -> const Value* {
-        while (function.at(id).opcode == Opcode::Cast)
+        while (function.at(id).opcode == Opcode::Cast && program.typeOf(function, id).primitives & Primitive::String)
             id = function.at(id).child(0);
         return function.at(id).opcode == Opcode::String ? &function.at(id) : nullptr;
     };
@@ -453,7 +454,8 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
             flags = *parsed;
         }
         Word32 rawFlags = word32(flags.toRaw());
-        if (auto& source = m_function.at(originOf(arguments[0])); source.opcode == Opcode::String) {
+        if (ValueID constant = stringConstantOf(arguments[0])) {
+            auto& source = m_function.at(constant);
             if (auto key = keyOfRegExpLiteral(m_program, m_function, value); key && isKeptByNothing(result, flags.contains(Yarr::Flags::Global))) {
                 if (auto place = m_program.offsetsOfSharedRegExpObjects.find(*key); place != m_program.offsetsOfSharedRegExpObjects.end()) {
                     LValue shared = m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, fixedPointer(Instance::offsetOfTypedStatics()), place->value));

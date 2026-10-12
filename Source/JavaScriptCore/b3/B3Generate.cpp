@@ -50,9 +50,11 @@
 #include "B3ReduceDoubleToFloat.h"
 #include "B3ReduceStrength.h"
 #include "B3RotateLoops.h"
+#include "B3CountedLoops.h"
 #include "B3StripMineLoops.h"
 #include "B3SpecializeSelect.h"
 #include "B3Validate.h"
+#include "B3SinkValues.h"
 #include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
 
@@ -79,7 +81,8 @@ void generateToAir(Procedure& procedure)
         dataLog(procedure);
     }
     // We don't require the incoming IR to have predecessors computed.
-    procedure.resetReachability();
+    if (!procedure.takeReachabilityIsFresh())
+        procedure.resetReachability();
 
     if (Options::dumpIonGraph()) [[unlikely]]
         procedure.appendIonGraphPass("InitialCFG"_s);
@@ -94,21 +97,19 @@ void generateToAir(Procedure& procedure)
         reduceStrength(procedure, ReduceStrengthPass::Initial);
         if (Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues() && !procedure.rotatesLoops())
             hoistLoopInvariantValues(procedure);
-        eliminateCommonSubexpressions(procedure);
-        eliminateDeadCode(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+        if (!procedure.positionIndependent())
+#endif
+        {
+            eliminateCommonSubexpressions(procedure);
+            eliminateDeadCode(procedure);
+        }
 
         // Wasm has br_table instruction, so intent of the switch is already represented
         // and OMG generates Switch nodes directly.
         // In JS, switch can involve variables (non-constant values) and bytecode can fail
         // to be in op_switch. Thus after FTL with type speculation & constant folding,
         // we can infer a switch from if-else chain.
-#if USE(BUN_JSC_ADDITIONS)
-        // A later test that repeats one of a chain shares its comparison, and a comparison with two users is not taken into a switch. The chain decides that test, and what hangs on its other outcome goes.
-        if (procedure.positionIndependent()) {
-            foldPathConstants(procedure);
-            simplifyTerminals(procedure);
-        }
-#endif
         if (!procedure.isWasm())
             inferSwitches(procedure);
 
@@ -121,21 +122,38 @@ void generateToAir(Procedure& procedure)
         if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops()) {
             bool hoists = Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues();
             simplifyTerminals(procedure);
+            eliminateRedundantPhiCycles(procedure);
             if (hoists)
                 hoistLoopInvariantValues(procedure);
             if (rotateLoops(procedure)) {
                 fixSSA(procedure);
                 if (hoists)
                     hoistLoopInvariantValues(procedure);
-                eliminateCommonSubexpressions(procedure);
                 // The rotation has made two of what the loop test tests on its way: the one in front of the loop decides the one at its end.
                 foldPathConstants(procedure);
                 simplifyTerminals(procedure);
                 eliminateDeadCode(procedure);
             }
-            if (hoists && versionLoops(procedure)) {
-                fixSSA(procedure);
+            if (foldComparisonsWithBounds(procedure)) {
+                simplifyTerminals(procedure);
                 eliminateDeadCode(procedure);
+            }
+            Vector<BasicBlock*> headersOfVersionsTestedAtTheTop;
+            if (hoists && versionLoops(procedure, headersOfVersionsTestedAtTheTop)) {
+                fixSSA(procedure);
+                eliminateRedundantPhiCycles(procedure);
+                foldComparisonsWithWhatIsOutOfRange(procedure);
+                eliminateDeadCode(procedure);
+                if (!headersOfVersionsTestedAtTheTop.isEmpty() && rotateLoops(procedure, &headersOfVersionsTestedAtTheTop)) {
+                    fixSSA(procedure);
+                    foldPathConstants(procedure);
+                    simplifyTerminals(procedure);
+                    eliminateDeadCode(procedure);
+                    if (foldComparisonsWithBounds(procedure)) {
+                        simplifyTerminals(procedure);
+                        eliminateDeadCode(procedure);
+                    }
+                }
             }
             if (stripMineLoops(procedure) && hoists)
                 hoistLoopInvariantValues(procedure);
@@ -148,6 +166,10 @@ void generateToAir(Procedure& procedure)
     } else if (procedure.optLevel() >= 1) {
         // FIXME: Explore better "quick mode" optimizations.
         reduceStrength(procedure, ReduceStrengthPass::Initial);
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.positionIndependent())
+            duplicateTails(procedure, true);
+#endif
         fixSSA(procedure);
     } else
         fixSSA(procedure);
@@ -158,6 +180,10 @@ void generateToAir(Procedure& procedure)
     if (procedure.optLevel() >= 2) {
         optimizeAssociativeExpressionTrees(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Final);
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops())
+            eliminateRedundantPhiCycles(procedure);
+#endif
 
         // FIXME: Add more optimizations here.
         // https://bugs.webkit.org/show_bug.cgi?id=150507
@@ -169,6 +195,10 @@ void generateToAir(Procedure& procedure)
 #endif
     lowerMacrosAfterOptimizations(procedure);
     legalizeMemoryOffsets(procedure);
+#if USE(BUN_JSC_ADDITIONS)
+    if (procedure.positionIndependent() && procedure.optLevel() >= 2)
+        sinkValues(procedure);
+#endif
     moveConstants(procedure);
     legalizeMemoryOffsets(procedure);
     eliminateDeadCode(procedure);

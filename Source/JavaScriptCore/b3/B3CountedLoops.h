@@ -10,6 +10,8 @@
 #include "B3NaturalLoops.h"
 #include "B3Opcode.h"
 #include <wtf/HashMap.h>
+#include <wtf/IndexMap.h>
+#include <wtf/Noncopyable.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Vector.h>
 
@@ -46,11 +48,24 @@ struct CountedLoop {
 
 static constexpr int64_t maxIterationsPerStrip = 1 << 16;
 
-using UpsilonsByPhi = UncheckedKeyHashMap<Value*, Vector<UpsilonValue*, 2>>;
-UpsilonsByPhi collectUpsilonsByPhi(Procedure&);
+class UpsilonsByPhi {
+    WTF_MAKE_NONCOPYABLE(UpsilonsByPhi);
+public:
+    explicit UpsilonsByPhi(Procedure& proc)
+        : m_proc(proc)
+    {
+    }
+
+    const Vector<UpsilonValue*, 2>* find(Value* phi) const;
+
+private:
+    Procedure& m_proc;
+    mutable IndexMap<Value*, Vector<UpsilonValue*, 2>> m_map;
+};
 
 // The owners of values are up to date, and the header has one predecessor outside the loop.
 std::optional<CountedLoop> analyzeCountedLoop(NaturalLoops&, const NaturalLoop&, const UpsilonsByPhi&, const ScopedLambda<bool(Value*)>& isInvariant);
+std::optional<CountedLoop> analyzeCountedLoopTestedAtTheTop(NaturalLoops&, const NaturalLoop&, BasicBlock* preHeader, BasicBlock* test, Value* condition, const UpsilonsByPhi&, const ScopedLambda<bool(Value*)>& isInvariant, const ScopedLambda<bool(BasicBlock*)>& isLeftOut);
 
 // For strip mining. Where relation(from, bound) holds: at most maxIterationsPerStrip from there, not beyond the bound, and on this side of what the variable saturates at.
 // With `relationMayNotHold`: where it does not hold, an end that no value of the variable is on this side of. Appended to the block, in front of its terminal if it has one.
@@ -58,6 +73,8 @@ Value* appendEndOfStrip(Procedure&, BasicBlock*, const CountedLoop&, Value* from
 
 // Whether the pre-header is only reached by way of a Branch on relation(start, bound): the guard that rotateLoops() leaves.
 bool relationHoldsOnEntry(const CountedLoop&);
+std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop&, Opcode, Value* left, Value* right, Value* bound);
+bool foldComparisonsWithBounds(Procedure&);
 
 } } // namespace JSC::B3
 
