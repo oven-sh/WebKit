@@ -73,6 +73,10 @@ public:
     JS_EXPORT_PRIVATE JSValue evaluate(JSGlobalObject*, JSValue sentValue, JSValue resumeMode);
 
     bool isTopLevelExecutionFinished() const;
+#if USE(BUN_JSC_ADDITIONS)
+    // The body has started and waits at a top-level await.
+    bool isSuspendedAtTopLevelAwait() const;
+#endif
 
     void execute(JSGlobalObject*, JSPromise* = nullptr);
     void executeAsync(JSGlobalObject*);
