@@ -570,12 +570,25 @@ void Heap::reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(const JSCell*
 
 void Heap::reportExtraMemoryAllocatedSlowCase(GCDeferralContext* deferralContext, const JSCell* cell, size_t size)
 {
-    didAllocate(size);
+    ASSERT(deferralContext || isDeferred() || !AssertNoGC::isInEffectOnCurrentThread());
+    if constexpr (validateDFGDoesGC)
+        vm().verifyCanGC();
+
+    m_extraMemoryBytesSinceLastCollectionCheck += size;
+    bool shouldCheckForCollection = m_extraMemoryBytesSinceLastCollectionCheck >= MarkedBlock::blockSize;
+    if (shouldCheckForCollection) {
+        m_extraMemoryBytesSinceLastCollectionCheck = 0;
+        didAllocate(size);
+    } else {
+        m_nonOversizedBytesAllocatedThisCycle += size;
+        performIncrement(size);
+    }
     if (cell) {
         if (isWithinThreshold(cell->cellState(), barrierThreshold())) [[unlikely]]
             reportExtraMemoryAllocatedPossiblyFromAlreadyMarkedCell(cell, size);
     }
-    collectIfNecessaryOrDefer(deferralContext);
+    if (shouldCheckForCollection)
+        collectIfNecessaryOrDefer(deferralContext);
 }
 
 void Heap::deprecatedReportExtraMemorySlowCase(size_t size)
@@ -656,10 +669,9 @@ bool Heap::unprotect(JSValue k)
 void Heap::addReference(JSCell* cell, ArrayBuffer* buffer, size_t bytesAlreadyReported)
 {
     if (m_arrayBuffers.addReference(cell, buffer)) {
-        collectIfNecessaryOrDefer();
         size_t size = buffer->gcSizeEstimateInBytes();
         ASSERT(bytesAlreadyReported <= size);
-        didAllocate(size - std::min(size, bytesAlreadyReported));
+        reportExtraMemoryAllocatedSlowCase(nullptr, nullptr, size - std::min(size, bytesAlreadyReported));
     }
 }
 
