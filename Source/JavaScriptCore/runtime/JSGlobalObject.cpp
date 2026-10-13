@@ -2011,6 +2011,11 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::importModule)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "importModule"_s, globalFuncImportModule, ImplementationVisibility::Private));
         });
+#if USE(BUN_JSC_ADDITIONS)
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::importMeta)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(JSFunction::create(init.vm, init.owner, 1, "importMeta"_s, globalFuncImportMeta, ImplementationVisibility::Private));
+        });
+#endif
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::copyDataProperties)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "copyDataProperties"_s, globalFuncCopyDataProperties, ImplementationVisibility::Private));
         });
