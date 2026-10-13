@@ -184,6 +184,12 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
             SourceProfiler::profile(SourceProfiler::Type::Eval, source);
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Before the literal fast path, which makes no CodeBlock.
+        if (NonEmbeddedCode::throwIfEvalDisallowed(globalObject, scope, programSource)) [[unlikely]]
+            return { };
+#endif
+
         if (!(lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)) {
             JSValue parsedValue;
             if (programSource.is8Bit()) {

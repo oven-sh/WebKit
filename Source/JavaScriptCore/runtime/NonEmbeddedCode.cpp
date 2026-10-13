@@ -86,6 +86,12 @@ bool throwIfDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, Sour
     return true;
 }
 
+bool throwIfEvalDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, const String& programSource)
+{
+    Ref provider = StringSourceProvider::create(programSource, SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
+    return throwIfDisallowedSlow(globalObject, scope, provider.get(), "eval"_s);
+}
+
 bool isBytecodeDisallowedSlow(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
 {
     auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
