@@ -5538,7 +5538,7 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     if (!entry)
         return nullptr;
 #if USE(BUN_JSC_ADDITIONS)
-    if (NonEmbeddedCode::isBytecodeDisallowed(vm, provider, cachedBytecode.get())) [[unlikely]]
+    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::isBytecodeDisallowed(vm, provider, cachedBytecode.get())) [[unlikely]]
         return nullptr;
 #endif
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
@@ -5900,7 +5900,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
         return rejected();
 #if USE(BUN_JSC_ADDITIONS)
     // The CodeCache would hand what is decoded here to any provider of equal text.
-    if (NonEmbeddedCode::isBytecodeDisallowed(vm, key.source().provider(), cachedBytecode.get())) [[unlikely]]
+    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::isBytecodeDisallowed(vm, key.source().provider(), cachedBytecode.get())) [[unlikely]]
         return rejected();
 #endif
     // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()

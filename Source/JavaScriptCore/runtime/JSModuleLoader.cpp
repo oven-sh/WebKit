@@ -1474,7 +1474,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
     // Before the parse, so that what the module imports is not loaded. Every type but these four is parsed as JavaScript below.
     bool hasNoJavaScript = sourceType == SourceProviderSourceType::WebAssembly || sourceType == SourceProviderSourceType::JSON || sourceType == SourceProviderSourceType::Text || sourceType == SourceProviderSourceType::Synthetic;
-    if (!hasNoJavaScript && NonEmbeddedCode::throwIfDisallowed(globalObject, scope, *sourceCode.provider(), "module"_s)) [[unlikely]] {
+    if (NonEmbeddedCode::isDisallowedOrReported() && !hasNoJavaScript && NonEmbeddedCode::throwIfDisallowed(globalObject, scope, *sourceCode.provider(), "module"_s)) [[unlikely]] {
         attachErrorInfo(globalObject, scope, nullptr, moduleKey, ScriptFetchParameters::JavaScript, ModuleFailure::Kind::Evaluation);
         return promise->rejectWithCaughtException(vm, scope);
     }

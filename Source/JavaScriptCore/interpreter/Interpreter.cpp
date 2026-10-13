@@ -186,7 +186,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
 
 #if USE(BUN_JSC_ADDITIONS)
         // Before the literal fast path, which makes no CodeBlock.
-        if (NonEmbeddedCode::throwIfEvalDisallowed(globalObject, scope, programSource)) [[unlikely]]
+        if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfEvalDisallowed(globalObject, scope, programSource)) [[unlikely]]
             return { };
 #endif
 
@@ -1091,7 +1091,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
 #if USE(BUN_JSC_ADDITIONS)
     // Before the JSONP fast path, which makes no CodeBlock, and before the program's global declarations.
-    if (NonEmbeddedCode::throwIfDisallowed(globalObject, throwScope, *source.provider(), "program"_s)) [[unlikely]]
+    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfDisallowed(globalObject, throwScope, *source.provider(), "program"_s)) [[unlikely]]
         return { };
 #endif
 

@@ -414,7 +414,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
 #if USE(BUN_JSC_ADDITIONS)
     // All new code passes here on its way to a CodeBlock. The other sites only come earlier.
-    if (NonEmbeddedCode::throwIfDisallowed(scope->realm(), throwScope, *source().provider(), "run"_s)) [[unlikely]]
+    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfDisallowed(scope->realm(), throwScope, *source().provider(), "run"_s)) [[unlikely]]
         return;
 #endif
 

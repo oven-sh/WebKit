@@ -74,7 +74,7 @@ static void reportIfNeeded(VM& vm, SourceProvider& provider, ASCIILiteral site)
     dataLogLn(message);
 }
 
-bool throwIfDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, ASCIILiteral site)
+bool throwIfDisallowed(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, ASCIILiteral site)
 {
     if (provider.isBuiltinOrEmbedded())
         return false;
@@ -86,13 +86,13 @@ bool throwIfDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, Sour
     return true;
 }
 
-bool throwIfEvalDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, const String& programSource)
+bool throwIfEvalDisallowed(JSGlobalObject* globalObject, ThrowScope& scope, const String& programSource)
 {
     Ref provider = StringSourceProvider::create(programSource, SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
-    return throwIfDisallowedSlow(globalObject, scope, provider.get(), "eval"_s);
+    return throwIfDisallowed(globalObject, scope, provider.get(), "eval"_s);
 }
 
-bool isBytecodeDisallowedSlow(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
+bool isBytecodeDisallowed(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
 {
     auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
     if (isEmbeddedCode && isEmbeddedCode(provider.sourceBytes(), bytecode.span(), bytecode.entryOffset()))

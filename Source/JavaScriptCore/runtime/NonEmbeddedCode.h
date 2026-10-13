@@ -44,25 +44,11 @@ namespace NonEmbeddedCode {
 
 ALWAYS_INLINE bool isDisallowedOrReported() { return Options::disallowNonEmbeddedCode() || Options::reportNonEmbeddedCode(); }
 
-bool throwIfDisallowedSlow(JSGlobalObject*, ThrowScope&, SourceProvider&, ASCIILiteral site);
-bool throwIfEvalDisallowedSlow(JSGlobalObject*, ThrowScope&, const String& programSource);
-bool isBytecodeDisallowedSlow(VM&, SourceProvider&, const CachedBytecode&);
-
-// These report what is not embedded, under the name of the site. They return whether it is disallowed as well.
-ALWAYS_INLINE bool throwIfDisallowed(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, ASCIILiteral site)
-{
-    return isDisallowedOrReported() && throwIfDisallowedSlow(globalObject, scope, provider, site);
-}
-
-ALWAYS_INLINE bool throwIfEvalDisallowed(JSGlobalObject* globalObject, ThrowScope& scope, const String& programSource)
-{
-    return isDisallowedOrReported() && throwIfEvalDisallowedSlow(globalObject, scope, programSource);
-}
-
-ALWAYS_INLINE bool isBytecodeDisallowed(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
-{
-    return isDisallowedOrReported() && isBytecodeDisallowedSlow(vm, provider, bytecode);
-}
+// These report what is not embedded, under the name of the site, and return whether it is disallowed as well.
+// Call them behind isDisallowedOrReported(): an inline wrapper would evaluate their arguments with both options off.
+bool throwIfDisallowed(JSGlobalObject*, ThrowScope&, SourceProvider&, ASCIILiteral site);
+bool throwIfEvalDisallowed(JSGlobalObject*, ThrowScope&, const String& programSource);
+bool isBytecodeDisallowed(VM&, SourceProvider&, const CachedBytecode&);
 
 } // namespace NonEmbeddedCode
 
