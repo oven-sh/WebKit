@@ -2345,12 +2345,22 @@ StreamingJSONParseResult LiteralParser<CharType, reviverMode>::tryStreamingParse
         }
 
         results.appendWithCrashOnOverflow(value);
-        lastGoodPosition = static_cast<size_t>(m_lexer.positionAfterLastToken() - m_lexer.start());
+
+        // The token after the value is already lexed. lex() records where the value ended, but
+        // nextAfterValue() lexes `,` `}` and `]` without lex(), so walk back from the token.
+        const CharType* valueEnd = m_lexer.positionAfterLastToken();
+        TokenType nextType = m_lexer.currentToken()->type;
+        if (nextType == TokComma || nextType == TokRBrace || nextType == TokRBracket) {
+            valueEnd = m_lexer.ptr() - 1;
+            while (isJSONWhiteSpace(valueEnd[-1]))
+                --valueEnd;
+        }
+        lastGoodPosition = static_cast<size_t>(valueEnd - m_lexer.start());
 
         // Find the next newline and skip directly to it — one WTF::find,
         // which uses memchr for 8-bit. This is both the delimiter check
         // and the advance.
-        auto remaining = std::span { m_lexer.positionAfterLastToken(), m_lexer.end() };
+        auto remaining = std::span { valueEnd, m_lexer.end() };
         size_t nlIndex = WTF::find(remaining, static_cast<CharType>('\n'));
         if (nlIndex != notFound) {
             // JSONL/NDJSON: exactly one value per line. Anything other than
