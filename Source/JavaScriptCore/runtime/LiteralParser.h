@@ -306,6 +306,7 @@ private:
         StringBuilder m_builder;
         const CharType* m_start;
 #if USE(BUN_JSC_ADDITIONS)
+        // tryStreamingParse() takes this for the end of a value, so whatever lexes the token after a value has to set it.
         const CharType* m_positionAfterLastToken { nullptr };
 #endif
         const CharType* m_currentTokenStart { nullptr };

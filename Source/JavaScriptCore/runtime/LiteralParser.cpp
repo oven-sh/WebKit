@@ -923,6 +923,9 @@ ALWAYS_INLINE TokenType LiteralParser<CharType, reviverMode>::Lexer::nextAfterVa
         default:
             return next();
         }
+#if USE(BUN_JSC_ADDITIONS)
+        m_positionAfterLastToken = m_ptr;
+#endif
         ++m_ptr;
 #if ASSERT_ENABLED
         m_currentTokenID++;
