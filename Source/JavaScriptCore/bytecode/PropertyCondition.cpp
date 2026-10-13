@@ -83,6 +83,12 @@ bool PropertyCondition::isStillValidAssumingImpurePropertyWatchpoint(
         return false;
     }
 
+    // No object has a departed dictionary, and it has no table to check a condition against.
+    if (structure->isDepartedDictionary()) {
+        dataLogLnIf(PropertyConditionInternal::verbose, "Invalid because the structure is a departed dictionary.");
+        return false;
+    }
+
     switch (m_header.type()) {
     case Presence:
     case Replacement:
@@ -376,10 +382,11 @@ bool PropertyCondition::isWatchableWhenValid(Structure* structure, WatchabilityE
         PropertyOffset offset = structure->get(vm, concurrency, uid());
 
         // This method should only be called when some variant of isValid returned true, which
-        // implies that we already confirmed that the structure knows of the property. We should
-        // also have verified that the Structure is a cacheable dictionary, which means we
-        // shouldn't have a TOCTOU race either.
-        RELEASE_ASSERT(offset != invalidOffset);
+        // implies that we already confirmed that the structure knows of the property. A dictionary
+        // can have departed since then (its object left it and the transition took its table), in
+        // which case the property is not found now: the condition is not watchable on it.
+        if (offset == invalidOffset)
+            return false;
 
         WatchpointSet* set = nullptr;
         switch (effort) {
@@ -399,11 +406,9 @@ bool PropertyCondition::isWatchableWhenValid(Structure* structure, WatchabilityE
     case Equivalence: {
         PropertyOffset offset = structure->get(structure->vm(), concurrency, uid());
         
-        // This method should only be called when some variant of isValid returned true, which
-        // implies that we already confirmed that the structure knows of the property. We should
-        // also have verified that the Structure is a cacheable dictionary, which means we
-        // shouldn't have a TOCTOU race either.
-        RELEASE_ASSERT(offset != invalidOffset);
+        // As above: a departed dictionary does not find the property any more.
+        if (offset == invalidOffset)
+            return false;
         
         WatchpointSet* set = nullptr;
         switch (effort) {
