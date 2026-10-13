@@ -4001,8 +4001,12 @@ static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable
         JSObject* object = objects.takeLast();
         if (object->type() == GlobalProxyType)
             object = uncheckedDowncast<JSGlobalProxy>(object)->target();
-        if (object->structure()->hasImmutableProperties() || !object->makePropertiesImmutable(vm))
+        if (object->structure()->hasImmutableProperties())
             continue;
+        if (!object->makePropertiesImmutable(vm)) {
+            dataLogLnIf(Options::logImmutableGlobals(), "immutableGlobals: left mutable: an object of class ", object->classInfo()->className, ", which has write hooks of its own");
+            continue;
+        }
         object->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
             appendFunctionsOfProperty(vm, objects, object, entry.key(), object->getDirect(entry.offset()));
             return true;
@@ -4080,6 +4084,15 @@ void JSGlobalObject::makeAllBuiltinsImmutable(VM& vm)
     makeObjectsAndTheirFunctionsImmutable(vm, objects);
 }
 
+bool JSGlobalObject::immutableGlobalsOptionLists(StringView name)
+{
+    bool result = false;
+    forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
+        result |= entry == name;
+    });
+    return result;
+}
+
 void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
 {
     DeferTermination deferTermination(vm);
@@ -4096,6 +4109,8 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
         }
         if (value.isObject())
             makeObjectAndItsFunctionsImmutable(vm, asObject(value));
+        else
+            dataLogLnIf(Options::logImmutableGlobals(), "immutableGlobals: ", entry, " is not the name of an object in this global object");
     });
 }
 

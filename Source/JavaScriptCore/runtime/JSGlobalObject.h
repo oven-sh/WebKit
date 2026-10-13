@@ -1282,6 +1282,8 @@ public:
     // '*' does not include the global object. What '*' covers and is created later is made immutable when it is created.
     JS_EXPORT_PRIVATE void applyImmutableGlobalsOption(VM&);
     bool hasImmutableGlobals() const { return m_hasImmutableGlobals; }
+    // For an embedder that creates the value of a global later than applyImmutableGlobalsOption() looks the name up, or while it does.
+    JS_EXPORT_PRIVATE static bool immutableGlobalsOptionLists(StringView name);
     // JSObject::makePropertiesImmutable() for the object, for the functions its properties hold (methods, getters and setters) and,
     // if it is a function, for its "prototype"; then the same for each of those. An object of a class that does not support it is
     // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too.

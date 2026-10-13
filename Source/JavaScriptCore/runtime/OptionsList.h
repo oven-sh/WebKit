@@ -665,6 +665,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, useArrayAllocationProfiling, true, Normal, "If true, we will use our normal array allocation profiling. If false, the allocation profile will always claim to be undecided."_s) \
     v(Bool, useCopyOnWriteArraysForImmutableProperties, true, Normal, "If true, JSObject::makePropertiesImmutable() makes a JSArray whose Int32, Double or Contiguous elements have no holes a copy-on-write array. If false, it enters dictionary indexing mode, as every other object with elements does."_s) \
     v(OptionString, immutableGlobals, nullptr, Normal, "Comma-separated list of what JSGlobalObject::applyImmutableGlobalsOption() makes immutable in each new global object. '*' is every built-in of JavaScriptCore's own, named or not; any other entry is a name looked up on the global object (globalThis is the global object itself). See JSObject::makePropertiesImmutable()."_s) \
+    v(Bool, logImmutableGlobals, false, Normal, "Log what Options::immutableGlobals() lists and leaves mutable: a name that is not there, an object of a class that does not support it. An embedder logs what it creates later and leaves mutable."_s) \
     v(Bool, forcePolyProto, false, Normal, "If true, create_this will always create an object with a poly proto structure."_s) \
     v(Bool, forceMiniVMMode, false, Normal, "If true, it will force mini VM mode on."_s) \
     v(Bool, useTracePoints, false, Normal, nullptr) \

@@ -68,11 +68,17 @@ void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
     
     this->constructor = constructor;
 
-    prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    {
+        // (An embedder may have made the prototype immutable by now, as it made the structure.)
+        AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
+        prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
+    }
     classStructure.m_constructor.set(vm, global, constructor);
 
     if (global->isFieldOfJSGlobalObject(&classStructure))
         global->didCreateBuiltin(vm, prototype);
+    else if (prototype->structure()->hasImmutableProperties()) [[unlikely]]
+        global->makeObjectAndItsFunctionsImmutable(vm, constructor);
 }
 
 template<typename Visitor>
