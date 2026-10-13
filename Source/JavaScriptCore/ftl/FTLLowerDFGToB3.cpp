@@ -4432,11 +4432,29 @@ private:
             switch (m_node->arrayMode().type()) {
             case Array::Int32:
             case Array::Double:
-            case Array::Contiguous:
+            case Array::Contiguous: {
+                // An index inside the vector is not sparse, however large it is.
+                LBasicBlock largeIndex = m_out.newBlock();
+                LBasicBlock convert = m_out.newBlock();
+
+                m_out.branch(
+                    m_out.aboveOrEqual(property, m_out.constInt32(MIN_SPARSE_ARRAY_INDEX)),
+                    rarely(largeIndex), usually(convert));
+
+                m_out.appendTo(largeIndex, convert);
+                LValue indexingType = m_out.load8ZeroExt32(cell, m_heaps.JSCell_indexingTypeAndMisc);
                 speculate(
                     SparseIndex, noValue(), nullptr,
-                    m_out.aboveOrEqual(property, m_out.constInt32(MIN_SPARSE_ARRAY_INDEX)));
+                    m_out.testIsZero32(indexingType, m_out.constInt32(IndexingShapeMask)));
+                LValue butterfly = m_out.loadPtr(cell, m_heaps.JSObject_butterfly);
+                speculate(
+                    SparseIndex, noValue(), nullptr,
+                    m_out.aboveOrEqual(property, m_out.load32NonNegative(butterfly, m_heaps.Butterfly_vectorLength)));
+                m_out.jump(convert);
+
+                m_out.appendTo(convert, continuation);
                 break;
+            }
             default:
                 break;
             }
