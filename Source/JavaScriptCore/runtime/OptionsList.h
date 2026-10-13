@@ -469,6 +469,7 @@ bool hasCapacityToUseLargeGigacage();
     \
     v(Unsigned, minimumNumberOfScansBetweenRebalance, 100, Normal, nullptr) \
     v(Unsigned, numberOfGCMarkers, computeNumberOfGCMarkers(8), Normal, nullptr) \
+    v(Unsigned, minimumBytesVisitedForParallelMarking, 1 * MB, Normal, "The marking helper threads join a collection once its collector visitor has visited this many bytes, or once the mutator resumes with marking left. Until then the collector's thread marks alone and, with the stochastic scheduler, stays paused. 0 = they join at the start of every collection."_s) \
     v(Bool, useParallelMarkingConstraintSolver, true, Normal, nullptr) \
     v(Unsigned, opaqueRootMergeThreshold, 1000, Normal, nullptr) \
     v(Unsigned, maxHeapSizeAsRAMSizeMultiple, 0, Normal, nullptr) \
