@@ -278,7 +278,27 @@ RegisterID* NewTargetNode::emitBytecode(BytecodeGenerator& generator, RegisterID
 
 RegisterID* ImportMetaNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // https://tc39.es/ecma262/#sec-meta-properties-runtime-semantics-evaluation
+    // The environment of the module has the object from the first evaluation of import.meta on. That evaluation calls
+    // importMeta (globalFuncImportMeta) with the environment: it has the host make the object, and stores it.
+    RefPtr<RegisterID> meta = generator.newTemporary();
+    generator.emitNode(meta.get(), m_expr);
+    Ref<Label> created = generator.newLabel();
+    generator.emitJumpIfFalse(generator.emitIsEmpty(generator.newTemporary(), meta.get()), created.get());
+    {
+        RefPtr<RegisterID> importMeta = generator.moveLinkTimeConstant(nullptr, LinkTimeConstant::importMeta);
+        CallArguments arguments(generator, nullptr, 1);
+        generator.emitLoad(arguments.thisRegister(), jsUndefined());
+        RefPtr<RegisterID> scope = generator.emitResolveScope(generator.newTemporary(), generator.variable(generator.propertyNames().builtinNames().metaPrivateName()));
+        generator.move(arguments.argumentRegister(0), scope.get());
+        generator.emitCall(meta.get(), importMeta.get(), NoExpectedFunction, arguments, position(), position(), position(), DebuggableCall::No);
+    }
+    generator.emitLabel(created.get());
+    return generator.move(generator.finalDestination(dst, meta.get()), meta.get());
+#else
     return generator.emitNode(dst, m_expr);
+#endif
 }
 
 // ------------------------------ ResolveNode ----------------------------------
