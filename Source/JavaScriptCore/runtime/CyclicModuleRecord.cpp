@@ -514,6 +514,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         }
     }
 
+#if !USE(BUN_JSC_ADDITIONS)
     if (jsModule->features() & ImportMetaFeature) {
         JSObject* metaProperties = moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleKey()), jsModule, scriptFetcher);
         RETURN_IF_EXCEPTION(scope, void());
@@ -521,6 +522,7 @@ void CyclicModuleRecord::initializeEnvironment(JSGlobalObject* globalObject, Ref
         symbolTablePutTouchWatchpointSet(env, globalObject, vm.propertyNames->builtinNames().metaPrivateName(), metaProperties, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
         RETURN_IF_EXCEPTION(scope, void());
     }
+#endif
 
     // 25. Remove moduleContext from the execution context stack.
     // 26. Return UNUSED.
