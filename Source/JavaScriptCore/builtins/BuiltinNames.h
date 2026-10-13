@@ -186,6 +186,7 @@ namespace JSC {
     macro(handlePositiveProxySetTrapResult) \
     macro(handleProxyGetTrapResult) \
     macro(importModule) \
+    macro(importMeta) \
     macro(moduleFetchFailureKind) \
     macro(moduleFailureModuleRecord) \
     macro(moduleFailureModuleKey) \

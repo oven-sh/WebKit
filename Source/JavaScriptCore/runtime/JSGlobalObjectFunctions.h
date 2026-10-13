@@ -57,6 +57,9 @@ JSC_DECLARE_HOST_FUNCTION(globalFuncSetPrototypeDirectOrThrow);
 JSC_DECLARE_HOST_FUNCTION(globalFuncBuiltinLog);
 JSC_DECLARE_HOST_FUNCTION(globalFuncBuiltinDescribe);
 JSC_DECLARE_HOST_FUNCTION(globalFuncImportModule);
+#if USE(BUN_JSC_ADDITIONS)
+JSC_DECLARE_HOST_FUNCTION(globalFuncImportMeta);
+#endif
 JSC_DECLARE_HOST_FUNCTION(globalFuncCopyDataProperties);
 JSC_DECLARE_HOST_FUNCTION(globalFuncCloneObject);
 JSC_DECLARE_HOST_FUNCTION(globalFuncHandleNegativeProxyHasTrapResult);

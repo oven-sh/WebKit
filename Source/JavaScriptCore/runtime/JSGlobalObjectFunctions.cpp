@@ -25,6 +25,7 @@
 #include "config.h"
 #include "JSGlobalObjectFunctions.h"
 
+#include "BuiltinNames.h"
 #include "CallFrame.h"
 #include "GlobalObjectMethodTable.h"
 #include "ImportMap.h"
@@ -33,7 +34,9 @@
 #include "Interpreter.h"
 #include "IntlDateTimeFormat.h"
 #include "JSCInlines.h"
+#include "JSModuleEnvironment.h"
 #include "JSModuleLoader.h"
+#include "JSModuleRecord.h"
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "LiteralParser.h"
@@ -41,6 +44,7 @@
 #include "ParseInt.h"
 #include "SourceCharacters.h"
 #include "SourceProfiler.h"
+#include "SymbolTableInlines.h"
 #include <stdio.h>
 #include <wtf/ASCIICType.h>
 #include <wtf/Assertions.h>
@@ -851,6 +855,27 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncImportModule, (JSGlobalObject* globalObject, 
     return JSValue::encode(importPromise);
 #endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+// https://tc39.es/ecma262/#sec-meta-properties-runtime-semantics-evaluation
+// The first evaluation of import.meta in a module calls this with the environment of the module
+// (ImportMetaNode::emitBytecode). If the host throws, nothing is stored and the next evaluation asks it again.
+JSC_DEFINE_HOST_FUNCTION(globalFuncImportMeta, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* environment = uncheckedDowncast<JSModuleEnvironment>(callFrame->uncheckedArgument(0));
+    auto* moduleRecord = uncheckedDowncast<JSModuleRecord>(environment->moduleRecord());
+    RefPtr<ScriptFetcher> scriptFetcher = moduleRecord->sourceCode().provider()->sourceOrigin().fetcher();
+    JSObject* meta = moduleRecord->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, moduleRecord->moduleKey()), moduleRecord, WTF::move(scriptFetcher));
+    RETURN_IF_EXCEPTION(scope, { });
+    bool putResult = false;
+    symbolTablePutTouchWatchpointSet(environment, globalObject, vm.propertyNames->builtinNames().metaPrivateName(), meta, /* shouldThrowReadOnlyError */ false, /* ignoreReadOnlyErrors */ true, putResult);
+    RETURN_IF_EXCEPTION(scope, { });
+    return JSValue::encode(meta);
+}
+#endif
 
 static bool NODELETE canPerformFastPropertyEnumerationForCopyDataProperties(Structure* structure)
 {
