@@ -100,7 +100,8 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
 #if USE(BUN_JSC_ADDITIONS)
     UnlinkedProgramCodeBlock* unlinkedCodeBlock = nullptr;
-    if (precompiled && precompiled->codeGenerationMode() == codeGenerationMode) {
+    // (Unlinked code does not say which text it was made from.)
+    if (precompiled && precompiled->codeGenerationMode() == codeGenerationMode && !Options::refuseUntrustedCode()) {
         unlinkedCodeBlock = precompiled;
         recordParseFromUnlinkedCodeBlock(this, source(), unlinkedCodeBlock);
     } else {

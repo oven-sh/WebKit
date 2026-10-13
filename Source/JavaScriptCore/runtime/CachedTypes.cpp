@@ -47,6 +47,7 @@
 #include "UnlinkedMetadataTableInlines.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
+#include "UntrustedCode.h"
 #include "VariableEnvironmentInlines.h"
 #include <ranges>
 #include <wtf/FileHandle.h>
@@ -5536,6 +5537,10 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    if (UntrustedCode::isChecked() && UntrustedCode::isBytecodeRefused(vm, provider, cachedBytecode.get())) [[unlikely]]
+        return nullptr;
+#endif
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
     DeferGC deferGC(vm);
     UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), provider, embedderStamp);
@@ -5893,6 +5898,10 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     auto* cachedEntry = cacheEntryOf(cachedBytecode.get());
     if (!cachedEntry)
         return rejected();
+#if USE(BUN_JSC_ADDITIONS)
+    if (UntrustedCode::isChecked() && UntrustedCode::isBytecodeRefused(vm, key.source().provider(), cachedBytecode.get())) [[unlikely]]
+        return rejected();
+#endif
     // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()
     // goes with this Decoder and the code blocks it made.)
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider(), recoverableCode);

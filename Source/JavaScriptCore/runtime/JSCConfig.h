@@ -29,6 +29,7 @@
 #include "OptionsList.h"
 #include "SecureARM64EHashPins.h"
 #include "StopTheWorldCallback.h"
+#include <span>
 #include <wtf/PtrTag.h>
 #include <wtf/WTFConfig.h>
 
@@ -117,6 +118,9 @@ struct Config {
     StopTheWorldCallback JSC_CONFIG_METHOD(memoryDebuggerStopTheWorld);
 #if USE(BUN_JSC_ADDITIONS)
     StopTheWorldCallback JSC_CONFIG_METHOD(jsDebuggerStopTheWorld);
+    // Whether `source` is all of a text the embedder vouches for and `bytecode`, if there is any, the cached bytecode of that text (UntrustedCode.h).
+    using IsTrustedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
+    IsTrustedCodeCallback JSC_CONFIG_METHOD(isTrustedCode);
 #endif
 
     static constexpr unsigned exceptionInstructionsSize = 64;

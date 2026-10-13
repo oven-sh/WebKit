@@ -66,6 +66,18 @@ SourceCode BuiltinExecutables::defaultConstructorSourceCode(ConstructorKind cons
     return SourceCode();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool BuiltinExecutables::isBuiltinSource(StringView text)
+{
+    auto isAllOf = [&](StringView builtin) {
+        return text.rawCharacters() == builtin.rawCharacters() && text.length() == builtin.length() && text.is8Bit() == builtin.is8Bit();
+    };
+    return isAllOf(std::span { s_JSCCombinedCode, s_JSCCombinedCodeLength })
+        || isAllOf(defaultConstructorSourceCode(ConstructorKind::Base).view())
+        || isAllOf(defaultConstructorSourceCode(ConstructorKind::Extends).view());
+}
+#endif
+
 UnlinkedFunctionExecutable* BuiltinExecutables::createDefaultConstructor(ConstructorKind constructorKind, const Identifier& name, NeedsClassFieldInitializer needsClassFieldInitializer, PrivateBrandRequirement privateBrandRequirement)
 {
     switch (constructorKind) {

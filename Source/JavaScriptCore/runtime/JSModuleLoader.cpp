@@ -49,6 +49,7 @@
 #include "Symbol.h"
 #include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
+#include "UntrustedCode.h"
 #include "VMTrapsInlines.h"
 #include <wtf/text/MakeString.h>
 
@@ -1470,6 +1471,12 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     promise->markAsHandled();
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
+#if USE(BUN_JSC_ADDITIONS)
+    if (UntrustedCode::isChecked() && (sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::BunTranspiledModule)) [[unlikely]] {
+        if (UntrustedCode::throwIfRefused(globalObject, scope, *sourceCode.provider(), UntrustedCode::Site::Module))
+            return promise->rejectWithCaughtException(vm, scope);
+    }
+#endif
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
     case SourceProviderSourceType::WebAssembly:

@@ -1138,6 +1138,7 @@ runtime/TypeSet.cpp
 runtime/TypedArrayController.cpp
 runtime/TypedArrayType.cpp
 runtime/TypeofType.cpp
+runtime/UntrustedCode.cpp
 runtime/VM.cpp
 runtime/VMEntryScope.cpp
 runtime/VMManager.cpp

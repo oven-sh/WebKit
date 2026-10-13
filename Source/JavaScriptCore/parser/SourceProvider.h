@@ -147,6 +147,14 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+
+    std::span<const uint8_t> sourceBytes() const
+    {
+        StringView text = source();
+        return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
+    }
+    // Whether source() is a builtin's text or one Config::isTrustedCode vouches for (UntrustedCode.h). Asked once: a provider's text does not change.
+    JS_EXPORT_PRIVATE bool isTrusted();
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -289,6 +297,10 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    enum class Trust : uint8_t { Unknown, Trusted, Untrusted };
+    std::atomic<Trust> m_trust { Trust::Unknown };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

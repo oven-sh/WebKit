@@ -42,6 +42,7 @@
 #include "ModuleProgramCodeBlock.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
+#include "UntrustedCode.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -410,6 +411,11 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
         throwException(globalObject, throwScope, createError(globalObject, "Forced Failure"_s));
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (UntrustedCode::isChecked() && UntrustedCode::throwIfRefused(scope->realm(), throwScope, *source().provider(), UntrustedCode::Site::Link)) [[unlikely]]
+        return;
+#endif
 
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);
     RETURN_IF_EXCEPTION(throwScope, void());

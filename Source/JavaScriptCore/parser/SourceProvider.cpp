@@ -26,6 +26,8 @@
 #include "config.h"
 #include "SourceProvider.h"
 
+#include "BuiltinExecutables.h"
+#include "JSCConfig.h"
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/ProcessID.h>
@@ -73,6 +75,21 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 {
     function(source());
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool SourceProvider::isTrusted()
+{
+    Trust trust = m_trust.load(std::memory_order_relaxed);
+    if (trust == Trust::Unknown) {
+        auto isTrustedCode = g_jscConfig.isTrustedCode;
+        StringView text = source();
+        bool isTrusted = text.isEmpty() || BuiltinExecutables::isBuiltinSource(text) || (isTrustedCode && isTrustedCode(sourceBytes(), { }, 0));
+        trust = isTrusted ? Trust::Trusted : Trust::Untrusted;
+        m_trust.store(trust, std::memory_order_relaxed);
+    }
+    return trust == Trust::Trusted;
+}
+#endif
 
 void SourceProvider::lockUnderlyingBufferImpl() { }
 

@@ -85,6 +85,7 @@
 #include "StackVisitor.h"
 #include "StrictEvalActivation.h"
 #include "TopExceptionScope.h"
+#include "UntrustedCode.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
@@ -1081,6 +1082,11 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
     if (vm.disallowVMEntryCount) [[unlikely]]
         return VM::checkVMEntryPermission();
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (UntrustedCode::isChecked() && UntrustedCode::throwIfRefused(globalObject, throwScope, *source.provider(), UntrustedCode::Site::Program)) [[unlikely]]
+        return { };
+#endif
 
     // First check if the "program" is actually just a JSON object. If so,
     // we'll handle the JSON object here. Else, we'll handle real JS code
