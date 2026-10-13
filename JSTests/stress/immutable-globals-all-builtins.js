@@ -1,4 +1,4 @@
-//@ requireOptions("--immutableGlobals=*", "--useTemporal=1", "--useShadowRealm=1")
+//@ requireOptions("--immutableGlobals=*", "--useTemporal=1", "--useShadowRealm=1", "--exposeProfilersOnGlobalObject=1")
 
 // --immutableGlobals=* makes every built-in of JavaScriptCore's own immutable (JSObject::makePropertiesImmutable()) in each new
 // global object: constructors, prototypes, namespace objects and functions, with or without a global name, whenever they are created.
@@ -31,9 +31,11 @@ const sourceOfValues = `[
     Object.getOwnPropertyDescriptor((function () { "use strict"; return arguments; })(), "callee").get,
     new TypeError, new AggregateError([]), Temporal.Now.instant(),
     typeof WebAssembly === "object" ? new WebAssembly.Memory({ initial: 1 }) : null,
+    (() => { try { return $vm.ffiCallback({ args: [], returns: "void" }, () => { }); } catch { return null; } })(),
 ]`;
 
-// Follows every own property (value, getter and setter) and every prototype from the properties of a global object.
+// Follows every own property (value, getter and setter, and what the getter returns if that is the same object each time) and every
+// prototype from the properties of a global object.
 function mutableObjectsReachableFrom(global, isExempt = () => false) {
     let seen = new Set([global, global.globalThis, global.$vm]);
     let queue = [];
@@ -52,6 +54,13 @@ function mutableObjectsReachableFrom(global, isExempt = () => false) {
             visit(descriptor.value, path + String(key));
             visit(descriptor.get, "get " + path + String(key));
             visit(descriptor.set, "set " + path + String(key));
+            if (descriptor.get) {
+                try {
+                    let result = Reflect.get(object, key);
+                    if (result === Reflect.get(object, key))
+                        visit(result, path + String(key));
+                } catch { }
+            }
         }
     }
     visitProperties(global, "");

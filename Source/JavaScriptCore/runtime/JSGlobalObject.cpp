@@ -1115,8 +1115,10 @@ void JSGlobalObject::init(VM& vm)
     convertToDictionary(vm);
 
     forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
-        if (entry == "*"_s)
+        if (entry == "*"_s) {
             m_immutableBuiltins = ImmutableBuiltins::OnceOptionIsApplied;
+            m_hasImmutableGlobals = true;
+        }
     });
 
     m_debugger = nullptr;
@@ -2269,7 +2271,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_ffiCallbackStructure.initLater(
         [] (const Initializer<Structure>& init) {
-            init.set(JSFFICallback::createStructure(init.vm, init.owner, JSFFICallback::createPrototype(init.vm, init.owner)));
+            JSObject* prototype = JSFFICallback::createPrototype(init.vm, init.owner);
+            init.set(JSFFICallback::createStructure(init.vm, init.owner, prototype));
+            init.owner->didCreateBuiltin(init.vm, prototype);
         });
 #endif
 
@@ -2320,7 +2324,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             });
         m_webAssemblyJSTag.initLater(
             [] (const Initializer<JSWebAssemblyTag>& init) {
-                init.set(JSWebAssemblyTag::create(init.vm, init.owner, init.owner->webAssemblyTagStructure(), Wasm::Tag::jsExceptionTag()));
+                auto* tag = JSWebAssemblyTag::create(init.vm, init.owner, init.owner->webAssemblyTagStructure(), Wasm::Tag::jsExceptionTag());
+                init.set(tag);
+                init.owner->didCreateBuiltin(init.vm, tag);
             });
 
 #define CREATE_WEBASSEMBLY_PROTOTYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
@@ -2452,6 +2458,16 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+
+    // So far the global object's properties are JavaScriptCore's own. From here on they may be an embedder's.
+    if (m_immutableBuiltins != ImmutableBuiltins::No) [[unlikely]] {
+        structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
+            JSValue value = getDirect(entry.offset());
+            if (value.isObject() && !PropertyName(entry.key()).isPrivateName())
+                didCreateBuiltin(vm, asObject(value));
+            return true;
+        });
+    }
 }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -3945,6 +3961,9 @@ WatchpointSet& JSGlobalObject::ensureReferencedPropertyWatchpointSet(UniquedStri
 
 std::optional<unsigned> JSGlobalObject::stackTraceLimit() const
 {
+    if (m_stackTraceLimitOverride) [[unlikely]]
+        return m_stackTraceLimitOverride;
+
     JSObject* errorConstructor = m_errorStructure.constructorConcurrently();
     if (!errorConstructor)
         return Options::defaultErrorStackTraceLimit();
@@ -3993,6 +4012,7 @@ static void makeObjectsAndTheirFunctionsImmutable(VM& vm, ObjectsToMakeImmutable
 
 void JSGlobalObject::makeObjectAndItsFunctionsImmutable(VM& vm, JSObject* object)
 {
+    m_hasImmutableGlobals = true;
     ObjectsToMakeImmutable objects;
     objects.append(object);
     makeObjectsAndTheirFunctionsImmutable(vm, objects);
@@ -4003,9 +4023,9 @@ void JSGlobalObject::didReifyStaticProperty(VM& vm, JSObject* holder, const Hash
     ASSERT(m_hasImmutableGlobals);
     // What JavaScriptCore's own table gives the global object is a built-in, whatever kind of object it is. (A subclass has a table of its own.)
     const HashTable* table = info()->staticPropHashTable;
-    if (holder == this && m_immutableBuiltins == ImmutableBuiltins::Yes && &entry >= table->values && &entry < table->values + table->numberOfValues) {
+    if (holder == this && m_immutableBuiltins != ImmutableBuiltins::No && &entry >= table->values && &entry < table->values + table->numberOfValues) {
         if (value.isObject() && value != globalThis())
-            makeObjectAndItsFunctionsImmutable(vm, asObject(value));
+            didCreateBuiltin(vm, asObject(value));
         return;
     }
     if (!holder->structure()->hasImmutableProperties())
@@ -4028,7 +4048,6 @@ void JSGlobalObject::didCreateBuiltinSlow(VM& vm, JSObject* object)
 
 void JSGlobalObject::makeAllBuiltinsImmutable(VM& vm)
 {
-    DeferGC deferGC(vm); // The collector does not see this list.
     ObjectsToMakeImmutable objects;
     {
         Locker locker { cellLock() };
@@ -4036,15 +4055,8 @@ void JSGlobalObject::makeAllBuiltinsImmutable(VM& vm)
         objects.appendVector(std::exchange(m_builtinsCreatedBeforeOptionIsApplied, { }));
     }
 
-    // What init() creates. A constructor is reached from its prototype's "constructor".
+    // What init() creates and no function in a property of the global object leads to.
     objects.appendList<JSObject*>({
-        m_objectPrototype.get(),
-        m_functionPrototype.get(),
-        m_arrayPrototype.get(),
-        m_regExpPrototype.get(),
-        m_shadowRealmPrototype.get(),
-        m_iteratorPrototype.get(),
-        m_iteratorConstructor.get(),
         m_iteratorHelperPrototype.get(),
         m_asyncIteratorPrototype.get(),
         m_arrayIteratorPrototype.get(),
@@ -4062,20 +4074,8 @@ void JSGlobalObject::makeAllBuiltinsImmutable(VM& vm)
 #define APPEND_PROTOTYPE_FOR_SIMPLE_TYPE(capitalName, lowerName, properName, instanceType, jsName, prototypeBase, featureFlag) \
     if (featureFlag) \
         objects.append(m_ ## lowerName ## Prototype.get());
-    FOR_EACH_SIMPLE_BUILTIN_TYPE(APPEND_PROTOTYPE_FOR_SIMPLE_TYPE)
     FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(APPEND_PROTOTYPE_FOR_SIMPLE_TYPE)
 #undef APPEND_PROTOTYPE_FOR_SIMPLE_TYPE
-    auto appendValue = [&](JSValue value) {
-        if (value && value.isObject() && value != globalThis())
-            objects.append(asObject(value));
-    };
-    appendValue(m_arrayPrototype->getDirect(vm, vm.propertyNames->unscopablesSymbol));
-    appendValue(getDirect(vm, vm.propertyNames->Intl));
-    appendValue(getDirect(vm, vm.propertyNames->Temporal));
-
-    // What the global object has materialized from its own table so far. didReifyStaticProperty() sees the rest.
-    for (auto& entry : *info()->staticPropHashTable)
-        appendValue(getDirect(vm, Identifier::fromString(vm, entry.m_key)));
 
     makeObjectsAndTheirFunctionsImmutable(vm, objects);
 }
@@ -4085,7 +4085,6 @@ void JSGlobalObject::applyImmutableGlobalsOption(VM& vm)
     DeferTermination deferTermination(vm);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
-        m_hasImmutableGlobals = true;
         if (entry == "*"_s) {
             makeAllBuiltinsImmutable(vm);
             return;

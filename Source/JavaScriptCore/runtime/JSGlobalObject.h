@@ -732,6 +732,8 @@ public:
     bool m_hasImmutableGlobals { false };
     Vector<JSObject*> m_builtinsCreatedBeforeOptionIsApplied;
 
+    std::optional<unsigned> m_stackTraceLimitOverride;
+
     template<typename T>
     struct WeakCustomGetterOrSetterHash {
         static unsigned hash(T*);
@@ -807,6 +809,10 @@ public:
 #endif
 
     std::optional<unsigned> stackTraceLimit() const;
+    // Takes the place of Error.stackTraceLimit while it is set: for an embedder's own code, which would otherwise assign that property
+    // and put the old value back, and cannot once Error has immutable properties.
+    std::optional<unsigned> stackTraceLimitOverride() const { return m_stackTraceLimitOverride; }
+    void setStackTraceLimitOverride(std::optional<unsigned> limit) { m_stackTraceLimitOverride = limit; }
 
     JS_EXPORT_PRIVATE void startSignpost(String&&);
     JS_EXPORT_PRIVATE void stopSignpost(String&&);
@@ -1279,8 +1285,8 @@ public:
     // JSObject::makePropertiesImmutable() for the object, for the functions its properties hold (methods, getters and setters) and,
     // if it is a function, for its "prototype"; then the same for each of those. An object of a class that does not support it is
     // skipped. A function that one of these objects creates later, for a property it has not materialized yet, is covered too.
-    void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
-    // For a built-in of JavaScriptCore's own that init() does not create and that no property of another built-in holds as a function.
+    JS_EXPORT_PRIVATE void makeObjectAndItsFunctionsImmutable(VM&, JSObject*);
+    // For a built-in of JavaScriptCore's own that no property of another built-in holds as a function.
     void didCreateBuiltin(VM& vm, JSObject* object)
     {
         if (m_immutableBuiltins != ImmutableBuiltins::No) [[unlikely]]
