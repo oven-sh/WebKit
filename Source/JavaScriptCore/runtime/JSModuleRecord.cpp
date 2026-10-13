@@ -225,6 +225,16 @@ bool JSModuleRecord::isTopLevelExecutionFinished() const
     return !state.isNumber() || state.asInt32AsAnyInt() == std::to_underlying(State::Executing);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool JSModuleRecord::isSuspendedAtTopLevelAwait() const
+{
+    // As for a generator: the index of the yield point. The states that are not at one are State::Init,
+    // State::Executing (running, or finished: isTopLevelExecutionFinished()) and State::Completed.
+    JSValue state = internalField(Field::State).get();
+    return state.isInt32() && state.asInt32() > 0;
+}
+#endif
+
 void JSModuleRecord::didFinishWithExecutable(VM& vm)
 {
     ModuleProgramExecutable* executable = m_moduleProgramExecutable.get();
