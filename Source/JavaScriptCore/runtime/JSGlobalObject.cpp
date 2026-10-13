@@ -1115,10 +1115,9 @@ void JSGlobalObject::init(VM& vm)
     convertToDictionary(vm);
 
     forEachEntryOfImmutableGlobalsOption([&](StringView entry) {
-        if (entry == "*"_s) {
+        m_hasImmutableGlobals = true;
+        if (entry == "*"_s)
             m_immutableBuiltins = ImmutableBuiltins::OnceOptionIsApplied;
-            m_hasImmutableGlobals = true;
-        }
     });
 
     m_debugger = nullptr;
