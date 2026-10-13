@@ -83,6 +83,18 @@ declares("var topLevelVar;"); // re-declaring an existing variable is allowed an
 shouldBe(topLevelVar, testLoopCount * 2 - 1);
 shouldBe(Reflect.ownKeys(globalThis).length, ownKeysBefore);
 
+// A top-level let, const or class is not a property, but it is what the name means to every later script. The script fails before
+// it creates any binding.
+for (let source of ["let lateLet = 1;", "const lateConst = 1;", "class LateClass { }", "let Array = 1;", "let lateLet = 1; var topLevelVar;", "let ownKeysBefore;"])
+    shouldThrow(() => loadString(source), SyntaxError, source);
+shouldBe(typeof lateLet, "undefined");
+shouldBe(typeof lateConst, "undefined");
+shouldBe(typeof LateClass, "undefined");
+shouldBe(Array.isArray([]), true);
+shouldBe(loadString("{ let inBlock = 1; inBlock + eval('let inEval = 2; inEval'); }"), 3);
+ownKeysBefore++; // An existing one stays assignable.
+ownKeysBefore--;
+
 // Everything else keeps working.
 shouldBe([1, 2, 3].map(x => x * 2).join(), "2,4,6");
 shouldBe(typeof Intl.NumberFormat, "function");

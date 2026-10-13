@@ -70,6 +70,11 @@ void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
 
     prototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     classStructure.m_constructor.set(vm, global, constructor);
+
+    if (global->isFieldOfJSGlobalObject(&classStructure)) {
+        global->didCreateBuiltin(vm, prototype);
+        global->didCreateBuiltin(vm, constructor);
+    }
 }
 
 template<typename Visitor>

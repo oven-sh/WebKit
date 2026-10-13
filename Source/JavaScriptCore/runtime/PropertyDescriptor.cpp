@@ -304,6 +304,12 @@ bool PropertyDescriptor::setPropertySlot(JSGlobalObject* globalObject, PropertyN
             setGetter(createCustomGetterFunction(slotBaseGlobalObject, vm, propertyName, slot.customGetter(), slot.domAttribute()));
         if (slot.customSetter())
             setSetter(createCustomSetterFunction(slotBaseGlobalObject, vm, propertyName, slot.customSetter()));
+        if (slotBaseGlobalObject->hasImmutableGlobals() && slot.slotBase()->structure()->hasImmutableProperties()) [[unlikely]] {
+            if (m_getter.isObject())
+                slotBaseGlobalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(m_getter));
+            if (m_setter.isObject())
+                slotBaseGlobalObject->makeObjectAndItsFunctionsImmutable(vm, asObject(m_setter));
+        }
     } else {
         JSValue value = slot.getValue(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, false);
