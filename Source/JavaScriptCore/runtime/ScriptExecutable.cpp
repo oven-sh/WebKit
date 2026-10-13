@@ -40,9 +40,9 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "LLIntEntrypoint.h"
 #include "ModuleProgramCodeBlock.h"
+#include "NonEmbeddedCode.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
-#include "UntrustedCode.h"
 #include "VMInlines.h"
 
 namespace JSC {
@@ -413,7 +413,8 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (UntrustedCode::isChecked() && UntrustedCode::throwIfRefused(scope->realm(), throwScope, *source().provider(), UntrustedCode::Site::Link)) [[unlikely]]
+    // All new code passes here on its way to a CodeBlock. The other sites only come earlier.
+    if (NonEmbeddedCode::throwIfDisallowed(scope->realm(), throwScope, *source().provider(), "run"_s)) [[unlikely]]
         return;
 #endif
 

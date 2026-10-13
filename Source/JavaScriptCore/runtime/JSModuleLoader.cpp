@@ -43,13 +43,13 @@
 #include "ModuleLoadingContext.h"
 #include "ModuleRegistryEntry.h"
 #include "Nodes.h"
+#include "NonEmbeddedCode.h"
 #include "ObjectConstructor.h"
 #include "Parser.h"
 #include "ParserError.h"
 #include "Symbol.h"
 #include "SyntheticModuleRecord.h"
 #include "TopExceptionScope.h"
-#include "UntrustedCode.h"
 #include "VMTrapsInlines.h"
 #include <wtf/text/MakeString.h>
 
@@ -1472,9 +1472,10 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
 #if USE(BUN_JSC_ADDITIONS)
-    if (UntrustedCode::isChecked() && (sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::BunTranspiledModule)) [[unlikely]] {
-        if (UntrustedCode::throwIfRefused(globalObject, scope, *sourceCode.provider(), UntrustedCode::Site::Module))
-            return promise->rejectWithCaughtException(vm, scope);
+    // Before the parse, so that what the module imports is not loaded.
+    if ((sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::BunTranspiledModule) && NonEmbeddedCode::throwIfDisallowed(globalObject, scope, *sourceCode.provider(), "module"_s)) [[unlikely]] {
+        attachErrorInfo(globalObject, scope, nullptr, moduleKey, ScriptFetchParameters::JavaScript, ModuleFailure::Kind::Evaluation);
+        return promise->rejectWithCaughtException(vm, scope);
     }
 #endif
     switch (sourceType) {

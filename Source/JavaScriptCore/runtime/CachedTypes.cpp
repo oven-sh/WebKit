@@ -37,6 +37,7 @@
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "JSTemplateObjectDescriptor.h"
+#include "NonEmbeddedCode.h"
 #include "ScopedArgumentsTable.h"
 #include "SourceCodeKey.h"
 #include "StrongInlines.h"
@@ -47,7 +48,6 @@
 #include "UnlinkedMetadataTableInlines.h"
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include "UnlinkedProgramCodeBlock.h"
-#include "UntrustedCode.h"
 #include "VariableEnvironmentInlines.h"
 #include <ranges>
 #include <wtf/FileHandle.h>
@@ -5538,7 +5538,7 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     if (!entry)
         return nullptr;
 #if USE(BUN_JSC_ADDITIONS)
-    if (UntrustedCode::isChecked() && UntrustedCode::isBytecodeRefused(vm, provider, cachedBytecode.get())) [[unlikely]]
+    if (NonEmbeddedCode::isBytecodeDisallowed(vm, provider, cachedBytecode.get())) [[unlikely]]
         return nullptr;
 #endif
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
@@ -5899,7 +5899,8 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (!cachedEntry)
         return rejected();
 #if USE(BUN_JSC_ADDITIONS)
-    if (UntrustedCode::isChecked() && UntrustedCode::isBytecodeRefused(vm, key.source().provider(), cachedBytecode.get())) [[unlikely]]
+    // The CodeCache would hand what is decoded here to any provider of equal text.
+    if (NonEmbeddedCode::isBytecodeDisallowed(vm, key.source().provider(), cachedBytecode.get())) [[unlikely]]
         return rejected();
 #endif
     // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()

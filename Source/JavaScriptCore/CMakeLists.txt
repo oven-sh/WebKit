@@ -1624,6 +1624,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/NativeErrorPrototypeInlines.h
     runtime/NativeExecutable.h
     runtime/NativeFunction.h
+    runtime/NonEmbeddedCode.h
     runtime/NullGetterFunction.h
     runtime/NullGetterFunctionInlines.h
     runtime/NullSetterFunction.h

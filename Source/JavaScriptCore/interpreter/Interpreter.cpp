@@ -75,6 +75,7 @@
 #include "MicrotaskCall.h"
 #include "ModuleProgramCodeBlock.h"
 #include "NativeCallee.h"
+#include "NonEmbeddedCode.h"
 #include "ProgramCodeBlock.h"
 #include "ProtoCallFrameInlines.h"
 #include "Register.h"
@@ -85,7 +86,6 @@
 #include "StackVisitor.h"
 #include "StrictEvalActivation.h"
 #include "TopExceptionScope.h"
-#include "UntrustedCode.h"
 #include "VMEntryScopeInlines.h"
 #include "VMInlines.h"
 #include "VMTrapsInlines.h"
@@ -1084,7 +1084,8 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
         return VM::checkVMEntryPermission();
 
 #if USE(BUN_JSC_ADDITIONS)
-    if (UntrustedCode::isChecked() && UntrustedCode::throwIfRefused(globalObject, throwScope, *source.provider(), UntrustedCode::Site::Program)) [[unlikely]]
+    // Before the JSONP fast path, which makes no CodeBlock, and before the program's global declarations.
+    if (NonEmbeddedCode::throwIfDisallowed(globalObject, throwScope, *source.provider(), "program"_s)) [[unlikely]]
         return { };
 #endif
 

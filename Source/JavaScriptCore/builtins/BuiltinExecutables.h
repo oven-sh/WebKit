@@ -79,7 +79,7 @@ SourceCode name##Source();
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
 #if USE(BUN_JSC_ADDITIONS)
     // Whether these are the very characters of all the builtins or of a default constructor, not a copy of them.
-    static bool isBuiltinSource(StringView);
+    static bool isBuiltinSource(StringView source);
 #endif
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 

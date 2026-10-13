@@ -67,14 +67,14 @@ SourceCode BuiltinExecutables::defaultConstructorSourceCode(ConstructorKind cons
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool BuiltinExecutables::isBuiltinSource(StringView text)
+bool BuiltinExecutables::isBuiltinSource(StringView source)
 {
-    auto isAllOf = [&](StringView builtin) {
-        return text.rawCharacters() == builtin.rawCharacters() && text.length() == builtin.length() && text.is8Bit() == builtin.is8Bit();
+    auto isSameMemory = [&](StringView builtin) {
+        return source.rawCharacters() == builtin.rawCharacters() && source.length() == builtin.length() && source.is8Bit() == builtin.is8Bit();
     };
-    return isAllOf(std::span { s_JSCCombinedCode, s_JSCCombinedCodeLength })
-        || isAllOf(defaultConstructorSourceCode(ConstructorKind::Base).view())
-        || isAllOf(defaultConstructorSourceCode(ConstructorKind::Extends).view());
+    return isSameMemory(std::span { s_JSCCombinedCode, s_JSCCombinedCodeLength })
+        || isSameMemory(defaultConstructorSourceCode(ConstructorKind::Base).view())
+        || isSameMemory(defaultConstructorSourceCode(ConstructorKind::Extends).view());
 }
 #endif
 

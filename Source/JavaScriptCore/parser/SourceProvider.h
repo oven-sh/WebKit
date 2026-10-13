@@ -45,6 +45,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/RefCountedFixedVector.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Threading.h>
+#include <wtf/TriState.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -153,8 +154,8 @@ public:
         StringView text = source();
         return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
     }
-    // Whether source() is a builtin's text or one Config::isTrustedCode vouches for (UntrustedCode.h). Asked once: a provider's text does not change.
-    JS_EXPORT_PRIVATE bool isTrusted();
+    // By where the characters of source() are, so no provider can declare it. Computed once: a provider's text does not change.
+    bool isBuiltinOrEmbedded();
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -298,8 +299,7 @@ private:
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
-    enum class Trust : uint8_t { Unknown, Trusted, Untrusted };
-    std::atomic<Trust> m_trust { Trust::Unknown };
+    std::atomic<TriState> m_isBuiltinOrEmbedded { TriState::Indeterminate };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };

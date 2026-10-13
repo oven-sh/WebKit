@@ -27,7 +27,8 @@
 
 #if USE(BUN_JSC_ADDITIONS)
 
-#include "Options.h"
+#include <JavaScriptCore/Options.h>
+#include <wtf/text/ASCIILiteral.h>
 
 namespace JSC {
 
@@ -37,25 +38,26 @@ class SourceProvider;
 class ThrowScope;
 class VM;
 
-// Options::refuseUntrustedCode() and Options::reportUntrustedCode(). A source is trusted for where its text is, not for
-// what made it: SourceProvider::isTrusted() asks about the characters the parser reads, so a provider nobody thought of
-// is not trusted. Nothing can be declared trusted, and there is no way back from the options once they are frozen.
-namespace UntrustedCode {
+// Options::disallowNonEmbeddedCode() and Options::reportNonEmbeddedCode(). What is embedded: SourceProvider::isBuiltinOrEmbedded().
+namespace NonEmbeddedCode {
 
-enum class Site : uint8_t {
-    Link, // ScriptExecutable::prepareForExecutionImpl(), which all new code passes on its way to a CodeBlock. The others only refuse earlier.
-    Program, // Interpreter::executeProgram(), before the JSONP fast path (which runs no code of its own) and the global declarations.
-    Module, // JSModuleLoader::makeModule(), before the parse and so before what the module imports is loaded.
-    Bytecode, // decodeCodeBlockImpl() and decodeBuiltinFunction(). A CodeCache entry made from it would be handed to any provider of equal text.
-};
+ALWAYS_INLINE bool isDisallowedOrReported() { return Options::disallowNonEmbeddedCode() || Options::reportNonEmbeddedCode(); }
 
-ALWAYS_INLINE bool isChecked() { return Options::refuseUntrustedCode() || Options::reportUntrustedCode(); }
+bool throwIfDisallowedSlow(JSGlobalObject*, ThrowScope&, SourceProvider&, ASCIILiteral site);
+bool isBytecodeDisallowedSlow(VM&, SourceProvider&, const CachedBytecode&);
 
-// These are for when isChecked(). They report what is not trusted, and return whether it is refused as well.
-bool throwIfRefused(JSGlobalObject*, ThrowScope&, SourceProvider&, Site);
-bool isBytecodeRefused(VM&, SourceProvider&, const CachedBytecode&);
+// Both report what is not embedded, under the name of the site. They return whether it is disallowed as well.
+ALWAYS_INLINE bool throwIfDisallowed(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, ASCIILiteral site)
+{
+    return isDisallowedOrReported() && throwIfDisallowedSlow(globalObject, scope, provider, site);
+}
 
-} // namespace UntrustedCode
+ALWAYS_INLINE bool isBytecodeDisallowed(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
+{
+    return isDisallowedOrReported() && isBytecodeDisallowedSlow(vm, provider, bytecode);
+}
+
+} // namespace NonEmbeddedCode
 
 } // namespace JSC
 

@@ -77,17 +77,16 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool SourceProvider::isTrusted()
+bool SourceProvider::isBuiltinOrEmbedded()
 {
-    Trust trust = m_trust.load(std::memory_order_relaxed);
-    if (trust == Trust::Unknown) {
-        auto isTrustedCode = g_jscConfig.isTrustedCode;
+    TriState result = m_isBuiltinOrEmbedded.load(std::memory_order_relaxed);
+    if (result == TriState::Indeterminate) {
+        auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
         StringView text = source();
-        bool isTrusted = text.isEmpty() || BuiltinExecutables::isBuiltinSource(text) || (isTrustedCode && isTrustedCode(sourceBytes(), { }, 0));
-        trust = isTrusted ? Trust::Trusted : Trust::Untrusted;
-        m_trust.store(trust, std::memory_order_relaxed);
+        result = triState(text.isEmpty() || BuiltinExecutables::isBuiltinSource(text) || (isEmbeddedCode && isEmbeddedCode(sourceBytes(), { }, 0)));
+        m_isBuiltinOrEmbedded.store(result, std::memory_order_relaxed);
     }
-    return trust == Trust::Trusted;
+    return result == TriState::True;
 }
 #endif
 

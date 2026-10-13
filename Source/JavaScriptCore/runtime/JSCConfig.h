@@ -118,9 +118,9 @@ struct Config {
     StopTheWorldCallback JSC_CONFIG_METHOD(memoryDebuggerStopTheWorld);
 #if USE(BUN_JSC_ADDITIONS)
     StopTheWorldCallback JSC_CONFIG_METHOD(jsDebuggerStopTheWorld);
-    // Whether `source` is all of a text the embedder vouches for and `bytecode`, if there is any, the cached bytecode of that text (UntrustedCode.h).
-    using IsTrustedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
-    IsTrustedCodeCallback JSC_CONFIG_METHOD(isTrustedCode);
+    // Whether `source` is all of a text embedded in the executable and `bytecode`, if there is any, the cached bytecode embedded for that text (NonEmbeddedCode.h).
+    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
+    IsEmbeddedCodeCallback JSC_CONFIG_METHOD(isEmbeddedCode);
 #endif
 
     static constexpr unsigned exceptionInstructionsSize = 64;

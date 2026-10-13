@@ -24,7 +24,7 @@
  */
 
 #include "config.h"
-#include "UntrustedCode.h"
+#include "NonEmbeddedCode.h"
 
 #if USE(BUN_JSC_ADDITIONS)
 
@@ -45,74 +45,57 @@
 #include <wtf/text/StringHash.h>
 
 namespace JSC {
-namespace UntrustedCode {
+namespace NonEmbeddedCode {
 
-static ASCIILiteral nameOf(Site site)
+static void reportIfNeeded(VM& vm, SourceProvider& provider, ASCIILiteral site)
 {
-    switch (site) {
-    case Site::Link:
-        return "link"_s;
-    case Site::Program:
-        return "program"_s;
-    case Site::Module:
-        return "module"_s;
-    case Site::Bytecode:
-        return "bytecode"_s;
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-static void reportIfNeeded(VM& vm, SourceProvider& provider, Site site)
-{
-    if (!Options::reportUntrustedCode())
+    if (!Options::reportNonEmbeddedCode())
         return;
 
     static constexpr unsigned maxFrames = 16;
     StringBuilder report;
-    report.append("[untrusted code] "_s, nameOf(site), ": "_s, provider.sourceURL().isEmpty() ? "(no source URL)"_s : StringView(provider.sourceURL()));
+    report.append("[non-embedded code] "_s, site, ": "_s, provider.sourceURL().isEmpty() ? "(no source URL)"_s : StringView(provider.sourceURL()));
     if (CallFrame* callFrame = vm.topCallFrame) {
-        unsigned frames = 0;
+        unsigned frameCount = 0;
         StackVisitor::visit(callFrame, vm, [&](StackVisitor& visitor) {
             report.append("\n    at "_s, visitor->toString());
-            return ++frames < maxFrames ? IterationStatus::Continue : IterationStatus::Done;
+            return ++frameCount < maxFrames ? IterationStatus::Continue : IterationStatus::Done;
         });
     }
 
-    static Lock lock;
-    static NeverDestroyed<HashSet<String>> reported;
-    String text = report.toString();
+    static Lock reportedMessagesLock;
+    static NeverDestroyed<HashSet<String>> reportedMessages;
+    String message = report.toString();
     {
-        Locker locker { lock };
-        if (!reported->add(text.isolatedCopy()).isNewEntry)
+        Locker locker { reportedMessagesLock };
+        if (!reportedMessages->add(message.isolatedCopy()).isNewEntry)
             return;
     }
-    dataLogLn(text);
+    dataLogLn(message);
 }
 
-bool throwIfRefused(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, Site site)
+bool throwIfDisallowedSlow(JSGlobalObject* globalObject, ThrowScope& scope, SourceProvider& provider, ASCIILiteral site)
 {
-    ASSERT(isChecked());
-    if (provider.isTrusted())
+    if (provider.isBuiltinOrEmbedded())
         return false;
     reportIfNeeded(globalObject->vm(), provider, site);
-    if (!Options::refuseUntrustedCode())
+    if (!Options::disallowNonEmbeddedCode())
         return false;
     const String& url = provider.sourceURL();
-    throwException(globalObject, scope, createEvalError(globalObject, url.isEmpty() ? "Refused to run untrusted code"_str : makeString("Refused to run untrusted code: "_s, url)));
+    throwException(globalObject, scope, createEvalError(globalObject, url.isEmpty() ? "Refused to run code that is not embedded in the executable"_str : makeString("Refused to run "_s, url, " because it is not embedded in the executable"_s)));
     return true;
 }
 
-bool isBytecodeRefused(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
+bool isBytecodeDisallowedSlow(VM& vm, SourceProvider& provider, const CachedBytecode& bytecode)
 {
-    ASSERT(isChecked());
-    auto isTrustedCode = g_jscConfig.isTrustedCode;
-    if (isTrustedCode && isTrustedCode(provider.sourceBytes(), bytecode.span(), bytecode.entryOffset()))
+    auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
+    if (isEmbeddedCode && isEmbeddedCode(provider.sourceBytes(), bytecode.span(), bytecode.entryOffset()))
         return false;
-    reportIfNeeded(vm, provider, Site::Bytecode);
-    return Options::refuseUntrustedCode();
+    reportIfNeeded(vm, provider, "bytecode"_s);
+    return Options::disallowNonEmbeddedCode();
 }
 
-} // namespace UntrustedCode
+} // namespace NonEmbeddedCode
 } // namespace JSC
 
 #endif // USE(BUN_JSC_ADDITIONS)
