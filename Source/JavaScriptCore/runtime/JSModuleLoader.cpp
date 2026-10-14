@@ -1475,7 +1475,6 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     bool hasNoJavaScript = sourceType == SourceProviderSourceType::WebAssembly || sourceType == SourceProviderSourceType::JSON || sourceType == SourceProviderSourceType::Text || sourceType == SourceProviderSourceType::Synthetic;
     if (Options::disallowNonEmbeddedCode() && !hasNoJavaScript && !sourceCode.provider()->isBuiltinOrEmbedded()) [[unlikely]] {
         throwNonEmbeddedCodeError(globalObject, scope, *sourceCode.provider());
-        attachErrorInfo(globalObject, scope, nullptr, moduleKey, ScriptFetchParameters::JavaScript, ModuleFailure::Kind::Evaluation);
         return promise->rejectWithCaughtException(vm, scope);
     }
 #endif

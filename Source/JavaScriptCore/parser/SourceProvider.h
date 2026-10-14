@@ -301,7 +301,7 @@ private:
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
-    std::atomic<TriState> m_isBuiltinOrEmbedded { TriState::Indeterminate };
+    TriState m_isBuiltinOrEmbedded { TriState::Indeterminate };
 #endif
 
     std::atomic<bool> m_sourceCodeDumped { false };

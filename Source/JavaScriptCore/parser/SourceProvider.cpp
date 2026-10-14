@@ -79,14 +79,12 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 #if USE(BUN_JSC_ADDITIONS)
 bool SourceProvider::isBuiltinOrEmbedded()
 {
-    TriState result = m_isBuiltinOrEmbedded.load(std::memory_order_relaxed);
-    if (result == TriState::Indeterminate) {
+    if (m_isBuiltinOrEmbedded == TriState::Indeterminate) {
         auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
         StringView text = source();
-        result = triState(text.isEmpty() || BuiltinExecutables::isBuiltinSource(text) || (isEmbeddedCode && isEmbeddedCode(sourceBytes(), { }, 0)));
-        m_isBuiltinOrEmbedded.store(result, std::memory_order_relaxed);
+        m_isBuiltinOrEmbedded = triState(BuiltinExecutables::isBuiltinSource(text) || (isEmbeddedCode && isEmbeddedCode(sourceBytes(), { }, 0)));
     }
-    return result == TriState::True;
+    return m_isBuiltinOrEmbedded == TriState::True;
 }
 
 bool SourceProvider::isEmbeddedBytecode(const CachedBytecode& bytecode) const
