@@ -2484,7 +2484,7 @@ LLINT_SLOW_PATH_DECL(slow_path_get_from_scope)
     if (metadata.m_getPutInfo.resolveType() == LazyClosureVar)
         LLINT_RETURN_PROFILED(JSModuleEnvironment::readLazyClosureVar(vm, scope, ScopeOffset(metadata.m_operand)));
 
-    LLINT_RETURN(scope->getPropertySlot(globalObject, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
+    LLINT_RETURN(CommonSlowPaths::getPropertySlotForGetFromScope(globalObject, scope, ident, [&] (bool found, PropertySlot& slot) -> JSValue {
         if (!found) {
             if (metadata.m_getPutInfo.resolveMode() == ThrowIfNotFound)
                 return throwException(globalObject, throwScope, createUndefinedVariableError(globalObject, ident));
