@@ -1182,8 +1182,8 @@ public:
     void setAllowRedeclaringSymbols(bool allowRedeclaringSymbols) { m_allowRedeclaringSymbols = allowRedeclaringSymbols; }
     ALWAYS_INLINE bool allowRedeclaringSymbols() const { return m_allowRedeclaringSymbols; }
 
-    void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping = true; }
-    bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping; }
+    void setShouldBuildPCToCodeOriginMapping() { m_shouldBuildPCToCodeOriginMapping.store(true, std::memory_order_relaxed); }
+    bool shouldBuilderPCToCodeOriginMapping() const { return m_shouldBuildPCToCodeOriginMapping.load(std::memory_order_relaxed); }
 
     BytecodeIntrinsicRegistry& bytecodeIntrinsicRegistry() { return *m_bytecodeIntrinsicRegistry; }
     
@@ -1405,7 +1405,7 @@ private:
     bool m_failNextNewCodeBlock { false };
     bool m_globalConstRedeclarationShouldThrow { true };
     bool m_allowRedeclaringSymbols { false };
-    bool m_shouldBuildPCToCodeOriginMapping { false };
+    std::atomic<bool> m_shouldBuildPCToCodeOriginMapping { false }; // The compiler threads read it.
     DeletePropertyMode m_deletePropertyMode { DeletePropertyMode::Default };
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
