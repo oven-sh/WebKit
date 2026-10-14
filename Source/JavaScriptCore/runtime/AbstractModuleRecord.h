@@ -243,6 +243,11 @@ public:
 
         bool isSameBinding(const Resolution& other) const { return moduleRecord == other.moduleRecord && localName == other.localName; }
         bool isEquivalentTo(const Resolution& other) const { return type == other.type && (type != Type::Resolved || isSameBinding(other)); }
+#if USE(BUN_JSC_ADDITIONS)
+        // True if this binding has to be read with moduleRecord->getLiveExport(localName) instead of from the module environment.
+        // `export * as ns` from a live record doesn't count: it resolves to the namespace object, which is an ordinary binding.
+        bool isLiveExport(VM&) const;
+#endif
 
         Type type;
         AbstractModuleRecord* moduleRecord;
@@ -250,10 +255,11 @@ public:
     };
 
     Resolution resolveExport(JSGlobalObject*, const Identifier& exportName);
-    Resolution resolveImport(JSGlobalObject*, const Identifier& localName);
+    // requestedModule is set to the module the import names. For a re-export, that isn't the resolution's moduleRecord.
+    Resolution resolveImport(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
     // The same over the by-name entry maps only, never answered from a PrelinkedModuleGraph (a prelinked record builds its maps first).
     Resolution resolveExportByName(JSGlobalObject*, const Identifier& exportName);
-    Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName);
+    Resolution resolveImportByName(JSGlobalObject*, const Identifier& localName, AbstractModuleRecord** requestedModule = nullptr);
 
     AbstractModuleRecord* hostResolveImportedModule(JSGlobalObject*, const Identifier& moduleName, ScriptFetchParameters::Type moduleRequestType);
     void setImportedModule(JSGlobalObject*, const ModuleRequest&, AbstractModuleRecord*);
@@ -310,6 +316,25 @@ public:
 
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isTypeScript = false;
+
+    // Live exports, used for module mocks. Exports of a live record are never cached: every read, through an import binding or a
+    // namespace object, does liveExportsSource()->get(exportName).
+    // - Any export name resolves to (record, exportName), declared or not. A query that arrives through `export *` only matches
+    //   names the record declares or gets from its own `export *`, or that no other module exports. See resolveExportImpl().
+    // - A live export never makes a name ambiguous. The first `export *` that provides the name wins.
+    // - Imports of live exports get ResolveType Dynamic and never read the exporter's slot. See ModuleProgramExecutable::liveImports().
+    // Must be set before anything links against the record. It can't be unset.
+    bool hasLiveExports() const { return m_hasLiveExports; }
+    void setHasLiveExports();
+    // Null until the embedder sets it. Reading an export before that throws a TDZ error.
+    JSObject* liveExportsSource() const { return m_liveExportsSource.get(); }
+    JS_EXPORT_PRIVATE void setLiveExportsSource(VM&, JSObject*);
+    // All three can run arbitrary JS and throw.
+    JSValue getLiveExport(JSGlobalObject*, PropertyName exportName);
+    bool hasLiveExport(JSGlobalObject*, PropertyName exportName);
+    // For a read through another module's `export { x } from` or `export *`. A name the source doesn't have is undefined, as in
+    // Vitest. The source's [[Get]] can then throw for such a name, and only an import from the live record itself sees that.
+    JSValue getReexportedLiveExport(JSGlobalObject*, PropertyName exportName);
 
     // Options::usePrelinkedModuleInfo(): this record is module `prelinkedIndex()` of an embedder-resolved graph. Its
     // requests, import and export entries live in the graph; a request that names a graph module is answered by the
@@ -415,6 +440,8 @@ protected:
     SourceProviderSourceType m_sourceType;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_prelinkedEntriesMaterialized { false };
+    bool m_hasLiveExports { false };
+    WriteBarrier<JSObject> m_liveExportsSource;
     uint32_t m_prelinkedIndex { 0 };
     RefPtr<PrelinkedModuleGraph> m_prelinked;
     // By import index, filled per import on its first resolveImport (at/after Link, so a memoized target is already
