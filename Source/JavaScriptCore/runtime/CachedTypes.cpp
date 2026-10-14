@@ -5893,11 +5893,6 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     auto* cachedEntry = cacheEntryOf(cachedBytecode.get());
     if (!cachedEntry)
         return rejected();
-#if USE(BUN_JSC_ADDITIONS)
-    // Embedded source does not make bytecode from elsewhere embedded.
-    if (Options::disallowNonEmbeddedCode() && !key.source().provider().isEmbeddedBytecode(cachedBytecode.get())) [[unlikely]]
-        return rejected();
-#endif
     // (A payload that turns out not to be for this key leaves nothing behind: its slot in VM::persistentBytecodePayloads()
     // goes with this Decoder and the code blocks it made.)
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &key.source().provider(), recoverableCode);

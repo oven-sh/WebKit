@@ -153,9 +153,8 @@ public:
         StringView text = source();
         return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
     }
-    // Both answer by where the bytes are, so no provider can declare it. JSC's builtins are embedded code too.
+    // Answers by where the bytes are, so no provider can declare it. JSC's builtins are embedded code too.
     bool isEmbeddedCode();
-    bool isEmbeddedBytecode(const CachedBytecode&) const;
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND

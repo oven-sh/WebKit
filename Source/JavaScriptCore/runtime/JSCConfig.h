@@ -59,8 +59,8 @@ struct Config {
     // JSC::initialize().
     JS_EXPORT_PRIVATE static void NODELETE disableEnvironmentOptions();
 #if USE(BUN_JSC_ADDITIONS)
-    // Whether `source` is all of a text embedded in the executable and `bytecode`, if there is any, the cached bytecode embedded for that text. For Options::disallowNonEmbeddedCode().
-    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
+    // Whether `source` is all of a text embedded in the executable. For Options::disallowNonEmbeddedCode().
+    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source);
     JS_EXPORT_PRIVATE static void NODELETE setIsEmbeddedCodeCallback(IsEmbeddedCodeCallback);
 #endif
     static void finalize() { WTF::Config::finalize(); }
