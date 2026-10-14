@@ -2402,11 +2402,7 @@ public:
         // may run even when the pattern declares capturing subpatterns, and a capturing group wrapping
         // a fixed string (e.g. "(t0)") may be treated as that string. Backreferences and named groups
         // can still observe captures even in match-only mode, so keep the conservative bail for them.
-        bool ignoreCaptures = m_pattern.m_executionMode != ExecutionMode::IncludeSubpatterns
-            && !m_pattern.m_containsBackreferences
-            && !m_pattern.m_hasNamedCaptureGroups
-            && !m_pattern.m_numDuplicateNamedCaptureGroups
-            && !m_pattern.m_containsLookbehinds;
+        bool ignoreCaptures = !capturesAreObservable();
 
         auto& alternatives = m_pattern.m_body->m_alternatives;
         bool hasObservableCaptures = m_pattern.m_numSubpatterns && !ignoreCaptures;
@@ -2702,6 +2698,76 @@ public:
                 allAlternativesStartWithBOL = false;
         }
         return allAlternativesStartWithBOL;
+    }
+
+    bool capturesAreObservable() const
+    {
+        return m_pattern.m_executionMode == ExecutionMode::IncludeSubpatterns
+            || m_pattern.m_containsBackreferences
+            || m_pattern.m_hasNamedCaptureGroups
+            || m_pattern.m_numDuplicateNamedCaptureGroups
+            || m_pattern.m_containsLookbehinds;
+    }
+
+    // Returns true if the disjunction can always match the empty string: some alternative has only
+    // terms that may be skipped. An assertion may fail, so it is not such a term.
+    bool dropMinimumOfGroupsThatCanAlwaysMatchEmpty(PatternDisjunction& disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]] {
+            m_error = ErrorCode::PatternTooLarge;
+            return false;
+        }
+
+        bool canAlwaysMatchEmpty = false;
+        for (auto& alternative : disjunction.m_alternatives) {
+            bool allTermsCanBeSkipped = true;
+            for (auto& term : alternative->m_terms) {
+                bool canBeSkipped = false;
+                switch (term.type) {
+                case PatternTerm::Type::PatternCharacter:
+                case PatternTerm::Type::CharacterClass:
+                case PatternTerm::Type::NumberedBackReference:
+                case PatternTerm::Type::NamedBackReference:
+                    canBeSkipped = !term.quantityMinCount;
+                    break;
+                case PatternTerm::Type::ParentheticalAssertion:
+                    dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*term.parentheses.disjunction);
+                    break;
+                case PatternTerm::Type::ParenthesesSubpattern: {
+                    bool bodyCanAlwaysMatchEmpty = dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*term.parentheses.disjunction);
+                    if (bodyCanAlwaysMatchEmpty
+                        && term.quantityMinCount
+                        && term.quantityMaxCount == quantifyInfinite
+                        && term.quantityType == QuantifierType::Greedy
+                        && term.matchDirection() == Forward
+                        && !((term.capture() || term.containsAnyCaptures()) && capturesAreObservable()))
+                        term.quantityMinCount = 0;
+                    canBeSkipped = bodyCanAlwaysMatchEmpty || !term.quantityMinCount;
+                    break;
+                }
+                default:
+                    break;
+                }
+                allTermsCanBeSkipped &= canBeSkipped;
+            }
+            canAlwaysMatchEmpty |= allTermsCanBeSkipped;
+        }
+        return canAlwaysMatchEmpty;
+    }
+
+    // /(?:X)+/ and /(?:X)*/ match the same text when X can always match the empty string. All that
+    // the minimum adds is a required iteration that may be empty, and what follows an empty
+    // iteration is /(?:X)*/ at the same index. So /(?:X)+/ tries the end positions of /(?:X)*/ in
+    // the same order, some of them twice. They differ in the captures that an empty iteration sets,
+    // which is why those must not be observable. This does not hold for a non-greedy quantifier,
+    // which would rather stop before the first iteration, or for a maximum, which the empty
+    // iteration counts against.
+    //
+    // YarrJIT handles an empty iteration of a group without a minimum. With a minimum it leaves
+    // the whole match to the interpreter: see m_abortExecution.
+    void dropMinimumOfGroupsThatCanAlwaysMatchEmpty()
+    {
+        dropMinimumOfGroupsThatCanAlwaysMatchEmpty(*m_pattern.m_body);
     }
 
     void recomputeStartsWithBOL()
@@ -3867,6 +3933,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
             return error;
     }
 
+    constructor.dropMinimumOfGroupsThatCanAlwaysMatchEmpty();
     constructor.recomputeStartsWithBOL();
     constructor.checkForTerminalParentheses();
     constructor.optimizeDotStarWrappedExpressions();
