@@ -74,6 +74,23 @@ bool mayInherit(const Program& program, LayoutID view, StringID name)
     });
 }
 
+bool storeMayAskPrototypeChain(const Program& program, const Function& function, const Block& block, size_t index, LayoutID view, StringID name)
+{
+    return view && !isInitializingStore(program, function, block, index) && mayInherit(program, view, name);
+}
+
+bool mayGiveUp(const Program& program, LayoutID view)
+{
+    return program.at(view).mayGiveUp || std::ranges::any_of(program.at(view).members, [&](LayoutID member) {
+        return program.at(member).mayGiveUp;
+    });
+}
+
+bool storeMayMakeObjectGiveUp(const Program& program, const Function& function, const Block& block, size_t index, LayoutID view)
+{
+    return view && !isInitializingStore(program, function, block, index) && mayGiveUp(program, view);
+}
+
 bool mayInheritAtBirth(const Program& program, const Function& function, ValueID object, StringID name)
 {
     LayoutID made = function.at(object).layout();
@@ -117,8 +134,11 @@ bool inheritsByItsLayout(const Program& program, LayoutID view, StringID name)
     // Any record may have been made by a function of the program: `new` does not always know its callee. The `prototype` of such a function
     // takes no other name of a field: see Typed::PrototypeObject. Nothing can be added to the prototype object of a class.
     bool hasRecord = false;
-    for (LayoutID member : program.at(view).members)
-        hasRecord |= program.at(member).kind != LayoutKind::Instance;
+    for (LayoutID member : program.at(view).members) {
+        auto& layout = program.at(member);
+        auto field = layout.fieldNamed(name);
+        hasRecord |= layout.kind != LayoutKind::Instance && (layout.kind != LayoutKind::Record || layout.mayBeMadeByNew || !layout.mayHaveOtherPrototype) && !(field && layout.fields[*field].flags & fieldIsNeverSeenAbsentAsWritten);
+    }
     return hasRecord && program.prototypePropertyNames.get(name.index());
 }
 
@@ -278,14 +298,14 @@ Operand Lowering::load(Store store, TypedPointer pointer, unsigned flags, LValue
     case Store::Cell32:
     case Store::OptionalCell32: {
         LValue index = m_out.zeroExtPtr(marked(m_out.load32(pointer), flags));
+        // The back end may take the index from an earlier store or load, across calls that collect. Until here the slot is what keeps the cell alive.
+        RELEASE_ASSERT(holder);
+        ensureStillAliveHere(CellPointer(holder));
         // Opaque, so that no address absorbs the sum: the collector's scan of the stack has to find the pointer.
         LValue cell = decodeCell32(index);
         if (!isDroppedForTesting()) [[likely]]
             cell = m_out.opaque(cell);
         m_indexOfCell.add(cell, index);
-        // The back end may take the index from an earlier store or load, across calls that collect. Until here the slot is what keeps the cell alive.
-        RELEASE_ASSERT(holder);
-        ensureStillAliveHere(CellPointer(holder));
         if (store == Store::Cell32)
             return CellPointer(cell);
         return boxDecoded(index, cell);
@@ -304,9 +324,8 @@ Operand Lowering::load(Store store, TypedPointer pointer, unsigned flags, LValue
 Boxed Lowering::boxDecoded(LValue index, LValue cell, LValue loaded)
 {
     LValue word = loaded ? loaded : index;
-    // By a comparison: two instructions. isNoCell() is for branches.
     LValue boxed = m_out.select(m_out.below(word, m_out.constInt64(firstCellWord)), index, cell);
-    m_decoded.add(boxed, Decoded { index, cell, isNoCell(word), word, !!loaded });
+    m_decoded.add(boxed, Decoded { index, cell, word, !!loaded });
     return Boxed(boxed);
 }
 
@@ -339,11 +358,41 @@ Operand Lowering::OperandJoin::finish()
         for (auto& arm : m_arms)
             isInParts |= m_lowering.m_decoded.contains(arm.operand.value);
     }
+    bool keepsInt32 = false;
+    bool keepsExactInteger = false;
+    if (m_joined.rep == Rep::Double) {
+        for (auto& arm : m_arms) {
+            keepsInt32 |= m_lowering.m_int32sOfNumbers.contains(arm.operand.value);
+            keepsExactInteger |= m_lowering.m_exactIntegersOfNumbers.contains(arm.operand.value);
+        }
+    }
+    bool keepsWord = false;
+    if (m_joined.rep == Rep::Double || m_joined.rep == Rep::OptionalDouble) {
+        for (auto& arm : m_arms)
+            keepsWord |= m_lowering.m_wordsOfNumbers.contains(arm.operand.value);
+    }
     Vector<ValueFromBlock, 4> values;
     Vector<ValueFromBlock, 4> cells;
+    Vector<ValueFromBlock, 4> int32s;
+    Vector<ValueFromBlock, 4> exactIntegers;
+    Vector<ValueFromBlock, 4> words;
     bool zeroReadsUndefined = false;
     for (auto& arm : m_arms) {
         out.appendTo(arm.block);
+        if (keepsWord) {
+            auto found = m_lowering.m_wordsOfNumbers.find(arm.operand.value);
+            words.append(out.anchor(found != m_lowering.m_wordsOfNumbers.end() ? found->value : out.constInt64(INT32_MIN)));
+        }
+        if (keepsInt32) {
+            auto found = m_lowering.m_int32sOfNumbers.find(arm.operand.value);
+            LValue int32 = found != m_lowering.m_int32sOfNumbers.end() ? found->value : m_lowering.toInt32InArm(arm.operand.as<Number>(), false).value();
+            int32s.append(out.anchor(int32));
+        }
+        if (keepsExactInteger) {
+            auto found = m_lowering.m_exactIntegersOfNumbers.find(arm.operand.value);
+            LValue exactInteger = found != m_lowering.m_exactIntegersOfNumbers.end() ? found->value : m_lowering.exactIntegerInArm(arm.operand.as<Number>()).value();
+            exactIntegers.append(out.anchor(exactInteger));
+        }
         if (isInParts) {
             Parts parts = m_lowering.partsOf(arm.operand.as<Boxed>());
             values.append(out.anchor(parts.word));
@@ -357,6 +406,12 @@ Operand Lowering::OperandJoin::finish()
     if (m_joined.rep == Rep::Void)
         return { };
     LValue value = out.phi(b3TypeOf(m_joined.rep), values);
+    if (keepsInt32)
+        m_lowering.m_int32sOfNumbers.add(value, out.phi(Int32, int32s));
+    if (keepsExactInteger)
+        m_lowering.m_exactIntegersOfNumbers.add(value, out.phi(Int64, exactIntegers));
+    if (keepsWord)
+        m_lowering.m_wordsOfNumbers.add(value, out.phi(Int64, words));
     if (!isInParts)
         return Operand(m_joined.rep, value);
     return m_lowering.fromParts(value, out.phi(Int64, cells), zeroReadsUndefined);
@@ -453,14 +508,118 @@ void Lowering::store(Store store, Operand operand, TypedPointer pointer)
 }
 
 // The threshold changes, and with the usual one the state of a cell, only while this thread is in a call. See applyEffects().
+static bool mayStandBetweenStoreAndBarrier(B3::Opcode opcode)
+{
+    switch (opcode) {
+    case B3::Nop:
+    case B3::Identity:
+    case B3::Opaque:
+    case B3::Const32:
+    case B3::Const64:
+    case B3::ConstDouble:
+    case B3::ConstFloat:
+    case B3::Add:
+    case B3::Sub:
+    case B3::Mul:
+    case B3::Neg:
+    case B3::BitAnd:
+    case B3::BitOr:
+    case B3::BitXor:
+    case B3::Shl:
+    case B3::SShr:
+    case B3::ZShr:
+    case B3::BitwiseCast:
+    case B3::SExt8:
+    case B3::SExt16:
+    case B3::SExt32:
+    case B3::ZExt32:
+    case B3::Trunc:
+    case B3::IToD:
+    case B3::FloatToDouble:
+    case B3::DoubleToFloat:
+    case B3::PurifyNaN:
+    case B3::Equal:
+    case B3::NotEqual:
+    case B3::LessThan:
+    case B3::GreaterThan:
+    case B3::LessEqual:
+    case B3::GreaterEqual:
+    case B3::Above:
+    case B3::Below:
+    case B3::AboveEqual:
+    case B3::BelowEqual:
+    case B3::Select:
+    case B3::Load8Z:
+    case B3::Load8S:
+    case B3::Load16Z:
+    case B3::Load16S:
+    case B3::Load:
+    case B3::Store8:
+    case B3::Store16:
+    case B3::Store:
+    case B3::Upsilon:
+    case B3::Phi:
+    case B3::Jump:
+    case B3::Branch:
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool Lowering::everyWayLeadsHere(LBasicBlock block, size_t index, Vector<LBasicBlock, 8>& underWay, Vector<LBasicBlock, 8>& walked) const
+{
+    if (underWay.contains(block) || underWay.size() + walked.size() >= 8)
+        return false;
+    if (walked.contains(block))
+        return true;
+    for (; index < block->size(); ++index) {
+        LValue value = block->at(index);
+        bool emitsNothing = value->opcode() == B3::Patchpoint && value->as<PatchpointValue>()->generator() == m_generatorOfNothing;
+        if (!emitsNothing && !mayStandBetweenStoreAndBarrier(value->opcode()))
+            return false;
+    }
+    if (block == m_out.m_block)
+        return true;
+    if (!block->numSuccessors())
+        return false;
+    underWay.append(block);
+    for (LBasicBlock successor : block->successorBlocks()) {
+        if (!everyWayLeadsHere(successor, 0, underWay, walked))
+            return false;
+    }
+    underWay.removeLast();
+    walked.append(block);
+    return true;
+}
+
+void Lowering::leaveLastBarrierToBarrierOn(CellPointer owner)
+{
+    LaidBarrier last = std::exchange(m_lastBarrier, LaidBarrier { });
+    if (last.owner != owner.value())
+        return;
+    Vector<LBasicBlock, 8> underWay;
+    Vector<LBasicBlock, 8> walked;
+    if (!everyWayLeadsHere(last.next, last.indexInNext, underWay, walked))
+        return;
+    if (last.blockOfBranch)
+        last.test->replaceWithJump(last.blockOfBranch, FrequentedBlock(last.next));
+    else
+        last.test->replaceWithNop();
+    if (Options::verboseAOTCompilation()) [[unlikely]]
+        dataLogLn("AOT: f", m_id.index(), ": a write barrier is left to the one behind it");
+}
+
 void Lowering::barrier(CellPointer owner)
 {
+    leaveLastBarrierToBarrierOn(owner);
     if (!m_isInLoop) {
 #if !CPU(X86_64)
         LValue threshold = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfBarrierThreshold()));
         LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, owner.value(), JSCell::cellStateOffset()));
 #endif
         PatchpointValue* patchpoint = m_out.patchpoint(Void);
+        m_lastBarrier = LaidBarrier { owner.value(), patchpoint, nullptr, m_out.m_block, m_out.m_block->size() };
         applyEffects(patchpoint, effectsOfOperation<operationAOTTypedBarrierSlow>());
         patchpoint->append(ConstrainedValue(owner.value(), ValueRep::SomeRegister));
 #if !CPU(X86_64)
@@ -468,11 +627,12 @@ void Lowering::barrier(CellPointer owner)
         patchpoint->append(ConstrainedValue(threshold, ValueRep::SomeRegister));
 #endif
         patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-        if (!hasStubsForFunctionsWithoutFrame) {
+        if (LoweringContext::coldSitesForceFrame()) {
             m_context.emitsCalls = true;
             patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-        }
-        uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(Entry::operationAOTTypedBarrierSlow) * sizeof(void*));
+        } else if (!hasStubsForFunctionsWithoutFrame)
+            m_context.holdsColdSites = true;
+        uint32_t immediate = static_cast<uint32_t>(static_cast<unsigned>(isARM64() ? Entry::operationAOTTypedBarrierSlowKeepingRegisters : Entry::operationAOTTypedBarrierSlow) * sizeof(void*));
         patchpoint->setGenerator([context = &m_context, immediate](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             GPRReg owner = params[0].gpr();
@@ -485,6 +645,8 @@ void Lowering::barrier(CellPointer owner)
             CCallHelpers::Label done = jit.label();
             Vector<GPRReg, 4> saved;
             for (GPRReg reg : { GPRInfo::returnValueGPR, operationArgumentGPR(1), stubTemporaryGPRs[0], stubTemporaryGPRs[1] }) {
+                if (isARM64())
+                    break;
                 bool isTemporary = reg == stubTemporaryGPRs[0] || reg == stubTemporaryGPRs[1];
                 if (isTemporary && !registersChangedBy(Stub::ColdPlainOperation)->contains(reg, IgnoreVectors))
                     continue;
@@ -494,6 +656,9 @@ void Lowering::barrier(CellPointer owner)
             if (saved.size() & 1)
                 saved.append(jit.scratchRegister());
             bool isLeaf = hasStubsForFunctionsWithoutFrame && context->hasNoFrame(params.proc().code());
+#if CPU(X86_64)
+            bool makesFrame = context->hasNoFrame(params.proc().code());
+#endif
             bool holdsFPR = false;
             RegisterSet::registersToSaveForCCall(params.usedRegisters()).forEach([&](Reg reg) {
                 holdsFPR |= reg.isFPR();
@@ -501,21 +666,37 @@ void Lowering::barrier(CellPointer owner)
             params.addLatePath([=](CCallHelpers& jit) {
                 AllowMacroScratchRegisterUsage allowScratch(jit);
                 isSlow.link(&jit);
+#if CPU(X86_64)
+                if (makesFrame)
+                    jit.emitFunctionPrologue();
+#endif
                 for (unsigned i = 0; i < saved.size(); i += 2)
                     jit.pushPair(saved[i], saved[i + 1]);
-                jit.move(owner, operationArgumentGPR(1));
 #if CPU(ARM64)
                 if (isLeaf)
-                    jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+                    jit.move(CCallHelpers::linkRegister, ARM64Registers::x17);
 #endif
                 unsigned stub = static_cast<unsigned>(Stub::ColdPlainOperation);
                 if (!holdsFPR)
                     stub += 2;
                 if (isLeaf)
                     ++stub;
-                context->stubCalls.call(jit, static_cast<Stub>(stub), immediate, CallSite { });
+                ArgumentMoves ownerToArgument;
+#if CPU(ARM64)
+                appendArgumentMove(ownerToArgument, ARM64Registers::x16, ArgumentSource::Register, operationArgumentGPR(1));
+#endif
+                if (owner != operationArgumentGPR(1))
+                    appendArgumentMove(ownerToArgument, operationArgumentGPR(1), ArgumentSource::Register, owner);
+                if (ownerToArgument.isEmpty())
+                    context->stubCalls.call(jit, static_cast<Stub>(stub), immediate, CallSite { });
+                else
+                    context->stubCalls.call(jit, static_cast<Stub>(stub), immediate, CallSite { }, ownerToArgument);
                 for (unsigned i = saved.size(); i; i -= 2)
                     jit.popPair(saved[i - 2], saved[i - 1]);
+#if CPU(X86_64)
+                if (makesFrame)
+                    jit.emitFunctionEpilogueWithEmptyFrame();
+#endif
                 jit.jump().linkTo(done, &jit);
             });
         });
@@ -525,11 +706,13 @@ void Lowering::barrier(CellPointer owner)
     LBasicBlock continuation = m_out.newBlock();
     LValue threshold = m_out.load32(m_out.address(m_heaps.AOTTyped_collectorState, m_instance, Instance::offsetOfBarrierThreshold()));
     LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, owner.value(), JSCell::cellStateOffset()));
+    LBasicBlock blockOfBranch = m_out.m_block;
     m_out.branch(m_out.above(state, threshold), usually(continuation), rarely(slowPath));
     m_out.appendTo(slowPath);
     AOT_TYPED_OPERATION(BarrierSlow, owner);
     m_out.jump(continuation);
     m_out.appendTo(continuation);
+    m_lastBarrier = LaidBarrier { owner.value(), blockOfBranch->last(), blockOfBranch, continuation, 0 };
 }
 
 // What barrier() asks.
@@ -578,7 +761,7 @@ void Lowering::didLowerInitializingStore()
     }
     size_t next = m_currentIndexInBlock + 1;
     auto& store = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
-    if (store.opcode == Opcode::PutField && m_program.at(store.layout()).isInFrame)
+    if (store.opcode == Opcode::PutField && m_function.environmentsInFrame.get(originOf(store.child(0)).index()))
         return;
     if (next < m_currentBlock->values.size() && isInitializingStore(m_program, m_function, *m_currentBlock, next))
         return;
@@ -591,6 +774,10 @@ void Lowering::didLowerInitializingStore()
             line->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
             return;
         }
+    }
+    if (store.opcode == Opcode::PutField && m_program.at(store.layout()).reuseVariable) {
+        m_isFillingReusedEnvironment = false;
+        barrier(in<CellPointer>(store.child(0)));
     }
     fenceAfterInitialization();
 }
@@ -617,13 +804,7 @@ bool Lowering::mostMembersLack(LayoutID view, const Field& field) const
 bool Lowering::mayGiveUp(LayoutID view) const
 {
     return m_viewsThatMayGiveUp.ensure(view.index(), [&] {
-        if (m_program.at(view).mayGiveUp)
-            return true;
-        for (LayoutID member : m_program.at(view).members) {
-            if (m_program.at(member).mayGiveUp)
-                return true;
-        }
-        return false;
+        return Typed::mayGiveUp(m_program, view);
     }).iterator->value;
 }
 
@@ -703,6 +884,8 @@ Operand Lowering::readField(CellPointer cell, const Field& field, const Type& ty
     auto& stored = m_program.at(field.stored);
     if (!(stored.primitives & Primitive::Absent))
         return ensure(raw, stored, type);
+    if (std::exchange(m_fieldIsPresent, false) && raw.rep == Rep::JSValue)
+        return ensure(raw, stored.withoutPrimitives(Primitive::Absent), type);
 
     // A field that is absent reads `undefined`.
     Type held = stored;
@@ -717,9 +900,19 @@ Operand Lowering::readField(CellPointer cell, const Field& field, const Type& ty
         raw = fromBits(select(isAbsent(raw), integer(bitsOfMarker(Primitive::Undefined, raw.rep)), bits), raw.rep);
         static_assert(JSValue::ValueUndefined == undefinedCell32 && JSValue::ValueNull == nullCell32);
         if (raw.rep == Rep::JSValue && !(held.primitives & ~(Primitive::String | Primitive::Symbol | Primitive::BigInt | Primitive::UndefinedOrNull)))
-            m_decoded.add(raw.value, Decoded { raw.value, bits.value(), isNoCell(bits.value()), bits.value(), true });
+            m_decoded.add(raw.value, Decoded { raw.value, bits.value(), bits.value(), true });
     }
     return ensure(raw, held, type);
+}
+
+Operand Lowering::askMarkedObject(CellPointer cell, StringID name, const Type& type)
+{
+    if (Options::validateAOTTypedFacts() || Options::auditAOTTypedAssertions() || isPrivateName(m_program.string(name))) [[unlikely]]
+        return ensure(emitGetById(box(cell), name), type);
+    TypeID typeOfRead = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+    if (!m_fusedCasts && &m_program.at(typeOfRead) == &type && holdsCells(repOf(type)) && !type.isNever() && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch())
+        return convert(AOT_TYPED_OPERATION(GetByNameHeld, cell, word32(name.index()), word32(typeOfRead.index())), type, repOf(type));
+    return ensure(AOT_TYPED_OPERATION(GetByName, box(cell), word32(name.index())), type);
 }
 
 // What an object that has the field finds under the name: its own property, or what it inherits where the field is absent.
@@ -728,6 +921,7 @@ Operand Lowering::readProperty(CellPointer cell, LayoutID view, const Field& fie
     if (!(m_program.at(field.stored).primitives & Primitive::Absent) || !mayInherit(m_program, view, field.name))
         return readField(cell, field, type);
     auto read = [&] {
+        SetForScope fieldIsPresent(m_fieldIsPresent, true);
         return readField(cell, field, type);
     };
     auto ask = [&] {
@@ -749,7 +943,7 @@ Operand Lowering::readProperty(CellPointer cell, LayoutID view, const Field& fie
     m_out.appendTo(isUnmarked);
     join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
     m_out.appendTo(asks);
-    join.add(ask());
+    join.add(askMarkedObject(cell, field.name, type));
     return join.finish();
 }
 
@@ -758,6 +952,26 @@ Word32 Lowering::hasField(CellPointer cell, const Field& field)
     if (!(m_program.at(field.stored).primitives & Primitive::Absent))
         return boolean(true);
     return logicalNot(isFieldAbsent(cell, field, safeIfAllMembersHave(cell, field)));
+}
+
+Word32 Lowering::hasOwnField(CellPointer cell, const Field& field)
+{
+    if (!(field.flags & fieldMayExistWithoutStorage))
+        return hasField(cell, field);
+    return either<Word32>(hasField(cell, field), [&] {
+        return boolean(true);
+    }, [&] {
+        return AOT_TYPED_OPERATION(HasExtra, cell, word32(field.name.index() | nameMayBeOfOwnField));
+    });
+}
+
+bool Lowering::isStoreThatNeedsNoStorage(const Field& field, ValueID stored) const
+{
+    if (!field.isOutOfLine)
+        return false;
+    ValueID constant = m_program.constantOf(m_function, stored);
+    RELEASE_ASSERT(field.flags & fieldMayExistWithoutStorage && constant && m_function.at(constant).opcode == Opcode::Undefined);
+    return true;
 }
 
 // The slot may say so.
@@ -780,9 +994,8 @@ static Type numbersKeptInPlace()
 void Lowering::branchOnInt32InPlace(Integer word, FTL::WeightedTarget inPlace, FTL::WeightedTarget otherwise)
 {
 #if CPU(ARM64)
-    // leastInt32InPlace takes two instructions to make. The words below it are those from which their number cannot be subtracted.
-    static constexpr int32_t numberOfOtherWords = static_cast<int32_t>(static_cast<int64_t>(leastInt32InPlace) - INT32_MIN);
-    static_assert(numberOfOtherWords > 0 && numberOfOtherWords < 4096);
+    // leastInt32InPlace takes an instruction to make. The words below it are those with the highest bit set and the next one clear.
+    static_assert(leastInt32InPlace == -(1 << 30));
     PatchpointValue* patchpoint = m_out.patchpoint(Void);
     patchpoint->effects = Effects::none();
     patchpoint->effects.terminal = true;
@@ -791,7 +1004,8 @@ void Lowering::branchOnInt32InPlace(Integer word, FTL::WeightedTarget inPlace, F
     m_out.appendSuccessor(otherwise);
     m_out.appendSuccessor(inPlace);
     patchpoint->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
-        CCallHelpers::Jump isOtherWord = jit.branchSub32(CCallHelpers::Overflow, params[0].gpr(), CCallHelpers::TrustedImm32(numberOfOtherWords), ARM64Registers::zr);
+        jit.m_assembler.bic<32, ARM64Assembler::S>(ARM64Registers::zr, params[0].gpr(), params[0].gpr(), ARM64Assembler::LSL, 1);
+        CCallHelpers::Jump isOtherWord = jit.branchOnFlags(CCallHelpers::LessThan);
         CCallHelpers::Jump isInPlace;
         if (!params.fallsThroughToSuccessor(1))
             isInPlace = jit.jump();
@@ -813,12 +1027,30 @@ Operand Lowering::readInt32OrElsewhere(CellPointer cell, const Field& field, con
     auto& stored = m_program.at(field.stored);
     // Nothing else uses what is loaded, so that the back end makes one instruction of the two.
     Integer word = signExtended(load(field.store, fieldAt(cell, field), safeIfAllMembersHave(cell, field)).as<Word32>());
-    bool readsUndefined = stored.primitives & (Primitive::Absent | Primitive::Undefined);
+    bool readsUndefined = stored.primitives & (std::exchange(m_fieldIsPresent, false) ? Primitive::Undefined : Primitive::Absent | Primitive::Undefined);
     bool readsNull = stored.primitives & Primitive::Null;
     Rep rep = repOf(type);
     Join join(m_out, rep, b3TypeOf(rep));
+    ValueID lowered = valueBeingLowered();
+    bool keepsIntegers = rep == Rep::Double && lowered;
+    bool keepsInt32 = keepsIntegers && isTakenAsInt32(lowered);
+    bool keepsExactInteger = keepsIntegers;
+    bool keepsWord = rep == Rep::Double || rep == Rep::OptionalDouble;
+    Vector<ValueFromBlock, 4> int32s;
+    Vector<ValueFromBlock, 4> exactIntegers;
+    Vector<ValueFromBlock, 4> words;
+    bool isInPlaceArm = false;
+    auto add = [&](Operand number, Word32 int32, Integer exactInteger) {
+        if (keepsWord)
+            words.append(m_out.anchor(isInPlaceArm ? word.value() : m_out.constInt64(INT32_MIN)));
+        if (keepsInt32)
+            int32s.append(m_out.anchor(int32.value()));
+        if (keepsExactInteger)
+            exactIntegers.append(m_out.anchor(exactInteger.value()));
+        join.add(number);
+    };
     LBasicBlock inPlace = m_out.newBlock();
-    LBasicBlock elsewhere = newColdBlock();
+    LBasicBlock elsewhere = newUnlikelyBlock();
     if (!readsUndefined && !readsNull)
         branchOnInt32InPlace(word, usually(inPlace), rarely(elsewhere));
     else {
@@ -828,34 +1060,43 @@ Operand Lowering::readInt32OrElsewhere(CellPointer cell, const Field& field, con
         LBasicBlock isNil = m_out.newBlock();
         branchOnInt32InPlace(word, unsure(inPlace), unsure(isNoNumber));
         m_out.appendTo(isNoNumber);
-        // The word is one of the four that are no number. They differ in the lowest two bits.
-        static_assert(!(elsewhereInt32 & 3) && leastInt32InPlace == elsewhereInt32 + 4);
-        m_out.branch(m_out.testIsZero64(word.value(), m_out.constInt64(3)), rarely(elsewhere), usually(isNil));
+        // The word is one of the three that are no number, or refers to a box.
+        static_assert(absentInt32 < nullInt32 && undefinedInt32 < nullInt32);
+        m_out.branch(greaterThan(word, integer(nullInt32)).value(), rarely(elsewhere), usually(isNil));
         m_out.appendTo(isNil);
         if (readsUndefined && readsNull) {
             LBasicBlock isNull = m_out.newBlock();
             LBasicBlock isUndefined = m_out.newBlock();
             m_out.branch(equal(word, integer(nullInt32)).value(), unsure(isNull), unsure(isUndefined));
             m_out.appendTo(isNull);
-            join.add(ensure(boxedConstant(jsNull()), Type::ofPrimitives(Primitive::Null), type));
+            add(ensure(boxedConstant(jsNull()), Type::ofPrimitives(Primitive::Null), type), word32(0), integer(INT64_MIN));
             m_out.appendTo(isUndefined);
         }
         // A field that is absent reads `undefined`.
         if (readsUndefined)
-            join.add(ensure(undefined(), Type::ofPrimitives(Primitive::Undefined), type));
+            add(ensure(undefined(), Type::ofPrimitives(Primitive::Undefined), type), word32(0), integer(INT64_MIN));
         else
-            join.add(ensure(boxedConstant(jsNull()), Type::ofPrimitives(Primitive::Null), type));
+            add(ensure(boxedConstant(jsNull()), Type::ofPrimitives(Primitive::Null), type), word32(0), integer(INT64_MIN));
     }
     m_out.appendTo(inPlace);
-    join.add(ensure(word, numbersKeptInPlace(), type));
+    isInPlaceArm = true;
+    add(ensure(word, numbersKeptInPlace(), type), low32(word), word);
+    isInPlaceArm = false;
     m_out.appendTo(elsewhere);
     Type numbers = stored.withoutPrimitives(Primitive::Absent | Primitive::UndefinedOrNull);
-    // As it is wanted: nothing is boxed to be taken apart here.
-    if (rep != Rep::JSValue)
-        join.add(ensure(AOT_TYPED_OPERATION(GetElsewhereAsDouble, cell, word32(field.name.index())), numbers, type));
-    else
-        join.add(ensure(AOT_TYPED_OPERATION(GetElsewhere, cell, word32(field.name.index())), numbers, type));
-    return join.finish();
+    Number boxed(m_out.loadDouble(numberBoxAt(field, low32(word))));
+    ensureStillAliveHere(cell);
+    Operand kept = ensure(boxed, numbers, type);
+    Word32 int32 = keepsInt32 ? toInt32InArm(kept.as<Number>(), false) : word32(0);
+    add(kept, int32, keepsExactInteger ? exactIntegerInArm(kept.as<Number>()) : integer(INT64_MIN));
+    Operand joined = join.finish();
+    if (keepsInt32)
+        m_int32sOfNumbers.add(joined.value, m_out.phi(Int32, int32s));
+    if (keepsExactInteger)
+        m_exactIntegersOfNumbers.add(joined.value, m_out.phi(Int64, exactIntegers));
+    if (keepsWord)
+        m_wordsOfNumbers.add(joined.value, m_out.phi(Int64, words));
+    return joined;
 }
 
 // Whether the store comes down to a store of 32 bits whatever the value is. Otherwise it may call the run time, which may collect garbage.
@@ -866,18 +1107,35 @@ bool Lowering::isStoredInPlace(const Field& field, ValueID stored) const
 
 // What is stored is of the type of the field. `otherwise`, if there is such a block: where to go with a number that the word cannot
 // hold, nothing having been done.
-void Lowering::storeInt32OrElsewhere(CellPointer cell, const Field& field, ValueID stored, LBasicBlock otherwise)
+void Lowering::storeInt32OrElsewhere(CellPointer cell, const Field& field, ValueID stored, bool isFirstStore, LBasicBlock otherwise)
 {
     auto& type = typeOf(stored);
     auto put = [&](Word32 word) {
         store(field.store, word, fieldAt(cell, field));
     };
     Type inPlace = numbersKeptInPlace();
-    if (type.isWithin(inPlace, m_program)) {
+    if (type.isWithin(inPlace, m_program) && isFirstStore) {
         put(low32(in<Integer>(stored)));
         return;
     }
     LBasicBlock continuation = m_out.newBlock();
+    if (type.primitives & Primitive::Number && !isFirstStore) {
+        LBasicBlock hasBox = newUnlikelyBlock();
+        LBasicBlock hasNoBox = m_out.newBlock();
+        Word32 current = load(field.store, fieldAt(cell, field), 0).as<Word32>();
+        m_out.branch(refersToNumberBox(current).value(), rarely(hasBox), usually(hasNoBox));
+        m_out.appendTo(hasBox);
+        m_out.storeDouble(fitOrElse(get(stored), type, Type::ofPrimitives(Primitive::Number), hasNoBox).as<Number>().value(), numberBoxAt(field, current));
+        ensureStillAliveHere(cell);
+        m_out.jump(continuation);
+        m_out.appendTo(hasNoBox);
+    }
+    if (type.isWithin(inPlace, m_program)) {
+        put(low32(in<Integer>(stored)));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return;
+    }
     if (type.primitives & Primitive::Number) {
         LBasicBlock isNotInPlace = type.mayBeUndefinedOrNull() ? m_out.newBlock() : newColdBlock();
         if (type.isInteger() && type.integers.isWithin(Range::int32())) {
@@ -886,6 +1144,28 @@ void Lowering::storeInt32OrElsewhere(CellPointer cell, const Field& field, Value
             branchOnInt32InPlace(word, usually(isInPlace), rarely(isNotInPlace));
             m_out.appendTo(isInPlace);
             put(low32(word));
+        } else if (auto found = m_wordsOfNumbers.find(get(stored).value); found != m_wordsOfNumbers.end()) {
+            Integer word(found->value);
+            LBasicBlock isWord = m_out.newBlock();
+            LBasicBlock isNoWord = newUnlikelyBlock();
+            branchOnInt32InPlace(word, usually(isWord), rarely(isNoWord));
+            m_out.appendTo(isWord);
+            if (Options::validateAOTTypedFacts()) [[unlikely]] {
+                LBasicBlock doesNotHold = newColdBlock();
+                LBasicBlock holds = m_out.newBlock();
+                m_out.branch(equal(bitsOf(convertToNumber(word)), bitsOf(get(stored))).value(), usually(holds), rarely(doesNotHold));
+                m_out.appendTo(doesNotHold);
+                {
+                    SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+                    AOT_TYPED_OPERATION(FactDoesNotHold, boxInt32(low32(word)), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+                }
+                m_out.jump(holds);
+                m_out.appendTo(holds);
+            }
+            put(low32(word));
+            m_out.jump(continuation);
+            m_out.appendTo(isNoWord);
+            put(low32(fitOrElse(get(stored), type, inPlace, isNotInPlace).as<Integer>()));
         } else
             put(low32(fitOrElse(get(stored), type, inPlace, isNotInPlace).as<Integer>()));
         m_out.jump(continuation);
@@ -907,6 +1187,8 @@ void Lowering::storeInt32OrElsewhere(CellPointer cell, const Field& field, Value
     else if (otherwise)
         m_out.jump(otherwise);
     else {
+        if (isFirstStore)
+            put(word32(0));
         if (get(stored).rep == Rep::Double)
             AOT_TYPED_OPERATION(PutNumberElsewhere, cell, word32(field.name.index()), in<Number>(stored));
         else
@@ -1043,7 +1325,7 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
     Word32 isHit(m_out.equal(words, m_out.load64(inCache(OBJECT_OFFSETOF(AOT::Slot, pointer)))));
     m_out.branch(isHit.value(), usually(hit), rarely(miss));
     m_out.appendTo(hit);
-    m_out.store32(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, offset))), cell.value(), m_heaps.AOTTypedObject_orderWord);
+    m_out.store64(m_out.bitXor(words, m_out.zeroExtPtr(m_out.load32(inCache(OBJECT_OFFSETOF(AOT::Slot, offset))))), cell.value(), m_heaps.AOTTypedObject_orderWord);
     m_out.jump(continuation);
     m_out.appendTo(miss);
     throughStub(cache.value());
@@ -1225,7 +1507,7 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
     guardPinnedFields(isLoweringInitializingStore() ? m_function.at(object).layout() : typeOf(object).onlyView(), field, stored);
     auto put = [&] {
         if (field.store == Store::Int32OrElsewhere)
-            storeInt32OrElsewhere(cell, field, stored);
+            storeInt32OrElsewhere(cell, field, stored, isLoweringInitializingStore());
         else
             store(field.store, in(stored, repOf(field.store)), fieldAt(cell, field));
     };
@@ -1233,6 +1515,10 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
     // Nothing has happened to the object yet. The collector has not run, or every field is fit to be looked at: see lowerNewObject().
     bool isInitializing = isLoweringInitializingStore();
     if (isInitializing && isBornWith(m_program.allocations[m_function.at(object).allocation()], field.name)) {
+        if (isStoreThatNeedsNoStorage(field, stored)) {
+            didLowerInitializingStore();
+            return;
+        }
         didEmitWrite(Writes::RuntimeState);
         put();
         if (holdsCells(field.store) && typeOf(stored).hasCells() && collectorMayHaveRunSinceBirth(object))
@@ -1247,17 +1533,19 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
     bool mayBeAbsent = m_program.at(field.stored).primitives & Primitive::Absent;
     LayoutID view = typeOf(object).onlyView();
     // [[Set]] asks the prototype chain before it creates a property: there may be a setter, or a property that is not writable.
-    bool asksPrototypeChain = !isInitializing && mayBeAbsent && view && inheritsByItsLayout(m_program, view, field.name);
+    bool mayAsk = mayBeAbsent && storeMayAskPrototypeChain(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, view, field.name);
+    bool asksPrototypeChain = mayAsk && inheritsByItsLayout(m_program, view, field.name);
     // The object says so: it has another prototype than its layout says, see mayInherit(). Or it takes no more properties.
-    bool mayAskPrototypeChain = !isInitializing && mayBeAbsent && view && !asksPrototypeChain && mayInherit(m_program, view, field.name);
+    bool mayAskPrototypeChain = mayAsk && !asksPrototypeChain;
     bool mayRefuse = mayBeAbsent && view && !asksPrototypeChain && mayBeFrozen(view) && !isPrivateName(m_program.string(field.name));
-    LBasicBlock done = keepsDiscriminant || asksPrototypeChain || mayAskPrototypeChain ? m_out.newBlock() : nullptr;
+    bool mayExistAlready = field.flags & fieldMayExistWithoutStorage;
+    LBasicBlock done = keepsDiscriminant || asksPrototypeChain || mayAskPrototypeChain || (mayRefuse && (isInSloppyCode() || mayExistAlready)) ? m_out.newBlock() : nullptr;
     auto keepDiscriminant = [&] {
         LBasicBlock differs = newColdBlock();
         Boxed current = readField(cell, field, m_program.at(m_program.types.anything)).as<Boxed>();
         m_out.branch(equal(current, in<Boxed>(stored)).value(), usually(done), rarely(differs));
         m_out.appendTo(differs);
-        OperationEffects effects { Writes::Fields, true, view && mayGiveUp(view) };
+        OperationEffects effects { Writes::Fields, true, storeMayMakeObjectGiveUp(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, view) };
         AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effects, box(cell), word32(field.name.index()), in<Boxed>(stored));
         m_out.jump(done);
     };
@@ -1278,7 +1566,7 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
         }
         m_out.appendTo(creates);
         if (asksPrototypeChain) {
-            AOT_TYPED_OPERATION(SetByName, box(cell), word32(field.name.index()), in<Boxed>(stored));
+            setByName(box(cell), field.name, in<Boxed>(stored));
             m_out.jump(done);
         } else {
             auto unlessAsked = [&] {
@@ -1290,9 +1578,18 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
                 m_out.branch(lacksBits(orderWordOf(cell), bits).value(), usually(goesOn), rarely(asks));
                 m_out.appendTo(asks);
                 if (mayAskPrototypeChain) {
-                    AOT_TYPED_OPERATION(SetByName, box(cell), word32(field.name.index()), in<Boxed>(stored));
+                    setByName(box(cell), field.name, in<Boxed>(stored));
                     m_out.jump(done);
-                } else {
+                } else if (mayExistAlready) {
+                    OperationEffects effects { Writes::Fields, true, storeMayMakeObjectGiveUp(m_program, m_function, *m_currentBlock, m_currentIndexInBlock, view) };
+                    if (isInSloppyCode())
+                        AOT_TYPED_OPERATION_WITH_EFFECTS(SetByNameSloppy, effects, box(cell), word32(field.name.index()), in<Boxed>(stored));
+                    else
+                        AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effects, box(cell), word32(field.name.index()), in<Boxed>(stored));
+                    m_out.jump(done);
+                } else if (isInSloppyCode())
+                    m_out.jump(done);
+                else {
                     // The object turns the store away.
                     OperationEffects refusal { Writes::Nothing, true };
                     AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, refusal, box(cell), word32(field.name.index()), in<Boxed>(stored));
@@ -1302,7 +1599,7 @@ void Lowering::writeField(CellPointer cell, ValueID object, const Field& field, 
             };
             OperationEffects effects { Writes::Fields, false, false, true };
             // Neither the stub nor the site counts anything.
-            if (Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations()) {
+            if (Options::countAOTTypedAllocations()) {
                 unlessAsked();
                 AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(field.name.index()));
             } else
@@ -1469,8 +1766,6 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
     // The casts behind it are carried out in its arms, where the last of them is lowered: see lowerFusedCast().
     if (!m_fusedCasts && (numberOfCastsFusedWithRead(m_currentIndexInBlock) || indexOfUseFusedWithRead(m_currentIndexInBlock, 0)))
         return placeholder(value.rep);
-    if (asksReadForText(result, value))
-        return placeholder(value.rep);
     auto& type = m_fusedCasts ? m_fusedCasts->type : typeOf(result);
     if (value.isAtKnownPlace())
         return ensure(getAtKnownPlace(value, in<Boxed>(object)), type);
@@ -1487,7 +1782,9 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             return ifOfMember(cell, object, view, repOf(type), [&] {
                 return eitherOperand(lacksBits(orderWordOf(cell), orderWordHasExtraProperties), repOf(type), [&] {
                     return ensure(closureConstant(targets->first().function), m_program.at(m_program.types.function), type);
-                }, askObject);
+                }, [&] {
+                    return askMarkedObject(cell, name, type);
+                });
             }, askObject);
         }
         if (view && onlyExtraPropertiesSupply(m_program, view, name)) {
@@ -1495,7 +1792,7 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             return eitherOperand(lacksBits(orderWordOf(cell), orderWordHasExtraProperties), joinedAs(type), [&] {
                 return ensure(undefined(), m_program.at(m_program.types.undefined), type);
             }, [&] {
-                return ensure(emitGetById(box(cell), name), type);
+                return askMarkedObject(cell, name, type);
             });
         }
         auto generally = [&] {
@@ -1508,7 +1805,10 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             return eitherOperand(isUnreifiedSlimClosure(closure), repOf(type), [&] {
                 LValue data = fixedPointer(Instance::offsetOfTypedData());
                 LValue lengths = m_out.add(data, m_out.zeroExtPtr(marked(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, data, OBJECT_OFFSETOF(Data, functionLengthsOffset))), IsFixed)));
-                LValue address = m_out.add(lengths, m_out.shl(m_out.zeroExtPtr(functionOfClosure(closure, true).value()), m_out.constInt32(1)));
+                LValue function = m_out.zeroExtPtr(functionOfClosure(closure, true).value());
+                if (m_program.functionLengthsAreBytes)
+                    return ensure(Word32(marked(m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, m_out.add(lengths, function), 0)), IsFixed)), Type::integer({ 0, UINT8_MAX }), type);
+                LValue address = m_out.add(lengths, m_out.shl(function, m_out.constInt32(1)));
                 return ensure(Word32(marked(m_out.load16ZeroExt32(m_out.address(m_heaps.AOTTyped_runtimeState, address, 0)), IsFixed)), Type::integer({ 0, UINT16_MAX }), type);
             }, generally);
         }
@@ -1522,24 +1822,11 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
                 return ensure(CellPointer(callAllocationStub(Stub::TypedString, { { key, stubTemporaryGPRs[0] } }, { Writes::RuntimeState, false }, false)), m_program.at(m_program.types.string), type);
             }, generally);
         }
-        auto isLeftToGeneralWay = [&] {
-            auto left = readsOfExpectedLeftToGeneralWay();
-            if (left == ReadsOfExpectedLeftToGeneralWay::None) [[likely]]
-                return false;
-            bool goesByGraph = left == ReadsOfExpectedLeftToGeneralWay::LengthWhereColdByGraph || left == ReadsOfExpectedLeftToGeneralWay::AllWhereColdByGraph;
-            if (goesByGraph ? !m_program.isColdByGraph(m_id) : m_isInLoop || m_program.isHotByText(m_id))
-                return false;
-            bool isForLengthAlone = left == ReadsOfExpectedLeftToGeneralWay::Length || left == ReadsOfExpectedLeftToGeneralWay::LengthWhereColdByGraph;
-            if (static const BuiltinName length = Builtins::singleton().nameOf("length"_s.span8()); isForLengthAlone && (!length || m_program.builtinName(name) != length))
-                return false;
-            ++m_context.numberOfReadsOfExpectedLeftToGeneralWayBySwitch;
-            return true;
-        };
+        if (!m_isInLoop && !m_program.isHotByText(m_id))
+            return generally();
         // A primitive that the receiver is expected to be besides takes the general way.
         if (auto expectedObject = predictionOf(object, Primitive::All)) {
             if (const Field* expectedField = fieldExpectedFor(*expectedObject, name)) {
-                if (isLeftToGeneralWay())
-                    return generally();
                 return ifAsExpected({ { object, &*expectedObject } }, repOf(type), [&](LBasicBlock otherwise) {
                     return readField(withFieldOrElse(object, expectedObject->onlyView(), *expectedField, otherwise), *expectedField, type);
                 }, generally);
@@ -1549,13 +1836,11 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         if (!expected)
             return generally();
         if (auto builtin = expectedBuiltin(BuiltinKind::Getter, object, name, { }))
-            return isLeftToGeneralWay() ? generally() : lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
+            return lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
         // A method: what a string or a number finds under a name cannot change.
         if (BuiltinName known = m_program.builtinName(name); known && (expected->isString() || expected->isNumber())) {
             BuiltinID method = m_builtins.findForInstance(BuiltinKind::Method, expected->isString() ? m_builtins.stringClass() : m_builtins.numberClass(), known);
             if (method && m_builtins.hasCell(method)) {
-                if (isLeftToGeneralWay())
-                    return generally();
                 return ifAsExpected({ { object, &m_program.at(expected->isString() ? m_program.types.string : m_program.types.number) } }, repOf(type), [&](LBasicBlock) {
                     return ensure(builtinCell(m_builtins.cellOf(method)), m_program.at(m_program.types.function), type);
                 }, generally);
@@ -1597,7 +1882,7 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
     auto lacks = [&] {
         bool suppliesAlone = onlyFieldsSupply(m_program, view, name);
         if (!suppliesAlone && !onlyFieldsSupply(m_program, view, name, true))
-            return ensure(emitGetById(box(cell), name), type);
+            return ensureProperty(cell, name, emitGetById(box(cell), name), type);
         if (field->isElsewhereInSomeMember) {
             auto ask = [&] {
                 return ensure(AOT_TYPED_OPERATION(GetExtra, cell, word32(name.index() | nameMayBeOfOwnField)), type);
@@ -1614,7 +1899,7 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             return ensure(undefined(), m_program.at(m_program.types.undefined), type);
         }, [&] {
             if (!suppliesAlone)
-                return ensure(emitGetById(box(cell), name), type);
+                return askMarkedObject(cell, name, type);
             return ensure(AOT_TYPED_OPERATION(GetExtra, cell, word32(name.index())), type);
         });
     };
@@ -1685,8 +1970,12 @@ void Lowering::lowerInitialStores(const InitialStores& stores)
     LBasicBlock isFresh = m_out.newBlock();
     LBasicBlock isNotFresh = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
+    if (LayoutID view = stores.typeOfThis->onlyView(); m_program.at(view).admitsForeignObjects && !isAllocatedAsMemberOf(object, view))
+        orElse(passes(shapeWordOf(cell), m_program.at(view).test, isNotFresh), isNotFresh);
     // No property, no flag, and not keysAreInLayoutOrder: an allocation that is born with nothing has the first order of its layout.
-    m_out.branch(isZero(orderWordOf(cell)).value(), usually(isFresh), rarely(isNotFresh));
+    static_assert(offsetOfOrderWord + sizeof(uint32_t) == offsetOfShapeWord && !(offsetOfOrderWord % sizeof(uint64_t)));
+    LValue words = m_out.load64(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(offsetOfOrderWord))));
+    m_out.branch(isZero(Word32(m_out.castToInt32(words))).value(), usually(isFresh), rarely(isNotFresh));
 
     m_out.appendTo(isFresh);
     {
@@ -1697,21 +1986,24 @@ void Lowering::lowerInitialStores(const InitialStores& stores)
             SetForScope currentIndex(m_currentIndexInBlock, stores.first + i);
             auto& value = m_function.at(values[stores.first + i]);
             const Field* field = fieldFor(*stores.typeOfThis, value.string());
-            RELEASE_ASSERT(field && !field->isLackedBySomeMember && !field->isOutOfLine);
+            RELEASE_ASSERT(field && !field->isLackedBySomeMember);
+            bool needsNoStorage = isStoreThatNeedsNoStorage(*field, value.child(1));
             guardPinnedFields(stores.typeOfThis->onlyView(), *field, value.child(1));
             // So that the counters see the field. It comes to the same order word.
             if (Options::countAOTTypedAllocations()) [[unlikely]] {
                 OperationEffects effects { Writes::Fields, false, false, true };
-                AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(value.string().index()));
+                AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(value.string().index() | (needsNoStorage ? nameOfFieldCreatedWithoutStorage : 0)));
             }
+            if (needsNoStorage)
+                continue;
             if (field->store == Store::Int32OrElsewhere)
-                storeInt32OrElsewhere(cell, *field, value.child(1));
+                storeInt32OrElsewhere(cell, *field, value.child(1), true);
             else
                 store(field->store, in(value.child(1), repOf(field->store)), fieldAt(cell, *field));
             storesCells |= holdsCells(field->store) && typeOf(value.child(1)).hasCells();
         }
         if (!Options::countAOTTypedAllocations()) [[likely]]
-            m_out.store32(m_out.constInt32(stores.orderWord), cell.value(), m_heaps.AOTTypedObject_orderWord);
+            m_out.store64(m_out.bitOr(words, m_out.constInt64(stores.orderWord)), cell.value(), m_heaps.AOTTypedObject_orderWord);
         if (storesCells)
             barrier(cell);
     }
@@ -2020,6 +2312,7 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
     unsigned count = names.size();
     RELEASE_ASSERT(count == values.size());
     if (row != Format::none) {
+        m_roadOfLiteral = 'r';
         RELEASE_ASSERT(!newTargetID && numberOfRowFor(names, inlineCapacity, hasNullPrototype) == row);
         unsigned inRegisters = std::min(count, maxLiteralPropertiesInRegisters);
         Vector<std::pair<LValue, GPRReg>, 4> operands { { m_out.constInt64(row), GPRInfo::argumentGPR1 } };
@@ -2028,6 +2321,8 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
         LValue made = callICStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectOfRow0) + inRegisters), Int64, operands, std::nullopt, { Writes::RuntimeState, false });
         for (unsigned i = inRegisters; i < count; ++i)
             m_out.store64(values[i].value(), m_out.address(m_heaps.properties.atAnyNumber(), made, JSObject::offsetOfInlineStorage() + i * sizeof(EncodedJSValue)));
+        if (count > inRegisters)
+            fenceAfterInitialization();
         return CellPointer(made);
     }
     Pointer cache = slotAddress(slot);
@@ -2056,6 +2351,28 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
         return object;
     };
     auto generally = [&] {
+        if (stores && std::ranges::none_of(names, [&](StringID name) { return isNamedLastIndex(name); })) {
+            CellPointer constructorCell = constructor();
+            CellPointer newTargetCell = newTarget();
+            LValue buffer = transientBuffer(count * sizeof(EncodedJSValue));
+            Vector<uint32_t, 16> row;
+            Vector<uint32_t, 16> items;
+            SetForScope currentIndex(m_currentIndexInBlock, m_currentIndexInBlock);
+            for (unsigned i = 0; i < count; ++i) {
+                RELEASE_ASSERT(!(names[i].index() >> 31));
+                m_out.store64(values[i].value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+                row.append(names[i].index() | static_cast<uint32_t>(stores >> i & 1) << 31);
+                m_currentIndexInBlock = group->fields[i];
+                items.append(nextItemSite());
+            }
+            m_currentIndexInBlock = group->allocation;
+            uint32_t callSite = m_nextSite;
+            CellPointer made = AOT_TYPED_OPERATION(CreateThisWithStores, cache, constructorCell, newTargetCell, word32(count), word32(inlineCapacity), Pointer(buffer), word32(rowOf(row.span())));
+            RELEASE_ASSERT(m_nextSite == callSite + 1);
+            for (unsigned i = 0; i < count; ++i)
+                m_context.itemSites.append({ callSite, i, items[i] });
+            return made;
+        }
         if (stores) {
             // All at once where nothing on the prototype chain has a say: the object is born with the structure that has all the names, and none is made for the steps between.
             CellPointer constructorCell = constructor();
@@ -2100,11 +2417,15 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
             operands.append({ values[i].value(), GPRInfo::toArgumentRegister(2 + i) });
         LValue made = callICStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewObjectLiteral0) + inRegisters), Int64, operands, std::nullopt, { Writes::RuntimeState, false });
         // The stub has cleared the other slots, all of which are in the object. Nothing has looked at it yet.
+        bool hasStoredBehindStub = false;
         for (unsigned i = inRegisters; i < count; ++i) {
             if (values[i].value()->hasInt64() && !values[i].value()->asInt64())
                 continue;
             m_out.store64(values[i].value(), m_out.address(m_heaps.properties.atAnyNumber(), made, JSObject::offsetOfInlineStorage() + i * sizeof(EncodedJSValue)));
+            hasStoredBehindStub = true;
         }
+        if (hasStoredBehindStub)
+            fenceAfterInitialization();
         return made;
     };
     // The stub asks the slot itself. What it calls where that is empty finds the names by the site, and leaves the object as the stub does: see newObjectLiteralAtSite(). Nothing stands here for that case.
@@ -2115,7 +2436,9 @@ CellPointer Lowering::newObjectWithProperties(unsigned slot, bool hasNullPrototy
     bool areDistinct = true;
     for (unsigned i = 0; i < count; ++i)
         areDistinct = areDistinct && std::ranges::none_of(names.first(i), [&](StringID earlier) { return earlier == names[i]; });
+    m_roadOfLiteral = 'g';
     if (!newTargetID && count <= maxPropertiesNamedBySite && inlineCapacity < 1u << 15 && !mayBeIndex && areDistinct) {
+        m_roadOfLiteral = 's';
         Vector<uint32_t, 16> row { count | inlineCapacity << 16 | static_cast<uint32_t>(hasNullPrototype) << 31 };
         for (StringID name : names)
             row.append(name.index());
@@ -2215,7 +2538,38 @@ unsigned Lowering::capacityThatFillsTheCell(unsigned inlineCapacity)
     return std::min<unsigned>((size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue), JSFinalObject::maxInlineCapacity);
 }
 
-unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& function, ValueID id, bool hasFields)
+static unsigned roomToBecomeRecord(const Program& program, std::span<const StringID> names)
+{
+    const Vector<LayoutID, 1>* records = nullptr;
+    for (StringID name : names) {
+        auto found = program.recordsThatPlainDataBecomesByName.find(name.index() + 1);
+        if (found == program.recordsThatPlainDataBecomesByName.end())
+            return 0;
+        if (!records || found->value.size() < records->size())
+            records = &found->value;
+    }
+    if (!records)
+        return 0;
+    size_t size = JSFinalObject::allocationSize(0);
+    for (LayoutID record : *records) {
+        auto& layout = program.at(record);
+        if (layout.sizeWithRoomToSpecialize <= size)
+            continue;
+        bool hasFieldForEachName = std::ranges::all_of(names, [&](StringID name) {
+            return layout.fields.containsIf([&](auto& field) {
+                return field.name == name;
+            });
+        });
+        bool hasNameForEachRequiredField = std::ranges::all_of(layout.fields, [&](auto& field) {
+            return field.flags & (fieldIsOptional | fieldIsNeverStored) || std::ranges::find(names, field.name) != names.end();
+        });
+        if (hasFieldForEachName && hasNameForEachRequiredField)
+            size = layout.sizeWithRoomToSpecialize;
+    }
+    return WTF::roundUpToMultipleOf<sizeof(EncodedJSValue)>(size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
+}
+
+unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& function, ValueID id, bool hasFields, const UsersInBlocks* users)
 {
     auto& builtins = Builtins::singleton();
     auto withoutUpcasts = [&](ValueID value) {
@@ -2233,17 +2587,21 @@ unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& f
     };
     Vector<StringID, 16> names;
     unsigned numberOfKeys = 0;
-    collectPropertiesGivenTo(program, function, id, 3, names, numberOfKeys);
+    collectPropertiesGivenTo(program, function, id, 3, names, numberOfKeys, users);
     unsigned inlineCapacity = std::min<unsigned>(names.size() + numberOfKeys, JSFinalObject::maxInlineCapacity);
     if (inlineCapacity <= JSFinalObject::defaultInlineCapacity) {
         bool isStoredToByKey = false;
         bool isCopiedInto = false;
-        for (auto& other : function.blocks) {
-            for (ValueID user : other.values) {
-                auto& value = function.at(user);
-                isStoredToByKey |= value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == id;
-                isCopiedInto |= makesItsFirstArgument(value) && !value.arguments.isEmpty() && withoutUpcasts(value.arguments[0]) == id;
-            }
+        auto look = [&](ValueID user) {
+            auto& value = function.at(user);
+            isStoredToByKey |= value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == id;
+            isCopiedInto |= makesItsFirstArgument(value) && !value.arguments.isEmpty() && withoutUpcasts(value.arguments[0]) == id;
+        };
+        for (size_t i = 0; users && i < users->size(); ++i)
+            look(users->at(i).value);
+        for (size_t i = 0; !users && i < function.blocks.size(); ++i) {
+            for (ValueID user : function.blocks[i].values)
+                look(user);
         }
         if (isCopiedInto || (isStoredToByKey && !hasFields))
             inlineCapacity = 0;
@@ -2252,6 +2610,8 @@ unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& f
         auto& row = program.rowsOfBirths[birth.rowOfBirth()];
         inlineCapacity = std::max<unsigned>(inlineCapacity, row.firstPlace + row.names.size());
     }
+    if (inlineCapacity)
+        inlineCapacity = std::max(inlineCapacity, roomToBecomeRecord(program, names.span()));
     return capacityThatFillsTheCell(inlineCapacity);
 }
 
@@ -2263,6 +2623,13 @@ void Lowering::numberRowsOfBirths(Program& program)
                 value.immediates[1] = Format::none;
         }
     });
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        auto& layout = program.layouts[i];
+        if (layout.kind != LayoutKind::Record || !layout.shape || layout.admitsForeignObjects || layout.sizeWithRoomToSpecialize <= JSFinalObject::allocationSize(2) || layout.sizeWithRoomToSpecialize > JSFinalObject::allocationSize(JSFinalObject::defaultInlineCapacity))
+            continue;
+        for (auto& field : layout.fields)
+            program.recordsThatPlainDataBecomesByName.add(field.name.index() + 1, Vector<LayoutID, 1>()).iterator->value.append(LayoutID(i));
+    }
     if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
         return;
     auto& builtins = Builtins::singleton();
@@ -2275,19 +2642,47 @@ void Lowering::numberRowsOfBirths(Program& program)
         Vector<unsigned> blocksOfStores;
     };
     Vector<Vector<Birth>> birthsOfFunctions(program.functions.size());
+    const UsersInBlocks noUsers;
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = program.functions[i];
+        auto makesObjectWithoutPrototype = [&](const Value& value) {
+            if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 1 || function.at(value.arguments[0]).opcode != Opcode::Null)
+                return false;
+            auto& builtin = builtins.at(value.builtin());
+            return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
+        };
+        BitVector isBirth;
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (function.at(id).opcode == Opcode::NewObject || makesObjectWithoutPrototype(function.at(id)))
+                    isBirth.set(id.index());
+            }
+        }
+        if (isBirth.isEmpty())
+            return;
+        UncheckedKeyHashMap<uint32_t, UsersInBlocks, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usersOfBirths;
+        for (unsigned block = 0; block < function.blocks.size(); ++block) {
+            for (ValueID user : function.blocks[block].values) {
+                function.at(user).forEachChild([&](ValueID child) {
+                    while (function.at(child).opcode == Opcode::Cast && function.at(child).castReason() == CastReason::Upcast)
+                        child = function.at(child).child(0);
+                    if (!isBirth.get(child.index()))
+                        return;
+                    auto& users = usersOfBirths.add(child.index(), UsersInBlocks { }).iterator->value;
+                    if (users.isEmpty() || users.last().value != user)
+                        users.append({ block, user });
+                });
+            }
+        }
         for (auto& block : function.blocks) {
             for (size_t index = 0; index < block.values.size(); ++index) {
                 ValueID id = block.values[index];
                 auto& value = function.at(id);
-                bool hasNullPrototype = false;
-                if (value.opcode == Opcode::CallBuiltin && value.arguments.size() == 1 && function.at(value.arguments[0]).opcode == Opcode::Null) {
-                    auto& builtin = builtins.at(value.builtin());
-                    hasNullPrototype = builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
-                }
+                bool hasNullPrototype = makesObjectWithoutPrototype(value);
                 if (value.opcode != Opcode::NewObject && !hasNullPrototype)
                     continue;
+                auto found = usersOfBirths.find(id.index());
+                const UsersInBlocks& users = found == usersOfBirths.end() ? noUsers : found->value;
                 auto fields = fieldsMadeWithAllocation(program, function, block, index, false, hasNullPrototype);
                 Vector<StringID, 8> names;
                 for (size_t field : fields) {
@@ -2306,24 +2701,22 @@ void Lowering::numberRowsOfBirths(Program& program)
                 }
                 if (!isNamedBySite)
                     continue;
-                unsigned room = roomInLineOfLiteral(program, function, id, !fields.isEmpty());
+                unsigned room = roomInLineOfLiteral(program, function, id, !fields.isEmpty(), &users);
                 unsigned numberOfNamesAtBirth = names.size();
                 size_t roomForNames = std::max<size_t>(names.size(), room);
                 Vector<unsigned> blocksOfStores;
-                for (unsigned other = 0; other < function.blocks.size() && !hasNullPrototype; ++other) {
-                    for (ValueID user : function.blocks[other].values) {
-                        auto& store = function.at(user);
-                        if (store.opcode != Opcode::PutById || store.isInitialStore() || store.hasWordOfKnownPlace() || names.size() >= std::min<size_t>(roomForNames, maxPropertiesNamedBySite) || names.contains(store.string()))
-                            continue;
-                        ValueID receiver = store.child(0);
-                        while (function.at(receiver).opcode == Opcode::Cast && function.at(receiver).castReason() == CastReason::Upcast)
-                            receiver = function.at(receiver).child(0);
-                        auto text = program.string(store.string());
-                        if (receiver != id || (!text.empty() && isASCIIDigit(text[0])) || equalSpans(text, "__proto__"_s.span8()))
-                            continue;
-                        names.append(store.string());
-                        blocksOfStores.append(other);
-                    }
+                for (size_t k = 0; k < users.size() && !hasNullPrototype; ++k) {
+                    auto& store = function.at(users[k].value);
+                    if (store.opcode != Opcode::PutById || store.isInitialStore() || store.hasWordOfKnownPlace() || names.size() >= std::min<size_t>(roomForNames, maxPropertiesNamedBySite) || names.contains(store.string()))
+                        continue;
+                    ValueID receiver = store.child(0);
+                    while (function.at(receiver).opcode == Opcode::Cast && function.at(receiver).castReason() == CastReason::Upcast)
+                        receiver = function.at(receiver).child(0);
+                    auto text = program.string(store.string());
+                    if (receiver != id || (!text.empty() && isASCIIDigit(text[0])) || equalSpans(text, "__proto__"_s.span8()))
+                        continue;
+                    names.append(store.string());
+                    blocksOfStores.append(users[k].block);
                 }
                 birthsOfFunctions[i].append(Birth { id, room, hasNullPrototype, numberOfNamesAtBirth, WTF::move(names), WTF::move(blocksOfStores) });
             }
@@ -2335,8 +2728,10 @@ void Lowering::numberRowsOfBirths(Program& program)
         for (auto& birth : birthsOfFunctions[i]) {
             ++births;
             uint32_t number = program.ensureNumberOfRow(birth.names.span().first(birth.numberOfNamesAtBirth), birth.room, birth.hasNullPrototype);
-            if (function.at(birth.id).opcode == Opcode::NewObject)
+            if (function.at(birth.id).opcode == Opcode::NewObject) {
                 function.values[birth.id.index()].immediates[1] = number;
+                program.rowsThatStayAsBorn.set(number);
+            }
             unsigned block = UINT_MAX;
             for (unsigned k = 0; k < birth.blocksOfStores.size(); ++k) {
                 if (birth.blocksOfStores[k] != block) {
@@ -2360,6 +2755,12 @@ void Lowering::numberRowsOfBirths(Program& program)
         if (isNumbered)
             row.number = program.ensureNumberOfRow(row.names.span(), 0xff, false);
     }
+    for (auto& grown : program.rowsGrownInto)
+        program.rowsThatStayAsBorn.clear(grown[0]);
+    for (uint32_t number = 0; number < program.numberedRows.size(); ++number) {
+        for (StringID name : program.numberedRows[number].names)
+            program.numbersOfRowsByName.add(name.index() + 1, Vector<uint32_t, 1>()).iterator->value.append(number);
+    }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT passes: rows by number: ", program.numberedRows.size(), " rows of ", births, " births; of them rows of this: ", program.numberedRows.size() - program.firstNumberOfRowsOfThis);
 }
 
@@ -2377,7 +2778,7 @@ CellPointer Lowering::newEmptyObject(unsigned numberOfNames)
 
 std::optional<InlineBuiltin> Lowering::builtinThatListed(ValueID list) const
 {
-    const Value* listing = &m_function.at(withoutUpcasts(list));
+    const Value* listing = &m_function.at(withoutCasts(m_function, list));
     if (listing->opcode == Opcode::CallDirect) {
         auto& callee = m_program.at(listing->function());
         if (callee.blocks.size() != 1 || callee.blocks[0].terminator.kind != TerminatorKind::Return || !callee.blocks[0].terminator.value)
@@ -2394,16 +2795,23 @@ std::optional<InlineBuiltin> Lowering::builtinThatListed(ValueID list) const
 
 ValueID Lowering::listReadBy(ValueID element, bool mustBeFirstElement) const
 {
-    auto& value = m_function.at(withoutUpcasts(element));
+    auto& value = m_function.at(withoutCasts(m_function, element));
     ValueID list;
+    ValueID index = value.child(1);
     if (value.opcode == Opcode::GetByVal)
         list = value.child(0);
-    else if (value.opcode == Opcode::IteratorValue && m_function.at(withoutUpcasts(value.child(0))).opcode == Opcode::IteratorOpen)
-        list = m_function.at(withoutUpcasts(value.child(0))).child(0);
-    else
+    else if (value.opcode == Opcode::IteratorValue && m_function.at(withoutCasts(m_function, value.child(0))).opcode == Opcode::IteratorOpen)
+        list = m_function.at(withoutCasts(m_function, value.child(0))).child(0);
+    else if (value.opcode == Opcode::CallBuiltin && value.arguments.size() == 2) {
+        auto& implementation = m_builtins.at(value.builtin()).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline || (implementation.inlined != InlineBuiltin::GetDoubleIndex && implementation.inlined != InlineBuiltin::GetContiguousIndex && implementation.inlined != InlineBuiltin::ArrayGetIndex))
+            return { };
+        list = value.arguments[0];
+        index = value.arguments[1];
+    } else
         return { };
     if (mustBeFirstElement) {
-        auto& place = m_function.at(withoutUpcasts(value.child(1)));
+        auto& place = m_function.at(withoutUpcasts(index));
         if (place.opcode != Opcode::Integer || place.integer())
             return { };
     }
@@ -2445,59 +2853,16 @@ bool Lowering::isKeyEnumeratedFromObject(ValueID key, unsigned depth) const
     return false;
 }
 
-unsigned Lowering::kindOfFirstKeyStoredInLoopThatIsNotEnumerated(ValueID object) const
+bool Lowering::isFilledInLoopByKeyThatIsNotEnumerated(ValueID object) const
 {
-    for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
-        if (!m_loopBlocks.get(i))
-            continue;
-        for (ValueID user : m_function.blocks[i].values) {
-            auto& value = m_function.at(user);
-            if (value.opcode != Opcode::PutByVal || withoutUpcasts(value.child(0)) != object || typeOf(value.child(1)).isNumber() || isKeyEnumeratedFromObject(value.child(1)))
-                continue;
-            switch (m_function.at(withoutUpcasts(value.child(1))).opcode) {
-            case Opcode::GetById:
-                return 1;
-            case Opcode::GetByVal:
-            case Opcode::IteratorValue:
-                return 2;
-            case Opcode::Parameter:
-                return 3;
-            case Opcode::Add:
-                return 4;
-            default:
-                return 5;
-            }
-        }
-    }
-    return 0;
-}
-
-static NEVER_INLINE void countBirthForKeys(unsigned kindOfFirstKeyThatIsNotEnumerated)
-{
-    static std::array<std::atomic<uint64_t>, 7> counts { };
-    static std::once_flag once;
-    std::call_once(once, [] {
-        atexit([] {
-            dataLogLn("keys: empty literals filled by key in a loop: ", counts[6].load(), " | every key enumerated from an object: ", counts[0].load());
-            dataLogLn("keys:    the first key that is not: a read by name ", counts[1].load(), " | an element of another list ", counts[2].load(), " | a parameter ", counts[3].load(), " | put together ", counts[4].load(), " | another ", counts[5].load());
-        });
-    });
-    counts[6]++;
-    counts[kindOfFirstKeyThatIsNotEnumerated]++;
-}
-
-bool Lowering::isFilledByKeyInLoop(ValueID object) const
-{
-    static const char* const atBirth = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH");
-    static const bool isSwitchedOff = atBirth && !(atBirth[0] == '2' && !atBirth[1]);
-    if (m_isInLoop || isSwitchedOff)
+    if (m_isInLoop)
         return false;
     for (uint32_t i = 0; i < m_function.blocks.size(); ++i) {
         if (!m_loopBlocks.get(i))
             continue;
         for (ValueID user : m_function.blocks[i].values) {
             auto& value = m_function.at(user);
-            if (value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == object && !typeOf(value.child(1)).isNumber())
+            if (value.opcode == Opcode::PutByVal && withoutUpcasts(value.child(0)) == object && !typeOf(value.child(1)).isNumber() && !isKeyEnumeratedFromObject(value.child(1)))
                 return true;
         }
     }
@@ -2513,15 +2878,9 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
         return lowerPropertyDefinition(literal);
     auto& block = m_currentBlock->values;
     ValueID id = block[literal.allocation];
-    if (literal.fields.isEmpty() && !literal.newTarget && !m_function.at(id).hasRowOfBirth() && isFilledByKeyInLoop(id)) {
-        const char* atBirth = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH");
-        const char* counts = getenv("BUN_AOT_SWITCH_NO_DICTIONARY_AT_BIRTH_COUNT");
-        if (counts && counts[0] == '1' && !counts[1])
-            countBirthForKeys(kindOfFirstKeyStoredInLoopThatIsNotEnumerated(id));
-        if (!atBirth || kindOfFirstKeyStoredInLoopThatIsNotEnumerated(id)) {
-            defineObjectMadeLater(id, countPlainAllocation(PlainAllocationKind::Object, id, AOT_TYPED_OPERATION(NewObjectForKeys, word32(literal.hasNullPrototype))));
-            return;
-        }
+    if (literal.fields.isEmpty() && !literal.newTarget && !m_function.at(id).hasRowOfBirth() && isFilledInLoopByKeyThatIsNotEnumerated(id)) {
+        defineObjectMadeLater(id, countPlainAllocation(PlainAllocationKind::Object, id, AOT_TYPED_OPERATION(NewObjectForKeys, word32(literal.hasNullPrototype))));
+        return;
     }
     Vector<StringID, 6> names;
     Vector<Boxed, 6> values;
@@ -2533,6 +2892,28 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
             stores |= 1ull << names.size();
         names.append(isStore ? field.string() : m_function.at(field.arguments[1]).string());
         values.append(in<Boxed>(isStore ? field.child(1) : field.arguments[2]));
+    }
+    if (Options::aotMapFilePath()) [[unlikely]] {
+        unsigned operands = 0;
+        for (size_t index : literal.fields) {
+            auto& field = m_function.at(block[index]);
+            switch (m_function.at(field.opcode == Opcode::PutById ? field.child(1) : field.arguments[2]).opcode) {
+            case Opcode::Integer:
+            case Opcode::Double:
+            case Opcode::Boolean:
+            case Opcode::Undefined:
+            case Opcode::Null:
+            case Opcode::String:
+            case Opcode::BigInt:
+            case Opcode::FunctionReference:
+                break;
+            default:
+                ++operands;
+            }
+        }
+        m_context.literalsForMap.append('\t', block[m_currentIndexInBlock].index() + 1, '\t', literal.newTarget ? 't' : literal.hasNullPrototype ? 'n' : 'o', m_isInLoop ? "l"_s : ""_s, '\t', operands, '\t', names.isEmpty() ? "-"_s : ""_s);
+        for (size_t i = 0; i < names.size(); ++i)
+            m_context.literalsForMap.append(i ? ","_s : ""_s, names[i].index());
     }
     if (m_function.at(id).hasRowOfBirth()) {
         auto& row = m_program.rowsOfBirths[m_function.at(id).rowOfBirth()];
@@ -2562,6 +2943,8 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
         inlineCapacity = capacityThatFillsTheCell(inlineCapacity);
     }
     defineObjectMadeLater(id, countPlainAllocation(literal.newTarget ? PlainAllocationKind::This : PlainAllocationKind::Object, id, newObjectWithProperties(literal.slot, literal.hasNullPrototype, literal.newTarget, literal.constructor, inlineCapacity, names.span(), values.span(), stores, &literal, literal.row)));
+    if (Options::aotMapFilePath()) [[unlikely]]
+        m_context.literalsForMap.append('\t', m_roadOfLiteral);
 }
 
 CellPointer Lowering::countPlainAllocation(PlainAllocationKind kind, ValueID id, CellPointer cell)
@@ -2606,7 +2989,15 @@ Vector<LayoutID, 2> Lowering::layoutsClonedInPlace(const Type& type) const
     return result;
 }
 
-// A fresh object of the layout with what the fields of the other hold, which is of the same layout and has no extra properties. `overwritten`: the caller stores to these before anybody looks. It also sees to the fence.
+void Lowering::unlessHasNumberBox(CellPointer cell, const Layout& layout, LBasicBlock otherwise)
+{
+    for (auto& field : layout.fields) {
+        if (field.store == Store::Int32OrElsewhere && !(field.flags & fieldIsNeverStored))
+            orElse(logicalNot(refersToNumberBox(load(field.store, fieldAt(cell, field), 0).as<Word32>())), otherwise);
+    }
+}
+
+// A fresh object of the layout with what the fields of the other hold, which is of the same layout and has no extra properties and no number in a box. `overwritten`: the caller stores to these before anybody looks. It also sees to the fence.
 CellPointer Lowering::copyRecord(CellPointer cell, Word32 orderWord, const Layout& layout, const Vector<StringID, 4>& overwritten)
 {
     CellPointer copy = allocate(layout.allocationOfClone);
@@ -2694,6 +3085,244 @@ Operand Lowering::lowerMergeGroup(MergeGroup group)
     }
     join.add(result);
     return join.finish();
+}
+
+CellPointer Lowering::copyRecordAs(const Value& value, LayoutID to, NamesOfCopy namesAre)
+{
+    auto& target = m_program.at(to);
+    ValueID sourceID = value.arguments[0];
+    auto& typeOfSource = typeOf(sourceID);
+    bool excludesNames = namesAre == NamesOfCopy::Excluded;
+    bool storesNamesFirst = namesAre == NamesOfCopy::StoredFirst;
+    auto isRecordWithoutExtraProperties = [&](LValue words) {
+        return m_out.bitAnd(m_out.aboveOrEqual(words, m_out.constInt64(0xffULL << 56)), m_out.testIsZero64(words, m_out.constInt64(orderWordHasExtraProperties)));
+    };
+    auto outOfLine = [&] {
+        LBasicBlock mayBeCopied = m_out.newBlock();
+        LBasicBlock isNoRecord = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        Vector<ValueFromBlock, 2> copies;
+        Boxed boxed = in<Boxed>(sourceID);
+        orElse(isCell(boxed, typeOfSource), isNoRecord);
+        m_out.branch(isRecordWithoutExtraProperties(m_out.load64(TypedPointer(m_heaps.root, m_out.add(asCell(boxed).value(), m_out.constIntPtr(offsetOfOrderWord))))), unsure(mayBeCopied), unsure(isNoRecord));
+        m_out.appendTo(mayBeCopied);
+        auto [count, list] = argumentBuffer(value.arguments);
+        copies.append(m_out.anchor(AOT_TYPED_OPERATION(TryCopyRecordAs, word32(target.shape), word32(static_cast<uint32_t>(namesAre)), count, list).value()));
+        m_out.jump(continuation);
+        m_out.appendTo(isNoRecord);
+        copies.append(m_out.anchor(m_out.int64Zero));
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return CellPointer(m_out.phi(Int64, copies));
+    };
+    Vector<StringID, 4> names;
+    Vector<ValueID, 4> given;
+    for (size_t i = 1; i < value.arguments.size(); i += storesNamesFirst ? 2 : 1) {
+        auto& name = m_function.at(value.arguments[i]);
+        if (name.opcode != Opcode::String || (storesNamesFirst && (names.contains(name.string()) || i + 1 == value.arguments.size())))
+            return outOfLine();
+        names.append(name.string());
+        if (storesNamesFirst)
+            given.append(value.arguments[i + 1]);
+    }
+    bool isAllocatedInPlace = target.allocationOfClone != Format::none && !target.hasExtension && target.shape && m_program.allocations[target.allocationOfClone].size == target.sizeWithRoomToSpecialize
+        && !m_program.allocations[target.allocationOfClone].numberOfLiterals;
+    if (!isAllocatedInPlace || typeOfSource.primitives & (Primitive::String | Primitive::Symbol | Primitive::BigInt) || typeOfSource.anyObject || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || Options::countAOTTypedAllocations())
+        return outOfLine();
+    struct Source {
+        LayoutID layout;
+        Vector<std::pair<uint32_t, uint32_t>, 8> moves;
+    };
+    auto sameLiterals = [](const Field& a, const Field& b) {
+        return a.literals.size() == b.literals.size() && std::ranges::equal(a.literals, b.literals, [](const Literal& x, const Literal& y) {
+            return x.string == y.string && std::bit_cast<uint64_t>(x.number) == std::bit_cast<uint64_t>(y.number);
+        });
+    };
+    auto restIsBornOrAbsent = [&](const BitVector& isSupplied) {
+        for (uint32_t i = 0; i < target.fields.size(); ++i) {
+            auto& held = target.fields[i];
+            if (held.flags & fieldIsNeverStored || isSupplied.get(i))
+                continue;
+            uint16_t primitives = m_program.at(held.stored).primitives;
+            if (held.isOutOfLine)
+                return false;
+            if (!excludesNames && names.contains(held.name)) {
+                if (held.flags & fieldIsImmutable || held.isPinned || m_program.at(held.slot).isDiscriminant || (!storesNamesFirst && primitives & Primitive::Absent && !(primitives & Primitive::Undefined)))
+                    return false;
+                if (ValueID stored = storesNamesFirst ? given[names.find(held.name)] : ValueID(); stored && ((held.type && !typeOf(stored).isWithin(m_program.at(held.type), m_program)) || !isStoredInPlace(held, stored)))
+                    return false;
+            } else if (!(primitives & Primitive::Absent))
+                return false;
+        }
+        return true;
+    };
+    auto movesFrom = [&](LayoutID id) -> std::optional<Source> {
+        auto& layout = m_program.at(id);
+        if (layout.kind != LayoutKind::Record || !layout.shape || Typed::shapeWordOf(layout.shape) >> 24 != 0xff || !layout.isAllocated || layout.hasExtension)
+            return std::nullopt;
+        Source source { id, { } };
+        BitVector isSupplied;
+        for (uint32_t i = 0; i < layout.fields.size(); ++i) {
+            auto& field = layout.fields[i];
+            if (field.flags & fieldIsNeverStored || (!storesNamesFirst && names.contains(field.name)))
+                continue;
+            if (names.contains(field.name) && m_program.at(field.stored).primitives & Primitive::Absent)
+                return std::nullopt;
+            auto index = target.fieldNamed(field.name);
+            if (!index)
+                return std::nullopt;
+            auto& held = target.fields[*index];
+            if (held.flags & (fieldIsNeverStored | fieldIsImmutable) || field.isOutOfLine || held.isOutOfLine || (held.store != field.store && ((held.store == Store::Int32OrElsewhere && !m_program.at(field.stored).isNumber()) || field.store == Store::Int32OrElsewhere || m_program.at(field.stored).primitives & Primitive::Absent)) || held.isPinned || field.isPinned || !sameLiterals(held, field)
+                || m_program.at(held.slot).isDiscriminant || !m_program.at(field.stored).isWithin(m_program.at(held.stored), m_program))
+                return std::nullopt;
+            source.moves.append({ i, *index });
+            isSupplied.set(*index);
+        }
+        if (!restIsBornOrAbsent(isSupplied))
+            return std::nullopt;
+        return source;
+    };
+    Vector<Source, 2> sources;
+    for (LayoutID view : typeOfSource.views) {
+        for (LayoutID member : m_program.at(view).members) {
+            bool isKnown = sources.containsIf([&](auto& source) {
+                return source.layout == member;
+            });
+            if (isKnown || sources.size() == 2)
+                continue;
+            if (auto source = movesFrom(member))
+                sources.append(WTF::move(*source));
+        }
+    }
+    bool makesRecordOfNothing = namesAre == NamesOfCopy::StoredNext && typeOfSource.primitives & Primitive::UndefinedOrNull && restIsBornOrAbsent({ });
+    for (StringID name : names) {
+        if (!excludesNames && !target.fieldNamed(name)) {
+            sources.clear();
+            makesRecordOfNothing = false;
+        }
+    }
+    if (m_context.sites.size() + sources.size() + 1 + makesRecordOfNothing > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots) || (m_program.runsOnce(m_id) && !m_isInLoop))
+        return outOfLine();
+    unsigned firstSlot = m_context.sites.size();
+    for (unsigned i = 0; i <= sources.size() + makesRecordOfNothing; ++i)
+        m_context.sites.append(Site { });
+    Pointer cache = slotAddress(firstSlot);
+    auto inCache = [&](size_t offset) {
+        return TypedPointer(m_heaps.AOTTyped_collectorState, m_out.add(cache.value(), m_out.constIntPtr(offset)));
+    };
+    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock isNoRecord = newColdBlock();
+    LBasicBlock isNoCell = makesRecordOfNothing ? m_out.newBlock() : isNoRecord;
+    LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 4> copies;
+    Boxed boxed = in<Boxed>(sourceID);
+    orElse(isCell(boxed, typeOfSource), isNoCell);
+    CellPointer cell = asCell(boxed);
+    static_assert(offsetOfOrderWord + sizeof(uint32_t) == offsetOfShapeWord && !(offsetOfOrderWord % sizeof(uint64_t)));
+    LValue words = m_out.load64(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(offsetOfOrderWord))));
+    orElse(Word32(m_out.notZero64(words)), isNoRecord);
+    for (unsigned i = 0; i < sources.size(); ++i) {
+        auto& layout = m_program.at(sources[i].layout);
+        LBasicBlock hit = m_out.newBlock();
+        LBasicBlock otherwise = i + 1 == sources.size() ? slowPath : m_out.newBlock();
+        m_out.branch(m_out.equal(words, m_out.load64(inCache(i * sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, pointer)))), usually(hit), rarely(otherwise));
+        m_out.appendTo(hit);
+        Vector<LValue, 8> numbersInPlace;
+        for (auto [from, into] : sources[i].moves) {
+            if (layout.fields[from].store == Store::Int32OrElsewhere)
+                orElse(logicalNot(refersToNumberBox(load(Store::Int32OrElsewhere, fieldAt(cell, layout.fields[from]), 0).as<Word32>())), slowPath);
+            bool isFitted = layout.fields[from].store != Store::Int32OrElsewhere && target.fields[into].store == Store::Int32OrElsewhere;
+            numbersInPlace.append(isFitted ? low32(fitOrElse(load(layout.fields[from].store, fieldAt(cell, layout.fields[from]), 0, cell.value()), m_program.at(layout.fields[from].stored), numbersKeptInPlace(), slowPath).as<Integer>()).value() : nullptr);
+        }
+        CellPointer copy = allocate(target.allocationOfClone);
+        m_out.store32(m_out.load32(inCache(i * sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, offset))), copy.value(), m_heaps.AOTTypedObject_orderWord);
+        BitVector isMoved;
+        for (unsigned k = 0; k < sources[i].moves.size(); ++k) {
+            auto [from, into] = sources[i].moves[k];
+            TypedPointer source = fieldAt(cell, layout.fields[from]);
+            TypedPointer destination = fieldAt(copy, target.fields[into]);
+            isMoved.set(into);
+            if (numbersInPlace[k]) {
+                store(Store::Int32OrElsewhere, Word32(numbersInPlace[k]), destination);
+                continue;
+            }
+            if (layout.fields[from].store != target.fields[into].store) {
+                store(target.fields[into].store, convert(load(layout.fields[from].store, source, 0, cell.value()), m_program.at(layout.fields[from].stored), repOf(target.fields[into].store)), destination);
+                continue;
+            }
+            switch (sizeOf(target.fields[into].store)) {
+            case 1:
+                m_out.store32As8(m_out.load8ZeroExt32(source), destination);
+                break;
+            case 2:
+                m_out.store32As16(m_out.load16ZeroExt32(source), destination);
+                break;
+            case 4:
+                m_out.store32(m_out.load32(source), destination);
+                break;
+            case 8:
+                m_out.store64(m_out.load64(source), destination);
+                break;
+            default:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+        }
+        for (uint32_t k = 0; k < target.fields.size(); ++k) {
+            auto& held = target.fields[k];
+            if (held.flags & fieldIsNeverStored || isMoved.get(k))
+                continue;
+            if (!storesNamesFirst || !names.contains(held.name))
+                store(held.store, initialStateOf(held, !excludesNames && names.contains(held.name)), fieldAt(copy, held));
+            else if (held.store == Store::Int32OrElsewhere)
+                storeInt32OrElsewhere(copy, held, given[names.find(held.name)], true);
+            else
+                store(held.store, in(given[names.find(held.name)], repOf(held.store)), fieldAt(copy, held));
+        }
+        ensureStillAliveHere(cell);
+        fenceAfterInitialization();
+        copies.append(m_out.anchor(copy.value()));
+        m_out.jump(continuation);
+        if (otherwise != slowPath)
+            m_out.appendTo(otherwise);
+    }
+    if (sources.isEmpty())
+        m_out.jump(slowPath);
+    m_out.appendTo(slowPath);
+    static_assert(Typed::shapeWordOf(1) >> 24 == 0xff);
+    LBasicBlock mayBeCopied = newColdBlock();
+    m_out.branch(isRecordWithoutExtraProperties(words), unsure(mayBeCopied), unsure(isNoRecord));
+    m_out.appendTo(mayBeCopied);
+    orElse(Word32(m_out.notEqual(words, m_out.load64(inCache(sources.size() * sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, pointer))))), isNoRecord);
+    auto tryOutOfLine = [&] {
+        auto [count, list] = argumentBuffer(value.arguments);
+        copies.append(m_out.anchor(AOT_TYPED_OPERATION(TryCopyRecordAsAt, cache, word32(sources.isEmpty() ? 0 : m_program.at(sources[0].layout).shape), word32(sources.size() > 1 ? m_program.at(sources[1].layout).shape : 0), word32(target.shape), word32(static_cast<uint32_t>(namesAre)), count, list).value()));
+        m_out.jump(continuation);
+    };
+    tryOutOfLine();
+    if (makesRecordOfNothing) {
+        size_t slot = (sources.size() + 1) * sizeof(AOT::Slot);
+        LBasicBlock isKnown = m_out.newBlock();
+        LBasicBlock isNotKnown = newColdBlock();
+        m_out.appendTo(isNoCell);
+        m_out.branch(m_out.notZero64(m_out.load64(inCache(slot + OBJECT_OFFSETOF(AOT::Slot, pointer)))), usually(isKnown), rarely(isNotKnown));
+        m_out.appendTo(isKnown);
+        CellPointer made = allocate(target.allocationOfClone);
+        m_out.store32(m_out.load32(inCache(slot + OBJECT_OFFSETOF(AOT::Slot, offset))), made.value(), m_heaps.AOTTypedObject_orderWord);
+        for (auto& held : target.fields) {
+            if (!(held.flags & fieldIsNeverStored))
+                store(held.store, initialStateOf(held, names.contains(held.name)), fieldAt(made, held));
+        }
+        fenceAfterInitialization();
+        copies.append(m_out.anchor(made.value()));
+        m_out.jump(continuation);
+        m_out.appendTo(isNotKnown);
+        tryOutOfLine();
+    }
+    m_out.appendTo(isNoRecord);
+    copies.append(m_out.anchor(m_out.int64Zero));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+    return CellPointer(m_out.phi(Int64, copies));
 }
 
 std::optional<Lowering::CloneGroup> Lowering::findCloneGroup(size_t indexOfClone)
@@ -2787,6 +3416,7 @@ void Lowering::testSourceOfCloneGroup(const CloneGroup& group, LBasicBlock slowP
             if (m_program.at(field.stored).primitives & Primitive::Absent && inheritsByItsLayout(m_program, group.layouts[i], field.name))
                 orElse(logicalNot(isFieldAbsent(cell, field, 0)), slowPath);
         }
+        unlessHasNumberBox(cell, layout, slowPath);
         onLayout(i);
         if (otherwise != slowPath)
             m_out.appendTo(otherwise);
@@ -2837,7 +3467,7 @@ Operand Lowering::lowerCloneGroup(CloneGroup group)
             auto& member = m_function.at(values[k]);
             auto& field = layout.fields[*layout.fieldNamed(member.string())];
             if (field.store == Store::Int32OrElsewhere)
-                storeInt32OrElsewhere(copy, field, member.child(1));
+                storeInt32OrElsewhere(copy, field, member.child(1), true);
             else
                 store(field.store, in(member.child(1), repOf(field.store)), fieldAt(copy, field));
         }
@@ -2972,6 +3602,7 @@ CellPointer Lowering::cloneObject(ValueID sourceID, bool keepsLayout, const Defi
         LBasicBlock otherwise = id == layouts.last() ? slowPath : m_out.newBlock();
         m_out.branch(isZero(add(shapeWord, word32(layout.shape))).value(), usually(isOfLayout), rarely(otherwise));
         m_out.appendTo(isOfLayout);
+        unlessHasNumberBox(cell, layout, slowPath);
         CellPointer copy = copyRecord(cell, orderWord, layout, { });
         fenceAfterInitialization();
         results.append(m_out.anchor(copy.value()));
@@ -3686,17 +4317,20 @@ void Lowering::lowerPutById(ValueID, const Value& value)
         }
         auto expected = predictionOf(object);
         const Field* expectedField = expected ? fieldExpectedFor(*expected, name) : nullptr;
-        if (!expectedField || hasMemberThatKeepsField(expected->onlyView(), name) || m_program.at(expectedField->slot).isDiscriminant) {
+        if (!expectedField || hasMemberThatKeepsField(expected->onlyView(), name) || m_program.at(expectedField->slot).isDiscriminant || (!m_isInLoop && !m_program.isHotByText(m_id))) {
             generally();
             return;
         }
         // What a store that was not compiled with the type of the receiver may store: whatever the slot holds.
         Type held = m_program.at(expectedField->stored).withoutPrimitives(Primitive::Absent);
-        ifAsExpected({ { object, &*expected }, { stored, &held } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
+        if (expectedField->type && m_program.at(expectedField->type).withoutPrimitives(Primitive::Absent).isWithin(held, m_program))
+            held = m_program.at(expectedField->type).withoutPrimitives(Primitive::Absent);
+        ifAsExpected({ { object, &*expected }, { stored, &held, false, true } }, Rep::Void, [&](LBasicBlock otherwise) -> Operand {
             LayoutID view = expected->onlyView();
             // [[Set]] asks the prototype chain before it creates a property.
             // A number that is not kept in place leaves for the general way, which must not find the key there already.
-            bool createsInPlace = m_program.at(expectedField->stored).primitives & Primitive::Absent && !inheritsByItsLayout(m_program, view, name) && expectedField->store != Store::Int32OrElsewhere;
+            bool createsInPlace = m_program.at(expectedField->stored).primitives & Primitive::Absent && !inheritsByItsLayout(m_program, view, name);
+            LBasicBlock isStored = createsInPlace && expectedField->store == Store::Int32OrElsewhere ? m_out.newBlock() : nullptr;
             CellPointer cell = withFieldOrElse(object, view, *expectedField, otherwise, createsInPlace);
             if (mayBeFrozen(view))
                 orElse(lacksBits(orderWordOf(cell), orderWordIsFrozen), otherwise);
@@ -3708,23 +4342,30 @@ void Lowering::lowerPutById(ValueID, const Value& value)
                 LBasicBlock continuation = m_out.newBlock();
                 m_out.branch(isFieldAbsent(cell, *expectedField, 0).value(), unsure(creates), unsure(continuation));
                 m_out.appendTo(creates);
+                Operand numberInPlace = isStored ? fitOrElse(get(stored), typeOf(stored), numbersKeptInPlace(), otherwise) : Operand { };
                 auto unlessAsked = [&] {
                     if (uint32_t bits = (mayInherit(m_program, view, name) ? orderWordHasExtraProperties : 0) | (mayBeFrozen(view) ? orderWordIsNotExtensible : 0))
                         orElse(lacksBits(orderWordOf(cell), bits), otherwise);
                 };
                 OperationEffects effects { Writes::Fields, false, false, true };
-                if (Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations()) {
+                if (Options::countAOTTypedAllocations()) {
                     unlessAsked();
                     AOT_TYPED_OPERATION_WITH_EFFECTS(DidCreateField, effects, cell, word32(name.index()));
                 } else
                     didCreateFieldInCell(cell, *expectedField, effects, unlessAsked);
-                m_out.jump(continuation);
+                if (isStored)
+                    store(expectedField->store, low32(numberInPlace.as<Integer>()), fieldAt(cell, *expectedField));
+                m_out.jump(isStored ? isStored : continuation);
                 m_out.appendTo(continuation);
             }
             if (expectedField->store == Store::Int32OrElsewhere)
-                storeInt32OrElsewhere(cell, *expectedField, stored, otherwise);
+                storeInt32OrElsewhere(cell, *expectedField, stored, false, otherwise);
             else
                 store(expectedField->store, in(stored, repOf(expectedField->store)), fieldAt(cell, *expectedField));
+            if (isStored) {
+                m_out.jump(isStored);
+                m_out.appendTo(isStored);
+            }
             if (holdsCells(expectedField->store) && held.hasCells())
                 barrier(cell);
             return { };
@@ -3844,7 +4485,7 @@ Word32 Lowering::lowerInById(const Value& value)
     CellPointer cell = operand.as<CellPointer>();
     return throughView(cell, object, view, *field, Rep::Int32, [&]() -> Operand {
         if (!(m_program.at(field->stored).primitives & Primitive::Absent) || !mayInherit(m_program, view, name))
-            return hasField(cell, *field);
+            return hasOwnField(cell, *field);
         auto ask = [&] {
             return AOT_TYPED_OPERATION(HasName, box(cell), word32(name.index()));
         };
@@ -3859,7 +4500,7 @@ Word32 Lowering::lowerInById(const Value& value)
         LBasicBlock isUnmarked = m_out.newBlock();
         LBasicBlock asks = newColdBlock();
         OperandJoin join(*this, Rep::Int32);
-        m_out.branch(hasField(cell, *field).value(), unsure(isPresent), unsure(isAbsent));
+        m_out.branch(hasOwnField(cell, *field).value(), unsure(isPresent), unsure(isAbsent));
         m_out.appendTo(isPresent);
         join.add(boolean(true));
         m_out.appendTo(isAbsent);
@@ -3875,7 +4516,7 @@ Word32 Lowering::lowerInById(const Value& value)
             return AOT_TYPED_OPERATION(HasName, box(cell), word32(name.index()));
         if (field->isElsewhereInSomeMember) {
             return byOwnFieldOfMember(cell, view, *field, Rep::Int32, [&](LayoutID, const Field& own) -> Operand {
-                return hasField(cell, own);
+                return hasOwnField(cell, own);
             }, [&]() -> Operand {
                 return AOT_TYPED_OPERATION(HasExtra, cell, word32(name.index() | nameMayBeOfOwnField));
             });
@@ -3951,6 +4592,27 @@ bool Lowering::layoutVariesByDiscriminant(const Allocation& site) const
     return false;
 }
 
+CellPointer Lowering::lowerMaterializeEnvironment(const Value& value)
+{
+    CellPointer current = in<CellPointer>(value.child(0));
+    auto& birth = m_function.at(value.child(1));
+    auto& layout = m_program.at(birth.layout());
+    RELEASE_ASSERT(layout.mayBeInFrame && !layout.isInFrame && !layout.hasExtension);
+    for (auto& field : layout.fields)
+        RELEASE_ASSERT(!(field.flags & fieldIsNeverStored) && !field.isOutOfLine && field.store != Store::Int32OrElsewhere && field.store != Store::Cell32 && field.store != Store::OptionalCell32);
+    RELEASE_ASSERT(layout.size > sizeof(JSCell) && !(layout.size % sizeof(uint64_t)));
+    if (Options::countAOTTypedAllocations()) [[unlikely]] {
+        LValue state = m_out.load8ZeroExt32(m_out.address(m_heaps.AOTTyped_collectorState, current.value(), JSCell::cellStateOffset()));
+        return either<CellPointer>(Word32(m_out.notEqual(state, m_out.constInt32(UINT8_MAX))), [&] {
+            return current;
+        }, [&] {
+            return AOT_TYPED_OPERATION(MaterializeEnvironment, word32(birth.allocation()), Pointer(current.value()));
+        });
+    }
+    m_context.emitsCalls = true;
+    return CellPointer(callAllocationStub(Stub::MaterializeEnvironment, { { current.value(), GPRInfo::returnValueGPR }, { integer(static_cast<int64_t>(birth.allocation() | static_cast<uint64_t>(layout.size) << 32)).value(), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedMaterializeEnvironment>(), false));
+}
+
 // Room in the frame for what would be a cell. It is a new value at each birth, with the effects of an allocation: the address is the same every time round a loop, and what reads a word that
 // never changes has to stay behind the birth it belongs to. The block needs a frame: see FunctionSplitting.
 CellPointer Lowering::cellInFrame(size_t size)
@@ -3966,7 +4628,33 @@ CellPointer Lowering::cellInFrame(size_t size)
     return CellPointer(patchpoint);
 }
 
-Operand Lowering::lowerNewObject(ValueID, const Value& value)
+Operand Lowering::initialStateOf(const Field& field, bool isBorn)
+{
+    uint16_t primitives = m_program.at(field.stored).primitives;
+    bool startsAbsent = primitives & Primitive::Absent && !isBorn;
+    bool startsUndefined = !startsAbsent && primitives & Primitive::Undefined;
+    switch (repOf(field.store)) {
+    case Rep::Double:
+        return number(0);
+    case Rep::Int32:
+        return word32(field.store != Store::Int32OrElsewhere ? 0 : startsAbsent ? absentInt32 : startsUndefined ? undefinedInt32 : 0);
+    case Rep::Int64:
+        return integer(0);
+    case Rep::OptionalInt64:
+        return OptionalInteger(integer(startsAbsent ? absentInteger : startsUndefined ? undefinedInteger : 0).value());
+    case Rep::OptionalDouble:
+        return OptionalNumber(m_out.constDouble(std::bit_cast<double>(startsAbsent ? absentDouble : startsUndefined ? undefinedDouble : 0)));
+    case Rep::Cell:
+        return CellPointer(m_out.int64Zero);
+    case Rep::JSValue:
+        return startsUndefined ? undefined() : Boxed(m_out.int64Zero);
+    case Rep::Void:
+        break;
+    }
+    RELEASE_ASSERT_NOT_REACHED();
+}
+
+Operand Lowering::lowerNewObject(ValueID id, const Value& value)
 {
     // The discriminant picks the entry by its value. Constant or not, the same value gives the same object.
     auto constant = constantAllocation(value);
@@ -3992,7 +4680,37 @@ Operand Lowering::lowerNewObject(ValueID, const Value& value)
             storedNext.set(field);
         mayHaveCollected |= !isStoredInPlace(layout.fields[field], following.child(1)) || (isObjectLayout(layout.kind) && !born.get(field));
     }
-    CellPointer cell = layout.isInFrame ? cellInFrame(layout.size) : constant ? allocate(*constant) : allocate(value.allocation(), allocationFor(value), fromTemplate ? FieldInit::FromTemplate : FieldInit::ByCaller);
+    bool isInFrame = m_function.environmentsInFrame.get(id.index());
+    RELEASE_ASSERT(!isInFrame || layout.mayBeInFrame);
+    auto allocateCell = [&] {
+        return constant ? allocate(*constant) : allocate(value.allocation(), allocationFor(value), fromTemplate ? FieldInit::FromTemplate : FieldInit::ByCaller);
+    };
+    auto reuseOrAllocateCell = [&] {
+        auto& variable = m_program.variables[layout.reuseVariable.index()];
+        TypedPointer place = addressOf(layout.reuseVariable);
+        TypedPointer address(m_heaps.AOTTyped_runtimeState, place.base(), place.offset());
+        Boxed held = convertTo<Boxed>(load(variable.store, address, IsSafe), m_program.at(variable.type));
+        LBasicBlock reused = m_out.newBlock();
+        LBasicBlock fresh = m_out.newBlock();
+        LBasicBlock continuation = m_out.newBlock();
+        m_out.branch(isCell(held).value(), unsure(reused), unsure(fresh));
+        m_out.appendTo(reused);
+        didEmitWrite(Writes::RuntimeState);
+        store(variable.store, convert(undefined(), Type::ofPrimitives(Primitive::Undefined), repOf(variable.store)), address);
+        CellPointer taken = asCell(held);
+        ValueFromBlock first = m_out.anchor(taken.value());
+        m_out.jump(continuation);
+        m_out.appendTo(fresh);
+        ValueFromBlock second = m_out.anchor(allocateCell().value());
+        m_out.jump(continuation);
+        m_out.appendTo(continuation);
+        return CellPointer(m_out.phi(Int64, first, second));
+    };
+    bool mayBeUsedAgain = !isInFrame && layout.reuseVariable && !Options::validateAOTTypedFacts();
+    CellPointer cell = isInFrame ? cellInFrame(layout.size) : mayBeUsedAgain ? reuseOrAllocateCell() : allocateCell();
+    m_isFillingReusedEnvironment = mayBeUsedAgain;
+    if (isInFrame && !layout.isInFrame)
+        m_out.store32As8(m_out.constInt32(UINT8_MAX), m_out.address(m_heaps.AOTTyped_collectorState, cell.value(), JSCell::cellStateOffset()));
     if (!fromTemplate) {
         m_fieldsAwaitingFirstStore = storedNext;
         m_layoutOfFieldsAwaitingFirstStore = allocation.layout;
@@ -4005,38 +4723,13 @@ Operand Lowering::lowerNewObject(ValueID, const Value& value)
             continue;
         if (layout.isCoroutineFrame && !holdsCells(field.store))
             continue;
-        uint16_t primitives = m_program.at(field.stored).primitives;
-        bool startsAbsent = primitives & Primitive::Absent && !born.get(i);
-        bool startsUndefined = !startsAbsent && primitives & Primitive::Undefined;
-        Operand initial;
-        switch (repOf(field.store)) {
-        case Rep::Double:
-            initial = number(0);
-            break;
-        case Rep::Int32:
-            initial = word32(field.store != Store::Int32OrElsewhere ? 0 : startsAbsent ? absentInt32 : startsUndefined ? undefinedInt32 : 0);
-            break;
-        case Rep::Int64:
-            initial = integer(0);
-            break;
-        case Rep::OptionalInt64:
-            initial = OptionalInteger(integer(startsAbsent ? absentInteger : startsUndefined ? undefinedInteger : 0).value());
-            break;
-        case Rep::OptionalDouble:
-            initial = OptionalNumber(m_out.constDouble(std::bit_cast<double>(startsAbsent ? absentDouble : startsUndefined ? undefinedDouble : 0)));
-            break;
-        case Rep::Cell:
-            initial = CellPointer(m_out.int64Zero);
-            break;
-        case Rep::JSValue:
-            initial = startsUndefined ? undefined() : Boxed(m_out.int64Zero);
-            break;
-        case Rep::Void:
-            RELEASE_ASSERT_NOT_REACHED();
-        }
-        store(field.store, initial, fieldAt(cell, field));
+        store(field.store, initialStateOf(field, born.get(i)), fieldAt(cell, field));
     }
-    if (next == m_currentIndexInBlock + 1 && !layout.isInFrame)
+    if (next == m_currentIndexInBlock + 1 && layout.reuseVariable) {
+        m_isFillingReusedEnvironment = false;
+        barrier(cell);
+    }
+    if (next == m_currentIndexInBlock + 1 && !isInFrame)
         fenceAfterInitialization();
     return cell;
 }

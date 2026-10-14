@@ -20,6 +20,7 @@ class Procedure;
 // they fail. A control-dependent value goes once every guard in front of it has gone. Where it yields true it leaves variables: fixSSA() has to follow.
 bool versionLoops(Procedure&, Vector<BasicBlock*>& headersOfVersionsTestedAtTheTop);
 bool eliminateRedundantPhiCycles(Procedure&);
+bool narrowPhisOfExtendedWords(Procedure&);
 bool foldComparisonsWithWhatIsOutOfRange(Procedure&);
 
 } } // namespace JSC::B3

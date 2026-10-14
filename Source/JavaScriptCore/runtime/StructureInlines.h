@@ -216,7 +216,7 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
     ASSERT(isValidOffset(offset));
 #if USE(BUN_JSC_ADDITIONS)
     // Nobody has asked whether the property keeps its value. Whoever asks from now on is told that none of them does: ensurePropertyReplacementWatchpointSet().
-    if (vm.m_aotProgram && !propertyReplacementWatchpointSet(offset)) {
+    if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
         m_isReplacedWithoutNotice = true;
         return;
     }

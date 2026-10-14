@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "B3ReduceStrength.h"
 #include "B3StackmapGenerationParams.h"
 #include "JSCInlines.h"
 
@@ -18,6 +19,7 @@ using namespace B3;
 // Toward zero. Of what does not fit: the least or the greatest integer, depending on the processor.
 Integer Lowering::truncateToInteger(Number value)
 {
+    static_assert(static_cast<int32_t>(PureFunctionOfChildren::TruncateToInteger) == keyOfTruncationToInt64 && static_cast<int32_t>(PureFunctionOfChildren::ToInt32) == keyOfConversionToInt32);
     // The back end does not look into a patchpoint.
     if (value.value()->hasDouble() && std::abs(value.value()->asDouble()) < static_cast<double>(maxKeptInteger))
         return integer(static_cast<int64_t>(value.value()->asDouble()));
@@ -333,6 +335,8 @@ Word32 Lowering::toInt32(ValueID id)
     case Rep::OptionalInt64:
         return low32(select(isMarker(operand), integer(0), assumedInteger(operand.as<OptionalInteger>())));
     default:
+        if (auto found = m_int32sOfNumbers.find(operand.value); found != m_int32sOfNumbers.end())
+            return Word32(found->value);
         if (LValue phi = m_int32Phis.get(id.index()))
             return Word32(phi);
         if (auto ofSum = toInt32OfSum(id))

@@ -134,21 +134,25 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             scope.release();
             return callStaticCode(g_aotStaticFunctionEntrypoints[0], vm, jsFunction, thisValue, context, args...);
         }
-        if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
+    }
+    if (vm.useImmutableIntrinsics) {
+        if (functionObject.isCell() && functionObject.asCell()->type() == JSFunctionType) {
+            if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
+                if (!vm.isSafeToRecurseSoft()) [[unlikely]]
+                    return throwStackOverflowError(globalObject, scope);
+                scope.release();
+                return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
+            }
+        }
+        if (functionObject.isCell() && isSlimClosureType(functionObject.asCell()->type())) {
             if (!vm.isSafeToRecurseSoft()) [[unlikely]]
                 return throwStackOverflowError(globalObject, scope);
             scope.release();
-            return callStaticCode(AOT::closureEntrypoint().taggedPtr(), vm, closure, thisValue, context, args...);
+            return callStaticCode(AOT::slimClosureEntrypoint().taggedPtr(), vm, asObject(functionObject.asCell()), thisValue, context, args...);
         }
+        if (Options::useAOTOperationCounters()) [[unlikely]]
+            AOT::countJobCall(vm, false);
     }
-    if (functionObject.isCell() && isSlimClosureType(functionObject.asCell()->type())) {
-        if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-            return throwStackOverflowError(globalObject, scope);
-        scope.release();
-        return callStaticCode(AOT::slimClosureEntrypoint().taggedPtr(), vm, asObject(functionObject.asCell()), thisValue, context, args...);
-    }
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::countJobCall(vm, false);
 #endif
 
     if (microtaskCallCache) [[likely]] {
@@ -1464,7 +1468,7 @@ static void moduleLoadLinkEvaluateSettled(JSGlobalObject* globalObject, VM& vm, 
                 return;
             }
 #if ENABLE(AOT)
-            if (JSObject* import = AOT::Instance::importOfCompiledEntryPoint(record)) {
+            if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::importOfCompiledEntryPoint(record) : nullptr) {
                 JSValue imported = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
                 if (scope.exception()) [[unlikely]] {
                     resultPromise->rejectWithCaughtException(vm, scope);
@@ -1677,7 +1681,7 @@ static void dynamicImportEvaluateSettled(JSGlobalObject* globalObject, VM& vm, T
     auto status = static_cast<JSPromise::Status>(payload);
     if (status == JSPromise::Status::Fulfilled) {
 #if ENABLE(AOT)
-        if (JSObject* import = AOT::Instance::importOfCompiledEntryPoint(module)) {
+        if (JSObject* import = vm.useImmutableIntrinsics ? AOT::Instance::importOfCompiledEntryPoint(module) : nullptr) {
             JSValue promise = call(globalObject, import, JSC::getCallData(import), jsUndefined(), ArgList());
             if (scope.exception()) [[unlikely]] {
                 capabilityPromise->rejectWithCaughtException(vm, scope);

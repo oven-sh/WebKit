@@ -16,10 +16,6 @@
 #include "B3StackmapGenerationParams.h"
 #include "B3VariableValue.h"
 #include "JSCInlines.h"
-#include <array>
-#include <atomic>
-#include <cstdlib>
-#include <mutex>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -421,7 +417,7 @@ Pointer Lowering::slotAddress(unsigned slot, SlotAddressIsFor use)
     LValue data = loadICData();
     if (use == SlotAddressIsFor::ColdBlock)
         data = m_out.opaque(data);
-    return Pointer(m_out.add(data, m_out.constIntPtr(AOT::Data::offsetOfSlots() + slot * sizeof(AOT::Slot))));
+    return Pointer(m_out.add(data, m_out.constIntPtr(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias)));
 }
 
 LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate, OperationEffects effects)
@@ -433,17 +429,11 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
         patchpoint->append(ConstrainedValue(value, ValueRep::reg(reg)));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-    static const int declaredSets = getenv("AOT_SWITCH_IC_SETS") ? atoi(getenv("AOT_SWITCH_IC_SETS")) : 0;
-    if (auto declared = declaredSets ? registersChangedBy(stub) : std::nullopt) {
+    if (auto declared = registersChangedBy(stub)) {
         declared->add(GPRInfo::returnValueGPR, IgnoreVectors);
         if (immediate)
             declared->add(immediate->first, IgnoreVectors);
         patchpoint->clobberLate(*declared);
-        if (declaredSets == 2) {
-            for (auto& [value, reg] : operands)
-                declared->remove(reg);
-            patchpoint->clobberEarly(*declared);
-        }
     } else {
         patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
 #if CPU(X86_64)
@@ -462,139 +452,6 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     });
     unwindToLandingPad(patchpoint, site);
     return patchpoint;
-}
-
-static std::array<std::atomic<uint64_t>, 24>& countsOfReadsAsked()
-{
-    static std::array<std::atomic<uint64_t>, 24> counts { };
-    return counts;
-}
-
-static bool refusesReadAsked(bool counts, unsigned row)
-{
-    if (!counts)
-        return false;
-    static std::once_flag once;
-    std::call_once(once, [] {
-        atexit([] {
-            auto& rows = countsOfReadsAsked();
-            auto at = [&](unsigned i) {
-                return rows[i].load();
-            };
-            dataLogLn("ask: reads that are the subject of their block's branch on a text: ", at(0));
-            dataLogLn("ask:    refused: under a handler ", at(1), " | other uses ", at(2), " | something between the read and the branch ", at(3), " | the receiver says something ", at(4), " | a name of its own kind, or a run ", at(5), " | the result is held to a type ", at(6));
-            dataLogLn("ask:    refused: the text: 9 to 16 characters ", at(7), " | longer ", at(8), " | one unit beyond Latin-1 ", at(9), " | no slot ", at(10));
-            dataLogLn("ask:    fit: ", at(11), " | by length 1 to 8: ", at(12), " ", at(13), " ", at(14), " ", at(15), " ", at(16), " ", at(17), " ", at(18), " ", at(19));
-        });
-    });
-    countsOfReadsAsked()[row]++;
-    return false;
-}
-
-static bool isSwitchedOn(const char* name)
-{
-    const char* value = getenv(name);
-    return value && *value && !(value[0] == '0' && !value[1]);
-}
-
-bool Lowering::asksReadForText(ValueID read, const Value& value)
-{
-    static const bool isOn = isSwitchedOn("BUN_AOT_SWITCH_ASK");
-    static const bool counts = isSwitchedOn("BUN_AOT_SWITCH_ASK_COUNT");
-    if ((!isOn && !counts) || m_fusedCasts || isCompact(16) || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
-        return false;
-    auto& terminator = m_currentBlock->terminator;
-    auto comparison = comparisonWithTextBranchedOn(*m_currentBlock);
-    if (!comparison || comparison->subject != read || successorsOf(terminator).size() != 2)
-        return false;
-    refusesReadAsked(counts, 0);
-    if (m_watchingHandler)
-        return refusesReadAsked(counts, 1);
-    if (numberOfUsesOf(read) != 1)
-        return refusesReadAsked(counts, 2);
-    auto& values = m_currentBlock->values;
-    for (size_t i = m_currentIndexInBlock + 1; i < values.size(); ++i) {
-        if (values[i] != terminator.value && !(m_function.at(values[i]).opcode == Opcode::String && isFetchedWhereNeeded(values[i])))
-            return refusesReadAsked(counts, 3);
-    }
-    ValueID object = value.child(0);
-    StringID name = value.string();
-    if (!typeOf(object).isAnything() || value.isAtKnownPlace() || m_function.at(object).opcode == Opcode::GetGlobal)
-        return refusesReadAsked(counts, 4);
-    if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || runOfCurrentAccess(name))
-        return refusesReadAsked(counts, 5);
-    if (!typeOf(read).isAnything() || value.rep != Rep::JSValue)
-        return refusesReadAsked(counts, 6);
-    size_t length = comparison->text.size();
-    if (!length)
-        return refusesReadAsked(counts, 9);
-    if (length > 16)
-        return refusesReadAsked(counts, 8);
-    if (length > 8)
-        return refusesReadAsked(counts, 7);
-    if (!isOn) {
-        refusesReadAsked(counts, 11);
-        return refusesReadAsked(counts, 11 + length);
-    }
-    auto slot = allocateSite(name, 0);
-    if (!slot)
-        return refusesReadAsked(counts, 10);
-    refusesReadAsked(counts, 11);
-    refusesReadAsked(counts, 11 + length);
-    uint64_t bytes = 0;
-    for (size_t i = 0; i < length; ++i)
-        bytes |= static_cast<uint64_t>(comparison->text[i]) << (8 * i);
-    m_readAskedForText = ReadAskedForText { read, static_cast<unsigned>(m_currentIndexInBlock), *slot, bytes, static_cast<unsigned>(length) };
-    return true;
-}
-
-void Lowering::lowerBranchOnTextOfRead()
-{
-    ReadAskedForText asked = *std::exchange(m_readAskedForText, std::nullopt);
-    auto& terminator = m_currentBlock->terminator;
-    LBasicBlock isText = edgeTo(terminator.targets[0], true);
-    LBasicBlock isNot = edgeTo(terminator.targets[1], true);
-    Boxed base = in<Boxed>(m_function.at(asked.read).child(0));
-    LValue address = slotAddress(asked.slot).value();
-    LValue text = integer(static_cast<int64_t>(asked.bytes)).value();
-    Stub stub = static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdIsText1) + asked.length - 1);
-    m_context.emitsCalls = true;
-    PatchpointValue* patchpoint = m_out.patchpoint(Void);
-    applyEffects(patchpoint, { });
-    patchpoint->effects.terminal = true;
-    patchpoint->append(ConstrainedValue(base.value(), ValueRep::reg(firstStubOperandGPR)));
-    patchpoint->append(ConstrainedValue(address, ValueRep::reg(GPRInfo::argumentGPR1)));
-    patchpoint->append(ConstrainedValue(text, ValueRep::reg(GPRInfo::regCS0)));
-    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
-    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
-#if CPU(X86_64)
-    for (GPRReg reg : stubTemporaryGPRs)
-        patchpoint->clobberLate(RegisterSet { reg });
-#endif
-    auto indexOfBranch = std::exchange(m_currentIndexInBlock, asked.indexInBlock);
-    CallSite site { nextSite() };
-    m_currentIndexInBlock = indexOfBranch;
-    m_out.appendSuccessor(unsure(isNot));
-    m_out.appendSuccessor(unsure(isText));
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
-        AllowMacroScratchRegisterUsage allowScratch(jit);
-        stubCalls->call(jit, stub, site);
-#if CPU(ARM64)
-        CCallHelpers::Jump differs = jit.branchOnFlags(CCallHelpers::NotEqual);
-#else
-        CCallHelpers::Jump differs = CCallHelpers::Jump(jit.m_assembler.jCC(X86Assembler::ConditionNE));
-#endif
-        CCallHelpers::Jump isSame;
-        if (!params.fallsThroughToSuccessor(1))
-            isSame = jit.jump();
-        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
-        params.addLatePath([=](CCallHelpers& jit) {
-            differs.linkTo(*labels[0], &jit);
-            if (isSame.isSet())
-                isSame.linkTo(*labels[1], &jit);
-        });
-    });
 }
 
 // The length of an array, a string or a typed array is no property that a slot could say the place of.
@@ -823,6 +680,17 @@ LValue Lowering::placeByRun(const RunOfAccesses& run, Boxed base, StringID name,
     m_out.appendTo(tests);
     m_out.branch(isCell(base).value(), usually(testsCell), rarely(own));
     m_out.appendTo(testsCell);
+    if (run.numberOfRow != Format::none) {
+        LValue structureIDOfRow = m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfRows()), static_cast<ptrdiff_t>(run.numberOfRow) * sizeof(AOT::Slot) + OBJECT_OFFSETOF(AOT::Slot, structureID)));
+        m_out.branch(m_out.equal(structureIDOfRow, m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))))), usually(hasPassed), rarely(own));
+        m_out.appendTo(hasPassed);
+        m_out.m_block->appendNew<VariableValue>(m_proc, B3::Set, m_out.origin(), run.verdict, m_out.int32One);
+        m_out.jump(isKnown);
+        m_out.appendTo(isKnown);
+        m_out.jump(isCovered);
+        m_out.appendTo(isCovered);
+        return m_out.add(base.value(), m_out.constIntPtr(JSObject::offsetOfInlineStorage() + run.places[index] * sizeof(EncodedJSValue)));
+    }
     Pointer header = slotAddress(run.header, follows ? SlotAddressIsFor::ColdBlock : SlotAddressIsFor::UsualPath);
     LValue learned = m_out.load32(TypedPointer(m_heaps.root, m_out.add(header.value(), m_out.constIntPtr(OBJECT_OFFSETOF(AOT::Slot, structureID)))));
     LValue structureID = m_out.load32(TypedPointer(m_heaps.root, m_out.add(base.value(), m_out.constIntPtr(JSCell::structureIDOffset()))));
@@ -947,11 +815,27 @@ void Lowering::emitCachedPutById(Boxed base, StringID name, Boxed value)
     m_out.appendTo(continuation);
 }
 
+bool Lowering::isInSloppyCode() const
+{
+    auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+    auto& writtenIn = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+    return writtenIn.has(Format::FunctionIsSloppy);
+}
+
+void Lowering::setByName(Boxed base, StringID name, Boxed value)
+{
+    if (isInSloppyCode())
+        AOT_TYPED_OPERATION(SetByNameSloppy, base, word32(name.index()), value);
+    else
+        AOT_TYPED_OPERATION(SetByName, base, word32(name.index()), value);
+}
+
 void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value, bool onlyThroughStub, unsigned flagsOfSite)
 {
-    constexpr unsigned isStrict = 2;
+    bool isSloppy = isInSloppyCode();
+    unsigned isStrict = isSloppy ? 0 : 2;
     auto slot = allocateSite(name, isStrict | flagsOfSite);
-    if (!slot && flagsOfSite) {
+    if (!slot && flagsOfSite && !isSloppy) {
         AOT_TYPED_OPERATION(SetByNameInRowOfThis, base, word32(name.index()), value);
         return;
     }
@@ -961,13 +845,13 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(m_out.notZero64(stored), usually(continuation), rarely(generally));
         m_out.appendTo(generally);
-        AOT_TYPED_OPERATION(SetByName, base, word32(name.index()), value);
+        setByName(base, name, value);
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return;
     }
     if (!slot) {
-        AOT_TYPED_OPERATION(SetByName, base, word32(name.index()), value);
+        setByName(base, name, value);
         return;
     }
     auto throughStub = [&](SlotAddressIsFor use) {
@@ -1019,14 +903,16 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
 }
 
 // Nothing: the function has as many sites as it can have.
-bool Lowering::emitDeleteByVal(Boxed base, Boxed key)
+std::optional<Word32> Lowering::emitDeleteByVal(Boxed base, Boxed key)
 {
     if (m_context.sites.size() + 2 > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
-        return false;
+        return std::nullopt;
     m_context.sites.append(Site { });
     m_context.sites.append(Site { });
+    if (isInSloppyCode())
+        return Word32(callICStub(Stub::DeleteByValCachedSloppy, Int32, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { slotAddress(m_context.sites.size() - 2).value(), GPRInfo::argumentGPR2 } }));
     callICStub(Stub::DeleteByValCached, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { slotAddress(m_context.sites.size() - 2).value(), GPRInfo::argumentGPR2 } });
-    return true;
+    return boolean(true);
 }
 
 bool Lowering::emitDefineByName(Boxed object, StringID name, Boxed value)
@@ -1050,11 +936,11 @@ Boxed Lowering::emitGetByVal(Boxed base, Boxed key, bool mayBeName)
 
 void Lowering::emitPutByVal(Boxed base, Boxed key, Boxed value, bool mayBeName)
 {
+    uint32_t isStrict = !isInSloppyCode();
     if (mayBeName) {
-        callICStub(Stub::PutByValCached, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } });
+        callICStub(isStrict ? Stub::PutByValCached : Stub::PutByValCachedSloppy, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } });
         return;
     }
-    constexpr uint32_t isStrict = 1;
     callICStub(Stub::PutByVal, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { value.value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, isStrict });
 }
 

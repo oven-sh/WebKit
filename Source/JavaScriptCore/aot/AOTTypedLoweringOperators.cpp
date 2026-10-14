@@ -127,8 +127,13 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
 
     OperationEffects effects { writesOfArithmetic(left, &right), true };
     // An object is asked for a primitive first, which is not what it is asked for to become a string.
-    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects() && !isCompact(4)) {
+    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects() && !isCompact(4) && !goesGenerallyWhereTextIsCold()) {
+        bool isColdByText = !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id);
         if (left.isString() || right.isString()) {
+            if (isColdByText) {
+                CellPointer first = toStringCell(a);
+                return ensure(concatenateByStub(first, toStringCell(b)), m_program.at(m_program.types.string), type);
+            }
             StringPart first = stringPartOf(a);
             return ensure(concatenate(first, stringPartOf(b)).string, m_program.at(m_program.types.string), type);
         }
@@ -138,6 +143,8 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
             bool areWhole = !indexOf(x.value()) && !indexOf(y.value()) && !m_decoded.contains(x.value()) && !m_decoded.contains(y.value());
             Word32 areCells = areWhole ? Word32(m_out.testIsZero64(m_out.bitOr(x.value(), y.value()), m_out.constInt64(JSValue::OtherTag))) : logicalAnd(isCell(x, left), isCell(y, right));
             return eitherOperand(areCells, joinedAs(type), [&] {
+                if (isColdByText)
+                    return ensure(concatenateByStub(asCell(x), asCell(y)), m_program.at(m_program.types.string), type);
                 return ensure(concatenate(stringPartOf(asCell(x)), stringPartOf(asCell(y))).string, m_program.at(m_program.types.string), type);
             }, [&] {
                 return ensure(emitGenericArithmetic(Stub::Add, x, y, effects), guaranteeOfStub(Opcode::Add), type);
@@ -149,6 +156,11 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
             Boxed x = in<Boxed>(a);
             Boxed y = in<Boxed>(b);
             return eitherOperand(isCell(isLeft ? x : y, isLeft ? left : right), joinedAs(type), [&] {
+                if (isColdByText) {
+                    CellPointer string = asCell(isLeft ? x : y);
+                    CellPointer other = toStringCell(isLeft ? b : a);
+                    return ensure(isLeft ? concatenateByStub(string, other) : concatenateByStub(other, string), m_program.at(m_program.types.string), type);
+                }
                 StringPart string = stringPartOf(asCell(isLeft ? x : y));
                 StringPart other = stringPartOf(isLeft ? b : a);
                 return ensure((isLeft ? concatenate(string, other) : concatenate(other, string)).string, m_program.at(m_program.types.string), type);
@@ -195,6 +207,8 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
         return ensure(boxed, guarantee, type);
     };
 
+    if (goesGenerallyWhereTextIsCold())
+        return generally();
     Rep rep = repOf(type);
     if (areExpectedToBeNumbers({ a, b })) {
         bool hasCodeForInt32 = value.opcode != Opcode::Div && value.opcode != Opcode::Pow;
@@ -243,17 +257,85 @@ Operand Lowering::yieldInt32OrElse(Integer exact, const Type& type, LBasicBlock 
     return ensure(exact, m_program.at(m_program.types.int32), type);
 }
 
+Word32 Lowering::int32OrElse(Opcode opcode, Word32 x, Word32 y, LBasicBlock otherwise, const char* file, unsigned line)
+{
+    if (dropsGuardAt(file, line)) [[unlikely]]
+        return opcode == Opcode::Add ? add(x, y) : opcode == Opcode::Sub ? Word32(m_out.sub(x.value(), y.value())) : mul(x, y);
+    if (!m_isValidatingFact && isForcedForTesting(file, line)) [[unlikely]]
+        Emitter::orElse(m_out.constInt32(0), otherwise);
+    auto constantOf = [](LValue value) -> std::optional<int32_t> {
+        if (value->hasInt32())
+            return value->asInt32();
+        if (value->opcode() == B3::Trunc && value->child(0)->hasInt64())
+            return static_cast<int32_t>(value->child(0)->asInt64());
+        return std::nullopt;
+    };
+    if (opcode == Opcode::Add && constantOf(x.value()))
+        std::swap(x, y);
+    std::optional<int32_t> constant = opcode == Opcode::Mul ? std::nullopt : constantOf(y.value());
+    if (constant && (*constant <= -4096 || *constant >= 4096))
+        constant = std::nullopt;
+    LBasicBlock continuation = m_out.newBlock();
+    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+    patchpoint->effects = Effects::none();
+    patchpoint->effects.terminal = true;
+    patchpoint->append(ConstrainedValue(x.value(), ValueRep::SomeRegister));
+    if (!constant)
+        patchpoint->append(ConstrainedValue(y.value(), opcode == Opcode::Sub ? ValueRep::SomeLateRegister : ValueRep::SomeRegister));
+    m_out.appendSuccessor(FTL::rarely(otherwise));
+    m_out.appendSuccessor(usually(continuation));
+    patchpoint->setGenerator([opcode, constant](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        GPRReg result = params[0].gpr();
+        GPRReg left = params[1].gpr();
+        RELEASE_ASSERT(opcode != Opcode::Sub || constant || result != params[2].gpr());
+        CCallHelpers::Jump isNoInt32;
+        if (opcode == Opcode::Add)
+            isNoInt32 = constant ? jit.branchAdd32(CCallHelpers::Overflow, left, CCallHelpers::TrustedImm32(*constant), result) : jit.branchAdd32(CCallHelpers::Overflow, left, params[2].gpr(), result);
+        else if (opcode == Opcode::Sub)
+            isNoInt32 = constant ? jit.branchSub32(CCallHelpers::Overflow, left, CCallHelpers::TrustedImm32(*constant), result) : jit.branchSub32(CCallHelpers::Overflow, left, params[2].gpr(), result);
+        else
+            isNoInt32 = jit.branchMul32(CCallHelpers::Overflow, left, params[2].gpr(), result);
+        CCallHelpers::Jump isInt32;
+        if (!params.fallsThroughToSuccessor(1))
+            isInt32 = jit.jump();
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        params.addLatePath([=](CCallHelpers& jit) {
+            isNoInt32.linkTo(*labels[0], &jit);
+            if (isInt32.isSet())
+                isInt32.linkTo(*labels[1], &jit);
+        });
+    });
+    m_out.appendTo(continuation);
+    return Word32(patchpoint);
+}
+
 // Both operands are int32. What integers do not come out with the way the language has it goes to the block.
 Operand Lowering::lowerBinaryOfInt32(Opcode opcode, ValueID a, ValueID b, const Type& type, LBasicBlock otherwise)
 {
+    bool isBoxed = repOf(type) == Rep::JSValue;
     switch (opcode) {
     case Opcode::Add:
+        if (isBoxed)
+            return ensure(signExtended(int32OrElse(opcode, low32(get(a).as<Integer>()), low32(get(b).as<Integer>()), otherwise)), m_program.at(m_program.types.int32), type);
         return yieldInt32OrElse(add(get(a).as<Integer>(), get(b).as<Integer>()), type, otherwise);
     case Opcode::Sub:
+        if (isBoxed)
+            return ensure(signExtended(int32OrElse(opcode, low32(get(a).as<Integer>()), low32(get(b).as<Integer>()), otherwise)), m_program.at(m_program.types.int32), type);
         return yieldInt32OrElse(sub(get(a).as<Integer>(), get(b).as<Integer>()), type, otherwise);
     case Opcode::Mul: {
         Integer x = get(a).as<Integer>();
         Integer y = get(b).as<Integer>();
+        if (isBoxed) {
+            Word32 product = int32OrElse(opcode, low32(x), low32(y), otherwise);
+            LBasicBlock isZeroCase = newUnlikelyBlock();
+            LBasicBlock continuation = m_out.newBlock();
+            m_out.branch(isZero(product).value(), rarely(isZeroCase), usually(continuation));
+            m_out.appendTo(isZeroCase);
+            orElse(greaterThanOrEqual(bitOr(low32(x), low32(y)), word32(0)), otherwise);
+            m_out.jump(continuation);
+            m_out.appendTo(continuation);
+            return ensure(signExtended(product), m_program.at(m_program.types.int32), type);
+        }
         Integer product = mul(x, y);
         // Zero is negative where one of the factors is.
         orElse(logicalOr(isNotZero(product), greaterThanOrEqual(bitOr(x, y), integer(0))), otherwise);
@@ -449,6 +531,8 @@ Operand Lowering::lowerNumericBinary(Opcode opcode, ValueID a, ValueID b, const 
     case Opcode::Pow:
         if (auto power = powerWithConstantExponent(x, b))
             computed = *power;
+        else if (auto power = powerWithConstantBase(a, b))
+            computed = *power;
         else
             computed = AOT_TYPED_OPERATION(Pow, x, y);
         break;
@@ -622,10 +706,47 @@ Operand Lowering::lowerUnary(ValueID result, const Value& value)
             return lowerUnary(result, value);
         // Zero negated is negative zero, which no integer stands for.
         Integer x = get(a).as<Integer>();
+        if (rep == Rep::JSValue) {
+            orElse(Word32(m_out.notZero32(bitAnd(low32(x), word32(INT32_MAX)).value())), otherwise);
+            return ensure(signExtended(Word32(m_out.neg(low32(x).value()))), m_program.at(m_program.types.int32), type);
+        }
         orElse(isNotZero(x), otherwise);
         return yieldInt32OrElse(neg(x), type, otherwise);
     }, [&] {
         return lowerUnary(result, value);
+    }, generally);
+}
+
+Operand Lowering::lowerStepByOne(InlineBuiltin which, ValueID result, const Value& value)
+{
+    auto& type = typeOf(result);
+    ValueID a = value.arguments[0];
+    bool isUp = which == InlineBuiltin::Increment;
+    Rep rep = repOf(type);
+    auto generally = [&]() -> Operand {
+        Boxed operand = in<Boxed>(a);
+        auto byOperation = [&] {
+            return ensure(isUp ? AOT_TYPED_OPERATION(Increment, operand) : AOT_TYPED_OPERATION(Decrement, operand), guaranteeOfStub(Opcode::ToNumeric), type);
+        };
+        if (m_hasFailedInt32Test || rep != Rep::JSValue)
+            return byOperation();
+        LBasicBlock otherwise = m_out.newBlock();
+        Join join(m_out, rep, b3TypeOf(rep));
+        orElse(isInt32(operand), otherwise);
+        join.add(ensure(signExtended(int32OrElse(isUp ? Opcode::Add : Opcode::Sub, low32(operand), word32(1), otherwise)), m_program.at(m_program.types.int32), type));
+        m_out.appendTo(otherwise);
+        join.add(byOperation());
+        return join.finish();
+    };
+    if (!areExpectedToBeNumbers({ a }))
+        return generally();
+    return ifNumbersAsExpected({ a }, rep, true, [&](LBasicBlock otherwise) {
+        Integer x = get(a).as<Integer>();
+        if (rep == Rep::JSValue)
+            return ensure(signExtended(int32OrElse(isUp ? Opcode::Add : Opcode::Sub, low32(x), word32(1), otherwise)), m_program.at(m_program.types.int32), type);
+        return ensure(isUp ? add(x, integer(1)) : sub(x, integer(1)), Type::integer(Range::full()), type);
+    }, [&] {
+        return ensure(add(asNumericOperand(a), number(isUp ? 1 : -1)), m_program.at(m_program.types.number), type);
     }, generally);
 }
 
@@ -779,8 +900,83 @@ unsigned Lowering::numberOfComparisonsWithIntegers(ValueID id)
     return m_numberOfComparisonsWithIntegers[id.index()];
 }
 
+ValueID Lowering::valueBeingLowered() const
+{
+    if (!m_currentBlock || m_currentIndexInBlock >= m_currentBlock->values.size())
+        return { };
+    return m_currentBlock->values[m_currentIndexInBlock];
+}
+
+bool Lowering::isTakenAsInt32(ValueID id)
+{
+    if (!m_didFindWhatIsTakenAsInt32) {
+        m_didFindWhatIsTakenAsInt32 = true;
+        m_isTakenAsInt32.ensureSize(m_function.values.size());
+        m_isTakenAsIndex.ensureSize(m_function.values.size());
+        for (auto& block : m_function.blocks) {
+            for (ValueID user : block.values) {
+                auto& value = m_function.at(user);
+                switch (value.opcode) {
+                case Opcode::BitAnd:
+                case Opcode::BitOr:
+                case Opcode::BitXor:
+                case Opcode::LShift:
+                case Opcode::RShift:
+                case Opcode::URShift:
+                    m_isTakenAsInt32.quickSet(value.child(1).index());
+                    [[fallthrough]];
+                case Opcode::BitNot:
+                    m_isTakenAsInt32.quickSet(value.child(0).index());
+                    break;
+                case Opcode::GetByVal:
+                case Opcode::PutByVal:
+                    m_isTakenAsIndex.quickSet(value.child(1).index());
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+    }
+    return m_isTakenAsInt32.quickGet(id.index());
+}
+
+bool Lowering::isTakenAsIndex(ValueID id)
+{
+    isTakenAsInt32(id);
+    return m_isTakenAsIndex.quickGet(id.index());
+}
+
+Word32 Lowering::toInt32InArm(Number value, bool isRare)
+{
+    if (value.value()->hasDouble())
+        return word32(JSC::toInt32(value.value()->asDouble()));
+#if CPU(ARM64)
+    if (MacroAssembler::supportsDoubleToInt32ConversionUsingJavaScriptSemantics())
+        return toInt32(value);
+#endif
+    if (isRare)
+        return AOT_TYPED_OPERATION(ToInt32, value);
+    return toInt32(value);
+}
+
+Integer Lowering::exactIntegerInArm(Number value)
+{
+    if (value.value()->hasDouble()) {
+        double constant = value.value()->asDouble();
+        bool isExact = constant >= -9007199254740992.0 && constant <= 9007199254740992.0 && static_cast<double>(static_cast<int64_t>(constant)) == constant;
+        return integer(isExact ? static_cast<int64_t>(constant) : INT64_MIN);
+    }
+    Integer truncated = truncateToInteger(value);
+    return select(equal(convertToNumber(truncated), value), truncated, integer(INT64_MIN));
+}
+
 void Lowering::didDefineNumber(ValueID id, const Value& value, Number number)
 {
+    if (auto found = m_exactIntegersOfNumbers.find(number.value()); found != m_exactIntegersOfNumbers.end()) {
+        m_integersOfNumbers.add(id.index(), IntegerOfNumber { number.value(), found->value });
+        return;
+    }
     // What was kept as an integer. `undefined` becomes what is not a number, `null` 0.
     // A read and a cast may have yielded a placeholder: see lowerFusedCast().
     if (value.opcode == Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::GetById) {
@@ -837,6 +1033,36 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
         if (auto asInteger = integerOfNumber(number))
             return equal(*asInteger, integer(m_function.at(constant).integer()));
     }
+    for (auto [number, other] : { std::pair { a, b }, std::pair { b, a } }) {
+        if (!typeOf(other).isInteger())
+            continue;
+        if (auto asInteger = integerOfNumber(number))
+            return equal(*asInteger, get(other).as<Integer>());
+    }
+    auto kept = [&](ValueID id) -> const IntegerOfNumber* {
+        auto found = m_integersOfNumbers.find(id.index());
+        return found != m_integersOfNumbers.end() && get(id).value == found->value.number ? &found->value : nullptr;
+    };
+    if (auto* x = kept(a), *y = kept(b); x && y && left.isNumber() && right.isNumber()) {
+        auto* integerOrNaN = x->least ? x : y->least ? y : nullptr;
+        LBasicBlock isSame = m_out.newBlock();
+        LBasicBlock isOther = m_out.newBlock();
+        Join join(m_out, Rep::Int32, Int32);
+        m_out.branch(equal(Integer(x->integer), Integer(y->integer)).value(), unsure(isSame), unsure(isOther));
+        m_out.appendTo(isOther);
+        join.add(boolean(false));
+        m_out.appendTo(isSame);
+        if (integerOrNaN)
+            join.add(*integerOrNaN->least >= 0 ? greaterThanOrEqual(Integer(integerOrNaN->integer), integer(0)) : notEqual(Integer(integerOrNaN->integer), integer(INT64_MIN)));
+        else {
+            join.add(either<Word32>(notEqual(Integer(x->integer), integer(INT64_MIN)), [&] {
+                return boolean(true);
+            }, [&] {
+                return equal(in<Number>(a), in<Number>(b));
+            }));
+        }
+        return join.finish().as<Word32>();
+    }
     if (left.isNumber() && right.isNumber())
         return equal(in<Number>(a), in<Number>(b));
     uint16_t either = left.primitives | right.primitives;
@@ -856,7 +1082,7 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     }
     // Equal bits are equal values and the other way round, unless both may be numbers, strings or big integers.
     if (!(both & (Primitive::Number | Primitive::String | Primitive::BigInt)))
-        return equal(in<Boxed>(a), in<Boxed>(b));
+        return haveEqualBits(in<Boxed>(a), in<Boxed>(b));
     if (isCompact(m_function.at(a).opcode == Opcode::String || m_function.at(b).opcode == Opcode::String ? 16 : 2)) {
         Boxed first = in<Boxed>(a);
         return emitGenericCompare(Stub::StrictEqual, first, in<Boxed>(b), OperationEffects { Writes::RuntimeState, true });
@@ -913,6 +1139,8 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     auto generally = [&] {
         return emitGenericCompare(Stub::StrictEqual, x, y, OperationEffects { Writes::RuntimeState, true });
     };
+    if (goesGenerallyWhereTextIsCold())
+        return generally();
     auto inPlace = [&](LBasicBlock) {
         return lowerStrictEq(a, b);
     };
@@ -998,6 +1226,8 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
     auto throughStub = [&] {
         return Word32(callICStub(Stub::ToBoolean, Int32, { { value.value(), firstStubOperandGPR } }, std::nullopt, { Writes::RuntimeState, false }));
     };
+    if (goesGenerallyWhereTextIsCold())
+        return throughStub();
     if (isCompact(3))
         return throughStub();
     // `undefined` and `null` are an answer like any other here.
@@ -1086,6 +1316,11 @@ CellPointer Lowering::toStringCell(ValueID id)
     Operand operand = get(id);
     if (type.isString())
         return operand.as<CellPointer>();
+    bool makesStringGenerally = goesGenerallyWhereTextIsCold();
+    if (operand.rep == Rep::Int64 && makesStringGenerally)
+        return AOT_TYPED_OPERATION(DoubleToString, convertToNumber(operand.as<Integer>()));
+    if (operand.rep == Rep::Double && makesStringGenerally)
+        return AOT_TYPED_OPERATION(DoubleToString, operand.as<Number>());
     if (operand.rep == Rep::Int64)
         return integerToString(operand.as<Integer>(), type);
     // As a rule a number is an int32 where it is made a string of. Minus zero reads "0".
@@ -1103,11 +1338,41 @@ CellPointer Lowering::toStringCell(ValueID id)
         // Only an object has a say in what string it becomes.
         return AOT_TYPED_OPERATION_WITH_EFFECTS(ToString, (OperationEffects { type.hasObjects() ? Writes::Heap : Writes::RuntimeState, true }), boxed);
     };
+    if (type.primitives & Primitive::String && !(type.primitives & Primitive::Absent) && !isStringOrNil(type) && !predictionOf(id)) {
+        bool everyCellIsString = !type.hasObjects() && !(type.primitives & (Primitive::Symbol | Primitive::BigInt));
+        bool mayBeNumberByType = !type.hasObjects() && type.primitives & Primitive::Number;
+        LBasicBlock isCellOfSomeKind = m_out.newBlock();
+        LBasicBlock isString = m_out.newBlock();
+        LBasicBlock isNoCell = m_out.newBlock();
+        LBasicBlock isAnythingElse = m_out.newBlock();
+        Join join(m_out, Rep::Cell, Int64);
+        m_out.branch(isCell(boxed).value(), unsure(isCellOfSomeKind), unsure(isNoCell));
+        m_out.appendTo(isCellOfSomeKind);
+        if (everyCellIsString)
+            m_out.jump(isString);
+        else
+            m_out.branch(equal(typeOfCell(asCell(boxed)), word32(StringType)).value(), unsure(isString), unsure(isAnythingElse));
+        m_out.appendTo(isString);
+        join.add(asCell(boxed));
+        m_out.appendTo(isNoCell);
+        if (mayBeNumberByType) {
+            LBasicBlock isWhole = m_out.newBlock();
+            m_out.branch(isInt32(boxed).value(), unsure(isWhole), unsure(isAnythingElse));
+            m_out.appendTo(isWhole);
+            join.add(integerToString(signExtended(low32(boxed)), m_program.at(m_program.types.int32)));
+        } else
+            m_out.jump(isAnythingElse);
+        m_out.appendTo(isAnythingElse);
+        join.add(generally());
+        return join.finish().as<CellPointer>();
+    }
     if (isStringOrNil(type)) {
         return either<CellPointer>(isCell(boxed), [&] {
             return asCell(boxed);
         }, generally);
     }
+    if (makesStringGenerally)
+        return generally();
     auto prediction = predictionOf(id);
     bool isNumberOrNil = type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
     if (!isNumberOrNil && (!prediction || !(prediction->isString() || prediction->isNumber())))

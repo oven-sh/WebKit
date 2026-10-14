@@ -70,6 +70,7 @@ public:
 
 private:
     static constexpr unsigned maxNumberOfClonedValues = 48;
+    static constexpr unsigned maxNumberOfClonedValuesWhereRangesAreHidden = 100;
     static constexpr unsigned maxNumberOfClonedValuesWhenUnswitching = 64;
     static constexpr unsigned minNumberOfHoistedValues = 2;
     static constexpr double frequencyScaleOfOriginalLoop = 1.0 / 1024;
@@ -109,6 +110,8 @@ private:
         Variable* endOfStrip { nullptr };
         BasicBlock* firstPreHeaderOfFastVersion { nullptr };
         BasicBlock* lastPreHeaderOfFastVersion { nullptr };
+        bool hidesRanges { false };
+        Vector<std::pair<Value*, Opcode>, 2> phisNarrowedOnEntry;
     };
 
     // A guard: a Branch, or a patchpoint that branches, with one successor that is rare or, if none is, leaves the loop.
@@ -256,7 +259,66 @@ private:
                 writesPinned |= effects.writesPinned;
             }
         }
-        if (numberOfClonedValues > maxNumberOfClonedValues)
+        auto isExtendedWordInFastVersion = [&](Value* value) -> Opcode {
+            for (unsigned depth = 0; depth < 4; ++depth) {
+                if (value->opcode() == SExt32 || value->opcode() == ZExt32)
+                    return value->opcode();
+                if (value->opcode() != Phi || value->owner == loop.header() || !hotBlocks.contains(value->owner))
+                    return Oops;
+                auto* upsilons = m_upsilons.find(value);
+                if (!upsilons)
+                    return Oops;
+                Value* only = nullptr;
+                for (UpsilonValue* upsilon : *upsilons) {
+                    if (!hotBlocks.contains(upsilon->owner))
+                        continue;
+                    if (only && only != upsilon->child(0))
+                        return Oops;
+                    only = upsilon->child(0);
+                }
+                if (!only)
+                    return Oops;
+                value = only;
+            }
+            return Oops;
+        };
+        for (BasicBlock* block : version.hotBlocks) {
+            for (Value* value : *block) {
+                if (value->opcode() != Phi || value->type() != Int64)
+                    continue;
+                auto* upsilons = m_upsilons.find(value);
+                if (!upsilons)
+                    continue;
+                if (block != loop.header()) {
+                    bool hasMarker = false;
+                    for (UpsilonValue* upsilon : *upsilons) {
+                        Value* source = upsilon->child(0);
+                        hasMarker |= !hotBlocks.contains(upsilon->owner) && source->hasInt64() && source->asInt64() != static_cast<int32_t>(source->asInt64()) && source->asInt64() != static_cast<int64_t>(static_cast<uint32_t>(source->asInt64()));
+                    }
+                    version.hidesRanges |= hasMarker && isExtendedWordInFastVersion(value) != Oops;
+                    continue;
+                }
+                Opcode comesRoundAs = Oops;
+                bool comesRoundOtherwise = false;
+                Value* entering = nullptr;
+                for (UpsilonValue* upsilon : *upsilons) {
+                    if (!loops.belongsTo(upsilon->owner, loop))
+                        entering = upsilon->child(0);
+                    if (!hotBlocks.contains(upsilon->owner))
+                        continue;
+                    Opcode extension = isExtendedWordInFastVersion(upsilon->child(0));
+                    if (extension == Oops || (comesRoundAs != Oops && comesRoundAs != extension))
+                        comesRoundOtherwise = true;
+                    else
+                        comesRoundAs = extension;
+                }
+                if (comesRoundAs != Oops && !comesRoundOtherwise && entering && entering->opcode() != comesRoundAs && !entering->hasInt64())
+                    version.phisNarrowedOnEntry.append({ value, comesRoundAs });
+            }
+        }
+        if (!version.hidesRanges)
+            version.phisNarrowedOnEntry.clear();
+        if (numberOfClonedValues > (version.hidesRanges ? maxNumberOfClonedValuesWhereRangesAreHidden : maxNumberOfClonedValues))
             return std::nullopt;
         version.numberOfClonedValues = numberOfClonedValues;
 
@@ -445,8 +507,10 @@ private:
             }
             block = likelySuccessor;
         }
-        if (numberOfHoistedValues < minNumberOfHoistedValues || (unswitchedBlock && !version.hoistedValueSet.contains(unswitchedBlock->last())))
+        if ((!version.hidesRanges && numberOfHoistedValues < minNumberOfHoistedValues) || (unswitchedBlock && !version.hoistedValueSet.contains(unswitchedBlock->last())))
             return std::nullopt;
+        if (numberOfClonedValues <= maxNumberOfClonedValues && numberOfHoistedValues >= minNumberOfHoistedValues)
+            version.phisNarrowedOnEntry.clear();
         version.numberOfHoistedValues = numberOfHoistedValues;
         version.countedLoop = analyzeCountedLoop(loops, loop, m_upsilons, isInvariant);
         if (!version.countedLoop && testAtTheTop && m_seesWhatIsOneValue) {
@@ -624,12 +688,8 @@ private:
         demoteValues(m_proc, valuesToDemote);
     }
 
-    void cloneHotBlocks(Version& version)
+    void fillClonesOfHotBlocks(Version& version, const UncheckedKeyHashMap<BasicBlock*, BasicBlock*>& clones, BasicBlock* headerOfNextTurn, Variable* nextOfInductionVariable)
     {
-        UncheckedKeyHashMap<BasicBlock*, BasicBlock*> clones;
-        for (BasicBlock* block : version.hotBlocks)
-            clones.add(block, m_proc.addBlock(m_originalFrequencies.get(block)));
-        Variable* nextOfInductionVariable = version.poll ? m_proc.addVariable(Int64) : nullptr;
         for (BasicBlock* block : version.hotBlocks) {
             BasicBlock* cloneOfBlock = clones.get(block);
             UncheckedKeyHashMap<Value*, Value*> map;
@@ -664,13 +724,46 @@ private:
             else
                 cloneOfBlock->successors() = block->successors();
             for (BasicBlock*& successor : cloneOfBlock->successorBlocks()) {
-                if (BasicBlock* cloneOfSuccessor = clones.get(successor))
+                if (successor == version.header)
+                    successor = headerOfNextTurn;
+                else if (BasicBlock* cloneOfSuccessor = clones.get(successor))
                     successor = cloneOfSuccessor;
             }
-            block->setFrequency(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop);
         }
+    }
+
+    void cloneHotBlocks(Version& version)
+    {
+        UncheckedKeyHashMap<BasicBlock*, BasicBlock*> clones;
+        for (BasicBlock* block : version.hotBlocks)
+            clones.add(block, m_proc.addBlock(m_originalFrequencies.get(block)));
+        Variable* nextOfInductionVariable = version.poll ? m_proc.addVariable(Int64) : nullptr;
+        fillClonesOfHotBlocks(version, clones, clones.get(version.header), nextOfInductionVariable);
+        BasicBlock* whereNarrowingFails = version.header;
+        if (!version.phisNarrowedOnEntry.isEmpty()) {
+            UncheckedKeyHashMap<BasicBlock*, BasicBlock*> firstTurn;
+            for (BasicBlock* block : version.hotBlocks)
+                firstTurn.add(block, m_proc.addBlock(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop));
+            fillClonesOfHotBlocks(version, firstTurn, clones.get(version.header), nullptr);
+            whereNarrowingFails = firstTurn.get(version.header);
+        }
+        for (BasicBlock* block : version.hotBlocks)
+            block->setFrequency(m_originalFrequencies.get(block) * frequencyScaleOfOriginalLoop);
         if (version.poll)
             stripMine(version, clones, nextOfInductionVariable);
+        for (auto [phi, extension] : version.phisNarrowedOnEntry) {
+            auto* read = phi->opcode() == Identity ? phi->child(0)->as<VariableValue>() : nullptr;
+            if (!read || read->opcode() != Get)
+                continue;
+            BasicBlock* block = version.lastPreHeaderOfFastVersion;
+            BasicBlock* next = m_proc.addBlock(block->frequency());
+            Value* entered = block->appendNew<VariableValue>(m_proc, Get, phi->origin(), read->variable());
+            Value* narrowed = block->appendNew<Value>(m_proc, extension, phi->origin(), block->appendNew<Value>(m_proc, Trunc, phi->origin(), entered));
+            block->appendNew<Value>(m_proc, Branch, phi->origin(), block->appendNew<Value>(m_proc, Equal, phi->origin(), narrowed, entered));
+            block->setSuccessors(FrequentedBlock(next), FrequentedBlock(whereNarrowingFails, FrequencyClass::Rare));
+            next->appendNew<VariableValue>(m_proc, Set, phi->origin(), read->variable(), narrowed);
+            version.lastPreHeaderOfFastVersion = next;
+        }
         version.lastPreHeaderOfFastVersion->appendNew<Value>(m_proc, Jump, version.header->at(0)->origin());
         version.lastPreHeaderOfFastVersion->setSuccessors(FrequentedBlock(clones.get(version.header)));
         if (version.isTestedAtTheTop)
@@ -789,6 +882,69 @@ bool foldComparisonsWithWhatIsOutOfRange(Procedure& proc)
         insertionSet.execute(block);
     }
     return changed;
+}
+
+bool narrowPhisOfExtendedWords(Procedure& proc)
+{
+    PhaseScope phaseScope(proc, "narrowPhisOfExtendedWords"_s);
+    enum class Sources : uint8_t { ConstantsOnly, ExtendedWords, ZeroExtendedWords, Other };
+    UncheckedKeyHashMap<Value*, Sources> sourcesOf;
+    UncheckedKeyHashMap<Value*, std::pair<int64_t, int64_t>> constantsOf;
+    for (Value* value : proc.values()) {
+        auto* upsilon = value->as<UpsilonValue>();
+        if (!upsilon || upsilon->phi()->type() != Int64)
+            continue;
+        Value* source = upsilon->child(0);
+        auto& sources = sourcesOf.add(upsilon->phi(), Sources::ConstantsOnly).iterator->value;
+        if (source->opcode() == SExt32)
+            sources = sources == Sources::ZeroExtendedWords ? Sources::Other : std::max(sources, Sources::ExtendedWords);
+        else if (source->opcode() == ZExt32)
+            sources = sources == Sources::ExtendedWords ? Sources::Other : std::max(sources, Sources::ZeroExtendedWords);
+        else if (source->hasInt64()) {
+            auto& constants = constantsOf.add(upsilon->phi(), std::pair { source->asInt64(), source->asInt64() }).iterator->value;
+            constants = { std::min(constants.first, source->asInt64()), std::max(constants.second, source->asInt64()) };
+        } else
+            sources = Sources::Other;
+    }
+    for (auto& [phi, constants] : constantsOf) {
+        auto& sources = sourcesOf.find(phi)->value;
+        if (sources == Sources::ExtendedWords && (constants.first < std::numeric_limits<int32_t>::min() || constants.second > std::numeric_limits<int32_t>::max()))
+            sources = Sources::Other;
+        if (sources == Sources::ZeroExtendedWords && (constants.first < 0 || constants.second > static_cast<int64_t>(std::numeric_limits<uint32_t>::max())))
+            sources = Sources::Other;
+    }
+    UncheckedKeyHashMap<Value*, Value*> narrowPhis;
+    InsertionSet insertionSet(proc);
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            Value* phi = block->at(index);
+            if (phi->opcode() != Phi)
+                continue;
+            auto found = sourcesOf.find(phi);
+            if (found == sourcesOf.end() || (found->value != Sources::ExtendedWords && found->value != Sources::ZeroExtendedWords))
+                continue;
+            Value* narrow = insertionSet.insert<Value>(index, Phi, Int32, phi->origin());
+            narrowPhis.add(phi, narrow);
+            phi->replaceWithIdentity(insertionSet.insert<Value>(index, found->value == Sources::ExtendedWords ? SExt32 : ZExt32, phi->origin(), narrow));
+        }
+        insertionSet.execute(block);
+    }
+    if (narrowPhis.isEmpty())
+        return false;
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            auto* upsilon = block->at(index)->as<UpsilonValue>();
+            Value* narrow = upsilon ? narrowPhis.get(upsilon->phi()) : nullptr;
+            if (!narrow)
+                continue;
+            Value* source = upsilon->child(0);
+            Value* word = source->opcode() == SExt32 || source->opcode() == ZExt32 ? source->child(0) : insertionSet.insert<Const32Value>(index, upsilon->origin(), static_cast<int32_t>(source->asInt64()));
+            insertionSet.insert<UpsilonValue>(index, upsilon->origin(), word, narrow);
+            upsilon->replaceWithNop();
+        }
+        insertionSet.execute(block);
+    }
+    return true;
 }
 
 bool eliminateRedundantPhiCycles(Procedure& proc)

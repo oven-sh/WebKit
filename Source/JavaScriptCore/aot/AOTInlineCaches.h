@@ -46,7 +46,7 @@ void cacheInstanceOf(JSGlobalObject*, Data*, Slot* cache, JSObject* constructor,
 void makePrototypeChainWatchable(VM&, JSCell* base);
 
 JSValue getByIdAndFillMegamorphicCache(JSGlobalObject*, JSValue base, const Identifier&, PropertySlot&);
-bool hasPropertyAndFillMegamorphicCache(JSGlobalObject*, JSObject* base, UniquedStringImpl*, bool& goesByStructure);
+bool hasPropertyAndFillMegamorphicCache(JSGlobalObject*, JSObject* base, UniquedStringImpl*, bool& goesByStructure, bool* isForGood = nullptr);
 bool flattenOnce(VM&, JSObject*);
 bool isHostObjectThatOverridesPut(Structure*);
 void fillMegamorphicCacheAfterPut(JSGlobalObject*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&);
@@ -57,12 +57,8 @@ void cacheStoreTransition(Instance*, Data*, JSCell* object, Structure* oldStruct
 
 void fillConstructionCache(VM&, Data*, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator);
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
-void fillFunctionAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uintptr_t functionWord);
-void cacheSiteObject(VM&, Data*, Slot* cache, JSObject*);
-bool tryGetFromOrdinaryObject(JSGlobalObject*, JSValue base, UniquedStringImpl*, PropertySlot&, JSValue& result, const Slot* site);
-void readCacheFirstSwitch();
+bool tryGetFromOrdinaryObject(JSGlobalObject*, JSValue base, UniquedStringImpl*, PropertySlot&, JSValue& result);
 const EncodedJSValue* undefinedValueHolder();
-void readFirstTrySwitch();
 // After Object.defineProperty(object, name, { value: .., flags that are constants }) has been carried out on an object that was of the structure. `absent`: those of the six names of a descriptor that the literal has not.
 // The slot: as of a store that adds the property; or, without a structure to go to, the place of a property that can be neither changed nor deleted. See Stub::DefineOwnProperty.
 void cacheDefinedProperty(JSGlobalObject*, Data*, Slot* cache, JSObject*, Structure* before, UniquedStringImpl*, std::span<UniquedStringImpl* const> absent);

@@ -377,6 +377,8 @@ ParserError BytecodeGenerator::generate(unsigned& size)
     size = instructions().size();
     if (!m_codeBlock->finalize(m_writer.finalize())) [[unlikely]]
         return ParserError(ParserError::OutOfMemory);
+    if (m_costOfAudits) [[unlikely]]
+        m_codeBlock->setCostOfAudits(m_costOfAudits);
 #if ENABLE(AOT)
     if (!m_functionAssignments.isEmpty()) [[unlikely]]
         AOT::recordFunctionAssignments(m_codeBlock->codeBlock(), WTF::move(m_functionAssignments));
@@ -466,7 +468,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, Unlinke
     // Generator, async function, and async generator bodies hold no tail positions at all
     // (IsInTailPosition steps 4 to 7): their "return" is not a plain return. An async generator
     // awaits the returned value, and a tail call would jump over that await.
-    , m_allowTailCallOptimization(Options::useTailCalls() && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode() && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
+    , m_allowTailCallOptimization(Options::useTailCalls() && !(vm.auditsImmutableIntrinsics() && !codeBlock->isBuiltinFunction()) && !isConstructor() && constructorKind() == ConstructorKind::None && functionNode->isStrictMode() && !isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
     , m_allowCallIgnoreResultOptimization(m_defaultAllowCallIgnoreResultOptimization)
     , m_needsToUpdateArrowFunctionContext(functionNode->usesArrowFunction() || functionNode->usesEval())
     , m_ecmaMode(ECMAMode::fromBool(functionNode->isStrictMode()))
@@ -971,6 +973,8 @@ IGNORE_GCC_WARNINGS_END
     asyncFuncParametersTryCatchWrap([&]() {
         // All "addVar()"s needs to happen before "initializeDefaultParameterValuesAndSetupFunctionScopeStack()" is called
         // because a function's default parameter ExpressionNodes will use temporary registers.
+        if (auto* provider = functionNode->source().provider(); provider && provider->auditSites()) [[unlikely]]
+            emitAuditOfParameters(*provider->auditSites(), parameters);
         initializeDefaultParameterValuesAndSetupFunctionScopeStack(parameters, isSimpleParameterList, functionNode, functionSymbolTable, symbolTableConstantIndex, captures, shouldCreateArgumentsVariableInParameterScope);
     });
 
@@ -1464,6 +1468,124 @@ void BytecodeGenerator::initializeParameters(FunctionParameters& parameters)
         }
         if (!nonSimpleArguments)
             initializeNextParameter();
+    }
+}
+
+void BytecodeGenerator::emitAuditOfParameters(const AuditSites& auditSites, FunctionParameters& parameters)
+{
+    if (isGeneratorOrAsyncFunctionBodyParseMode(parseMode()))
+        return;
+    for (auto& site : auditSites.parametersOfFunction(m_scopeNode->source().startOffset())) {
+        if (site.index >= parameters.size() || parameters.at(site.index).first->isRestParameter())
+            continue;
+        RefPtr<RegisterID> argument = site.index + 1 < m_parameters.size() ? &m_parameters[site.index + 1] : emitGetArgument(newTemporary(), site.index);
+        emitAudit(argument.get(), site.id, AuditSites::valueClasses(site.passes), site.least, site.most);
+    }
+}
+
+static unsigned numberOfValueClassTests(OptionSet<AuditedValueClass> classes)
+{
+    using enum AuditedValueClass;
+    unsigned count = classes.contains(Number) + classes.contains(String) + classes.contains(Symbol) + classes.contains(BigInt);
+    count += classes.containsAny({ False, True });
+    count += classes.containsAny({ Undefined, Null });
+    count += classes.containsAny({ Object, Function });
+    count += classes.contains(Object) && !classes.contains(Function);
+    return count;
+}
+
+void BytecodeGenerator::emitJumpIfValueClassIsIn(RegisterID* value, OptionSet<AuditedValueClass> classes, Label& target)
+{
+    using enum AuditedValueClass;
+    if (classes.contains(Number))
+        emitJumpIfTrue(emitIsNumber(newTemporary(), value), target);
+    if (classes.contains(String))
+        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, StringType), target);
+    if (classes.containsAll({ Object, Function }))
+        emitJumpIfTrue(emitIsObject(newTemporary(), value), target);
+    else if (classes.contains(Function))
+        emitJumpIfTrue(emitUnaryOp<OpTypeofIsFunction>(newTemporary(), value), target);
+    else if (classes.contains(Object)) {
+        Ref<Label> notObject = newLabel();
+        emitJumpIfFalse(emitIsObject(newTemporary(), value), notObject.get());
+        emitJumpIfFalse(emitUnaryOp<OpTypeofIsFunction>(newTemporary(), value), target);
+        emitLabel(notObject.get());
+    }
+    if (classes.containsAll({ False, True }))
+        emitJumpIfTrue(emitUnaryOp<OpIsBoolean>(newTemporary(), value), target);
+    else if (classes.containsAny({ False, True }))
+        emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), value, emitLoad(nullptr, jsBoolean(classes.contains(True)))), target);
+    if (classes.containsAll({ Undefined, Null }))
+        emitJumpIfTrue(emitIsUndefinedOrNull(newTemporary(), value), target);
+    else if (classes.contains(Undefined))
+        emitJumpIfTrue(emitIsUndefined(newTemporary(), value), target);
+    else if (classes.contains(Null))
+        emitJumpIfTrue(emitIsNull(newTemporary(), value), target);
+    if (classes.contains(Symbol))
+        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, SymbolType), target);
+    if (classes.contains(BigInt)) {
+#if USE(BIGINT32)
+        emitJumpIfTrue(emitUnaryOp<OpIsBigInt>(newTemporary(), value), target);
+#else
+        emitJumpIfTrue(emitIsCellWithType(newTemporary(), value, HeapBigIntType), target);
+#endif
+    }
+}
+
+void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most)
+{
+    ASSERT(value->refCount());
+    auto fails = AuditSites::allValueClasses() - passes;
+    if (!fails)
+        return;
+
+    unsigned begin = instructions().size();
+    Ref<Label> done = newLabel();
+    if (fails == OptionSet<AuditedValueClass> { AuditedValueClass::Undefined, AuditedValueClass::Null })
+        emitJumpIfFalse(emitIsUndefinedOrNull(newTemporary(), value), done.get());
+    else if (numberOfValueClassTests(fails) < numberOfValueClassTests(passes)) {
+        Ref<Label> failed = newLabel();
+        emitJumpIfValueClassIsIn(value, fails, failed.get());
+        emitJump(done.get());
+        emitLabel(failed.get());
+    } else
+        emitJumpIfValueClassIsIn(value, passes, done.get());
+
+    if (least <= most && fails.contains(AuditedValueClass::Number)) {
+        OperandTypes numbers(ResultType::numberType(), ResultType::numberType());
+        Ref<Label> outside = newLabel();
+        emitJumpIfFalse(emitIsNumber(newTemporary(), value), outside.get());
+        RefPtr<RegisterID> zero = emitLoad(nullptr, jsNumber(0));
+        RefPtr<RegisterID> whole = emitBinaryOp(op_bitor, newTemporary(), value, zero.get(), numbers);
+        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), whole.get(), value), outside.get());
+        if (least > std::numeric_limits<int32_t>::min())
+            emitJumpIfTrue(emitBinaryOp(op_less, newTemporary(), value, emitLoad(nullptr, jsNumber(least)), numbers), outside.get());
+        if (most < std::numeric_limits<int32_t>::max())
+            emitJumpIfTrue(emitBinaryOp(op_greater, newTemporary(), value, emitLoad(nullptr, jsNumber(most)), numbers), outside.get());
+        if (least <= 0 && most >= 0) {
+            emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), value, zero.get()), done.get());
+            RefPtr<RegisterID> inverse = emitBinaryOp(op_div, newTemporary(), emitLoad(nullptr, jsNumber(1)), value, numbers);
+            emitJumpIfFalse(emitBinaryOp(op_less, newTemporary(), inverse.get(), zero.get(), numbers), done.get());
+        } else
+            emitJump(done.get());
+        emitLabel(outside.get());
+    }
+
+    RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
+    RefPtr<RegisterID> result = newTemporary();
+    CallArguments arguments(*this, nullptr, 2);
+    emitLoad(arguments.thisRegister(), jsUndefined());
+    move(arguments.argumentRegister(0), value);
+    emitLoad(arguments.argumentRegister(1), jsNumber(id));
+    Vector<RefPtr<RegisterID>, CallFrame::headerSizeInRegisters, UnsafeVectorOverflow> callFrame;
+    for (int i = 0; i < CallFrame::headerSizeInRegisters; ++i)
+        callFrame.append(newTemporary());
+    OpCall::emit(this, result.get(), function.get(), arguments.argumentCountIncludingThis(), arguments.stackOffset(), nextValueProfileIndex());
+    emitLabel(done.get());
+    for (unsigned offset = begin; offset < instructions().size();) {
+        auto instruction = instructions().at(offset);
+        m_costOfAudits += opcodeLengths[instruction->opcodeID()] + 1;
+        offset += instruction->size();
     }
 }
 

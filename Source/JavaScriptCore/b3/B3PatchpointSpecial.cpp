@@ -171,6 +171,13 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     return MacroAssembler::Jump();
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+bool PatchpointSpecial::hasFixedForms(Inst&)
+{
+    return true;
+}
+
+#endif
 bool PatchpointSpecial::isTerminal(Inst& inst)
 {
     return inst.origin->as<PatchpointValue>()->effects.terminal;

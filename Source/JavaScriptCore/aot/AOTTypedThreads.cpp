@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "Options.h"
 #include <atomic>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/NumberOfCores.h>
@@ -16,6 +17,12 @@
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+bool saysClocks()
+{
+    static const bool result = Options::verboseAOTCompilation() || getenv("BUN_AOT_SAYS_CLOCKS");
+    return result;
+}
 
 static ParallelHelperPool& helpers()
 {

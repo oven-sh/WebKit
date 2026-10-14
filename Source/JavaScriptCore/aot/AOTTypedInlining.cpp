@@ -30,12 +30,16 @@ public:
         unsigned count = program.functions.size();
         Vector<unsigned> sizes(count);
         Vector<BitVector> neverReturn(count);
+        Vector<Program::FactsForInlining> facts(count);
         forEachIndexInParallel(count, [&](unsigned i) {
             Function none;
             Inlining inlining(program, FunctionID(i), none);
             sizes[i] = inlining.sizeOf(program.functions[i], UINT_MAX);
             neverReturn[i] = inlining.neverReturnsIn(FunctionID(i));
+            if (!program.functions[i].blocks.isEmpty())
+                facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.parametersCalledBy(FunctionID(i)), inlining.parametersCalledInLoopsBy(FunctionID(i)) };
         });
+        program.factsForInlining = WTF::move(facts);
         program.sizesForInlining = WTF::move(sizes);
         program.blocksThatNeverReturn = WTF::move(neverReturn);
     }
@@ -49,9 +53,10 @@ public:
             return neverReturnsIn(callee).get(0);
         });
         if (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller) || m_program.isHotOnlyInItsLoops(m_id))
-            findLoops();
+            m_isInLoop = blocksInLoops(m_caller);
+        m_isInLoopOfCaller = blocksInLoops(m_caller);
         BitVector takesMisfits;
-        if (m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) {
+        if ((m_caller.has(Format::FunctionIsHiddenInStackTraces) && !m_caller.isGenericEntrypoint()) || m_caller.has(FunctionLogsMisfits)) {
             for (auto& block : m_caller.blocks) {
                 if (block.terminator.kind == TerminatorKind::Invoke)
                     takesMisfits.set(block.terminator.targets[1].block.index());
@@ -65,6 +70,7 @@ public:
             if (m_neverReturns.get(block.index()) || takesMisfits.get(block.index()))
                 continue;
             m_currentBlockIsInLoop = m_isInLoop.get(block.index());
+            m_currentBlockIsInLoopOfCaller = m_isInLoopOfCaller.get(block.index());
             for (unsigned k = 0; k < m_caller.at(block).values.size(); ++k) {
                 ValueID call = m_caller.at(block).values[k];
                 if (m_caller.at(call).opcode != Opcode::CallDirect || m_caller.at(call).immediates[1] == behindItsHead || m_caller.at(call).isCallWhoseCopyWasDeclined())
@@ -86,18 +92,19 @@ public:
                 }
                 if (!mayBeCopied(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
-                if (m_program.at(callee).worker && takesResultsOnlyWhereTheyAreRead() && !isMerelyRead(m_caller, call))
+                bool callerIsHot = m_program.isHotByText(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInItsLoops(m_id));
+                if (m_program.at(callee).worker && !isMerelyRead(m_caller, call))
                     continue;
-                if (isOwnWorker(callee) && wayOfFreshResults() == '3')
+                if (isOwnWorker(callee))
                     continue;
                 // Its first stores are lowered together, in one block. What is copied in the place of a call that a handler watches is split at whatever may throw.
                 if (k + 1 == m_caller.at(block).values.size() && m_caller.at(block).terminator.kind == TerminatorKind::Invoke && !initialStoresOf(m_program.at(callee)).empty() && !initialStoresCannotThrowAt(block, k, m_program.at(callee)))
                     continue;
-                bool callerIsHot = m_program.isHotByText(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInItsLoops(m_id));
                 // A wrapper is a call and a birth, where a call stood.
                 bool isBuiltin = m_program.at(callee).worker || isOwnWorker(callee) || (callerIsHot && m_program.at(callee).has(Format::FunctionIsBuiltin));
                 bool isMoved = !isTooDeep && isOnlyCall(callee, m_caller.at(call));
-                unsigned limit = depthOf(m_caller.at(call)) ? smallInCopy : small;
+                bool takesNothingInCopies = !m_currentBlockIsInLoopOfCaller && !constructsForDerivedClass(callee, m_caller.at(call));
+                unsigned limit = depthOf(m_caller.at(call)) ? (takesNothingInCopies ? 0 : smallInCopy) : small;
                 unsigned limitWithoutLicence = limit;
                 char licence = depthOf(m_caller.at(call)) ? 'c' : 's';
                 bool isBornAsCast = handsBackWhatIsCast(callee, block, k);
@@ -108,12 +115,12 @@ public:
                 } else if (onlyStoresToThis(m_program.at(callee)) || isAccessor(callee) || isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call))) {
                     limit = smallWhereMoreIsGained;
                     licence = isAccessor(callee) ? 'a' : onlyStoresToThis(m_program.at(callee)) ? 't' : 'h';
-                } else if (!depthOf(m_caller.at(call)) && m_program.numberOfDirectCalls[callee.index()] <= fewCalls) {
+                } else if (m_currentBlockIsInLoopOfCaller && !depthOf(m_caller.at(call)) && m_program.numberOfDirectCalls[callee.index()] <= fewCalls) {
                     limit = smallWhereMoreIsGained;
                     licence = 'f';
                 }
                 if (!callerIsHot && !onlyStoresToThis(m_program.at(callee)) && !isBornAsCast && !isFactory && !isHandedFunctionItCalls(callee, m_caller.at(call), true) && !isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)))
-                    limit = limitWithoutLicence = tinyWhereNotHot;
+                    limit = limitWithoutLicence = takesNothingInCopies && depthOf(m_caller.at(call)) ? 0 : tinyWhereNotHot;
                 if (!isTooDeep && limit < maxHandedLiteral && isHandedArrayLiteral(m_caller.at(call))) {
                     limit = maxHandedLiteral;
                     licence = 'h';
@@ -129,7 +136,7 @@ public:
                 // constants of the call make another function of, not one that is a little too large.
                 if (!isTooDeep && !isBuiltin && !isMoved && growsBy > limit) {
                     unsigned left = sizeAtCall(m_program.at(callee), m_caller.at(call), smallWhereMoreIsGained + 1);
-                    if (left <= smallWhereMoreIsGained && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
+                    if (left <= mostLeftByConstants && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
                         growsBy = left;
                         limit = smallWhereMoreIsGained;
                         licence = 'k';
@@ -196,6 +203,16 @@ public:
     }
 
 private:
+    bool constructsForDerivedClass(FunctionID callee, const Value& call) const
+    {
+        auto& constructor = m_program.at(callee);
+        if (constructor.kind != FunctionKind::Constructor)
+            return false;
+        if (constructor.constructedClass && m_program.at(constructor.constructedClass).base)
+            return true;
+        return call.inlineFrame && m_program.at(m_caller.inlineFrames[call.inlineFrame].callee).kind == FunctionKind::Constructor;
+    }
+
     bool handsRestParameterToSuperclass(const Function& constructor) const
     {
         if (!constructor.has(Format::FunctionHasRestParameter) || constructor.blocks.isEmpty() || constructor.blocks[0].parameters.isEmpty())
@@ -213,18 +230,34 @@ private:
         return false;
     }
 
+    static unsigned shareOf(unsigned size)
+    {
+        static const unsigned percent = [] {
+            const char* text = getenv("AOT_SWITCH_INLINER_PERCENT");
+            if (!text)
+                return 100u;
+            int asked = atoi(text);
+            if (asked < 1 || asked > 100 || strlen(text) > 3 || strspn(text, "0123456789") != strlen(text)) {
+                dataLogLn("AOT: AOT_SWITCH_INLINER_PERCENT is not 1 .. 100: ", text);
+                exit(1);
+            }
+            return static_cast<unsigned>(asked);
+        }();
+        return std::max(1u, size * percent / 100);
+    }
     // A function this small is copied to every call that stands in the caller as it was written.
-    static constexpr unsigned small = 13;
+    const unsigned small { shareOf(13) };
     // And one this small to a call that came along with a copy.
-    static constexpr unsigned smallInCopy = 12;
+    const unsigned smallInCopy { shareOf(12) };
     // In a caller that the text does not say is hot nothing larger than this is copied, but to its only call: a copy buys time only where time is spent.
-    static constexpr unsigned tinyWhereNotHot = 7;
+    const unsigned tinyWhereNotHot { shareOf(7) };
     // One this small wherever the copy does away with more than the call: a constructor of stores (the object is born as what it is cast to,
     // with its fields), a function that calls a function made at the call (no closure is made, and the call of it is a direct one).
-    static constexpr unsigned smallWhereMoreIsGained = 40;
+    const unsigned smallWhereMoreIsGained { shareOf(40) };
+    const unsigned mostLeftByConstants { shareOf(10) };
     // What only tests what it is handed, and what reads memory besides, is copied wherever its call stands, up to these: see isAccessor().
-    static constexpr unsigned maxPredicate = 40;
-    static constexpr unsigned maxAccessor = 20;
+    const unsigned maxPredicate { shareOf(40) };
+    const unsigned maxAccessor { shareOf(20) };
     // As much at a call as written of a function that this few calls in the whole program name: there is little to copy to.
     static constexpr unsigned fewCalls = 3;
     // A function this small is no larger than the call of it.
@@ -234,19 +267,31 @@ private:
     // In the place of the depth of a call: its head stands in front of it, and it stays a call, in this round and in those to come.
     static constexpr uint32_t behindItsHead = Format::none - 1;
     // One this small goes to its only call.
-    static constexpr unsigned maxMoved = 200;
-    static constexpr unsigned maxFactorySize = 400;
-    static constexpr unsigned maxHandedLiteral = 120;
+    const unsigned maxMoved { shareOf(200) };
+    const unsigned maxFactorySize { shareOf(400) };
+    const unsigned maxHandedLiteral { shareOf(120) };
     static constexpr unsigned minFactoryMethods = 8;
     // A function this large takes in no more.
-    static constexpr unsigned maxGrownTo = 4000;
+    const unsigned maxGrownTo { shareOf(4000) };
     static constexpr uint32_t none = UINT32_MAX;
     // A call that came along with a body that came along with a body, and so on this many times, stays a call.
     // More than that makes the code larger and no faster.
     static constexpr uint32_t maxDepth = 2;
 
+    using EdgesIntoBlocks = Vector<Vector<const Target*, 2>>;
+
+    static EdgesIntoBlocks edgesIntoBlocks(const Function& function)
+    {
+        EdgesIntoBlocks result(function.blocks.size());
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets)
+                result[target.block.index()].append(&target);
+        }
+        return result;
+    }
+
     // Behind casts, and behind block parameters: what a loop uses comes through its header, and through the block where its ways back meet. The one value that gets into the web of block parameters from outside, if it is one.
-    static ValueID originOf(const Function& function, ValueID value)
+    static ValueID originOf(const Function& function, ValueID value, EdgesIntoBlocks& edges)
     {
         auto behindCasts = [&](ValueID id) {
             while (function.at(id).opcode == Opcode::Cast)
@@ -259,81 +304,78 @@ private:
         value = behindCasts(value);
         if (!isBlockParameter(value))
             return value;
+        if (edges.isEmpty())
+            edges = edgesIntoBlocks(function);
         static constexpr unsigned maxWeb = 16;
         Vector<ValueID, maxWeb> web { value };
         ValueID only;
         for (unsigned next = 0; next < web.size(); ++next) {
             auto& parameter = function.at(web[next]);
-            for (auto& block : function.blocks) {
-                for (auto& target : block.terminator.targets) {
-                    if (target.block.index() != parameter.immediates[0])
+            if (parameter.immediates[0] >= edges.size())
+                continue;
+            for (const Target* target : edges[parameter.immediates[0]]) {
+                if (parameter.immediates[1] >= target->arguments.size())
+                    return value;
+                ValueID handed = behindCasts(target->arguments[parameter.immediates[1]]);
+                if (isBlockParameter(handed)) {
+                    if (web.contains(handed))
                         continue;
-                    if (parameter.immediates[1] >= target.arguments.size())
+                    if (web.size() == maxWeb)
                         return value;
-                    ValueID handed = behindCasts(target.arguments[parameter.immediates[1]]);
-                    if (isBlockParameter(handed)) {
-                        if (web.contains(handed))
-                            continue;
-                        if (web.size() == maxWeb)
-                            return value;
-                        web.append(handed);
-                        continue;
-                    }
-                    if (only && only != handed)
-                        return value;
-                    only = handed;
+                    web.append(handed);
+                    continue;
                 }
+                if (only && only != handed)
+                    return value;
+                only = handed;
             }
         }
         return only ? only : value;
     }
 
     // By parameter, as the entry block takes them: the function calls it.
+    const Program::FactsForInlining* factsOf(FunctionID id) const
+    {
+        return m_program.factsForInlining.isEmpty() || m_program.at(id).blocks.isEmpty() ? nullptr : &m_program.factsForInlining[id.index()];
+    }
+
     const BitVector& parametersCalledBy(FunctionID id)
     {
+        if (auto* facts = factsOf(id))
+            return facts->parametersCalled;
         return m_parametersCalledBy.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
+            EdgesIntoBlocks edges;
             for (auto& value : function.values) {
                 if (value.opcode != Opcode::Call)
                     continue;
-                if (size_t index = function.blocks[0].parameters.find(originOf(function, value.child(0))); index != notFound)
+                if (size_t index = function.blocks[0].parameters.find(originOf(function, value.child(0), edges)); index != notFound)
                     result.set(index);
             }
             return result;
         }).iterator->value;
     }
 
-    static bool reachesItself(const Function& function, unsigned start)
-    {
-        BitVector seen;
-        Vector<unsigned, 8> worklist { start };
-        while (!worklist.isEmpty()) {
-            for (auto& target : function.blocks[worklist.takeLast()].terminator.targets) {
-                if (target.block.index() == start)
-                    return true;
-                if (!seen.set(target.block.index()))
-                    worklist.append(target.block.index());
-            }
-        }
-        return false;
-    }
-
     // Likewise: it calls it in a loop.
     const BitVector& parametersCalledInLoopsBy(FunctionID id)
     {
+        if (auto* facts = factsOf(id))
+            return facts->parametersCalledInLoops;
         return m_parametersCalledInLoopsBy.ensure(id.index(), [&] {
             auto& function = m_program.at(id);
             BitVector result;
+            EdgesIntoBlocks edges;
+            Vector<unsigned> cycles;
             for (unsigned b = 0; b < function.blocks.size(); ++b) {
-                bool isKnown = false;
                 for (ValueID value : function.blocks[b].values) {
                     if (function.at(value).opcode != Opcode::Call)
                         continue;
-                    if (!isKnown && !reachesItself(function, b))
+                    if (cycles.isEmpty())
+                        cycles = cycleOfEachBlock(function);
+                    if (cycles[b] == isInNoCycle)
                         break;
-                    isKnown = true;
-                    if (size_t index = function.blocks[0].parameters.find(originOf(function, function.at(value).child(0))); index != notFound)
+                    if (size_t index = function.blocks[0].parameters.find(originOf(function, function.at(value).child(0), edges)); index != notFound)
                         result.set(index);
                 }
             }
@@ -488,6 +530,8 @@ private:
 
     bool returnsMethodTable(FunctionID id) const
     {
+        if (auto* facts = factsOf(id))
+            return facts->returnsMethodTable;
         auto& function = m_program.at(id);
         LayoutID resultLayout = m_program.at(resultTypeOf(function)).onlyView();
         if (!resultLayout || m_program.at(resultLayout).kind != LayoutKind::Record || m_program.at(resultLayout).fields.size() < minFactoryMethods)
@@ -529,17 +573,6 @@ private:
         return methods >= minFactoryMethods;
     }
 
-    static char wayOfFreshResults()
-    {
-        static const char way = [] {
-            const char* asked = getenv("AOT_X_FRESH_ONLY_WHERE_READ");
-            return asked ? *asked : '\0';
-        }();
-        return way;
-    }
-
-    static bool takesResultsOnlyWhereTheyAreRead() { return wayOfFreshResults() == '1' || wayOfFreshResults() == '3'; }
-
     static bool isMerelyRead(const Function& caller, ValueID result)
     {
         Vector<ValueID, 4> aliases { result };
@@ -563,6 +596,7 @@ private:
                     switch (value.opcode) {
                     case Opcode::GetField:
                     case Opcode::IsUndefinedOrNull:
+                    case Opcode::IteratorOpen:
                         continue;
                     case Opcode::GetById:
                         if (value.readsMethodFor())
@@ -800,44 +834,6 @@ private:
         return !m_currentBlockIsInLoop && (m_caller.kind == FunctionKind::Module || m_program.isResumeFunction(m_caller));
     }
 
-    // The blocks that a block with a LoopHint reaches and that reach it.
-    void findLoops()
-    {
-        unsigned numberOfBlocks = m_caller.blocks.size();
-        Vector<Vector<unsigned, 2>> predecessors(numberOfBlocks);
-        for (unsigned b = 0; b < numberOfBlocks; ++b) {
-            for (auto& target : m_caller.blocks[b].terminator.targets)
-                predecessors[target.block.index()].append(b);
-        }
-        for (unsigned header = 0; header < numberOfBlocks; ++header) {
-            bool isHeader = m_caller.blocks[header].values.containsIf([&](ValueID id) {
-                return m_caller.at(id).opcode == Opcode::LoopHint;
-            });
-            if (!isHeader || m_isInLoop.get(header))
-                continue;
-            BitVector isReached(numberOfBlocks);
-            Vector<unsigned, 16> worklist { header };
-            while (!worklist.isEmpty()) {
-                for (auto& target : m_caller.blocks[worklist.takeLast()].terminator.targets) {
-                    if (!isReached.set(target.block.index()))
-                        worklist.append(target.block.index());
-                }
-            }
-            if (!isReached.get(header))
-                continue;
-            BitVector reaches(numberOfBlocks);
-            reaches.set(header);
-            worklist.append(header);
-            while (!worklist.isEmpty()) {
-                for (unsigned predecessor : predecessors[worklist.takeLast()]) {
-                    if (isReached.get(predecessor) && !reaches.set(predecessor))
-                        worklist.append(predecessor);
-                }
-            }
-            m_isInLoop.merge(reaches);
-        }
-    }
-
     // Plain stores into an object that was made right before the call and that nobody has seen.
     bool initialStoresCannotThrowAt(BlockID block, unsigned k, const Function& callee) const
     {
@@ -876,7 +872,7 @@ private:
             auto field = layout.fieldNamed(store.string());
             if (store.child(0) != thisValue || store.child(1) == thisValue || !field)
                 return false;
-            if (m_program.prototypePropertyNames.get(store.string().index()) || inheritsByItsLayout(m_program, made, store.string()))
+            if ((m_program.prototypePropertyNames.get(store.string().index()) && layout.kind != LayoutKind::Record) || inheritsByItsLayout(m_program, made, store.string()))
                 return false;
             TypeID type = layout.fields[*field].type;
             if (type && !m_program.typeOf(callee, store.child(1)).isWithin(m_program.at(type), m_program))
@@ -888,6 +884,8 @@ private:
     // It reads and tests, and that is all.
     bool isAccessor(FunctionID id) const
     {
+        if (auto* facts = factsOf(id))
+            return facts->isAccessor;
         return m_isAccessor.ensure(id.index(), [&] {
             bool reads = false;
             auto size = sizeAsAccessor(m_program.at(id), reads, 0);
@@ -1474,7 +1472,7 @@ private:
 
     bool mayBeCopied(const Function& callee, const Value& call) const
     {
-        if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer))
+        if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | FunctionLogsMisfits))
             return false;
         if (m_caller.inlineFrames.size() > maxInlineFrames)
             return false;
@@ -1501,6 +1499,8 @@ private:
         // It takes the place of part of the block that is being looked at.
         if (m_currentBlockIsInLoop)
             m_isInLoop.set(m_caller.blocks.size() - 1);
+        if (m_currentBlockIsInLoopOfCaller)
+            m_isInLoopOfCaller.set(m_caller.blocks.size() - 1);
         return BlockID(m_caller.blocks.size() - 1);
     }
 
@@ -1782,6 +1782,8 @@ private:
     BitVector m_movedFrames;
     UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersCalledBy;
     bool m_currentBlockIsInLoop { false };
+    BitVector m_isInLoopOfCaller;
+    bool m_currentBlockIsInLoopOfCaller { false };
     bool m_isTakingOwnBody { false };
     UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_neverReturnsIn;
     UncheckedKeyHashMap<uint32_t, Head, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_heads;

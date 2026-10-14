@@ -499,6 +499,20 @@ CellPointer Lowering::newCopyOnWriteArray(LValue list, LBasicBlock slowPath)
     return array;
 }
 
+LValue Lowering::keyListOfLayoutOrElse(CellPointer object, LBasicBlock otherwise)
+{
+    static_assert(sizeof(Instance::TypedKeyList) == 16);
+    static_assert(hasOneBitSet(Instance::numberOfTypedKeyLists));
+    Word32 shapeWord = shapeWordOf(object);
+    LValue entry = m_out.add(fixedPointer(Instance::offsetOfTypedKeyLists()), m_out.shl(zeroExtended(bitAnd(shapeWord, word32(Instance::numberOfTypedKeyLists - 1))).value(), m_out.constInt32(4)));
+    orElse(equal(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, shapeWord)))), shapeWord), otherwise);
+    Word32 orderWord(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, orderWord))));
+    orElse(equal(orderWord, orderWordOf(object)), otherwise);
+    LValue list = m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, list)));
+    orElse(m_out.notNull(list), otherwise);
+    return list;
+}
+
 // As FTL::LowerDFGToB3::compileOwnPropertyKeysVariant(): the list the engine keeps for the Structure. Of an object of the program: the list the run time keeps for its layout and key order,
 // by Instance::typedKeyLists.
 CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument)
@@ -532,16 +546,7 @@ CellPointer Lowering::lowerOwnPropertyKeys(InlineBuiltin which, ValueID argument
 
     // Ends the block.
     auto findListOfLayout = [&] {
-        static_assert(sizeof(Instance::TypedKeyList) == 16);
-        static_assert(hasOneBitSet(Instance::numberOfTypedKeyLists));
-        Word32 shapeWord = shapeWordOf(object);
-        LValue entry = m_out.add(fixedPointer(Instance::offsetOfTypedKeyLists()), m_out.shl(zeroExtended(bitAnd(shapeWord, word32(Instance::numberOfTypedKeyLists - 1))).value(), m_out.constInt32(4)));
-        orElse(equal(Word32(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, shapeWord)))), shapeWord), slowPath);
-        Word32 orderWord(m_out.load32(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, orderWord))));
-        orElse(equal(orderWord, orderWordOf(object)), slowPath);
-        LValue list = m_out.loadPtr(m_out.address(m_heaps.AOTTyped_runtimeState, entry, OBJECT_OFFSETOF(Instance::TypedKeyList, list)));
-        orElse(m_out.notNull(list), slowPath);
-        lists.append(m_out.anchor(list));
+        lists.append(m_out.anchor(keyListOfLayoutOrElse(object, slowPath)));
         m_out.jump(haveList);
     };
     // Without extra properties its keys are strings and its properties enumerable: one list for all but the symbols.
@@ -583,31 +588,55 @@ CellPointer Lowering::listKeysForIn(Boxed value, const Type& type)
     static_assert(!NonArray && ArrayClass == 1 && UndecidedShape == 2 && ArrayWithUndecided == 3);
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
+    Vector<ValueFromBlock, 3> results;
     // No Structure of anything but an object keeps one.
     orElse(isCell(value, type), slowPath);
     CellPointer object = asCell(value);
-    orElse(belowOrEqual(indexingModeOf(object, IndexingTypeMask), word32(ArrayWithUndecided)), slowPath);
-    LValue previousOrRareData = m_out.loadPtr(structureOf(object.value()), m_heaps.Structure_previousOrRareData);
-    orElse(m_out.notNull(previousOrRareData), slowPath);
-    orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), slowPath);
-    LValue enumerator = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedPropertyNameEnumeratorAndFlag);
-    orElse(m_out.notNull(enumerator), slowPath);
-    orElse(m_out.testIsZeroPtr(enumerator, m_out.constIntPtr(StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag)), slowPath);
-    LValue numberOfNames = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex);
-    orElse(m_out.notZero32(numberOfNames), slowPath);
-    orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex), numberOfNames), slowPath);
-    orElse(m_out.isZero32(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength)), slowPath);
-    LValue list = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedEnumerableStrings);
-    orElse(m_out.above(list, m_out.constIntPtr(std::bit_cast<uintptr_t>(StructureRareData::cachedPropertyNamesSentinel()))), slowPath);
-    ValueFromBlock fast = m_out.anchor(newCopyOnWriteArray(list, slowPath).value());
-    m_out.jump(continuation);
+    auto enumeratorKeptFor = [&](CellPointer cell) {
+        orElse(belowOrEqual(indexingModeOf(cell, IndexingTypeMask), word32(ArrayWithUndecided)), slowPath);
+        LValue previousOrRareData = m_out.loadPtr(structureOf(cell.value()), m_heaps.Structure_previousOrRareData);
+        orElse(m_out.notNull(previousOrRareData), slowPath);
+        orElse(m_out.logicalNot(isCellOfType(previousOrRareData, StructureType)), slowPath);
+        LValue enumerator = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedPropertyNameEnumeratorAndFlag);
+        orElse(m_out.notNull(enumerator), slowPath);
+        orElse(m_out.testIsZeroPtr(enumerator, m_out.constIntPtr(StructureRareData::cachedPropertyNameEnumeratorIsValidatedViaTraversingFlag)), slowPath);
+        return std::pair { previousOrRareData, enumerator };
+    };
+    bool isOfProgram = hasOnlyObjectsOfProgram(type);
+    if (!type.views.isEmpty()) {
+        LBasicBlock isNotOfProgram = isOfProgram ? nullptr : m_out.newBlock();
+        if (!isOfProgram)
+            orElse(passes(shapeWordOf(object), ShapeTest { 1, static_cast<uint32_t>(m_program.layouts.size()) }), isNotOfProgram);
+        LValue list = keyListOfLayoutOrElse(object, slowPath);
+        Boxed prototype(m_out.load64(structureOf(object.value()), m_heaps.Structure_prototype));
+        orElse(m_out.notZero64(prototype.value()), slowPath);
+        orElse(isCell(prototype), slowPath);
+        LValue inherited = enumeratorKeptFor(CellPointer(prototype.value())).second;
+        orElse(m_out.isZero32(m_out.load32(inherited, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex)), slowPath);
+        orElse(m_out.isZero32(m_out.load32(inherited, m_heaps.JSPropertyNameEnumerator_indexLength)), slowPath);
+        results.append(m_out.anchor(newCopyOnWriteArray(list, slowPath).value()));
+        m_out.jump(continuation);
+        if (!isOfProgram)
+            m_out.appendTo(isNotOfProgram);
+    }
+    if (!isOfProgram) {
+        auto [previousOrRareData, enumerator] = enumeratorKeptFor(object);
+        LValue numberOfNames = m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endGenericPropertyIndex);
+        orElse(m_out.notZero32(numberOfNames), slowPath);
+        orElse(m_out.equal(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_endStructurePropertyIndex), numberOfNames), slowPath);
+        orElse(m_out.isZero32(m_out.load32(enumerator, m_heaps.JSPropertyNameEnumerator_indexLength)), slowPath);
+        LValue list = m_out.loadPtr(previousOrRareData, m_heaps.StructureRareData_cachedEnumerableStrings);
+        orElse(m_out.above(list, m_out.constIntPtr(std::bit_cast<uintptr_t>(StructureRareData::cachedPropertyNamesSentinel()))), slowPath);
+        results.append(m_out.anchor(newCopyOnWriteArray(list, slowPath).value()));
+        m_out.jump(continuation);
+    }
 
     m_out.appendTo(slowPath);
-    ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(ForInKeys, value).value());
+    results.append(m_out.anchor(AOT_TYPED_OPERATION(ForInKeys, value).value()));
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
-    return CellPointer(m_out.phi(pointerType(), fast, slow));
+    return CellPointer(m_out.phi(pointerType(), results));
 }
 
 // Whether the objects of the members have an own property of the name, as far as their layouts say. An object has what its layout has a field for, unless the field is absent, and its extra properties.
@@ -697,7 +726,7 @@ Word32 Lowering::lowerHasOwnProperty(ValueID object, ValueID key)
             if (!field || (field->isLackedBySomeMember && field->membersWithIt.passesNothing()))
                 return generally(box(cell));
             return throughView(cell, object, view, *field, Rep::Int32, [&]() -> Operand {
-                return hasField(cell, *field);
+                return hasOwnField(cell, *field);
             }, [&]() -> Operand {
                 return generally(box(cell));
             });
@@ -827,7 +856,7 @@ Operand Lowering::lowerCreate(ValueID result, const Value& value)
     auto& type = typeOf(result);
     auto& objectType = m_program.at(m_program.types.object);
     Rep rep = repOf(type);
-    LBasicBlock noObject = newColdBlock();
+    LBasicBlock noObject = newBlockForGeneralCall(value);
     LBasicBlock slowPath = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
     CellPointer prototype = objectOrElse(value.arguments[0], noObject);
@@ -850,8 +879,10 @@ Operand Lowering::lowerCreate(ValueID result, const Value& value)
     m_out.appendTo(slowPath);
     join.add(yieldAsTableSays(AOT_TYPED_OPERATION(ObjectCreate, prototype), objectType, value, type));
 
-    m_out.appendTo(noObject);
-    join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+    if (!isGeneralArmOnOffer(noObject)) {
+        m_out.appendTo(noObject);
+        join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+    }
     return join.finish();
 }
 
@@ -860,7 +891,7 @@ Operand Lowering::lowerGetPrototypeOf(ValueID result, const Value& value)
 {
     auto& type = typeOf(result);
     Rep rep = repOf(type);
-    LBasicBlock slowPath = newColdBlock();
+    LBasicBlock slowPath = newBlockForGeneralCall(value);
     Join join(m_out, rep, b3TypeOf(rep));
     CellPointer object = objectOrElse(value.arguments[0], slowPath);
     orElse(lacksBits(loadByte(object, m_heaps.JSCell_typeInfoFlags), OverridesGetPrototype), slowPath);
@@ -871,8 +902,10 @@ Operand Lowering::lowerGetPrototypeOf(ValueID result, const Value& value)
     objectOrNull.primitives = Primitive::Null;
     join.add(yieldAsTableSays(prototype, objectOrNull, value, type));
 
-    m_out.appendTo(slowPath);
-    join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+    if (!isGeneralArmOnOffer(slowPath)) {
+        m_out.appendTo(slowPath);
+        join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+    }
     return join.finish();
 }
 
@@ -1033,12 +1066,14 @@ CellPointer Lowering::lowerValuesOrEntries(InlineBuiltin which, const Value& val
         else {
             CellPointer made = AOT_TYPED_OPERATION(ObjectEntries, in<Boxed>(object));
             LBasicBlock isMade = m_out.newBlock();
-            LBasicBlock isNotMade = newColdBlock();
+            LBasicBlock isNotMade = newBlockForGeneralCall(value);
             m_out.branch(m_out.notNull(made.value()), usually(isMade), rarely(isNotMade));
             m_out.appendTo(isMade);
             join.add(made);
-            m_out.appendTo(isNotMade);
-            join.add(convert(callBuiltinFunction(value, effectsOfBuiltinCall(value)), Type::engineClass(m_builtins.arrayClass()), Rep::Cell));
+            if (!isGeneralArmOnOffer(isNotMade)) {
+                m_out.appendTo(isNotMade);
+                join.add(convert(callBuiltinFunction(value, effectsOfBuiltinCall(value)), Type::engineClass(m_builtins.arrayClass()), Rep::Cell));
+            }
         }
     });
     return join.finish().as<CellPointer>();
@@ -1096,7 +1131,7 @@ Operand Lowering::lowerAssign(ValueID result, const Value& value)
         defineObjectMadeLater(into, target);
         RELEASE_ASSERT(isNew);
     } else {
-        noObject = newColdBlock();
+        noObject = newBlockForGeneralCall(value);
         target = objectOrElse(into, noObject);
     }
     for (unsigned i = firstSource; i < value.arguments.size(); ++i) {
@@ -1114,7 +1149,7 @@ Operand Lowering::lowerAssign(ValueID result, const Value& value)
         m_out.appendTo(continuation);
     }
     join.add(yieldAsTableSays(target, m_program.at(m_program.types.object), value, type));
-    if (noObject) {
+    if (noObject && !isGeneralArmOnOffer(noObject)) {
         m_out.appendTo(noObject);
         join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), anything, value, type));
     }
@@ -1180,11 +1215,13 @@ std::optional<Operand> Lowering::lowerInlineObject(InlineBuiltin which, ValueID 
     // ToObject of an object is the object.
     case InlineBuiltin::ObjectCall: {
         Rep rep = repOf(type);
-        LBasicBlock slowPath = newColdBlock();
+        LBasicBlock slowPath = newBlockForGeneralCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         join.add(yieldAsTableSays(objectOrElse(value.arguments[0], slowPath), m_program.at(m_program.types.object), value, type));
-        m_out.appendTo(slowPath);
-        join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+        if (!isGeneralArmOnOffer(slowPath)) {
+            m_out.appendTo(slowPath);
+            join.add(yieldAsTableSays(callBuiltinFunction(value, effectsOfBuiltinCall(value)), m_program.at(m_program.types.anything), value, type));
+        }
         return join.finish();
     }
     default:

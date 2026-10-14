@@ -49,6 +49,7 @@ public:
     static ptrdiff_t offsetOfStorage() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_storage); }
 #if ENABLE(AOT)
     static ptrdiff_t offsetOfCompactTable() { return OBJECT_OFFSETOF(JSOrderedHashTable, m_compactTable); }
+    bool hasCompactTable() const { return !m_storage && m_compactTable; }
     static constexpr ptrdiff_t offsetOfAliveInCompactTable = 12;
 #endif
 
@@ -58,6 +59,12 @@ public:
         auto scope = DECLARE_THROW_SCOPE(vm);
         Base::finishCreation(vm);
 
+#if ENABLE(AOT)
+        if (!base->m_storage && base->m_compactTable) [[unlikely]] {
+            copyCompactTableOf(vm, base);
+            return;
+        }
+#endif
         if (base->hasStorage()) {
             Storage* storage = Helper::copy(globalObject, base->storageRef());
             RETURN_IF_EXCEPTION(scope, void());
@@ -222,6 +229,7 @@ public:
     WriteBarrier<JSCell> m_compactTable;
 
     JS_EXPORT_PRIVATE void convertCompactTable();
+    JS_EXPORT_PRIVATE void copyCompactTableOf(VM&, JSOrderedHashTable*);
     JS_EXPORT_PRIVATE uint32_t sizeOfCompactTable();
     JS_EXPORT_PRIVATE void clearCompactTable();
     // The value of the entry, or the key in a set. Empty: there is none.

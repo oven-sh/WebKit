@@ -6,6 +6,7 @@
 // Members of class Lowering: included in its body.
 
     std::optional<Number> powerWithConstantExponent(Number base, ValueID exponent);
+    std::optional<Number> powerWithConstantBase(ValueID base, ValueID exponent);
     // Math.max or Math.min, going by how the value is defined: whether it is Math.max.
     std::optional<bool> isMathMaxOrMin(ValueID) const;
     Number minOrMaxOfElements(bool isMax, CellPointer array, Pointer butterfly, Integer length, LBasicBlock otherwise);

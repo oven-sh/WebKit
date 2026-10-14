@@ -775,6 +775,14 @@ struct TmpData {
     UseDefCost useDefCost { 0 };
     UseDefCost cumulativeFixupCost { 0 };
     uint32_t spillSlotTableIndex { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    uint32_t allocationFailedAtEpoch { 0 };
+    uint32_t evictionFailedAtEpoch { 0 };
+#if USE(BUN_JSC_ADDITIONS)
+    uint64_t clobberedRegs { 0 };
+    bool hasClobberedRegs { false };
+#endif
+#endif
     uint32_t splitAroundClobbersMetadataIndex : 31 { 0 };
     uint32_t hasColdUse : 1 { 0 };
     bool paysForCalleeSave { false };
@@ -895,7 +903,9 @@ public:
         , m_aroundClobbersMetadata(1) // Sacrifice index 0.
         , m_spillSlotTable(FillWith { }, 1, nullptr) // Sacrifice index 0.
         , m_regRanges(Reg::maxIndex() + 1)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_insertionSets(code.size())
+#endif
     {
         TmpWidth::Analyzer tmpWidthAnalyzer(m_tmpWidth);
         UseCounts::Analyzer useCountsAnalyzer(m_useCounts);
@@ -1563,22 +1573,55 @@ private:
                         m_map[tmp].hasColdUse = true;
                 });
                 if (inst.kind.opcode == Patch) [[unlikely]] {
+#if USE(BUN_JSC_ADDITIONS)
+                    uint64_t earlyClobberedRegs = 0;
+                    uint64_t lateClobberedRegs = 0;
+#endif
                     inst.extraEarlyClobberedRegs().forEachWithWidthAndPreserved(
                         [&](Reg reg, Width, PreservedWidth preservedWidth) {
                             ASSERT(preservedWidth == PreservesNothing || preservedWidth == Preserves64);
+#if USE(BUN_JSC_ADDITIONS)
+                            if (preservedWidth == PreservesNothing) {
+#else
                             if (preservedWidth == PreservesNothing)
+#endif
                                 earlyDefs.append(Tmp(reg));
+#if USE(BUN_JSC_ADDITIONS)
+                                earlyClobberedRegs |= static_cast<uint64_t>(1) << reg.index();
+                            } else
+#else
                             else
+#endif
                                 earlyClobbersHigh64.append(reg);
                         });
                     inst.extraClobberedRegs().forEachWithWidthAndPreserved(
                         [&](Reg reg, Width, PreservedWidth preservedWidth) {
                             ASSERT(preservedWidth == PreservesNothing || preservedWidth == Preserves64);
+#if USE(BUN_JSC_ADDITIONS)
+                            if (preservedWidth == PreservesNothing) {
+#else
                             if (preservedWidth == PreservesNothing)
+#endif
                                 lateDefs.append(Tmp(reg));
+#if USE(BUN_JSC_ADDITIONS)
+                                lateClobberedRegs |= static_cast<uint64_t>(1) << reg.index();
+                            } else
+#else
                             else
+#endif
                                 lateClobbersHigh64.append(reg);
                         });
+#if USE(BUN_JSC_ADDITIONS)
+                    if (lateClobberedRegs) {
+                        m_clobberPoints.append(positionOfLate);
+                        m_clobberedRegsAtPoint.append(lateClobberedRegs);
+                    }
+                    if (earlyClobberedRegs) {
+                        m_clobberPoints.append(positionOfEarly);
+                        m_clobberedRegsAtPoint.append(earlyClobberedRegs);
+                    }
+                    m_allClobberedRegs |= earlyClobberedRegs | lateClobberedRegs;
+#endif
                 }
 
                 for (Tmp tmp : lateUses)
@@ -1624,6 +1667,10 @@ private:
         m_map.forEachValue([](TmpData& data) {
             data.liveRange.finishDescendingBuild();
         });
+#if USE(BUN_JSC_ADDITIONS)
+        m_clobberPoints.reverse();
+        m_clobberedRegsAtPoint.reverse();
+#endif
 
 #if ASSERT_ENABLED
         m_code.forEachTmp([&](Tmp tmp) {
@@ -2421,8 +2468,17 @@ private:
     void doStageTryAllocate(Tmp tmp, TmpData& tmpData)
     {
         ASSERT(tmpData.stage == Stage::TryAllocate || tmpData.stage == Stage::Unspillable);
+#if USE(BUN_JSC_ADDITIONS)
+        if (tmpData.spillability != TmpData::Spillability::Spillable && !tmpData.paysForCalleeSave) {
+#else
         if (tmpData.spillability != TmpData::Spillability::Spillable)
+#endif
             tmpData.paysForCalleeSave = true;
+#if USE(BUN_JSC_ADDITIONS)
+            tmpData.allocationFailedAtEpoch = 0;
+            tmpData.evictionFailedAtEpoch = 0;
+        }
+#endif
         if (tryAllocate<bank>(tmp, tmpData))
             return;
         if (tryEvict<bank>(tmp, tmpData))
@@ -2475,9 +2531,36 @@ private:
         if (!m_numberOfFreshCalleeSaves[bank] || tmpData.paysForCalleeSave || tmpData.useDefCost <= m_calleeSaveCost)
             return false;
         tmpData.paysForCalleeSave = true;
+#if USE(BUN_JSC_ADDITIONS)
+        tmpData.allocationFailedAtEpoch = 0;
+        tmpData.evictionFailedAtEpoch = 0;
+#endif
         return tryAllocate<bank>(tmp, tmpData);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    uint64_t clobberedRegs(TmpData& tmpData)
+    {
+        static_assert(Reg::maxIndex() < 64);
+        if (tmpData.hasClobberedRegs)
+            return tmpData.clobberedRegs;
+        uint64_t result = 0;
+        auto points = m_clobberPoints.span();
+        size_t index = 0;
+        for (auto& interval : tmpData.liveRange.intervals()) {
+            if (result == m_allClobberedRegs)
+                break;
+            auto rest = points.subspan(index);
+            index += std::ranges::lower_bound(rest, interval.begin()) - rest.begin();
+            for (; index < points.size() && points[index] < interval.end(); ++index)
+                result |= m_clobberedRegsAtPoint[index];
+        }
+        tmpData.clobberedRegs = result;
+        tmpData.hasClobberedRegs = true;
+        return result;
+    }
+
+#endif
     template <Bank bank>
     bool tryAllocate(Tmp tmp, TmpData& tmpData)
     {
@@ -2485,10 +2568,24 @@ private:
         ASSERT(!assignedReg(tmp));
 
         Width width = widthForConflicts<bank>(tmp);
+#if USE(BUN_JSC_ADDITIONS)
+        uint32_t failedAtEpoch = tmpData.allocationFailedAtEpoch;
+#if USE(BUN_JSC_ADDITIONS)
+        uint64_t clobbered = clobberedRegs(tmpData);
+#endif
+#endif
 
         auto tryAllocateToReg = [&](Reg r) {
             if (!mayTake(tmpData, r))
                 return false;
+#if USE(BUN_JSC_ADDITIONS)
+            if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
+                return false;
+#if USE(BUN_JSC_ADDITIONS)
+            if (clobbered >> r.index() & 1)
+                return false;
+#endif
+#endif
             LiveRange& liveRange = tmpData.liveRange;
             RegisterRange& regRanges = m_regRanges[r];
             if (!regRanges.hasConflict(liveRange, width)) {
@@ -2508,6 +2605,9 @@ private:
             if (tryAllocateToReg(r))
                 return true;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        tmpData.allocationFailedAtEpoch = m_removalEpoch;
+#endif
         return false;
     }
 
@@ -2543,9 +2643,23 @@ private:
         m_visited.resize(m_code.numTmps(bank));
         LiveRange& liveRange = tmpData.liveRange;
         Width width = widthForConflicts<bank>(tmp);
+#if USE(BUN_JSC_ADDITIONS)
+        uint32_t failedAtEpoch = tmpData.evictionFailedAtEpoch;
+#if USE(BUN_JSC_ADDITIONS)
+        uint64_t clobbered = clobberedRegs(tmpData);
+#endif
+#endif
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!mayTake(tmpData, r))
                 continue;
+#if USE(BUN_JSC_ADDITIONS)
+            if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
+                continue;
+#if USE(BUN_JSC_ADDITIONS)
+            if (clobbered >> r.index() & 1)
+                continue;
+#endif
+#endif
             SpillCost conflictsSpillCost(0);
             m_visited.clear();
             m_regRanges[r].forEachConflict(liveRange, width,
@@ -2579,6 +2693,9 @@ private:
             // If 'tmp' was unspillable, we better have found at least one suitable register.
             if (tmpData.spillCost() == unspillableCost) [[unlikely]]
                 failOutOfRegisters(tmp);
+#if USE(BUN_JSC_ADDITIONS)
+            tmpData.evictionFailedAtEpoch = m_removalEpoch;
+#endif
             return false;
         }
         // It's cheaper to spill all the already-assigned conflicting tmps, so evict them in favor of assigning 'tmp'.
@@ -2614,6 +2731,9 @@ private:
         ASSERT(m_allAllowedRegisters.contains(reg, IgnoreVectors));
         if (m_freshCalleeSaves.contains(reg) && (!tmp.isReg() || tmpData.liveRange.size())) {
             m_freshCalleeSaves.remove(reg);
+#if USE(BUN_JSC_ADDITIONS)
+            m_epochOfLastRemoval[reg.index()] = ++m_removalEpoch;
+#endif
             --m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
         }
         m_regRanges[reg].add(tmp, tmpData.liveRange);
@@ -2626,6 +2746,9 @@ private:
         ASSERT(tmpData.spillCost() != unspillableCost);
         ASSERT(tmpData.assigned == reg);
         m_regRanges[reg].evict(tmpData.liveRange);
+#if USE(BUN_JSC_ADDITIONS)
+        m_epochOfLastRemoval[reg.index()] = ++m_removalEpoch;
+#endif
         tmpData.stage = Stage::New;
         tmpData.assigned = Reg();
         dataLogLnIf(verbose(), "Evicted ", tmp, " from ", reg);
@@ -2833,6 +2956,13 @@ private:
 
         // originalTmp no longer live within the loop.
         originalData.liveRange = WTF::move(nonLoopRange);
+#if USE(BUN_JSC_ADDITIONS)
+        originalData.allocationFailedAtEpoch = 0;
+        originalData.evictionFailedAtEpoch = 0;
+#if USE(BUN_JSC_ADDITIONS)
+        originalData.hasClobberedRegs = false;
+#endif
+#endif
         originalData.useDefCost.subtractSaturating(loopData.useDefCost);
 
         m_aroundLoopMetadata.constructAndAppend(tmp, loop);
@@ -2894,22 +3024,7 @@ private:
         };
         ASSERT(tmpData.spillCost() != unspillableCost); // Should have evicted.
 #if USE(BUN_JSC_ADDITIONS)
-        static const char* const goesRoundAsked = getenv("BUN_AOT_SWITCH_SPLIT_ROUND_BOTH");
-        static const char whichGoRound = goesRoundAsked ? goesRoundAsked[0] : 0;
-        const bool takesEarlyAndLate = whichGoRound >= '1' && whichGoRound <= '3' && m_code.chargesForCalleeSaves();
-        auto isClobber = [&](Reg reg, Interval interval) {
-            if (interval.distance() == 1)
-                return true;
-            if (!takesEarlyAndLate || interval != earlyAndLateInterval(positionOfEarly(interval)))
-                return false;
-            return whichGoRound == '1' || RegisterSet::macroClobberedGPRs().contains(reg, IgnoreVectors) == (whichGoRound == '3');
-        };
-        static const char* const unsoundGapsAsked = getenv("BUN_AOT_SWITCH_UNSOUND_SHORT_GAPS");
-        static const char unsoundGaps = unsoundGapsAsked ? unsoundGapsAsked[0] : 0;
         const bool goesRoundStretches = m_code.chargesForCalleeSaves();
-        const bool minds = takesEarlyAndLate || goesRoundStretches;
-        const bool coversWholeSites = minds && unsoundGaps != '1' && unsoundGaps != '2';
-        const bool gapIsTheHole = minds && unsoundGaps == '2';
 #endif
 
         Reg bestSplitReg;
@@ -2935,11 +3050,7 @@ private:
             }
             m_regRanges[r].forEachConflict(tmpData.liveRange, width,
                 [&](auto& conflict) -> IterationStatus {
-#if USE(BUN_JSC_ADDITIONS)
-                    if (conflict.tmp.isReg() && isClobber(conflict.tmp.reg(), conflict.interval)) {
-#else
                     if (conflict.tmp.isReg() && conflict.interval.distance() == 1) {
-#endif
                         ClobberSite site = clobberSiteAt(conflict.interval.begin());
                         if (site.usesOrDefsTmp || ++numberOfClobbers > 32) {
                             // If the inst that clobbers regs also use/def the tmp trying to be split, then
@@ -2997,11 +3108,7 @@ private:
             [&](auto& conflict) -> IterationStatus {
                 if (!conflict.tmp.isReg())
                     return IterationStatus::Continue;
-#if USE(BUN_JSC_ADDITIONS)
-                ASSERT(isClobber(conflict.tmp.reg(), conflict.interval));
-#else
                 ASSERT(conflict.interval.distance() == 1);
-#endif
                 // Punched hole should always include the instructions late interval so the
                 // split tmp won't be modeled as conflicting with late defs.
                 Interval hole = conflict.interval | lateInterval(positionOfEarly(conflict.interval));
@@ -3060,6 +3167,13 @@ private:
 #endif
 
         tmpData.liveRange = LiveRange::subtract(tmpData.liveRange, holeRange);
+#if USE(BUN_JSC_ADDITIONS)
+        tmpData.allocationFailedAtEpoch = 0;
+        tmpData.evictionFailedAtEpoch = 0;
+#if USE(BUN_JSC_ADDITIONS)
+        tmpData.hasClobberedRegs = false;
+#endif
+#endif
         tmpData.splitAroundClobbersMetadataIndex = m_aroundClobbersMetadata.size();
         setStageAndEnqueue(tmp, tmpData, Stage::TryAllocate);
 
@@ -3081,10 +3195,8 @@ private:
             // analysis (see lowerAfterRegAlloc()), and that's unlikely to be worth it.
 #if USE(BUN_JSC_ADDITIONS)
             Interval gapInterval = hole | Interval(hole.begin() - 1);
-            if (coversWholeSites)
+            if (goesRoundStretches)
                 gapInterval = Interval(pointAtOffset(hole.begin(), PointOffsets::Pre), pointAtOffset(hole.end() - 1, PointOffsets::Post) + 1);
-            else if (gapIsTheHole)
-                gapInterval = hole;
 #else
             Interval gapInterval = hole | Interval(hole.begin() - 1);
 #endif
@@ -3524,7 +3636,11 @@ private:
                     // (scratch is early-def, late-use).
                     // See https://bugs.webkit.org/show_bug.cgi?id=163548#c2 for more info.
                     // FIXME: reconsider this, https://bugs.webkit.org/show_bug.cgi?id=288122
+#if USE(BUN_JSC_ADDITIONS)
+                    insert(block, instIndex, SpillMoveFrom, Padding, inst.origin);
+#else
                     m_insertionSets[block].insert(instIndex, SpillMoveFrom, Padding, inst.origin);
+#endif
                     continue;
                 }
 
@@ -3562,13 +3678,21 @@ private:
                             if constexpr (bank == GP) {
                                 int64_t value = m_useCounts.constant<bank>(tmpIndex);
                                 if (Arg::isValidImmForm(value) && isValidForm(Move, Arg::Imm, Arg::Tmp)) {
+#if USE(BUN_JSC_ADDITIONS)
+                                    insert(block, instIndex, SpillMoveFrom, Move, inst.origin, Arg::imm(value), tmp);
+#else
                                     m_insertionSets[block].insert(instIndex, SpillMoveFrom, Move, inst.origin, Arg::imm(value), tmp);
+#endif
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (imm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
                                     return true;
                                 }
                                 RELEASE_ASSERT(isValidForm(Move, Arg::BigImm, Arg::Tmp));
+#if USE(BUN_JSC_ADDITIONS)
+                                insert(block, instIndex, SpillMoveFrom, Move, inst.origin, Arg::bigImm(value), tmp);
+#else
                                 m_insertionSets[block].insert(instIndex, SpillMoveFrom, Move, inst.origin, Arg::bigImm(value), tmp);
+#endif
                                 m_stats[bank].numRematerializeConst++;
                                 dataLogLnIf(verbose(), "Rematerialized (bigImm) BB", *block, " ", originalTmp, ": ", tmp, " <- ", WTF::RawHex(value));
                                 return true;
@@ -3598,7 +3722,11 @@ private:
                                 }
 
                                 if (imm && isValidForm(constMove, imm.kind(), Arg::Tmp)) {
+#if USE(BUN_JSC_ADDITIONS)
+                                    insert(block, instIndex, SpillMoveFrom, constMove, inst.origin, imm, tmp);
+#else
                                     m_insertionSets[block].insert(instIndex, SpillMoveFrom, constMove, inst.origin, imm, tmp);
+#endif
                                     m_stats[bank].numRematerializeConst++;
                                     dataLogLnIf(verbose(), "Rematerialized (FP) BB", *block, " ", originalTmp, ": ", tmp);
                                     return true;
@@ -3609,7 +3737,11 @@ private:
                         };
 
                         if (!tryRematerialize()) {
+#if USE(BUN_JSC_ADDITIONS)
+                            insert(block, instIndex, SpillMoveFrom, move, inst.origin, arg, tmp);
+#else
                             m_insertionSets[block].insert(instIndex, SpillMoveFrom, move, inst.origin, arg, tmp);
+#endif
                             m_stats[bank].numLoadSpill++;
                         }
                     }
@@ -3623,7 +3755,11 @@ private:
                             dataLogLnIf(verbose(), "Rematerialized BB", *block, " removing def inst: ", inst);
                         } else {
                             ASSERT(!doKillInst);
+#if USE(BUN_JSC_ADDITIONS)
+                            insert(block, instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
+#else
                             m_insertionSets[block].insert(instIndex + 1, SpillMoveTo, move, inst.origin, tmp, arg);
+#endif
                             m_stats[bank].numStoreSpill++;
                         }
                     }
@@ -3689,13 +3825,64 @@ private:
                 m_code.proc().setUsesShuffle(true);
 
             for (auto& [block, shufflePairs] : loopEntryFixups)
+#if USE(BUN_JSC_ADDITIONS)
+                insertInst(block, block->size() - 1, AroundLoopEntryFixup, createShuffle(block->at(block->size() - 1).origin, shufflePairs.span()));
+#else
                 m_insertionSets[block].insertInst(block->size() - 1, AroundLoopEntryFixup, createShuffle(block->at(block->size() - 1).origin, shufflePairs.span()));
+#endif
             for (auto& [block, shufflePairs] : loopExitFixups)
+#if USE(BUN_JSC_ADDITIONS)
+                insertInst(block, 0, AroundLoopExitFixup, createShuffle(block->at(0).origin, shufflePairs.span()));
+#else
                 m_insertionSets[block].insertInst(0, AroundLoopExitFixup, createShuffle(block->at(0).origin, shufflePairs.span()));
+#endif
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        executeInsertions();
+    }
+
+    void insertInst(BasicBlock* block, size_t index, unsigned phase, Inst&& inst)
+    {
+        m_insertions.append(PhaseInsertion(index, phase, WTF::move(inst)));
+        m_blockOfInsertion.append(block->index());
+    }
+
+    template<typename... Arguments>
+    void insert(BasicBlock* block, size_t index, unsigned phase, Arguments&&... arguments)
+    {
+        insertInst(block, index, phase, Inst(std::forward<Arguments>(arguments)...));
+    }
+
+    void executeInsertions()
+    {
+        if (m_insertions.isEmpty())
+            return;
+        Vector<unsigned> endOfBlock(FillWith { }, m_code.size(), 0u);
+        for (unsigned blockIndex : m_blockOfInsertion)
+            ++endOfBlock[blockIndex];
+        unsigned sum = 0;
+        for (unsigned& end : endOfBlock)
+            sum += std::exchange(end, sum);
+        Vector<unsigned> order(m_insertions.size());
+        for (unsigned i = 0; i < m_insertions.size(); ++i)
+            order[endOfBlock[m_blockOfInsertion[i]]++] = i;
+        PhaseInsertionSet insertionSet;
+        unsigned begin = 0;
+        for (unsigned blockIndex = 0; blockIndex < endOfBlock.size(); ++blockIndex) {
+            unsigned end = endOfBlock[blockIndex];
+            if (begin == end)
+                continue;
+            for (; begin < end; ++begin)
+                insertionSet.appendInsertion(WTF::move(m_insertions[order[begin]]));
+            insertionSet.execute(m_code[blockIndex]);
+        }
+        m_insertions.shrink(0);
+        m_blockOfInsertion.shrink(0);
+#else
         for (BasicBlock* block : m_code)
             m_insertionSets[block].execute(block);
+#endif
     }
 
     void insertSplitAroundClobbersFixupCode(AroundClobbersSplitMetadata& metadata)
@@ -3713,7 +3900,7 @@ private:
             TmpData& gapData = m_map[gapTmp];
             for (auto& interval : gapData.liveRange.intervals()) {
 #if USE(BUN_JSC_ADDITIONS)
-                ASSERT(interval.distance() >= 1);
+                ASSERT(interval.distance() >= 2);
 #else
                 ASSERT(interval.distance() == 2);
 #endif
@@ -3734,12 +3921,26 @@ private:
                     Reg away = spilled ? Reg() : assignedReg(gapTmp);
                     m_movesRoundClobbers.append({ block->index(), indexAhead, false, home, away });
                     m_movesRoundClobbers.append({ block->index(), instIndex + 1, true, away, home });
+                    if (Options::airGreedyRegAllocRecordsFalseMoveForTesting() && away)
+                        m_movesRoundClobbers.append({ block->index(), indexAhead, false, away, home });
                 }
+#if USE(BUN_JSC_ADDITIONS)
+                insert(block, indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+#else
                 m_insertionSets[block].insert(indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
+#endif
+#else
+#if USE(BUN_JSC_ADDITIONS)
+                insert(block, instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #else
                 m_insertionSets[block].insert(instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #endif
+#endif
+#if USE(BUN_JSC_ADDITIONS)
+                insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
+#else
                 m_insertionSets[block].insert(instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
+#endif
 #if USE(BUN_JSC_ADDITIONS)
                 if (spilled)
                     m_stats[gapTmp.bank()].numSplitAroundClobberStackMoves += 2;
@@ -3779,7 +3980,11 @@ private:
             // trySplitIntraBlock includes the Pre point in the cluster interval iff the original Tmp is live into the cluster.
             if (pointAtOffset(clusterBegin, PointOffsets::Pre) == clusterBegin) {
                 unsigned instIndex = this->instIndex(positionOfHead, clusterBegin);
+#if USE(BUN_JSC_ADDITIONS)
+                insert(block, instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
+#else
                 m_insertionSets[block].insert(instIndex, IntraBlockMoveFrom, move, block->at(instIndex).origin, Arg::stack(spilled), clusterTmp);
+#endif
                 m_stats[bank].numSplitIntraBlockLoad++;
             } else
                 ASSERT(split.lastDefPoint);
@@ -3787,7 +3992,11 @@ private:
             // Need to store back into the original Tmp's spill slot only if the cluster def'ed the Tmp
             if (split.lastDefPoint) {
                 unsigned instIndex = this->instIndex(positionOfHead, split.lastDefPoint);
+#if USE(BUN_JSC_ADDITIONS)
+                insert(block, instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
+#else
                 m_insertionSets[block].insert(instIndex + 1, IntraBlockMoveTo, move, block->at(instIndex).origin, clusterTmp, Arg::stack(spilled));
+#endif
                 m_stats[bank].numSplitIntraBlockStore++;
             }
         }
@@ -4005,9 +4214,23 @@ private:
     Vector<AroundLoopSplitMetadata> m_aroundLoopMetadata;
     Vector<StackSlot*> m_spillSlotTable;
     IndexMap<Reg, RegisterRange> m_regRanges;
+#if USE(BUN_JSC_ADDITIONS)
+    std::array<uint32_t, Reg::maxIndex() + 1> m_epochOfLastRemoval { };
+    uint32_t m_removalEpoch { 1 };
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<Point> m_clobberPoints;
+    Vector<uint64_t> m_clobberedRegsAtPoint;
+    uint64_t m_allClobberedRegs { 0 };
+#endif
+#endif
     GenerationalSet<uint8_t, SaVector> m_visited;
     PriorityQueue<TmpPriority> m_queue;
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<PhaseInsertion> m_insertions;
+    Vector<unsigned> m_blockOfInsertion;
+#else
     IndexMap<BasicBlock*, PhaseInsertionSet> m_insertionSets;
+#endif
     BlockWorklist m_fastBlocks;
     UseCounts m_useCounts;
     TmpWidth m_tmpWidth;

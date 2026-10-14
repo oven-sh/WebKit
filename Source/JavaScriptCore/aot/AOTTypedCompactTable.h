@@ -109,6 +109,15 @@ public:
         return index <= undefinedCell32 ? JSValue::decode(index) : JSValue(MarkedBlockCage::decode(index));
     }
     std::span<const uint32_t> narrowKeys() const { return { at<uint32_t>(offsetOfKeys()), m_used }; }
+    CompactTable* copy(VM&) const;
+    template<typename Traits> static void forEachKey(JSOrderedHashTable<Traits>* owner, NOESCAPE const auto& functor)
+    {
+        auto* table = uncheckedDowncast<CompactTable>(owner->m_compactTable.get());
+        for (uint32_t entry = 0, used = table->m_used; entry < used; ++entry) {
+            if (JSString* key = table->keyAt(entry); key && functor(key) == IterationStatus::Done)
+                return;
+        }
+    }
     enum class Quickly : uint8_t { Found, Absent, Unknown };
     ALWAYS_INLINE Quickly tryFindQuickly(JSValue value, uint32_t& found) const
     {
@@ -224,6 +233,7 @@ private:
     bool hasTags() const { return !m_indexBits; }
     uint32_t deleted() const { return m_used - m_alive; }
     bool hasShortSlots() const { return m_capacity <= maxCapacityWithShortSlots; }
+    template<typename Visitor> void visitEntries(Visitor&, uint32_t first, uint32_t last) const;
 
     static bool canHold(Width, JSValue);
     void setKey(uint32_t entry, JSString*);

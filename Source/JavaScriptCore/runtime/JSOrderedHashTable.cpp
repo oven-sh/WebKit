@@ -55,6 +55,12 @@ void JSOrderedHashTable<Traits>::convertCompactTable()
 }
 
 template<typename Traits>
+void JSOrderedHashTable<Traits>::copyCompactTableOf(VM& vm, JSOrderedHashTable* base)
+{
+    m_compactTable.set(vm, this, uncheckedDowncast<CompactTable>(base->m_compactTable.get())->copy(vm));
+}
+
+template<typename Traits>
 uint32_t JSOrderedHashTable<Traits>::sizeOfCompactTable()
 {
     return uncheckedDowncast<CompactTable>(m_compactTable.get())->size();

@@ -32,6 +32,7 @@
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
+#include <JavaScriptCore/AuditSites.h>
 #include <JavaScriptCore/CachedBytecode.h>
 #include <JavaScriptCore/CodeBlockHash.h>
 #include <JavaScriptCore/CodeSpecializationKind.h>
@@ -198,6 +199,9 @@ public:
     void setHasNoSourceText() { m_hasNoSourceText = true; }
 #endif
 
+    const AuditSites* auditSites() const { return m_auditSites.get(); }
+    void setAuditSites(RefPtr<AuditSites>&& auditSites) { m_auditSites = WTF::move(auditSites); }
+
     SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
     bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
 
@@ -301,6 +305,7 @@ private:
     uint32_t m_aotModuleID { 0 };
     bool m_hasNoSourceText { false };
 #endif
+    RefPtr<AuditSites> m_auditSites;
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

@@ -5674,6 +5674,13 @@ public:
         move(src1, dest);
         m_assembler.imulq_rr(src2, dest);
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void mul64(TrustedImm32 imm, RegisterID src, RegisterID dest)
+    {
+        m_assembler.imulq_i32r(src, imm.m_value, dest);
+    }
+#endif
     
     void x86ConvertToQuadWord64()
     {

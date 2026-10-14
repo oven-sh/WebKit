@@ -18,6 +18,7 @@
 #include <wtf/BitVector.h>
 #include <wtf/HashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/MultiArrayList.h>
 #include <wtf/PrintStream.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -47,12 +48,15 @@ namespace JSC { namespace AOT { namespace Typed {
     v(ResultAt) \
     v(TypeOfIs) \
     v(AssertNotAllocated) \
+    v(MaterializeEnvironment) \
     v(ModuleEvaluationWord) \
     v(OffsetIndex) \
     v(GetModuleVariableAt) \
     v(PutModuleVariableAt) \
     v(CallModuleFunction) \
-    v(JumpToModuleEvaluator)
+    v(JumpToModuleEvaluator) \
+    v(FailModuleCycle) \
+    v(AddToModuleEvaluationDepth)
 
 enum class Opcode : uint8_t {
 #define AOT_TYPED_DECLARE_OPCODE(name) name,
@@ -75,6 +79,10 @@ using Format::MethodKind;
 using Format::TerminatorKind;
 
 using Arguments = Vector<ValueID, 4>;
+
+static constexpr uint32_t closureIsInFrame = 1;
+
+enum class MethodAskedByStub : uint8_t { None, ArrayPush, MapGet, MapHas, MapSet, SetHas, SetAdd };
 
 struct Value {
     Opcode opcode { Opcode::Undefined };
@@ -106,6 +114,7 @@ struct Value {
     // `position` is an offset into the source of that frame's function.
     uint32_t inlineFrame { 0 };
     bool receiverIsExpectedOfOneRow { false };
+    MethodAskedByStub methodAskedByStub { MethodAskedByStub::None };
     std::array<ValueID, 3> children;
     std::array<uint32_t, 2> immediates { Format::none, Format::none };
     Arguments arguments;
@@ -131,6 +140,7 @@ struct Value {
     }
     StringID string() const { return StringID(immediates[0]); }
     FunctionID function() const { return FunctionID(immediates[0]); }
+    bool isClosureInFrame() const { return opcode == Opcode::NewClosure && immediates[1] == closureIsInFrame; }
     // Of ResultAt: which of Function::resultTypes of the function its operand calls.
     uint32_t resultIndex() const { return immediates[0]; }
     // THE SECOND IMMEDIATE OF A CallDirect, WHOSE NUMBERS ARE WHOSE. Format::none and small numbers: the inliner's: the depth of copying the call stands at. Marks of the
@@ -144,6 +154,7 @@ struct Value {
     bool isJumpToContinuation() const { return opcode == Opcode::CallDirect && immediates[1] - jumpsToContinuation < maxContinuations; }
     uint32_t continuation() const { return immediates[1] - jumpsToContinuation; }
     VariableID variable() const { return VariableID(immediates[0]); }
+    bool findsVariableInitialized() const { return opcode == Opcode::GetModuleVariable && immediates[1] == Format::VariableIsInitialized; }
     LayoutID layout() const { return LayoutID(immediates[0]); }
     uint32_t field() const { return immediates[1]; }
     // Of GetCapture: which of Function::captureTypes of function().
@@ -151,6 +162,7 @@ struct Value {
     // Of NewObjectWithShape: among Function::allocations until these are linked, then among Program::allocations. Until
     // assignAllocations(): the name that goes with the first child, see Format::Value.
     uint32_t allocation() const { return immediates[1]; }
+    bool yieldsExceptionItself() const { return opcode == Opcode::CatchValue && immediates[0] == 1; }
     CastReason castReason() const { return static_cast<CastReason>(immediates[1] & 0xff); }
     void setCastReason(CastReason reason) { immediates[1] = (immediates[1] & ~0xffu) | static_cast<uint32_t>(reason); }
     // Of a Cast for the reason Coerce: see Format::CastReason.
@@ -164,11 +176,14 @@ struct Value {
     StringID accessedName() const { return castReason() == CastReason::Coerce || castReason() == CastReason::NonNull ? StringID() : string(); }
     // Of NewArray, from placement on: where in the statics the site keeps something, or none. See Placement::placeArraySites().
     uint32_t vectorLengthHintOffset() const { return immediates[0]; }
-    uint32_t copyOnWriteButterflyOffset() const { return immediates[1]; }
+    uint32_t copyOnWriteButterflyOffset() const { return immediates[1] & 1 ? Format::none : immediates[1]; }
+    uint32_t unsharedLiteralOfConstants() const { return immediates[1] != Format::none && immediates[1] & 1 ? immediates[1] >> 1 : Format::none; }
     static constexpr uint32_t keyIsListed = 1;
     static constexpr uint32_t isKeyOfForInList = 2;
+    static constexpr uint32_t elementIsKnownByTheStores = 3;
     bool readsListedKey() const { return opcode == Opcode::GetByVal && immediates[0] == keyIsListed; }
     bool readsForInList() const { return opcode == Opcode::GetByVal && immediates[0] == isKeyOfForInList; }
+    bool readsElementKnownByTheStores() const { return (opcode == Opcode::GetByVal || opcode == Opcode::IteratorValue) && immediates[0] == elementIsKnownByTheStores; }
     BlockID parameterBlock() const { return BlockID(immediates[0]); }
     uint32_t parameterIndex() const { return immediates[1]; }
     // Of CallBuiltin: the entry of the table that holds, and the class of the receiver or of what is made (EngineClass::index), if any.
@@ -178,6 +193,7 @@ struct Value {
     // Of CallBuiltin of a method on an object: the GetById that read the method from the receiver before the arguments were evaluated, if
     // there is one. The generic fallback calls what it has read.
     ValueID methodRead() const { return children[1]; }
+    bool takesArrayAsMade() const { return !!children[2]; }
     // Of GetById: it is the methodRead() of a CallBuiltin of this entry and has no other use. Where the receiver has its original
     // structure it reads nothing and yields the empty value, which stands for the entry's function.
     BuiltinID readsMethodFor() const { return hasWordOfKnownPlace() ? BuiltinID() : BuiltinID(immediates[1]); }
@@ -192,6 +208,7 @@ struct Value {
     bool isAtKnownPlace() const { return hasWordOfKnownPlace() && !(immediates[1] & (goesByName | receiverIsThis)); }
     bool isFirstStoreToThis() const { return opcode == Opcode::PutById && hasWordOfKnownPlace() && (immediates[1] & (isFirstStore | receiverIsThis)) == (isFirstStore | receiverIsThis); }
     bool isStoreToObjectBornWhole() const { return opcode == Opcode::PutById && hasWordOfKnownPlace() && (immediates[1] & (isFirstStore | receiverIsThis)) == isFirstStore; }
+    static constexpr uint32_t greatestBirthOfFirstStore = 0x3ffff;
     uint32_t birthOfFirstStore() const { return immediates[1] >> 11 & 0x3ffff; }
     void setBirthOfFirstStore(uint32_t birth) { immediates[1] = (immediates[1] & ~(0x3ffffu << 11)) | birth << 11; }
     unsigned attributesOfFirstStore() const { return (immediates[1] & receiverIsThis ? 0 : (immediates[1] >> 7 & 1) << 1) | (immediates[1] >> 29 & 1) << 3; }
@@ -261,20 +278,26 @@ struct Terminator {
     }
 };
 
+using ValuesOfBlock = Vector<ValueID, 4>;
+
 struct Block {
     Vector<ValueID> parameters;
-    Vector<ValueID> values;
+    ValuesOfBlock values;
     Terminator terminator;
 };
 
 static constexpr uint32_t FunctionIsGenericEntrypoint = 1 << 16;
 // The second immediate of IsClosureOf: and the closure has the Structure it was allocated with: no property of its own, and it inherits from what it did.
 static constexpr uint32_t closureIsAsMade = 1;
+static constexpr uint32_t closureEvenIfAltered = 2;
+static constexpr uint32_t closureIsTheOneThatConstructs = 3;
 // A general entry that is handed how many arguments there are and where they are, not the arguments.
 static constexpr uint32_t FunctionUsesArgumentBuffer = 1 << 17;
 // Code outside the program may call it as it is, without a general entry in between.
 static constexpr uint32_t FunctionHasUnknownCallers = 1 << 18;
 static constexpr uint32_t FunctionIsHalfOfHiddenCoroutine = 1 << 19;
+static constexpr uint32_t FunctionLogsMisfits = 1 << 20;
+static constexpr uint32_t FunctionIsEnteredByValue = 1 << 21;
 
 // How objects come to be, at one or several places of the program.
 struct Allocation {
@@ -360,6 +383,8 @@ struct Function {
     StringID name;
     ModuleID module;
     uint32_t position { 0 };
+    uint32_t placeOfText { 0 };
+    uint32_t endOfText { 0 };
     FunctionKind kind { FunctionKind::Plain };
     uint32_t flags { 0 };
     // Its `length` property.
@@ -372,10 +397,13 @@ struct Function {
     // Of the ramp of a generator function: its first parameter is the closure that was called, which what it makes inherits from the `prototype` of. Only the general entry calls it.
     bool takesItsClosure { false };
     FunctionID rampForClosures;
+    FunctionID writtenEntry;
+    FunctionID secondBody;
     bool isRampForClosures { false };
     bool isUsedAsObject { false };
     bool isBodyOfSeveralSites { false };
     bool storesWereMovedByCleanUp { false };
+    bool returnsBoxedValue { false };
     // Of a constructor, and of its general entry: the class.
     LayoutID constructedClass;
     // functionIsAsync, functionIsGenerator: what it is declared as, and so what its closures are as objects. Also of its general entry.
@@ -402,6 +430,10 @@ struct Function {
     Vector<TypeID> parameterTypes;
     // By parameter: its type is written down. What is passed and does not fit is coerced as by `as`. Otherwise it is turned away.
     BitVector annotatedParameters;
+    BitVector parametersOnlyCalled;
+    BitVector capturesOnlyCalled;
+    BitVector environmentsInFrame;
+    BitVector mayPointIntoFrame;
     // As Value::assertedType, of `this` and by parameter, for the casts of the general entry. None: thisType and parameterTypes say it.
     TypeID assertedThisType;
     Vector<TypeID> assertedParameterTypes;
@@ -465,11 +497,12 @@ static constexpr uint32_t fieldKeepsWideReference = 524288;
 // Those of AOTTypedData.h too: each has a bit of its own.
 static_assert((fieldIsOptional + fieldIsOutOfLine + fieldIsImmutable + fieldAllowsUndefined + fieldAllowsNull + fieldIsAnnotated + fieldIsMethod + fieldIsNeverSeenUninitialized
     + fieldIsStoredOnce + fieldIsNeverStored + fieldIsExpectedInt32 + fieldIsSetAtCreation + fieldMayBeSetAtCreation + fieldIsAbsentAtBirth + fieldHoldsClosureMadeOnce + fieldIsNeverSeenAbsent + fieldDoesNotAdmitUndefined
-    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten)
+    + fieldIsPinned + fieldIsNeverSeenAbsentAsWritten + fieldMayExistWithoutStorage)
     == (fieldIsOptional | fieldIsOutOfLine | fieldIsImmutable | fieldAllowsUndefined | fieldAllowsNull | fieldIsAnnotated | fieldIsMethod | fieldIsNeverSeenUninitialized
     | fieldIsStoredOnce | fieldIsNeverStored | fieldIsExpectedInt32 | fieldIsSetAtCreation | fieldMayBeSetAtCreation | fieldIsAbsentAtBirth | fieldHoldsClosureMadeOnce | fieldIsNeverSeenAbsent | fieldDoesNotAdmitUndefined
-    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten));
+    | fieldIsPinned | fieldIsNeverSeenAbsentAsWritten | fieldMayExistWithoutStorage));
 static_assert(fieldIsNeverSeenAbsentAsWritten < 1u << guardOfPinnedFieldShift);
+static_assert(fieldMayExistWithoutStorage < 1u << guardOfPinnedFieldShift);
 
 // Which shapes pass. Program::passes() says it in code.
 //
@@ -546,6 +579,7 @@ struct Field {
     FunctionID onlyFunction;
     bool onlyFunctionIsFact { false };
     bool onlyFunctionOrNil { false };
+    FunctionID otherFunction;
 };
 
 struct Method {
@@ -598,6 +632,7 @@ struct Layout {
     bool hasForeignRoot { false };
     bool hasFixedMembers { false };
     bool mayHaveOtherPrototype { false };
+    bool mayBeMadeByNew { false };
     // The prototype object has a method whose name is computed and may be any string: what an object of the class, or of one that extends
     // it, finds under a name is not known here.
     bool hasMethodOfUnknownName { false };
@@ -624,6 +659,8 @@ struct Layout {
     bool isCoroutineFrame { false };
     // Of an environment, from optimize() on: it is no cell. See findEnvironmentsInFrames().
     bool isInFrame { false };
+    VariableID reuseVariable;
+    bool mayBeInFrame { false };
     // The allocated layouts whose objects get into places of this type untested, itself among them if it is allocated. The front end
     // says which, from what the checker has found assignable. Not each has a field for every property: see Field::isLackedBySomeMember. Sorted.
     Vector<LayoutID> members;
@@ -715,6 +752,7 @@ struct Module {
     StringID displayPath;
     // Of Format::Module::lineTable, for the dump.
     uint32_t lineTableSize { 0 };
+    std::span<const uint8_t> printed;
     // Byte offset of each line.
     Vector<uint32_t> lineStarts;
     // For lines with non-ASCII text: the byte offset just past such a character, and how many fewer UTF-16 units than bytes its line has
@@ -725,6 +763,107 @@ struct Module {
         uint32_t excessBytes;
     };
     Vector<ColumnAdjustment> columnAdjustments;
+};
+
+class OpcodeSet {
+public:
+    constexpr OpcodeSet(std::initializer_list<Opcode> opcodes)
+    {
+        for (Opcode opcode : opcodes)
+            m_words[static_cast<unsigned>(opcode) / 64] |= 1ull << (static_cast<unsigned>(opcode) % 64);
+    }
+
+    constexpr bool contains(Opcode opcode) const { return m_words[static_cast<unsigned>(opcode) / 64] >> (static_cast<unsigned>(opcode) % 64) & 1; }
+
+private:
+    std::array<uint64_t, 4> m_words { };
+};
+
+class Functions {
+public:
+    size_t size() const { return m_functions.size(); }
+    bool isEmpty() const { return m_functions.isEmpty(); }
+
+    const Function& operator[](size_t index) const LIFETIME_BOUND { return m_functions[index]; }
+    Function& operator[](size_t index) LIFETIME_BOUND
+    {
+        forget(index);
+        return m_functions[index];
+    }
+
+    const Function* begin() const LIFETIME_BOUND { return m_functions.begin(); }
+    const Function* end() const LIFETIME_BOUND { return m_functions.end(); }
+    Function* begin() LIFETIME_BOUND
+    {
+        forgetAll();
+        return m_functions.begin();
+    }
+    Function* end() LIFETIME_BOUND { return m_functions.end(); }
+    std::span<const Function> span() const LIFETIME_BOUND { return m_functions.span(); }
+
+    void append(Function&& function) { m_functions.append(WTF::move(function)); }
+    void appendVector(Vector<Function>&& functions) { m_functions.appendVector(WTF::move(functions)); }
+    void grow(size_t size) { m_functions.grow(size); }
+    void reserveInitialCapacity(size_t size) { m_functions.reserveInitialCapacity(size); }
+    auto map(NOESCAPE const auto& functor) const { return m_functions.map(functor); }
+
+    void listValuesInOrder();
+    void forgetAll() { m_isListed.clear(); }
+    bool isListed(size_t index) const { return index < m_isListed.size() && WTF::atomicLoad(&m_isListed[index], std::memory_order_relaxed); }
+    size_t numberListed() const;
+
+    bool mayHold(size_t index, const OpcodeSet& wanted) const
+    {
+        if (!isListed(index))
+            return true;
+        for (Opcode opcode : opcodesInOrder(index)) {
+            if (wanted.contains(opcode))
+                return true;
+        }
+        return false;
+    }
+
+    void forEachValueInOrder(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
+    {
+        if (isListed(index)) {
+            auto opcodes = opcodesInOrder(index);
+            auto ids = m_valuesInOrder.items<&ValueInOrder::id>().subspan(m_firstInOrder[index], opcodes.size());
+            for (size_t k = 0; k < opcodes.size(); ++k) {
+                if (wanted.contains(opcodes[k]))
+                    functor(ids[k]);
+            }
+            return;
+        }
+        auto& function = m_functions[index];
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                if (wanted.contains(function.at(id).opcode))
+                    functor(id);
+            }
+        }
+    }
+
+private:
+    struct ValueInOrder {
+        ValueID id;
+        Opcode opcode { Opcode::Undefined };
+    };
+
+    std::span<const Opcode> opcodesInOrder(size_t index) const
+    {
+        return m_valuesInOrder.items<&ValueInOrder::opcode>().subspan(m_firstInOrder[index], m_firstInOrder[index + 1] - m_firstInOrder[index]);
+    }
+
+    void forget(size_t index)
+    {
+        if (isListed(index))
+            WTF::atomicStore(&m_isListed[index], static_cast<uint8_t>(0), std::memory_order_relaxed);
+    }
+
+    Vector<Function> m_functions;
+    MultiArrayList<ValueInOrder, &ValueInOrder::id, &ValueInOrder::opcode> m_valuesInOrder;
+    Vector<uint32_t> m_firstInOrder;
+    mutable Vector<uint8_t> m_isListed;
 };
 
 class Program final {
@@ -810,6 +949,8 @@ public:
     // By the index of the string. See Format::Header.
     BitVector prototypePropertyNames;
     Vector<std::pair<StringID, StringID>> regExpLiterals;
+    bool logsTypeErrors { false };
+    Vector<uint32_t> sites;
     // See Format::Header.
     Vector<std::pair<uint32_t, FunctionID>> builtinModules;
     struct BuiltinFunction {
@@ -874,8 +1015,15 @@ public:
     Vector<Layout> layouts;
     Vector<Variable> variables;
     Vector<Module> modules;
-    Vector<Function> functions;
+    Functions functions;
     Vector<unsigned> sizesForInlining;
+    struct FactsForInlining {
+        bool isAccessor { false };
+        bool returnsMethodTable { false };
+        BitVector parametersCalled;
+        BitVector parametersCalledInLoops;
+    };
+    Vector<FactsForInlining> factsForInlining;
     Vector<BitVector> blocksThatNeverReturn;
     // In the order of the entry points. Each is compiled in the place of the top-level code of a module.
     Vector<FunctionID, 1> entries;
@@ -896,7 +1044,7 @@ public:
     uint32_t allocationOfClosure(unsigned numberOfCaptures) const { return closureAllocations[numberOfCaptures / 2]; }
     // Of the closures of the function, which is not a generic entrypoint: how many words the collector follows, and how many words there are.
     std::pair<unsigned, unsigned> referencesAndCapturesOfClosures(const Function&) const;
-    bool makesSlimClosures(const Function& function) const { return mayMakeSlimClosures(function) && function.captureTypes.size() <= ClosureRequest::maxNumberOfCaptures; }
+    bool makesSlimClosures(const Function& function) const { return mayMakeSlimClosures(function) && function.captureTypes.size() <= ClosureRequest::maxNumberOfCapturesOfSlimClosure; }
     bool mayMakeSlimClosures(const Function&) const;
     // By PreludeFunction. None: the program has no such function.
     Vector<FunctionID> preludeFunctions;
@@ -923,11 +1071,15 @@ public:
     // In the statics: cells. See Placement::placeArraySites().
     uint32_t copyOnWriteButterfliesOffset { 0 };
     uint32_t numberOfCopyOnWriteButterflies { 0 };
+    Vector<Vector<uint64_t>> elementsOfArrayLiterals;
+    static constexpr unsigned maxLengthOfArrayLiteralMadeInline = 16;
     // In the statics: cells, one behind the other: the one object of a RegExp literal for the sites where nothing can get hold of it. By keyOfRegExpLiteral(). See
     // Placement::placeRegExpLiterals().
     uint32_t sharedRegExpObjectsOffset { 0 };
     UncheckedKeyHashMap<uint64_t, uint32_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> offsetsOfSharedRegExpObjects;
     uint32_t sizeOfStatics { 0 };
+    uint32_t sizeOfStaticsAsPlaced { 0 };
+    uint32_t sizeOfStaticsFilledLate { 0 };
     // For reads and for stores, by string, from one. Zero: the name has none.
     std::array<Vector<uint32_t>, 2> globalPropertyCacheNumbers;
     uint32_t globalPropertyCacheNumber(StringID name, bool isStore) const { return name.index() < globalPropertyCacheNumbers[isStore].size() ? globalPropertyCacheNumbers[isStore][name.index()] : 0; }
@@ -966,12 +1118,14 @@ public:
     BitVector functionsRareByText;
     bool isRareByText(FunctionID id) const { return functionsRareByText.get(id.index()); }
     BitVector functionsColdByGraph;
+    bool functionLengthsAreBytes { false };
     BitVector functionsThatTakeNoCopies;
     uint16_t licencesTheyAreNotGiven { 0 };
     bool saysWhatTakesNoCopies { false };
     bool takesNoCopy(FunctionID id, uint8_t licence) const { return licencesTheyAreNotGiven >> licence & 1 && functionsThatTakeNoCopies.get(id.index()); }
     bool isColdByGraph(FunctionID id) const { return functionsColdByGraph.get(id.index()); }
     Vector<String> heatLetters;
+    bool onlyDefaultsAskedForHeatLetters { false };
     // Those of them that have a loop, that no loop calls and that nothing hot makes: outside its loops such a function is like any that is not hot.
     BitVector functionsHotOnlyInTheirLoops;
     BitVector functionsInCycles;
@@ -979,10 +1133,13 @@ public:
     bool isHotOnlyInItsLoops(FunctionID id) const { return functionsHotOnlyInTheirLoops.get(id.index()); }
     bool isHotOutsideItsLoops(FunctionID id) const { return isHotByText(id) && !isHotOnlyInItsLoops(id); }
     bool mayMeetMasquerader { false };
+    bool passesExceptionsOn { false };
     // By function: the direct calls of it in the program as read, that of its general entry not counted.
     Vector<uint32_t> numberOfDirectCalls;
     // From optimize() on: the functions that only direct calls reach and that no call is left of. They have no code.
     BitVector functionsWithoutCalls;
+    BitVector functionsEnteredWithRoomOnStack;
+    bool isEnteredWithRoomOnStack(FunctionID id) const { return functionsEnteredWithRoomOnStack.get(id.index()); }
     bool hasCode(FunctionID id) const { return !functionsWithoutCalls.get(id.index()); }
     struct ModuleEvaluation {
         FunctionID function;
@@ -994,6 +1151,8 @@ public:
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> moduleEvaluationOfFunction;
     FunctionID moduleEvaluator;
     FunctionID moduleEvaluatorIfNeeded;
+    FunctionID moduleEvaluatorFromOutside;
+    FunctionID moduleEvaluatorForCallFromOutside() const { return moduleEvaluatorFromOutside ? moduleEvaluatorFromOutside : moduleEvaluator; }
     std::array<FunctionID, numberOfArgumentGPRs + 1> bodiesOfConstructions;
     FunctionID bodyOfConstruction(const Value& construct) const { return construct.arguments.size() < bodiesOfConstructions.size() ? bodiesOfConstructions[construct.arguments.size()] : FunctionID(); }
     static constexpr unsigned leverOfBodiesOfCasts = 17;
@@ -1028,6 +1187,9 @@ public:
     Vector<NumberedRow> numberedRows;
     uint32_t firstNumberOfRowsOfThis { Format::none };
     Vector<std::array<uint32_t, 3>> rowsGrownInto;
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 1>> numbersOfRowsByName;
+    UncheckedKeyHashMap<uint32_t, Vector<LayoutID, 1>> recordsThatPlainDataBecomesByName;
+    BitVector rowsThatStayAsBorn;
     UncheckedKeyHashMap<uint64_t, Vector<uint32_t, 1>> numbersOfRowsByHash;
     uint32_t numberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype) const;
     uint32_t ensureNumberOfRow(std::span<const StringID> names, unsigned inlineCapacity, bool hasNullPrototype);

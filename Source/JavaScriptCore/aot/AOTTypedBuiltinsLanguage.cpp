@@ -54,8 +54,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
             OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
             inheritsNone = !inherited->indexedLength() && !inherited->sizeOfPropertyNames();
         }
-        if (JSCellButterfly* keys = inheritsNone ? uncheckedDowncast<Typed::Object>(object)->keys(vm) : nullptr)
+        auto* ofProgram = uncheckedDowncast<Typed::Object>(object);
+        if (JSCellButterfly* keys = inheritsNone ? ofProgram->keys(vm) : nullptr) {
+            if (&ofProgram->state() == instance->typed)
+                instance->typedKeyLists[Typed::shapeWordOf(ofProgram->shape()) % Instance::numberOfTypedKeyLists] = { ofProgram->orderWord(), Typed::shapeWordOf(ofProgram->shape()), keys };
             OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly()));
+        }
     }
 
     // The engine keeps it for the Structure where it can.
@@ -92,6 +96,32 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedHasEnumerableProperty, size_t, (Instan
     OPERATION_RETURN(scope, object->hasEnumerableProperty(globalObject, key));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedIncrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (numeric.isBigInt())
+        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::inc(globalObject, numeric.asHeapBigInt())));
+    OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() + 1)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedDecrement, EncodedJSValue, (Instance* instance, EncodedJSValue encodedValue))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue numeric = JSValue::decode(encodedValue).toNumeric(globalObject);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (numeric.isBigInt())
+        OPERATION_RETURN(scope, JSValue::encode(JSBigInt::dec(globalObject, numeric.asHeapBigInt())));
+    OPERATION_RETURN(scope, JSValue::encode(jsNumber(numeric.asNumber() - 1)));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetSuperConstructor, EncodedJSValue, (Instance* instance, JSCell* classObject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, JSValue::encode(asObject(classObject)->getPrototype(globalObject)));
+}
+
 namespace Typed {
 
 using namespace B3;
@@ -103,6 +133,8 @@ std::optional<Writes> writesOfInlineLanguage(InlineBuiltin which, std::span<cons
     switch (which) {
     case InlineBuiltin::This:
         return Writes::Pure;
+    case InlineBuiltin::GetSuperConstructor:
+        return Writes::Nothing;
     // The structure it compares with is looked up on first use.
     case InlineBuiltin::HasOriginalStructure:
         return Writes::RuntimeState;
@@ -113,6 +145,8 @@ std::optional<Writes> writesOfInlineLanguage(InlineBuiltin which, std::span<cons
     // A proxy answers with code of the program.
     case InlineBuiltin::ForInKeys:
     case InlineBuiltin::HasEnumerableProperty:
+    case InlineBuiltin::Increment:
+    case InlineBuiltin::Decrement:
         return Writes::Heap;
     default:
         RELEASE_ASSERT_NOT_REACHED();
@@ -137,17 +171,38 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         if (value.engineClass() == Format::none)
             return yieldBoolean(boolean(false), type);
         auto& engineClass = m_builtins.classes()[value.engineClass()];
+        auto holdsOf = [&](CellPointer cell) {
+            Word32 isOriginal = hasOriginalStructure(cell, engineClass);
+            if (!value.takesArrayAsMade())
+                return isOriginal;
+            return either<Word32>(isOriginal, [&] {
+                return boolean(true);
+            }, [&] {
+                return isArrayAsMade(cell);
+            });
+        };
         Operand operand = get(arguments[0]);
         if (operand.rep == Rep::Cell)
-            return yieldBoolean(hasOriginalStructure(operand.as<CellPointer>(), engineClass), type);
+            return yieldBoolean(holdsOf(operand.as<CellPointer>()), type);
         if (operand.rep != Rep::JSValue)
             return yieldBoolean(boolean(false), type);
         Boxed boxed = operand.as<Boxed>();
         return yieldBoolean(either<Word32>(isCell(boxed), [&] {
-            return hasOriginalStructure(asCell(boxed), engineClass);
+            return holdsOf(asCell(boxed));
         }, [&] {
             return boolean(false);
         }), type);
+    }
+    case InlineBuiltin::GetSuperConstructor: {
+        CellPointer classObject = asCell(in<Boxed>(arguments[0]));
+        LBasicBlock keepsItItself = newColdBlock();
+        Join join(m_out, Rep::JSValue, Int64);
+        Boxed parent(m_out.load64(structureOf(classObject.value()), m_heaps.Structure_prototype));
+        orElse(isNotEmpty(parent), keepsItItself);
+        join.add(parent);
+        m_out.appendTo(keepsItItself);
+        join.add(AOT_TYPED_OPERATION(GetSuperConstructor, classObject));
+        return ensure(join.finish().as<Boxed>(), m_program.at(m_program.types.anything), type);
     }
     case InlineBuiltin::ArrayHasIndex:
     case InlineBuiltin::ArrayGetIndex:
@@ -161,6 +216,9 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         return lowerForInKeys(result, value);
     case InlineBuiltin::HasEnumerableProperty:
         return lowerHasEnumerableProperty(result, value);
+    case InlineBuiltin::Increment:
+    case InlineBuiltin::Decrement:
+        return lowerStepByOne(which, result, value);
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }

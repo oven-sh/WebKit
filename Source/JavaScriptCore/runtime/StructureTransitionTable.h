@@ -77,6 +77,9 @@ enum class TransitionKind : uint8_t {
     BecomeDerivedArray = 20,
 
     FixAndMakePropertiesImmutable = 21,
+
+    NoteFixedProperties = 22,
+    NoteFixedAndImmutableProperties = 23,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -154,6 +157,11 @@ inline bool preventsExtensions(TransitionKind transition)
 inline bool makesPropertiesImmutable(TransitionKind transition)
 {
     return transition == TransitionKind::MakePropertiesImmutable || transition == TransitionKind::FixAndMakePropertiesImmutable;
+}
+
+inline bool notesFixedProperties(TransitionKind transition)
+{
+    return transition == TransitionKind::NoteFixedProperties || transition == TransitionKind::NoteFixedAndImmutableProperties;
 }
 
 inline bool setsDontDeleteOnAllProperties(TransitionKind transition)

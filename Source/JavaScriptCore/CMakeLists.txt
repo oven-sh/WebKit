@@ -1110,6 +1110,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     parser/Nodes.h
     parser/Parser.h
     parser/ParserArena.h
+    parser/AuditSites.h
     parser/ParserError.h
     parser/ParserFunctionInfo.h
     parser/ParserModes.h

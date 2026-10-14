@@ -29,42 +29,83 @@ std::optional<LanguageOperation> languageOperationOf(const Program& program, con
     return builtins.at(entry).implementation.operation;
 }
 
-void collectPropertiesGivenTo(const Program& program, const Function& function, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys)
+void collectPropertiesGivenTo(const Program& program, const Function& function, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys, const UsersInBlocks* users, bool goesByTheChain)
 {
+    Vector<ValueID, 4> objects { object };
     auto isObject = [&](ValueID id) {
         while (function.at(id).opcode == Opcode::Cast && function.at(id).castReason() == CastReason::Upcast)
             id = function.at(id).child(0);
-        return id == object;
+        return objects.contains(id);
     };
+    for (bool hasGrown = goesByTheChain; hasGrown;) {
+        hasGrown = false;
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = function.at(target.block).parameters;
+                for (unsigned i = 0; i < std::min<size_t>(target.arguments.size(), parameters.size()); ++i) {
+                    if (!isObject(target.arguments[i]) || objects.contains(parameters[i]))
+                        continue;
+                    objects.append(parameters[i]);
+                    hasGrown = true;
+                }
+            }
+        }
+    }
     auto isExpectedToBeSymbol = [&](ValueID id) {
         TypeID prediction = function.at(id).prediction;
         auto& type = prediction ? program.at(prediction) : program.typeOf(function, id);
         return type.primitives & Primitive::Symbol && type.hasOnlyPrimitives(Primitive::Symbol | Primitive::UndefinedOrNull);
     };
-    for (auto& block : function.blocks) {
-        for (ValueID userID : block.values) {
-            auto& user = function.at(userID);
-            std::optional<StringID> name;
-            if (user.opcode == Opcode::PutById && isObject(user.child(0)))
-                name = user.string();
-            else if (user.opcode == Opcode::PutByVal && isObject(user.child(0)))
-                numberOfKeys += isExpectedToBeSymbol(user.child(1));
-            else if (user.opcode == Opcode::CallBuiltin && languageOperationOf(program, user) == LanguageOperation::DefineField && isObject(user.arguments[0]) && function.at(user.arguments[1]).opcode == Opcode::String)
-                name = function.at(user.arguments[1]).string();
-            else if (user.opcode == Opcode::CallDirect && depth) {
-                // Handed on, for `this` or as an argument: the arguments stand in the order of the parameters.
-                auto& callee = program.at(user.function());
-                if (callee.blocks.isEmpty())
-                    continue;
-                auto& parameters = callee.blocks[0].parameters;
-                for (unsigned i = callee.captureTypes.size(); i < std::min<size_t>(user.arguments.size(), parameters.size()); ++i) {
-                    if (isObject(user.arguments[i]))
-                        collectPropertiesGivenTo(program, callee, parameters[i], depth - 1, names, numberOfKeys);
-                }
+    auto look = [&](ValueID userID) {
+        auto& user = function.at(userID);
+        std::optional<StringID> name;
+        if (user.opcode == Opcode::PutById && isObject(user.child(0)))
+            name = user.string();
+        else if (user.opcode == Opcode::PutByVal && isObject(user.child(0)))
+            numberOfKeys += isExpectedToBeSymbol(user.child(1));
+        else if (user.opcode == Opcode::CallBuiltin && languageOperationOf(program, user) == LanguageOperation::DefineField && isObject(user.arguments[0]) && function.at(user.arguments[1]).opcode == Opcode::String)
+            name = function.at(user.arguments[1]).string();
+        else if (user.opcode == Opcode::CallDirect && depth) {
+            // Handed on, for `this` or as an argument: the arguments stand in the order of the parameters.
+            auto& callee = program.at(user.function());
+            if (callee.blocks.isEmpty())
+                return;
+            auto& parameters = callee.blocks[0].parameters;
+            for (unsigned i = callee.captureTypes.size(); i < std::min<size_t>(user.arguments.size(), parameters.size()); ++i) {
+                if (isObject(user.arguments[i]))
+                    collectPropertiesGivenTo(program, callee, parameters[i], depth - 1, names, numberOfKeys, nullptr, goesByTheChain);
             }
-            if (name && !names.contains(*name))
-                names.append(*name);
+        } else if (goesByTheChain) {
+            ValueID calleeOfLink;
+            bool isLink = false;
+            if (user.opcode == Opcode::Call || user.opcode == Opcode::CallForwardVarargs) {
+                isLink = isObject(user.child(1));
+                calleeOfLink = user.child(0);
+            } else if (user.opcode == Opcode::CallBuiltin && user.arguments.size() >= 2 && (languageOperationOf(program, user) == LanguageOperation::Apply || languageOperationOf(program, user) == LanguageOperation::CallWithSpread)) {
+                isLink = isObject(user.arguments[1]);
+                calleeOfLink = user.arguments[0];
+            }
+            if (!isLink)
+                return;
+            FunctionID expected = depth && calleeOfLink ? function.at(calleeOfLink).predictedClosure : FunctionID();
+            bool isFollowed = expected && !program.at(expected).blocks.isEmpty() && program.at(expected).blocks[0].parameters.size() > program.at(expected).captureTypes.size();
+            if (!isFollowed)
+                return;
+            auto& callee = program.at(expected);
+            collectPropertiesGivenTo(program, callee, callee.blocks[0].parameters[callee.captureTypes.size()], depth - 1, names, numberOfKeys, nullptr, true);
+            return;
         }
+        if (name && !names.contains(*name))
+            names.append(*name);
+    };
+    if (users) {
+        for (auto& user : *users)
+            look(user.value);
+        return;
+    }
+    for (auto& block : function.blocks) {
+        for (ValueID userID : block.values)
+            look(userID);
     }
 }
 
@@ -103,7 +144,7 @@ bool collectPropertiesGivenToThis(const Program& program, FunctionID id, Vector<
             }
         }
         for (ValueID object : objects)
-            collectPropertiesGivenTo(program, function, object, 3, names, numberOfKeys);
+            collectPropertiesGivenTo(program, function, object, 3, names, numberOfKeys, nullptr, true);
         if (!callsSuper)
             return true;
         if (!function.constructedClass)
@@ -140,7 +181,10 @@ public:
         , m_function(function)
         , m_length(program.find("length"_s.span8()).value_or(StringID()))
         , m_slice(program.find("slice"_s.span8()).value_or(StringID()))
-        , m_getFromArguments(Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("GetFromArguments"_s.span8())))
+        , m_getFromArguments([] {
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("GetFromArguments"_s.span8()));
+            return found;
+        }())
     {
     }
 
@@ -232,9 +276,12 @@ private:
 
     void findUses()
     {
+        m_placeInBlock.fill(0, m_function.values.size());
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             auto& block = m_function.blocks[b];
+            uint32_t place = 0;
             for (ValueID id : block.values) {
+                m_placeInBlock[id.index()] = place++;
                 std::as_const(m_function.at(id)).forEachChild([&](ValueID child) {
                     unsigned of = allocationOf(child);
                     if (!of || of == allocationOf(id))
@@ -482,33 +529,33 @@ private:
         return typeOf(elements->at(*index)).isWithin(type, m_program) || (!Options::auditAOTTypedAssertions() && writesOfElementRead(m_program, type) == Writes::Nothing);
     }
 
-    // The blocks that run after the block, on a path on which the allocation is not made anew.
-    BitVector blocksAfter(BlockID block, BlockID allocatedIn) const
-    {
-        BitVector seen(m_function.blocks.size());
-        Vector<BlockID> worklist { block };
-        while (!worklist.isEmpty()) {
-            for (auto& target : m_function.at(worklist.takeLast()).terminator.targets) {
-                if (target.block != allocatedIn && !seen.set(target.block.index()))
-                    worklist.append(target.block);
-            }
-        }
-        return seen;
-    }
-
     bool isLastUse(const Use& escape, BlockID allocatedIn) const
     {
-        BitVector after = blocksAfter(escape.block, allocatedIn);
-        if (after.get(escape.block.index()))
-            return false;
-        auto& values = m_function.at(escape.block).values;
-        size_t place = values.find(escape.user);
-        auto comesLater = [&](const Use& other) {
+        BitVector holdsUse(m_function.blocks.size());
+        holdsUse.quickSet(escape.block.index());
+        auto comesLaterInBlock = [&](const Use& other) {
             if (other.user == escape.user)
                 return false;
-            return after.get(other.block.index()) || (other.block == escape.block && values.find(other.user) > place);
+            if (other.block != escape.block) {
+                holdsUse.quickSet(other.block.index());
+                return false;
+            }
+            return m_placeInBlock[other.user.index()] > m_placeInBlock[escape.user.index()];
         };
-        return !m_reads.containsIf(comesLater) && !m_borrows.containsIf(comesLater) && !m_escapes.containsIf(comesLater);
+        if (m_reads.containsIf(comesLaterInBlock) || m_borrows.containsIf(comesLaterInBlock) || m_escapes.containsIf(comesLaterInBlock))
+            return false;
+        BitVector seen(m_function.blocks.size());
+        Vector<BlockID> worklist { escape.block };
+        while (!worklist.isEmpty()) {
+            for (auto& target : m_function.at(worklist.takeLast()).terminator.targets) {
+                if (target.block == allocatedIn || seen.set(target.block.index()))
+                    continue;
+                if (holdsUse.quickGet(target.block.index()))
+                    return false;
+                worklist.append(target.block);
+            }
+        }
+        return true;
     }
 
     // The value no longer throws.
@@ -737,7 +784,10 @@ private:
         m_escapes.clear();
         Vector<DecidedBranch, 4> decided;
         BitVector isReached;
-        if (elements)
+        auto readsLength = [&](const Use& use) {
+            return isLengthOfAllocation(use.user);
+        };
+        if (elements && allocation.uses.containsIf(readsLength))
             isReached = blocksReachedWhileUnchanged(block, elements->size(), decided);
         for (auto& use : allocation.uses) {
             if (!decided.isEmpty() && !isReached.get(use.block.index()))
@@ -814,6 +864,7 @@ private:
     Vector<Allocation> m_allocations;
     // By value: the number, from one, of the allocation that it is or is a cast of.
     Vector<unsigned> m_allocationOf;
+    Vector<uint32_t> m_placeInBlock;
     BitVector m_isStale;
     // The allocation that is being looked at, and its uses.
     unsigned m_current { 0 };
@@ -926,8 +977,7 @@ public:
     {
         if (!findReads())
             return false;
-        static const char* const asked = getenv("AOT_X_READS_GO_BY_WORDS_FROM");
-        static const size_t leastNumberOfReadsToGoByWords = asked ? atoi(asked) : 4096;
+        static constexpr size_t leastNumberOfReadsToGoByWords = 4096;
         m_goesByWords = m_reads.size() >= leastNumberOfReadsToGoByWords;
         findAllocations();
         findActions();
@@ -1771,11 +1821,13 @@ public:
                 changed = removeTrivialParameters();
                 changed |= propagateBranchConditions();
                 changed |= threadBranchesOnParameters();
+                changed |= threadWaysThatDecideTheTest();
                 changed |= mergeChains();
                 changed |= m_makesObjects && forwardStores();
                 changed |= removeUnusedValues();
             } while (changed);
         } while (!Options::auditAOTTypedAssertions() && (RedundantReadElimination(m_program, m_function).run() || (mayMakeArrays && ArrayEscapeAnalysis(m_program, m_function).run()) || (has(Opcode::NewObjectWithShape) && (promoteEnvironments() || sinkObjectAllocations(m_program, m_function, AllocationSinkingPolicy::EliminateOnly)))));
+        compactBlocks(m_function);
         if (!has(Opcode::NewObjectWithShape))
             return;
         moveStoresIntoArms();
@@ -2502,18 +2554,19 @@ private:
     }
 
     // An allocation reads what the `prototype` of the constructor is, which is no field: only what may store anywhere may store that. Nothing else can tell when an object was made that nobody has seen.
-    bool mayGoAboveAllocation(const Block& block, size_t index) const
+    bool mayGoAboveAllocation(const Block& block, size_t index, bool isBornWithoutPrototype) const
     {
         switch (m_function.at(block.values[index]).opcode) {
-        case Opcode::CallDirect:
         case Opcode::Await:
         case Opcode::Yield:
         case Opcode::GetResumeMode:
         case Opcode::LoopHint:
         case Opcode::CatchValue:
             return false;
+        case Opcode::CallDirect:
+            return isBornWithoutPrototype;
         default:
-            return writesOf(m_program, m_function, block, index) <= Writes::Fields;
+            return isBornWithoutPrototype || writesOf(m_program, m_function, block, index) <= Writes::Fields;
         }
     }
 
@@ -2584,6 +2637,8 @@ private:
                     }
                 }
                 // How far: up to the last plain store into the object before anything else uses it, or something comes that has to stay behind the allocation.
+                auto& layoutOfObject = m_program.at(m_function.at(object).layout());
+                bool isBornWithoutPrototype = layoutOfObject.kind == LayoutKind::Environment && !layoutOfObject.mayGiveUp;
                 Vector<ValueID, 2> upcasts;
                 size_t lastStore = i;
                 size_t limit = block.values.size() - endsInInvoke;
@@ -2606,7 +2661,7 @@ private:
                         usesObject |= child == object || upcasts.contains(child);
                     });
                     if (!usesObject) {
-                        if (!mayGoAboveAllocation(block, next))
+                        if (!mayGoAboveAllocation(block, next, isBornWithoutPrototype))
                             break;
                         continue;
                     }
@@ -2622,15 +2677,20 @@ private:
                 Vector<ValueID, 16> above;
                 Vector<ValueID, 16> stores;
                 Vector<ValueID, 2> behind;
+                unsigned numberThatMayStoreAnywhere = 0;
                 for (size_t next = i + 1; next <= lastStore; ++next) {
                     ValueID id = block.values[next];
                     if (isUpcastOfObject(id))
                         behind.append(id);
                     else if (m_function.at(id).child(0) == object && (m_function.at(id).opcode == Opcode::PutField || m_function.at(id).opcode == Opcode::PutById))
                         stores.append(id);
-                    else
+                    else {
+                        numberThatMayStoreAnywhere += isBornWithoutPrototype && !mayGoAboveAllocation(block, next, false);
                         above.append(id);
+                    }
                 }
+                if (numberThatMayStoreAnywhere && Options::verboseAOTCompilation()) [[unlikely]]
+                    dataLogLn("AOT: ", m_function.name ? String::fromUTF8(m_program.string(m_function.name)) : String(), ": the birth of an environment goes behind ", numberThatMayStoreAnywhere, " values that may store anywhere");
                 size_t at = i;
                 auto put = [&](ValueID id) {
                     m_function.storesWereMovedByCleanUp |= block.values[at] != id;
@@ -2733,7 +2793,7 @@ private:
     {
         Vector<unsigned> uses;
         for (auto& value : m_function.values) {
-            if (languageOperationOf(m_program, value) != LanguageOperation::SuperConstruct || value.arguments.size() != 3)
+            if (languageOperationOf(m_program, value) != LanguageOperation::SuperConstruct || value.arguments.size() < 3 || value.arguments.size() > 4)
                 continue;
             auto& list = m_function.at(value.arguments[2]);
             if (list.opcode != Opcode::NewArray || mayThrow(m_program, m_function, list))
@@ -2756,7 +2816,7 @@ private:
             Arguments elements = list.arguments;
             value.opcode = Opcode::ConstructSuper;
             m_hasFolded = true;
-            value.children = { value.arguments[0], value.arguments[1], ValueID() };
+            value.children = { value.arguments[0], value.arguments[1], value.arguments.size() == 4 ? value.arguments[3] : ValueID() };
             value.immediates = { Format::none, Format::none };
             value.arguments = WTF::move(elements);
         }
@@ -2766,7 +2826,7 @@ private:
     // between the last two but the edge to a handler.
     void foldSpreadCalls()
     {
-        BuiltinID callWithSpread = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallWithSpread"_s.span8()));
+        static const BuiltinID callWithSpread = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallWithSpread"_s.span8()));
         Vector<unsigned> uses;
         Vector<unsigned> waysIn;
         Vector<BlockID> comesFrom;
@@ -2982,7 +3042,7 @@ private:
                         // Whether it is still as it was made is not known from where it was made.
                         if (operand.function() != value.function())
                             result = false;
-                        else if (value.immediates[1] != closureIsAsMade)
+                        else if (value.immediates[1] != closureIsAsMade && value.immediates[1] != closureIsTheOneThatConstructs)
                             result = true;
                     }
                     break;
@@ -3204,6 +3264,290 @@ private:
                     waysIn[terminator.targets[1].block.index()].append(b);
                     changed = true;
                     break;
+                }
+            }
+        }
+        return changed;
+    }
+
+    struct KnownValue {
+        enum Kind : uint8_t { Unknown, Undefined, Null, Boolean, Integer, String };
+        Kind kind { Unknown };
+        int64_t number { 0 };
+    };
+
+    KnownValue knownValueOfConstant(const Value& value) const
+    {
+        switch (value.opcode) {
+        case Opcode::Undefined:
+            return { KnownValue::Undefined, 0 };
+        case Opcode::Null:
+            return { KnownValue::Null, 0 };
+        case Opcode::Boolean:
+            return { KnownValue::Boolean, value.boolean() };
+        case Opcode::Integer:
+            return { KnownValue::Integer, value.integer() };
+        case Opcode::String:
+            return { KnownValue::String, value.string().index() };
+        default:
+            return { };
+        }
+    }
+
+    bool mayHoldTheTest(const Block& block) const
+    {
+        if (block.terminator.kind != TerminatorKind::Branch || block.parameters.isEmpty() || block.values.isEmpty() || block.values.size() > 8)
+            return false;
+        for (ValueID id : block.values) {
+            switch (m_function.at(id).opcode) {
+            case Opcode::Undefined:
+            case Opcode::Null:
+            case Opcode::Boolean:
+            case Opcode::Integer:
+            case Opcode::String:
+            case Opcode::ToBoolean:
+            case Opcode::LogicalNot:
+            case Opcode::IsUndefinedOrNull:
+            case Opcode::StrictEq:
+            case Opcode::BitAnd:
+            case Opcode::Cast:
+                break;
+            default:
+                return false;
+            }
+        }
+        return true;
+    }
+
+    KnownValue outcomeOfTest(const Block& join, const Arguments& brought) const
+    {
+        Vector<std::pair<ValueID, KnownValue>, 12> known;
+        for (unsigned i = 0; i < join.parameters.size(); ++i)
+            known.append({ join.parameters[i], knownValueOfConstant(m_function.at(brought[i])) });
+        auto lookUp = [&](ValueID id) -> KnownValue {
+            for (auto& [value, what] : known) {
+                if (value == id)
+                    return what;
+            }
+            return knownValueOfConstant(m_function.at(id));
+        };
+        auto boolean = [](bool value) {
+            return KnownValue { KnownValue::Boolean, value };
+        };
+        for (ValueID id : join.values) {
+            auto& value = m_function.at(id);
+            KnownValue result = knownValueOfConstant(value);
+            switch (value.opcode) {
+            case Opcode::ToBoolean: {
+                KnownValue operand = lookUp(value.child(0));
+                switch (operand.kind) {
+                case KnownValue::Unknown:
+                    break;
+                case KnownValue::Undefined:
+                case KnownValue::Null:
+                    result = boolean(false);
+                    break;
+                case KnownValue::Boolean:
+                case KnownValue::Integer:
+                    result = boolean(!!operand.number);
+                    break;
+                case KnownValue::String:
+                    result = boolean(!m_program.string(StringID(static_cast<uint32_t>(operand.number))).empty());
+                    break;
+                }
+                break;
+            }
+            case Opcode::LogicalNot: {
+                KnownValue operand = lookUp(value.child(0));
+                if (operand.kind == KnownValue::Boolean)
+                    result = boolean(!operand.number);
+                break;
+            }
+            case Opcode::IsUndefinedOrNull: {
+                KnownValue operand = lookUp(value.child(0));
+                if (operand.kind != KnownValue::Unknown)
+                    result = boolean(operand.kind == KnownValue::Undefined || operand.kind == KnownValue::Null);
+                break;
+            }
+            case Opcode::StrictEq: {
+                KnownValue left = lookUp(value.child(0));
+                KnownValue right = lookUp(value.child(1));
+                if (left.kind == KnownValue::String && right.kind == KnownValue::String)
+                    result = boolean(std::ranges::equal(m_program.string(StringID(static_cast<uint32_t>(left.number))), m_program.string(StringID(static_cast<uint32_t>(right.number)))));
+                else if (left.kind != KnownValue::Unknown && right.kind != KnownValue::Unknown)
+                    result = boolean(left.kind == right.kind && left.number == right.number);
+                break;
+            }
+            case Opcode::BitAnd: {
+                KnownValue left = lookUp(value.child(0));
+                KnownValue right = lookUp(value.child(1));
+                if (left.kind == KnownValue::Integer && right.kind == KnownValue::Integer)
+                    result = { KnownValue::Integer, static_cast<int32_t>(left.number) & static_cast<int32_t>(right.number) };
+                else if ((left.kind == KnownValue::Integer && !static_cast<int32_t>(left.number)) || (right.kind == KnownValue::Integer && !static_cast<int32_t>(right.number)))
+                    result = { KnownValue::Integer, 0 };
+                break;
+            }
+            case Opcode::Cast: {
+                KnownValue operand = lookUp(value.child(0));
+                uint16_t admitted = m_program.at(value.type).primitives;
+                if (value.castReason() != CastReason::As && ((operand.kind == KnownValue::Undefined && admitted & Primitive::Undefined) || (operand.kind == KnownValue::Null && admitted & Primitive::Null)))
+                    result = operand;
+                break;
+            }
+            default:
+                break;
+            }
+            known.append({ id, result });
+        }
+        return lookUp(join.terminator.value);
+    }
+
+    BitVector m_sidesRefused;
+
+    bool threadWaysThatDecideTheTest()
+    {
+        unsigned numberOfBlocks = m_function.blocks.size();
+        BitVector holdsTheTest(numberOfBlocks);
+        for (unsigned j = 1; j < numberOfBlocks; ++j) {
+            if (mayHoldTheTest(m_function.blocks[j]))
+                holdsTheTest.set(j);
+        }
+        if (holdsTheTest.isEmpty())
+            return false;
+        bool mayThread = false;
+        for (unsigned b = 0; b < numberOfBlocks && !mayThread; ++b) {
+            auto& terminator = m_function.blocks[b].terminator;
+            if (terminator.kind != TerminatorKind::Jump && terminator.kind != TerminatorKind::Branch)
+                continue;
+            for (auto& target : terminator.targets) {
+                unsigned j = target.block.index();
+                if (j == b || !holdsTheTest.get(j))
+                    continue;
+                KnownValue outcome = outcomeOfTest(m_function.blocks[j], target.arguments);
+                mayThread |= outcome.kind == KnownValue::Boolean && !m_sidesRefused.get(j * 2 + (outcome.number ? 0 : 1));
+            }
+        }
+        if (!mayThread)
+            return false;
+        Vector<unsigned> joinThatDefines;
+        joinThatDefines.fill(0, m_function.values.size());
+        for (unsigned j = 1; j < numberOfBlocks; ++j) {
+            auto& join = m_function.blocks[j];
+            if (!holdsTheTest.get(j))
+                continue;
+            for (ValueID id : join.parameters)
+                joinThatDefines[id.index()] = j;
+            for (ValueID id : join.values)
+                joinThatDefines[id.index()] = j;
+        }
+        Vector<Vector<unsigned, 2>> usersBeyond(numberOfBlocks);
+        Vector<Vector<unsigned, 2>> waysIn(numberOfBlocks);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            auto& block = m_function.blocks[b];
+            auto note = [&](ValueID child) {
+                unsigned j = joinThatDefines[child.index()];
+                if (j && j != b && !usersBeyond[j].contains(b))
+                    usersBeyond[j].append(b);
+            };
+            for (ValueID id : block.values)
+                std::as_const(m_function.at(id)).forEachChild(note);
+            block.terminator.forEachChild([&](ValueID& child) {
+                note(child);
+            });
+            if (block.terminator.kind != TerminatorKind::Jump && block.terminator.kind != TerminatorKind::Branch)
+                continue;
+            for (auto& target : block.terminator.targets)
+                waysIn[target.block.index()].append(b);
+        }
+        BitVector isLoopHead(numberOfBlocks);
+        {
+            Vector<uint8_t> state;
+            state.fill(0, numberOfBlocks);
+            Vector<std::pair<unsigned, unsigned>, 16> stack { { 0, 0 } };
+            state[0] = 1;
+            while (!stack.isEmpty()) {
+                auto& [b, next] = stack.last();
+                auto& targets = m_function.blocks[b].terminator.targets;
+                if (next == targets.size()) {
+                    state[b] = 2;
+                    stack.removeLast();
+                    continue;
+                }
+                unsigned successor = targets[next++].block.index();
+                if (state[successor] == 1)
+                    isLoopHead.set(successor);
+                else if (!state[successor]) {
+                    state[successor] = 1;
+                    stack.append({ successor, 0 });
+                }
+            }
+        }
+        auto reachesUser = [&](unsigned j, unsigned from) {
+            if (usersBeyond[j].isEmpty())
+                return false;
+            BitVector seen(numberOfBlocks);
+            seen.set(j);
+            seen.set(from);
+            Vector<unsigned, 16> worklist { from };
+            unsigned budget = 128;
+            while (!worklist.isEmpty()) {
+                unsigned b = worklist.takeLast();
+                if (usersBeyond[j].contains(b) || !budget--)
+                    return true;
+                for (auto& target : m_function.blocks[b].terminator.targets) {
+                    if (!seen.set(target.block.index()))
+                        worklist.append(target.block.index());
+                }
+            }
+            return false;
+        };
+        bool changed = false;
+        for (unsigned j = 1; j < numberOfBlocks; ++j) {
+            auto& join = m_function.blocks[j];
+            if (!holdsTheTest.get(j))
+                continue;
+            if (isLoopHead.get(j) || join.terminator.targets[0].block.index() == j || join.terminator.targets[1].block.index() == j) {
+                m_sidesRefused.set(j * 2);
+                m_sidesRefused.set(j * 2 + 1);
+                continue;
+            }
+            std::array<std::optional<bool>, 2> mayGoStraightTo;
+            for (unsigned way = 0; way < waysIn[j].size(); ++way) {
+                unsigned b = waysIn[j][way];
+                if (b == j)
+                    continue;
+                auto& terminator = m_function.blocks[b].terminator;
+                for (auto& target : terminator.targets) {
+                    if (target.block.index() != j)
+                        continue;
+                    Arguments brought = target.arguments;
+                    KnownValue outcome = outcomeOfTest(join, brought);
+                    if (outcome.kind != KnownValue::Boolean)
+                        continue;
+                    unsigned side = outcome.number ? 0 : 1;
+                    auto& chosen = join.terminator.targets[side];
+                    if (!mayGoStraightTo[side]) {
+                        bool passesItsOwn = false;
+                        for (ValueID argument : chosen.arguments)
+                            passesItsOwn |= join.values.contains(argument);
+                        mayGoStraightTo[side] = !passesItsOwn && !reachesUser(j, chosen.block.index());
+                        if (!*mayGoStraightTo[side])
+                            m_sidesRefused.set(j * 2 + side);
+                    }
+                    if (!*mayGoStraightTo[side])
+                        continue;
+                    Target result;
+                    result.block = chosen.block;
+                    for (ValueID argument : chosen.arguments) {
+                        size_t index = join.parameters.find(argument);
+                        result.arguments.append(index == notFound ? argument : brought[index]);
+                        unsigned other = joinThatDefines[result.arguments.last().index()];
+                        if (other && other != b && !usersBeyond[other].contains(b))
+                            usersBeyond[other].append(b);
+                    }
+                    target = WTF::move(result);
+                    waysIn[target.block.index()].append(b);
+                    changed = true;
                 }
             }
         }
@@ -3687,6 +4031,42 @@ void moveBirthsIntoArms(const Program& program, Function& function)
     Cleanup(program, function).moveBirthsIntoArms();
 }
 
+void compactBlocks(Function& function)
+{
+    unsigned count = function.blocks.size();
+    if (count < 2)
+        return;
+    BitVector isKept(count);
+    isKept.quickSet(0);
+    for (unsigned b = 0; b < count; ++b) {
+        auto& block = function.blocks[b];
+        if (!block.values.isEmpty() || !block.parameters.isEmpty() || block.terminator.kind != TerminatorKind::Unreachable)
+            isKept.quickSet(b);
+        for (auto& target : block.terminator.targets)
+            isKept.quickSet(target.block.index());
+    }
+    if (isKept.bitCount() == count)
+        return;
+    Vector<uint32_t> movedTo(FillWith { }, count, Format::none);
+    unsigned next = 0;
+    for (unsigned b = 0; b < count; ++b) {
+        if (!isKept.quickGet(b))
+            continue;
+        if (next != b)
+            function.blocks[next] = WTF::move(function.blocks[b]);
+        movedTo[b] = next++;
+    }
+    function.blocks.shrink(next);
+    for (auto& block : function.blocks) {
+        for (auto& target : block.terminator.targets)
+            target.block = BlockID(movedTo[target.block.index()]);
+    }
+    for (auto& value : function.values) {
+        if (value.opcode == Opcode::Parameter && value.immediates[0] && value.immediates[0] < count)
+            value.immediates[0] = movedTo[value.immediates[0]];
+    }
+}
+
 void cleanUp(const Program& program, Function& function)
 {
     noteAllocationSites(program, function);
@@ -3768,6 +4148,7 @@ bool mayThrow(const Program& program, const Function& function, const Value& val
     case Opcode::BuiltinFunction:
     case Opcode::TypeOfIs:
     case Opcode::AssertNotAllocated:
+    case Opcode::MaterializeEnvironment:
     case Opcode::CatchValue:
     case Opcode::LoopHint:
     case Opcode::GetResumeMode:
@@ -3867,6 +4248,32 @@ static bool closesIteratorOfArrayOrString(const Program& program, const Function
 unsigned removeRedundantCatchBlocks(const Program& program, Function& function)
 {
     unsigned removed = 0;
+    BitVector isUsedInAnotherBlock;
+    Vector<Vector<unsigned, 2>> blocksThatUnwindTo;
+    auto findUsesAndWhoUnwindsWhere = [&] {
+        constexpr unsigned none = UINT_MAX;
+        Vector<unsigned> definedIn;
+        definedIn.fill(none, function.values.size());
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            for (ValueID id : function.blocks[b].values)
+                definedIn[id.index()] = b;
+        }
+        blocksThatUnwindTo.grow(function.blocks.size());
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            auto noteUse = [&](ValueID used) {
+                if (definedIn[used.index()] != b)
+                    isUsedInAnotherBlock.set(used.index());
+            };
+            for (ValueID id : function.blocks[b].values)
+                function.at(id).forEachChild(noteUse);
+            auto& terminator = function.blocks[b].terminator;
+            terminator.forEachChild(noteUse);
+            if (terminator.kind == TerminatorKind::Invoke)
+                blocksThatUnwindTo[terminator.targets[1].block.index()].append(b);
+            else if (terminator.kind == TerminatorKind::Throw && !terminator.targets.isEmpty())
+                blocksThatUnwindTo[terminator.targets[0].block.index()].append(b);
+        }
+    };
     for (unsigned b = 0; b < function.blocks.size(); ++b) {
         auto& handler = function.blocks[b];
         if (handler.terminator.kind != TerminatorKind::Throw || handler.values.isEmpty() || !handler.parameters.isEmpty())
@@ -3874,22 +4281,16 @@ unsigned removeRedundantCatchBlocks(const Program& program, Function& function)
         ValueID caught = handler.values[0];
         if (function.at(caught).opcode != Opcode::CatchValue || handler.terminator.value != caught)
             continue;
+        if (blocksThatUnwindTo.isEmpty())
+            findUsesAndWhoUnwindsWhere();
         bool onlyRethrows = true;
         for (unsigned i = 1; i < handler.values.size(); ++i)
             onlyRethrows &= closesIteratorOfArrayOrString(program, function, function.at(handler.values[i]));
         // What unwinds to it unwinds to where it rethrows to.
         Vector<Target, 2> outer = handler.terminator.targets;
         // Nor does anything else look at what it caught: it dominates where it rethrows to.
-        auto noteUse = [&](ValueID used) {
-            onlyRethrows &= !handler.values.contains(used);
-        };
-        for (unsigned other = 0; other < function.blocks.size(); ++other) {
-            if (other == b)
-                continue;
-            for (ValueID id : function.blocks[other].values)
-                function.at(id).forEachChild(noteUse);
-            function.blocks[other].terminator.forEachChild(noteUse);
-        }
+        for (ValueID id : handler.values)
+            onlyRethrows &= !isUsedInAnotherBlock.get(id.index());
         for (auto& target : outer) {
             for (ValueID argument : target.arguments)
                 onlyRethrows &= !handler.values.contains(argument);
@@ -3897,30 +4298,20 @@ unsigned removeRedundantCatchBlocks(const Program& program, Function& function)
         if (!onlyRethrows)
             continue;
         bool isUnwoundTo = false;
-        for (unsigned other = 0; other < function.blocks.size(); ++other) {
+        for (unsigned other : std::exchange(blocksThatUnwindTo[b], { })) {
             if (other == b)
                 continue;
             auto& terminator = function.blocks[other].terminator;
-            switch (terminator.kind) {
-            case TerminatorKind::Invoke:
-                if (terminator.targets[1].block != BlockID(b))
-                    break;
-                if (outer.isEmpty()) {
-                    terminator.kind = TerminatorKind::Jump;
-                    terminator.targets.shrink(1);
-                } else
-                    terminator.targets[1] = outer[0];
-                isUnwoundTo = true;
-                break;
-            case TerminatorKind::Throw:
-                if (terminator.targets.isEmpty() || terminator.targets[0].block != BlockID(b))
-                    break;
+            if (terminator.kind == TerminatorKind::Throw)
                 terminator.targets = outer;
-                isUnwoundTo = true;
-                break;
-            default:
-                break;
-            }
+            else if (outer.isEmpty()) {
+                terminator.kind = TerminatorKind::Jump;
+                terminator.targets.shrink(1);
+            } else
+                terminator.targets[1] = outer[0];
+            if (!outer.isEmpty())
+                blocksThatUnwindTo[outer[0].block.index()].append(other);
+            isUnwoundTo = true;
         }
         removed += isUnwoundTo;
     }
@@ -4271,7 +4662,7 @@ private:
             return none;
         uint32_t result = m_function.blocks.size();
         m_function.blocks.append(Block { });
-        Vector<ValueID> values;
+        ValuesOfBlock values;
         while (true) {
             if (b == m_turn || path.blocks.contains(b))
                 return none;

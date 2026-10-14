@@ -40,6 +40,8 @@ void expandDisposableStacks(Program&);
 // Splits each async function and generator into a ramp and a resume function with a coroutine frame.
 void splitCoroutines(Program&);
 BitVector blocksInLoops(const Function&);
+constexpr unsigned isInNoCycle = UINT_MAX;
+Vector<unsigned> cycleOfEachBlock(const Function&);
 bool mayLeaveConstructionToBody(const Program&, FunctionID, const Function&, const Value&);
 // For every function that is used as a value, every method and every constructor of a class: what someone calls who does not know the
 // function. It holds the arguments to the types of the parameters (Cast: As where the type is written down, else Store) and calls the function.
@@ -71,6 +73,7 @@ Vector<uint8_t> encodeData(const Program&);
 void verify(const Program&, FunctionID, const Function&, Vector<String>& findings);
 void verifyRegExpLiterals(const Program&, Vector<String>& findings);
 void cleanUp(const Program&, Function&);
+void compactBlocks(Function&);
 void cleanUpIfAnythingFolds(const Program&, Function&);
 bool threadOwnKeysOfForIn(const Program&, Function&);
 // Behind all passes on the function, once: the birth that a wrapper (Function::worker) has brought along and that is still there goes from the block where the ways out of the worker meet into each of them.
@@ -85,6 +88,7 @@ void noteAllocation(const Program&, Function&, const Value& site, AllocationOutc
 void noteAllocationSites(const Program&, Function&);
 void concludeAllocationNotes(const Program&, Function&);
 void printAllocationRemarks(const Program&, PrintStream&);
+void printUsesOfAllocations(const Program&, PrintStream&);
 
 static constexpr unsigned stringBuilderCapacity = 128;
 static constexpr unsigned maxStringBuilderAppendRun = 64;
@@ -109,7 +113,11 @@ StringBuilderAnalysis analyzeStringBuilders(const Program&, FunctionID, const Fu
 void dumpStringBuilderRemarks(const Program&, PrintStream&);
 BitVector computeMapKeyValues(const Program&, FunctionID, const Function&);
 void computeFunctionsReturningMapKeys(Program&);
-void findEnvironmentsInFrames(Program&);
+void findOperandsOnlyCalled(Program&);
+void verifyParametersOnlyCalled(const Program&, Vector<String>& findings);
+void findClosuresInFrames(Program&);
+void findEnvironmentsInFrames(Program&, Vector<String>& findings);
+void reuseEnvironments(Program&);
 // `===` or `==` of two constants: nil, booleans, numbers, strings. Nothing: one is no constant, or it is not told here.
 std::optional<bool> areEqualConstants(const Program&, const Value&, const Value&, bool isStrict);
 // Part of cleanUp(): a read of a field or a variable that repeats one whose outcome still holds becomes an Upcast of that one. Yields whether there was one.
@@ -135,7 +143,7 @@ unsigned removeRedundantCatchBlocks(const Program&, Function&);
 // receiver has its original structure. Yields how much it changed.
 unsigned resolvePreludeCalls(const Program&, Function&);
 // A call of a built-in method on a receiver of unknown class gets a fast path for the class it is speculated to be of. Yields how much it changed.
-unsigned speculateOnReceivers(const Program&, Function&);
+unsigned speculateOnReceivers(const Program&, FunctionID, Function&);
 // What comes down to one entry of the table of built-ins says so from here on.
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);
@@ -162,6 +170,9 @@ std::optional<FieldAccess> fieldOf(const Program&, const Type& receiver, StringI
 // Whether an object of a member of the view that has no own property of the name may inherit one, whether or not its layout has a field of
 // the name. Then a read, `in` and [[Set]] ask the prototype chain where the field is absent.
 bool mayInherit(const Program&, LayoutID view, StringID name);
+bool storeMayAskPrototypeChain(const Program&, const Function&, const Block&, size_t index, LayoutID view, StringID name);
+bool mayGiveUp(const Program&, LayoutID view);
+bool storeMayMakeObjectGiveUp(const Program&, const Function&, const Block&, size_t index, LayoutID view);
 bool onlyExtraPropertiesSupply(const Program&, LayoutID view, StringID name);
 // The part of that which holds of every such object: the prototype that its layout says may supply the name. For the rest, a member with
 // Layout::mayHaveOtherPrototype, the object says whether to ask: orderWordHasExtraProperties, see Typed::Object::noteWhetherToAsk().
@@ -222,7 +233,12 @@ Writes writesOf(const Program&, const Function&, const Block&, size_t index);
 // Of an Operation or a CallBuiltin: which operation of the language it is, if it is one.
 std::optional<LanguageOperation> languageOperationOf(const Program&, const Value&);
 // The names that are seen to be stored to the object or defined on it, and how many stores there are under symbols: in the function, and in those it calls by name with the object for `this` or for an argument, `depth` calls deep.
-void collectPropertiesGivenTo(const Program&, const Function&, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys);
+struct UserInBlock {
+    unsigned block;
+    ValueID value;
+};
+using UsersInBlocks = Vector<UserInBlock, 4>;
+void collectPropertiesGivenTo(const Program&, const Function&, ValueID object, unsigned depth, Vector<StringID, 16>& names, unsigned& numberOfKeys, const UsersInBlocks* users = nullptr, bool goesByTheChain = false);
 bool collectPropertiesGivenToThis(const Program&, FunctionID, Vector<StringID, 16>& names, unsigned& numberOfKeys);
 // What carrying out a Cast may change, from the effect summaries on. A test changes nothing, and where it fails and that is the end
 // nothing is changed either. As and Coerce go on: a plain object is copied (RuntimeState), and where Coerce converts an object to a
@@ -238,6 +254,7 @@ bool coercionMayChangeObjects(const Program&, const Type& from, const Type& coer
 bool narrowingMayRetag(const Program&, const Type&);
 // Whether it may turn the object into one of a specialization of its layout, where it is. See Function::writesShapeWords.
 bool castWritesShapeWords(const Program&, const Function&, const Value&);
+bool claimMayMakeObjects(const Program&, const Function&, const Value&);
 // Of a CallBuiltin: whether it tests that the receiver has its original structure, and is carried out by name where it has not.
 bool hasGenericFallback(const Program&, const Function&, const Value&);
 static constexpr size_t maxLengthOfTextComparedInPlace = 32;

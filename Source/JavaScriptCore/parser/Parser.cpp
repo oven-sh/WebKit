@@ -138,6 +138,7 @@ Parser<LexerType>::Parser(VM& vm, const SourceCode& source, ImplementationVisibi
     , m_implementationVisibility(implementationVisibility)
     , m_parseMode(parseMode)
     , m_isInsideOrdinaryFunction(isInsideOrdinaryFunction)
+    , m_auditSites(source.provider()->auditSites())
     , m_scriptMode(scriptMode)
     , m_superBinding(superBinding)
     , m_hasStackOverflow(false)
@@ -4200,7 +4201,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseExpression(T
         tail = context.appendToCommaExpr(tailLocation, tail, right);
     }
     context.setEndOffset(head, m_lastTokenLocation.endOffset);
-    return head;
+    return auditedIfListed(context, head, headLocation.startOffset);
 }
 
 template <typename LexerType>
@@ -4239,7 +4240,7 @@ template <typename TreeBuilder> TreeExpression Parser<LexerType>::parseDestructu
     auto rhs = parseAssignmentExpression(context);
     if (!rhs)
         propagateError();
-    return context.createDestructuringAssignment(location, pattern, rhs);
+    return auditedIfListed(context, context.createDestructuringAssignment(location, pattern, rhs), location.startOffset);
 }
 
 template <typename LexerType>
@@ -4402,7 +4403,7 @@ end:
     while (assignmentStack)
         lhs = context.createAssignment(location, assignmentStack, lhs, initialAssignmentCount, m_parserState.assignmentCount, lastTokenEndPosition());
     
-    return lhs;
+    return hadAssignment ? auditedIfListed(context, lhs, location.startOffset) : lhs;
 }
 
 template <typename LexerType>
@@ -4428,7 +4429,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     SavePoint savePoint = createSavePoint(context);
     next();
     if (m_lexer->hasLineTerminatorBeforeToken())
-        return context.createYield(location);
+        return auditedIfListed(context, context.createYield(location), location.startOffset);
 
     bool delegate = consume(TIMES);
     JSTextPosition argumentStart = tokenStartPosition();
@@ -4436,9 +4437,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseYieldExpress
     if (!argument) {
         restoreSavePoint(context, savePoint);
         next();
-        return context.createYield(location);
+        return auditedIfListed(context, context.createYield(location), location.startOffset);
     }
-    return context.createYield(location, argument, delegate, divotStart, argumentStart, lastTokenEndPosition());
+    return auditedIfListed(context, context.createYield(location, argument, delegate, divotStart, argumentStart, lastTokenEndPosition()), location.startOffset);
 }
 
 template <typename LexerType>
@@ -4483,7 +4484,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseConditionalE
     TreeExpression rhs = parseAssignmentExpression(context);
     failIfFalse(rhs, "Cannot parse right hand side of ternary operator");
     context.setEndOffset(rhs, m_lastTokenLocation.endOffset);
-    return context.createConditionalExpr(location, cond, lhs, rhs);
+    return auditedIfListed(context, context.createConditionalExpr(location, cond, lhs, rhs), location.startOffset);
 }
 
 ALWAYS_INLINE static bool isUnaryOpExcludingUpdateOp(JSTokenType token)
@@ -4578,6 +4579,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseBinaryExpres
             typename TreeBuilder::BinaryOperand lhs = context.getFromOperandStack(-2);
             context.shrinkOperandStackBy(operandStackDepth, 2);
             context.appendBinaryOperation(location, operandStackDepth, operatorStackDepth, lhs, rhs);
+            if (m_auditSites) [[unlikely]]
+                context.auditLastBinaryOperand(*m_auditSites);
             context.operatorStackPop(operatorStackDepth);
         }
         context.operatorStackAppend(operatorStackDepth, operatorToken, precedence);
@@ -4590,6 +4593,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseBinaryExpres
         typename TreeBuilder::BinaryOperand lhs = context.getFromOperandStack(-2);
         context.shrinkOperandStackBy(operandStackDepth, 2);
         context.appendBinaryOperation(location, operandStackDepth, operatorStackDepth, lhs, rhs);
+        if (m_auditSites) [[unlikely]]
+            context.auditLastBinaryOperand(*m_auditSites);
         context.operatorStackPop(operatorStackDepth);
     }
     return context.popOperandStack(operandStackDepth);
@@ -4675,7 +4680,7 @@ namedProperty:
             JSTextPosition start = tokenStartPosition();
             JSTokenLocation location(tokenLocation());
             currentScope()->useVariable(ident, m_vm.propertyNames->eval == *ident);
-            TreeExpression node = context.createResolve(location, *ident, start, lastTokenEndPosition());
+            TreeExpression node = auditedIfListed(context, context.createResolve(location, *ident, start, lastTokenEndPosition()), m_lastTokenLocation.startOffset);
             return context.createProperty(ident, node, static_cast<PropertyNode::Type>(PropertyNode::Constant | PropertyNode::Shorthand), SuperBinding::NotNeeded, InferName::Allowed, ClassElementTag::No);
         }
 
@@ -5396,6 +5401,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
         next();
     }
     size_t newCount = newTokenStartPositions.size();
+    unsigned baseStart = tokenStart();
 
     bool baseIsSuper = match(SUPER);
     bool previousBaseWasSuper = false;
@@ -5414,7 +5420,9 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             }
             base = context.createNewTargetExpr(location);
             newCount--;
+            baseStart = newTokenStartPositions[newCount].offset;
             next();
+            base = auditedIfListed(context, base, baseStart);
         } else {
             failIfTrue(match(IDENT), "\"new.\" can only be followed with target");
             failDueToUnexpectedToken();
@@ -5485,13 +5493,14 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             consumeOrFail(CLOSEPAREN, "import call expects one or two arguments");
             base = context.createImportExpr(location, expr, optionExpression, deferred, expressionStart, expressionEnd, lastTokenEndPosition());
         }
+        base = auditedIfListed(context, base, baseStart);
     } else {
         const bool isAsync = matchContextualKeyword(m_vm.propertyNames->async);
 
         if (TreeExpression argumentsDotLengthExpression = tryParseArgumentsDotLengthForFastPath(context))
             base = argumentsDotLengthExpression;
         else
-            base = parsePrimaryExpression(context);
+            base = auditedIfListed(context, parsePrimaryExpression(context), baseStart);
         failIfFalse(base, "Cannot parse base expression");
         if (isAsync && context.isResolve(base) && !m_lexer->hasLineTerminatorBeforeToken()) [[unlikely]] {
             baseIsAsyncKeyword = true;
@@ -5549,6 +5558,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
                 SetForScope nonLHSCountScope(m_parserState.nonLHSCount);
                 if (newCount) {
                     newCount--;
+                    baseStart = newTokenStartPositions[newCount].offset;
                     semanticFailIfTrue(baseIsSuper, "Cannot use new with super call");
                     JSTextPosition expressionEnd = lastTokenEndPosition();
                     TreeArguments arguments = parseArguments(context);
@@ -5626,18 +5636,23 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseMemberExpres
             default:
                 goto endOfChain;
             }
+            if (!optionalChainBase)
+                base = auditedIfListed(context, base, baseStart);
             previousBaseWasSuper = baseIsSuper;
             baseIsSuper = false;
             type = m_token.m_type;
         }
 endOfChain:
-        if (optionalChainBase)
+        if (optionalChainBase) {
             base = context.createOptionalChain(location, isOptionalCall ? 0 : optionalChainBase, base, !match(QUESTIONDOT));
+            if (!match(QUESTIONDOT))
+                base = auditedIfListed(context, base, baseStart);
+        }
     } while (match(QUESTIONDOT));
 
     semanticFailIfTrue(baseIsSuper, newCount ? "Cannot use new with super call" : "super is not valid in this context");
     while (newCount--)
-        base = context.createNewExpr(location, base, expressionStart, newTokenStartPositions[newCount], lastTokenEndPosition());
+        base = auditedIfListed(context, context.createNewExpr(location, base, expressionStart, newTokenStartPositions[newCount], lastTokenEndPosition()), newTokenStartPositions[newCount].offset);
     return base;
 }
 
@@ -5694,7 +5709,8 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseUnaryExpress
 
     if (match(AWAIT) && !m_parserState.classFieldInitMasksAsync && (currentFunctionScope()->isAsyncFunctionBoundary() || isModuleParseMode(sourceParseMode()))) [[unlikely]] {
         semanticFailIfTrue(currentScope()->isStaticBlock(), "Cannot use 'await' within static block");
-        return parseAwaitExpression(context);
+        unsigned awaitStart = tokenStart();
+        return auditedIfListed(context, parseAwaitExpression(context), awaitStart);
     }
 
     JSTokenLocation location(tokenLocation());
@@ -5743,6 +5759,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseUnaryExpress
         failIfTrueIfStrict(isEvalOrArguments, "Cannot modify '", m_parserState.lastIdentifier->impl(), "' in strict mode");
         semanticFailIfTrue(hasPrefixUpdateOp, "The ", operatorString(false, lastOperator), " operator requires a reference expression");
         next();
+        expr = auditedIfListed(context, expr, subExprStart.offset);
         break;
     case MINUSMINUS:
         semanticFailIfTrue(context.isMetaProperty(expr), metaPropertyName(context, expr), " can't come before a postfix operator");
@@ -5754,6 +5771,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseUnaryExpress
         failIfTrueIfStrict(isEvalOrArguments, "'", m_parserState.lastIdentifier->impl(), "' cannot be modified in strict mode");
         semanticFailIfTrue(hasPrefixUpdateOp, "The ", operatorString(false, lastOperator), " operator requires a reference expression");
         next();
+        expr = auditedIfListed(context, expr, subExprStart.offset);
         break;
     default:
         break;
@@ -5803,6 +5821,7 @@ template <class TreeBuilder> TreeExpression Parser<LexerType>::parseUnaryExpress
             // If we get here something has gone horribly horribly wrong
             CRASH();
         }
+        expr = auditedIfListed(context, expr, subExprStart.offset);
         context.unaryTokenStackRemoveLast(tokenStackDepth);
     }
     return expr;

@@ -42,10 +42,7 @@ const ClassInfo Exception::s_info = { "Exception"_s, nullptr, nullptr, nullptr, 
 static bool keepsReturnAddresses()
 {
 #if ENABLE(AOT)
-    if (!Options::useImmutableIntrinsics()) [[likely]]
-        return false;
-    static const bool keeps = getenv("BUN_AOT_SWITCH_LAZY_TRACES");
-    return keeps;
+    return Options::useImmutableIntrinsics();
 #else
     return false;
 #endif
@@ -88,8 +85,8 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     size_t size = thisObject->m_stack.sizeInBytes();
 #if ENABLE(AOT)
     if (auto* returnAddresses = thisObject->m_returnAddressesAndDidNotifyInspectorOfThrow.pointer()) {
+        visitor.markAuxiliary(returnAddresses);
         visitor.appendUnbarriered(AOT::tokenOf(returnAddresses->instance));
-        size += returnAddresses->returnAddresses.sizeInBytes();
     }
 #endif
     visitor.reportExtraMemoryVisited(size);
@@ -104,7 +101,7 @@ size_t Exception::estimatedSize(JSCell* cell, VM& vm)
     size_t size = thisObject->m_stack.sizeInBytes();
 #if ENABLE(AOT)
     if (auto* returnAddresses = thisObject->m_returnAddressesAndDidNotifyInspectorOfThrow.pointer())
-        size += returnAddresses->returnAddresses.sizeInBytes();
+        size += returnAddresses->sizeInBytes();
 #endif
     return Base::estimatedSize(cell, vm) + size;
 }
@@ -117,23 +114,23 @@ Exception::Exception(VM& vm, JSValue thrownValue)
 {
 }
 
-Exception::~Exception()
-{
-    delete m_returnAddressesAndDidNotifyInspectorOfThrow.pointer();
-}
+Exception::~Exception() = default;
 
 #if ENABLE(AOT)
 NEVER_INLINE bool Exception::tryKeepReturnAddresses(VM& vm)
 {
     std::unique_ptr<Vector<StackFrame>> otherFrames;
-    auto returnAddresses = vm.interpreter.tryGetStackTraceAsReturnAddresses(this, Options::exceptionStackTraceLimit(), otherFrames);
+    auto* returnAddresses = vm.interpreter.tryGetStackTraceAsReturnAddresses(this, Options::exceptionStackTraceLimit(), otherFrames);
     if (!returnAddresses)
         return false;
-    if (otherFrames)
-        m_stack = WTF::move(*otherFrames);
-    size_t size = m_stack.sizeInBytes() + returnAddresses->returnAddresses.sizeInBytes();
-    m_returnAddressesAndDidNotifyInspectorOfThrow.setPointer(returnAddresses.release());
-    vm.heap.reportExtraMemoryAllocated(this, size);
+    {
+        Locker locker { cellLock() };
+        if (otherFrames)
+            m_stack = WTF::move(*otherFrames);
+        m_returnAddressesAndDidNotifyInspectorOfThrow.setPointer(returnAddresses);
+    }
+    vm.writeBarrier(this);
+    vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
     return true;
 }
 #endif
@@ -157,10 +154,12 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
 void Exception::materializeStack()
 {
     VM& vm = this->vm();
-    std::unique_ptr<AOT::ReturnAddressTrace> returnAddresses { m_returnAddressesAndDidNotifyInspectorOfThrow.pointer() };
+    auto* returnAddresses = m_returnAddressesAndDidNotifyInspectorOfThrow.pointer();
     Vector<StackFrame> stack;
+    unsigned onTop = returnAddresses->hasFrameOfHostFunctionOnTop;
+    stack.append(m_stack.span().first(onTop));
     StackFrame::appendTypedFrames(*returnAddresses, stack);
-    stack.appendVector(m_stack);
+    stack.append(m_stack.span().subspan(onTop));
     {
         Locker locker { cellLock() };
         m_stack = WTF::move(stack);

@@ -89,9 +89,18 @@ public:
         , m_constructWith(program.find("ConstructWith"_s.span8()).value_or(StringID()))
         , m_superGet(program.find("SuperGet"_s.span8()).value_or(StringID()))
         , m_superSet(program.find("SuperSet"_s.span8()).value_or(StringID()))
-        , m_apply(Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("Apply"_s.span8())))
-        , m_isObject(Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("IsObject"_s.span8())))
-        , m_callNoInline(Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallNoInline"_s.span8())))
+        , m_apply([] {
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("Apply"_s.span8()));
+            return found;
+        }())
+        , m_isObject([] {
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("IsObject"_s.span8()));
+            return found;
+        }())
+        , m_callNoInline([] {
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallNoInline"_s.span8()));
+            return found;
+        }())
     {
     }
 
@@ -175,6 +184,7 @@ private:
         bool isCertain { true };
         // All the operand can be besides is `undefined` or `null`.
         bool isCertainUnlessNil { false };
+        FunctionID other { };
     };
 
     using Refuted = std::pair<ValueID, FunctionID>;
@@ -523,8 +533,9 @@ private:
                 return false;
             if (dispose && disposedIn == BlockID(b))
                 continue;
-            for (auto& target : block.terminator.targets) {
-                unsigned to = target.block.index();
+            bool isLeftWithoutStack = BlockID(b) == definedIn && block.terminator.kind == TerminatorKind::Invoke && block.values.last() == stack;
+            for (unsigned t = 0; t < block.terminator.targets.size() - isLeftWithoutStack; ++t) {
+                unsigned to = block.terminator.targets[t].block.index();
                 if (m_indexInRegion[to] != UINT_MAX)
                     continue;
                 m_indexInRegion[to] = 0;
@@ -566,6 +577,8 @@ private:
                 auto& targets = m_function.blocks[block].terminator.targets;
                 for (unsigned t = 0; t < targets.size(); ++t) {
                     unsigned to = targets[t].block.index();
+                    if (m_indexInRegion[to] == UINT_MAX)
+                        continue;
                     uint8_t& atEntry = resource.atEntryOf[m_indexInRegion[to]];
                     uint8_t joined = atEntry | atExitOf(resource, block, t);
                     if (std::exchange(atEntry, joined) != joined)
@@ -845,9 +858,26 @@ private:
         return appendThrowing(WTF::move(call));
     }
 
+    bool holdsSomething(FunctionID id, ValueID thisValue, std::span<const ValueID> given) const
+    {
+        auto& callee = m_program.at(id);
+        auto isHeld = [&](const Type& have, TypeID type, CastReason reason) {
+            return !type || m_program.isHeldAlready(have, m_program.at(type), reason);
+        };
+        if (callee.has(Format::FunctionHasThis) && !isHeld(typeOf(thisValue), callee.thisType, CastReason::Flow))
+            return true;
+        for (unsigned k = 0; k < callee.parameterTypes.size(); ++k) {
+            if (!isHeld(k < given.size() ? typeOf(given[k]) : m_program.at(m_program.types.undefined), callee.parameterTypes[k], callee.reasonToHoldParameter(k)))
+                return true;
+        }
+        return false;
+    }
+
     // `type`: of the value that is replaced.
     void callAndFinish(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> given, TypeID type, Yields yields)
     {
+        if (FunctionID written = m_program.at(id).writtenEntry; written && holdsSomething(id, thisValue, given))
+            id = written;
         // By the language an async function throws nothing to its caller: what it refuses of what it is handed rejects. Who does not know the function goes through its general entry: there the unwinder sees to it.
         TypeID promiseType = typeOfPromiseOf(m_program, m_program.at(id));
         bool wasWatched = m_isWatched;
@@ -1170,7 +1200,7 @@ private:
         ValueID callee = appendThrowing(WTF::move(read));
         Value call = make(Opcode::Call, original.type);
         call.children = { callee, receiver };
-        call.immediates[1] = m_inliningDepth;
+        call.immediates = { original.immediates[0], m_inliningDepth };
         call.arguments = original.arguments;
         finish(appendThrowing(WTF::move(call)));
     }
@@ -1446,6 +1476,8 @@ private:
             auto& field = m_program.at(definition.layout()).fields[definition.field()];
             if (field.onlyFunctionIsFact || field.onlyFunctionOrNil)
                 return KnownCallee { field.onlyFunction, value, { }, field.onlyFunctionIsFact, true };
+            if (field.otherFunction)
+                return KnownCallee { field.onlyFunction, value, { }, false, false, field.otherFunction };
             predicted = field.onlyFunction;
             break;
         }
@@ -1536,6 +1568,8 @@ private:
         Value test = make(Opcode::IsClosureOf, m_program.types.boolean);
         test.children[0] = callee;
         test.immediates[0] = known.function.index();
+        if (known.other)
+            test.immediates[1] = closureEvenIfAltered;
         BlockID otherwise = branch(append(WTF::move(test)));
         m_refuted[otherwise.index()] = Refuted { known.definition, known.function };
         return otherwise;
@@ -1552,7 +1586,9 @@ private:
         }
         if (!known || !mayBeCalledDirectlyWithClosure(known->function) || isRefuted(block, *known))
             return false;
-        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNil)
+        if (known->other && !mayBeCalledDirectlyWithClosure(known->other))
+            return false;
+        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNil && !known->other)
             return false;
         ValueID id = m_function.at(block).values[index];
         open(block, index);
@@ -1568,6 +1604,22 @@ private:
             given.append(original.child(0));
         given.append(original.arguments.span());
         callAndFinish(called, capturesOf(*known, original.child(0)).span(), original.child(1), given.span(), original.type, Yields::Result);
+        if (otherwise && known->other) {
+            moveTo(otherwise);
+            KnownCallee second { known->other, known->definition, { }, false, true };
+            BlockID isNil = testClosure(original.child(0), second);
+            FunctionID calledOtherwise = m_program.at(second.function).rampForClosures ? m_program.at(second.function).rampForClosures : second.function;
+            Arguments givenOtherwise;
+            if (m_program.at(calledOtherwise).takesItsClosure)
+                givenOtherwise.append(original.child(0));
+            givenOtherwise.append(original.arguments.span());
+            callAndFinish(calledOtherwise, capturesOf(second, original.child(0)).span(), original.child(1), givenOtherwise.span(), original.type, Yields::Result);
+            moveTo(isNil);
+            original.arguments.clear();
+            appendThrowing(WTF::move(original));
+            finishThrowing();
+            return true;
+        }
         if (otherwise) {
             moveTo(otherwise);
             // What is expected to be the function may be the function bound.
@@ -1577,6 +1629,8 @@ private:
                 callAndFinish(bound, capturesOf(second, original.child(0)).span(), original.child(1), original.arguments.span(), original.type, Yields::Result);
                 moveTo(neither);
             }
+            if (known->isCertainUnlessNil)
+                original.arguments.clear();
             ValueID general = appendThrowing(WTF::move(original));
             if (known->isCertainUnlessNil)
                 finishThrowing();
@@ -1649,7 +1703,7 @@ private:
             return std::nullopt;
         unsigned numberOfBoundArguments = std::min<unsigned>(numberOfArgumentsBoundBy(bind), callee.parameterTypes.size());
         // A closure has a byte for how many it captures.
-        if (callee.captureTypes.size() + 1 + numberOfBoundArguments > UINT8_MAX)
+        if (callee.captureTypes.size() + 2 + numberOfBoundArguments > UINT8_MAX)
             return std::nullopt;
         // A cast would throw here. What does not fit throws where the bound function is called.
         if (callee.has(Format::FunctionHasThis) && (bind.arguments.isEmpty() ? !m_program.at(m_program.types.undefined).isWithin(m_program.at(callee.thisType ? callee.thisType : m_program.types.anything), m_program) : !isWithin(bind.arguments[0], callee.thisType)))
@@ -1686,6 +1740,8 @@ private:
             closure.arguments.append(original.arguments.isEmpty() ? append(make(Opcode::Undefined, m_program.types.undefined)) : original.arguments[0]);
         for (unsigned i = 0; i < numberOfArgumentsBoundBy(original) && i < callee.parameterTypes.size(); ++i)
             closure.arguments.append(original.arguments[i + 1]);
+        if (closure.arguments.size() < m_program.at(bound).captureTypes.size())
+            closure.arguments.append(original.child(0));
         finish(held(append(WTF::move(closure)), original.type, CastReason::Claim));
 
         moveTo(otherwise);
@@ -1772,10 +1828,10 @@ private:
 
     // `new` on it makes an object, calls it with that for `this`, and yields the object. The object has the `prototype` of the one
     // closure there is of the function for its prototype: see Allocation::constructedBy.
-    bool mayConstructDirectly(FunctionID id) const
+    bool mayConstructDirectly(FunctionID id, bool evenWithManyClosures = false) const
     {
         auto& callee = m_program.at(id);
-        if (!mayBeCalledDirectly(id) || callee.kind != FunctionKind::Plain || !callee.captureTypes.isEmpty() || callee.hasManyClosures || !callee.has(Format::FunctionHasThis) || callee.has(Format::FunctionHasNewTarget))
+        if (!mayBeCalledDirectly(id) || callee.kind != FunctionKind::Plain || !callee.captureTypes.isEmpty() || (callee.hasManyClosures && !evenWithManyClosures) || !callee.has(Format::FunctionHasThis) || callee.has(Format::FunctionHasNewTarget))
             return false;
         return !mayReturnObject(callee);
     }
@@ -1872,6 +1928,8 @@ private:
         }
         if (otherwise) {
             moveTo(otherwise);
+            if (known.isCertainUnlessNil)
+                original.arguments.clear();
             ValueID general = appendThrowing(WTF::move(original));
             if (known.isCertainUnlessNil)
                 finishThrowing();
@@ -2019,7 +2077,10 @@ private:
         if (original.string() != m_constructWith || original.arguments.size() < 2)
             return false;
         auto known = knownCallee(original.arguments[0]);
-        if (!known || !mayConstructDirectly(known->function) || isRefuted(block, *known))
+        if (!known || !mayConstructDirectly(known->function, true) || isRefuted(block, *known))
+            return false;
+        bool isOneOfMany = m_program.at(known->function).hasManyClosures;
+        if (isOneOfMany && !m_program.genericEntrypoints.contains(known->function.index()))
             return false;
         ValueID object = original.arguments[1];
         if (m_function.at(object).opcode != Opcode::NewObjectWithShape || m_program.at(m_function.at(object).layout()).kind != LayoutKind::Record)
@@ -2034,7 +2095,14 @@ private:
 
         open(block, index - 1);
         BlockID otherwise;
-        if (!known->isCertain) {
+        if (isOneOfMany) {
+            takeCastOfResult(id);
+            Value test = make(Opcode::IsClosureOf, m_program.types.boolean);
+            test.children[0] = original.arguments[0];
+            test.immediates = { known->function.index(), closureIsTheOneThatConstructs };
+            otherwise = branch(append(WTF::move(test)));
+            m_refuted[otherwise.index()] = Refuted { known->definition, known->function };
+        } else if (!known->isCertain) {
             takeCastOfResult(id);
             otherwise = testClosure(original.arguments[0], *known);
         }
@@ -2050,8 +2118,11 @@ private:
         if (otherwise) {
             moveTo(otherwise);
             place(object);
+            bool isNil = known->isCertainUnlessNil && !isOneOfMany;
+            if (isNil)
+                original.arguments.shrink(2);
             ValueID general = appendThrowing(WTF::move(original));
-            if (known->isCertainUnlessNil)
+            if (isNil)
                 finishThrowing();
             else
                 finishWithCast(general);
@@ -2100,6 +2171,8 @@ private:
         finishWithCast(held(made, original.type, CastReason::Claim));
         if (otherwise) {
             moveTo(otherwise);
+            if (known->isCertainUnlessNil)
+                original.arguments.clear();
             ValueID general = appendThrowing(WTF::move(original));
             if (known->isCertainUnlessNil)
                 finishThrowing();
@@ -2166,16 +2239,30 @@ unsigned resolveCalls(const Program& program, Function& function, bool mayGuess)
 // The way in for callers that do not know the function: it takes the function value, `this` and the arguments as the engine passes
 // them, holds them to the types of the parameters, and calls the function. That of a constructor is only ever entered by the run time,
 // which has made `this` and passes `new.target` for the first argument if the constructor takes it: see State::createThis().
-static Function createGenericEntrypoint(const Program& program, FunctionID id)
+static Function createGenericEntrypoint(const Program& program, FunctionID id, FunctionID written = { })
 {
-    FunctionID called = program.at(id).rampForClosures ? program.at(id).rampForClosures : id;
+    FunctionID secondBody = written ? program.at(id).secondBody : FunctionID();
+    if (secondBody) {
+        auto& served = program.at(id);
+        auto& second = program.at(secondBody);
+        if (second.captureTypes == served.captureTypes && second.parameterTypes.size() == served.parameterTypes.size() && second.has(Format::FunctionHasThis) == served.has(Format::FunctionHasThis) && !served.has(Format::FunctionHasRestParameter) && !served.takesItsClosure && !second.takesItsClosure)
+            written = { };
+        else
+            secondBody = { };
+    }
+    FunctionID called = written ? written : program.at(id).rampForClosures ? program.at(id).rampForClosures : id;
     auto& callee = program.at(called);
+    if (written) {
+        auto& served = program.at(id);
+        RELEASE_ASSERT(callee.kind == served.kind && callee.length == served.length && callee.captureTypes == served.captureTypes && callee.parameterTypes.size() == served.parameterTypes.size());
+        RELEASE_ASSERT(callee.has(Format::FunctionHasThis) == served.has(Format::FunctionHasThis) && callee.has(Format::FunctionHasRestParameter) == served.has(Format::FunctionHasRestParameter) && !callee.takesItsClosure && !served.takesItsClosure);
+    }
     auto& types = program.types;
     Function entry;
     entry.name = callee.name;
     entry.kind = callee.kind;
     entry.constructedClass = callee.constructedClass;
-    entry.declaredAs = callee.declaredAs;
+    entry.declaredAs = written ? program.at(id).declaredAs : callee.declaredAs;
     entry.module = callee.module;
     entry.position = callee.position;
     entry.length = callee.length;
@@ -2197,10 +2284,12 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id)
         value.rep = repOf(program.at(type));
         return value;
     };
+    unsigned current = 0;
+    bool isWatched = false;
     auto append = [&](Value&& value) {
         ValueID result(entry.values.size());
         entry.values.append(WTF::move(value));
-        entry.blocks[0].values.append(result);
+        entry.blocks[current].values.append(result);
         return result;
     };
     auto addParameter = [&](TypeID type) {
@@ -2218,7 +2307,21 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id)
         cast.assertedType = asserted;
         cast.children[0] = value;
         cast.immediates[1] = static_cast<uint32_t>(reason);
-        return append(WTF::move(cast));
+        if (!secondBody || asserted || !type || (reason == CastReason::As && !program.at(type).views.isEmpty()))
+            return append(WTF::move(cast));
+        cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
+        ValueID result = append(WTF::move(cast));
+        if (!isWatched) {
+            isWatched = true;
+            entry.blocks.append(Block { });
+        }
+        entry.blocks.append(Block { });
+        auto& terminator = entry.blocks[current].terminator;
+        terminator.kind = TerminatorKind::Invoke;
+        current = entry.blocks.size() - 1;
+        terminator.targets.append(Target { BlockID(current), { } });
+        terminator.targets.append(Target { BlockID(1u), { } });
+        return result;
     };
 
     ValueID closure = addParameter(program.at(program.closureLayout).type);
@@ -2257,8 +2360,37 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id)
     Value call = make(Opcode::CallDirect, callee.resultType ? callee.resultType : types.anything);
     call.immediates[0] = called.index();
     call.arguments = WTF::move(all);
-    entry.blocks[0].terminator.kind = TerminatorKind::Return;
-    entry.blocks[0].terminator.value = append(WTF::move(call));
+    entry.blocks[current].terminator.kind = TerminatorKind::Return;
+    entry.blocks[current].terminator.value = append(WTF::move(call));
+    if (!isWatched)
+        return entry;
+    entry.flags |= FunctionLogsMisfits;
+    current = 1;
+    append(make(Opcode::CatchValue, types.anything));
+    auto& second = program.at(secondBody);
+    Arguments original;
+    for (unsigned i = 0; i < second.captureTypes.size(); ++i) {
+        Value capture = make(Opcode::GetCapture, second.captureTypes[i]);
+        capture.children[0] = closure;
+        capture.immediates = { id.index(), i };
+        original.append(append(WTF::move(capture)));
+    }
+    if (second.has(Format::FunctionHasThis))
+        original.append(thisValue);
+    for (unsigned i = 0; i < given.size(); ++i) {
+        if (!usesArgumentBuffer) {
+            original.append(given[i]);
+            continue;
+        }
+        Value passed = make(Opcode::GetArgument, types.anything);
+        passed.immediates[0] = i;
+        original.append(append(WTF::move(passed)));
+    }
+    Value callOfSecondBody = make(Opcode::CallDirect, second.resultType ? second.resultType : types.anything);
+    callOfSecondBody.immediates[0] = secondBody.index();
+    callOfSecondBody.arguments = WTF::move(original);
+    entry.blocks[1].terminator.kind = TerminatorKind::Return;
+    entry.blocks[1].terminator.value = append(WTF::move(callOfSecondBody));
     return entry;
 }
 
@@ -2339,6 +2471,41 @@ void createGenericEntrypoints(Program& program)
                 isValue.set(method.function.index());
         }
     }
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        if (!program.functions[i].has(Format::FunctionIsGeneralEntry))
+            continue;
+        bool isWrittenForLog = program.logsTypeErrors && program.functions[i].kind != FunctionKind::Method;
+        if (isWrittenForLog)
+            program.functions[i].flags |= FunctionLogsMisfits;
+        FunctionID served;
+        for (auto& value : program.functions[i].values) {
+            if (value.opcode != Opcode::CallDirect)
+                continue;
+            if (served) {
+                program.functions[served.index()].secondBody = value.function();
+                break;
+            }
+            auto& entry = program.functions[i];
+            auto& candidate = program.at(value.function());
+            bool fits = !isWrittenForLog || (entry.kind == candidate.kind && entry.length == candidate.length && entry.captureTypes == candidate.captureTypes && entry.parameterTypes.size() == candidate.parameterTypes.size()
+                && entry.has(Format::FunctionHasThis) == candidate.has(Format::FunctionHasThis) && entry.has(Format::FunctionHasRestParameter) == candidate.has(Format::FunctionHasRestParameter) && !entry.takesItsClosure && !candidate.takesItsClosure);
+            if (fits && isValue.get(value.function().index()) && !candidate.rampForClosures) {
+                program.functions[value.function().index()].writtenEntry = FunctionID(i);
+                served = value.function();
+            }
+            if (!served || !isWrittenForLog)
+                break;
+        }
+    }
+    for (unsigned i = 0, numberOfFunctionsAsRead = program.functions.size(); i < numberOfFunctionsAsRead; ++i) {
+        FunctionID written = program.functions[i].writtenEntry;
+        if (!written || !program.at(written).has(FunctionLogsMisfits))
+            continue;
+        Function copy = program.at(written);
+        copy.flags |= FunctionIsEnteredByValue;
+        program.functions[i].writtenEntry = FunctionID(program.functions.size());
+        program.functions.append(WTF::move(copy));
+    }
     Vector<unsigned> entered;
     for (unsigned i : isValue) {
         if (!program.functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i))
@@ -2347,13 +2514,13 @@ void createGenericEntrypoints(Program& program)
     unsigned firstEntry = program.functions.size();
     program.functions.grow(firstEntry + entered.size());
     forEachIndexInParallel(entered.size(), [&](unsigned k) {
-        program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]));
+        program.functions[firstEntry + k] = createGenericEntrypoint(program, FunctionID(entered[k]), program.functions[entered[k]].writtenEntry);
     });
     for (unsigned k = 0; k < entered.size(); ++k)
         program.genericEntrypoints.add(entered[k], FunctionID(firstEntry + k));
 }
 
-// It takes what the function captures, `this` where the function takes one, the arguments that are bound, and the parameters that are left, each as the function declares it.
+// It takes what the function captures, `this` where the function takes one, the arguments that are bound, the closure that is bound unless the function has one closure, and the parameters that are left, each as the function declares it.
 static Function createBoundFunction(const Program& program, FunctionID id, unsigned numberOfBoundArguments, StringID name)
 {
     auto& callee = program.at(id);
@@ -2393,6 +2560,10 @@ static Function createBoundFunction(const Program& program, FunctionID id, unsig
         bound.captureTypes.append(addParameter(callee.thisType));
     for (unsigned i = 0; i < taken; ++i)
         bound.captureTypes.append(addParameter(callee.parameterTypes[i]));
+    if (!callee.captureTypes.isEmpty() || callee.hasManyClosures) {
+        bound.captureTypes.append(addParameter(TypeID()));
+        all.removeLast();
+    }
     for (unsigned i = taken; i < callee.parameterTypes.size(); ++i) {
         addParameter(callee.parameterTypes[i]);
         bound.parameterTypes.append(callee.parameterTypes[i]);

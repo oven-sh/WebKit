@@ -25,6 +25,9 @@ inline MapKeyAt
 inline MapValueAt
 inline SetNext
 inline SetKeyAt
+inline WeakMapGet
+inline WeakMapHas
+inline WeakSetHas
 
 runtime MapDelete : RuntimeState EncodedJSValue (JSCell* map, EncodedJSValue key)
 runtime SetDelete : RuntimeState EncodedJSValue (JSCell* set, EncodedJSValue key)
@@ -90,9 +93,9 @@ construct WeakMap () -> new WeakMap/N ; Allocates ; HostCall
 construct WeakMap (any/GPD?, any/-...) -> new WeakMap/N ; CallsUserCode ; HostCall
 
 method WeakMap.prototype.delete this/w (any/-) -> boolean ; ReadsRuntimeState WritesRuntimeState ; HostCall
-method WeakMap.prototype.get this/P (any/-) -> anything ; ReadsRuntimeState ; HostCall
+method WeakMap.prototype.get this/P (any/-) -> anything ; ReadsRuntimeState ; Inline(WeakMapGet)
 method WeakMap.prototype.getOrInsert this/wP (any/-, any/KR) -> anything ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
-method WeakMap.prototype.has this/- (any/-) -> boolean ; ReadsRuntimeState ; HostCall
+method WeakMap.prototype.has this/- (any/-) -> boolean ; ReadsRuntimeState ; Inline(WeakMapHas)
 method WeakMap.prototype.set this/wR (any/-, any/K) -> this ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
 method WeakMap.prototype.getOrInsertComputed this/wP (any/A?, any/C?, any/-...) -> anything ; CallsUserCode ; HostCall
 
@@ -101,7 +104,7 @@ construct WeakSet (any/GP?, any/-...) -> new WeakSet/N ; CallsUserCode ; HostCal
 
 method WeakSet.prototype.add this/wR (any/-) -> this ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
 method WeakSet.prototype.delete this/w (any/-) -> boolean ; ReadsRuntimeState WritesRuntimeState ; HostCall
-method WeakSet.prototype.has this/- (any/-) -> boolean ; ReadsRuntimeState ; HostCall
+method WeakSet.prototype.has this/- (any/-) -> boolean ; ReadsRuntimeState ; Inline(WeakSetHas)
 
 construct WeakRef (any/K) -> new WeakRef/N ; MayThrow Allocates ; HostCall
 

@@ -433,20 +433,29 @@ JS_EXPORT_PRIVATE void reifyFixedStaticProperty(VM&, const ClassInfo*, const Pro
 
 // With immutable intrinsics: an entry of the table of an object whose properties are fixed (JSObject::fixProperties()), or of the
 // global object's own table, which names the intrinsics, and console, which is the host's. It cannot be replaced or deleted, reified or not.
-inline bool isFixedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+inline bool isStaticPropertyOfIntrinsic(VM& vm, JSObject& object, const HashTableValue& value)
 {
-    if (!vm.useImmutableIntrinsics) [[likely]]
+    if (!vm.fixesOrNotesIntrinsics()) [[likely]]
         return false;
-    if (object.structure()->inheritorsMayOverrideReadOnlyProperties())
+    if (object.structure()->inheritorsMayOverrideReadOnlyProperties() || object.structure()->typeInfo().wouldHaveFixedProperties())
         return true;
     const HashTable& bindings = *JSGlobalObject::info()->staticPropHashTable;
     return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue) && value.m_key != "console"_s;
 }
 
+inline bool isFixedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
+{
+    if (!vm.useImmutableIntrinsics) [[likely]]
+        return false;
+    return isStaticPropertyOfIntrinsic(vm, object, value);
+}
+
 inline unsigned attributesOfStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)
 {
     unsigned attributes = attributesForStructure(value.attributes());
-    if (isFixedStaticProperty(vm, object, value)) [[unlikely]] {
+    if (isStaticPropertyOfIntrinsic(vm, object, value)) [[unlikely]] {
+        if (!vm.useImmutableIntrinsics)
+            return attributes | PropertyAttribute::WouldBeFixed;
         attributes |= PropertyAttribute::DontDelete;
         if ((value.attributes() & (PropertyAttribute::BuiltinOrFunctionOrLazyProperty | PropertyAttribute::ConstantInteger)) && !(value.attributes() & PropertyAttribute::Accessor))
             attributes |= PropertyAttribute::ReadOnly;
@@ -604,7 +613,7 @@ inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const Proper
 
 inline void reifyStaticProperty(VM& vm, const ClassInfo* classInfo, const PropertyName& propertyName, const HashTableValue& value, JSObject& thisObj)
 {
-    if (isFixedStaticProperty(vm, thisObj, value)) [[unlikely]] {
+    if (isStaticPropertyOfIntrinsic(vm, thisObj, value)) [[unlikely]] {
         reifyFixedStaticProperty(vm, classInfo, propertyName, value, thisObj);
         return;
     }

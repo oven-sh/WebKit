@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedThreads.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -212,6 +213,8 @@ private:
                 quoted(field.typeText);
             }
             onlyFunction(field.onlyFunction, field.onlyFunctionIsFact);
+            if (field.otherFunction)
+                m_out.print(" or f", field.otherFunction.index(), " fact");
             m_out.print("\n");
         }
         static constexpr ASCIILiteral methodKinds[] = { "Method"_s, "Getter"_s, "Setter"_s };
@@ -306,7 +309,7 @@ private:
             m_out.print(" f", value.function().index());
             break;
         case Opcode::IsClosureOf:
-            m_out.print(" f", value.function().index(), value.immediates[1] == closureIsAsMade ? " as made" : "");
+            m_out.print(" f", value.function().index(), value.immediates[1] == closureIsAsMade ? " as made" : value.immediates[1] == closureEvenIfAltered ? " even if altered" : value.immediates[1] == closureIsTheOneThatConstructs ? " the one that constructs" : "");
             break;
         case Opcode::TypeOfIs:
             m_out.print(" ", value.typeofType());
@@ -328,7 +331,7 @@ private:
         }
         case Opcode::GetModuleVariable:
         case Opcode::PutModuleVariable:
-            m_out.print(" variable ", value.variable().index());
+            m_out.print(" variable ", value.variable().index(), value.findsVariableInitialized() ? ", initialized" : "");
             break;
         case Opcode::GetStaticField:
         case Opcode::PutStaticField:
@@ -397,6 +400,8 @@ private:
         default:
             break;
         }
+        if (value.methodAskedByStub != MethodAskedByStub::None)
+            m_out.print(" asked by stub ", static_cast<unsigned>(value.methodAskedByStub));
         m_out.print("\n");
     }
 
@@ -460,9 +465,11 @@ private:
         index(function.module.index());
         m_out.print(" captures (");
         CommaPrinter captureComma(", "_s);
-        for (TypeID capture : function.captureTypes) {
+        for (unsigned k = 0; k < function.captureTypes.size(); ++k) {
             m_out.print(captureComma);
-            type(capture);
+            type(function.captureTypes[k]);
+            if (function.capturesOnlyCalled.get(k))
+                m_out.print(" only called");
         }
         m_out.print(") this ");
         type(function.thisType);
@@ -473,6 +480,8 @@ private:
             type(function.parameterTypes[k]);
             if (function.annotatedParameters.get(k))
                 m_out.print(" annotated");
+            if (function.parametersOnlyCalled.get(k))
+                m_out.print(" only called");
         }
         m_out.print(") result ");
         type(function.resultType);
@@ -614,6 +623,44 @@ void Program::dump(PrintStream& out, const Type& type) const
     }
     if (type.isNever())
         out.print("never");
+}
+
+void Functions::listValuesInOrder()
+{
+    unsigned count = m_functions.size();
+    m_isListed.clear();
+    m_firstInOrder.fill(0, count + 1);
+    forEachIndexInParallel(count, [&](unsigned i) {
+        uint32_t number = 0;
+        for (auto& block : m_functions[i].blocks)
+            number += block.values.size();
+        m_firstInOrder[i + 1] = number;
+    });
+    for (unsigned i = 0; i < count; ++i)
+        m_firstInOrder[i + 1] += m_firstInOrder[i];
+    m_valuesInOrder.clear();
+    m_valuesInOrder.growWithoutInitializing(m_firstInOrder[count]);
+    auto ids = m_valuesInOrder.items<&ValueInOrder::id>();
+    auto opcodes = m_valuesInOrder.items<&ValueInOrder::opcode>();
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = m_functions[i];
+        uint32_t next = m_firstInOrder[i];
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                ids[next] = id;
+                opcodes[next++] = function.at(id).opcode;
+            }
+        }
+    });
+    m_isListed.fill(1, count);
+}
+
+size_t Functions::numberListed() const
+{
+    size_t number = 0;
+    for (uint8_t isListed : m_isListed)
+        number += isListed;
+    return number;
 }
 
 } } } // namespace JSC::AOT::Typed

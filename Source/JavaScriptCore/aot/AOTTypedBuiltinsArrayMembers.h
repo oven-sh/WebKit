@@ -9,7 +9,7 @@
     static int64_t holeIn(IndexingType);
     const B3::AbstractHeap& elementsOf(IndexingType);
     LValue allocateStorage(LValue size, LBasicBlock slowPath);
-    CellPointer allocateArrayWithHoles(Integer length, IndexingType, LBasicBlock slowPath);
+    CellPointer allocateArrayWithHoles(Integer length, IndexingType, LBasicBlock slowPath, bool isInTheMaking = false);
     IndexingType indexingTypeOfLiteral(const Arguments& elements, const Type&) const;
     LValue allocateArrayOfNumbers(IndexingType, LValue lengthAndCapacity, LBasicBlock slowPath);
     CellPointer newArrayOfType(const Arguments& elements, const Type&);
@@ -38,6 +38,7 @@
     Type arrayTypeAtBirth(ValueID) const;
     ValueID emptyLiteralBehind(ValueID receiver);
     Word32 turnsLeftInLoop();
+    std::optional<Word32> mostPushedInLoopOverCollection(ValueID literal);
     unsigned numberOfElementsPushedTo(ValueID array);
     LBasicBlock appendSpread(const Value&);
     LBasicBlock appendSpreadOfTypedArray(const Value&);
@@ -52,3 +53,4 @@
     Operand lowerArraySlice(const Value&, const Type&);
     Operand lowerArraySplice(ValueID result, const Value&, const Type&);
     Integer indexOfNumber(CellPointer array, Number);
+    std::optional<Operand> lowerArraySearchAsOneCall(ValueID result, const Value&);

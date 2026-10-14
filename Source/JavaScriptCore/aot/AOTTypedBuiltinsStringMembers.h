@@ -25,6 +25,8 @@
         B3::Variable* length;
         B3::Variable* prefix;
         B3::Air::StackSlot* buffer;
+        B3::Variable* whole;
+        B3::Variable* lengthOfWhole;
     };
     static constexpr unsigned maxStringBuilderInlineDigits = 8;
     StringBuilderAnalysis m_stringBuilderAnalysis;
@@ -59,6 +61,8 @@
     ValueID m_keyBeingMaterialized;
     std::optional<Operand> tryLookupWithSunkKey(ValueID key, const Type&, const ScopedLambda<Boxed(Word32, Pointer)>& ask, const ScopedLambda<Operand()>& slowPath);
     CellPointer concatenateAsRopes(std::span<const ValueID> parts);
+    CellPointer concatenateByStub(std::span<const ValueID> parts);
+    CellPointer concatenateByStub(CellPointer, CellPointer);
     CellPointer concatenateWhereNeeded(const Value&);
     bool isNamedLastIndex(StringID) const;
     // Goes on where the value is a RegExp object, which it yields.
@@ -96,16 +100,6 @@
     Word32 isTextByStub(CellPointer string, ValueID constant);
     Characters charactersOfStringOfLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise);
     void lowerBranchOnText();
-    struct ReadAskedForText {
-        ValueID read;
-        unsigned indexInBlock;
-        unsigned slot;
-        uint64_t bytes;
-        unsigned length;
-    };
-    std::optional<ReadAskedForText> m_readAskedForText;
-    bool asksReadForText(ValueID, const Value&);
-    void lowerBranchOnTextOfRead();
     unsigned numberOfPredecessorsOf(BlockID);
     Vector<unsigned> m_numberOfPredecessors;
     BitVector m_blocksTakenIntoBranchOnText;
@@ -126,6 +120,13 @@
     BitVector valuesUsedOtherwiseThanAsIteratorsOfSteps() const;
     UncheckedKeyHashMap<uint32_t, B3::Air::StackSlot*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_iterationsInFrame;
     void findIterationsInFrame();
+    struct ElementsTakenAtOnce {
+        B3::Air::StackSlot* slot;
+        unsigned count;
+    };
+    UncheckedKeyHashMap<uint32_t, ElementsTakenAtOnce, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_elementsTakenAtOnce;
+    void findElementsTakenAtOnce();
+    const ElementsTakenAtOnce* elementsTakenAtOnce(ValueID iterator) const;
     std::optional<Pointer> recordInFrameOf(ValueID iterator);
     const IterationOfString* iterationOfString(ValueID iterator) const;
     Word32 isStringStandingForItsIterator(ValueID iterator);

@@ -177,7 +177,7 @@ void RegExp::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    auto code = AOT::Image::codeForRegExp(m_patternString, m_flags);
+    auto code = vm.useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt;
     m_sourceIsPattern = code && code->sourceIsPattern;
     if (code && !code->keepsMoreOfPattern) {
         if (m_patternString.length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage)
@@ -416,7 +416,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
         vm->m_aotRuntimeTable->countOperation("RegExp::compile");
 #endif
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (takeCodeFromImage(*vm))
+    if (vm->useImmutableIntrinsics && takeCodeFromImage(*vm))
         return;
 #endif
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
@@ -435,7 +435,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags); code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;
@@ -532,7 +532,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
         vm->m_aotRuntimeTable->countOperation("RegExp::compile");
 #endif
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
-    if (takeCodeFromImage(*vm))
+    if (vm->useImmutableIntrinsics && takeCodeFromImage(*vm))
         return;
 #endif
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
@@ -556,7 +556,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 
 #if ENABLE(YARR_JIT)
 #if ENABLE(AOT)
-    if (auto code = AOT::Image::codeForRegExp(m_patternString, m_flags); code && code->hasCode) {
+    if (auto code = vm->useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt; code && code->hasCode) {
         ensureRegExpJITCode().setCodeFromImage(code->for8Bit, code->for16Bit, offsetVectorSize());
         m_state = JITCode;
         m_minimumSize = pattern.m_body->m_minimumSize;

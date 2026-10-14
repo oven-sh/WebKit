@@ -2455,32 +2455,97 @@ public:
     //     Instead we fixup the offsets, if needed, at the top of the next alternative's
     //     matching JIT code.
 #if USE(BUN_JSC_ADDITIONS)
-    void findBackReferencesToWhatWasJustCaptured(PatternDisjunction* disjunction)
+    void markLastTermOfAssertion(PatternAlternative& alternative)
+    {
+        if (alternative.m_terms.isEmpty())
+            return;
+        auto& last = alternative.m_terms.last();
+        if (last.matchDirection() != Forward)
+            return;
+        if (last.type == PatternTerm::Type::PatternCharacter || last.type == PatternTerm::Type::CharacterClass) {
+            last.m_isNeverBacktrackedInto = last.quantityType != QuantifierType::FixedCount;
+            return;
+        }
+        if (last.type == PatternTerm::Type::ParenthesesSubpattern && last.quantityType == QuantifierType::FixedCount && last.quantityMinCount == 1 && last.quantityMaxCount == 1 && last.parentheses.disjunction->m_alternatives.size() == 1)
+            markLastTermOfAssertion(*last.parentheses.disjunction->m_alternatives[0]);
+    }
+
+    struct PlaceInPattern {
+        const PatternAlternative* alternative;
+        size_t numberOfTermsAhead;
+        const PlaceInPattern* placeOfGroup;
+    };
+
+    static bool isTakenOnce(const PatternTerm& term)
+    {
+        return term.quantityType == QuantifierType::FixedCount && term.quantityMinCount == 1 && term.quantityMaxCount == 1;
+    }
+
+    static bool isLookaheadThatCaptures(const PatternTerm& term, unsigned subpatternId)
+    {
+        if (term.type != PatternTerm::Type::ParentheticalAssertion || term.invert() || term.matchDirection() != Forward || !isTakenOnce(term) || term.parentheses.disjunction->m_alternatives.size() != 1)
+            return false;
+        auto& inner = term.parentheses.disjunction->m_alternatives[0]->m_terms;
+        return inner.size() == 1 && inner[0].type == PatternTerm::Type::ParenthesesSubpattern && inner[0].capture() && inner[0].parentheses.subpatternId == subpatternId && isTakenOnce(inner[0]);
+    }
+
+    static bool wasJustCaptured(PlaceInPattern place, unsigned subpatternId, unsigned depth)
+    {
+        for (;;) {
+            if (!place.numberOfTermsAhead) {
+                if (!place.placeOfGroup)
+                    return false;
+                place = *place.placeOfGroup;
+                continue;
+            }
+            auto& previous = place.alternative->m_terms[place.numberOfTermsAhead - 1];
+            --place.numberOfTermsAhead;
+            switch (previous.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                continue;
+            case PatternTerm::Type::ParentheticalAssertion:
+                if (isLookaheadThatCaptures(previous, subpatternId))
+                    return true;
+                if (previous.containsAnyCaptures() && previous.parentheses.subpatternId <= subpatternId && subpatternId <= previous.parentheses.lastSubpatternId)
+                    return false;
+                continue;
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                if (!depth || !isTakenOnce(previous) || previous.matchDirection() != Forward || previous.parentheses.disjunction->m_alternatives.size() != 1)
+                    return false;
+                auto& inner = *previous.parentheses.disjunction->m_alternatives[0];
+                return wasJustCaptured({ &inner, inner.m_terms.size(), &place }, subpatternId, depth - 1);
+            }
+            default:
+                return false;
+            }
+        }
+    }
+
+    void findBackReferencesToWhatWasJustCaptured(PatternDisjunction* disjunction, const PlaceInPattern* placeOfGroup = nullptr)
     {
         for (auto& alternative : disjunction->m_alternatives) {
             auto& terms = alternative->m_terms;
             for (size_t i = 0; i < terms.size(); ++i) {
                 auto& term = terms[i];
+                PlaceInPattern place { alternative.get(), i, placeOfGroup };
                 if (term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion) {
-                    findBackReferencesToWhatWasJustCaptured(term.parentheses.disjunction);
+                    findBackReferencesToWhatWasJustCaptured(term.parentheses.disjunction, isTakenOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward ? &place : nullptr);
+                    if (term.type == PatternTerm::Type::ParentheticalAssertion && term.matchDirection() == Forward) {
+                        for (auto& inner : term.parentheses.disjunction->m_alternatives)
+                            markLastTermOfAssertion(*inner);
+                    }
                     continue;
                 }
                 if (term.type == PatternTerm::Type::NamedBackReference)
                     m_pattern.m_comparesBackreferences = true;
                 if (term.type != PatternTerm::Type::NumberedBackReference)
                     continue;
-                auto isOnce = [](const PatternTerm& one) {
-                    return one.quantityType == QuantifierType::FixedCount && one.quantityMinCount == 1 && one.quantityMaxCount == 1;
-                };
-                bool isKnown = false;
-                if (i && isOnce(term) && term.matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups) {
-                    auto& previous = terms[i - 1];
-                    if (previous.type == PatternTerm::Type::ParentheticalAssertion && !previous.invert() && previous.matchDirection() == Forward && isOnce(previous) && previous.parentheses.disjunction->m_alternatives.size() == 1) {
-                        auto& inner = previous.parentheses.disjunction->m_alternatives[0]->m_terms;
-                        isKnown = inner.size() == 1 && inner[0].type == PatternTerm::Type::ParenthesesSubpattern && inner[0].capture() && inner[0].parentheses.subpatternId == term.backReferenceSubpatternId && isOnce(inner[0]);
-                    }
-                }
+                bool mayBeKnown = isTakenOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups;
+                bool isKnown = mayBeKnown && wasJustCaptured(place, term.backReferenceSubpatternId, 8);
                 term.m_matchesWhatWasJustCaptured = isKnown;
+                term.m_isRightBehindItsLookahead = mayBeKnown && i && isLookaheadThatCaptures(terms[i - 1], term.backReferenceSubpatternId);
                 m_pattern.m_comparesBackreferences |= !isKnown;
             }
         }

@@ -885,7 +885,7 @@ bool CodeBlock::finishCreation(VM& vm, ScriptExecutable* ownerExecutable, Unlink
             break;
         }
     }
-    m_bytecodeCost = bytecodeCost;
+    m_bytecodeCost = bytecodeCost - std::min(unlinkedCodeBlock->costOfAudits(), bytecodeCost - bytecodeCost / 4);
 
 #undef CASE
 #undef INITIALIZE_METADATA

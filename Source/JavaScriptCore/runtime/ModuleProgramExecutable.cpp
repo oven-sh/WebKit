@@ -208,7 +208,7 @@ ModuleProgramExecutable* ModuleProgramExecutable::tryCreate(JSGlobalObject* glob
     ModuleProgramExecutable* executable = new (NotNull, allocateCell<ModuleProgramExecutable>(vm)) ModuleProgramExecutable(globalObject, source, linker, moduleScopeSymbolTables);
     executable->finishCreation(vm);
 #if ENABLE(AOT)
-    if (executable->useProgramData(vm))
+    if (vm.useImmutableIntrinsics && executable->useProgramData(vm))
         return executable;
 #endif
     executable->getUnlinkedCodeBlock(globalObject); // This generates and binds unlinked code block. Null: it has thrown.

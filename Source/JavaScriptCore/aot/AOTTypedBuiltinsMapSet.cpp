@@ -11,11 +11,14 @@
 #include "AOTOperationHelpers.h"
 #include "AOTRuntime.h"
 #include "AOTTypedCompactTable.h"
+#include "AOTTypedObject.h"
 #include "JSCInlines.h"
 #include "JSMap.h"
 #include "JSMapIterator.h"
 #include "JSSet.h"
 #include "JSSetIterator.h"
+#include "JSWeakMap.h"
+#include "JSWeakSet.h"
 #include <wtf/text/IntegerToStringConversion.h>
 
 namespace JSC { namespace AOT {
@@ -30,6 +33,35 @@ static JSArray* arrayWithValuesInPlace(JSValue value, unsigned leastLength)
     return array;
 }
 
+static JSCell* tryNewSetOfWhatIsWalkedWithoutCode(JSGlobalObject* globalObject, Structure* structure, JSValue given)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!given.isCell() || given.asCell()->type() == JSSetType || !JSSet::isAddFastAndNonObservable(structure))
+        return nullptr;
+    JSArray* walked = constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    bool isWalked = Typed::CollectionIteration::tryAppendTo(globalObject, walked, given);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    if (!isWalked)
+        return nullptr;
+    JSSet* set = JSSet::create(vm, structure);
+    unsigned length = walked->length();
+    bool isCompact = length <= CompactTable::maxCapacity;
+    for (unsigned i = 0; i < length; ++i) {
+        JSValue key = walked->getIndexQuickly(i);
+        if (isCompact) {
+            isCompact = CompactTable::tryAdd(globalObject, set, key, JSValue(), CompactTable::CreateIfNeeded::Yes, length);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (isCompact)
+                continue;
+        }
+        set->add(globalObject, key);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+    }
+    return set;
+}
+
 template<typename Table>
 static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure* structure, JSValue given)
 {
@@ -37,6 +69,10 @@ static JSCell* tryNewTableWithStringKeys(JSGlobalObject* globalObject, Structure
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSArray* list = arrayWithValuesInPlace(given, 1);
+    if constexpr (!isMap) {
+        if (!list)
+            RELEASE_AND_RETURN(scope, tryNewSetOfWhatIsWalkedWithoutCode(globalObject, structure, given));
+    }
     if (!list || !list->isIteratorProtocolFastAndNonObservable())
         return nullptr;
     unsigned length = list->butterfly()->publicLength();
@@ -248,6 +284,16 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Ins
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     static constexpr size_t maxLength = 64;
+    JSString* only = nullptr;
+    bool isOneString = true;
+    for (uint32_t i = 0; i < count && isOneString; ++i) {
+        JSValue part = JSValue::decode(parts[i]);
+        isOneString = part.isString();
+        if (isOneString && asString(part)->length())
+            isOneString = !std::exchange(only, asString(part));
+    }
+    if (isOneString && only)
+        OPERATION_RETURN(scope, only);
     std::array<uint32_t, 8> lengths;
     size_t length = 0;
     bool isShort = count <= lengths.size();
@@ -264,8 +310,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Ins
         length += lengths[i];
     }
     if (isShort && length <= maxLength) {
-        std::span<Latin1Character> characters;
-        String result = StringImpl::createUninitialized(length, characters);
+        static_assert(maxLength == Typed::State::maxLengthOfMadeKey);
+        std::array<Latin1Character, maxLength> characters;
         Latin1Character* cursor = characters.data();
         for (uint32_t i = 0; i < count; cursor += lengths[i++]) {
             JSValue part = JSValue::decode(parts[i]);
@@ -282,8 +328,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Ins
             else
                 memcpy(cursor, source.data(), source.size());
         }
-        result.impl()->hash();
-        OPERATION_RETURN(scope, jsString(vm, WTF::move(result)));
+        OPERATION_RETURN(scope, instance->typed->keyMadeOf(vm, std::span<const Latin1Character> { characters }.first(length)));
     }
 
     JSString* result = jsEmptyString(vm);
@@ -337,6 +382,9 @@ std::optional<Writes> writesOfInlineMapSet(InlineBuiltin which, std::span<const 
     case InlineBuiltin::MapValueAt:
     case InlineBuiltin::SetNext:
     case InlineBuiltin::SetKeyAt:
+    case InlineBuiltin::WeakMapGet:
+    case InlineBuiltin::WeakMapHas:
+    case InlineBuiltin::WeakSetHas:
         return Writes::Nothing;
     case InlineBuiltin::CollectionTable:
     case InlineBuiltin::MapNew:
@@ -608,6 +656,68 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
         return partOfEntry(false, [&] { return AOT_TYPED_OPERATION(MapValueAt, collection(), entry(1)); });
     case InlineBuiltin::SetKeyAt:
         return partOfEntry(true, [&] { return AOT_TYPED_OPERATION(SetKeyAt, collection(), entry(1)); });
+    case InlineBuiltin::WeakMapGet:
+    case InlineBuiltin::WeakMapHas:
+    case InlineBuiltin::WeakSetHas: {
+        using BucketOfMap = WeakMapBucket<WeakMapBucketDataKeyValue>;
+        using BucketOfSet = WeakMapBucket<WeakMapBucketDataKey>;
+        static_assert(hasOneBitSet(sizeof(BucketOfMap)) && hasOneBitSet(sizeof(BucketOfSet)));
+        static_assert(JSWeakMap::offsetOfBuffer() == JSWeakSet::offsetOfBuffer() && JSWeakMap::offsetOfCapacity() == JSWeakSet::offsetOfCapacity());
+        static_assert(BucketOfMap::offsetOfKey() == BucketOfSet::offsetOfKey());
+        bool isMap = which != InlineBuiltin::WeakSetHas;
+        auto asTheCollectorLeftIt = [&](LValue base, ptrdiff_t offset) {
+            return m_out.address(m_heaps.AOTTyped_collectorState, base, offset);
+        };
+        CellPointer table = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        Boxed given = in<Boxed>(arguments[0]);
+        LBasicBlock mayBeKey = m_out.newBlock();
+        LBasicBlock loop = m_out.newBlock();
+        LBasicBlock isAnother = m_out.newBlock();
+        LBasicBlock next = m_out.newBlock();
+        LBasicBlock found = m_out.newBlock();
+        LBasicBlock absent = m_out.newBlock();
+        m_out.branch(isCell(given, typeOf(arguments[0])).value(), usually(mayBeKey), rarely(absent));
+
+        m_out.appendTo(mayBeKey);
+        CellPointer key = asCell(given);
+        ValueFromBlock first = m_out.anchor(hashOfMapKey(box(key)).value());
+        LValue buffer = m_out.loadPtr(asTheCollectorLeftIt(table.value(), JSWeakMap::offsetOfBuffer()));
+        LValue mask = m_out.sub(m_out.load32(asTheCollectorLeftIt(table.value(), JSWeakMap::offsetOfCapacity())), m_out.int32One);
+        m_out.jump(loop);
+
+        m_out.appendTo(loop);
+        LValue unmasked = m_out.phi(Int32, first);
+        LValue index = m_out.bitAnd(unmasked, mask);
+        LValue bucket = m_out.add(buffer, m_out.shl(m_out.zeroExtPtr(index), m_out.constInt32(getLSBSet(isMap ? sizeof(BucketOfMap) : sizeof(BucketOfSet)))));
+        LValue keyOfBucket = m_out.loadPtr(asTheCollectorLeftIt(bucket, BucketOfMap::offsetOfKey()));
+        m_out.branch(m_out.equal(keyOfBucket, key.value()), unsure(found), unsure(isAnother));
+
+        m_out.appendTo(isAnother);
+        m_out.branch(m_out.isNull(keyOfBucket), unsure(absent), unsure(next));
+
+        m_out.appendTo(next);
+        m_out.addIncomingToPhi(unmasked, m_out.anchor(m_out.add(index, m_out.int32One)));
+        m_out.jump(loop);
+
+        m_out.appendTo(found);
+        if (which == InlineBuiltin::WeakMapGet) {
+            Rep rep = repOf(type);
+            Join join(m_out, rep, b3TypeOf(rep));
+            join.add(ensure(Boxed(m_out.load64(asTheCollectorLeftIt(bucket, BucketOfMap::offsetOfValue()))), type));
+            m_out.appendTo(absent);
+            join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
+            Operand held = join.finish();
+            ensureStillAliveHere(table);
+            return held;
+        }
+        Join join(m_out, Rep::Int32, Int32);
+        join.add(boolean(true));
+        m_out.appendTo(absent);
+        join.add(boolean(false));
+        Operand has = join.finish();
+        ensureStillAliveHere(table);
+        return ensure(has, m_program.at(m_program.types.boolean), type);
+    }
     default:
         return lowerMapOrSetBuiltin(which, result, value, inPlace);
     }

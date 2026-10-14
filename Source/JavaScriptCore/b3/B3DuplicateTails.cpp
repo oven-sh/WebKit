@@ -181,6 +181,13 @@ public:
 #endif
         if (m_onlyDecidedTests && candidates.isEmpty())
             return;
+#if USE(BUN_JSC_ADDITIONS)
+        if (candidates.isEmpty()) {
+            m_proc.resetReachability();
+            m_proc.invalidateCFG();
+            return;
+        }
+#endif
 
         // Collect the set of values that must be de-SSA'd.
         IndexSet<Value*> valuesToDemote;

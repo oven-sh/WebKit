@@ -218,6 +218,7 @@ static void branchIfSlotIsLive(CCallHelpers& jit, GPRReg slot, JumpList& slowCas
     Jump isTaken = jit.branchTest32(CCallHelpers::NonZero, Address(slot, OBJECT_OFFSETOF(Slot, structureID)));
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfSharedData()), scratch0);
     jit.subPtr(slot, scratch0, scratch0);
+    jit.addPtr(TrustedImm32(BiasedDataPointer::bias), scratch0);
     slowCases.append(jit.branchPtr(CCallHelpers::AboveOrEqual, scratch0, CCallHelpers::TrustedImmPtr(SharedData::size)));
     hasGivenUp.link(&jit);
     isTaken.link(&jit);
@@ -374,21 +375,6 @@ static void emitAllocateFromCache(CCallHelpers& jit, GPRReg cache, GPRReg result
     jit.store64(scratch0, Address(result, 0));
 }
 
-void generateFrontEndNewObject(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    emitAllocateFromCache(jit, argument2, scratch3, slowCases);
-    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
-    jit.load32(Address(argument2, OBJECT_OFFSETOF(Slot, offset)), scratch0);
-    jit.and32(TrustedImm32(Slot::offsetMask), scratch0);
-    jit.emitInitializeInlineStorage(scratch3, scratch0);
-    mutatorFence(jit, scratch0);
-    returnValue(jit, scratch3);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawNewObject);
-}
-
 static void emitFillAndReturnObject(CCallHelpers&, GPRReg values, GPRReg count);
 
 static void emitAllocateWithProperties(CCallHelpers& jit, GPRReg cache, GPRReg values, GPRReg count, JumpList& slowCases)
@@ -431,170 +417,6 @@ void generateFrontEndNewObjectLiteral(CCallHelpers& jit)
     tailCall(jit, Entry::RawNewObjectLiteral);
 }
 
-static void branchIfHasTypedLayout(CCallHelpers& jit, GPRReg structure, GPRReg scratch, JumpList& slowCases)
-{
-    if (!Options::useAOTTypedFields())
-        return;
-    jit.load16(Address(structure, Structure::offsetOfTypedLayoutID()), scratch);
-    slowCases.append(jit.branchTest32(CCallHelpers::NonZero, scratch));
-}
-
-void generateFrontEndCreateThisWithProperties(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    jit.loadPtr(Address(argument4, OBJECT_OFFSETOF(Slot, pointer)), scratch0);
-    Jump isDifferentFunction = jit.branchPtr(CCallHelpers::NotEqual, scratch0, argument1);
-    jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
-    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
-    branchIfHasTypedLayout(jit, scratch0, scratch1, slowCases);
-    jit.load32(Address(argument4, 2 * sizeof(Slot) + OBJECT_OFFSETOF(Slot, structureID)), scratch1);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch1));
-    emitAllocateWithProperties(jit, argument4, argument2, argument3, slowCases);
-
-    isDifferentFunction.link(&jit);
-    using ConstructionEntry = MegamorphicCache::ConstructionEntry;
-    slowCases.append(jit.branchIfNotFunction(argument1));
-    jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
-    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
-    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
-    branchIfHasTypedLayout(jit, scratch0, scratch2, slowCases);
-    loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
-    jit.urshift32(scratch0, TrustedImm32(MegamorphicCache::constructionHashShift), scratch2);
-    jit.urshiftPtr(argument4, TrustedImm32(MegamorphicCache::constructionHashShift), scratch4);
-    jit.xor32(scratch4, scratch2);
-    jit.and32(TrustedImm32(MegamorphicCache::constructionCacheMask), scratch2);
-    static_assert(sizeof(ConstructionEntry) == 24);
-    jit.getEffectiveAddress(BaseIndex(scratch2, scratch2, CCallHelpers::TimesTwo), scratch2);
-    jit.getEffectiveAddress(BaseIndex(cacheGPR, scratch2, CCallHelpers::TimesEight, MegamorphicCache::offsetOfConstructionEntries()), scratch4);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, Address(scratch4, ConstructionEntry::offsetOfFirstStructureID())));
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, argument4, Address(scratch4, ConstructionEntry::offsetOfSite())));
-    jit.load16(Address(scratch4, ConstructionEntry::offsetOfEpoch()), scratch2);
-    jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch0);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch0, scratch2));
-    jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
-    jit.load32(Address(scratch4, ConstructionEntry::offsetOfLastStructureID()), scratch4);
-    loadEntry(jit, Entry::StructureIDBase, scratch0);
-    jit.addPtr(scratch0, scratch4);
-    jit.emitStoreStructureWithTypeInfo(scratch4, scratch3, scratch1);
-    jit.load8(Address(scratch4, Structure::inlineCapacityOffset()), scratch0);
-    emitFillAndReturnObject(jit, argument2, argument3);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawCreateThisWithProperties);
-}
-
-void generateFrontEndCreateThis(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    slowCases.append(jit.branchIfNotFunction(argument1));
-    jit.loadPtr(Address(argument1, JSFunction::offsetOfExecutableOrRareData()), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0, TrustedImm32(JSFunction::rareDataTag)));
-    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfAllocator() - JSFunction::rareDataTag), scratch1);
-    jit.loadPtr(Address(scratch0, FunctionRareData::offsetOfObjectAllocationProfile() + ObjectAllocationProfileWithPrototype::offsetOfStructure() - JSFunction::rareDataTag), scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch1));
-    if (Options::useAOTTypedFields()) {
-        jit.urshift32(argument2, TrustedImm32(16), scratch2);
-        Jump expectsNoLayout = jit.branchTest32(CCallHelpers::Zero, scratch2);
-        jit.load16(Address(scratch0, Structure::offsetOfTypedLayoutID()), scratch3);
-        slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch2, scratch3));
-        expectsNoLayout.link(&jit);
-    }
-    jit.emitAllocateWithNonNullAllocator(scratch3, JITAllocator::variable(), scratch1, scratch2, slowCases, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
-    jit.emitStoreStructureWithTypeInfo(scratch0, scratch3, scratch1);
-    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
-    jit.load8(Address(scratch0, Structure::inlineCapacityOffset()), scratch1);
-    jit.emitInitializeInlineStorage(scratch3, scratch1);
-    mutatorFence(jit, scratch0);
-    returnValue(jit, scratch3);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawCreateThis);
-}
-
-void generateFrontEndNewFunction(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    emitAllocateFromCache(jit, argument5, scratch3, slowCases);
-    jit.storePtr(TrustedImmPtr(nullptr), Address(scratch3, JSObject::butterflyOffset()));
-    jit.storePtr(argument1, Address(scratch3, JSCallee::offsetOfScopeChain()));
-    jit.loadPtr(Address(argument5, OBJECT_OFFSETOF(Slot, pointer)), scratch0);
-    jit.storePtr(scratch0, Address(scratch3, JSFunction::offsetOfExecutableOrRareData()));
-    mutatorFence(jit, scratch0);
-    returnValue(jit, scratch3);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawNewFunction);
-}
-
-static void returnIfInHasCache(CCallHelpers& jit, JumpList& slowCases)
-{
-    using HasEntry = MegamorphicCache::HasEntry;
-    loadEntry(jit, Entry::MegamorphicCache, cacheGPR);
-    jit.load32(Address(argument1, JSCell::structureIDOffset()), scratch1);
-#if CPU(X86_64)
-    jit.move(scratch1, scratch2);
-    jit.urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift1), scratch2);
-    jit.move(scratch1, scratch3);
-    jit.urshift32(TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3);
-    jit.xor32(scratch2, scratch3);
-    jit.load32(Address(scratch0, UniquedStringImpl::flagsOffset()), scratch2);
-    jit.urshift32(TrustedImm32(StringImpl::s_flagCount), scratch2);
-    jit.add32(scratch2, scratch3);
-#else
-    jit.extractUnsignedBitfield32(scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift1), TrustedImm32(32 - MegamorphicCache::structureIDHashShift1), scratch2);
-    jit.xorUnsignedRightShift32(scratch2, scratch1, TrustedImm32(MegamorphicCache::structureIDHashShift6), scratch3);
-    jit.load32(Address(scratch0, UniquedStringImpl::flagsOffset()), scratch2);
-    jit.addUnsignedRightShift32(scratch3, scratch2, TrustedImm32(StringImpl::s_flagCount), scratch3);
-#endif
-    jit.and32(TrustedImm32(MegamorphicCache::hasCachePrimaryMask), scratch3);
-    static_assert(hasOneBitSet(sizeof(HasEntry)));
-    jit.lshift32(TrustedImm32(getLSBSet(sizeof(HasEntry))), scratch3);
-    jit.addPtr(cacheGPR, scratch3);
-    jit.addPtr(TrustedImm32(MegamorphicCache::offsetOfHasCachePrimaryEntries()), scratch3);
-    jit.load16(Address(cacheGPR, MegamorphicCache::offsetOfEpoch()), scratch2);
-    slowCases.append(jit.branch32(CCallHelpers::NotEqual, scratch1, Address(scratch3, HasEntry::offsetOfStructureID())));
-    slowCases.append(jit.branchPtr(CCallHelpers::NotEqual, Address(scratch3, HasEntry::offsetOfUid()), scratch0));
-    slowCases.append(jit.branch32WithMemory16(CCallHelpers::NotEqual, Address(scratch3, HasEntry::offsetOfEpoch()), scratch2));
-    jit.load16(Address(scratch3, HasEntry::offsetOfResult()), scratch2);
-    returnValue(jit, scratch2);
-}
-
-void generateFrontEndInById(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    branchIfNotObjectValue(jit, argument1, slowCases);
-    loadIdentifier(jit, argument2, scratch0);
-    slowCases.append(jit.branchTestPtr(CCallHelpers::Zero, scratch0));
-    returnIfInHasCache(jit, slowCases);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawInById);
-}
-
-void generateFrontEndInByVal(CCallHelpers& jit)
-{
-    JumpList slowCases;
-    enter(jit);
-    branchIfNotObjectValue(jit, argument1, slowCases);
-    slowCases.append(jit.branchIfNotCell(argument2));
-    Jump isSymbol = jit.branchIfSymbol(argument2);
-    slowCases.append(jit.branchIfNotString(argument2));
-    jit.loadPtr(Address(argument2, JSString::offsetOfValue()), scratch0);
-    slowCases.append(jit.branchIfRopeStringImpl(scratch0));
-    slowCases.append(jit.branchTest32(CCallHelpers::Zero, Address(scratch0, StringImpl::flagsOffset()), TrustedImm32(StringImpl::flagIsAtom())));
-    Jump nameIsReady = jit.jump();
-    isSymbol.link(&jit);
-    jit.loadPtr(Address(argument2, Symbol::offsetOfSymbolImpl()), scratch0);
-    nameIsReady.link(&jit);
-    returnIfInHasCache(jit, slowCases);
-    slowCases.link(&jit);
-    tailCall(jit, Entry::RawInByVal);
-}
-
 void installOperationFrontEnds(VM& vm, void** entries)
 {
     auto install = [&](Entry entry, Entry raw, Stub stub) {
@@ -608,13 +430,7 @@ void installOperationFrontEnds(VM& vm, void** entries)
     AOT_INSTALL_FRONT_END(GetByVal)
     AOT_INSTALL_FRONT_END(PutById)
     AOT_INSTALL_FRONT_END(PutByVal)
-    AOT_INSTALL_FRONT_END(InById)
-    AOT_INSTALL_FRONT_END(InByVal)
-    AOT_INSTALL_FRONT_END(NewObject)
     AOT_INSTALL_FRONT_END(NewObjectLiteral)
-    AOT_INSTALL_FRONT_END(CreateThis)
-    AOT_INSTALL_FRONT_END(CreateThisWithProperties)
-    AOT_INSTALL_FRONT_END(NewFunction)
 #define AOT_INSTALL_HELPER(name, operation) install(Entry::operation, Entry::name##SlowPath, Stub::name##WithFastPath);
     FOR_EACH_AOT_OPERATION_BEHIND_HELPER(AOT_INSTALL_HELPER)
 #undef AOT_INSTALL_HELPER

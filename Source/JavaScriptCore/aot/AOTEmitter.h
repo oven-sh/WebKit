@@ -11,7 +11,6 @@
 #include "AOTRuntime.h"
 #include "AOTStubs.h"
 #include "AOTType.h"
-#include "AOTTypeTable.h"
 #include "BytecodeIndex.h"
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
@@ -22,7 +21,12 @@
 #include "ScopeOffset.h"
 #include "VirtualRegister.h"
 #include "B3AbstractHeapRepository.h"
+#include "B3Const32Value.h"
+#include "B3Const64Value.h"
+#include "B3ConstDoubleValue.h"
+#include "B3MemoryValue.h"
 #include "B3Procedure.h"
+#include "B3ValueInlines.h"
 #include "FTLAbbreviatedTypes.h"
 #include "FTLOutput.h"
 #include "FTLValueFromBlock.h"
@@ -33,11 +37,36 @@ namespace JSC { namespace AOT {
 using FTL::LBasicBlock;
 using FTL::LType;
 using FTL::LValue;
-using FTL::TypedPointer;
 using FTL::ValueFromBlock;
 using FTL::rarely;
 using FTL::unsure;
 using FTL::usually;
+
+class TypedPointer {
+public:
+    TypedPointer() = default;
+    TypedPointer(const B3::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0)
+        : m_heap(&heap)
+        , m_base(base)
+        , m_offset(offset)
+    {
+    }
+    TypedPointer(FTL::TypedPointer pointer)
+        : m_heap(pointer.heap())
+        , m_base(pointer.value())
+    {
+    }
+
+    explicit operator bool() const { return !!m_heap; }
+    const B3::AbstractHeap* heap() const { return m_heap; }
+    LValue base() const { return m_base; }
+    ptrdiff_t offset() const { return m_offset; }
+
+private:
+    const B3::AbstractHeap* m_heap { nullptr };
+    LValue m_base { nullptr };
+    ptrdiff_t m_offset { 0 };
+};
 
 class IntegersThatLookLikeAddresses {
 public:
@@ -83,6 +112,65 @@ public:
         return block;
     }
 
+    LValue constInt32(int32_t value) { return constantAtHead<B3::Const32Value>(m_int32sAtHead, value, value); }
+    LValue constInt64(int64_t value) { return constantAtHead<B3::Const64Value>(m_int64sAtHead, value, value); }
+    LValue constDouble(double value) { return constantAtHead<B3::ConstDoubleValue>(m_doublesAtHead, std::bit_cast<int64_t>(value), value); }
+    template<typename T>
+    LValue constIntPtr(T* value) { return constInt64(std::bit_cast<intptr_t>(value)); }
+    template<typename T>
+    LValue constIntPtr(T value) { return constInt64(static_cast<intptr_t>(value)); }
+
+    LValue valueOf(TypedPointer pointer) { return pointer.offset() ? FTL::Output::add(pointer.base(), constIntPtr(pointer.offset())) : pointer.base(); }
+    FTL::TypedPointer withValue(TypedPointer pointer) { return FTL::TypedPointer(*pointer.heap(), valueOf(pointer)); }
+    TypedPointer address(const B3::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0) { return TypedPointer(heap, base, offset); }
+    TypedPointer address(LValue base, const B3::AbstractHeap& field, ptrdiff_t offset = 0) { return TypedPointer(field, base, offset + field.offset()); }
+    LValue baseIndex(LValue base, LValue index, FTL::Scale scale, ptrdiff_t offset = 0) { return FTL::Output::baseIndex(base, index, scale, offset); }
+    TypedPointer baseIndex(const B3::AbstractHeap& heap, LValue base, LValue index, FTL::Scale scale, ptrdiff_t offset = 0) { return TypedPointer(heap, FTL::Output::baseIndex(base, index, scale), offset); }
+    TypedPointer baseIndex(B3::IndexedAbstractHeap& heap, LValue base, LValue index, JSValue indexAsConstant = JSValue(), ptrdiff_t offset = 0, LValue mask = nullptr)
+    {
+        if (indexAsConstant.isInt32())
+            return address(base, heap.at(indexAsConstant.asInt32()), offset);
+        if (mask)
+            index = bitAnd(mask, index);
+        return TypedPointer(heap.atAnyIndex(), FTL::Output::add(base, mul(index, constIntPtr(heap.elementSize()))), heap.offset() + offset);
+    }
+    TypedPointer absolute(const void* address) { return FTL::Output::absolute(address); }
+
+    LValue load(TypedPointer pointer, LType type) { return loadAs(B3::Load, type, pointer); }
+    LValue load8SignExt32(TypedPointer pointer) { return loadAs(B3::Load8S, B3::Int32, pointer); }
+    LValue load8ZeroExt32(TypedPointer pointer) { return loadAs(B3::Load8Z, B3::Int32, pointer); }
+    LValue load16SignExt32(TypedPointer pointer) { return loadAs(B3::Load16S, B3::Int32, pointer); }
+    LValue load16ZeroExt32(TypedPointer pointer) { return loadAs(B3::Load16Z, B3::Int32, pointer); }
+    LValue load32(TypedPointer pointer) { return load(pointer, B3::Int32); }
+    LValue load32NonNegative(TypedPointer pointer) { return load32(pointer); }
+    LValue load64(TypedPointer pointer) { return load(pointer, B3::Int64); }
+    LValue loadPtr(TypedPointer pointer) { return load(pointer, B3::pointerType()); }
+    LValue loadFloat(TypedPointer pointer) { return load(pointer, B3::Float); }
+    LValue loadDouble(TypedPointer pointer) { return load(pointer, B3::Double); }
+    LValue load8SignExt32(LValue base, const B3::AbstractHeap& field) { return load8SignExt32(address(base, field)); }
+    LValue load8ZeroExt32(LValue base, const B3::AbstractHeap& field) { return load8ZeroExt32(address(base, field)); }
+    LValue load16SignExt32(LValue base, const B3::AbstractHeap& field) { return load16SignExt32(address(base, field)); }
+    LValue load16ZeroExt32(LValue base, const B3::AbstractHeap& field) { return load16ZeroExt32(address(base, field)); }
+    LValue load32(LValue base, const B3::AbstractHeap& field) { return load32(address(base, field)); }
+    LValue load32NonNegative(LValue base, const B3::AbstractHeap& field) { return load32(address(base, field)); }
+    LValue load64(LValue base, const B3::AbstractHeap& field) { return load64(address(base, field)); }
+    LValue loadPtr(LValue base, const B3::AbstractHeap& field) { return loadPtr(address(base, field)); }
+    LValue loadDouble(LValue base, const B3::AbstractHeap& field) { return loadDouble(address(base, field)); }
+    LValue store(LValue value, TypedPointer pointer) { return storeAs(B3::Store, value, pointer); }
+    LValue store32As8(LValue value, TypedPointer pointer) { return storeAs(B3::Store8, value, pointer); }
+    LValue store32As16(LValue value, TypedPointer pointer) { return storeAs(B3::Store16, value, pointer); }
+    LValue store32(LValue value, TypedPointer pointer) { return store(value, pointer); }
+    LValue store64(LValue value, TypedPointer pointer) { return store(value, pointer); }
+    LValue storePtr(LValue value, TypedPointer pointer) { return store(value, pointer); }
+    LValue storeFloat(LValue value, TypedPointer pointer) { return store(value, pointer); }
+    LValue storeDouble(LValue value, TypedPointer pointer) { return store(value, pointer); }
+    void store32As8(LValue value, LValue base, const B3::AbstractHeap& field) { store32As8(value, address(base, field)); }
+    void store32As16(LValue value, LValue base, const B3::AbstractHeap& field) { store32As16(value, address(base, field)); }
+    void store32(LValue value, LValue base, const B3::AbstractHeap& field) { store32(value, address(base, field)); }
+    void store64(LValue value, LValue base, const B3::AbstractHeap& field) { store64(value, address(base, field)); }
+    void storePtr(LValue value, LValue base, const B3::AbstractHeap& field) { storePtr(value, address(base, field)); }
+    void storeDouble(LValue value, LValue base, const B3::AbstractHeap& field) { storeDouble(value, address(base, field)); }
+
     void noteFoldedConstantsIn(IntegersThatLookLikeAddresses& integers) { m_foldedConstants = &integers; }
     LValue add(LValue left, LValue right) { return noteIfFolded(FTL::Output::add(left, right), left, right); }
     LValue shl(LValue value, LValue amount) { return noteIfFolded(FTL::Output::shl(value, amount), value, amount); }
@@ -90,6 +178,50 @@ public:
     LValue lShr(LValue value, LValue amount) { return noteIfFolded(FTL::Output::lShr(value, amount), value, amount); }
 
 private:
+    template<typename Key>
+    using ConstantsAtHead = UncheckedKeyHashMap<Key, LValue, IntHash<Key>, WTF::UnsignedWithZeroKeyHashTraits<Key>>;
+
+    template<typename ValueType, typename Key, typename Constant>
+    LValue constantAtHead(ConstantsAtHead<Key>& constants, Key key, Constant constant)
+    {
+        if (key >= std::numeric_limits<Key>::max() - 1)
+            return m_block->appendNew<ValueType>(m_proc, origin(), constant);
+        auto result = constants.add(key, nullptr);
+        if (!result.isNewEntry)
+            return result.iterator->value;
+        LValue value = m_proc.add<ValueType>(origin(), constant);
+        auto& atHead = m_proc.at(0)->values();
+        if (!atHead.isEmpty() && atHead.last()->effects().terminal)
+            atHead.insert(atHead.size() - 1, value);
+        else
+            atHead.append(value);
+        result.iterator->value = value;
+        return value;
+    }
+
+    std::pair<LValue, int32_t> baseAndOffsetOf(TypedPointer pointer)
+    {
+        if (pointer.offset() == static_cast<int32_t>(pointer.offset()))
+            return { pointer.base(), static_cast<int32_t>(pointer.offset()) };
+        return { valueOf(pointer), 0 };
+    }
+
+    LValue loadAs(B3::Opcode opcode, LType type, TypedPointer pointer)
+    {
+        auto [base, offset] = baseAndOffsetOf(pointer);
+        LValue load = m_block->appendNew<B3::MemoryValue>(m_proc, opcode, type, origin(), base, offset);
+        m_heaps->decorateMemory(pointer.heap(), load);
+        return load;
+    }
+
+    LValue storeAs(B3::Opcode opcode, LValue value, TypedPointer pointer)
+    {
+        auto [base, offset] = baseAndOffsetOf(pointer);
+        LValue store = m_block->appendNew<B3::MemoryValue>(m_proc, opcode, origin(), value, base, offset);
+        m_heaps->decorateMemory(pointer.heap(), store);
+        return store;
+    }
+
     LValue noteIfFolded(LValue result, LValue left, LValue right)
     {
         if (m_foldedConstants && result->hasInt64() && left->hasInt() && right->hasInt())
@@ -97,6 +229,9 @@ private:
         return result;
     }
 
+    ConstantsAtHead<int32_t> m_int32sAtHead;
+    ConstantsAtHead<int64_t> m_int64sAtHead;
+    ConstantsAtHead<int64_t> m_doublesAtHead;
     IntegersThatLookLikeAddresses* m_foldedConstants { nullptr };
     bool m_dropsNextGuard { false };
     bool m_forcesNextGuard { false };
@@ -173,15 +308,9 @@ protected:
     LValue emptyString() { return fixedPointer(Instance::offsetOfEmptyString()); }
 
     LValue newArrayFromValues(LValue values, LValue count, bool areInt32, LBasicBlock giveUp);
-    LValue newArrayFromButterfly(LValue immutableButterfly, LBasicBlock giveUp);
-    LValue newActivation(LValue scope, LValue symbolTable, LValue initialValue, LValue count, LBasicBlock giveUp);
     LValue allocateObject(Instance::InlineAllocation, LBasicBlock giveUp);
     LValue newPromise(LBasicBlock giveUp);
     LValue newResolvedPromise(LValue, LBasicBlock giveUp);
-    LValue newInternalFieldObject(Instance::InlineAllocation, std::span<const JSValue> initialValues, LBasicBlock giveUp);
-    LValue newMapOrSet(Instance::InlineAllocation, LBasicBlock giveUp);
-    LValue newArrayWithSpread(LValue values, LValue count, LValue spreadMask, LBasicBlock giveUp);
-    LValue newArrayLike(LValue length, LValue array, LBasicBlock giveUp);
     LValue newArrayWithSize(LValue length, LBasicBlock giveUp);
     struct StringParts {
         LValue base;
@@ -198,9 +327,6 @@ protected:
     LValue stringOrInt32ToString(LValue, LBasicBlock giveUp);
     LValue addStringsOrInt32s(LValue first, LValue second, LBasicBlock giveUp);
     LValue concatenate(LValue values, LValue count, LBasicBlock giveUp);
-    LValue keysOfObject(LValue, LBasicBlock giveUp);
-    void setArrayLength(LValue array, LValue length, LBasicBlock giveUp);
-    void addTypedField(LValue, LValue storedValue, LValue slot, LBasicBlock giveUp);
     LValue isOriginalArray(LValue cell);
 
     B3::Procedure& m_proc;
@@ -208,11 +334,10 @@ protected:
     B3::AbstractHeapRepository& m_heaps;
     Output m_out;
     LValue m_instance { nullptr };
-    LValue m_vm { nullptr };
-    LValue m_globalObject { nullptr };
     LValue m_table { nullptr };
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
+    bool m_leavesNextIntervalToSlowPath { false };
 };
 
 void pinRegisters(B3::Procedure&);

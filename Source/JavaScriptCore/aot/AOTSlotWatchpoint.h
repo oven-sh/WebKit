@@ -24,6 +24,10 @@ struct Data;
 struct Instance;
 struct Slot;
 
+namespace Typed {
+struct GlobalPropertyCache;
+}
+
 class SlotWatchpoint final : public Watchpoint {
 public:
     SlotWatchpoint();
@@ -78,6 +82,18 @@ private:
 
     Instance* m_instance { nullptr };
     unsigned m_row { 0 };
+};
+
+class GlobalPropertyWatchpoint final : public AdaptiveInferredPropertyValueWatchpointBase {
+    WTF_MAKE_TZONE_ALLOCATED(GlobalPropertyWatchpoint);
+public:
+    bool isWatching() const { return m_cache; }
+    void watch(VM&, const ObjectPropertyCondition&, Typed::GlobalPropertyCache&);
+
+private:
+    void handleFire(VM&, const FireDetail&) final;
+
+    Typed::GlobalPropertyCache* m_cache { nullptr };
 };
 
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;

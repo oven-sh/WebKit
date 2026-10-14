@@ -215,7 +215,7 @@ inline void UnwindFunctorBase::copyCalleeSavesToEntryFrameCalleeSavesBuffer(Stac
 #endif
 {
 #if ENABLE(AOT) && ENABLE(ASSEMBLER)
-    if (const AOT::ImageFunction* function = visitor->compiledFunctionForUnwinding()) {
+    if (const AOT::ImageFunction* function = visitor->aotFunction() ? visitor->compiledFunctionForUnwinding() : nullptr) {
         AOT::SavedRegisters saved = AOT::savedRegistersOf(*function);
         auto dontCopyRegisters = RegisterSet::stackRegisters();
         const CPURegister* slot = reinterpret_cast<const CPURegister*>(visitor->callFrame()->registers()) + saved.first;

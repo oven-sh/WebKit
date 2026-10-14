@@ -48,7 +48,9 @@ static std::optional<uint32_t> fieldStoredTo(const Program& program, const Funct
     case Opcode::PutById:
         // It is [[Set]], which asks the prototype chain: see mayInherit(). An object of a class that is made here has the prototype of the class, and a
         // literal Object.prototype.
-        if (program.prototypePropertyNames.get(store.string().index()) || (program.at(made).kind == LayoutKind::Record && program.at(made).mayHaveOtherPrototype && isForFunction))
+        if ((program.prototypePropertyNames.get(store.string().index()) && inheritsByItsLayout(program, made, store.string())) || (program.at(made).kind == LayoutKind::Record && program.at(made).mayHaveOtherPrototype && isForFunction))
+            return std::nullopt;
+        if (program.prototypePropertyNames.get(store.string().index()) && program.at(made).kind != LayoutKind::Record)
             return std::nullopt;
         return program.at(made).fieldNamed(store.string());
     default:
@@ -228,9 +230,9 @@ bool coercionMayChangeObjects(const Program& program, const Type& from, const Ty
 }
 
 // A shape transition in place, or a copy of plain data, field by field. A plain object that a type admitting foreign objects keeps gets
-// its properties replaced. Compiled code tests the structure of such an object in line (Lowering::emitCachedGetById()) and may go by one
-// that it loaded ahead of the cast: that holds as long as nothing in here deletes or moves a property of an object that is not compiled,
-// gives it another prototype or another class. The value itself is read afresh.
+// its properties replaced. Plain data that has the room becomes its copy in its own cell (State::become()): another header, other slots:
+// whoever may do that is said to write shape words, see castWritesShapeWords(), whose range has both: nothing that compiled code has
+// loaded from such an object ahead of the cast serves behind it.
 static Writes writesOfMakingObjects(const Type& from, const Type& to)
 {
     return coerces(from, to) ? Writes::RuntimeState : Writes::Nothing;
@@ -245,6 +247,14 @@ Writes writesOfElementRead(const Program& program, const Type& type)
     return Writes::Nothing;
 }
 
+bool claimMayMakeObjects(const Program& program, const Function& function, const Value& value)
+{
+    if (value.castReason() != CastReason::Claim || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
+        return false;
+    auto& from = program.typeOf(function, value.child(0));
+    return (from.anyObject || from.admitsForeignObjects(program)) && writesOfElementRead(program, program.at(value.type)) != Writes::Nothing;
+}
+
 Writes writesOfCast(const Program& program, const Function& function, const Value& value)
 {
     auto& from = program.typeOf(function, value.child(0));
@@ -255,8 +265,9 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     switch (reason) {
     case CastReason::Upcast:
         return Writes::Pure;
-    case CastReason::Store:
     case CastReason::Claim:
+        return claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
+    case CastReason::Store:
     case CastReason::NonNull:
         return Writes::Nothing;
     case CastReason::Flow:
@@ -267,6 +278,7 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
         break;
     case CastReason::CoerceFreshObject:
     case CastReason::CoerceFreshGraph:
+    case CastReason::AsFreshObject:
         RELEASE_ASSERT_NOT_REACHED();
     }
     auto& to = program.at(value.coercedType());
@@ -296,6 +308,8 @@ bool castWritesShapeWords(const Program& program, const Function& function, cons
         return narrowingMayRetag(program, program.at(value.type));
     if (!program.castsMayRetag)
         return false;
+    if (value.castReason() == CastReason::Claim)
+        return claimMayMakeObjects(program, function, value);
     auto& from = program.typeOf(function, value.child(0));
     // Also of an object of the program that a plain object leads to.
     if (value.castReason() == CastReason::As)
@@ -409,8 +423,9 @@ namespace {
 
 class EffectSummaries {
 public:
-    explicit EffectSummaries(Program& program)
+    explicit EffectSummaries(Program& program, bool asksStoresToFields = true)
         : m_program(program)
+        , m_asksStoresToFields(asksStoresToFields)
     {
     }
 
@@ -430,7 +445,7 @@ public:
         Vector<Vector<std::pair<unsigned, unsigned>>> partsOf(numberOfFunctions);
         forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
             FunctionID id(i);
-            EffectSummaries(m_program).sumUpBody(id, m_effects[ofAnyCall(id)], m_effects[ofCallThatReturns(id)], partsOf[i]);
+            EffectSummaries(m_program, m_asksStoresToFields).sumUpBody(id, m_effects[ofAnyCall(id)], m_effects[ofCallThatReturns(id)], partsOf[i]);
         });
         for (auto& parts : partsOf) {
             for (auto [dependent, summary] : parts)
@@ -493,12 +508,14 @@ private:
     {
         m_program.castsMayRetag = false;
         for (auto& layout : m_program.layouts)
-            m_program.castsMayRetag |= !layout.specializations.isEmpty() || layout.mayGiveUp;
+            m_program.castsMayRetag |= !layout.specializations.isEmpty() || layout.mayGiveUp || layout.kind == LayoutKind::Record;
     }
 
     // The slow path converts a plain-data element as an `As` cast would, stores it back and rejoins.
     Effects ofElementRead(const Value& value) const
     {
+        if (value.readsElementKnownByTheStores() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions())
+            return { Writes::Nothing, false };
         Writes writes = writesOfElementRead(m_program, m_program.at(value.type));
         return { writes, writes != Writes::Nothing && m_program.castsMayRetag };
     }
@@ -604,6 +621,11 @@ private:
         }).iterator->value;
     }
 
+    bool mayMakeReceiverGiveUp(const Function& function, const Block& block, size_t index) const
+    {
+        return storeMayMakeObjectGiveUp(m_program, function, block, index, typeOf(function, function.at(block.values[index]).child(0)).onlyView());
+    }
+
     bool isGlobalOfEngine(const Value& value) const
     {
         BuiltinName name = m_program.builtinName(value.string());
@@ -644,6 +666,7 @@ private:
         case Opcode::IsBuiltinFunction:
         case Opcode::BuiltinFunction:
         case Opcode::NewObjectWithShape:
+        case Opcode::MaterializeEnvironment:
         case Opcode::NewClosure:
         // Nothing else looks at the variable it keeps the closure in.
         case Opcode::NewClosureOnce:
@@ -668,7 +691,10 @@ private:
         case Opcode::GetModuleVariableAt:
             return changes(Writes::Nothing);
         case Opcode::PutModuleVariableAt:
+        case Opcode::FailModuleCycle:
             return changes(Writes::Fields);
+        case Opcode::AddToModuleEvaluationDepth:
+            return changes(Writes::RuntimeState);
         case Opcode::PutModuleVariable:
             return changes(Writes::Fields);
         case Opcode::GetStaticField:
@@ -676,7 +702,16 @@ private:
             return changes(Writes::Heap);
         // Nobody who was running before can have looked into what was made since.
         case Opcode::PutField:
-            return changes(isLocalAllocation(function, value.child(0)) ? Writes::RuntimeState : Writes::Fields);
+            if (auto& layout = m_program.at(value.layout()); m_asksStoresToFields && isObjectLayout(layout.kind)) {
+                auto mayAsk = [&](LayoutID view) {
+                    return storeMayAskPrototypeChain(m_program, function, block, index, view, layout.fields[value.field()].name);
+                };
+                if (mayAsk(typeOf(function, value.child(0)).onlyView()) || mayAsk(value.layout()))
+                    return changes(Writes::Heap);
+            }
+            if (isLocalAllocation(function, value.child(0)))
+                return changes(Writes::RuntimeState);
+            return { Writes::Fields, mayMakeReceiverGiveUp(function, block, index) || storeMayMakeObjectGiveUp(m_program, function, block, index, value.layout()) };
         case Opcode::GetById:
         case Opcode::InById:
             return changes(isAccessToField(function, value) || (value.isAtKnownPlace() && !Options::validateAOTTypedFacts()) ? Writes::Nothing : Writes::Heap);
@@ -687,7 +722,7 @@ private:
                 return changes(Writes::Heap);
             if (isLocalAllocation(function, value.child(0)))
                 return changes(Writes::RuntimeState);
-            return { Writes::Fields, mayTransition(function, value) };
+            return { Writes::Fields, mayTransition(function, value) || mayMakeReceiverGiveUp(function, block, index) };
         // What the engine has under the name from the start, and the program leaves there, is not looked up.
         case Opcode::GetGlobal:
         case Opcode::GetGlobalForTypeOf:
@@ -751,8 +786,12 @@ private:
         // Of an object of the program the shape says it. The prototype chain of any other is walked, which may have a proxy on it.
         case Opcode::IsInstanceOfClass:
             return changes(mayWalkPrototypeChain(m_program, function, value) ? Writes::Heap : Writes::Nothing);
-        case Opcode::CallBuiltin:
-            return changes(writesOfBuiltinCall(m_program, function, value));
+        case Opcode::CallBuiltin: {
+            Effects effects = changes(writesOfBuiltinCall(m_program, function, value));
+            if (value.type && writesOfElementRead(m_program, m_program.at(value.type)) != Writes::Nothing)
+                effects.add({ Writes::RuntimeState, m_program.castsMayRetag });
+            return effects;
+        }
         case Opcode::PutGlobal:
         case Opcode::DeleteById:
         case Opcode::InByVal:
@@ -777,6 +816,7 @@ private:
     }
 
     Program& m_program;
+    bool m_asksStoresToFields;
     // Two for each function, see ofAnyCall() and ofCallThatReturns().
     Vector<Effects> m_effects;
     // By summary: those it is part of.
@@ -794,8 +834,42 @@ Writes writesOf(const Program& program, const Function& function, const Block& b
     return EffectSummaries(const_cast<Program&>(program)).writesOf(function, block, index);
 }
 
+static void reportStoresThatMayAskPrototypeChain(Program& program)
+{
+    EffectSummaries(program, false).run();
+    auto summaries = program.functions.map([](auto& function) {
+        return std::pair { function.writes, function.writesIfItReturns };
+    });
+    EffectSummaries(program).run();
+    unsigned numberOfStores = 0;
+    unsigned numberOfFunctionsWithThem = 0;
+    unsigned numberThatRise = 0;
+    unsigned numberThatRiseIfTheyReturn = 0;
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        auto& function = program.functions[i];
+        unsigned before = numberOfStores;
+        for (auto& block : function.blocks) {
+            for (size_t index = 0; index < block.values.size(); ++index) {
+                auto& value = function.at(block.values[index]);
+                if (value.opcode != Opcode::PutField || !isObjectLayout(program.at(value.layout()).kind))
+                    continue;
+                StringID name = program.at(value.layout()).fields[value.field()].name;
+                numberOfStores += storeMayAskPrototypeChain(program, function, block, index, program.typeOf(function, value.child(0)).onlyView(), name) || storeMayAskPrototypeChain(program, function, block, index, value.layout(), name);
+            }
+        }
+        numberOfFunctionsWithThem += numberOfStores != before;
+        numberThatRise += function.writes != summaries[i].first;
+        numberThatRiseIfTheyReturn += function.writesIfItReturns != summaries[i].second;
+    }
+    dataLogLn("AOT: ", numberOfStores, " stores to fields may ask the prototype chain, in ", numberOfFunctionsWithThem, " functions; for that alone ", numberThatRise, " functions are summed up as changing the heap, ", numberThatRiseIfTheyReturn, " where they return");
+}
+
 void computeEffectSummaries(Program& program)
 {
+    if (Options::verboseAOTCompilation() && !Options::auditAOTTypedAssertions()) [[unlikely]] {
+        reportStoresThatMayAskPrototypeChain(program);
+        return;
+    }
     EffectSummaries(program).run();
 }
 

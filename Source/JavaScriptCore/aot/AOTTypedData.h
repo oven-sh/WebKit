@@ -53,7 +53,7 @@ enum class Store : uint8_t {
     // A byte, zero or one.
     Boolean,
     // Four bytes, of a field of an object that holds numbers which are expected to be int32, and maybe `undefined` or `null`. See
-    // elsewhereInt32. It is storage only: the field is of the type it is of, and holds whatever that admits.
+    // leastInt32InPlace. It is storage only: the field is of the type it is of, and holds whatever that admits.
     Int32OrElsewhere,
     // Four bytes: the address of a cell, shifted right by four.
     Cell32,
@@ -82,18 +82,19 @@ static constexpr uint64_t undefinedDouble = 0x7ffaull << 48;
 static constexpr uint64_t nullDouble = 0x7ffbull << 48;
 static constexpr uint64_t absentDouble = 0x7ffcull << 48;
 
-// Store::Int32OrElsewhere. From leastInt32InPlace on, the word is the number. Any other number (a fraction, -0, NaN, what is beyond int32,
-// these four integers) is among the extra properties of the object, under a private name for the field, and the word says so. An
-// entry beside a word that does not say so is stale, and is not looked at.
-static constexpr int32_t elsewhereInt32 = INT32_MIN;
+// Store::Int32OrElsewhere. From leastInt32InPlace on, the word is the number. Any other number (a fraction, -0, NaN, what is beyond int32
+// or below that) is in a box, eight bytes that this word alone refers to: it is INT32_MIN and the place of the box, see NumberBoxTable.
+// A field that has a box keeps it, and every number is stored into it, until the field is made nil. The collector knows nothing of it.
 static constexpr int32_t absentInt32 = INT32_MIN + 1;
 static constexpr int32_t undefinedInt32 = INT32_MIN + 2;
 static constexpr int32_t nullInt32 = INT32_MIN + 3;
-static constexpr int32_t leastInt32InPlace = INT32_MIN + 4;
+static constexpr int32_t leastInt32InPlace = -(1 << 30);
+static constexpr unsigned numberBoxShift = 3;
+inline bool refersToNumberBox(int32_t word) { return word > nullInt32 && word < leastInt32InPlace; }
 
 // Store::Cell32 and Store::OptionalCell32. Every cell the type of such a slot admits is in a MarkedBlock, so it is 16-byte aligned and within the
 // MarkedBlockCage: MarkedBlockCage::encode() and decode(). What is no cell is the low half of its JSValue, which is below every index.
-static constexpr unsigned cell32Shift = 4;
+static constexpr unsigned cell32Shift = 3;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
@@ -121,6 +122,7 @@ static constexpr ptrdiff_t offsetOfMaskInStringTable = sizeof(uint32_t);
 // Compiled code reads the shape word only where a value is held to a type (Cast, and what tests its result), where an optional field is
 // not in every member of a view, and to tell which method to call. An access of a field tests nothing: the type of the receiver is a
 // fact. So an object stays as its layout says for as long as it lives. What would change that is refused, see AOTTypedObject.h.
+enum class NamesOfCopy : uint32_t { Excluded, StoredNext, StoredFirst };
 static constexpr uint32_t shapeWordOf(uint32_t shape) { return 0 - shape; }
 static constexpr uint32_t shapeOf(uint32_t shapeWord) { return 0 - shapeWord; }
 static constexpr uint32_t offsetOfOrderWord = 8;
@@ -173,6 +175,8 @@ static constexpr uint32_t fieldIsNeverSeenAbsentAsWritten = 262144;
 // Only in FieldData::flags. The field lists one string, and compiled code takes an object of the layout to hold a string of that text there for as long as the byte
 // Instance::typedAlteredLiterals[flags >> guardOfPinnedFieldShift] is clear. Whoever stores anything else, or takes the property away, sets the byte first. See Placement::pinLiterals().
 static constexpr uint32_t fieldIsPinned = 131072;
+static constexpr uint32_t fieldMayExistWithoutStorage = 1048576;
+static constexpr uint32_t nameOfFieldCreatedWithoutStorage = 1u << 31;
 static constexpr uint32_t guardOfPinnedFieldShift = 24;
 static constexpr uint32_t numberOfGuardsOfPinnedFields = 256;
 
@@ -373,6 +377,7 @@ struct LayoutData {
     uint8_t hasExtension : 1;
     uint8_t hasPrototypeAheadOfClassObject : 1;
     uint8_t makesClassObjectWhenChanged : 1;
+    uint8_t mayBeMadeByNew : 1;
     uint32_t index;
     uint32_t shape;
     uint32_t name;
@@ -444,6 +449,7 @@ static constexpr unsigned closureStructureOf(uint8_t kindAndWhatItIsDeclaredAs)
     return kindAndWhatItIsDeclaredAs / functionIsAsync & 3;
 }
 
+static constexpr uint32_t boundFunctionHoldsItsTarget = 4;
 static constexpr unsigned numberOfSlimClosureKinds = 2;
 static constexpr unsigned slimClosureKindOf(uint8_t kindAndWhatItIsDeclaredAs)
 {
@@ -469,6 +475,13 @@ struct GlobalPropertyCache {
     int64_t location;
     // Not empty: the name has this one value for good, whatever the words above say.
     EncodedJSValue value;
+};
+
+struct FunctionTexts {
+    uint32_t numberOfEntries;
+    uint32_t entriesOffset;
+    uint32_t textOffset;
+    uint32_t pathsOffset;
 };
 
 // What the program needs at run time: in the program data, read in place.
@@ -500,7 +513,7 @@ struct Data {
     // Pairs of the generic entrypoint of a constructor and the LayoutData::index of its class, in the order of the former.
     uint32_t numberOfConstructors;
     uint32_t constructorsOffset;
-    // Three words each, sorted: the general entry of a Format::FunctionKind::Bound, that of the function it binds, how many arguments it binds.
+    // Three words each, sorted: the general entry of a Format::FunctionKind::Bound, that of the function it binds, how many arguments it binds with boundFunctionHoldsItsTarget where the last reference its closures capture is the closure that is bound.
     uint32_t numberOfBoundFunctions;
     uint32_t boundFunctionsOffset;
     uint32_t numberOfRows;
@@ -517,6 +530,7 @@ struct Data {
     uint32_t shapeSetsOffset;
     uint32_t numberOfShapeSetWords;
     uint32_t sizeOfStatics;
+    uint32_t sizeOfStaticsFilledLate;
     // What the statics hold before any code runs, where that is not zero bits. Four words each: the first 64-bit word, how many, the low and
     // the high half of what each of them holds.
     uint32_t numberOfStaticsRuns;
@@ -530,13 +544,23 @@ struct Data {
     static constexpr unsigned cardShift = 8;
     uint32_t numberOfCards;
     uint32_t rootMasksOffset;
+    uint32_t copyOnWriteButterfliesOffset;
+    uint32_t arrayLiteralsOffset;
+    static constexpr uint64_t encodedStringConstant(uint32_t string) { return (static_cast<uint64_t>(string) + 1) << 3; }
+    static constexpr uint32_t stringOfEncodedConstant(uint64_t encoded) { return static_cast<uint32_t>(encoded >> 3) - 1; }
+    static constexpr uint64_t encodedStringIsSmall = 1;
+    static constexpr uint64_t encodedStringIsMadeOnce = 4;
+    static constexpr uint64_t encodedSmallString(uint8_t characterOrZero) { return static_cast<uint64_t>(characterOrZero) << 3 | encodedStringIsSmall; }
     uint32_t numberOfFunctions;
     uint32_t functionsOffset; // For each, the number of the string that is its name.
     uint32_t functionKindsOffset; // For each a byte: its Format::FunctionKind, with functionIsAsync and functionIsGenerator.
-    uint32_t functionLengthsOffset; // For each, its `length` property, in 16 bits.
+    uint32_t functionLengthsOffset; // For each from firstFunctionClosuresGoBy to endOfFunctionsClosuresGoBy, its `length` property: in 8 bits where functionLengthsAreBytes, else in 16. The offset is of where that of function 0 would stand.
     uint32_t moduleEvaluationsOffset;
     uint32_t slimClosuresOffset;
-    uint32_t closureCountsOffset; // For each two bytes: of its closures, how many words the collector follows, which come first, and how many words there are.
+    uint32_t firstFunctionClosuresGoBy;
+    uint32_t endOfFunctionsClosuresGoBy;
+    uint32_t rowsLeftOutAheadOfClosures;
+    uint32_t closureCountsOffset; // For each from firstFunctionClosuresGoBy to endOfFunctionsClosuresGoBy two bytes: of its closures, how many words the collector follows, which come first, and how many words there are. The offset is of where those of function 0 would stand.
     // Ascending: the modules in whose place an entry function runs, by ProgramModule::entryOffset.
     uint32_t numberOfEntryPoints;
     uint32_t entryPointsOffset;
@@ -560,6 +584,8 @@ struct Data {
     // "absent" that the function does not store first, so `new` does not hand the function the object it has made of that shape.
     uint32_t numberOfRefusedFreshObjects;
     uint32_t refusedFreshObjectsOffset;
+    uint32_t numberOfFunctionsThatKeepFieldNamesOffTheirPrototypes;
+    uint32_t functionsThatKeepFieldNamesOffTheirPrototypesOffset;
     static constexpr uint32_t propertyCountIsOfWholeChain = 1u << 31;
     uint32_t numberOfPropertyCountsOfThis;
     uint32_t propertyCountsOfThisOffset;
@@ -573,16 +599,22 @@ struct Data {
     // The program was compiled with Options::auditAOTTypedAssertions(): compiled code has room for a value that fails a test, and the run
     // time lets it go on. See State::assertionFailed().
     uint32_t isCompiledForAudit;
+    uint32_t logsTypeErrors;
+    uint32_t numberOfWordsOfSites;
+    uint32_t sitesOffset;
     // The program was compiled with Options::countAOTTypedAllocations(): every allocation calls the run time, which counts.
     uint32_t countsAllocations;
     // The program was compiled with Options::useAOTWideReferences(): no slot is a Store::Cell32 or Store::OptionalCell32, and the MarkedBlockCage is not needed.
     uint32_t usesWideReferences;
+    uint32_t functionLengthsAreBytes;
     // Pairs of a function and the function it belongs to, sorted by the first: a generic entrypoint and what it wraps, the function that
-    // runs a coroutine's body and the coroutine. For matching a stack frame against a closure.
+    // runs a coroutine's body and the coroutine. For matching a stack frame against a closure. The first of each pair is not written: those with numbers in a row are a run. The runs, two words each, sorted: the first function of the run, and where what it belongs to stands among the seconds. Then the seconds: the low 16 bits of all, then the high 8 bits of all.
     uint32_t numberOfFunctionAliases;
+    uint32_t numberOfRunsOfFunctionAliases;
     uint32_t functionAliasesOffset;
-    // Only with isCompiledForAudit: for each function the string that is its source path, for the audit's lines.
+    // With isCompiledForAudit: for each function the string that is its source path, for the audit's lines.
     uint32_t functionSourcesOffset;
+    uint32_t functionTextsOffset;
     // The functions that make objects of a layout where they are called with `new`, in order: the number of the generic entrypoint << 2, with what State::mayAlterPrototypeObjectOf() and makesObjectsWithDefinitelyInitializedFields() say.
     uint32_t numberOfMakers;
     uint32_t makersOffset;
@@ -603,6 +635,7 @@ struct Data {
     static constexpr uint32_t stringHasIdentifierNumber = 1u << 27;
 
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
+    uint32_t lengthOfFunction(uint32_t function) const { return functionLengthsAreBytes ? at<uint8_t>(functionLengthsOffset)[function] : at<uint16_t>(functionLengthsOffset)[function]; }
     std::span<const uint32_t> row(uint32_t number) const
     {
         const uint32_t* starts = at<uint32_t>(rowsOffset);

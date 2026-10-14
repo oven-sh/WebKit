@@ -524,6 +524,12 @@ public:
     BytecodeGenerationOptions bytecodeGenerationOptions;
 
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
+    using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
+    ImmutableIntrinsicsAuditReporter immutableIntrinsicsAuditReporter() const { return m_immutableIntrinsicsAuditReporter; }
+    void setImmutableIntrinsicsAuditReporter(ImmutableIntrinsicsAuditReporter reporter) { m_immutableIntrinsicsAuditReporter = useImmutableIntrinsics ? nullptr : reporter; }
+    bool auditsImmutableIntrinsics() const { return m_immutableIntrinsicsAuditReporter; }
+    bool fixesOrNotesIntrinsics() const { return useImmutableIntrinsics || m_immutableIntrinsicsAuditReporter; }
+    ImmutableIntrinsicsAuditReporter m_immutableIntrinsicsAuditReporter { nullptr };
 #if ENABLE(AOT)
     static constexpr ptrdiff_t offsetOfAOTRuntimeTable() { return OBJECT_OFFSETOF(VM, m_aotRuntimeTable); }
 #endif

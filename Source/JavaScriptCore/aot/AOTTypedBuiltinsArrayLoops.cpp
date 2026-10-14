@@ -16,9 +16,10 @@ namespace JSC { namespace AOT {
 
 // For `isCapacity` of operationAOTTypedNewArrayWithHoles.
 static constexpr uint32_t mustHaveIndexingType = 2;
+static constexpr uint32_t arrayIsInTheMaking = 4;
 
-// Of the indexing type where compiled code goes on to store in place: for a source that has its elements in place, and where there is no source and a length is asked for,
-// which then is that of an array with its elements in place. Once the realm is having a bad time no array is.
+// Where compiled code goes on to store without a look, the array is of the indexing type: for a source that has its elements in place, and where there is no source and
+// a length is asked for, which then is that of an array with its elements in place.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithHoles, JSCell*, (Instance* instance, JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -26,17 +27,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithHoles, JSCell*, (Instance*
         throwException(globalObject, scope, createRangeError(globalObject, "Array size is not a small enough positive integer."_s));
         OPERATION_RETURN(scope, nullptr);
     }
+    bool isInTheMaking = isCapacity & arrayIsInTheMaking;
+    isCapacity &= ~arrayIsInTheMaking;
     IndexingType ofSource = source ? source->indexingType() : NonArray;
     bool isStoredToInPlace = isCapacity == mustHaveIndexingType || hasInt32(ofSource) || hasDouble(ofSource) || hasContiguous(ofSource);
-    if ((isStoredToInPlace || length < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) && !globalObject->isHavingABadTime()) {
-        if (JSArray* array = JSArray::tryCreate(vm, globalObject->originalArrayStructureForIndexingType(indexingType), length))
+    if ((isStoredToInPlace || length < MIN_ARRAY_STORAGE_CONSTRUCTION_LENGTH) && (isInTheMaking || !globalObject->isHavingABadTime())) {
+        Structure* structure = isInTheMaking ? instance->arrayInTheMakingStructure(indexingType) : globalObject->originalArrayStructureForIndexingType(indexingType);
+        if (JSArray* array = JSArray::tryCreate(vm, structure, length))
             OPERATION_RETURN(scope, array);
     }
-    if (isStoredToInPlace && !globalObject->isHavingABadTime()) {
+    if (isStoredToInPlace) {
         throwOutOfMemoryError(globalObject, scope);
         OPERATION_RETURN(scope, nullptr);
     }
-    OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, isCapacity && isCapacity != mustHaveIndexingType ? 0 : static_cast<uint32_t>(length)));
+    OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr, isCapacity ? 0 : static_cast<uint32_t>(length)));
 }
 
 // Up to its new length, which is twice what is asked for, the array has holes. Where that is too much nothing is done.
@@ -53,33 +57,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTruncateNewArray, JSCell*, (Instance* 
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSArray* array = uncheckedDowncast<JSArray>(cell);
+    if (!globalObject->isOriginalArrayStructure(array->structure())) {
+        array->setStructure(vm, globalObject->originalArrayStructureForIndexingType(array->indexingType()));
+        if (globalObject->isHavingABadTime() && !hasSlowPutArrayStorage(array->indexingType()))
+            array->switchToSlowPutArrayStorage(vm);
+    }
     if (length < array->length()) {
         if (JSArray* copy = JSArray::fastSlice(globalObject, array, 0, length))
             OPERATION_RETURN(scope, copy);
     }
     array->setLength(globalObject, length, true);
     OPERATION_RETURN(scope, array);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayGetDirectIndex, EncodedJSValue, (Instance* instance, JSCell* array, uint64_t index))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    return JSValue::encode(asObject(array)->getDirectIndex(globalObject, static_cast<unsigned>(index)));
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayGetDirectDoubleIndex, double, (Instance* instance, JSCell* array, uint64_t index))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    JSValue value = asObject(array)->getDirectIndex(globalObject, static_cast<unsigned>(index));
-    return value ? value.asNumber() : PNaN;
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedArrayPutDirectIndex, void, (Instance* instance, JSCell* array, uint64_t index, EncodedJSValue value))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    DeferGCForAWhile deferGC(vm);
-    asObject(array)->putDirectIndex(globalObject, static_cast<unsigned>(index), JSValue::decode(value));
-    scope.releaseAssertNoException();
 }
 
 namespace Typed {
@@ -187,101 +175,6 @@ IndexingType Lowering::indexingTypeAtBirth(ValueID newArray) const
     return areInt32 ? ArrayWithInt32 : ArrayWithDouble;
 }
 
-bool Lowering::leavesArraysAsTheyAre(const Block& block, size_t index) const
-{
-    switch (m_function.at(block.values[index]).opcode) {
-    case Opcode::CallDirect:
-    case Opcode::Await:
-    case Opcode::Yield:
-    case Opcode::GetResumeMode:
-        return false;
-    default:
-        return writesOf(m_program, m_function, block, index) <= Writes::Nothing;
-    }
-}
-
-void Lowering::findShapeTestsThatHold()
-{
-    constexpr unsigned none = UINT_MAX;
-    unsigned numberOfBlocks = m_function.blocks.size();
-    Vector<unsigned> testOnTakenEdge;
-    testOnTakenEdge.fill(none, numberOfBlocks);
-    BitVector changesArrays(numberOfBlocks);
-    for (unsigned b = 0; b < numberOfBlocks; ++b) {
-        auto& block = m_function.blocks[b];
-        size_t lastChange = notFound;
-        for (size_t i = 0; i < block.values.size(); ++i) {
-            if (!leavesArraysAsTheyAre(block, i))
-                lastChange = i;
-        }
-        if (lastChange != notFound)
-            changesArrays.set(b);
-        auto& terminator = block.terminator;
-        if (terminator.kind != TerminatorKind::Branch || terminator.targets[0].block == terminator.targets[1].block)
-            continue;
-        bool isDouble = isInlineBuiltin(terminator.value, InlineBuiltin::IsDoubleArray);
-        if (!isDouble && !isInlineBuiltin(terminator.value, InlineBuiltin::IsContiguousArray))
-            continue;
-        size_t position = block.values.reverseFind(terminator.value);
-        if (position == notFound || (lastChange != notFound && lastChange > position))
-            continue;
-        std::pair<ValueID, bool> test { originOf(m_function.at(terminator.value).arguments[0]), isDouble };
-        size_t number = m_shapeTests.find(test);
-        if (number == notFound) {
-            if (m_shapeTests.size() == 64)
-                continue;
-            number = m_shapeTests.size();
-            m_shapeTests.append(test);
-        }
-        testOnTakenEdge[b] = number;
-    }
-    m_shapeTestsThatHoldAtHead.fill(0, numberOfBlocks);
-    if (m_shapeTests.isEmpty())
-        return;
-    struct Edge {
-        unsigned from;
-        bool isTaken;
-    };
-    Vector<Vector<Edge, 2>> edgesInto(numberOfBlocks);
-    for (unsigned b = 0; b < numberOfBlocks; ++b) {
-        auto& targets = m_function.blocks[b].terminator.targets;
-        for (unsigned i = 0; i < targets.size(); ++i)
-            edgesInto[targets[i].block.index()].append(Edge { b, !i && testOnTakenEdge[b] != none });
-    }
-    for (unsigned b = 1; b < numberOfBlocks; ++b) {
-        if (!edgesInto[b].isEmpty())
-            m_shapeTestsThatHoldAtHead[b] = UINT64_MAX;
-    }
-    for (bool hasChanged = true; hasChanged;) {
-        hasChanged = false;
-        for (unsigned b = 1; b < numberOfBlocks; ++b) {
-            uint64_t holds = m_shapeTestsThatHoldAtHead[b];
-            for (auto& edge : edgesInto[b]) {
-                uint64_t atEnd = changesArrays.get(edge.from) ? 0 : m_shapeTestsThatHoldAtHead[edge.from];
-                if (edge.isTaken)
-                    atEnd |= 1ull << testOnTakenEdge[edge.from];
-                holds &= atEnd;
-            }
-            hasChanged |= holds != m_shapeTestsThatHoldAtHead[b];
-            m_shapeTestsThatHoldAtHead[b] = holds;
-        }
-    }
-}
-
-bool Lowering::hasPassedShapeTest(ValueID array, bool isDouble)
-{
-    if (!std::exchange(m_hasFoundShapeTests, true))
-        findShapeTestsThatHold();
-    size_t number = m_shapeTests.find(std::pair<ValueID, bool> { originOf(array), isDouble });
-    if (number == notFound || !(m_shapeTestsThatHoldAtHead[m_currentBlockID.index()] >> number & 1))
-        return false;
-    for (size_t i = 0; i < m_currentIndexInBlock; ++i) {
-        if (!leavesArraysAsTheyAre(*m_currentBlock, i))
-            return false;
-    }
-    return true;
-}
-
 // The arguments: the length, and the array it is made for. Nothing but holes, up to the capacity.
 CellPointer Lowering::newArrayWithHoles(ValueID result, const Value& value, bool isCapacity)
 {
@@ -290,11 +183,11 @@ CellPointer Lowering::newArrayWithHoles(ValueID result, const Value& value, bool
     CellPointer source = typeOf(value.arguments[1]).isUndefinedOrNull() ? CellPointer(m_out.int64Zero) : arrayOperand(value.arguments[1]);
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
-    ValueFromBlock fast = m_out.anchor(allocateArrayWithHoles(length, indexingType, slowPath).value());
+    ValueFromBlock fast = m_out.anchor(allocateArrayWithHoles(length, indexingType, slowPath, true).value());
     m_out.jump(continuation);
 
     m_out.appendTo(slowPath);
-    ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArrayWithHoles, source, length, word32(indexingType), word32(isCapacity)).value());
+    ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArrayWithHoles, source, length, word32(indexingType), word32(isCapacity | arrayIsInTheMaking)).value());
     m_out.jump(continuation);
 
     m_out.appendTo(continuation);
@@ -323,50 +216,6 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     };
     auto valueAt = [&](CellPointer array, Integer index) {
         return m_out.baseIndex(m_heaps.indexedContiguousProperties, butterflyOf(array).value(), index.value());
-    };
-    auto hasShape = [&](ValueID array, IndexingType shape) {
-        return equal(indexingModeOf(arrayOperand(array), IndexingShapeMask), word32(shape));
-    };
-    auto isContiguousArray = [&](ValueID array) {
-        Word32 shape = indexingModeOf(arrayOperand(array), IndexingShapeMask);
-        Word32 isContiguous = equal(shape, word32(ContiguousShape));
-        return mayHoldNumbers(array) ? logicalOr(isContiguous, equal(shape, word32(Int32Shape))) : isContiguous;
-    };
-    auto loadElement = [&](Word32 isInPlace, B3::Type typeOfElement, const auto& inPlace, const auto& general) {
-        LBasicBlock slowPath = newColdBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        orElse(isInPlace, slowPath);
-        ValueFromBlock fast = m_out.anchor(inPlace());
-        m_out.jump(continuation);
-        m_out.appendTo(slowPath);
-        ValueFromBlock slow = m_out.anchor(general());
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-        return m_out.phi(typeOfElement, fast, slow);
-    };
-    auto storeElement = [&](Word32 isInPlace, ValueID stored, const auto& inPlace) {
-        CellPointer array = arrayOperand(arguments[0]);
-        Integer index = indexOperand(arguments[1]);
-        LBasicBlock slowPath = newColdBlock();
-        LBasicBlock continuation = m_out.newBlock();
-        orElse(isInPlace, slowPath);
-        inPlace(array, index);
-        m_out.jump(continuation);
-        m_out.appendTo(slowPath);
-        AOT_TYPED_OPERATION(ArrayPutDirectIndex, array, index, in<Boxed>(stored));
-        m_out.jump(continuation);
-        m_out.appendTo(continuation);
-    };
-    auto contiguousElement = [&] {
-        CellPointer array = arrayOperand(arguments[0]);
-        Integer index = indexOperand(arguments[1]);
-        if (hasPassedShapeTest(arguments[0], false))
-            return m_out.load64(valueAt(array, index));
-        return loadElement(isContiguousArray(arguments[0]), Int64, [&] {
-            return m_out.load64(valueAt(array, index));
-        }, [&] {
-            return AOT_TYPED_OPERATION(ArrayGetDirectIndex, array, index).value();
-        });
     };
 
     switch (which) {
@@ -408,7 +257,7 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
             static_assert(!NoIndexingShape);
             LValue name = m_out.loadPtr(builtinCell(m_builtins.cellOf(iterator)).value(), m_heaps.Symbol_symbolImpl);
             Word32 hasNotSeenName(m_out.notEqual(m_out.bitAnd(m_out.loadPtr(structure, m_heaps.Structure_seenProperties), name), name));
-            Word32 isOrdinary = logicalAnd(equal(typeOfCell(cell), word32(FinalObjectType)), isZero(indexingModeOf(cell, IndexingShapeMask)));
+            Word32 isOrdinary = logicalAnd(Word32(isCellOfType(cell.value(), FinalObjectType)), isZero(indexingModeOf(cell, IndexingShapeMask)));
             return yieldBoolean(logicalAnd(logicalAnd(isOrdinary, Word32(m_out.equal(m_out.load64(structure, m_heaps.Structure_prototype), objectPrototype))), hasNotSeenName), type);
         }
         Word32 isPlain = logicalAnd(Word32(m_out.equal(m_out.load64(structure, m_heaps.Structure_prototype), objectPrototype)), lacksBits(orderWordOf(cell), orderWordHasExtraProperties));
@@ -418,21 +267,18 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::IsDoubleArray:
         if (!mayHoldNumbers(arguments[0]))
             return yieldBoolean(boolean(false), type);
-        return yieldBoolean(hasShape(arguments[0], DoubleShape), type);
-    case InlineBuiltin::IsContiguousArray:
-        return yieldBoolean(isContiguousArray(arguments[0]), type);
-    case InlineBuiltin::GetDoubleIndex: {
-        CellPointer array = arrayOperand(arguments[0]);
-        Integer index = indexOperand(arguments[1]);
-        LValue element = hasPassedShapeTest(arguments[0], true) ? m_out.loadDouble(doubleAt(array, index)) : loadElement(hasShape(arguments[0], DoubleShape), Double, [&] {
-            return m_out.loadDouble(doubleAt(array, index));
-        }, [&] {
-            return AOT_TYPED_OPERATION(ArrayGetDirectDoubleIndex, array, index).value();
-        });
-        return ensure(Number(element), m_program.at(m_program.types.number), type);
+        return yieldBoolean(equal(indexingModeOf(arrayOperand(arguments[0]), IndexingShapeMask), word32(DoubleShape)), type);
+    case InlineBuiltin::IsContiguousArray: {
+        Word32 shape = indexingModeOf(arrayOperand(arguments[0]), IndexingShapeMask);
+        Word32 isContiguous = equal(shape, word32(ContiguousShape));
+        if (!mayHoldNumbers(arguments[0]))
+            return yieldBoolean(isContiguous, type);
+        return yieldBoolean(logicalOr(isContiguous, equal(shape, word32(Int32Shape))), type);
     }
+    case InlineBuiltin::GetDoubleIndex:
+        return ensure(Number(m_out.loadDouble(doubleAt(arrayOperand(arguments[0]), indexOperand(arguments[1])))), m_program.at(m_program.types.number), type);
     case InlineBuiltin::HasContiguousIndex: {
-        LValue element = contiguousElement();
+        LValue element = m_out.load64(valueAt(arrayOperand(arguments[0]), indexOperand(arguments[1])));
         auto& terminator = m_currentBlock->terminator;
         if (terminator.kind == TerminatorKind::Branch && terminator.value == result && m_currentBlock->values.last() == result) {
             BlockID hasIt = terminator.targets[0].block;
@@ -444,36 +290,32 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
     case InlineBuiltin::GetContiguousIndex:
         if (LValue element = elementLoadedAhead(arguments[0], arguments[1]))
             return ensure(Boxed(element), type);
-        return ensure(Boxed(contiguousElement()), type);
+        return ensure(Boxed(m_out.load64(valueAt(arrayOperand(arguments[0]), indexOperand(arguments[1])))), type);
     case InlineBuiltin::NewArrayWithSpecies:
     case InlineBuiltin::NewArrayWithCapacity:
         return ensure(newArrayWithHoles(result, value, which == InlineBuiltin::NewArrayWithCapacity), Type::engineClass(m_builtins.arrayClass()), type);
-    // The index is within the length. What an ArrayWithDouble cannot hold reads as a hole there.
+    // The array is as it was born, and the index within its length. What an ArrayWithDouble cannot hold reads as a hole there.
     case InlineBuiltin::TryPutByValDirect: {
         ValueID newArray = originOf(arguments[0]);
         if (!isInlineBuiltin(newArray, InlineBuiltin::NewArrayWithSpecies) && !isInlineBuiltin(newArray, InlineBuiltin::NewArrayWithCapacity))
             return yieldBoolean(boolean(false), type);
+        CellPointer array = arrayOperand(arguments[0]);
+        Integer index = indexOperand(arguments[1]);
         ValueID stored = arguments[2];
         didEmitWrite(inPlace);
         switch (indexingTypeAtBirth(newArray)) {
         case ArrayWithInt32:
-            storeElement(hasShape(arguments[0], Int32Shape), stored, [&](CellPointer array, Integer index) {
-                m_out.store64(boxInt32(low32(in<Integer>(stored))).value(), valueAt(array, index));
-            });
+            m_out.store64(boxInt32(low32(in<Integer>(stored))).value(), valueAt(array, index));
             return yieldBoolean(boolean(true), type);
         case ArrayWithDouble: {
             Number number = in<Number>(stored);
-            storeElement(hasShape(arguments[0], DoubleShape), stored, [&](CellPointer array, Integer index) {
-                m_out.storeDouble(number.value(), doubleAt(array, index));
-            });
+            m_out.storeDouble(number.value(), doubleAt(array, index));
             return yieldBoolean(typeOf(stored).isInteger() ? boolean(true) : equal(number, number), type);
         }
         default:
-            storeElement(hasShape(arguments[0], ContiguousShape), stored, [&](CellPointer array, Integer index) {
-                m_out.store64(in<Boxed>(stored).value(), valueAt(array, index));
-                if (typeOf(stored).hasCells())
-                    barrier(array);
-            });
+            m_out.store64(in<Boxed>(stored).value(), valueAt(array, index));
+            if (typeOf(stored).hasCells())
+                barrier(array);
             return yieldBoolean(boolean(true), type);
         }
     }
@@ -483,29 +325,27 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         Integer length = indexOperand(arguments[0]);
         LBasicBlock slowPath = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
-        ValueFromBlock fast = m_out.anchor(allocateArrayWithHoles(length, indexingType, slowPath).value());
+        ValueFromBlock fast = m_out.anchor(allocateArrayWithHoles(length, indexingType, slowPath, true).value());
         m_out.jump(continuation);
         m_out.appendTo(slowPath);
-        ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArrayWithHoles, CellPointer(m_out.int64Zero), length, word32(indexingType), word32(mustHaveIndexingType)).value());
+        ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArrayWithHoles, CellPointer(m_out.int64Zero), length, word32(indexingType), word32(mustHaveIndexingType | arrayIsInTheMaking)).value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return ensure(CellPointer(m_out.phi(Int64, fast, slow)), Type::engineClass(m_builtins.arrayClass()), type);
     }
-    // The index is within the length.
+    // The array keeps its elements that way, and the index is within its length.
     case InlineBuiltin::PutDoubleIndex:
         didEmitWrite(inPlace);
-        storeElement(hasShape(arguments[0], DoubleShape), arguments[2], [&](CellPointer array, Integer index) {
-            m_out.storeDouble(in<Number>(arguments[2]).value(), doubleAt(array, index));
-        });
+        m_out.storeDouble(in<Number>(arguments[2]).value(), doubleAt(arrayOperand(arguments[0]), indexOperand(arguments[1])));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
-    case InlineBuiltin::PutContiguousIndex:
+    case InlineBuiltin::PutContiguousIndex: {
+        CellPointer array = arrayOperand(arguments[0]);
         didEmitWrite(inPlace);
-        storeElement(hasShape(arguments[0], ContiguousShape), arguments[2], [&](CellPointer array, Integer index) {
-            m_out.store64(in<Boxed>(arguments[2]).value(), valueAt(array, index));
-            if (typeOf(arguments[2]).hasCells())
-                barrier(array);
-        });
+        m_out.store64(in<Boxed>(arguments[2]).value(), valueAt(array, indexOperand(arguments[1])));
+        if (typeOf(arguments[2]).hasCells())
+            barrier(array);
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    }
     case InlineBuiltin::GrowNewArray:
         AOT_TYPED_OPERATION_WITH_EFFECTS(GrowNewArray, (OperationEffects { Writes::Heap, true, false }), arrayOperand(arguments[0]), indexOperand(arguments[1]));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
@@ -520,7 +360,15 @@ std::optional<Operand> Lowering::lowerInlineArrayLoops(InlineBuiltin which, Valu
         LBasicBlock continuation = m_out.newBlock();
         didEmitWrite(inPlace);
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        orElse(belowOrEqual(binary<Word32>(&Output::sub, indexingModeOf(array, IndexingShapeAndWritabilityMask), word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
+        Word32 kind = binary<Word32>(&Output::sub, indexingModeOf(array, IndexingShapeAndWritabilityMask), word32(Int32Shape));
+        orElse(belowOrEqual(kind, word32(ContiguousShape - Int32Shape)), slowPath);
+        static_assert(OBJECT_OFFSETOF(Instance, newArrayWithDoubleHeader) == OBJECT_OFFSETOF(Instance, newArrayWithInt32Header) + sizeof(uint64_t) && OBJECT_OFFSETOF(Instance, newArrayWithContiguousHeader) == OBJECT_OFFSETOF(Instance, newArrayWithInt32Header) + 2 * sizeof(uint64_t));
+        LValue headers = m_out.add(m_instance, m_out.shl(m_out.zeroExtPtr(kind.value()), m_out.constInt32(2)));
+        LValue inTheMaking = m_out.load64(TypedPointer(m_heaps.AOTInstance_mutableFields, m_out.add(headers, m_out.constIntPtr(Instance::offsetOfArrayInTheMakingHeaders()))));
+        orElse(Word32(m_out.equal(m_out.load32(array.value(), m_heaps.JSCell_structureID), m_out.castToInt32(inTheMaking))), slowPath);
+        LValue original = m_out.load64(TypedPointer(m_heaps.AOTInstance_mutableFields, m_out.add(headers, m_out.constIntPtr(Instance::offsetOfNewArrayHeader(ArrayWithInt32)))));
+        orElse(Word32(m_out.notZero64(original)), slowPath);
+        m_out.store32(m_out.castToInt32(original), array.value(), m_heaps.JSCell_structureID);
         Pointer butterfly = butterflyOf(array);
         // No more than is used, or than an empty array has anyway.
         constexpr int64_t fewLeftUnused = 8;

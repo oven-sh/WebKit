@@ -26,7 +26,7 @@ Rep resultRepOf(const Program& program, FunctionID id)
 {
     auto& function = program.at(id);
     // Whoever calls a general entry knows nothing about it.
-    if (function.isGenericEntrypoint() || !function.resultType)
+    if (function.isGenericEntrypoint() || !function.resultType || function.returnsBoxedValue)
         return Rep::JSValue;
     auto& type = program.at(function.resultType);
     if (type.isNever() || type.hasOnlyPrimitives(Primitive::Undefined))
@@ -627,6 +627,7 @@ public:
         runStep("placeEnvironments"_s, &Placement::placeEnvironments);
         runStep("makeRoomToSpecialize"_s, &Placement::makeRoomToSpecialize);
         runStep("capLayouts"_s, &Placement::capLayouts);
+        runStep("widenNumbersWhereBytesAreFree"_s, &Placement::widenNumbersWhereBytesAreFree);
         runStep("pinLiterals"_s, &Placement::pinLiterals);
         runStep("sizeAllocations"_s, &Placement::sizeAllocations);
         runStep("collectOrders"_s, &Placement::collectOrders);
@@ -635,6 +636,7 @@ public:
         runStep("placeArraySites"_s, &Placement::placeArraySites);
         runStep("placeRegExpLiterals"_s, &Placement::placeRegExpLiterals);
         runStep("checkPlacement"_s, &Placement::checkPlacement);
+        m_program.sizeOfStaticsAsPlaced = m_program.sizeOfStatics;
         m_program.types.freeze();
     }
 
@@ -652,21 +654,44 @@ private:
 
     // What is found in one function asks nothing of another: it is found on all threads, and taken in the order of the functions.
     template<typename Found>
-    void forEachFunctionInOrder(const Invocable<Found(Function&)> auto& find, const Invocable<void(Found&&)> auto& take)
+    void forEachFunctionInOrder(const Invocable<Found(Function&)> auto& find, const Invocable<void(Found&&)> auto& take, uint8_t held = 0)
     {
         Vector<Found> found(m_program.functions.size());
         forEachIndexInParallel(found.size(), [&](unsigned i) {
+            if (held && !(m_heldByFunction[i] & held))
+                return;
             found[i] = find(m_program.functions[i]);
         });
         for (auto& ofFunction : found)
             take(WTF::move(ofFunction));
     }
 
+    static constexpr uint8_t holdsNewObjectWithShape = 1;
+    static constexpr uint8_t holdsNewArray = 2;
+    static constexpr uint8_t holdsStoreToField = 4;
+    static constexpr uint8_t holdsCallBuiltin = 8;
+    static uint8_t heldWith(Opcode opcode)
+    {
+        switch (opcode) {
+        case Opcode::NewObjectWithShape:
+            return holdsNewObjectWithShape;
+        case Opcode::NewArray:
+            return holdsNewArray;
+        case Opcode::PutField:
+        case Opcode::PutById:
+            return holdsStoreToField;
+        case Opcode::CallBuiltin:
+            return holdsCallBuiltin;
+        default:
+            return 0;
+        }
+    }
+
     void runStep(ASCIILiteral name, void (Placement::*step)())
     {
         MonotonicTime start = MonotonicTime::now();
         (this->*step)();
-        report(name, " took ", (MonotonicTime::now() - start).milliseconds(), " ms");
+        dataLogLnIf(saysClocks(), "AOT placement: ", name, " took ", (MonotonicTime::now() - start).milliseconds(), " ms");
     }
 
     // What the front end has handed over cannot be placed.
@@ -876,6 +901,13 @@ private:
         }
         for (unsigned i = 0; i < layouts.size(); ++i)
             m_group[i] = find(i);
+        m_isBornOrNamedByCast.ensureSize(layouts.size());
+        for (auto& allocation : m_program.allocations)
+            m_isBornOrNamedByCast.quickSet(allocation.layout.index());
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            if (m_castsOfWhatIsNotReadOutOfPlace[i] || layouts[i].kind == LayoutKind::Instance)
+                m_isBornOrNamedByCast.quickSet(i);
+        }
     }
 
     std::span<const uint32_t> viewsOf(uint32_t layout) const { return m_views.span().subspan(m_firstView[layout], m_firstView[layout + 1] - m_firstView[layout]); }
@@ -1004,9 +1036,6 @@ private:
     void countInitialStores()
     {
         for (auto& initial : m_initialStores) {
-            auto& view = m_program.at(initial.view);
-            if (view.admitsForeignObjects)
-                continue;
             while (initial.count < std::min<size_t>(initial.names.size(), maxFieldsInOrder)) {
                 auto field = fieldOf(initial, initial.count);
                 if (!field || m_lackedFieldOfField[m_firstField[initial.view.index()] + *field] != none)
@@ -1133,7 +1162,7 @@ private:
         }, [&](Vector<uint32_t>&& usedOtherwise) {
             for (uint32_t allocation : usedOtherwise)
                 m_isUsedOtherwise.quickSet(allocation);
-        });
+        }, holdsNewObjectWithShape);
         for (uint32_t i = 0; i < allocations.size(); ++i) {
             for (uint32_t k = 0; allocations[i].numberOfLiterals && k <= allocations[i].numberOfLiterals && m_isUsedOtherwise.quickGet(i); ++k)
                 m_isUsedOtherwise.quickSet(allocations[i].allocationOfFirstLiteral + k);
@@ -1195,11 +1224,14 @@ private:
         m_isStoredThrough.ensureSize(m_firstField.last());
         static constexpr uint32_t isStoredThrough = 1u << 31;
         static constexpr uint32_t isNotAccessed = 1u << 30;
+        m_heldByFunction.fill(0, m_program.functions.size());
         forEachFunctionInOrder<Vector<uint32_t>>([&](Function& function) {
             Vector<uint32_t> accessed;
+            uint8_t held = 0;
             for (auto& block : function.blocks) {
                 for (size_t index = 0; index < block.values.size(); ++index) {
                     auto& value = function.at(block.values[index]);
+                    held |= heldWith(value.opcode);
                     switch (value.opcode) {
                     case Opcode::PutById:
                         if (isInitializingStore(m_program, function, block, index))
@@ -1238,6 +1270,7 @@ private:
                     }
                 }
             }
+            m_heldByFunction[&function - &std::as_const(m_program.functions)[0]] = held;
             return accessed;
         }, [&](Vector<uint32_t>&& accessed) {
             for (uint32_t field : accessed) {
@@ -1712,20 +1745,70 @@ private:
         m_testsOfView.fill(0, layouts.size());
         m_testsOfClass.fill(0, layouts.size());
         m_coercionsToView.fill(0, layouts.size());
+        m_castsOfWhatIsNotReadOutOfPlace.fill(0, layouts.size());
         m_numberOfBirths.fill(0, layouts.size());
         m_isMadeOften.ensureSize(layouts.size());
         Vector<std::pair<SlotID, TypeID>> allStoredThroughViews;
         m_numberOfBirthsInitializing.fill(0, m_firstField.last());
         m_accessWeight.fill(0, m_program.slots.size());
+        m_numberOfStoresOfDoubles.fill(0, m_program.slots.size());
+        auto isDoubleAsStored = [&](Function& function, ValueID id) {
+            for (;;) {
+                auto& value = function.at(id);
+                if (m_program.at(value.type).isInteger())
+                    return false;
+                if (value.opcode != Opcode::Cast || (value.castReason() != CastReason::Upcast && value.castReason() != CastReason::Store && value.castReason() != CastReason::Flow))
+                    return !!(m_program.at(value.type).primitives & Primitive::Number);
+                id = value.child(0);
+            }
+        };
+        m_isInCopiedRecord.ensureSize(m_program.slots.size());
+        auto noteRecordsCopied = [&](Function& function, const Value& value, Vector<uint32_t>& copied) {
+            auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+            if (implementation.kind != BuiltinImplementation::Operation)
+                return;
+            switch (implementation.operation) {
+            case LanguageOperation::CopyDataProperties:
+            case LanguageOperation::CopyDataPropertiesExcluding:
+            case LanguageOperation::CloneObject:
+            case LanguageOperation::CloneObjectWith:
+            case LanguageOperation::CloneObjectAfter:
+                break;
+            default:
+                return;
+            }
+            auto note = [&](const Type& type) {
+                for (LayoutID view : type.views) {
+                    copied.append(view.index());
+                    for (LayoutID member : m_program.at(view).members)
+                        copied.append(member.index());
+                }
+            };
+            for (ValueID argument : value.arguments)
+                note(m_program.typeOf(function, argument));
+            note(m_program.at(value.type));
+            if (value.prediction)
+                note(m_program.at(value.prediction));
+        };
         struct Found {
             Vector<std::pair<SlotID, TypeID>> storedThroughViews;
             Vector<uint32_t> madeOften;
+            Vector<uint32_t> copied;
+            Vector<uint32_t> firstStoredWithValue;
+        };
+        m_isFirstStoredWithValue.ensureSize(m_program.slots.size());
+        auto isFirstStoreOfValue = [&](Function& function, const Block& block, size_t index) {
+            auto& store = function.at(block.values[index]);
+            if (!(store.opcode == Opcode::PutById && store.isInitialStore()) && !isInitializingStore(m_program, function, block, index))
+                return false;
+            ValueID constant = m_program.constantOf(function, store.child(1));
+            return !constant || function.at(constant).opcode != Opcode::Undefined;
         };
         auto add = [](auto& sum, uint64_t more) {
             WTF::atomicExchangeAdd(&sum, more, std::memory_order_relaxed);
         };
         forEachFunctionInOrder<Found>([&](Function& function) {
-            auto [storedThroughViews, madeOften] = Found { };
+            auto [storedThroughViews, madeOften, copied, firstStoredWithValue] = Found { };
             Vector<uint32_t, 16> initializedAtThisBirth;
             BitVector isInLoop;
             findBlocksInLoops(function, isInLoop);
@@ -1733,6 +1816,8 @@ private:
                 uint64_t weight = isInLoop.get(&block - &function.blocks[0]) ? weightInLoop : 1;
                 for (size_t index = 0; index < block.values.size(); ++index) {
                     auto& value = function.at(block.values[index]);
+                    if (value.opcode == Opcode::CallBuiltin)
+                        noteRecordsCopied(function, value, copied);
                     switch (value.opcode) {
                     case Opcode::NewObjectWithShape: {
                         uint32_t layout = value.layout().index();
@@ -1765,8 +1850,12 @@ private:
                                 if (uint32_t lacked = m_lackedFieldOfField[m_firstField[view.index()] + *found]; lacked != none)
                                     add(m_lackedFields[lacked].numberOfAccesses, 1);
                                 add(m_accessWeight[field->slot.index()], weight);
+                                if (value.opcode == Opcode::PutById && isDoubleAsStored(function, value.child(1)))
+                                    add(m_numberOfStoresOfDoubles[field->slot.index()], 1);
                                 if (value.opcode == Opcode::PutById && !isMade(m_program.at(view)))
                                     storedThroughViews.append({ field->slot, function.at(value.child(1)).type });
+                                if (value.opcode == Opcode::PutById && isFirstStoreOfValue(function, block, index))
+                                    firstStoredWithValue.append(field->slot.index());
                             }
                         }
                         if (value.opcode == Opcode::CallMethod || (value.opcode == Opcode::GetById && (!field || m_holdsSeveralTypes.quickGet(field->slot.index()))))
@@ -1774,8 +1863,12 @@ private:
                         break;
                     }
                     case Opcode::PutField:
+                        if (auto& field = m_program.at(value.layout()).fields[value.field()]; exists(field) && isDoubleAsStored(function, value.child(1)))
+                            add(m_numberOfStoresOfDoubles[field.slot.index()], 1);
                         if (auto& layout = m_program.at(value.layout()); !isMade(layout))
                             storedThroughViews.append({ layout.fields[value.field()].slot, function.at(value.child(1)).type });
+                        if (auto& field = m_program.at(value.layout()).fields[value.field()]; exists(field) && isObjectLayout(m_program.at(value.layout()).kind) && isFirstStoreOfValue(function, block, index))
+                            firstStoredWithValue.append(field.slot.index());
                         break;
                     case Opcode::Cast:
                         // It tests for what it can make something of, not for what comes of it.
@@ -1784,6 +1877,16 @@ private:
                                 add(m_coercionsToView[view.index()], 1);
                         } else if (value.castReason() != CastReason::Upcast)
                             add(m_testsOfType[value.type.index()], 1);
+                        if (value.castReason() == CastReason::As || value.castReason() == CastReason::Coerce) {
+                            ValueID origin = value.child(0);
+                            while (function.at(origin).opcode == Opcode::Cast)
+                                origin = function.at(origin).child(0);
+                            Opcode yieldedBy = function.at(origin).opcode;
+                            if (yieldedBy == Opcode::GetById || yieldedBy == Opcode::GetField || yieldedBy == Opcode::GetByVal)
+                                break;
+                            for (LayoutID view : m_program.at(value.castReason() == CastReason::Coerce ? value.coercedType() : value.type).views)
+                                add(m_castsOfWhatIsNotReadOutOfPlace[view.index()], 1);
+                        }
                         break;
                     case Opcode::HasShapeOf:
                         // Otherwise for the one shape of the layout itself.
@@ -1810,11 +1913,19 @@ private:
                     }
                 }
             }
-            return Found { WTF::move(storedThroughViews), WTF::move(madeOften) };
+            return Found { WTF::move(storedThroughViews), WTF::move(madeOften), WTF::move(copied), WTF::move(firstStoredWithValue) };
         }, [&](Found&& found) {
             allStoredThroughViews.appendVector(found.storedThroughViews);
+            for (uint32_t layout : found.copied) {
+                for (auto& field : layouts[layout].fields) {
+                    if (exists(field))
+                        m_isInCopiedRecord.quickSet(field.slot.index());
+                }
+            }
             for (uint32_t layout : found.madeOften)
                 m_isMadeOften.quickSet(layout);
+            for (uint32_t slot : found.firstStoredWithValue)
+                m_isFirstStoredWithValue.quickSet(slot);
         });
         for (auto [slot, type] : allStoredThroughViews)
             holds(slot, type);
@@ -1969,14 +2080,14 @@ private:
         unsigned numberOfActivations = 0;
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
-            RELEASE_ASSERT(!layout.isInFrame || m_numberOfBirths[i]);
-            if (layout.kind != LayoutKind::Environment || (layout.isCoroutineFrame && !layout.isInFrame) || !m_numberOfBirths[i] || (m_isMadeOften.quickGet(i) && !layout.isInFrame))
+            RELEASE_ASSERT(!layout.mayBeInFrame || m_numberOfBirths[i]);
+            if (layout.kind != LayoutKind::Environment || (layout.isCoroutineFrame && !layout.mayBeInFrame) || !m_numberOfBirths[i] || (m_isMadeOften.quickGet(i) && !layout.mayBeInFrame))
                 continue;
             ++numberOfActivations;
             for (auto& field : layout.fields) {
                 if (exists(field))
                     m_keepsWideReferences.quickSet(field.slot.index());
-                if (exists(field) && layout.isInFrame)
+                if (exists(field) && layout.mayBeInFrame)
                     m_isExpectedInt32.quickClear(field.slot.index());
             }
         }
@@ -2035,7 +2146,7 @@ private:
                 slot.type = withAbsent(slot.type);
             // A number that is never seen absent is kept as it is, whatever is expected of it: a load of it tests nothing. Unless some field
             // says that it is an integer: what reads that would have to convert the number, and test.
-            if (m_isNeverSeenAbsent.quickGet(i) && !m_hasIntegerField.quickGet(i) && m_program.at(slot.type).isNumber())
+            if (m_isNeverSeenAbsent.quickGet(i) && !m_hasIntegerField.quickGet(i) && m_program.at(slot.type).isNumber() && (m_numberOfStoresOfDoubles[i] || m_isInCopiedRecord.quickGet(i)))
                 m_isExpectedInt32.quickClear(i);
             slot.store = storeFor(m_program.at(slot.type), m_isExpectedInt32.quickGet(i), m_keepsWideReferences.quickGet(i));
             numberThatHoldReferences += holdsCells(slot.store);
@@ -2076,36 +2187,66 @@ private:
     // Of two orders the one by which an object of each layout takes fewer bytes in all.
     void placeObjects()
     {
-        uint64_t bytesMostSharedFirst = placeObjectsInOrder(false);
-        if (placeObjectsInOrder(true) > bytesMostSharedFirst)
-            placeObjectsInOrder(false);
+        auto prepared = prepareToPlaceObjects();
+        unsigned best = 0;
+        uint64_t leastBytes = placeObjectsInOrder(prepared, 0);
+        for (unsigned timesAsManyLayouts : { 2u, 4u }) {
+            uint64_t bytes = placeObjectsInOrder(prepared, timesAsManyLayouts);
+            if (bytes > leastBytes)
+                continue;
+            leastBytes = bytes;
+            best = timesAsManyLayouts;
+        }
+        if (best != 4)
+            placeObjectsInOrder(prepared, best);
     }
 
-    // Slots are placed greedily at the lowest offset free in every layout that has them, those first that most layouts have: placed far out, they make all of these large.
-    // smallLayoutsFirst: that holds between slots that share a layout where the one is in twice as many layouts as the other. Of the rest, the slot first whose layouts are small: a small layout comes out
-    // without holes, and a large one takes them, where they weigh less.
-    uint64_t placeObjectsInOrder(bool smallLayoutsFirst)
-    {
-        auto& layouts = m_program.layouts;
-        auto& slots = m_program.slots;
-        auto hasObjects = [](const Layout& layout) {
-            return isObjectLayout(layout.kind) && layout.isAllocated;
-        };
-        auto bytesNeededBy = [&](const Layout& layout) {
-            uint32_t needed = offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0);
-            for (auto& field : layout.fields) {
-                if (exists(field) && !m_program.at(field.slot).isOutOfLine)
-                    needed += sizeOf(m_program.at(field.slot).store);
-            }
-            return needed;
-        };
+    struct ObjectsToPlace {
+        Vector<SlotUse> uses;
+        Vector<Occupancy> occupancies;
+        Vector<Occupancy> extensions;
+        Vector<uint32_t> layoutsOfSlots;
+        Vector<uint32_t> order;
+        BitVector mayBeOutOfLine;
+        BitVector comesAboutByTransitionAlone;
+        uint32_t numberOfUses { 0 };
+    };
 
-        // What an earlier run has put out of line is as typeSlots() left it.
+    static bool hasObjects(const Layout& layout)
+    {
+        return isObjectLayout(layout.kind) && layout.isAllocated;
+    }
+
+    uint32_t bytesNeededBy(const Layout& layout) const
+    {
+        uint32_t needed = offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0);
+        for (auto& field : layout.fields) {
+            if (exists(field) && !m_program.at(field.slot).isOutOfLine)
+                needed += sizeOf(m_program.at(field.slot).store);
+        }
+        return needed;
+    }
+
+    void takeBackWhatWasPutOutOfLine()
+    {
+        auto& slots = m_program.slots;
         for (auto [index, store, type] : std::exchange(m_slotsPutOutOfLine, { })) {
             slots[index].isOutOfLine = false;
             slots[index].store = store;
             slots[index].type = type;
         }
+    }
+
+    // Slots are placed greedily at the lowest offset free in every layout that has them, those first that most layouts have: placed far out, they make all of these large.
+    // smallLayoutsFirst: that holds between slots that share a layout where the one is in twice as many layouts as the other. Of the rest, the slot first whose layouts are small: a small layout comes out
+    // without holes, and a large one takes them, where they weigh less.
+    ObjectsToPlace prepareToPlaceObjects()
+    {
+        auto& layouts = m_program.layouts;
+        auto& slots = m_program.slots;
+
+        // What an earlier run has put out of line is as typeSlots() left it.
+        takeBackWhatWasPutOutOfLine();
 
         Vector<SlotUse> uses(slots.size());
         Vector<Occupancy> occupancies(layouts.size());
@@ -2144,7 +2285,6 @@ private:
         // A slot no object has is never accessed: no object passes for one of a view without members.
         Vector<uint32_t> order;
         for (unsigned i = 0; i < slots.size(); ++i) {
-            slots[i].offset = offsetOfFirstField;
             if (uses[i].numberOfLayouts)
                 order.append(i);
         }
@@ -2170,50 +2310,121 @@ private:
                     mayBeNil.quickSet(field.slot.index());
             }
         }
+        BitVector comesAboutByTransitionAlone;
+        comesAboutByTransitionAlone.ensureSize(slots.size());
+        for (uint32_t index : order) {
+            auto layoutsOfSlot = layoutsOfSlots.span().subspan(uses[index].firstLayout, uses[index].numberOfLayouts);
+            if (std::ranges::any_of(layoutsOfSlot, [&](uint32_t layout) { return m_isBornOrNamedByCast.quickGet(layout); }))
+                continue;
+            comesAboutByTransitionAlone.quickSet(index);
+            mayBeNil.quickSet(index);
+        }
         mayBeOutOfLine.filter(mayBeNil);
+        for (auto& layout : layouts) {
+            if (layout.kind != LayoutKind::Instance || !hasObjects(layout))
+                continue;
+            for (auto& field : layout.fields) {
+                if (exists(field) && !(field.flags & fieldIsAbsentAtBirth) && !(m_program.at(slots[field.slot.index()].type).primitives & Primitive::Undefined))
+                    mayBeOutOfLine.quickClear(field.slot.index());
+            }
+        }
+        m_existsFromBirth.ensureSize(slots.size());
         for (auto& allocation : m_program.allocations) {
             for (uint16_t field : allocation.order.span().first(allocation.born)) {
-                if (auto& born = m_program.at(allocation.layout).fields[field]; exists(born))
-                    mayBeOutOfLine.quickClear(born.slot.index());
+                if (auto& born = m_program.at(allocation.layout).fields[field]; exists(born)) {
+                    m_existsFromBirth.quickSet(born.slot.index());
+                    if (allocation.born > maxFieldsInOrder)
+                        m_isFirstStoredWithValue.quickSet(born.slot.index());
+                }
             }
         }
         for (auto& initial : m_initialStores) {
-            for (unsigned k = 0; k < initial.count; ++k)
-                mayBeOutOfLine.quickClear(m_program.at(initial.view).fields[*fieldOf(initial, k)].slot.index());
+            for (unsigned k = 0; k < initial.count; ++k) {
+                uint32_t slot = m_program.at(initial.view).fields[*fieldOf(initial, k)].slot.index();
+                m_existsFromBirth.quickSet(slot);
+                if (initial.count > maxFieldsInOrder)
+                    m_isFirstStoredWithValue.quickSet(slot);
+            }
+        }
+        for (auto& layout : layouts) {
+            for (auto& field : layout.fields) {
+                if (layout.kind == LayoutKind::Instance && hasObjects(layout) && exists(field) && !(field.flags & fieldIsAbsentAtBirth))
+                    m_existsFromBirth.quickSet(field.slot.index());
+            }
+        }
+        for (size_t slot : m_existsFromBirth) {
+            if (m_isFirstStoredWithValue.quickGet(slot))
+                mayBeOutOfLine.quickClear(slot);
         }
         // What every object of some layout gets where it is made is inline too. Of the rest, what some get there comes first, then what most
         // code gets at.
         BitVector mayBeSetAtCreation;
         mayBeSetAtCreation.ensureSize(slots.size());
+        BitVector isSetAtCreation;
+        isSetAtCreation.ensureSize(slots.size());
         for (auto& layout : layouts) {
             for (auto& field : layout.fields) {
                 if (!hasObjects(layout) || !exists(field))
                     continue;
                 if (field.flags & fieldIsSetAtCreation)
-                    mayBeOutOfLine.quickClear(field.slot.index());
+                    isSetAtCreation.quickSet(field.slot.index());
                 if (field.flags & fieldMayBeSetAtCreation)
                     mayBeSetAtCreation.quickSet(field.slot.index());
             }
         }
         auto scoreOf = [&](uint32_t slot) {
-            return std::tuple(mayBeSetAtCreation.quickGet(slot), m_accessWeight[slot]);
+            return std::tuple(isSetAtCreation.quickGet(slot), isSetAtCreation.quickGet(slot) ? uses[slot].numberOfLayouts : 0u, mayBeSetAtCreation.quickGet(slot), m_accessWeight[slot]);
         };
         Vector<Occupancy> extensions(layouts.size());
         for (auto& extension : extensions)
             extension.words.append((1ull << offsetOfFirstExtensionSlot) - 1);
-        std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
-            if (mayBeOutOfLine.quickGet(a) != mayBeOutOfLine.quickGet(b))
-                return !mayBeOutOfLine.quickGet(a);
-            if (mayBeOutOfLine.quickGet(a) && scoreOf(a) != scoreOf(b))
-                return scoreOf(a) > scoreOf(b);
-            if (uses[a].numberOfLayouts != uses[b].numberOfLayouts)
-                return uses[a].numberOfLayouts > uses[b].numberOfLayouts;
-            if (uses[a].deadline != uses[b].deadline)
-                return uses[a].deadline < uses[b].deadline;
-            if (sizeOf(slots[a].store) != sizeOf(slots[b].store))
-                return sizeOf(slots[a].store) > sizeOf(slots[b].store);
-            return a < b;
+        struct WhatTheOrderGoesBy {
+            decltype(scoreOf(0)) score;
+            uint32_t numberOfLayouts;
+            uint32_t deadline;
+            uint32_t slot;
+            uint8_t size;
+            bool mayBeOutOfLine;
+            bool comesAboutByTransitionAlone;
+        };
+        Vector<WhatTheOrderGoesBy> ordered(order.size(), [&](size_t index) {
+            uint32_t slot = order[index];
+            return WhatTheOrderGoesBy { scoreOf(slot), uses[slot].numberOfLayouts, uses[slot].deadline, slot, static_cast<uint8_t>(sizeOf(slots[slot].store)), mayBeOutOfLine.quickGet(slot), mayBeOutOfLine.quickGet(slot) && comesAboutByTransitionAlone.quickGet(slot) };
         });
+        std::ranges::sort(ordered, [](const WhatTheOrderGoesBy& a, const WhatTheOrderGoesBy& b) {
+            if (a.mayBeOutOfLine != b.mayBeOutOfLine)
+                return !a.mayBeOutOfLine;
+            if (a.comesAboutByTransitionAlone != b.comesAboutByTransitionAlone)
+                return a.comesAboutByTransitionAlone;
+            if (a.mayBeOutOfLine && a.score != b.score)
+                return a.score > b.score;
+            if (a.numberOfLayouts != b.numberOfLayouts)
+                return a.numberOfLayouts > b.numberOfLayouts;
+            if (a.deadline != b.deadline)
+                return a.deadline < b.deadline;
+            if (a.size != b.size)
+                return a.size > b.size;
+            return a.slot < b.slot;
+        });
+        for (size_t index = 0; index < order.size(); ++index)
+            order[index] = ordered[index].slot;
+        return { WTF::move(uses), WTF::move(occupancies), WTF::move(extensions), WTF::move(layoutsOfSlots), WTF::move(order), WTF::move(mayBeOutOfLine), WTF::move(comesAboutByTransitionAlone), numberOfUses };
+    }
+
+    uint64_t placeObjectsInOrder(const ObjectsToPlace& prepared, unsigned smallLayoutsFirst)
+    {
+        auto& layouts = m_program.layouts;
+        auto& slots = m_program.slots;
+        auto& uses = prepared.uses;
+        auto& layoutsOfSlots = prepared.layoutsOfSlots;
+        auto& mayBeOutOfLine = prepared.mayBeOutOfLine;
+        uint32_t numberOfUses = prepared.numberOfUses;
+        Vector<Occupancy> occupancies = prepared.occupancies;
+        Vector<Occupancy> extensions = prepared.extensions;
+        Vector<uint32_t> order = prepared.order;
+        takeBackWhatWasPutOutOfLine();
+        for (auto& slot : slots)
+            slot.offset = offsetOfFirstField;
         if (smallLayoutsFirst) {
             size_t numberInLine = std::ranges::partition_point(order, [&](uint32_t slot) {
                 return !mayBeOutOfLine.quickGet(slot);
@@ -2232,7 +2443,7 @@ private:
                     return uses[a].numberOfLayouts > uses[b].numberOfLayouts;
                 });
                 for (size_t later = 1; later < slotsOfLayout.size(); ++later) {
-                    for (size_t earlier = 0; earlier < later && uses[slotsOfLayout[earlier]].numberOfLayouts >= 2 * uses[slotsOfLayout[later]].numberOfLayouts; ++earlier)
+                    for (size_t earlier = 0; earlier < later && uses[slotsOfLayout[earlier]].numberOfLayouts >= smallLayoutsFirst * uses[slotsOfLayout[later]].numberOfLayouts; ++earlier)
                         waiting[slotsOfLayout[earlier]].append(slotsOfLayout[later]);
                 }
             }
@@ -2302,7 +2513,7 @@ private:
                 room = roomIn(occupied, logSize);
                 if (!room)
                     continue;
-                if (slot.isOutOfLine || !mayBeOutOfLine.quickGet(index) || word * 64 + WTF::ctz(room) + size <= cap)
+                if (slot.isOutOfLine || !mayBeOutOfLine.quickGet(index) || (!prepared.comesAboutByTransitionAlone.quickGet(index) && word * 64 + WTF::ctz(room) + size <= cap))
                     break;
                 m_slotsPutOutOfLine.append({ index, slot.store, slot.type });
                 slot.isOutOfLine = true;
@@ -2342,6 +2553,7 @@ private:
                 field.store = slot.store;
                 field.offset = slot.offset;
                 field.isOutOfLine = slot.isOutOfLine;
+                field.flags = slot.isOutOfLine && m_existsFromBirth.quickGet(field.slot.index()) ? field.flags | fieldMayExistWithoutStorage : field.flags & ~fieldMayExistWithoutStorage;
                 (slot.isOutOfLine ? layout.extensionSize : end) = std::max(slot.isOutOfLine ? layout.extensionSize : end, slot.offset + sizeOf(slot.store));
             }
             if (!layout.isAllocated)
@@ -2400,10 +2612,10 @@ private:
         static constexpr uint32_t endOfExtensionPointer = offsetOfExtension + sizeOfExtensionWord;
         // As yet everything is inline.
         auto withEverything = largestCells(bytesAllocated);
-        auto atCreation = largestCells([](const Layout& layout) {
+        auto atCreation = largestCells([&](const Layout& layout) {
             uint32_t bytes = endOfExtensionPointer;
             for (auto& field : layout.fields) {
-                if (exists(field) && field.flags & fieldIsSetAtCreation)
+                if (exists(field) && field.flags & fieldIsSetAtCreation && m_isBornOrNamedByCast.quickGet(&layout - &layouts[0]) && (m_isFirstStoredWithValue.quickGet(field.slot.index()) || !m_existsFromBirth.quickGet(field.slot.index())))
                     bytes += sizeOf(field.store);
             }
             return bytes;
@@ -2412,11 +2624,20 @@ private:
             return endOfExtensionPointer;
         });
         auto withTheLeast = largestCells(bytesAllocated);
+        Vector<uint32_t> endOfWhatHasToBeInLine(FillWith { }, layouts.size(), 0);
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            if (!mayHaveExtension(i))
+                continue;
+            for (auto& field : layouts[i].fields) {
+                if (exists(field) && !field.isOutOfLine)
+                    endOfWhatHasToBeInLine[m_group[i]] = std::max<uint32_t>(endOfWhatHasToBeInLine[m_group[i]], field.offset + sizeOf(field.store));
+            }
+        }
 
         uint32_t bytesBeyondCreation = referencesBeyondCreation * sizeOf(Store::Cell32);
         Vector<uint32_t> caps(FillWith { }, layouts.size(), noCap);
         for (unsigned i = 0; i < layouts.size(); ++i) {
-            uint32_t cap = std::max<uint32_t>(withTheLeast[i], cellSizeFor(atCreation[i] + bytesBeyondCreation));
+            uint32_t cap = std::max<uint32_t>(withTheLeast[i], std::min<uint32_t>(cellSizeFor(std::max(atCreation[i], endOfWhatHasToBeInLine[i]) + bytesBeyondCreation), mostRoomInLine));
             if (withEverything[i] > cap)
                 caps[i] = cap;
         }
@@ -2476,6 +2697,167 @@ private:
     }
 
     // What has been turned into one of a specialization may be turned into one of a specialization of that.
+    void widenNumbersWhereBytesAreFree()
+    {
+        auto& layouts = m_program.layouts;
+        auto& slots = m_program.slots;
+        Vector<uint32_t> candidates;
+        for (unsigned i = 0; i < slots.size(); ++i) {
+            if (slots[i].store == Store::Int32OrElsewhere && !slots[i].isOutOfLine)
+                candidates.append(i);
+        }
+        if (candidates.isEmpty())
+            return;
+
+        auto bytesAt = [](uint32_t offset, uint32_t size) {
+            return ((1ull << size) - 1) << (offset % 64);
+        };
+        Vector<Vector<uint64_t, 4>> occupied(layouts.size());
+        Vector<std::pair<uint32_t, uint32_t>> layoutsOfSlots;
+        for (unsigned i = 0; i < layouts.size(); ++i) {
+            auto& layout = layouts[i];
+            if (!isObjectLayout(layout.kind) || !layout.isAllocated)
+                continue;
+            auto& words = occupied[i];
+            words.fill(0, layout.size / 64 + 1);
+            words[0] = bytesAt(0, offsetOfFirstField + (layout.hasExtension ? sizeOfExtensionWord : 0));
+            for (auto& field : layout.fields) {
+                if (!exists(field) || field.isOutOfLine)
+                    continue;
+                words[field.offset / 64] |= bytesAt(field.offset, sizeOf(field.store));
+                if (field.store == Store::Int32OrElsewhere)
+                    layoutsOfSlots.append({ field.slot.index(), i });
+            }
+        }
+        std::ranges::sort(layoutsOfSlots);
+
+        UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> groupOfName;
+        Vector<uint32_t> groupOfSlot;
+        groupOfSlot.fill(UINT32_MAX, slots.size());
+        Vector<Vector<uint32_t, 1>> groups;
+        BitVector isHeldBack;
+        for (auto& layout : layouts) {
+            if (layout.kind != LayoutKind::Record)
+                continue;
+            for (auto& field : layout.fields) {
+                if (!exists(field) || field.store != Store::Int32OrElsewhere)
+                    continue;
+                uint32_t group = groupOfName.ensure(field.name.index(), [&] {
+                    groups.append({ });
+                    return groups.size() - 1;
+                }).iterator->value;
+                if (field.isOutOfLine)
+                    isHeldBack.set(group);
+                uint32_t& groupOfThis = groupOfSlot[field.slot.index()];
+                if (groupOfThis == UINT32_MAX) {
+                    groupOfThis = group;
+                    groups[group].append(field.slot.index());
+                } else if (groupOfThis != group) {
+                    isHeldBack.set(group);
+                    isHeldBack.set(groupOfThis);
+                }
+            }
+        }
+        for (uint32_t index : candidates) {
+            if (groupOfSlot[index] != UINT32_MAX)
+                continue;
+            groupOfSlot[index] = groups.size();
+            groups.append({ index });
+        }
+        Vector<uint32_t> order;
+        Vector<uint64_t> weightOfGroup;
+        weightOfGroup.fill(0, groups.size());
+        for (uint32_t group = 0; group < groups.size(); ++group) {
+            if (isHeldBack.get(group))
+                continue;
+            order.append(group);
+            for (uint32_t index : groups[group])
+                weightOfGroup[group] = std::max<uint64_t>(weightOfGroup[group], m_accessWeight[index]);
+        }
+        std::ranges::sort(order, [&](uint32_t a, uint32_t b) {
+            return std::tuple(weightOfGroup[b], groups[a][0]) < std::tuple(weightOfGroup[a], groups[b][0]);
+        });
+
+        uint32_t narrow = sizeOf(Store::Int32OrElsewhere);
+        uint32_t wide = sizeOf(Store::Double);
+        auto layoutsOf = [&](uint32_t index) {
+            return std::ranges::equal_range(layoutsOfSlots, index, { }, &std::pair<uint32_t, uint32_t>::first);
+        };
+        auto move = [&](uint32_t index, uint32_t from, uint32_t sizeThere, uint32_t to, uint32_t sizeHere) {
+            for (auto& use : layoutsOf(index)) {
+                occupied[use.second][from / 64] &= ~bytesAt(from, sizeThere);
+                occupied[use.second][to / 64] |= bytesAt(to, sizeHere);
+            }
+        };
+        auto roomFor = [&](uint32_t index) -> std::optional<uint32_t> {
+            auto& slot = slots[index];
+            auto layoutsOfSlot = layoutsOf(index);
+            uint32_t end = UINT32_MAX;
+            for (auto& use : layoutsOfSlot)
+                end = std::min({ end, layouts[use.second].size, m_inlineCap[use.second] });
+            for (uint32_t offset = WTF::roundUpToMultipleOf(wide, offsetOfFirstField); offset + wide <= end; offset += wide) {
+                bool isFree = std::ranges::all_of(layoutsOfSlot, [&](auto& use) {
+                    uint64_t word = occupied[use.second][offset / 64];
+                    if (slot.offset / 64 == offset / 64)
+                        word &= ~bytesAt(slot.offset, narrow);
+                    return !(word & bytesAt(offset, wide));
+                });
+                if (isFree)
+                    return offset;
+            }
+            return std::nullopt;
+        };
+        unsigned numberWidened = 0;
+        BitVector isWidened;
+        for (bool didWiden = true; didWiden;) {
+            didWiden = false;
+            for (uint32_t group : order) {
+                if (isWidened.get(group))
+                    continue;
+                Vector<std::pair<uint32_t, uint32_t>, 4> found;
+                bool hasRoom = true;
+                for (uint32_t index : groups[group]) {
+                    if (layoutsOf(index).empty())
+                        continue;
+                    auto offset = roomFor(index);
+                    if (!offset) {
+                        hasRoom = false;
+                        break;
+                    }
+                    move(index, slots[index].offset, narrow, *offset, wide);
+                    found.append({ index, *offset });
+                }
+                if (!hasRoom || found.isEmpty()) {
+                    for (auto [index, offset] : found | std::views::reverse)
+                        move(index, offset, wide, slots[index].offset, narrow);
+                    continue;
+                }
+                for (auto [index, offset] : found) {
+                    auto& slot = slots[index];
+                    m_isExpectedInt32.quickClear(index);
+                    slot.store = storeFor(m_program.at(slot.type), false, m_keepsWideReferences.quickGet(index));
+                    RELEASE_ASSERT(sizeOf(slot.store) == wide);
+                    slot.offset = offset;
+                    ++numberWidened;
+                }
+                isWidened.set(group);
+                didWiden = true;
+            }
+        }
+        for (auto& layout : layouts) {
+            if (!isObjectLayout(layout.kind))
+                continue;
+            for (auto& field : layout.fields) {
+                if (!exists(field))
+                    continue;
+                auto& slot = m_program.at(field.slot);
+                field.store = slot.store;
+                field.offset = slot.offset;
+            }
+        }
+        report(candidates.size() - numberWidened, " of ", candidates.size(), " slots of numbers that are expected to be int32s take 32 bits: the others have found 64 that were free");
+    }
+
     void makeRoomToSpecialize()
     {
         Vector<Layout*> specialized;
@@ -3117,18 +3499,111 @@ private:
             if (timesStoredLater[index])
                 variables[index].hasCard = false;
         }
+        constexpr unsigned numberOfGroupsThatAreFilled = 5;
+        BitVector isModuleOfHost(m_program.modules.size());
+        auto addModuleOf = [&](FunctionID function) {
+            if (ModuleID module = function ? m_program.at(function).module : ModuleID())
+                isModuleOfHost.set(module.index());
+        };
+        for (auto& module : m_program.builtinModules)
+            addModuleOf(module.second);
+        for (auto& builtin : m_program.builtinFunctions)
+            addModuleOf(builtin.function);
+        for (FunctionID function : m_program.preludeFunctions)
+            addModuleOf(function);
+        BitVector mayRunAheadOfProgram(m_program.functions.size());
+        Vector<unsigned> functionsToLookAt;
+        auto reach = [&](FunctionID function) {
+            if (function && !mayRunAheadOfProgram.set(function.index()))
+                functionsToLookAt.append(function.index());
+        };
+        for (unsigned index = 0; index < m_program.functions.size(); ++index) {
+            if (ModuleID module = m_program.functions[index].module; module && isModuleOfHost.get(module.index()))
+                reach(FunctionID(index));
+        }
+        BitVector isFilledAtBirth(variables.size());
+        for (unsigned index = 0; index < variables.size(); ++index) {
+            if (!variables[index].module || isModuleOfHost.get(variables[index].module.index()))
+                isFilledAtBirth.set(index);
+        }
+        unsigned numberOfBirthsAndReleasesAheadOfProgram = 0;
+        unsigned numberOfVariablesFilledAtBirthForThem = 0;
+        auto fillAtBirthWhatKeeps = [&](LayoutID layout) {
+            if (VariableID reused = layout ? m_program.at(layout).reuseVariable : VariableID()) {
+                ++numberOfBirthsAndReleasesAheadOfProgram;
+                numberOfVariablesFilledAtBirthForThem += !isFilledAtBirth.set(reused.index());
+            }
+        };
+        while (!functionsToLookAt.isEmpty()) {
+            FunctionID id(functionsToLookAt.takeLast());
+            auto& function = m_program.at(id);
+            for (FunctionID other : { m_program.genericEntrypoints.get(id.index()), function.rampForClosures, function.resumeFunction, function.startFunction, function.worker })
+                reach(other);
+            if (auto row = m_program.moduleEvaluationOfFunction.find(id.index()); row != m_program.moduleEvaluationOfFunction.end()) {
+                auto& evaluation = m_program.moduleEvaluations[row->value];
+                isFilledAtBirth.set(evaluation.isEvaluated.index());
+                if (evaluation.error)
+                    isFilledAtBirth.set(evaluation.error.index());
+                for (FunctionID callee : evaluation.callees)
+                    reach(callee);
+            }
+            for (auto& value : function.values) {
+                switch (value.opcode) {
+                case Opcode::CallDirect:
+                case Opcode::FunctionReference:
+                case Opcode::NewClosure:
+                case Opcode::NewClosureOnce:
+                    reach(value.function());
+                    break;
+                case Opcode::Construct:
+                    reach(m_program.bodyOfConstruction(value));
+                    break;
+                case Opcode::Cast:
+                    reach(m_program.bodyOfCast(value));
+                    break;
+                case Opcode::GetModuleVariable:
+                case Opcode::PutModuleVariable:
+                    isFilledAtBirth.set(value.variable().index());
+                    break;
+                case Opcode::NewObjectWithShape:
+                    if (value.allocation() < m_program.allocations.size())
+                        fillAtBirthWhatKeeps(m_program.allocations[value.allocation()].layout);
+                    [[fallthrough]];
+                case Opcode::PutField:
+                    fillAtBirthWhatKeeps(value.layout());
+                    break;
+                default:
+                    break;
+                }
+            }
+        }
+        auto placeOf = [&](unsigned index) {
+            unsigned group = groupOf(variables[index]);
+            return group < numberOfGroupsThatAreFilled && !isFilledAtBirth.get(index) ? group : group + numberOfGroupsThatAreFilled;
+        };
         Vector<unsigned> order(variables.size(), [](size_t index) {
             return static_cast<unsigned>(index);
         });
         std::ranges::stable_sort(order, [&](unsigned a, unsigned b) {
-            return groupOf(variables[a]) < groupOf(variables[b]);
+            return placeOf(a) < placeOf(b);
         });
         uint32_t offset = 0;
-        for (unsigned i : order) {
-            variables[i].offset = offset;
-            offset += sizeOf(variables[i].store);
-        }
+        auto place = [&](bool isFilledLate) {
+            for (unsigned i : order) {
+                if ((placeOf(i) < numberOfGroupsThatAreFilled) != isFilledLate)
+                    continue;
+                variables[i].offset = offset;
+                offset += sizeOf(variables[i].store);
+            }
+        };
+        place(true);
+        if (Options::validateAOTTypedFacts()) [[unlikely]]
+            offset = WTF::roundUpToMultipleOf<16 * KB>(offset);
+        m_program.sizeOfStaticsFilledLate = offset;
+        place(false);
         report(variables.size(), " variables in ", offset, " bytes");
+        report(m_program.sizeOfStaticsFilledLate, " bytes of them are filled when the program is first entered");
+        report(numberOfBirthsAndReleasesAheadOfProgram, " births and releases of an environment that is used again stand in code that may run ahead of the program; ", numberOfVariablesFilledAtBirthForThem, " variables are filled at birth for that alone");
         auto& builtins = Builtins::singleton();
         m_program.globalPropertyCachesOffset = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(offset);
         for (auto& numbers : m_program.globalPropertyCacheNumbers)
@@ -3166,14 +3641,41 @@ private:
     // Empty: eight bytes, for what ArrayAllocationProfile::vectorLengthHint() is for: see ArraySite.
     // Which sites get one goes by what the function itself does with the array, which decides how fast the program is and nothing else: an array that is stored to right
     // away is better not made copy-on-write, and only of an array that is pushed to here is it known where it was made when it has to grow.
+    uint64_t encodedConstant(const Value& constant, bool isShared) const
+    {
+        switch (constant.opcode) {
+        case Opcode::Undefined:
+            return JSValue::encode(jsUndefined());
+        case Opcode::Null:
+            return JSValue::encode(jsNull());
+        case Opcode::Boolean:
+            return JSValue::encode(jsBoolean(constant.boolean()));
+        case Opcode::Integer:
+            return JSValue::encode(jsNumber(static_cast<double>(constant.integer())));
+        case Opcode::Double:
+            return JSValue::encode(jsDoubleNumber(purifyNaN(std::bit_cast<double>(constant.bits()))));
+        case Opcode::String: {
+            auto bytes = m_program.string(constant.string());
+            if (bytes.empty() || (bytes.size() == 1 && bytes[0] && isASCII(bytes[0])))
+                return Data::encodedSmallString(bytes.empty() ? 0 : bytes[0]);
+            bool isMadeOnce = isShared && m_program.stringsMadeOnce.get(constant.string().index());
+            return Data::encodedStringConstant(constant.string().index()) | (isMadeOnce ? Data::encodedStringIsMadeOnce : 0);
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
     void placeArraySites()
     {
         auto& builtins = Builtins::singleton();
         Vector<Value*> allLiteralsOfConstants;
         Vector<Value*> allLiteralsPushedTo;
-        using Literals = std::pair<Vector<Value*>, Vector<Value*>>;
+        Vector<Value*> allUnsharedLiterals;
+        Vector<Vector<uint64_t>> allElementsOfUnsharedLiterals;
+        using Literals = std::tuple<Vector<Value*>, Vector<Value*>, Vector<Vector<uint64_t>>, Vector<Value*>, Vector<Vector<uint64_t>>>;
         forEachFunctionInOrder<Literals>([&](Function& function) {
-            auto [literalsOfConstants, literalsPushedTo] = Literals { };
+            auto [literalsOfConstants, literalsPushedTo, elementsOfLiterals, unsharedLiterals, elementsOfUnsharedLiterals] = Literals { };
             BitVector isStoredTo;
             BitVector isPushedTo;
             auto originOf = [&](ValueID id) {
@@ -3238,15 +3740,27 @@ private:
                             return false;
                         }
                     });
-                    if (areConstants && !isStoredTo.get(id.index()) && !isPushedTo.get(id.index()))
-                        literalsOfConstants.append(&value);
+                    bool isShared = !isStoredTo.get(id.index()) && !isPushedTo.get(id.index());
+                    bool isFromData = Options::useAOTArrayLiteralsFromData();
+                    if (areConstants && (isShared || (isFromData && value.arguments.size() > Program::maxLengthOfArrayLiteralMadeInline))) {
+                        (isShared ? literalsOfConstants : unsharedLiterals).append(&value);
+                        if (isFromData) {
+                            Vector<uint64_t> elements;
+                            for (ValueID element : value.arguments)
+                                elements.append(encodedConstant(function.at(element), isShared));
+                            (isShared ? elementsOfLiterals : elementsOfUnsharedLiterals).append(WTF::move(elements));
+                        }
+                    }
                 }
             }
-            return Literals { WTF::move(literalsOfConstants), WTF::move(literalsPushedTo) };
+            return Literals { WTF::move(literalsOfConstants), WTF::move(literalsPushedTo), WTF::move(elementsOfLiterals), WTF::move(unsharedLiterals), WTF::move(elementsOfUnsharedLiterals) };
         }, [&](Literals&& literals) {
-            allLiteralsOfConstants.appendVector(literals.first);
-            allLiteralsPushedTo.appendVector(literals.second);
-        });
+            allLiteralsOfConstants.appendVector(std::get<0>(literals));
+            allLiteralsPushedTo.appendVector(std::get<1>(literals));
+            m_program.elementsOfArrayLiterals.appendVector(WTF::move(std::get<2>(literals)));
+            allUnsharedLiterals.appendVector(std::get<3>(literals));
+            allElementsOfUnsharedLiterals.appendVector(WTF::move(std::get<4>(literals)));
+        }, holdsNewArray);
         auto& literalsOfConstants = allLiteralsOfConstants;
         auto& literalsPushedTo = allLiteralsPushedTo;
         uint32_t offset = WTF::roundUpToMultipleOf<sizeof(JSCell*)>(m_program.sizeOfStatics);
@@ -3256,6 +3770,10 @@ private:
             literal->immediates[1] = offset;
             offset += sizeof(JSCell*);
         }
+        uint32_t numberOfLiteral = literalsOfConstants.size();
+        for (Value* literal : allUnsharedLiterals)
+            literal->immediates[1] = numberOfLiteral++ << 1 | 1;
+        m_program.elementsOfArrayLiterals.appendVector(WTF::move(allElementsOfUnsharedLiterals));
         for (Value* literal : literalsPushedTo) {
             literal->immediates[0] = offset;
             offset += 2 * sizeof(uint32_t);
@@ -3284,7 +3802,7 @@ private:
                 if (m_program.offsetsOfSharedRegExpObjects.add(key, offset).isNewEntry)
                     offset += sizeof(JSCell*);
             }
-        });
+        }, holdsCallBuiltin);
         m_program.sizeOfStatics = WTF::roundUpToMultipleOf<sizeof(uint64_t)>(offset);
         report(m_program.offsetsOfSharedRegExpObjects.size(), " RegExp literals");
     }
@@ -3302,7 +3820,7 @@ private:
             }
             RELEASE_ASSERT(allocation.size >= layout.size && allocation.size <= layout.sizeWithRoomToSpecialize && !(allocation.size % 8));
             for (uint16_t field : allocation.order.span().first(allocation.born))
-                RELEASE_ASSERT(!layout.fields[field].isOutOfLine && !(layout.fields[field].flags & fieldIsAbsentAtBirth));
+                RELEASE_ASSERT((!layout.fields[field].isOutOfLine || layout.fields[field].flags & fieldMayExistWithoutStorage) && !(layout.fields[field].flags & fieldIsAbsentAtBirth));
             if (!allocation.numberOfLiterals)
                 continue;
             RELEASE_ASSERT(allocation.size == layout.sizeWithRoomToSpecialize);
@@ -3361,6 +3879,8 @@ private:
     void checkStores()
     {
         forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            if (!(m_heldByFunction[i] & holdsStoreToField))
+                return;
             auto& function = m_program.functions[i];
             for (auto& block : function.blocks) {
                 for (ValueID id : block.values) {
@@ -3420,7 +3940,7 @@ private:
                 for (unsigned k = 0; k < initial.count; ++k) {
                     auto& field = layout.fields[order[k]];
                     auto& throughView = view.fields[*fieldOf(initial, k)];
-                    RELEASE_ASSERT(field.name == names[k] && field.slot == throughView.slot && !field.isOutOfLine && !throughView.isLackedBySomeMember);
+                    RELEASE_ASSERT(field.name == names[k] && field.slot == throughView.slot && (!field.isOutOfLine || field.flags & fieldMayExistWithoutStorage) && !throughView.isLackedBySomeMember);
                 }
             });
         }
@@ -3659,6 +4179,7 @@ private:
     Vector<std::array<uint64_t, 2>> m_hashOfLayout;
     // By field.
     BitVector m_isAccessed;
+    Vector<uint8_t> m_heldByFunction;
     BitVector m_isStoredThrough;
     Vector<uint32_t> m_lackedFieldOfField;
     Vector<Fingerprint> m_membersWith;
@@ -3675,11 +4196,14 @@ private:
     Vector<Family> m_families;
     // By slot: access sites, those in loops weighted.
     Vector<uint64_t> m_accessWeight;
+    Vector<uint64_t> m_numberOfStoresOfDoubles;
+    BitVector m_isInCopiedRecord;
     const Vector<size_t> m_sizeClasses { MarkedSpace::sizeClassesFor(Options::sizeClassProgressionWithAOT()) };
     // By layout.
     Vector<uint32_t> m_group;
     static constexpr uint32_t noCap = UINT32_MAX;
-    static constexpr uint32_t referencesBeyondCreation = 8;
+    static constexpr uint32_t referencesBeyondCreation = 4;
+    static constexpr uint32_t mostRoomInLine = 128;
     // By layout: where the inline slots that may as well be out of line end. noCap: it has no extension.
     Vector<uint32_t> m_inlineCap;
     // With what typeSlots() made of them.
@@ -3706,6 +4230,10 @@ private:
     Vector<uint64_t> m_testsOfView;
     Vector<uint64_t> m_testsOfClass;
     Vector<uint64_t> m_coercionsToView;
+    Vector<uint64_t> m_castsOfWhatIsNotReadOutOfPlace;
+    BitVector m_isBornOrNamedByCast;
+    BitVector m_isFirstStoredWithValue;
+    BitVector m_existsFromBirth;
     // And one more.
     Vector<uint32_t> m_firstRetagSource;
     Vector<uint32_t> m_retagSources;
@@ -3770,8 +4298,7 @@ public:
                 holders[byLastCharacters[i - 1]] = holders[byLastCharacters[i]];
         }
         Vector<uint32_t> gaps(FillWith { }, strings.size(), 0);
-        static const char* const sharesTextsInside = getenv("AOT_SWITCH_TEXTS_INSIDE");
-        if (sharesTextsInside && sharesTextsInside[0] == '1') {
+        {
             MonotonicTime startOfSearch = MonotonicTime::now();
             constexpr size_t sizeOfHead = sizeof(uint32_t);
             constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
@@ -4042,8 +4569,11 @@ public:
         header.numberOfConstructors = constructors.size();
         header.constructorsOffset = append(constructorsAndClasses);
         Vector<std::array<uint32_t, 3>> boundFunctions;
-        for (auto& [key, bound] : m_program.boundFunctions)
-            boundFunctions.append({ entrypointOf(bound), entrypointOf(FunctionID(static_cast<uint32_t>(key >> 2))), static_cast<uint32_t>(key & 3) });
+        for (auto& [key, bound] : m_program.boundFunctions) {
+            auto& callee = m_program.at(FunctionID(static_cast<uint32_t>(key >> 2)));
+            uint32_t holdsItsTarget = callee.captureTypes.isEmpty() && !callee.hasManyClosures ? 0 : boundFunctionHoldsItsTarget;
+            boundFunctions.append({ entrypointOf(bound), entrypointOf(FunctionID(static_cast<uint32_t>(key >> 2))), static_cast<uint32_t>(key & 3) | holdsItsTarget });
+        }
         std::ranges::sort(boundFunctions);
         Vector<uint32_t> boundFunctionsAndWhatTheyBind;
         for (auto& entry : boundFunctions)
@@ -4209,6 +4739,7 @@ public:
         header.shapeSetsOffset = append(shapeSets);
 
         header.sizeOfStatics = m_program.sizeOfStatics;
+        header.sizeOfStaticsFilledLate = m_program.sizeOfStaticsFilledLate;
         // The memory is all zero bits at first, which in a boxed value stands for nothing.
         struct InitialWord {
             uint32_t offset;
@@ -4243,7 +4774,7 @@ public:
         Vector<uint32_t> staticsRuns;
         for (unsigned first = 0; first < initialWords.size();) {
             unsigned end = first + 1;
-            while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].offset == initialWords[end - 1].offset + sizeof(uint64_t))
+            while (end < initialWords.size() && initialWords[end].bits == initialWords[first].bits && initialWords[end].offset == initialWords[end - 1].offset + sizeof(uint64_t) && initialWords[end].offset != m_program.sizeOfStaticsFilledLate)
                 ++end;
             uint64_t bits = initialWords[first].bits;
             staticsRuns.appendList({ static_cast<uint32_t>(initialWords[first].offset / sizeof(uint64_t)), end - first, static_cast<uint32_t>(bits), static_cast<uint32_t>(bits >> 32) });
@@ -4280,22 +4811,67 @@ public:
         header.rootsOffset = append(roots);
         header.numberOfCards = rootMasks.size();
         header.rootMasksOffset = append(rootMasks);
+        header.copyOnWriteButterfliesOffset = m_program.copyOnWriteButterfliesOffset;
+        Vector<std::array<uint32_t, 2>> arrayLiterals;
+        for (auto& elements : m_program.elementsOfArrayLiterals)
+            arrayLiterals.append({ append(elements), static_cast<uint32_t>(elements.size()) });
+        header.arrayLiteralsOffset = append(arrayLiterals);
 
         header.numberOfFunctions = m_program.functions.size();
         Vector<uint32_t> names;
         Vector<uint8_t> kinds;
         Vector<uint16_t> lengths;
+        Vector<uint8_t> lengthsInBytes;
         for (auto& function : m_program.functions) {
             BuiltinID builtin = m_program.builtinCarriedOutBy(function);
             StringID nameOfBuiltin = builtin ? m_program.stringOf(Builtins::singleton().at(builtin).nameName) : StringID();
             names.append((nameOfBuiltin ? nameOfBuiltin : function.name).index());
             static_assert(static_cast<uint8_t>(FunctionKind::Bound) < functionKindOfBodiesOfSeveralSites && functionKindOfBodiesOfSeveralSites <= functionKindMask);
             kinds.append(kindByteOf(m_program, function));
-            lengths.append(static_cast<uint16_t>(function.length));
+            RELEASE_ASSERT(function.length <= (m_program.functionLengthsAreBytes ? std::numeric_limits<uint8_t>::max() : std::numeric_limits<uint16_t>::max()));
+            if (m_program.functionLengthsAreBytes)
+                lengthsInBytes.append(static_cast<uint8_t>(function.length));
+            else
+                lengths.append(static_cast<uint16_t>(function.length));
         }
         header.functionsOffset = append(names);
         header.functionKindsOffset = append(kinds);
-        header.functionLengthsOffset = append(lengths);
+        header.functionLengthsAreBytes = m_program.functionLengthsAreBytes;
+        uint32_t firstFunctionClosuresGoBy = m_program.functions.size();
+        uint32_t endOfFunctionsClosuresGoBy = m_program.functions.size();
+        bool closuresGoBySome = false;
+        auto noteClosuresGoBy = [&](uint32_t function) {
+            firstFunctionClosuresGoBy = std::min(firstFunctionClosuresGoBy, function);
+            endOfFunctionsClosuresGoBy = closuresGoBySome ? std::max(endOfFunctionsClosuresGoBy, function + 1) : function + 1;
+            closuresGoBySome = true;
+        };
+        for (auto& [function, entrypoint] : m_program.genericEntrypoints)
+            noteClosuresGoBy(entrypoint.index());
+        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+            if (m_program.isResumeFunction(m_program.functions[i]))
+                noteClosuresGoBy(i);
+        }
+        uint32_t endOfFunctionsCalledByNumber = 0;
+        for (auto& evaluation : m_program.moduleEvaluations) {
+            for (FunctionID callee : evaluation.callees) {
+                if (!m_program.moduleEvaluationOfFunction.contains(callee.index()))
+                    endOfFunctionsCalledByNumber = std::max(endOfFunctionsCalledByNumber, callee.index() + 1);
+            }
+        }
+        uint32_t rowsLeftOutAheadOfClosures = firstFunctionClosuresGoBy > endOfFunctionsCalledByNumber ? firstFunctionClosuresGoBy - endOfFunctionsCalledByNumber : 0;
+        header.firstFunctionClosuresGoBy = firstFunctionClosuresGoBy;
+        header.endOfFunctionsClosuresGoBy = endOfFunctionsClosuresGoBy;
+        header.rowsLeftOutAheadOfClosures = rowsLeftOutAheadOfClosures;
+        auto appendRowsOfClosures = [&](std::span<const uint8_t> rows, size_t sizeOfRow) {
+            auto kept = rows.subspan(firstFunctionClosuresGoBy * sizeOfRow, (endOfFunctionsClosuresGoBy - firstFunctionClosuresGoBy) * sizeOfRow);
+            if (m_result.size() < firstFunctionClosuresGoBy * sizeOfRow)
+                allocate(firstFunctionClosuresGoBy * sizeOfRow - m_result.size());
+            uint32_t offset = allocate(kept.size());
+            memcpySpan(m_result.mutableSpan().subspan(offset), kept);
+            RELEASE_ASSERT(offset >= firstFunctionClosuresGoBy * sizeOfRow);
+            return safeCast<uint32_t>(offset - firstFunctionClosuresGoBy * sizeOfRow);
+        };
+        header.functionLengthsOffset = m_program.functionLengthsAreBytes ? appendRowsOfClosures(asBytes(lengthsInBytes.span()), sizeof(uint8_t)) : appendRowsOfClosures(asBytes(lengths.span()), sizeof(uint16_t));
         uint32_t numberOfModuleEvaluations = m_program.moduleEvaluations.size();
         Vector<uint32_t> moduleEvaluations(2 * numberOfModuleEvaluations);
         auto offsetOf = [&](VariableID variable) {
@@ -4311,7 +4887,7 @@ public:
                 auto other = m_program.moduleEvaluationOfFunction.find(callee.index());
                 bool isRow = other != m_program.moduleEvaluationOfFunction.end();
                 moduleEvaluations.append(isRow ? offsetOf(m_program.moduleEvaluations[other->value].isEvaluated) : std::numeric_limits<uint32_t>::max());
-                moduleEvaluations.append(isRow ? other->value : callee.index());
+                moduleEvaluations.append(isRow ? other->value : callee.index() + rowsLeftOutAheadOfClosures);
             }
         }
         header.moduleEvaluationsOffset = append(moduleEvaluations);
@@ -4327,7 +4903,7 @@ public:
             if (m_program.isResumeFunction(m_program.functions[i]))
                 setCounts(FunctionID(i), m_program.functions[i]);
         }
-        header.closureCountsOffset = append(closureCounts);
+        header.closureCountsOffset = appendRowsOfClosures(asBytes(closureCounts.span()), sizeof(closureCounts[0]));
         Vector<uint8_t> slimClosures;
         slimClosures.fill(0, (m_program.functions.size() + 7) / 8);
         for (auto& [function, entrypoint] : m_program.genericEntrypoints) {
@@ -4407,12 +4983,42 @@ public:
         }
         header.numberOfRefusedFreshObjects = refusedFreshObjects.size();
         header.refusedFreshObjectsOffset = append(refusedFunctionsAndShapes);
+        Vector<uint32_t> functionsThatKeepFieldNamesOffTheirPrototypes;
+        for (auto& [index, entrypoint] : m_program.genericEntrypoints) {
+            if (m_program.functions[index].has(Format::FunctionKeepsFieldNamesOffItsPrototype))
+                functionsThatKeepFieldNamesOffTheirPrototypes.append(entrypoint.index());
+        }
+        std::ranges::sort(functionsThatKeepFieldNamesOffTheirPrototypes);
+        header.numberOfFunctionsThatKeepFieldNamesOffTheirPrototypes = functionsThatKeepFieldNamesOffTheirPrototypes.size();
+        header.functionsThatKeepFieldNamesOffTheirPrototypesOffset = append(functionsThatKeepFieldNamesOffTheirPrototypes);
         Vector<std::pair<uint32_t, uint32_t>> propertyCountsOfThis;
         Vector<std::pair<uint32_t, uint32_t>> functionsAndEntrypoints;
         for (auto& [index, entrypoint] : m_program.genericEntrypoints)
             functionsAndEntrypoints.append({ index, entrypoint.index() });
         Vector<uint32_t> countsOfThis;
         countsOfThis.fill(0, functionsAndEntrypoints.size());
+        Vector<Vector<StringID, 4>> namesGivenByMakers(m_program.functions.size());
+        for (auto& maker : m_program.functions) {
+            UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> made;
+            for (auto& block : maker.blocks) {
+                for (ValueID id : block.values) {
+                    auto& value = maker.at(id);
+                    if (value.opcode == Opcode::Construct || value.opcode == Opcode::CreateThis) {
+                        if (FunctionID expected = maker.at(value.child(0)).predictedClosure)
+                            made.add(id.index(), expected.index());
+                        continue;
+                    }
+                    if (value.opcode != Opcode::PutById || made.isEmpty())
+                        continue;
+                    ValueID object = value.child(0);
+                    while (maker.at(object).opcode == Opcode::Cast && maker.at(object).castReason() == CastReason::Upcast)
+                        object = maker.at(object).child(0);
+                    auto found = made.find(object.index());
+                    if (found != made.end() && !namesGivenByMakers[found->value].contains(value.string()))
+                        namesGivenByMakers[found->value].append(value.string());
+                }
+            }
+        }
         forEachIndexInParallel(functionsAndEntrypoints.size(), [&](unsigned i) {
             uint32_t index = functionsAndEntrypoints[i].first;
             auto& function = m_program.functions[index];
@@ -4421,6 +5027,10 @@ public:
             Vector<StringID, 16> names;
             unsigned numberOfKeys = 0;
             bool isOfWholeChain = collectPropertiesGivenToThis(m_program, FunctionID(index), names, numberOfKeys);
+            for (StringID name : namesGivenByMakers[index]) {
+                if (!names.contains(name))
+                    names.append(name);
+            }
             if (names.size() + numberOfKeys)
                 countsOfThis[i] = (names.size() + numberOfKeys) | (isOfWholeChain ? Data::propertyCountIsOfWholeChain : 0);
         });
@@ -4468,6 +5078,9 @@ public:
         header.numberOfFieldNames = fieldNames.size();
         header.fieldNamesOffset = append(fieldNames);
         header.isCompiledForAudit = Options::auditAOTTypedAssertions();
+        header.logsTypeErrors = m_program.logsTypeErrors;
+        header.numberOfWordsOfSites = m_program.sites.size();
+        header.sitesOffset = append(m_program.sites);
         header.countsAllocations = Options::countAOTTypedAllocations();
         header.usesWideReferences = Options::useAOTWideReferences();
         {
@@ -4506,12 +5119,26 @@ public:
             }
             for (auto& [function, entrypoint] : m_program.genericEntrypoints)
                 owner[entrypoint.index()] = owner[function];
-            Vector<uint32_t> aliases;
+            Vector<uint32_t> runsOfAliases;
+            Vector<uint16_t> lowHalvesOfOwners;
+            Vector<uint8_t> highBytesOfOwners;
+            RELEASE_ASSERT(!(owner.size() >> 24));
+            unsigned behindLastAlias = 0;
             for (unsigned i = 0; i < owner.size(); ++i) {
-                if (owner[i] != i)
-                    aliases.appendList({ i, owner[i] });
+                if (owner[i] == i)
+                    continue;
+                if (runsOfAliases.isEmpty() || i != behindLastAlias)
+                    runsOfAliases.appendList({ static_cast<uint32_t>(i), static_cast<uint32_t>(highBytesOfOwners.size()) });
+                behindLastAlias = i + 1;
+                lowHalvesOfOwners.append(static_cast<uint16_t>(owner[i]));
+                highBytesOfOwners.append(static_cast<uint8_t>(owner[i] >> 16));
             }
-            header.numberOfFunctionAliases = aliases.size() / 2;
+            header.numberOfFunctionAliases = highBytesOfOwners.size();
+            header.numberOfRunsOfFunctionAliases = runsOfAliases.size() / 2;
+            Vector<uint8_t> aliases;
+            aliases.append(asBytes(runsOfAliases.span()));
+            aliases.append(asBytes(lowHalvesOfOwners.span()));
+            aliases.appendVector(highBytesOfOwners);
             header.functionAliasesOffset = append(aliases);
         }
         if (header.isCompiledForAudit) {
@@ -4557,6 +5184,7 @@ public:
         header.makersOffset = append(makers);
         header.numberOfAllocationsByConstructor = allocationsByConstructor.size();
         header.allocationsByConstructorOffset = append(allocationsByConstructor);
+        header.functionTextsOffset = appendFunctionTexts();
         at<Data>(0) = header;
         {
             const Data& data = at<Data>(0);
@@ -4594,6 +5222,60 @@ public:
     }
 
 private:
+    uint32_t appendFunctionTexts()
+    {
+        Vector<std::array<uint32_t, 2>> values;
+        for (auto& [function, entrypoint] : m_program.genericEntrypoints)
+            values.append({ entrypoint.index(), function });
+        std::ranges::sort(values);
+        Vector<std::array<uint32_t, 3>> entries;
+        Vector<uint32_t> paths;
+        Vector<uint8_t> text;
+        Vector<uint32_t> placeOfModule(m_program.modules.size(), [](size_t) {
+            return UINT32_MAX;
+        });
+        Vector<uint32_t> without;
+        for (auto [entrypoint, number] : values) {
+            const Function& function = m_program.functions[number];
+            if (!function.module || function.kind == FunctionKind::Bound || function.declaredAs & functionIsOfBuiltinModule || function.has(Format::FunctionIsBuiltin))
+                continue;
+            if (!function.placeOfText && !function.endOfText) {
+                if (!function.has(Format::FunctionIsHiddenInStackTraces))
+                    without.append(number);
+                continue;
+            }
+            const Module& module = m_program.modules[function.module.index()];
+            uint32_t& place = placeOfModule[function.module.index()];
+            if (function.endOfText) {
+                if (place == UINT32_MAX) {
+                    place = safeCast<uint32_t>(text.size());
+                    text.append(module.printed);
+                }
+                entries.append({ entrypoint, place + function.placeOfText, place + function.endOfText });
+                continue;
+            }
+            if (place == UINT32_MAX) {
+                auto path = m_program.string(module.path);
+                place = paths.size() / 2;
+                paths.appendList({ append(path), safeCast<uint32_t>(path.size()) });
+            }
+            entries.append({ entrypoint, place, function.placeOfText - 1 });
+        }
+        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: the text of functions: ", entries.size(), " functions that can be values have one, ", without.size(), " have none; ", text.size(), " bytes of text");
+        if (entries.isEmpty())
+            return 0;
+        if (Options::verboseAOTCompilation()) [[unlikely]] {
+            for (uint32_t number : without) {
+                const Function& function = m_program.functions[number];
+                LineColumn where = m_program.lineColumnFor(function.module, function.position);
+                dataLogLn("AOT: no text: ", String::fromUTF8(m_program.string(function.name)), " at ", String::fromUTF8(m_program.string(m_program.modules[function.module.index()].displayPath)), ":", where.line, ":", where.column);
+            }
+        }
+        RELEASE_ASSERT(text.isEmpty() || paths.isEmpty());
+        FunctionTexts texts { safeCast<uint32_t>(entries.size()), append(entries), text.isEmpty() ? 0 : append(text), append(paths) };
+        return append(asBytes(singleElementSpan(texts)));
+    }
+
     // Cleared, so that the bytes a structure leaves unused between its members are the same in every build.
     uint32_t allocate(size_t size)
     {
@@ -4916,6 +5598,7 @@ private:
         data.hasForeignRoot = layout.hasForeignRoot;
         data.hasFixedMembers = layout.hasFixedMembers;
         data.mayHaveOtherPrototype = layout.mayHaveOtherPrototype;
+        data.mayBeMadeByNew = layout.mayBeMadeByNew;
         data.constructorTakesNewTarget = layout.constructor && m_program.at(layout.constructor).has(Format::FunctionHasNewTarget);
         data.numberOfOrders = orders.size();
         data.ordersOffset = ordersOffset;
@@ -4996,6 +5679,7 @@ private:
 void place(Program& program)
 {
     Placement(program).run();
+    numberRowsOfBirths(program);
 }
 
 uint8_t kindByteOf(const Program& program, const Function& function)

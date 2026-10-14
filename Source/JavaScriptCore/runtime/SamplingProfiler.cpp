@@ -619,7 +619,7 @@ void SamplingProfiler::processUnverifiedStackTraces()
 
     TinyBloomFilter<uintptr_t> filter = m_vm.heap.objectSpace().blocks().filter();
 #if ENABLE(AOT)
-    UncheckedKeyHashMap<uint64_t, LineColumn> positionsOfCompiledSites;
+    UncheckedKeyHashMap<uint64_t, AOT::FunctionRef::ReportedPosition> positionsOfCompiledSites;
 #endif
 
     for (UnprocessedStackTrace& unprocessedStackTrace : m_unprocessedStackTraces) {
@@ -888,9 +888,10 @@ void SamplingProfiler::processUnverifiedStackTraces()
                         continue;
                     auto position = positionsOfCompiledSites.ensure((static_cast<uint64_t>(compiledFrame.function) << 32 | compiledFrame.callSite().asBits()) + 1, [&] {
                         auto reported = AOT::FunctionRef { nullptr, compiledFrame.function }.reportedPositionFor(compiledFrame.callSite());
-                        return reported ? reported->lineColumn : frame.semanticLocation.lineColumn;
+                        return reported ? *reported : AOT::FunctionRef::ReportedPosition { frame.semanticLocation.lineColumn, 0 };
                     });
-                    frame.semanticLocation.lineColumn = position.iterator->value;
+                    frame.semanticLocation.lineColumn = position.iterator->value.lineColumn;
+                    frame.sourceOfCompiledSite = position.iterator->value.source;
                 }
                 continue;
 #endif
@@ -1131,7 +1132,8 @@ std::tuple<SourceProvider*, SourceID> SamplingProfiler::StackFrame::sourceProvid
 #if ENABLE(AOT)
     if (isCompiled()) {
         auto definition = AOT::definitionOfTypedFunction(compiledFunction);
-        return { nullptr, definition && definition->source ? firstSourceIDOfCompiledCode + definition->source : internalSourceID };
+        uint32_t source = definition && definition->source ? definition->source : sourceOfCompiledSite;
+        return { nullptr, source ? firstSourceIDOfCompiledCode + source : internalSourceID };
     }
 #endif
     switch (frameType) {
@@ -1159,7 +1161,8 @@ String SamplingProfiler::StackFrame::url()
 #if ENABLE(AOT)
     if (isCompiled()) {
         auto definition = AOT::definitionOfTypedFunction(compiledFunction);
-        return definition && definition->source ? AOT::ProgramData::get()->sourceName(definition->source) : emptyString();
+        uint32_t source = definition && definition->source ? definition->source : sourceOfCompiledSite;
+        return source ? AOT::ProgramData::get()->sourceName(source) : emptyString();
     }
 #endif
     switch (frameType) {

@@ -62,6 +62,10 @@ void Lowering::applyEffects(PatchpointValue* patchpoint, OperationEffects effect
 {
     RELEASE_ASSERT_WITH_MESSAGE(!m_environmentAwaitingBarrier || effects.writes == Writes::Pure || m_isReportingThatFactDoesNotHold, "AOT: what may collect garbage comes between a store to an environment and its barrier");
     RELEASE_ASSERT_WITH_MESSAGE(!m_isFillingArrayAtBirth || effects.writes == Writes::Pure || m_isReportingThatFactDoesNotHold, "AOT: what may collect garbage comes between the birth of an array and the last element it is born with");
+    if (m_isFillingReusedEnvironment && effects.writes != Writes::Pure && !m_isReportingThatFactDoesNotHold) [[unlikely]] {
+        dataLogLn("AOT: f", m_id.index(), ": what may collect garbage comes between the birth of an environment that is used again and its barrier");
+        CRASH();
+    }
     if (!m_fieldsAwaitingFirstStore.isEmpty() && effects.writes != Writes::Pure && !effects.writesOnlyTypedArrayProperties && !m_isReportingThatFactDoesNotHold) [[unlikely]] {
         BitVector others = m_fieldsAwaitingFirstStore;
         if (isLoweringInitializingStore()) {
@@ -204,19 +208,37 @@ void Lowering::branchToLandingPad(PatchpointValue* patchpoint, std::optional<GPR
     m_out.appendTo(continuation);
 }
 
-static void callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite)
+static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool isLeaf, CallSite site, bool returnsToSite, const Vector<uint32_t, 3>& words, bool valueIsInWordRegister)
 {
 #if CPU(X86_64) && OS(LINUX)
-    static const bool traps = getenv("AOT_SWITCH_THROW_TRAP");
-    if (traps && !returnsToSite) {
+    static_assert(throwWordGPR == X86Registers::r11);
+    static const bool traps = [] {
+        const char* asGiven = getenv("AOT_SWITCH_THROW_TRAP");
+        if (asGiven && strcmp(asGiven, "0") && strcmp(asGiven, "1")) {
+            dataLogLn("AOT: AOT_SWITCH_THROW_TRAP is not 0 | 1: ", asGiven);
+            exit(1);
+        }
+        return !asGiven || asGiven[0] == '1';
+    }();
+    if (traps && !returnsToSite && !isLeaf && !valueIsInWordRegister) {
         context.trapsAtThrowSites.append({ jit.labelIgnoringWatchpoints(), site.bits });
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xf4));
-        return;
+        return false;
     }
-#else
-    UNUSED_PARAM(returnsToSite);
 #endif
+    if (isLeaf && !hasStubsForFunctionsWithoutFrame) {
+        jit.emitFunctionPrologue();
+        isLeaf = false;
+    }
+    if (!returnsToSite && words.size() == 1 && !valueIsInWordRegister) {
+        ArgumentMoves moves;
+        static const bool wordIsWrongForTesting = getenv("BUN_AOT_SWITCH_ARMS_BREAK") && !strcmp(getenv("BUN_AOT_SWITCH_ARMS_BREAK"), "word");
+        appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0] + wordIsWrongForTesting);
+        context.stubCalls.call(jit, isLeaf ? Stub::LeafThrowAtSiteByWord : Stub::ThrowAtSiteByWord, site, moves);
+        return true;
+    }
     context.stubCalls.call(jit, isLeaf ? Stub::LeafThrowAtSite : Stub::ThrowAtSite, site);
+    return false;
 }
 
 uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint32_t a, std::optional<uint32_t> b, unsigned classOfNewErrorPlusOne)
@@ -236,10 +258,11 @@ uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint3
     if (operand)
         patchpoint->append(ConstrainedValue(operand->value, ValueRep::SomeRegister));
     patchpoint->clobber(*registersChangedBy(Stub::ColdOperationVoid));
-    if (!hasStubsForFunctionsWithoutFrame) {
+    if (LoweringContext::coldSitesForceFrame() || (!hasStubsForFunctionsWithoutFrame && m_watchingHandler)) {
         m_context.emitsCalls = true;
         patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-    }
+    } else if (!hasStubsForFunctionsWithoutFrame)
+        m_context.holdsColdSites = true;
     CallSite site { nextSite() };
     uint32_t returnsToSite = m_watchingHandler ? 1u << 31 : 0;
     patchpoint->setGenerator([context = &m_context, kind, rep, a, b, site, returnsToSite, classOfNewErrorPlusOne](CCallHelpers& jit, const StackmapGenerationParams& params) {
@@ -249,10 +272,11 @@ uint32_t Lowering::throwAt(ThrowKind kind, std::optional<Operand> operand, uint3
         if (isLeaf)
             jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
 #endif
-        callThrowAtSite(*context, jit, isLeaf, site, returnsToSite);
         unsigned number = rep == Rep::Void ? classOfNewErrorPlusOne : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, b);
         words[0] |= returnsToSite;
+        if (callThrowAtSite(*context, jit, isLeaf, site, returnsToSite, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
+            return;
         context->noteDataInCode(jit, words.size());
         for (uint32_t word : words)
             jit.m_assembler.buffer().putInt(word);
@@ -284,10 +308,11 @@ void Lowering::requireOrThrowAt(Word32 condition, ThrowKind kind, std::optional<
     if (operand && hasStubsForFunctionsWithoutFrame)
         check->clobberEarly(RegisterSet { stubTemporaryGPRs[1] });
 #endif
-    if (!hasStubsForFunctionsWithoutFrame) {
+    if (LoweringContext::coldSitesForceFrame()) {
         m_context.emitsCalls = true;
         check->clobberLate(RegisterSet { callMarkerGPR });
-    }
+    } else if (!hasStubsForFunctionsWithoutFrame)
+        m_context.holdsColdSites = true;
     CallSite site { nextSite() };
     check->setGenerator([context = &m_context, kind, rep, a, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -296,9 +321,10 @@ void Lowering::requireOrThrowAt(Word32 condition, ThrowKind kind, std::optional<
         if (isLeaf)
             jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
 #endif
-        callThrowAtSite(*context, jit, isLeaf, site, false);
         unsigned number = rep == Rep::Void ? 0 : rep == Rep::Double || rep == Rep::OptionalDouble ? static_cast<unsigned>(params[0].fpr()) : static_cast<unsigned>(params[0].gpr());
         auto words = throwSiteWords(kind, rep, number, a, std::nullopt);
+        if (callThrowAtSite(*context, jit, isLeaf, site, false, words, rep != Rep::Void && params[0].isGPR() && params[0].gpr() == throwWordGPR))
+            return;
         context->noteDataInCode(jit, words.size());
         for (uint32_t word : words)
             jit.m_assembler.buffer().putInt(word);
@@ -312,8 +338,7 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
     for (LValue argument : arguments)
         numberOfGPRs += argument->type() != Double;
     bool isOffUsualPath = m_out.m_block->frequency() < 1 && (withInstance || !mayThrow) && numberOfGPRs <= GPRInfo::numberOfArgumentRegisters;
-    static const bool keepsConstantsOfSitesInPlace = !!getenv("BUN_AOT_SWITCH_ARMS_IN_PLACE");
-    bool argumentsAreTakenWhereTheyAre = isOffUsualPath && !(keepsConstantsOfSitesInPlace && (entry == Entry::operationAOTTypedGetByName || entry == Entry::operationAOTTypedSetByName || entry == Entry::operationAOTTypedNewArrayBuffer));
+    bool argumentsAreTakenWhereTheyAre = isOffUsualPath;
     Vector<LValue, 8> children = arguments;
     if (argumentsAreTakenWhereTheyAre) {
         for (LValue& child : children) {
@@ -357,10 +382,11 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
         patchpoint->clobber(*registersChangedBy(Stub::ColdOperationValue));
         if (!stubChecksException && type == Void)
             patchpoint->clobberLate(RegisterSet { GPRInfo::returnValueGPR });
-        if (!hasStubsForFunctionsWithoutFrame) {
+        if (LoweringContext::coldSitesForceFrame() || (!hasStubsForFunctionsWithoutFrame && m_watchingHandler)) {
             m_context.emitsCalls = true;
             patchpoint->clobberLate(RegisterSet { callMarkerGPR });
-        }
+        } else if (!hasStubsForFunctionsWithoutFrame)
+            m_context.holdsColdSites = true;
         if (returnsValue)
             patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         else if (returnsDouble)
@@ -389,7 +415,8 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
                     stub = static_cast<Stub>(static_cast<unsigned>(stub) + 2);
             }
             // Each is followed by its variant for a caller without a frame.
-            if (isLeaf)
+            bool makesFrame = isLeaf && !hasStubsForFunctionsWithoutFrame;
+            if (isLeaf && !makesFrame)
                 stub = static_cast<Stub>(static_cast<unsigned>(stub) + 1);
             ArgumentMoves moves;
             unsigned numberOfChildren = argumentsAreTakenWhereTheyAre ? params.value()->numChildren() : 0;
@@ -412,10 +439,14 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
                 RELEASE_ASSERT(rep.isStack() && !isLeaf);
                 appendArgumentMove(moves, destination, typeOfChild == Int32 ? ArgumentSource::Stack32 : ArgumentSource::Stack64, static_cast<int64_t>(rep.offsetFromFP()));
             }
+            if (makesFrame)
+                jit.emitFunctionPrologue();
             if (moves.isEmpty())
                 context->stubCalls.call(jit, stub, immediate, site);
             else
                 context->stubCalls.call(jit, stub, immediate, site, moves);
+            if (makesFrame)
+                jit.emitFunctionEpilogueWithEmptyFrame();
         });
         if (mayThrow && !stubChecksException)
             branchToLandingPad(patchpoint, type == Void ? GPRInfo::returnValueGPR : exceptionGPR);
@@ -434,11 +465,20 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
         stub = withInstance ? Stub::OperationVoidWithInstance : Stub::OperationVoid;
     else
         stub = withInstance ? Stub::OperationValueWithInstance : Stub::OperationValue;
-    if (entry == Entry::operationAOTTypedStringReplaceRegExpString && stub == Stub::OperationValueWithInstance) {
-        const char* asksBodyFirst = getenv("BUN_AOT_SWITCH_REPLACE_MISS");
-        if (asksBodyFirst && asksBodyFirst[0] == '1')
-            stub = Stub::StringReplaceRegExpStringThatMayFindNothing;
-    }
+    if (entry == Entry::operationAOTTypedStringReplaceRegExpString && stub == Stub::OperationValueWithInstance)
+        stub = Stub::StringReplaceRegExpStringThatMayFindNothing;
+    if (entry == Entry::operationAOTTypedRegExpExec && stub == Stub::OperationValueWithInstance)
+        stub = Stub::RegExpExecThatAsksBodyFirst;
+    if (entry == Entry::operationAOTTypedNewRegExpLiteral && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
+        stub = stub == Stub::OperationValueWithInstance ? Stub::NewRegExpLiteral : Stub::UncheckedNewRegExpLiteral;
+    if (entry == Entry::operationAOTTypedRegExpTest && stub == Stub::OperationValueWithInstance)
+        stub = Stub::RegExpTestThatAsksBodyFirst;
+    if (entry == Entry::operationAOTTypedStringToLowerCase && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
+        stub = stub == Stub::OperationValueWithInstance ? Stub::StringToLowerCase : Stub::UncheckedStringToLowerCase;
+    if (entry == Entry::operationAOTTypedStringToUpperCase && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
+        stub = stub == Stub::OperationValueWithInstance ? Stub::StringToUpperCase : Stub::UncheckedStringToUpperCase;
+    if (entry == Entry::operationAOTTypedNewTypedArray && (stub == Stub::OperationValueWithInstance || stub == Stub::UncheckedOperationWithInstance))
+        stub = stub == Stub::OperationValueWithInstance ? Stub::NewTypedArray : Stub::UncheckedNewTypedArray;
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
@@ -451,7 +491,7 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        if (stub == Stub::StringReplaceRegExpStringThatMayFindNothing)
+        if (stub == Stub::NewRegExpLiteral || stub == Stub::UncheckedNewRegExpLiteral || stub == Stub::StringReplaceRegExpStringThatMayFindNothing || stub == Stub::RegExpExecThatAsksBodyFirst || stub == Stub::RegExpTestThatAsksBodyFirst || stub == Stub::StringToLowerCase || stub == Stub::StringToUpperCase || stub == Stub::UncheckedStringToLowerCase || stub == Stub::UncheckedStringToUpperCase || stub == Stub::NewTypedArray || stub == Stub::UncheckedNewTypedArray)
             stubCalls->call(jit, stub, site);
         else
             stubCalls->call(jit, stub, immediate, site);
@@ -482,7 +522,7 @@ bool Lowering::mayJumpTo(FunctionID function, const Vector<LValue, 8>& arguments
     Rep rep = resultRepOf(m_program, function);
     // What lies in this frame has to be there while the callee runs.
     for (ValueID argument : m_function.at(terminator.value).arguments) {
-        if (LayoutID view = typeOf(argument).onlyView(); view && m_program.at(view).isInFrame)
+        if (LayoutID view = typeOf(argument).onlyView(); (view && m_program.at(view).mayBeInFrame) || m_function.mayPointIntoFrame.get(originOf(argument).index()))
             return false;
     }
     if (resultRepOf(m_program, m_id) != Rep::JSValue || (rep != Rep::JSValue && rep != Rep::Cell))
@@ -591,15 +631,28 @@ void Lowering::callFunctionFromColdBlock(FunctionID function)
 }
 
 // The operands: the callee, `this`, the arguments.
-Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, OperationEffects effects, LValue word)
+static std::optional<Stub> stubThatAsksFor(MethodAskedByStub method, bool methodIsRead)
+{
+    static_assert(static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 1 == static_cast<unsigned>(Stub::ArrayPushOrCallValue) && static_cast<unsigned>(Stub::SetAddOrCallMethod) + 1 == static_cast<unsigned>(Stub::SetAddOrCallValue));
+    static_assert(static_cast<unsigned>(Stub::SetAddOrCallMethod) == static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 2 * (static_cast<unsigned>(MethodAskedByStub::SetAdd) - static_cast<unsigned>(MethodAskedByStub::ArrayPush)));
+    if (method == MethodAskedByStub::None)
+        return std::nullopt;
+    return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 2 * (static_cast<unsigned>(method) - static_cast<unsigned>(MethodAskedByStub::ArrayPush)) + methodIsRead);
+}
+
+Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, OperationEffects effects, LValue word, MethodAskedByStub method)
 {
     m_context.emitsCalls = true;
     unsigned count = operands.size() - 2;
     RELEASE_ASSERT(count <= numberOfArgumentGPRs);
+    RELEASE_ASSERT(method == MethodAskedByStub::None || stub == Stub::CallValue);
+    if (method == MethodAskedByStub::None && stub == Stub::CallValue && operands[1]->hasInt64() && operands[1]->asInt64() == static_cast<int64_t>(JSValue::encode(jsUndefined())))
+        stub = Stub::CallValueWithoutThis;
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     applyEffects(patchpoint, effects);
     patchpoint->append(ConstrainedValue(operands[0], ValueRep::reg(calleeGPR)));
-    patchpoint->append(ConstrainedValue(operands[1], ValueRep::reg(thisGPR)));
+    if (stub != Stub::CallValueWithoutThis)
+        patchpoint->append(ConstrainedValue(operands[1], ValueRep::reg(thisGPR)));
     for (unsigned i = 0; i < count; ++i)
         patchpoint->append(ConstrainedValue(operands[i + 2], ValueRep::reg(argumentGPR(i))));
     RELEASE_ASSERT(!!word == (stub == Stub::ConstructClosure));
@@ -611,9 +664,12 @@ Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, Operatio
     patchpoint->clobberLate(registersClobberedByCalls());
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, count, site](CCallHelpers& jit, const StackmapGenerationParams&) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, count, site, asks = stubThatAsksFor(method, true)](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        stubCalls->call(jit, stub, count, site);
+        if (asks)
+            stubCalls->call(jit, *asks, site);
+        else
+            stubCalls->call(jit, stub, count, site);
     });
     unwindToLandingPad(patchpoint, site);
     return Boxed(patchpoint);
@@ -755,7 +811,7 @@ bool Lowering::isPassedInMemory(ValueID array)
     return m_restArraysPassedInMemory.get(array.index());
 }
 
-LValue Lowering::callAllocationStub(Stub stub, const Vector<std::pair<LValue, GPRReg>, 4>& operands, OperationEffects effects, bool mayThrow)
+LValue Lowering::callAllocationStub(Stub stub, const Vector<std::pair<LValue, GPRReg>, 4>& operands, OperationEffects effects, bool mayThrow, bool isOffUsualPath)
 {
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
     applyEffects(patchpoint, effects);
@@ -768,8 +824,11 @@ LValue Lowering::callAllocationStub(Stub stub, const Vector<std::pair<LValue, GP
     if (auto changed = registersChangedBy(stub)) {
         static_assert(hasStubsForFunctionsWithoutFrame == isARM64());
         if (!hasStubsForFunctionsWithoutFrame) {
-            m_context.emitsCalls = true;
-            patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+            if (!isOffUsualPath || LoweringContext::coldSitesForceFrame() || m_watchingHandler) {
+                m_context.emitsCalls = true;
+                patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+            } else
+                m_context.holdsColdSites = true;
         }
         patchpoint->clobberLate(*changed);
         if (isARM64()) {
@@ -793,12 +852,18 @@ LValue Lowering::callAllocationStub(Stub stub, const Vector<std::pair<LValue, GP
         site.bits = nextSite();
     patchpoint->setGenerator([context = &m_context, stub, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        bool isLeaf = hasStubsForFunctionsWithoutFrame && context->hasNoFrame(params.proc().code());
+        bool hasNoFrame = context->hasNoFrame(params.proc().code());
+        bool isLeaf = hasStubsForFunctionsWithoutFrame && hasNoFrame;
+        bool makesFrame = !hasStubsForFunctionsWithoutFrame && hasNoFrame;
 #if CPU(ARM64)
         if (isLeaf)
             jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
 #endif
+        if (makesFrame)
+            jit.emitFunctionPrologue();
         context->stubCalls.call(jit, isLeaf ? static_cast<Stub>(static_cast<unsigned>(stub) + 1) : stub, site);
+        if (makesFrame)
+            jit.emitFunctionEpilogueWithEmptyFrame();
     });
     if (mayThrow)
         unwindToLandingPad(patchpoint, site);
@@ -836,7 +901,7 @@ Lowering::CharactersOfSubstring Lowering::charactersOfSubstring(CellPointer stri
 CellPointer Lowering::allocate(uint32_t site, Integer number, FieldInit fieldInit)
 {
     // Allocations are counted in State::allocate().
-    if (Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations()) [[unlikely]]
+    if (Options::countAOTTypedAllocations()) [[unlikely]]
         return AOT_TYPED_OPERATION(AllocSlow, low32(number));
     RELEASE_ASSERT(fieldInit != FieldInit::FromTemplate || m_program.allocations[site].numberOfLiterals);
     Stub stub = fieldInit == FieldInit::FromTemplate ? Stub::AllocateTypedObjectFromTemplate : isObjectLayout(m_program.at(m_program.allocations[site].layout).kind) ? Stub::AllocateTypedObject : Stub::AllocateTypedCell;
@@ -871,9 +936,10 @@ CellPointer Lowering::newArray(const Arguments& elements)
         auto [count, list] = argumentBuffer(elements);
         return AOT_TYPED_OPERATION(NewArray, count, list);
     };
-    constexpr unsigned maxInlineLength = 16;
+    constexpr unsigned maxInlineLength = Program::maxLengthOfArrayLiteralMadeInline;
     unsigned length = elements.size();
-    if (length > maxInlineLength)
+    bool isColdByText = !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id);
+    if (length > maxInlineLength || (length > maxArrayElementsInRegisters && isColdByText))
         return outOfLine();
     Vector<Boxed, 8> boxed;
     for (ValueID element : elements)
@@ -1186,8 +1252,7 @@ Operand Lowering::jumpToContinuation(const Value& value)
     for (ValueID id : value.arguments)
         passed.append(in(id, repOf(m_program.at(m_function.at(id).type))).value);
     for (ValueID id : value.arguments) {
-        LayoutID view = typeOf(id).onlyView();
-        RELEASE_ASSERT_WITH_MESSAGE(!view || !m_program.at(view).isInFrame || !isLocalAllocation(m_function, id), "AOT: an environment that lies in this frame is handed to a continuation");
+        RELEASE_ASSERT_WITH_MESSAGE(!m_function.at(originOf(id)).isClosureInFrame() && !m_function.environmentsInFrame.get(originOf(id).index()), "AOT: what lies in this frame is handed to a continuation");
     }
     m_context.knownCallees.append(keyOfContinuation(m_id, value.continuation()));
     jumpToFunction(m_context.knownCallees.size() - 1, passed);
@@ -1209,7 +1274,7 @@ Operand Lowering::lowerCallDirect(ValueID result, const Value& value)
         LValue isEvaluated = marked(m_out.load64(addressOf(m_program.moduleEvaluations[row->value].isEvaluated)), IsSafe);
         m_out.branch(m_out.equal(isEvaluated, m_out.constInt64(JSValue::encode(jsBoolean(true)))), usually(continuation), rarely(evaluate));
         inColdBlock(evaluate, [&] {
-            callFunction(m_program.moduleEvaluator, yielded, { m_out.constInt64(row->value) }, value.function());
+            callFunction(m_program.moduleEvaluatorForCallFromOutside(), yielded, { m_out.constInt64(row->value) }, value.function());
             m_out.jump(continuation);
         });
         m_out.appendTo(continuation);
@@ -1329,7 +1394,7 @@ CellPointer Lowering::closureConstant(FunctionID function)
 }
 
 // A function value that captures something.
-CellPointer Lowering::lowerNewClosure(const Value& value)
+CellPointer Lowering::lowerNewClosure(const Value& value, LValue variableOfClosureMadeOnce, Store storeOfVariable, bool* isStoredByStub)
 {
     auto& callee = m_program.at(value.function());
     // Only the run time enters the resume closure of a coroutine, at Stub::EnterResume, which passes the frame and the resume mode as compiled
@@ -1349,30 +1414,45 @@ CellPointer Lowering::lowerNewClosure(const Value& value)
         captures.append(ensure(get(value.arguments[i]), typeOf(value.arguments[i]), m_program.at(types[i])));
     // The collector has the two numbers by function.
     RELEASE_ASSERT(m_program.referencesAndCapturesOfClosures(callee) == std::pair(numberOfReferencesAmong(m_program, types.span()), static_cast<unsigned>(types.size())));
+    bool isInFrame = value.isClosureInFrame();
+    auto callStub = [&](Vector<std::pair<LValue, GPRReg>, 4>& operands, size_t size) {
+        if (isInFrame) {
+            m_context.emitsCalls = true;
+            operands.append({ m_out.lockedStackSlot(size), GPRInfo::returnValueGPR });
+        }
+        if (variableOfClosureMadeOnce && !isInFrame && types.size() == 1 && captures[0].rep == Rep::Cell && value.arguments[0] == value.child(0) && (storeOfVariable == Store::JSValue || storeOfVariable == Store::OptionalCell32) && !Options::validateAOTTypedFacts()) {
+            *isStoredByStub = true;
+            operands.append({ variableOfClosureMadeOnce, GPRInfo::toArgumentRegister(3) });
+            if (Options::verboseAOTCompilation())
+                dataLogLn("AOT: f", m_id.index(), ": a closure made once is stored by the stub that makes it");
+            return CellPointer(callAllocationStub(storeOfVariable == Store::OptionalCell32 ? Stub::NewTypedClosureOnce32 : Stub::NewTypedClosureOnce, operands, { Writes::RuntimeState, false }, false));
+        }
+        return CellPointer(callAllocationStub(static_cast<Stub>(static_cast<unsigned>(isInFrame ? Stub::InitializeTypedClosure0 : Stub::NewTypedClosure0) + 2 * types.size()), operands, { Writes::RuntimeState, false }, false));
+    };
     if (m_program.makesSlimClosures(callee)) {
         auto& goesBy = m_program.at(general);
         uint64_t request = general.index() | static_cast<uint64_t>(slimClosureKindOf(static_cast<uint8_t>(goesBy.kind) | goesBy.declaredAs)) << ClosureRequest::executableShift | 1ULL << ClosureRequest::isSlimBit;
-        if (Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations()) [[unlikely]]
+        if (!isInFrame && Options::countAOTTypedAllocations()) [[unlikely]]
             AOT_TYPED_OPERATION(CountClosure, word32(general.index()), word32(types.size()));
         Vector<std::pair<LValue, GPRReg>, 4> operands { { integer(static_cast<int64_t>(request)).value(), stubTemporaryGPRs[0] } };
         for (unsigned i = 0; i < types.size(); ++i) {
             LValue word = captures[i].rep == Rep::Int32 ? m_out.zeroExtPtr(captures[i].value) : b3TypeOf(captures[i].rep) == Double ? m_out.bitCast(captures[i].value, Int64) : captures[i].value;
             operands.append({ word, GPRInfo::toArgumentRegister(2 + slotOfCapture(m_program, types.span(), i)) });
         }
-        return CellPointer(callAllocationStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewTypedClosure0) + 2 * types.size()), operands, { Writes::RuntimeState, false }, false));
+        return callStub(operands, SlimClosure::allocationSize(types.size()));
     }
     // As a rule one stub makes it. What follows is for the others, and says what the stub does.
     bool isMadeByStub = !isResumeClosure && callee.kind != FunctionKind::Constructor && !closureStructureOf(callee.declaredAs) && types.size() <= ClosureRequest::maxNumberOfCaptures
-        && !Options::auditAOTTypedAssertions() && !Options::countAOTTypedAllocations();
+        && !Options::countAOTTypedAllocations();
     for (auto& capture : captures)
         isMadeByStub &= b3TypeOf(capture.rep) != Double;
     if (isMadeByStub) {
         auto& goesBy = m_program.at(general);
-        uint64_t request = ClosureRequest::encode(general.index(), FunctionTables::kindOfExecutable(static_cast<uint8_t>(goesBy.kind) | goesBy.declaredAs, false), m_program.allocationOfClosure(types.size()));
+        uint64_t request = ClosureRequest::encode(general.index(), FunctionTables::kindOfExecutable(static_cast<uint8_t>(goesBy.kind) | goesBy.declaredAs, false), isInFrame ? 0 : m_program.allocationOfClosure(types.size()));
         Vector<std::pair<LValue, GPRReg>, 4> operands { { integer(static_cast<int64_t>(request)).value(), stubTemporaryGPRs[0] } };
         for (unsigned i = 0; i < types.size(); ++i)
             operands.append({ captures[i].rep == Rep::Int32 ? m_out.zeroExtPtr(captures[i].value) : captures[i].value, GPRInfo::toArgumentRegister(2 + slotOfCapture(m_program, types.span(), i)) });
-        return CellPointer(callAllocationStub(static_cast<Stub>(static_cast<unsigned>(Stub::NewTypedClosure0) + 2 * types.size()), operands, { Writes::RuntimeState, false }, false));
+        return callStub(operands, Closure::allocationSize(types.size()));
     }
     // A constant of the build.
     Pointer entry(marked(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfTypedFunctions()), static_cast<ptrdiff_t>(general.index()) * sizeof(uint64_t))), IsFixed));
@@ -1380,9 +1460,12 @@ CellPointer Lowering::lowerNewClosure(const Value& value)
     CellPointer executable(fixedPointer(Instance::offsetOfTypedExecutable(FunctionTables::kindOfExecutable(static_cast<uint8_t>(closuresGoBy.kind) | closuresGoBy.declaredAs, false))));
     if (isResumeClosure)
         entry = Pointer(m_out.bitOr(entry.value(), m_out.constIntPtr(static_cast<int64_t>(1ULL << ClosureWord::isNotCallableBit))));
-    if (Options::auditAOTTypedAssertions() || Options::countAOTTypedAllocations()) [[unlikely]]
-        AOT_TYPED_OPERATION(CountClosure, word32(general.index()), word32(types.size()));
-    CellPointer cell = allocate(m_program.allocationOfClosure(types.size()));
+    if (Options::countAOTTypedAllocations()) [[unlikely]]
+        if (!isInFrame)
+            AOT_TYPED_OPERATION(CountClosure, word32(general.index()), word32(types.size()));
+    CellPointer cell = isInFrame ? cellInFrame(Closure::allocationSize(types.size())) : allocate(m_program.allocationOfClosure(types.size()));
+    if (isInFrame)
+        storeHeader(cell.value(), m_out.bitOr(m_out.zeroExtPtr(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID())), m_out.constInt64(static_cast<int64_t>(static_cast<uint64_t>(TypeInfoBlob(NonArray, TypeInfo(JSFunctionType, Closure::StructureFlags)).blob()) << 32))));
     // That is as of a plain function. An async function or a generator function has another prototype, and so another Structure.
     if (unsigned which = callee.kind == FunctionKind::Constructor ? closureStructureOfClassObjects : closureStructureOf(callee.declaredAs))
         storeField(cell, m_heaps.JSCell_structureID, Word32(loadRuntimeState32(Instance::offsetOfTypedClosureStructureID(which))));
@@ -1398,6 +1481,8 @@ CellPointer Lowering::lowerNewClosure(const Value& value)
     }
     // Last: it says how many of the words above the collector follows.
     storeField(cell, m_heaps.AOTTypedClosure_entry, entry);
+    if (isInFrame)
+        return cell;
     fenceAfterInitialization();
     return cell;
 }
@@ -1416,10 +1501,13 @@ CellPointer Lowering::lowerNewClosureOnce(const Value& value)
     ValueFromBlock made = m_out.anchor(held.value());
     m_out.branch(isCell(held).value(), unsure(continuation), unsure(isNotMade));
     m_out.appendTo(isNotMade);
-    CellPointer closure = lowerNewClosure(value);
+    bool isStoredByStub = false;
+    CellPointer closure = lowerNewClosure(value, m_out.add(environment.value(), m_out.constIntPtr(field.offset)), field.store, &isStoredByStub);
     didEmitWrite(Writes::RuntimeState);
-    store(field.store, box(closure), variable);
-    barrier(environment);
+    if (!isStoredByStub) {
+        store(field.store, box(closure), variable);
+        barrier(environment);
+    }
     ValueFromBlock fresh = m_out.anchor(closure.value());
     m_out.jump(continuation);
     m_out.appendTo(continuation);
@@ -1427,7 +1515,7 @@ CellPointer Lowering::lowerNewClosureOnce(const Value& value)
 }
 
 // A call of a value of which nothing is known.
-Boxed Lowering::callGenerally(Boxed callee, Boxed thisValue, const Arguments& arguments, StringID nameOfMethod)
+Boxed Lowering::callGenerally(Boxed callee, Boxed thisValue, const Arguments& arguments, StringID nameOfMethod, MethodAskedByStub method)
 {
     if (nameOfMethod) {
         // The stub could only say what the value is, not what was asked for.
@@ -1445,7 +1533,7 @@ Boxed Lowering::callGenerally(Boxed callee, Boxed thisValue, const Arguments& ar
     Vector<LValue, 8> operands { callee.value(), thisValue.value() };
     for (ValueID argument : arguments)
         operands.append(in<Boxed>(argument).value());
-    return callValue(Stub::CallValue, operands);
+    return callValue(Stub::CallValue, operands, { }, nullptr, method);
 }
 
 Boxed Lowering::callMethodGenerally(Boxed object, StringID name, const Arguments& arguments)
@@ -1459,7 +1547,7 @@ Boxed Lowering::callMethodGenerally(Boxed object, StringID name, const Arguments
     return callGenerally(emitGetById(object, name, true), object, arguments, name);
 }
 
-Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Arguments& arguments)
+Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Arguments& arguments, MethodAskedByStub method)
 {
     m_context.emitsCalls = true;
     unsigned count = arguments.size();
@@ -1481,9 +1569,12 @@ Boxed Lowering::callMethodThroughSlot(Boxed object, unsigned slot, const Argumen
         patchpoint->clobberLate(RegisterSet { reg });
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite siteOfCall { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, count, siteOfCall](CCallHelpers& jit, const StackmapGenerationParams&) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, count, siteOfCall, asks = stubThatAsksFor(method, false)](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        stubCalls->call(jit, Stub::CallMethod, count, siteOfCall);
+        if (asks)
+            stubCalls->call(jit, *asks, siteOfCall);
+        else
+            stubCalls->call(jit, Stub::CallMethod, count, siteOfCall);
     });
     unwindToLandingPad(patchpoint, siteOfCall);
     return Boxed(patchpoint);
@@ -1725,6 +1816,8 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
     StringID nameOfMethod;
     if (auto& read = definitionOf(callee); thisValue && read.opcode == Opcode::GetById && &definitionOf(read.child(0)) == &definitionOf(thisValue))
         nameOfMethod = read.string();
+    else if (thisValue)
+        nameOfMethod = value.string();
     // What call resolution leaves where the callee has just been found nil: it can only throw, and needs no argument for that. No handler watches it: its block ends behind it.
     if (auto found = m_foundNilIn.find(m_currentBlockID.index()); found != m_foundNilIn.end() && m_currentBlock->terminator.kind == TerminatorKind::Unreachable && m_currentIndexInBlock + 1 == m_currentBlock->values.size() && !Options::auditAOTTypedAssertions()) {
         ValueID tested = callee;
@@ -1735,6 +1828,8 @@ Operand Lowering::lowerCall(ValueID result, const Value& value)
             return placeholder(repOf(type));
         }
     }
+    if (value.methodAskedByStub != MethodAskedByStub::None && thisValue && value.arguments.size() <= numberOfArgumentGPRs)
+        return ensure(callGenerally(in<Boxed>(callee), in<Boxed>(thisValue), value.arguments, nameOfMethod, value.methodAskedByStub), type);
     auto generally = [&] {
         return lowerIndirectCall(callee, thisValue, value.arguments, type, nameOfMethod);
     };
@@ -1854,11 +1949,13 @@ Operand Lowering::lowerConstructSuper(ValueID result, const Value& value)
     if (value.opcode == Opcode::ConstructSuperForwardVarargs)
         skipped = value.numberOfArgumentsToSkip();
     auto generally = [&] {
-        LValue inBuffer[] = { classObject.value(), newTarget.value(), box(skipped ? AOT_TYPED_OPERATION(NewArray, restLength(*skipped), offsetBy(m_argumentBuffer, integer(*skipped), 3)) : newArray(value.arguments)).value() };
-        LValue buffer = transientBuffer(3 * sizeof(EncodedJSValue));
-        for (unsigned i = 0; i < std::size(inBuffer); ++i)
+        Vector<LValue, 4> inBuffer { classObject.value(), newTarget.value(), box(skipped ? AOT_TYPED_OPERATION(NewArray, restLength(*skipped), offsetBy(m_argumentBuffer, integer(*skipped), 3)) : newArray(value.arguments)).value() };
+        if (value.child(2))
+            inBuffer.append(in<Boxed>(value.child(2)).value());
+        LValue buffer = transientBuffer(inBuffer.size() * sizeof(EncodedJSValue));
+        for (unsigned i = 0; i < inBuffer.size(); ++i)
             m_out.store64(inBuffer[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
-        return AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::SuperConstruct)), word32(std::size(inBuffer)), Pointer(buffer));
+        return AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::SuperConstruct)), word32(inBuffer.size()), Pointer(buffer));
     };
     if (value.arguments.size() > numberOfArgumentGPRs || isCompact(10))
         return ensure(generally(), object, typeOf(result));
@@ -1866,7 +1963,7 @@ Operand Lowering::lowerConstructSuper(ValueID result, const Value& value)
     Join join(m_out, Rep::JSValue, Int64);
     orElse(isCell(classObject, typeOf(value.child(0))), otherwise);
     // The empty value: the object itself says what it inherits from.
-    Boxed parent(m_out.load64(structureOf(classObject.value()), m_heaps.Structure_prototype));
+    Boxed parent = value.child(2) ? in<Boxed>(value.child(2)) : Boxed(m_out.load64(structureOf(classObject.value()), m_heaps.Structure_prototype));
     orElse(logicalAnd(isNotEmpty(parent), isCell(parent)), otherwise);
     LBasicBlock isNotOrdinary = m_out.newBlock();
     Integer word = entryWordIfClosure(asCell(parent));
@@ -2044,6 +2141,10 @@ Operand Lowering::lowerCallMethod(ValueID result, const Value& value)
     auto& type = typeOf(result);
     LayoutID view = receiver.onlyView();
     auto targets = view ? methodTargets(view, name) : std::nullopt;
+    if (!targets && value.methodAskedByStub != MethodAskedByStub::None) {
+        if (auto slot = allocateSite(name, 0))
+            return ensure(callMethodThroughSlot(in<Boxed>(object), *slot, value.arguments, value.methodAskedByStub), type);
+    }
     if (!targets) {
         if (auto call = lowerCallOrApply(result, object, name, std::nullopt, value.arguments))
             return *call;

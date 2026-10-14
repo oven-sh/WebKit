@@ -351,7 +351,7 @@ bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
 FunctionExecutable* BuiltinExecutables::programExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
 {
 #if ENABLE(AOT)
-    if (auto* program = AOT::VMProgram::of(m_vm)) [[unlikely]]
+    if (auto* program = m_vm.useImmutableIntrinsics ? AOT::VMProgram::of(m_vm) : nullptr) [[unlikely]]
         return program->engineBuiltinFor(static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
 #else
     UNUSED_PARAM(index);

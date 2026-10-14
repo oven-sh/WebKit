@@ -51,8 +51,40 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTest, size_t, (Instance* instanc
     OPERATION_RETURN(scope, !!matchFromStart(globalObject, vm, regExp, string, input));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpExecFound, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto* string = uncheckedDowncast<JSString>(subject);
+    RegExp* regExp = uncheckedDowncast<RegExpObject>(cell)->regExp();
+    auto subpatternResults = regExp->ovectorSpan();
+    MatchResult result(subpatternResults[0], subpatternResults[1]);
+    RELEASE_ASSERT(result.end >= result.start);
+    unsigned numSubpatterns = regExp->numSubpatterns();
+    bool hasNamedCaptures = regExp->hasNamedCaptures();
+    bool createIndices = regExp->hasIndices();
+    JSArray* array;
+    if (hasNamedCaptures || createIndices) [[unlikely]]
+        array = createRegExpMatchesArrayWithGroupsOrIndices(vm, globalObject, string, regExp, result, subpatternResults, numSubpatterns, hasNamedCaptures, createIndices);
+    else if (globalObject->isHavingABadTime()) [[unlikely]]
+        array = createRegExpMatchesArrayForPlainRegExpHavingABadTime(vm, globalObject, string, result, subpatternResults, numSubpatterns);
+    else
+        array = createRegExpMatchesArrayForPlainRegExp(vm, globalObject, string, result, subpatternResults, numSubpatterns);
+    OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, string, result, false);
+    OPERATION_RETURN(scope, JSValue::encode(array));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestFound, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    RegExp* regExp = uncheckedDowncast<RegExpObject>(cell)->regExp();
+    auto subpatternResults = regExp->ovectorSpan();
+    globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, uncheckedDowncast<JSString>(subject), MatchResult(subpatternResults[0], subpatternResults[1]), false);
+    OPERATION_RETURN(scope, true);
+}
+
 // `/source/flags`, `new RegExp("source", "flags")`: as regExpCreate(), with the RegExp looked up once.
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewRegExpLiteral, JSCell*, (Instance* instance, uint32_t source, uint32_t flags))
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewRegExpLiteral, JSCell*, (Instance* instance, uint32_t source, uint32_t flags, uint32_t offset))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     RegExp* regExp = instance->typed->regExpLiteral(vm, source, flags);
@@ -60,6 +92,13 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewRegExpLiteral, JSCell*, (Instance* 
         throwException(globalObject, scope, regExp->errorToThrow(globalObject));
         OPERATION_RETURN(scope, nullptr);
     }
+    if (offset != std::numeric_limits<uint32_t>::max() && !*reinterpret_cast<JSCell**>(instance->typedStatics + offset)) {
+        RegExpObject* shared = RegExpObject::create(vm, globalObject->regExpStructure(), regExp);
+        vm.mutatorFence();
+        *reinterpret_cast<JSCell**>(instance->typedStatics + offset) = shared;
+        instance->didStoreRootInStatics(offset);
+    }
+    prepareInlineAllocation<RegExpObject>(instance, Instance::InlineAllocation::RegExpObject, globalObject->regExpStructure());
     OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
 }
 
@@ -434,12 +473,14 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
     // Of an operation that yields nothing where the engine's function is to be called.
     auto orGenerally = [&](Operand yielded, const Type& guarantee) {
         Rep rep = repOf(type);
-        LBasicBlock isLeftToFunction = newColdBlock();
+        LBasicBlock isLeftToFunction = newBlockForGeneralCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         orElse(Word32(m_out.notZero64(yielded.value)), isLeftToFunction);
         join.add(ensure(yielded, guarantee, type));
-        m_out.appendTo(isLeftToFunction);
-        join.add(generally());
+        if (!isGeneralArmOnOffer(isLeftToFunction)) {
+            m_out.appendTo(isLeftToFunction);
+            join.add(generally());
+        }
         return join.finish();
     };
 
@@ -456,17 +497,21 @@ std::optional<Operand> Lowering::lowerInlineRegExp(InlineBuiltin which, ValueID 
         Word32 rawFlags = word32(flags.toRaw());
         if (ValueID constant = stringConstantOf(arguments[0])) {
             auto& source = m_function.at(constant);
-            if (auto key = keyOfRegExpLiteral(m_program, m_function, value); key && isKeptByNothing(result, flags.contains(Yarr::Flags::Global))) {
+            int32_t placeOfWord = -1;
+            if (auto key = keyOfRegExpLiteral(m_program, m_function, value)) {
                 if (auto place = m_program.offsetsOfSharedRegExpObjects.find(*key); place != m_program.offsetsOfSharedRegExpObjects.end()) {
-                    LValue shared = m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, fixedPointer(Instance::offsetOfTypedStatics()), place->value));
-                    return ensure(either<CellPointer>(Word32(m_out.notZero64(shared)), [&] {
-                        return CellPointer(shared);
-                    }, [&] {
-                        return AOT_TYPED_OPERATION(SharedRegExpLiteral, word32(place->value), word32(source.string().index()), rawFlags);
-                    }), regExpClass, type);
+                    placeOfWord = place->value;
+                    if (isKeptByNothing(result, flags.contains(Yarr::Flags::Global))) {
+                        LValue shared = m_out.load64(inStatics(m_heaps.AOTTyped_collectorState, place->value));
+                        return ensure(either<CellPointer>(Word32(m_out.notZero64(shared)), [&] {
+                            return CellPointer(shared);
+                        }, [&] {
+                            return AOT_TYPED_OPERATION(SharedRegExpLiteral, word32(place->value), word32(source.string().index()), rawFlags);
+                        }), regExpClass, type);
+                    }
                 }
             }
-            return ensure(AOT_TYPED_OPERATION(NewRegExpLiteral, word32(source.string().index()), rawFlags), regExpClass, type);
+            return ensure(AOT_TYPED_OPERATION(NewRegExpLiteral, word32(source.string().index()), rawFlags, word32(placeOfWord)), regExpClass, type);
         }
         return ensure(AOT_TYPED_OPERATION(NewRegExp, in<CellPointer>(arguments[0]), rawFlags), regExpClass, type);
     }

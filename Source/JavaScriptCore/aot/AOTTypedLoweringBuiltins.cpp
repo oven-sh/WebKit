@@ -91,6 +91,11 @@ Word32 Lowering::hasOriginalStructure(CellPointer cell, const EngineClass& engin
     });
 }
 
+Word32 Lowering::isArrayAsMade(CellPointer cell)
+{
+    return Word32(m_out.castToInt32(callAllocationStub(Stub::IsArrayAsMade, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false, true)));
+}
+
 bool Lowering::isGuardOfReceiver(const Value& value) const
 {
     return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.hasOriginalStructureOperation() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts();
@@ -120,13 +125,20 @@ void Lowering::branchOnOriginalStructure(const Value& value, const Terminator& t
         m_out.appendTo(isCellCase);
         cell = asCell(boxed);
     }
-    m_out.branch(hasOriginalStructure(cell, m_builtins.classes()[value.engineClass()]).value(), unsure(isOriginal), unsure(hasChanged));
+    Word32 holds = hasOriginalStructure(cell, m_builtins.classes()[value.engineClass()]);
+    if (value.takesArrayAsMade()) {
+        LBasicBlock hasAnother = newColdBlock();
+        m_out.branch(holds.value(), unsure(isOriginal), unsure(hasAnother));
+        m_out.appendTo(hasAnother);
+        holds = isArrayAsMade(cell);
+    }
+    m_out.branch(holds.value(), unsure(isOriginal), unsure(hasChanged));
     if (terminator.targets[0].block == terminator.targets[1].block)
         return;
     for (unsigned i = 0; i < 2; ++i) {
         BlockID target = terminator.targets[i].block;
         if (target.index() && numberOfPredecessorsOf(target) == 1)
-            m_receiversAsked.set(target.index(), ReceiverAsked { receiverBehindCasts(value.arguments[0]), value.engineClass(), !i });
+            m_receiversAsked.set(target.index(), ReceiverAsked { receiverBehindCasts(value.arguments[0]), value.engineClass(), !i, value.takesArrayAsMade() });
     }
 }
 
@@ -138,6 +150,8 @@ std::optional<bool> Lowering::answerOfGuardAhead(ValueID receiver, const EngineC
     if (found == m_receiversAsked.end() || found->value.engineClass != engineClass.index || found->value.receiver != receiverBehindCasts(receiver))
         return std::nullopt;
     if (askedFor == AskedFor::Structure) {
+        if (found->value.isOriginal && found->value.mayOnlyBeAsMade)
+            return std::nullopt;
         for (size_t i = 0; i < m_currentIndexInBlock; ++i) {
             switch (m_function.at(m_currentBlock->values[i]).opcode) {
             case Opcode::CallDirect:
@@ -164,6 +178,8 @@ bool Lowering::makesTableWithStringKeys(const Value& value)
     JSType made = m_builtins.classes()[value.engineClass()].type;
     if (made != JSSetType)
         return false;
+    if (value.hasStringKeysByType)
+        return true;
     auto elementsOfArray = [&](const Type& type) -> const Type* {
         auto* engineClass = type.onlyEngineClass();
         return engineClass && engineClass->type == ArrayType && type.elements ? &m_program.at(type.elements) : nullptr;
@@ -208,6 +224,22 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
             SetForScope isMakingTableGenerally(m_isMakingTableGenerally, true);
             return callBuiltinFunction(value, effects, calledOn);
         });
+    }
+    if (auto& called = m_builtins.at(value.builtin()); !m_isApplyingGenerally && called.kind == BuiltinKind::StaticFunction && called.holder == "Reflect"_s && called.name == "apply"_s && value.arguments.size() == 3) {
+        Boxed function = in<Boxed>(value.arguments[0]);
+        Boxed list = in<Boxed>(value.arguments[2]);
+        LBasicBlock generally = newUnlikelyBlock();
+        Join join(m_out, Rep::JSValue, Int64);
+        orElse(isCell(function), generally);
+        orElse(hasTypeOfFunctionFlag(asCell(function)), generally);
+        orElse(isCell(list), generally);
+        orElse(isPlainArray(asCell(list)), generally);
+        orElse(belowOrEqual(publicLength(butterflyOf(asCell(list))), integer(numberOfArgumentGPRs)), generally);
+        join.add(callValueWithArray(Stub::ApplyArray, function, in<Boxed>(value.arguments[1]), list));
+        m_out.appendTo(generally);
+        SetForScope isApplyingGenerally(m_isApplyingGenerally, true);
+        join.add(callBuiltinFunction(value, effects, calledOn));
+        return join.finish().as<Boxed>();
     }
     auto& builtin = m_builtins.at(value.builtin());
     // The typed arrays have their functions in common. Which of them one was found on is what it goes by.
@@ -277,7 +309,20 @@ Boxed Lowering::callBuiltinFunction(const Value& value, OperationEffects effects
 }
 
 // The receiver does not have its original structure: the call, read or store by name.
-Operand Lowering::lowerGenericFallback(const Value& value, CellPointer receiver, const Type& type)
+bool Lowering::needsOnlyItsMethod(const Value& value) const
+{
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    switch (implementation.kind) {
+    case BuiltinImplementation::Call:
+        return true;
+    case BuiltinImplementation::Inline:
+        return isExactForEveryReceiver(implementation.inlined) || familyOf(implementation.inlined) == BuiltinFamily::MapSet;
+    default:
+        return false;
+    }
+}
+
+Operand Lowering::lowerGenericFallback(const Value& value, CellPointer receiver, const Type& type, bool methodWasFound)
 {
     auto& builtin = m_builtins.at(value.builtin());
     StringID name = m_program.stringOf(builtin.nameName);
@@ -291,7 +336,11 @@ Operand Lowering::lowerGenericFallback(const Value& value, CellPointer receiver,
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     case BuiltinKind::Method:
         if (!value.methodRead()) {
-            yielded = callMethodGenerally(box(receiver), name, value.arguments);
+            yielded = name ? callMethodGenerally(box(receiver), name, value.arguments) : callGenerally(box(builtinCell(m_builtins.cellOf(value.builtin()))), box(receiver), value.arguments);
+            break;
+        }
+        if (methodWasFound) {
+            yielded = callGenerally(in<Boxed>(value.methodRead()), box(receiver), value.arguments);
             break;
         }
         // See Value::readsMethodFor().
@@ -344,6 +393,10 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
     if (!hasGenericFallback(m_program, m_function, value))
         return lowerResolvedBuiltin(result, value);
     auto answer = answerOfGuardAhead(value.child(0), *typeOf(value.child(0)).onlyEngineClass(), AskedFor::Structure);
+    if (answer.value_or(true)) {
+        if (auto searched = lowerArraySearchAsOneCall(result, value))
+            return *searched;
+    }
     if (answer.value_or(false))
         return lowerResolvedBuiltin(result, value);
     auto& type = typeOf(result);
@@ -352,24 +405,54 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
     auto kindOfResolvedWay = m_builtins.at(value.builtin()).implementation.kind;
     if (answer || isCompact(kindOfResolvedWay == BuiltinImplementation::Call || kindOfResolvedWay == BuiltinImplementation::Prelude ? 5 : 14))
         return lowerGenericFallback(value, receiver, type);
+    if (tableStubAsksReceiver(result, value)) {
+        SetForScope isInArm(m_isInArm, true);
+        m_tableStubAsksReceiver = true;
+        Operand yielded = lowerResolvedBuiltin(result, value);
+        RELEASE_ASSERT(!m_tableStubAsksReceiver);
+        return yielded;
+    }
+    if (holdsResultOfMapGetBehindJoin(value)) {
+        LBasicBlock isOriginal = m_out.newBlock();
+        LBasicBlock hasChanged = newColdBlock();
+        Join join(m_out, Rep::JSValue, Int64);
+        m_out.branch(hasOriginalStructure(receiver, *typeOf(value.child(0)).onlyEngineClass()).value(), usually(isOriginal), rarely(hasChanged));
+        m_out.appendTo(isOriginal);
+        {
+            SetForScope isInArm(m_isInArm, true);
+            m_mapGetYieldsAnything = true;
+            join.add(lowerResolvedBuiltin(result, value));
+            RELEASE_ASSERT(!m_mapGetYieldsAnything);
+            m_out.appendTo(hasChanged);
+            join.add(lowerGenericFallback(value, receiver, m_program.at(m_program.types.anything)));
+        }
+        return ensure(join.finish().as<Boxed>(), type);
+    }
     LBasicBlock isOriginal = m_out.newBlock();
     LBasicBlock hasChanged = newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
-    m_out.branch(hasOriginalStructure(receiver, *typeOf(value.child(0)).onlyEngineClass()).value(), usually(isOriginal), rarely(hasChanged));
+    bool methodWasFound = value.methodRead() && needsOnlyItsMethod(value);
+    m_out.branch((methodWasFound ? isEmpty(in<Boxed>(value.methodRead())) : hasOriginalStructure(receiver, *typeOf(value.child(0)).onlyEngineClass())).value(), usually(isOriginal), rarely(hasChanged));
     m_out.appendTo(isOriginal);
     SetForScope isInArm(m_isInArm, true);
-    Operand resolved = lowerResolvedBuiltin(result, value);
+    Operand resolved;
+    {
+        SetForScope offer(m_generalArmOnOffer, !methodWasFound ? hasChanged : nullptr);
+        SetForScope expectedMethodThatWasRead(m_expectedMethodThatWasRead, methodWasFound ? value.builtin() : m_expectedMethodThatWasRead);
+        SetForScope builtinOfOffer(m_builtinOfGeneralArmOnOffer, value.builtin());
+        resolved = lowerResolvedBuiltin(result, value);
+    }
     if (rep != Rep::Double || m_lastIntegerMadeNumber.number != resolved.value) {
         join.add(resolved);
         m_out.appendTo(hasChanged);
-        join.add(lowerGenericFallback(value, receiver, type));
+        join.add(lowerGenericFallback(value, receiver, type, methodWasFound));
         return join.finish();
     }
     int64_t least = m_lastIntegerMadeNumber.least;
     ValueFromBlock integerInPlace = m_out.anchor(m_lastIntegerMadeNumber.integer);
     join.add(resolved);
     m_out.appendTo(hasChanged);
-    Operand general = lowerGenericFallback(value, receiver, type);
+    Operand general = lowerGenericFallback(value, receiver, type, methodWasFound);
     ValueFromBlock noInteger = m_out.anchor(integer(INT64_MIN).value());
     join.add(general);
     Operand joined = join.finish();

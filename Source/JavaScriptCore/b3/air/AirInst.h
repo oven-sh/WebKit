@@ -83,7 +83,12 @@ struct Inst {
     {
         if (arguments.size() > inlineCapacity) {
             m_size = static_cast<unsigned>(arguments.size());
+#if USE(BUN_JSC_ADDITIONS)
+            m_storage.outOfLine.args = arguments.releaseBuffer().leakSpan().data();
+            m_storage.outOfLine.forms[0] = formsAreNotAsked;
+#else
             m_storage.outOfLineArgs = arguments.releaseBuffer().leakSpan().data();
+#endif
         } else
             initializeArgsFrom(arguments.span());
     }
@@ -264,8 +269,32 @@ private:
     void forEachArgSimple(NOESCAPE const Func&);
     void forEachArgCustom(ScopedLambda<EachArgCallback>);
 
+#if USE(BUN_JSC_ADDITIONS)
+    Arg* argsData() { return m_size > inlineCapacity ? m_storage.outOfLine.args : m_storage.inlineArgs.data(); }
+    const Arg* argsData() const { return m_size > inlineCapacity ? m_storage.outOfLine.args : m_storage.inlineArgs.data(); }
+
+    static constexpr unsigned maxNumberOfForms = 40;
+    static constexpr uint8_t formsAreNotAsked = 0;
+    static constexpr uint8_t formsAreNotFixed = 0xff;
+    static constexpr uint8_t formsAreNone = 1;
+
+    ALWAYS_INLINE uint8_t* formsBehindSpecial() { return m_size > inlineCapacity ? m_storage.outOfLine.forms.data() : m_formsInLine.data(); }
+
+    ALWAYS_INLINE const uint8_t* formsOfPatch()
+    {
+        if (m_size > maxNumberOfForms + 1) [[unlikely]]
+            return nullptr;
+        uint8_t* forms = formsBehindSpecial();
+        if (forms[0] == formsAreNotAsked) [[unlikely]]
+            fillForms();
+        return forms[0] == formsAreNotFixed ? nullptr : forms;
+    }
+
+    JS_EXPORT_PRIVATE void fillForms();
+#else
     Arg* argsData() { return m_size > inlineCapacity ? m_storage.outOfLineArgs : m_storage.inlineArgs.data(); }
     const Arg* argsData() const { return m_size > inlineCapacity ? m_storage.outOfLineArgs : m_storage.inlineArgs.data(); }
+#endif
 
     // Air::Inst owns its out-of-line argument buffer using the same allocator as Vector, so that a
     // Vector<Arg>'s heap buffer can be adopted directly (see the Vector<Arg>&& constructor).
@@ -284,8 +313,16 @@ private:
     {
         static_assert(std::is_trivially_copyable_v<Arg> && std::is_trivially_destructible_v<Arg>);
         m_size = static_cast<unsigned>(source.size());
+#if USE(BUN_JSC_ADDITIONS)
+        if (m_size > inlineCapacity) {
+            m_storage.outOfLine.args = static_cast<Arg*>(ArgMalloc::malloc(m_size * sizeof(Arg)));
+            m_storage.outOfLine.forms[0] = formsAreNotAsked;
+        }
+        m_formsInLine[0] = formsAreNotAsked;
+#else
         if (m_size > inlineCapacity)
             m_storage.outOfLineArgs = static_cast<Arg*>(ArgMalloc::malloc(m_size * sizeof(Arg)));
+#endif
         if (!source.empty())
             memcpySpan(args(), source);
     }
@@ -293,9 +330,17 @@ private:
     void moveArgsFrom(Inst& other)
     {
         m_size = other.m_size;
+#if USE(BUN_JSC_ADDITIONS)
+        m_formsInLine = other.m_formsInLine;
+        if (other.m_size > inlineCapacity) {
+            m_storage.outOfLine = other.m_storage.outOfLine;
+            other.m_storage.outOfLine.args = nullptr;
+        } else if (other.m_size)
+#else
         if (other.m_size > inlineCapacity)
             m_storage.outOfLineArgs = std::exchange(other.m_storage.outOfLineArgs, nullptr);
         else if (other.m_size)
+#endif
             memcpySpan(args(), other.args());
         other.m_size = 0;
     }
@@ -303,20 +348,38 @@ private:
     void destroyArgs()
     {
         if (m_size > inlineCapacity)
+#if USE(BUN_JSC_ADDITIONS)
+            ArgMalloc::free(std::exchange(m_storage.outOfLine.args, nullptr));
+#else
             ArgMalloc::free(std::exchange(m_storage.outOfLineArgs, nullptr));
+#endif
         m_size = 0;
     }
 
 public:
     Kind kind;
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    std::array<uint8_t, 2> m_formsInLine { };
+#endif
     unsigned m_size { 0 };
 public:
     Value* origin { nullptr }; // The B3::Value that this originated from.
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    struct OutOfLine {
+        Arg* args;
+        std::array<uint8_t, maxNumberOfForms> forms;
+    };
+    static_assert(sizeof(OutOfLine) == inlineCapacity * sizeof(Arg));
+#endif
     union {
         std::array<Arg, inlineCapacity> inlineArgs { };
+#if USE(BUN_JSC_ADDITIONS)
+        OutOfLine outOfLine;
+#else
         Arg* outOfLineArgs;
+#endif
     } m_storage;
 };
 

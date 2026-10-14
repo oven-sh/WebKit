@@ -842,6 +842,18 @@ namespace JSC {
     {
     }
 
+    inline AuditedExpressionNode::AuditedExpressionNode(ExpressionNode* expr, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most)
+        : ExpressionNode(JSTokenLocation(), expr->resultDescriptor())
+        , m_expr(expr)
+        , m_id(id)
+        , m_passes(passes)
+        , m_least(least)
+        , m_most(most)
+    {
+        m_position = expr->position();
+        m_endOffset = expr->endOffset();
+    }
+
     inline SourceElements::SourceElements()
     {
     }

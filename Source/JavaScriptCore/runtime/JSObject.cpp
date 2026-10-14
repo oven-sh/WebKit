@@ -34,6 +34,7 @@
 #include "GCDeferralContextInlines.h"
 #include "GetterSetter.h"
 #include "HeapAnalyzer.h"
+#include "ImmutableIntrinsics.h"
 #include "IndexingHeaderInlines.h"
 #include "JSCInlines.h"
 #include "IndexingTypeInlines.h"
@@ -856,8 +857,14 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
-    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
+    if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]] {
+        if (slot.isStrictMode())
+            noteRefusalByLock(vm, propertyName.uid());
         return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+    }
+
+    if (structure()->typeInfo().wouldHaveFixedProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
+        ImmutableIntrinsicsAudit::willPut(globalObject, this, propertyName, slot);
 
     if (!vm.isSafeToRecurseSoft()) [[unlikely]] {
         throwStackOverflowError(globalObject, scope);
@@ -896,8 +903,11 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
         if (hasProperty) {
             if (attributes & PropertyAttribute::ReadOnly) {
-                if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+                if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+                    if (slot.isStrictMode() && obj->isLockedBuiltin())
+                        obj->noteRefusalByLock(vm, propertyName.uid());
                     return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+                }
                 break;
             }
             if (attributes & PropertyAttribute::Accessor) {
@@ -1019,6 +1029,8 @@ bool JSObject::definePropertyOnReceiver(JSGlobalObject* globalObject, PropertyNa
     // The steps as the specification has them, in which the receiver's [[DefineOwnProperty]] decides: the shortcuts below put.
     if (receiver->structure()->hasImmutableProperties()) [[unlikely]]
         return definePropertyOnReceiverSlow(globalObject, propertyName, value, receiver, slot.isStrictMode());
+    if (receiver->structure()->typeInfo().wouldHaveFixedProperties()) [[unlikely]]
+        ImmutableIntrinsicsAudit::willPut(globalObject, receiver, propertyName, slot);
 
     if (slot.isTaintedByOpaqueObject() || receiver->methodTable()->defineOwnProperty != JSObject::defineOwnProperty) {
         if (mightBeSpecialProperty(vm, receiver->type(), propertyName.uid()))
@@ -1074,8 +1086,13 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
 
     if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
+        if (shouldThrow)
+            thisObject->noteRefusalByLock(vm);
         return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
     }
+
+    if (thisObject->structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
+        ImmutableIntrinsicsAudit::willPutByIndex(globalObject, thisObject, propertyName, shouldThrow);
 
     if (propertyName > MAX_ARRAY_INDEX) {
         PutPropertySlot slot(cell, shouldThrow);
@@ -2232,17 +2249,24 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (this->structure()->typeInfo().wouldHaveFixedProperties()) [[unlikely]]
+        ImmutableIntrinsicsAudit::willSetPrototype(globalObject, this, prototype, shouldThrowIfCantSet);
+
     if (this->structure()->isImmutablePrototypeExoticObject() || this->structure()->inheritorsMayOverrideReadOnlyProperties()) {
         // This implements https://tc39.github.io/ecma262/#sec-set-immutable-prototype.
         if (this->getPrototype(globalObject) == prototype)
             return true;
 
+        if (shouldThrowIfCantSet && isLockedBuiltin() && this != globalObject->objectPrototype())
+            noteRefusalByLock(vm);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
 
     if (this->structure()->hasImmutableProperties()) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
+        if (shouldThrowIfCantSet && this != globalObject->objectPrototype())
+            noteRefusalByLock(vm);
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of a built-in object: built-ins are immutable in compiled programs"_s);
     }
 
@@ -2510,6 +2534,8 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
             slot.setNonconfigurable();
             return false;
         }
+        if (attributes & PropertyAttribute::WouldBeFixed && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) [[unlikely]]
+            ImmutableIntrinsicsAudit::willDeleteProperty(globalObject, thisObject, propertyName, slot);
 #if USE(BUN_JSC_ADDITIONS)
         if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
             if (auto* field = TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
@@ -3085,13 +3111,16 @@ void JSObject::seal(VM& vm)
 
 void JSObject::fixProperties(VM& vm, FixedObject kind)
 {
-    if (structure()->inheritorsMayOverrideReadOnlyProperties())
+    if (structure()->inheritorsMayOverrideReadOnlyProperties() || structure()->typeInfo().wouldHaveFixedProperties())
         return;
     if (structure()->isDictionary())
         flattenDictionaryObject(vm);
     Structure* oldStructure = structure();
     DeferredStructureTransitionWatchpointFire deferred(vm, oldStructure);
-    setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::FixAndMakePropertiesImmutable, &deferred));
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        setStructure(vm, Structure::nonPropertyTransition(vm, oldStructure, kind == FixedObject::StaysExtensible ? TransitionKind::NoteFixedProperties : TransitionKind::NoteFixedAndImmutableProperties, &deferred));
+    else
+        setStructure(vm, kind == FixedObject::StaysExtensible ? Structure::fixPropertiesTransition(vm, oldStructure, &deferred) : Structure::nonPropertyTransition(vm, oldStructure, TransitionKind::FixAndMakePropertiesImmutable, &deferred));
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
@@ -3452,6 +3481,8 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
     // Nothing below applies: the descriptor is validated against the current one, which defineOwnNonIndexProperty() does.
     if (structure()->hasImmutableProperties()) [[unlikely]]
         RELEASE_AND_RETURN(scope, defineOwnNonIndexProperty(globalObject, Identifier::from(vm, index), descriptor, throwException));
+    if (structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
+        ImmutableIntrinsicsAudit::willDefineOwnIndexedProperty(globalObject, this, index, descriptor, throwException);
 
     ASSERT(index <= MAX_ARRAY_INDEX);
 
@@ -4400,7 +4431,7 @@ bool JSObject::putDirectMayBeIndex(JSGlobalObject* globalObject, PropertyName pr
 }
 
 // True if every field of the descriptor is already in the current one with the same value.
-static bool isPropertyUnchangedByDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
+bool isPropertyUnchangedByDescriptor(JSGlobalObject* globalObject, const PropertyDescriptor& current, const PropertyDescriptor& descriptor)
 {
     if (descriptor.enumerablePresent() && descriptor.enumerable() != current.enumerable())
         return false;
@@ -4438,8 +4469,11 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
     if (!isCurrentDefined) {
         // unless extensions are prevented!
         // Step 2.a
-        if (!isExtensible)
+        if (!isExtensible) {
+            if (throwException && object && object->isLockedBuiltin())
+                object->noteRefusalByLock(vm, propertyName.uid());
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
+        }
         if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
             return typeError(globalObject, scope, throwException, ReadonlyPropertyWriteError);
         ASSERT(!object || !object->structure()->hasImmutableProperties());
@@ -4561,6 +4595,10 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
     RETURN_IF_EXCEPTION(throwScope, false);
     bool isExtensible = this->isExtensible(globalObject);
     RETURN_IF_EXCEPTION(throwScope, false);
+    if (structure()->typeInfo().wouldHaveFixedProperties() || (isCurrentDefined && current.attributes() & PropertyAttribute::WouldBeFixed)) [[unlikely]] {
+        ImmutableIntrinsicsAudit::willDefineOwnProperty(globalObject, this, propertyName, descriptor, isCurrentDefined, current, throwException);
+        RETURN_IF_EXCEPTION(throwScope, false);
+    }
     RELEASE_AND_RETURN(throwScope, validateAndApplyPropertyDescriptor(globalObject, this, propertyName, isExtensible, descriptor, isCurrentDefined, current, throwException));
 }
 

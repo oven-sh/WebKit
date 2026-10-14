@@ -79,8 +79,8 @@ namespace JSC { namespace B3 { namespace Air {
     macro(numSplitAroundClobberStackMoves)      \
     macro(numSplitAroundClobberStretches)       \
     macro(numSplitAroundClobberSitesInStretches)
-#endif
 
+#endif
 class AirAllocateRegistersStats {
 public:
     AirAllocateRegistersStats(Bank bank, const String& label = { })

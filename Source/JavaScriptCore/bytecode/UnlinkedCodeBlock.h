@@ -191,6 +191,14 @@ public:
     bool hasCheckpoints() const { return m_hasCheckpoints; }
     void setHasCheckpoints() { m_hasCheckpoints = true; }
 
+    unsigned costOfAudits() const { return m_rareData ? m_rareData->m_costOfAudits : 0; }
+    void setCostOfAudits(unsigned cost)
+    {
+        Locker locker { m_lock };
+        createRareDataIfNecessary(locker);
+        m_rareData->m_costOfAudits = cost;
+    }
+
     bool hasQuickDFGTierUpUpdated() const { return m_quickDFGTierUp != TriState::Indeterminate; }
     bool isQuickDFGTierUp() const { return m_quickDFGTierUp == TriState::True; }
     void setQuickDFGTierUp(TriState state) { m_quickDFGTierUp = state; }
@@ -519,6 +527,7 @@ public:
 
         unsigned m_needsClassFieldInitializer : 1;
         unsigned m_privateBrandRequirement : 1;
+        unsigned m_costOfAudits { 0 };
     };
 
     int outOfLineJumpOffset(JSInstructionStream::Offset);

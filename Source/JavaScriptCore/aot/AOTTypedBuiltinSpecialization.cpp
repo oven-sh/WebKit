@@ -62,24 +62,35 @@ public:
     {
     }
 
+    void leaveColdTextToStubs()
+    {
+        BitVector isInLoop = blocksInLoops(m_function);
+        m_isColdByText.fill(true, m_function.blocks.size());
+        for (size_t block : isInLoop)
+            m_isColdByText[block] = false;
+    }
+
     unsigned run()
     {
         noteRefutedReceivers();
         unsigned changed = 0;
         // What comes after a value that was replaced is in a new block, which has its turn.
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
-            for (unsigned i = 0; i < m_function.blocks[b].values.size(); ++i) {
+            for (unsigned i = m_numberOfValuesLeftBehind[b]; i < m_function.blocks[b].values.size(); ++i) {
                 auto& value = m_function.at(m_function.blocks[b].values[i]);
                 if (value.opcode == Opcode::Operation && m_callIntrinsic && value.string() == m_callIntrinsic) {
                     convertCallIntrinsicToCall(value);
                     ++changed;
                     continue;
                 }
+                m_blockOfSite = BlockID(b);
                 if ((m_mode == Mode::Speculation && takeTimeOfDates(BlockID(b), i)) || specialize(BlockID(b), i)) {
                     ++changed;
                     break;
                 }
             }
+            if (unsigned leftBehind = std::exchange(m_numberOfValuesLeftBehind[b], 0))
+                m_function.blocks[b].values.removeAt(0, leftBehind);
         }
         if (changed)
             cleanUp(m_program, m_function);
@@ -186,11 +197,13 @@ private:
         case Opcode::ToNumber:
             operands.append(m_function.at(id).child(0));
             break;
-        case Opcode::Call:
-            if (m_function.at(id).arguments.size() != 1 || globalDefinedBy(m_function.at(id).child(0)) != m_builtins.nameOf("Number"_s.span8()))
+        case Opcode::Call: {
+            static const BuiltinName number = Builtins::singleton().nameOf("Number"_s.span8());
+            if (m_function.at(id).arguments.size() != 1 || globalDefinedBy(m_function.at(id).child(0)) != number)
                 return false;
             operands.append(m_function.at(id).arguments[0]);
             break;
+        }
         case Opcode::Less:
         case Opcode::LessEq:
         case Opcode::Greater:
@@ -298,6 +311,13 @@ private:
                 return false;
         } else if (isKnown)
             return false;
+        if (!m_isColdByText.isEmpty() && m_isColdByText[block.index()] && (m_function.at(id).opcode == Opcode::CallMethod || m_function.at(id).opcode == Opcode::Call)) {
+            if (auto method = methodAskedByStub(entry, m_function.at(id).arguments.size()); method != MethodAskedByStub::None) {
+                m_function.at(id).methodAskedByStub = method;
+                leaveReadOfMethodToCall(block, index);
+                return false;
+            }
+        }
         TypeID typeOfClass = m_program.engineClassTypes[engineClass->index];
         RELEASE_ASSERT(typeOfClass);
 
@@ -310,6 +330,8 @@ private:
         Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
         guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), engineClass->index };
         guard.arguments.append(site->receiver);
+        if (callee && engineClass->type == ArrayType && !(m_builtins.at(entry).usesOfThis & (OperandUse::WritesProperties | OperandUse::WritesContents)))
+            guard.children[2] = site->receiver;
         BlockID slow = branch(append(WTF::move(guard)));
 
         if (callee)
@@ -326,6 +348,82 @@ private:
         m_refuted[slow.index()] = { originOf(site->receiver), engineClass->index };
         finish(appendThrowing(WTF::move(original)));
         return true;
+    }
+
+    void leaveReadOfMethodToCall(BlockID block, unsigned index)
+    {
+        auto& values = m_function.at(block).values;
+        auto& call = m_function.at(values[index]);
+        if (call.opcode != Opcode::Call)
+            return;
+        ValueID read = call.child(0);
+        if (m_function.at(read).opcode != Opcode::GetById || m_function.at(read).child(0) != call.child(1))
+            return;
+        unsigned at = index;
+        while (true) {
+            if (at-- == m_numberOfValuesLeftBehind[block.index()])
+                return;
+            if (values[at] == read)
+                break;
+            switch (m_function.at(values[at]).opcode) {
+            case Opcode::Undefined:
+            case Opcode::Null:
+            case Opcode::Boolean:
+            case Opcode::Integer:
+            case Opcode::Double:
+            case Opcode::String:
+            case Opcode::BigInt:
+            case Opcode::FunctionReference:
+            case Opcode::NewClosure:
+                break;
+            default:
+                return;
+            }
+        }
+        unsigned uses = 0;
+        auto count = [&](ValueID used) {
+            uses += used == read;
+        };
+        for (auto& other : m_function.blocks) {
+            for (ValueID id : other.values)
+                std::as_const(m_function.at(id)).forEachChild(count);
+            other.terminator.forEachChild(count);
+        }
+        if (uses != 1)
+            return;
+        call.opcode = Opcode::CallMethod;
+        call.immediates = { m_function.at(read).string().index(), call.immediates[1] };
+        call.children = { call.child(1), ValueID(), ValueID() };
+        Value nothing;
+        nothing.opcode = Opcode::Undefined;
+        nothing.position = m_function.at(read).position;
+        nothing.inlineFrame = m_function.at(read).inlineFrame;
+        nothing.type = m_program.types.undefined;
+        nothing.rep = repOf(m_program.at(nothing.type));
+        m_function.at(read) = WTF::move(nothing);
+    }
+
+    MethodAskedByStub methodAskedByStub(BuiltinID entry, size_t numberOfArguments) const
+    {
+        auto& implementation = m_builtins.at(entry).implementation;
+        if (implementation.kind != BuiltinImplementation::Inline)
+            return MethodAskedByStub::None;
+        switch (implementation.inlined) {
+        case InlineBuiltin::ArrayPush:
+            return numberOfArguments == 1 ? MethodAskedByStub::ArrayPush : MethodAskedByStub::None;
+        case InlineBuiltin::MapGet:
+            return numberOfArguments == 1 ? MethodAskedByStub::MapGet : MethodAskedByStub::None;
+        case InlineBuiltin::MapHas:
+            return numberOfArguments == 1 ? MethodAskedByStub::MapHas : MethodAskedByStub::None;
+        case InlineBuiltin::MapSet:
+            return numberOfArguments == 2 ? MethodAskedByStub::MapSet : MethodAskedByStub::None;
+        case InlineBuiltin::SetHas:
+            return numberOfArguments == 1 ? MethodAskedByStub::SetHas : MethodAskedByStub::None;
+        case InlineBuiltin::SetAdd:
+            return numberOfArguments == 1 ? MethodAskedByStub::SetAdd : MethodAskedByStub::None;
+        default:
+            return MethodAskedByStub::None;
+        }
     }
 
     bool splitOnNumber(BlockID block, unsigned index, Site site, BuiltinName name, std::span<const Type> argumentTypes)
@@ -445,6 +543,7 @@ private:
     {
         m_refuted.fill(Refuted { }, m_function.blocks.size());
         m_holdsDatesAsTheyWere.fill(false, m_function.blocks.size());
+        m_numberOfValuesLeftBehind.fill(0, m_function.blocks.size());
         for (auto& block : m_function.blocks) {
             if (block.terminator.kind != TerminatorKind::Branch)
                 continue;
@@ -489,6 +588,9 @@ private:
         m_function.blocks.append(Block { });
         m_refuted.append(Refuted { });
         m_holdsDatesAsTheyWere.append(false);
+        m_numberOfValuesLeftBehind.append(0);
+        if (!m_isColdByText.isEmpty())
+            m_isColdByText.append(m_isColdByText[m_blockOfSite.index()]);
         return BlockID(m_function.blocks.size() - 1);
     }
 
@@ -515,8 +617,11 @@ private:
         m_after = addBlock();
         {
             auto& from = m_function.at(block);
-            m_function.at(m_after).values.append(from.values.subspan(index + 1));
-            from.values.shrink(index);
+            unsigned leftBehind = std::exchange(m_numberOfValuesLeftBehind[block.index()], 0);
+            ValuesOfBlock ahead;
+            ahead.append(from.values.subspan(leftBehind, index - leftBehind));
+            m_function.at(m_after).values = std::exchange(from.values, WTF::move(ahead));
+            m_numberOfValuesLeftBehind[m_after.index()] = index + 1;
             m_function.at(m_after).terminator = std::exchange(from.terminator, Terminator { });
         }
         m_handler = { };
@@ -615,6 +720,9 @@ private:
     // By block.
     Vector<Refuted> m_refuted;
     Vector<bool> m_holdsDatesAsTheyWere;
+    Vector<unsigned> m_numberOfValuesLeftBehind;
+    Vector<bool> m_isColdByText;
+    BlockID m_blockOfSite;
     // Of the value that is being replaced.
     uint32_t m_position { 0 };
     uint32_t m_inlineFrame { 0 };
@@ -634,9 +742,12 @@ unsigned resolvePreludeCalls(const Program& program, Function& function)
     return BuiltinSpecialization(program, function, BuiltinSpecialization::Mode::Prelude).run();
 }
 
-unsigned speculateOnReceivers(const Program& program, Function& function)
+unsigned speculateOnReceivers(const Program& program, FunctionID id, Function& function)
 {
-    return BuiltinSpecialization(program, function, BuiltinSpecialization::Mode::Speculation).run();
+    BuiltinSpecialization speculation(program, function, BuiltinSpecialization::Mode::Speculation);
+    if (!program.isHotOutsideItsLoops(id) && function.kind != FunctionKind::Module)
+        speculation.leaveColdTextToStubs();
+    return speculation.run();
 }
 
 } } } // namespace JSC::AOT::Typed

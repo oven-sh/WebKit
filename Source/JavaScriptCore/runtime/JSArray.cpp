@@ -25,6 +25,7 @@
 
 #include "ArrayPrototypeInlines.h"
 #include "GCDeferralContextInlines.h"
+#include "ImmutableIntrinsics.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
@@ -330,6 +331,8 @@ bool JSArray::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName prope
         // (Refused before the value is converted, which can run user code and throw a RangeError.)
         if (thisObject->structure()->hasImmutableProperties()) [[unlikely]]
             RELEASE_AND_RETURN(scope, JSObject::put(cell, globalObject, propertyName, value, slot));
+        if (thisObject->structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
+            ImmutableIntrinsicsAudit::willPut(globalObject, thisObject, propertyName, slot);
 
         unsigned newLength = value.toUInt32(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
@@ -1269,6 +1272,8 @@ bool JSArray::tryPutIndexInPlace(VM& vm, unsigned index, JSValue value)
         return false;
     if (index > MAX_STORAGE_VECTOR_INDEX || !ensureLength(vm, index + 1))
         return false;
+    if (hasUndecided(indexingType))
+        convertUndecidedForValue(vm, value);
     setIndexQuickly(vm, index, value);
     return true;
 }

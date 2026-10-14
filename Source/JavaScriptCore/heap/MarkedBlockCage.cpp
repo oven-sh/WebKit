@@ -28,12 +28,21 @@
 
 namespace JSC {
 
+#if OS(LINUX)
+static constexpr bool isReservedWithoutAccess = true;
+#elif !OS(DARWIN)
+static constexpr bool isReservedWithoutAccess = false;
+#endif
+
 class MarkedBlockCageManager {
 public:
     MarkedBlockCageManager()
     {
         size_t size = static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB;
-        RELEASE_ASSERT(hasOneBitSet(size) && size <= MarkedBlockCage::maxSize, size);
+        if (!hasOneBitSet(size) || size > MarkedBlockCage::maxSize) {
+            dataLogLn("markedBlockCageSizeInMB is not 0 or a power of two of at most ", MarkedBlockCage::maxSize / MB, ": ", Options::markedBlockCageSizeInMB());
+            exit(EXIT_FAILURE);
+        }
 
         uintptr_t start = 0;
         for (unsigned i = 0; i < 8; ++i) {
@@ -126,7 +135,7 @@ private:
 #if OS(LINUX)
         for (unsigned attempt = 0; attempt < 16 && !address; ++attempt) {
             void* wanted = std::bit_cast<void*>((128 + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % 1024)) * MarkedBlockCage::maxSize);
-            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, wanted);
+            void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, wanted, false);
             if (!reserved)
                 return 0;
             if (reserved == wanted)
@@ -136,11 +145,11 @@ private:
         }
 #endif
         if (!address)
-            address = OSAllocator::tryReserveUncommittedAligned(size, MarkedBlockCage::maxSize, OSAllocator::FastMallocPages);
+            address = OSAllocator::tryReserveUncommittedAligned(size, MarkedBlockCage::maxSize, OSAllocator::FastMallocPages, nullptr, !isReservedWithoutAccess);
 #if OS(UNIX)
         // What `undefined` and `null` are decoded to is in the first block: see AOT::prepareFaultingAccesses().
         if (address)
-            RELEASE_ASSERT(!mprotect(address, MarkedBlock::blockSize, PROT_NONE));
+            RELEASE_ASSERT(!mprotect(address, isReservedWithoutAccess ? size : MarkedBlock::blockSize, PROT_NONE));
 #endif
 #if OS(LINUX) && defined(MADV_DOFORK)
         // A child process inherits the blocks, as it does what fastMalloc hands out.
@@ -157,6 +166,10 @@ private:
 #if OS(DARWIN)
         return mmap(address, size, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, OSAllocator::FastMallocPages, 0) != MAP_FAILED;
 #else
+#if OS(LINUX)
+        if (mprotect(address, size, PROT_READ | PROT_WRITE))
+            return false;
+#endif
         OSAllocator::commit(address, size, true, false);
         return true;
 #endif
@@ -237,7 +250,7 @@ private:
     size_t m_firstDecommittedFreeBlock { 0 };
 };
 
-static_assert(1 << MarkedBlockCage::shift == MarkedBlock::atomSize);
+static_assert(1 << MarkedBlockCage::shift <= MarkedBlock::atomSize);
 
 static LazyNeverDestroyed<MarkedBlockCageManager> s_markedBlockCageManager;
 std::atomic<bool> MarkedBlockCage::s_isRequired { false };

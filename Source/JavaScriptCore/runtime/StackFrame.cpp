@@ -103,17 +103,19 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
 {
 #if ENABLE(AOT)
     JSCell* instanceToken = AOT::tokenOf(trace.instance);
-    bool isAtTheTop = true;
-    results.reserveCapacity(std::min(trace.limit, trace.returnAddresses.size()));
+    bool isAtTheTop = !trace.hasFrameOfHostFunctionOnTop && !trace.numberOfFramesLeftOut;
+    unsigned numberToLeaveOut = trace.numberOfFramesLeftOut;
+    results.reserveCapacity(std::min<uint32_t>(trace.limit, trace.numberOfReturnAddresses + trace.hasFrameOfHostFunctionOnTop));
     const AOT::Instance::PlaceInTrace* places = trace.instance->placesInTraces();
     AOT::InlineFramesRead inlineFramesRead;
     uint32_t lastShown = AOT::FunctionRef::none;
-    for (const void* kept : trace.returnAddresses) {
-        const void* returnAddress = AOT::ReturnAddressTrace::addressOf(kept);
-        bool rootIsConstructed = kept != returnAddress;
+    uintptr_t startOfImageCode = AOT::startOfImageCode();
+    for (uint32_t kept : trace.returnAddresses()) {
+        const void* returnAddress = AOT::ReturnAddressTrace::addressOf(kept, startOfImageCode);
+        bool rootIsConstructed = kept & AOT::ReturnAddressTrace::isOfConstructed;
         const AOT::Instance::CachedAddressInfo* asked = trace.instance->resolveReturnAddress(returnAddress);
         RELEASE_ASSERT(asked);
-        if (auto place = places[asked - trace.instance->cachedReturnAddresses].ofSite(); !isAtTheTop && place.kind == AOT::Instance::PlaceInTrace::IsShown) {
+        if (auto place = places[asked - trace.instance->cachedReturnAddresses].ofSite(); !isAtTheTop && !numberToLeaveOut && place.kind == AOT::Instance::PlaceInTrace::IsShown) {
             if (results.size() == trace.limit)
                 return;
             results.constructAndAppend(instanceToken, AOT::FrameInTrace::create(asked->function, place.typedFunction, CallSiteIndex(place.callSiteBits).bytecodeIndex(), rootIsConstructed));
@@ -124,7 +126,10 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
         for (auto location = function.locationForReturnAddress(returnAddress, nullptr, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
             bool isHidden = isAtTheTop ? AOT::typedFunctionStandsForNoFunction(location.typedFunction) : AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction);
             bool isConstructed = location.inlineFrame ? location.isConstructed : rootIsConstructed;
-            if (!location.isTailDeleted && !isHidden) {
+            if (!location.isTailDeleted && !isHidden && numberToLeaveOut) {
+                --numberToLeaveOut;
+                lastShown = AOT::FunctionRef::none;
+            } else if (!location.isTailDeleted && !isHidden) {
                 if (results.size() == trace.limit)
                     return;
                 isAtTheTop = false;

@@ -2093,6 +2093,14 @@ public:
         m_formatter.immediate32(value);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void imulq_i32r(RegisterID src, int32_t value, RegisterID dst)
+    {
+        m_formatter.oneByteOp64(OP_IMUL_GvEvIz, dst, src);
+        m_formatter.immediate32(value);
+    }
+#endif
+
     void divl_r(RegisterID dst)
     {
         m_formatter.oneByteOp(OP_GROUP3_Ev, GROUP3_OP_DIV, dst);

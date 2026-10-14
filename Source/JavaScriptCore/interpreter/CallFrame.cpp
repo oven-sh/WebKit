@@ -204,9 +204,20 @@ SourceOrigin CallFrame::callerSourceOrigin(VM& vm)
         if (!std::exchange(haveSkippedFirstFrame, true))
             return IterationStatus::Continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (visitor->isTypedAOTFrame()) {
+            if (visitor->isHiddenAOTFrame(false))
+                return IterationStatus::Continue;
+            String path = visitor->sourceURL();
+            if (path.startsWith('/'))
+                sourceOrigin = SourceOrigin { URL::fileURLWithFileSystemPath(path) };
+            return IterationStatus::Done;
+        }
+#else
         // Code compiled from types has no executable to ask, like Wasm below.
         if (visitor->isTypedAOTFrame())
             return IterationStatus::Done;
+#endif
 
         switch (visitor->codeType()) {
         case StackVisitor::Frame::CodeType::Function:

@@ -102,6 +102,12 @@ Integer Lowering::indexOrElse(ValueID key, LBasicBlock otherwise)
     case Rep::Double:
     // What stands for `undefined` or `null` is not a number, and equal to nothing.
     case Rep::OptionalDouble: {
+        if (auto exact = integerOfNumber(key)) {
+            ValueID lowered = valueBeingLowered();
+            bool isKey = lowered && (m_function.at(lowered).opcode == Opcode::GetByVal || m_function.at(lowered).opcode == Opcode::PutByVal);
+            orElse(isKey ? greaterThanOrEqual(*exact, integer(0)) : notEqual(*exact, integer(INT64_MIN)), otherwise);
+            return *exact;
+        }
         Number number = operand.rep == Rep::Double ? operand.as<Number>() : assumedNumber(operand.as<OptionalNumber>());
         Integer index = truncateToInteger(number);
         orElse(equal(convertToNumber(index), number), otherwise);
@@ -160,7 +166,7 @@ void Lowering::putByValGenerally(ValueID object, ValueID key, ValueID stored)
         emitPutByVal(base, boxedKey, in<Boxed>(stored), !expectedTypeOf(key).isNumber());
         return;
     }
-    constexpr uint32_t isStrict = 1;
+    uint32_t isStrict = !isInSloppyCode();
     callICStub(Stub::PutByValAtIndex, Void, { { base.value(), firstStubOperandGPR }, { operand.value, GPRInfo::argumentGPR1 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR2 } }, std::pair { GPRInfo::argumentGPR3, isStrict });
 }
 
@@ -232,13 +238,17 @@ bool Lowering::isExpectedToBeNumber(ValueID element)
 
 Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& type, LBasicBlock otherwise, bool expectsNumbers)
 {
-    bool looksForNumbers = expectsNumbers && type.primitives & Primitive::Number;
+    bool leavesNumbersToLoadElement = std::exchange(m_leavesNumbersToLoadElement, false) && expectsNumbers && type.primitives & Primitive::Number && !type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull) && get(key).rep == Rep::Int64;
+    bool looksForNumbers = expectsNumbers && type.primitives & Primitive::Number && !leavesNumbersToLoadElement;
     bool looksForNumbersLast = !type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
     Rep rep = repOf(type);
     LBasicBlock inside = m_out.newBlock();
+    bool takesIndexAsItIs = !otherwise && get(key).rep == Rep::Int64;
+    TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+    bool holdsInArm = takesIndexAsItIs && !(type.primitives & Primitive::Number) && &m_program.at(given) == &type && !m_function.at(m_currentBlock->values[m_currentIndexInBlock]).readsElementKnownByTheStores() && !Options::auditAOTTypedAssertions();
+    LBasicBlock slowPath = otherwise ? otherwise : newColdBlock();
     LBasicBlock outside = otherwise ? otherwise : m_out.newBlock();
     LBasicBlock absent = otherwise ? otherwise : m_out.newBlock();
-    LBasicBlock slowPath = otherwise ? otherwise : newColdBlock();
     Join join(m_out, rep, b3TypeOf(rep));
 
     Integer index = indexOrElse(key, slowPath);
@@ -247,7 +257,9 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
 
     // An array that shares its elements until it is stored to is read like any other.
     m_out.appendTo(inside);
-    Word32 shape = indexingModeOf(array, IndexingShapeMask);
+    bool asksWholeByte = !looksForNumbers && !(type.primitives & ~Primitive::UndefinedOrNull);
+    IndexingType keptAsValues = asksWholeByte ? ArrayWithContiguous : ContiguousShape;
+    Word32 shape = asksWholeByte ? loadByte(array, m_heaps.JSCell_indexingTypeAndMisc, safeIfReaches(array, sizeof(JSCell))) : indexingModeOf(array, IndexingShapeMask);
     // Goes on where the elements are kept another way. What is asked first is what the array was born as if it was made as its type says; the back end would
     // make one switch of the questions, in the order of the numbers, if it saw that they are about one value.
     bool isFirst = true;
@@ -269,10 +281,10 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
         Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
         addIfNumber(join, element, type);
         orElse(isNotEmpty(element), absent);
-        join.add(ensureElement(array, index, element, type));
+        join.add(holdsInArm ? fitOrElse(element, m_program.at(m_program.types.anything), type, slowPath) : ensureElement(array, index, element, type));
     };
     if (looksForNumbersLast)
-        whenKeptAs(ContiguousShape, readValue);
+        whenKeptAs(keptAsValues, readValue);
     // Kept as numbers, they are only looked at where a number will do and one is expected. All else is left to the operation.
     // Where values are what is expected, and outside loops, numbers are left to the stub that reads any array at an index: the arms are five times the code of the read.
     bool leavesNumbersToStub = looksForNumbers && looksForNumbersLast && !otherwise && !m_isInLoop;
@@ -294,8 +306,10 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
         });
     }
     if (!looksForNumbersLast)
-        whenKeptAs(ContiguousShape, readValue);
-    if (leavesNumbersToStub)
+        whenKeptAs(keptAsValues, readValue);
+    if (leavesNumbersToLoadElement)
+        join.add(ensure(Boxed(callAllocationStub(Stub::LoadElement, { { array.value(), GPRInfo::argumentGPR1 }, { index.value(), GPRInfo::argumentGPR2 } }, effectsOfOperation<operationAOTTypedArrayGetAtIndex>(), true)), type));
+    else if (leavesNumbersToStub)
         join.add(ensure(Boxed(callICStub(Stub::GetByValAtIndex, Int64, { { array.value(), firstStubOperandGPR }, { index.value(), GPRInfo::argumentGPR1 } }, std::nullopt, effectsOfOperation<operationAOTTypedArrayGet>())), type));
     else
         m_out.jump(slowPath);
@@ -310,6 +324,15 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
         join.add(*nothing);
 
     m_out.appendTo(slowPath);
+    if (holdsInArm) {
+        Writes writes = writesOfElementRead(m_program, type);
+        join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(ArrayElementAs, (OperationEffects { writes, true, writes != Writes::Nothing }), array, index, word32(given.index())), type, rep));
+        return join.finish();
+    }
+    if (takesIndexAsItIs) {
+        join.add(ensure(AOT_TYPED_OPERATION(ArrayGetAtIndex, array, index), type));
+        return join.finish();
+    }
     // To box a double takes thirteen instructions, and the operation would undo it.
     if (get(key).rep == Rep::Double)
         join.add(ensure(AOT_TYPED_OPERATION(ArrayGetAtNumber, array, in<Number>(key)), type));
@@ -403,7 +426,7 @@ void Lowering::storeArrayElement(CellPointer array, Integer index, ValueID store
         afterwards();
         m_out.appendTo(notDoubles);
     }
-    Word32 isTaken = equal(mode, word32(ContiguousShape));
+    Word32 isTaken = type.isNumber() ? equal(mode, word32(ContiguousShape)) : equal(loadByte(array, m_heaps.JSCell_indexingTypeAndMisc, safeIfReaches(array, sizeof(JSCell))), word32(ArrayWithContiguous));
     if (type.isInteger() && type.integers.isWithin(Range::int32()))
         isTaken = logicalOr(isTaken, equal(mode, word32(Int32Shape)));
     orElse(isTaken, otherwise);
@@ -426,6 +449,8 @@ void Lowering::putArrayElement(CellPointer array, ValueID key, ValueID stored, L
         m_out.appendTo(slowPath);
         if (get(key).rep == Rep::Double)
             AOT_TYPED_OPERATION(ArrayPutAtNumber, array, in<Boxed>(stored), in<Number>(key));
+        else if (get(key).rep == Rep::Int64)
+            AOT_TYPED_OPERATION(ArrayPutAtIndex, array, in<Boxed>(stored), index);
         else
             AOT_TYPED_OPERATION(ArrayPut, array, in<Boxed>(key), in<Boxed>(stored));
         m_out.jump(continuation);
@@ -460,15 +485,54 @@ Operand Lowering::pushArrayElement(CellPointer array, ValueID receiver, ValueID 
 
     Word32 mode = indexingModeOf(array, IndexingShapeAndWritabilityMask);
     Pointer butterfly = butterflyOf(array);
-    Integer length = publicLength(butterfly);
+    const bool isTight = !(isARM64() && m_isInLoop);
+    const bool isYieldUsed = numberOfUsesOf(m_currentBlock->values[m_currentIndexInBlock]);
+    LValue bothLengths = nullptr;
+    if (isTight && isARM64()) {
+        PatchpointValue* pair = m_out.patchpoint(m_proc.addTuple({ Int32, Int32 }));
+        pair->effects = Effects::none();
+        pair->effects.controlDependent = true;
+        m_heaps.decoratePatchpointRead(&m_heaps.root, pair);
+        pair->append(ConstrainedValue(butterfly.value(), ValueRep::SomeRegister));
+        pair->resultConstraints = { ValueRep::SomeRegister, ValueRep::SomeRegister };
+        pair->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+#if CPU(ARM64)
+            jit.loadPair32(params[2].gpr(), CCallHelpers::TrustedImm32(Butterfly::offsetOfPublicLength()), params[0].gpr(), params[1].gpr());
+#else
+            UNUSED_PARAM(jit);
+            UNUSED_PARAM(params);
+#endif
+        });
+        bothLengths = pair;
+    }
+    auto oneOfBothLengths = [&](int32_t which) {
+        return Word32(m_out.m_block->appendNew<B3::ExtractValue>(m_proc, m_out.origin(), Int32, bothLengths, which));
+    };
+    Integer length = bothLengths ? zeroExtended(oneOfBothLengths(0)) : publicLength(butterfly);
+    Word32 roomOfBothLengths = bothLengths ? oneOfBothLengths(1) : Word32();
     auto store = [&](bool amongDoubles) {
         if (amongDoubles && !typeOfPushed.isInteger())
             orElse(equal(in<Number>(pushed), in<Number>(pushed)), slowPath);
         if (typeOfPushed.hasCells())
             orElse(isBeyondBarrierThreshold(array), slowPath);
-        orElse(below(length, vectorLength(butterfly)), slowPath);
+        if (bothLengths)
+            orElse(below(low32(length), roomOfBothLengths), slowPath);
+        else if (isTight)
+            orElse(below(low32(length), loadField<Word32>(butterfly, m_heaps.Butterfly_vectorLength)), slowPath);
+        else
+            orElse(below(length, vectorLength(butterfly)), slowPath);
         Integer newLength = add(length, integer(1));
-        storeField(butterfly, m_heaps.Butterfly_publicLength, low32(newLength));
+        if (isTight && isX86_64() && !isYieldUsed) {
+            PatchpointValue* addsOne = m_out.patchpoint(Void);
+            addsOne->effects = Effects::none();
+            m_heaps.decoratePatchpointRead(&m_heaps.Butterfly_publicLength, addsOne);
+            m_heaps.decoratePatchpointWrite(&m_heaps.Butterfly_publicLength, addsOne);
+            addsOne->append(ConstrainedValue(butterfly.value(), ValueRep::SomeRegister));
+            addsOne->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.add32(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params[0].gpr(), Butterfly::offsetOfPublicLength()));
+            });
+        } else
+            storeField(butterfly, m_heaps.Butterfly_publicLength, low32(newLength));
         if (amongDoubles)
             m_out.storeDouble(in<Number>(pushed).value(), m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), length.value()));
         else
@@ -481,8 +545,14 @@ Operand Lowering::pushArrayElement(CellPointer array, ValueID receiver, ValueID 
         Word32 keepsValues = equal(mode, word32(ContiguousShape));
         return isInt32 ? logicalOr(keepsValues, equal(mode, word32(Int32Shape))) : keepsValues;
     };
-    if (!isUnboxedNumber) {
-        orElse(keeps(false), slowPath);
+    bool isColdByText = !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id);
+    if (isColdByText)
+        m_out.jump(slowPath);
+    else if (!isUnboxedNumber) {
+        if (isTight && isX86_64() && !isInt32)
+            orElse(equal(loadField<Word32>(array, m_heaps.JSCell_structureID), Word32(changing32(Instance::offsetOfNewArrayWithContiguousStructureID()))), slowPath);
+        else
+            orElse(keeps(false), slowPath);
         store(false);
     } else {
         bool expectsDoubles = atBirth == ArrayWithDouble || (atBirth == ArrayWithInt32 && !isInt32);
@@ -615,7 +685,7 @@ void Lowering::ensureStillAliveHere(CellPointer owner, const char* file, unsigne
     patchpoint->effects.writesLocalState = true;
     patchpoint->effects.reads = HeapRange::top();
     patchpoint->append(owner.value(), ValueRep::ColdAny);
-    patchpoint->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+    patchpoint->setGenerator(m_generatorOfNothing);
 }
 
 // Typed arrays.
@@ -875,7 +945,7 @@ Operand Lowering::lowerArrayFromTypedArray(ValueID result, const Value& value, c
         indexingType = ArrayWithDouble;
     auto& elements = elementsOf(indexingType);
     Rep rep = repOf(type);
-    LBasicBlock generally = newColdBlock();
+    LBasicBlock generally = newBlockForGeneralCall(value);
     LBasicBlock outOfLine = newUnlikelyBlock();
     LBasicBlock copyLoop = m_out.newBlock();
     LBasicBlock copy = m_out.newBlock();
@@ -937,8 +1007,10 @@ Operand Lowering::lowerArrayFromTypedArray(ValueID result, const Value& value, c
     m_out.appendTo(outOfLine);
     join.add(ensure(AOT_TYPED_OPERATION(ArrayFromTypedArray, source, word32(indexingType)), made, type));
 
-    m_out.appendTo(generally);
-    join.add(ensure(callBuiltinFunction(value, OperationEffects { Writes::Heap, true }), type));
+    if (!isGeneralArmOnOffer(generally)) {
+        m_out.appendTo(generally);
+        join.add(ensure(callBuiltinFunction(value, OperationEffects { Writes::Heap, true }), type));
+    }
     return join.finish();
 }
 
@@ -975,6 +1047,21 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
     }
     switch (keyedAccessOf(m_program, m_function, value)) {
     case KeyedAccess::Array:
+        static_assert(static_cast<unsigned>(Stub::LoadElement) + 1 == static_cast<unsigned>(Stub::LeafLoadElement));
+        if (Writes writes = m_function.at(result).readsElementKnownByTheStores() && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions() ? Writes::Nothing : writesOfElementRead(m_program, type); !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id) && get(key).rep == Rep::Int64 && (writes == Writes::Nothing || (!(type.primitives & Primitive::Number) && &m_program.at(m_function.at(result).type) == &type && !Options::auditAOTTypedAssertions()))) {
+            CellPointer array = nonNil(object, { });
+            Integer index = in<Integer>(key);
+            Boxed element(callAllocationStub(Stub::LoadElement, { { array.value(), GPRInfo::argumentGPR1 }, { index.value(), GPRInfo::argumentGPR2 } }, effectsOfOperation<operationAOTTypedArrayGetAtIndex>(), true));
+            if (writes == Writes::Nothing)
+                return ensure(element, type);
+            Rep rep = repOf(type);
+            LBasicBlock misfit = newColdBlock();
+            Join join(m_out, rep, b3TypeOf(rep));
+            join.add(fitOrElse(element, m_program.at(m_program.types.anything), type, misfit));
+            m_out.appendTo(misfit);
+            join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(ArrayElementAs, (OperationEffects { writes, true, true }), array, index, word32(m_function.at(result).type.index())), type, rep));
+            return join.finish();
+        }
         return getArrayElement(nonNil(object, { }), key, type, nullptr, isExpectedToBeNumber(result));
     case KeyedAccess::TypedArray:
         return getTypedArrayElement(typedArrayReceiver(object), key, typeOf(object).onlyEngineClass()->typedArrayType, type);
@@ -1057,6 +1144,7 @@ Operand Lowering::lowerGetByVal(ValueID result, const Value& value)
     if (engineClass->type == ArrayType) {
         bool expectsNumbers = (!expected.elements || m_program.at(expected.elements).primitives & Primitive::Number) && isExpectedToBeNumber(result);
         return inPlace([&](CellPointer array, LBasicBlock otherwise) {
+            m_leavesNumbersToLoadElement = m_function.at(result).type == m_program.types.anything && !predictionOf(result);
             return getArrayElement(array, key, type, otherwise, expectsNumbers);
         });
     }
@@ -1081,15 +1169,12 @@ void Lowering::lowerPutByVal(const Value& value)
     KeyedAccess access = keyedAccessOf(m_program, m_function, value);
     didEmitWrite(access == KeyedAccess::TypedArray ? Writes::TypedArrayProperties : Writes::Heap);
     bool isColdByText = !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id);
-    const char* hasStubForStores = hasStubsForFunctionsWithoutFrame ? "1" : getenv("BUN_AOT_SWITCH_X86COLD");
     switch (access) {
     case KeyedAccess::Array:
-        if (hasStubForStores && hasStubForStores[0] == '1') {
-            static_assert(static_cast<unsigned>(Stub::StoreElement) + 1 == static_cast<unsigned>(Stub::LeafStoreElement));
-            if (isColdByText && get(key).rep == Rep::Int64) {
-                callAllocationStub(Stub::StoreElement, { { nonNil(object, { }).value(), GPRInfo::argumentGPR1 }, { in<Integer>(key).value(), GPRInfo::argumentGPR2 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR3 } }, effectsOfOperation<operationAOTTypedStoreElement>(), true);
-                return;
-            }
+        static_assert(static_cast<unsigned>(Stub::StoreElement) + 1 == static_cast<unsigned>(Stub::LeafStoreElement));
+        if (isColdByText && get(key).rep == Rep::Int64) {
+            callAllocationStub(Stub::StoreElement, { { nonNil(object, { }).value(), GPRInfo::argumentGPR1 }, { in<Integer>(key).value(), GPRInfo::argumentGPR2 }, { in<Boxed>(stored).value(), GPRInfo::argumentGPR3 } }, effectsOfOperation<operationAOTTypedStoreElement>(), true);
+            return;
         }
         putArrayElement(nonNil(object, { }), key, stored);
         return;
@@ -1197,13 +1282,136 @@ BitVector Lowering::valuesUsedOtherwiseThanAsIteratorsOfSteps() const
     return hasOtherUse;
 }
 
+const Lowering::ElementsTakenAtOnce* Lowering::elementsTakenAtOnce(ValueID iterator) const
+{
+    if (m_elementsTakenAtOnce.isEmpty())
+        return nullptr;
+    auto found = m_elementsTakenAtOnce.find(iterator.index());
+    return found == m_elementsTakenAtOnce.end() ? nullptr : &found->value;
+}
+
+void Lowering::findElementsTakenAtOnce()
+{
+    static constexpr unsigned maxElementsTakenAtOnce = 8;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return;
+    Vector<std::pair<unsigned, unsigned>, 4> found;
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        if (m_loopBlocks.get(b))
+            continue;
+        auto& values = m_function.blocks[b].values;
+        for (unsigned i = 0; i < values.size(); ++i) {
+            auto& value = m_function.at(values[i]);
+            if (value.opcode == Opcode::IteratorOpen && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Generic && !iterationOfString(values[i]) && !m_iterationsOfEntries.get(values[i].index()) && !m_pairsOfEntries.contains(values[i].index()))
+                found.append({ b, i });
+        }
+    }
+    if (found.isEmpty())
+        return;
+    BitVector hasOtherUse = valuesUsedOtherwiseThanAsIteratorsOfSteps();
+    Vector<Vector<unsigned, 2>> predecessors(m_function.blocks.size());
+    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+        for (auto& target : m_function.blocks[b].terminator.targets)
+            predecessors[target.block.index()].append(b);
+    }
+    auto isStepOf = [&](const Value& value, ValueID iterator) {
+        return (value.opcode == Opcode::IteratorHasNext || value.opcode == Opcode::IteratorValue || value.opcode == Opcode::IteratorClose) && value.child(0) == iterator;
+    };
+    auto nobodyCanTell = [&](const Value& value) {
+        switch (value.opcode) {
+        case Opcode::Undefined:
+        case Opcode::Null:
+        case Opcode::Boolean:
+        case Opcode::Integer:
+        case Opcode::Double:
+        case Opcode::String:
+        case Opcode::BigInt:
+        case Opcode::StrictEq:
+        case Opcode::LogicalNot:
+        case Opcode::IsUndefinedOrNull:
+        case Opcode::ToBoolean:
+            return true;
+        default:
+            return false;
+        }
+    };
+    for (auto [opened, indexOfOpen] : found) {
+        ValueID iterator = m_function.blocks[opened].values[indexOfOpen];
+        if (hasOtherUse.get(iterator.index()))
+            continue;
+        BitVector leadsToStep(m_function.blocks.size());
+        Vector<unsigned, 16> worklist;
+        uint32_t asked = 0;
+        uint32_t read = 0;
+        bool isRegular = true;
+        for (unsigned b = 0; b < m_function.blocks.size() && isRegular; ++b) {
+            for (ValueID id : m_function.blocks[b].values) {
+                auto& step = m_function.at(id);
+                if (!isStepOf(step, iterator))
+                    continue;
+                if (!leadsToStep.set(b))
+                    worklist.append(b);
+                isRegular &= !m_loopBlocks.get(b);
+                if (step.opcode == Opcode::IteratorClose) {
+                    isRegular &= !step.immediates[0];
+                    continue;
+                }
+                auto& place = m_function.at(step.child(1));
+                if (place.opcode != Opcode::Integer || place.integer() < 0 || place.integer() >= maxElementsTakenAtOnce) {
+                    isRegular = false;
+                    break;
+                }
+                uint32_t& seen = step.opcode == Opcode::IteratorHasNext ? asked : read;
+                isRegular &= !(seen >> place.integer() & 1);
+                seen |= 1u << place.integer();
+                if (step.opcode == Opcode::IteratorValue)
+                    isRegular &= step.type == m_program.types.anything;
+            }
+        }
+        if (!isRegular || !asked || asked & (asked + 1) || read & ~asked)
+            continue;
+        while (!worklist.isEmpty()) {
+            unsigned b = worklist.takeLast();
+            if (b == opened)
+                continue;
+            for (unsigned predecessor : predecessors[b]) {
+                if (!leadsToStep.set(predecessor))
+                    worklist.append(predecessor);
+            }
+        }
+        if (!leadsToStep.get(opened))
+            continue;
+        for (unsigned b : leadsToStep) {
+            auto& block = m_function.blocks[b];
+            bool goesOnToStep = false;
+            for (auto& target : block.terminator.targets)
+                goesOnToStep |= target.block.index() != opened && leadsToStep.get(target.block.index());
+            if (goesOnToStep && block.terminator.kind != TerminatorKind::Jump && block.terminator.kind != TerminatorKind::Branch)
+                isRegular = false;
+            if (block.terminator.kind == TerminatorKind::Invoke)
+                isRegular = false;
+            unsigned end = block.values.size();
+            while (!goesOnToStep && end && !isStepOf(m_function.at(block.values[end - 1]), iterator))
+                --end;
+            for (unsigned i = b == opened ? indexOfOpen + 1 : 0; i < end; ++i) {
+                auto& value = m_function.at(block.values[i]);
+                isRegular &= isStepOf(value, iterator) || nobodyCanTell(value);
+            }
+        }
+        if (!isRegular)
+            continue;
+        unsigned count = std::popcount(asked);
+        m_elementsTakenAtOnce.add(iterator.index(), ElementsTakenAtOnce { m_proc.addStackSlot(count * sizeof(EncodedJSValue)), count });
+    }
+}
+
 void Lowering::findIterationsInFrame()
 {
     Vector<ValueID, 4> found;
     for (auto& block : m_function.blocks) {
         for (ValueID id : block.values) {
             auto& value = m_function.at(id);
-            if (value.opcode == Opcode::IteratorOpen && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Generic && !iterationOfString(id) && !m_iterationsOfEntries.get(id.index()) && !m_pairsOfEntries.contains(id.index()))
+            if (value.opcode == Opcode::IteratorOpen && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Generic && !iterationOfString(id) && !m_iterationsOfEntries.get(id.index()) && !m_pairsOfEntries.contains(id.index()) && !elementsTakenAtOnce(id))
                 found.append(id);
         }
     }
@@ -1366,7 +1574,7 @@ CellPointer Lowering::nextOfIteratedString(const IterationOfString& iteration, V
 
 // `for (const [i, x] of array.entries())`. The call of `entries`, on an array that has its original structure, goes to one place: the IteratorOpen of a loop, straight or through parameters of blocks
 // and upcasts that nothing else uses. Nothing uses that but its IteratorHasNext, IteratorValue and IteratorClose, and what each IteratorValue yields is only taken apart: by an IteratorOpen that
-// nothing uses but IteratorHasNext and IteratorValue with constant indices and IteratorClose, or by casts that nothing uses but GetByVal with 0 or 1. Then nobody can tell whether there is an
+// nothing uses but IteratorHasNext and IteratorValue with constant indices and IteratorClose, or by casts that nothing uses but GetByVal with 0 or 1 and an IteratorOpen that nothing uses. Then nobody can tell whether there is an
 // iterator, or a pair: the call makes a record (CollectionIteration::isOfEntriesOfArrayByIndex), and each of the others asks the iterator of the loop whether it is one: see partOfEntriesOfArray().
 void Lowering::findEntriesOfArrays()
 {
@@ -1477,7 +1685,11 @@ void Lowering::findEntriesOfArrays()
                 }
                 if (use.opcode != Opcode::Cast || use.castReason() == CastReason::Coerce || use.castReason() == CastReason::As)
                     return false;
-                return isOnlyUsedBy(user, [&](ValueID, const Value& read) {
+                return isOnlyUsedBy(user, [&](ValueID reader, const Value& read) {
+                    if (read.opcode == Opcode::IteratorOpen && !numberOfUsesOf(reader) && !iterationOfString(reader) && m_function.at(reader).rep == Rep::JSValue) {
+                        pairs.add(reader.index(), PairOfEntries { iterator, pair });
+                        return true;
+                    }
                     return read.opcode == Opcode::GetByVal && isConstantIndex(read.child(1), 2);
                 });
             });
@@ -1529,8 +1741,10 @@ std::optional<Operand> Lowering::partOfEntriesOfArray(ValueID id, const Value& v
             ValueID counter = m_function.at(pair.pair).child(1);
             return ensure(in<Integer>(counter), typeOf(counter), type);
         }
-        if (index == 1)
+        if (index == 1) {
+            SetForScope isElementOfEntries(m_isElementOfEntries, true);
             return ensure(in<Boxed>(pair.pair), type);
+        }
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     };
 
@@ -1630,6 +1844,11 @@ std::optional<Operand> Lowering::partOfEntriesOfArray(ValueID id, const Value& v
 Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
 {
     ValueID iterable = value.child(0);
+    if (auto* taken = elementsTakenAtOnce(result)) {
+        LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken->slot);
+        callICStub(Stub::TakeElements, Void, { { in<Boxed>(iterable).value(), firstStubOperandGPR }, { words, GPRInfo::argumentGPR1 }, { m_out.constInt64(taken->count), GPRInfo::argumentGPR2 } });
+        return ensure(undefined(), m_program.at(m_program.types.undefined), typeOf(result));
+    }
     if (auto* iteration = iterationOfString(result))
         return openIterationOfString(*iteration, result, iterable);
     if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array) {
@@ -1678,6 +1897,8 @@ Operand Lowering::lowerIteratorOpen(ValueID result, const Value& value)
 Word32 Lowering::lowerIteratorHasNext(const Value& value)
 {
     ValueID iterator = value.child(0);
+    if (elementsTakenAtOnce(iterator))
+        return boolean(true);
     auto isInsideArray = [&] {
         return below(in<Integer>(value.child(1)), arrayLength(asCell(in<Boxed>(iterator))));
     };
@@ -1724,6 +1945,10 @@ Operand Lowering::lowerIteratorValue(ValueID result, const Value& value)
 {
     ValueID iterator = value.child(0);
     auto& type = typeOf(result);
+    if (auto* taken = elementsTakenAtOnce(iterator)) {
+        LValue words = m_out.m_block->appendNew<B3::SlotBaseValue>(m_proc, m_out.origin(), taken->slot);
+        return ensure(Boxed(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, words, m_function.at(value.child(1)).integer() * sizeof(EncodedJSValue)))), type);
+    }
     if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
         return getArrayElement(asCell(in<Boxed>(iterator)), value.child(1), type, nullptr, isExpectedToBeNumber(result));
     if (keyedAccessOf(m_program, m_function, value) == KeyedAccess::TypedArray)
@@ -1754,9 +1979,10 @@ Operand Lowering::valueOfArrayOrRecord(ValueID result, const Value& value)
     auto& type = typeOf(result);
     // The iterator of arrays asks the array for the element, whatever has become of the array since.
     return eitherOperand(isArrayStandingForItsIterator(iterator), repOf(type), [&] {
-        if (isCompact(12))
+        if (isCompact(12) || goesGenerallyWhereTextIsCold())
             return ensure(getByValGenerally(iterator, value.child(1)), type);
         return ifAsExpected({ }, repOf(type), [&](LBasicBlock otherwise) {
+            m_leavesNumbersToLoadElement = m_function.at(result).type == m_program.types.anything && !predictionOf(result);
             return getArrayElement(asCell(in<Boxed>(iterator)), value.child(1), type, otherwise, isExpectedToBeNumber(result));
         }, [&] {
             return ensure(getByValGenerally(iterator, value.child(1)), type);
@@ -1771,7 +1997,7 @@ Operand Lowering::valueOfArrayOrRecord(ValueID result, const Value& value)
 
 void Lowering::lowerIteratorClose(const Value& value)
 {
-    if (keyedAccessOf(m_program, m_function, value) != KeyedAccess::Generic)
+    if (keyedAccessOf(m_program, m_function, value) != KeyedAccess::Generic || elementsTakenAtOnce(value.child(0)))
         return;
     auto generally = [&] {
         ifElse(isArrayStandingForItsIterator(value.child(0)), [] { }, [&] {
@@ -1855,7 +2081,10 @@ Operand Lowering::lowerContainerBuiltin(InlineBuiltin which, ValueID result, con
         storeField(butterfly, m_heaps.Butterfly_publicLength, low32(newLength));
         m_out.jump(continuation);
         m_out.appendTo(slowPath);
-        AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effectsOfStoringElements, box(array), word32(m_program.stringOf(m_builtins.at(value.builtin()).nameName).index()), in<Boxed>(arguments[0]));
+        if (isInSloppyCode())
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SetByNameSloppy, effectsOfStoringElements, box(array), word32(m_program.stringOf(m_builtins.at(value.builtin()).nameName).index()), in<Boxed>(arguments[0]));
+        else
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SetByName, effectsOfStoringElements, box(array), word32(m_program.stringOf(m_builtins.at(value.builtin()).nameName).index()), in<Boxed>(arguments[0]));
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
@@ -1894,7 +2123,7 @@ Operand Lowering::lowerContainerBuiltin(InlineBuiltin which, ValueID result, con
         LBasicBlock isArray = m_out.newBlock();
         LBasicBlock isOtherCell = m_out.newBlock();
         LBasicBlock isNotArray = m_out.newBlock();
-        LBasicBlock isProxy = newColdBlock();
+        LBasicBlock isProxy = newBlockForGeneralCall(value);
         Join join(m_out, Rep::Int32, Int32);
         Boxed boxed = in<Boxed>(argument);
         m_out.branch(isCell(boxed).value(), unsure(isCellCase), unsure(isNotArray));
@@ -1908,8 +2137,10 @@ Operand Lowering::lowerContainerBuiltin(InlineBuiltin which, ValueID result, con
         m_out.appendTo(isNotArray);
         join.add(boolean(false));
         // It is what its target is. That runs no code of the program, but there is no target once the proxy has been revoked: that throws.
-        m_out.appendTo(isProxy);
-        join.add(unboxedBoolean(callBuiltinFunction(value, OperationEffects { inPlace, true })));
+        if (!isGeneralArmOnOffer(isProxy)) {
+            m_out.appendTo(isProxy);
+            join.add(unboxedBoolean(callBuiltinFunction(value, OperationEffects { inPlace, true })));
+        }
         return ensure(join.finish(), booleanType, type);
     }
 

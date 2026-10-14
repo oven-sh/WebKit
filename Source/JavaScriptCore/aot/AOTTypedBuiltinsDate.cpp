@@ -110,7 +110,7 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
     RELEASE_ASSERT(part);
 
     Rep rep = repOf(type);
-    LBasicBlock isNotWorkedOut = newColdBlock();
+    LBasicBlock isNotWorkedOut = newBlockForGeneralCall(value);
     Join join(m_out, rep, b3TypeOf(rep));
     LValue payload = m_out.load64(field(isUTC ? DateInstance::offsetOfCachedGregorianDateTimeUTC() : DateInstance::offsetOfCachedGregorianDateTime()));
     orElse(Word32(m_out.testNonZero64(payload, integer(DateTime::validityMask).value())), isNotWorkedOut);
@@ -125,9 +125,11 @@ std::optional<Operand> Lowering::lowerInlineDate(InlineBuiltin which, ValueID re
     join.add(ensure(yielded, Type::integer(part->range), type));
 
     // Also a date that is none.
-    m_out.appendTo(isNotWorkedOut);
-    Boxed generally = callBuiltinFunction(value, OperationEffects { writes, true });
-    join.add(vouchesForItsType(m_program, m_function, m_function.at(result)) ? convert(generally, type, rep) : ensure(generally, type));
+    if (!isGeneralArmOnOffer(isNotWorkedOut)) {
+        m_out.appendTo(isNotWorkedOut);
+        Boxed generally = callBuiltinFunction(value, OperationEffects { writes, true });
+        join.add(vouchesForItsType(m_program, m_function, m_function.at(result)) ? convert(generally, type, rep) : ensure(generally, type));
+    }
     return join.finish();
 }
 

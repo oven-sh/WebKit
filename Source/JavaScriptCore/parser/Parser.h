@@ -1847,6 +1847,13 @@ private:
 
     template <class TreeBuilder> ALWAYS_INLINE TreeExpression createResolveAndUseVariable(TreeBuilder&, const Identifier*, bool isEval, const JSTextPosition&, const JSTokenLocation&);
 
+    template <class TreeBuilder> ALWAYS_INLINE TreeExpression auditedIfListed(TreeBuilder& context, TreeExpression expression, unsigned start)
+    {
+        if (m_auditSites) [[unlikely]]
+            return context.auditedIfListed(*m_auditSites, expression, start, m_lastTokenLocation.endOffset);
+        return expression;
+    }
+
     enum class FunctionDefinitionType { Expression, Declaration, Method };
     template <class TreeBuilder> NEVER_INLINE bool parseFunctionInfo(TreeBuilder&, FunctionNameRequirements, bool nameIsInContainingScope, ConstructorKind, SuperBinding, unsigned functionStart, ParserFunctionInfo<TreeBuilder>&, FunctionDefinitionType, std::optional<int> functionConstructorParametersEndPosition = std::nullopt);
     
@@ -2127,6 +2134,7 @@ private:
     bool m_seenArgumentsDotLength { false };
     // offset 192; too rarely touched for grouping to pay.
     ParserArena m_parserArena;
+    const AuditSites* m_auditSites;
     CallOrApplyDepthScope* m_callOrApplyDepthScope { nullptr };
     JSParserScriptMode m_scriptMode;
     SuperBinding m_superBinding;

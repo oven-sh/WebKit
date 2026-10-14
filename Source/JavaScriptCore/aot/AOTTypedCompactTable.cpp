@@ -96,7 +96,7 @@ bool CompactTable::canHold(Width width, JSValue value)
 {
     if (width != Width::Narrow || value.isUndefinedOrNull() || value.isBoolean())
         return true;
-    return value.isCell() && MarkedBlockCage::contains(value.asCell()) && !(std::bit_cast<uintptr_t>(value.asCell()) & ((1 << cell32Shift) - 1));
+    return value.isCell() && MarkedBlockCage::contains(value.asCell()) && !(std::bit_cast<uintptr_t>(value.asCell()) & (MarkedBlock::atomSize - 1));
 }
 
 JSString* CompactTable::keyAt(uint32_t entry) const
@@ -333,6 +333,25 @@ CompactTable* CompactTable::copyWithRoom(VM& vm, Width value) const
     return copy;
 }
 
+CompactTable* CompactTable::copy(VM& vm) const
+{
+    RELEASE_ASSERT(isLive());
+    size_t used = allocationSize(m_capacity, keyWidth(), m_valueWidth);
+    size_t size = MarkedSpace::optimalSizeFor(used);
+    CompactTable* copy = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, structure());
+    copy->m_capacity = m_capacity;
+    copy->m_indexBits = m_indexBits;
+    copy->m_keysShift = m_keysShift;
+    copy->m_valueWidth = m_valueWidth;
+    memcpy(copy->at<uint8_t>(offsetOfIndex()), at<uint8_t>(offsetOfIndex()), used - offsetOfIndex());
+    zeroSpan(std::span { copy->at<uint8_t>(used), size - used });
+    WTF::storeStoreFence();
+    copy->m_used = m_used;
+    copy->m_alive = m_alive;
+    vm.writeBarrier(copy);
+    return copy;
+}
+
 void CompactTable::becomeObsolete(VM& vm, State state, JSCell* next)
 {
     RELEASE_ASSERT(isLive() && state > State::Iterated);
@@ -374,7 +393,8 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
         if (state && state->isCounting()) [[unlikely]]
             state->countCompactTable(event, table->size());
         replacement->m_state = table->m_state;
-        table->becomeObsolete(vm, State::Replaced, replacement);
+        if (table->m_state != State::Live)
+            table->becomeObsolete(vm, State::Replaced, replacement);
         owner->m_compactTable.set(vm, owner, replacement);
         table = replacement;
     };
@@ -416,10 +436,91 @@ bool CompactTable::tryAdd(JSGlobalObject* globalObject, JSOrderedHashTable<Trait
     if (!canHold(table->keyWidth(), string)) [[unlikely]]
         return false;
     bool holdsValue = canHold(table->m_valueWidth, value);
+    constexpr uint32_t maxEntriesOfKnownGrowth = 64;
+    static std::atomic<uint32_t> capacitiesAndIndexBitsOfGrownTables[3][maxEntriesOfKnownGrowth / 2];
+    std::atomic<uint32_t>* knownGrowth = nullptr;
+    if (uint32_t count = table->m_used; count == table->m_capacity && holdsValue && count == table->m_alive && count < maxEntriesOfKnownGrowth && table->keyWidth() == Width::Narrow) {
+        Width valueWidth = table->m_valueWidth;
+        knownGrowth = &capacitiesAndIndexBitsOfGrownTables[static_cast<unsigned>(valueWidth) / 4][count / 2];
+        if (uint32_t known = knownGrowth->load(std::memory_order_relaxed)) [[likely]] {
+            uint32_t capacity = known & 0xffffff;
+            unsigned indexBits = known >> 24;
+            size_t keys = offsetOfIndex() + (indexBits ? sizeof(uint16_t) << indexBits : maxCapacityWithTags);
+            size_t size = MarkedSpace::optimalSizeFor(keys + capacity * (static_cast<size_t>(Width::Narrow) + static_cast<size_t>(valueWidth)));
+            CompactTable* larger = new (NotNull, allocateCell<CompactTable>(vm, size)) CompactTable(vm, table->structure());
+            larger->m_capacity = capacity;
+            larger->m_indexBits = indexBits;
+            larger->m_keysShift = indexBits ? indexBits : keysShiftWithTags;
+            larger->m_valueWidth = valueWidth;
+            constexpr size_t maxWordsInLine = 8;
+            auto copyWords = [](uint64_t*& to, const uint64_t* from, size_t words) ALWAYS_INLINE_LAMBDA {
+                if (words > maxWordsInLine) {
+                    memcpy(to, from, words * sizeof(uint64_t));
+                    to += words;
+                    return;
+                }
+                for (size_t i = 0; i < words; ++i) {
+                    *to++ = from[i];
+                    WTF::compilerFence();
+                }
+            };
+            auto fillWords = [](uint64_t*& to, uint64_t word, size_t words) ALWAYS_INLINE_LAMBDA {
+                if (words > maxWordsInLine) {
+                    memset(to, static_cast<int>(word & 0xff), words * sizeof(uint64_t));
+                    to += words;
+                    return;
+                }
+                for (size_t i = 0; i < words; ++i) {
+                    *to++ = word;
+                    WTF::compilerFence();
+                }
+            };
+            unsigned hash = hashOf(string);
+            uint64_t* to = larger->at<uint64_t>(offsetOfIndex());
+            if (indexBits)
+                fillWords(to, std::numeric_limits<uint64_t>::max(), (keys - offsetOfIndex()) / sizeof(uint64_t));
+            else
+                *to++ = *table->template at<uint64_t>(offsetOfIndex()) | static_cast<uint64_t>(shortTagOf(hash)) << (count * 8);
+            uint32_t* keysOfLarger = reinterpret_cast<uint32_t*>(to);
+            copyWords(to, table->template at<uint64_t>(table->offsetOfKeys()), count / 2);
+            fillWords(to, 0, (capacity - count) / 2);
+            size_t wordsOfValues = count * static_cast<size_t>(valueWidth) / sizeof(uint64_t);
+            copyWords(to, table->template at<uint64_t>(table->offsetOfValues()), wordsOfValues);
+            fillWords(to, 0, larger->at<uint64_t>(size) - to);
+            vm.mutatorFence();
+            keysOfLarger[count] = MarkedBlockCage::encode(string);
+            larger->setValue(count, value);
+            if (indexBits) {
+                uint32_t mask = (1u << indexBits) - 1;
+                uint16_t* slots = larger->at<uint16_t>(offsetOfIndex());
+                for (uint32_t entry = 0; entry <= count; ++entry) {
+                    unsigned hashOfEntry = entry == count ? hash : uncheckedDowncast<JSString>(MarkedBlockCage::decode(keysOfLarger[entry]))->tryGetValueImpl()->existingHash();
+                    uint32_t i = hashOfEntry & mask;
+                    while (slots[i] != freeShortSlot)
+                        i = (i + 1) & mask;
+                    slots[i] = shortTagOf(hashOfEntry) << entryBitsOfShortSlot | entry;
+                }
+            }
+            WTF::storeStoreFence();
+            larger->m_used = count + 1;
+            larger->m_alive = count + 1;
+            vm.writeBarrier(larger);
+            if (Options::validateAOTTypedFacts()) [[unlikely]] {
+                CompactTable* byTheOldWay = table->copyWithRoom(vm, valueWidth);
+                RELEASE_ASSERT(byTheOldWay);
+                byTheOldWay->append(vm, string, hash, value);
+                RELEASE_ASSERT(!memcmp(byTheOldWay->at<uint8_t>(sizeof(JSCell)), larger->at<uint8_t>(sizeof(JSCell)), size - sizeof(JSCell)));
+            }
+            replaceBy(larger, "grown"_s);
+            return true;
+        }
+    }
     if (table->m_used == table->m_capacity || !holdsValue) {
         CompactTable* larger = table->copyWithRoom(vm, holdsValue ? table->m_valueWidth : Width::Wide);
         if (!larger)
             return false;
+        if (knownGrowth && larger->m_capacity <= maxCapacityWithShortSlots)
+            knownGrowth->store(larger->m_capacity | static_cast<uint32_t>(larger->m_indexBits) << 24, std::memory_order_relaxed);
         replaceBy(larger, holdsValue ? "grown"_s : "widened"_s);
     }
     table->append(vm, string, hashOf(string), value);
@@ -957,6 +1058,38 @@ bool CollectionIteration::tryAppendTo(JSGlobalObject* globalObject, JSArray* tar
 }
 
 template<typename Visitor>
+ALWAYS_INLINE void CompactTable::visitEntries(Visitor& visitor, uint32_t first, uint32_t last) const
+{
+    if (keyWidth() == Width::Narrow && m_valueWidth != Width::Wide) [[likely]] {
+        uintptr_t base = MarkedBlockCage::base();
+        auto decode = [&](uint32_t index) ALWAYS_INLINE_LAMBDA {
+            return std::bit_cast<JSCell*>(base + (static_cast<uintptr_t>(index) << MarkedBlockCage::shift));
+        };
+        const uint32_t* keys = at<uint32_t>(offsetOfKeys());
+        if (m_valueWidth == Width::None) {
+            for (uint32_t entry = first; entry < last; ++entry) {
+                if (uint32_t key = keys[entry])
+                    visitor.appendUnbarriered(decode(key));
+            }
+            return;
+        }
+        const uint32_t* values = at<uint32_t>(offsetOfValues());
+        for (uint32_t entry = first; entry < last; ++entry) {
+            if (uint32_t key = keys[entry])
+                visitor.appendUnbarriered(decode(key));
+            if (uint32_t value = values[entry]; value > undefinedCell32)
+                visitor.appendUnbarriered(decode(value));
+        }
+        return;
+    }
+    for (uint32_t entry = first; entry < last; ++entry) {
+        if (JSString* key = keyAt(entry))
+            visitor.appendUnbarriered(key);
+        visitor.appendUnbarriered(valueAt(entry));
+    }
+}
+
+template<typename Visitor>
 void CompactTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     auto* table = uncheckedDowncast<CompactTable>(cell);
@@ -969,11 +1102,7 @@ void CompactTable::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     uint32_t used = table->m_used;
     WTF::loadLoadFence();
-    for (uint32_t entry = 0; entry < used; ++entry) {
-        if (JSString* key = table->keyAt(entry))
-            visitor.appendUnbarriered(key);
-        visitor.appendUnbarriered(table->valueAt(entry));
-    }
+    table->visitEntries(visitor, 0, used);
 }
 
 DEFINE_VISIT_CHILDREN(CompactTable);

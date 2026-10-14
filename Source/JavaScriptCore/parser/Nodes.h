@@ -190,6 +190,7 @@ namespace JSC {
         virtual bool isPrivateLocation() const { return false; }
         virtual bool isAssignmentLocation() const { return isLocation(); }
         virtual bool isResolveNode() const { return false; }
+        virtual bool isAuditedExpressionNode() const { return false; }
         virtual bool isAssignResolveNode() const { return false; }
         virtual bool isBracketAccessorNode() const { return false; }
         virtual bool isDotAccessorNode() const { return false; }
@@ -1627,6 +1628,23 @@ namespace JSC {
 
         ExpressionNode* m_expr;
         CommaNode* m_next { nullptr };
+    };
+
+    class AuditedExpressionNode final : public ExpressionNode {
+    public:
+        AuditedExpressionNode(ExpressionNode*, uint32_t id, OptionSet<AuditedValueClass> passes, int32_t least, int32_t most);
+
+        ExpressionNode* expr() const { return m_expr; }
+
+    private:
+        RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;
+        bool isAuditedExpressionNode() const final { return true; }
+
+        ExpressionNode* m_expr;
+        uint32_t m_id;
+        OptionSet<AuditedValueClass> m_passes;
+        int32_t m_least;
+        int32_t m_most;
     };
     
     class SourceElements final : public ParserArenaFreeable {

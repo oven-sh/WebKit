@@ -122,7 +122,7 @@ enum class FunctionStructureKind : uint32_t { None, Arrow, StrictFunction, Stric
 static_assert(sizeof(ExecutableRow) == 48);
 
 struct ProgramData {
-    static constexpr uint64_t expectedMagic = 0x3130415441445250ULL;
+    static constexpr uint64_t expectedMagic = 0x3430415441445250ULL;
 
     struct RetainedPositions {
         const Vector<FunctionReportableSites>& sites;
@@ -145,10 +145,14 @@ struct ProgramData {
     std::span<const uint32_t> functionDeclarationSlots(const ProgramModule& module) const { return spanAt<uint32_t>(module.functionDeclarationSlotsOffset, module.numberOfFunctionDeclarationSlots); }
     JS_EXPORT_PRIVATE std::span<const uint32_t> functionDeclarationListEntries(const ProgramModule&) const;
     inline const FunctionInfo* infos() const;
+    const uint32_t* indexAndFlagsOfFunctions() const { return at<uint32_t>(indexAndFlagsOfFunctionsOffset); }
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
+    std::span<const uint8_t> handlersOfTypedFunction(uint32_t functionIndex) const;
+    const uint8_t* positionsOfTypedFunction(uint32_t functionIndex) const;
     const ExecutableRow& executableRow(uint32_t index) const { return at<ExecutableRow>(executableRowsOffset)[index]; }
-    // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code.
-    const uint64_t* closureWords() const { return at<uint64_t>(typedEntriesOffset); }
+    // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code. Only from firstFunctionClosuresGoBy on; ahead of those stand the rows of the first functions of the program, which Stub::CallModuleFunction calls by their number plus rowsLeftOutAheadOfClosures. There is nothing at an index under rowsLeftOutAheadOfClosures.
+    const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - rowsLeftOutAheadOfClosures * sizeof(uint64_t)); }
+    uint64_t closureWordOf(uint32_t function) const { return function >= firstFunctionClosuresGoBy && function - rowsLeftOutAheadOfClosures < numberOfTypedEntries ? closureWords()[function] : 0; }
     JS_EXPORT_PRIVATE const ExecutableRow& executableRowForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE uint32_t executableIndexForFunction(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE LineColumn functionStartPosition(uint32_t functionIndex) const;
@@ -166,6 +170,7 @@ struct ProgramData {
     uint32_t modulesOffset;
     uint32_t numberOfModules;
     uint32_t infosOffset;
+    uint32_t indexAndFlagsOfFunctionsOffset;
     uint32_t numberOfFunctions;
     uint32_t numberOfStates;
     uint32_t functionMetadataTableOffset;
@@ -173,6 +178,8 @@ struct ProgramData {
     uint32_t numberOfExecutables;
     uint32_t typedEntriesOffset;
     uint32_t numberOfTypedEntries;
+    uint32_t firstFunctionClosuresGoBy;
+    uint32_t rowsLeftOutAheadOfClosures;
     uint32_t numberOfIdentifiers;
     uint32_t numberOfConstants;
     uint32_t numberOfUnlinkedFunctions;
@@ -207,12 +214,8 @@ public:
         uint32_t hash = index * constantHashMultiplier;
         return hash ^ hash >> constantHashShift;
     }
-    static constexpr ptrdiff_t offsetOfConstantValues() { return OBJECT_OFFSETOF(VMProgram, m_constantValues); }
-    static constexpr ptrdiff_t offsetOfConstantKeys() { return OBJECT_OFFSETOF(VMProgram, m_constantKeys); }
-    static constexpr ptrdiff_t offsetOfConstantMask() { return OBJECT_OFFSETOF(VMProgram, m_constantMask); }
 
     JS_EXPORT_PRIVATE JSValue constant(uint32_t index);
-    JSValue createTransientConstant(uint32_t index);
     ALWAYS_INLINE UniquedStringImpl* identifier(uint32_t index)
     {
         RELEASE_ASSERT(index < m_data.numberOfIdentifiers);

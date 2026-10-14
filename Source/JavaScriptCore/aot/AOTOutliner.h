@@ -26,6 +26,7 @@ struct OutliningOptions {
     unsigned leastLength { 2 };
     bool mayEndInCall { false };
     bool onlyCounts { false };
+    bool speaks { true };
 
     static const std::optional<OutliningOptions>& asked();
     bool takesWhole(uint8_t regionsOfFunction) const { return takesFunctionsWhole && (regionsOfFunction & region) == region; }

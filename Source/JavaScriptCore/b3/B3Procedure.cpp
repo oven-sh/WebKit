@@ -366,6 +366,13 @@ void Procedure::deleteValue(Value* value)
 
 void Procedure::deleteOrphans()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    size_t numberOfValuesInBlocks = 0;
+    for (BasicBlock* block : *this)
+        numberOfValuesInBlocks += block->size();
+    if (numberOfValuesInBlocks == m_values.numberOfEntries())
+        return;
+#endif
     IndexSet<Value*> valuesInBlocks;
     for (BasicBlock* block : *this)
         valuesInBlocks.addAll(*block);

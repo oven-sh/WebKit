@@ -142,6 +142,7 @@ void generateToAir(Procedure& procedure)
             if (hoists && versionLoops(procedure, headersOfVersionsTestedAtTheTop)) {
                 fixSSA(procedure);
                 eliminateRedundantPhiCycles(procedure);
+                narrowPhisOfExtendedWords(procedure);
                 foldComparisonsWithWhatIsOutOfRange(procedure);
                 eliminateDeadCode(procedure);
                 if (!headersOfVersionsTestedAtTheTop.isEmpty() && rotateLoops(procedure, &headersOfVersionsTestedAtTheTop)) {

@@ -332,6 +332,27 @@ bool OptimizeAssociativeExpressionTrees::run()
 
     m_proc.resetValueOwners();
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasTreeOfThree = false;
+    for (BasicBlock* block : m_proc) {
+        for (Value* value : *block) {
+            switch (value->opcode()) {
+            case Mul:
+            case Add:
+            case BitAnd:
+            case BitOr:
+            case BitXor:
+                hasTreeOfThree |= value->child(0)->opcode() == value->opcode() || value->child(1)->opcode() == value->opcode();
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    if (!hasTreeOfThree)
+        return false;
+#endif
+
     Vector<unsigned> useCounts(FillWith { }, m_proc.values().size(), 0); // Mapping from Value::m_index to use counts.
     UncheckedKeyHashSet<Value*> expressionTreeRoots;
     UncheckedKeyHashSet<BasicBlock*> rootOwners;

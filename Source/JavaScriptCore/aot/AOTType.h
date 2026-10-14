@@ -39,7 +39,6 @@
 namespace JSC { namespace AOT {
 
 using Type = unsigned __int128;
-inline unsigned numberOfBitsIn(Type type) { return std::popcount(static_cast<uint64_t>(type)) + std::popcount(static_cast<uint64_t>(type >> 64)); }
 
 static constexpr Type TNone = 0;
 static constexpr Type TInt32 = Type(1) << 0;
@@ -98,7 +97,6 @@ static constexpr Type TDataView = Type(1) << 35;
 static constexpr Type TStringObject = Type(1) << 36;
 static constexpr Type TObject = TOtherObject | TFinalObject | TMap | TSet | TWeakMap | TWeakSet | TRegExp | TPromise | TDate | TError | TArrayBuffer | TDataView | TStringObject;
 constexpr Type typeForTypedArray(JSType type) { return Type(1) << (firstTypedArrayBit + type - FirstTypedArrayType); }
-constexpr Type objectTypeForKind(JSType);
 
 struct ObjectKind {
     Type type;
@@ -108,14 +106,6 @@ static constexpr ObjectKind objectKinds[] = {
     { TFinalObject, FinalObjectType }, { TMap, JSMapType }, { TSet, JSSetType }, { TWeakMap, JSWeakMapType }, { TWeakSet, JSWeakSetType }, { TRegExp, RegExpObjectType },
     { TPromise, JSPromiseType }, { TDate, JSDateType }, { TError, ErrorInstanceType }, { TArrayBuffer, ArrayBufferType }, { TDataView, DataViewType }, { TStringObject, StringObjectType },
 };
-constexpr Type objectTypeForKind(JSType jsType)
-{
-    for (auto& kind : objectKinds) {
-        if (kind.jsType == jsType)
-            return kind.type;
-    }
-    return typeForTypedArray(jsType);
-}
 
 static constexpr Type TNumber = TInt32 | TDouble;
 static constexpr Type TOther = TUndefined | TNull;
@@ -160,18 +150,6 @@ inline uint32_t maxFunctionNumberInTypes()
     return forTesting ? std::min(forTesting, largestFunctionNumberInTypes) : largestFunctionNumberInTypes;
 }
 inline Type functionType(uint32_t number) { return number <= maxFunctionNumberInTypes() ? TFunctionTag | dualRailEncode(number, firstFunctionNumberBit, functionNumberBits) : TFunction; }
-constexpr Type intrinsicFunctionType(uint32_t intrinsic) { return intrinsic && intrinsic <= maxIntrinsicNumberInTypes ? TFunctionTag | dualRailEncode(largestFunctionNumberInTypes + intrinsic, firstFunctionNumberBit, functionNumberBits) : TFunction; }
-constexpr Type objectTypeForLayout(uint32_t layout) { return TFinalObjectTag | dualRailEncode(layout, firstLayoutNumberBit, layoutNumberBits); }
-constexpr Type objectTypeForLayoutRange(uint32_t first, uint32_t last)
-{
-    Type result = TFinalObjectTag;
-    bool differ = false;
-    for (unsigned i = layoutNumberBits; i--;) {
-        differ |= (first >> i & 1) != (last >> i & 1);
-        result |= Type(differ ? 3 : first >> i & 1 ? 2 : 1) << (firstLayoutNumberBit + 2 * i);
-    }
-    return result;
-}
 constexpr uint32_t functionNumberOf(Type type)
 {
     auto numbers = dualRailDecode(type, firstFunctionNumberBit, functionNumberBits);
@@ -185,15 +163,6 @@ constexpr uint32_t intrinsicFunctionOf(Type type)
     return numbers.isOne() && numbers.lowest > largestFunctionNumberInTypes ? numbers.lowest - largestFunctionNumberInTypes : 0;
 }
 constexpr DualRailNumbers layoutRangeOf(Type type) { return dualRailDecode(type, firstLayoutNumberBit, layoutNumberBits); }
-
-constexpr Type withoutShapes(Type type)
-{
-    if (type & TFinalObjectTag)
-        type |= TAnyShape;
-    if (type & TArrayTag)
-        type |= TAnyArrayShape;
-    return type;
-}
 
 inline bool isSubtype(Type type, Type of) { return !(type & ~of); }
 inline bool mayBe(Type type, Type what) { return type & what; }
@@ -212,91 +181,20 @@ struct IntegerRange {
     static constexpr IntegerRange none() { return { 1, 0 }; }
     static constexpr IntegerRange unknown() { return { INT64_MIN, INT64_MAX }; }
     static constexpr IntegerRange of(int64_t min, int64_t max) { return { min, max }; }
-    static IntegerRange forNumber(JSValue value)
-    {
-        if (value.isInt32())
-            return of(value.asInt32(), value.asInt32());
-        if (!value.isDouble())
-            return none();
-        double number = value.asDouble();
-        if (!(number >= -static_cast<double>(limit) && number <= static_cast<double>(limit)))
-            return unknown();
-        int64_t integer = static_cast<int64_t>(number);
-        if (static_cast<double>(integer) != number || (!integer && std::signbit(number)))
-            return unknown();
-        return of(integer, integer);
-    }
 
     bool isNone() const { return min > max; }
     bool isKnown() const { return min <= max && min != INT64_MIN; }
     bool contains(int64_t value) const { return min <= value && value <= max; }
-    bool fitsInt32() const { return isKnown() && min >= INT32_MIN && max <= INT32_MAX; }
-    IntegerRange unionWith(IntegerRange other) const
-    {
-        if (isNone())
-            return other;
-        if (other.isNone())
-            return *this;
-        if (!isKnown() || !other.isKnown())
-            return unknown();
-        return { std::min(min, other.min), std::max(max, other.max) };
-    }
     friend bool operator==(const IntegerRange&, const IntegerRange&) = default;
 
     int64_t min { 1 };
     int64_t max { 0 };
 };
 
-inline Rep repForType(Type type)
-{
-    if (!type)
-        return Rep::JSValue;
-    if (isSubtype(type, TInt32))
-        return Rep::Int32;
-    if (isSubtype(type, TNumber))
-        return Rep::Double;
-    if (isSubtype(type, TBoolean))
-        return Rep::Boolean;
-    return Rep::JSValue;
-}
-
 enum SoundTypeMaskBits : unsigned {
     MaskUndefined = 1, MaskNull = 2, MaskBoolean = 4, MaskNumber = 8, MaskString = 16, MaskSymbol = 32, MaskBigInt = 64,
     MaskFunction = 128, MaskArray = 256, MaskOtherObject = 512,
 };
-
-inline Type typeAcceptedByMask(unsigned mask)
-{
-    Type result = TNone;
-    if (mask & MaskUndefined)
-        result |= TUndefined;
-    if (mask & MaskNull)
-        result |= TNull;
-    if (mask & MaskBoolean)
-        result |= TBoolean;
-    if (mask & MaskNumber)
-        result |= TNumber;
-    if (mask & MaskString)
-        result |= TString;
-    if (mask & MaskSymbol)
-        result |= TSymbol;
-    if (mask & MaskBigInt)
-        result |= TBigInt;
-    if (mask & MaskFunction)
-        result |= TFunction | TOtherObject;
-    if (mask & MaskArray)
-        result |= TArray;
-    if (mask & MaskOtherObject)
-        result |= soundTypeMaskNamesTypedArray(mask) ? objectTypeForKind(typedArrayTypeForSoundTypeMask(mask)) : TObject | TTypedArray;
-    return result;
-}
-
-inline std::optional<JSType> typedArrayTypeOf(Type type)
-{
-    if (!type || !isSubtype(type, TTypedArray) || !hasOneBitSet(static_cast<uint64_t>(type)))
-        return std::nullopt;
-    return static_cast<JSType>(FirstTypedArrayType + WTF::ctz(static_cast<uint64_t>(type)) - firstTypedArrayBit);
-}
 
 class AtomicType {
 public:

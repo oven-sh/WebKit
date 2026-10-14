@@ -33,8 +33,13 @@
 
 namespace JSC {
 
+class DeletePropertySlot;
+class JSFunction;
 class JSGlobalObject;
 class JSObject;
+class PropertyDescriptor;
+class PropertyName;
+class PutPropertySlot;
 class VM;
 
 class ImmutableIntrinsics {
@@ -76,6 +81,18 @@ private:
     Vector<Entry> m_entries;
     UncheckedKeyHashMap<uint64_t, uint16_t> m_numbers;
     uint32_t m_hash { 0 };
+};
+
+class ImmutableIntrinsicsAudit {
+public:
+    static void willPut(JSGlobalObject*, JSObject* receiver, PropertyName, PutPropertySlot&);
+    static void willPutByIndex(JSGlobalObject*, JSObject* receiver, unsigned index, bool shouldThrow);
+    static void willDefineOwnProperty(JSGlobalObject*, JSObject*, PropertyName, const PropertyDescriptor&, bool isCurrentDefined, const PropertyDescriptor& current, bool shouldThrow);
+    static void willDefineOwnIndexedProperty(JSGlobalObject*, JSObject*, unsigned index, const PropertyDescriptor&, bool shouldThrow);
+    static void willDeleteProperty(JSGlobalObject*, JSObject*, PropertyName, DeletePropertySlot&);
+    static void willSetPrototype(JSGlobalObject*, JSObject*, JSValue prototype, bool shouldThrow);
+    static void willReplacePrototypeProperty(JSGlobalObject*, JSFunction*, JSValue, bool shouldThrow);
+    static void didAccessCallerOrArguments(JSGlobalObject*, JSFunction*, PropertyName);
 };
 
 } // namespace JSC

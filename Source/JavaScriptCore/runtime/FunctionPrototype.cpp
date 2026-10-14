@@ -26,6 +26,7 @@
 #include "ClonedArguments.h"
 #include "ExecutableBaseInlines.h"
 #include "FunctionExecutable.h"
+#include "ImmutableIntrinsics.h"
 #include "IntegrityInlines.h"
 #include "JSBoundFunction.h"
 #include "JSCInlines.h"
@@ -222,6 +223,16 @@ static ALWAYS_INLINE bool NODELETE isAllowedReceiverFunctionForCallerAndArgument
     return !executable->isInStrictContext() && executable->parseMode() == SourceParseMode::NormalFunctionMode && !executable->isClassConstructorFunction();
 }
 
+#if ENABLE(AOT)
+static bool wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(JSFunction* function)
+{
+    if (function->isHostOrBuiltinFunction() || !AOT::hasCompiledCode(function->vm(), function))
+        return false;
+    FunctionExecutable* executable = function->jsExecutable();
+    return executable->implementationVisibility() == ImplementationVisibility::Public && !executable->isInStrictContext() && executable->parseMode() == SourceParseMode::NormalFunctionMode && !executable->isClassConstructorFunction();
+}
+#endif
+
 class RetrieveArgumentsFunctor {
 public:
     RetrieveArgumentsFunctor(VM& vm, JSFunction* functionObj)
@@ -267,8 +278,16 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+#if ENABLE(AOT)
+        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj))
+            thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
+#endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
+
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
 
     JSValue result = retrieveArguments(vm, vm.topCallFrame, thisObj);
     EXCEPTION_ASSERT(scope.exception() || result);
@@ -338,8 +357,16 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
+#if ENABLE(AOT)
+        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj))
+            thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
+#endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    }
+
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
 
     JSValue caller = retrieveCallerFunction(vm, vm.topCallFrame, thisObj);
     if (caller.isNull())
@@ -364,7 +391,7 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     return JSValue::encode(caller);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue, PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue, PropertyName propertyName))
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -372,6 +399,8 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
         throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
+    else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, propertyName);
 
     return true;
 }

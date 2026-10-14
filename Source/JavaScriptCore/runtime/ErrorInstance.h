@@ -51,6 +51,7 @@ public:
     typedef String (*SourceAppender) (const String& originalMessage, StringView sourceText, RuntimeType, SourceTextWhereErrorOccurred);
 
     DECLARE_EXPORT_INFO;
+    DECLARE_VISIT_CHILDREN;
 
     static size_t estimatedSize(JSCell*, VM&);
 
@@ -171,7 +172,7 @@ protected:
     SourceAppender m_sourceAppender { nullptr };
     // Frames captured by the constructor
     std::unique_ptr<Vector<StackFrame>> m_stackTrace;
-    std::unique_ptr<AOT::ReturnAddressTrace> m_returnAddresses;
+    AOT::ReturnAddressTrace* m_returnAddresses { nullptr };
     // Frames captured by Error.captureStackTrace()
     std::unique_ptr<Vector<StackFrame>> m_capturedStackTrace;
 

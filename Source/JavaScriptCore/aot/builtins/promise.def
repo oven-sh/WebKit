@@ -7,6 +7,7 @@ inline AwaitedValue
 inline SuspendAsyncFunction
 inline PromiseResolve
 inline PromiseThen
+inline PromiseCatch
 inline IsAsyncIteratorDriven
 inline GetAsyncIteratorNext
 inline AsyncIteratorNext
@@ -17,6 +18,7 @@ inline AsyncGeneratorYield
 
 runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
 runtime PromiseThen : RuntimeState void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived)
+runtime PromiseCatch : RuntimeState JSCell* (JSCell* promise, EncodedJSValue onRejected)
 runtime GetAsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
 runtime AsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator, EncodedJSValue sent)
 runtime GetIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
@@ -50,7 +52,7 @@ static Promise.try (any/C?, any/A...) -> new Promise/N ; CallsUserCode ; Call
 static Promise.withResolvers () -> new Object ; Allocates ; HostCall
 
 method Promise.prototype.then this/wGP (any/KC?, any/KC?, any/-...) -> anything ; CallsUserCode ; Inline(PromiseThen)
-method Promise.prototype.catch this/wGP (any/KC?, any/-...) -> anything ; CallsUserCode ; HostCall
+method Promise.prototype.catch this/wGP (any/KC?, any/-...) -> anything ; CallsUserCode ; Inline(PromiseCatch)
 method Promise.prototype.finally this/wGP (any/KC?, any/-...) -> anything ; CallsUserCode ; HostCall
 
 construct AsyncDisposableStack () -> new Object ; Allocates ; HostCall

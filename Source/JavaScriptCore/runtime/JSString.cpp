@@ -89,8 +89,156 @@ void JSString::dumpToStream(const JSCell* cell, PrintStream& out)
 
 bool JSString::equalSlowCase(JSGlobalObject* globalObject, JSString* other) const
 {
+#if USE(BUN_JSC_ADDITIONS)
+    UNUSED_PARAM(globalObject);
+    return equalMakingRopesFlat(other);
+#else
     return equalInline(globalObject, other);
+#endif
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+bool JSString::equalMakingRopesFlat(JSString* other) const
+{
+    if (length() != other->length())
+        return false;
+    const JSString* operands[2] { this, other };
+    if (isNonSubstringRope() && other->isNonSubstringRope())
+        static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
+    if (!equalWithoutResolvingRopes(other)) {
+        for (auto* operand : operands) {
+            if (operand->isNonSubstringRope())
+                static_cast<const JSRopeString*>(operand)->resolveRope(nullptr);
+        }
+        return false;
+    }
+    if (isNonSubstringRope() && other->isRope())
+        static_cast<const JSRopeString*>(this)->resolveRope(nullptr);
+    else if (isRope() && other->isNonSubstringRope())
+        static_cast<const JSRopeString*>(other)->resolveRope(nullptr);
+    for (unsigned i = 0; i < 2; ++i) {
+        const JSString* flat = operands[1 - i];
+        if (!operands[i]->isNonSubstringRope() || flat->isRope())
+            continue;
+        StringImpl* impl = flat->valueInternal().impl();
+        if (impl && (impl->is8Bit() || !operands[i]->is8Bit()))
+            static_cast<const JSRopeString*>(operands[i])->convertToNonRope(String { *impl });
+    }
+    return true;
+}
+
+bool JSString::equalWithoutResolvingRopes(JSString* other) const
+{
+    auto runOf = [](const JSString* string) -> StringView {
+        if (!string->isRope())
+            return StringView { string->valueInternal().impl() };
+        auto* part = static_cast<const JSRopeString*>(string);
+        return StringView { part->substringBase()->valueInternal().impl() }.substring(part->substringOffset(), part->length());
+    };
+    if (!isNonSubstringRope() && !other->isNonSubstringRope())
+        return runOf(this) == runOf(other);
+
+    auto charactersOf = [](const JSString* string) -> std::optional<std::span<const Latin1Character>> {
+        if (!string->isRope()) {
+            auto& flat = string->valueInternal();
+            if (!flat.is8Bit())
+                return std::nullopt;
+            return flat.span8();
+        }
+        auto* part = static_cast<const JSRopeString*>(string);
+        auto& base = part->substringBase()->valueInternal();
+        if (!base.is8Bit())
+            return std::nullopt;
+        return base.span8().subspan(part->substringOffset(), part->length());
+    };
+    const JSString* operands[2] { this, other };
+    for (unsigned i = 0; i < 2; ++i) {
+        if (!operands[i]->isNonSubstringRope() || operands[1 - i]->isNonSubstringRope())
+            continue;
+        auto whole = charactersOf(operands[1 - i]);
+        if (!whole)
+            break;
+        const Latin1Character* end = whole->data() + whole->size();
+        constexpr unsigned capacity = 24;
+        const JSString* pending[capacity];
+        unsigned count = 0;
+        pending[count++] = operands[i];
+        bool isSettled = true;
+        while (count) {
+            const JSString* string = pending[--count];
+            if (string->isNonSubstringRope()) {
+                if (count + JSRopeString::s_maxInternalRopeLength > capacity) {
+                    isSettled = false;
+                    break;
+                }
+                auto* rope = static_cast<const JSRopeString*>(string);
+                for (unsigned j = 0; j < JSRopeString::s_maxInternalRopeLength; ++j) {
+                    if (const JSString* fiber = rope->fiber(j))
+                        pending[count++] = fiber;
+                }
+                continue;
+            }
+            auto piece = charactersOf(string);
+            if (!piece) {
+                isSettled = false;
+                break;
+            }
+            end -= piece->size();
+            if (!WTF::equal(end, *piece))
+                return false;
+        }
+        if (isSettled)
+            return true;
+        break;
+    }
+
+    struct Pieces {
+        explicit Pieces(const JSString* string)
+        {
+            pending.append(string);
+        }
+
+        StringView next()
+        {
+            while (true) {
+                const JSString* string = pending.takeLast();
+                if (!string->isRope())
+                    return StringView { string->valueInternal().impl() };
+                auto* rope = static_cast<const JSRopeString*>(string);
+                if (rope->isSubstring())
+                    return StringView { rope->substringBase()->valueInternal().impl() }.substring(rope->substringOffset(), rope->length());
+                for (unsigned i = JSRopeString::s_maxInternalRopeLength; i--;) {
+                    if (const JSString* fiber = rope->fiber(i))
+                        pending.append(fiber);
+                }
+            }
+        }
+
+        Vector<const JSString*, 16> pending;
+    };
+
+    unsigned remaining = length();
+    ASSERT(remaining == other->length());
+    Pieces left { this };
+    Pieces right { other };
+    StringView a;
+    StringView b;
+    while (remaining) {
+        while (a.isEmpty())
+            a = left.next();
+        while (b.isEmpty())
+            b = right.next();
+        unsigned common = std::min(a.length(), b.length());
+        bool isSameMemory = a.rawCharacters() == b.rawCharacters() && a.is8Bit() == b.is8Bit();
+        if (!isSameMemory && a.left(common) != b.left(common))
+            return false;
+        a = a.substring(common);
+        b = b.substring(common);
+        remaining -= common;
+    }
+    return true;
+}
+#endif
 
 size_t JSString::estimatedSize(JSCell* cell, VM& vm)
 {
@@ -138,7 +286,7 @@ void JSString::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     }
     if (StringImpl* impl = std::bit_cast<StringImpl*>(pointer)) {
 #if ENABLE(AOT)
-        if (Options::excludeAOTImageTextFromExtraMemory() && AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
+        if (AOT::Image::isBackedByStaticData(*impl)) [[unlikely]]
             return;
 #endif
         visitor.reportExtraMemoryVisited(impl->costDuringGC());

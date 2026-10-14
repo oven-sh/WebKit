@@ -373,6 +373,20 @@ private:
 
 ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
 {
+    // Funny story: it's possible for the object to be black already, if we barrier the object at
+    // about the same time that it's marked. That's fine. It's a gnarly and super-rare race. It's
+    // not clear to me that it would be correct or profitable to bail here if the object is already
+    // black.
+
+    cell->setCellState(CellState::PossiblyBlack);
+
+    WTF::storeLoadFence();
+
+    visitChildrenOfBlackCell(cell);
+}
+
+ALWAYS_INLINE void SlotVisitor::visitChildrenOfBlackCell(const JSCell* cell)
+{
     ASSERT(isMarked(cell));
     
     SetCurrentCellScope currentCellScope(*this, cell);
@@ -383,15 +397,6 @@ ALWAYS_INLINE void SlotVisitor::visitChildren(const JSCell* cell)
             dataLog(" (subsequent)");
         dataLog("\n");
     }
-    
-    // Funny story: it's possible for the object to be black already, if we barrier the object at
-    // about the same time that it's marked. That's fine. It's a gnarly and super-rare race. It's
-    // not clear to me that it would be correct or profitable to bail here if the object is already
-    // black.
-    
-    cell->setCellState(CellState::PossiblyBlack);
-    
-    WTF::storeLoadFence();
     
     switch (cell->type()) {
     case StringType:
@@ -456,13 +461,9 @@ public:
             return false;
         if (cell->type() == ArrayType)
             return tryVisitArray(cell);
-        if (!structureOf(cell)->isOfCompiledCells())
-            return false;
-
-        cell->setCellState(CellState::PossiblyBlack);
-        WTF::storeLoadFence();
-
         Structure* structure = structureOf(cell);
+        if (!structure->isOfCompiledCells())
+            return false;
         const LayoutData* layout = structure->compiledLayout();
         if (!layout)
             layout = &layoutOfEnvironment(*structure->dataOfCompiledEnvironments(), structure->firstShapeOfCompiledEnvironments(), cell);
@@ -480,7 +481,7 @@ public:
         const uint32_t* references = reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(layout) + layout->referencesOffset);
         const uint32_t* offset = references + 3;
         for (const uint32_t* end = offset + references[0] + references[1]; offset != end; ++offset)
-            m_visitor.appendUnbarriered(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(fields + *offset)));
+            append(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(fields + *offset)));
         for (const uint32_t* end = offset + references[2]; offset != end; ++offset) {
             if (uint32_t word = *reinterpret_cast<const uint32_t*>(fields + *offset); word > undefinedCell32)
                 append(std::bit_cast<JSCell*>(m_cageBase + (static_cast<uintptr_t>(word) << MarkedBlockCage::shift)));
@@ -504,7 +505,7 @@ private:
         offset += 2;
         const uint32_t* endOfBoxed = offset + numberOfBoxed;
         for (; offset != endOfBoxed && *offset + sizeof(EncodedJSValue) <= size; ++offset)
-            m_visitor.appendUnbarriered(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(extension + *offset)));
+            append(JSValue::decode(*reinterpret_cast<const EncodedJSValue*>(extension + *offset)));
         offset = endOfBoxed;
         for (const uint32_t* end = offset + numberOfNarrow; offset != end && *offset + sizeof(uint32_t) <= size; ++offset) {
             if (uint32_t word = *reinterpret_cast<const uint32_t*>(extension + *offset); word > undefinedCell32)
@@ -515,9 +516,6 @@ private:
     // As JSObjectWithButterfly::visitChildrenImpl(), for an array without properties, array storage or a butterfly it shares.
     ALWAYS_INLINE bool tryVisitArray(const JSCell* cell)
     {
-        cell->setCellState(CellState::PossiblyBlack);
-        WTF::storeLoadFence();
-
         auto* array = static_cast<JSObjectWithButterfly*>(const_cast<JSCell*>(cell));
         StructureID structureID = cell->structureID();
         if (structureID.isNuked())
@@ -545,16 +543,8 @@ private:
         if (indexingMode != ArrayWithContiguous)
             return true;
         const WriteBarrier<Unknown>* elements = butterfly->contiguous().data();
-        for (unsigned i = 0, length = butterfly->publicLength(); i < length; ++i) {
-            JSValue value = elements[i].get();
-            // A hole reads as no cell at all.
-            if (!value || !value.isCell())
-                continue;
-            if (value.asCell()->isPreciseAllocation()) [[unlikely]]
-                m_visitor.appendHiddenUnbarriered(value.asCell());
-            else
-                append(value.asCell());
-        }
+        for (unsigned i = 0, length = butterfly->publicLength(); i < length; ++i)
+            append(elements[i].get());
         return true;
     }
 
@@ -578,6 +568,17 @@ private:
     ALWAYS_INLINE Structure* structureOf(const JSCell* cell) const
     {
         return std::bit_cast<Structure*>(m_structureIDBase + cell->structureID().decontaminate().bits());
+    }
+
+    // A hole reads as no cell at all.
+    ALWAYS_INLINE void append(JSValue value)
+    {
+        if (!value || !value.isCell())
+            return;
+        if (value.asCell()->isPreciseAllocation()) [[unlikely]]
+            m_visitor.appendHiddenUnbarriered(value.asCell());
+        else
+            append(value.asCell());
     }
 
     // The cell is in a MarkedBlock.
@@ -745,11 +746,13 @@ NEVER_INLINE void SlotVisitor::drain(MonotonicTime timeout)
                 for (const JSCell* next = popAndPrefetch(); next;) {
                     const JSCell* cell = next;
                     next = popAndPrefetch();
+                    cell->setCellState(CellState::PossiblyBlack);
+                    WTF::storeLoadFence();
 #if ENABLE(AOT)
                     if (compiledLayoutVisitor.tryVisit(cell))
                         continue;
 #endif
-                    visitChildren(cell);
+                    visitChildrenOfBlackCell(cell);
                 }
                 return IterationStatus::Done;
             });

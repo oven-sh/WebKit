@@ -55,12 +55,20 @@ public:
 
     void run()
     {
-        hoistConstants(
-            [&] (const Value* value) -> bool {
-                return value->opcode() == ConstDouble || value->opcode() == Const128;
-            });
+        bool mayHaveWideConstants = !m_proc.positionIndependent();
+        for (Value* value : m_proc.values()) {
+            if (mayHaveWideConstants)
+                break;
+            mayHaveWideConstants = value->opcode() == ConstDouble || value->opcode() == Const128;
+        }
+        if (mayHaveWideConstants) {
+            hoistConstants(
+                [&] (const Value* value) -> bool {
+                    return value->opcode() == ConstDouble || value->opcode() == Const128;
+                });
 
-        lowerMaterializationCostHeavyConstants();
+            lowerMaterializationCostHeavyConstants();
+        }
 
         hoistConstants(
             [&] (const Value* value) -> bool {

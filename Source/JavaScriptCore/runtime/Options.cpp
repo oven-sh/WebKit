@@ -822,6 +822,8 @@ void Options::notifyOptionsChanged()
         Options::useMiniVMModeWithoutJIT() = false;
         if (!OptionsHelper::wasOverridden(heapGrowthMaxIncreaseID))
             Options::heapGrowthMaxIncrease() = 1;
+        if (!OptionsHelper::wasOverridden(jitMemoryReservationSizeID))
+            Options::jitMemoryReservationSize() = 64 * MB;
         Options::sizeClassProgression() = sizeClassProgressionWithAOT();
     }
 

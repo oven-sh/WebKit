@@ -389,16 +389,8 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsi
             uint8_t sib = bytes[placeOfModRM + 1];
             if (!(!mode && (sib & 7) == 5))
                 namesStackPointer |= ((sib & 7) | b << 3) == stackPointer;
-        } else if (!mode && (modRM & 7) == 5) {
-            if (map != 1 || hasVex || opcode != 0x8d || placeOfModRM + 5 != length)
-                return Cause::PCRelativeOperand;
-            int64_t target = static_cast<int64_t>(instruction.offset) + length + readInt32(bytes + length - 4);
-            if (target < 0 || target > std::numeric_limits<uint32_t>::max())
-                return Cause::TargetOutOfTheFunction;
-            instruction.kind = Kind::AddressOfTable;
-            instruction.target = static_cast<uint32_t>(target);
-            return Cause::None;
-        }
+        } else if (!mode && (modRM & 7) == 5)
+            return Cause::PCRelativeOperand;
     }
     instruction.kind = namesStackPointer ? Kind::Pinned : Kind::Plain;
     return Cause::None;
@@ -639,8 +631,6 @@ inline void setTarget(std::span<uint8_t> newBytes, const InstructionInCode& inst
             at[1] = static_cast<uint8_t>(static_cast<int8_t>(distance));
             return;
         }
-        [[fallthrough]];
-    case Kind::AddressOfTable:
         writeInt32(at + instruction.length - sizeof(int32_t), distance);
         return;
     default:

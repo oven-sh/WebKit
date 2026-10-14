@@ -191,6 +191,15 @@ void PropertyTable::fix()
     });
 }
 
+void PropertyTable::noteFixed()
+{
+    forEachPropertyMutable([&](auto& entry) {
+        if (!PropertyName(entry.key()).isPrivateName())
+            entry.setAttributes(entry.attributes() | static_cast<unsigned>(PropertyAttribute::WouldBeFixed));
+        return IterationStatus::Continue;
+    });
+}
+
 bool PropertyTable::isSealed() const
 {
     bool result = true;

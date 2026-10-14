@@ -314,7 +314,7 @@ private:
         result.name = m_function.name;
         result.module = m_function.module;
         result.position = m_function.position;
-        result.flags = m_function.flags & (Format::FunctionIsTyped | Format::FunctionIsBuiltin | Format::FunctionIsOfBuiltinModule);
+        result.flags = m_function.flags & (Format::FunctionIsTyped | Format::FunctionIsBuiltin | Format::FunctionIsOfBuiltinModule | Format::FunctionIsSloppy);
         result.resultType = m_function.resultType;
         result.resultTypes = m_function.resultTypes;
         result.writes = m_function.writes;
@@ -323,6 +323,8 @@ private:
         result.writesShapeWordsIfItReturns = m_function.writesShapeWordsIfItReturns;
         result.inlineFrames = m_function.inlineFrames;
         result.values = m_function.values;
+        result.environmentsInFrame = m_function.environmentsInFrame;
+        result.mayPointIntoFrame = m_function.mayPointIntoFrame;
         result.blocks.grow(m_numberOfBlocks);
 
         BitVector blocks = reachableFrom(cut, { });

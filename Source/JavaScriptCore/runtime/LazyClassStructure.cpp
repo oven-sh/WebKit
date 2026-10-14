@@ -75,7 +75,7 @@ void LazyClassStructure::Initializer::setConstructor(JSObject* constructor)
 void LazyClassStructure::Initializer::didInitialize()
 {
     // The classes of the engine are members of JSGlobalObject itself. Those of an embedder come after it.
-    if (!vm.useImmutableIntrinsics || std::bit_cast<uintptr_t>(&classStructure) - std::bit_cast<uintptr_t>(global) >= sizeof(JSGlobalObject)) [[likely]]
+    if (!vm.fixesOrNotesIntrinsics() || std::bit_cast<uintptr_t>(&classStructure) - std::bit_cast<uintptr_t>(global) >= sizeof(JSGlobalObject)) [[likely]]
         return;
     if (constructor)
         global->makeIntrinsicImmutable(constructor, JSGlobalObject::IntrinsicKind::Other);

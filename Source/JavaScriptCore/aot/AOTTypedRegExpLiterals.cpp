@@ -1082,7 +1082,7 @@ private:
         }
         if (is("CopyDataProperties"_s))
             return call(m_objectAssign, jsUndefined(), std::array { argument(0), argument(1) });
-        if (is("CloneObject"_s))
+        if (is("CloneObject"_s) || is("CloneObjectWith"_s))
             return call(m_objectAssign, jsUndefined(), std::array { JSValue(constructEmptyObject(m_globalObject)), argument(0) });
         if (is("CopyDataPropertiesExcluding"_s)) {
             JSValue copy = call(m_objectAssign, jsUndefined(), std::array { JSValue(constructEmptyObject(m_globalObject)), argument(0) });

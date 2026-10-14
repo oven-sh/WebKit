@@ -244,6 +244,9 @@ public:
 
     ALWAYS_INLINE bool equalInline(JSGlobalObject*, JSString* other) const;
     inline bool equal(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE bool equalMakingRopesFlat(JSString* other) const;
+#endif
     GCOwnedDataScope<const String&> value(JSGlobalObject*) const;
     inline GCOwnedDataScope<const String&> tryGetValue(bool allocationAllowed = true) const;
     GCOwnedDataScope<const String&> tryGetValueWithoutGC() const;
@@ -329,6 +332,9 @@ protected:
     friend class JSCell;
 
     JS_EXPORT_PRIVATE bool equalSlowCase(JSGlobalObject*, JSString* other) const;
+#if USE(BUN_JSC_ADDITIONS)
+    bool equalWithoutResolvingRopes(JSString* other) const;
+#endif
 
     inline JSString* tryReplaceOneCharImpl(JSGlobalObject*, char16_t search, JSString* replacement, uint8_t* stackLimit, bool& found);
 

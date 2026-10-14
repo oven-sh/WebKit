@@ -88,8 +88,14 @@ public:
         : m_proc(proc)
         , m_blockInsertionSet(proc)
         , m_insertionSet(proc)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_useCounts(proc)
+#endif
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!proc.positionIndependent())
+            m_useCounts.emplace(proc);
+#endif
     }
 
     bool run()
@@ -446,7 +452,13 @@ private:
                 // things.
                 
                 if (isX86()) {
+#if USE(BUN_JSC_ADDITIONS)
+                    if (m_value->opcode() == AtomicXchgSub && !m_useCounts)
+                        m_useCounts.emplace(m_proc);
+                    if (m_value->opcode() == AtomicXchgSub && m_useCounts->numUses(m_value)) {
+#else
                     if (m_value->opcode() == AtomicXchgSub && m_useCounts.numUses(m_value)) {
+#endif
                         // On x86, xchgadd is better than xchgsub if it has any users.
                         m_value->setOpcodeUnsafely(AtomicXchgAdd);
                         m_value->child(0) = m_insertionSet.insert<Value>(
@@ -1173,12 +1185,6 @@ private:
                 GPRReg result = params[0].gpr();
 #if CPU(ARM64)
                 jit.m_assembler.adr(result, 0);
-#elif CPU(X86_64)
-                auto& buffer = jit.m_assembler.buffer();
-                buffer.putByte(static_cast<int8_t>(0x48 | (static_cast<unsigned>(result) >> 3) << 2));
-                buffer.putByte(static_cast<int8_t>(0x8d));
-                buffer.putByte(static_cast<int8_t>((static_cast<unsigned>(result) & 7) << 3 | 5));
-                buffer.putInt(0);
 #else
                 UNUSED_PARAM(result);
                 RELEASE_ASSERT_NOT_REACHED();
@@ -1237,10 +1243,6 @@ private:
                         memcpy(&adr, instruction, sizeof(adr));
                         adr |= (distance & 3) << 29 | (distance >> 2) << 5;
                         memcpy(instruction, &adr, sizeof(adr));
-#elif CPU(X86_64)
-                        constexpr ptrdiff_t instructionSize = 7;
-                        int32_t displacement = safeCast<int32_t>(table - instruction - instructionSize);
-                        memcpy(instruction + instructionSize - sizeof(displacement), &displacement, sizeof(displacement));
 #else
                         UNUSED_PARAM(instruction);
 #endif
@@ -1261,9 +1263,13 @@ private:
         // shift off the uninteresting bits. On the other hand, it's not clear that this would
         // actually be any better than what we have done here and it's not clear that it would be
         // better than a binary switch.
+#if USE(BUN_JSC_ADDITIONS)
+        const unsigned minCasesForTable = m_proc.positionIndependent() ? 128 : 7;
+#else
         const unsigned minCasesForTable = 7;
+#endif
         const unsigned densityLimit = 4;
-        if (end - start >= minCasesForTable && (!m_proc.positionIndependent() || isARM64() || isX86_64())) {
+        if (end - start >= minCasesForTable && (!m_proc.positionIndependent() || isARM64())) {
             CheckedInt64 firstValue = cases[start].caseValue();
             CheckedInt64 lastValue = cases[end - 1].caseValue();
             CheckedInt64 range = lastValue - firstValue + 1;
@@ -1834,7 +1840,11 @@ private:
     Procedure& m_proc;
     BlockInsertionSet m_blockInsertionSet;
     InsertionSet m_insertionSet;
+#if USE(BUN_JSC_ADDITIONS)
+    std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
+#else
     UseCountsWithoutUsingInstructions m_useCounts;
+#endif
     BasicBlock* m_block;
     unsigned m_index;
     Value* m_value;

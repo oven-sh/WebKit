@@ -43,7 +43,6 @@ public:
         TypeID resumeModeType;
         TypeID driverType;
         Vector<ASCIILiteral, 16> namesByFirstUse;
-        unsigned numberOfAwaitsThatShareThrowBlock { 0 };
     };
 
     static bool hasStartFunction(const Function& function)
@@ -56,12 +55,6 @@ public:
                 numberOfAwaits += function.at(id).opcode == Opcode::Await;
         }
         return numberOfAwaits <= maxAwaitsWithStartFunction;
-    }
-
-    static bool sharesThrowBlock()
-    {
-        static const bool result = getenv("BUN_AOT_SWITCH_ONE_THROW_A_COROUTINE");
-        return result;
     }
 
     static Numbers reserveNumbers(Program& program, FunctionID ramp, FunctionID resume)
@@ -290,7 +283,7 @@ private:
 
     static uint32_t flagsOfHalf(const Function& ramp, uint32_t kept)
     {
-        return (ramp.flags & (kept | Format::FunctionIsCodeOfModule)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsHalfOfHiddenCoroutine : 0);
+        return (ramp.flags & (kept | Format::FunctionIsCodeOfModule | Format::FunctionIsSloppy)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsHalfOfHiddenCoroutine : 0);
     }
 
     // Values keep their numbers in both copies of the body.
@@ -490,18 +483,11 @@ private:
         } else {
             BlockID normalBlock = addBlock(m_body);
             goOnWith(normalBlock, m_resumeValue);
-            BlockID throwBlock = !handler && sharesThrowBlock() ? m_throwBlockWithoutHandler : BlockID();
-            if (throwBlock)
-                ++m_numbers.numberOfAwaitsThatShareThrowBlock;
-            else {
-                throwBlock = addBlock(m_body);
-                m_body.at(throwBlock).terminator.value = m_resumeValue;
-                m_body.at(throwBlock).terminator.kind = TerminatorKind::Throw;
-                if (handler)
-                    m_body.at(throwBlock).terminator.targets.append(*handler);
-                else
-                    m_throwBlockWithoutHandler = throwBlock;
-            }
+            BlockID throwBlock = addBlock(m_body);
+            m_body.at(throwBlock).terminator.value = m_resumeValue;
+            m_body.at(throwBlock).terminator.kind = TerminatorKind::Throw;
+            if (handler)
+                m_body.at(throwBlock).terminator.targets.append(*handler);
 
             ValueID throwMode = append(m_body, resumeBlock, integer(resumeModeThrow, m_resumeModeType));
             if (m_isGenerator) {
@@ -1453,7 +1439,6 @@ private:
     Vector<TypeID> m_argumentTypes;
     uint32_t m_position { 0 };
     BlockID m_start;
-    BlockID m_throwBlockWithoutHandler;
     ValueID m_frame;
     ValueID m_resumeMode;
     ValueID m_resumeValue;
@@ -1481,31 +1466,31 @@ void splitCoroutines(Program& program)
     unsigned numberOfFunctions = program.functions.size();
     unsigned numberOfFunctionsBehind = numberOfFunctions;
     Vector<CoroutineSplitter::Numbers> coroutines;
-    for (unsigned i = 0; i < numberOfFunctions; ++i) {
+    Vector<uint8_t> numberOfFunctionsMadeOf(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
+    forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
         auto& function = program.functions[i];
-        if ((function.has(Format::FunctionIsAsync) || function.has(Format::FunctionIsGenerator)) && !function.blocks.isEmpty()) {
-            coroutines.append(CoroutineSplitter::reserveNumbers(program, FunctionID(i), FunctionID(numberOfFunctionsBehind)));
-            numberOfFunctionsBehind += CoroutineSplitter::hasStartFunction(function) ? 2 : 1;
-        }
+        if ((function.has(Format::FunctionIsAsync) || function.has(Format::FunctionIsGenerator)) && !function.blocks.isEmpty())
+            numberOfFunctionsMadeOf[i] = CoroutineSplitter::hasStartFunction(function) ? 2 : 1;
+    });
+    for (unsigned i = 0; i < numberOfFunctions; ++i) {
+        if (!numberOfFunctionsMadeOf[i])
+            continue;
+        coroutines.append(CoroutineSplitter::reserveNumbers(program, FunctionID(i), FunctionID(numberOfFunctionsBehind)));
+        numberOfFunctionsBehind += numberOfFunctionsMadeOf[i];
     }
     program.functions.grow(numberOfFunctionsBehind);
     forEachIndexInParallel(coroutines.size(), [&](unsigned k) {
         removeTrivialParameters(program, program.at(coroutines[k].ramp));
         CoroutineSplitter(program, coroutines[k], numberOfRegisters).run();
     });
-    if (CoroutineSplitter::sharesThrowBlock()) {
-        unsigned awaits = 0;
-        unsigned sharing = 0;
-        for (auto& numbers : coroutines) {
-            awaits += numbers.numberOfAwaitsThatShareThrowBlock;
-            sharing += !!numbers.numberOfAwaitsThatShareThrowBlock;
-        }
-        dataLogLn("AOT: one Throw a coroutine: ", awaits, " awaits of ", sharing, " coroutines throw in a block that was there already; ", coroutines.size(), " coroutines in all");
-    }
     Vector<Vector<StringID, 16>> names(coroutines.size());
+    UncheckedKeyHashMap<const char*, StringID> internedLiterals;
     for (unsigned k = 0; k < coroutines.size(); ++k) {
-        for (ASCIILiteral name : coroutines[k].namesByFirstUse)
-            names[k].append(program.intern(name.span8()));
+        for (ASCIILiteral name : coroutines[k].namesByFirstUse) {
+            names[k].append(internedLiterals.ensure(name.characters(), [&] {
+                return program.intern(name.span8());
+            }).iterator->value);
+        }
     }
     forEachIndexInParallel(coroutines.size(), [&](unsigned k) {
         CoroutineSplitter::replaceProvisionalNames(program, coroutines[k], names[k].span());

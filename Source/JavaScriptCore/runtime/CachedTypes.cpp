@@ -32,7 +32,6 @@
 #include <wtf/Function.h>
 
 #include "AOTCompiler.h"
-#include "AOTTypeTable.h"
 #include "AOTTypedPasses.h"
 #include "AOTTypedThreads.h"
 #include <wtf/Scope.h>
@@ -5853,64 +5852,6 @@ RefPtr<CachedBytecode> encodeCodeBlock(VM& vm, const SourceCodeKey& key, const U
 #if USE(BUN_JSC_ADDITIONS)
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BytecodeLinkEncoder);
 
-using CallTargetKey = std::tuple<uint32_t, uint32_t, uint32_t>;
-
-template<typename Functor>
-static void forEachCallTargetFact(const Functor& functor)
-{
-    auto contents = FileSystem::readEntireFile(String { Options::aotCallTargetsPath() });
-    RELEASE_ASSERT_WITH_MESSAGE(contents, "The file of call targets cannot be read");
-    String text = String::fromUTF8(contents->span());
-    unsigned lineNumber = 0;
-    auto require = [&](bool condition, ASCIILiteral what) {
-        if (condition) [[likely]]
-            return;
-        dataLogLn("AOT: the file of call targets, line ", lineNumber, ": ", what);
-        RELEASE_ASSERT_NOT_REACHED();
-    };
-    auto number = [&](StringView field) {
-        require(!field.isEmpty() && field.length() <= 10, "a field is not a number"_s);
-        uint64_t value = 0;
-        for (unsigned i = 0; i < field.length(); ++i) {
-            require(isASCIIDigit(field[i]), "a field is not a number"_s);
-            value = value * 10 + (field[i] - '0');
-        }
-        require(value <= std::numeric_limits<uint32_t>::max(), "a field is not a number"_s);
-        return static_cast<uint32_t>(value);
-    };
-    std::tuple<CallTargetKey, uint32_t> previousSite;
-    for (StringView line : StringView { text }.splitAllowingEmptyEntries('\n')) {
-        ++lineNumber;
-        if (line.isEmpty())
-            continue;
-        Vector<StringView, 8> fields;
-        for (StringView field : line.splitAllowingEmptyEntries('\t'))
-            fields.append(field);
-        if (lineNumber == 1) {
-            require(fields.size() == 2 && fields[0] == "V"_s && fields[1] == "1"_s, "the file does not start with V 1"_s);
-            continue;
-        }
-        require(fields.size() == 7 && fields[0] == "T"_s, "not a T line of seven fields"_s);
-        CallTargetKey site { number(fields[1]), number(fields[2]), number(fields[3]) };
-        uint32_t offset = number(fields[4]);
-        require(lineNumber == 2 || previousSite < std::tuple { site, offset }, "the sites are not in order, or one is there twice"_s);
-        previousSite = { site, offset };
-        Vector<CallTargetKey, 4> targets;
-        for (StringView target : fields[6].splitAllowingEmptyEntries(',')) {
-            Vector<StringView, 3> parts;
-            for (StringView part : target.splitAllowingEmptyEntries(':'))
-                parts.append(part);
-            require(parts.size() == 3, "a target is not module:start:kind"_s);
-            targets.append(CallTargetKey { number(parts[0]), number(parts[1]), number(parts[2]) });
-            require(!(std::get<2>(targets.last()) & 1), "a target names construct code"_s);
-            require(targets.size() == 1 || targets[targets.size() - 2] < targets.last(), "the targets are not in order, or one is there twice"_s);
-        }
-        require(!targets.isEmpty() && targets.size() <= 4, "not one to four targets"_s);
-        require(functor(site, offset, fields[5], targets.span()), "it does not fit this program: no such code block, another instruction at that offset, or no such function"_s);
-    }
-    require(lineNumber, "the file is empty"_s);
-}
-
 struct BytecodeLinkEncoder::Impl {
     WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(Impl);
 
@@ -6168,13 +6109,13 @@ struct BytecodeLinkEncoder::Impl {
         MonotonicTime stepStart = phaseStart;
         auto endPhase = [&](ASCIILiteral name) {
             MonotonicTime now = MonotonicTime::now();
-            if (Options::verboseAOTCompilation()) [[unlikely]]
+            if (AOT::Typed::saysClocks()) [[unlikely]]
                 dataLogLn("AOT: ", name, " took ", static_cast<unsigned>((now - phaseStart).milliseconds()), " ms");
             phaseStart = now;
             stepStart = now;
         };
         auto endStep = [&](ASCIILiteral name) {
-            if (!Options::verboseAOTCompilation()) [[likely]]
+            if (!AOT::Typed::saysClocks()) [[likely]]
                 return;
             MonotonicTime now = MonotonicTime::now();
             dataLogLn("AOT: - ", name, " took ", static_cast<unsigned>((now - stepStart).milliseconds()), " ms");
@@ -6217,7 +6158,7 @@ struct BytecodeLinkEncoder::Impl {
                 code.info.constantIndices = *numbers;
             String nameForMap;
             if (Options::aotMapFilePath()) [[unlikely]]
-                nameForMap = typedFunctionsForMap[typedEntryOf(index).index()];
+                nameForMap = typedFunctionsForMap[typedEntryOf(index).index()].isolatedCopy();
             builder.add(jobs[index].key, jobs[index].rank, WTF::move(code), WTF::move(nameForMap));
         };
         AOT::IdentifierIndices identifierIndices;
@@ -6405,6 +6346,7 @@ struct BytecodeLinkEncoder::Impl {
                     thread->waitForCompletion();
             }
             endStep("waiting for the other threads"_s);
+            RELEASE_ASSERT(typedProgram->sizeOfStatics == typedProgram->sizeOfStaticsAsPlaced);
             endPhase("code generation"_s);
             if (Options::verboseAOTCompilation()) [[unlikely]] {
                 uint64_t total = 0;
@@ -6438,6 +6380,14 @@ struct BytecodeLinkEncoder::Impl {
             }
             Vector<size_t> placesInBuilder(numberOfTypedFunctions);
             size_t numberToAdd = 0;
+            struct PlaceInOrder {
+                uint64_t rank;
+                uint32_t start;
+                uint32_t kind;
+                uint32_t place;
+            };
+            Vector<PlaceInOrder> placesInOrder;
+            placesInOrder.reserveInitialCapacity(numberOfTypedFunctions);
             for (uint32_t function = 0; function < numberOfTypedFunctions; ++function) {
                 auto& result = typedResults[function];
                 placesInBuilder[function] = numberToAdd;
@@ -6453,27 +6403,41 @@ struct BytecodeLinkEncoder::Impl {
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
-                numberToAdd += result->code.continuations.size() + 1;
+                for (unsigned index = 0; index < result->code.continuations.size(); ++index) {
+                    auto key = AOT::Typed::keyOfContinuation(id, index);
+                    RELEASE_ASSERT(!key.module);
+                    placesInOrder.append({ isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
+                }
+                auto key = AOT::Typed::keyOf(id);
+                RELEASE_ASSERT(!key.module);
+                placesInOrder.append({ isNotHot | 1ull << 61 | placeOfTypedFunction[function], key.start, key.kind, safeCast<uint32_t>(numberToAdd++) });
             }
             if (numberOfDeclinedFunctions)
                 return { };
+            std::ranges::sort(placesInOrder, [](const PlaceInOrder& a, const PlaceInOrder& b) {
+                return std::tie(a.rank, a.start, a.kind) < std::tie(b.rank, b.start, b.kind);
+            });
+            Vector<uint32_t> whereItWillStand(numberToAdd);
+            for (size_t index = 0; index < placesInOrder.size(); ++index)
+                whereItWillStand[placesInOrder[index].place] = safeCast<uint32_t>(index);
             size_t firstPlaceInBuilder = builder.growFunctions(numberToAdd);
             AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
                 auto result = WTF::move(typedResults[function]);
                 if (!result)
                     return;
                 AOT::Typed::FunctionID id(function);
-                size_t place = firstPlaceInBuilder + placesInBuilder[function];
+                size_t place = placesInBuilder[function];
                 String nameForMap = typedFunctionsForMap.isEmpty() ? String() : WTF::move(typedFunctionsForMap[function]);
                 auto continuations = WTF::move(result->code.continuations);
                 for (unsigned index = 0; index < continuations.size(); ++index)
-                    builder.set(place++, AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
-                builder.set(place, AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
+                    builder.set(firstPlaceInBuilder + whereItWillStand[place++], AOT::Typed::keyOfContinuation(id, index), isNotHot | 1ull << 61 | placeOfTypedFunction[function] | 1, WTF::move(continuations[index]), makeStringByReplacingAll(nameForMap, "\ttyped\t"_s, "\tcontinuation\t"_s));
+                builder.set(firstPlaceInBuilder + whereItWillStand[place], AOT::Typed::keyOf(id), isNotHot | 1ull << 61 | placeOfTypedFunction[function], WTF::move(result->code), WTF::move(nameForMap));
             });
             endPhase("adding the functions to the image"_s);
             AOT::Typed::forEachIndexInParallel(numberOfTypedFunctions, [&](unsigned function) {
                 typedProgram->functions[function] = AOT::Typed::Function();
             });
+            AOT::Typed::destroyBeside(WTF::move(typedProgram));
             endPhase("freeing the typed functions"_s);
         }
         AOT::forgetDeclaredNames();

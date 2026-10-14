@@ -80,9 +80,11 @@ Word32 Lowering::passes(Word32 shapeWord, const MergedShapeTest& merged, LBasicB
     auto& test = merged.test;
     if (test.passesNothing())
         return boolean(false);
+    if (test.isRange() && !merged.bits && test.count == 1)
+        return equal(shapeWord, word32(0u - test.last()));
     Word32 place = add(shapeWord, word32(test.last()));
     if (test.isRange() && !merged.bits)
-        return test.count == 1 ? isZero(place) : below(place, word32(test.count));
+        return below(place, word32(test.count));
 
     Word32 isWithinReach = below(place, word32(test.count));
     if (otherwise)
@@ -227,7 +229,7 @@ void Lowering::accessStaticField(const Value& value, const Invocable<void(CellPo
     auto& layout = m_program.at(value.layout());
     uint32_t place = layout.staticFields[value.immediates[1]].place;
     auto word = [&](uint32_t number) {
-        return m_out.address(m_heaps.AOTInstance_mutableFields, fixedPointer(Instance::offsetOfTypedStatics()), m_program.staticFieldPlacesOffset + number * sizeof(int32_t));
+        return inStatics(m_heaps.AOTInstance_mutableFields, m_program.staticFieldPlacesOffset + number * sizeof(int32_t));
     };
     LBasicBlock isReady = m_out.newBlock();
     LBasicBlock asks = newColdBlock();
@@ -291,7 +293,7 @@ Word32 Lowering::lowerHasShapeOf(const Value& value)
 }
 
 // Whether the cell is the function as a value.
-Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeAsMade)
+Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeAsMade, bool evenIfAltered)
 {
     // Only a function with a general entry is ever made a value of.
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
@@ -317,10 +319,14 @@ Word32 Lowering::isClosureOf(CellPointer cell, FunctionID function, bool mustBeA
         return equal(functionOfClosure(cell, isSlim), word32(general));
     }, [&] {
         // A closure that was given properties has another Structure. The test is a guard: it is taken for none, and goes the way that is right for every value. A class object has a Structure of its own from the start.
-        if (mustBeAsMade || m_program.at(function).kind != FunctionKind::Constructor)
+        if (mustBeAsMade || (m_program.at(function).kind != FunctionKind::Constructor && !evenIfAltered))
             return boolean(false);
         // Zero: it is no closure. The table has that too, for as long as there is no closure of the function.
         Integer entry(callAllocationStub(Stub::TypedClosureEntry, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));
+        if (m_program.at(function).kind != FunctionKind::Constructor) {
+            Word32 functionOfEntry(m_out.bitAnd(m_out.castToInt32(m_out.lShr(entry.value(), m_out.constInt32(ClosureWord::functionShift))), m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
+            return logicalAnd(logicalNot(isZero(entry)), equal(functionOfEntry, word32(general)));
+        }
         Integer entryOfFunction(m_out.load64(m_out.address(m_heaps.AOTTyped_runtimeState, fixedPointer(Instance::offsetOfTypedFunctions()), static_cast<ptrdiff_t>(general) * sizeof(void*))));
         return logicalAnd(logicalNot(isZero(entry)), equal(entry, entryOfFunction));
     });
@@ -347,12 +353,12 @@ Word32 Lowering::functionOfClosure(CellPointer closure, bool isSlim)
 }
 
 // Goes on where the cell is the function as a value. Elsewhere: to the block. Each test branches: no answer is made into a value.
-void Lowering::closureOfOrElse(CellPointer cell, FunctionID function, bool mustBeAsMade, LBasicBlock otherwise)
+void Lowering::closureOfOrElse(CellPointer cell, FunctionID function, bool mustBeAsMade, LBasicBlock otherwise, bool evenIfAltered)
 {
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
     auto& callee = m_program.at(function);
-    if (entrypoint == m_program.genericEntrypoints.end() || (callee.captureTypes.isEmpty() && !callee.hasManyClosures) || callee.kind == FunctionKind::Constructor) {
-        orElse(isClosureOf(cell, function, mustBeAsMade), otherwise);
+    if (entrypoint == m_program.genericEntrypoints.end() || (callee.captureTypes.isEmpty() && !callee.hasManyClosures) || callee.kind == FunctionKind::Constructor || evenIfAltered) {
+        orElse(isClosureOf(cell, function, mustBeAsMade, evenIfAltered), otherwise);
         return;
     }
     orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(offsetOfStructureIDOfClosuresOf(callee)))), otherwise);
@@ -369,7 +375,12 @@ void Lowering::branchOnClosureOf(const Value& value, LBasicBlock isOne, LBasicBl
     }
     if (operand.rep == Rep::JSValue)
         orElse(isCell(operand.as<Boxed>(), typeOf(value.child(0))), isNone);
-    closureOfOrElse(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), value.function(), value.immediates[1] == closureIsAsMade, isNone);
+    if (value.immediates[1] == closureIsTheOneThatConstructs) {
+        orElse(isTheClosure(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), m_program.genericEntrypoints.get(value.function().index()).index()), isNone);
+        m_out.jump(isOne);
+        return;
+    }
+    closureOfOrElse(operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>()), value.function(), value.immediates[1] == closureIsAsMade, isNone, value.immediates[1] == closureEvenIfAltered);
     m_out.jump(isOne);
 }
 
@@ -403,13 +414,19 @@ Word32 Lowering::lowerIsClosureOf(const Value& value)
 {
     Operand operand = get(value.child(0));
     bool mustBeAsMade = value.immediates[1] == closureIsAsMade;
+    bool evenIfAltered = value.immediates[1] == closureEvenIfAltered;
+    auto test = [&](CellPointer cell) {
+        if (value.immediates[1] == closureIsTheOneThatConstructs)
+            return isTheClosure(cell, m_program.genericEntrypoints.get(value.function().index()).index());
+        return isClosureOf(cell, value.function(), mustBeAsMade, evenIfAltered);
+    };
     if (operand.rep == Rep::Cell)
-        return isClosureOf(operand.as<CellPointer>(), value.function(), mustBeAsMade);
+        return test(operand.as<CellPointer>());
     if (operand.rep != Rep::JSValue)
         return boolean(false);
     Boxed boxed = operand.as<Boxed>();
     return either<Word32>(isCell(boxed, typeOf(value.child(0))), [&] {
-        return isClosureOf(asCell(boxed), value.function(), mustBeAsMade);
+        return test(asCell(boxed));
     }, [&] {
         return boolean(false);
     });
@@ -554,7 +571,7 @@ Word32 Lowering::nonCellFits(Boxed value, const Type& from, const Type& to)
     Word32 result;
     switch (both & Primitive::UndefinedOrNull) {
     case Primitive::UndefinedOrNull:
-        result = logicalOr(result, isUndefinedOrNull(value));
+        result = logicalOr(result, isUndefinedOrNull(value, from));
         break;
     case Primitive::Undefined:
         result = logicalOr(result, is(jsUndefined()));
@@ -707,7 +724,7 @@ Operand Lowering::fitBoxedOrElse(Boxed value, const Type& from, const Type& to, 
             else if (gone == Primitive::Null)
                 isOne = notEqual(value, boxedConstant(jsNull()));
             else
-                isOne = logicalNot(isUndefinedOrNull(value));
+                isOne = logicalNot(isUndefinedOrNull(value, from));
         } else
             isOne = logicalOr(isCell(value, from), nonCellFits(value, from, to));
         orElse(isOne, otherwise);
@@ -901,6 +918,20 @@ void Lowering::throwTypeMismatch(Operand operand, const Type& from, const Type& 
     m_out.unreachable();
 }
 
+bool Lowering::resultBecomesItsType(const Type& guarantee, const Type& type) const
+{
+    auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
+    if (!value.type || &m_program.at(value.type) != &type || !(guarantee.anyObject || guarantee.admitsForeignObjects(m_program)) || writesOfElementRead(m_program, type) == Writes::Nothing)
+        return false;
+    if (Options::auditAOTTypedAssertions() || m_useCastTest || m_foreignObjectsDoNotFit || handlerEnteredByBranch() || m_environmentAwaitingBarrier || m_isFillingArrayAtBirth || m_isFillingReusedEnvironment || !m_fieldsAwaitingFirstStore.isEmpty())
+        return false;
+    if (value.opcode == Opcode::Cast)
+        return claimMayMakeObjects(m_program, m_function, value);
+    if (m_isElementOfEntries && (value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
+        return !value.readsElementKnownByTheStores() || Options::validateAOTTypedFacts();
+    return value.opcode == Opcode::CallBuiltin || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
+}
+
 Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& type)
 {
     if (m_fusedCasts && &type == &m_fusedCasts->type && !m_fusedCasts->areBeingCarriedOut)
@@ -908,6 +939,32 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
     // `never` says nothing.
     if (&guarantee == &type || type.isNever() || guarantee.isWithin(type, m_program))
         return convert(operand, guarantee, repOf(type));
+    if (resultBecomesItsType(guarantee, type)) {
+        TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+        OperationEffects effects { Writes::RuntimeState, true, true };
+        if (m_program.isColdByGraph(m_id) && !m_isInLoop && repOf(guarantee) == Rep::JSValue)
+            return convert(AOT_TYPED_OPERATION_WITH_EFFECTS(HoldOrBecome, effects, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(given.index())), type, repOf(type));
+        Rep rep = repOf(type);
+        LBasicBlock misfit = newColdBlock();
+        Join join(m_out, rep, b3TypeOf(rep));
+        join.add(fitOrElse(operand, guarantee, type, misfit));
+        m_out.appendTo(misfit);
+        join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(HoldOrBecome, effects, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(given.index())), type, rep));
+        return join.finish();
+    }
+    if (m_program.isColdByGraph(m_id) && !m_isInLoop && !m_function.isBodyOfSeveralSites
+        && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty() && repOf(guarantee) == Rep::JSValue && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
+        && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
+        Boxed given = remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>());
+        LValue number = m_out.constInt64(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index());
+        LValue held = callAllocationStub(Stub::HoldToType, { { given.value(), GPRInfo::argumentGPR1 }, { number, GPRInfo::argumentGPR2 } }, { Writes::Nothing, true }, true);
+        return convert(Boxed(held), type, repOf(type));
+    }
+    if (m_program.isColdByGraph(m_id) && !m_out.m_block->frequency() && repOf(guarantee) == Rep::JSValue && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
+        && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
+        Boxed given = convert(operand, guarantee, Rep::JSValue).as<Boxed>();
+        return convert(AOT_TYPED_OPERATION(Hold, remade(given), word32(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index())), type, repOf(type));
+    }
     LBasicBlock mismatch = newColdBlock();
     Operand result = fitOrElse(operand, guarantee, type, mismatch);
     // Of the types an operation holds its result to only those without room for whatever comes are left then: see Reader::typeReliedOn().
@@ -925,9 +982,19 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
     }
     LBasicBlock continuation = m_out.m_block;
     m_out.appendTo(mismatch);
-    if (LBasicBlock handler = handlerEnteredByBranch())
+    if (LBasicBlock handler = handlerEnteredByBranch()) {
+        if (auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]); m_function.has(FunctionLogsMisfits) && &m_program.at(value.type) == &type) {
+            auto& held = m_function.at(value.child(0));
+            uint32_t first = m_function.isGenericEntrypoint() ? 2 : m_function.captureTypes.size() + m_function.has(Format::FunctionHasThis);
+            uint32_t parameter = UINT32_MAX;
+            if (held.opcode == Opcode::Parameter && held.immediates[1] >= first)
+                parameter = held.immediates[1] - first;
+            else if (held.opcode == Opcode::GetArgument)
+                parameter = held.immediates[0];
+            AOT_TYPED_OPERATION(NoteMisfit, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(value.type.index()), word32(parameter), word32(!m_function.isGenericEntrypoint() && !m_function.has(FunctionIsEnteredByValue)));
+        }
         m_out.jump(handler);
-    else
+    } else
         throwTypeMismatch(operand, guarantee, type);
     m_out.appendTo(continuation);
     return result;
@@ -937,6 +1004,8 @@ Operand Lowering::ensureElement(CellPointer array, Integer index, Boxed element,
 {
     // The run time knows a type by its number, so this is for the type of the value that is being lowered.
     TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+    if (m_function.at(m_currentBlock->values[m_currentIndexInBlock]).readsElementKnownByTheStores() && &m_program.at(given) == &type && !Options::validateAOTTypedFacts() && !Options::auditAOTTypedAssertions())
+        return ensure(element, type, type);
     Writes writes = writesOfElementRead(m_program, type);
     if (writes == Writes::Nothing || &m_program.at(given) != &type || Options::auditAOTTypedAssertions())
         return ensure(element, type);
@@ -950,12 +1019,37 @@ Operand Lowering::ensureElement(CellPointer array, Integer index, Boxed element,
     m_out.appendTo(misfit);
     m_out.branch(isCell(element).value(), usually(cellCase), rarely(mismatch));
     m_out.appendTo(cellCase);
-    m_out.branch(equal(typeOfCell(asCell(element)), word32(FinalObjectType)).value(), usually(plainObject), rarely(mismatch));
+    m_out.branch(logicalOr(equal(typeOfCell(asCell(element)), word32(FinalObjectType)), equal(typeOfCell(asCell(element)), word32(ObjectType))).value(), usually(plainObject), rarely(mismatch));
     m_out.appendTo(plainObject);
     OperationEffects effects { writes, true, true };
     join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceElement, effects, array, low32(index), word32(given.index())), type, rep));
     m_out.appendTo(mismatch);
     throwTypeMismatch(element, m_program.at(m_program.types.anything), type);
+    return join.finish();
+}
+
+Operand Lowering::ensureProperty(CellPointer holder, StringID name, Boxed yielded, const Type& type)
+{
+    TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+    Writes writes = writesOfElementRead(m_program, type);
+    if (writes == Writes::Nothing || &m_program.at(given) != &type || Options::auditAOTTypedAssertions())
+        return ensure(yielded, type);
+    Rep rep = repOf(type);
+    LBasicBlock misfit = newColdBlock();
+    LBasicBlock cellCase = newColdBlock();
+    LBasicBlock plainObject = newColdBlock();
+    LBasicBlock mismatch = newColdBlock();
+    Join join(m_out, rep, b3TypeOf(rep));
+    join.add(fitOrElse(yielded, m_program.at(m_program.types.anything), type, misfit));
+    m_out.appendTo(misfit);
+    m_out.branch(isCell(yielded).value(), usually(cellCase), rarely(mismatch));
+    m_out.appendTo(cellCase);
+    m_out.branch(logicalOr(equal(typeOfCell(asCell(yielded)), word32(FinalObjectType)), equal(typeOfCell(asCell(yielded)), word32(ObjectType))).value(), usually(plainObject), rarely(mismatch));
+    m_out.appendTo(plainObject);
+    OperationEffects effects { writes, true, true };
+    join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceProperty, effects, holder, word32(name.index()), yielded, word32(given.index())), type, rep));
+    m_out.appendTo(mismatch);
+    throwTypeMismatch(yielded, m_program.at(m_program.types.anything), type);
     return join.finish();
 }
 
@@ -1011,7 +1105,7 @@ void Lowering::auditResult(Operand operand, const Value& value)
     m_out.appendTo(continuation);
 }
 
-void Lowering::validateOnlyFunction(Operand stored, ValueID id, FunctionID function, bool mayBeNil)
+void Lowering::validateOnlyFunction(Operand stored, ValueID id, FunctionID function, bool mayBeNil, FunctionID other)
 {
     if ((stored.rep != Rep::Cell && stored.rep != Rep::JSValue) || m_function.at(id).opcode == Opcode::Unspecified)
         return;
@@ -1033,7 +1127,10 @@ void Lowering::validateOnlyFunction(Operand stored, ValueID id, FunctionID funct
         m_out.jump(doesNotHold);
     m_out.appendTo(cellCase);
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
-    if (entrypoint == m_program.genericEntrypoints.end())
+    if (other) {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        m_out.branch(logicalOr(isClosureOf(asCell(boxed), function, false, true), isClosureOf(asCell(boxed), other, false, true)).value(), unsure(continuation), rarely(doesNotHold));
+    } else if (entrypoint == m_program.genericEntrypoints.end())
         m_out.jump(doesNotHold);
     else {
         SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
@@ -1120,6 +1217,39 @@ bool Lowering::markNilTest(CellPointer accessed)
     marker->append(ConstrainedValue(number, ValueRep::ColdAny));
     marker->setGenerator(m_context.nilTestMarker);
     return true;
+}
+
+void Lowering::validateIsNotReleased(CellPointer environment, const Value& access)
+{
+    auto& layout = m_program.at(access.layout());
+    if (!layout.reuseVariable || access.field() + 1 >= layout.fields.size())
+        return;
+    auto& hasEscaped = layout.fields[layout.fields.size() - 2];
+    auto& isReleased = layout.fields[layout.fields.size() - 1];
+    LBasicBlock released = m_out.newBlock();
+    LBasicBlock doesNotHold = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(load(isReleased.store, fieldAt(environment, isReleased), 0, environment.value()).value, rarely(released), usually(continuation));
+    m_out.appendTo(released);
+    m_out.branch(load(hasEscaped.store, fieldAt(environment, hasEscaped), 0, environment.value()).value, usually(continuation), rarely(doesNotHold));
+    m_out.appendTo(doesNotHold);
+    {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        AOT_TYPED_OPERATION(FactDoesNotHold, Boxed(m_out.int64Zero), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+    }
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
+}
+
+void Lowering::validateIsNotEmpty(Boxed value)
+{
+    LBasicBlock doesNotHold = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(m_out.notZero64(value.value()), usually(continuation), rarely(doesNotHold));
+    m_out.appendTo(doesNotHold);
+    AOT_TYPED_OPERATION(FactDoesNotHold, value, word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 void Lowering::throwNullish(Boxed value, StringID name, CellPointer accessed)
@@ -1210,6 +1340,217 @@ static void emitAccess(CCallHelpers& jit, B3::Opcode opcode, B3::Type type, bool
         return;
     default:
         RELEASE_ASSERT_NOT_REACHED();
+    }
+}
+
+void askMemoryAtLoopPolls(Procedure& proc)
+{
+#if CPU(X86_64)
+    if (!proc.loopPollGenerator())
+        return;
+    UseCounts useCounts(proc);
+    for (BasicBlock* block : proc) {
+        B3::Value* branch = block->last();
+        if (branch->opcode() != B3::Branch)
+            continue;
+        B3::Value* comparison = branch->child(0);
+        if (comparison->opcode() != B3::LessThan || !comparison->child(1)->isInt64(0) || useCounts.numUses(comparison) != 1)
+            continue;
+        auto* poll = comparison->child(0)->as<PatchpointValue>();
+        if (!poll || poll->generator() != proc.loopPollGenerator() || useCounts.numUses(poll) != 1 || poll->owner != block || comparison->owner != block)
+            continue;
+        PatchpointValue* folded = proc.add<PatchpointValue>(B3::Void, branch->origin());
+        folded->effects = poll->effects;
+        folded->effects.terminal = true;
+        folded->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            CCallHelpers::Jump isInterrupted = jit.branch64(CCallHelpers::LessThan, CCallHelpers::Address(instanceGPR, Instance::offsetOfTrapAwareSoftStackLimit()), CCallHelpers::TrustedImm32(0));
+            CCallHelpers::Jump goesOn;
+            if (!params.fallsThroughToSuccessor(1))
+                goesOn = jit.jump();
+            Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+            params.addLatePath([=](CCallHelpers& jit) {
+                isInterrupted.linkTo(*labels[0], &jit);
+                if (goesOn.isSet())
+                    goesOn.linkTo(*labels[1], &jit);
+            });
+        });
+        block->replaceLast(proc, folded);
+        comparison->replaceWithNopIgnoringType();
+        poll->replaceWithNopIgnoringType();
+    }
+#else
+    UNUSED_PARAM(proc);
+#endif
+}
+
+void askZeroExtendedWordsIn32Bits(Procedure& proc)
+{
+    auto isZeroExtended = [](B3::Value* value) {
+        return value->opcode() == B3::ZExt32;
+    };
+    auto isWord = [](B3::Value* value) {
+        return value->hasInt64() && value->asInt64() >= 0 && value->asInt64() <= static_cast<int64_t>(std::numeric_limits<uint32_t>::max());
+    };
+    auto unsignedOpcode = [](B3::Opcode opcode) {
+        switch (opcode) {
+        case B3::LessThan:
+            return B3::Below;
+        case B3::LessEqual:
+            return B3::BelowEqual;
+        case B3::GreaterThan:
+            return B3::Above;
+        case B3::GreaterEqual:
+            return B3::AboveEqual;
+        default:
+            return opcode;
+        }
+    };
+    std::optional<B3::UseCountsWithoutUsingInstructions> useCounts;
+    InsertionSet insertionSet(proc);
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            auto narrowConstant = [&](B3::Value* constant) {
+                return insertionSet.insert<Const32Value>(index, value->origin(), static_cast<int32_t>(static_cast<uint32_t>(constant->asInt64())));
+            };
+            auto narrowMask = [&](B3::Value* masked) -> B3::Value* {
+                if (masked->opcode() != B3::BitAnd || masked->type() != Int64 || !isZeroExtended(masked->child(0)) || !masked->child(1)->hasInt64())
+                    return nullptr;
+                return insertionSet.insert<B3::Value>(index, B3::BitAnd, value->origin(), masked->child(0)->child(0), narrowConstant(masked->child(1)));
+            };
+            switch (value->opcode()) {
+            case B3::Branch:
+            case B3::Select:
+                if (B3::Value* masked = narrowMask(value->child(0)))
+                    value->child(0) = masked;
+                else if (isZeroExtended(value->child(0)))
+                    value->child(0) = value->child(0)->child(0);
+                break;
+            case B3::Equal:
+            case B3::NotEqual:
+                if (value->child(1)->isInt64(0)) {
+                    if (B3::Value* masked = narrowMask(value->child(0))) {
+                        value->child(0) = masked;
+                        value->child(1) = insertionSet.insert<Const32Value>(index, value->origin(), 0);
+                        break;
+                    }
+                }
+                [[fallthrough]];
+            case B3::LessThan:
+            case B3::GreaterThan:
+            case B3::LessEqual:
+            case B3::GreaterEqual:
+            case B3::Below:
+            case B3::BelowEqual:
+            case B3::Above:
+            case B3::AboveEqual: {
+                if (!isZeroExtended(value->child(0)))
+                    break;
+                B3::Value* right = nullptr;
+                if (isZeroExtended(value->child(1)))
+                    right = value->child(1)->child(0);
+                else if (isWord(value->child(1)))
+                    right = narrowConstant(value->child(1));
+                if (!right)
+                    break;
+                value->setOpcodeUnsafely(unsignedOpcode(value->opcode()));
+                value->child(0) = value->child(0)->child(0);
+                value->child(1) = right;
+                break;
+            }
+            case B3::ZShr: {
+                auto* memory = value->child(0)->as<MemoryValue>();
+                if (value->type() != Int64 || !value->child(1)->isInt32(32) || !memory || memory->opcode() != B3::Load || memory->hasFence() || memory->offset() > std::numeric_limits<int32_t>::max() - 4)
+                    break;
+                unsigned place = index;
+                while (place && index - place < 8 && block->at(place) != memory)
+                    --place;
+                if (block->at(place) != memory)
+                    break;
+                if (!useCounts)
+                    useCounts.emplace(proc);
+                if (useCounts->numUses(memory) != 1)
+                    break;
+                auto* upperHalf = insertionSet.insert<MemoryValue>(place, B3::Load, Int32, memory->origin(), memory->lastChild(), memory->offset() + 4, memory->range(), memory->fenceRange());
+                upperHalf->setReadsMutability(memory->readsMutability());
+                upperHalf->setControlDependent(memory->controlDependent());
+                value->replaceWithIdentity(insertionSet.insert<B3::Value>(index, B3::ZExt32, value->origin(), upperHalf));
+                break;
+            }
+            default:
+                break;
+            }
+        }
+        insertionSet.execute(block);
+    }
+}
+
+void askSignExtendedWordsIn32Bits(Procedure& proc)
+{
+    auto isSignExtended = [](B3::Value* value) {
+        return value->opcode() == B3::SExt32;
+    };
+    auto isWithin = [](B3::Value* value, int64_t least, int64_t greatest) {
+        return value->hasInt64() && value->asInt64() >= least && value->asInt64() <= greatest;
+    };
+    InsertionSet insertionSet(proc);
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            auto narrowConstant = [&](B3::Value* constant) {
+                return insertionSet.insert<Const32Value>(index, value->origin(), static_cast<int32_t>(constant->asInt64()));
+            };
+            auto narrowMask = [&](B3::Value* masked) -> B3::Value* {
+                if (masked->opcode() != B3::BitAnd || masked->type() != Int64 || !isSignExtended(masked->child(0)) || !isWithin(masked->child(1), 0, std::numeric_limits<int32_t>::max()))
+                    return nullptr;
+                return insertionSet.insert<B3::Value>(index, B3::BitAnd, value->origin(), masked->child(0)->child(0), narrowConstant(masked->child(1)));
+            };
+            switch (value->opcode()) {
+            case B3::Branch:
+            case B3::Select:
+                if (B3::Value* masked = narrowMask(value->child(0)))
+                    value->child(0) = masked;
+                else if (isSignExtended(value->child(0)))
+                    value->child(0) = value->child(0)->child(0);
+                break;
+            case B3::Equal:
+            case B3::NotEqual:
+                if (value->child(1)->isInt64(0)) {
+                    if (B3::Value* masked = narrowMask(value->child(0))) {
+                        value->child(0) = masked;
+                        value->child(1) = insertionSet.insert<Const32Value>(index, value->origin(), 0);
+                        break;
+                    }
+                }
+                [[fallthrough]];
+            case B3::LessThan:
+            case B3::GreaterThan:
+            case B3::LessEqual:
+            case B3::GreaterEqual:
+                if (!isSignExtended(value->child(0)))
+                    break;
+                if (isSignExtended(value->child(1))) {
+                    value->child(0) = value->child(0)->child(0);
+                    value->child(1) = value->child(1)->child(0);
+                } else if (isWithin(value->child(1), std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max())) {
+                    value->child(1) = narrowConstant(value->child(1));
+                    value->child(0) = value->child(0)->child(0);
+                }
+                break;
+            case B3::Below:
+            case B3::BelowEqual:
+            case B3::Above:
+            case B3::AboveEqual:
+                if (isSignExtended(value->child(0)) && isWithin(value->child(1), 0, std::numeric_limits<int32_t>::max())) {
+                    value->child(1) = narrowConstant(value->child(1));
+                    value->child(0) = value->child(0)->child(0);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+        insertionSet.execute(block);
     }
 }
 
@@ -1473,14 +1814,16 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
 
     m_out.appendTo(slowPath);
     OperationEffects effects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
-    Boxed passed = operand.rep == Rep::JSValue ? remade(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
+    bool onlyCellsComeHere = operand.rep == Rep::JSValue && withoutCells(from).isWithin(withoutCells(to), m_program);
+    Boxed passed = onlyCellsComeHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? remade(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
     // An object of the program becomes what it becomes where it is, and what is no object is handed back or turned away: the value goes on as it was, and is of the type now.
     if (!from.anyObject && !from.admitsForeignObjects(m_program) && !Options::auditAOTTypedAssertions()) {
         AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceInPlace, effects, passed, typeAndReason(cast.type, cast.castReason()));
         join.add(convert(convert(operand, from, repOf(from)), to, rep));
         return join.finish();
     }
-    Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.type, cast.castReason()));
+    RELEASE_ASSERT(isNarrowing || !m_program.castsMayRetag || effects.writesShapeWords);
+    Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.type, cast.castReason() == CastReason::As && cast.coercesFreshData() ? CastReason::AsFreshObject : cast.castReason()));
     join.add(convert(coerced, to, rep));
     return join.finish();
 }
@@ -1495,7 +1838,7 @@ static CastReason reasonForRunTime(const Value& cast)
 
 Word32 Lowering::typeAndReason(TypeID type, CastReason reason)
 {
-    static_assert(static_cast<uint32_t>(CastReason::CoerceFreshGraph) < 16);
+    static_assert(static_cast<uint32_t>(CastReason::AsFreshObject) < 16);
     RELEASE_ASSERT(type.index() < 1u << 28 && static_cast<uint32_t>(reason) < 16);
     return word32(type.index() << 4 | static_cast<uint32_t>(reason));
 }
@@ -1579,13 +1922,15 @@ Operand Lowering::lowerCoercion(ValueID result, const Value& cast)
 
     m_out.appendTo(slowPath);
     OperationEffects effects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
-    Boxed passed = operand.rep == Rep::JSValue ? remade(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
+    bool onlyCellsComeHere = operand.rep == Rep::JSValue && withoutCells(from).isWithin(withoutCells(type), m_program);
+    Boxed passed = onlyCellsComeHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? remade(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
     // See coerce(). Nothing is converted either: only an object of a layout that is turned into another comes here.
     if (!mayBeAnyObject && from.isWithin(type, m_program) && !Options::auditAOTTypedAssertions()) {
         AOT_TYPED_OPERATION_WITH_EFFECTS(CoerceInPlace, effects, passed, typeAndReason(cast.coercedType(), CastReason::Coerce));
         join.add(Operand(rep, fitted.value));
         return join.finish();
     }
+    RELEASE_ASSERT(!mayCopy || !m_program.castsMayRetag || effects.writesShapeWords);
     Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.coercedType(), reasonForRunTime(cast)));
     join.add(convert(coerced, type, rep));
     return join.finish();
@@ -2152,6 +2497,7 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
         return lowerCoercion(result, value);
     case CastReason::CoerceFreshObject:
     case CastReason::CoerceFreshGraph:
+    case CastReason::AsFreshObject:
         RELEASE_ASSERT_NOT_REACHED();
     case CastReason::NonNull:
         return lowerNonNull(result, value);
@@ -2199,11 +2545,11 @@ Word32 Lowering::lowerIsUndefinedOrNull(ValueID id)
         return logicalNot(isCell(value, type));
     switch (type.primitives & Primitive::UndefinedOrNull) {
     case Primitive::Undefined:
-        return equal(value, undefined());
+        return haveEqualBits(value, undefined());
     case Primitive::Null:
-        return equal(value, boxedConstant(jsNull()));
+        return haveEqualBits(value, boxedConstant(jsNull()));
     default:
-        return isUndefinedOrNull(value);
+        return isUndefinedOrNull(value, type);
     }
 }
 
@@ -2389,6 +2735,8 @@ void Lowering::findParametersJoinedInParts()
             auto& user = m_function.at(id);
             if (user.opcode == Opcode::Cast || user.opcode == Opcode::ToBoolean || user.opcode == Opcode::IsUndefinedOrNull)
                 continue;
+            if (user.opcode == Opcode::StrictEq && (m_function.at(user.child(0)).opcode == Opcode::Null || m_function.at(user.child(1)).opcode == Opcode::Null))
+                continue;
             bool hasReceiver = user.opcode == Opcode::GetById || user.opcode == Opcode::PutById;
             for (unsigned k = hasReceiver; k < user.children.size(); ++k)
                 takeBoxed(user.children[k]);
@@ -2430,12 +2778,6 @@ void Lowering::findParametersJoinedInParts()
             }
         });
     }
-}
-
-// Whether the only use of the value is that its block ends in a branch on it.
-bool Lowering::isOnlyBranchedOn(ValueID id)
-{
-    return numberOfUsesOf(id) == 1 && m_currentBlock->terminator.kind == TerminatorKind::Branch && m_currentBlock->terminator.value == id;
 }
 
 Word32 Lowering::lowerToBoolean(ValueID id)

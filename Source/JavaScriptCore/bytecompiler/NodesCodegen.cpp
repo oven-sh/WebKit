@@ -4347,6 +4347,13 @@ void CommaNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, Lab
     generator.emitNodeInConditionContext(node->m_expr, trueTarget, falseTarget, fallThroughMode);
 }
 
+RegisterID* AuditedExpressionNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    RefPtr<RegisterID> value = generator.emitNode(dst == generator.ignoredResult() ? nullptr : dst, m_expr);
+    generator.emitAudit(value.get(), m_id, m_passes, m_least, m_most);
+    return generator.move(dst, value.get());
+}
+
 // ------------------------------ SourceElements -------------------------------
 
 inline void SourceElements::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)

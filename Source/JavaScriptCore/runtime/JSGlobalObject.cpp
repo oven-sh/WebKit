@@ -1258,7 +1258,7 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
-            if (init.vm.useImmutableIntrinsics) [[unlikely]]
+            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
                 init.owner->makeIntrinsicImmutable(constructor, IntrinsicKind::Other);
         });
 
@@ -1617,6 +1617,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     unsigned attributesOfIntrinsic = static_cast<unsigned>(PropertyAttribute::DontEnum);
     if (vm.useImmutableIntrinsics) [[unlikely]]
         attributesOfIntrinsic |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
+    else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        attributesOfIntrinsic |= static_cast<unsigned>(PropertyAttribute::WouldBeFixed);
 
     putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, attributesOfIntrinsic);
     putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, attributesOfIntrinsic);
@@ -1716,7 +1718,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentIteratorPrototype* segmentIteratorPrototype = IntlSegmentIteratorPrototype::create(init.vm, IntlSegmentIteratorPrototype::createStructure(init.vm, globalObject, globalObject->iteratorPrototype()));
             init.set(IntlSegmentIterator::createStructure(init.vm, globalObject, segmentIteratorPrototype));
-            if (init.vm.useImmutableIntrinsics) [[unlikely]]
+            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentIteratorPrototype, IntrinsicKind::Prototype);
         });
     m_segmenterStructure.initLater(
@@ -1730,7 +1732,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentsPrototype* segmentsPrototype = IntlSegmentsPrototype::create(init.vm, globalObject, IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
-            if (init.vm.useImmutableIntrinsics) [[unlikely]]
+            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentsPrototype, IntrinsicKind::Prototype);
         });
     m_segmentDataObjectStructure.initLater(
@@ -2048,6 +2050,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::noteClass)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, "noteClass"_s, globalFuncNoteClass, ImplementationVisibility::Private));
         });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].initLater([] (const Initializer<JSCell>& init) {
+            init.set(init.owner->functionPrototype());
+        });
 #if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "enqueueJob"_s, enqueueJob, ImplementationVisibility::Public));
@@ -2349,7 +2354,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    if (vm.useImmutableIntrinsics) [[unlikely]]
+    if (vm.fixesOrNotesIntrinsics()) [[unlikely]]
         makeIntrinsicsImmutable();
 
     // Detect property change.
@@ -2499,6 +2504,8 @@ bool JSGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyNam
     EXCEPTION_ASSERT((!!scope.exception() == (done && !putResult)) || !shouldThrowReadOnlyError);
     if (done)
         return putResult;
+    if (vm.auditsImmutableIntrinsics()) [[unlikely]]
+        ImmutableIntrinsicsAudit::willPut(globalObject, thisObject, propertyName, slot);
     RELEASE_AND_RETURN(scope, Base::put(thisObject, globalObject, propertyName, value, slot));
 }
 
@@ -2843,6 +2850,13 @@ inline IterationStatus ObjectsWithBrokenIndexingFinder<mode>::visit(JSObject* ob
     // Run this filter first, since it's cheap, and ought to filter out a lot of objects.
     if (!hasBrokenIndexing(object))
         return IterationStatus::Continue;
+
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : object->vm().m_aotInstances) {
+        if (instance->isArrayInTheMaking(object))
+            return IterationStatus::Continue;
+    }
+#endif
 
     if (isInAffectedGlobalObject(object))
         m_foundObjects.append(object);
@@ -3517,7 +3531,7 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
         return;
     }
     // Besides functions a prototype has data (Array.prototype[Symbol.unscopables]). The methods of console are for a host to replace.
-    if (object->type() != InternalFunctionType && (holder.structure()->hasImmutableProperties() || object->isGlobalObject() || object->type() == GlobalProxyType || object->classInfo() == ConsoleObject::info()))
+    if (object->type() != InternalFunctionType && (holder.structure()->hasImmutableProperties() || holder.structure()->typeInfo().wouldHaveImmutableProperties() || object->isGlobalObject() || object->type() == GlobalProxyType || object->classInfo() == ConsoleObject::info()))
         return;
     makeIntrinsicImmutable(object, IntrinsicKind::Other);
 }
@@ -3525,7 +3539,7 @@ void JSGlobalObject::makeValueOfIntrinsicImmutable(JSObject& holder, PropertyNam
 void JSGlobalObject::makeIntrinsicImmutable(JSObject* object, IntrinsicKind kind)
 {
     VM& vm = this->vm();
-    if (object->structure()->inheritorsMayOverrideReadOnlyProperties())
+    if (object->structure()->inheritorsMayOverrideReadOnlyProperties() || object->structure()->typeInfo().wouldHaveFixedProperties())
         return;
     if (m_isNumberingIntrinsics && object->hasNonReifiedStaticProperties())
         object->reifyAllStaticProperties(this);
@@ -3544,7 +3558,8 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     VM& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 #if ENABLE(AOT)
-    AOT::Typed::installGeneratorMethods(this);
+    if (vm.useImmutableIntrinsics)
+        AOT::Typed::installGeneratorMethods(this);
 #endif
     // What ImmutableIntrinsics numbers: these variables and, of the first group, what they lead to. All of it is made here.
     static constexpr ASCIILiteral names[] = {
@@ -3561,6 +3576,7 @@ void JSGlobalObject::makeIntrinsicsImmutable()
 #if ENABLE(AOT)
     numbersIntrinsics = AOT::Image::usesNumberedIntrinsics();
 #endif
+    numbersIntrinsics &= vm.useImmutableIntrinsics;
     for (unsigned i = 0; i < std::size(names) && numbersIntrinsics; ++i) {
         SetForScope isNumberingIntrinsics(m_isNumberingIntrinsics, i < numberOfNamesWithNumberedProperties);
         JSValue value = get(this, Identifier::fromString(vm, names[i]));
@@ -3574,7 +3590,7 @@ void JSGlobalObject::makeIntrinsicsImmutable()
     // Whatever else the realm was made with: what a variable names, and the prototypes that only their objects lead to.
     structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
         constexpr unsigned fixed = PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
-        if ((entry.attributes() & fixed) == fixed)
+        if ((entry.attributes() & fixed) == fixed || entry.attributes() & PropertyAttribute::WouldBeFixed)
             makeValueOfIntrinsicImmutable(*this, entry.key(), getDirect(entry.offset()), entry.attributes());
         return true;
     });
@@ -3928,6 +3944,12 @@ void JSGlobalObject::setName(const String& name)
 
 void JSGlobalObject::bumpGlobalLexicalBindingEpoch(VM& vm)
 {
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : vm.m_aotInstances) {
+        if (instance->globalObject == this)
+            instance->forgetValuesOfGlobalProperties();
+    }
+#endif
     if (++m_globalLexicalBindingEpoch == Options::thresholdForGlobalLexicalBindingEpoch()) {
         // Since the epoch overflows, we should rewrite all the CodeBlock to adjust to the newly started generation.
         m_globalLexicalBindingEpoch = 1;
@@ -4027,6 +4049,11 @@ void JSGlobalObject::promiseRejectionTracker(JSGlobalObject* globalObject, JSPro
 
 void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Exception*)
 {
+}
+
+void JSGlobalObject::setAuditFunction(VM& vm, JSObject* function)
+{
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].set(vm, this, function);
 }
 
 void JSGlobalObject::setConsoleClient(WeakPtr<ConsoleClient>&& consoleClient)

@@ -50,7 +50,9 @@ public:
     InferSwitches(Procedure& proc)
         : m_proc(proc)
         , m_insertionSet(proc)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_useCounts(proc)
+#endif
     {
     }
     
@@ -176,7 +178,13 @@ private:
         if (B3InferSwitchesInternal::verbose)
             dataLog("    Doing it!\n");
         // We're committed to doing the thing.
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_useCounts)
+            m_useCounts.emplace(m_proc);
+
+#else
         
+#endif
         // Delete the extra value from the predecessor, since that would break downstream inference
         // on the next fixpoint iteration. We would think that this block is too expensive to merge
         // because of the Equal or NotEqual value even though that value is dead! We know it's dead
@@ -272,7 +280,11 @@ private:
             // predicates.
             if (predicate->numChildren() == 2
                 && predicate->child(1)->hasInt()
+#if USE(BUN_JSC_ADDITIONS)
+                && useCounts().numUses(predicate) == 1) {
+#else
                 && m_useCounts.numUses(predicate) == 1) {
+#endif
                 switch (predicate->opcode()) {
                 case Equal:
                     result.source = predicate->child(0);
@@ -320,7 +332,18 @@ private:
     
     Procedure& m_proc;
     InsertionSet m_insertionSet;
+#if USE(BUN_JSC_ADDITIONS)
+    UseCountsWithoutUsingInstructions& useCounts()
+    {
+        if (!m_useCounts)
+            m_useCounts.emplace(m_proc);
+        return *m_useCounts;
+    }
+
+    std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
+#else
     UseCountsWithoutUsingInstructions m_useCounts;
+#endif
 };
 
 } // anonymous namespace

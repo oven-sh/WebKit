@@ -263,6 +263,7 @@ private:
     bool isCalledByConstructionOrConstructedWrapper();
     bool isEnteredByConstruction();
     AOT::ImageAddressInfo classify(const void* address);
+    bool gotoNextAOTFrame();
     bool tryGotoCompiledCaller();
 #endif
 #if ENABLE(DFG_JIT)
@@ -280,6 +281,7 @@ private:
     CallFrame* m_aotAdapterSkippedAtTop { nullptr };
     bool m_topEntryFrameIsEmpty { false };
     bool m_wantsOnlyHandlers { false };
+    bool m_mayVisitAOTFrames { false };
 };
 
 class CallerFunctor {

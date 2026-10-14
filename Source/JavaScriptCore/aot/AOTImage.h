@@ -29,7 +29,6 @@ namespace AOT {
 
 static constexpr uint64_t imageMagic = 0x3130544f414e5542ULL;
 static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 * KB);
-static constexpr size_t sizeOfZeroesInImage = 128 * KB;
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
@@ -56,29 +55,8 @@ struct ImageHeader {
     uint32_t shapesOffset;
     uint32_t numberOfShapes;
     uint32_t shapeSlotsOffset;
-    uint32_t slotRangesOffset;
-    uint32_t numberOfSlotRanges;
-    uint32_t slotTypesOffset;
-    uint32_t fieldRangesOffset;
-    uint32_t fieldRecordsOffset;
-    uint32_t fieldTypesOffset;
-    uint32_t fieldLayoutIDsOffset;
-    uint32_t fieldsStartOffset;
-    uint32_t fieldsOffset;
-    uint32_t layoutIDsByFieldIDOffset;
-    uint32_t largestFieldID;
-    uint32_t inlineSlotCountsOffset;
     uint32_t auditsTypes;
-    uint32_t numberOfTypeCoverageCounters;
-    uint32_t selectorsOffset;
-    uint32_t numberOfSelectors;
-    uint32_t selectorRowsOffset;
-    uint32_t selectorTextOffset;
-    uint32_t selectorsInOrderOffset;
-    uint32_t numberOfSelectorsInOrder;
     uint32_t intrinsicHash;
-    uint32_t dispatchOffset;
-    uint32_t dispatchSize;
     uint32_t quotesOffset;
     uint32_t quotesTextOffset;
     uint32_t quoteTextBlockSize;
@@ -95,13 +73,11 @@ struct ImageHeader {
     uint32_t faultingAccessesOffset;
     uint32_t numberOfFaultingAccesses;
     uint32_t numberOfFaultingAccessesWithWideName;
+    uint32_t numberOfThrowSitesOfFaultingAccesses;
     uint32_t numberOfTrapsAtThrowSites;
     uint32_t framesOffset;
     uint32_t typedDataOffset;
     uint32_t typedDataSize;
-    uint32_t staticsOffset;
-    uint32_t staticsSize;
-    uint32_t zeroesOffset;
     uint32_t functionsEnd;
     uint32_t stubsSize;
     uint32_t numberOfStubCopies;
@@ -148,22 +124,6 @@ struct ImageShape {
     uint16_t unused;
 };
 
-struct ImageSelector {
-    uint32_t text;
-    uint32_t length : 31;
-    uint32_t is8Bit : 1;
-};
-
-struct ImageDispatchEntry {
-    static constexpr unsigned locationBits = 12;
-    static bool fits(int32_t location) { return location >= -(1 << (locationBits - 1)) && location < (1 << (locationBits - 1)); }
-    static uint32_t encode(uint32_t selector, int32_t location)
-    {
-        RELEASE_ASSERT(fits(location));
-        return selector << locationBits | (static_cast<uint32_t>(location) & ((1u << locationBits) - 1));
-    }
-};
-
 struct ImageEnvironment {
     uint32_t distance;
     uint32_t size;
@@ -197,7 +157,6 @@ struct CompiledCode {
 };
 
 JS_EXPORT_PRIVATE uint64_t imageStamp();
-void didUseNumberedIntrinsic();
 
 class ImageBuilder {
     WTF_MAKE_TZONE_ALLOCATED(ImageBuilder);
@@ -207,13 +166,11 @@ public:
 
     void add(ImageKey, uint64_t rank, CompiledCode&&, String&& nameForMap = { });
     static void clearStubCalls(CompiledCode&);
-    void reserveFunctions(size_t number) { m_functions.reserveCapacity(m_functions.size() + number); }
     size_t growFunctions(size_t number);
     void set(size_t place, ImageKey, uint64_t rank, CompiledCode&&, String&& nameForMap);
     size_t numberOfFunctions() const { return m_functions.size(); }
     void clear() { m_functions.clear(); }
     void setEnvironments(Vector<ImageEnvironment>&& environments, uint32_t size) { m_environments = WTF::move(environments); m_environmentsSize = size; }
-    void setNumberOfTypeCoverageCounters(uint32_t number) { m_numberOfTypeCoverageCounters = number; }
     void setProgramIdentifierIndices(const IdentifierIndices* numbers, uint32_t number)
     {
         m_programIdentifierIndices = numbers;
@@ -239,7 +196,6 @@ private:
     Vector<Function> m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
-    uint32_t m_numberOfTypeCoverageCounters { 0 };
     Vector<FunctionReportableSites> reportableSites();
     Vector<FunctionReportableSites> m_reportableSites;
     struct RegExpCode {
@@ -307,12 +263,8 @@ public:
     // Whether a realm has to have its intrinsics numbered: see ImageHeader::intrinsicHash. Also where there is no image: the compiler.
     JS_EXPORT_PRIVATE static bool usesNumberedIntrinsics();
     const void* code() const { return m_code; }
-    void* mapPrivately(uint32_t offset, size_t) const;
-    static void* mapZeroes(size_t);
-    static void unmap(void*, size_t);
     JS_EXPORT_PRIVATE static uint32_t environmentsSize();
     JS_EXPORT_PRIVATE static uint32_t numberOfFunctions();
-    static uint32_t numberOfTypeCoverageCounters();
     static size_t totalDataSize();
     JS_EXPORT_PRIVATE static ImageEnvironment environmentOf(uint32_t graphModule);
     static const void* stubAddress(Stub);
@@ -337,7 +289,6 @@ public:
     String quoteText(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(m_data.data() + offset); }
-    uint32_t selectorNamed(VM&, const StringImpl&) const;
 
     const uint8_t* codeFor(const ImageFunction& function) const { return static_cast<const uint8_t*>(m_code) + at<uint32_t>(header().functionStartsOffset)[function.index]; }
     size_t sizeOfCodeOf(const ImageFunction& function) const
@@ -408,7 +359,7 @@ struct ImageCode {
 };
 struct FaultingAccessInImage {
     // Offsets are multiples of 4 wherever a function can be without a frame.
-    static constexpr uint32_t hasNoFrameBit = hasStubsForFunctionsWithoutFrame ? 1 : 0;
+    static constexpr uint32_t hasNoFrameBit = hasStubsForFunctionsWithoutFrame ? 1 : isX86_64() ? 1u << 31 : 0;
     // How far from zero, or from the base of the cage, an address is taken for an access through `undefined` or `null`.
     static constexpr uintptr_t reach = 16 * KB;
 
@@ -424,10 +375,6 @@ ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlo
 bool moduleIsLinkedAsCompiled(JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> jitCodeForImageFunction(ImageCode, CodeSpecializationKind);
-enum class EmptyArrayLiteralsLeftToStub : uint8_t { WhereTextSays, OutsideLoops, All };
-EmptyArrayLiteralsLeftToStub emptyArrayLiteralsLeftToStub();
-enum class ReadsOfExpectedLeftToGeneralWay : uint8_t { None, Length, All, LengthWhereColdByGraph, AllWhereColdByGraph };
-ReadsOfExpectedLeftToGeneralWay readsOfExpectedLeftToGeneralWay();
 
 } } // namespace JSC::AOT
 

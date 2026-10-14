@@ -190,7 +190,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JS_EXPORT_PRIVATE static JSCell* asyncFunctionIn(JSValue context);
         JS_EXPORT_PRIVATE static JSPromise* promiseOfAsyncFunction(JSCell* generatorOrResumeClosure);
         JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure, size_t maxStackSize);
-        std::unique_ptr<AOT::ReturnAddressTrace> tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames);
+        AOT::ReturnAddressTrace* tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames);
+        AOT::ReturnAddressTrace* tryGetStackTraceBehindConstructors(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructor);
 #endif
 
         struct FramesAlreadyInTrace {
@@ -203,6 +204,8 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
     private:
 #if ENABLE(AOT)
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSCell* initialGeneratorOrResumeClosure, size_t maxStackSize);
+        template<bool isUnderHostFunction, bool leavesOutConstructors = false> AOT::ReturnAddressTrace* getStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame*, void* returnPC, JSFunction* hostFunctionOnTop, JSCell* lastConstructor = nullptr);
+        AOT::ReturnAddressTrace* tryGetStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, CallFrame*);
 #else
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
 #endif

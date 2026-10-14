@@ -26,17 +26,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewError, JSCell*, (Instance* instance
     OPERATION_RETURN(scope, ErrorInstance::create(globalObject, globalObject->errorStructure(errorType), JSValue::decode(message), JSValue::decode(options), nullptr, TypeNothing, errorType, useCurrentFrame));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowNewError, void, (Instance* instance, uint32_t type, uint32_t message))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    ErrorType errorType = static_cast<ErrorType>(type);
-    constexpr bool useCurrentFrame = true;
-    auto* error = ErrorInstance::create(globalObject, globalObject->errorStructure(errorType), instance->typed->string(vm, message), jsUndefined(), nullptr, TypeNothing, errorType, useCurrentFrame);
-    OPERATION_RETURN_IF_EXCEPTION(scope);
-    throwException(globalObject, scope, error);
-    OPERATION_RETURN(scope);
-}
-
 namespace Typed {
 
 using namespace B3;
@@ -115,12 +104,7 @@ void Lowering::throwNewError(const Value& error)
 {
     RELEASE_ASSERT(error.opcode == Opcode::CallBuiltin);
     ErrorType type = errorTypeOf(m_builtins.at(error.builtin()).implementation.inlined);
-    static const bool isThrowSite = getenv("AOT_SWITCH_THROW_NEW_ERROR");
-    if (isThrowSite) {
-        throwAt(ThrowKind::TypeMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
-        return;
-    }
-    AOT_TYPED_OPERATION(ThrowNewError, word32(static_cast<int32_t>(type)), word32(m_function.at(error.arguments[0]).string().index()));
+    throwAt(ThrowKind::TypeMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
 }
 
 } } } // namespace JSC::AOT::Typed

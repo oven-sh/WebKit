@@ -967,6 +967,9 @@ void testBranchNotEqualFoldPtr(intptr_t value);
 void testBranchEqualFoldPtr(intptr_t value);
 void testBranchLoadPtr();
 void testBranchLoad32();
+#if USE(BUN_JSC_ADDITIONS)
+void testMemoryNumberingWhenWalkRemovesEdgeIntoJoin();
+#endif
 void testBranchLoad8S();
 void testBranchLoad8Z();
 void testBranchLoad16S();

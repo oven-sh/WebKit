@@ -39,7 +39,7 @@ One declaration per line. `#` starts a comment.
   replaceable NAME
       A global object that hosts and programs replace, as they do each of its properties. Compiled code reads both every time, and takes
       what an entry says to hold where the function it finds is the one the realm started with. Its entries are static functions:
-      HostCall, Call or Generic.
+      HostCall, Call, Generic or Inline(NAME).
   inline NAME [exact]
       InlineBuiltin::NAME, which this family lowers. Any family may use it. `exact`: the code does what the call by name does whatever has
       become of the receiver, so the receiver's original structure is not checked first.
@@ -51,7 +51,7 @@ One declaration per line. `#` starts a comment.
   predicted PATH
       What lib.d.ts declares of HOLDER.NAME, or of the global NAME and all it leads to, says more than the function does (`Object.assign`
       is declared to return `T & U` and returns its first argument). The entries stay; the checker is not given the name, so that to
-      it the declaration is one without a body like any other: a prediction.
+      it the declaration is one without a body like any other: a prediction. A holder that is left without a name is not given either.
   $NAME POSITION = WHAT
       What `$NAME` is in a file of Bun's src/js that does not declare it. POSITION: Call (`$NAME(..)`), Value (not called) or Member
       (`o.$NAME`, `o.$NAME(..)`, a key, a member of a class). `$PREFIX* POSITION = WHAT`: of every name that starts so and has no line.
@@ -382,8 +382,8 @@ def cpp_lowering(entry):
     is_function = kind not in ('operation', 'intrinsic', 'constant')
     if lowering == 'Generic' and is_function:
         return 'generic'
-    if entry['holder'] in replaceable and (kind != 'static' or lowering not in ('Call', 'HostCall')):
-        errors.append('%s: %s is replaceable: a static function that is HostCall, Call or Generic' % (where, entry['holder']))
+    if entry['holder'] in replaceable and (kind != 'static' or not re.fullmatch(r'Call|HostCall|Inline\(\w+\)', lowering)):
+        errors.append('%s: %s is replaceable: a static function that is HostCall, Call, Generic or Inline(NAME)' % (where, entry['holder']))
     if lowering in ('Call', 'HostCall') and is_function:
         return 'calls(%s)' % cpp_call(entry, lowering)
     if lowering == 'Cell' and kind == 'constant':
@@ -533,6 +533,8 @@ for where, path in predicted:
     names[holder].discard(name)
     if not holder:
         names.pop(name, None)
+    elif not names[holder]:
+        del names[holder]
 
 # What the checker is told of each entry.
 RUST_KINDS = {'function': 'Function', 'call': 'Call', 'construct': 'Construct', 'static': 'Static', 'method': 'Method', 'getter': 'Getter', 'setter': 'Setter', 'intrinsic': 'Intrinsic'}

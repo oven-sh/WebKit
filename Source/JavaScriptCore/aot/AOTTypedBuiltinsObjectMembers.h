@@ -13,6 +13,7 @@
     // From an allocator that is there and whose cells have that size. Nothing has been stored to the cell.
     CellPointer allocateCell(LValue allocator, size_t cellSize, LBasicBlock slowPath);
     CellPointer newCopyOnWriteArray(LValue list, LBasicBlock slowPath);
+    LValue keyListOfLayoutOrElse(CellPointer object, LBasicBlock otherwise);
     CellPointer lowerOwnPropertyKeys(InlineBuiltin, ValueID object);
     CellPointer listKeysForIn(Boxed object, const Type&);
     enum class OwnField : uint8_t { InAllMembers, InNoMember, Varies };

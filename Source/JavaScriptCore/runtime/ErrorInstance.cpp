@@ -170,6 +170,19 @@ void ErrorInstance::setStackFrames(VM& vm, WTF::Vector<StackFrame>&& stackFrames
     vm.writeBarrier(this);
 }
 
+template<typename Visitor>
+void ErrorInstance::visitChildrenImpl(JSCell* cell, Visitor& visitor)
+{
+    ErrorInstance* thisObject = uncheckedDowncast<ErrorInstance>(cell);
+    ASSERT_GC_OBJECT_INHERITS(thisObject, info());
+    Base::visitChildren(thisObject, visitor);
+    Locker locker { thisObject->cellLock() };
+    if (thisObject->m_returnAddresses)
+        visitor.markAuxiliary(thisObject->m_returnAddresses);
+}
+
+DEFINE_VISIT_CHILDREN(ErrorInstance);
+
 size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 {
     size_t size = sizeof(ErrorInstance);
@@ -180,7 +193,7 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
         if (errorInstance->m_stackTrace)
             size += errorInstance->m_stackTrace->sizeInBytes();
         if (errorInstance->m_returnAddresses)
-            size += errorInstance->m_returnAddresses->returnAddresses.sizeInBytes();
+            size += errorInstance->m_returnAddresses->sizeInBytes();
         if (!errorInstance->m_stackString.isEmpty())
             size += errorInstance->m_stackString.impl()->costDuringGC();
     }
@@ -191,9 +204,12 @@ size_t ErrorInstance::estimatedSize(JSCell* cell, VM& vm)
 void ErrorInstance::materializeStackTrace()
 {
     auto stackTrace = makeUnique<Vector<StackFrame>>();
+    unsigned onTop = m_returnAddresses->hasFrameOfHostFunctionOnTop;
+    if (onTop)
+        stackTrace->append(m_stackTrace->span().first(onTop));
     StackFrame::appendTypedFrames(*m_returnAddresses, *stackTrace);
     if (m_stackTrace)
-        stackTrace->appendVector(*m_stackTrace);
+        stackTrace->append(m_stackTrace->span().subspan(onTop));
     Locker locker { cellLock() };
     m_stackTrace = WTF::move(stackTrace);
     m_returnAddresses = nullptr;
@@ -245,13 +261,12 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     m_runtimeTypeForCause = type;
 
     std::unique_ptr<Vector<StackFrame>> stackTrace;
-    std::unique_ptr<AOT::ReturnAddressTrace> returnAddresses;
+    AOT::ReturnAddressTrace* returnAddresses = nullptr;
 #if ENABLE(AOT)
     if (vm.useImmutableIntrinsics) [[unlikely]] {
-        static const bool keepsReturnAddresses = getenv("BUN_AOT_SWITCH_LAZY_TRACES");
-        if (keepsReturnAddresses && useCurrentFrame && !subclassCaller) {
+        if (useCurrentFrame) {
             if (std::optional<unsigned> stackTraceLimit = realm()->stackTraceLimit())
-                returnAddresses = vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
+                returnAddresses = subclassCaller ? vm.interpreter.tryGetStackTraceBehindConstructors(this, *stackTraceLimit, stackTrace, subclassCaller) : vm.interpreter.tryGetStackTraceAsReturnAddresses(this, *stackTraceLimit, stackTrace);
         }
     }
 #endif
@@ -260,7 +275,7 @@ void ErrorInstance::finishCreation(VM& vm, const String& message, JSValue cause,
     {
         Locker locker { cellLock() };
         m_stackTrace = WTF::move(stackTrace);
-        m_returnAddresses = WTF::move(returnAddresses);
+        m_returnAddresses = returnAddresses;
     }
     vm.writeBarrier(this);
 

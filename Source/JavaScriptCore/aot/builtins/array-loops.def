@@ -21,11 +21,8 @@ inline IsPlainArrayLike
 runtime NewArrayWithHoles : RuntimeState JSCell* (JSCell* source, uint64_t length, uint32_t indexingType, uint32_t isCapacity)
 runtime GrowNewArray : Heap void (JSCell* array, uint64_t length)
 runtime TruncateNewArray : Heap JSCell* (JSCell* array, uint32_t length)
-runtime ArrayGetDirectIndex : Nothing EncodedJSValue (JSCell* array, uint64_t index) noexcept
-runtime ArrayGetDirectDoubleIndex : Nothing double (JSCell* array, uint64_t index) noexcept
-runtime ArrayPutDirectIndex : RuntimeState void (JSCell* array, uint64_t index, EncodedJSValue value) noexcept
 
-# Of the prelude. An array operand is a cell. An index is within the length, which the caller has looked at since anything else ran. How the array keeps its elements is looked at here.
+# Of the prelude. An array operand is a cell. An index is within the length, which the caller has looked at since anything else ran.
 intrinsic CallNoInline (any/C, any/A, any/A...) -> anything ; CallsUserCode ; Inline(Call)
 intrinsic IsOriginalArray (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsOriginalArray)
 intrinsic IsDoubleArray (any/-) -> boolean ; ReadsRuntimeState ; Inline(IsDoubleArray)

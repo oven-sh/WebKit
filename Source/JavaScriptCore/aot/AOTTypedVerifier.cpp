@@ -45,6 +45,7 @@ public:
                     worklist.append(target.block.index());
             }
         }
+        bool hasInvokeWithoutTwoTargets = false;
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             if (!isReached.get(b))
                 continue;
@@ -54,7 +55,17 @@ public:
             verify(block.terminator);
             if (block.terminator.kind == TerminatorKind::Invoke && block.values.isEmpty())
                 failAtEndOf(b, "ends in an Invoke and has no value for it to watch"_s);
+            if (block.terminator.kind == TerminatorKind::Invoke && block.terminator.targets.size() != 2) {
+                failAtEndOf(b, "ends in an Invoke that does not have two targets"_s);
+                hasInvokeWithoutTwoTargets = true;
+            }
+            for (auto& target : block.terminator.targets) {
+                if (target.arguments.size() != m_function.at(target.block).parameters.size())
+                    failAtEndOf(b, "passes a block another number of arguments than it has parameters"_s);
+            }
         }
+        if (hasInvokeWithoutTwoTargets)
+            return;
         verifyInitialStores(isReached);
         verifyDefinitions(isReached);
         for (unsigned v = 0; v < m_function.values.size(); ++v) {

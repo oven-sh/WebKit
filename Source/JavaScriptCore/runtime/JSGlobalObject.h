@@ -1272,6 +1272,8 @@ public:
     inline JSCell* linkTimeConstant(LinkTimeConstant) const;
     template<typename Type> inline Type linkTimeConstantConcurrently(LinkTimeConstant) const;
 
+    JS_EXPORT_PRIVATE void setAuditFunction(VM&, JSObject*);
+
     inline JSObject* asyncGeneratorPrototypeNextFunction() const;
     inline JSObject* asyncIteratorPrototypeSymbolAsyncIteratorFunction() const;
 

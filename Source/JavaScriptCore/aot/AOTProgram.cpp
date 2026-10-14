@@ -87,14 +87,6 @@ void forgetDeclaredNames()
 }
 
 
-unsigned KnownShape::inlineCapacityFor(unsigned numberOfProperties)
-{
-    unsigned capacity = std::min(std::max(numberOfProperties, 1u), JSFinalObject::maxInlineCapacity);
-    size_t size = JSFinalObject::allocationSize(capacity);
-    capacity += (MarkedSpace::optimalSizeFor(size) - size) / sizeof(WriteBarrier<Unknown>);
-    return std::min(capacity, JSFinalObject::maxInlineCapacity);
-}
-
 Convention conventionOf(UnlinkedCodeBlock* codeBlock)
 {
     Convention result;

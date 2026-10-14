@@ -22,15 +22,9 @@ namespace AOT {
     v(GetByVal) \
     v(PutById) \
     v(PutByVal) \
-    v(NewObject) \
     v(NewObjectLiteral) \
-    v(CreateThis) \
-    v(CreateThisWithProperties) \
-    v(NewFunction) \
     v(CompareStrictEq) \
     v(CompareEq) \
-    v(InById) \
-    v(InByVal) \
 
 static constexpr ptrdiff_t offsetOfInstanceRegisterInAdapter = -24;
 static constexpr ptrdiff_t offsetOfNumberTagRegisterInAdapter = -16;
@@ -50,48 +44,11 @@ static constexpr unsigned maxCodeGranuleShift = 12;
 
 #define FOR_EACH_AOT_OPERATION_BEHIND_HELPER(v) \
     v(NewArray, operationAOTNewArray) \
-    v(NewArrayBuffer, operationAOTNewArrayBuffer) \
-    v(NewArrayWithSpread, operationAOTNewArrayWithSpread) \
-    v(NewArrayWithSpecies, operationAOTNewArrayWithSpecies) \
-    v(NewArrayWithSize, operationAOTNewArrayWithSize) \
-    v(CreateRest, operationAOTCreateRest) \
-    v(CreateLexicalEnvironment, operationAOTCreateLexicalEnvironment) \
-    v(NewInternalFieldObject, operationAOTNewInternalFieldObject) \
-    v(NewResolvedPromise, operationNewResolvedPromise) \
-    v(NewMapOrSet, operationAOTNewMapOrSet) \
-    v(ToString, operationAOTToString) \
-    v(Int32ToStringWithValidRadix, operationInt32ToStringWithValidRadix) \
-    v(MakeRope2, operationMakeRope2) \
-    v(MakeRope3, operationMakeRope3) \
-    v(StringSliceWithEnd, operationStringSliceWithEnd) \
-    v(StringSubstringWithEnd, operationStringSubstringWithEnd) \
-    v(ObjectKeysObject, operationObjectKeysObject) \
     v(ValueAdd, operationAOTValueAdd) \
-    v(Strcat, operationAOTStrcat) \
 
 #define FOR_EACH_AOT_HELPER(v) \
     v(HelperNewArray) \
     v(HelperNewInt32Array) \
-    v(HelperNewArrayBuffer) \
-    v(HelperNewActivation) \
-    v(HelperNewPromise) \
-    v(HelperNewResolvedPromise) \
-    v(HelperNewGenerator) \
-    v(HelperNewAsyncFunctionGenerator) \
-    v(HelperNewMap) \
-    v(HelperNewSet) \
-    v(HelperNewArrayWithSpread) \
-    v(HelperNewArrayWithSpecies) \
-    v(HelperNewArrayWithSize) \
-    v(HelperStringSlice) \
-    v(HelperStringSubstring) \
-    v(HelperMakeRope2) \
-    v(HelperMakeRope3) \
-    v(HelperInt32ToString) \
-    v(HelperObjectKeys) \
-    v(HelperAddField) \
-    v(HelperSetArrayLength) \
-    v(HelperStrcat) \
     v(HelperAddStrings) \
 
 #define FOR_EACH_AOT_STUB(v) \
@@ -107,6 +64,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(EnterSlimClosure) \
     v(EnterResume) \
     v(CallValue) \
+    v(CallValueWithoutThis) \
     v(CallMethod) \
     v(CallMethodRead) \
     v(ApplyArray) \
@@ -129,6 +87,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(UncheckedOperationDoubleWithInstance) \
     v(ThrowAtSite) \
     v(LeafThrowAtSite) \
+    v(ThrowAtSiteByWord) \
+    v(LeafThrowAtSiteByWord) \
     v(ThrowAtFault) \
     v(LeafThrowAtFault) \
     v(ThrowAtTrap) \
@@ -178,6 +138,22 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafNewTypedClosure3) \
     v(NewTypedClosure4) \
     v(LeafNewTypedClosure4) \
+    v(NewTypedClosureOnce) \
+    v(LeafNewTypedClosureOnce) \
+    v(NewTypedClosureOnce32) \
+    v(LeafNewTypedClosureOnce32) \
+    v(InitializeTypedClosure0) \
+    v(LeafInitializeTypedClosure0) \
+    v(InitializeTypedClosure1) \
+    v(LeafInitializeTypedClosure1) \
+    v(InitializeTypedClosure2) \
+    v(LeafInitializeTypedClosure2) \
+    v(InitializeTypedClosure3) \
+    v(LeafInitializeTypedClosure3) \
+    v(InitializeTypedClosure4) \
+    v(LeafInitializeTypedClosure4) \
+    v(MaterializeEnvironment) \
+    v(LeafMaterializeEnvironment) \
     v(TypedString) \
     v(LeafTypedString) \
     v(CallModuleFunction) \
@@ -214,12 +190,30 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(StringIsText) \
     v(LeafStringIsText) \
     v(StringReplaceRegExpStringThatMayFindNothing) \
+    v(NewRegExpLiteral) \
+    v(UncheckedNewRegExpLiteral) \
+    v(RegExpExecThatAsksBodyFirst) \
+    v(RegExpTestThatAsksBodyFirst) \
+    v(StringToLowerCase) \
+    v(StringToUpperCase) \
+    v(UncheckedStringToLowerCase) \
+    v(UncheckedStringToUpperCase) \
+    v(NewTypedArray) \
+    v(UncheckedNewTypedArray) \
+    v(HoldToType) \
+    v(LeafHoldToType) \
     v(StringStartsWithText) \
     v(LeafStringStartsWithText) \
     v(StringEndsWithText) \
     v(LeafStringEndsWithText) \
     v(StringsAreEqual) \
     v(LeafStringsAreEqual) \
+    v(ConcatenateTwo) \
+    v(LeafConcatenateTwo) \
+    v(ConcatenateThree) \
+    v(LeafConcatenateThree) \
+    v(StringOfInt32) \
+    v(LeafStringOfInt32) \
     v(StringTrim) \
     v(LeafStringTrim) \
     v(StringTrimStart) \
@@ -238,6 +232,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafTypedBuiltinCell) \
     v(TypedClosureEntry) \
     v(LeafTypedClosureEntry) \
+    v(IsArrayAsMade) \
+    v(LeafIsArrayAsMade) \
     v(TypedNewPromise) \
     v(LeafTypedNewPromise) \
     v(AwaitMayContinue) \
@@ -280,11 +276,21 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafPushToFullVector) \
     v(PushDoubleToFullVector) \
     v(LeafPushDoubleToFullVector) \
+    v(PartOfString) \
+    v(LeafPartOfString) \
     v(StoreElement) \
     v(LeafStoreElement) \
+    v(LoadElement) \
+    v(LeafLoadElement) \
+    v(ArraySlice) \
+    v(LeafArraySlice) \
+    v(ArrayCopy) \
+    v(LeafArrayCopy) \
     v(WriteBarrier) \
     v(ToBoolean) \
     v(CharactersOfSubstring) \
+    v(CodeUnitOfRope) \
+    v(LeafCodeUnitOfRope) \
     v(StrictEqual) \
     v(LooseEqual) \
     v(Add) \
@@ -324,43 +330,67 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(PutById) \
     v(TryGetByNameAndRow) \
     v(TryPutByNameAndRow) \
-    v(GetByIdIsText1) \
-    v(GetByIdIsText2) \
-    v(GetByIdIsText3) \
-    v(GetByIdIsText4) \
-    v(GetByIdIsText5) \
-    v(GetByIdIsText6) \
-    v(GetByIdIsText7) \
-    v(GetByIdIsText8) \
     v(DefineOwnProperty) \
     v(GetByValCached) \
     v(PutByValCached) \
+    v(PutByValCachedSloppy) \
     v(PrivateGet) \
     v(PrivateSet) \
     v(PrivateHas) \
     v(PrivateFieldAdd) \
     v(InByValCached) \
     v(DeleteByValCached) \
+    v(DeleteByValCachedSloppy) \
     v(InstanceOf) \
     v(InstanceOfCached) \
+    v(MapGetAskingReceiver) \
     v(MapGet) \
+    v(MapHasAskingReceiver) \
     v(MapHas) \
+    v(MapSetAskingReceiver) \
     v(MapSet) \
+    v(SetHasAskingReceiver) \
     v(SetHas) \
+    v(SetAddAskingReceiver) \
     v(SetAdd) \
+    v(MapSetWithStringKeyAskingReceiver) \
     v(MapSetWithStringKey) \
+    v(SetAddWithStringKeyAskingReceiver) \
     v(SetAddWithStringKey) \
+    v(MapGetWithStringKeyAskingReceiver) \
     v(MapGetWithStringKey) \
+    v(MapHasWithStringKeyAskingReceiver) \
     v(MapHasWithStringKey) \
+    v(SetHasWithStringKeyAskingReceiver) \
     v(SetHasWithStringKey) \
     v(MapDelete) \
     v(SetDelete) \
+    v(MapGetByBits) \
+    v(MapHasByBits) \
+    v(MapSetByBits) \
+    v(SetHasByBits) \
+    v(SetAddByBits) \
     v(ArrayIncludes) \
     v(ArrayIndexOf) \
+    v(ArrayIncludesOrCall) \
+    v(ArrayIndexOfOrCall) \
+    v(ArrayIncludesOrCallMethodRead) \
+    v(ArrayIndexOfOrCallMethodRead) \
+    v(ArrayPushOrCallMethod) \
+    v(ArrayPushOrCallValue) \
+    v(MapGetOrCallMethod) \
+    v(MapGetOrCallValue) \
+    v(MapHasOrCallMethod) \
+    v(MapHasOrCallValue) \
+    v(MapSetOrCallMethod) \
+    v(MapSetOrCallValue) \
+    v(SetHasOrCallMethod) \
+    v(SetHasOrCallValue) \
+    v(SetAddOrCallMethod) \
+    v(SetAddOrCallValue) \
+    v(TakeElements) \
     v(HandleException) \
     v(PollAtPrologue) \
-    v(SharedPrologue) \
-    v(SharedPrologueWithCalleeSave) \
     v(HandleExceptionAtPrologue) \
     v(ThrowStackOverflowAtPrologue) \
     v(ThrowStackOverflow) \
@@ -374,35 +404,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndGetByVal) \
     v(FrontEndPutById) \
     v(FrontEndPutByVal) \
-    v(FrontEndNewObject) \
     v(FrontEndNewObjectLiteral) \
-    v(FrontEndCreateThis) \
-    v(FrontEndCreateThisWithProperties) \
-    v(FrontEndNewFunction) \
     v(FrontEndCompareStrictEq) \
     v(FrontEndCompareEq) \
-    v(FrontEndInById) \
-    v(FrontEndInByVal) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \
-    v(NewArrayBufferWithFastPath) \
-    v(NewArrayWithSpreadWithFastPath) \
-    v(NewArrayWithSpeciesWithFastPath) \
-    v(NewArrayWithSizeWithFastPath) \
-    v(CreateRestWithFastPath) \
-    v(CreateLexicalEnvironmentWithFastPath) \
-    v(NewInternalFieldObjectWithFastPath) \
-    v(NewResolvedPromiseWithFastPath) \
-    v(NewMapOrSetWithFastPath) \
-    v(ToStringWithFastPath) \
-    v(Int32ToStringWithValidRadixWithFastPath) \
-    v(MakeRope2WithFastPath) \
-    v(MakeRope3WithFastPath) \
-    v(StringSliceWithEndWithFastPath) \
-    v(StringSubstringWithEndWithFastPath) \
-    v(ObjectKeysObjectWithFastPath) \
     v(ValueAddWithFastPath) \
-    v(StrcatWithFastPath) \
     v(NewObjectLiteral0) \
     v(NewObjectLiteral1) \
     v(NewObjectLiteral2) \
@@ -432,6 +439,8 @@ static constexpr unsigned numberOfTypedStringStubsInBlock = 4;
 static_assert(static_cast<unsigned>(Stub::TypedStringInBlock7) == static_cast<unsigned>(Stub::TypedStringInBlock1) + numberOfTypedStringStubsInBlock * (numberOfBlocksOfTypedStrings - 2));
 static_assert(static_cast<unsigned>(Stub::TypedStringMadeOnceInBlock7) == static_cast<unsigned>(Stub::TypedStringMadeOnceInBlock1) + numberOfTypedStringStubsInBlock * (numberOfBlocksOfTypedStrings - 2));
 ASCIILiteral nameOf(Stub);
+static constexpr Stub askingReceiver(Stub stub) { return static_cast<Stub>(static_cast<unsigned>(stub) - 1); }
+static_assert(askingReceiver(Stub::MapGet) == Stub::MapGetAskingReceiver && askingReceiver(Stub::MapHas) == Stub::MapHasAskingReceiver && askingReceiver(Stub::MapSet) == Stub::MapSetAskingReceiver && askingReceiver(Stub::SetHas) == Stub::SetHasAskingReceiver && askingReceiver(Stub::SetAdd) == Stub::SetAddAskingReceiver && askingReceiver(Stub::MapSetWithStringKey) == Stub::MapSetWithStringKeyAskingReceiver && askingReceiver(Stub::SetAddWithStringKey) == Stub::SetAddWithStringKeyAskingReceiver && askingReceiver(Stub::MapGetWithStringKey) == Stub::MapGetWithStringKeyAskingReceiver && askingReceiver(Stub::MapHasWithStringKey) == Stub::MapHasWithStringKeyAskingReceiver && askingReceiver(Stub::SetHasWithStringKey) == Stub::SetHasWithStringKeyAskingReceiver);
 static constexpr unsigned shortLiteralLengthBits = 4;
 static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits) - 1;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
@@ -457,12 +466,8 @@ struct Site {
     static constexpr unsigned extraBits = 32 - identifierBits;
     static bool fits(unsigned identifier, unsigned extra) { return identifier < (1u << identifierBits) && extra < (1u << extraBits); }
 
-    static constexpr unsigned resolvesInGlobalScopes = (1u << extraBits) - 1;
-    static constexpr unsigned throwsIfNotFound = 1;
-    static constexpr unsigned isImport = 2;
     static constexpr unsigned storesLazyClosure = 4;
     static constexpr unsigned isOfRowOfThis = 8;
-    static constexpr uint32_t isCalleeCache = 0xfff00000;
 
     uint32_t identifierAndExtra { 0 };
 };
@@ -479,7 +484,6 @@ struct KnownShape {
     unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
 
     static constexpr unsigned maxProperties = 4096;
-    static unsigned inlineCapacityFor(unsigned numberOfProperties);
 };
 
 struct ImageKey {
@@ -491,12 +495,6 @@ struct ImageKey {
     static constexpr uint32_t typedBody = 1u << 16;
     static constexpr uint32_t typedFunction = 1u << 17;
     static constexpr uint32_t isEntryInsideFunction = 1u << 31;
-    ImageKey ofPublicBody() const
-    {
-        ImageKey result = *this;
-        result.kind &= ~typedBody;
-        return result;
-    }
     bool sameFunction(const ImageKey& other) const { return module == other.module && start == other.start && kind == other.kind; }
     unsigned hash() const
     {
@@ -512,6 +510,7 @@ struct StubCall {
     static constexpr uint32_t noFunction = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noCallSite = std::numeric_limits<uint32_t>::max();
     static constexpr uint32_t noArgumentMoves = std::numeric_limits<uint32_t>::max();
+    static constexpr uint64_t noImmediate = std::numeric_limits<uint64_t>::max();
 
     uint32_t offset;
     Stub stub;
@@ -578,7 +577,7 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-const StubBlob& stubBlob(unsigned codeGranuleShift);
+const StubBlob& stubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes);
 
 struct IndexReference {
     uint32_t offset;
@@ -608,14 +607,9 @@ struct ListDescriptor {
         Passed,
     };
     static constexpr unsigned maxItems = 13;
-    static constexpr uint32_t forList(uint32_t firstVarArg) { return firstVarArg << 1; }
-    static constexpr uint32_t forItems(uint32_t count) { return 1 | count << 1; }
-    static constexpr uint32_t itemKind(unsigned index, Kind kind) { return static_cast<uint32_t>(kind) << (5 + 2 * index); }
     static_assert(5 + 2 * maxItems <= 32 && maxItems < 16);
 
-    bool describesItems() const { return bits & 1; }
     uint32_t firstVarArg() const { return bits >> 1; }
-    unsigned numberOfItems() const { return bits >> 1 & 15; }
     Kind kindOf(unsigned index) const { return static_cast<Kind>(bits >> (5 + 2 * index) & 3); }
 
     uint32_t bits;
@@ -649,8 +643,10 @@ struct CallSite {
 
 #if CPU(ARM64)
 static constexpr GPRReg functionIndexGPR = ARM64Registers::x15;
+static constexpr GPRReg throwWordGPR = ARM64Registers::x16;
 #elif CPU(X86_64)
 static constexpr GPRReg functionIndexGPR = X86Registers::r10;
+static constexpr GPRReg throwWordGPR = X86Registers::r11;
 #endif
 #if CPU(ARM64) || CPU(X86_64)
 void loadFunctionIndexAt(CCallHelpers&, GPRReg pc);
@@ -661,6 +657,7 @@ public:
     void call(CCallHelpers&, Stub, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite);
     void call(CCallHelpers&, Stub, uint32_t t9Value, CallSite, const ArgumentMoves&);
+    void call(CCallHelpers&, Stub, CallSite, const ArgumentMoves&);
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t t9Value);
     void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);

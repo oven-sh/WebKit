@@ -745,6 +745,9 @@ void run(const TestConfig* config)
     RUN(testBranchEqualFoldPtr(0));
     RUN(testBranchLoadPtr());
     RUN(testBranchLoad32());
+#if USE(BUN_JSC_ADDITIONS)
+    RUN(testMemoryNumberingWhenWalkRemovesEdgeIntoJoin());
+#endif
     RUN(testBranchLoad8S());
     RUN(testBranchLoad8Z());
     RUN(testBranchLoad16S());

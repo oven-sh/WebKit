@@ -27,7 +27,6 @@
 #include "config.h"
 #include "Structure.h"
 
-#include "AOTFunction.h"
 #include "AOTProgramData.h"
 
 #include "BrandedStructure.h"
@@ -644,10 +643,6 @@ PropertyTable* Structure::materializePropertyTable(VM& vm, bool setPropertyTable
     ASSERT(!isCompilationThread());
     ASSERT(structure()->classInfoForCells() == info());
     ASSERT(!protectPropertyTableWhileTransitioning());
-#if ENABLE(AOT)
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        AOT::countMaterializationOfPropertyTable(vm);
-#endif
     
     DeferGC deferGC(vm);
     
@@ -1208,6 +1203,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     RELEASE_ASSERT(!structure->hasStableFields() || !setsReadOnlyOnNonAccessorProperties(transitionKind));
 #endif
     bool fixesProperties = transitionKind == TransitionKind::FixAndMakePropertiesImmutable || transitionKind == TransitionKind::FixProperties;
+    bool notesProperties = notesFixedProperties(transitionKind);
     IndexingType indexingModeIncludingHistory = newIndexingType(structure->indexingModeIncludingHistory(), transitionKind);
     
     if (!structure->isDictionary()) {
@@ -1244,7 +1240,7 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     if (makesPropertiesImmutable(transitionKind))
         transition->setHasImmutableProperties(true);
 
-    if (fixesProperties || makesPropertiesImmutable(transitionKind)) {
+    if (fixesProperties || notesProperties || makesPropertiesImmutable(transitionKind)) {
         // A structure is not watched once a watched predecessor of it has transitioned, on the grounds that the object will change
         // shape again. This object will not: what remains for it is a transition such as BecomePrototype, at most once, and for one
         // that stays extensible the rare addition.
@@ -1254,12 +1250,12 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         transition->setDidTransition(structure->didTransition());
     }
     
-    if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind)) {
+    if (setsDontDeleteOnAllProperties(transitionKind) || setsReadOnlyOnNonAccessorProperties(transitionKind) || notesProperties) {
         // We pin the property table on transitions that do wholesale editing of the property
         // table, since our logic for walking the property transition chain to rematerialize the
         // table doesn't know how to take into account such wholesale edits.
 
-        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || fixesProperties);
+        ASSERT(transitionKind == TransitionKind::Seal || transitionKind == TransitionKind::Freeze || fixesProperties || notesProperties);
 
         PropertyTable* table = structure->copyPropertyTableForPinning(vm);
         transition->pinForCaching(Locker { transition->m_lock }, vm, table);
@@ -1269,12 +1265,15 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         RELEASE_ASSERT(table);
         if (transitionKind == TransitionKind::Seal)
             table->seal();
-        else if (fixesProperties) {
+        else if (fixesProperties || notesProperties) {
             JSType type = structure->typeInfo().type();
-            bool isFunction = transitionKind == TransitionKind::FixProperties && (type == JSFunctionType || type == InternalFunctionType);
+            bool isFunction = (transitionKind == TransitionKind::FixProperties || transitionKind == TransitionKind::NoteFixedProperties) && (type == JSFunctionType || type == InternalFunctionType);
             unsigned attributesOfName = std::get<1>(table->get(vm.propertyNames->name.impl()));
             unsigned attributesOfLength = std::get<1>(table->get(vm.propertyNames->length.impl()));
-            table->fix();
+            if (notesProperties)
+                table->noteFixed();
+            else
+                table->fix();
             if (isFunction) {
                 table->updateAttributeIfExists(vm.propertyNames->name.impl(), attributesOfName);
                 table->updateAttributeIfExists(vm.propertyNames->length.impl(), attributesOfLength);
@@ -1282,9 +1281,11 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
         } else
             table->freeze();
 
-        transition->setHasNonEnumerableProperties(true);
-        transition->setHasNonConfigurableProperties(true);
-        transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
+        if (!notesProperties) {
+            transition->setHasNonEnumerableProperties(true);
+            transition->setHasNonConfigurableProperties(true);
+            transition->setHasNonConfigurableReadOnlyOrGetterSetterProperties(true);
+        }
     } else {
         transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
         transition->setMaxOffset(vm, structure->maxOffset());
@@ -1298,6 +1299,8 @@ Structure* Structure::nonPropertyTransitionSlow(VM& vm, Structure* structure, Tr
     // (An object with immutable properties refuses as the receiver whatever this says, and does not slow down its inheritors.)
     if (fixesProperties)
         transition->setInheritorsMayOverrideReadOnlyProperties(true);
+    if (notesProperties)
+        transition->m_outOfLineTypeFlags |= (transitionKind == TransitionKind::NoteFixedProperties ? WouldHaveFixedProperties : WouldHaveFixedProperties | WouldHaveImmutableProperties) >> numberOfInlineBits;
     if (setsReadOnlyOnNonAccessorProperties(transitionKind) && transitionKind != TransitionKind::FixAndMakePropertiesImmutable
         && !transition->propertyTableOrNull()->isEmpty())
         transition->setHasReadOnlyOrGetterSetterPropertiesExcludingProto(true);
@@ -2538,6 +2541,12 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::FixAndMakePropertiesImmutable:
         kindName = "FixAndMakePropertiesImmutable";
+        break;
+    case TransitionKind::NoteFixedProperties:
+        kindName = "NoteFixedProperties";
+        break;
+    case TransitionKind::NoteFixedAndImmutableProperties:
+        kindName = "NoteFixedAndImmutableProperties";
         break;
     case TransitionKind::BecomeDerivedArray:
         kindName = "BecomeDerivedArray";

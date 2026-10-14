@@ -26,6 +26,7 @@ class CodeBlock;
 class FunctionExecutable;
 class JSFunction;
 class JSGlobalObject;
+class JSObject;
 class JSValue;
 class RegisterAtOffsetList;
 class ScriptExecutable;
@@ -49,6 +50,8 @@ struct Slot;
 using Compress = size_t (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t capacity);
 using Decompress = bool (*)(const uint8_t* source, size_t sourceSize, uint8_t* destination, size_t size);
 JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
+using TextOfFunctionInFile = String (*)(JSGlobalObject*, const String& path, uint32_t place);
+JS_EXPORT_PRIVATE void setTextOfFunctionInFile(TextOfFunctionInFile);
 
 struct AllocationPlan {
     static uint32_t encode(unsigned inlineCapacity, unsigned count)
@@ -65,8 +68,6 @@ struct AllocationPlan {
     bool isAssigned(unsigned i) const { return words[i + 1] & 4; }
     bool isDefined(unsigned i) const { return words[i + 1] & 2; }
     bool isStrict(unsigned i) const { return words[i + 1] & 1; }
-    uint16_t thisLayoutID() const { return static_cast<uint16_t>(words[count() + 1]); }
-    uint16_t thisFamily() const { return static_cast<uint16_t>(words[count() + 1] >> 16); }
 
     const uint32_t* words { nullptr };
 };
@@ -94,12 +95,11 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
-    JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset) const;
+    JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& madeHere) const;
     JS_EXPORT_PRIVATE void* catchEntrypointAddress(unsigned bytecodeOffset) const;
     JS_EXPORT_PRIVATE JSCell* calleeInFrame(const void* frame) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
-    JS_EXPORT_PRIVATE BytecodeIndex resumePointOf(int32_t state) const;
 
     JS_EXPORT_PRIVATE LineColumn lineColumnFor(BytecodeIndex) const;
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* ensureUnlinkedCodeBlock() const;
@@ -108,7 +108,6 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE Data* ensureData() const;
     FunctionExecutable* functionDecl(unsigned) const;
     FunctionExecutable* functionExpr(unsigned) const;
-    std::optional<uint32_t> nestedExecutableIndex(bool isExpression, unsigned index) const;
     uint32_t siteConstantOf(const Slot*) const;
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
     struct ReportedPosition {
@@ -118,7 +117,6 @@ struct FunctionRef {
     enum class ConstructPosition : bool { AtDivot, AtStart };
     JS_EXPORT_PRIVATE std::optional<ReportedPosition> reportedPositionFor(BytecodeIndex, ConstructPosition = ConstructPosition::AtDivot) const;
     JS_EXPORT_PRIVATE bool constructsAt(BytecodeIndex) const;
-    AllocationPlan planOf(const Slot* firstSiteSlot) const;
 
     static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
     Instance* instance { nullptr };
@@ -164,6 +162,12 @@ JS_EXPORT_PRIVATE void* taggedSlimClosureEntrypoint();
 JS_EXPORT_PRIVATE JSValue textOfSlimClosure(JSGlobalObject*, JSObject*);
 // The ClosureWord of the function. `relative`: the EntryWord of its code, with the distance from the start of the code for an address.
 uint64_t closureWordOfTypedFunction(std::span<const uint8_t> image, uint32_t function, uint64_t relative);
+struct RangeOfClosureWords {
+    uint32_t firstFunctionClosuresGoBy;
+    uint32_t endOfFunctionsClosuresGoBy;
+    uint32_t rowsLeftOutAheadOfClosures;
+};
+RangeOfClosureWords rangeOfClosureWordsIn(std::span<const uint8_t> image);
 // Whether the cell is a closure of the function, whichever of its entrypoints each of the two goes by.
 JS_EXPORT_PRIVATE bool isClosureOfTypedFunction(JSCell*, uint32_t function);
 
@@ -172,6 +176,7 @@ namespace Typed {
 // Whether an entry function of a program that was compiled from types runs in the place of the top-level code of the module, which is named
 // as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
+JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 Identifier tryMakeIdentifier(VM&, uint32_t identifier);
 String tryGetTextOfIdentifier(uint32_t identifier);
 // For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
@@ -195,6 +200,8 @@ JS_EXPORT_PRIVATE bool isOfBuiltinModule(JSCell*);
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
 // After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
+// For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
+JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
 
 } // namespace Typed
 JS_EXPORT_PRIVATE JSGlobalObject* globalObjectForInstanceToken(VM&, JSCell* token);
@@ -224,14 +231,23 @@ JS_EXPORT_PRIVATE std::optional<FunctionRef::ReportedPosition> definitionOfTyped
 JS_EXPORT_PRIVATE uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc);
 
 struct ReturnAddressTrace {
-    WTF_DEPRECATED_MAKE_STRUCT_FAST_COMPACT_ALLOCATED(ReturnAddressTrace);
-    Instance* instance { nullptr };
-    size_t limit { 0 };
-    Vector<const void*> returnAddresses;
-    static constexpr uintptr_t isOfConstructed = static_cast<uintptr_t>(1) << 63;
-    static const void* ofConstructed(const void* address) { return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(address) | isOfConstructed); }
-    static const void* addressOf(const void* kept) { return std::bit_cast<const void*>(std::bit_cast<uintptr_t>(kept) & ~isOfConstructed); }
+    WTF_ALLOW_STRUCT_COMPACT_POINTERS;
+    Instance* instance;
+    static constexpr unsigned numberOfBitsOfLimit = 24;
+    static constexpr unsigned maxNumberOfFramesLeftOut = 255;
+    uint32_t limit : numberOfBitsOfLimit;
+    uint32_t numberOfFramesLeftOut : 8;
+    uint32_t numberOfReturnAddresses : 31;
+    uint32_t hasFrameOfHostFunctionOnTop : 1;
+    static size_t allocationSize(size_t numberOfReturnAddresses) { return sizeof(ReturnAddressTrace) + numberOfReturnAddresses * sizeof(uint32_t); }
+    size_t sizeInBytes() const { return allocationSize(numberOfReturnAddresses); }
+    std::span<uint32_t> returnAddresses() { return { reinterpret_cast<uint32_t*>(this + 1), numberOfReturnAddresses }; }
+    std::span<const uint32_t> returnAddresses() const { return { reinterpret_cast<const uint32_t*>(this + 1), numberOfReturnAddresses }; }
+    static constexpr uint32_t isOfConstructed = 1u << 31;
+    static uint32_t keep(const void* address, uintptr_t startOfImageCode) { return static_cast<uint32_t>(std::bit_cast<uintptr_t>(address) - startOfImageCode); }
+    static const void* addressOf(uint32_t kept, uintptr_t startOfImageCode) { return std::bit_cast<const void*>(startOfImageCode + (kept & ~isOfConstructed)); }
 };
+JS_EXPORT_PRIVATE uintptr_t startOfImageCode();
 
 struct ImageAddressInfo {
     enum Kind : uint8_t {
@@ -255,7 +271,6 @@ struct FrameAndPC {
 };
 JS_EXPORT_PRIVATE std::optional<FrameAndPC> innermostFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* topCallFrame, const StackBounds&);
 JS_EXPORT_PRIVATE void* returnAddressOfTopWithoutFrame(void* machineFrame, void* machinePC, void* machineLinkRegister, void* machineStackPointer, const StackBounds&);
-JS_EXPORT_PRIVATE uint32_t callSiteAt(const ImageFunction&, uint32_t offsetOfReturnAddress);
 JS_EXPORT_PRIVATE const RegisterAtOffsetList& adapterSavedRegisters();
 // What calleeSaveRegistersOf() says, without a list: by Reg::index(); they are saved in that order, a word each, the first that many words from the frame pointer.
 struct SavedRegisters {
@@ -324,7 +339,6 @@ private:
     unsigned m_item { 0 };
 };
 JS_EXPORT_PRIVATE Instance* instanceForFrame(const void* frame);
-JS_EXPORT_PRIVATE bool canFindInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE Instance* tryInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
@@ -332,7 +346,6 @@ JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
 JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&, bool entersStaticCode);
-void countMaterializationOfPropertyTable(VM&);
 void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);
 
 } } // namespace JSC::AOT

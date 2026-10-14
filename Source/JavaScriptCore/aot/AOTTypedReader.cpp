@@ -35,6 +35,9 @@ public:
             if (m_header->recordSizes[i] != Format::recordSizes[i])
                 return "the front end and the engine lay out a record differently"_s;
         }
+        if (m_header->flags & ~Format::programLogsTypeErrors)
+            return "the program has a flag that the engine does not know"_s;
+        m_program.logsTypeErrors = m_header->flags & Format::programLogsTypeErrors;
 
         auto bytes = section<uint8_t>(m_header->bytes);
         m_words = section<uint32_t>(m_header->words);
@@ -73,7 +76,10 @@ public:
             layout.name = StringID(shape.name);
             layout.base = LayoutID(shape.base);
             layout.constructor = FunctionID(shape.constructor);
-            layout.environment = LayoutID(shape.environment);
+            if (layout.kind == LayoutKind::Environment && shape.flags & Format::ShapeMayBeReused)
+                layout.reuseVariable = VariableID(shape.environment);
+            else
+                layout.environment = LayoutID(shape.environment);
             layout.isAllocated = shape.flags & Format::ShapeIsAllocated;
             if (shape.declaredPath != Format::none && shape.declaredPath >= m_program.strings.size())
                 return "the path a shape is declared at is no string of the program"_s;
@@ -230,6 +236,7 @@ public:
             module.lineTableSize = from.lineTable.count;
             if (!readLineTable(slice(bytes, from.lineTable), module))
                 return "the line table of a module is malformed"_s;
+            module.printed = slice(bytes, from.printed);
             m_program.modules.append(WTF::move(module));
         }
         auto functions = section<Format::Function>(m_header->functions);
@@ -279,6 +286,7 @@ public:
                 return "a regular expression literal is no pair of strings of the program"_s;
             m_program.regExpLiterals.append({ StringID(regExpLiterals[i]), StringID(regExpLiterals[i + 1]) });
         }
+        m_program.sites = Vector<uint32_t>(slice(m_words, m_header->sites));
         auto builtinModules = slice(m_words, m_header->builtinModules);
         if (builtinModules.size() % 2)
             return "the list of builtin modules is not one of pairs"_s;
@@ -343,6 +351,8 @@ private:
         auto& functions = m_program.functions;
         for (unsigned i = 0; i < layouts.size(); ++i) {
             auto& layout = layouts[i];
+            if (layout.reuseVariable && (layout.reuseVariable.index() >= m_program.variables.size() || layout.fields.size() < 2))
+                return "an environment that may be reused has no variable to be kept in"_s;
             if (layout.kind != LayoutKind::Instance) {
                 if (layout.constructor || layout.environment || !layout.staticMethods.isEmpty() || !layout.staticFields.isEmpty())
                     return "a shape that is no class has what only a class has"_s;
@@ -767,6 +777,10 @@ private:
         function.name = StringID(source.name);
         function.module = ModuleID(source.module);
         function.position = source.position;
+        function.placeOfText = source.placeOfText;
+        function.endOfText = source.endOfText;
+        if (source.endOfText && (source.module >= m_program.modules.size() || source.placeOfText > source.endOfText || source.endOfText > m_program.modules[source.module].printed.size()))
+            m_failed = true;
         if (source.kind > FunctionKind::Module)
             m_failed = true;
         function.kind = source.kind;
@@ -779,6 +793,10 @@ private:
         if (source.captures.count > UINT8_MAX)
             m_failed = true;
         for (uint32_t word : slice(m_words, source.captures)) {
+            if (word != Format::none && word & Format::ParameterIsOnlyCalled) {
+                function.capturesOnlyCalled.set(function.captureTypes.size());
+                word &= ~Format::ParameterIsOnlyCalled;
+            }
             function.captureTypes.append(typeReliedOn(word));
             if (!function.captureTypes.last())
                 m_failed = true;
@@ -787,6 +805,13 @@ private:
         function.assertedThisType = assertedTypeAt(source.thisType);
         function.resultType = typeReliedOn(source.resultType);
         for (uint32_t word : slice(m_words, source.parameterTypes)) {
+            if (word == Format::untypedParameterIsOnlyCalled) {
+                function.parametersOnlyCalled.set(function.parameterTypes.size());
+                word = Format::none;
+            } else if (word != Format::none && word & Format::ParameterIsOnlyCalled) {
+                function.parametersOnlyCalled.set(function.parameterTypes.size());
+                word &= ~Format::ParameterIsOnlyCalled;
+            }
             if (word != Format::none && word & Format::ParameterIsAnnotated) {
                 function.annotatedParameters.set(function.parameterTypes.size());
                 word &= ~Format::ParameterIsAnnotated;
@@ -806,11 +831,27 @@ private:
             for (unsigned i = 0; i < 3; ++i)
                 value.children[i] = ValueID(from.children[i]);
             value.immediates = { from.immediates[0], from.immediates[1] };
+            if ((value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && value.immediates[0] != Format::none && value.immediates[0] != Value::elementIsKnownByTheStores) {
+                m_failed = true;
+                break;
+            }
             if ((value.opcode == Opcode::GetById || value.opcode == Opcode::PutById) && value.immediates[1] == Format::ReceiverIsOfOneRow) {
                 value.receiverIsExpectedOfOneRow = true;
                 value.immediates[1] = Format::none;
             }
-            if (value.opcode == Opcode::Construct && value.immediates[0] != Format::none) {
+            if (value.opcode == Opcode::Construct) {
+                if (value.immediates[0] != Format::none || (value.immediates[1] != Format::none && value.immediates[1] != 1)) {
+                    m_failed = true;
+                    break;
+                }
+                value.hasStringKeysByType = value.immediates[1] == 1;
+                value.immediates[1] = Format::none;
+            }
+            if (value.opcode == Opcode::GetModuleVariable && value.immediates[1] != Format::none && value.immediates[1] != Format::VariableIsInitialized) {
+                m_failed = true;
+                break;
+            }
+            if (value.opcode == Opcode::Call && value.immediates[0] != Format::none) {
                 m_failed = true;
                 break;
             }
@@ -849,7 +890,7 @@ private:
             // The type a cast holds its operand to is the type of the cast, but for a coercion.
             if (value.opcode == Opcode::Cast) {
                 if (uint32_t freshness = from.immediates[1] >> Format::freshnessShift; (from.immediates[1] & 0xff) > static_cast<uint32_t>(CastReason::Coerce)
-                    || freshness > static_cast<uint32_t>(Format::Freshness::WholeGraph) || (freshness && value.castReason() != CastReason::Coerce))
+                    || freshness > static_cast<uint32_t>(Format::Freshness::WholeGraph) || (freshness && value.castReason() != CastReason::Coerce && !(value.castReason() == CastReason::As && freshness == static_cast<uint32_t>(Format::Freshness::TopLevel))))
                     m_failed = true;
                 TypeID coercedTo = value.castReason() == CastReason::Coerce ? typeAt(from.immediates[0]) : TypeID();
                 if (value.castReason() == CastReason::Coerce && !coercedTo)

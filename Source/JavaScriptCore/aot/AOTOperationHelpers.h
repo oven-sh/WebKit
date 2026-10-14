@@ -216,7 +216,6 @@ ALWAYS_INLINE Data* dataWithSlot(Instance* instance, CallFrame* callFrame, const
         return data;
     return callerData(instance, callFrame);
 }
-ALWAYS_INLINE UnlinkedCodeBlock* callerCode(Instance* instance, CallFrame* callFrame) { return callerBytecodeOwner(instance, callFrame).ensureUnlinkedCodeBlock(); }
 
 ALWAYS_INLINE void didFillSlot(VM&, Data* data)
 {

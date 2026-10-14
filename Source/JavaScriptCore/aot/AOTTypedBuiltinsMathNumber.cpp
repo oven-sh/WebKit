@@ -114,7 +114,7 @@ std::optional<Writes> writesOfInlineMathNumber(InlineBuiltin which, std::span<co
         return writesIf(arguments.size() <= 3 && areNumbers(arguments), Writes::Pure);
     case InlineBuiltin::MathMin:
     case InlineBuiltin::MathMax:
-        return writesIf(areNumbers(arguments), Writes::Pure);
+        return writesIf(std::ranges::all_of(arguments, isNumericOperand), Writes::Pure);
     case InlineBuiltin::MathRandom:
         return Writes::RuntimeState;
     case InlineBuiltin::IsNaN:
@@ -434,6 +434,47 @@ std::optional<Number> Lowering::powerWithConstantExponent(Number base, ValueID e
     return result ? result : number(1);
 }
 
+std::optional<Number> Lowering::powerWithConstantBase(ValueID base, ValueID exponent)
+{
+    auto& constant = m_function.at(originOf(base));
+    double x;
+    if (constant.opcode == Opcode::Integer)
+        x = static_cast<double>(constant.integer());
+    else if (constant.opcode == Opcode::Double)
+        x = std::bit_cast<double>(constant.bits());
+    else
+        return std::nullopt;
+    if (x != 2 && x != 10)
+        return std::nullopt;
+    Range handled = x == 2 ? Range { -1022, 1023 } : Range { 0, static_cast<int64_t>(AOT::powersOfTen.size()) - 1 };
+    auto inPlace = [&](Integer k) {
+        if (x == 2)
+            return Number(m_out.bitCast(m_out.shl(add(k, integer(1023)).value(), m_out.constInt32(52)), Double));
+        LValue table = fixedPointer(Instance::offsetOfPowersOfTen());
+        return Number(m_out.loadDouble(TypedPointer(m_heaps.AOTInstance_fixedFields, m_out.add(table, m_out.shl(k.value(), m_out.constInt32(3))))));
+    };
+    auto& type = typeOf(exponent);
+    if (type.isInteger() && type.integers.isWithin(handled))
+        return inPlace(in<Integer>(exponent));
+
+    LBasicBlock generally = newUnlikelyBlock();
+    Join join(m_out, Rep::Double, Double);
+    Number y = in<Number>(exponent);
+    Integer k;
+    if (type.isInteger())
+        k = in<Integer>(exponent);
+    else {
+        Word32 narrow = low32(truncateToInteger(y));
+        orElse(equal(toNumber(narrow), y), generally);
+        k = signExtended(narrow);
+    }
+    orElse(belowOrEqual(sub(k, integer(handled.least)), integer(handled.most - handled.least)), generally);
+    join.add(inPlace(k));
+    m_out.appendTo(generally);
+    join.add(Number(AOT_TYPED_OPERATION(Pow, number(x), y)));
+    return join.finish().as<Number>();
+}
+
 static bool isExactInteger(const Type& type, int64_t limit = maxExactInteger)
 {
     return type.isInteger() && type.integers.isWithin({ -limit, limit });
@@ -551,16 +592,18 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
     // The characters of a string that is flat, or part of one that is, and 8-bit. Anything else is left to the engine's function.
     auto ofLatin1Characters = [&](ValueID string, auto&& functor) {
         Rep rep = repOf(type);
-        LBasicBlock otherwise = newColdBlock();
+        LBasicBlock otherwise = newBlockForGeneralCall(value);
         Join join(m_out, rep, b3TypeOf(rep));
         Characters characters = charactersOf(stringReceiver(get(string).as<CellPointer>()), otherwise);
         orElse(hasBits(characters.flags, StringImpl::flagIs8Bit()), otherwise);
         Number yielded = functor(characters);
         ensureStillAliveHere(characters.owner);
         join.add(yieldNumber(yielded, type));
-        m_out.appendTo(otherwise);
-        Boxed generally = callBuiltinFunction(value, OperationEffects { writes, true });
-        join.add(vouchesForItsType(m_program, m_function, m_function.at(result)) ? convert(generally, type, rep) : ensure(generally, type));
+        if (!isGeneralArmOnOffer(otherwise)) {
+            m_out.appendTo(otherwise);
+            Boxed generally = callBuiltinFunction(value, OperationEffects { writes, true });
+            join.add(vouchesForItsType(m_program, m_function, m_function.at(result)) ? convert(generally, type, rep) : ensure(generally, type));
+        }
         return join.finish();
     };
 
@@ -690,6 +733,8 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
         Number base = in<Number>(arguments[0]);
         if (auto power = powerWithConstantExponent(base, arguments[1]))
             return yieldNumber(*power, type);
+        if (auto power = powerWithConstantBase(arguments[0], arguments[1]))
+            return yieldNumber(*power, type);
         return yieldNumber(AOT_TYPED_OPERATION(Pow, base, in<Number>(arguments[1])), type);
     }
     case InlineBuiltin::MathMin:
@@ -708,9 +753,9 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
             }
             return type.isInteger() ? convert(chosen, type, repOf(type)) : ensure(chosen, Type::integer(range), type);
         }
-        Number chosen = in<Number>(arguments[0]);
+        Number chosen = asNumericOperand(arguments[0]);
         for (ValueID argument : arguments.span().subspan(1))
-            chosen = isMax ? max(chosen, in<Number>(argument)) : min(chosen, in<Number>(argument));
+            chosen = isMax ? max(chosen, asNumericOperand(argument)) : min(chosen, asNumericOperand(argument));
         return yieldNumber(chosen, type);
     }
     case InlineBuiltin::MathImul:

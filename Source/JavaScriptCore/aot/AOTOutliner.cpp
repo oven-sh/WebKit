@@ -22,24 +22,39 @@ const std::optional<OutliningOptions>& OutliningOptions::asked()
 {
     static const NeverDestroyed<std::optional<OutliningOptions>> result = []() -> std::optional<OutliningOptions> {
         const char* text = getenv("AOT_SWITCH_OUTLINE");
-        if (!text)
-            return std::nullopt;
         OutliningOptions options;
-        char region[3] = { };
-        char form = 0;
-        int read = 0;
-        int fields = sscanf(text, "%2[atgl],%u,%c%n", region, &options.leastLength, &form, &read);
-        const char* rest = text + read;
-        bool isRegion = !strcmp(region, "a") || !strcmp(region, "t") || !strcmp(region, "g") || !strcmp(region, "l") || !strcmp(region, "tl") || !strcmp(region, "gl");
-        bool isWellFormed = fields == 3 && isRegion && strchr("sk", form) && options.leastLength >= 2 && options.leastLength <= 24 && (!*rest || !strcmp(rest, ",count"));
-        if (!isWellFormed) {
-            dataLogLn("AOT: AOT_SWITCH_OUTLINE is not <a|t|g|l|tl|gl>,<least length, 2 to 24>,<s|k>[,count]: ", text);
-            CRASH();
+        if (!text) {
+            options.region |= isColdByGraph;
+            options.takesRareCode = true;
+            options.mayEndInCall = true;
+            options.speaks = false;
+            return options;
         }
-        options.region |= region[0] == 't' ? isNotHotByText : region[0] == 'g' ? isColdByGraph : 0;
-        options.takesFunctionsWhole = region[0] != 'l';
-        options.takesRareCode = strchr(region, 'l');
-        options.mayEndInCall = form == 'k';
+        if (!strcmp(text, "off"))
+            return std::nullopt;
+        const char* rest = text;
+        auto takes = [&](char wanted) {
+            if (*rest != wanted)
+                return false;
+            ++rest;
+            return true;
+        };
+        char whole = takes('a') ? 'a' : takes('t') ? 't' : takes('g') ? 'g' : 0;
+        options.takesFunctionsWhole = whole;
+        options.takesRareCode = whole != 'a' && takes('l');
+        bool isWellFormed = whole || options.takesRareCode;
+        isWellFormed = isWellFormed && takes(',') && *rest != '0';
+        options.leastLength = 0;
+        while (isWellFormed && isASCIIDigit(*rest) && options.leastLength < 100)
+            options.leastLength = options.leastLength * 10 + (*rest++ - '0');
+        isWellFormed = isWellFormed && options.leastLength >= 2 && options.leastLength <= 24 && takes(',');
+        options.mayEndInCall = isWellFormed && takes('k');
+        isWellFormed = isWellFormed && (options.mayEndInCall || takes('s')) && (!*rest || !strcmp(rest, ",count"));
+        if (!isWellFormed) {
+            dataLogLn("AOT: AOT_SWITCH_OUTLINE is not off | <a|t|g|l|tl|gl>,<least length, 2 to 24>,<s|k>[,count]: ", text);
+            exit(1);
+        }
+        options.region |= whole == 't' ? isNotHotByText : whole == 'g' ? isColdByGraph : 0;
         options.onlyCounts = *rest;
         return options;
     }();
@@ -113,14 +128,40 @@ bool callsTheSame(const CompiledFunctionInfo& a, const StubCall& first, const Co
 struct Window {
     uint64_t hash;
     uint32_t unit;
+    uint32_t function;
 };
+static_assert(sizeof(Window) == 16);
 
 struct Family {
     int64_t saving;
     uint32_t begin;
     uint32_t end;
     uint32_t firstUnit;
+    bool allAreTheSame;
 };
+
+void zeroOnPool(std::span<uint8_t> bytes)
+{
+    constexpr size_t bytesInChunk = MB;
+    Typed::forEachIndexInParallel(static_cast<unsigned>((bytes.size() + bytesInChunk - 1) / bytesInChunk), [&](unsigned chunk) {
+        size_t start = static_cast<size_t>(chunk) * bytesInChunk;
+        zeroSpan(bytes.subspan(start, std::min(bytesInChunk, bytes.size() - start)));
+    });
+}
+
+template<typename T>
+void fillWithZeroesOnPool(Vector<T>& vector, size_t size)
+{
+    static_assert(std::is_integral_v<T>);
+#if ASAN_ENABLED
+    vector.fill(0, size);
+#else
+    RELEASE_ASSERT(vector.isEmpty());
+    vector.reserveCapacity(size);
+    zeroOnPool(unsafeMakeSpan(reinterpret_cast<uint8_t*>(vector.begin()), size * sizeof(T)));
+    vector.grow(size);
+#endif
+}
 
 class Chooser {
 public:
@@ -164,19 +205,27 @@ private:
         numberOfUnits.fill(0, count);
         Vector<CauseOfNoWalk> causes;
         causes.fill(CauseOfNoWalk::None, count);
+        m_walked.grow(count);
         Typed::forEachIndexInParallel(count, [&](unsigned function) {
             auto& code = *m_functions[function];
             if (!isInRegion(code))
                 return;
-            if (!canBeWalked(code)) {
+            uint32_t number = 0;
+            Walked& walked = m_walked[function];
+            walked.kindsAndLengths.reserveInitialCapacity(isX86() ? code.instructions.size() : code.bytes.size() / sizeof(uint32_t));
+            CauseOfNoWalk cause = InstructionsInCodeInternal::tryToWalk(code, [&](const InstructionInCode& instruction) {
+                ++number;
+                RELEASE_ASSERT(instruction.length < 16);
+                walked.kindsAndLengths.append(static_cast<uint8_t>(static_cast<unsigned>(instruction.kind) << 4 | instruction.length));
+                if (hasTarget(instruction.kind))
+                    walked.targets.append(instruction.target);
+            });
+            if (cause != CauseOfNoWalk::None || !code.hasNotes || code.isRewritten) {
+                walked = { };
                 numberOfUnits[function] = std::numeric_limits<uint32_t>::max();
-                causes[function] = causeOfNoWalk(code);
+                causes[function] = cause;
                 return;
             }
-            uint32_t number = 0;
-            forEachInstructionInCode(code, [&](const InstructionInCode&) {
-                ++number;
-            });
             numberOfUnits[function] = number;
         });
         m_firstUnit.reserveInitialCapacity(count + 1);
@@ -199,12 +248,12 @@ private:
         m_firstUnit.append(safeCast<uint32_t>(total));
         m_numberOfUnits = safeCast<uint32_t>(total);
         m_numberOfCopies = sizeOfCode / stubCallReach + 1;
-        m_sums.fill(0, total + 1);
-        m_offsets.fill(0, total);
-        m_lengths.fill(0, total);
-        m_flags.fill(0, total);
-        m_runs.fill(0, total);
-        m_longestThatMayRepeat.fill(0, total);
+        fillWithZeroesOnPool(m_sums, total + 1);
+        fillWithZeroesOnPool(m_offsets, total);
+        fillWithZeroesOnPool(m_lengths, total);
+        fillWithZeroesOnPool(m_flags, total);
+        fillWithZeroesOnPool(m_runs, total);
+        fillWithZeroesOnPool(m_longestThatMayRepeat, total);
         Typed::forEachIndexInParallel(count, [&](unsigned function) {
             if (numberOfUnits[function])
                 gatherUnitsOf(function);
@@ -219,6 +268,43 @@ private:
         m_seenTwice.resize(m_slotMask + 1);
     }
 
+    struct Walked {
+        Vector<uint8_t> kindsAndLengths;
+        Vector<uint32_t> targets;
+    };
+
+    static bool hasTarget(InstructionInCode::Kind kind)
+    {
+        switch (kind) {
+        case InstructionInCode::Kind::StubCall:
+        case InstructionInCode::Kind::Jump:
+        case InstructionInCode::Kind::ConditionalJump:
+        case InstructionInCode::Kind::AddressOfTable:
+        case InstructionInCode::Kind::TableEntry:
+            return true;
+        case InstructionInCode::Kind::Plain:
+        case InstructionInCode::Kind::Pinned:
+        case InstructionInCode::Kind::End:
+            return false;
+        }
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+
+    template<typename Functor>
+    void forEachInstructionWalked(unsigned function, const Functor& functor)
+    {
+        Walked walked = std::exchange(m_walked[function], { });
+        uint32_t offset = 0;
+        size_t nextTarget = 0;
+        for (uint8_t packed : walked.kindsAndLengths) {
+            InstructionInCode instruction { offset, 0, static_cast<uint8_t>(packed & 15), static_cast<InstructionInCode::Kind>(packed >> 4) };
+            if (hasTarget(instruction.kind))
+                instruction.target = walked.targets[nextTarget++];
+            functor(static_cast<const InstructionInCode&>(instruction));
+            offset += instruction.length;
+        }
+    }
+
     void gatherUnitsOf(unsigned function)
     {
         auto& code = *m_functions[function];
@@ -229,7 +315,7 @@ private:
         constexpr unsigned numberOfFirstBranches = 8;
         Vector<std::pair<uint32_t, uint32_t>, numberOfFirstBranches> firstBranches;
         uint32_t pollAtPrologue = std::numeric_limits<uint32_t>::max();
-        forEachInstructionInCode(code, [&](const InstructionInCode& instruction) {
+        forEachInstructionWalked(function, [&](const InstructionInCode& instruction) {
             RELEASE_ASSERT(instruction.offset == end && instruction.length);
             end += instruction.length;
             m_offsets[unit] = instruction.offset;
@@ -331,8 +417,8 @@ private:
                         functor(unit);
                 }
             };
-            m_seen.clearAll();
-            m_seenTwice.clearAll();
+            zeroOnPool(asMutableByteSpan(m_seen.unsafeWords().words()));
+            zeroOnPool(asMutableByteSpan(m_seenTwice.unsafeWords().words()));
             Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
                 forEachCandidateIn(chunk, [&](uint32_t unit) {
                     size_t slot = hashOf(unit, length) & m_slotMask;
@@ -360,10 +446,22 @@ private:
             if (!numberLeft)
                 break;
         }
-        for (uint32_t unit = 0; unit < m_numberOfUnits; ++unit) {
-            if (uint8_t length = m_longestThatMayRepeat[unit])
-                m_unitsByLongest[length].append(unit);
-        }
+        Vector<std::array<Vector<uint32_t>, longestWindow + 1>> unitsOfChunk(numberOfChunks);
+        Typed::forEachIndexInParallel(numberOfChunks, [&](unsigned chunk) {
+            uint32_t end = std::min<uint64_t>(m_numberOfUnits, static_cast<uint64_t>(chunk + 1) * unitsInChunk);
+            for (uint32_t unit = chunk * unitsInChunk; unit < end; ++unit) {
+                if (uint8_t length = m_longestThatMayRepeat[unit])
+                    unitsOfChunk[chunk][length].append(unit);
+            }
+        });
+        Typed::forEachIndexInParallel(longestWindow + 1, [&](unsigned length) {
+            size_t number = 0;
+            for (auto& units : unitsOfChunk)
+                number += units[length].size();
+            m_unitsByLongest[length].reserveCapacity(number);
+            for (auto& units : unitsOfChunk)
+                m_unitsByLongest[length].appendVector(units[length]);
+        });
     }
 
     size_t sizeOfUnits() const
@@ -425,11 +523,11 @@ private:
             forEachPlaceIn(chunk, [&](size_t place) {
                 uint32_t unit = m_active[place];
                 if (!isFree(unit, length)) {
-                    m_found[place] = { 0, std::numeric_limits<uint32_t>::max() };
+                    m_found[place] = { 0, std::numeric_limits<uint32_t>::max(), 0 };
                     return;
                 }
                 uint64_t hash = hashOf(unit, length);
-                m_found[place] = { hash, unit };
+                m_found[place] = { hash, unit, 0 };
                 ++starts[static_cast<size_t>(chunk) * numberOfShards + (hash >> 56)];
             });
         });
@@ -472,8 +570,14 @@ private:
                     behindLast = windows[i].unit + length;
                 }
                 uint32_t first = windows[begin].unit;
-                if (int64_t saving = savingOf(places, bytesOf(first, length), m_flags[first + length - 1] & IsCall); saving >= leastSaving)
-                    familiesOfShard[shard].append({ saving, static_cast<uint32_t>(startOfShard[shard] + begin), static_cast<uint32_t>(startOfShard[shard] + end), first });
+                if (int64_t saving = savingOf(places, bytesOf(first, length), m_flags[first + length - 1] & IsCall); saving >= leastSaving) {
+                    bool allAreTheSame = true;
+                    for (size_t i = begin; i < end; ++i) {
+                        windows[i].function = functionOf(windows[i].unit);
+                        allAreTheSame = allAreTheSame && isTheSame(first, windows[begin].function, windows[i].unit, windows[i].function, length);
+                    }
+                    familiesOfShard[shard].append({ saving, static_cast<uint32_t>(startOfShard[shard] + begin), static_cast<uint32_t>(startOfShard[shard] + end), first, allAreTheSame });
+                }
                 begin = end;
             }
         });
@@ -495,8 +599,8 @@ private:
                 uint32_t unit = m_windows[i].unit;
                 if ((!chosen.isEmpty() && unit < behindLast) || !isFree(unit, length))
                     continue;
-                unsigned function = functionOf(unit);
-                if (!chosen.isEmpty() && !isTheSame(chosen[0].first, chosen[0].second, unit, function, length))
+                unsigned function = m_windows[i].function;
+                if (!chosen.isEmpty() && !family.allAreTheSame && !isTheSame(chosen[0].first, chosen[0].second, unit, function, length))
                     continue;
                 chosen.append({ unit, function });
                 behindLast = unit + length;
@@ -534,6 +638,8 @@ private:
         uint64_t places = 0;
         uint64_t sizeOfBodies = 0;
         uint64_t withOneCaller = 0;
+        if (!m_options.speaks && !Options::verboseAOTCompilation())
+            return;
         for (unsigned length = 0; length <= longestWindow; ++length) {
             saved += m_saved[length];
             places += m_places[length];
@@ -568,6 +674,7 @@ private:
     const OutliningOptions& m_options;
     Outlining m_result;
     Vector<uint32_t> m_firstUnit;
+    Vector<Walked> m_walked;
     Vector<uint64_t> m_sums;
     Vector<uint32_t> m_offsets;
     Vector<uint8_t> m_lengths;

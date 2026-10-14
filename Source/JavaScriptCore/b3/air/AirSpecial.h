@@ -94,6 +94,10 @@ public:
     // By default, this returns false.
     virtual bool isTerminal(Inst&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    virtual bool hasFixedForms(Inst&);
+
+#endif
     // By default, this returns true.
     virtual bool hasNonArgEffects(Inst&);
 

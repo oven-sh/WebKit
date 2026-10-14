@@ -202,7 +202,7 @@ ALWAYS_INLINE bool JSObject::canPerformFastPutInlineExcludingProto()
     JSObject* obj = this;
     while (true) {
         Structure* structure = obj->structure();
-        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
+        bool mayInterceptPut = obj == this ? structure->hasReadOnlyOrGetterSetterPropertiesExcludingProtoOrImmutableProperties() || structure->typeInfo().wouldHaveFixedProperties() : structure->hasReadOnlyOrGetterSetterPropertiesExcludingProto();
         if (mayInterceptPut || structure->typeInfo().overridesGetPrototype())
             return false;
         if (obj != this && structure->typeInfo().overridesPut())
@@ -470,6 +470,8 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
         if (error.characters() == ImmutableShapeError.characters())
             RELEASE_AND_RETURN(scope, false);
 #endif
+        if (slot.isStrictMode() && isLockedBuiltin())
+            noteRefusalByLock(vm, propertyName.uid());
         return typeError(globalObject, scope, slot.isStrictMode() || error.characters() == TypedFieldOfInheritorError.characters(), error);
     }
     return true;

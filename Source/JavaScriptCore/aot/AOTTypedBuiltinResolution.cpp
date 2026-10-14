@@ -288,6 +288,7 @@ bool vouchesForItsType(const Program& program, const Function& function, const V
     case Opcode::BuiltinFunction:
     case Opcode::TypeOfIs:
     case Opcode::AssertNotAllocated:
+    case Opcode::MaterializeEnvironment:
     // It is the test.
     case Opcode::Cast:
         return true;
@@ -381,6 +382,7 @@ public:
         }
         foldReadsOfMethods();
         countUses();
+        foldJoinsOfLiterals();
         removeUnusedReadsOfBuiltins();
         markMethodReads();
     }
@@ -501,6 +503,8 @@ private:
                     continue;
                 auto& claimed = m_program.at(cast.type);
                 if (claimed.hasObjects() || !claimed.isWithin(m_program.at(read.type), m_program))
+                    continue;
+                if (read.readsElementKnownByTheStores() && read.type != cast.type)
                     continue;
                 read.type = cast.type;
                 read.rep = repOf(claimed);
@@ -828,6 +832,43 @@ private:
         }
         default:
             return false;
+        }
+    }
+
+    void foldJoinsOfLiterals()
+    {
+        constexpr unsigned maxElements = 8;
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values) {
+                auto& join = m_function.at(id);
+                if (join.opcode != Opcode::CallBuiltin || join.arguments.size() != 1 || join.methodRead())
+                    continue;
+                auto& implementation = m_builtins.at(join.builtin()).implementation;
+                if (implementation.kind != BuiltinImplementation::Inline || implementation.inlined != InlineBuiltin::ArrayJoin)
+                    continue;
+                if (block.terminator.kind == TerminatorKind::Invoke && block.values.last() == id)
+                    continue;
+                ValueID receiver = join.child(0);
+                ValueID separator = join.arguments[0];
+                auto& literal = m_function.at(receiver);
+                if (literal.opcode != Opcode::NewArray || m_uses[receiver.index()] != 1 || literal.arguments.isEmpty() || literal.arguments.size() > maxElements || !block.values.contains(receiver))
+                    continue;
+                if (!typeOf(separator).isString() || !std::ranges::all_of(literal.arguments, [&](ValueID element) { return typeOf(element).isString(); }))
+                    continue;
+                Arguments parts;
+                for (ValueID element : literal.arguments) {
+                    if (!parts.isEmpty())
+                        parts.append(separator);
+                    parts.append(element);
+                }
+                --m_uses[receiver.index()];
+                join.opcode = Opcode::Strcat;
+                join.type = m_program.types.string;
+                join.rep = Rep::Cell;
+                join.children = { };
+                join.immediates = { Format::none, Format::none };
+                join.arguments = WTF::move(parts);
+            }
         }
     }
 

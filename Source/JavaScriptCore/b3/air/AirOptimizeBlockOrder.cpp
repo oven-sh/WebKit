@@ -31,6 +31,8 @@
 #include "AirBlockWorklist.h"
 #include "AirCode.h"
 #include "AirPhaseScope.h"
+#include <algorithm>
+#include <cmath>
 #include <wtf/BubbleSort.h>
 #include <wtf/Deque.h>
 
@@ -154,11 +156,20 @@ private:
     {
         // We prefer a stable sort, and we don't want it to go off the rails if we see NaN. Also, the number
         // of successors is bounded. In fact, it currently cannot be more than 2. :-)
-        bubbleSort(
-            m_successors.mutableSpan(),
-            [] (BasicBlock* left, BasicBlock* right) {
-                return left->frequency() < right->frequency();
-            });
+        auto isLessFrequent = [] (BasicBlock* left, BasicBlock* right) {
+            return left->frequency() < right->frequency();
+        };
+#if USE(BUN_JSC_ADDITIONS)
+        constexpr size_t mostForBubbleSort = 16;
+        auto hasNoFrequency = [] (BasicBlock* block) {
+            return std::isnan(block->frequency());
+        };
+        if (m_successors.size() > mostForBubbleSort && std::none_of(m_successors.begin(), m_successors.end(), hasNoFrequency)) {
+            std::stable_sort(m_successors.begin(), m_successors.end(), isLessFrequent);
+            return;
+        }
+#endif
+        bubbleSort(m_successors.mutableSpan(), isLessFrequent);
     }
 
     Vector<BasicBlock*, 2> m_successors;

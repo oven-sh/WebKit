@@ -1,6 +1,8 @@
 # The grammar is in the header of Source/JavaScriptCore/Scripts/generate-aot-builtins.py. After a change: run it, it rewrites the generated files of both trees.
 
 replaceable console
+replaceable Buffer
+predicted Buffer.byteLength
 
 static console.log (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
 static console.info (any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
@@ -24,3 +26,6 @@ static console.profile (toString?) -> undefined ; MayThrow ReadsRuntimeState Wri
 static console.profileEnd (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
 static console.timeStamp (toString?) -> undefined ; MayThrow ReadsRuntimeState WritesRuntimeState ; HostCall
 static console.timeLog (toString?, any/GD...) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; HostCall
+
+static Buffer.byteLength (toString, toString?) -> int[0,6442450941] ; MayThrow ; Inline(StringUTF8ByteLength)
+static Buffer.byteLength (any, any/-?, any/-...) -> number ; CallsUserCode ; Inline(StringUTF8ByteLength)

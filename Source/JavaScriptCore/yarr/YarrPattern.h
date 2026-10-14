@@ -281,6 +281,8 @@ struct PatternTerm {
     bool m_possessive { false };
 #if USE(BUN_JSC_ADDITIONS)
     bool m_matchesWhatWasJustCaptured { false };
+    bool m_isRightBehindItsLookahead { false };
+    bool m_isNeverBacktrackedInto { false };
 #endif
 
     PatternTerm(char32_t ch, OptionSet<Flags> currFlags, MatchDirection matchDirection = Forward)

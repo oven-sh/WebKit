@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTTypedThreads.h"
 #include "Options.h"
 #include <tuple>
 #include <wtf/StringPrintStream.h>
@@ -579,10 +580,15 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
             if (note.left.isEmpty())
                 out.print(": removed");
             else {
-                if (note.outcome == AllocationOutcome::BuiltLate)
+                size_t inFrame = std::ranges::count_if(note.left, [&](ValueID id) {
+                    return function.at(id).isClosureInFrame() || function.environmentsInFrame.get(id.index());
+                });
+                if (inFrame == note.left.size())
+                    out.print(": frame");
+                else if (note.outcome == AllocationOutcome::BuiltLate)
                     out.print(": built at ", note.left.size(), note.left.size() == 1 ? " place" : " places");
                 else
-                    out.print(note.layout && program.at(note.layout).isInFrame ? ": frame" : ": heap");
+                    out.print(": heap");
                 if (note.forcedBy) {
                     out.print(": ", note.forcedBy, " at ");
                     printPlace(out, program, function, note.forcedByInlineFrame, note.forcedByPosition);
@@ -601,6 +607,10 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
                         out.print(" (into v", note.forcedByInto.index(), " ", holder.opcode == Opcode::Parameter && holder.immediates[0] ? "BlockParameter"_s : Typed::nameOf(holder.opcode), ")");
                     }
                 }
+                if (inFrame && note.layout && std::ranges::any_of(function.values, [&](auto& value) { return value.opcode == Opcode::MaterializeEnvironment && note.left.contains(value.child(1)); }))
+                    out.print(" (moves to the heap in an arm)");
+                if (inFrame && inFrame < note.left.size())
+                    out.print(" (", inFrame, " in the frame)");
                 if (note.outcome != AllocationOutcome::BuiltLate && note.left.size() > 1)
                     out.print(" (", note.left.size(), " copies)");
             }
@@ -626,6 +636,491 @@ void printAllocationRemarks(const Program& program, PrintStream& out)
             out.print("\n");
         }
     }
+}
+
+namespace {
+
+namespace UseOfAllocation {
+static constexpr uint16_t IsKept = 1 << 0;
+static constexpr uint16_t IsRead = 1 << 1;
+static constexpr uint16_t IsReadByName = 1 << 2;
+static constexpr uint16_t IsWritten = 1 << 3;
+static constexpr uint16_t IsWrittenByName = 1 << 4;
+static constexpr uint16_t IsIterated = 1 << 5;
+static constexpr uint16_t IsGivenToInlineBuiltin = 1 << 6;
+static constexpr uint16_t IsGivenToBuiltin = 1 << 7;
+static constexpr uint16_t IsWrittenByBuiltin = 1 << 8;
+static constexpr uint16_t IsCompared = 1 << 9;
+static constexpr uint16_t IsHandedOn = 1 << 10;
+static constexpr uint16_t IsReturned = 1 << 11;
+static constexpr ASCIILiteral letters = "KrnwmibBgecR"_s;
+static constexpr uint16_t isTouchedByCallee = IsRead | IsReadByName | IsWritten | IsWrittenByName | IsIterated | IsGivenToInlineBuiltin | IsGivenToBuiltin | IsWrittenByBuiltin;
+static constexpr uint16_t leavesCompiledCode = IsWrittenByName | IsReadByName | IsGivenToBuiltin | IsWrittenByBuiltin;
+}
+
+namespace ResultOfFunction {
+static constexpr uint8_t MayBeFresh = 1 << 0;
+static constexpr uint8_t MayBeOperand = 1 << 1;
+static constexpr uint8_t MayBeAnything = 1 << 2;
+}
+
+struct UsesOfAllocation {
+    uint16_t own { 0 };
+    uint16_t ofCallees { 0 };
+    std::optional<Use> keptBy;
+    std::optional<Use> returnedBy;
+
+    uint16_t all() const { return own | ofCallees; }
+    bool isKept() const { return own & UseOfAllocation::IsKept; }
+    bool isLetGo() const { return !(own & (UseOfAllocation::IsKept | UseOfAllocation::IsReturned)); }
+    bool mayLieInFrame(bool mayGrowByStore) const { return isLetGo() && !(ofCallees & UseOfAllocation::isTouchedByCallee) && !(own & (UseOfAllocation::leavesCompiledCode | (mayGrowByStore ? UseOfAllocation::IsWritten : 0))); }
+};
+
+struct SummariesOfFunctions {
+    Vector<Vector<uint16_t>> operands;
+    Vector<uint8_t> results;
+};
+
+bool reachesArgumentsOtherwise(const Program& program, const Function& function)
+{
+    return std::ranges::any_of(function.values, [&](const Value& value) {
+        switch (value.opcode) {
+        case Opcode::GetArgument:
+        case Opcode::CreateRest:
+        case Opcode::GetRestLength:
+        case Opcode::GetMyArgumentByVal:
+        case Opcode::CallForwardVarargs:
+        case Opcode::ConstructSuperForwardVarargs:
+            return true;
+        case Opcode::Operation:
+        case Opcode::CallBuiltin:
+            return isOperation(program, value, LanguageOperation::CreateArguments);
+        default:
+            return false;
+        }
+    });
+}
+
+bool isPlainCallDirect(const Value& value)
+{
+    return value.opcode == Opcode::CallDirect && !value.isJumpToContinuation();
+}
+
+uint16_t lettersOf(const Program& program, const Function& function, const Value& user, ValueID object, Need need)
+{
+    using namespace UseOfAllocation;
+    if (need == Need::Object || need == Need::Held)
+        return IsKept;
+    switch (user.opcode) {
+    case Opcode::PutField:
+    case Opcode::PutByVal:
+        return IsWritten;
+    case Opcode::PutById:
+        return IsWrittenByName;
+    case Opcode::GetField:
+    case Opcode::GetByVal:
+    case Opcode::InByVal:
+        return IsRead;
+    case Opcode::GetById:
+    case Opcode::InById:
+        return IsReadByName;
+    case Opcode::IteratorOpen:
+        return IsIterated;
+    case Opcode::StrictEq: {
+        ValueID other = originOf(function, user.child(0)) == object ? user.child(1) : user.child(0);
+        return program.typeOf(function, other).hasObjects() ? IsCompared : 0;
+    }
+    case Opcode::Operation:
+    case Opcode::CallBuiltin: {
+        auto& builtins = Builtins::singleton();
+        BuiltinID entry = user.opcode == Opcode::CallBuiltin ? user.builtin() : builtins.find(BuiltinKind::Operation, { }, program.builtinName(user.string()));
+        uint16_t result = entry && builtins.at(entry).implementation.kind == BuiltinImplementation::Inline ? IsGivenToInlineBuiltin : IsGivenToBuiltin;
+        if (need == Need::Store)
+            result |= IsWrittenByBuiltin;
+        return result;
+    }
+    default:
+        return 0;
+    }
+}
+
+Vector<UsesOfAllocation> usesOf(const Program& program, const Function& function, std::span<const ValueID> objects, const SummariesOfFunctions& summaries)
+{
+    using namespace UseOfAllocation;
+    RELEASE_ASSERT(objects.size() <= 64);
+    Vector<UsesOfAllocation> result(objects.size());
+    Vector<uint64_t> mayBe;
+    mayBe.fill(0, function.values.size());
+    for (unsigned i = 0; i < objects.size(); ++i)
+        mayBe[objects[i].index()] |= 1ull << i;
+    auto whatMayBe = [&](ValueID id) {
+        return id ? mayBe[originOf(function, id).index()] : 0;
+    };
+    auto add = [&](ValueID to, uint64_t more) {
+        bool isNew = more & ~mayBe[to.index()];
+        mayBe[to.index()] |= more;
+        return isNew;
+    };
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = function.at(id);
+                if (value.opcode == Opcode::Cast || value.opcode == Opcode::IteratorOpen)
+                    changed |= add(id, whatMayBe(value.child(0)));
+                if (!isPlainCallDirect(value))
+                    continue;
+                auto& ofCallee = summaries.operands[value.function().index()];
+                for (unsigned i = 0; i < value.arguments.size() && i < ofCallee.size(); ++i) {
+                    if (ofCallee[i] & IsReturned)
+                        changed |= add(id, whatMayBe(value.arguments[i]));
+                }
+            }
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = function.at(target.block).parameters;
+                for (size_t i = 0; i < parameters.size() && i < target.arguments.size(); ++i)
+                    changed |= add(parameters[i], whatMayBe(target.arguments[i]));
+            }
+        }
+    }
+    auto note = [&](uint64_t which, uint16_t own, uint16_t ofCallees, const Use& use) {
+        for (; which; which &= which - 1) {
+            auto& uses = result[WTF::ctz(which)];
+            uses.own |= own;
+            uses.ofCallees |= ofCallees;
+            if (own & IsKept && !uses.keptBy)
+                uses.keptBy = use;
+            if (own & IsReturned && !uses.returnedBy)
+                uses.returnedBy = use;
+        }
+    };
+    for (auto& block : function.blocks) {
+        const Value* last = nullptr;
+        for (ValueID id : block.values) {
+            auto& user = function.at(id);
+            last = &user;
+            if (user.opcode == Opcode::Cast)
+                continue;
+            Use use;
+            use.operation = Typed::nameOf(user.opcode);
+            use.inlineFrame = user.inlineFrame;
+            use.position = user.position;
+            if (isPlainCallDirect(user)) {
+                auto& ofCallee = summaries.operands[user.function().index()];
+                for (ValueID child : user.children)
+                    note(whatMayBe(child), IsKept, 0, use);
+                for (unsigned i = 0; i < user.arguments.size(); ++i) {
+                    uint64_t which = whatMayBe(user.arguments[i]);
+                    if (!which)
+                        continue;
+                    uint16_t summary = i < ofCallee.size() ? ofCallee[i] : IsKept;
+                    use.callee = user.function();
+                    use.argument = i;
+                    note(which, IsHandedOn | (summary & IsKept), summary & ~(IsKept | IsHandedOn | IsReturned), use);
+                }
+                continue;
+            }
+            user.forEachChild([&](ValueID child) {
+                uint64_t which = whatMayBe(child);
+                if (!which)
+                    return;
+                ValueID object = originOf(function, child);
+                if (user.opcode == Opcode::CallBuiltin)
+                    use.builtin = user.builtin();
+                note(which, lettersOf(program, function, user, object, needOf(program, function, user, object)), 0, use);
+            });
+        }
+        auto& terminator = block.terminator;
+        if (terminator.value && (terminator.kind == TerminatorKind::Return || terminator.kind == TerminatorKind::Throw)) {
+            auto& at = last ? *last : function.at(terminator.value);
+            Use use;
+            use.operation = nameOf(terminator.kind);
+            use.inlineFrame = at.inlineFrame;
+            use.position = at.position;
+            note(whatMayBe(terminator.value), terminator.kind == TerminatorKind::Return ? IsReturned : IsKept, 0, use);
+        }
+    }
+    return result;
+}
+
+template<typename Functor>
+void forEachGroupOf64(std::span<const ValueID> objects, const Functor& functor)
+{
+    for (size_t first = 0; first < objects.size(); first += 64)
+        functor(first, objects.subspan(first, std::min<size_t>(64, objects.size() - first)));
+}
+
+bool yieldsFreshObject(const Value& value, const SummariesOfFunctions& summaries)
+{
+    using namespace ResultOfFunction;
+    if (!isPlainCallDirect(value))
+        return false;
+    uint8_t result = summaries.results[value.function().index()];
+    return result & MayBeFresh && !(result & MayBeAnything);
+}
+
+Vector<ValueID> sitesOf(const Program& program, const Function& function, const SummariesOfFunctions& summaries)
+{
+    Vector<ValueID> sites;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            auto kind = allocationKindOf(program, value);
+            if ((kind && (*kind == AllocationKind::Array || *kind == AllocationKind::Object || *kind == AllocationKind::Rest)) || yieldsFreshObject(value, summaries))
+                sites.append(id);
+        }
+    }
+    return sites;
+}
+
+uint8_t resultOf(const Program& program, const Function& function, const SummariesOfFunctions& summaries)
+{
+    using namespace ResultOfFunction;
+    Vector<uint8_t> mayBe;
+    mayBe.fill(0, function.values.size());
+    BitVector isSettled(function.values.size());
+    for (ValueID operand : function.blocks[0].parameters)
+        mayBe[operand.index()] = MayBeOperand;
+    Vector<ValueID> sites = sitesOf(program, function, summaries);
+    forEachGroupOf64(sites.span(), [&](size_t, std::span<const ValueID> group) {
+        auto uses = usesOf(program, function, group, summaries);
+        for (size_t k = 0; k < group.size(); ++k) {
+            mayBe[group[k].index()] = uses[k].isKept() ? MayBeAnything : MayBeFresh;
+            if (!isPlainCallDirect(function.at(group[k])))
+                isSettled.quickSet(group[k].index());
+        }
+    });
+    auto whatMayBe = [&](ValueID id) {
+        return mayBe[originOf(function, id).index()];
+    };
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            if (isSettled.quickGet(id.index()) || value.opcode == Opcode::Cast || !program.typeOf(function, id).hasObjects())
+                continue;
+            if (!isPlainCallDirect(value) || summaries.results[value.function().index()] & MayBeAnything)
+                mayBe[id.index()] |= MayBeAnything;
+        }
+    }
+    for (bool changed = true; changed;) {
+        changed = false;
+        auto add = [&](ValueID to, uint8_t more) {
+            changed |= more & ~mayBe[to.index()];
+            mayBe[to.index()] |= more;
+        };
+        for (auto& block : function.blocks) {
+            for (ValueID id : block.values) {
+                auto& value = function.at(id);
+                if (value.opcode == Opcode::Cast && value.child(0))
+                    add(id, whatMayBe(value.child(0)));
+                if (!isPlainCallDirect(value))
+                    continue;
+                auto& ofCallee = summaries.operands[value.function().index()];
+                for (unsigned i = 0; i < value.arguments.size() && i < ofCallee.size(); ++i) {
+                    if (ofCallee[i] & UseOfAllocation::IsReturned)
+                        add(id, whatMayBe(value.arguments[i]));
+                }
+            }
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = function.at(target.block).parameters;
+                for (size_t i = 0; i < parameters.size() && i < target.arguments.size(); ++i)
+                    add(parameters[i], whatMayBe(target.arguments[i]));
+            }
+        }
+    }
+    uint8_t result = 0;
+    for (auto& block : function.blocks) {
+        auto& terminator = block.terminator;
+        if (terminator.kind == TerminatorKind::Return && terminator.value && program.typeOf(function, terminator.value).hasObjects())
+            result |= whatMayBe(terminator.value);
+    }
+    return result;
+}
+
+SummariesOfFunctions summarizeFunctions(const Program& program, unsigned& numberOfRounds)
+{
+    using namespace UseOfAllocation;
+    unsigned count = program.functions.size();
+    SummariesOfFunctions summaries;
+    summaries.operands.grow(count);
+    summaries.results.fill(0, count);
+    BitVector isLost(count);
+    BitVector isLeftOut(count);
+    Vector<Vector<unsigned>> callees(count);
+    for (unsigned i = 0; i < count; ++i) {
+        auto& function = program.functions[i];
+        if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty()) {
+            isLeftOut.quickSet(i);
+            summaries.results[i] = ResultOfFunction::MayBeAnything;
+            continue;
+        }
+        if (reachesArgumentsOtherwise(program, function))
+            isLost.quickSet(i);
+        summaries.operands[i].fill(isLost.quickGet(i) ? IsKept : 0, function.blocks[0].parameters.size());
+        for (auto& value : function.values) {
+            if (isPlainCallDirect(value))
+                callees[i].append(value.function().index());
+        }
+        std::ranges::sort(callees[i]);
+        callees[i].shrink(std::ranges::unique(callees[i]).begin() - callees[i].begin());
+    }
+    Vector<uint8_t> hasChanged;
+    hasChanged.fill(1, count);
+    numberOfRounds = 0;
+    for (bool changed = true; changed;) {
+        bool isFirstRound = !numberOfRounds++;
+        SummariesOfFunctions next = summaries;
+        Vector<uint8_t> changesNow;
+        changesNow.fill(0, count);
+        forEachIndexInParallel(count, [&](unsigned i) {
+            if (isLeftOut.quickGet(i))
+                return;
+            if (!isFirstRound && std::ranges::none_of(callees[i], [&](unsigned callee) { return hasChanged[callee]; }))
+                return;
+            auto& function = program.functions[i];
+            if (!isLost.quickGet(i)) {
+                forEachGroupOf64(function.blocks[0].parameters.span(), [&](size_t first, std::span<const ValueID> group) {
+                    auto uses = usesOf(program, function, group, summaries);
+                    for (size_t k = 0; k < group.size(); ++k) {
+                        if (program.typeOf(function, group[k]).hasObjects())
+                            next.operands[i][first + k] |= uses[k].all();
+                    }
+                });
+            }
+            next.results[i] |= isLost.quickGet(i) ? ResultOfFunction::MayBeAnything : resultOf(program, function, summaries);
+            changesNow[i] = next.operands[i] != summaries.operands[i] || next.results[i] != summaries.results[i];
+        });
+        changed = std::ranges::any_of(changesNow, [](uint8_t value) { return value; });
+        hasChanged = WTF::move(changesNow);
+        summaries = WTF::move(next);
+    }
+    return summaries;
+}
+
+void printLetters(PrintStream& out, uint16_t uses)
+{
+    if (!uses) {
+        out.print("-");
+        return;
+    }
+    for (unsigned i = 0; i < UseOfAllocation::letters.length(); ++i) {
+        if (uses & 1 << i)
+            out.print(UseOfAllocation::letters[i]);
+    }
+}
+
+void printUse(PrintStream& out, const Program& program, const Function& function, const Use& use)
+{
+    out.print(use.operation, " at ");
+    printPlace(out, program, function, use.inlineFrame, use.position);
+    if (use.callee)
+        out.print(" (to f", use.callee.index(), " #", use.argument, ")");
+    else if (use.builtin) {
+        auto& builtin = Builtins::singleton().at(use.builtin);
+        out.print(" (of ", builtin.holder, builtin.holder.isEmpty() ? "" : ".", builtin.name, ")");
+    }
+}
+
+void printVerdict(PrintStream& out, const Program& program, const Function& function, const UsesOfAllocation& uses)
+{
+    out.print(" own ");
+    printLetters(out, uses.own);
+    out.print(" callees ");
+    printLetters(out, uses.ofCallees);
+    if (uses.keptBy) {
+        out.print(": kept: ");
+        printUse(out, program, function, *uses.keptBy);
+    } else if (uses.returnedBy) {
+        out.print(": returned: ");
+        printUse(out, program, function, *uses.returnedBy);
+    } else
+        out.print(": lets go");
+}
+
+} // anonymous namespace
+
+void printUsesOfAllocations(const Program& program, PrintStream& out)
+{
+    using namespace UseOfAllocation;
+    using namespace ResultOfFunction;
+    unsigned numberOfRounds = 0;
+    SummariesOfFunctions summaries = summarizeFunctions(program, numberOfRounds);
+    struct Calls {
+        unsigned letGo { 0 };
+        unsigned returned { 0 };
+        unsigned kept { 0 };
+    };
+    Vector<Calls> callsOf(program.functions.size());
+    unsigned numberOfOperands = 0;
+    unsigned numberLetGo = 0;
+    unsigned numberReturned = 0;
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        if (!program.hasCode(FunctionID(i)) || program.functions[i].blocks.isEmpty())
+            continue;
+        auto& function = program.functions[i];
+        bool isLost = reachesArgumentsOtherwise(program, function);
+        forEachGroupOf64(function.blocks[0].parameters.span(), [&](size_t first, std::span<const ValueID> group) {
+            auto uses = usesOf(program, function, group, summaries);
+            for (size_t k = 0; k < group.size(); ++k) {
+                if (!program.typeOf(function, group[k]).hasObjects())
+                    continue;
+                ++numberOfOperands;
+                out.print("operand f", i, " #", first + k);
+                if (isLost)
+                    out.print(" own K callees -: kept: reaches its arguments otherwise");
+                else {
+                    numberLetGo += uses[k].isLetGo();
+                    numberReturned += !uses[k].isKept() && !uses[k].isLetGo();
+                    printVerdict(out, program, function, uses[k]);
+                }
+                out.print(" in ");
+                printName(out, program, function.name);
+                out.print("\n");
+            }
+        });
+        Vector<ValueID> sites = sitesOf(program, function, summaries);
+        forEachGroupOf64(sites.span(), [&](size_t, std::span<const ValueID> group) {
+            auto uses = usesOf(program, function, group, summaries);
+            for (size_t k = 0; k < group.size(); ++k) {
+                auto& site = function.at(group[k]);
+                auto kind = allocationKindOf(program, site);
+                out.print("site f", i, " v", group[k].index());
+                if (!kind) {
+                    out.print(" call f", site.function().index(), summaries.results[site.function().index()] & MayBeOperand ? " fresh or an operand" : " fresh");
+                    auto& calls = callsOf[site.function().index()];
+                    ++(uses[k].isKept() ? calls.kept : uses[k].isLetGo() ? calls.letGo : calls.returned);
+                } else {
+                    out.print(*kind == AllocationKind::Array ? " array " : *kind == AllocationKind::Rest ? " rest " : " object ");
+                    printSite(out, program, site.opcode, site.opcode == Opcode::NewObjectWithShape ? site.layout() : LayoutID(), FunctionID());
+                    if (*kind == AllocationKind::Array)
+                        out.print(" of ", site.arguments.size());
+                }
+                printVerdict(out, program, function, uses[k]);
+                out.print(kind && uses[k].mayLieInFrame(*kind != AllocationKind::Object) ? " | frame yes | " : " | frame no | ");
+                printPlace(out, program, function, site.inlineFrame, site.position);
+                out.print(" in ");
+                printName(out, program, function.name);
+                for (uint32_t frame = site.inlineFrame; frame; frame = function.inlineFrames[frame].parent) {
+                    out.print(" < ");
+                    printName(out, program, program.at(function.inlineFrames[frame].callee).name);
+                }
+                out.print("\n");
+            }
+        });
+    }
+    unsigned numberOfFunctionsWithFreshResult = 0;
+    for (unsigned i = 0; i < program.functions.size(); ++i) {
+        uint8_t result = summaries.results[i];
+        if (!program.hasCode(FunctionID(i)) || program.functions[i].blocks.isEmpty() || !result)
+            continue;
+        auto& function = program.functions[i];
+        numberOfFunctionsWithFreshResult += result & MayBeFresh && !(result & MayBeAnything);
+        out.print("result f", i, result & MayBeFresh ? " fresh" : "", result & MayBeOperand ? " operand" : "", result & MayBeAnything ? " anything" : "");
+        out.print(" | direct calls whose result is let go ", callsOf[i].letGo, ", returned ", callsOf[i].returned, ", kept ", callsOf[i].kept, function.has(Format::FunctionIsUsedAsValue) ? " | is used as a value" : " | is no value", " | kind ", static_cast<unsigned>(function.kind), " in ");
+        printName(out, program, function.name);
+        out.print("\n");
+    }
+    out.print("operands that may hold objects: ", numberOfOperands, "; that are let go: ", numberLetGo, "; that are only returned: ", numberReturned, "; functions whose every result is fresh or an operand, and some fresh: ", numberOfFunctionsWithFreshResult, "; rounds: ", numberOfRounds, "\n");
 }
 
 } } } // namespace JSC::AOT::Typed

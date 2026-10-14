@@ -125,7 +125,9 @@ public:
         , m_phiToTmp(procedure.values().size())
         , m_blockToBlock(procedure.size())
         , m_useCounts(procedure)
+#if !USE(BUN_JSC_ADDITIONS)
         , m_phiChildren(procedure)
+#endif
         , m_dominators(procedure.dominators())
         , m_procedure(procedure)
         , m_code(procedure.code())
@@ -978,8 +980,20 @@ private:
         
         // We recognize when a child is a Phi that has this value as one of its children. We're very
         // conservative about this; for example we don't even consider transitive Phi children.
+#if USE(BUN_JSC_ADDITIONS)
+        auto isPhiWithThis = [&] (Value* value) {
+            if (value->opcode() != Phi)
+                return false;
+            if (!m_phiChildren)
+                m_phiChildren.emplace(m_procedure);
+            return (*m_phiChildren)[value].transitivelyUses(m_value);
+        };
+        bool leftIsPhiWithThis = isPhiWithThis(left);
+        bool rightIsPhiWithThis = isPhiWithThis(right);
+#else
         bool leftIsPhiWithThis = m_phiChildren[left].transitivelyUses(m_value);
         bool rightIsPhiWithThis = m_phiChildren[right].transitivelyUses(m_value);
+#endif
 
         if (leftIsPhiWithThis != rightIsPhiWithThis)
             return rightIsPhiWithThis;
@@ -5820,6 +5834,53 @@ private:
         }
 
         case ZExt32: {
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_procedure.positionIndependent()) {
+                Value* child = m_value->child(0);
+                bool isZeroExtendedAlready = false;
+                switch (child->opcode()) {
+                case Load:
+                case Load8Z:
+                case Load8S:
+                case Load16Z:
+                case Load16S:
+                    isZeroExtendedAlready = child->type() == Int32 && m_useCounts.numUses(child) > 1;
+                    break;
+                case Add:
+                case Sub:
+                case Mul:
+                case Neg:
+                case BitAnd:
+                case BitOr:
+                case BitXor:
+                case Clz:
+                case Equal:
+                case NotEqual:
+                case LessThan:
+                case GreaterThan:
+                case LessEqual:
+                case GreaterEqual:
+                case Above:
+                case Below:
+                case AboveEqual:
+                case BelowEqual:
+                    isZeroExtendedAlready = child->type() == Int32;
+                    break;
+                case Shl:
+                case ZShr:
+                case RotR:
+                case RotL:
+                    isZeroExtendedAlready = child->type() == Int32 && child->child(1)->hasInt32() && (child->child(1)->asInt32() & 31);
+                    break;
+                default:
+                    break;
+                }
+                if (isZeroExtendedAlready) {
+                    append(Move, tmp(child), tmp(m_value));
+                    return;
+                }
+            }
+#endif
             appendUnOp<Move32, Air::Oops>(m_value->child(0));
             return;
         }
@@ -6787,7 +6848,11 @@ private:
     IndexMap<B3::BasicBlock*, Air::BasicBlock*> m_blockToBlock;
 
     UseCounts m_useCounts;
+#if USE(BUN_JSC_ADDITIONS)
+    std::optional<PhiChildren> m_phiChildren;
+#else
     PhiChildren m_phiChildren;
+#endif
     BlockWorklist m_fastWorklist;
     Dominators& m_dominators;
 

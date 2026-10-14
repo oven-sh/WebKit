@@ -123,6 +123,9 @@ public:
     }
 
     unsigned size() const { return m_vector.size(); }
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned numberOfEntries() const { return m_vector.size() - m_indexFreeList.size(); }
+#endif
     bool isEmpty() const { return m_vector.isEmpty(); }
     
     T* at(unsigned index) const { return m_vector[index].get(); }

@@ -1358,8 +1358,8 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
 
     Structure* namespaceStructure = globalObject->moduleNamespaceObjectStructure();
 #if ENABLE(AOT)
-    if (AOT::VMProgram::of(vm))
-        namespaceStructure = JSModuleNamespaceObject::createStructure(vm, globalObject, jsNull());
+    if (vm.useImmutableIntrinsics && AOT::VMProgram::of(vm))
+        namespaceStructure = JSModuleNamespaceObject::createStructure(vm, globalObject, namespaceStructure->storedPrototype());
 #endif
     auto* moduleNamespaceObject = JSModuleNamespaceObject::create(globalObject, namespaceStructure, this, WTF::move(resolutions), shouldPreventExtensions, phase == ModulePhase::Defer);
     RETURN_IF_EXCEPTION(scope, nullptr);

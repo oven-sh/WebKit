@@ -615,6 +615,11 @@ public:
     JS_EXPORT_PRIVATE JSValue getDirectOfCompiledObject(VM&, PropertyName, unsigned* attributes) const;
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
     JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
+    JS_EXPORT_PRIVATE void noteRefusalByLock(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { });
+    bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
+#else
+    void noteRefusalByLock(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }) { }
+    bool isLockedBuiltin() const { return false; }
 #endif
 
     void flattenDictionaryObject(VM& vm)
@@ -1381,6 +1386,7 @@ ALWAYS_INLINE Identifier makeIdentifier(VM&, const Identifier& name)
     return name;
 }
 
+bool isPropertyUnchangedByDescriptor(JSGlobalObject*, const PropertyDescriptor& current, const PropertyDescriptor&);
 bool validateAndApplyPropertyDescriptor(JSGlobalObject*, JSObject*, PropertyName, bool isExtensible,
     const PropertyDescriptor& descriptor, bool isCurrentDefined, const PropertyDescriptor& current, bool throwException);
 

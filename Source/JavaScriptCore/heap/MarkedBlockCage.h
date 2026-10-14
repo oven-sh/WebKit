@@ -22,7 +22,7 @@ public:
     static bool contains(const void* pointer) { return std::bit_cast<uintptr_t>(pointer) - g_jscConfig.startOfMarkedBlockCage < g_jscConfig.sizeOfMarkedBlockCage; }
 
     // A cell of a block in 32 bits. The cage is aligned to its size, which is at most maxSize, so it does not cross a multiple of that.
-    static constexpr unsigned shift = 4;
+    static constexpr unsigned shift = 3;
     static constexpr uint64_t maxSize = 1ull << (32 + shift);
     static uintptr_t base() { return g_jscConfig.startOfMarkedBlockCage & ~static_cast<uintptr_t>(maxSize - 1); }
     static uint32_t encode(const JSCell* cell)

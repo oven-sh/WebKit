@@ -338,7 +338,7 @@ public:
 
     ExpressionNode* createTaggedTemplate(const JSTokenLocation& location, ExpressionNode* base, TemplateLiteralNode* templateLiteral, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
     {
-        auto node = new (m_parserArena) TaggedTemplateNode(location, base, templateLiteral);
+        auto node = new (m_parserArena) TaggedTemplateNode(location, referenceWithoutAudit(base), templateLiteral);
         setExceptionLocation(node, start, divot, end);
         setEndOffset(node, end.offset);
         return node;
@@ -639,7 +639,7 @@ public:
 
     StatementNode* createForInLoop(const JSTokenLocation& location, ExpressionNode* lhs, ExpressionNode* iter, StatementNode* statements, const JSTokenLocation&, const JSTextPosition& eStart, const JSTextPosition& eDivot, const JSTextPosition& eEnd, VariableEnvironment&& lexicalVariables)
     {
-        ForInNode* result = new (m_parserArena) ForInNode(location, lhs, iter, statements, WTF::move(lexicalVariables));
+        ForInNode* result = new (m_parserArena) ForInNode(location, withoutAudit(lhs), iter, statements, WTF::move(lexicalVariables));
         result->setStartOffset(location.startOffset);
         setExceptionLocation(result, eStart, eDivot, eEnd);
         return result;
@@ -653,7 +653,7 @@ public:
     
     StatementNode* createForOfLoop(bool isForAwait, const JSTokenLocation& location, ExpressionNode* lhs, ExpressionNode* iter, StatementNode* statements, const JSTokenLocation&, const JSTextPosition& eStart, const JSTextPosition& eDivot, const JSTextPosition& eEnd, VariableEnvironment&& lexicalVariables)
     {
-        ForOfNode* result = new (m_parserArena) ForOfNode(isForAwait, location, lhs, iter, statements, WTF::move(lexicalVariables));
+        ForOfNode* result = new (m_parserArena) ForOfNode(isForAwait, location, withoutAudit(lhs), iter, statements, WTF::move(lexicalVariables));
         result->setStartOffset(location.startOffset);
         setExceptionLocation(result, eStart, eDivot, eEnd);
         if (isForAwait)
@@ -672,19 +672,34 @@ public:
         return pattern->isBindingNode();
     }
 
+    ExpressionNode* withoutAudit(ExpressionNode* node)
+    {
+        if (!m_hasAuditedExpressions) [[likely]]
+            return node;
+        while (node && node->isAuditedExpressionNode())
+            node = static_cast<AuditedExpressionNode*>(node)->expr();
+        return node;
+    }
+
+    ExpressionNode* referenceWithoutAudit(ExpressionNode* node)
+    {
+        ExpressionNode* inside = withoutAudit(node);
+        return inside && inside->isLocation() ? inside : node;
+    }
+
     bool isLocation(const Expression& node)
     {
-        return node->isLocation();
+        return withoutAudit(node)->isLocation();
     }
 
     bool isAssignmentLocation(const Expression& node)
     {
-        return node->isAssignmentLocation();
+        return withoutAudit(node)->isAssignmentLocation();
     }
 
     bool isPrivateLocation(const Expression& node)
     {
-        return node->isPrivateLocation();
+        return withoutAudit(node)->isPrivateLocation();
     }
 
     bool isObjectLiteral(const Expression& node)
@@ -939,6 +954,24 @@ public:
         operandStackDepth++;
         m_binaryOperandStack.append(std::make_pair(makeBinaryNode(location, m_binaryOperatorStack.last().first, lhs, rhs), BinaryOpInfo(lhs.second, rhs.second)));
     }
+    void auditLastBinaryOperand(const AuditSites& auditSites)
+    {
+        auto& operand = m_binaryOperandStack.last();
+        operand.first = auditedIfListed(auditSites, operand.first, operand.second.start.offset, operand.second.end.offset);
+    }
+    ExpressionNode* auditedIfListed(const AuditSites& auditSites, ExpressionNode* expression, unsigned start, unsigned end)
+    {
+        auto sites = auditSites.find(start, end);
+        if (sites.empty() || !expression || expression->isBaseFuncExprNode() || expression->isClassExprNode() || expression->isSuperNode())
+            return expression;
+        for (auto& site : sites) {
+            if (auto passes = AuditSites::valueClasses(site.passes); passes != AuditSites::allValueClasses()) {
+                expression = new (m_parserArena) AuditedExpressionNode(expression, site.id, passes, site.least, site.most);
+                m_hasAuditedExpressions = true;
+            }
+        }
+        return expression;
+    }
     void operatorStackAppend(int& operatorStackDepth, int op, int precedence)
     {
         operatorStackDepth++;
@@ -1085,8 +1118,8 @@ public:
 
     AssignmentElement createAssignmentElement(const Expression& assignmentTarget, const JSTextPosition& start, const JSTextPosition& end)
     {
-        checkArgumentsLengthModification(assignmentTarget);
-        return new (m_parserArena) AssignmentElementNode(assignmentTarget, start, end);
+        checkArgumentsLengthModification(withoutAudit(assignmentTarget));
+        return new (m_parserArena) AssignmentElementNode(withoutAudit(assignmentTarget), start, end);
     }
 
     void setEndOffset(Node* node, int offset)
@@ -1213,6 +1246,7 @@ private:
             static_cast<ClassExprNode*>(defaultValue)->setEcmaName(ident);
     }
 
+    bool m_hasAuditedExpressions { false };
     VM& m_vm;
     ParserArena& m_parserArena;
     SourceCode* m_sourceCode;
@@ -1226,6 +1260,8 @@ private:
 
 ExpressionNode* ASTBuilder::makeTypeOfNode(const JSTokenLocation& location, ExpressionNode* expr, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
 {
+    if (ExpressionNode* inside = withoutAudit(expr); inside->isResolveNode())
+        expr = inside;
     if (expr->isResolveNode()) {
         ResolveNode* resolve = static_cast<ResolveNode*>(expr);
         return new (m_parserArena) TypeOfResolveNode(location, resolve->identifier(), start, divot, end);
@@ -1235,6 +1271,7 @@ ExpressionNode* ASTBuilder::makeTypeOfNode(const JSTokenLocation& location, Expr
 
 ExpressionNode* ASTBuilder::makeDeleteNode(const JSTokenLocation& location, ExpressionNode* expr, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
 {
+    expr = withoutAudit(expr);
     if (expr->isOptionalChain()) {
         OptionalChainNode* optionalChain = static_cast<OptionalChainNode*>(expr);
         if (optionalChain->expr()->isLocation()) {
@@ -1463,6 +1500,7 @@ ExpressionNode* ASTBuilder::makeStaticBlockFunctionCallNode(const JSTokenLocatio
 
 ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location, ExpressionNode* func, bool previousBaseWasSuper, ArgumentsNode* args, const JSTextPosition& divotStart, const JSTextPosition& divot, const JSTextPosition& divotEnd, size_t callOrApplyChildDepth, bool isOptionalCall)
 {
+    func = referenceWithoutAudit(func);
     if (func->isSuperNode())
         usesSuperCall();
 
@@ -1624,6 +1662,7 @@ ExpressionNode* ASTBuilder::makeBinaryNode(const JSTokenLocation& location, int 
 
 ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, ExpressionNode* loc, Operator op, ExpressionNode* expr, bool locHasAssignments, bool exprHasAssignments, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
 {
+    loc = withoutAudit(loc);
     if (!loc->isLocation()) {
         ASSERT(loc->isFunctionCall());
         return new (m_parserArena) AssignErrorNode(location, loc, divot, start, end);
@@ -1695,12 +1734,14 @@ ExpressionNode* ASTBuilder::makeAssignNode(const JSTokenLocation& location, Expr
 
 ExpressionNode* ASTBuilder::makePrefixNode(const JSTokenLocation& location, ExpressionNode* expr, Operator op, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
 {
+    expr = withoutAudit(expr);
     checkArgumentsLengthModification(expr);
     return new (m_parserArena) PrefixNode(location, expr, op, divot, start, end);
 }
 
 ExpressionNode* ASTBuilder::makePostfixNode(const JSTokenLocation& location, ExpressionNode* expr, Operator op, const JSTextPosition& start, const JSTextPosition& divot, const JSTextPosition& end)
 {
+    expr = withoutAudit(expr);
     checkArgumentsLengthModification(expr);
     return new (m_parserArena) PostfixNode(location, expr, op, divot, start, end);
 }

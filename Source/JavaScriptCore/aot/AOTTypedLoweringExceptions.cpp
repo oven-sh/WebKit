@@ -29,7 +29,7 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
         bool isClaim = !block.values.isEmpty() && target.arguments.isEmpty();
         if (isClaim) {
             auto& last = m_function.at(block.values.last());
-            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string();
+            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string() && (m_function.isGenericEntrypoint() || m_function.has(Format::FunctionIsHiddenInStackTraces) || !claimMayMakeObjects(m_program, m_function, last));
         }
         if (!isClaim)
             isRefused.set(target.block.index());
@@ -42,7 +42,7 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
         isParameterOfEntry.set(parameter.index());
     for (unsigned index : isHandler) {
         auto& handler = m_function.blocks[index];
-        if (!handler.parameters.isEmpty() || handler.values.isEmpty() || m_function.at(handler.values[0]).opcode != Opcode::CatchValue || handler.terminator.kind != TerminatorKind::Return)
+        if (!handler.parameters.isEmpty() || handler.values.isEmpty() || m_function.at(handler.values[0]).opcode != Opcode::CatchValue || handler.terminator.kind != TerminatorKind::Return || exceptionCaughtIn(BlockID(index)))
             continue;
         BitVector isThere = isParameterOfEntry;
         bool isClosed = true;
@@ -118,9 +118,20 @@ Operand Lowering::get(ValueID id)
     return repOf(narrowed) == Rep::JSValue ? operand : convert(operand, narrowed, repOf(narrowed));
 }
 
-Boxed Lowering::catchException()
+ValueID Lowering::exceptionCaughtIn(BlockID handler) const
 {
-    Boxed caught = AOT_TYPED_OPERATION(Catch);
+    if (!m_program.passesExceptionsOn)
+        return { };
+    for (ValueID id : m_function.at(handler).values) {
+        if (m_function.at(id).yieldsExceptionItself())
+            return id;
+    }
+    return { };
+}
+
+Boxed Lowering::catchException(BlockID handler)
+{
+    Boxed caught = exceptionCaughtIn(handler) ? AOT_TYPED_OPERATION(CatchException) : AOT_TYPED_OPERATION(Catch);
     m_heaps.decoratePatchpointWrite(&m_heaps.root, &m_heaps.root, caught.value());
     LBasicBlock isTermination = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -161,7 +172,7 @@ void Lowering::didLowerWatchedOperation()
             LBasicBlock edge = m_out.m_block;
             LBasicBlock block = newColdBlock();
             m_out.appendTo(block);
-            Boxed value = catchException();
+            Boxed value = catchException(handler->block);
             m_out.addIncomingToPhi(caught, m_out.anchor(value.value()));
             m_out.jump(target);
             m_out.appendTo(edge);

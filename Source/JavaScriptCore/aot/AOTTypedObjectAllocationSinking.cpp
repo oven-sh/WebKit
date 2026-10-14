@@ -1060,6 +1060,10 @@ private:
             break;
         case Opcode::PutField:
         case Opcode::PutById:
+            if (auto& store = m_function.at(id); opcode == Opcode::PutField && m_program.at(store.layout()).reuseVariable && store.field() + 1 == m_program.at(store.layout()).fields.size()) {
+                if (uint32_t object = aliasOf(first); object != none && m_state[object].status != Status::Materialized)
+                    return false;
+            }
             if (isVirtual(aliasOf(second)) && !canHoldVirtually(aliasOf(first), m_function.at(id)))
                 escape(aliasOf(second), id);
             if (uint32_t object = aliasOf(first); isVirtual(object)) {
@@ -1126,12 +1130,12 @@ private:
             break;
         case Opcode::IsClosureOf:
             if (uint32_t object = aliasOf(first); isVirtual(object)) {
-                replaceWithBoolean(id, m_candidates[object].isClosure && m_function.at(m_candidates[object].allocation).function() == m_function.at(id).function());
+                replaceWithBoolean(id, m_function.at(id).immediates[1] != closureIsTheOneThatConstructs && m_candidates[object].isClosure && m_function.at(m_candidates[object].allocation).function() == m_function.at(id).function());
                 return false;
             }
             if (ValueID closure = closureLoadedBy(first)) {
                 bool isOfFunction = m_function.at(closure).function() == m_function.at(id).function();
-                if (!isOfFunction || m_function.at(id).immediates[1] != closureIsAsMade) {
+                if (!isOfFunction || (m_function.at(id).immediates[1] != closureIsAsMade && m_function.at(id).immediates[1] != closureIsTheOneThatConstructs)) {
                     replaceWithBoolean(id, isOfFunction);
                     return false;
                 }
@@ -1220,7 +1224,7 @@ private:
     {
         m_currentBlock = b;
         restoreState(m_head[b]);
-        Vector<ValueID> values = m_function.blocks[b].values;
+        ValuesOfBlock values = m_function.blocks[b].values;
         if (m_mode == Mode::Rewrite) {
             m_newValues.clear();
             loadHeadParameters(b);

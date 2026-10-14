@@ -319,7 +319,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(!executable->m_codeBlock);
         RELEASE_ASSERT(!function);
 #if ENABLE(AOT)
-        if (AOT::Image::hasAny()) {
+        if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
             if (auto code = AOT::findInImage(executable, kind, executable->unlinkedCodeBlock(), scope)) {
                 ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -342,7 +342,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         ASSERT(executable->unlinkedCodeBlock());
 #if ENABLE(AOT)
-        if (AOT::Image::hasAny()) {
+        if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
             if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
                 ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
@@ -392,7 +392,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         return nullptr;
     }
 #if ENABLE(AOT)
-    if (AOT::Image::hasAny()) {
+    if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
         if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
             throwScope.release();
             AOT::install(vm, executable, kind, unlinkedCodeBlock, scope, AOT::codeFromImage(code, unlinkedCodeBlock));

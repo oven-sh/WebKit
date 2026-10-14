@@ -23,3 +23,4 @@
     ValueID originOf(ValueID) const;
     Operand lowerForInKeys(ValueID result, const Value&);
     Operand lowerHasEnumerableProperty(ValueID result, const Value&);
+    Operand lowerStepByOne(InlineBuiltin, ValueID result, const Value&);

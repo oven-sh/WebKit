@@ -12,7 +12,6 @@
 #include "AOTEmitter.h"
 #include "AOTProgram.h"
 #include "AOTStubs.h"
-#include "AOTTypeTable.h"
 #include "AirCode.h"
 #include "AirGenerate.h"
 #include "AirInstInlines.h"
@@ -127,7 +126,7 @@ static constexpr unsigned maxFrameSizeToMoveFirst = 4 * KB;
 CCallHelpers::JumpList emitStackCheck(CCallHelpers& jit, unsigned frameSize)
 {
     // Below the limit lies the reserved zone, so for a frame much smaller than that the stack pointer may move before the test.
-    static_assert(maxFrameSizeToMoveFirst < minimumReservedZoneSize);
+    static_assert(maxFrameSizeToMoveFirst + maxStackTakenWithoutCheck < minimumReservedZoneSize);
     CCallHelpers::Address limit(instanceGPR, Instance::offsetOfSoftStackLimit());
     if (frameSize <= maxFrameSizeToMoveFirst) {
         if (frameSize)

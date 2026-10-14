@@ -24,6 +24,10 @@
 #include "config.h"
 #include "ArrayConstructor.h"
 
+#if ENABLE(AOT)
+#include "AOTTypedCompactTable.h"
+#endif
+
 #include "ArrayPrototype.h"
 #include "ArrayPrototypeInlines.h"
 #include "BuiltinNames.h"
@@ -373,6 +377,16 @@ static JSArray* tryCreateArrayFromSet(JSGlobalObject* globalObject, JSSet* set)
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if ENABLE(AOT)
+    if (set->hasCompactTable()) [[unlikely]] {
+        JSArray* result = constructEmptyArray(globalObject, nullptr);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, result, set);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (isAppended)
+            return result;
+    }
+#endif
     unsigned length = set->size();
 
     if (!length)
@@ -612,6 +626,14 @@ static JSArray* tryCreateArrayFromSetIterator(JSGlobalObject* globalObject, JSSe
 #if ENABLE(AOT)
         if (setIterator->isAtCompactTable()) [[unlikely]]
             return nullptr;
+        if (set->hasCompactTable()) [[unlikely]] {
+            JSArray* result = constructEmptyArray(globalObject, nullptr);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            bool isAppended = AOT::Typed::CollectionIteration::tryAppendTo(globalObject, result, setIterator);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            if (isAppended)
+                return result;
+        }
 #endif
         storageCell = set->storageOrSentinel(vm);
         if (storageCell == vm.orderedHashTableSentinel())

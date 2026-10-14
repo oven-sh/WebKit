@@ -1966,6 +1966,65 @@ void testBranchLoad32()
     CHECK_EQ(invoke<int32_t>(*code, &cond), 0);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void testMemoryNumberingWhenWalkRemovesEdgeIntoJoin()
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t*, int32_t, int32_t>(proc, root);
+    BasicBlock* stores = proc.addBlock();
+    BasicBlock* storesElsewhere = proc.addBlock();
+    BasicBlock* testsAgain = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    BasicBlock* leaves = proc.addBlock();
+    HeapRange heap(10, 11);
+    HeapRange otherHeap(11, 12);
+    auto load = [&](BasicBlock* block) {
+        MemoryValue* value = block->appendNew<MemoryValue>(proc, Load, Int32, Origin(), arguments[0]);
+        value->setRange(heap);
+        return value;
+    };
+
+    Value* before = load(root);
+    root->setSuccessors(FrequentedBlock(stores), FrequentedBlock(testsAgain));
+    root->appendNew<Value>(proc, Branch, Origin(), arguments[1]);
+
+    stores->appendNew<MemoryValue>(proc, Store, Origin(), stores->appendNew<Const32Value>(proc, Origin(), 5), arguments[0], 0, heap);
+    stores->setSuccessors(FrequentedBlock(storesElsewhere), FrequentedBlock(join));
+    stores->appendNew<Value>(proc, Branch, Origin(), arguments[2]);
+
+    storesElsewhere->appendNew<MemoryValue>(proc, Store, Origin(), storesElsewhere->appendNew<Const32Value>(proc, Origin(), 1), arguments[0], 4, otherHeap);
+    storesElsewhere->setSuccessors(FrequentedBlock(join));
+    storesElsewhere->appendNew<Value>(proc, Jump, Origin());
+
+    testsAgain->setSuccessors(FrequentedBlock(join), FrequentedBlock(leaves));
+    testsAgain->appendNew<Value>(proc, Branch, Origin(), arguments[1]);
+
+    leaves->clearSuccessors();
+    leaves->appendNew<Value>(proc, Return, Origin(), leaves->appendNew<Const32Value>(proc, Origin(), 0));
+
+    Value* after = load(join);
+    join->clearSuccessors();
+    join->appendNew<Value>(proc, Return, Origin(), join->appendNew<Value>(proc, Add, Origin(), join->appendNew<Value>(proc, Mul, Origin(), before, join->appendNew<Const32Value>(proc, Origin(), 100)), after));
+
+    proc.resetReachability();
+    proc.setPositionIndependent();
+    reduceStrength(proc, ReduceStrengthPass::Initial);
+    proc.setPositionIndependent(false);
+
+    auto code = compileProc(proc);
+    for (int32_t alsoElsewhere : { 0, 1 }) {
+        int32_t memory[2] = { 1, 2 };
+        CHECK_EQ(invoke<int32_t>(*code, memory, 1, alsoElsewhere), 105);
+        CHECK_EQ(memory[0], 5);
+        CHECK_EQ(memory[1], alsoElsewhere ? 1 : 2);
+    }
+    int32_t memory[2] = { 1, 2 };
+    CHECK_EQ(invoke<int32_t>(*code, memory, 0, 1), 0);
+    CHECK_EQ(memory[0], 1);
+}
+#endif
+
 void testBranchLoad8S()
 {
     Procedure proc;

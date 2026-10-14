@@ -60,6 +60,14 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseThen, void, (Instance* instance
     OPERATION_RETURN(scope);
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseCatch, JSCell*, (Instance* instance, JSCell* promise, EncodedJSValue onRejected))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSPromise* derived = JSPromise::create(vm, globalObject->promiseStructure());
+    uncheckedDowncast<JSPromise>(promise)->performPromiseThen(vm, globalObject, jsUndefined(), JSValue::decode(onRejected), derived);
+    OPERATION_RETURN(scope, derived);
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncGeneratorYield, void, (Instance* instance, JSCell* resumeClosure, EncodedJSValue operand))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -133,6 +141,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
         return !arguments.empty() && arguments[0].hasObjects() ? Writes::Heap : Writes::RuntimeState;
     // The receiver finds the constructor and the species the realm started with.
     case InlineBuiltin::PromiseThen:
+    case InlineBuiltin::PromiseCatch:
         return Writes::RuntimeState;
     case InlineBuiltin::AwaitMayContinue:
         return Writes::Nothing;
@@ -300,7 +309,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
     if (which == InlineBuiltin::SuspendAsyncFunction) {
         CellPointer closure = in<CellPointer>(value.arguments[0]);
         Boxed awaited = in<Boxed>(value.arguments[1]);
-        if (m_environmentAwaitingBarrier && leavesBarriersToParks() && m_environmentAwaitingBarrier == m_function.at(value.arguments[0]).child(0)) {
+        if (m_environmentAwaitingBarrier && m_environmentAwaitingBarrier == m_function.at(value.arguments[0]).child(0)) {
             m_environmentAwaitingBarrier = ValueID();
             AOT_TYPED_OPERATION_WITH_EFFECTS(ParkAsyncFunction, effectsOfBuiltinCall(value), closure, awaited);
         } else
@@ -345,6 +354,10 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         AOT_TYPED_OPERATION(PromiseThen, promise, onFulfilled, onRejected, derived);
         return ensure(derived, promiseType, type);
     }
+    if (which == InlineBuiltin::PromiseCatch) {
+        CellPointer promise = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        return ensure(AOT_TYPED_OPERATION(PromiseCatch, promise, argumentOrUndefined(0)), promiseType, type);
+    }
     if (which == InlineBuiltin::PromiseResolve) {
         Boxed resolution = argumentOrUndefined(0);
         bool mayBeObject = !value.arguments.isEmpty() && typeOf(value.arguments[0]).hasObjects();
@@ -353,7 +366,7 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
         if (mayBeObject) {
             LBasicBlock isCellCase = m_out.newBlock();
             LBasicBlock isObject = m_out.newBlock();
-            LBasicBlock otherwise = newColdBlock();
+            LBasicBlock otherwise = newBlockForGeneralCall(value);
             m_out.branch(isCell(resolution).value(), unsure(isCellCase), unsure(isNoObject));
             m_out.appendTo(isCellCase);
             CellPointer cell = asCell(resolution);
@@ -367,8 +380,10 @@ std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID
                 m_out.appendTo(isOriginalPromise);
                 join.add(cell);
             }
-            m_out.appendTo(otherwise);
-            join.add(asCell(callBuiltinFunction(value, effectsOfBuiltinCall(value))));
+            if (!isGeneralArmOnOffer(otherwise)) {
+                m_out.appendTo(otherwise);
+                join.add(asCell(callBuiltinFunction(value, effectsOfBuiltinCall(value))));
+            }
         } else
             m_out.jump(isNoObject);
         m_out.appendTo(isNoObject);

@@ -13,6 +13,7 @@
 #include "AirBlockInsertionSet.h"
 #include "AirCode.h"
 #include "AirGenerate.h"
+#include "AirInstInlines.h"
 #include "AirInsertionSet.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Generate.h"
@@ -39,10 +40,11 @@ Lowering::Lowering(Procedure& proc, const Program& program, FunctionID id, const
     , m_length(program.find("length"_s.span8()).value_or(StringID()))
 {
     m_out.noteFoldedConstantsIn(m_context.wideIntegerConstants);
-    static const char* const compactSet = getenv("BUN_AOT_SWITCH_COMPACT2");
+    static const char* const compactSetAsked = getenv("BUN_AOT_SWITCH_COMPACT2");
+    static const char* const compactSet = compactSetAsked ? compactSetAsked : "g";
     static const char* const compactLevers = getenv("BUN_AOT_SWITCH_COMPACT2_LEVERS");
-    m_isCompact = compactSet && !function.isBodyOfSeveralSites && (!strcmp(compactSet, "all") || (strchr(compactSet, 'g') && program.isColdByGraph(id)) || strchr(compactSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c'));
-    m_compactLevers = compactLevers ? static_cast<unsigned>(atoi(compactLevers)) : 65565;
+    m_isCompact = !function.isBodyOfSeveralSites && (!strcmp(compactSet, "all") || (strchr(compactSet, 'g') && program.isColdByGraph(id)) || strchr(compactSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c'));
+    m_compactLevers = compactLevers ? static_cast<unsigned>(atoi(compactLevers)) : 458781;
 }
 
 LType Lowering::b3TypeOf(Rep rep)
@@ -291,10 +293,7 @@ void Lowering::lowerTerminator(const Terminator& terminator)
             return;
         }
         if (isFetchedWhereNeeded(terminator.value)) {
-            if (m_readAskedForText)
-                lowerBranchOnTextOfRead();
-            else
-                lowerBranchOnText();
+            lowerBranchOnText();
             return;
         }
         if (m_isCarriedOutByBranch.get(terminator.value.index())) {
@@ -376,6 +375,8 @@ void Lowering::lowerTerminator(const Terminator& terminator)
     case TerminatorKind::Throw: {
         if (LValue caught = terminator.targets.isEmpty() ? nullptr : m_caughtValues.get(terminator.targets[0].block.index())) {
             Boxed thrown = in<Boxed>(terminator.value);
+            if (m_program.passesExceptionsOn && typeOf(terminator.value).isAnything() && !exceptionCaughtIn(terminator.targets[0].block))
+                thrown = AOT_TYPED_OPERATION(ValueOfException, thrown);
             LBasicBlock handler = edgeTo(terminator.targets[0], false);
             m_out.addIncomingToPhi(caught, m_out.anchor(thrown.value()));
             m_out.jump(handler);
@@ -621,7 +622,7 @@ static String bytesByOperation(const B3::PCToOriginMap& map, LinkBuffer& linkBuf
     for (size_t i = 0; i < ranges.size(); ++i) {
         uintptr_t origin = std::bit_cast<uintptr_t>(ranges[i].origin.dfgOrigin());
         if (offsetOf(i + 1) > offsetOf(i))
-            out.print("\t", origin >> 8 & 0xffff, "\t", origin >> 32, "\t", offsetOf(i), "\t", offsetOf(i + 1) - offsetOf(i));
+            out.print("\t", origin >> 8 & 0xffff, "\t", origin >> 32 | (origin & 1) << 31, "\t", offsetOf(i), "\t", offsetOf(i + 1) - offsetOf(i));
     }
     return out.toString();
 }
@@ -632,8 +633,12 @@ void Lowering::lowerBlock(BlockID id)
     m_currentBlockID = id;
     m_isInLoop = m_loopBlocks.get(id.index());
     bool didEmitCalls = std::exchange(m_context.emitsCalls, false);
+#if CPU(X86_64)
+    m_context.holdsColdSites = false;
+#endif
     auto& block = m_function.at(id);
     m_currentBlock = &block;
+    m_leavesNextIntervalToSlowPath = isCompact(18);
     for (ValueID parameter : block.parameters)
         didDefineReceiverOfRun(parameter);
     materializeFinalStringBuilderStates(block);
@@ -699,7 +704,7 @@ void Lowering::lowerBlock(BlockID id)
             m_watchingHandler = &block.terminator.targets[1];
         m_unconditionalBlock = m_out.m_block;
         if (Options::aotMapFilePath()) [[unlikely]]
-            m_out.setOrigin(std::bit_cast<DFG::Node*>(std::bit_cast<uintptr_t>(originForMap(m_function, value)) | static_cast<uintptr_t>(valueID.index() + 1) << 32 | classForMap(value.child(0)) << 56 | ((value.opcode == Opcode::GetById || value.opcode == Opcode::PutById) && valueID.index() + 1 < 1u << 20 ? (valueID.index() + 1 < 1u << 17 ? formForMap(valueID, value) << 3 | (value.rep == Rep::Int32 && typeOf(valueID).isBoolean() ? 0 : static_cast<uintptr_t>(value.rep)) : 15 << 3) : 0) << 49 | static_cast<uintptr_t>(m_isInLoop) << 63));
+            m_out.setOrigin(std::bit_cast<DFG::Node*>(std::bit_cast<uintptr_t>(originForMap(m_function, value)) | static_cast<uintptr_t>(valueID.index() + 1) << 32 | classForMap(value.child(0)) << 56 | ((value.opcode == Opcode::GetById || value.opcode == Opcode::PutById) && valueID.index() + 1 < 1u << 20 ? (valueID.index() + 1 < 1u << 17 ? formForMap(valueID, value) << 3 | (value.rep == Rep::Int32 && typeOf(valueID).isBoolean() ? 0 : static_cast<uintptr_t>(value.rep)) : 15 << 3) : 0) << 49 | static_cast<uintptr_t>(m_isInLoop)));
         double frequency = m_out.m_block->frequency();
         Operand result = lower(valueID, value);
         didLowerWatchedOperation();
@@ -717,6 +722,10 @@ void Lowering::lowerBlock(BlockID id)
         }
         define(valueID, result);
         RELEASE_ASSERT_WITH_MESSAGE(!m_environmentAwaitingBarrier || i + 1 < block.values.size(), "AOT: a block ends between a store to an environment and its barrier");
+        if (m_isFillingReusedEnvironment && i + 1 == block.values.size()) [[unlikely]] {
+            dataLogLn("AOT: f", m_id.index(), ": a block ends between the birth of an environment that is used again and its barrier");
+            CRASH();
+        }
         if (isFetchedWhereNeeded(valueID))
             continue;
         didDefineReceiverOfRun(valueID);
@@ -737,9 +746,44 @@ void Lowering::lowerBlock(BlockID id)
     if (Options::aotMapFilePath()) [[unlikely]]
         m_out.setOrigin(std::bit_cast<DFG::Node*>(std::bit_cast<uintptr_t>(originForMap(firstTerminatorForMap + static_cast<unsigned>(block.terminator.kind), false)) | static_cast<uintptr_t>(0x800000 + id.index() + 1) << 32 | (id.index() + 1 < 1u << 16 ? conditionForMap(block.terminator.value) : 0) << 48 | classForMap(block.terminator.value) << 56));
     lowerTerminator(block.terminator);
+#if CPU(X86_64)
+    if (m_context.holdsColdSites && LoweringContext::splitsAsIfColdSitesCalled())
+        m_context.blocksThatEmitCalls.set(id.index());
+#endif
     if (m_context.emitsCalls)
         m_context.blocksThatEmitCalls.set(id.index());
     m_context.emitsCalls |= didEmitCalls;
+}
+
+void Lowering::findRowOfRun(RunOfAccesses& run) const
+{
+    if (Options::auditAOTTypedAssertions())
+        return;
+    const Vector<uint32_t, 1>* fewest = nullptr;
+    for (StringID name : run.names) {
+        auto found = m_program.numbersOfRowsByName.find(name.index() + 1);
+        if (found == m_program.numbersOfRowsByName.end())
+            return;
+        if (!fewest || found->value.size() < fewest->size())
+            fewest = &found->value;
+    }
+    uint32_t only = Format::none;
+    for (uint32_t number : *fewest) {
+        auto& row = m_program.numberedRows[number];
+        if (!std::ranges::all_of(run.names, [&](StringID name) { return row.names.contains(name); }))
+            continue;
+        if (only != Format::none)
+            return;
+        only = number;
+    }
+    if (only == Format::none || only >= m_program.firstNumberOfRowsOfThis || !m_program.rowsThatStayAsBorn.get(only))
+        return;
+    auto& row = m_program.numberedRows[only];
+    if (row.names.size() > row.inlineCapacity)
+        return;
+    run.numberOfRow = only;
+    for (StringID name : run.names)
+        run.places.append(row.names.find(name));
 }
 
 void Lowering::findRunsOfAccesses(const Vector<BlockID>& order)
@@ -827,7 +871,8 @@ void Lowering::findRunsOfAccesses(const Vector<BlockID>& order)
             if (access.isStore)
                 run.stored |= 1u << index;
         }
-        unsigned slots = (run.names.size() + 7) / 8;
+        findRowOfRun(run);
+        unsigned slots = run.numberOfRow != Format::none ? 0 : (run.names.size() + 7) / 8;
         if (m_context.sites.size() + slots > std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
             break;
         run.header = m_context.sites.size();
@@ -981,6 +1026,7 @@ bool Lowering::run()
     findStringsReadInLoops();
     findIterationsOfStrings();
     findEntriesOfArrays();
+    findElementsTakenAtOnce();
     findIterationsInFrame();
     findParametersJoinedInParts();
     findNumbersJoinedWithIntegers(order);
@@ -1102,15 +1148,57 @@ bool Lowering::lowerEntryParameters()
     return true;
 }
 
+TypedPointer Lowering::inStatics(const FTL::AbstractHeap& heap, ptrdiff_t offset)
+{
+    if (!isX86())
+        return m_out.address(heap, fixedPointer(Instance::offsetOfTypedStatics()), offset);
+    return m_out.address(heap, m_instance, Instance::displacementOfTypedStatics(m_program.sizeOfStatics) + offset);
+}
+
+TypedPointer Lowering::cardOf(uint32_t offsetInStatics)
+{
+    if (!isX86())
+        return m_out.address(m_heaps.AOTTyped_cards, fixedPointer(Instance::offsetOfTypedCards()), offsetInStatics >> Instance::typedCardShift);
+    return m_out.address(m_heaps.AOTTyped_cards, m_instance, Instance::displacementOfTypedCards(m_program.sizeOfStatics) + static_cast<ptrdiff_t>(offsetInStatics >> Instance::typedCardShift));
+}
+
+LValue Lowering::startOfStatics()
+{
+    if (!isX86())
+        return fixedPointer(Instance::offsetOfTypedStatics());
+    return m_out.add(m_instance, m_out.constIntPtr(Instance::displacementOfTypedStatics(m_program.sizeOfStatics)));
+}
+
+LValue Lowering::startOfCards()
+{
+    if (!isX86())
+        return fixedPointer(Instance::offsetOfTypedCards());
+    return m_out.add(m_instance, m_out.constIntPtr(Instance::displacementOfTypedCards(m_program.sizeOfStatics)));
+}
+
 TypedPointer Lowering::addressOf(VariableID id)
 {
-    return m_out.address(m_heaps.AOTTyped_variables[id.index()], fixedPointer(Instance::offsetOfTypedStatics()), m_program.variables[id.index()].offset);
+    return inStatics(m_heaps.AOTTyped_variables[id.index()], m_program.variables[id.index()].offset);
 }
 
 // What was read from a variable that may hold nothing yet.
 void Lowering::checkInitialized(Operand raw, StringID name)
 {
     requireOrThrowAt(logicalNot(isAbsent(raw)), ThrowKind::TDZ, std::nullopt, name.index());
+}
+
+void Lowering::validateIsInitialized(Operand raw)
+{
+    LBasicBlock doesNotHold = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(isAbsent(raw).value(), rarely(doesNotHold), usually(continuation));
+    m_out.appendTo(doesNotHold);
+    {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        AOT_TYPED_OPERATION(FactDoesNotHold, Boxed(m_out.int64Zero), word32(m_id.index()), word32(m_currentBlock->values[m_currentIndexInBlock].index()));
+    }
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 // The module variables and the variables in environments that this function stores to. One that is stored to once, and is never seen
@@ -1140,8 +1228,10 @@ Operand Lowering::lowerGetModuleVariable(ValueID result, const Value& value)
             flags |= IsFixed;
     }
     Operand raw = load(variable.store, addressOf(value.variable()), flags);
-    if (variable.mayBeSeenUninitialized())
+    if (variable.mayBeSeenUninitialized() && !value.findsVariableInitialized())
         checkInitialized(raw, variable.name);
+    if (Options::validateAOTTypedFacts() && variable.mayBeSeenUninitialized() && value.findsVariableInitialized()) [[unlikely]]
+        validateIsInitialized(raw);
     if (Options::validateAOTTypedFacts() && variable.onlyFunctionIsFact) [[unlikely]]
         validateOnlyFunction(raw, result, variable.onlyFunction, false);
     return ensure(raw, m_program.at(variable.type ? variable.type : m_program.types.anything), typeOf(result));
@@ -1149,28 +1239,16 @@ Operand Lowering::lowerGetModuleVariable(ValueID result, const Value& value)
 
 LValue Lowering::wordOfGlobalPropertyCache(uint32_t cacheNumber, size_t offset)
 {
-    return marked(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, fixedPointer(Instance::offsetOfTypedStatics()), m_program.globalPropertyCachesOffset + (cacheNumber - 1) * sizeof(GlobalPropertyCache) + offset)), IsSafe);
+    return marked(m_out.load64(inStatics(m_heaps.AOTTyped_collectorState, m_program.globalPropertyCachesOffset + (cacheNumber - 1) * sizeof(GlobalPropertyCache) + offset)), IsSafe);
 }
 
-Boxed Lowering::valueOfGlobalPropertyOrElse(StringID name, uint32_t cacheNumber, LBasicBlock miss)
+Boxed Lowering::valueOfGlobalPropertyOrElse(StringID name, uint32_t cacheNumber, LBasicBlock miss, bool isFreeName)
 {
-    if (isEnginePrivateName(m_program.string(name))) {
-        Boxed value(wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value)));
-        orElse(m_out.notZero64(value.value()), miss);
-        if (Options::validateAOTTypedFacts()) [[unlikely]]
-            AOT_TYPED_OPERATION(ValidateGlobalForGood, word32(name.index()), value);
-        return value;
-    }
-    LBasicBlock mayChange = m_out.newBlock();
-    LBasicBlock continuation = m_out.newBlock();
-    LValue value = wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value));
-    ValueFromBlock forGood = m_out.anchor(value);
-    m_out.branch(m_out.notZero64(value), unsure(continuation), unsure(mayChange));
-    m_out.appendTo(mayChange);
-    ValueFromBlock current = m_out.anchor(m_out.load64(globalPropertyOrElse(cacheNumber, miss)));
-    m_out.jump(continuation);
-    m_out.appendTo(continuation);
-    return Boxed(m_out.phi(Int64, forGood, current));
+    Boxed value(wordOfGlobalPropertyCache(cacheNumber, OBJECT_OFFSETOF(GlobalPropertyCache, value)));
+    orElse(m_out.notZero64(value.value()), miss);
+    if (Options::validateAOTTypedFacts() && isFreeName) [[unlikely]]
+        AOT_TYPED_OPERATION(ValidateGlobalForGood, word32(name.index()), value);
+    return value;
 }
 
 TypedPointer Lowering::globalPropertyOrElse(uint32_t cacheNumber, LBasicBlock miss)
@@ -1222,7 +1300,7 @@ std::optional<Boxed> Lowering::getPropertyOfGlobalThis(ValueID base, StringID na
     LBasicBlock miss = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     orElse(m_out.equal(object.value(), marked(m_out.load64(m_out.address(m_heaps.AOTTyped_collectorState, fixedPointer(Instance::offsetOfGlobalObject()), JSGlobalObject::offsetOfGlobalThis())), IsSafe)), isAnotherObject);
-    ValueFromBlock fast = m_out.anchor(valueOfGlobalPropertyOrElse(name, cacheNumber, miss).value());
+    ValueFromBlock fast = m_out.anchor(valueOfGlobalPropertyOrElse(name, cacheNumber, miss, false).value());
     m_out.jump(continuation);
     ValueFromBlock slow;
     inColdBlock(miss, [&] {
@@ -1243,8 +1321,14 @@ void Lowering::lowerPutGlobal(const Value& value)
     Word32 name = word32(value.string().index());
     uint32_t cacheNumber = m_program.globalPropertyCacheNumber(value.string(), true);
     Boxed stored = in<Boxed>(value.child(0));
+    auto generally = [&, isSloppy = isInSloppyCode()] {
+        if (isSloppy)
+            AOT_TYPED_OPERATION(SetFreeSloppy, name, word32(cacheNumber), stored);
+        else
+            AOT_TYPED_OPERATION(SetFree, name, word32(cacheNumber), stored);
+    };
     if (!cacheNumber) {
-        AOT_TYPED_OPERATION(SetFree, name, word32(cacheNumber), stored);
+        generally();
         return;
     }
     LBasicBlock miss = newColdBlock();
@@ -1256,7 +1340,7 @@ void Lowering::lowerPutGlobal(const Value& value)
         barrier(CellPointer(fixedPointer(Instance::offsetOfGlobalObject())));
     m_out.jump(continuation);
     inColdBlock(miss, [&] {
-        AOT_TYPED_OPERATION(SetFree, name, word32(cacheNumber), stored);
+        generally();
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
@@ -1271,7 +1355,7 @@ void Lowering::lowerPutModuleVariable(const Value& value)
         validateOnlyFunction(stored, value.child(0), variable.onlyFunction, true);
     store(variable.store, stored, addressOf(value.variable()));
     if (variable.hasCard && holdsCells(variable.store))
-        m_out.store32As8(m_out.constInt32(Instance::typedCardIsStoredTo), m_out.address(m_heaps.AOTTyped_cards, fixedPointer(Instance::offsetOfTypedCards()), variable.offset >> Instance::typedCardShift));
+        m_out.store32As8(m_out.constInt32(Instance::typedCardIsStoredTo), cardOf(variable.offset));
 }
 
 // Only compiled code gets to see an environment or the frame of a coroutine.
@@ -1279,6 +1363,8 @@ Operand Lowering::lowerGetEnvironmentField(ValueID result, const Value& value)
 {
     auto& field = m_program.at(value.layout()).fields[value.field()];
     CellPointer cell = in<CellPointer>(value.child(0));
+    if (Options::validateAOTTypedFacts()) [[unlikely]]
+        validateIsNotReleased(cell, value);
     unsigned flags = safeIfReaches(cell, field.offset + sizeOf(field.store));
     if (field.flags & fieldIsImmutable)
         flags |= IsFixed;
@@ -1293,6 +1379,8 @@ Operand Lowering::lowerGetEnvironmentField(ValueID result, const Value& value)
         checkInitialized(raw, field.name);
     if (Options::validateAOTTypedFacts() && field.onlyFunctionIsFact) [[unlikely]]
         validateOnlyFunction(raw, result, field.onlyFunction, false);
+    if (Options::validateAOTTypedFacts() && field.otherFunction) [[unlikely]]
+        validateOnlyFunction(raw, result, field.onlyFunction, true, field.otherFunction);
     return ensure(raw, stored.withoutPrimitives(Primitive::Absent), typeOf(result));
 }
 
@@ -1315,27 +1403,9 @@ bool Lowering::isFollowedByStoreWithBarrier(ValueID environment) const
     return false;
 }
 
-bool Lowering::leavesBarriersToParks()
-{
-    static const bool result = getenv("BUN_AOT_SWITCH_PARK_DOES_THE_BARRIER");
-    return result;
-}
-
-static void countBarrierLeftToPark()
-{
-    static std::atomic<uint64_t> count { 0 };
-    static std::once_flag once;
-    std::call_once(once, [] {
-        atexit([] {
-            dataLogLn("AOT: parks do the barrier: ", count.load(), " times the lowering left the barrier of a frame to the park");
-        });
-    });
-    count++;
-}
-
 bool Lowering::leavesBarrierToPark(ValueID frame) const
 {
-    if (!leavesBarriersToParks() || Options::validateAOTTypedFacts())
+    if (Options::validateAOTTypedFacts())
         return false;
     auto isOfFrame = [&](const Value& access) {
         return access.child(0) == frame && m_program.at(access.layout()).isCoroutineFrame;
@@ -1363,7 +1433,6 @@ bool Lowering::leavesBarrierToPark(ValueID frame) const
             return false;
         if (!isResumeClosure(m_function.at(next.arguments[0])) || !isThereAlready(next.arguments[1]))
             return false;
-        countBarrierLeftToPark();
         return true;
     }
     return false;
@@ -1374,10 +1443,12 @@ void Lowering::lowerPutEnvironmentField(const Value& value)
     auto& field = m_program.at(value.layout()).fields[value.field()];
     CellPointer cell = in<CellPointer>(value.child(0));
     ValueID stored = value.child(1);
+    if (Options::validateAOTTypedFacts() && !isLoweringInitializingStore()) [[unlikely]]
+        validateIsNotReleased(cell, value);
     didEmitWrite(isLocalAllocation(m_function, value.child(0)) ? Writes::RuntimeState : Writes::Fields);
     Operand operand = in(stored, repOf(field.store));
-    if (Options::validateAOTTypedFacts() && (field.onlyFunctionIsFact || field.onlyFunctionOrNil)) [[unlikely]]
-        validateOnlyFunction(operand, stored, field.onlyFunction, true);
+    if (Options::validateAOTTypedFacts() && (field.onlyFunctionIsFact || field.onlyFunctionOrNil || field.otherFunction)) [[unlikely]]
+        validateOnlyFunction(operand, stored, field.onlyFunction, true, field.otherFunction);
     store(field.store, operand, fieldAt(cell, field));
     if (isLoweringInitializingStore())
         didLowerInitializingStore();
@@ -1386,13 +1457,47 @@ void Lowering::lowerPutEnvironmentField(const Value& value)
         if (!m_environmentAwaitingBarrier)
             barrier(cell);
     }
+    auto& layout = m_program.at(value.layout());
+    if (!layout.reuseVariable || value.field() + 1 != layout.fields.size())
+        return;
+    auto& hasEscaped = layout.fields[value.field() - 1];
+    auto& variable = m_program.variables[layout.reuseVariable.index()];
+    RELEASE_ASSERT(hasEscaped.store == Store::Boolean);
+    Operand released = in(value.child(0), repOf(variable.store));
+    LBasicBlock release = m_out.newBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(load(hasEscaped.store, fieldAt(cell, hasEscaped), 0, cell.value()).value, unsure(continuation), unsure(release));
+    m_out.appendTo(release);
+    for (unsigned i = 0; i + 2 < layout.fields.size(); ++i) {
+        auto& variableOfEnvironment = layout.fields[i];
+        if (!holdsCells(variableOfEnvironment.store) || variableOfEnvironment.isOutOfLine || variableOfEnvironment.flags & fieldIsNeverStored)
+            continue;
+        Operand nothing;
+        if (m_program.at(variableOfEnvironment.stored).primitives & Primitive::Undefined)
+            nothing = convert(undefined(), Type::ofPrimitives(Primitive::Undefined), repOf(variableOfEnvironment.store));
+        else if (repOf(variableOfEnvironment.store) == Rep::Cell)
+            nothing = CellPointer(m_out.int64Zero);
+        else if (repOf(variableOfEnvironment.store) == Rep::JSValue)
+            nothing = Boxed(m_out.int64Zero);
+        else
+            continue;
+        store(variableOfEnvironment.store, nothing, fieldAt(cell, variableOfEnvironment));
+    }
+    didEmitWrite(Writes::RuntimeState);
+    if (!Options::validateAOTTypedFacts()) [[likely]] {
+        TypedPointer place = addressOf(layout.reuseVariable);
+        store(variable.store, released, TypedPointer(m_heaps.AOTTyped_runtimeState, place.base(), place.offset()));
+    }
+    if (variable.hasCard && holdsCells(variable.store) && !Options::validateAOTTypedFacts())
+        m_out.store32As8(m_out.constInt32(Instance::typedCardIsStoredTo), cardOf(variable.offset));
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 CellPointer Lowering::lowerNewPromise()
 {
     static_assert(static_cast<unsigned>(Stub::TypedNewPromise) + 1 == static_cast<unsigned>(Stub::LeafTypedNewPromise));
-    const char* hasStubForPromises = hasStubsForFunctionsWithoutFrame ? "1" : getenv("BUN_AOT_SWITCH_X86COLD");
-    if (hasStubForPromises && hasStubForPromises[0] == '1' && !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id))
+    if (!m_isInLoop && !m_program.isHotOutsideItsLoops(m_id))
         return CellPointer(callAllocationStub(Stub::TypedNewPromise, { }, effectsOfOperation<operationAOTTypedNewPromise>(), false));
     LBasicBlock slowPath = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
@@ -1603,12 +1708,11 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         m_out.appendTo(continuation);
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
-    if (builtin.implementation.operation == LanguageOperation::CopyDataPropertiesExcluding) {
+    if (builtin.implementation.operation == LanguageOperation::CopyDataPropertiesExcluding || builtin.implementation.operation == LanguageOperation::CloneObjectWith || builtin.implementation.operation == LanguageOperation::CloneObjectAfter) {
         auto expected = predictionOf(id);
         LayoutID view = expected ? expected->onlyView() : LayoutID();
         if (view && m_program.at(view).kind == LayoutKind::Record && m_program.at(view).shape && !Options::auditAOTTypedAssertions()) {
-            auto [count, list] = argumentBuffer(value.arguments);
-            CellPointer made = AOT_TYPED_OPERATION(TryCopyRecordAs, word32(m_program.at(view).shape), count, list);
+            CellPointer made = copyRecordAs(value, view, builtin.implementation.operation == LanguageOperation::CopyDataPropertiesExcluding ? NamesOfCopy::Excluded : builtin.implementation.operation == LanguageOperation::CloneObjectWith ? NamesOfCopy::StoredNext : NamesOfCopy::StoredFirst);
             LBasicBlock isMade = m_out.newBlock();
             LBasicBlock isNotMade = newColdBlock();
             Join join(m_out, value.rep, b3TypeOf(value.rep));
@@ -1616,7 +1720,26 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
             m_out.appendTo(isMade);
             join.add(ensure(made, m_program.at(m_program.types.object), type));
             m_out.appendTo(isNotMade);
-            join.add(outOfLine());
+            Vector<StringID, 4> names;
+            bool isLiteral = builtin.implementation.operation == LanguageOperation::CloneObjectAfter && value.arguments.size() % 2;
+            for (size_t i = 1; i < value.arguments.size() && isLiteral; i += 2) {
+                auto& name = m_function.at(value.arguments[i]);
+                isLiteral = name.opcode == Opcode::String && !names.contains(name.string()) && !m_program.string(name.string()).empty() && !isASCIIDigit(m_program.string(name.string())[0]);
+                if (isLiteral)
+                    names.append(name.string());
+            }
+            if (!isLiteral) {
+                join.add(outOfLine());
+                return join.finish();
+            }
+            Vector<Boxed, 4> values;
+            for (size_t i = 2; i < value.arguments.size(); i += 2)
+                values.append(in<Boxed>(value.arguments[i]));
+            LValue inBuffer[] = { box(countPlainAllocation(PlainAllocationKind::Object, id, newObjectLiteral(names.span(), values.span()))).value(), in<Boxed>(value.arguments[0]).value() };
+            LValue buffer = transientBuffer(std::size(inBuffer) * sizeof(EncodedJSValue));
+            for (unsigned i = 0; i < std::size(inBuffer); ++i)
+                m_out.store64(inBuffer[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
+            join.add(ensure(AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::CopyDataProperties)), word32(std::size(inBuffer)), Pointer(buffer)), type));
             return join.finish();
         }
     }
@@ -1730,6 +1853,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return undefined();
     case Opcode::NewObjectWithShape:
         return lowerNewObject(id, value);
+    case Opcode::MaterializeEnvironment:
+        return lowerMaterializeEnvironment(value);
     case Opcode::GetField:
         if (!isObjectLayout(m_program.at(value.layout()).kind))
             return lowerGetEnvironmentField(id, value);
@@ -1750,16 +1875,49 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::InById:
         return lowerInById(value);
     case Opcode::DeleteById:
-        if (!fieldFor(typeOf(value.child(0)), value.string()) && emitDeleteByVal(in<Boxed>(value.child(0)), box(stringConstant(value.string()))))
-            return boolean(true);
+        if (auto deleted = fieldFor(typeOf(value.child(0)), value.string()) ? std::optional<Word32>() : emitDeleteByVal(in<Boxed>(value.child(0)), box(stringConstant(value.string()))))
+            return *deleted;
+        if (isInSloppyCode())
+            return AOT_TYPED_OPERATION(DeleteByValSloppy, in<Boxed>(value.child(0)), box(stringConstant(value.string())));
         return AOT_TYPED_OPERATION(DeleteByName, in<Boxed>(value.child(0)), word32(value.string().index()));
     case Opcode::InByVal:
         if (!expectedTypeOf(value.child(1)).isNumber())
             return emitInByVal(in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
+        if (Operand operand = get(value.child(0)); holdsCells(operand.rep)) {
+            LBasicBlock generally = newUnlikelyBlock();
+            LBasicBlock absent = m_out.newBlock();
+            LBasicBlock isDouble = m_out.newBlock();
+            LBasicBlock isNotDouble = m_out.newBlock();
+            Join join(m_out, Rep::Int32, Int32);
+            if (operand.rep == Rep::JSValue)
+                orElse(isCell(operand.as<Boxed>()), generally);
+            CellPointer array = operand.rep == Rep::Cell ? operand.as<CellPointer>() : asCell(operand.as<Boxed>());
+            orElse(isPlainArray(array), generally);
+            Integer index = indexOrElse(value.child(1), generally);
+            Pointer butterfly = butterflyOf(array);
+            orElse(below(index, publicLength(butterfly)), absent);
+            Word32 shape = indexingModeOf(array, IndexingShapeMask);
+            m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(isDouble), unsure(isNotDouble));
+            m_out.appendTo(isDouble);
+            Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
+            join.add(equal(asDouble, asDouble));
+            m_out.appendTo(isNotDouble);
+            orElse(notEqual(shape, word32(UndecidedShape)), absent);
+            orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), generally);
+            join.add(isNotEmpty(Boxed(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())))));
+            m_out.appendTo(absent);
+            orElse(belowOrEqual(index, integer(MAX_ARRAY_INDEX)), generally);
+            join.add(boolean(false));
+            m_out.appendTo(generally);
+            join.add(AOT_TYPED_OPERATION(HasKey, in<Boxed>(value.child(0)), in<Boxed>(value.child(1))));
+            return join.finish();
+        }
         return AOT_TYPED_OPERATION(HasKey, in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
     case Opcode::DeleteByVal:
-        if (!expectedTypeOf(value.child(1)).isNumber() && emitDeleteByVal(in<Boxed>(value.child(0)), in<Boxed>(value.child(1))))
-            return boolean(true);
+        if (auto deleted = expectedTypeOf(value.child(1)).isNumber() ? std::optional<Word32>() : emitDeleteByVal(in<Boxed>(value.child(0)), in<Boxed>(value.child(1))))
+            return *deleted;
+        if (isInSloppyCode())
+            return AOT_TYPED_OPERATION(DeleteByValSloppy, in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
         return AOT_TYPED_OPERATION(DeleteByKey, in<Boxed>(value.child(0)), in<Boxed>(value.child(1)));
     case Opcode::GetByVal:
         return lowerGetByVal(id, value);
@@ -1826,10 +1984,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return lowerLooseEq(value.child(0), value.child(1));
     case Opcode::LogicalNot:
         return logicalNot(get(value.child(0)).as<Word32>());
-    case Opcode::ToBoolean: {
-        SetForScope answerIsValue(m_answerIsValue, !isOnlyBranchedOn(id));
+    case Opcode::ToBoolean:
         return lowerToBoolean(value.child(0));
-    }
     case Opcode::TypeOf:
         return convert(AOT_TYPED_OPERATION(TypeOf, in<Boxed>(value.child(0))), type, value.rep);
     case Opcode::InstanceOf:
@@ -1843,10 +1999,8 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return convert(toStringCell(value.child(0)), type, value.rep);
     case Opcode::ToPropertyKey:
         return ensure(AOT_TYPED_OPERATION(ToKey, in<Boxed>(value.child(0))), type);
-    case Opcode::IsUndefinedOrNull: {
-        SetForScope answerIsValue(m_answerIsValue, !isOnlyBranchedOn(id));
+    case Opcode::IsUndefinedOrNull:
         return lowerIsUndefinedOrNull(value.child(0));
-    }
     case Opcode::IsInstanceOfClass:
         return lowerIsInstanceOfClass(value);
     case Opcode::HasShapeOf:
@@ -1915,16 +2069,25 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::OffsetIndex:
         return convert(Integer(m_out.add(in<Integer>(value.child(0)).value(), m_out.constInt64(value.immediates[0]))), type, value.rep);
     case Opcode::GetModuleVariableAt:
-        return ensure(Boxed(m_out.load64(TypedPointer(m_heaps.AOTTyped_variables.atAnyNumber(), m_out.add(fixedPointer(Instance::offsetOfTypedStatics()), in<Integer>(value.child(0)).value())))), type);
+        return ensure(Boxed(m_out.load64(TypedPointer(m_heaps.AOTTyped_variables.atAnyNumber(), m_out.add(startOfStatics(), in<Integer>(value.child(0)).value())))), type);
     case Opcode::PutModuleVariableAt:
         didEmitWrite(Writes::Fields);
-        m_out.store64(in<Boxed>(value.child(1)).value(), TypedPointer(m_heaps.AOTTyped_variables.atAnyNumber(), m_out.add(fixedPointer(Instance::offsetOfTypedStatics()), in<Integer>(value.child(0)).value())));
-        m_out.store32As8(m_out.constInt32(Instance::typedCardIsStoredTo), TypedPointer(m_heaps.AOTTyped_cards, m_out.add(fixedPointer(Instance::offsetOfTypedCards()), m_out.lShr(in<Integer>(value.child(0)).value(), m_out.constInt32(Instance::typedCardShift)))));
+        m_out.store64(in<Boxed>(value.child(1)).value(), TypedPointer(m_heaps.AOTTyped_variables.atAnyNumber(), m_out.add(startOfStatics(), in<Integer>(value.child(0)).value())));
+        m_out.store32As8(m_out.constInt32(Instance::typedCardIsStoredTo), TypedPointer(m_heaps.AOTTyped_cards, m_out.add(startOfCards(), m_out.lShr(in<Integer>(value.child(0)).value(), m_out.constInt32(Instance::typedCardShift)))));
         return convert(undefined(), type, value.rep);
     case Opcode::CallModuleFunction:
         return ensure(Boxed(callICStub(Stub::CallModuleFunction, Int64, { { in<Integer>(value.child(0)).value(), GPRInfo::argumentGPR1 } })), type);
+    case Opcode::FailModuleCycle:
+        AOT_TYPED_OPERATION(FailModuleCycle, in<Integer>(value.child(0)), word32(value.immediates[0]), in<Boxed>(value.child(1)));
+        return convert(undefined(), type, value.rep);
+    case Opcode::AddToModuleEvaluationDepth: {
+        didEmitWrite(Writes::RuntimeState);
+        TypedPointer depth = m_out.address(m_heaps.AOTTyped_runtimeState, m_instance, Instance::offsetOfModuleEvaluationDepth());
+        m_out.store32(m_out.add(m_out.load32(depth), m_out.constInt32(static_cast<int32_t>(value.immediates[0]))), depth);
+        return convert(undefined(), type, value.rep);
+    }
     case Opcode::JumpToModuleEvaluator:
-        jumpToFunction(indexOfCallee(m_program.moduleEvaluator), { in<Integer>(value.child(0)).value() });
+        jumpToFunction(indexOfCallee(m_program.moduleEvaluatorForCallFromOutside()), { in<Integer>(value.child(0)).value() });
         return convert(undefined(), type, value.rep);
     // The passes have turned these into something else.
     case Opcode::Operation:
@@ -1938,9 +2101,11 @@ Operand Lowering::lower(ValueID id, const Value& value)
     case Opcode::CatchValue: {
         if (m_handlersEnteredByBranch.get(m_currentBlockID.index()))
             return convert(undefined(), m_program.at(m_program.types.undefined), value.rep);
+        if (ValueID exception = exceptionCaughtIn(m_currentBlockID); exception && exception != id)
+            return ensure(AOT_TYPED_OPERATION(ValueOfException, in<Boxed>(exception)), type);
         if (LValue caught = m_caughtValues.get(m_currentBlockID.index()))
             return ensure(Boxed(caught), type);
-        return ensure(catchException(), type);
+        return ensure(catchException(m_currentBlockID), type);
     }
     case Opcode::LoopHint:
         poll();
@@ -1964,6 +2129,95 @@ ImageKey keyOfContinuation(FunctionID function, unsigned index)
     RELEASE_ASSERT(index + 1 < ImageKey::typedBody);
     key.kind |= index + 1;
     return key;
+}
+
+static void resequenceMovesBeforePatches(Air::Code& code)
+{
+    auto isSimpleMove = [](Air::Inst& inst) {
+        if ((inst.kind.opcode != Air::Move && inst.kind.opcode != Air::MoveDouble) || inst.args().size() != 2 || !inst.args()[1].isReg())
+            return false;
+        if (inst.args()[0].isReg())
+            return true;
+        return inst.kind.opcode == Air::Move && (inst.args()[0].isSomeImm() || inst.args()[0].isZeroReg());
+    };
+    struct PendingMove {
+        Air::Arg source;
+        Reg destination;
+        Air::Inst* original;
+    };
+    for (Air::BasicBlock* block : code) {
+        bool didChange = false;
+        for (unsigned end = 0; end < block->size(); ++end) {
+            Air::Inst& patch = block->at(end);
+            if (patch.kind.opcode != Air::Patch)
+                continue;
+            unsigned begin = end;
+            while (begin && block->at(begin - 1) && isSimpleMove(block->at(begin - 1)))
+                --begin;
+            if (end - begin < 2)
+                continue;
+            Vector<PendingMove, 8> pending;
+            bool handsOnWideImmediate = false;
+            auto valueOf = [&](Air::Arg arg) {
+                if (!arg.isReg())
+                    return arg;
+                for (auto& move : pending) {
+                    if (move.destination == arg.reg()) {
+                        handsOnWideImmediate |= move.source.isBigImm();
+                        return move.source;
+                    }
+                }
+                return arg;
+            };
+            for (unsigned i = begin; i < end; ++i) {
+                Air::Inst& inst = block->at(i);
+                Air::Arg source = valueOf(inst.args()[0]);
+                Reg destination = inst.args()[1].reg();
+                pending.removeAllMatching([&](auto& move) { return move.destination == destination; });
+                pending.append({ source, destination, &inst });
+            }
+            if (handsOnWideImmediate)
+                continue;
+            RegisterSet used;
+            RegisterSet overwritten = patch.extraEarlyClobberedRegs();
+            overwritten.merge(patch.extraClobberedRegs());
+            patch.forEachTmp([&](Air::Tmp& tmp, Air::Arg::Role role, Bank, Width) {
+                if (!tmp.isReg())
+                    return;
+                if (Air::Arg::isAnyUse(role))
+                    used.add(tmp.reg(), IgnoreVectors);
+                if (Air::Arg::isAnyDef(role))
+                    overwritten.add(tmp.reg(), IgnoreVectors);
+            });
+            pending.removeAllMatching([&](auto& move) {
+                if (move.source.isReg() && move.source.reg() == move.destination)
+                    return true;
+                return overwritten.contains(move.destination, IgnoreVectors) && !used.contains(move.destination, IgnoreVectors);
+            });
+            if (pending.size() >= end - begin)
+                continue;
+            Vector<Air::Inst, 8> ordered;
+            while (!pending.isEmpty()) {
+                size_t next = pending.findIf([&](auto& candidate) {
+                    return !pending.containsIf([&](auto& other) {
+                        return &other != &candidate && other.source.isReg() && other.source.reg() == candidate.destination;
+                    });
+                });
+                if (next == notFound)
+                    break;
+                auto& move = pending[next];
+                ordered.append(Air::Inst(move.destination.isGPR() ? Air::Move : Air::MoveDouble, move.original->origin, move.source, Air::Tmp(move.destination)));
+                pending.removeAt(next);
+            }
+            if (!pending.isEmpty())
+                continue;
+            for (unsigned i = begin; i < end; ++i)
+                block->at(i) = i - begin < ordered.size() ? ordered[i - begin] : Air::Inst();
+            didChange = true;
+        }
+        if (didChange)
+            block->insts().removeAllMatching([](const Air::Inst& inst) { return !inst; });
+    }
 }
 
 // Blocks of machine instructions that are the same to the letter and go on to the same place: one stays. No path runs an instruction more than before.
@@ -2177,8 +2431,6 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     Procedure proc(/* usesSIMD = */ false);
     if (Options::airDumpPhaseStats() || Options::airGreedyRegAllocDumpFunction()) [[unlikely]]
         proc.setName(makeString('#', id.index(), '#'));
-    if (!program.isWarmByText(id))
-        proc.setOptLevel(1);
     proc.setPositionIndependent();
     proc.setMaterializesConstantsByFrequency();
     proc.setRotatesLoops();
@@ -2195,7 +2447,10 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     context.nilTestMarker = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers&, const StackmapGenerationParams&) { });
     proc.setLastPhase(createSharedTask<void(Procedure&)>([&](Procedure& proc) {
         foldNumberBoxings(proc, context);
+        askSignExtendedWordsIn32Bits(proc);
+        askZeroExtendedWordsIn32Bits(proc);
         useFaultsForNilTests(proc, context);
+        askMemoryAtLoopPolls(proc);
     }));
     Lowering lowering(proc, program, id, function, context);
     if (!lowering.run()) {
@@ -2224,16 +2479,16 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     }
 
     CCallHelpers::JumpList frameDoesNotFit;
-#if CPU(X86_64)
-    static const char* const sharedPrologueSet = getenv("BUN_AOT_SWITCH_SHARED_PROLOGUE");
-    bool takesSharedPrologue = sharedPrologueSet && (!strcmp(sharedPrologueSet, "all") || strchr(sharedPrologueSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c') || (strchr(sharedPrologueSet, 'g') && program.isColdByGraph(id)));
-#endif
+    bool fitsByProof = false;
     proc.code().setPrologueForEntrypoint(0, createSharedTask<Air::PrologueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code) {
         if (context.hasNoFrame(code))
             return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         // A general entry calls its function, which tests at once.
         bool isLeftToCallee = function.isGenericEntrypoint() && function.inlineFrames.size() <= 1;
+        static_assert(maxFrameSizeWithoutStackCheck <= 256);
+        fitsByProof = context.emitsCalls && !isLeftToCallee && program.isEnteredWithRoomOnStack(id) && code.frameSize() <= maxFrameSizeWithoutStackCheck;
+        isLeftToCallee |= fitsByProof;
 #if CPU(ARM64)
         if (code.placesSpillsAboveFrameRecord()) {
             jit.m_assembler.stp<64>(GPRInfo::callFrameRegister, CCallHelpers::linkRegister, CCallHelpers::stackPointerRegister, PairPreIndex(-static_cast<int>(code.bytesAboveFrameRecord() + sizeof(CallerFrameAndPC))));
@@ -2242,19 +2497,6 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
                 frameDoesNotFit = emitStackCheck(jit, 0);
             pushCalleeSaves(jit, code.calleeSaveRegisterAtOffsetList());
             return;
-        }
-#endif
-#if CPU(X86_64)
-        constexpr unsigned maxFrameSizeWithSharedPrologue = 512;
-        if (takesSharedPrologue && context.emitsCalls && !isLeftToCallee && code.frameSize() <= maxFrameSizeWithSharedPrologue) {
-            RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
-            bool savesOne = saves.registerCount() == 1 && saves.at(0).reg() == Reg(X86Registers::ebx) && saves.at(0).offset() == -static_cast<ptrdiff_t>(sizeof(CPURegister));
-            if (!saves.registerCount() || savesOne) {
-                context.stubCalls.call(jit, savesOne ? Stub::SharedPrologueWithCalleeSave : Stub::SharedPrologue, CallSite { });
-                if (code.frameSize())
-                    jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
-                return;
-            }
         }
 #endif
         jit.emitFunctionPrologue();
@@ -2277,6 +2519,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         placeResultsOfInvokes(proc.code());
     usePinnedRegistersDirectly(proc.code());
     Air::prepareForGeneration(proc.code());
+    resequenceMovesBeforePatches(proc.code());
     mergeIdenticalBlocks(proc.code());
     static const char* const recordsAsked = getenv("BUN_AOT_SWITCH_INSTRUCTION_RECORDS");
     uint8_t regionsForOutlining = OutliningOptions::isFromTypedLowering | (program.isHotByText(id) ? 0 : OutliningOptions::isNotHotByText) | (program.isColdByGraph(id) ? OutliningOptions::isColdByGraph : 0);
@@ -2313,8 +2556,6 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     info.numSlots = context.sites.size();
     info.numberOfEmptyArrayLiteralsMadeInPlace = context.numberOfEmptyArrayLiteralsMadeInPlace;
     info.numberOfEmptyArrayLiteralsMadeByStub = context.numberOfEmptyArrayLiteralsMadeByStub;
-    info.numberOfEmptyArrayLiteralsLeftToStubBySwitch = context.numberOfEmptyArrayLiteralsLeftToStubBySwitch;
-    info.numberOfReadsOfExpectedLeftToGeneralWayBySwitch = context.numberOfReadsOfExpectedLeftToGeneralWayBySwitch;
     info.sites = WTF::move(context.sites);
     info.siteConstants.fill(0, info.numSlots);
     info.plans = WTF::move(context.plans);
@@ -2337,6 +2578,8 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         info.faultingAccesses.append({ static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(trap.instruction).untaggedPtr()) - static_cast<uint8_t*>(start)), trap.callSite, { } });
     std::ranges::sort(info.faultingAccesses, { }, &CompiledFunctionInfo::FaultingAccess::codeOffset);
     info.hasNoFrame = context.hasNoFrame(proc.code());
+    info.isEnteredWithoutStackCheck = frameDoesNotFit.empty();
+    info.fitsOnStackByProof = fitsByProof;
     info.typedFunction = id.index();
     info.isGenericEntrypoint = function.isGenericEntrypoint();
     info.kindByte = kindByteOf(program, function);
@@ -2381,6 +2624,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     };
     // The sites are numbered anew, in the order of their return addresses: the image has no number to store for them, and what the optimizer
     // removed has no entry anywhere. In front stay those that have a position and no code: see LoweringContext::numberOfSitesWithoutCode.
+    size_t numberOfSitesThatAreNoItems;
     {
         uint32_t numberOfSitesWithoutCode = context.numberOfSitesWithoutCode;
         info.numberOfSitesWithoutCode = numberOfSitesWithoutCode;
@@ -2410,6 +2654,13 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
             if (catchEntrypointOf[old] != none)
                 catchEntrypoints.append({ number, catchEntrypointOf[old] });
             *site = PackedSite::pack(PackedSite::inlineFrame(*site), CallSiteIndex(BytecodeIndex(number)).bits());
+            for (auto entry = std::ranges::lower_bound(context.itemSites, old, { }, &SpreadSite::callSite); entry != context.itemSites.end() && entry->callSite == old; ++entry)
+                info.spreadSites.append({ *site, entry->item, entry->site });
+        }
+        numberOfSitesThatAreNoItems = positions.size();
+        for (auto& entry : info.spreadSites) {
+            positions.append(context.sitePositions[CallSiteIndex(PackedSite::bits(entry.site)).bytecodeIndex().offset() - 1]);
+            entry.site = PackedSite::pack(PackedSite::inlineFrame(entry.site), CallSiteIndex(BytecodeIndex(positions.size())).bits());
         }
         context.sitePositions = WTF::move(positions);
         info.typedCatchEntrypointsForCallSites = WTF::move(catchEntrypoints);
@@ -2422,7 +2673,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     uint32_t firstFrameOfTailCall = context.framesLeftByTailCalls.isEmpty() ? UINT32_MAX : static_cast<uint32_t>(context.inlineCallSites.size() - context.framesLeftByTailCalls.size());
     for (auto& site : context.sitePositions) {
         uint32_t frame = site.inlineFrame >= firstFrameOfTailCall ? context.framesLeftByTailCalls[site.inlineFrame - firstFrameOfTailCall] : site.inlineFrame;
-        info.typedPositions.append(positionIn(frame ? program.at(function.inlineFrames[frame].callee) : function, site.position, site.inlineFrame));
+        info.typedPositions.append(positionIn(frame ? program.at(function.inlineFrames[frame].callee) : function, site.position, info.typedPositions.size() > numberOfSitesThatAreNoItems ? 0 : site.inlineFrame));
     }
     for (unsigned frame = 0; frame < function.inlineFrames.size(); ++frame)
         info.inlineFrames.append({ function.inlineFrames[frame].parent, context.inlineCallSites[frame], function.inlineFrames[frame].callee.index(), function.inlineFrames[frame].isTailCall, function.inlineFrames[frame].isConstruction });
@@ -2435,7 +2686,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     MacroAssemblerCodeRef<JSEntryPtrTag> codeRef = FINALIZE_CODE_IF(Options::dumpAOTDisassembly() && result.mayBeDumped, linkBuffer, JSEntryPtrTag, nullptr, "AOT code");
     dropPaddingAtEnd(info, start, proc.code());
     if (Options::aotMapFilePath()) [[unlikely]]
-        result.bytesByOperation = bytesByOperation(proc.pcToOriginMap(), linkBuffer, info.codeSize);
+        result.bytesByOperation = makeString(bytesByOperation(proc.pcToOriginMap(), linkBuffer, info.codeSize), context.literalsForMap.isEmpty() ? ""_s : "\nV"_s, context.literalsForMap.toString());
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
     if (keepsRecords) {
         auto offsetOf = [&](CCallHelpers::Label label) {

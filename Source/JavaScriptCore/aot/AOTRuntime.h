@@ -62,7 +62,6 @@ struct State;
     v(operationAOTValueLShift) \
     v(operationAOTValueRShift) \
     v(operationAOTValueURShift) \
-    v(operationAOTToString) \
     v(operationAOTToBoolean) \
     v(operationAOTCompareLess) \
     v(operationAOTCompareLessEq) \
@@ -75,22 +74,12 @@ struct State;
     v(operationAOTGetByVal) \
     v(operationAOTGetByValAndCache) \
     v(operationAOTPutByValAndCache) \
+    v(operationAOTPutByValAndCacheSloppy) \
     v(operationAOTInByValAndCache) \
     v(operationAOTDeleteByValAndCache) \
-    v(operationAOTGetElementOrEmpty) \
+    v(operationAOTDeleteByValAndCacheSloppy) \
     v(operationAOTPutByVal) \
-    v(operationAOTResolveScope) \
-    v(operationAOTGetFromScope) \
-    v(operationAOTReadLazyClosureVar) \
-    v(operationAOTPutToScope) \
-    v(operationAOTThrow) \
-    v(operationAOTCheckType) \
-    v(operationAOTCheckTypedLayout) \
-    v(operationAOTReadField) \
     v(operationAOTWriteBarrier) \
-    v(operationAOTProgramConstant) \
-    v(operationAOTTemplateObject) \
-    v(operationAOTCreateTransientConstant) \
     v(operationAOTGetPlainly) \
     v(operationAOTHasPlainly) \
     v(operationAOTGetPlainlyAtSite) \
@@ -102,68 +91,13 @@ struct State;
     FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
 
 #define FOR_EACH_AOT_OPERATION_OF_THE_OTHER_TIERS(v) \
-    v(operationStringStartsWith) \
-    v(operationStringStartsWithWithIndex) \
-    v(operationStringEndsWith) \
-    v(operationStringEndsWithWithEndPosition) \
-    v(operationStringIndexOf) \
-    v(operationStringIndexOfWithOneChar) \
     v(operationStringIndexOfWithIndex) \
-    v(operationStringLastIndexOf) \
-    v(operationStringSlice) \
-    v(operationStringSliceWithEnd) \
-    v(operationStringSubstring) \
-    v(operationStringSubstringWithEnd) \
-    v(operationStringTrim) \
-    v(operationStringTrimStart) \
-    v(operationStringTrimEnd) \
-    v(operationToLowerCase) \
-    v(operationToUpperCase) \
     v(operationStringLocaleCompare) \
     v(operationStringReplaceStringString) \
     v(operationStringProtoFuncReplaceRegExpString) \
-    v(operationStringProtoFuncReplaceAllRegExpString) \
-    v(operationStringSplit) \
-    v(operationStringSplitRegExp) \
-    v(operationStringMatchRegExp) \
-    v(operationStringSearchRegExp) \
-    v(operationStringFromCharCode) \
-    v(operationToString) \
-    v(operationInt32ToStringWithValidRadix) \
-    v(operationDoubleToStringWithValidRadix) \
-    v(operationParseIntStringNoRadix) \
-    v(operationParseIntDoubleNoRadix) \
-    v(operationParseIntString) \
-    v(operationObjectKeysObject) \
-    v(operationObjectGetOwnPropertyNamesObject) \
-    v(operationObjectGetOwnPropertySymbolsObject) \
-    v(operationGetPrototypeOfObject) \
-    v(operationObjectCreate) \
     v(operationObjectAssignUntyped) \
-    v(operationSameValue) \
-    v(operationArrayPush) \
-    v(operationArrayPop) \
-    v(operationArrayShift) \
-    v(operationArrayUnshift) \
-    v(operationArraySplice) \
-    v(operationArraySpliceIgnoreResult) \
-    v(operationArrayConcatAppendOne) \
-    v(operationArrayJoin) \
-    v(operationArrayJoinGeneric) \
     v(operationArrayIndexOfValueInt32OrContiguous) \
     v(operationArrayIncludesValueInt32OrContiguous) \
-    v(operationRegExpTestString) \
-    v(operationRegExpExecString) \
-    v(operationDateNow) \
-    v(operationNewResolvedPromise) \
-    v(operationNewRejectedPromise) \
-    v(operationResolvePromiseFirstResolving) \
-    v(operationRejectPromiseFirstResolving) \
-    v(operationFulfillPromiseFirstResolving) \
-    v(operationPromiseResolve) \
-    v(operationPromiseReject) \
-    v(operationMakeRope2) \
-    v(operationMakeRope3) \
 
 #define FOR_EACH_AOT_THUNK(v) \
     v(HandleException) \
@@ -187,22 +121,6 @@ struct State;
     v(ConstructViaCall) \
     v(MegamorphicCache) \
     v(UndefinedHolder) \
-    v(FieldLayoutIDsInSlot0) \
-    v(FieldLayoutIDsInSlot1) \
-    v(FieldLayoutIDsInSlot2) \
-    v(FieldLayoutIDsInSlot3) \
-    v(FieldLayoutIDsInSlot4) \
-    v(FieldLayoutIDsInSlot5) \
-    v(FieldLayoutIDsInSlot6) \
-    v(FieldLayoutIDsInSlot7) \
-    v(FieldLayoutIDsInSlot8) \
-    v(FieldLayoutIDsInSlot9) \
-    v(FieldLayoutIDsInSlot10) \
-    v(FieldLayoutIDsInSlot11) \
-    v(FieldLayoutIDsInSlot12) \
-    v(FieldLayoutIDsInSlot13) \
-    v(FieldLayoutIDsInSlot14) \
-    v(FieldLayoutIDsInSlot15) \
     v(HostMathSqrt) \
     v(HostMathAbs) \
     v(HostMathFloor) \
@@ -228,34 +146,11 @@ struct State;
     v(RawGetByVal) \
     v(RawPutById) \
     v(RawPutByVal) \
-    v(RawNewObject) \
     v(RawNewObjectLiteral) \
-    v(RawCreateThis) \
-    v(RawCreateThisWithProperties) \
-    v(RawNewFunction) \
     v(RawCompareStrictEq) \
     v(RawCompareEq) \
-    v(RawInById) \
-    v(RawInByVal) \
     v(NewArraySlowPath) \
-    v(NewArrayBufferSlowPath) \
-    v(NewArrayWithSpreadSlowPath) \
-    v(NewArrayWithSpeciesSlowPath) \
-    v(NewArrayWithSizeSlowPath) \
-    v(CreateRestSlowPath) \
-    v(CreateLexicalEnvironmentSlowPath) \
-    v(NewInternalFieldObjectSlowPath) \
-    v(NewResolvedPromiseSlowPath) \
-    v(NewMapOrSetSlowPath) \
-    v(ToStringSlowPath) \
-    v(Int32ToStringWithValidRadixSlowPath) \
-    v(MakeRope2SlowPath) \
-    v(MakeRope3SlowPath) \
-    v(StringSliceWithEndSlowPath) \
-    v(StringSubstringWithEndSlowPath) \
-    v(ObjectKeysObjectSlowPath) \
     v(ValueAddSlowPath) \
-    v(StrcatSlowPath) \
 
 enum class Entry : uint16_t {
 #define AOT_DEFINE_ENTRY(name) name,
@@ -325,7 +220,6 @@ public:
     }
     void forgetFilledPairsOfDeadStructures(VM&);
     void noteGuest(const char* kind, StringView group, String&& sample);
-    void noteShape(const char* kind, StringView what, VM&, Structure*);
     uint64_t operationCount(StringView nameAndDetail) const;
     void dumpOperationCounts(PrintStream&) const;
     void writeOperationCounts() const;
@@ -349,6 +243,26 @@ RuntimeTable& runtimeTable(VM&);
 void countAllocatedBytes(VM&, const char* kind, const Subspace*, size_t cellSize, const JSCell* owner, size_t bytes);
 JS_EXPORT_PRIVATE uint64_t operationCount(VM&, StringView nameAndDetail);
 JS_EXPORT_PRIVATE void writeOperationCounts(VM&);
+
+struct Data;
+
+class BiasedDataPointer {
+public:
+    static constexpr ptrdiff_t bias = 48 + 128;
+    BiasedDataPointer() = default;
+    BiasedDataPointer& operator=(Data* data)
+    {
+        m_bits = data ? std::bit_cast<uintptr_t>(data) + bias : 0;
+        return *this;
+    }
+    Data* get() const { return m_bits ? std::bit_cast<Data*>(m_bits - bias) : nullptr; }
+    operator Data*() const { return get(); }
+    Data* operator->() const { return get(); }
+
+private:
+    uintptr_t m_bits;
+};
+static_assert(sizeof(BiasedDataPointer) == sizeof(Data*) && std::is_trivially_default_constructible_v<BiasedDataPointer>);
 
 struct Slot {
     static constexpr unsigned offsetBits = 24;
@@ -407,7 +321,7 @@ struct Slot {
     static constexpr unsigned customGetterPlaceShift = 40;
     static constexpr uint32_t customGetterSerialStep = 8;
     static constexpr uint64_t knownCustomGetterAt(uint32_t placeInTable, uint32_t serial) { return static_cast<uint64_t>(placeInTable) << customGetterPlaceShift | static_cast<uint64_t>(FieldRead::KnownCustomGetter) << fieldReadShift | serial; }
-    // Of a store, with pointerIsNotCell: the property is a field of an object of a compiled layout. The lower half of `pointer` is the offset of the field in the object, in bytes. The upper half, which is never zero:
+    // Of a store, with pointerIsNotCell: the property is a field of an object of a compiled layout. The low 16 bits of `pointer` are the offset of the field in the object, in bytes. See typeShift for the RuntimeType that tells which objects may be stored without asking. The upper half, which is never zero:
     struct FieldWrite {
         enum Kept : uint32_t { Boxed, Cell32, Int32OrElsewhere, Double, Boolean, Int64, Int32 };
         static constexpr uint32_t keptMask = 7;
@@ -427,6 +341,10 @@ struct Slot {
         // The name is no field of the layout: an extra property, if anything. No stub serves that: it goes to the operation by the shortest way.
         static constexpr uint32_t isNoField = 1u << 13;
         static constexpr uint32_t isInGlobalProxyTarget = 1u << 14;
+        static constexpr unsigned offsetBits = 16;
+        static constexpr unsigned typeShift = 15;
+        static constexpr unsigned typeBitsInUpperHalf = 15;
+        static constexpr uint64_t withType(uint32_t offsetInData) { return static_cast<uint64_t>(offsetInData >> 2 & 0xffff) << offsetBits | static_cast<uint64_t>(offsetInData >> 18) << (32 + typeShift); }
         static constexpr uint32_t isFieldWrite = 1u << 31;
     };
     // Of a store, with pointerIsNotCell: it makes an object of a compiled layout, which the structure stands for, one of a specialization that has a field by the name. The rest of `pointer` is the address of a Typed::StoreTransition.
@@ -543,50 +461,43 @@ struct ImageFunction;
 struct Site;
 
 struct FunctionInfo {
-    static constexpr uint16_t hasSiteConstants = 1;
-    static constexpr uint16_t startsCold = 2;
-    static constexpr uint16_t sitesHaveInlineConstants = 4;
-
-    static constexpr unsigned numberOfFlagBits = 3;
-    static constexpr uint32_t maxEncodedSlots = (1u << (16 - numberOfFlagBits)) - 1;
-    static constexpr uint16_t encodeSlotCountInFlags(uint32_t numSlots) { return static_cast<uint16_t>(std::min(numSlots, maxEncodedSlots) << numberOfFlagBits); }
+    static constexpr uint32_t maxEncodedSlots = (1u << 13) - 1;
 
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(FunctionInfo, sites); }
-    static constexpr ptrdiff_t offsetOfFlags() { return OBJECT_OFFSETOF(FunctionInfo, flags); }
-    static constexpr ptrdiff_t offsetOfBitsAndStateNumber() { return OBJECT_OFFSETOF(FunctionInfo, calleeStart) + sizeof(uint16_t); }
+    static constexpr ptrdiff_t offsetOfBitsAndStateNumber() { return OBJECT_OFFSETOF(FunctionInfo, sites) + sizeof(uint32_t); }
     static constexpr unsigned stateNumberShift = 4;
 
-    void set(uint32_t indexPlusOne, CodeSpecializationKind kind, CodeType codeType)
+    static uint32_t encodeIndexAndFlags(uint32_t indexPlusOne, CodeSpecializationKind kind, CodeType codeType)
     {
         static_assert(FunctionCode < 4 && ModuleCode < 4 && GlobalCode < 4);
         RELEASE_ASSERT(!(indexPlusOne >> 29));
-        indexAndFlags = indexPlusOne << 3 | static_cast<uint32_t>(codeType) << 1 | (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0);
+        return indexPlusOne << 3 | static_cast<uint32_t>(codeType) << 1 | (kind == CodeSpecializationKind::CodeForConstruct ? 1 : 0);
     }
-    void setTyped(uint32_t typedFunction)
+    static uint32_t encodeTypedFunction(uint32_t typedFunction)
     {
         RELEASE_ASSERT(!(typedFunction >> 29));
-        indexAndFlags = typedFunction << 3 | static_cast<uint32_t>(FunctionCode) << 1;
-        isTyped = true;
+        return typedFunction << 3 | static_cast<uint32_t>(FunctionCode) << 1;
     }
-    uint32_t indexPlusOne() const { return isTyped ? 0 : indexAndFlags >> 3; }
+    inline uint32_t indexAndFlags() const;
+    uint32_t indexPlusOne() const { return isTyped ? 0 : indexAndFlags() >> 3; }
     // Its number in Typed::Data.
     uint32_t typedFunction() const
     {
         ASSERT(isTyped);
-        return indexAndFlags >> 3;
+        return indexAndFlags() >> 3;
     }
-    CodeType codeType() const { return static_cast<CodeType>(indexAndFlags >> 1 & 3); }
+    CodeType codeType() const { return static_cast<CodeType>(indexAndFlags() >> 1 & 3); }
     bool isTopLevelCode() const { return codeType() != FunctionCode; }
     bool hasExecutable() const { return indexPlusOne() && !isTopLevelCode(); }
-    CodeSpecializationKind kind() const { return indexAndFlags & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
-    bool hasCodeInImage() const { return flags & (hasSiteConstants | sitesHaveInlineConstants); }
+    CodeSpecializationKind kind() const { return indexAndFlags() & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
+    bool hasCodeInImage() const { return sites; }
+    inline bool hasSiteConstants() const;
+    inline bool startsCold() const;
+    inline uint32_t numberOfSlotsForMisses() const;
     JS_EXPORT_PRIVATE const Site* sitesInImage() const;
     inline const ImageFunction* function() const;
 
     uint32_t sites;
-    uint32_t indexAndFlags;
-    uint16_t flags;
-    uint16_t calleeStart;
     uint32_t hasInlineFrames : 1;
     // Compiled from types: no executable and no bytecode. A "bytecode index" is a call-site number, and with inline frames all positions
     // are still in this function's own ExpressionInfo.
@@ -597,10 +508,27 @@ struct FunctionInfo {
     uint32_t hasNoHandlers : 1;
     uint32_t stateNumber : 32 - stateNumberShift;
 };
-static_assert(sizeof(FunctionInfo) == 16);
+static_assert(sizeof(FunctionInfo) == 8);
 
 // See Instance::receiverStructureIDs.
 enum class Receiver : uint8_t { None, String, Array, Map, Set, WeakMap, WeakSet, RegExp, Date, Number };
+enum class TableMethod : uint8_t { MapGet, MapHas, MapSet, SetHas, SetAdd };
+
+inline constexpr auto powersOfTen = [] {
+    std::array<double, 309> result { };
+    for (int32_t k = 0; k < static_cast<int32_t>(result.size()); ++k) {
+        double power = 1;
+        double square = 10;
+        for (int32_t bits = k; bits; bits >>= 1) {
+            if (bits & 1)
+                power *= square;
+            if (bits >> 1)
+                square *= square;
+        }
+        result[k] = power;
+    }
+    return result;
+}();
 
 struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
@@ -608,12 +536,7 @@ struct Instance {
     static Instance* of(JSFunction*);
     Structure* functionStructure(Structure* realmStructure, FunctionExecutable*, JSScope*);
     Structure* functionStructure(Structure* realmStructure);
-    JS_EXPORT_PRIVATE JSFunction* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*);
-    JSFunctionWithCaptures* tryMakeFunctionWithoutExecutable(uint32_t executableIndex, JSScope*, std::span<const EncodedJSValue> captures);
-    Structure* functionStructureWithCaptures(Structure* realmStructure);
     JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
-    StringImpl* retainUntilNextCall(String&&);
-    JSArray* templateObjectFor(uint32_t numberOfDescriptor);
     JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(uint32_t moduleID);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable*);
     JS_EXPORT_PRIVATE uint64_t prepareModuleCode(ModuleProgramExecutable*, JSScope*);
@@ -624,21 +547,12 @@ struct Instance {
     bool loaderWasCleared() const;
     JS_EXPORT_PRIVATE static void destroyUnneededInstances(VM&);
     static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID);
-    Structure* emptyStructureForLayout(uint16_t layoutID);
-    Structure* emptyStructureForLayout(uint16_t layoutID, JSObject* prototype);
-    void noteConstructorOfLayout(uint16_t layoutID, JSFunction*);
-    String nameOfClassWithLayout(uint16_t layoutID);
     static JSObject* newObjectOf(VM&, Structure*);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
 
     template<typename Visitor> void visit(Visitor&, bool newOnly);
     void finalizeUnconditionally(bool newOnly);
     void clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollection = false);
-    void noteCalleeCacheFilled(Slot*);
-    void noteCalleeCacheAbandoned(Slot*);
-    static constexpr uint32_t isNotCompiledFunction = std::numeric_limits<uint32_t>::max();
-    void noteCalleeSeen(Slot* cache, uint32_t function);
-    unsigned dumpCalleesSeen(PrintStream&) const;
 
     static constexpr ptrdiff_t offsetOfRuntimeTable() { return OBJECT_OFFSETOF(Instance, runtimeTable); }
     static constexpr ptrdiff_t offsetOfVM() { return OBJECT_OFFSETOF(Instance, vm); }
@@ -652,12 +566,9 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfAddressOfStates() { return OBJECT_OFFSETOF(Instance, addressOfStates); }
     static constexpr ptrdiff_t offsetOfMicrotaskQueue() { return OBJECT_OFFSETOF(Instance, microtaskQueue); }
     static constexpr ptrdiff_t offsetOfAwaitMustSuspend() { return OBJECT_OFFSETOF(Instance, awaitMustSuspend); }
-    static constexpr ptrdiff_t offsetOfProgram() { return OBJECT_OFFSETOF(Instance, program); }
     static constexpr ptrdiff_t offsetOfProgramIdentifiers() { return OBJECT_OFFSETOF(Instance, programIdentifiers); }
     static constexpr ptrdiff_t offsetOfProgramIdentifierPlaces() { return OBJECT_OFFSETOF(Instance, programIdentifierPlaces); }
     static constexpr ptrdiff_t offsetOfImage() { return OBJECT_OFFSETOF(Instance, image); }
-    static constexpr ptrdiff_t offsetOfProgramData() { return OBJECT_OFFSETOF(Instance, programData); }
-    static constexpr ptrdiff_t offsetOfStringConstantRecords() { return OBJECT_OFFSETOF(Instance, stringConstantRecords); }
     static constexpr ptrdiff_t offsetOfSharedData() { return OBJECT_OFFSETOF(Instance, sharedData); }
     static constexpr ptrdiff_t offsetOfCode() { return OBJECT_OFFSETOF(Instance, code); }
     static constexpr ptrdiff_t offsetOfCodeGranules() { return OBJECT_OFFSETOF(Instance, codeGranules); }
@@ -669,7 +580,7 @@ struct Instance {
         ASSERT(!dataIfExists(index));
         if (!infos[index].stateNumber)
             return;
-        uint32_t numberOfSlots = infos[index].flags >> FunctionInfo::numberOfFlagBits;
+        uint32_t numberOfSlots = infos[index].numberOfSlotsForMisses();
         if (!numberOfSlots)
             return;
         uint16_t& counter = missCounters[index % numberOfMissCounters];
@@ -690,7 +601,7 @@ struct Instance {
     Data* dataIfExists(uint32_t index) const
     {
         uint16_t number = states[infos[index].stateNumber];
-        return number > stateOfLinkedWithoutData() ? std::bit_cast<Data* const*>(this)[number] : nullptr;
+        return number > stateOfLinkedWithoutData() ? std::bit_cast<const BiasedDataPointer*>(this)[number].get() : nullptr;
     }
     void setLinkedWithoutData(uint32_t index)
     {
@@ -718,9 +629,6 @@ struct Instance {
     Structure* literalStructure(Structure* empty, std::span<UniquedStringImpl* const>, uint32_t numberOfRowPlusOne = 0);
     Structure* emptyStructureWithoutPrototype(unsigned inlineCapacity);
 
-    static void giveFamily(VM&, Structure*, uint16_t family, std::span<UniquedStringImpl* const> namesInSlots, const char* birth);
-    Structure* knownShapeStructure(uint32_t shape, std::span<UniquedStringImpl* const> names);
-    Structure* knownShapeStructureIfExists(uint32_t shape);
     struct PropertyRunTarget {
         Structure* last { nullptr };
         Vector<StructureID, 4> prototypeStructures;
@@ -741,10 +649,9 @@ struct Instance {
     StructuresOfClass structuresOfClass(uint32_t classIndex, JSObject* parentOfClassObject, JSCell* parentOfPrototype);
     void noteStructuresOfClass(uint32_t classIndex, JSObject* parentOfClassObject, JSCell* parentOfPrototype, StructuresOfClass);
     static constexpr unsigned maxLearnedInlineCapacity = Structure::numberOfSlotsWithFieldIDs;
-    unsigned inlineCapacityFor(JSFunction* constructor, unsigned inlineCapacityInBytecode);
-    void noteFirstStructure(Structure*, JSFunction* constructor);
     void noteOutOfLineProperty(Structure*);
     JS_EXPORT_PRIVATE void forgetResolvedGlobalScopes();
+    JS_EXPORT_PRIVATE void forgetValuesOfGlobalProperties();
     void noteRunOfProperties(Structure* from, Structure* to);
     JSFunction* constructorOfObjectsWith(Structure*);
     void learnInlineCapacity(JSFunction* constructor, Structure*);
@@ -755,7 +662,6 @@ struct Instance {
         return offset + 1 == static_cast<PropertyOffset>(inlineCapacity) ? firstOutOfLineOffset : offset + 1;
     }
 
-    JSObject* tryCopySlotsForSpread(JSObject* source);
     struct CopyForMore {
         Structure* structure { nullptr };
         std::array<PropertyOffset, 2> offsets { invalidOffset, invalidOffset };
@@ -764,31 +670,25 @@ struct Instance {
     struct CopyExcluding {
         Structure* structure { nullptr };
         Vector<PropertyOffset, 8> offsets;
-        std::array<RefPtr<UniquedStringImpl>, 2> excluded;
+        Vector<RefPtr<UniquedStringImpl>, 4> excluded;
     };
-    const CopyExcluding* copyExcluding(Structure* source, UniquedStringImpl*, UniquedStringImpl*);
+    const CopyExcluding* copyExcluding(Structure* source, std::span<UniquedStringImpl* const> excluded);
     const CopyExcluding* setCopyExcluding(Structure* source, CopyExcluding&&);
     const CopyForMore* setCopyForMore(Structure* source, uint64_t more, CopyForMore);
-    std::span<const uint16_t> knownShapeSlots(uint32_t shape) const;
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
     static constexpr ptrdiff_t offsetOfCellCageBase() { return OBJECT_OFFSETOF(Instance, cellCageBase); }
-    static constexpr ptrdiff_t offsetOfFamilyBase() { return OBJECT_OFFSETOF(Instance, familyBase); }
+    static constexpr ptrdiff_t offsetOfNumberBoxBase() { return OBJECT_OFFSETOF(Instance, numberBoxBase); }
     static constexpr unsigned numberOfFamiliesWithByte = 2048;
     static constexpr bool hasByteForFamily(unsigned family) { return family && family < numberOfFamiliesWithByte; }
     static constexpr ptrdiff_t offsetOfDepartedFamily(unsigned family) { return OBJECT_OFFSETOF(Instance, departedFamilies) + family; }
     JS_EXPORT_PRIVATE static void noteDepartedFamily(VM&, uint16_t family);
     static constexpr ptrdiff_t offsetOfFieldIDAtDirectLocationBase() { return OBJECT_OFFSETOF(Instance, fieldIDAtDirectLocationBase); }
     static constexpr ptrdiff_t offsetOfFieldIDInSlotBase(unsigned slot) { return OBJECT_OFFSETOF(Instance, fieldIDInSlotBases) + slot * sizeof(uintptr_t); }
-    void inspectObjectPrototype();
     static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
     static constexpr ptrdiff_t offsetOfLinkTimeConstants() { return OBJECT_OFFSETOF(Instance, linkTimeConstants); }
     static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
-    static constexpr ptrdiff_t offsetOfObjectPrototypeStructureID() { return OBJECT_OFFSETOF(Instance, objectPrototypeStructureID); }
-    static constexpr ptrdiff_t offsetOfSelectorsOnObjectPrototype() { return OBJECT_OFFSETOF(Instance, selectorsOnObjectPrototype); }
-    static constexpr ptrdiff_t offsetOfDispatch() { return OBJECT_OFFSETOF(Instance, dispatch); }
-    static constexpr ptrdiff_t offsetOfSelectorRows() { return OBJECT_OFFSETOF(Instance, selectorRows); }
 
-    Data* sharedData;
+    BiasedDataPointer sharedData;
     JSGlobalObject* globalObject;
     VM* vm;
     StackManager::Mirror stackMirror;
@@ -799,12 +699,14 @@ struct Instance {
     uint8_t* typedCards { nullptr };
     // MarkedBlockCage::base().
     uintptr_t cellCageBase;
+    uintptr_t numberBoxBase;
     uint8_t* typedStatics { nullptr };
     // See Typed::startInStringTable().
     uint64_t* typedStrings { nullptr };
     uint64_t stringHeader { 0 };
     void* singleCharacterStrings { nullptr };
     JSCell* emptyString { nullptr };
+    const double* powersOfTen { nullptr };
     // Goes up whenever the `prototype` property of a closure gets another value. See Typed::State::structureForThis().
     uint32_t typedPrototypeEpoch { 0 };
     static constexpr unsigned arrayKindShift = 1;
@@ -821,9 +723,9 @@ struct Instance {
     // What an allocation stores into the object. All clear until the first one, which takes the slow path.
     struct TypedAllocation {
         uint64_t header;
-        void* allocator;
         // The order word and, in the upper half, the shape word: what is at offset 8. Only of Record and Instance layouts.
         uint64_t words;
+        void* allocator;
         // Only of Record and Instance layouts, with an allocator and Typed::AllocationData::usesFieldTemplate: the bytes of a new object from Typed::offsetOfFirstField to the
         // allocator's cell size, every field absent. Set before `allocator`. See Typed::State::fieldTemplate().
         const void* fieldTemplate;
@@ -929,13 +831,9 @@ struct Instance {
     uintptr_t structureIDBase;
     uintptr_t familyBase;
     uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithFieldIDs];
-    const uint32_t* dispatch;
-    const uint32_t* selectorRows;
     JSObject* objectPrototype;
     uint8_t* fieldsWithObservableReads;
     static constexpr size_t sizeOfFieldsWithObservableReads = (static_cast<size_t>(Structure::numberOfSlotsWithFieldIDs) << 16) / 8;
-    static constexpr ptrdiff_t offsetOfFieldsWithObservableReads() { return OBJECT_OFFSETOF(Instance, fieldsWithObservableReads); }
-    void noteObservableRead(unsigned slot, uint16_t id) { fieldsWithObservableReads[(slot << 16 | id) >> 3] |= 1 << (id & 7); }
     JSCell* functionPrototypeCall { nullptr };
     uint32_t boundFunctionStructureID { 0 };
     uint32_t hostFunctionStructureID { 0 };
@@ -947,13 +845,6 @@ struct Instance {
     const uint32_t* placesByNameAndRow { nullptr };
     static constexpr ptrdiff_t offsetOfPlacesByNameAndRow() { return OBJECT_OFFSETOF(Instance, placesByNameAndRow); }
     static constexpr ptrdiff_t offsetOfTypedPrototypeEpoch() { return OBJECT_OFFSETOF(Instance, typedPrototypeEpoch); }
-    uint32_t* typeCoverageCounters { nullptr };
-    static constexpr ptrdiff_t offsetOfTypeCoverageCounters() { return OBJECT_OFFSETOF(Instance, typeCoverageCounters); }
-    enum class CalleeCacheMiss : unsigned { SameCode, OtherCode, OtherKindOfCallee, CacheInSharedData };
-    static constexpr unsigned numberOfKindsOfCalleeCacheMiss = 4;
-    uint64_t calleeCacheMisses[numberOfKindsOfCalleeCacheMiss] { };
-    static constexpr ptrdiff_t offsetOfCalleeCacheMisses(CalleeCacheMiss kind) { return OBJECT_OFFSETOF(Instance, calleeCacheMisses) + static_cast<unsigned>(kind) * sizeof(uint64_t); }
-    void collectCalleeCacheMisses();
     static constexpr ptrdiff_t offsetOfFunctionPrototypeCall() { return OBJECT_OFFSETOF(Instance, functionPrototypeCall); }
     static constexpr ptrdiff_t offsetOfBoundFunctionStructureID() { return OBJECT_OFFSETOF(Instance, boundFunctionStructureID); }
     static constexpr ptrdiff_t offsetOfHostFunctionStructureID() { return OBJECT_OFFSETOF(Instance, hostFunctionStructureID); }
@@ -961,11 +852,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfBoundFunctionExecutable() { return OBJECT_OFFSETOF(Instance, boundFunctionExecutable); }
     const ClassInfo* boundFunctionClassInfo { nullptr };
     static constexpr ptrdiff_t offsetOfBoundFunctionClassInfo() { return OBJECT_OFFSETOF(Instance, boundFunctionClassInfo); }
-    uint8_t* selectorsOnObjectPrototype;
-    uint32_t objectPrototypeStructureID;
     uint8_t departedFamilies[numberOfFamiliesWithByte] { };
     uint32_t guardChecksExecutedForTesting { 0 };
-    static constexpr ptrdiff_t offsetOfGuardChecksExecutedForTesting() { return OBJECT_OFFSETOF(Instance, guardChecksExecutedForTesting); }
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     static constexpr unsigned numberOfReceivers = 16;
@@ -984,11 +872,16 @@ struct Instance {
     uint8_t nextVectorLengths[maxVectorLengthGrownByStub + 1] { };
     static constexpr ptrdiff_t offsetOfNextVectorLengths() { return OBJECT_OFFSETOF(Instance, nextVectorLengths); }
     uint32_t regExpMatchesArrayStructureIDs[2] { };
-    static constexpr ptrdiff_t offsetOfRegExpMatchesArrayStructureIDs() { return OBJECT_OFFSETOF(Instance, regExpMatchesArrayStructureIDs); }
     uint64_t newArrayWithInt32Header { 0 };
     uint64_t newArrayWithDoubleHeader { 0 };
     uint64_t newArrayWithContiguousHeader { 0 };
     uint64_t newCopyOnWriteArrayHeaders[3] { };
+    uint64_t arrayInTheMakingHeaders[3] { };
+    Structure* arrayInTheMakingStructures[3] { };
+    static constexpr unsigned indexOfArrayInTheMaking(IndexingType indexingType) { return ((indexingType & IndexingShapeMask) - Int32Shape) / 2; }
+    static constexpr ptrdiff_t offsetOfArrayInTheMakingHeaders() { return OBJECT_OFFSETOF(Instance, arrayInTheMakingHeaders); }
+    JS_EXPORT_PRIVATE bool isArrayInTheMaking(JSCell*) const;
+    Structure* arrayInTheMakingStructure(IndexingType);
     uint64_t activationHeader { 0 };
     // Typed::Data::shapeSetsOffset, as an address.
     const uint32_t* typedShapeSets { nullptr };
@@ -1007,12 +900,9 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfNewArrayWithInt32StructureID() { return OBJECT_OFFSETOF(Instance, newArrayWithInt32Header); }
     static constexpr ptrdiff_t offsetOfNewArrayWithContiguousStructureID() { return OBJECT_OFFSETOF(Instance, newArrayWithContiguousHeader); }
     static constexpr ptrdiff_t offsetOfNewCopyOnWriteArrayHeaders() { return OBJECT_OFFSETOF(Instance, newCopyOnWriteArrayHeaders); }
-    static constexpr ptrdiff_t offsetOfActivationHeader() { return OBJECT_OFFSETOF(Instance, activationHeader); }
     static constexpr ptrdiff_t offsetOfStringHeader() { return OBJECT_OFFSETOF(Instance, stringHeader); }
     uint32_t arraysLackIsConcatSpreadable { 0 };
     uint32_t arraysLackInheritedElements { 0 };
-    static constexpr ptrdiff_t offsetOfArraysLackIsConcatSpreadable() { return OBJECT_OFFSETOF(Instance, arraysLackIsConcatSpreadable); }
-    static constexpr ptrdiff_t offsetOfArraysLackInheritedElements() { return OBJECT_OFFSETOF(Instance, arraysLackInheritedElements); }
     // The accessors of the embedder's Buffer, by row of FOR_EACH_AOT_TYPED_BUFFER_ACCESSOR. An object with the structure finds the function under the name of the row: it has no property of
     // that name, it inherits from the holder, and a watchpoint sees to it that the holder keeps the function there. Zero: nobody has looked yet. When the holder loses the function, both are
     // cleared for good. See operationAOTTypedLookForBufferAccessor().
@@ -1042,19 +932,17 @@ struct Instance {
     void* arrayAllocator { nullptr };
     void* ropeStringAllocator { nullptr };
     JSCell* arrayIterationSentinel { nullptr };
-    static constexpr ptrdiff_t offsetOfArrayIterationSentinel() { return OBJECT_OFFSETOF(Instance, arrayIterationSentinel); }
     JSCell* sentinelString { nullptr };
-    static constexpr ptrdiff_t offsetOfSentinelString() { return OBJECT_OFFSETOF(Instance, sentinelString); }
     // Zero until the first Typed::CompactTable is made.
     uint32_t compactTableStructureID { 0 };
     static constexpr ptrdiff_t offsetOfAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, auxiliarySpace); }
-    static constexpr ptrdiff_t offsetOfActivationSpace() { return OBJECT_OFFSETOF(Instance, activationSpace); }
     static constexpr ptrdiff_t offsetOfCellSpace() { return OBJECT_OFFSETOF(Instance, cellSpace); }
     static constexpr ptrdiff_t offsetOfCompactTableStructureID() { return OBJECT_OFFSETOF(Instance, compactTableStructureID); }
     static constexpr ptrdiff_t offsetOfArrayAllocator() { return OBJECT_OFFSETOF(Instance, arrayAllocator); }
     static constexpr ptrdiff_t offsetOfRopeStringAllocator() { return OBJECT_OFFSETOF(Instance, ropeStringAllocator); }
     static constexpr ptrdiff_t offsetOfSingleCharacterStrings() { return OBJECT_OFFSETOF(Instance, singleCharacterStrings); }
     static constexpr ptrdiff_t offsetOfEmptyString() { return OBJECT_OFFSETOF(Instance, emptyString); }
+    static constexpr ptrdiff_t offsetOfPowersOfTen() { return OBJECT_OFFSETOF(Instance, powersOfTen); }
     static constexpr ptrdiff_t offsetOfStringStructureID() { return OBJECT_OFFSETOF(Instance, stringHeader); }
     const void* smallIntStrings { nullptr };
     const void* intStrings { nullptr };
@@ -1062,27 +950,28 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfIntStrings() { return OBJECT_OFFSETOF(Instance, intStrings); }
     uint64_t hashSecrets[2] { };
     static constexpr ptrdiff_t offsetOfHashSecrets() { return OBJECT_OFFSETOF(Instance, hashSecrets); }
-    enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set, BoundFunction, BigInt, DataPropertyDescriptor };
-    static constexpr unsigned numberOfInlineAllocations = 8;
+    enum class InlineAllocation : unsigned { Promise, Generator, AsyncFunctionGenerator, Map, Set, BoundFunction, BigInt, DataPropertyDescriptor, RegExpObject };
+    static constexpr unsigned numberOfInlineAllocations = 9;
     struct InlineAllocationData {
         void* allocator;
         uint64_t header;
     };
     InlineAllocationData inlineAllocations[numberOfInlineAllocations] { };
+    struct TypedArrayAllocation {
+        void* allocator;
+        uint64_t header;
+        uint64_t elementSize;
+        uint64_t unused;
+    };
+    static_assert(sizeof(TypedArrayAllocation) == 32);
+    static constexpr unsigned numberOfTypedArrayAllocations = 16;
+    TypedArrayAllocation typedArrayAllocations[numberOfTypedArrayAllocations] { };
+    void* primitiveAuxiliarySpace { nullptr };
+    static constexpr ptrdiff_t offsetOfTypedArrayAllocations() { return OBJECT_OFFSETOF(Instance, typedArrayAllocations); }
+    static constexpr ptrdiff_t offsetOfPrimitiveAuxiliarySpace() { return OBJECT_OFFSETOF(Instance, primitiveAuxiliarySpace); }
     static constexpr ptrdiff_t offsetOfAllocatorFor(InlineAllocation kind) { return OBJECT_OFFSETOF(Instance, inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, allocator); }
     static constexpr ptrdiff_t offsetOfHeaderFor(InlineAllocation kind) { return OBJECT_OFFSETOF(Instance, inlineAllocations) + static_cast<unsigned>(kind) * sizeof(InlineAllocationData) + OBJECT_OFFSETOF(InlineAllocationData, header); }
     JS_EXPORT_PRIVATE void didHaveBadTime();
-    struct FieldAddition {
-        uint32_t structureID;
-        uint32_t slot;
-        uint32_t structureIDAfterAddition;
-        uint32_t unused;
-    };
-    static constexpr unsigned numberOfFieldAdditions = 1024;
-    static constexpr unsigned fieldAdditionIndex(uint32_t structureID, unsigned slot) { return ((structureID >> 4) ^ (slot * 0x9e5u)) & (numberOfFieldAdditions - 1); }
-    FieldAddition fieldAdditions[numberOfFieldAdditions] { };
-    static constexpr ptrdiff_t offsetOfFieldAdditions() { return OBJECT_OFFSETOF(Instance, fieldAdditions); }
-    void noteFieldAddition(Structure* before, unsigned slot, Structure* afterwards);
     // Whether every object with the Structure has an own property of the name, as HasOwnPropertyCache has it, for a name that is a string of the typed program: the structure ID in the low
     // half, above it the number of the string, in the top bit the answer. No Structure has the ID zero. Every collection clears them.
     static constexpr unsigned numberOfOwnPropertyAnswers = 512;
@@ -1331,10 +1220,18 @@ struct Instance {
     JS_EXPORT_PRIVATE const PlaceInUnwinding& findPlaceInUnwinding(const CachedAddressInfo&);
     JS_EXPORT_PRIVATE const CachedAddressInfo* resolveReturnAddress(const void*);
     uint32_t operationSamplingState { 0 };
+    uint32_t moduleEvaluationDepth { 0 };
     bool evictsSecondPlaceOfReturnAddress { false };
     const CallSiteOverride* callSiteOverrides { nullptr };
     static constexpr ptrdiff_t offsetOfTypedStatics() { return OBJECT_OFFSETOF(Instance, typedStatics); }
+    static constexpr size_t roomForEnvironments = 1 * MB;
+    static constexpr size_t granuleBelowInstance = 64 * KB;
+    static constexpr size_t roundedUpToGranule(size_t size) { return (size + granuleBelowInstance - 1) & ~(granuleBelowInstance - 1); }
+    static constexpr ptrdiff_t displacementOfTypedStatics(size_t sizeOfStatics) { return -static_cast<ptrdiff_t>(roomForEnvironments + roundedUpToGranule(sizeOfStatics)); }
+    static constexpr ptrdiff_t displacementOfTypedCards(size_t sizeOfStatics) { return displacementOfTypedStatics(sizeOfStatics) - static_cast<ptrdiff_t>(roundedUpToGranule(sizeOfStatics) >> typedCardShift); }
+    static constexpr size_t roomBelowInstance(size_t sizeOfStatics) { return roomForEnvironments + roundedUpToGranule(sizeOfStatics) + roundedUpToGranule(roundedUpToGranule(sizeOfStatics) >> typedCardShift); }
     static constexpr ptrdiff_t offsetOfTypedCards() { return OBJECT_OFFSETOF(Instance, typedCards); }
+    static constexpr ptrdiff_t offsetOfModuleEvaluationDepth() { return OBJECT_OFFSETOF(Instance, moduleEvaluationDepth); }
     static constexpr ptrdiff_t offsetOfTypedAllocationRows() { return OBJECT_OFFSETOF(Instance, typedAllocationRows); }
     static constexpr ptrdiff_t offsetOfTypedAlteredClassObjects() { return OBJECT_OFFSETOF(Instance, typedAlteredClassObjects); }
     static constexpr ptrdiff_t offsetOfTypedShapeSets() { return OBJECT_OFFSETOF(Instance, typedShapeSets); }
@@ -1354,8 +1251,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfTypedExecutable(unsigned kind) { return OBJECT_OFFSETOF(Instance, typedExecutables) + kind * sizeof(JSCell*); }
     static constexpr ptrdiff_t offsetOfTypedClosures() { return OBJECT_OFFSETOF(Instance, typedClosures); }
     static constexpr ptrdiff_t offsetOfTypedBuiltins() { return OBJECT_OFFSETOF(Instance, typedBuiltins); }
-    Data* sharedDataOfLinkedFunctions;
-    Data* ownData[maxNumberOfOwnData];
+    BiasedDataPointer sharedDataOfLinkedFunctions;
+    BiasedDataPointer ownData[maxNumberOfOwnData];
     uint16_t missCounters[numberOfMissCounters];
     uint16_t states[0];
 };
@@ -1388,8 +1285,6 @@ struct Data {
     static constexpr ptrdiff_t offsetOfSites() { return OBJECT_OFFSETOF(Data, sites); }
     static constexpr ptrdiff_t offsetOfSlots() { return OBJECT_OFFSETOF(Data, slots); }
     static constexpr ptrdiff_t offsetOfSlotEpoch() { return OBJECT_OFFSETOF(Data, slotEpoch); }
-    static constexpr ptrdiff_t offsetOfNumSlots() { return OBJECT_OFFSETOF(Data, numSlots); }
-    static constexpr ptrdiff_t offsetOfHasSiteConstants() { return OBJECT_OFFSETOF(Data, hasSiteConstants); }
     static constexpr ptrdiff_t offsetOfHasBeenFilledSinceLastCollection() { return OBJECT_OFFSETOF(Data, hasBeenFilledSinceLastCollection); }
 
     struct Linkage {
@@ -1420,6 +1315,7 @@ struct Data {
     uint64_t slotEpoch;
     Slot slots[0];
 };
+static_assert(BiasedDataPointer::bias == Data::offsetOfSlots() + 128 && !(BiasedDataPointer::bias % sizeof(Slot)));
 
 struct FunctionMetadata {
     enum Section : uint32_t {
@@ -1428,13 +1324,14 @@ struct FunctionMetadata {
         FunctionDecls = 1 << 2,
         FunctionExprs = 1 << 3,
         StringSwitchJumpTables = 1 << 4,
-        ResumePoints = 1 << 5,
         ConstantIdentifierSets = 1 << 6,
         Scalars = 1 << 7,
     };
     static constexpr uint32_t isBuiltinFunction = 1 << 8;
     static constexpr unsigned instructionsSizeShift = 9;
     static constexpr uint32_t isPositionsOfTypedFunction = 1;
+    static constexpr uint32_t isHandlersAndPositionsOfTypedFunction = 2;
+    static constexpr bool isOfTypedFunctionWithHandlers(uint32_t word) { return (word & 3) == isHandlersAndPositionsOfTypedFunction; }
     static constexpr uint32_t executableListEntry(uint32_t number) { return (number + 1) << 1; }
     static constexpr uint32_t unlinkedFunctionListEntry(uint32_t number) { return (number + 1) << 1 | 1; }
     static unsigned wordsFor(Section section) { return section == Handlers || section == FunctionDecls || section == FunctionExprs ? 2 : 1; }
@@ -1455,13 +1352,6 @@ struct FunctionMetadata {
     uint32_t flagsAndInstructionsSize;
 };
 
-struct CalleeCache {
-    static constexpr uint32_t hasGivenUp = 1;
-    static constexpr uint32_t attempt = 2;
-    static constexpr uint32_t maxAttempts = 5;
-    static constexpr unsigned numberOfSlots = 2;
-};
-
 struct SharedData {
     static constexpr unsigned maxSlots = 8192;
     static constexpr size_t size = sizeof(Data) + maxSlots * sizeof(Slot);
@@ -1470,6 +1360,11 @@ struct SharedData {
 };
 
 inline const FunctionInfo* ProgramData::infos() const { return at<FunctionInfo>(infosOffset); }
+inline uint32_t FunctionInfo::indexAndFlags() const
+{
+    const ProgramData* data = ProgramData::get();
+    return data->indexAndFlagsOfFunctions()[this - data->infos()];
+}
 inline const ProgramData& FunctionRef::programData() const { return instance ? instance->program->data() : *ProgramData::get(); }
 inline const FunctionInfo& FunctionRef::info() const { return instance ? instance->infos[index] : ProgramData::get()->infos()[index]; }
 
@@ -1507,8 +1402,6 @@ struct CompiledFunctionInfo {
     unsigned numSlots { 0 };
     unsigned numberOfEmptyArrayLiteralsMadeInPlace { 0 };
     unsigned numberOfEmptyArrayLiteralsMadeByStub { 0 };
-    unsigned numberOfEmptyArrayLiteralsLeftToStubBySwitch { 0 };
-    unsigned numberOfReadsOfExpectedLeftToGeneralWayBySwitch { 0 };
     bool usesStaticImports { false };
     bool startsCold { false };
     bool isGetByValOnThis { false };
@@ -1540,6 +1433,8 @@ struct CompiledFunctionInfo {
     };
     Vector<FaultingAccess> faultingAccesses;
     bool hasNoFrame { false };
+    bool isEnteredWithoutStackCheck { false };
+    bool fitsOnStackByProof { false };
     bool isGenericEntrypoint { false };
     uint8_t kindByte { 0 };
     // See FunctionReportableSites. With typedFunction set, InlineFrame::knownCallee is a number in Typed::Data too.
@@ -1569,20 +1464,25 @@ struct ImageFrame {
 static_assert(sizeof(ImageFrame) == 8);
 
 struct ImageFunction {
-    uint32_t index;
-    uint32_t numSlots;
-    uint32_t callSites;
-    uint16_t hasQuotes : 1;
-    uint16_t frame : 15;
-    uint8_t numberOfParameters;
-    uint8_t takesList : 1;
-    uint8_t hasInlineFrames : 1;
-    uint8_t hasSiteConstants : 1;
-    uint8_t usesStaticImports : 1;
-    uint8_t startsCold : 1;
-    uint8_t isGetByValOnThis : 1;
-    uint8_t returnsScopeVariable : 1;
-    uint8_t hasNoGeneralBody : 1;
+    static constexpr unsigned numberOfIndexBits = 24;
+    static constexpr unsigned numberOfCallSitesBits = 27;
+    static constexpr unsigned numberOfSlotsBits = 16;
+    static constexpr unsigned numberOfFrameBits = 12;
+
+    uint32_t index : numberOfIndexBits;
+    uint32_t numberOfParameters : 8;
+    uint32_t callSites : numberOfCallSitesBits;
+    uint32_t hasQuotes : 1;
+    uint32_t takesList : 1;
+    uint32_t hasInlineFrames : 1;
+    uint32_t hasSiteConstants : 1;
+    uint32_t usesStaticImports : 1;
+    uint32_t numSlots : numberOfSlotsBits;
+    uint32_t frame : numberOfFrameBits;
+    uint32_t startsCold : 1;
+    uint32_t isGetByValOnThis : 1;
+    uint32_t returnsScopeVariable : 1;
+    uint32_t hasNoGeneralBody : 1;
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
 #if CPU(ARM64)
@@ -1600,6 +1500,7 @@ struct ImageFunction {
         return packed;
     }
 
+    static constexpr ptrdiff_t offsetOfNumSlotsFromSites() { return -static_cast<ptrdiff_t>(sizeof(uint32_t)); }
     const Site* sites() const { return reinterpret_cast<const Site*>(this + 1); }
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
     const uint32_t* returnedVariable() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); }
@@ -1608,12 +1509,15 @@ struct ImageFunction {
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
-static_assert(sizeof(ImageFunction) == 16);
+static_assert(sizeof(ImageFunction) == 12);
 
 inline const ImageFunction* FunctionInfo::function() const
 {
     return hasCodeInImage() ? reinterpret_cast<const ImageFunction*>(sitesInImage()) - 1 : nullptr;
 }
+inline bool FunctionInfo::hasSiteConstants() const { return !isTyped && hasCodeInImage() && function()->hasSiteConstants; }
+inline bool FunctionInfo::startsCold() const { return hasCodeInImage() && function()->startsCold && (isTyped || hasExecutable()); }
+inline uint32_t FunctionInfo::numberOfSlotsForMisses() const { return hasCodeInImage() ? std::min<uint32_t>(function()->numSlots, maxEncodedSlots) : 0; }
 
 class JITCode final : public JSC::JITCode {
 public:
@@ -1652,7 +1556,6 @@ private:
 };
 
 Instance& instanceOf(JSScope*);
-Instance* instanceIfExists(JSScope*);
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 bool linkColdStaticFunction(Instance*, uint32_t functionIndex, JSScope*);

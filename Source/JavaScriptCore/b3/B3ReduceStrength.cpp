@@ -730,6 +730,7 @@ public:
         if (m_numbersMemory) {
             m_heapEpochs.clear();
             m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
+            noteWritesOfLoops();
         }
 #endif
         reduceAllBlocksStrengthInDominatorPreOrder();
@@ -866,6 +867,10 @@ private:
 
     void reduceValueStrength()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (keepsIntegersOutOfDoubles())
+            return;
+#endif
         switch (m_value->opcode()) {
         case Opaque:
             // Turn this: Opaque(Opaque(value))
@@ -4562,6 +4567,265 @@ private:
 
     // FIXME: This should really be a forward analysis. Instead, we uses a bounded-search backwards
     // analysis.
+#if USE(BUN_JSC_ADDITIONS)
+    struct WholeNumber {
+        IntRange range;
+        bool mayBeNegativeZero { false };
+    };
+
+    static bool isKeptExactly(const IntRange& range)
+    {
+        constexpr int64_t limit = static_cast<int64_t>(1) << 53;
+        return range.min() >= -limit && range.max() <= limit;
+    }
+
+    std::optional<WholeNumber> wholeNumberFor(Value* value, unsigned timeToLive = 4)
+    {
+        if (!timeToLive || value->type() != Double)
+            return std::nullopt;
+        switch (value->opcode()) {
+        case ConstDouble: {
+            double number = value->asDouble();
+            constexpr double limit = 9007199254740992.0;
+            if (!(number >= -limit && number <= limit) || number != std::trunc(number) || (!number && std::signbit(number)))
+                return std::nullopt;
+            int64_t whole = static_cast<int64_t>(number);
+            return WholeNumber { IntRange(whole, whole), false };
+        }
+        case IToD: {
+            IntRange range = rangeFor(value->child(0));
+            if (!isKeptExactly(range))
+                return std::nullopt;
+            return WholeNumber { range, false };
+        }
+        case Add:
+        case Sub:
+        case Mul: {
+            auto left = wholeNumberFor(value->child(0), timeToLive - 1);
+            if (!left)
+                return std::nullopt;
+            auto right = wholeNumberFor(value->child(1), timeToLive - 1);
+            if (!right)
+                return std::nullopt;
+            IntRange range = value->opcode() == Add ? left->range.add(right->range, Int64) : value->opcode() == Sub ? left->range.sub(right->range, Int64) : left->range.mul(right->range, Int64);
+            if (!isKeptExactly(range))
+                return std::nullopt;
+            bool productMayBeNegativeZero = value->opcode() == Mul && range.min() <= 0 && range.max() >= 0 && (left->range.min() < 0 || right->range.min() < 0);
+            return WholeNumber { range, left->mayBeNegativeZero || right->mayBeNegativeZero || productMayBeNegativeZero };
+        }
+        default:
+            return std::nullopt;
+        }
+    }
+
+    Value* wholeNumberAsInteger(Value* value)
+    {
+        switch (value->opcode()) {
+        case ConstDouble:
+            return m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), static_cast<int64_t>(value->asDouble()));
+        case IToD:
+            if (value->child(0)->type() == Int64)
+                return value->child(0);
+            return m_insertionSet.insert<Value>(m_index, SExt32, m_value->origin(), value->child(0));
+        case Add:
+        case Sub:
+        case Mul: {
+            Value* left = wholeNumberAsInteger(value->child(0));
+            Value* right = wholeNumberAsInteger(value->child(1));
+            return m_insertionSet.insert<Value>(m_index, value->opcode(), m_value->origin(), left, right);
+        }
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            return nullptr;
+        }
+    }
+
+    static bool mayHaveRangeOfItsOwn(Value* value)
+    {
+        switch (value->opcode()) {
+        case BitAnd:
+        case SShr:
+        case ZShr:
+        case Shl:
+        case Add:
+        case Sub:
+        case Mul:
+        case SExt8:
+        case SExt8To64:
+        case SExt16:
+        case SExt16To64:
+        case SExt32:
+        case ZExt32:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    std::optional<std::pair<uint64_t, uint64_t>> unsignedRangeFor(Value* value)
+    {
+        if (value->type() != Int64)
+            return std::nullopt;
+        uint64_t moved = 0;
+        if (value->opcode() == Add && value->child(1)->hasInt64()) {
+            moved = static_cast<uint64_t>(value->child(1)->asInt64());
+            value = value->child(0);
+        }
+        if (!mayHaveRangeOfItsOwn(value))
+            return std::nullopt;
+        IntRange range = rangeFor(value);
+        uint64_t least = static_cast<uint64_t>(range.min()) + moved;
+        uint64_t most = static_cast<uint64_t>(range.max()) + moved;
+        if (least > most)
+            return std::nullopt;
+        return std::pair { least, most };
+    }
+
+    static bool isSameInteger(Value* a, Value* b, unsigned timeToLive = 5)
+    {
+        if (a == b)
+            return true;
+        if (!timeToLive || a->opcode() != b->opcode() || a->type() != b->type())
+            return false;
+        switch (a->opcode()) {
+        case Const64:
+            return a->asInt64() == b->asInt64();
+        case SExt32:
+            return a->child(0) == b->child(0);
+        case Add:
+        case Sub:
+        case Mul:
+            return isSameInteger(a->child(0), b->child(0), timeToLive - 1) && isSameInteger(a->child(1), b->child(1), timeToLive - 1);
+        default:
+            return false;
+        }
+    }
+
+    bool answersForOneInteger(Opcode opcode, Value* left, Value* right)
+    {
+        if (!isSameInteger(left, right))
+            return false;
+        return answer(opcode == Equal || opcode == LessEqual || opcode == GreaterEqual);
+    }
+
+    bool answer(bool isTrue)
+    {
+        return replaceWithNewValue(m_proc.addBoolConstant(m_value->origin(), isTrue ? TriState::True : TriState::False));
+    }
+
+    bool keepsIntegersOutOfDoubles()
+    {
+        if (!m_proc.positionIndependent())
+            return false;
+        Opcode opcode = m_value->opcode();
+        switch (opcode) {
+        case Patchpoint: {
+            auto* patchpoint = m_value->as<PatchpointValue>();
+            int32_t key = patchpoint->pureFunctionOfChildrenKey;
+            if ((key != keyOfTruncationToInt64 && key != keyOfConversionToInt32) || patchpoint->numChildren() != 1 || !wholeNumberFor(patchpoint->child(0)))
+                return false;
+            Value* whole = wholeNumberAsInteger(patchpoint->child(0));
+            if (key == keyOfTruncationToInt64)
+                replaceWithIdentity(whole);
+            else
+                replaceWithNew<Value>(Trunc, m_value->origin(), whole);
+            return true;
+        }
+        case Equal:
+        case NotEqual:
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual: {
+            Value* left = m_value->child(0);
+            Value* right = m_value->child(1);
+            if (left->type() == Double) {
+                if (!wholeNumberFor(left) || !wholeNumberFor(right))
+                    return false;
+                Value* wholeLeft = wholeNumberAsInteger(left);
+                Value* wholeRight = wholeNumberAsInteger(right);
+                if (answersForOneInteger(opcode, wholeLeft, wholeRight))
+                    return true;
+                replaceWithNew<Value>(opcode, m_value->origin(), wholeLeft, wholeRight);
+                return true;
+            }
+            if (!left->isInteger())
+                return false;
+            if ((opcode == Equal || opcode == NotEqual) && left->opcode() == BitwiseCast && right->opcode() == BitwiseCast && left->type() == Int64) {
+                auto first = wholeNumberFor(left->child(0));
+                auto second = first ? wholeNumberFor(right->child(0)) : std::nullopt;
+                if (!second || first->mayBeNegativeZero || second->mayBeNegativeZero)
+                    return false;
+                Value* wholeLeft = wholeNumberAsInteger(left->child(0));
+                Value* wholeRight = wholeNumberAsInteger(right->child(0));
+                if (answersForOneInteger(opcode, wholeLeft, wholeRight))
+                    return true;
+                replaceWithNew<Value>(opcode, m_value->origin(), wholeLeft, wholeRight);
+                return true;
+            }
+            if (!right->hasInt() || left->hasInt() || !mayHaveRangeOfItsOwn(left))
+                return false;
+            IntRange range = rangeFor(left);
+            int64_t constant = right->asInt();
+            switch (opcode) {
+            case Equal:
+            case NotEqual:
+                if (constant < range.min() || constant > range.max())
+                    return answer(opcode == NotEqual);
+                return false;
+            case LessThan:
+            case GreaterEqual:
+                if (range.max() < constant)
+                    return answer(opcode == LessThan);
+                if (range.min() >= constant)
+                    return answer(opcode == GreaterEqual);
+                return false;
+            default:
+                if (range.min() > constant)
+                    return answer(opcode == GreaterThan);
+                if (range.max() <= constant)
+                    return answer(opcode == LessEqual);
+                return false;
+            }
+        }
+        case Below:
+        case BelowEqual:
+        case Above:
+        case AboveEqual: {
+            Value* left = m_value->child(0);
+            Value* right = m_value->child(1);
+            if (left->hasInt64() && !right->hasInt64()) {
+                std::swap(left, right);
+                opcode = opcode == Below ? Above : opcode == BelowEqual ? AboveEqual : opcode == Above ? Below : BelowEqual;
+            }
+            if (!right->hasInt64() || left->hasInt64())
+                return false;
+            auto range = unsignedRangeFor(left);
+            if (!range)
+                return false;
+            uint64_t constant = static_cast<uint64_t>(right->asInt64());
+            switch (opcode) {
+            case Below:
+            case AboveEqual:
+                if (range->second < constant)
+                    return answer(opcode == Below);
+                if (range->first >= constant)
+                    return answer(opcode == AboveEqual);
+                return false;
+            default:
+                if (range->first > constant)
+                    return answer(opcode == Above);
+                if (range->second <= constant)
+                    return answer(opcode == BelowEqual);
+                return false;
+            }
+        }
+        default:
+            return false;
+        }
+    }
+#endif
+
     IntRange rangeFor(Value* value, unsigned timeToLive = 5)
     {
         if (!timeToLive)
@@ -4749,12 +5013,198 @@ private:
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    struct NotedWrite {
+        unsigned begin { 0 };
+        unsigned end { 0 };
+        unsigned id { 0 };
+
+        bool isOfOneHeap() const { return end - begin == 1; }
+        bool isOfSameHeapsAs(const NotedWrite& other) const { return begin == other.begin && end == other.end; }
+    };
+
     struct MemoryState {
+        static constexpr unsigned maxNotedWrites = 8;
+        static constexpr unsigned maxNotedRanges = 3;
+
         unsigned epoch { 0 };
         unsigned id { 0 };
         unsigned callEpoch { 0 };
         BasicBlock* owner { nullptr };
+        BasicBlock* epochOwner { nullptr };
+        unsigned numberOfNotedWrites { 0 };
+        bool hasWritesThatAreNotNoted { false };
+        std::array<NotedWrite, maxNotedWrites> notedWrites { };
+
+        std::span<NotedWrite> noted() { return std::span { notedWrites }.first(numberOfNotedWrites); }
+        std::span<const NotedWrite> noted() const { return std::span { notedWrites }.first(numberOfNotedWrites); }
+
+        void beginEpoch(BasicBlock* block)
+        {
+            epoch = id;
+            epochOwner = block;
+            numberOfNotedWrites = 0;
+            hasWritesThatAreNotNoted = false;
+        }
+
+        bool note(NotedWrite write)
+        {
+            unsigned numberOfRanges = 0;
+            for (NotedWrite& other : noted()) {
+                if (other.isOfSameHeapsAs(write)) {
+                    other.id = write.id;
+                    return true;
+                }
+                numberOfRanges += !other.isOfOneHeap();
+            }
+            if (numberOfNotedWrites == maxNotedWrites || (!write.isOfOneHeap() && numberOfRanges == maxNotedRanges))
+                return false;
+            notedWrites[numberOfNotedWrites++] = write;
+            return true;
+        }
     };
+
+    bool hasOverlayAsNoted(const NotedWrite& write)
+    {
+        return m_heapEpochs.find(write.begin).value_or(0) == write.id;
+    }
+
+    struct WritesOfLoop {
+        bool areAllNoted { true };
+        bool hasCall { false };
+        MemoryState state;
+    };
+
+    void noteWritesOfLoops()
+    {
+        m_loopsForMemoryNumbering = nullptr;
+        m_writesOfLoops.shrink(0);
+        bool hasEdgeThatGoesBack = false;
+        for (BasicBlock* block : m_proc) {
+            for (BasicBlock* successor : block->successorBlocks())
+                hasEdgeThatGoesBack |= m_dominators->dominates(successor, block);
+        }
+        if (!hasEdgeThatGoesBack)
+            return;
+        auto& loops = m_proc.naturalLoops();
+        if (!loops.numLoops())
+            return;
+        m_loopsForMemoryNumbering = &loops;
+        m_writesOfLoops.grow(loops.numLoops());
+        for (BasicBlock* block : m_proc) {
+            auto* innerMost = loops.innerMostLoopOf(block);
+            if (!innerMost)
+                continue;
+            for (Value* value : *block) {
+                Effects effects = value->effects();
+                bool isCall = clobbersLikeCall(value);
+                if (!isCall && !effects.fence && !effects.writes)
+                    continue;
+                bool canBeNoted = !effects.fence && effects.writes.end() <= std::numeric_limits<unsigned>::max();
+                NotedWrite write { static_cast<unsigned>(effects.writes.begin()), static_cast<unsigned>(effects.writes.end()), 0 };
+                for (auto* loop = innerMost; loop; loop = loops.innerMostOuterLoop(*loop)) {
+                    WritesOfLoop& writes = m_writesOfLoops[loop->index()];
+                    writes.hasCall |= isCall;
+                    if (!canBeNoted || (effects.writes && !writes.state.note(write)))
+                        writes.areAllNoted = false;
+                }
+            }
+        }
+    }
+
+    bool takeStateFromAheadOfLoop(BasicBlock* header, MemoryState& state, unsigned& callEpoch)
+    {
+        if (!m_loopsForMemoryNumbering)
+            return false;
+        auto* loop = m_loopsForMemoryNumbering->headerOf(header);
+        if (!loop || !m_writesOfLoops[loop->index()].areAllNoted)
+            return false;
+        const MemoryState* ahead = nullptr;
+        bool callEpochsDiffer = false;
+        for (BasicBlock* predecessor : header->predecessors()) {
+            if (predecessor->index() >= m_memoryStateAtTail.size())
+                return false;
+            if (m_loopsForMemoryNumbering->belongsTo(predecessor, *loop))
+                continue;
+            const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
+            if (!atTail.id || atTail.hasWritesThatAreNotNoted || (ahead && ahead->id != atTail.id))
+                return false;
+            callEpochsDiffer |= ahead && ahead->callEpoch != atTail.callEpoch;
+            ahead = &atTail;
+        }
+        if (!ahead || !ahead->epochOwner || !m_dominators->dominates(ahead->epochOwner, header))
+            return false;
+        MemoryState taken = *ahead;
+        unsigned id = m_lastMemoryStateID + 1;
+        for (NotedWrite& write : taken.noted()) {
+            if (write.isOfOneHeap() && !hasOverlayAsNoted(write))
+                write.id = id;
+        }
+        const WritesOfLoop& writes = m_writesOfLoops[loop->index()];
+        for (NotedWrite write : writes.state.noted()) {
+            write.id = id;
+            if (!taken.note(write))
+                return false;
+        }
+        m_lastMemoryStateID = id;
+        taken.id = id;
+        taken.owner = header;
+        for (const NotedWrite& write : taken.noted()) {
+            if (write.id == id && write.isOfOneHeap())
+                m_heapEpochs.overlay(write.begin, id);
+        }
+        callEpoch = writes.hasCall || callEpochsDiffer ? 0 : taken.callEpoch;
+        state = taken;
+        return true;
+    }
+
+    bool mergeStatesOfOneEpoch(BasicBlock* block, MemoryState& merged)
+    {
+        if (block->numPredecessors() < 2)
+            return false;
+        unsigned numberOfPredecessors = 0;
+        std::array<unsigned, MemoryState::maxNotedWrites> numberOfStatesThatAgree { };
+        for (BasicBlock* predecessor : block->predecessors()) {
+            if (predecessor->index() >= m_memoryStateAtTail.size())
+                return false;
+            const MemoryState& atTail = m_memoryStateAtTail[predecessor->index()];
+            if (!atTail.id || atTail.hasWritesThatAreNotNoted)
+                return false;
+            if (!numberOfPredecessors++) {
+                merged = atTail;
+                numberOfStatesThatAgree.fill(1);
+                continue;
+            }
+            if (merged.epoch != atTail.epoch)
+                return false;
+            for (const NotedWrite& write : atTail.noted()) {
+                bool isKnown = false;
+                for (unsigned i = 0; i < merged.numberOfNotedWrites; ++i) {
+                    if (!merged.notedWrites[i].isOfSameHeapsAs(write))
+                        continue;
+                    isKnown = true;
+                    numberOfStatesThatAgree[i] += merged.notedWrites[i].id == write.id;
+                }
+                if (isKnown)
+                    continue;
+                if (!merged.note(write))
+                    return false;
+                numberOfStatesThatAgree[merged.numberOfNotedWrites - 1] = 0;
+            }
+        }
+        if (!merged.epoch || !merged.epochOwner || !m_dominators->dominates(merged.epochOwner, block))
+            return false;
+        merged.id = ++m_lastMemoryStateID;
+        merged.owner = block;
+        for (unsigned i = 0; i < merged.numberOfNotedWrites; ++i) {
+            NotedWrite& write = merged.notedWrites[i];
+            if (numberOfStatesThatAgree[i] == numberOfPredecessors && (!write.isOfOneHeap() || hasOverlayAsNoted(write)))
+                continue;
+            write.id = merged.id;
+            if (write.isOfOneHeap())
+                m_heapEpochs.overlay(write.begin, merged.id);
+        }
+        return true;
+    }
 
     void beginMemoryNumbering(BasicBlock* block)
     {
@@ -4764,7 +5214,8 @@ private:
         unsigned callEpoch = 0;
         bool isFirst = true;
         for (BasicBlock* predecessor : block->predecessors()) {
-            MemoryState atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : MemoryState { };
+            static const MemoryState stateOfBlockNotWalked;
+            const MemoryState& atTail = predecessor->index() < m_memoryStateAtTail.size() ? m_memoryStateAtTail[predecessor->index()] : stateOfBlockNotWalked;
             if (isFirst) {
                 state = atTail;
                 callEpoch = atTail.callEpoch;
@@ -4776,10 +5227,10 @@ private:
             if (callEpoch != atTail.callEpoch)
                 callEpoch = 0;
         }
-        if (!state.id || !m_dominators->dominates(state.owner, block)) {
+        if ((!state.id || !m_dominators->dominates(state.owner, block)) && !mergeStatesOfOneEpoch(block, state) && !takeStateFromAheadOfLoop(block, state, callEpoch)) {
             state.id = ++m_lastMemoryStateID;
-            state.epoch = state.id;
             state.owner = block;
+            state.beginEpoch(block);
         }
         state.callEpoch = callEpoch ? callEpoch : ++m_lastMemoryStateID;
         m_memoryState = state;
@@ -4851,10 +5302,23 @@ private:
     {
         m_memoryState.id = ++m_lastMemoryStateID;
         m_memoryState.owner = m_block;
-        if (writes.distance() == 1)
+        NotedWrite write { static_cast<unsigned>(writes.begin()), static_cast<unsigned>(writes.end()), m_memoryState.id };
+        if (writes.distance() == 1) {
             m_heapEpochs.overlay(writes.begin(), m_memoryState.id);
-        else
-            m_memoryState.epoch = m_memoryState.id;
+            if (!m_memoryState.note(write))
+                m_memoryState.hasWritesThatAreNotNoted = true;
+        } else if (writes.end() > std::numeric_limits<unsigned>::max() || !m_memoryState.note(write))
+            m_memoryState.beginEpoch(m_block);
+    }
+
+    unsigned epochOfHeap(unsigned heap)
+    {
+        unsigned epoch = std::max(m_memoryState.epoch, m_heapEpochs.find(heap).value_or(0));
+        for (const NotedWrite& write : m_memoryState.noted()) {
+            if (!write.isOfOneHeap() && write.begin <= heap && heap < write.end)
+                epoch = std::max(epoch, write.id);
+        }
+        return epoch;
     }
 
     ValueKey keyForLoad(Kind kind, Type type, MemoryValue* memory)
@@ -4865,7 +5329,7 @@ private:
         if (memory->isLoad() && memory->readsMutability() == Mutability::Immutable)
             bits.u32x4[2] = 0;
         else if (memory->range().distance() == 1)
-            bits.u32x4[2] = std::max(m_memoryState.epoch, m_heapEpochs.find(memory->range().begin()).value_or(0));
+            bits.u32x4[2] = epochOfHeap(memory->range().begin());
         else
             bits.u32x4[2] = m_memoryState.id;
         bits.u32x4[3] = m_memoryState.callEpoch;
@@ -5640,6 +6104,8 @@ private:
     MemoryState m_memoryState;
     unsigned m_lastMemoryStateID { 0 };
     Vector<MemoryState> m_memoryStateAtTail;
+    const NaturalLoops* m_loopsForMemoryNumbering { nullptr };
+    Vector<WritesOfLoop> m_writesOfLoops;
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
 #endif
 

@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed { namespace Format {
 // The program as the front end hands it over: one buffer of 32-bit words, read in place. src/aot/format.rs in Bun mirrors this file.
 
 static constexpr uint32_t magic = 0x52495442;
-static constexpr uint32_t version = 30;
+static constexpr uint32_t version = 34;
 static constexpr uint32_t none = UINT32_MAX;
 
 struct Section {
@@ -203,6 +203,7 @@ enum ShapeFlag : uint32_t {
     // Of a class: it declares a static field or method whose name is computed and may be any string. What is found on the class object
     // under a name, or on that of a class that extends it, is not known.
     ShapeHasStaticMemberOfUnknownName = 1 << 8,
+    ShapeMayBeReused = 1 << 10,
 };
 
 // Every class of the program has a shape of the kind Instance. The class object is the closure of its constructor, and is made by the run
@@ -276,6 +277,7 @@ struct Module {
     //   one number per non-ASCII character: (gap << 2) | (length - 2). gap: bytes since the end of the previous non-ASCII character of
     //   the line, or since the line start. length: its UTF-8 length.
     Span lineTable;
+    Span printed;
 };
 
 enum class FunctionKind : uint32_t {
@@ -312,11 +314,16 @@ enum FunctionFlag : uint32_t {
     FunctionIsHiddenInStackTraces = 1 << 10,
     FunctionNameIsGiven = 1 << 11,
     FunctionIsCodeOfModule = 1 << 12,
+    FunctionIsSloppy = 1 << 13,
+    FunctionIsGeneralEntry = 1 << 14,
+    FunctionKeepsFieldNamesOffItsPrototype = 1 << 15,
 };
 
 // In Function::parameterTypes: the type of the parameter is written down, so what does not fit it is coerced as by `as`. The other bits
 // number the type.
 static constexpr uint32_t ParameterIsAnnotated = 1u << 31;
+static constexpr uint32_t ParameterIsOnlyCalled = 1u << 30;
+static constexpr uint32_t untypedParameterIsOnlyCalled = none & ~ParameterIsOnlyCalled;
 
 struct Function {
     uint32_t name;
@@ -334,6 +341,8 @@ struct Function {
     // Its `length` property.
     uint32_t length;
     uint32_t resultType;
+    uint32_t placeOfText;
+    uint32_t endOfText;
 };
 
 #define FOR_EACH_AOT_TYPED_OPCODE(v) \
@@ -463,6 +472,7 @@ enum class CastReason : uint32_t {
     // Coerce with a Freshness, as compiled code tells the run time. No Value has them for a reason.
     CoerceFreshObject,
     CoerceFreshGraph,
+    AsFreshObject,
 };
 // Of a Cast for the reason Coerce, in Value::immediates[1] from bit 8 on. Nobody else can hold the object that the operand yields: `{ ...a } as T`,
 // `Object.fromEntries(..) as T`: plain data is copied into the layout as `As` does it, and what it holds stays what it is. Nor anything that
@@ -475,6 +485,7 @@ static constexpr uint32_t PredictionIsClosure = 1u << 31;
 // Without that one, on a GetByVal: the other bits number a string. See Header::functionsByKey.
 static constexpr uint32_t PredictionIsByKey = 1u << 30;
 static constexpr uint32_t ReceiverIsOfOneRow = 1u << 29;
+static constexpr uint32_t VariableIsInitialized = 1;
 
 // NewObjectWithShape: immediates[0] is the layout. children[0] and immediates[1] are both none, or a value and the name of a property:
 // of an object that `new` makes for a function it does not know. Then this is a fact. Every function of the program that declares a
@@ -517,6 +528,8 @@ struct Block {
     Span cases;
 };
 
+static constexpr uint32_t programLogsTypeErrors = 1;
+
 struct Header {
     uint32_t magic;
     uint32_t version;
@@ -524,6 +537,7 @@ struct Header {
     uint32_t opcodeNamesHash;
     // Typed::builtinsHash of the table the front end was built with.
     uint32_t builtinsHash;
+    uint32_t flags;
     Section bytes;
     Section words;
     Section strings;
@@ -560,6 +574,7 @@ struct Header {
     // top-level code of a module. In an Instance one of them runs, once.
     Span entries;
     Span regExpLiterals;
+    Span sites;
     uint32_t recordSizes[12];
 };
 

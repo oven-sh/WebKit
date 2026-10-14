@@ -78,6 +78,10 @@ static constexpr unsigned maxArrayElementsInRegisters = 4;
 static constexpr unsigned vectorLengthOfArrayLiteral(unsigned count) { return (count ? count : 5) | 1; }
 // operationAOTTypedNewArray is told the room of an empty literal that is born with another above the count.
 static constexpr unsigned capacityShiftInArrayLiteralCount = 27;
+static constexpr unsigned maxFrameSizeWithoutStackCheck = 240;
+static constexpr unsigned maxFunctionsWithoutStackCheckOnEachOther = 8;
+static constexpr unsigned maxStackTakenWithoutCheck = 4096;
+static_assert(maxFunctionsWithoutStackCheckOnEachOther * (maxFrameSizeWithoutStackCheck + 2 * sizeof(void*)) <= maxStackTakenWithoutCheck / 2);
 
 enum class Signature : uint8_t {
     Registers,
@@ -173,6 +177,8 @@ struct ClosureRequest {
     static constexpr unsigned executableShift = ClosureWord::numberOfFunctionBits;
     static constexpr unsigned allocationShift = 32;
     static constexpr unsigned countShift = 56;
+    static constexpr unsigned variableIsCell32Bit = 61;
+    static constexpr unsigned isMadeOnceBit = 62;
     static constexpr unsigned isSlimBit = 63;
 #if CPU(ARM64)
     static constexpr unsigned maxNumberOfCaptures = 4;
@@ -180,6 +186,7 @@ struct ClosureRequest {
     // The fifth and the sixth argument register are temporaries of the stubs there.
     static constexpr unsigned maxNumberOfCaptures = 2;
 #endif
+    static constexpr unsigned maxNumberOfCapturesOfSlimClosure = 4;
     static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation)
     {
         RELEASE_ASSERT(function <= ClosureWord::functionMask && executable < 1u << (allocationShift - executableShift) && allocation < 1u << (countShift - allocationShift));
@@ -188,7 +195,9 @@ struct ClosureRequest {
     static constexpr uint32_t functionOf(uint64_t request) { return request & ClosureWord::functionMask; }
     static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & 0xff; }
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
-    static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x7f; }
+    static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x1f; }
+    static constexpr bool variableIsCell32(uint64_t request) { return request >> variableIsCell32Bit & 1; }
+    static constexpr bool isMadeOnce(uint64_t request) { return request >> isMadeOnceBit & 1; }
     static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit; }
 };
 

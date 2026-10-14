@@ -2595,7 +2595,11 @@ JSC_DEFINE_JIT_OPERATION(operationCompareStringEq, EncodedJSValue, (JSGlobalObje
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool result = asString(left)->equal(globalObject, asString(right));
+#else
     bool result = asString(left)->equalInline(globalObject, asString(right));
+#endif
     OPERATION_RETURN(scope, JSValue::encode(jsBoolean(result)));
 }
 

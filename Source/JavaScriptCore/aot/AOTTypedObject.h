@@ -37,6 +37,8 @@ class JSSlimPromiseReaction;
 namespace AOT {
 
 struct Instance;
+struct ModuleEvaluation;
+class GlobalPropertyWatchpoint;
 
 namespace Typed {
 
@@ -70,6 +72,7 @@ public:
     static Structure* createStructure(VM&, Instance&, JSValue prototype, const LayoutData*);
     // Every field that can be absent is, the others are clear.
     static Object* create(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
+    static Object* createWithBody(VM&, Structure*, std::span<const uint8_t> body);
     // Of a class, as compiled code makes it: every field is there, and holds `undefined` if it can, but for fieldIsAbsentAtBirth.
     static Object* createWithBornFields(VM&, Structure*, const LayoutData&, size_t size, uint32_t orderWord);
     // `{ ...record }`, of a record: ObjectCreate(%Object.prototype%), then CopyDataProperties. The copy is of the layout the record has.
@@ -81,9 +84,10 @@ public:
     // The same with keys left out: `const { a, ...rest } = record`. Null also where a key is no atom string.
     JSObject* tryCopyAsPlainObject(JSGlobalObject*, std::span<const EncodedJSValue> excluded) const;
     // CopyDataProperties with excluded keys onto a new object, which is of the layout `to`. Null, and nothing has happened that anybody can see: this is no record, it has extra
-    // properties, `to` has no field for one of its own or does not take the value as it is, or `to` requires more.
-    Object* tryCopyAs(JSGlobalObject*, const LayoutData& to, std::span<const EncodedJSValue> excluded);
+    // properties, `to` has no field for one of its own or does not take the value as it is, or `to` requires more. `storedNext`: fields of `to` that whoever asks stores to before anybody sees the copy: the last of its keys, in this order.
+    Object* tryCopyAs(JSGlobalObject*, const LayoutData& to, NamesOfCopy, std::span<const EncodedJSValue> names, bool* isNeverCopied = nullptr);
     static Object* tryMergeAs(JSGlobalObject*, const LayoutData& to, Object& first, Object& second);
+    static Object* tryMakeAs(JSGlobalObject*, State&, const LayoutData& to, std::span<const EncodedJSValue> namesStoredNext);
     // CopyDataProperties onto this record, WHICH NOBODY HAS YET (the copy or the literal that a spread goes onto), from another. False: the general way is to be gone, from the first key: what has been copied by
     // then it copies again, which nobody can tell.
     bool tryCopyFieldsOf(VM&, const Object& source);
@@ -111,8 +115,9 @@ public:
     // A store by code that was not compiled with the type: see State::holdToTypeOf(). False: it has thrown.
     bool assign(JSGlobalObject*, const FieldData&, JSValue, bool* givesUp = nullptr);
     JSObject* becomeOrdinary(VM&);
+    JSFinalObject* copyAsOrdinary(VM&, unsigned inlineCapacity);
     // Store::Int32OrElsewhere: a number, as a rule one that the word cannot hold. Also for compiled code, whose first stores to the object
-    // may not be over: this looks at the header and the order word only. It may collect garbage.
+    // may not be over: this looks at the word of the field only.
     void storeElsewhere(VM&, const FieldData&, JSValue);
 
     uint32_t orderWord() const { return at<uint32_t>(offsetOfOrderWord); }
@@ -147,6 +152,7 @@ public:
         uint16_t acceptedPrimitives { 0 };
         bool acceptsInt32 { false };
         bool acceptsAnyObject { false };
+        uint32_t typeOfAcceptedObjects { 0 };
     };
     // Of the field of the name, for every object of the Structure of this one. Nothing: there is no such field.
     std::optional<FieldAccess> fieldAccessFor(VM&, PropertyName);
@@ -167,7 +173,9 @@ public:
     JSCellButterfly* keys(VM&) const;
     // The field is absent and is about to be stored to: it is the last of the keys now. If it is out of line, the object has an extension
     // of its own from here on: compiled code loads the pointer again. That may collect garbage.
-    void didCreateField(State&, const FieldData&);
+    void didCreateField(State&, const FieldData&, bool withStorage = true);
+    bool isAmongKeysInOrder(State&, const FieldData&) const;
+    void willKeepKeysInLayoutOrder();
     void ensureStorageFor(VM& vm, State& state, const FieldData& field) { ensureExtensionCovers(vm, state, field); }
     // JSObject::getDirect() and putDirect(): native code that goes past the method table.
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
@@ -239,11 +247,19 @@ private:
     void ensureExtensionCovers(VM&, State&, const FieldData&);
     // By a copy with room for that many bytes.
     void replaceExtension(VM&, State&, uint32_t size);
+    static double* numberBoxAt(int32_t word);
+    void storeInNumberBoxOfItsOwn(State&, uint32_t offset, double);
+    void copyNumberBoxes(State&);
     // The value as the field keeps it, whatever the type of the field. False: it cannot be kept that way. It may collect garbage.
     bool store(VM&, const FieldData&, JSValue);
     // Absent if it can be.
     void clear(const FieldData&);
-    void setOrderAndCount(uint32_t orderAndCount) { at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount; }
+    void setOrderAndCount(uint32_t orderAndCount)
+    {
+        if (orderOf(orderAndCount) == keysAreInLayoutOrder && orderOf(orderWord()) != keysAreInLayoutOrder) [[unlikely]]
+            willKeepKeysInLayoutOrder();
+        at<uint32_t>(offsetOfOrderWord) = (orderWord() & ~orderAndCountMask) | orderAndCount;
+    }
     // The entries of the object's key order: a field index, or from LayoutData::numberOfFields on a placed extra key (State::extraKeyName).
     void forEachKeyInOrder(State&, const Invocable<void(uint16_t)> auto&) const;
     void forEachFieldInKeyOrder(State&, const Invocable<void(uint16_t)> auto&) const;
@@ -394,6 +410,31 @@ private:
     UncheckedKeyHashMap<Object*, JSObject*> m_map;
 };
 
+class NumberBoxTable final : public WeakGCHashTable {
+    WTF_MAKE_NONCOPYABLE(NumberBoxTable);
+public:
+    explicit NumberBoxTable(VM&);
+    ~NumberBoxTable() final;
+
+    static uintptr_t base();
+    bool isEmpty() const { return m_map.isEmpty(); }
+    int32_t wordFor(Object*, uint32_t offset);
+    void reconcileWeakReferencesAtGCEnd(VM&, CollectionScope) final;
+
+private:
+    struct Box {
+        uint32_t offset;
+        uint32_t place;
+    };
+    VM& m_vm;
+    UncheckedKeyHashMap<Object*, Vector<Box, 2>> m_map;
+};
+
+inline double* Object::numberBoxAt(int32_t word)
+{
+    return std::bit_cast<double*>(NumberBoxTable::base() + (static_cast<uintptr_t>(static_cast<uint32_t>(word) & INT32_MAX) << numberBoxShift));
+}
+
 class FieldAttributesTable final : public WeakGCHashTable {
     WTF_MAKE_NONCOPYABLE(FieldAttributesTable);
 public:
@@ -465,7 +506,7 @@ public:
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
 
-    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype);
+    static Structure* createStructure(VM&, JSGlobalObject*, JSValue prototype, bool isBound = false);
     static Closure* create(VM&, Structure*, uint32_t function, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
     // For compiled code, where it cannot allocate by itself. It writes everything from the executable on, the word last. Until then the cell has no captures.
     static Closure* createForCompiledCode(VM&, Structure*, size_t allocationSize);
@@ -489,6 +530,7 @@ public:
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
     static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSValue, bool shouldThrow);
     static bool preventExtensions(JSObject*, JSGlobalObject*);
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     // Function.prototype.toString(). There is no text: what it is declared as, and the name it was compiled with.
     JSValue toString(JSGlobalObject*) const;
@@ -521,6 +563,7 @@ public:
     // The class object of a class that State::makesClassObjectWhenChanged(), and nobody has looked at anything it has, or changed or listed it: nothing is stored in it, and it shares its Structure.
     bool isUnmadeClassObject() const;
     void ensureClassObject(VM&);
+    void takeStructureOfBoundFunction(VM&);
     // What `prototype` holds. It is made if need be, an unmade class object stays one. Empty: a function of its kind has none.
     JSValue prototypeProperty(VM&);
     // What [[Construct]] does once `this` is there, which is `undefined` for a class with a foreign root. Yields what the function returns:
@@ -550,13 +593,14 @@ public:
     using Base = JSObjectWithButterfly;
     static constexpr unsigned ReifiedStructureFlags = Base::StructureFlags | OverridesGetCallData | TypeOfYieldsFunction | ImplementsHasInstance | ImplementsDefaultHasInstance;
     static constexpr unsigned ReifiedConstructorStructureFlags = ReifiedStructureFlags | OverridesPut;
+    static constexpr unsigned ReifiedBoundStructureFlags = ReifiedStructureFlags & ~ImplementsDefaultHasInstance;
     static constexpr unsigned StructureFlags = Base::StructureFlags | OverridesGetOwnPropertySlot | GetOwnPropertySlotIsImpureForPropertyAbsence | OverridesGetOwnPropertyNames | OverridesPut | OverridesIsExtensible | OverridesGetCallData | TypeOfYieldsFunction | InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | ImplementsHasInstance | ImplementsDefaultHasInstance;
     static constexpr DestructionMode needsDestruction = DoesNotNeedDestruction;
 
     template<typename CellType, SubspaceAccess>
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.heap.aotClosureSpace; }
 
-    static Structure* createStructure(VM&, Instance&, JSValue prototype, bool hasProperties, bool constructs = false);
+    static Structure* createStructure(VM&, Instance&, JSValue prototype, bool hasProperties, bool constructs = false, bool isBound = false);
     static SlimClosure* create(VM&, Structure*, uint32_t function, std::span<const uint64_t> captures = { }, unsigned numberOfReferences = 0);
     static SlimClosure* createForCompiledCode(VM&, Structure*, size_t allocationSize);
 
@@ -584,11 +628,13 @@ public:
     static bool preventExtensions(JSObject*, JSGlobalObject*);
     static bool isExtensible(JSObject*, JSGlobalObject*);
     static bool setPrototype(JSObject*, JSGlobalObject*, JSValue, bool shouldThrowIfCantSet);
+    static bool customHasInstance(JSObject*, JSGlobalObject*, JSValue);
 
     uint32_t functionIndex() const { return isReified() ? functionIndexInButterfly() : ClosureWord::functionOf(word()); }
     State& state() const;
     uint8_t kindAndDeclaration() const;
     bool canConstruct() const { return !(kindAndDeclaration() & (functionKindMask | functionIsAsync)); }
+    bool isBound() const { return static_cast<Format::FunctionKind>(kindAndDeclaration() & functionKindMask) == Format::FunctionKind::Bound; }
     std::span<const uint64_t> captures() const;
     unsigned numberOfReferences() const;
     String nameOfFunction() const;
@@ -763,12 +809,13 @@ public:
     static CompleteSubspace* subspaceFor(VM& vm) { return &vm.cellSpace(); }
 
     // Not extensible, and the prototype is null.
-    static Structure* createStructure(VM&, JSGlobalObject*);
+    static Structure* createStructure(VM&, JSGlobalObject*, bool hasPrototypeOfHost);
     // The names: strings that are atoms, in the order of their numbers, which is that of their code units.
-    static ModuleNamespace* create(VM&, Structure*, JSObject* read, JSCellButterfly* names);
+    static ModuleNamespace* create(VM&, Structure*, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar);
     static constexpr ptrdiff_t offsetOfRead() { return OBJECT_OFFSETOF(ModuleNamespace, m_read); }
     static constexpr unsigned noExport = UINT_MAX;
     unsigned numberOf(UniquedStringImpl*) const;
+    bool isBroughtByStar(UniquedStringImpl*) const;
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -783,10 +830,12 @@ public:
     static bool defineOwnProperty(JSObject*, JSGlobalObject*, PropertyName, const PropertyDescriptor&, bool shouldThrow);
 
 private:
-    ModuleNamespace(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names)
+    ModuleNamespace(VM& vm, Structure* structure, JSObject* read, JSCellButterfly* names, JSObject* star, JSCellButterfly* namesOfStar)
         : Base(vm, structure)
         , m_read(read, WriteBarrierEarlyInit)
         , m_names(names, WriteBarrierEarlyInit)
+        , m_star(star, WriteBarrierEarlyInit)
+        , m_namesOfStar(namesOfStar, WriteBarrierEarlyInit)
     {
     }
 
@@ -795,6 +844,8 @@ private:
 
     WriteBarrier<JSObject> m_read;
     WriteBarrier<JSCellButterfly> m_names;
+    WriteBarrier<JSObject> m_star;
+    WriteBarrier<JSCellButterfly> m_namesOfStar;
     bool m_saysItIsAModule { false };
 };
 
@@ -857,6 +908,7 @@ public:
     void willSuspendAtAwait() { set(isSuspendingAtAwaitFlag, true); }
     void willSuspendAtYield() { set(isSuspendingAtAwaitFlag | isAwaitingYieldOperandFlag, true); }
     void resumeFromAwait(JSGlobalObject*, JSValue resolution, bool isRejected);
+    void appendTargetsOfRequests(Vector<JSCell*, 4>&) const;
 
 private:
     AsyncGenerator(VM& vm, Structure* structure, Closure* resumeClosure)
@@ -892,8 +944,6 @@ private:
 // The generators of the program inherit from %GeneratorPrototype% and %AsyncGeneratorPrototype% of the realm, as those of the engine do.
 // From here on next(), return() and throw() of the two take both. To be called before the two are made immutable. Once is enough.
 JS_EXPORT_PRIVATE void installGeneratorMethods(JSGlobalObject*);
-// For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
-JS_EXPORT_PRIVATE void didCreateReplaceableGlobal(JSGlobalObject*, ASCIILiteral name, JSObject*);
 // `@text` of the engine's and the host's builtin code. What nobody has registered is made and registered: whoever asks next finds the same.
 JS_EXPORT_PRIVATE Identifier enginePrivateName(VM&, const String& text);
 
@@ -905,10 +955,14 @@ bool driveAsyncIterator(JSGlobalObject*, VM&, JSCell* awaited, JSObject* driver)
 void resumeDriver(VM&, JSObject* driver, JSValue resolution, bool isRejected, bool isEnteredByJobLoop);
 JS_EXPORT_PRIVATE bool isResumeClosureOfAsyncFunction(JSCell*);
 JS_EXPORT_PRIVATE JSPromise* promiseOfAsyncFunction(JSCell* resumeClosure);
+JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBy(JSCell* coroutine);
+JS_EXPORT_PRIVATE Vector<JSPromise*, 4> promisesSettledBehind(JSPromise*);
 JS_EXPORT_PRIVATE void appendSuspendedAsyncFunction(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* resumeClosure);
 JS_EXPORT_PRIVATE JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>&, JSCell* resumeClosure, size_t maxStackSize);
 // Of the structure of compiled objects, for isDefinitelyNonThenable().
 bool closureLacksWhatItsStructureLacks(VM&, JSCell*, UniquedStringImpl*, bool isReceiver = true);
+bool closureAnswersForPrototypeProperty(JSCell*);
+GetValueFunc getterOfPrototypePropertyOfClosures();
 bool hasFieldNamedThen(Structure*);
 bool neverHasThen(Structure*);
 
@@ -923,8 +977,7 @@ struct State {
 
     const Identifier& name(VM&, uint32_t);
     std::span<GlobalPropertyCache> globalPropertyCaches() const;
-    // By the name of a field that is kept as Store::Int32OrElsewhere: the private name its number is under among the extra properties.
-    Identifier nameElsewhere(uint32_t);
+    bool trustGlobalProperty(VM&, JSGlobalObject*, uint32_t cacheNumber, UniquedStringImpl*, JSValue);
     JSString* string(VM&, uint32_t);
     JSString* makeAndKeepStringConstant(VM&, uint32_t);
     JSString* makeStringConstant(VM&, uint32_t);
@@ -1032,9 +1085,9 @@ struct State {
     uint32_t makerFlags(uint32_t function) const;
     // And none of those layouts has LayoutData::mayHaveOtherPrototype.
     bool hasGuardedPrototype(uint32_t function);
-    bool isReservedFieldName(VM&, UniquedStringImpl*);
+    bool isReservedFieldName(VM&, UniquedStringImpl*, uint32_t function);
     Structure* prototypeObjectStructure(VM&);
-    Structure* moduleNamespaceStructure(VM&);
+    Structure* moduleNamespaceStructure(VM&, bool hasPrototypeOfHost);
     static constexpr ptrdiff_t offsetOfModuleNamespaceStructure() { return OBJECT_OFFSETOF(State, m_moduleNamespaceStructure); }
     // What adding properties of these names, in this order, makes of an array of the Structure: see operationAOTTypedTryAddNamedProperties.
     struct NamedPropertiesTransition {
@@ -1057,7 +1110,13 @@ struct State {
     // The Instance has just been made. If it is that of the default loader of its realm, the closures that the realm has made so far are its own.
     void adoptClosuresOfRealm(VM&);
     Closure* closure(VM&, uint32_t function);
+    void ensureStaticsOfProgramAreFilled()
+    {
+        if (!m_areStaticsOfProgramFilled) [[unlikely]]
+            fillStaticsOfProgram();
+    }
     JSCell* closureIfMade(uint32_t function) const;
+    void makeTheOneThatConstructs(Closure*);
     template<typename Visitor> void visit(Visitor&);
     // The slow path of the barrier behind a store of the value into the array. Stub::RememberElement does the usual case by itself.
     void rememberElement(VM&, JSObject* array, JSValue);
@@ -1078,6 +1137,7 @@ struct State {
     Object* compiledObject(JSValue) const;
     bool passes(const RuntimeShapeTest&, uint32_t shape) const;
     bool admitsShape(const RuntimeType&, uint32_t shape) const;
+    bool membersHaveNoSpecializations(const RuntimeType&) const;
     // Of an object: whether the type has it for what it is, and not because it admits whatever object comes.
     bool fitsAsOneOfItsOwn(const RuntimeType&, JSObject*) const;
     // What compiled code tests where it holds a value to a type.
@@ -1086,10 +1146,52 @@ struct State {
     // if it can be, converted if it is of another kind, and let through if it is an object that nothing can be made of. Flow, where a
     // value is narrowed to the type: only an object of the program is made anything of, where it is. Empty: it has thrown.
     // Store, Claim: it is tested, and nothing becomes of it.
-    JSValue coerce(JSGlobalObject*, JSValue, const RuntimeType&, Format::CastReason, AuditSite = { });
+    enum class HandsBack : bool { TheObjectItself, WhatComesOfIt };
+    JSValue coerce(JSGlobalObject*, JSValue, const RuntimeType&, Format::CastReason, AuditSite = { }, HandsBack = HandsBack::WhatComesOfIt);
+    struct PlanOfCoercion {
+        WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfCoercion);
+        struct Field {
+            PropertyOffset offset;
+            const FieldData* field;
+            UniquedStringImpl* name;
+            uint8_t kindsTaken;
+        };
+        static constexpr uint8_t takesInt32 = 1;
+        static constexpr uint8_t takesString = 2;
+        static constexpr uint8_t takesTrue = 4;
+        static constexpr uint8_t takesFalse = 8;
+        static constexpr uint8_t takesUndefined = 16;
+        static constexpr uint8_t takesNull = 32;
+        static uint8_t kindOf(JSValue value) { return value.isInt32() ? takesInt32 : value.isString() ? takesString : value.isTrue() ? takesTrue : value.isFalse() ? takesFalse : value.isUndefined() ? takesUndefined : value.isNull() ? takesNull : 0; }
+        static constexpr unsigned maxNumberByDiscriminant = 256;
+        static constexpr unsigned maxNumberOfDiscriminants = 4;
+        using Discriminants = Vector<PropertyOffset, maxNumberOfDiscriminants>;
+        const LayoutData* layout { nullptr };
+        uint32_t orderAndCount { 0 };
+        Vector<Field, 8> fields;
+        static constexpr size_t maxSizeMadeOverWhereItIs = 256;
+        Vector<uint8_t> bodyBeforeStores;
+        PropertyOffset discriminant { invalidOffset };
+        UncheckedKeyHashMap<String, std::unique_ptr<PlanOfCoercion>> byDiscriminant;
+    };
+    const PlanOfCoercion* planOfCoercion(Structure*, const RuntimeType&) const;
+    const PlanOfCoercion* planOfCoercion(JSObject*, const RuntimeType&) const;
+    void addPlanOfCoercion(JSObject*, Structure*, const RuntimeType&, std::unique_ptr<PlanOfCoercion>&&, const PlanOfCoercion::Discriminants&);
+    bool takesMorePlansOfCoercions() const { return m_plansOfCoercions.size() < maxNumberOfPlansOfCoercions; }
+    void forgetPlansOfCoercionsOfDeadStructures(VM&, bool newOnly);
+    static constexpr size_t maxLengthOfMadeKey = 64;
+    JSString* keyMadeOf(VM&, std::span<const Latin1Character>);
+    void forgetMadeKeysThatAreDead(VM&);
+    uint8_t kindsTakenBy(const RuntimeType&) const;
+    Object* copyWhatStaysAsItIsByPlan(VM&, JSObject*, const RuntimeType&, bool mayBecomeIt = false);
+    Object* tryBecomeOrCopyByPlan(VM&, JSObject*, const PlanOfCoercion&, bool mayBecomeIt);
+    bool tryBecomeByPlans(VM&, JSObject*, const RuntimeType&);
+    bool hasRoomToBecome(JSObject*, Object* copy);
+    void become(VM&, JSObject*, Object* copy);
     // What has got somewhere behind the type of the place, and nobody has cast: it is made of the type as by As, but an object of the
     // program only becomes what it has everything for. Empty: it has thrown.
     JSValue hold(JSGlobalObject*, JSValue, const RuntimeType&);
+    bool becomeWhereItIs(JSGlobalObject*, JSObject*, const RuntimeType&);
     // A data property, writable, enumerable and configurable, is about to be created under a name that the layout of the object has no
     // field for. If the object can become one of a layout that has, where it is, it does, and the value is stored to the field: the
     // smallest such layout, of several the one with the least index. False: there is none, and nothing has been done.
@@ -1120,7 +1222,31 @@ struct State {
     // line says so.
     enum class InAudit : bool { Ignored, CarriedOut };
     // `departure`: in what the run differs from that of the program though the thing is done.
-    bool reportOrThrow(JSGlobalObject*, const String& message, InAudit, ASCIILiteral departure = { });
+    enum class ActionOnViolation : uint8_t { Threw, Continued, Dropped, Converted, Copied };
+    struct Violation {
+        ASCIILiteral kind;
+        ASCIILiteral what { };
+        const LayoutData* on { nullptr };
+        JSObject* onBuiltin { nullptr };
+        uint32_t onFunction { UINT32_MAX };
+        UniquedStringImpl* member { nullptr };
+        const RuntimeType* expected { nullptr };
+        std::optional<uint32_t> expectedKinds { };
+        uint32_t expectedName { UINT32_MAX };
+        JSValue got { };
+        std::optional<unsigned> parameter { };
+        bool isAtCaller { false };
+        ActionOnViolation action { ActionOnViolation::Threw };
+    };
+    static constexpr ASCIILiteral kindOfUnnamedViolation = "type-mismatch"_s;
+    void noteViolation(VM&, const Violation&);
+    struct ListedSite {
+        ASCIILiteral kind;
+        unsigned ordinal { 0 };
+    };
+    std::optional<ListedSite> listedSite(const String& file, LineColumn, const Violation&, ASCIILiteral kind) const;
+    static ASCIILiteral wordForKind(JSValue, const RuntimeType* heldTo = nullptr);
+    bool reportOrThrow(JSGlobalObject*, const Violation&, const String& message, InAudit, ASCIILiteral departure = { });
     ASCIILiteral noteOnIgnoredRules() const { return m_hasIgnoredRule ? " (after a rule was ignored)"_s : ""_s; }
     // Counters, only in an image compiled for the audit or with Options::countAOTTypedAllocations(); elsewhere these do nothing. Printed
     // when the process exits or the State goes away, one `AOT count:` line per record. A new object is counted once its order word says
@@ -1142,7 +1268,9 @@ struct State {
     void countClosure(uint32_t function, unsigned numberOfCaptures);
     bool makesSlimClosures(uint32_t function) const { return data.at<uint8_t>(data.slimClosuresOffset)[function / 8] >> function % 8 & 1; }
     Structure* slimClosureStructure(VM&, uint32_t function);
+    void createSlimClosureStructures(VM&);
     Structure* reifiedSlimClosureStructure(VM&, uint32_t function);
+    Structure* structureOfBoundClosures(VM&, uint32_t function);
     JSObject* closureObjectFor(VM&, uint32_t function);
     JSObject* slimClosureLazyPropertyHolder(VM&);
     void countPlainAllocation(JSCell*, uint32_t function, uint32_t kindAndValue);
@@ -1162,6 +1290,7 @@ struct State {
     // What a field, or a variable of a class, is to hold when code that was not compiled with its type stores the value: the value, if it
     // is of the type. If the type is written down, what `as` makes of it. Empty: nothing, and the string may say why, or it has thrown.
     JSValue holdToTypeOf(JSGlobalObject*, const FieldData&, JSValue, String& failure);
+    bool storesMakeOverPlainData { true };
     // Whether it is one of the strings, or of the numbers, that are all the type of the field allows. See FieldData::literalsOffset.
     bool isAmongLiterals(const FieldData&, JSValue) const;
     bool isAmongLiterals(std::span<const LiteralData>, JSValue) const;
@@ -1210,7 +1339,7 @@ struct State {
     uint32_t orderInSpecialization(VM&, const LayoutData& from, const LayoutData& to, uint32_t orderWord);
     // For the Structure of the object and the shape, which is among the specializations of its own. Made once.
     TransitionPlan& planOfTransition(VM&, Object*, uint32_t shape);
-    // What Object::tryCopyAs() comes to for every record of a layout with the same order word, where each field of the copy is kept and typed as the field it is copied from.
+    // What Object::tryCopyAs() comes to for every record of a layout with the same order word. A field of the copy that is typed otherwise than the one it is copied from is held to its type each time.
     struct PlanOfCopy {
         WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PlanOfCopy);
         struct Move {
@@ -1218,11 +1347,29 @@ struct State {
             uint32_t to;
             uint32_t size;
         };
+        struct Fill {
+            uint32_t to;
+            uint32_t size;
+            uint64_t bits;
+        };
+        struct Given {
+            uint16_t field;
+            uint16_t index;
+        };
+        struct Conversion {
+            uint16_t from;
+            uint16_t to;
+            uint8_t kindsTaken { 0 };
+        };
         Vector<RefPtr<UniquedStringImpl>, 2> excluded;
-        Structure* structure;
-        uint32_t size;
-        uint32_t orderWord;
+        Structure* structure { nullptr };
+        uint32_t size { 0 };
+        uint32_t orderWord { 0 };
         Vector<Move, 8> moves;
+        Vector<Fill, 2> fills;
+        Vector<Given, 2> given;
+        Vector<Conversion, 2> conversions;
+        Vector<Conversion, 2> fitted;
     };
     const PlanOfCopy* planOfCopy(uint32_t shape, uint32_t orderWord, uint32_t shapeOfCopy, std::span<UniquedStringImpl* const> excluded) const;
     void addPlanOfCopy(uint32_t shape, uint32_t orderWord, uint32_t shapeOfCopy, std::unique_ptr<PlanOfCopy>&&);
@@ -1291,7 +1438,11 @@ struct State {
     const Data& data;
     // The module whose code the program's entry function is. External modules are its dependencies.
     AbstractModuleRecord* moduleRecord { nullptr };
+    ModuleEvaluation* moduleEvaluation { nullptr };
+    int32_t moduleAsyncEvaluationCount { 0 };
+    Vector<JSArray*, 4> modulesExecutingAsync;
     JSObject* importMeta { nullptr };
+    JSObject* importMetaOfModule(JSGlobalObject*, JSString* path);
     Vector<std::pair<AbstractModuleRecord*, JSObject*>, 1> importsOfEntryPoints;
     // From where [[Construct]] enters a function that is functionReadsNewTarget to where that takes it out, which is the first thing it does.
     JSValue newTarget;
@@ -1312,6 +1463,7 @@ struct State {
     };
     UncheckedKeyHashMap<JSObject*, UnmadeHeirs> unmadeHeirs;
     ExtraPropertiesTable extraProperties;
+    NumberBoxTable numberBoxes;
     FieldAttributesTable fieldAttributes;
     // Coercion::keep() has failed for an object of the Structure at the type, which has one layout to make objects of: at this property. Empty after a collection: the number of a Structure that has died may be given out again.
     struct FailureOfKeeping {
@@ -1441,7 +1593,8 @@ private:
     // As Instance::typedClosureStructureIDs.
     Structure* m_closureStructures[closureStructureOfClassObjects + 1] { };
     Structure* m_slimClosureStructures[numberOfSlimClosureKinds] { };
-    Structure* m_reifiedSlimClosureStructures[2][2] { };
+    Structure* m_reifiedSlimClosureStructures[2][3] { };
+    Structure* m_structuresOfBoundClosures[2] { };
     RefPtr<PrivateSymbolImpl> m_functionIndexPrivateName;
 public:
     Structure* asyncBoundFunctionStructure { nullptr };
@@ -1483,7 +1636,6 @@ private:
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfNames;
     SegmentedVector<Identifier, 128> m_names;
     const Identifier& nameSlow(VM&, uint32_t);
-    UncheckedKeyHashMap<uint32_t, Identifier, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_namesElsewhere;
     // By shape number, made when first asked for.
     // By shape and name, for specializeToStore(): the shapes that will do whatever the object holds, the best first. As to the names, see
     // m_cachedFields: the key holds the reference.
@@ -1510,6 +1662,17 @@ private:
     CachedField* m_cachedFields { nullptr };
     UncheckedKeyHashMap<std::pair<Structure*, uint32_t>, std::unique_ptr<TransitionPlan>> m_plansOfTransitions;
     UncheckedKeyHashMap<std::tuple<uint32_t, uint32_t, uint32_t>, Vector<std::unique_ptr<PlanOfCopy>, 1>> m_plansOfCopies;
+    static constexpr unsigned maxNumberOfPlansOfCoercions = 4096;
+    static constexpr unsigned maxNumberOfPlansOfCoercionsByDiscriminants = 16384;
+    unsigned m_numberOfPlansOfCoercionsByDiscriminants { 0 };
+    UncheckedKeyHashMap<std::pair<Structure*, const RuntimeType*>, std::unique_ptr<PlanOfCoercion>> m_plansOfCoercions;
+    bool m_hasAddedPlansOfCoercionsSinceLastCollection { false };
+    struct PlanOfCoercionLastAskedFor {
+        Structure* structure { nullptr };
+        const RuntimeType* type { nullptr };
+        const PlanOfCoercion* plan { nullptr };
+    };
+    mutable PlanOfCoercionLastAskedFor m_planOfCoercionLastAskedFor;
     // Without a Structure: the object stays what it is.
     TransitionPlan m_planToStay;
     UncheckedKeyHashMap<KeyOfMerge, std::unique_ptr<PlanOfMerge>> m_plansOfMerges;
@@ -1599,13 +1762,20 @@ private:
     void keepString(uint32_t, JSCell*);
     template<typename Visitor> void visitStrings(Visitor&);
     uint32_t m_numberOfStringsMade { 0 };
-    bool m_staticsAreMappedFromImage { false };
     void createStatics();
     void destroyStatics();
+    void fillStatics(uint32_t firstWord, uint32_t endWord);
+    void fillStaticsOfProgram();
+    bool m_areStaticsOfProgramFilled { false };
+    uint32_t m_sizeOfStaticsWithoutAccess { 0 };
+    Vector<std::unique_ptr<GlobalPropertyWatchpoint>> m_globalPropertyWatchpoints;
     // Not released, and still to be read: compiled code may hold the address of one, and finds in it what was there or nothing. It leans on OSAllocator::decommit() leaving the pages
     // readable (madvise and no more): with an mprotect(PROT_NONE) in there, as upstream has had, such a read would fault.
     Vector<uint64_t*> m_formerStringTables;
+    Vector<uint64_t> m_madeKeys;
+    size_t m_numberOfMadeKeysOverwritten { 0 };
     Vector<JSCell*> m_wideStrings;
+    Vector<std::pair<String, JSObject*>> m_importMetaOfModules;
     // What an earlier collection has marked stays marked in a collection of the young, which is handed those alone that were made since the last visit of the collection before: as Cell32;
     // how many of them the collector had been handed at its last visit; which collection that visit was of.
     struct MadeLately {
@@ -1619,6 +1789,7 @@ private:
     };
     MadeLately m_stringsMadeLately;
     MadeLately m_stringsBackedByStaticDataMadeLately;
+    bool m_isLastStringConstantBackedByStaticData { false };
     template<typename Visitor> void visitClosures(Visitor&);
     MadeLately m_closuresMadeLately;
     static constexpr unsigned closuresInStretchShift = 10;

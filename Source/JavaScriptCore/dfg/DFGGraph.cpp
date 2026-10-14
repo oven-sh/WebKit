@@ -28,7 +28,6 @@
 
 #if ENABLE(DFG_JIT)
 
-#include "AOTImage.h"
 #include "ArrayPrototype.h"
 #include "CacheableIdentifierInlines.h"
 #include "CodeBlock.h"
@@ -1462,11 +1461,6 @@ JSValue Graph::tryGetConstantClosureVar(JSValue base, ScopeOffset offset)
         if (offset.offset() >= firstImportSlot && offset.offset() - firstImportSlot < moduleEnvironment->importSlotCount())
             return moduleEnvironment->importSlot(offset.offset() - firstImportSlot).get();
     }
-
-#if ENABLE(AOT)
-    if (AOT::Image::hasAny())
-        return JSValue();
-#endif
 
     JSValue value;
     InlineWatchpointSet* set;

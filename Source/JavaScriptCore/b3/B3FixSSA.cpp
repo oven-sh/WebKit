@@ -277,8 +277,22 @@ void fixSSAGlobally(Procedure& proc)
 
 void demoteValues(Procedure& proc, const IndexSet<Value*>& values)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    struct VariableByValue {
+        void add(Value* value, Variable* variable) { table.add(value, variable); }
+        Variable* get(Value* value) const { return values.contains(value) ? table.get(value) : nullptr; }
+        auto begin() const { return table.begin(); }
+        auto end() const { return table.end(); }
+
+        const IndexSet<Value*>& values;
+        UncheckedKeyHashMap<Value*, Variable*> table { };
+    };
+    VariableByValue map { values };
+    VariableByValue phiMap { values };
+#else
     UncheckedKeyHashMap<Value*, Variable*> map;
     UncheckedKeyHashMap<Value*, Variable*> phiMap;
+#endif
 
     // Create stack slots.
     for (Value* value : values.values(proc.values())) {
