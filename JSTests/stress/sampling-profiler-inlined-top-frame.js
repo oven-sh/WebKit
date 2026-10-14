@@ -22,9 +22,13 @@ if (platformSupportsSamplingProfiler()) {
         outer(2);
     samplingProfilerStackTraces();
 
+    const timeToFail = 50000;
+    const startTime = Date.now();
     let innerSamples = 0;
     let outerSamples = 0;
     while (innerSamples + outerSamples < 40) {
+        if (Date.now() - startTime > timeToFail)
+            throw new Error(`after ${timeToFail} ms inner() has ${innerSamples} samples and outer() has ${outerSamples}`);
         outer(100);
         for (const trace of samplingProfilerStackTraces().traces) {
             const name = trace.frames[0].name;
