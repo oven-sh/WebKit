@@ -374,7 +374,11 @@ public:
 
 private:
     BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+#if USE(BUN_JSC_ADDITIONS)
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static)
+#else
+        : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+#endif
         , m_starts(starts)
     {
     }
