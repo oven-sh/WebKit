@@ -128,9 +128,24 @@ bool JSModuleEnvironment::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glo
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSModuleEnvironment* thisObject = uncheckedDowncast<JSModuleEnvironment>(cell);
-    AbstractModuleRecord::Resolution resolution = thisObject->moduleRecord()->resolveImport(globalObject, Identifier::fromUid(vm, propertyName.uid()));
+    AbstractModuleRecord* requestedModule = nullptr;
+    AbstractModuleRecord::Resolution resolution = thisObject->moduleRecord()->resolveImport(globalObject, Identifier::fromUid(vm, propertyName.uid()), &requestedModule);
     RETURN_IF_EXCEPTION(scope, false);
     if (resolution.type == AbstractModuleRecord::Resolution::Type::Resolved) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (resolution.isLiveExport(vm)) [[unlikely]] {
+            JSValue value = jsUndefined();
+            if (slot.internalMethodType() == PropertySlot::InternalMethodType::Get || slot.internalMethodType() == PropertySlot::InternalMethodType::GetOwnProperty) {
+                if (requestedModule == resolution.moduleRecord)
+                    value = resolution.moduleRecord->getLiveExport(globalObject, resolution.localName);
+                else
+                    value = resolution.moduleRecord->getReexportedLiveExport(globalObject, resolution.localName);
+                RETURN_IF_EXCEPTION(scope, false);
+            }
+            slot.setValue(thisObject, PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly, value);
+            return true;
+        }
+#endif
         // When resolveImport resolves the resolution, the imported module environment must have the binding.
         JSModuleEnvironment* importedModuleEnvironment = resolution.moduleRecord->moduleEnvironment();
         PropertySlot redirectSlot(importedModuleEnvironment, PropertySlot::InternalMethodType::Get);
