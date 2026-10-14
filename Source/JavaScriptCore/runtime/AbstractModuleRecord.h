@@ -206,6 +206,10 @@ public:
     ModuleMap<LoadedModuleRequest>& loadedModules() LIFETIME_BOUND { return m_loadedModules; }
     const ModuleMap<LoadedModuleRequest>& loadedModules() const LIFETIME_BOUND { return m_loadedModules; }
 #if USE(BUN_JSC_ADDITIONS)
+    // Caches the key the host resolved each static import to while that import is still loading. See
+    // JSModuleLoader::hostLoadImportedModule(). The map's keys point into requestedModules(), which keeps them alive.
+    ModuleMap<RefPtr<UniquedStringImpl>>& resolvedRequests() LIFETIME_BOUND { return m_resolvedRequests; }
+    void removeResolvedRequest(const ModuleRequest& request) { m_resolvedRequests.remove(ModuleMapKey { request.m_specifier.impl(), request.type() }); }
     // A prelinked record keeps these in its PrelinkedModuleGraph and only builds the maps when asked for them here.
     const ExportEntries& exportEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_exportEntries; }
     const ImportEntries& importEntries() const LIFETIME_BOUND { ensurePrelinkedEntriesMaterialized(); return m_importEntries; }
@@ -425,6 +429,9 @@ protected:
     WriteBarrier<JSModuleEnvironment> m_moduleEnvironment;
 
     ModuleMap<LoadedModuleRequest> m_loadedModules;
+#if USE(BUN_JSC_ADDITIONS)
+    ModuleMap<RefPtr<UniquedStringImpl>> m_resolvedRequests;
+#endif
 
     Vector<WriteBarrier<AbstractModuleRecord>> m_asyncParentModules;
 
