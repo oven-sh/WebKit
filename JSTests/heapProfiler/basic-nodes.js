@@ -73,7 +73,7 @@ for (let i = 0; i < 1234; ++i)
 simpleObject1 = null;
 simpleObjectList.fill(null);
 
-// The stack is scanned conservatively, so a stale word on it may keep a dropped object alive. Nothing may reference one.
+// Bun: upstream asserts that no 'SimpleObject' node is left. The stack is scanned conservatively, so a stale word on it may keep a dropped object alive. Nothing may reference one.
 (function() {
     let snapshot = createHeapSnapshot();
     for (let node of snapshot.nodesWithClassName("SimpleObject")) {
