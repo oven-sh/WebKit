@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 121 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 120 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -126,7 +126,6 @@ Rules for an edit to an upstream test:
 | `LayoutTests/.../wasm/core/js/simd/simd_f32x4_cmp.wast.js` | `skip if $asan` | `RunLoopGeneric`: the collector thread starts a timer while it is in `fired()` without the lock; `ASSERTION FAILED: !isScheduled()`. Only assertion builds see it, and of our lanes those are the asan ones |
 | `wasm/stress/memory64-overflow.js` | `slow!` | past the 300 s hard timeout under ASan in `wasm-collect-continuously` |
 | `stress/function-toString-native-one-line.js` | none; test fixed | its walker was a top-level `function`, so a property of `globalThis`, and its own source contains the `[native code]` it looks for. It is a `const` |
-| `heapProfiler/basic-nodes.js` | none; test fixed | its last step drops 1,235 objects and asserted that the next snapshot has none of them. The stack is scanned conservatively, so one may survive: in `no-cjit-collect-continuously`, from 0 to 574 of 5,000 runs depending on the build (fork PR #798 has the numbers). It asserts instead that a node still there has no incoming edge, so nothing references it, and its one outgoing edge, so this collection visited it and it is not a dead object's node left behind |
 
 `$asan` and `slow!` are fork additions to the runner, see D.
 

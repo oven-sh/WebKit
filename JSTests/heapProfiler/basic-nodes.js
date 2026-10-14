@@ -73,11 +73,8 @@ for (let i = 0; i < 1234; ++i)
 simpleObject1 = null;
 simpleObjectList.fill(null);
 
-// Bun: upstream asserts that no 'SimpleObject' node is left. The stack is scanned conservatively, so a stale word on it may keep a dropped object alive. Nothing may reference one.
 (function() {
-    let snapshot = createHeapSnapshot();
-    for (let node of snapshot.nodesWithClassName("SimpleObject")) {
-        assert(node.incomingEdges.length === 0, "Nothing should reference a dropped 'SimpleObject' instance");
-        assert(node.outgoingEdges.length === 1, "A dead 'SimpleObject' instance should not keep its node");
-    }
+    let snapshot = createCheapHeapSnapshot();
+    let nodes = snapshot.nodesWithClassName("SimpleObject");
+    assert(nodes.length === 0, "Snapshot should not contain a 'SimpleObject' instance");
 })();
