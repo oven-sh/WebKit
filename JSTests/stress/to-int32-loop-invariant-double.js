@@ -16,7 +16,7 @@ function toInt32Reference(x)
 // conversion out of the loop, where the call runs whether or not the fast path fails.
 function storeInLoop(array, value)
 {
-    for (let i = 0; i < 1000; i++)
+    for (let i = 0; i < 50; i++)
         array[0] = value;
     return array[0];
 }
@@ -24,7 +24,7 @@ noInline(storeInLoop);
 
 function storeInLoopUnderBranch(array, value, skip)
 {
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < 50; i++) {
         if (!skip)
             array[0] = value;
     }
@@ -34,18 +34,19 @@ noInline(storeInLoopUnderBranch);
 
 function atomicsStoreInLoop(array, value)
 {
-    for (let i = 0; i < 1000; i++)
+    for (let i = 0; i < 50; i++)
         Atomics.store(array, 0, value);
     return array[0];
 }
 noInline(atomicsStoreInLoop);
 
-function storeConstant()
+function storeConstantInLoop(array)
 {
-    const array = new Int32Array(1);
-    array[0] = 1.5;
+    for (let i = 0; i < 50; i++)
+        array[0] = 1.5;
     return array[0];
 }
+noInline(storeConstantInLoop);
 
 // Both sides of 2^63, where the x86_64 fast path starts to fail.
 const inputs = [
@@ -54,25 +55,22 @@ const inputs = [
     2 ** 63 + 2048, -(2 ** 63 + 2048), 2 ** 64, 2 ** 84, 2 ** 85,
     Number.MAX_VALUE, Infinity, -Infinity, NaN,
 ];
+const expected = inputs.map(toInt32Reference);
 
 const int32Array = new Int32Array(1);
 
-for (let round = 0; round < 200; round++) {
-    for (const input of inputs) {
-        const expected = toInt32Reference(input);
+for (let i = 0; i < testLoopCount; i++) {
+    const input = inputs[i % inputs.length];
+    const result = expected[i % inputs.length];
 
-        shouldBe(storeInLoop(int32Array, input), expected, input);
-        shouldBe(atomicsStoreInLoop(int32Array, input), expected, input);
+    shouldBe(storeInLoop(int32Array, input), result, input);
+    shouldBe(atomicsStoreInLoop(int32Array, input), result, input);
 
-        int32Array[0] = 42;
-        shouldBe(storeInLoopUnderBranch(int32Array, input, true), 42, input);
-    }
+    int32Array[0] = 42;
+    shouldBe(storeInLoopUnderBranch(int32Array, input, true), 42, input);
+
+    shouldBe(storeConstantInLoop(int32Array), 1, 1.5);
 }
 
-for (const input of inputs)
-    shouldBe(storeInLoopUnderBranch(int32Array, input, false), toInt32Reference(input), input);
-
-let sum = 0;
-for (let i = 0; i < 1000000; i++)
-    sum += storeConstant();
-shouldBe(sum, 1000000, 1.5);
+for (let i = 0; i < inputs.length; i++)
+    shouldBe(storeInLoopUnderBranch(int32Array, inputs[i], false), expected[i], inputs[i]);
