@@ -1923,7 +1923,7 @@ struct BytecodeOptimizerAccess::Mapper {
     BytecodeOptimizerAccess& optimizer;
     Insn* insn { nullptr };
     unsigned targetCursor { 0 };
-    bool finalPass { false };
+    bool* usedPlaceholder { nullptr };
 
     VirtualRegister logical(BytecodeOperandName name, VirtualRegister r)
     {
@@ -1961,10 +1961,13 @@ struct BytecodeOptimizerAccess::Mapper {
         int from = static_cast<int>(insn->newOffset);
         int to = static_cast<int>(targetInsn.newOffset == UINT_MAX ? targetInsn.oldOffset : targetInsn.newOffset);
         int delta = to - from;
-        if (finalPass)
-            RELEASE_ASSERT(delta);
-        else if (!delta)
-            delta = 1; // Placeholder; never zero, which would mean "out of line".
+        if (!delta) {
+            // A forward target's offset is the previous pass's, so while the layout still moves the delta can
+            // be anything. Never zero, which would mean "out of line". The kept pass has exact offsets, and a
+            // zero there would be a jump to itself, which cannot be encoded.
+            delta = 1;
+            *usedPlaceholder = true;
+        }
         return BoundLabel(delta);
     }
 
@@ -2002,9 +2005,10 @@ struct BytecodeOptimizerAccess::Mapper {
 void BytecodeOptimizerAccess::emit()
 {
     // Relaxation: instruction sizes depend on jump distances which depend on sizes. Sizes only grow across
-    // iterations (minimumSize ratchets), so this terminates.
+    // iterations (minimumSize ratchets), so this terminates. A pass whose offsets match the previous pass's
+    // computed every jump from exact offsets (forward targets read the previous pass, backward targets this
+    // one), so its stream is the result. Nothing runs between that verdict and the stream it applies to.
     JSInstructionStreamWriter newWriter;
-    bool finalPass = false;
     for (unsigned iteration = 0; ; ++iteration) {
         if (iteration == 16) {
             // Each pass can widen as little as one branch; rather than iterate once per branch on a pathological
@@ -2018,6 +2022,7 @@ void BytecodeOptimizerAccess::emit()
         JSInstructionStreamWriter writer;
         m_codeBlock->metadata().restartForReemit();
         bool offsetsChanged = false;
+        bool usedPlaceholder = false;
         m_generator.withWriter(writer, [&] {
             for (unsigned i = 0; i < m_insns.size(); ++i) {
                 auto& insn = m_insns[i];
@@ -2027,7 +2032,7 @@ void BytecodeOptimizerAccess::emit()
                 if (insn.newOffset != offset)
                     offsetsChanged = true;
                 insn.newOffset = offset;
-                Mapper mapper { *this, &insn, 0, finalPass };
+                Mapper mapper { *this, &insn, 0, &usedPlaceholder };
                 switch (insn.kind) {
                 case Insn::Original:
                     reemitInstruction(insn.instruction, &m_generator, insn.minimumSize, mapper);
@@ -2071,13 +2076,11 @@ void BytecodeOptimizerAccess::emit()
                 }
             }
         });
-        if (finalPass) {
-            RELEASE_ASSERT(!offsetsChanged);
+        if (!offsetsChanged) {
+            RELEASE_ASSERT(!usedPlaceholder);
             newWriter.swap(writer);
             break;
         }
-        if (!offsetsChanged)
-            finalPass = true; // One more pass with exact deltas (and assertions) now that the layout is stable.
     }
     unsigned newSize = newWriter.size();
 
