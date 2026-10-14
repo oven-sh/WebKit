@@ -41,7 +41,12 @@ JSObject* createJSWebAssemblyRuntimeError(JSGlobalObject* globalObject, VM& vm, 
 
 JSObject* createJSWebAssemblyRuntimeError(JSGlobalObject* globalObject, VM& vm, Wasm::ExceptionType type)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // No source appender. A trap is raised under a wasm frame, so the source text it would add is that of some JS caller.
+    ErrorInstance* error = ErrorInstance::create(vm, globalObject->webAssemblyRuntimeErrorStructure(), Wasm::errorMessageForExceptionType(type), JSValue(), nullptr, TypeNothing, ErrorType::Error, true);
+#else
     ErrorInstance* error = ErrorInstance::create(vm, globalObject->webAssemblyRuntimeErrorStructure(), Wasm::errorMessageForExceptionType(type), JSValue(), defaultSourceAppender, TypeNothing, ErrorType::Error, true);
+#endif
     error->setCatchableFromWasm(false);
     return error;
 }

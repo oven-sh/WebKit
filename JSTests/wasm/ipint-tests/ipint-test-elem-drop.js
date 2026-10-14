@@ -45,7 +45,8 @@ async function test() {
     assert.eq(read(), 0);
     assert.eq(call(5), 6);
     drop();
-    assert.throws(() => {init(0, 0, 1)}, WebAssembly.RuntimeError, "Out of bounds table access (evaluating 'init(0, 0, 1)'")
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'init(0, 0, 1)'".
+    assert.throws(() => {init(0, 0, 1)}, WebAssembly.RuntimeError, "Out of bounds table access")
 }
 
 await assert.asyncTest(test())

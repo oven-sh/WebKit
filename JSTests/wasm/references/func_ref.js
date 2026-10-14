@@ -314,11 +314,13 @@ assert.throws(() => new WebAssembly.Module((new Builder())
     const ident = makeExportedIdent();
 
     $1.exports.set_glob($1.exports.ret_20); assert.eq($1.exports.get_glob(), $1.exports.ret_20); assert.eq($1.exports.call_glob(42), 20)
-    $1.exports.set_glob(null); assert.eq($1.exports.get_glob(), null); assert.throws(() => $1.exports.call_glob(42), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+    $1.exports.set_glob(null); assert.eq($1.exports.get_glob(), null); assert.throws(() => $1.exports.call_glob(42), Error, "call_indirect to a signature that does not match")
     $1.exports.set_glob(ident); assert.eq($1.exports.get_glob(), ident); assert.eq($1.exports.call_glob(42), 42)
 
     assert.throws(() => $1.exports.set_glob(fun), TypeError, "Argument value did not match the reference type")
-    $1.exports.set_glob(myfun); assert.eq($1.exports.get_glob(), myfun); assert.throws(() => $1.exports.call_glob(42), Error, "call_indirect to a signature that does not match (evaluating 'func(...args)')")
+    // Bun: a trap's message has no source text. Upstream expects the suffix " (evaluating 'func(...args)')".
+    $1.exports.set_glob(myfun); assert.eq($1.exports.get_glob(), myfun); assert.throws(() => $1.exports.call_glob(42), Error, "call_indirect to a signature that does not match")
 
     for (let i=0; i<1000; ++i) {
         assert.throws(() => $1.exports.set_glob(function() {}), TypeError, "Argument value did not match the reference type");
