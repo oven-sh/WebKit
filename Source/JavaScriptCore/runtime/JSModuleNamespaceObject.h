@@ -82,6 +82,10 @@ private:
     JS_EXPORT_PRIVATE JSModuleNamespaceObject(VM&, Structure*, AbstractModuleRecord*, Vector<std::pair<Identifier, AbstractModuleRecord::Resolution>>&&, bool isDeferred);
     JS_EXPORT_PRIVATE void finishCreation(JSGlobalObject*, bool shouldPreventExtensions);
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
+#if USE(BUN_JSC_ADDITIONS)
+    bool getOwnPropertySlotForLiveExports(JSGlobalObject*, PropertyName, PropertySlot&);
+    JSObject* liveExportsSource() const { return m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
+#endif
     ALWAYS_INLINE bool isSymbolLikeNamespaceKey(VM&, PropertyName);
     void ensureDeferredNamespaceEvaluation(JSGlobalObject*);
 

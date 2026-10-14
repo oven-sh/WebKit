@@ -147,6 +147,11 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+
+    // The module record created from this provider gets live exports. See AbstractModuleRecord::hasLiveExports().
+    // For a SyntheticSourceProvider, use createWithLazyExports(): the object the generator returns becomes liveExportsSource().
+    bool moduleHasLiveExports() const { return m_moduleHasLiveExports; }
+    void setModuleHasLiveExports() { m_moduleHasLiveExports = true; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -289,6 +294,9 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_moduleHasLiveExports { false };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
