@@ -27,12 +27,21 @@ function call(thisArgument)
 {
     "use strict";
 
-    var argumentValues = [];
-    // Start from 1 to ignore thisArgument
-    for (var i = 1; i < @argumentCount(); i++)
-        @putByValDirect(argumentValues, i-1, arguments[i]);
+    // f.call(...) is compiled to a call of f and never gets here. Function.prototype.call.bind(f)(...) does.
+    // The DFG inlines the bound function, and then this function with f as a constant |this|. It goes on to
+    // inline f, or f's intrinsic, only if the call has a fixed number of arguments, and only if this function
+    // is small and does not allocate.
+    var argumentCount = @argumentCount();
+    if (argumentCount === 2)
+        return this.@call(thisArgument, @argument(1));
+    if (argumentCount === 3)
+        return this.@call(thisArgument, @argument(1), @argument(2));
+    if (argumentCount <= 1)
+        return this.@call(thisArgument);
+    if (argumentCount === 4)
+        return this.@call(thisArgument, @argument(1), @argument(2), @argument(3));
 
-    return this.@apply(thisArgument, argumentValues);
+    return this.@apply(thisArgument, @argumentsFrom(1));
 }
 
 function apply(thisValue, argumentValues)
