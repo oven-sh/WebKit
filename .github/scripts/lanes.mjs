@@ -68,9 +68,18 @@ const variants = {
   "debug": { buildType: "Debug" },
   "asan": { buildType: "Release", sanitizers: SANITIZERS },
   "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
+  // For fuzzing. Each is the variant bun would link without it ("lto", or "release" when bun has assertions on, which
+  // turns its LTO off) with assertions, coverage or both added and nothing else changed, so that what is fuzzed is as
+  // close as it can be to what ships. `assertions` is the assertions of the asan variants without the sanitizers.
+  // `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls __sanitizer_cov_trace_pc_guard on every
+  // edge. The libraries leave that for bun to define, and jsc takes --reprl.
+  "assertions": { buildType: "Release", mimalloc: true, assertions: true },
+  "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
+  "lto-coverage": { buildType: "Release", mimalloc: true, lto: true, coverage: true },
 };
-const ALL = Object.keys(variants);
 const NO_ASAN = ["release", "lto", "debug"];
+const ALL = [...NO_ASAN, "asan", "debug-asan"];
+const FUZZING = ["assertions", "assertions-coverage", "lto-coverage"];
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
@@ -93,7 +102,7 @@ const platforms = [
     // arm64 sysroot in the same container.
     dockerfile: "Dockerfile",
     packageOS: "linux",
-    lanes: { amd64: ALL, arm64: ALL },
+    lanes: { amd64: [...ALL, ...FUZZING], arm64: ALL },
     tested: {
       amd64: { on: "linux-x64-gh", variants: ["lto"] },
       arm64: { on: "linux-arm64-gh", variants: ["lto"] },
@@ -104,6 +113,8 @@ const platforms = [
       LINUX_ARCH: arch === "arm64" ? "aarch64" : "x86_64",
       RELEASE_FLAGS: "-O3 -DNDEBUG=1",
       ENABLE_SANITIZERS: v.sanitizers ?? "",
+      ENABLE_ASSERTS: v.assertions ? "ON" : "AUTO",
+      ENABLE_FUZZILLI: v.coverage ? "ON" : "OFF",
       // Explicit --target: Ubuntu's clang defaults to x86_64-pc-linux-gnu, while bun's own objects and its Rust code
       // are <arch>-unknown-linux-gnu; with LTO, lld warns about the vendor mismatch once per JavaScriptCore object.
       MARCH_FLAG:

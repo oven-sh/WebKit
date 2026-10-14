@@ -2288,6 +2288,13 @@ if (COMPILER_IS_GCC_OR_CLANG)
     endif()
 endif()
 
+if (ENABLE_FUZZILLI)
+    # For compiling only. Whatever links JavaScriptCore defines __sanitizer_cov_trace_pc_guard and
+    # __sanitizer_cov_trace_pc_guard_init itself (the executables in shell/ do, with fuzzilli/Fuzzilli.cpp). A link
+    # that is given this flag gets them from clang's runtime, whose signal handlers turn a crash into exit(1).
+    target_compile_options(JavaScriptCore PRIVATE -fsanitize-coverage=trace-pc-guard)
+endif ()
+
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
     DESTINATION ${JavaScriptCore_HEADERS_DIR}
     FILES ${JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS}

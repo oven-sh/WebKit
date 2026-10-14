@@ -29,7 +29,11 @@ if (USE_EXTERNAL_MIMALLOC)
 endif ()
 
 if (ENABLE_FUZZILLI)
-  list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
+    list(APPEND jsc_SOURCES ../fuzzilli/Fuzzilli.cpp)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        # shm_open, before glibc 2.34.
+        list(APPEND jsc_LIBRARIES rt)
+    endif ()
 endif ()
 
 # The ICU data the release lanes bundle is repacked with a zstd frame per item (icu/compress-data.ts), and the ICU they
@@ -99,6 +103,13 @@ if (USE_BUN_JSC_ADDITIONS)
         # framework must supply the vendored mimalloc objects itself.
         list(APPEND testFFI_SOURCES ExternalMimallocShims.cpp)
         list(APPEND testFFI_LIBRARIES $<TARGET_OBJECTS:mimalloc-obj>)
+    endif ()
+    if (ENABLE_FUZZILLI)
+        # Same as jsc above: JavaScriptCore calls the coverage callbacks.
+        list(APPEND testFFI_SOURCES ../fuzzilli/Fuzzilli.cpp)
+        if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+            list(APPEND testFFI_LIBRARIES rt)
+        endif ()
     endif ()
 
     WEBKIT_EXECUTABLE_DECLARE(testFFI)
