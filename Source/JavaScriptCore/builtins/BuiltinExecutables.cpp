@@ -67,16 +67,16 @@ SourceCode BuiltinExecutables::defaultConstructorSourceCode(ConstructorKind cons
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool BuiltinExecutables::isBuiltinSource(StringView source)
+bool BuiltinExecutables::isBuiltinSource(std::span<const uint8_t> source)
 {
     static NeverDestroyed<std::array<SourceCode, 2>> defaultConstructors { std::array { defaultConstructorSourceCode(ConstructorKind::Base), defaultConstructorSourceCode(ConstructorKind::Extends) } };
     // Addresses are compared. No character is read.
-    auto hasSameAddress = [&](StringView builtin) {
-        return source.rawCharacters() == builtin.rawCharacters() && source.length() == builtin.length() && source.is8Bit() == builtin.is8Bit();
+    auto hasSameAddress = [&](std::span<const uint8_t> builtin) {
+        return source.data() == builtin.data() && source.size() == builtin.size();
     };
-    return hasSameAddress(std::span { s_JSCCombinedCode, s_JSCCombinedCodeLength })
-        || hasSameAddress(defaultConstructors.get()[0].view())
-        || hasSameAddress(defaultConstructors.get()[1].view());
+    return hasSameAddress(asByteSpan(std::span { s_JSCCombinedCode, s_JSCCombinedCodeLength }))
+        || hasSameAddress(defaultConstructors.get()[0].provider()->sourceBytes())
+        || hasSameAddress(defaultConstructors.get()[1].provider()->sourceBytes());
 }
 #endif
 

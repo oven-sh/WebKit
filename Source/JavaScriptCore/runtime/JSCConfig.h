@@ -29,9 +29,12 @@
 #include "OptionsList.h"
 #include "SecureARM64EHashPins.h"
 #include "StopTheWorldCallback.h"
-#include <span>
 #include <wtf/PtrTag.h>
 #include <wtf/WTFConfig.h>
+
+#if USE(BUN_JSC_ADDITIONS)
+#include <span>
+#endif
 
 namespace JSC {
 

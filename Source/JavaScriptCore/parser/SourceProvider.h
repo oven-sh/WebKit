@@ -45,7 +45,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/RefCountedFixedVector.h>
 #include <wtf/ScopedLambda.h>
 #include <wtf/Threading.h>
-#include <wtf/TriState.h>
 #include <wtf/Vector.h>
 #include <wtf/text/TextPosition.h>
 #include <wtf/text/WTFString.h>
@@ -149,13 +148,13 @@ public:
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
 
-    std::span<const uint8_t> sourceBytes() const
+    std::span<const uint8_t> sourceBytes() const LIFETIME_BOUND
     {
         StringView text = source();
         return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
     }
-    // By where the characters of source() are, so no provider can declare it. Computed once: a provider's text does not change.
-    bool isBuiltinOrEmbedded();
+    // Both answer by where the bytes are, so no provider can declare it. JSC's builtins are embedded code too.
+    bool isEmbeddedCode() const;
     bool isEmbeddedBytecode(const CachedBytecode&) const;
 #endif
 
@@ -299,9 +298,6 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
-#if USE(BUN_JSC_ADDITIONS)
-    TriState m_isBuiltinOrEmbedded { TriState::Indeterminate };
-#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

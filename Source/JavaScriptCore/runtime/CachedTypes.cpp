@@ -5536,10 +5536,6 @@ UnlinkedFunctionExecutable* decodeBuiltinFunction(VM& vm, Ref<CachedBytecode> ca
     auto* entry = cacheEntryOf<BuiltinFunctionCacheEntry>(cachedBytecode.get());
     if (!entry)
         return nullptr;
-#if USE(BUN_JSC_ADDITIONS)
-    if (Options::disallowNonEmbeddedCode() && !provider.isEmbeddedBytecode(cachedBytecode.get())) [[unlikely]]
-        return nullptr;
-#endif
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode), &provider, recoverableCode);
     DeferGC deferGC(vm);
     UnlinkedFunctionExecutable* executable = entry->decode(decoder.get(), provider, embedderStamp);
@@ -5898,7 +5894,7 @@ UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<Cac
     if (!cachedEntry)
         return rejected();
 #if USE(BUN_JSC_ADDITIONS)
-    // The CodeCache would hand what is decoded here to any provider of equal text.
+    // Embedded source does not make bytecode from elsewhere embedded.
     if (Options::disallowNonEmbeddedCode() && !key.source().provider().isEmbeddedBytecode(cachedBytecode.get())) [[unlikely]]
         return rejected();
 #endif

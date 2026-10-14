@@ -26,13 +26,16 @@
 #include "config.h"
 #include "SourceProvider.h"
 
-#include "BuiltinExecutables.h"
-#include "JSCConfig.h"
 #include <wtf/FileHandle.h>
 #include <wtf/FileSystem.h>
 #include <wtf/ProcessID.h>
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
+
+#if USE(BUN_JSC_ADDITIONS)
+#include "BuiltinExecutables.h"
+#include "JSCConfig.h"
+#endif
 
 namespace JSC {
 
@@ -77,20 +80,17 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool SourceProvider::isBuiltinOrEmbedded()
+bool SourceProvider::isEmbeddedCode() const
 {
-    if (m_isBuiltinOrEmbedded == TriState::Indeterminate) {
-        auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
-        StringView text = source();
-        m_isBuiltinOrEmbedded = triState(BuiltinExecutables::isBuiltinSource(text) || (isEmbeddedCode && isEmbeddedCode(sourceBytes(), { }, 0)));
-    }
-    return m_isBuiltinOrEmbedded == TriState::True;
+    auto bytes = sourceBytes();
+    auto callback = g_jscConfig.isEmbeddedCode;
+    return BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(bytes, { }, 0));
 }
 
 bool SourceProvider::isEmbeddedBytecode(const CachedBytecode& bytecode) const
 {
-    auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
-    return isEmbeddedCode && isEmbeddedCode(sourceBytes(), bytecode.span(), bytecode.entryOffset());
+    auto callback = g_jscConfig.isEmbeddedCode;
+    return callback && callback(sourceBytes(), bytecode.span(), bytecode.entryOffset());
 }
 #endif
 

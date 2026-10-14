@@ -1084,10 +1084,8 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
 #if USE(BUN_JSC_ADDITIONS)
     // Before the JSONP fast path, which makes no CodeBlock, and before the program's global declarations.
-    if (Options::disallowNonEmbeddedCode() && !source.provider()->isBuiltinOrEmbedded()) [[unlikely]] {
-        throwNonEmbeddedCodeError(globalObject, throwScope, *source.provider());
-        return { };
-    }
+    if (Options::disallowNonEmbeddedCode() && !source.provider()->isEmbeddedCode()) [[unlikely]]
+        return throwNonEmbeddedCodeError(globalObject, throwScope, *source.provider());
 #endif
 
     // First check if the "program" is actually just a JSON object. If so,
