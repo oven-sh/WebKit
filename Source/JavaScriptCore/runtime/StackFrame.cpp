@@ -75,15 +75,13 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, CodeBlock* codeBlock, BytecodeInde
 }
 
 StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, ScriptExecutable* executable, CodeSpecializationKind kind, JSCell* instanceToken, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
-    : m_frameData(JSFrameData {
+    : m_frameData(CompiledFrameData::create(
         callee ? WriteBarrier<JSCell>(vm, owner, callee) : WriteBarrier<JSCell>(),
-        WriteBarrier<CodeBlock>(),
-        bytecodeIndex,
-        isAsyncFrame,
-        kind,
         WriteBarrier<ScriptExecutable>(vm, owner, executable),
-        WriteBarrier<JSCell>(vm, owner, instanceToken)
-    })
+        WriteBarrier<JSCell>(vm, owner, instanceToken),
+        kind,
+        bytecodeIndex,
+        isAsyncFrame))
 {
 }
 
@@ -149,15 +147,12 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
 
 StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite, bool isAsyncFrame)
     : m_frameData(JSFrameData {
-        WriteBarrier<JSCell>(),
-        WriteBarrier<CodeBlock>(),
-        callSite,
-        isAsyncFrame,
-        CodeSpecializationKind::CodeForCall,
-        WriteBarrier<ScriptExecutable>(),
         WriteBarrier<JSCell>(vm, owner, instanceToken),
         typedCode,
-        typedFunction
+        typedFunction,
+        CodeSpecializationKind::CodeForCall,
+        callSite,
+        isAsyncFrame
     })
 {
 }
@@ -165,11 +160,11 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* instanceToken, uint32_t ty
 CodeBlock* StackFrame::makeCodeBlock() const
 {
 #if ENABLE(AOT)
-    auto& jsFrame = std::get<JSFrameData>(m_frameData);
-    VM& vm = jsFrame.aotExecutable->vm();
+    auto& jsFrame = *jsFrameData();
+    VM& vm = jsFrame.aotExecutable()->vm();
     if (vm.heap.mutatorState() != MutatorState::Running)
         return nullptr;
-    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get()); function && function.instance && function.codeType() == FunctionCode)
+    if (AOT::FunctionRef function = AOT::FunctionRef::of(vm, jsFrame.aotExecutable(), jsFrame.aotInstanceToken()); function && function.instance && function.codeType() == FunctionCode)
         return function.ensureCodeBlock();
 #endif
     return nullptr;
@@ -177,44 +172,44 @@ CodeBlock* StackFrame::makeCodeBlock() const
 
 static ScriptExecutable* ownerExecutableOf(const JSFrameData& jsFrame)
 {
-    if (jsFrame.aotExecutable)
-        return jsFrame.aotExecutable.get();
-    return jsFrame.codeBlock ? jsFrame.codeBlock->ownerExecutable() : nullptr;
+    if (jsFrame.aotExecutable())
+        return jsFrame.aotExecutable();
+    return jsFrame.codeBlock() ? jsFrame.codeBlock()->ownerExecutable() : nullptr;
 }
 
 ScriptExecutable* StackFrame::ownerExecutable() const
 {
-    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+    auto* jsFrame = jsFrameData();
     return jsFrame ? ownerExecutableOf(*jsFrame) : nullptr;
 }
 
 CodeType StackFrame::codeType() const
 {
-    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    auto& jsFrame = *jsFrameData();
 #if ENABLE(AOT)
     if (jsFrame.isTyped())
-        return AOT::typedFunctionCodeType(jsFrame.aotTypedFunction);
+        return AOT::typedFunctionCodeType(jsFrame.aotTypedFunction());
 #endif
-    if (jsFrame.aotExecutable)
-        return jsFrame.aotExecutable->isFunctionExecutable() ? FunctionCode : ModuleCode;
-    return jsFrame.codeBlock->codeType();
+    if (jsFrame.aotExecutable())
+        return jsFrame.aotExecutable()->isFunctionExecutable() ? FunctionCode : ModuleCode;
+    return jsFrame.codeBlock()->codeType();
 }
 
 bool StackFrame::isConstructor() const
 {
-    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    auto& jsFrame = *jsFrameData();
 #if ENABLE(AOT)
     if (jsFrame.isTyped())
-        return jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct || AOT::typedFunctionIsConstructor(jsFrame.aotTypedFunction) || AOT::builtinThatTypedFunctionStandsFor(jsFrame.aotTypedFunction) == AOT::BuiltinInTrace::ConstructorWrittenInJavaScript;
+        return jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct || AOT::typedFunctionIsConstructor(jsFrame.aotTypedFunction()) || AOT::builtinThatTypedFunctionStandsFor(jsFrame.aotTypedFunction()) == AOT::BuiltinInTrace::ConstructorWrittenInJavaScript;
 #endif
-    return jsFrame.aotExecutable ? jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct : jsFrame.codeBlock->isConstructor();
+    return jsFrame.aotExecutable() ? jsFrame.aotKind == CodeSpecializationKind::CodeForConstruct : jsFrame.codeBlock()->isConstructor();
 }
 
 bool StackFrame::standsForHostFunction() const
 {
 #if ENABLE(AOT)
-    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
-    return jsFrame && jsFrame->isTyped() && AOT::builtinThatTypedFunctionStandsFor(jsFrame->aotTypedFunction) == AOT::BuiltinInTrace::HostFunction;
+    auto* jsFrame = jsFrameData();
+    return jsFrame && jsFrame->isTyped() && AOT::builtinThatTypedFunctionStandsFor(jsFrame->aotTypedFunction()) == AOT::BuiltinInTrace::HostFunction;
 #else
     return false;
 #endif
@@ -222,7 +217,7 @@ bool StackFrame::standsForHostFunction() const
 
 bool StackFrame::isBuiltinFunction() const
 {
-    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    auto& jsFrame = *jsFrameData();
     if (jsFrame.isTyped()) {
 #if ENABLE(AOT)
         if (standsForHostFunction())
@@ -233,25 +228,25 @@ bool StackFrame::isBuiltinFunction() const
         return false;
 #endif
     }
-    if (jsFrame.aotExecutable) {
-        auto* asFunctionExecutable = dynamicDowncast<FunctionExecutable>(jsFrame.aotExecutable.get());
+    if (jsFrame.aotExecutable()) {
+        auto* asFunctionExecutable = dynamicDowncast<FunctionExecutable>(jsFrame.aotExecutable());
         return asFunctionExecutable && asFunctionExecutable->isBuiltinFunction();
     }
-    return jsFrame.codeBlock->unlinkedCodeBlock()->isBuiltinFunction();
+    return jsFrame.codeBlock()->unlinkedCodeBlock()->isBuiltinFunction();
 }
 
 JSGlobalObject* StackFrame::codeGlobalObject() const
 {
-    auto& jsFrame = std::get<JSFrameData>(m_frameData);
+    auto& jsFrame = *jsFrameData();
 #if ENABLE(AOT)
     if (jsFrame.isTyped())
-        return AOT::globalObjectForInstanceToken(jsFrame.aotInstanceToken->vm(), jsFrame.aotInstanceToken.get());
-    if (jsFrame.aotExecutable) {
-        AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable->vm(), jsFrame.aotExecutable.get(), jsFrame.aotKind, jsFrame.aotInstanceToken.get());
+        return AOT::globalObjectForInstanceToken(jsFrame.aotInstanceToken()->vm(), jsFrame.aotInstanceToken());
+    if (jsFrame.aotExecutable()) {
+        AOT::FunctionRef function = AOT::FunctionRef::of(jsFrame.aotExecutable()->vm(), jsFrame.aotExecutable(), jsFrame.aotInstanceToken());
         return function.instance ? function.instance->globalObject : nullptr;
     }
 #endif
-    return jsFrame.codeBlock->globalObject();
+    return jsFrame.codeBlock()->globalObject();
 }
 
 StackFrame::StackFrame(Wasm::IndexOrName indexOrName)
@@ -276,7 +271,7 @@ StackFrame::StackFrame(VM& vm, JSCell* owner, JSCell* callee, bool isAsyncFrame)
 
 bool StackFrame::hasBytecodeIndex() const
 {
-    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+    if (auto* jsFrame = jsFrameData())
         return !!jsFrame->bytecodeIndex;
     return false;
 }
@@ -284,22 +279,22 @@ bool StackFrame::hasBytecodeIndex() const
 BytecodeIndex StackFrame::bytecodeIndex() const
 {
     ASSERT(hasBytecodeIndex());
-    return std::get<JSFrameData>(m_frameData).bytecodeIndex;
+    return jsFrameData()->bytecodeIndex;
 }
 
 template<typename Visitor>
 void StackFrame::visitAggregate(Visitor& visitor)
 {
-    WTF::switchOn(m_frameData,
+    switchOnFrameData(
         [&visitor](const JSFrameData& jsFrame) {
-            if (jsFrame.callee)
-                visitor.append(jsFrame.callee);
-            if (jsFrame.codeBlock)
-                visitor.append(jsFrame.codeBlock);
-            if (jsFrame.aotExecutable)
-                visitor.append(jsFrame.aotExecutable);
-            if (jsFrame.aotInstanceToken)
-                visitor.append(jsFrame.aotInstanceToken);
+            if (jsFrame.callee())
+                visitor.appendUnbarriered(jsFrame.callee());
+            if (jsFrame.codeBlock())
+                visitor.appendUnbarriered(jsFrame.codeBlock());
+            if (jsFrame.aotExecutable())
+                visitor.appendUnbarriered(jsFrame.aotExecutable());
+            if (jsFrame.aotInstanceToken())
+                visitor.appendUnbarriered(jsFrame.aotInstanceToken());
         },
         [](const WasmFrameData&) { }
     );
@@ -309,9 +304,9 @@ template void StackFrame::visitAggregate(SlotVisitor&);
 
 bool StackFrame::isMarked(VM& vm) const
 {
-    return WTF::switchOn(m_frameData,
+    return switchOnFrameData(
         [&vm](const JSFrameData& jsFrame) {
-            return (!jsFrame.callee || vm.heap.isMarked(jsFrame.callee.get())) && (!jsFrame.codeBlock || vm.heap.isMarked(jsFrame.codeBlock.get())) && (!jsFrame.aotExecutable || vm.heap.isMarked(jsFrame.aotExecutable.get())) && (!jsFrame.aotInstanceToken || vm.heap.isMarked(jsFrame.aotInstanceToken.get()));
+            return (!jsFrame.callee() || vm.heap.isMarked(jsFrame.callee())) && (!jsFrame.codeBlock() || vm.heap.isMarked(jsFrame.codeBlock())) && (!jsFrame.aotExecutable() || vm.heap.isMarked(jsFrame.aotExecutable())) && (!jsFrame.aotInstanceToken() || vm.heap.isMarked(jsFrame.aotInstanceToken()));
         },
         [](const WasmFrameData&) { return true; }
     );
@@ -319,7 +314,7 @@ bool StackFrame::isMarked(VM& vm) const
 
 SourceID StackFrame::sourceID() const
 {
-    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
+    if (auto* jsFrame = jsFrameData()) {
         ScriptExecutable* executable = ownerExecutableOf(*jsFrame);
         return executable ? executable->sourceID() : noSourceID;
     }
@@ -341,12 +336,12 @@ static String processSourceURL(VM& vm, const JSC::StackFrame& frame, const Strin
 
 String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
 {
-    return WTF::switchOn(m_frameData,
+    return switchOnFrameData(
         [&vm, allowOverride, this](const JSFrameData& jsFrame) -> String {
             if (isAsyncFrameWithoutCodeBlock()) {
-                ASSERT(jsFrame.callee);
-                ASSERT(!jsFrame.codeBlock);
-                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
+                ASSERT(jsFrame.callee());
+                ASSERT(!jsFrame.codeBlock());
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURL(), allowOverride);
             }
 
@@ -370,12 +365,12 @@ String StackFrame::sourceURL(VM& vm, AllowURLOverride allowOverride) const
 
 String StackFrame::sourceURLStripped(VM& vm) const
 {
-    return WTF::switchOn(m_frameData,
+    return switchOnFrameData(
         [&vm, this](const JSFrameData& jsFrame) -> String {
             if (isAsyncFrameWithoutCodeBlock()) {
-                ASSERT(jsFrame.callee);
-                ASSERT(!jsFrame.codeBlock);
-                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee.get());
+                ASSERT(jsFrame.callee());
+                ASSERT(!jsFrame.codeBlock());
+                JSFunction* calleeFn = dynamicDowncast<JSFunction>(jsFrame.callee());
                 return processSourceURL(vm, *this, calleeFn->jsExecutable()->sourceURLStripped());
             }
 
@@ -397,10 +392,10 @@ String StackFrame::sourceURLStripped(VM& vm) const
 
 String StackFrame::functionName(VM& vm) const
 {
-    return WTF::switchOn(m_frameData,
+    return switchOnFrameData(
         [&vm](const JSFrameData& jsFrame) -> String {
-            if (jsFrame.codeBlock) {
-                switch (jsFrame.codeBlock->codeType()) {
+            if (jsFrame.codeBlock()) {
+                switch (jsFrame.codeBlock()->codeType()) {
                 case EvalCode:
                     return "eval code"_s;
                 case ModuleCode:
@@ -410,21 +405,21 @@ String StackFrame::functionName(VM& vm) const
                 case FunctionCode:
                     break;
                 }
-            } else if (jsFrame.aotExecutable && !jsFrame.aotExecutable->isFunctionExecutable())
+            } else if (jsFrame.aotExecutable() && !jsFrame.aotExecutable()->isFunctionExecutable())
                 return "module code"_s;
 #if ENABLE(AOT)
             if (jsFrame.isTyped()) {
-                if (AOT::typedFunctionCodeType(jsFrame.aotTypedFunction) == ModuleCode)
+                if (AOT::typedFunctionCodeType(jsFrame.aotTypedFunction()) == ModuleCode)
                     return "module code"_str;
-                String name = AOT::typedFunctionName(jsFrame.aotTypedFunction);
+                String name = AOT::typedFunctionName(jsFrame.aotTypedFunction());
                 if (!jsFrame.m_isAsyncFrame)
                     return name;
-                return name.isEmpty() || AOT::typedFunctionHasGivenName(jsFrame.aotTypedFunction) ? emptyString() : makeString("async "_s, name);
+                return name.isEmpty() || AOT::typedFunctionHasGivenName(jsFrame.aotTypedFunction()) ? emptyString() : makeString("async "_s, name);
             }
 #endif
             String name;
-            if (jsFrame.callee && jsFrame.callee->isObject())
-                name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee.get())).impl();
+            if (jsFrame.callee() && jsFrame.callee()->isObject())
+                name = getCalculatedDisplayName(vm, uncheckedDowncast<JSObject>(jsFrame.callee())).impl();
             else if (auto* executable = dynamicDowncast<FunctionExecutable>(ownerExecutableOf(jsFrame)))
                 name = executable->ecmaNameWithoutGC();
 
@@ -449,16 +444,16 @@ String StackFrame::functionName(VM& vm) const
 std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(AOT::FunctionRef::ConstructPosition constructPosition) const
 {
 #if ENABLE(AOT)
-    auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+    auto* jsFrame = jsFrameData();
     if (!jsFrame || !AOT::ProgramData::get())
         return std::nullopt;
     AOT::FunctionRef function;
     if (jsFrame->isTyped())
-        function = { nullptr, jsFrame->aotTypedCode };
-    else if (jsFrame->aotExecutable)
-        function = AOT::FunctionRef::of(jsFrame->aotExecutable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind, jsFrame->aotInstanceToken.get());
-    else if (jsFrame->codeBlock)
-        function = AOT::FunctionRef::of(jsFrame->codeBlock.get());
+        function = { nullptr, jsFrame->aotTypedCode() };
+    else if (jsFrame->aotExecutable())
+        function = AOT::FunctionRef::of(jsFrame->aotExecutable()->vm(), jsFrame->aotExecutable(), jsFrame->aotInstanceToken());
+    else if (jsFrame->codeBlock())
+        function = AOT::FunctionRef::of(jsFrame->codeBlock());
     if (function)
         return function.reportedPositionFor(jsFrame->bytecodeIndex, constructPosition);
 #else
@@ -469,7 +464,7 @@ std::optional<AOT::FunctionRef::ReportedPosition> StackFrame::reportedPosition(A
 
 LineColumn StackFrame::computeLineAndColumn() const
 {
-    if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
+    if (auto* jsFrame = jsFrameData()) {
         if (jsFrame->isTyped()) {
             auto position = reportedPosition();
             return position ? position->lineColumn : LineColumn { };
@@ -479,12 +474,12 @@ LineColumn StackFrame::computeLineAndColumn() const
             return { };
         LineColumn lineColumn;
 #if ENABLE(AOT)
-        if (jsFrame->aotExecutable) {
-            if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable.get(), jsFrame->aotKind, jsFrame->aotInstanceToken.get()))
+        if (jsFrame->aotExecutable()) {
+            if (AOT::FunctionRef function = AOT::FunctionRef::of(executable->vm(), jsFrame->aotExecutable(), jsFrame->aotInstanceToken()))
                 lineColumn = function.lineColumnFor(jsFrame->bytecodeIndex);
         } else
 #endif
-            lineColumn = jsFrame->codeBlock->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
+            lineColumn = jsFrame->codeBlock()->lineColumnForBytecodeIndex(jsFrame->bytecodeIndex);
 
         if (std::optional<int> overrideLineNumber = executable->overrideLineNumber(executable->vm()))
             lineColumn.line = overrideLineNumber.value();
@@ -519,7 +514,14 @@ String StackFrame::toString(VM& vm) const
 {
     String functionName = this->functionName(vm);
     // sourceURL points into fullSourceURL, so keep fullSourceURL around.
-    String fullSourceURL = this->sourceURLStripped(vm);
+    String fullSourceURL;
+    std::optional<AOT::FunctionRef::ReportedPosition> typedPosition;
+    bool isTyped = isTypedAOTFrame() && !isAsyncFrameWithoutCodeBlock();
+    if (isTyped) {
+        typedPosition = reportedPosition();
+        fullSourceURL = typedPosition && typedPosition->source ? AOT::ProgramData::get()->sourceName(typedPosition->source) : emptyString();
+    } else
+        fullSourceURL = this->sourceURLStripped(vm);
     auto sourceURL = truncateLongDataURL(fullSourceURL);
 
     if (sourceURL.isEmpty() && standsForHostFunction())
@@ -527,7 +529,11 @@ String StackFrame::toString(VM& vm) const
     if (sourceURL.isEmpty() || !hasLineAndColumnInfo())
         return makeString(functionName, '@', sourceURL);
 
-    auto lineColumn = computeLineAndColumn();
+    LineColumn lineColumn;
+    if (!isTyped)
+        lineColumn = computeLineAndColumn();
+    else if (typedPosition)
+        lineColumn = typedPosition->lineColumn;
     return makeString(functionName, '@', sourceURL, ':', lineColumn.line, ':', lineColumn.column);
 }
 

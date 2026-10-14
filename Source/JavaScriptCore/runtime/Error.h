@@ -31,6 +31,7 @@
 #include "ThrowScope.h"
 #include <stdint.h>
 
+
 namespace JSC {
 
 class CallFrame;

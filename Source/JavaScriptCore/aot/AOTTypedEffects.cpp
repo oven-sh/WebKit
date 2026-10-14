@@ -186,7 +186,7 @@ void findViewsRetaggedTo(Program& program)
         return;
     leftAlone.ensureSize(numberOfLayouts);
     for (unsigned i = 0; i < numberOfLayouts; ++i) {
-        if (!retaggedTo.get(i) && !isSpecialization.get(i))
+        if (!retaggedTo.get(i) && !isSpecialization.get(i) && !program.layouts[i].isOpenedForLog)
             leftAlone.set(i);
     }
     // The largest set that holds: a view goes out of it where something can be made of what a field holds: a plain object is copied where the type of the field admits none as it is, and whatever can be made of an object
@@ -249,10 +249,21 @@ Writes writesOfElementRead(const Program& program, const Type& type)
 
 bool claimMayMakeObjects(const Program& program, const Function& function, const Value& value)
 {
-    if (value.castReason() != CastReason::Claim || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
+    if ((value.castReason() != CastReason::Claim && value.castReason() != CastReason::Flow) || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
         return false;
     auto& from = program.typeOf(function, value.child(0));
     return (from.anyObject || from.admitsForeignObjects(program)) && writesOfElementRead(program, program.at(value.type)) != Writes::Nothing;
+}
+
+bool fieldReadMayMakeObjects(const Program& program, const Function& function, const Value& value)
+{
+    if (value.opcode != Opcode::GetById || !value.type || Options::auditAOTTypedAssertions() || writesOfElementRead(program, program.at(value.type)) == Writes::Nothing)
+        return false;
+    auto access = fieldOf(program, program.typeOf(function, value.child(0)), value.string());
+    if (!access)
+        return false;
+    TypeID held = program.at(access->layout).fields[access->field].type;
+    return !held || program.at(held).anyObject;
 }
 
 Writes writesOfCast(const Program& program, const Function& function, const Value& value)
@@ -271,7 +282,7 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::NonNull:
         return Writes::Nothing;
     case CastReason::Flow:
-        return narrowingMayRetag(program, program.at(value.type)) ? Writes::RuntimeState : Writes::Nothing;
+        return narrowingMayRetag(program, program.at(value.type)) || claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::As:
         return writesOfMakingObjects(from, program.at(value.type));
     case CastReason::Coerce:
@@ -305,7 +316,7 @@ bool castWritesShapeWords(const Program& program, const Function& function, cons
     if (Options::auditAOTTypedAssertions()) [[unlikely]]
         return writesOfCast(program, function, value) == Writes::Heap;
     if (value.castReason() == CastReason::Flow)
-        return narrowingMayRetag(program, program.at(value.type));
+        return narrowingMayRetag(program, program.at(value.type)) || (program.castsMayRetag && claimMayMakeObjects(program, function, value));
     if (!program.castsMayRetag)
         return false;
     if (value.castReason() == CastReason::Claim)
@@ -714,7 +725,11 @@ private:
             return { Writes::Fields, mayMakeReceiverGiveUp(function, block, index) || storeMayMakeObjectGiveUp(m_program, function, block, index, value.layout()) };
         case Opcode::GetById:
         case Opcode::InById:
-            return changes(isAccessToField(function, value) || (value.isAtKnownPlace() && !Options::validateAOTTypedFacts()) ? Writes::Nothing : Writes::Heap);
+            if (!isAccessToField(function, value) && !(value.isAtKnownPlace() && !Options::validateAOTTypedFacts()))
+                return changes(Writes::Heap);
+            if (fieldReadMayMakeObjects(m_program, function, value))
+                return { Writes::RuntimeState, m_program.castsMayRetag };
+            return changes(Writes::Nothing);
         case Opcode::PutById:
             if (isInitializingStore(m_program, function, block, index))
                 return changes(Writes::RuntimeState);

@@ -80,30 +80,42 @@ public:
 private:
     const Type& typeOf(ValueID id) const { return m_program.at(m_function.at(id).type); }
 
+    String place() const
+    {
+        if (!m_function.module || m_function.module.index() >= m_program.modules.size())
+            return { };
+        auto& module = m_program.modules[m_function.module.index()];
+        String path = String::fromUTF8(m_program.string(module.displayPath ? module.displayPath : module.path));
+        if (module.lineStarts.isEmpty())
+            return makeString(" ("_s, path, ')');
+        LineColumn start = m_program.lineColumnFor(m_function.module, m_function.position);
+        return makeString(" ("_s, path, ':', start.line, ':', start.column, ')');
+    }
+
     void failAtEndOf(unsigned block, ASCIILiteral what)
     {
         StringPrintStream out;
-        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: b", block, " ", what);
-        m_findings.append(out.toString());
+        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": b", block, " ", what);
+        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
     }
 
     void fail(ValueID id, ASCIILiteral what)
     {
         StringPrintStream out;
-        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: v", id.index(), " ", nameOf(m_function.at(id).opcode), " ", what);
-        m_findings.append(out.toString());
+        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " ", nameOf(m_function.at(id).opcode), " ", what);
+        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
     }
 
     void fail(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
     {
         StringPrintStream out;
-        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: v", operand.index(), " of type ");
+        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", operand.index(), " of type ");
         m_program.dump(out, typeOf(operand));
         out.print(" is used as ", as, " of type ");
         m_program.dump(out, needed);
         if (user)
             out.print(" by v", user.index(), " ", nameOf(m_function.at(user).opcode));
-        m_findings.append(out.toString());
+        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
     }
 
     void need(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
@@ -196,12 +208,12 @@ private:
     void fail(ValueID operand, ValueID user, unsigned block, ASCIILiteral what)
     {
         StringPrintStream out;
-        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: v", operand.index(), " ", nameOf(m_function.at(operand).opcode), " ", what, ", and is used by ");
+        out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", operand.index(), " ", nameOf(m_function.at(operand).opcode), " ", what, ", and is used by ");
         if (user)
             out.print("v", user.index(), " ", nameOf(m_function.at(user).opcode), " in b", block);
         else
             out.print("the end of b", block);
-        m_findings.append(out.toString());
+        m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
     }
 
     // The definition of an operand dominates its use. The edge of an Invoke to the handler is taken from within the last value of the
@@ -261,7 +273,7 @@ private:
         Vector<unsigned> dominator;
         dominator.fill(none, numberOfNodes);
         dominator[0] = 0;
-        for (bool changed = true; changed;) {
+        for (bool changed = !tryFindImmediateDominators(order.size(), [&](unsigned i) { return order[i]; }, predecessors, dominator); changed;) {
             changed = false;
             for (unsigned i = 1; i < order.size(); ++i) {
                 unsigned found = none;
@@ -522,8 +534,8 @@ private:
                 arguments.append(typeOf(argument));
             if (!applicableEntry(Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(value.string())), arguments.span())) {
                 StringPrintStream out;
-                out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`: v", id.index(), " Operation ", String::fromUTF8(m_program.string(value.string())), ": the built-ins table has no entry for its ", value.arguments.size(), " arguments");
-                m_findings.append(out.toString());
+                out.print("f", m_id.index(), " `", String::fromUTF8(m_program.string(m_function.name)), "`", place(), ": v", id.index(), " Operation ", String::fromUTF8(m_program.string(value.string())), ": the built-ins table has no entry for its ", value.arguments.size(), " arguments");
+                m_findings.append(makeString(out.toString(), ": this is a bug in bun --aot: please report it"_s));
             }
             if (value.string() == m_newObjectOfClass) {
                 LayoutID made = m_program.at(value.assertedType ? value.assertedType : value.type).onlyView();

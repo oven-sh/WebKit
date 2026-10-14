@@ -285,18 +285,6 @@ public:
         return append(stream.span(), 2);
     }
 
-    uint32_t appendFunctionList(std::span<const WriteBarrier<UnlinkedFunctionExecutable>> functions)
-    {
-        Vector<uint32_t> zeros;
-        zeros.fill(0, functions.size());
-        uint32_t offset = append(zeros);
-        Vector<UnlinkedFunctionExecutable*> list;
-        for (auto& function : functions)
-            list.append(function.get());
-        m_functionLists.append({ offset, WTF::move(list) });
-        return offset;
-    }
-
     // The handlers of what was compiled from types: the calls stand for places in the code, the number of a handler for where it starts.
     Vector<UnlinkedHandlerInfo> typedExceptionHandlers(uint32_t index) const
     {
@@ -316,17 +304,16 @@ public:
         return handlers;
     }
 
-    void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, LineStartTable& lineStarts)
+    void fillMetadata(uint32_t index, UnlinkedCodeBlock* codeBlock, LineStartTable& lineStarts)
     {
         if (m_functionMetadataOffsets[index])
             return;
         using Metadata = FunctionMetadata;
         RELEASE_ASSERT(codeBlock->instructions().size() < (1u << (32 - Metadata::instructionsSizeShift)));
         Vector<uint32_t, 16> words { static_cast<uint32_t>(codeBlock->instructions().size()) << Metadata::instructionsSizeShift | (codeBlock->isBuiltinFunction() ? Metadata::isBuiltinFunction : 0) };
-        if (executable || codeBlock->codeType() != FunctionCode) {
-            words[0] |= Metadata::ExpressionInfo;
-            words.append(makePositions(index, codeBlock, executable ? executable->source().startOffset() : 0, lineStarts));
-        }
+        RELEASE_ASSERT(codeBlock->codeType() != FunctionCode);
+        words[0] |= Metadata::ExpressionInfo;
+        words.append(makePositions(index, codeBlock, 0, lineStarts));
         if (auto handlers = typedExceptionHandlers(index); !handlers.isEmpty()) {
             words[0] |= Metadata::Handlers;
             words.append(append(handlers));
@@ -346,15 +333,6 @@ public:
             words.append(append(handlers));
             words.append(count);
         }
-        auto functions = [&](Metadata::Section section, std::span<const WriteBarrier<UnlinkedFunctionExecutable>> all) {
-            if (all.empty())
-                return;
-            words[0] |= section;
-            words.append(appendFunctionList(all));
-            words.append(all.size());
-        };
-        functions(Metadata::FunctionDecls, codeBlock->functionDecls());
-        functions(Metadata::FunctionExprs, codeBlock->functionExprs());
         if (size_t count = codeBlock->numberOfUnlinkedStringSwitchJumpTables()) {
             Vector<uint32_t> list { static_cast<uint32_t>(count) };
             for (size_t i = 0; i < count; ++i) {
@@ -401,9 +379,7 @@ public:
         m_functionMetadataOffsets[index] = append(words);
     }
 
-    static constexpr uint32_t invalidExecutableIndex = std::numeric_limits<uint32_t>::max();
-
-    void fillInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, ScriptExecutable* executable, uint32_t executableIndex, CodeSpecializationKind kind, LineStartTable& lineStarts)
+    void fillInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, LineStartTable& lineStarts)
     {
         FunctionInfo& info = m_infos[function.index];
         auto& constantIndices = m_reportableSites[function.index].constantIndices;
@@ -442,12 +418,11 @@ public:
             inTable = name;
         }
         info.sites = safeCast<uint32_t>(std::bit_cast<uintptr_t>(function.sites));
-        RELEASE_ASSERT(info.sites && !!executable == (executableIndex != invalidExecutableIndex));
-        m_indexAndFlags[function.index] = FunctionInfo::encodeIndexAndFlags(executableIndex == invalidExecutableIndex ? 0 : executableIndex + 1, kind, FunctionCode);
+        RELEASE_ASSERT(info.sites);
         info.stateNumber = m_reportableSites[function.index].stateNumber;
         RELEASE_ASSERT(info.stateNumber);
         info.hasInlineFrames = function.hasInlineFrames;
-        fillMetadata(function.index, codeBlock, executable, lineStarts);
+        fillMetadata(function.index, codeBlock, lineStarts);
     }
 
     void noteTypedIdentifiers()
@@ -529,90 +504,10 @@ public:
 
     void fillTopLevelCodeInfo(const ImageView::Function& function, UnlinkedCodeBlock* codeBlock, uint32_t numberOfTopLevelCode, LineStartTable& lineStarts)
     {
-        fillInfo(function, codeBlock, nullptr, invalidExecutableIndex, CodeSpecializationKind::CodeForCall, lineStarts);
+        fillInfo(function, codeBlock, lineStarts);
         FunctionInfo& info = m_infos[function.index];
         m_indexAndFlags[function.index] = FunctionInfo::encodeIndexAndFlags(numberOfTopLevelCode + 1, CodeSpecializationKind::CodeForCall, codeBlock->codeType());
         info.isHiddenInStackTraces = m_reportableSites[function.index].typedFunction != FunctionReportableSites::notTyped;
-    }
-
-    void makeExecutables(UnlinkedCodeBlock* codeBlock, const SourceCode& source, bool isInsideOrdinaryFunction, uint32_t moduleIndex, LineStartTable& lineStarts, UnlinkedFunctionExecutable* only = nullptr)
-    {
-        uint32_t moduleID = m_moduleEntryOffset + 1;
-        auto make = [&](UnlinkedFunctionExecutable* unlinked) {
-            if (m_unlinkedFunctionExecutable.contains(unlinked))
-                return;
-            bool isDefaultConstructor = unlinked->isBuiltinDefaultClassConstructor();
-            auto functionKey = orderFunctionKey(*unlinked, isDefaultConstructor ? source : unlinked->linkedSourceCode(source));
-            if (!functionKey)
-                return;
-            std::optional<ImageView::Function> code[2];
-            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (!unlinked->codeBlockIfExists(kind))
-                    continue;
-                ImageKey key;
-                key.module = moduleID;
-                key.start = functionKey->start;
-                key.kind = static_cast<uint32_t>(functionKey->kind) << 1 | (kind == CodeSpecializationKind::CodeForConstruct);
-                code[static_cast<unsigned>(kind)] = m_image.find(key);
-            }
-            if (!code[0] && !code[1])
-                return;
-            std::optional<ImageView::Function> typedBody;
-            if (code[0]) {
-                ImageKey key;
-                key.module = moduleID;
-                key.start = functionKey->start;
-                key.kind = static_cast<uint32_t>(functionKey->kind) << 1 | ImageKey::typedBody;
-                typedBody = m_image.find(key);
-            }
-            uint32_t existing = invalidExecutableIndex;
-            for (auto& function : code) {
-                if (function && indexPlusOneOf(function->index))
-                    existing = indexPlusOneOf(function->index) - 1;
-            }
-            if (existing != invalidExecutableIndex) {
-                bool isComplete = true;
-                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                    if (auto& function = code[static_cast<unsigned>(kind)])
-                        isComplete &= indexPlusOneOf(function->index) == existing + 1 && (m_indexAndFlags[function->index] & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall) == kind;
-                }
-                if (!isComplete)
-                    return;
-                m_unlinkedFunctionExecutable.add(unlinked, existing);
-                FunctionExecutable* executable = m_executables[existing].executable;
-                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                    if (auto* nested = unlinked->codeBlockIfExists(kind))
-                        makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleIndex, lineStarts);
-                }
-                return;
-            }
-            FunctionExecutable* executable = unlinked->link(m_vm, nullptr, source, std::nullopt, NoIntrinsic, isInsideOrdinaryFunction);
-            uint32_t executableIndex = safeCast<uint32_t>(m_executables.size());
-            m_executables.append({ executable, moduleIndex });
-            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (auto& function = code[static_cast<unsigned>(kind)]) {
-                    executable->setAOTCode(kind, function->entry, function->index);
-                    fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, executableIndex, kind, lineStarts);
-                }
-            }
-            if (typedBody)
-                fillInfo(*typedBody, unlinked->codeBlockIfExists(CodeSpecializationKind::CodeForCall), executable, executableIndex, CodeSpecializationKind::CodeForCall, lineStarts);
-            if (code[0] && !code[1] && unlinked->constructAbility() == ConstructAbility::CanConstruct && !unlinked->isClassConstructorFunction())
-                executable->setAOTCode(CodeSpecializationKind::CodeForConstruct, m_image.stubCodeOffset(Stub::ConstructViaCall), FunctionExecutable::aotConstructViaCallIndex);
-            m_unlinkedFunctionExecutable.add(unlinked, executableIndex);
-            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (auto* nested = unlinked->codeBlockIfExists(kind))
-                    makeExecutables(nested, executable->source(), executable->isInsideOrdinaryFunction(), moduleIndex, lineStarts);
-            }
-        };
-        if (only) {
-            make(only);
-            return;
-        }
-        for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
-            make(codeBlock->functionDecl(i));
-        for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
-            make(codeBlock->functionExpr(i));
     }
 
     void dropUnreferencedVariableNames(UnlinkedCodeBlock* codeBlock, DynamicallyResolvedNames& lookedUp, const Vector<uint32_t>* exportedByModule = nullptr)
@@ -641,23 +536,6 @@ public:
                 break;
             }
         }
-        auto inside = [&](UnlinkedFunctionExecutable* function) {
-            if (function->features() & EvalFeature)
-                own.mayBeAnything = true;
-            bool hasCode = false;
-            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                if (auto* nested = function->codeBlockIfExists(kind)) {
-                    hasCode = true;
-                    dropUnreferencedVariableNames(nested, own);
-                }
-            }
-            if (!hasCode)
-                own.mayBeAnything = true;
-        };
-        for (unsigned i = 0; i < codeBlock->numberOfFunctionDecls(); ++i)
-            inside(codeBlock->functionDecl(i));
-        for (unsigned i = 0; i < codeBlock->numberOfFunctionExprs(); ++i)
-            inside(codeBlock->functionExpr(i));
 
         SymbolTable* moduleValue = nullptr;
         if (auto* moduleCode = dynamicDowncast<UnlinkedModuleProgramCodeBlock>(codeBlock))
@@ -695,77 +573,6 @@ public:
         }
     }
 
-    uint32_t numberOfUnlinkedFunction(UnlinkedFunctionExecutable* function)
-    {
-        return m_unlinkedFunctionIndices.ensure(function, [&] {
-            function->clearCodegenOnlyData();
-            m_unlinkedFunctions.append(function);
-            return safeCast<uint32_t>(m_unlinkedFunctions.size() - 1);
-        }).iterator->value;
-    }
-
-    uint32_t functionListEntryFor(UnlinkedFunctionExecutable* function)
-    {
-        if (!function)
-            return 0;
-        if (auto it = m_unlinkedFunctionExecutable.find(function); it != m_unlinkedFunctionExecutable.end())
-            return FunctionMetadata::executableListEntry(it->value);
-        return FunctionMetadata::unlinkedFunctionListEntry(numberOfUnlinkedFunction(function));
-    }
-
-    void makeRows()
-    {
-        UncheckedKeyHashMap<String, uint32_t> shared;
-        for (auto& [executable, moduleIndex] : m_executables) {
-            UnlinkedFunctionExecutable* unlinked = executable->unlinkedExecutable();
-            unlinked->clearCodegenOnlyData();
-            bool hasCodeToCall = executable->aotEntryFor(CodeSpecializationKind::CodeForCall);
-            bool hasCode = hasCodeToCall || (executable->aotEntryFor(CodeSpecializationKind::CodeForConstruct) && !executable->constructsViaCall());
-            uint32_t index = executable->aotIndexFor(hasCodeToCall ? CodeSpecializationKind::CodeForCall : CodeSpecializationKind::CodeForConstruct);
-            auto hasStartPosition = [&] {
-                uint32_t at = m_functionMetadataOffsets[index];
-                return at && !(at & 3) && reinterpret_cast<const FunctionMetadata*>(m_out.span().data() + at)->find(FunctionMetadata::ExpressionInfo);
-            };
-            RELEASE_ASSERT(moduleIndex < (1u << ExecutableRow::moduleBits));
-            ExecutableRow row { };
-            row.isShort = hasCode && unlinked->canUseSharedTemplate() && hasStartPosition()
-                && unlinked->parameterCount() < (1u << ExecutableRow::parameterCountBits)
-                && executable->intrinsic() == NoIntrinsic && executable->evalContextType() == EvalContextType::None && !executable->overrideLineNumber()
-                && executable->derivedContextType() == unlinked->derivedContextType() && executable->lexicallyScopedFeatures() == unlinked->lexicallyScopedFeatures();
-            for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                row.entry[static_cast<unsigned>(kind)] = executable->aotEntryFor(kind);
-                row.index[static_cast<unsigned>(kind)] = executable->aotIndexFor(kind);
-            }
-            if (SourceParseMode parseMode = executable->parseMode(); row.isShort && hasCodeToCall && !executable->isBuiltinFunction() && !executable->isClassConstructorFunction()
-                && !isGeneratorWrapperParseMode(parseMode) && !isAsyncFunctionWrapperParseMode(parseMode) && !isAsyncGeneratorWrapperParseMode(parseMode)) {
-                FunctionStructureKind kind;
-                if (executable->isArrowFunction())
-                    kind = FunctionStructureKind::Arrow;
-                else if (executable->isInStrictContext())
-                    kind = executable->hasPrototypeProperty() ? FunctionStructureKind::StrictFunction : FunctionStructureKind::StrictMethod;
-                else
-                    kind = executable->hasPrototypeProperty() ? FunctionStructureKind::SloppyFunction : FunctionStructureKind::SloppyMethod;
-                row.functionStructureKind = static_cast<uint32_t>(kind);
-            }
-            row.module = moduleIndex;
-            row.isArrowFunctionContext = executable->isArrowFunctionContext();
-            row.isInsideOrdinaryFunction = executable->isInsideOrdinaryFunction();
-            if (row.isShort) {
-                row.name = numberOfIdentifier(unlinked->ecmaName().impl());
-                row.parameterCount = unlinked->parameterCount();
-                auto what = unlinked->sharedTemplateKey();
-                row.unlinkedFunction = shared.ensure(String { byteCast<Latin1Character>(asByteSpan(what)) }, [&] {
-                    return numberOfUnlinkedFunction(unlinked);
-                }).iterator->value;
-            } else {
-                row.unlinkedFunction = numberOfUnlinkedFunction(unlinked);
-                row.startOffset = executable->source().startOffset();
-                row.sourceLength = executable->source().length();
-            }
-            m_rows.append(row);
-        }
-    }
-
     VM& m_vm;
     const ImageView& m_image;
     const ProgramData::RetainedPositions& m_positions;
@@ -774,26 +581,14 @@ public:
 
     Vector<uint8_t> m_out;
     UncheckedKeyHashMap<uint64_t, Vector<std::pair<uint32_t, uint32_t>, 1>> m_copies;
-    uint32_t indexPlusOneOf(uint32_t index) const { return m_infos[index].isTyped ? 0 : m_indexAndFlags[index] >> 3; }
-    bool hasExecutable(uint32_t index) const { return indexPlusOneOf(index) && static_cast<CodeType>(m_indexAndFlags[index] >> 1 & 3) == FunctionCode; }
     Vector<FunctionInfo> m_infos;
     Vector<uint32_t> m_indexAndFlags;
     Vector<uint32_t> m_functionMetadataOffsets;
-    Vector<ExecutableRow> m_rows;
-    struct Executable {
-        FunctionExecutable* executable;
-        uint32_t moduleIndex;
-    };
-    Vector<Executable> m_executables;
-    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionExecutable;
-    Vector<std::pair<uint32_t, Vector<UnlinkedFunctionExecutable*>>> m_functionLists;
     Vector<UniquedStringImpl*> m_identifiers;
     Vector<AtomString> m_typedIdentifiers;
     Vector<RefPtr<AtomStringImpl>> m_switchAtoms;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_identifierIndices;
     Vector<JSValue> m_constants;
-    Vector<UnlinkedFunctionExecutable*> m_unlinkedFunctions;
-    UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionIndices;
     Vector<UnlinkedCodeBlock*> m_topLevelCodes;
     UncheckedKeyHashMap<UTF8CString, uint32_t> m_sources;
     Vector<UTF8CString> m_sourceNames;
@@ -872,36 +667,11 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         Ref provider = BuildTimeProvider::create();
 
         SourceCodeKey key;
-        Vector<UnlinkedFunctionExecutable*> functions;
         LineStartTable lineStarts;
         auto setLineStarts = [&](const LineStarts& codeLineStarts) {
             lineStarts.setLineStarts(codeLineStarts ? LineStarts { codeLineStarts } : LineStartTable::encode(Vector<unsigned> { 0 }));
         };
-        if (entryIsBuiltinFunction(decoder.get())) {
-            unsigned builtinLength = 0;
-            unsigned builtinStamp = 0;
-            LineStarts builtinLineStarts;
-            UnlinkedFunctionExecutable* builtinFunction = decodeBuiltinForProgramData(decoder.get(), builtinLength, builtinStamp, builtinLineStarts, functions);
-            ProgramModule module { };
-            if (builtinFunction) {
-                setLineStarts(builtinLineStarts);
-                builder.makeExecutables(nullptr, SourceCode { provider.copyRef(), 0, static_cast<int>(builtinLength) }, false, i, lineStarts, builtinFunction);
-                DynamicallyResolvedNames lookedUp;
-                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                    if (auto* code = builtinFunction->codeBlockIfExists(kind))
-                        builder.dropUnreferencedVariableNames(code, lookedUp);
-                }
-                if (auto it = builder.m_unlinkedFunctionExecutable.find(builtinFunction); it != builder.m_unlinkedFunctionExecutable.end())
-                    module.executableIndex = it->value;
-            }
-            module.entryOffset = sortedOffsets[i];
-            module.keyHash = builtinStamp;
-            module.keyLength = builtinLength;
-            module.isBuiltinFunction = true;
-            modules.append(module);
-            continue;
-        }
-        UnlinkedCodeBlock* codeBlock = decodeModuleForProgramData(decoder.get(), key, functions);
+        UnlinkedCodeBlock* codeBlock = decodeModuleForProgramData(decoder.get(), key);
         if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
             codeBlock = nullptr;
         if (!codeBlock) {
@@ -909,8 +679,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             ok = false;
             continue;
         }
+        RELEASE_ASSERT(!codeBlock->numberOfFunctionDecls() && !codeBlock->numberOfFunctionExprs());
         setLineStarts(uncheckedDowncast<UnlinkedGlobalCodeBlock>(codeBlock)->lineStarts());
-        builder.makeExecutables(codeBlock, SourceCode { provider.copyRef(), 0, static_cast<int>(key.length()) }, false, i, lineStarts);
         ProgramModule module { };
         module.entryOffset = sortedOffsets[i];
         module.keyHash = key.hash();
@@ -955,17 +725,6 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     endStep("the modules"_s);
     builder.mergeSymbolTables();
     endStep("mergeSymbolTables"_s);
-    builder.makeRows();
-    for (auto& [offset, list] : builder.m_functionLists) {
-        for (size_t i = 0; i < list.size(); ++i) {
-            uint32_t entry = builder.functionListEntryFor(list[i]);
-            memcpy(builder.m_out.mutableSpan().data() + offset + i * sizeof(uint32_t), &entry, sizeof(uint32_t));
-        }
-    }
-    for (auto* function : builder.m_unlinkedFunctions)
-        function->discardCode();
-
-    endStep("makeRows, and the lists of functions"_s);
     builder.noteTypedIdentifiers();
 
     endStep("noteTypedIdentifiers"_s);
@@ -979,20 +738,6 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         objects.identifiers = builder.m_identifiers.span();
         objects.constants = builder.m_constants.span();
         objects.topLevelCodes = builder.m_topLevelCodes.span();
-        objects.functionListEntryFor = [&](UnlinkedFunctionExecutable* function) {
-            uint32_t entry = builder.functionListEntryFor(function);
-            RELEASE_ASSERT(entry);
-            return entry;
-        };
-        for (auto* codeBlock : builder.m_topLevelCodes) {
-            for (auto list : { codeBlock->functionDecls(), codeBlock->functionExprs() }) {
-                for (auto& function : list) {
-                    if (builder.functionListEntryFor(function.get()) & 1)
-                        function->discardCode();
-                }
-            }
-        }
-        objects.unlinkedFunctions = builder.m_unlinkedFunctions.span();
         Vector<uint8_t> encoded = encodeProgramObjects(vm, encoderStringTable, objects);
         RELEASE_ASSERT(encoderStringTable.count() == table.count());
         header.objectsOffset = builder.append(encoded.span(), 16);
@@ -1000,19 +745,6 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     }
     header.modulesOffset = builder.append(modules);
     header.numberOfModules = modules.size();
-    {
-        Vector<uint32_t> engineBuiltinModules;
-        for (uint32_t i = 0; i < modules.size(); ++i) {
-            if (!modules[i].isBuiltinFunction || !modules[i].hasExecutable() || !BuiltinExecutables::isStamp(modules[i].keyHash))
-                continue;
-            unsigned which = modules[i].keyHash & 0xffff;
-            while (engineBuiltinModules.size() <= which)
-                engineBuiltinModules.append(0);
-            engineBuiltinModules[which] = i + 1;
-        }
-        header.engineBuiltinModulesOffset = builder.append(engineBuiltinModules);
-        header.numberOfEngineBuiltins = engineBuiltinModules.size();
-    }
     endStep("strings, identifiers, constants and modules"_s);
     Vector<uint64_t> typedEntries;
     auto keys = image->keys();
@@ -1142,11 +874,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         RELEASE_ASSERT(numSlots == 0x1234);
     }
     header.functionMetadataTableOffset = builder.append(builder.m_functionMetadataOffsets);
-    header.executableRowsOffset = builder.append(builder.m_rows);
-    header.numberOfExecutables = builder.m_rows.size();
     header.numberOfIdentifiers = builder.m_identifiers.size();
     header.numberOfConstants = builder.m_constants.size();
-    header.numberOfUnlinkedFunctions = builder.m_unlinkedFunctions.size();
     header.numberOfTopLevelCodes = builder.m_topLevelCodes.size();
     {
         Vector<uint32_t> starts;
@@ -1160,11 +889,11 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         builder.m_out.appendVector(text);
         header.numberOfSources = builder.m_sourceNames.size();
     }
-    endStep("infos, metadata and rows"_s);
+    endStep("infos and metadata"_s);
     if (image->keysAreOmitted()) {
         auto isLookedUp = [&](const ImageKey& key) {
             // What is compiled from types is reached by its number: see imageKeyFor().
-            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !(key.kind & (ImageKey::typedBody | ImageKey::typedFunction)) && !builder.hasExecutable(image->functionIndexWith(key));
+            return key.record && key.kind != std::numeric_limits<uint32_t>::max() && !(key.kind & (ImageKey::typedBody | ImageKey::typedFunction));
         };
         size_t count = 0;
         for (auto& key : image->keys())
@@ -1190,7 +919,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     header.size = safeCast<uint32_t>(builder.m_out.size());
     memcpy(builder.m_out.mutableSpan().data(), &header, sizeof(header));
     if (Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("AOT: program data: ", header.size, " bytes: strings ", header.stringsSize, ", objects ", header.objectsSize, "; ", header.numberOfFunctions, " functions, ", header.numberOfExecutables, " executables, ", header.numberOfUnlinkedFunctions, " unlinked functions, ", header.numberOfIdentifiers, " identifiers, ", header.numberOfConstants, " constants, ", header.numberOfSources, " sources");
+        dataLogLn("AOT: program data: ", header.size, " bytes: strings ", header.stringsSize, ", objects ", header.objectsSize, "; ", header.numberOfFunctions, " functions, ", header.numberOfIdentifiers, " identifiers, ", header.numberOfConstants, " constants, ", header.numberOfSources, " sources");
     return WTF::move(builder.m_out);
 }
 
@@ -1213,30 +942,11 @@ std::optional<std::pair<size_t, size_t>> ProgramData::stringTableIn(std::span<co
     return std::pair { static_cast<size_t>(header.stringsOffset), static_cast<size_t>(header.stringsSize) };
 }
 
-std::span<const uint32_t> ProgramData::functionDeclarationListEntries(const ProgramModule& module) const
-{
-    const uint32_t* list = at<FunctionMetadata>(functionMetadataOffsets()[module.functionIndex])->find(FunctionMetadata::FunctionDecls);
-    RELEASE_ASSERT(list && list[1] >= module.numberOfFunctionDeclarationSlots);
-    return { at<uint32_t>(list[0]), module.numberOfFunctionDeclarationSlots };
-}
-
 const ProgramModule* ProgramData::moduleWithEntryOffset(uint32_t entryOffset) const
 {
     auto all = modules();
     size_t index = std::ranges::lower_bound(all, entryOffset, { }, &ProgramModule::entryOffset) - all.begin();
     return index != all.size() && all[index].entryOffset == entryOffset ? &all[index] : nullptr;
-}
-
-uint32_t ProgramData::executableIndexForFunction(uint32_t functionIndex) const
-{
-    const FunctionInfo& info = infos()[functionIndex];
-    RELEASE_ASSERT(functionIndex < numberOfFunctions && info.indexPlusOne() && !info.isTopLevelCode());
-    return info.indexPlusOne() - 1;
-}
-
-const ExecutableRow& ProgramData::executableRowForFunction(uint32_t functionIndex) const
-{
-    return executableRow(executableIndexForFunction(functionIndex));
 }
 
 String ProgramData::sourceName(uint32_t source) const
@@ -1273,34 +983,11 @@ const uint8_t* ProgramData::positionsOfTypedFunction(uint32_t functionIndex) con
     return handlers.data() + handlers.size();
 }
 
-LineColumn ProgramData::functionStartPosition(uint32_t functionIndex) const
-{
-    RELEASE_ASSERT(functionIndex < numberOfFunctions);
-    uint32_t word = functionMetadataOffsets()[functionIndex];
-    RELEASE_ASSERT(word);
-    const uint8_t* bytes = positionsOfTypedFunction(functionIndex);
-    const uint32_t* where = bytes ? nullptr : at<FunctionMetadata>(word)->find(FunctionMetadata::ExpressionInfo);
-    RELEASE_ASSERT(where || bytes);
-    if (where)
-        bytes = at<uint8_t>(*where);
-    auto readVarint = [&] {
-        unsigned value = 0;
-        for (unsigned shift = 0;; shift += 7) {
-            uint8_t byte = *bytes++;
-            value |= static_cast<unsigned>(byte & 0x7f) << shift;
-            if (!(byte & 0x80))
-                return value;
-        }
-    };
-    unsigned line = readVarint();
-    return { line, readVarint() };
-}
-
 Vector<uint32_t> ProgramData::moduleEntryOffsets() const
 {
     Vector<uint32_t> result;
     for (auto& module : modules()) {
-        if (!module.isBuiltinFunction && (module.hasTopLevelCode() || module.isCompiledModule()))
+        if (module.hasTopLevelCode() || module.isCompiledModule())
             result.append(module.entryOffset);
     }
     return result;
@@ -1318,12 +1005,9 @@ struct VMProgram::Impl {
     std::unique_ptr<ProgramObjectsDecoder> decoder;
     Vector<JSCell*> createdSinceLastCollection;
     bool hasVisitedEverythingInThisCollection { false };
-    BitVector materializedExecutables;
     SegmentedVector<Identifier, 64> identifiersKeptElsewhere;
     UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> positionsOfIdentifiersKeptElsewhere;
-    Vector<UnlinkedFunctionExecutable*> unlinkedFunctions;
     Vector<RefPtr<SourceProvider>> providers;
-    UncheckedKeyHashMap<uint32_t, std::unique_ptr<SourceCode>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> shortExecutableSources;
     UncheckedKeyHashMap<uint32_t, FixedVector<UnlinkedStringJumpTable>> stringSwitchJumpTables;
     UncheckedKeyHashMap<uint32_t, FixedVector<IdentifierSet>> identifierSets;
 };
@@ -1355,16 +1039,13 @@ VMProgram::VMProgram(VM& vm)
     , m_data(*ProgramData::get())
     , m_identifiers(zeroedTable<UniquedStringImpl*>(capacityOfIdentifiers(m_data)))
     , m_identifierPlaces(zeroedTable<uint16_t>(m_data.numberOfIdentifiers))
-    , m_executableChunks(static_cast<FunctionExecutable***>(fastZeroedMalloc((m_data.numberOfExecutables / executablesPerChunk + 1) * sizeof(FunctionExecutable**))))
     , m_impl(makeUnique<Impl>())
 {
-    m_impl->unlinkedFunctions.fill(nullptr, m_data.numberOfUnlinkedFunctions);
     m_impl->providers.grow(m_data.numberOfModules);
     constexpr uint32_t initialCapacity = 1024;
     m_constantValues = static_cast<EncodedJSValue*>(fastZeroedMalloc(initialCapacity * sizeof(EncodedJSValue)));
     m_constantKeys = static_cast<uint32_t*>(fastZeroedMalloc(initialCapacity * sizeof(uint32_t)));
     m_constantMask = initialCapacity - 1;
-    m_impl->materializedExecutables.ensureSize(m_data.numberOfExecutables);
 }
 
 VMProgram::~VMProgram()
@@ -1376,9 +1057,6 @@ VMProgram::~VMProgram()
     fastFree(m_constantKeys);
     freeTable(m_identifiers, capacityOfIdentifiers(m_data));
     freeTable(m_identifierPlaces, m_data.numberOfIdentifiers);
-    for (uint32_t i = 0; i <= m_data.numberOfExecutables / executablesPerChunk; ++i)
-        fastFree(m_executableChunks[i]);
-    fastFree(m_executableChunks);
 }
 
 DecoderStringTable& VMProgram::strings()
@@ -1481,17 +1159,6 @@ const Identifier& VMProgram::keepIdentifier(uint32_t index, Identifier&& identif
     return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
 }
 
-String VMProgram::identifierWithoutGC(uint32_t index)
-{
-    RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
-    uint16_t place = m_identifierPlaces[index];
-    if (!index || (place && place != placeOfIdentifiersKeptElsewhere) || !m_vm.heap.currentThreadIsDoingGCWork())
-        return identifierAsIdentifier(index).string();
-    if (String text = Typed::tryGetTextOfIdentifier(index); !text.isNull())
-        return text;
-    return ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).identifierAsPlainString(index);
-}
-
 const Identifier* VMProgram::tryGetIdentifierConcurrently(uint32_t index) const
 {
     RELEASE_ASSERT(index < m_data.numberOfIdentifiers);
@@ -1511,21 +1178,6 @@ NEVER_INLINE const Identifier& VMProgram::identifierAsIdentifierSlow(uint32_t in
     return *reinterpret_cast<const Identifier*>(&m_identifiers[place]);
 }
 
-UnlinkedFunctionExecutable* VMProgram::unlinkedFunction(uint32_t index, bool isShared)
-{
-    RELEASE_ASSERT(index < m_data.numberOfUnlinkedFunctions);
-    if (UnlinkedFunctionExecutable* existing = m_impl->unlinkedFunctions[index])
-        return existing;
-    DeferGCForAWhile deferGC(m_vm);
-    UnlinkedFunctionExecutable* result = ensureDecoder(m_impl->decoder, m_vm, m_data, strings()).unlinkedFunction(index);
-    RELEASE_ASSERT(result);
-    if (isShared)
-        result->convertToSharedTemplate();
-    didMaterialize(result);
-    m_impl->unlinkedFunctions[index] = result;
-    return result;
-}
-
 UnlinkedCodeBlock* VMProgram::topLevelCode(uint32_t index)
 {
     RELEASE_ASSERT(index < m_data.numberOfTopLevelCodes);
@@ -1542,7 +1194,7 @@ UnlinkedCodeBlock* VMProgram::topLevelCodeFor(const SourceCodeKey& key)
     if (!id || !provider.hasNoSourceText())
         return nullptr;
     const ProgramModule* module = m_data.moduleWithEntryOffset(id - 1);
-    if (!module || module->isBuiltinFunction || !module->hasTopLevelCode() || key.flagsBitsWithoutCodeGenerationMode() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
+    if (!module || !module->hasTopLevelCode() || key.flagsBitsWithoutCodeGenerationMode() != module->keyFlags || !key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1)
         return nullptr;
     didLoadModule(provider);
     return topLevelCode(module->topLevelCodeIndex);
@@ -1567,70 +1219,6 @@ void VMProgram::didLoadModule(SourceProvider& provider)
     RefPtr<SourceProvider>& first = m_impl->providers[module - m_data.modules().data()];
     if (!first)
         first = &provider;
-}
-
-SourceProvider* VMProgram::moduleProvider(uint32_t moduleIndex)
-{
-    RefPtr<SourceProvider>& provider = m_impl->providers[moduleIndex];
-    if (!provider) {
-        const ProgramModule& module = m_data.modules()[moduleIndex];
-        RELEASE_ASSERT(module.isBuiltinFunction && BuiltinExecutables::isStamp(module.keyHash));
-        provider = StringSourceProvider::create(StringImpl::createWithoutCopying(BuiltinExecutables::textOf(module.keyHash & 0xffff)), SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
-        provider->setAOTModuleID(module.entryOffset + 1);
-    }
-    return provider.get();
-}
-
-const SourceCode& VMProgram::shortExecutableSource(uint32_t index)
-{
-    return *m_impl->shortExecutableSources.ensure(index, [&] {
-        return makeUniqueWithoutFastMallocCheck<SourceCode>(RefPtr { moduleProvider(m_data.executableRow(index).module) }, 0, 0);
-    }).iterator->value;
-}
-
-FunctionExecutable* VMProgram::executable(uint32_t executableIndex)
-{
-    RELEASE_ASSERT(executableIndex < m_data.numberOfExecutables);
-    if (FunctionExecutable* existing = executableIfExists(executableIndex))
-        return existing;
-    RELEASE_ASSERT(!m_vm.heap.isShuttingDown() && m_vm.heap.mutatorState() == MutatorState::Running && !m_vm.heap.worldIsStopped() && !m_vm.heap.objectSpace().isIterating());
-    const ExecutableRow& row = m_data.executableRow(executableIndex);
-    DeferGCForAWhile deferGC(m_vm);
-    FunctionExecutable* result;
-    if (row.isShort)
-        result = FunctionExecutable::createInShortForm(m_vm, row.entry, row.index);
-    else {
-        SourceCode source { RefPtr { moduleProvider(row.module) }, static_cast<int>(row.startOffset), static_cast<int>(row.startOffset + row.sourceLength) };
-        result = FunctionExecutable::create(m_vm, nullptr, source, unlinkedFunction(row.unlinkedFunction, false), NoIntrinsic, row.isInsideOrdinaryFunction);
-        result->becomeSharedAcrossRealms(m_vm);
-        for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-            if (uint64_t entry = row.entry[static_cast<unsigned>(kind)])
-                result->setAOTCode(kind, entry, row.index[static_cast<unsigned>(kind)]);
-        }
-    }
-    didMaterialize(result);
-    m_impl->materializedExecutables.quickSet(executableIndex);
-    FunctionExecutable**& chunk = m_executableChunks[executableIndex / executablesPerChunk];
-    if (!chunk)
-        chunk = static_cast<FunctionExecutable**>(fastZeroedMalloc(executablesPerChunk * sizeof(FunctionExecutable*)));
-    chunk[executableIndex % executablesPerChunk] = result;
-    return result;
-}
-
-FunctionExecutable* VMProgram::engineBuiltinFor(unsigned index, std::span<const Latin1Character> text)
-{
-    uint32_t moduleIndexPlusOne = index < m_data.numberOfEngineBuiltins ? m_data.at<uint32_t>(m_data.engineBuiltinModulesOffset)[index] : 0;
-    if (!moduleIndexPlusOne)
-        return nullptr;
-    const ProgramModule& module = m_data.modules()[moduleIndexPlusOne - 1];
-    if (BytecodeOrderRecorder::ofVM(m_vm) || module.keyLength != text.size())
-        return nullptr;
-    RefPtr<SourceProvider>& provider = m_impl->providers[moduleIndexPlusOne - 1];
-    if (!provider) {
-        provider = StringSourceProvider::create(StringImpl::createWithoutCopying(text), SourceOrigin(), String(), SourceTaintedOrigin::Untainted);
-        provider->setAOTModuleID(module.entryOffset + 1);
-    }
-    return executable(module.executableIndex);
 }
 
 const UnlinkedStringJumpTable& VMProgram::stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which)
@@ -1678,13 +1266,6 @@ void VMProgram::visit(Visitor& visitor, CollectionScope scope)
         if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
             visitor.appendUnbarriered(value.asCell());
     }
-    m_impl->materializedExecutables.forEachSetBit([&](size_t index) {
-        visitor.appendUnbarriered(executableIfExists(index));
-    });
-    for (auto* function : m_impl->unlinkedFunctions) {
-        if (function)
-            visitor.appendUnbarriered(function);
-    }
 }
 template void VMProgram::visit(AbstractSlotVisitor&, CollectionScope);
 template void VMProgram::visit(SlotVisitor&, CollectionScope);
@@ -1723,12 +1304,7 @@ void VMProgram::didFinishCollection()
             if (JSValue value = JSValue::decode(m_constantValues[i]); m_constantKeys[i] && value.isCell())
                 count(value.asCell());
         }
-        m_impl->materializedExecutables.forEachSetBit([&](size_t index) { count(executableIfExists(index)); });
-        for (auto* function : m_impl->unlinkedFunctions) {
-            if (function)
-                count(function);
-        }
-        dataLog("AOT: made so far: ", m_numberOfIdentifiersInPlaces + m_impl->identifiersKeptElsewhere.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants, ", m_impl->materializedExecutables.bitCount(), " of ", m_data.numberOfExecutables, " executables:");
+        dataLog("AOT: made so far: ", m_numberOfIdentifiersInPlaces + m_impl->identifiersKeptElsewhere.size(), " of ", m_data.numberOfIdentifiers, " identifiers, ", m_numberOfMaterializedConstants, " of ", m_data.numberOfConstants, " constants:");
         for (auto& [info, entry] : byClass)
             dataLog(" ", info->className, " ", entry.first, " (", entry.second, " bytes)");
         dataLogLn("; ", m_impl->stringSwitchJumpTables.size(), " + ", m_impl->identifierSets.size(), " tables of functions");

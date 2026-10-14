@@ -86,12 +86,7 @@ public:
     }
     bool isFunctionExecutable() const
     {
-        return type() == FunctionExecutableType || type() == ShortFunctionExecutableType;
-    }
-    bool hasAOTEntry() const { return m_aotEntry[0] || m_aotEntry[1]; }
-    bool isShortFunctionExecutable() const
-    {
-        return type() == ShortFunctionExecutableType;
+        return type() == FunctionExecutableType;
     }
     bool isProgramExecutable() const
     {
@@ -123,8 +118,6 @@ public:
         return *m_jitCodeForConstruct;
     }
 
-    JSC::JITCode* jitCodeIfExistsFor(CodeSpecializationKind kind) const { return isShortFunctionExecutable() ? nullptr : (kind == CodeSpecializationKind::CodeForCall ? WTF::opaque(this)->m_jitCodeForCall : WTF::opaque(this)->m_jitCodeForConstruct).get(); }
-
     void* generatedJITCodeAddressForCall() const
     {
         ASSERT(m_jitCodeForCall);
@@ -141,20 +134,12 @@ public:
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForCall() const
     {
-        if (!isShortFunctionExecutable()) [[likely]] {
-            if (CodePtr<JSEntryPtrTag> result = WTF::opaque(this)->m_jitCodeForCallWithArityCheck) [[likely]]
-                return result;
-        }
-        return staticCodeEntrypoint(CodeSpecializationKind::CodeForCall);
+        return m_jitCodeForCallWithArityCheck;
     }
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckForConstruct() const
     {
-        if (!isShortFunctionExecutable()) [[likely]] {
-            if (CodePtr<JSEntryPtrTag> result = WTF::opaque(this)->m_jitCodeForConstructWithArityCheck) [[likely]]
-                return result;
-        }
-        return staticCodeEntrypoint(CodeSpecializationKind::CodeForConstruct);
+        return m_jitCodeForConstructWithArityCheck;
     }
 
     CodePtr<JSEntryPtrTag> generatedJITCodeWithArityCheckFor(CodeSpecializationKind kind) const
@@ -170,17 +155,14 @@ public:
         // Check if we have a cached result. We only have it for arity check because we use the
         // no-arity entrypoint in non-virtual calls, which will "cache" this value directly in
         // machine code.
-        if (m_aotEntry[static_cast<unsigned>(kind)] || isShortFunctionExecutable()) [[unlikely]]
-            return staticCodeEntrypoint(kind);
-        ExecutableBase* fullForm = WTF::opaque(this);
         if (arity == ArityCheckMode::MustCheckArity) {
             switch (kind) {
             case CodeSpecializationKind::CodeForCall:
-                if (CodePtr<JSEntryPtrTag> result = fullForm->m_jitCodeForCallWithArityCheck)
+                if (CodePtr<JSEntryPtrTag> result = m_jitCodeForCallWithArityCheck)
                     return result;
                 break;
             case CodeSpecializationKind::CodeForConstruct:
-                if (CodePtr<JSEntryPtrTag> result = fullForm->m_jitCodeForConstructWithArityCheck)
+                if (CodePtr<JSEntryPtrTag> result = m_jitCodeForConstructWithArityCheck)
                     return result;
                 break;
             }
@@ -190,10 +172,10 @@ public:
             // Cache the result; this is necessary for the JIT's virtual call optimizations.
             switch (kind) {
             case CodeSpecializationKind::CodeForCall:
-                fullForm->m_jitCodeForCallWithArityCheck = result;
+                m_jitCodeForCallWithArityCheck = result;
                 break;
             case CodeSpecializationKind::CodeForConstruct:
-                fullForm->m_jitCodeForConstructWithArityCheck = result;
+                m_jitCodeForConstructWithArityCheck = result;
                 break;
             }
         }
@@ -246,7 +228,6 @@ public:
 
     CodePtr<JSEntryPtrTag> swapGeneratedJITCodeWithArityCheckForDebugger(CodeSpecializationKind kind, CodePtr<JSEntryPtrTag> jitCodeWithArityCheck)
     {
-        RELEASE_ASSERT(!isShortFunctionExecutable());
         if (kind == CodeSpecializationKind::CodeForCall)
             return swapGeneratedJITCodeForCallWithArityCheckForDebugger(jitCodeWithArityCheck);
         ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
@@ -270,14 +251,10 @@ public:
     void dump(PrintStream&) const;
         
 protected:
-    JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> staticCodeEntrypoint(CodeSpecializationKind) const;
-
-    uint64_t m_aotEntry[2] { };
-    uint32_t m_aotIndex[2] { };
-    CodePtr<JSEntryPtrTag> m_jitCodeForCallWithArityCheck;
-    CodePtr<JSEntryPtrTag> m_jitCodeForConstructWithArityCheck;
     RefPtr<JSC::JITCode> m_jitCodeForCall;
     RefPtr<JSC::JITCode> m_jitCodeForConstruct;
+    CodePtr<JSEntryPtrTag> m_jitCodeForCallWithArityCheck;
+    CodePtr<JSEntryPtrTag> m_jitCodeForConstructWithArityCheck;
 };
 
 } // namespace JSC

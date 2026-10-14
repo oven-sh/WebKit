@@ -524,8 +524,16 @@ void optimizeBlockOrder(Code& code)
         case BranchTest8:
         case BranchTest32:
         case BranchTest64:
+#if USE(BUN_JSC_ADDITIONS)
+        case BranchTestBit32:
+        case BranchTestBit64:
+#endif
         case BranchFloat:
         case BranchDouble:
+#if USE(BUN_JSC_ADDITIONS)
+        case BranchFloatWithZero:
+        case BranchDoubleWithZero:
+#endif
         case BranchAdd32:
         case BranchAdd64:
         case BranchMul32:

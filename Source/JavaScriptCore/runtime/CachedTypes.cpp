@@ -94,6 +94,7 @@ template<typename T> concept PayloadType = std::has_unique_object_representation
 
 namespace JSC {
 
+
 // Scalars of the per-function records are written as a LEB128 tail right after the fixed part of the record: most of them
 // are small or zero in almost every function, and they are read exactly once, into the object being constructed.
 class VarintWriter {
@@ -927,9 +928,8 @@ public:
     }
 
     bool updatable() const { return m_updatable; }
-    bool omitsCode() const { return !!m_functionListEntryFor; }
-    void omitCode(const Function<uint32_t(UnlinkedFunctionExecutable*)>& functionListEntryFor) { m_functionListEntryFor = &functionListEntryFor; }
-    uint32_t functionListEntryFor(UnlinkedFunctionExecutable* function) const { return (*m_functionListEntryFor)(function); }
+    bool omitsCode() const { return m_omitsCode; }
+    void omitCode() { m_omitsCode = true; }
 
     VM& vm() { return m_vm; }
 
@@ -1501,7 +1501,7 @@ private:
     EncoderStringTable* m_externalStrings;
     bool m_numberStrings;
     bool m_updatable;
-    const Function<uint32_t(UnlinkedFunctionExecutable*)>* m_functionListEntryFor { nullptr };
+    bool m_omitsCode { false };
     Vector<SharedPrivateNameEnvironment> m_sharedPrivateNameEnvironments;
     bool m_arraySharingEnabled { false };
     UncheckedKeyHashMap<unsigned, Vector<std::pair<ptrdiff_t, size_t>, 1>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_arraysByHash;
@@ -3801,6 +3801,7 @@ private:
     int m_endOffset;
 };
 
+
 class CachedUnlinkedSourceCode : public CachedUnlinkedSourceCodeShape<UnlinkedSourceCode> { };
 
 class CachedSourceCode : public CachedUnlinkedSourceCodeShape<SourceCode> {
@@ -3954,20 +3955,12 @@ public:
 
     UnlinkedFunctionExecutable::RareData* decode(Decoder& decoder) const
     {
-        bool isForGeneratingCode = true;
-#if USE(BUN_JSC_ADDITIONS)
-        if (decoder.isForProgramData()) [[unlikely]] {
-            isForGeneratingCode = false;
-            if (!(m_header & (HasClassSource | HasClassElementDefinitions)))
-                return nullptr;
-        }
-#endif
         UnlinkedFunctionExecutable::RareData* rareData = new UnlinkedFunctionExecutable::RareData { };
-        if (auto* p = isForGeneratingCode ? tailField(HasWrapperParameterNames) : nullptr)
+        if (auto* p = tailField(HasWrapperParameterNames))
             reinterpret_cast<const CachedVector<CachedIdentifier>*>(p)->decode(decoder, rareData->m_generatorOrAsyncWrapperFunctionParameterNames);
         if (auto* p = tailField(HasClassElementDefinitions))
             reinterpret_cast<const CachedVector<CachedClassElementDefinition>*>(p)->decode(decoder, rareData->m_classElementDefinitions);
-        if (auto* p = isForGeneratingCode ? tailField(HasParentPrivateNameEnvironment) : nullptr)
+        if (auto* p = tailField(HasParentPrivateNameEnvironment))
             reinterpret_cast<const CachedPrivateNameEnvironment*>(p)->decode(decoder, rareData->m_parentPrivateNameEnvironment);
         if (auto* p = tailField(HasClassSource)) {
             VarintReader reader(p);
@@ -4493,6 +4486,7 @@ public:
     UnlinkedFunctionCodeBlock* decode(Decoder&) const;
 };
 
+
 ALWAYS_INLINE UnlinkedFunctionCodeBlock::UnlinkedFunctionCodeBlock(Decoder& decoder, const CachedFunctionCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedFunctionCodeBlockStructure.get(), cachedCodeBlock)
 {
@@ -4580,8 +4574,6 @@ ALWAYS_INLINE UnlinkedCodeBlock::UnlinkedCodeBlock(Decoder& decoder, Structure* 
     m_llintExecuteCounter.setNewThreshold(thresholdForJIT(Options::thresholdForJITAfterWarmUp()));
 }
 
-static UnlinkedFunctionExecutable* programUnlinkedFunction(Decoder&, uint32_t number);
-
 template<typename CodeBlockType>
 ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, UnlinkedCodeBlock& codeBlock, const Tail& tail) const
 {
@@ -4625,20 +4617,7 @@ ALWAYS_INLINE void CachedCodeBlock<CodeBlockType>::decode(Decoder& decoder, Unli
         codeBlock.initializeLoopHintExecutionCounter();
     if (layout.flags & LayoutHasNoCode) {
         codeBlock.setHasNoInstructions();
-        auto decodeNumbers = [&](const Array& array, auto& out) {
-            if (!array.count)
-                return;
-            out = std::remove_reference_t<decltype(out)>(array.count);
-            auto* numbers = at<uint32_t>(layout, array);
-            for (unsigned i = 0; i < array.count; ++i) {
-                if (numbers[i] & 1)
-                    out[i].set(decoder.vm(), &codeBlock, programUnlinkedFunction(decoder, (numbers[i] >> 1) - 1));
-                else
-                    UnlinkedCodeBlock::setExecutableIndexIn(out[i], (numbers[i] >> 1) - 1);
-            }
-        };
-        decodeNumbers(layout.functionDecls, codeBlock.m_functionDecls);
-        decodeNumbers(layout.functionExprs, codeBlock.m_functionExprs);
+        RELEASE_ASSERT(!layout.functionDecls.count && !layout.functionExprs.count);
         return;
     }
     unsigned firstFunctionDeclToDecode = 0;
@@ -4763,6 +4742,7 @@ UnlinkedFunctionCodeBlock* CachedFunctionCodeBlock::decode(Decoder& decoder) con
     decodeOwnMembers(decoder, *codeBlock);
     return codeBlock;
 }
+
 
 ALWAYS_INLINE UnlinkedProgramCodeBlock::UnlinkedProgramCodeBlock(Decoder& decoder, const CachedProgramCodeBlock& cachedCodeBlock)
     : Base(decoder, decoder.vm().unlinkedProgramCodeBlockStructure.get(), cachedCodeBlock)
@@ -4941,7 +4921,7 @@ std::optional<uint32_t> UnlinkedFunctionExecutable::classSourceStartWithoutMater
 {
     if (!m_membersAreDeferred) {
         auto* rareData = m_members.live().rareData.get();
-        return rareData && (!rareData->m_classSource.isNull() || m_isClass) ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
+        return rareData && !rareData->m_classSource.isNull() ? std::optional<uint32_t>(rareData->m_classSource.startOffset()) : std::nullopt;
     }
     auto* rareData = m_members.pending().record->slotsView().rareData;
     return rareData ? (*rareData)->classSourceStart() : std::nullopt;
@@ -5131,7 +5111,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
     , m_unlinkedCodeBlockForConstruct()
     , m_members(nullptr)
 {
-    bool defer = decoder.canDeferIntoPayload() && !decoder.isForProgramData();
+    bool defer = decoder.canDeferIntoPayload();
     CachedFunctionExecutable::View v = cachedExecutable.view(defer ? CachedFunctionExecutable::HotScalarsOnly : CachedFunctionExecutable::AllScalars);
     const auto& scalars = v.scalars;
     m_hasCapturedVariables = scalars.hasCapturedVariables;
@@ -5145,9 +5125,6 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         v.name = nullptr;
         v.tdz = nullptr;
         v.rareData = nullptr;
-    } else if (decoder.isForProgramData()) {
-        m_singletonHasBeenInvalidated = true;
-        v.tdz = nullptr;
     }
     if (v.name)
         m_ecmaName = v.name->decode(decoder);
@@ -5155,7 +5132,7 @@ ALWAYS_INLINE UnlinkedFunctionExecutable::UnlinkedFunctionExecutable(Decoder& de
         m_members.live().parentScopeTDZVariables = v.tdz->decode(decoder);
     if (v.rareData) {
         m_members.live().rareData = std::unique_ptr<RareData>(v.rareData->decode(decoder));
-        ASSERT_WITH_MESSAGE(!m_members.live().rareData || m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
+        ASSERT_WITH_MESSAGE(m_members.live().rareData->m_classSource.isNull() || m_isClass, "payload predates the IsClass header bit (stale bytecode cache version)");
     }
     m_unlinkedFunctionStart = scalars.unlinkedFunctionStart;
     m_isBuiltinFunction = scalars.isBuiltinFunction;
@@ -5486,13 +5463,7 @@ auto CachedCodeBlock<CodeBlockType>::create(Encoder& encoder, const CodeBlockTyp
         if (!slots.count)
             return;
         auto bytes = encoder.mutableBytesAt(regionStart + slots.at, sizeof(CachedWriteBarrier<CachedFunctionExecutable>) * slots.count);
-        if (encoder.omitsCode()) {
-            static_assert(sizeof(CachedWriteBarrier<CachedFunctionExecutable>) == sizeof(uint32_t));
-            auto* number = reinterpret_cast<uint32_t*>(bytes.data());
-            for (unsigned i = 0; i < slots.count; ++i)
-                number[i] = encoder.functionListEntryFor(executables[i].get());
-            return;
-        }
+        RELEASE_ASSERT(!encoder.omitsCode());
         auto* slot = reinterpret_cast<CachedWriteBarrier<CachedFunctionExecutable>*>(bytes.data());
         for (unsigned i = 0; i < slots.count; ++i)
             slot[i].encode(encoder, executables[i]);
@@ -5713,7 +5684,7 @@ public:
         m_sourceLength = source.length();
         m_embedderStamp = embedderStamp;
         m_executable.encode(encoder, &executable);
-        m_lineStarts.encode(encoder, encoder.vm().bytecodeGenerationOptions.keepAllSourceLineStarts ? source.provider()->lineStarts() : source.provider()->lineStartsForBytecode());
+        m_lineStarts.encode(encoder, source.provider()->lineStartsForBytecode());
     }
 
     UnlinkedFunctionExecutable* decode(Decoder& decoder, SourceProvider& provider, unsigned embedderStamp) const
@@ -5726,18 +5697,6 @@ public:
             provider.setLineStarts(WTF::move(lineStarts));
         return m_executable.decode(decoder);
     }
-
-    UnlinkedFunctionExecutable* decode(Decoder& decoder, LineStarts& lineStarts) const
-    {
-        if (tag() != CachedCodeBlockTag::CachedBuiltinFunctionTag || !isUpToDate(decoder))
-            return nullptr;
-        lineStarts = m_lineStarts.decode(decoder);
-        return m_executable.decode(decoder);
-    }
-
-    unsigned sourceLength() const { return m_sourceLength; }
-    unsigned embedderStamp() const { return m_embedderStamp; }
-    bool matchesAssumedType() const { return tag() == CachedCodeBlockTag::CachedBuiltinFunctionTag; }
 
 private:
     unsigned m_sourceLength { 0 };
@@ -6407,7 +6366,6 @@ struct BytecodeLinkEncoder::Impl {
             AOT::Typed::destroyBeside(WTF::move(typedProgram));
             endPhase("freeing the typed functions"_s);
         }
-        AOT::forgetDeclaredNames();
         AOT::setProgramIdentifierIndices(nullptr);
         AOT::setProgramConstantIndices(nullptr);
         for (auto& job : jobs) {
@@ -6702,6 +6660,7 @@ std::optional<CachedCodeDigest> digestOfAllCachedBuiltinCode(VM& vm, const Sourc
     return result;
 }
 
+
 std::optional<CachedCodeDigest> digestOfAllCachedCode(VM& vm, const SourceCode& source, bool isModule, Ref<CachedBytecode> cachedBytecode)
 {
     SourceCodeKey key = isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source);
@@ -6762,10 +6721,7 @@ public:
             }
             m_constantKinds.encode(encoder, kinds);
         }
-        m_unlinkedFunctions.encodeRange(encoder, objects.unlinkedFunctions.size(), objects.unlinkedFunctions | std::views::transform([](UnlinkedFunctionExecutable* function) -> const UnlinkedFunctionExecutable* {
-            return function;
-        }));
-        encoder.omitCode(objects.functionListEntryFor);
+        encoder.omitCode();
         auto modules = m_modules.allocateElements(encoder, objects.topLevelCodes);
         auto programs = m_programs.allocateElements(encoder, objects.topLevelCodes);
         for (size_t i = 0; i < objects.topLevelCodes.size(); ++i) {
@@ -6785,7 +6741,6 @@ public:
             return std::nullopt;
         return m_constants.elements()[number].aliasTarget();
     }
-    UnlinkedFunctionExecutable* unlinkedFunction(Decoder& decoder, uint32_t number) const { return m_unlinkedFunctions.elements()[number].decode(decoder); }
     UnlinkedCodeBlock* topLevelCode(Decoder& decoder, uint32_t number) const
     {
         if (UnlinkedCodeBlock* module = m_modules.elements()[number].decode(decoder))
@@ -6797,15 +6752,9 @@ private:
     CachedVector<CachedIdentifier> m_identifiers;
     CachedVector<CachedJSValue> m_constants;
     CachedVector<uint8_t> m_constantKinds;
-    CachedVector<CachedPtr<CachedFunctionExecutable>> m_unlinkedFunctions;
     CachedVector<CachedPtr<CachedModuleCodeBlock>> m_modules;
     CachedVector<CachedPtr<CachedProgramCodeBlock>> m_programs;
 };
-
-static UnlinkedFunctionExecutable* programUnlinkedFunction(Decoder& decoder, uint32_t number)
-{
-    return AOT::VMProgram::of(decoder.vm())->unlinkedFunction(number, false);
-}
 
 Vector<uint8_t> encodeProgramObjects(VM& vm, EncoderStringTable& strings, const ProgramObjects& objects)
 {
@@ -6845,7 +6794,6 @@ Identifier ProgramObjectsDecoder::identifier(uint32_t number) { return m_objects
 String ProgramObjectsDecoder::identifierAsPlainString(uint32_t number) { return m_objects.identifierAsPlainString(m_decoder.get(), number); }
 JSValue ProgramObjectsDecoder::constant(uint32_t number) { return m_objects.constant(m_decoder.get(), number); }
 std::optional<uint32_t> ProgramObjectsDecoder::constantAliasTarget(uint32_t number) { return m_objects.constantAliasTarget(number); }
-UnlinkedFunctionExecutable* ProgramObjectsDecoder::unlinkedFunction(uint32_t number) { return m_objects.unlinkedFunction(m_decoder.get(), number); }
 UnlinkedCodeBlock* ProgramObjectsDecoder::topLevelCode(uint32_t number) { return m_objects.topLevelCode(m_decoder.get(), number); }
 
 std::span<const uint8_t> absentInstructions(size_t size)
@@ -6853,56 +6801,14 @@ std::span<const uint8_t> absentInstructions(size_t size)
     return { reinterpret_cast<const uint8_t*>(static_cast<uintptr_t>(sizeof(void*))), size };
 }
 
-static void decodeNestedFunctionsForProgramData(VM& vm, UnlinkedCodeBlock* codeBlockOrNull, UnlinkedFunctionExecutable* functionOrNull, Vector<UnlinkedFunctionExecutable*>& functions)
-{
-    Vector<UnlinkedCodeBlock*> worklist;
-    auto decodeFunction = [&](UnlinkedFunctionExecutable* executable) {
-        if (executable->isCached())
-            functions.append(executable);
-        auto [forCall, forConstruct] = executable->codeBlocksDecodingCached(vm);
-        if (forCall)
-            worklist.append(forCall);
-        if (forConstruct)
-            worklist.append(forConstruct);
-    };
-    if (codeBlockOrNull)
-        worklist.append(codeBlockOrNull);
-    if (functionOrNull)
-        decodeFunction(functionOrNull);
-    while (!worklist.isEmpty()) {
-        UnlinkedCodeBlock& codeBlock = *worklist.takeLast();
-        for (unsigned i = 0; i < codeBlock.numberOfFunctionDecls(); ++i)
-            decodeFunction(codeBlock.functionDecl(i));
-        for (unsigned i = 0; i < codeBlock.numberOfFunctionExprs(); ++i)
-            decodeFunction(codeBlock.functionExpr(i));
-    }
-}
-
-UnlinkedCodeBlock* decodeModuleForProgramData(Decoder& decoder, SourceCodeKey& key, Vector<UnlinkedFunctionExecutable*>& functions)
+UnlinkedCodeBlock* decodeModuleForProgramData(Decoder& decoder, SourceCodeKey& key)
 {
     auto* cachedEntry = std::bit_cast<const GenericCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
     std::pair<SourceCodeKey, UnlinkedCodeBlock*> entry;
     if (!cachedEntry->decode(decoder, entry) || !entry.second)
         return nullptr;
     key = entry.first;
-    decodeNestedFunctionsForProgramData(decoder.vm(), entry.second, nullptr, functions);
     return entry.second;
-}
-
-bool entryIsBuiltinFunction(Decoder& decoder)
-{
-    return std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()))->matchesAssumedType();
-}
-
-UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder& decoder, unsigned& sourceLength, unsigned& embedderStamp, LineStarts& lineStarts, Vector<UnlinkedFunctionExecutable*>& functions)
-{
-    auto* entry = std::bit_cast<const BuiltinFunctionCacheEntry*>(decoder.ptrForOffsetFromBase(decoder.entryOffset()));
-    sourceLength = entry->sourceLength();
-    embedderStamp = entry->embedderStamp();
-    UnlinkedFunctionExecutable* executable = entry->decode(decoder, lineStarts);
-    if (executable)
-        decodeNestedFunctionsForProgramData(decoder.vm(), nullptr, executable, functions);
-    return executable;
 }
 
 UnlinkedCodeBlock* decodeCodeBlockImpl(VM& vm, const SourceCodeKey& key, Ref<CachedBytecode> cachedBytecode, Decoder::RecoverableCode recoverableCode)
@@ -6964,6 +6870,7 @@ bool isCachedBytecodeStillValid(VM& vm, Ref<CachedBytecode> cachedBytecode, cons
     Ref decoder = Decoder::create(vm, WTF::move(cachedBytecode));
     return cachedEntry->isStillValid(decoder.get(), key, tagFromSourceCodeType(type));
 }
+
 
 // The size of every record under every ABI we build (see PayloadType). Changing a record means changing its number here,
 // and with it the serialized form.

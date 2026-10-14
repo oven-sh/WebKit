@@ -968,14 +968,14 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         LValue bound = m_out.bitOr(entries->value(), m_out.int32One);
         capacity = m_out.select(m_out.below(bound, room), bound, room);
     }
-    Vector<ValueFromBlock, 2> small;
+    Vector<ValueFromBlock, 2> madeSmall;
     if (hasStubs) {
         for (auto [room, stub] : { std::pair { 1, Stub::EmptyArrayWithRoomFor1 }, std::pair { 3, Stub::EmptyArrayWithRoomFor3 } }) {
             LBasicBlock isThat = m_out.newBlock();
             LBasicBlock isNot = m_out.newBlock();
             m_out.branch(m_out.equal(capacity, m_out.constInt32(room)), unsure(isThat), unsure(isNot));
             m_out.appendTo(isThat);
-            small.append(m_out.anchor(callAllocationStub(stub, { }, effectsOfOperation<operationAOTTypedNewArray>(), true)));
+            madeSmall.append(m_out.anchor(callAllocationStub(stub, { }, effectsOfOperation<operationAOTTypedNewArray>(), true)));
             m_out.jump(continuation);
             m_out.appendTo(isNot);
         }
@@ -989,7 +989,7 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
             m_out.appendTo(isThat);
             LValue made = callAllocationStub(stub, { }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
             orElse(m_out.notZero64(made), asUsual);
-            small.append(m_out.anchor(made));
+            madeSmall.append(m_out.anchor(made));
             m_out.jump(continuation);
             m_out.appendTo(isNot);
         }
@@ -1010,7 +1010,7 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
     m_out.jump(continuation);
     m_out.appendTo(continuation);
     LValue made = m_out.phi(Int64, hinted, usual);
-    for (ValueFromBlock& one : small)
+    for (ValueFromBlock& one : madeSmall)
         m_out.addIncomingToPhi(made, one);
     return CellPointer(made);
 }

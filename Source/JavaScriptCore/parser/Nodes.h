@@ -249,6 +249,7 @@ namespace JSC {
     public:
         virtual void emitBytecode(BytecodeGenerator&, RegisterID* destination = nullptr) = 0;
 
+
         StatementNode* next() const { return m_next; }
         void setNext(StatementNode* next) { m_next = next; }
 
@@ -779,7 +780,6 @@ namespace JSC {
             return m_node->isInstanceClassField();
         }
         bool NODELETE hasInstanceFields() const;
-        Vector<Identifier> plainInstanceFieldNames() const;
 
         bool isStaticClassField() const
         {
@@ -2290,9 +2290,6 @@ namespace JSC {
             m_needsClassFieldInitializer = value;
         }
 
-        const Vector<Identifier>& plainInstanceFieldNames() const LIFETIME_BOUND { return m_plainInstanceFieldNames; }
-        void setPlainInstanceFieldNames(Vector<Identifier>&& names) { m_plainInstanceFieldNames = WTF::move(names); }
-
         bool isSloppyModeHoistedFunction() const { return m_isSloppyModeHoistedFunction; }
         void setIsSloppyModeHoistedFunction() { m_isSloppyModeHoistedFunction = true; }
 
@@ -2320,7 +2317,6 @@ namespace JSC {
         SourceCode m_classSource;
         int m_startStartOffset;
         unsigned m_parameterCount;
-        Vector<Identifier> m_plainInstanceFieldNames;
     };
 
     class FunctionNode final : public ScopeNode {
@@ -2339,13 +2335,9 @@ namespace JSC {
 
         FunctionMode functionMode() const { return m_functionMode; }
 
-        const FixedVector<Identifier>* plainInstanceFieldNames() const { return m_plainInstanceFieldNames; }
-        void setPlainInstanceFieldNames(const FixedVector<Identifier>* names) { m_plainInstanceFieldNames = names; }
-
         static constexpr bool scopeIsFunction = true;
 
     private:
-        const FixedVector<Identifier>* m_plainInstanceFieldNames { nullptr };
         Identifier m_ident;
         FunctionMode m_functionMode;
         FunctionParameters* m_parameters;
@@ -2362,6 +2354,7 @@ namespace JSC {
 
         FunctionMetadataNode* m_metadata;
     };
+
 
     class FuncExprNode : public BaseFuncExprNode {
     public:
@@ -2448,7 +2441,6 @@ namespace JSC {
 
         bool hasStaticProperty(const Identifier& propName) { return m_classElements && m_classElements->hasStaticallyNamedProperty(propName); }
         bool hasInstanceFields() const { return m_classElements && m_classElements->hasInstanceFields(); }
-        ExpressionNode* constructorExpression() const { return m_constructorExpression; }
 
     private:
         RegisterID* emitBytecode(BytecodeGenerator&, RegisterID* = nullptr) final;

@@ -267,7 +267,6 @@ public:
                 blocksToVisit.append(block);
             }
 #endif
-            m_proc.didDuplicateTail();
         }
 
         m_proc.resetReachability();

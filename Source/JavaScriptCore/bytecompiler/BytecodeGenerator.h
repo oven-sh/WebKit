@@ -639,6 +639,7 @@ namespace JSC {
             m_codeBlock->addExpressionInfo(instructionOffset, divotOffset, startOffset, endOffset);
         }
 
+
         ALWAYS_INLINE bool leftHandSideNeedsCopy(bool rightHasAssignments, bool rightIsPure)
         {
             return (m_codeType != FunctionCode || rightHasAssignments) && !rightIsPure;
@@ -1107,7 +1108,6 @@ namespace JSC {
         bool shouldEmitTypeProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::TypeProfiler); }
         bool shouldEmitControlFlowProfilerHooks() const { return m_codeGenerationMode.contains(CodeGenerationMode::ControlFlowProfiler); }
         bool shouldRunBytecodeOptimizer() const { return m_optimizeBytecode; }
-        void recordFunctionAssignment(const Identifier&, const Variable&, ExpressionNode* right);
         
         ECMAMode ecmaMode() const { return m_ecmaMode; }
         void setUsesCheckpoints() { m_codeBlock->setHasCheckpoints(); }
@@ -1259,7 +1259,6 @@ namespace JSC {
             auto* executable = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::None, scriptMode(), WTF::move(optionalVariablesUnderTDZ), WTF::move(generatorOrAsyncWrapperFunctionParameterNames), WTF::move(parentPrivateNameEnvironment), newDerivedContextType, newEvalContextType, needsClassFieldInitializer, privateBrandRequirement);
             if (shouldRunBytecodeOptimizer()) [[unlikely]]
                 executable->setParentDeclaredNames(currentDeclaredNames());
-            executable->setPlainInstanceFieldNames(metadata->plainInstanceFieldNames());
             return executable;
         }
 
@@ -1347,8 +1346,6 @@ namespace JSC {
     private:
         OptionSet<CodeGenerationMode> m_codeGenerationMode;
         bool m_optimizeBytecode;
-        UncheckedKeyHashMap<FunctionMetadataNode*, unsigned> m_functionExprIndices;
-        Vector<FunctionAssignment> m_functionAssignments;
         RefPtr<DeclaredNamesLink> m_parentDeclaredNames;
         // currentDeclaredNames() state: one shared Frame per m_lexicalScopeStack entry (built lazily, dropped when the
         // entry is popped), the module's import names, and the last link handed out.

@@ -37,23 +37,16 @@ inline Structure* FunctionExecutable::createStructure(VM& vm, JSGlobalObject* gl
     return Structure::create(vm, globalObject, proto, TypeInfo(FunctionExecutableType, StructureFlags), info());
 }
 
-inline Structure* FunctionExecutable::createShortFormStructure(VM& vm, JSGlobalObject* globalObject, JSValue proto)
-{
-    return Structure::create(vm, globalObject, proto, TypeInfo(ShortFunctionExecutableType, StructureFlags), info());
-}
-
 inline void FunctionExecutable::notifyCreation(VM& vm, JSFunction* function, const char* reason)
 {
-    if (isShortForm())
-        return;
-    fullForm()->m_singleton.notifyWrite(vm, this, function, reason);
-    if (fullForm()->m_singleton.hasBeenInvalidated() && !fullForm()->m_unlinkedExecutable->singletonHasBeenInvalidated())
-        fullForm()->m_unlinkedExecutable->setSingletonHasBeenInvalidated();
+    m_singleton.notifyWrite(vm, this, function, reason);
+    if (m_singleton.hasBeenInvalidated())
+        m_unlinkedExecutable->setSingletonHasBeenInvalidated();
 }
 
 inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, CollectionScope collectionScope)
 {
-    fullForm()->m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
+    m_singleton.reconcileWeakReferencesAtGCEnd(vm, collectionScope);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForCall);
     jettisonCodeBlockEdgeIfDead(vm, m_codeBlockForConstruct);
     vm.heap.functionExecutableSpaceAndSet.outputConstraintsSet.remove(this);
@@ -61,22 +54,19 @@ inline void FunctionExecutable::reconcileWeakReferencesAtGCEnd(VM& vm, Collectio
 
 inline FunctionCodeBlock* FunctionExecutable::replaceCodeBlockWith(VM& vm, CodeSpecializationKind kind, CodeBlock* newCodeBlock)
 {
-    RELEASE_ASSERT(!isShortForm());
     if (kind == CodeSpecializationKind::CodeForCall) {
         FunctionCodeBlock* oldCodeBlock = codeBlockForCall();
-        fullForm()->m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
+        m_codeBlockForCall.setMayBeNull(vm, this, newCodeBlock);
         return oldCodeBlock;
     }
     ASSERT(kind == CodeSpecializationKind::CodeForConstruct);
     FunctionCodeBlock* oldCodeBlock = codeBlockForConstruct();
-    fullForm()->m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
+    m_codeBlockForConstruct.setMayBeNull(vm, this, newCodeBlock);
     return oldCodeBlock;
 }
 
 inline JSString* FunctionExecutable::toString(JSGlobalObject* globalObject)
 {
-    if (isShortForm())
-        return toStringSlow(globalObject);
     RareData& rareData = ensureRareData();
     if (!rareData.m_asString)
         return toStringSlow(globalObject);

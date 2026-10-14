@@ -215,9 +215,10 @@ ALWAYS_INLINE void* linkFor(VM& vm, JSCell* owner, CallFrame* calleeFrame, CallL
         RETURN_IF_EXCEPTION(throwScope, nullptr);
 
         codeBlock = *codeBlockSlot;
+        ASSERT(codeBlock);
 
         ArityCheckMode arity;
-        if (!codeBlock || calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()) || callLinkInfo->isVarargs())
+        if (calleeFrame->argumentCountIncludingThis() < static_cast<size_t>(codeBlock->numParameters()) || callLinkInfo->isVarargs())
             arity = ArityCheckMode::MustCheckArity;
         else
             arity = ArityCheckMode::ArityCheckNotRequired;

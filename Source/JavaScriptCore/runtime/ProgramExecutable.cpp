@@ -135,13 +135,6 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     const VariableEnvironment& variableDeclarations = unlinkedCodeBlock->variableDeclarations();
     const VariableEnvironment& lexicalDeclarations = unlinkedCodeBlock->lexicalDeclarations();
     size_t numberOfFunctions = unlinkedCodeBlock->numberOfFunctionDecls();
-    auto functionName = [&](size_t i) -> const Identifier& {
-#if USE(BUN_JSC_ADDITIONS)
-        if (FunctionExecutable* executable = unlinkedCodeBlock->functionDeclExecutable(i))
-            return executable->name();
-#endif
-        return unlinkedCodeBlock->functionDecl(i)->name();
-    };
     // The ES6 spec says that no vars/global properties/let/const can be duplicated in the global scope.
     // This carried out section 15.1.8 of the ES6 spec: http://www.ecma-international.org/ecma-262/6.0/index.html#sec-globaldeclarationinstantiation
     {
@@ -198,17 +191,18 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
         }
 
         for (size_t i = 0; i < numberOfFunctions; ++i) {
-            ASSERT(!functionName(i).isEmpty());
-            bool canDeclare = globalObject->canDeclareGlobalFunction(functionName(i));
+            UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
+            ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
+            bool canDeclare = globalObject->canDeclareGlobalFunction(unlinkedFunctionExecutable->name());
             RETURN_IF_EXCEPTION(throwScope, nullptr);
             if (!canDeclare) {
                 if (requiresCanDeclareGlobalFunctionQuirk()) {
                     VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-                    JSCell::deleteProperty(globalObject, globalObject, functionName(i));
+                    JSCell::deleteProperty(globalObject, globalObject, unlinkedFunctionExecutable->name());
                     RETURN_IF_EXCEPTION(throwScope, nullptr);
                     continue;
                 }
-                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, functionName(i));
+                return createErrorForInvalidGlobalFunctionDeclaration(globalObject, unlinkedFunctionExecutable->name());
             }
         }
 
@@ -256,11 +250,11 @@ JSObject* ProgramExecutable::initializeGlobalProperties(VM& vm, JSGlobalObject* 
     }
 
     for (size_t i = 0; i < numberOfFunctions; ++i) {
-        ASSERT(!functionName(i).isEmpty());
-        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(functionName(i));
+        UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
+        ASSERT(!unlinkedFunctionExecutable->name().isEmpty());
+        globalObject->createGlobalFunctionBinding<BindingCreationContext::Global>(unlinkedFunctionExecutable->name());
         RETURN_IF_EXCEPTION(throwScope, nullptr);
         if ((vm.typeProfiler() || vm.controlFlowProfiler()) && !unlinkedCodeBlock->hasNoInstructions()) {
-            UnlinkedFunctionExecutable* unlinkedFunctionExecutable = unlinkedCodeBlock->functionDecl(i);
             vm.functionHasExecutedCache()->insertUnexecutedRange(sourceID(), 
                 unlinkedFunctionExecutable->unlinkedFunctionStart(),
                 unlinkedFunctionExecutable->unlinkedFunctionEnd());

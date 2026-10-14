@@ -118,8 +118,6 @@ public:
     static constexpr uintptr_t getterShortcutIsCode = 1;
     static constexpr ptrdiff_t offsetOfGetterShortcut() { return OBJECT_OFFSETOF(GetterSetter, m_getterShortcut); }
     uintptr_t getterShortcut() const { return m_getterShortcut; }
-    bool getterReturnsVariable() const { return m_getterShortcut && !(m_getterShortcut & getterShortcutIsCode); }
-    void setVariableReturnedByGetter(WriteBarrierBase<Unknown>* variable) { m_getterShortcut = std::bit_cast<uintptr_t>(variable); }
     void setCodeOfGetter(const void* code) { m_getterShortcut = std::bit_cast<uintptr_t>(code) & getterShortcutIsCode ? 0 : std::bit_cast<uintptr_t>(code) | getterShortcutIsCode; }
 #endif
 

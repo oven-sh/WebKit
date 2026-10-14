@@ -417,6 +417,7 @@ private:
             return nullptr;
         }
 
+    
     private:
         JS_EXPORT_PRIVATE SyntheticSourceProvider(SyntheticSourceGenerator&& generator, LazySyntheticSourceGenerator&& lazyGenerator, const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL = String())
             : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), SourceTaintedOrigin::Untainted, TextPosition(), SourceProviderSourceType::Synthetic)

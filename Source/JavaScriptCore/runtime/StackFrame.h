@@ -36,6 +36,7 @@
 #include "WasmIndexOrName.h"
 #include "WriteBarrier.h"
 #include <limits.h>
+#include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/Variant.h>
 
 namespace JSC {
@@ -46,21 +47,94 @@ class JSGlobalObject;
 class JSObject;
 class ScriptExecutable;
 
-struct JSFrameData {
-    WriteBarrier<JSCell> callee;
-    WriteBarrier<CodeBlock> codeBlock;
-    BytecodeIndex bytecodeIndex;
-    bool m_isAsyncFrame { false };
-    CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
-    WriteBarrier<ScriptExecutable> aotExecutable { };
-    WriteBarrier<JSCell> aotInstanceToken { };
+class JSFrameData {
+public:
+    JSFrameData() = default;
+    JSFrameData(WriteBarrier<JSCell> callee, WriteBarrier<CodeBlock> codeBlock, BytecodeIndex bytecodeIndex, bool isAsyncFrame = false)
+        : m_calleeOrInstanceToken(callee.get())
+        , m_codeBlock(codeBlock.get())
+        , bytecodeIndex(bytecodeIndex)
+        , m_isAsyncFrame(isAsyncFrame)
+    {
+    }
+    struct CompiledCode {
+        ScriptExecutable* executable;
+        JSCell* instanceToken;
+    };
+    JSFrameData(WriteBarrier<JSCell> callee, const CompiledCode* compiledCode, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+        : m_calleeOrInstanceToken(callee.get())
+        , m_compiledCode(compiledCode)
+        , bytecodeIndex(bytecodeIndex)
+        , m_isAsyncFrame(isAsyncFrame)
+        , aotKind(kind)
+        , m_form(Form::Compiled)
+    {
+    }
+    JSFrameData(WriteBarrier<JSCell> instanceToken, uint32_t typedCode, uint32_t typedFunction, CodeSpecializationKind kind, BytecodeIndex callSite, bool isAsyncFrame)
+        : m_calleeOrInstanceToken(typedCode != notTyped ? instanceToken.get() : nullptr)
+        , m_typed { typedCode, typedFunction }
+        , bytecodeIndex(callSite)
+        , m_isAsyncFrame(isAsyncFrame)
+        , aotKind(kind)
+        , m_form(typedCode != notTyped ? Form::Typed : Form::Plain)
+    {
+        if (typedCode == notTyped)
+            m_codeBlock = nullptr;
+    }
+    JSCell* callee() const { return m_form == Form::Typed ? nullptr : m_calleeOrInstanceToken; }
+    CodeBlock* codeBlock() const { return m_form == Form::Plain ? m_codeBlock : nullptr; }
+    ScriptExecutable* aotExecutable() const { return m_form == Form::Compiled ? m_compiledCode->executable : nullptr; }
+    JSCell* aotInstanceToken() const
+    {
+        if (m_form == Form::Typed)
+            return m_calleeOrInstanceToken;
+        return m_form == Form::Compiled ? m_compiledCode->instanceToken : nullptr;
+    }
     // A frame of code compiled from types, which has neither a CodeBlock nor an executable. aotTypedCode: the function in the image whose
     // code was running; bytecodeIndex is a call site of it. aotTypedFunction: the function to report, which may have been inlined
     // into that one. See AOT::FunctionRef::Location::typedFunction.
     static constexpr uint32_t notTyped = UINT32_MAX;
-    uint32_t aotTypedCode { notTyped };
-    uint32_t aotTypedFunction { notTyped };
-    bool isTyped() const { return aotTypedCode != notTyped; }
+    uint32_t aotTypedCode() const { return isTyped() ? m_typed.code : notTyped; }
+    uint32_t aotTypedFunction() const { return isTyped() ? m_typed.function : notTyped; }
+    bool isTyped() const { return m_form == Form::Typed; }
+
+private:
+    enum class Form : uint8_t { Plain, Compiled, Typed };
+    struct Typed {
+        uint32_t code;
+        uint32_t function;
+    };
+
+    JSCell* m_calleeOrInstanceToken { nullptr };
+    union {
+        CodeBlock* m_codeBlock { nullptr };
+        const CompiledCode* m_compiledCode;
+        Typed m_typed;
+    };
+
+public:
+    BytecodeIndex bytecodeIndex;
+    bool m_isAsyncFrame { false };
+    CodeSpecializationKind aotKind { CodeSpecializationKind::CodeForCall };
+
+private:
+    Form m_form { Form::Plain };
+};
+static_assert(sizeof(JSFrameData) == 24 && std::is_trivially_copyable_v<JSFrameData>);
+
+struct CompiledFrameData : public ThreadSafeRefCounted<CompiledFrameData> {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(CompiledFrameData);
+    static Ref<CompiledFrameData> create(WriteBarrier<JSCell> callee, WriteBarrier<ScriptExecutable> executable, WriteBarrier<JSCell> instanceToken, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+    {
+        return adoptRef(*new CompiledFrameData(callee, executable, instanceToken, kind, bytecodeIndex, isAsyncFrame));
+    }
+    CompiledFrameData(WriteBarrier<JSCell> callee, WriteBarrier<ScriptExecutable> executable, WriteBarrier<JSCell> instanceToken, CodeSpecializationKind kind, BytecodeIndex bytecodeIndex, bool isAsyncFrame)
+        : code { executable.get(), instanceToken.get() }
+        , frame(callee, &code, kind, bytecodeIndex, isAsyncFrame)
+    {
+    }
+    JSFrameData::CompiledCode code;
+    JSFrameData frame;
 };
 
 struct WasmFrameData {
@@ -72,7 +146,7 @@ enum class AllowURLOverride : bool { No, Yes };
 
 class StackFrame {
 public:
-    using FrameData = Variant<JSFrameData, WasmFrameData>;
+    using FrameData = Variant<JSFrameData, WasmFrameData, Ref<CompiledFrameData>>;
 
     StackFrame(VM&, JSCell* owner, JSCell* callee);
     StackFrame(VM&, JSCell* owner, JSCell* callee, CodeBlock*, BytecodeIndex);
@@ -81,14 +155,14 @@ public:
     StackFrame(VM&, JSCell* owner, JSCell* calleeOrNull, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken, BytecodeIndex, bool isAsyncFrame = false);
     StackFrame(VM&, JSCell* owner, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite, bool isAsyncFrame = false);
     StackFrame(JSCell* instanceToken, const AOT::FrameInTrace& frame)
-        : m_frameData(JSFrameData { { }, { }, frame.callSite(), false, frame.isConstructed() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), frame.function, frame.typedFunction })
+        : m_frameData(JSFrameData { WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), frame.function, frame.typedFunction, frame.isConstructed() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, frame.callSite(), false })
     {
     }
     static void appendTypedFrames(VM&, JSCell* owner, JSCell* instanceToken, std::span<const AOT::FrameInTrace>, Vector<StackFrame>&, bool mayBeFollowedByMore);
     static void appendTypedFrames(const AOT::ReturnAddressTrace&, Vector<StackFrame>&);
     enum SuspendedTag { Suspended };
     StackFrame(SuspendedTag, JSCell* instanceToken, uint32_t typedCode, uint32_t typedFunction, BytecodeIndex callSite)
-        : m_frameData(JSFrameData { { }, { }, callSite, true, CodeSpecializationKind::CodeForCall, { }, WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), typedCode, typedFunction })
+        : m_frameData(JSFrameData { WriteBarrier<JSCell>(instanceToken, WriteBarrierEarlyInit), typedCode, typedFunction, CodeSpecializationKind::CodeForCall, callSite, true })
     {
     }
     StackFrame(VM&, JSCell* owner, JSCell* callee, bool isAsyncFrame);
@@ -98,48 +172,48 @@ public:
 
     bool hasLineAndColumnInfo() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
-            return jsFrame->codeBlock || jsFrame->aotExecutable || (jsFrame->isTyped() && !standsForHostFunction());
+        if (auto* jsFrame = jsFrameData())
+            return jsFrame->codeBlock() || jsFrame->aotExecutable() || (jsFrame->isTyped() && !standsForHostFunction());
         return false;
     }
 
     // Compiled from types: codeBlock() and ownerExecutable() are null though hasLineAndColumnInfo() is true.
     bool isTypedAOTFrame() const
     {
-        auto* jsFrame = std::get_if<JSFrameData>(&m_frameData);
+        auto* jsFrame = jsFrameData();
         return jsFrame && jsFrame->isTyped();
     }
     // The number isClosureOfTypedFunction() takes.
-    uint32_t typedAOTFunction() const { return std::get<JSFrameData>(m_frameData).aotTypedFunction; }
+    uint32_t typedAOTFunction() const { return jsFrameData()->aotTypedFunction(); }
 
     CodeBlock* codeBlock() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) {
-            if (jsFrame->aotExecutable) [[unlikely]]
+        if (auto* jsFrame = jsFrameData()) {
+            if (jsFrame->aotExecutable()) [[unlikely]]
                 return makeCodeBlock();
-            return jsFrame->codeBlock.get();
+            return jsFrame->codeBlock();
         }
         return nullptr;
     }
 
     CodeBlock* codeBlockIfExists() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
-            return jsFrame->codeBlock.get();
+        if (auto* jsFrame = jsFrameData())
+            return jsFrame->codeBlock();
         return nullptr;
     }
     JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
     JS_EXPORT_PRIVATE CodeType codeType() const;
     JS_EXPORT_PRIVATE bool isConstructor() const;
-    void setIsConstructed() { std::get<JSFrameData>(m_frameData).aotKind = CodeSpecializationKind::CodeForConstruct; }
+    void setIsConstructed() { jsFrameData()->aotKind = CodeSpecializationKind::CodeForConstruct; }
     JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE bool standsForHostFunction() const;
     JS_EXPORT_PRIVATE JSGlobalObject* codeGlobalObject() const;
 
     JSCell* callee() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
-            return jsFrame->callee.get();
+        if (auto* jsFrame = jsFrameData())
+            return jsFrame->callee();
         return nullptr;
     }
 
@@ -157,7 +231,7 @@ public:
 
     bool isAsyncFrame() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+        if (auto* jsFrame = jsFrameData())
             return jsFrame->m_isAsyncFrame;
         return false;
     }
@@ -165,7 +239,7 @@ public:
 
     bool isAsyncFrameWithoutCodeBlock() const
     {
-        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData))
+        if (auto* jsFrame = jsFrameData())
             return jsFrame->m_isAsyncFrame && !hasLineAndColumnInfo();
         return false;
     }
@@ -187,9 +261,26 @@ public:
     bool isMarked(VM&) const;
 
 private:
+    const JSFrameData* jsFrameData() const
+    {
+        if (auto* jsFrame = std::get_if<JSFrameData>(&m_frameData)) [[likely]]
+            return jsFrame;
+        if (auto* compiledFrame = std::get_if<Ref<CompiledFrameData>>(&m_frameData))
+            return &compiledFrame->get().frame;
+        return nullptr;
+    }
+    JSFrameData* jsFrameData() { return const_cast<JSFrameData*>(const_cast<const StackFrame*>(this)->jsFrameData()); }
+    template<typename JSFunctor, typename WasmFunctor>
+    decltype(auto) switchOnFrameData(const JSFunctor& jsFunctor, const WasmFunctor& wasmFunctor) const
+    {
+        if (auto* jsFrame = jsFrameData())
+            return jsFunctor(*jsFrame);
+        return wasmFunctor(std::get<WasmFrameData>(m_frameData));
+    }
     JS_EXPORT_PRIVATE CodeBlock* makeCodeBlock() const;
 
     FrameData m_frameData { JSFrameData {} };
 };
+static_assert(sizeof(StackFrame) == 32);
 
 } // namespace JSC

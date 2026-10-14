@@ -66,6 +66,57 @@ void place(Program&);
 // What the program needs at run time.
 Vector<uint8_t> encodeData(const Program&);
 
+template<typename NodeAt, typename Predecessors>
+bool tryFindImmediateDominators(unsigned count, const NodeAt& nodeAt, const Predecessors& predecessors, Vector<unsigned>& dominator)
+{
+    static constexpr unsigned none = UINT_MAX;
+    if (count <= 2048)
+        return false;
+    unsigned root = nodeAt(0);
+    Vector<unsigned> depth(FillWith { }, dominator.size(), 0u);
+    Vector<unsigned> jump(FillWith { }, dominator.size(), root);
+    auto intersect = [&](unsigned a, unsigned b) {
+        if (depth[a] < depth[b])
+            std::swap(a, b);
+        while (depth[a] > depth[b])
+            a = depth[jump[a]] >= depth[b] ? jump[a] : dominator[a];
+        while (a != b) {
+            bool jumps = jump[a] != jump[b];
+            a = jumps ? jump[a] : dominator[a];
+            b = jumps ? jump[b] : dominator[b];
+        }
+        return a;
+    };
+    auto find = [&](unsigned node) {
+        unsigned found = none;
+        for (unsigned other : predecessors[node]) {
+            if (dominator[other] != none)
+                found = found == none ? other : intersect(found, other);
+        }
+        return found;
+    };
+    bool isRight = true;
+    for (unsigned i = 1; i < count && isRight; ++i) {
+        unsigned node = nodeAt(i);
+        unsigned found = find(node);
+        if (found == none) {
+            isRight = false;
+            break;
+        }
+        dominator[node] = found;
+        depth[node] = depth[found] + 1;
+        unsigned middle = jump[found];
+        jump[node] = depth[found] - depth[middle] == depth[middle] - depth[jump[middle]] ? jump[middle] : found;
+    }
+    for (unsigned i = 1; i < count && isRight; ++i)
+        isRight = find(nodeAt(i)) == dominator[nodeAt(i)];
+    if (isRight)
+        return true;
+    dominator.fill(none, dominator.size());
+    dominator[root] = root;
+    return false;
+}
+
 // One function at a time. `function` is a copy of the one in the program, which stays as it was.
 
 // Every operand is of the type its operation needs, every argument of the type of the parameter, every value stored of the type of the
@@ -255,6 +306,7 @@ bool narrowingMayRetag(const Program&, const Type&);
 // Whether it may turn the object into one of a specialization of its layout, where it is. See Function::writesShapeWords.
 bool castWritesShapeWords(const Program&, const Function&, const Value&);
 bool claimMayMakeObjects(const Program&, const Function&, const Value&);
+bool fieldReadMayMakeObjects(const Program&, const Function&, const Value&);
 // Of a CallBuiltin: whether it tests that the receiver has its original structure, and is carried out by name where it has not.
 bool hasGenericFallback(const Program&, const Function&, const Value&);
 static constexpr size_t maxLengthOfTextComparedInPlace = 32;

@@ -10,6 +10,7 @@
 
 #include "AOTTypedObject.h"
 #include "AOTTypedThreads.h"
+#include "JSCJSValueInlines.h"
 #include "MarkedSpace.h"
 #include "Options.h"
 #include <wtf/DataLog.h>
@@ -4526,23 +4527,8 @@ public:
             if (!isConstant.get(index) || charactersAreAllASCII(byteCast<Latin1Character>(bytes)))
                 continue;
             // UTF-8, but that half of a surrogate pair on its own is encoded like any other code unit.
-            Vector<char16_t> units;
+            Vector<char16_t> units = decodeTextOfProgram(bytes);
             char16_t all = 0;
-            for (size_t i = 0; i < bytes.size();) {
-                uint8_t lead = bytes[i];
-                unsigned length = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
-                RELEASE_ASSERT(i + length <= bytes.size());
-                char32_t character = length == 1 ? lead : lead & (0x7f >> length);
-                for (unsigned k = 1; k < length; ++k)
-                    character = character << 6 | (bytes[i + k] & 0x3f);
-                i += length;
-                if (U_IS_BMP(character))
-                    units.append(static_cast<char16_t>(character));
-                else {
-                    units.append(U16_LEAD(character));
-                    units.append(U16_TRAIL(character));
-                }
-            }
             for (char16_t unit : units)
                 all |= unit;
             RELEASE_ASSERT(units.size() < Data::isDecodedTo16Bits);
@@ -5430,7 +5416,7 @@ private:
             typesWithHash.append({ said, offset });
             auto& runtimeType = at<RuntimeType>(offset);
             runtimeType.primitives = type.primitives;
-            runtimeType.bits = (type.anyObject ? RuntimeType::allowsAnyObjectBit : 0) | (type.anyFunction ? RuntimeType::allowsAnyFunctionBit : 0) | (type.admitsForeignObjects(m_program) ? RuntimeType::admitsForeignObjectsBit : 0)
+            runtimeType.bits = (type.anyObject ? RuntimeType::allowsAnyObjectBit : 0) | (type.anyFunction ? RuntimeType::allowsAnyFunctionBit : 0) | (!type.admitsForeignObjects(m_program) ? 0 : m_program.isOpenedForLog(type) ? RuntimeType::isOpenedForLogBit : RuntimeType::admitsForeignObjectsBit)
                 | (type.elements ? RuntimeType::hasElementsBit : 0) | (hasOneInteger ? RuntimeType::hasOneIntegerBit : hasNoInteger ? 0 : RuntimeType::hasIntegersBit);
             runtimeType.viewsCount = type.views.size();
             runtimeType.jsTypesCount = type.engineClasses.size();

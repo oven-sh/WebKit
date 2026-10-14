@@ -34,6 +34,7 @@
 namespace JSC {
 
 class FunctionExecutable;
+class JSModuleLoader;
 class JSModuleRecord;
 class SymbolTable;
 class UnlinkedFunctionExecutable;

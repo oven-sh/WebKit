@@ -269,7 +269,7 @@ private:
         Vector<unsigned> dominator;
         dominator.fill(unknown, numberOfBlocks);
         dominator[0] = 0;
-        for (bool changed = true; changed;) {
+        for (bool changed = !tryFindImmediateDominators(order.size(), [&](unsigned i) { return order[i]; }, predecessors, dominator); changed;) {
             changed = false;
             for (unsigned i = 1; i < order.size(); ++i) {
                 unsigned found = unknown;

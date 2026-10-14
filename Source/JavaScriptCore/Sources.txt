@@ -1402,7 +1402,6 @@ yarr/YarrCanonicalizeUnicode.cpp
 runtime/InternalFieldTuple.cpp
 
 heap/BunV8HeapSnapshotBuilder.cpp
-heap/HeapCensus.cpp
 
 ffi/BunFFI.cpp
 ffi/FFICallHost.cpp

@@ -871,6 +871,7 @@ private:
             return true;
         }
 
+
         // addBottom creates a fresh Const; InsertionSet::insertBottom would
         // alias placeholders of the same type within one block.
         Vector<Value*, 4> sources;
@@ -1232,3 +1233,4 @@ bool eliminateCommonSubexpressions(Procedure& proc)
 } } // namespace JSC::B3
 
 #endif // ENABLE(B3_JIT)
+

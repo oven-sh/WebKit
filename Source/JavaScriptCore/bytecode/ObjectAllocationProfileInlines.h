@@ -32,15 +32,6 @@
 namespace JSC {
 
 template<typename Derived>
-inline void ObjectAllocationProfileBase<Derived>::replaceStructure(VM& vm, JSCell* owner, Structure* structure)
-{
-    ASSERT(m_structure && !structure->hasPolyProto());
-    m_allocator = subspaceFor<JSFinalObject>(vm)->allocatorFor(JSFinalObject::allocationSize(structure->inlineCapacity()), AllocatorForMode::EnsureAllocator);
-    WTF::storeStoreFence();
-    m_structure.set(vm, owner, structure);
-}
-
-template<typename Derived>
 ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& vm, JSGlobalObject* globalObject, JSCell* owner, JSObject* prototype, unsigned inferredInlineCapacity, JSFunction* constructor, FunctionRareData* functionRareData)
 {
     ASSERT(!m_allocator);
@@ -59,10 +50,7 @@ ALWAYS_INLINE void ObjectAllocationProfileBase<Derived>::initializeProfile(VM& v
         // https://bugs.webkit.org/show_bug.cgi?id=177792
 
         executable = constructor->jsExecutable();
-    }
-    if (executable && executable->hasAOTEntry())
-        executable = nullptr;
-    if (executable) {
+
         if (Structure* structure = executable->cachedPolyProtoStructure()) {
             RELEASE_ASSERT(structure->typeInfo().type() == FinalObjectType);
             m_allocator = Allocator();

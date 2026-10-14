@@ -90,8 +90,6 @@ JSC::BuiltinCode codeName##Generator(JSC::VM& vm) \\
 {\\
     if (vm.builtinExecutables()->hasCompiledFunction(JSC::BuiltinCodeIndex::codeName)) \\
         return { nullptr, static_cast<uint32_t>(JSC::BuiltinCodeIndex::codeName) }; \\
-    if (auto* executable = vm.builtinExecutables()->programExecutableFor(JSC::BuiltinCodeIndex::codeName, s_##codeName, s_##codeName##Length)) \\
-        return { executable, 0 }; \\
     return { vm.builtinExecutables()->codeName##Executable()->link(vm, nullptr, vm.builtinExecutables()->codeName##Source(), std::nullopt, s_##codeName##Intrinsic), 0 }; \
 }
 ${macroPrefix}_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_GENERATOR)

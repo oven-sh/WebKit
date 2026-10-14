@@ -36,8 +36,7 @@ static constexpr ptrdiff_t offsetOfInstanceInAdapter = -48;
 static constexpr unsigned adapterSaveAreaSize = 48;
 #else
 static constexpr ptrdiff_t offsetOfCellCageBaseRegisterInAdapter = -32;
-static constexpr ptrdiff_t offsetOfStaticsRegisterInAdapter = -40;
-static constexpr ptrdiff_t offsetOfInstanceInAdapter = -48;
+static constexpr ptrdiff_t offsetOfInstanceInAdapter = -40;
 static constexpr unsigned adapterSaveAreaSize = 48;
 #endif
 
@@ -67,6 +66,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(EnterResume) \
     v(CallValue) \
     v(CallValueWithoutThis) \
+    v(CallValueNamed) \
     v(CallMethod) \
     v(CallMethodRead) \
     v(ApplyArray) \
@@ -74,9 +74,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(ConstructClosure) \
     v(EnterFunctionForCall) \
     v(EnterFunctionForConstruct) \
-    v(EnterStaticFunctionForCall) \
-    v(EnterStaticFunctionForConstruct) \
-    v(ConstructViaCall) \
     v(CallBoundFunction) \
     v(OperationValue) \
     v(OperationVoid) \
@@ -130,6 +127,22 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafAllocateTypedObject) \
     v(AllocateTypedObjectFromTemplate) \
     v(LeafAllocateTypedObjectFromTemplate) \
+    v(AllocateTypedExtension16) \
+    v(AllocateTypedExtension32) \
+    v(AllocateTypedExtension48) \
+    v(AllocateTypedExtension64) \
+    v(AllocateTypedExtension80) \
+    v(AllocateTypedExtension96) \
+    v(AllocateTypedExtension112) \
+    v(AllocateTypedExtension128) \
+    v(AllocateTypedExtension144) \
+    v(AllocateTypedExtension160) \
+    v(AllocateTypedExtension176) \
+    v(AllocateTypedExtension192) \
+    v(AllocateTypedExtension208) \
+    v(AllocateTypedExtension224) \
+    v(AllocateTypedExtension240) \
+    v(AllocateTypedExtension256) \
     v(NewTypedClosure0) \
     v(LeafNewTypedClosure0) \
     v(NewTypedClosure1) \
@@ -443,7 +456,6 @@ ASCIILiteral nameOf(Stub);
 static constexpr Stub askingReceiver(Stub stub) { return static_cast<Stub>(static_cast<unsigned>(stub) - 1); }
 static_assert(askingReceiver(Stub::MapGet) == Stub::MapGetAskingReceiver && askingReceiver(Stub::MapHas) == Stub::MapHasAskingReceiver && askingReceiver(Stub::MapSet) == Stub::MapSetAskingReceiver && askingReceiver(Stub::SetHas) == Stub::SetHasAskingReceiver && askingReceiver(Stub::SetAdd) == Stub::SetAddAskingReceiver && askingReceiver(Stub::MapSetWithStringKey) == Stub::MapSetWithStringKeyAskingReceiver && askingReceiver(Stub::SetAddWithStringKey) == Stub::SetAddWithStringKeyAskingReceiver && askingReceiver(Stub::MapGetWithStringKey) == Stub::MapGetWithStringKeyAskingReceiver && askingReceiver(Stub::MapHasWithStringKey) == Stub::MapHasWithStringKeyAskingReceiver && askingReceiver(Stub::SetHasWithStringKey) == Stub::SetHasWithStringKeyAskingReceiver);
 static constexpr unsigned shortLiteralLengthBits = 4;
-static constexpr unsigned shortLiteralLengthMask = (1u << shortLiteralLengthBits) - 1;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegisters <= 4);
 // For code compiled from types. Each is followed by its variant for a caller without a frame.
@@ -596,7 +608,6 @@ struct ListDescriptor {
 
     uint32_t bits;
 };
-static constexpr unsigned maxListItems = ListDescriptor::maxItems;
 
 struct PackedSite {
     static constexpr unsigned shift = 24;

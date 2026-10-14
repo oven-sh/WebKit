@@ -73,6 +73,7 @@ private:
 
     static Structure* create(VM&, Structure*, UniquedStringImpl* brand, DeferredStructureTransitionWatchpointFire* = nullptr);
 
+    alignas(AOTFields) [[maybe_unused]] std::byte m_roomForAOTFields[sizeof(AOTFields)];
     CompactRefPtr<UniquedStringImpl> m_brand;
     WriteBarrierStructureID m_parentBrand;
 

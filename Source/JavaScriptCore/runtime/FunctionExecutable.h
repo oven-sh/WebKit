@@ -58,18 +58,9 @@ public:
 
     static void destroy(JSCell*);
         
-    static constexpr size_t sizeOfShortForm = 32;
-    inline static Structure* createShortFormStructure(VM&, JSGlobalObject*, JSValue);
-    static FunctionExecutable* createInShortForm(VM&, const uint64_t (&entry)[2], const uint32_t (&index)[2]);
-
-    const FunctionExecutable* fullForm() const { return WTF::opaque(this); }
-    FunctionExecutable* fullForm() { return WTF::opaque(this); }
-
     UnlinkedFunctionExecutable* unlinkedExecutable() const
     {
-        if (isShortForm()) [[unlikely]]
-            return shortFormUnlinkedExecutable();
-        return fullForm()->m_unlinkedExecutable.get();
+        return m_unlinkedExecutable.get();
     }
 
     // Returns either call or construct bytecode. This can be appropriate
@@ -89,7 +80,7 @@ public:
 
     FunctionCodeBlock* codeBlockForCall() const
     {
-        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(fullForm()->m_codeBlockForCall.get());
+        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForCall.get());
     }
 
     bool isGeneratedForConstruct() const
@@ -99,7 +90,7 @@ public:
 
     FunctionCodeBlock* codeBlockForConstruct() const
     {
-        return isShortForm() ? nullptr : std::bit_cast<FunctionCodeBlock*>(fullForm()->m_codeBlockForConstruct.get());
+        return std::bit_cast<FunctionCodeBlock*>(m_codeBlockForConstruct.get());
     }
         
     bool isGeneratedFor(CodeSpecializationKind kind)
@@ -135,13 +126,13 @@ public:
         return rareData.m_returnStatementTypeSet;
     }
         
-    FunctionMode functionMode() { return unlinkedExecutable()->functionMode(); }
-    ImplementationVisibility implementationVisibility() const { return unlinkedExecutable()->implementationVisibility(); }
-    bool isBuiltinFunction() const { return unlinkedExecutable()->isBuiltinFunction(); }
-    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!sourceProvider() || !sourceProvider()->sourceURL()); }
-    ConstructAbility constructAbility() const { return unlinkedExecutable()->constructAbility(); }
-    InlineAttribute inlineAttribute() const { return unlinkedExecutable()->inlineAttribute(); }
-    bool isClass() const { return unlinkedExecutable()->isClass(); }
+    FunctionMode functionMode() { return m_unlinkedExecutable->functionMode(); }
+    ImplementationVisibility implementationVisibility() const { return m_unlinkedExecutable->implementationVisibility(); }
+    bool isBuiltinFunction() const { return m_unlinkedExecutable->isBuiltinFunction(); }
+    bool isPrivateBuiltinFunction() const { return isBuiltinFunction() && (!m_source.provider() || !m_source.provider()->sourceURL()); }
+    ConstructAbility constructAbility() const { return m_unlinkedExecutable->constructAbility(); }
+    InlineAttribute inlineAttribute() const { return m_unlinkedExecutable->inlineAttribute(); }
+    bool isClass() const { return m_unlinkedExecutable->isClass(); }
     bool isArrowFunction() const { return parseMode() == SourceParseMode::ArrowFunctionMode; }
     bool isGetter() const { return parseMode() == SourceParseMode::GetterMode; }
     bool isSetter() const { return parseMode() == SourceParseMode::SetterMode; }
@@ -160,35 +151,19 @@ public:
             SourceParseMode::AsyncGeneratorBodyMode
         ).contains(parseMode()) || isClass();
     }
-    DerivedContextType derivedContextType() const { return unlinkedExecutable()->derivedContextType(); }
-    bool isClassConstructorFunction() const { return unlinkedExecutable()->isClassConstructorFunction(); }
-    const Identifier& name()
-    {
-        if (isShortForm()) [[unlikely]]
-            return unlinkedExecutable()->hasName() ? ecmaName() : unlinkedExecutable()->name();
-        return fullForm()->m_unlinkedExecutable->name();
-    }
-    const Identifier& ecmaName()
-    {
-        if (isShortForm()) [[unlikely]]
-            return shortFormName();
-        return fullForm()->m_unlinkedExecutable->ecmaName();
-    }
+    DerivedContextType derivedContextType() const { return m_unlinkedExecutable->derivedContextType(); }
+    bool isClassConstructorFunction() const { return m_unlinkedExecutable->isClassConstructorFunction(); }
+    const Identifier& name() { return m_unlinkedExecutable->name(); }
+    const Identifier& ecmaName() { return m_unlinkedExecutable->ecmaName(); }
     // Unlike name() / ecmaName(), also callable from the collector's end phase (ErrorInstance::computeErrorInfo's stack traces).
-    String nameWithoutGC() { return isShortForm() ? (unlinkedExecutable()->hasName() ? ecmaNameWithoutGC() : String()) : fullForm()->m_unlinkedExecutable->nameWithoutGC(); }
-    String ecmaNameWithoutGC() { return isShortForm() ? shortFormNameWithoutGC() : fullForm()->m_unlinkedExecutable->ecmaNameWithoutGC(); }
-    const Identifier* tryGetEcmaNameConcurrently() { return isShortForm() ? tryGetShortFormNameConcurrently() : fullForm()->m_unlinkedExecutable->tryGetEcmaNameConcurrently(); }
+    String nameWithoutGC() { return m_unlinkedExecutable->nameWithoutGC(); }
+    String ecmaNameWithoutGC() { return m_unlinkedExecutable->ecmaNameWithoutGC(); }
+    const Identifier* tryGetEcmaNameConcurrently() { return m_unlinkedExecutable->tryGetEcmaNameConcurrently(); } // null while the name is still only in the bytecode cache; otherwise &ecmaName() (which may itself be a null Identifier)
     UTF8CString inferredNameForTools(); // dumps and debug info; callable from compiler / GC threads, where a name still in the bytecode cache prints as a placeholder
-    unsigned parameterCount() const { return isShortForm() ? shortFormRow().parameterCount : fullForm()->m_unlinkedExecutable->parameterCount(); }
-    SourceParseMode parseMode() const { return unlinkedExecutable()->parseMode(); }
-    JSParserScriptMode scriptMode() const { return unlinkedExecutable()->scriptMode(); }
-    SourceCode classSource() const
-    {
-        if (isShortForm()) [[unlikely]]
-            return unlinkedExecutable()->classSource(*sourceProvider());
-        bool isInTopLevelSource = fullForm()->m_unlinkedExecutable->isBuiltinDefaultClassConstructor() && fullForm()->m_topLevelExecutable;
-        return fullForm()->m_unlinkedExecutable->classSource(*(isInTopLevelSource ? fullForm()->m_topLevelExecutable->source() : source()).provider());
-    }
+    unsigned parameterCount() const { return m_unlinkedExecutable->parameterCount(); } // Excluding 'this'!
+    SourceParseMode parseMode() const { return m_unlinkedExecutable->parseMode(); }
+    JSParserScriptMode scriptMode() const { return m_unlinkedExecutable->scriptMode(); }
+    SourceCode classSource() const { return m_unlinkedExecutable->classSource(); }
 
     DECLARE_VISIT_CHILDREN;
     DECLARE_VISIT_OUTPUT_CONSTRAINTS;
@@ -198,8 +173,8 @@ public:
     void setOverrideLineNumber(int overrideLineNumber)
     {
         if (overrideLineNumber == overrideLineNumberNotFound) {
-            if (auto* rareData = this->rareData()) [[unlikely]]
-                rareData->m_overrideLineNumber = std::nullopt;
+            if (m_rareData) [[unlikely]]
+                m_rareData->m_overrideLineNumber = std::nullopt;
             return;
         }
         ensureRareData().m_overrideLineNumber = overrideLineNumber;
@@ -207,24 +182,22 @@ public:
 
     std::optional<int> overrideLineNumber() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_overrideLineNumber;
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_overrideLineNumber;
         return std::nullopt;
     }
 
     LineStartTable::PositionInfo sourceStartInfo() const
     {
-        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return source.provider()->positionInfoForOffset(source.startOffset());
+        return m_source.provider()->positionInfoForOffset(m_source.startOffset());
     }
 
     // endOffset() is one past the closing brace, but a reported end column names the brace itself.
     LineStartTable::PositionInfo sourceEndInfo() const
     {
-        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return source.provider()->positionInfoForOffset(source.endOffset() - 1);
+        return m_source.provider()->positionInfoForOffset(m_source.endOffset() - 1);
     }
 
     // Deliberately not cached in RareData: the only callers are the debugger and a debug assertion,
@@ -232,23 +205,18 @@ public:
     // web-reachable Function.prototype.toString path.
     int lineCount() const
     {
-        if (isShortForm()) [[unlikely]]
-            return 0;
         return static_cast<int>(sourceEndInfo().line0Based) - static_cast<int>(sourceStartInfo().line0Based);
     }
 
     int endColumn() const
     {
-        if (isShortForm()) [[unlikely]]
-            return startColumn();
-        auto& source = fullForm()->m_source;
         SUPPRESS_UNCOUNTED_ARG // m_source holds the owning ref for the whole call
-        return source.provider()->documentLineColumnForOffset(source.endOffset() - 1).column;
+        return m_source.provider()->documentLineColumnForOffset(m_source.endOffset() - 1).column;
     }
 
     int firstLine() const
     {
-        return ScriptExecutable::firstLine();
+        return source().firstLine().oneBasedInt();
     }
 
     int lastLine() const
@@ -258,40 +226,32 @@ public:
 
     unsigned functionEnd() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_functionEnd;
-        if (isShortForm()) [[unlikely]]
-            return 0;
-        return fullForm()->m_unlinkedExecutable->unlinkedFunctionEnd();
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_functionEnd;
+        return m_unlinkedExecutable->unlinkedFunctionEnd();
     }
 
     unsigned functionStart() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_functionStart;
-        if (isShortForm()) [[unlikely]]
-            return 0;
-        return fullForm()->m_unlinkedExecutable->unlinkedFunctionStart();
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_functionStart;
+        return m_unlinkedExecutable->unlinkedFunctionStart();
     }
 
     unsigned parametersStartOffset() const
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_parametersStartOffset;
-        if (isShortForm()) [[unlikely]]
-            return 0;
-        return fullForm()->m_unlinkedExecutable->parametersStartOffset();
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_parametersStartOffset;
+        return m_unlinkedExecutable->parametersStartOffset();
     }
 
     void overrideInfo(const FunctionOverrideInfo&);
 
     DECLARE_EXPORT_INFO;
 
-    bool singletonHasBeenInvalidated() const { return isShortForm() || fullForm()->m_singleton.hasBeenInvalidated(); }
     InferredValue<JSFunction>& singleton()
     {
-        RELEASE_ASSERT(!isShortForm());
-        return fullForm()->m_singleton;
+        return m_singleton;
     }
 
     void notifyCreation(VM&, JSFunction*, const char* reason);
@@ -299,8 +259,8 @@ public:
     // Cached poly proto structure for the result of constructing this executable.
     Structure* cachedPolyProtoStructure()
     {
-        if (auto* rareData = this->rareData()) [[unlikely]]
-            return rareData->m_cachedPolyProtoStructureID.get();
+        if (m_rareData) [[unlikely]]
+            return m_rareData->m_cachedPolyProtoStructureID.get();
         return nullptr;
     }
     void setCachedPolyProtoStructure(VM& vm, Structure* structure)
@@ -310,24 +270,14 @@ public:
 
     InlineWatchpointSet& ensurePolyProtoWatchpoint()
     {
-        RareData& rareData = ensureRareData();
-        if (!rareData.m_polyProtoWatchpoint)
-            rareData.m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
-        return *rareData.m_polyProtoWatchpoint;
+        if (!m_polyProtoWatchpoint)
+            m_polyProtoWatchpoint = Box<InlineWatchpointSet>::create(IsWatched);
+        return *m_polyProtoWatchpoint;
     }
 
-    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return rareData() ? rareData()->m_polyProtoWatchpoint : nullptr; }
+    Box<InlineWatchpointSet> sharedPolyProtoWatchpoint() const { return m_polyProtoWatchpoint; }
 
-    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return isShortForm() ? nullptr : fullForm()->m_topLevelExecutable.get(); }
-
-    uint64_t aotEntryFor(CodeSpecializationKind kind) const { return m_aotEntry[static_cast<unsigned>(kind)]; }
-    uint32_t aotIndexFor(CodeSpecializationKind kind) const { return m_aotIndex[static_cast<unsigned>(kind)]; }
-    void becomeSharedAcrossRealms(VM&);
-    JS_EXPORT_PRIVATE void setAOTCode(CodeSpecializationKind, uint64_t entry, uint32_t index);
-    static constexpr uint32_t aotConstructViaCallIndex = std::numeric_limits<uint32_t>::max();
-    bool constructsViaCall() const { return m_aotIndex[static_cast<unsigned>(CodeSpecializationKind::CodeForConstruct)] == aotConstructViaCallIndex; }
-    static constexpr ptrdiff_t offsetOfAOTEntryFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotEntry) + static_cast<unsigned>(kind) * sizeof(void*); }
-    static constexpr ptrdiff_t offsetOfAOTIndexFor(CodeSpecializationKind kind) { return OBJECT_OFFSETOF(FunctionExecutable, m_aotIndex) + static_cast<unsigned>(kind) * sizeof(uint32_t); }
+    ScriptExecutable* topLevelExecutable() const LIFETIME_BOUND { return m_topLevelExecutable.get(); }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -336,9 +286,9 @@ public:
     JSString* toString(JSGlobalObject*);
     JSString* asStringConcurrently() const
     {
-        if (!rareData())
+        if (!m_rareData)
             return nullptr;
-        return rareData()->m_asString.get();
+        return m_rareData->m_asString.get();
     }
 
     static constexpr ptrdiff_t offsetOfRareData() { return OBJECT_OFFSETOF(FunctionExecutable, m_rareData); }
@@ -370,7 +320,6 @@ public:
         WriteBarrier<JSString> m_asString;
         unsigned m_functionStart { UINT_MAX };
         unsigned m_functionEnd { UINT_MAX };
-        Box<InlineWatchpointSet> m_polyProtoWatchpoint;
     };
 
 private:
@@ -381,12 +330,10 @@ private:
 
     friend class ScriptExecutable;
 
-    RareData* rareData() const { return isShortForm() ? nullptr : fullForm()->m_rareData.get(); }
     RareData& ensureRareData()
     {
-        RELEASE_ASSERT(!isShortForm());
-        if (fullForm()->m_rareData) [[likely]]
-            return *fullForm()->m_rareData;
+        if (m_rareData) [[likely]]
+            return *m_rareData;
         return ensureRareDataSlow();
     }
     RareData& ensureRareDataSlow();
@@ -402,11 +349,7 @@ private:
     WriteBarrier<CodeBlock> m_codeBlockForCall;
     WriteBarrier<CodeBlock> m_codeBlockForConstruct;
     InferredValue<JSFunction> m_singleton;
-
-    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* shortFormUnlinkedExecutable() const;
-    JS_EXPORT_PRIVATE const Identifier& shortFormName() const;
-    JS_EXPORT_PRIVATE String shortFormNameWithoutGC() const;
-    JS_EXPORT_PRIVATE const Identifier* tryGetShortFormNameConcurrently() const;
+    Box<InlineWatchpointSet> m_polyProtoWatchpoint;
 };
 
 } // namespace JSC

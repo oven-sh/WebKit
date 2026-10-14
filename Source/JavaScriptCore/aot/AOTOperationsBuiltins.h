@@ -32,7 +32,6 @@ namespace AOT {
 
 enum class MathFunction : uint32_t { Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Tanh, Asinh, Acosh, Atanh, Log, Log2, Log10, Log1p, Exp, Expm1, Cbrt };
 enum class DateField : uint32_t { FullYear, Month, Date, Day, Hours, Minutes, Seconds, TimezoneOffset };
-static constexpr uint32_t dateFieldIsUTC = 16;
 
 JSC_DECLARE_JIT_OPERATION(operationAOTMapGet, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTMapHas, EncodedJSValue, (Instance*, JSCell*, EncodedJSValue));

@@ -31,7 +31,6 @@
 #include "config.h"
 #include "BytecodeGenerator.h"
 
-#include "AOTProgram.h"
 #include "AbstractModuleRecord.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
@@ -367,6 +366,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         m_codeBlock->addExceptionHandler(info);
     }
     
+
     if (shouldRunBytecodeOptimizer()) [[unlikely]]
         BytecodeOptimizer::run(*this);
 
@@ -379,10 +379,6 @@ ParserError BytecodeGenerator::generate(unsigned& size)
         return ParserError(ParserError::OutOfMemory);
     if (m_costOfAudits) [[unlikely]]
         m_codeBlock->setCostOfAudits(m_costOfAudits);
-#if ENABLE(AOT)
-    if (!m_functionAssignments.isEmpty()) [[unlikely]]
-        AOT::recordFunctionAssignments(m_codeBlock->codeBlock(), WTF::move(m_functionAssignments));
-#endif
 
     // We limit total bytecode sequence size to int32_t so that we can use int32_t jump offsets.
     // Also, this allows us to use one bit of bytecode for some flag, including "ignore-result-flag".
@@ -397,7 +393,7 @@ ParserError BytecodeGenerator::generate(unsigned& size)
 BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(programNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -445,7 +441,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ProgramNode* programNode, UnlinkedP
 BytecodeGenerator::BytecodeGenerator(VM& vm, FunctionNode* functionNode, UnlinkedFunctionCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>* generatorOrAsyncWrapperFunctionParameterNames, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(functionNode)
     , m_codeType(FunctionCode)
@@ -823,6 +819,7 @@ IGNORE_GCC_WARNINGS_END
         createVariable(Identifier::fromUid(m_vm, entry.key.get()), varKind(entry.key.get()), functionSymbolTable, IgnoreExisting);
     }
 
+
     if (functionNode->needsNewTargetRegisterForThisScope() || isNewTargetUsedInInnerArrowFunction() || usesEval())
         m_newTargetRegister = addVar();
 
@@ -1019,7 +1016,7 @@ IGNORE_GCC_WARNINGS_END
 BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment* parentPrivateNameEnvironment, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(evalNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -1087,7 +1084,7 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, EvalNode* evalNode, UnlinkedEvalCod
 BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNode, UnlinkedModuleProgramCodeBlock* codeBlock, OptionSet<CodeGenerationMode> codeGenerationMode, const RefPtr<TDZEnvironmentLink>& parentScopeTDZVariables, const FixedVector<Identifier>*, const PrivateNameEnvironment*, OptimizeBytecode optimize, RefPtr<DeclaredNamesLink>&& parentDeclaredNames)
     : BytecodeGeneratorBase(makeUnique<UnlinkedCodeBlockGenerator>(vm, codeBlock), CodeBlock::llintBaselineCalleeSaveSpaceAsVirtualRegisters())
     , m_codeGenerationMode(codeGenerationMode)
-    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer() || vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
+    , m_optimizeBytecode(optimize == OptimizeBytecode::Yes || Options::useBytecodeOptimizer())
     , m_parentDeclaredNames(WTF::move(parentDeclaredNames))
     , m_scopeNode(moduleProgramNode)
     , m_thisRegister(CallFrame::thisArgumentOffset())
@@ -1273,10 +1270,6 @@ BytecodeGenerator::BytecodeGenerator(VM& vm, ModuleProgramNode* moduleProgramNod
     // cloned in the code block linking. After that, to create the module environment, we retrieve
     // the cloned symbol table from the linked code block by using this offset.
     codeBlock->setModuleEnvironmentSymbolTableConstantRegisterOffset(constantSymbolTable->index());
-#if ENABLE(AOT)
-    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
-        AOT::noteDeclaredNames(codeBlock, currentDeclaredNames());
-#endif
 }
 
 BytecodeGenerator::~BytecodeGenerator() = default;
@@ -3414,15 +3407,6 @@ RegisterID* BytecodeGenerator::emitInstanceFieldInitializationIfNeeded(RegisterI
     if (!(isConstructor() || isDerivedConstructorContext()) || needsClassFieldInitializer() == NeedsClassFieldInitializer::No)
         return dst;
 
-    if (isConstructor() && m_scopeNode->isFunctionNode()) {
-        if (auto* names = static_cast<FunctionNode*>(m_scopeNode)->plainInstanceFieldNames(); names && !names->isEmpty()) {
-            RefPtr<RegisterID> value = emitLoad(newTemporary(), jsUndefined());
-            for (auto& name : *names)
-                emitDirectPutById(dst, name, value.get());
-            return dst;
-        }
-    }
-
     RefPtr<RegisterID> initializer = emitDirectGetById(newTemporary(), constructor, propertyNames().builtinNames().instanceFieldInitializerPrivateName());
     CallArguments args(*this, nullptr);
     emitMove(args.thisRegister(), dst);
@@ -3596,17 +3580,16 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
             continue;
         ConcurrentJSLocker locker(entry.m_symbolTable->m_lock);
         unsigned size = entry.m_symbolTable->size(locker);
-        const void* identity = VirtualRegister(entry.m_symbolTableConstantIndex).isConstant() ? m_codeBlock->getConstant(VirtualRegister(entry.m_symbolTableConstantIndex)).asCell() : nullptr;
-        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size || node->identity != identity) {
+        if (!node || node->isBarrier || node->next != frames || m_frameSymbolTableSizes[i] != size) {
             DeclaredNamesLink::Frame::Slots slots;
             for (auto it = entry.m_symbolTable->begin(locker), end = entry.m_symbolTable->end(locker); it != end; ++it) {
                 VarOffset offset = it->value.varOffset();
                 if (offset.isScope()) {
                     bool isLazyFunctionSlot = m_moduleEnvironmentSymbolTableConstantIndex && entry.m_symbolTableConstantIndex == *m_moduleEnvironmentSymbolTableConstantIndex && m_lazyModuleFunctionDeclarations.contains(it->key.get());
-                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0) | (it->value.isReadOnly() ? DeclaredNamesLink::Frame::readOnlySlotFlag : 0));
+                    slots.add(it->key, offset.scopeOffset().offset() | (isLazyFunctionSlot ? DeclaredNamesLink::Frame::lazyFunctionSlotFlag : 0));
                 }
             }
-            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames, identity);
+            node = DeclaredNamesLink::Frame::create(false, WTF::move(slots), frames);
             m_frameSymbolTableSizes[i] = size;
         }
         frames = node;
@@ -3619,7 +3602,7 @@ RefPtr<DeclaredNamesLink> BytecodeGenerator::currentDeclaredNames()
 
     // Functions created back to back in the same scope (the common case) share one link.
     if (!m_cachedDeclaredNames || m_cachedDeclaredNames->names() != names.get() || m_cachedDeclaredNames->frames() != frames.get())
-        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_codeType == ModuleCode || m_codeType == GlobalCode, m_parentDeclaredNames);
+        m_cachedDeclaredNames = DeclaredNamesLink::create(WTF::move(names), WTF::move(frames), isDynamicBarrier, m_parentDeclaredNames);
     return m_cachedDeclaredNames;
 }
 
@@ -3821,8 +3804,6 @@ RegisterID* BytecodeGenerator::emitNewRegExp(RegisterID* dst, RegExp* regExp)
 void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, FunctionMetadataNode* function)
 {
     unsigned index = m_codeBlock->addFunctionExpr(makeFunction(function));
-    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[unlikely]]
-        m_functionExprIndices.set(function, index);
 
     switch (function->parseMode()) {
     case SourceParseMode::GeneratorWrapperFunctionMode:
@@ -3842,30 +3823,6 @@ void BytecodeGenerator::emitNewFunctionExpressionCommon(RegisterID* dst, Functio
         OpNewFuncExp::emit(this, dst, scopeRegister(), index);
         break;
     }
-}
-
-void BytecodeGenerator::recordFunctionAssignment(const Identifier& ident, const Variable& var, ExpressionNode* right)
-{
-    if (!m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically) [[likely]]
-        return;
-    if (right->isClassExprNode())
-        right = static_cast<ClassExprNode*>(right)->constructorExpression();
-    if (!right || !right->isBaseFuncExprNode())
-        return;
-    auto it = m_functionExprIndices.find(static_cast<BaseFuncExprNode*>(right)->metadata());
-    if (it == m_functionExprIndices.end())
-        return;
-    FunctionAssignment note;
-    note.identifier = addConstant(ident);
-    note.functionExpr = it->value;
-    if (var.isResolved()) {
-        if (!var.offset().isScope())
-            return;
-        note.isOwn = true;
-        note.symbolTableConstantIndex = var.symbolTableConstantIndex();
-        note.scopeOffset = var.offset().scopeOffset().offset();
-    }
-    m_functionAssignments.append(note);
 }
 
 RegisterID* BytecodeGenerator::emitNewFunctionExpression(RegisterID* dst, FuncExprNode* func)
@@ -3922,8 +3879,6 @@ RegisterID* BytecodeGenerator::emitNewClassFieldInitializerFunction(RegisterID* 
     metadata.finishParsing(m_scopeNode->source(), Identifier(), FunctionMode::MethodDefinition);
     auto initializer = UnlinkedFunctionExecutable::create(m_vm, m_scopeNode->source(), &metadata, isBuiltinFunction() ? UnlinkedBuiltinFunction : UnlinkedNormalFunction, constructAbility, InlineAttribute::Always, scriptMode(), WTF::move(variablesUnderTDZ), { }, WTF::move(parentPrivateNameEnvironment), newDerivedContextType, EvalContextType::InstanceFieldEvalContext, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None);
     initializer->setClassElementDefinitions(WTF::move(classElementDefinitions));
-    if (m_vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically)
-        initializer->setParentDeclaredNames(currentDeclaredNames());
 
     unsigned index = m_codeBlock->addFunctionExpr(initializer);
     OpNewFuncExp::emit(this, dst, scopeRegister(), index);
@@ -5689,6 +5644,7 @@ void BytecodeGenerator::emitYieldPoint(RegisterID* argument, JSAsyncGenerator::A
     }
     Vector<TryContext> savedTryContextStack;
     m_tryContextStack.swap(savedTryContextStack);
+
 
     OpYield::emit(this, yieldPointIndex, argument);
 

@@ -204,6 +204,7 @@ enum ShapeFlag : uint32_t {
     // under a name, or on that of a class that extends it, is not known.
     ShapeHasStaticMemberOfUnknownName = 1 << 8,
     ShapeMayBeReused = 1 << 10,
+    ShapeIsOpenedForLog = 1 << 11,
 };
 
 // Every class of the program has a shape of the kind Instance. The class object is the closure of its constructor, and is made by the run

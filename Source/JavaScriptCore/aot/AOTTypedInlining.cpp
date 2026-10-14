@@ -106,7 +106,7 @@ public:
                 bool isBuiltin = m_program.at(callee).worker || isOwnWorker(callee) || (callerIsHot && m_program.at(callee).has(Format::FunctionIsBuiltin));
                 bool isMoved = !isTooDeep && isOnlyCall(callee, m_caller.at(call));
                 bool takesNothingInCopies = !m_currentBlockIsInLoopOfCaller && !constructsForDerivedClass(callee, m_caller.at(call));
-                unsigned limit = depthOf(m_caller.at(call)) ? (takesNothingInCopies ? 0 : smallInCopy) : small;
+                unsigned limit = depthOf(m_caller.at(call)) ? (takesNothingInCopies ? 0 : smallInCopy) : smallSize;
                 unsigned limitWithoutLicence = limit;
                 char licence = depthOf(m_caller.at(call)) ? 'c' : 's';
                 bool isBornAsCast = handsBackWhatIsCast(callee, block, k);
@@ -138,7 +138,7 @@ public:
                 // constants of the call make another function of, not one that is a little too large.
                 if (!isTooDeep && !isBuiltin && !isMoved && growsBy > limit) {
                     unsigned left = sizeAtCall(m_program.at(callee), m_caller.at(call), smallWhereMoreIsGained + 1);
-                    if (left <= mostLeftByConstants && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
+                    if (left <= (m_currentBlockIsInLoopOfCaller ? smallWhereMoreIsGained : mostLeftByConstants) && sizeOf(m_program.at(callee), 2 * left) >= 2 * left) {
                         growsBy = left;
                         limit = smallWhereMoreIsGained;
                         licence = 'k';
@@ -248,7 +248,7 @@ private:
         return std::max(1u, size * percent / 100);
     }
     // A function this small is copied to every call that stands in the caller as it was written.
-    const unsigned small { shareOf(13) };
+    const unsigned smallSize { shareOf(13) };
     // And one this small to a call that came along with a copy.
     const unsigned smallInCopy { shareOf(12) };
     // In a caller that the text does not say is hot nothing larger than this is copied, but to its only call: a copy buys time only where time is spent.
@@ -715,7 +715,7 @@ private:
         if (m_program.numberOfDirectCalls[callee.index()] != 1 || m_program.genericEntrypoints.contains(callee.index()))
             return false;
         // A ramp is copied nowhere either.
-        return (m_program.at(m_id).resumeFunction || sizeOf(m_program.at(m_id), small + 1) > small) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
+        return (m_program.at(m_id).resumeFunction || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
     }
 
     // Whatever it returns is an object that it has made, or that a function it calls has.
@@ -1731,6 +1731,10 @@ private:
                         target = Target { rest, { } };
                 }
                 terminator.forEachChild(mapped);
+                if (terminator.kind == TerminatorKind::Throw && !terminator.cases.isEmpty()) {
+                    terminator.cases.shrink(1);
+                    terminator.cases.append(inlineFrame);
+                }
             }
             m_caller.at(made).terminator = WTF::move(terminator);
         }

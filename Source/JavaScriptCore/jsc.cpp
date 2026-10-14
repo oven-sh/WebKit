@@ -470,6 +470,7 @@ static EncodedJSValue throwSerializationError(JSGlobalObject* globalObject, Thro
     return throwVMException(globalObject, scope, createError(globalObject, "Value could not be cloned."_s));
 }
 
+
 static JSC_DECLARE_HOST_FUNCTION(functionAtob);
 static JSC_DECLARE_HOST_FUNCTION(functionBtoa);
 static JSC_DECLARE_HOST_FUNCTION(functionStructuredClone);
@@ -4786,6 +4787,7 @@ static void runInteractive(GlobalObject* globalObject)
             continue;
         }
         
+        
         NakedPtr<Exception> evaluationException;
         JSValue returnValue = evaluate(globalObject, jscSource(source, sourceOrigin), JSValue(), evaluationException);
 #else
@@ -5318,6 +5320,7 @@ int runJSC(const CommandLine& options, bool isWorker, NOESCAPE const Func& func)
             if (!vm.m_perBytecodeProfiler->save(options.m_profilerOutput.utf8()))
                 fprintf(stderr, "could not save profiler output.\n");
         }
+
 
 #if ENABLE(REGEXP_TRACING)
         {

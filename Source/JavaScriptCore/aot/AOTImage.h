@@ -32,8 +32,8 @@ static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 *
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
-static constexpr unsigned numberOfAdapters = 9;
-static constexpr unsigned numberOfStubsThatFindTargets = 5;
+static constexpr unsigned numberOfAdapters = 7;
+static constexpr unsigned numberOfStubsThatFindTargets = 3;
 static constexpr unsigned maxReturnsIntoFramesOfHostFunctions = numberOfStubsThatFindTargets + 1;
 
 struct ImageHeader {
@@ -125,7 +125,6 @@ struct CompiledCode {
     Vector<DataInCode> dataInCode;
     uint32_t startOfGuests { std::numeric_limits<uint32_t>::max() };
     CompiledFunctionInfo info;
-    Vector<CoveredOperation> coverage;
     String whyDeclined;
     // For the map of the image: kinds of operations and the bytes of code that come from each, separated by tabs.
     String bytesByOperation;
@@ -304,14 +303,11 @@ public:
         bool startsCold;
         bool hasSiteConstants;
         bool hasInlineFrames;
-        uint16_t calleeStart;
     };
     JS_EXPORT_PRIVATE static std::optional<ImageView> tryCreate(std::span<const uint8_t> data, const void* address);
     JS_EXPORT_PRIVATE std::optional<Function> find(const ImageKey&) const;
-    JS_EXPORT_PRIVATE uint32_t stubCodeOffset(Stub) const;
     bool keysAreOmitted() const { return !header().tableCapacity; }
     JS_EXPORT_PRIVATE std::span<const ImageKey> keys() const;
-    JS_EXPORT_PRIVATE uint32_t functionIndexWith(const ImageKey&) const;
     size_t numberOfFunctions() const { return header().numberOfFunctions; }
     uint32_t numberOfProgramIdentifiers() const { return header().numberOfProgramIdentifiers; }
     uint32_t numberOfProgramConstants() const { return header().numberOfProgramConstants; }
@@ -329,7 +325,7 @@ private:
 };
 
 uint32_t moduleIDFor(SourceProvider&);
-std::optional<ImageKey> imageKeyFor(ScriptExecutable*, CodeSpecializationKind);
+std::optional<ImageKey> imageKeyFor(ScriptExecutable*);
 JS_EXPORT_PRIVATE ImageKey imageKeyForTopLevelCode(uint32_t module);
 unsigned codeHash(std::span<const uint8_t>);
 
@@ -352,8 +348,7 @@ std::optional<FaultingAccessInImage> faultingAccessAt(const void* instruction);
 void prepareFaultingAccesses();
 JS_EXPORT_PRIVATE void collectQuotes(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text, unsigned sourceOffset);
 JS_EXPORT_PRIVATE void collectConstructSites(CompiledFunctionInfo&, UnlinkedCodeBlock*, StringView text = { }, unsigned sourceOffset = 0);
-ImageCode findInImage(ScriptExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*);
-bool moduleIsLinkedAsCompiled(JSScope*);
+ImageCode findInImage(ScriptExecutable*, JSScope*);
 Ref<JITCode> codeFromImage(ImageCode, UnlinkedCodeBlock*);
 Ref<JITCode> jitCodeForImageFunction(ImageCode, CodeSpecializationKind);
 

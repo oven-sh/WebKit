@@ -1268,6 +1268,17 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
         }
         m_out.appendTo(hasNoExtension);
         size_t size = WTF::roundUpToMultipleOf<leastExtensionSize>(field.offset + sizeOf(field.store));
+        if (isX86_64() && size <= 256) {
+            static_assert(leastExtensionSize == 16);
+            callAllocationStub(static_cast<Stub>(static_cast<unsigned>(Stub::AllocateTypedExtension16) + size / leastExtensionSize - 1), { { cell.value(), GPRInfo::argumentGPR1 } }, effects, false, true);
+            barrier(cell);
+            m_out.jump(hasStorage);
+            m_out.appendTo(slowPath);
+            AOT_TYPED_OPERATION_WITH_EFFECTS(EnsureStorage, effects, cell, word32(field.name.index()));
+            m_out.jump(hasStorage);
+            m_out.appendTo(hasStorage);
+            return;
+        }
         LValue storage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size), slowPath);
         applyEffects(storage->as<PatchpointValue>(), { Writes::RuntimeState, false });
         static_assert(!offsetOfExtensionSize);
@@ -2273,6 +2284,8 @@ Lowering::ObjectLiteral* Lowering::objectLiteralAt(size_t index)
     if (m_blockOfObjectLiterals != m_currentBlock) {
         m_blockOfObjectLiterals = m_currentBlock;
         m_objectLiterals.clear();
+        m_objectLiteralAtIndex.clear();
+        m_objectLiteralAtIndexIsWhole = false;
         auto& values = m_currentBlock->values;
         for (size_t i = 0; i < values.size(); ++i) {
             bool hasNullPrototype = isObjectCreateNull(m_function.at(values[i]));
@@ -2312,6 +2325,18 @@ Lowering::ObjectLiteral* Lowering::objectLiteralAt(size_t index)
                 m_context.sites.append(Site { });
             m_objectLiterals.append(WTF::move(literal));
         }
+        if (m_objectLiterals.size() > 16) {
+            for (unsigned k = 0; k < m_objectLiterals.size(); ++k) {
+                m_objectLiteralAtIndex.add(m_objectLiterals[k].allocation, k);
+                for (size_t field : m_objectLiterals[k].fields)
+                    m_objectLiteralAtIndex.add(field, k);
+            }
+            m_objectLiteralAtIndexIsWhole = true;
+        }
+    }
+    if (m_objectLiteralAtIndexIsWhole) {
+        auto found = m_objectLiteralAtIndex.find(index);
+        return found == m_objectLiteralAtIndex.end() ? nullptr : &m_objectLiterals[found->value];
     }
     for (auto& literal : m_objectLiterals) {
         if (literal.allocation == index || literal.fields.contains(index))
@@ -3688,7 +3713,21 @@ std::optional<size_t> Lowering::indexOfUseThatMakes(ValueID id) const
     if (m_function.at(id).hasRowOfBirth() && m_program.rowsOfBirths[m_function.at(id).rowOfBirth()].isWhole)
         return std::nullopt;
     auto& block = m_currentBlock->values;
-    size_t index = block.find(id);
+    size_t index = notFound;
+    if (block.size() <= 64)
+        index = block.find(id);
+    else {
+        if (m_blockOfPlacesOfNewObjects != m_currentBlock) {
+            m_blockOfPlacesOfNewObjects = m_currentBlock;
+            m_placesOfNewObjects.clear();
+            for (size_t k = 0; k < block.size(); ++k) {
+                if (m_function.at(block[k]).opcode == Opcode::NewObject)
+                    m_placesOfNewObjects.add(block[k].index(), k);
+            }
+        }
+        if (auto place = m_placesOfNewObjects.find(id.index()); place != m_placesOfNewObjects.end())
+            index = place->value;
+    }
     if (index == notFound)
         return std::nullopt;
     for (size_t k = index + 1; k < block.size(); ++k) {

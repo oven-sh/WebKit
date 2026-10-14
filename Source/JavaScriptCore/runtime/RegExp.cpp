@@ -355,6 +355,8 @@ void RegExp::finishCreationFromCache(VM& vm, unsigned numSubpatterns, String&& a
     m_ovector = FixedVector<int>(offsetVectorBaseForNamedCaptures());
 }
 
+
+
 static std::unique_ptr<Yarr::BytecodePattern> byteCodeCompilePattern(VM* vm, Yarr::YarrPattern& pattern, Yarr::ErrorCode& errorCode)
 {
     return Yarr::byteCompile(pattern, &vm->m_regExpAllocator, errorCode, &vm->m_regExpAllocatorLock);

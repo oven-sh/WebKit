@@ -141,6 +141,7 @@ ALWAYS_INLINE bool checkStructureForClone(Structure* structure)
     return true;
 }
 
+
 ALWAYS_INLINE bool objectCloneFast(VM& vm, JSFinalObject* target, JSObject* source)
 {
     static constexpr bool verbose = false;
@@ -362,6 +363,7 @@ ALWAYS_INLINE bool objectAssignFast(JSGlobalObject* globalObject, JSFinalObject*
 
     return true;
 }
+
 
 } // namespace JSC
 

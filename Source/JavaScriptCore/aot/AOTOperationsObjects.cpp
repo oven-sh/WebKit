@@ -117,51 +117,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance* ins
     OPERATION_RETURN(scope, newObjectLiteralAtSite(instance, globalObject, vm, function, cache, values, count));
 }
 
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallFrame* callFrame))
-{
-    auto* function = uncheckedDowncast<JSFunction>(callFrame->jsCallee());
-    VM& vm = function->vm();
-    NativeCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    JSGlobalObject* globalObject = function->globalObject();
-    JSObject* newTarget = asObject(callFrame->newTarget());
-
-    JSObject* thisObject = nullptr;
-    if (auto* constructor = dynamicDowncast<JSFunction>(newTarget); constructor && constructor->canUseAllocationProfiles()) {
-        ObjectAllocationProfileWithPrototype* allocationProfile = constructor->ensureRareDataAndObjectAllocationProfile(globalObject, 0)->objectAllocationProfile();
-        RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
-        Structure* structure = allocationProfile->structure();
-        thisObject = Instance::newObjectOf(vm, structure);
-        if (structure->hasPolyProto()) {
-            JSObject* prototype = allocationProfile->prototype();
-            thisObject->putDirectOffset(vm, knownPolyProtoOffset, prototype);
-            prototype->didBecomePrototype(vm);
-        }
-    } else {
-        JSValue proto = newTarget->get(globalObject, vm.propertyNames->prototype);
-        RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
-        if (proto.isObject())
-            thisObject = constructEmptyObject(globalObject, asObject(proto));
-        else {
-            JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, newTarget);
-            RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
-            thisObject = constructEmptyObject(functionGlobalObject);
-        }
-    }
-
-    MarkedArgumentBuffer arguments;
-    arguments.ensureCapacity(callFrame->argumentCount());
-    for (unsigned i = 0; i < callFrame->argumentCount(); ++i)
-        arguments.append(callFrame->uncheckedArgument(i));
-    if (arguments.hasOverflowed()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return encodeResult(nullptr, &vm);
-    }
-    JSValue result = call(globalObject, function, JSC::getCallData(function), thisObject, arguments);
-    RETURN_IF_EXCEPTION(scope, encodeResult(nullptr, &vm));
-    return encodeResult(std::bit_cast<void*>(JSValue::encode(result.isObject() ? result : JSValue(thisObject))), nullptr);
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTNewArray, JSObject*, (Instance* instance, const EncodedJSValue* values, uint32_t count, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN(instance);

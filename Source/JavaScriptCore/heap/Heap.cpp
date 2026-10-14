@@ -290,7 +290,7 @@ private:
     , name ISO_SUBSPACE_INIT(*this, heapCellType, type)
 
 #define INIT_SERVER_STRUCTURE_ISO_SUBSPACE(name, heapCellType, type) \
-    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
+    , name(#name ""_s, *this, heapCellType, WTF::roundUpToMultipleOf<type::atomSize>(std::is_same_v<type, Structure> ? Structure::allocationSize() : sizeof(type)), type::numberOfLowerTierPreciseCells, structureAllocator.get())
 
 Heap::Heap(VM& vm, HeapType heapType)
     : m_heapType(heapType)
@@ -1215,13 +1215,7 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
             if (!state.isInt32() || state.asInt32() < static_cast<int32_t>(JSGenerator::State::Init))
                 return;
             auto* function = dynamicDowncast<JSFunction>(next);
-            if (!function)
-                return;
-#if ENABLE(AOT)
-            if (function->executable()->isShortFunctionExecutable())
-                return;
-#endif
-            if (function->isHostOrBuiltinFunction())
+            if (!function || function->isHostOrBuiltinFunction())
                 return;
             suspended.add(function->jsExecutable()->unlinkedExecutable());
         };

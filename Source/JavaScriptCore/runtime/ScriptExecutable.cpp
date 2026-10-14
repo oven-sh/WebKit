@@ -95,8 +95,6 @@ void ScriptExecutable::clearCode(IsoCellSet& clearableCodeSet, ClearCode mode)
     };
 
     switch (type()) {
-    case ShortFunctionExecutableType:
-        RELEASE_ASSERT_NOT_REACHED();
     case FunctionExecutableType: {
         FunctionExecutable* executable = static_cast<FunctionExecutable*>(this);
         executable->m_codeBlockForCall.clear();
@@ -237,31 +235,12 @@ void ScriptExecutable::installCode(VM& vm, CodeBlock* genericCodeBlock, CodeType
     vm.writeBarrier(this);
 }
 
-void ScriptExecutable::installAOTCode(VM& vm, CodeSpecializationKind kind, Ref<JITCode>&& code)
-{
-    ASSERT(type() == FunctionExecutableType && !uncheckedDowncast<FunctionExecutable>(this)->codeBlockFor(kind));
-    switch (kind) {
-    case CodeSpecializationKind::CodeForCall:
-        m_jitCodeForCall = WTF::move(code);
-        m_jitCodeForCallWithArityCheck = nullptr;
-        break;
-    case CodeSpecializationKind::CodeForConstruct:
-        m_jitCodeForConstruct = WTF::move(code);
-        m_jitCodeForConstructWithArityCheck = nullptr;
-        break;
-    }
-    Heap::ScriptExecutableSpaceAndSets::clearableCodeSetFor(*subspace()).add(this);
-    vm.writeBarrier(this);
-}
-
 bool ScriptExecutable::hasClearableCode() const
 {
-    if (isShortForm())
-        return false;
-    if (fullForm()->m_jitCodeForCall
-        || fullForm()->m_jitCodeForConstruct
-        || fullForm()->m_jitCodeForCallWithArityCheck
-        || fullForm()->m_jitCodeForConstructWithArityCheck)
+    if (m_jitCodeForCall
+        || m_jitCodeForConstruct
+        || m_jitCodeForCallWithArityCheck
+        || m_jitCodeForConstructWithArityCheck)
         return true;
 
     if (structure()->classInfoForCells() == FunctionExecutable::info()) {
@@ -296,7 +275,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     ASSERT(vm.heap.isDeferred());
     // Compiling needs source text. Asking for a position would build the provider's
     // line-start table for every executable whenever assertions are on.
-    ASSERT(hasSourceText() || isShortForm());
+    ASSERT(hasSourceText());
 
     JSGlobalObject* globalObject = scope->realm();
 
@@ -320,7 +299,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         RELEASE_ASSERT(!function);
 #if ENABLE(AOT)
         if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
-            if (auto code = AOT::findInImage(executable, kind, executable->unlinkedCodeBlock(), scope)) {
+            if (auto code = AOT::findInImage(executable, scope)) {
                 ProgramCodeBlock* codeBlock = ProgramCodeBlock::create(vm, executable, executable->unlinkedCodeBlock(), scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 if (codeBlock)
@@ -343,7 +322,7 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         ASSERT(executable->unlinkedCodeBlock());
 #if ENABLE(AOT)
         if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
-            if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
+            if (auto code = AOT::findInImage(executable, scope)) {
                 ModuleProgramCodeBlock* codeBlock = ModuleProgramCodeBlock::create(vm, executable, unlinkedCodeBlock, scope, CodeBlock::LinkMode::ForCodeFromImage);
                 RETURN_IF_EXCEPTION(throwScope, nullptr);
                 if (codeBlock)
@@ -363,12 +342,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
     RELEASE_ASSERT(function);
     FunctionExecutable* executable = uncheckedDowncast<FunctionExecutable>(this);
     RELEASE_ASSERT(!executable->codeBlockFor(kind));
-    if (kind == CodeSpecializationKind::CodeForCall && executable->isClassConstructorFunction() && executable->hasAOTEntry()) [[unlikely]] {
-        String name = executable->name().string();
-        throwTypeError(globalObject, throwScope, name.isEmpty() ? "Cannot call a class constructor without |new|"_str : makeString("Cannot call a class constructor "_s, name, " without |new|"_s));
-        return nullptr;
-    }
-    RELEASE_ASSERT(!executable->isShortForm());
     ParserError error;
     OptionSet<CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
     // We continue using the same CodeGenerationMode for Generators because live generator objects can
@@ -391,15 +364,6 @@ CodeBlock* ScriptExecutable::newCodeBlockFor(CodeSpecializationKind kind, JSFunc
         throwException(globalObject, throwScope, error.toErrorObject(globalObject, executable->source()));
         return nullptr;
     }
-#if ENABLE(AOT)
-    if (vm.useImmutableIntrinsics && AOT::Image::hasAny()) {
-        if (auto code = AOT::findInImage(executable, kind, unlinkedCodeBlock, scope)) {
-            throwScope.release();
-            AOT::install(vm, executable, kind, unlinkedCodeBlock, scope, AOT::codeFromImage(code, unlinkedCodeBlock));
-            return nullptr;
-        }
-    }
-#endif
     RELEASE_AND_RETURN(throwScope, FunctionCodeBlock::create(vm, executable, unlinkedCodeBlock, scope));
 }
 
@@ -482,10 +446,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     RETURN_IF_EXCEPTION(throwScope, void());
 
     resultCodeBlock = codeBlock;
-    if (!codeBlock) {
-        ASSERT(hasJITCodeFor(kind));
-        return;
-    }
+    ASSERT(codeBlock);
 
     bool installedUnlinkedBaselineCode = codeBlock->jitType() == JITType::AOTJIT;
     if (Options::validateBytecode() && !installedUnlinkedBaselineCode)
@@ -517,7 +478,6 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 ScriptExecutable* ScriptExecutable::topLevelExecutable()
 {
     switch (type()) {
-    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->topLevelExecutable();
     default:
@@ -557,7 +517,6 @@ auto ScriptExecutable::ensureTemplateObjectMapImpl(std::unique_ptr<TemplateObjec
 auto ScriptExecutable::ensureTemplateObjectMap(VM& vm) -> TemplateObjectMap&
 {
     switch (type()) {
-    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return static_cast<FunctionExecutable*>(this)->ensureTemplateObjectMap(vm);
     case EvalExecutableType:
@@ -601,10 +560,10 @@ unsigned ScriptExecutable::typeProfilingEndOffset() const
     return source().length() - 1;
 }
 
+
 int ScriptExecutable::lastLine() const
 {
     switch (type()) {
-    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->lastLine();
     default:
@@ -616,7 +575,6 @@ int ScriptExecutable::lastLine() const
 unsigned ScriptExecutable::endColumn() const
 {
     switch (type()) {
-    case ShortFunctionExecutableType:
     case FunctionExecutableType:
         return uncheckedDowncast<FunctionExecutable>(this)->endColumn();
     default:

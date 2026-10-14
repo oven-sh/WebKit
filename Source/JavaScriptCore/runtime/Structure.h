@@ -33,6 +33,7 @@
 #include "JSCJSValueCell.h"
 #include "JSCast.h"
 #include "JSTypeInfo.h"
+#include "Options.h"
 #include "PropertyName.h"
 #include "PropertyNameArray.h"
 #include "PropertyOffset.h"
@@ -103,6 +104,7 @@ public:
     }
 
     const Structure* structure() const { return m_structure; }
+
 
 private:
     JS_EXPORT_PRIVATE void fireAllSlow();
@@ -195,6 +197,7 @@ private:
     PropertyOffset m_offset { 0 };
     uint8_t m_attributes { 0 };
 };
+
 
 inline CompactPropertyTableEntry::CompactPropertyTableEntry(const PropertyTableEntry& entry)
     : m_data(entry.key(), ((entry.offset() << 8) | entry.attributes()))
@@ -336,15 +339,42 @@ public:
     JS_EXPORT_PRIVATE Vector<UniquedStringImpl*, 16> namesIfNumbered() const;
     JS_EXPORT_PRIVATE static Structure* addPropertiesTransition(VM&, Structure*, std::span<UniquedStringImpl* const>, DeferredStructureTransitionWatchpointFire*);
     static constexpr unsigned numberOfSlotsWithPropertyNameIDs = 24;
-    uint16_t fieldIDInSlot(unsigned slot) const { return m_fieldIDInSlot[slot]; }
+    static bool hasAOTFields() { return Options::useAOT(); }
+    struct AOTFields {
+#if ENABLE(AOT)
+        static constexpr uintptr_t isOfCompiledEnvironments = 1;
+        bool isOfCompiledCells() const { return compiledLayoutOrData; }
+        const AOT::Typed::LayoutData* compiledLayout() const { return compiledLayoutOrData & isOfCompiledEnvironments ? nullptr : std::bit_cast<const AOT::Typed::LayoutData*>(compiledLayoutOrData); }
+        const AOT::Typed::Data* dataOfCompiledEnvironments() const { return compiledLayoutOrData & isOfCompiledEnvironments ? std::bit_cast<const AOT::Typed::Data*>(compiledLayoutOrData - isOfCompiledEnvironments) : nullptr; }
+        uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(pageOfEnvironmentShapes) << 16; }
+
+        AOT::Instance* aotInstance { nullptr };
+        uintptr_t compiledLayoutOrData { 0 };
+        uint16_t pageOfEnvironmentShapes { 0 };
+#endif
+        bool isReplacedWithoutNotice { false };
+        uint16_t fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
+    };
+    const AOTFields& existingAOTFields() const
+    {
+        ASSERT(hasAOTFields());
+        return *reinterpret_cast<const AOTFields*>(reinterpret_cast<const char*>(this) + sizeof(Structure));
+    }
+    AOTFields& existingAOTFields()
+    {
+        ASSERT(hasAOTFields());
+        return *reinterpret_cast<AOTFields*>(reinterpret_cast<char*>(this) + sizeof(Structure));
+    }
+    static size_t allocationSize() { return sizeof(Structure) + (hasAOTFields() ? sizeof(AOTFields) : 0); }
+    uint16_t fieldIDInSlot(unsigned slot) const { return aotFieldsOrEmpty().fieldIDInSlot[slot]; }
     static constexpr uint16_t noPropertyNameID = 0xfffe;
     static constexpr uint16_t firstReservedPropertyNameID = 0xfffd;
     void setPropertyNameIDInInlineSlot(unsigned slot, uint16_t id)
     {
         ASSERT((!isUncacheableDictionary() && slot < m_inlineCapacity) || id == noPropertyNameID);
-        m_fieldIDInSlot[slot] = id;
+        aotFields().fieldIDInSlot[slot] = id;
     }
-    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return OBJECT_OFFSETOF(Structure, m_fieldIDInSlot); }
+    static constexpr ptrdiff_t offsetOfFieldIDInSlot() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, fieldIDInSlot); }
     inline unsigned numberOfPropertiesOfDictionary() const;
     PropertyTable* materializedPropertyTable() const { return m_propertyTableUnsafe.get(); }
 
@@ -699,29 +729,29 @@ public:
     }
 
 #if ENABLE(AOT)
-    AOT::Instance* aotInstance() const { return m_aotInstance; }
-    void setAOTInstance(AOT::Instance* instance) { m_aotInstance = instance; }
-    bool isOfCompiledCells() const { return m_compiledLayoutOrData; }
-    const AOT::Typed::LayoutData* compiledLayout() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? nullptr : std::bit_cast<const AOT::Typed::LayoutData*>(m_compiledLayoutOrData); }
-    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { m_compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
+    AOT::Instance* aotInstance() const { return aotFieldsOrEmpty().aotInstance; }
+    void setAOTInstance(AOT::Instance* instance) { aotFields().aotInstance = instance; }
+    bool isOfCompiledCells() const { return aotFieldsOrEmpty().isOfCompiledCells(); }
+    const AOT::Typed::LayoutData* compiledLayout() const { return aotFieldsOrEmpty().compiledLayout(); }
+    void setCompiledLayout(const AOT::Typed::LayoutData* layout) { aotFields().compiledLayoutOrData = std::bit_cast<uintptr_t>(layout); }
     // Of the environments of 65,536 shapes. Which of them a cell is of is in its header: see AOT::Typed::layoutOfEnvironment().
-    const AOT::Typed::Data* dataOfCompiledEnvironments() const { return m_compiledLayoutOrData & isOfCompiledEnvironments ? std::bit_cast<const AOT::Typed::Data*>(m_compiledLayoutOrData - isOfCompiledEnvironments) : nullptr; }
-    uint32_t firstShapeOfCompiledEnvironments() const { return static_cast<uint32_t>(m_pageOfEnvironmentShapes) << 16; }
-    uint16_t numberOfRowPlusOne() const { return m_compiledLayoutOrData ? 0 : m_pageOfEnvironmentShapes; }
+    const AOT::Typed::Data* dataOfCompiledEnvironments() const { return aotFieldsOrEmpty().dataOfCompiledEnvironments(); }
+    uint32_t firstShapeOfCompiledEnvironments() const { return aotFieldsOrEmpty().firstShapeOfCompiledEnvironments(); }
+    uint16_t numberOfRowPlusOne() const { return aotFieldsOrEmpty().compiledLayoutOrData ? 0 : aotFieldsOrEmpty().pageOfEnvironmentShapes; }
     void setNumberOfRowPlusOne(uint16_t number)
     {
-        RELEASE_ASSERT(!m_compiledLayoutOrData && !m_pageOfEnvironmentShapes);
-        m_pageOfEnvironmentShapes = number;
+        RELEASE_ASSERT(!aotFieldsOrEmpty().compiledLayoutOrData && !aotFieldsOrEmpty().pageOfEnvironmentShapes);
+        aotFields().pageOfEnvironmentShapes = number;
     }
-    static constexpr ptrdiff_t offsetOfNumberOfRowPlusOne() { return OBJECT_OFFSETOF(Structure, m_pageOfEnvironmentShapes); }
+    static constexpr ptrdiff_t offsetOfNumberOfRowPlusOne() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, pageOfEnvironmentShapes); }
     void setCompiledEnvironments(const AOT::Typed::Data* data, uint16_t page)
     {
-        m_compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | isOfCompiledEnvironments;
-        m_pageOfEnvironmentShapes = page;
+        aotFields().compiledLayoutOrData = std::bit_cast<uintptr_t>(data) | AOTFields::isOfCompiledEnvironments;
+        aotFields().pageOfEnvironmentShapes = page;
     }
     // Of a cell of this Structure. Null: it is not laid out by the compiler.
     JS_EXPORT_PRIVATE const AOT::Typed::LayoutData* compiledLayoutOf(const JSCell*) const;
-    static constexpr ptrdiff_t offsetOfAOTInstance() { return OBJECT_OFFSETOF(Structure, m_aotInstance); }
+    static constexpr ptrdiff_t offsetOfAOTInstance() { return static_cast<ptrdiff_t>(sizeof(Structure)) + OBJECT_OFFSETOF(AOTFields, aotInstance); }
 #endif
 
     static constexpr ptrdiff_t classInfoOffset()
@@ -918,6 +948,7 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     DEFINE_BITFIELD(bool, inheritorsMayOverrideReadOnlyProperties, InheritorsMayOverrideReadOnlyProperties, 1, 31);
     bool hasImmutablePropertiesWithFixedAttributes() const { return hasImmutableProperties() && inheritorsMayOverrideReadOnlyProperties(); }
+    JS_EXPORT_PRIVATE bool inheritorsMayOverride(VM&, UniquedStringImpl*) const;
     DEFINE_BITFIELD(bool, hasImmutableShape, HasImmutableShape, 1, 11);
     static_assert(!(s_hasImmutableShapeBits & (s_definitelyNonThenableStateBits | s_hasImmutablePropertiesBits | s_transitionKindBits)));
     static_assert(!(s_inheritorsMayOverrideReadOnlyPropertiesBits & s_hasNonConfigurableReadOnlyOrGetterSetterPropertiesBits));
@@ -1093,22 +1124,10 @@ private:
     uint16_t m_maxOffset;
 
     uint32_t m_propertyHash;
-#if USE(BUN_JSC_ADDITIONS)
-    // Compiled code stores over properties of such objects and does not say so: see didCachePropertyReplacement().
-    bool m_isReplacedWithoutNotice { false };
-#endif
-#if ENABLE(AOT)
-    uint16_t m_pageOfEnvironmentShapes { 0 };
-#endif
     SeenProperties m_seenProperties;
 
+
     WriteBarrier<JSGlobalObject> m_realm;
-#if ENABLE(AOT)
-    AOT::Instance* m_aotInstance { nullptr };
-    // An AOT::Typed::LayoutData, or with the bit an AOT::Typed::Data.
-    static constexpr uintptr_t isOfCompiledEnvironments = 1;
-    uintptr_t m_compiledLayoutOrData { 0 };
-#endif
     WriteBarrier<Unknown> m_prototype;
     mutable WriteBarrier<StructureChain> m_cachedPrototypeChain;
 
@@ -1127,11 +1146,17 @@ private:
     mutable InlineWatchpointSet m_transitionWatchpointSet;
 
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_fieldIDInSlot[numberOfSlotsWithPropertyNameIDs] { };
+    JS_EXPORT_PRIVATE static const AOTFields s_emptyAOTFields;
+    AOTFields& aotFields()
+    {
+        RELEASE_ASSERT(hasAOTFields());
+        return existingAOTFields();
+    }
+    const AOTFields& aotFieldsOrEmpty() const { return hasAOTFields() ? existingAOTFields() : s_emptyAOTFields; }
     void forgetPropertyNameIDInSlot(PropertyOffset offset)
     {
-        if (static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs)
-            m_fieldIDInSlot[offset] = 0;
+        if (hasAOTFields() && static_cast<unsigned>(offset) < numberOfSlotsWithPropertyNameIDs)
+            existingAOTFields().fieldIDInSlot[offset] = 0;
     }
     void copyPropertyNameIDsFrom(const Structure&);
 #endif

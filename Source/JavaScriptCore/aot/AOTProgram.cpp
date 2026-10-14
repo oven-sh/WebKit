@@ -10,7 +10,6 @@
 
 #include "AOTImage.h"
 #include "AOTOpcodeTraits.h"
-#include "AOTType.h"
 #include "BytecodeStructs.h"
 #include "BytecodeUseDef.h"
 #include "ImmutableIntrinsics.h"
@@ -24,33 +23,6 @@
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT {
-
-static Lock s_declaredNamesLock;
-static UncheckedKeyHashMap<UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>>& declaredNames() WTF_REQUIRES_LOCK(s_declaredNamesLock)
-{
-    static NeverDestroyed<UncheckedKeyHashMap<UnlinkedCodeBlock*, RefPtr<DeclaredNamesLink>>> map;
-    return map;
-}
-
-void noteDeclaredNames(UnlinkedCodeBlock* codeBlock, RefPtr<DeclaredNamesLink>&& names)
-{
-    if (!names)
-        return;
-    Locker locker { s_declaredNamesLock };
-    declaredNames().set(codeBlock, WTF::move(names));
-}
-
-static UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionAssignment>>& functionAssignments() WTF_REQUIRES_LOCK(s_declaredNamesLock)
-{
-    static NeverDestroyed<UncheckedKeyHashMap<UnlinkedCodeBlock*, Vector<FunctionAssignment>>> map;
-    return map;
-}
-
-void recordFunctionAssignments(UnlinkedCodeBlock* codeBlock, Vector<FunctionAssignment>&& functions)
-{
-    Locker locker { s_declaredNamesLock };
-    functionAssignments().set(codeBlock, WTF::move(functions));
-}
 
 static const IdentifierIndices* s_programIdentifierIndices;
 
@@ -78,14 +50,6 @@ const Vector<uint32_t>* programConstantIndicesFor(UnlinkedCodeBlock* codeBlock)
     auto it = s_programConstantIndices->find(codeBlock);
     return it == s_programConstantIndices->end() ? nullptr : &it->value;
 }
-
-void forgetDeclaredNames()
-{
-    Locker locker { s_declaredNamesLock };
-    declaredNames().clear();
-    functionAssignments().clear();
-}
-
 
 Convention conventionOf(UnlinkedCodeBlock* codeBlock)
 {

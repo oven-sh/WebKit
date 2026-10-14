@@ -468,6 +468,7 @@ JSWebAssemblyInstance* CallFrame::wasmInstance() const
 }
 #endif
 
+
 } // namespace JSC
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

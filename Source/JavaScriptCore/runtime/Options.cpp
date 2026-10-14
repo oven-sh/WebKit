@@ -1334,6 +1334,7 @@ static ASCIILiteral invertBoolOptionValue(const char* valueStr)
     return value.value() ? "false"_s : "true"_s;
 }
 
+
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 bool Options::setAliasedOption(const char* arg, bool verify)
@@ -1382,6 +1383,7 @@ bool Options::setOption(const char* arg, bool verify)
         return true;
     return setAliasedOption(arg, verify);
 }
+
 
 void Options::dumpAllOptions(StringBuilder& builder, DumpLevel level, ASCIILiteral title,
     ASCIILiteral separator, ASCIILiteral optionHeader, ASCIILiteral optionFooter, DumpDefaultsOption dumpDefaultsOption)

@@ -1348,6 +1348,7 @@ private:
     IsoSubspace programExecutableSpace;
     IsoSubspace unlinkedFunctionExecutableSpace;
 
+
     friend class JSC::VM;
 };
 

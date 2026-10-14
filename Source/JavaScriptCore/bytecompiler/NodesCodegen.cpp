@@ -612,8 +612,6 @@ ArgumentListNode* ArrayNode::toArgumentList(ParserArena& parserArena, int startP
 
 // ------------------------------ ObjectLiteralNode ----------------------------
 
-static ALWAYS_INLINE bool needsHomeObject(ExpressionNode*);
-
 RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
     if (!m_list) {
@@ -658,32 +656,6 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
         }
     }
 
-    if (!newObject && generator.vm().bytecodeGenerationOptions.evaluateObjectLiteralValuesFirst) {
-        constexpr unsigned maximumCount = 64;
-        unsigned count = 0;
-        bool isSimple = true;
-        for (auto* p = propertyList; p && isSimple; p = p->m_next) {
-            PropertyNode& node = *p->m_node;
-            isSimple = (node.m_type & PropertyNode::Constant) && node.name() && !node.isClassProperty() && !parseIndex(*node.name())
-                && !PropertyNode::isUnderscoreProtoSetter(generator.vm(), node) && !needsHomeObject(node.m_assign) && ++count <= maximumCount;
-        }
-        if (isSimple) {
-            Vector<RefPtr<RegisterID>, 8> values;
-            for (auto* p = propertyList; p; p = p->m_next) {
-                RefPtr<RegisterID> value = generator.emitNode(p->m_node->m_assign);
-                if (p->m_next && !value->isTemporary() && !value->virtualRegister().isConstant())
-                    value = generator.move(generator.newTemporary(), value.get());
-                values.append(WTF::move(value));
-            }
-            newObject = generator.tempDestination(dst);
-            generator.emitNewObject(newObject.get());
-            unsigned index = 0;
-            for (auto* p = propertyList; p; p = p->m_next)
-                generator.emitDirectPutById(newObject.get(), *p->m_node->name(), values[index++].get());
-            return generator.move(dst, newObject.get());
-        }
-    }
-
     if (!newObject)
         newObject = generator.emitNewObject(generator.tempDestination(dst));
     generator.emitNode(newObject.get(), propertyList);
@@ -695,20 +667,6 @@ RegisterID* ObjectLiteralNode::emitBytecode(BytecodeGenerator& generator, Regist
 static inline void emitPutHomeObject(BytecodeGenerator& generator, RegisterID* function, RegisterID* homeObject)
 {
     generator.emitPutById(function, generator.propertyNames().builtinNames().homeObjectPrivateName(), homeObject);
-}
-
-Vector<Identifier> PropertyListNode::plainInstanceFieldNames() const
-{
-    Vector<Identifier> names;
-    for (const PropertyListNode* p = this; p; p = p->m_next) {
-        const PropertyNode& node = *p->m_node;
-        if (!node.isInstanceClassField())
-            continue;
-        if (node.hasComputedName() || node.isPrivate() || node.m_assign || !node.name() || parseIndex(*node.name()))
-            return { };
-        names.append(*node.name());
-    }
-    return names;
 }
 
 void PropertyListNode::emitDeclarePrivateFieldNames(BytecodeGenerator& generator, RegisterID* scope)
@@ -3248,6 +3206,7 @@ void LogicalNotNode::emitBytecodeInConditionContext(BytecodeGenerator& generator
     generator.emitNodeInConditionContext(expr(), falseTarget, trueTarget, invert(fallThroughMode));
 }
 
+
 // ------------------------------ Binary Operation Nodes -----------------------------------
 
 // BinaryOpNode::emitStrcat:
@@ -3616,6 +3575,7 @@ RegisterID* InNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
     generator.emitExpressionInfo(divot(), divotStart(), divotEnd());
     return generator.emitInByVal(generator.finalDestination(dst, key.get()), key.get(), base.get());
 }
+
 
 // ------------------------------ LogicalOpNode ----------------------------
 
@@ -4137,7 +4097,6 @@ RegisterID* AssignResolveNode::emitBytecode(BytecodeGenerator& generator, Regist
     if (!isReadOnly) {
         returnResult = generator.emitPutToScope(scope.get(), var, result.get(), generator.ecmaMode().isStrict() ? ThrowIfNotFound : DoNotThrowIfNotFound, initializationModeForAssignmentContext(m_assignmentContext));
         generator.emitProfileType(result.get(), var, divotStart(), divotEnd());
-        generator.recordFunctionAssignment(m_ident, var, m_right);
     }
 
     if (isUsingOrAwaitUsingAssignmentContext(m_assignmentContext))
@@ -5904,8 +5863,6 @@ RegisterID* ClassExprNode::emitBytecode(BytecodeGenerator& generator, RegisterID
         metadata->setClassSource(m_classSource);
         metadata->setNeedsClassFieldInitializer(needsClassFieldInitializer == NeedsClassFieldInitializer::Yes);
         metadata->setPrivateBrandRequirement(privateBrandRequirement);
-        if (generator.vm().bytecodeGenerationOptions.definePlainInstanceFieldsInConstructor && needsClassFieldInitializer == NeedsClassFieldInitializer::Yes)
-            metadata->setPlainInstanceFieldNames(m_classElements->plainInstanceFieldNames());
         constructor = generator.emitNode(constructor.get(), m_constructorExpression);
         needsHomeObject = m_classHeritage || metadata->superBinding() == SuperBinding::Needed;
     } else
@@ -6430,6 +6387,7 @@ void ObjectPatternNode::collectBoundIdentifiers(Vector<Identifier>& identifiers)
         m_targetPatterns[i].pattern->collectBoundIdentifiers(identifiers);
 }
 
+
 bool BindingNode::bindValueCanThrow(BytecodeGenerator& generator) const
 {
     Variable var = generator.variable(m_boundProperty);
@@ -6691,6 +6649,7 @@ void RestParameterNode::emit(BytecodeGenerator& generator)
     generator.emitRestParameter(temp.get(), m_numParametersToSkip);
     m_pattern->bindValue(generator, temp.get());
 }
+
 
 RegisterID* SpreadExpressionNode::emitBytecode(BytecodeGenerator&, RegisterID*)
 {

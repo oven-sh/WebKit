@@ -113,12 +113,6 @@ public:
     // resolveImport(localName) and, for a resolved binding, its import slot.
     Resolution resolveImportWithSlot(JSGlobalObject*, const Identifier& localName, unsigned& importSlot);
     JSModuleEnvironment* fillImportSlot(JSGlobalObject*, unsigned index);
-#if USE(BUN_JSC_ADDITIONS)
-#if ENABLE(AOT)
-    JS_EXPORT_PRIVATE bool isLinkedAsCompiled(JSGlobalObject*);
-    bool isSelfLinkedAsCompiled(JSGlobalObject*, const Function<bool(JSModuleRecord*)>& mayImportFrom);
-#endif
-#endif
     std::optional<ModuleProgramExecutable::ImportedBindings> importedBindings(JSGlobalObject*);
     // Whether every import binding of this record is at the same place for `executable`'s code as for the record it
     // was linked for (its linker): the same slot, and the same variable of a module with the same source (or, for an
@@ -139,7 +133,6 @@ private:
     std::optional<Vector<Identifier>> m_importSlotNames;
     HashMap<RefPtr<UniquedStringImpl>, unsigned, IdentifierRepHash> m_importSlotIndices; // filled with m_importSlotNames
     CodeFeatures m_features;
-    TriState m_isLinkedAsCompiled { TriState::Indeterminate };
 
     struct UninstantiatedFunctionDeclarations {
         WTF_MAKE_STRUCT_TZONE_ALLOCATED(UninstantiatedFunctionDeclarations);

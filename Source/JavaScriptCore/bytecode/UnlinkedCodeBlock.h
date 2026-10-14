@@ -274,13 +274,6 @@ public:
     size_t numberOfUnlinkedStringSwitchJumpTables() const { return m_rareData ? m_rareData->m_unlinkedStringSwitchJumpTables.size() : 0; }
     const UnlinkedStringJumpTable& unlinkedStringSwitchJumpTable(int tableIndex) const { ASSERT(m_rareData); return m_rareData->m_unlinkedStringSwitchJumpTables[tableIndex]; }
 
-    static constexpr uintptr_t isExecutableIndex = 1;
-    static void setExecutableIndexIn(WriteBarrier<UnlinkedFunctionExecutable>& entry, uint32_t number) { reinterpret_cast<uintptr_t&>(entry) = static_cast<uintptr_t>(number) << 1 | isExecutableIndex; }
-    static bool hasExecutableIndex(const WriteBarrier<UnlinkedFunctionExecutable>& entry) { return std::bit_cast<uintptr_t>(entry) & isExecutableIndex; }
-    FunctionExecutable* functionDeclExecutable(int index) const { return hasExecutableIndex(m_functionDecls[index]) ? executableAtIndexIn(m_functionDecls[index]) : nullptr; }
-    FunctionExecutable* functionExprExecutable(int index) const { return hasExecutableIndex(m_functionExprs[index]) ? executableAtIndexIn(m_functionExprs[index]) : nullptr; }
-    JS_EXPORT_PRIVATE FunctionExecutable* executableAtIndexIn(const WriteBarrier<UnlinkedFunctionExecutable>&) const;
-
     UnlinkedFunctionExecutable* functionDecl(int index)
     {
         if (auto* executable = m_functionDecls[index].get()) [[likely]]

@@ -14,11 +14,13 @@
 
 namespace JSC {
 
+class JSArray;
 class JSCell;
 
 namespace AOT {
 
 struct Instance;
+struct Slot;
 
 #define FOR_EACH_AOT_TYPED_OPERATION(v) \
     v(operationAOTTypedGetFree) \
@@ -103,6 +105,7 @@ struct Instance;
     v(operationAOTTypedDidCreateField) \
     v(operationAOTTypedDidCreateFieldAt) \
     v(operationAOTTypedEnsureStorage) \
+    v(operationAOTTypedEnsureStorageOfSize) \
     v(operationAOTTypedCountClosure) \
     v(operationAOTTypedCountPlainAllocation) \
     v(operationAOTTypedGetExtra) \
@@ -379,6 +382,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedDidCreateField, Fields, vo
 // The same, of the field whose slot is at the offset in the cell. What Stub::DidCreateTypedField has no answer to.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedDidCreateFieldAt, Fields, void, (Instance*, JSCell* object, uint32_t offset, Slot* cache));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedEnsureStorage, Fields, void, (Instance*, JSCell* object, uint32_t name));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedEnsureStorageOfSize, Fields, void, (Instance*, JSCell* object, uint32_t size));
 // Only in a program compiled with Options::countAOTTypedAllocations(), or for the audit: compiled code has made a closure.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedCountClosure, RuntimeState, void, (Instance*, uint32_t function, uint32_t numberOfCaptures));
 // Likewise: it has made a plain object or an array. `kindAndValue`: PlainAllocationKind from bit 28, and the number of the value in the function.

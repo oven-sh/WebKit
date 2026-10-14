@@ -136,7 +136,12 @@ private:
     bool isTracked(uint32_t object) const { return isVirtual(object) || isMaybeMaterialized(object); }
     uint32_t aliasOf(ValueID id) const { return id && id.index() < m_alias.size() ? m_alias[id.index()] : none; }
     bool hasInvokedValue(unsigned b) const { return m_function.blocks[b].terminator.kind == TerminatorKind::Invoke && !m_function.blocks[b].values.isEmpty(); }
-    bool isIgnoredEdge(unsigned from, unsigned target) const { return m_ignoredEdges.containsIf([&](const Edge& edge) { return edge.from == from && edge.target == target; }); }
+    bool isIgnoredEdge(unsigned from, unsigned target) const
+    {
+        if (m_ignoredEdges.size() > 8)
+            return m_ignoredEdgeSet.contains(static_cast<uint64_t>(from) << 32 | target);
+        return m_ignoredEdges.containsIf([&](const Edge& edge) { return edge.from == from && edge.target == target; });
+    }
     bool isDeadEdge(const Edge& edge) const { return isIgnoredEdge(edge.from, edge.target) || isDeadHandlerEdge(edge) || m_deadTarget[edge.from] == edge.target; }
     bool isDeadHandlerEdge(const Edge& edge) const { return edge.target == 1 && m_function.blocks[edge.from].terminator.kind == TerminatorKind::Invoke && m_isHandlerEdgeDead.get(edge.from); }
 
@@ -1405,6 +1410,8 @@ private:
             bool pays = false;
             if (!built.isEmpty() && hasVirtualPredecessor) {
                 m_ignoredEdges = built;
+                for (auto& edge : built)
+                    m_ignoredEdgeSet.add(static_cast<uint64_t>(edge.from) << 32 | edge.target);
                 object.allowsMaybeMaterialized = group == none;
                 do {
                     analyze();
@@ -1412,6 +1419,7 @@ private:
                 } while (abandonUnprofitableCandidates());
                 pays = !object.isAbandoned;
                 m_ignoredEdges.clear();
+                m_ignoredEdgeSet.clear();
             }
             m_isSpeculating = false;
             m_candidates = WTF::move(saved);
@@ -1624,6 +1632,7 @@ private:
     Vector<Meet> m_meet;
     BitVector m_mayWriteFields;
     Vector<Edge> m_ignoredEdges;
+    UncheckedKeyHashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> m_ignoredEdgeSet;
     Vector<unsigned> m_deadTarget;
     Vector<KnownBoolean> m_knownBoolean;
     Vector<ValueID> m_loadedValue;

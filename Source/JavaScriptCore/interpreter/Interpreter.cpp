@@ -1034,13 +1034,10 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
                 if (visitor.isAtConstructedCompiledFrame()) [[unlikely]]
                     results.last().setIsConstructed();
             } else if (AOT::FunctionRef function = visitor->aotFunction(); function && (builtinsHaveLinesAndColumns || !function.isBuiltinFunction())) {
-                JSCell* callee = visitor->aotCallee();
-                if (callee)
-                    uncheckedDowncast<JSFunction>(callee)->executable();
                 if (CodeBlock* codeBlock = function.codeBlockIfExists())
-                    results.append(callee ? StackFrame(vm, owner, callee, codeBlock, visitor->bytecodeIndex()) : StackFrame(vm, owner, codeBlock, visitor->bytecodeIndex()));
+                    results.append(StackFrame(vm, owner, codeBlock, visitor->bytecodeIndex()));
                 else
-                    results.append(StackFrame(vm, owner, callee, function.executable(), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
+                    results.append(StackFrame(vm, owner, nullptr, function.executable(), function.info().kind(), AOT::tokenOf(function.instance), visitor->bytecodeIndex()));
 #endif
 #if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
             } else if (!!visitor->codeBlock())
@@ -1074,9 +1071,58 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
 #if ENABLE(AOT)
     if (alreadyInTrace)
         StackVisitor::visitCallersOfCompiledFrame(vm, alreadyInTrace->lastCallFrame, alreadyInTrace->lastReturnPC, appendFrameOf);
+    else if (vm.useImmutableIntrinsics)
+        StackVisitor::visit(callFrame, vm, appendFrameOf);
     else
 #endif
-        StackVisitor::visit(callFrame, vm, appendFrameOf);
+    StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+        if (results.size() >= maxStackSize)
+            return IterationStatus::Done;
+
+        if (skippedFrames < framesToSkip) {
+            skippedFrames++;
+            return IterationStatus::Continue;
+        }
+
+        if (!foundCaller) {
+            if (!visitor->callee().isNativeCallee() && visitor->callee().asCell() == caller)
+                foundCaller = true;
+            skippedFrames++;
+            return IterationStatus::Continue;
+        }
+
+        auto* currentEntryFrame = visitor->entryFrame();
+        if (Options::useAsyncStackTrace()) {
+            if (currentEntryFrame != previousEntryFrame && previousEntryFrame)
+                updateAsyncStackTraceOriginGenerator();
+        }
+
+        if (!visitor->isImplementationVisibilityPrivate()) {
+            if (visitor->isNativeCalleeFrame()) {
+                auto* nativeCallee = visitor->callee().asNativeCallee();
+                switch (nativeCallee->category()) {
+                case NativeCallee::Category::Wasm: {
+                    results.append(StackFrame(visitor->wasmFunctionIndexOrName(), visitor->wasmFunctionIndex()));
+                    break;
+                }
+                case NativeCallee::Category::InlineCache: {
+                    break;
+                }
+                }
+#if USE(ALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS)
+            } else if (!!visitor->codeBlock())
+#else
+            } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction())
+#endif
+                results.append(StackFrame(vm, owner, visitor->callee().asCell(), visitor->codeBlock(), visitor->bytecodeIndex()));
+            else
+                results.append(StackFrame(vm, owner, visitor->callee().asCell()));
+
+            previousEntryFrame = currentEntryFrame;
+            previousEntryFrameStackTraceInsertPos = results.size();
+        }
+        return IterationStatus::Continue;
+    });
 
 #if USE(BUN_JSC_ADDITIONS)
     // Add the single async frame if it exists and we have space
@@ -1282,6 +1328,47 @@ public:
         m_handler.m_catchPCForInterpreter = { static_cast<JSInstruction*>(nullptr) };
         return true;
     }
+
+    NEVER_INLINE IterationStatus unwindCompiledFrame(StackVisitor& visitor) const
+    {
+        AOT::FunctionRef function = visitor->aotFunction();
+        m_codeBlock = nullptr;
+        if (function.info().hasNoHandlers) {
+            bool rejects = rejectsInFrame(visitor, function);
+            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
+            if (rejects || visitor->callerIsEntryFrame())
+                return IterationStatus::Done;
+            if (visitor.gotoLastOfCompiledCallersWithoutHandlers(m_vmEntryRecord->calleeSaveRegistersBuffer, m_vmCalleeSaveBufferSlotsByRegIndex)) {
+                m_callFrame = visitor->callFrame();
+                if (CallFrame* adapter = visitor->aotAdapterFrame())
+                    copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
+                if (visitor->callerIsEntryFrame())
+                    return IterationStatus::Done;
+            }
+            return IterationStatus::Continue;
+        }
+        // The handlers of code compiled from types are keyed by the machine call, which the innermost frame has. The numbers that stand
+        // for inlined calls have no handlers.
+        if (visitor->isInlinedAOTFrame() && !visitor->isTypedAOTFrame())
+            return IterationStatus::Continue;
+        RELEASE_ASSERT(visitor->bytecodeIndex());
+        if (!m_isTermination) {
+            UnlinkedHandlerInfo madeHere;
+            m_handler = { function.handlerFor(visitor->bytecodeIndex().offset(), madeHere), function };
+            if (m_handler.m_valid)
+                return IterationStatus::Done;
+        }
+        if (visitor->isInlinedAOTFrame())
+            return IterationStatus::Continue;
+        bool rejects = rejectsInFrame(visitor, function);
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
+        return rejects || visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+    }
+
+    NEVER_INLINE void copyCalleeSavesOfAdapter(CallFrame* adapter) const
+    {
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
+    }
 #endif
 
     IterationStatus operator()(StackVisitor& visitor) const
@@ -1290,41 +1377,10 @@ public:
         m_callFrame = visitor->callFrame();
         m_handler.m_valid = false;
 #if ENABLE(AOT)
-        if (AOT::FunctionRef function = visitor->aotFunction()) {
-            m_codeBlock = nullptr;
-            if (function.info().hasNoHandlers) {
-                bool rejects = rejectsInFrame(visitor, function);
-                copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
-                if (rejects || visitor->callerIsEntryFrame())
-                    return IterationStatus::Done;
-                if (visitor.gotoLastOfCompiledCallersWithoutHandlers(m_vmEntryRecord->calleeSaveRegistersBuffer, m_vmCalleeSaveBufferSlotsByRegIndex)) {
-                    m_callFrame = visitor->callFrame();
-                    if (CallFrame* adapter = visitor->aotAdapterFrame())
-                        copyCalleeSavesToEntryFrameCalleeSavesBuffer(adapter, &AOT::adapterSavedRegisters());
-                    if (visitor->callerIsEntryFrame())
-                        return IterationStatus::Done;
-                }
-                return IterationStatus::Continue;
-            }
-            // The handlers of code compiled from types are keyed by the machine call, which the innermost frame has. The numbers that stand
-            // for inlined calls have no handlers.
-            if (visitor->isInlinedAOTFrame() && !visitor->isTypedAOTFrame())
-                return IterationStatus::Continue;
-            RELEASE_ASSERT(visitor->bytecodeIndex());
-            if (!m_isTermination) {
-                UnlinkedHandlerInfo madeHere;
-                m_handler = { function.handlerFor(visitor->bytecodeIndex().offset(), madeHere), function };
-                if (m_handler.m_valid)
-                    return IterationStatus::Done;
-            }
-            if (visitor->isInlinedAOTFrame())
-                return IterationStatus::Continue;
-            bool rejects = rejectsInFrame(visitor, function);
-            copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor, !rejects);
-            return rejects || visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
-        } else
+        if (visitor->aotFunction()) [[unlikely]]
+            return unwindCompiledFrame(visitor);
 #endif
-            m_codeBlock = visitor->codeBlock();
+        m_codeBlock = visitor->codeBlock();
 
         if (m_codeBlock) {
             if (!m_isTermination) {
@@ -1373,7 +1429,11 @@ public:
         JSGlobalObject* globalObject = m_callFrame->lexicalGlobalObject(m_vm);
         notifyDebuggerOfUnwinding(globalObject, m_callFrame);
 
-        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor);
+        copyCalleeSavesToEntryFrameCalleeSavesBuffer(visitor->callFrame(), visitor->calleeSaveRegistersForUnwinding());
+#if ENABLE(AOT)
+        if (CallFrame* adapter = visitor->aotAdapterFrame()) [[unlikely]]
+            copyCalleeSavesOfAdapter(adapter);
+#endif
 
         bool shouldStopUnwinding = visitor->callerIsEntryFrame();
         if (shouldStopUnwinding)
@@ -1854,14 +1914,14 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(function), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            if (newCodeBlock)
-                newCodeBlock->m_shouldAlwaysBeInlined = false;
+            ASSERT(newCodeBlock);
+            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSCall)
-                jitCode = functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall);
+                jitCode = functionExecutable->generatedJITCodeForCall();
             protoCallFrame.init(newCodeBlock, globalObject, function, thisValue, context, argsCount, args.data());
         }
     }
@@ -1869,8 +1929,8 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
     // Execute the code:
     scope.release();
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall));
-        return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
+        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
+        return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     }
 
 #if ENABLE(WEBASSEMBLY)
@@ -1950,14 +2010,14 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
             // Compile the callee:
             constructData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(constructor), scope, CodeSpecializationKind::CodeForConstruct, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, nullptr);
-            if (newCodeBlock)
-                newCodeBlock->m_shouldAlwaysBeInlined = false;
+            ASSERT(newCodeBlock);
+            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
             if (isJSConstruct)
-                jitCode = constructData.js.functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForConstruct);
+                jitCode = constructData.js.functionExecutable->generatedJITCodeForConstruct();
             protoCallFrame.init(newCodeBlock, globalObject, constructor, newTarget, nullptr, argsCount, args.data());
         }
     }
@@ -1965,8 +2025,8 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
     EncodedJSValue result;
     // Execute the code.
     if (isJSConstruct) {
-        ASSERT(jitCode == constructData.js.functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForConstruct));
-        result = vmEntryToJavaScript(constructData.js.functionExecutable->entrypointFor(CodeSpecializationKind::CodeForConstruct, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame);
+        ASSERT(jitCode == constructData.js.functionExecutable->generatedJITCodeForConstruct().ptr());
+        result = vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame);
     } else
         result = vmEntryToNative(constructData.native.function.taggedPtr(), &vm, &protoCallFrame);
 
@@ -1987,10 +2047,7 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     cachedCall.functionExecutable()->prepareForExecution<FunctionExecutable>(vm, function, cachedCall.scope(), CodeSpecializationKind::CodeForCall, newCodeBlock);
     RETURN_IF_EXCEPTION(throwScope, { });
 
-    if (!newCodeBlock) {
-        cachedCall.m_addressForCall = cachedCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
-        return nullptr;
-    }
+    ASSERT(newCodeBlock);
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     cachedCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
@@ -2008,10 +2065,7 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     microtaskCall.functionExecutable()->prepareForExecution<FunctionExecutable>(vm, function, function->scope(), CodeSpecializationKind::CodeForCall, newCodeBlock);
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, { });
 
-    if (!newCodeBlock) {
-        microtaskCall.m_addressForCall = microtaskCall.functionExecutable()->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
-        return nullptr;
-    }
+    ASSERT(newCodeBlock);
     newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     microtaskCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();

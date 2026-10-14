@@ -53,7 +53,7 @@ inline Structure* Structure::create(VM& vm, Structure* previous, DeferredStructu
     ASSERT(vm.structureStructure);
     switch (previous->variant()) {
     case StructureVariant::Normal: {
-        auto* result = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, previous->variant(), previous);
+        auto* result = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, previous->variant(), previous);
         result->finishCreation(vm, previous, deferred);
         return result;
     }
@@ -217,7 +217,7 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
 #if USE(BUN_JSC_ADDITIONS)
     // Nobody has asked whether the property keeps its value. Whoever asks from now on is told that none of them does: ensurePropertyReplacementWatchpointSet().
     if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
-        m_isReplacedWithoutNotice = true;
+        aotFields().isReplacedWithoutNotice = true;
         return;
     }
 #endif

@@ -668,10 +668,10 @@ Operand Lowering::fitBoxedToIntegerOrElse(Boxed value, const Type& from, const T
         m_out.branch(isInt32(value).value(), usually(int32Case), rarely(otherCase));
 
         m_out.appendTo(int32Case);
-        Integer small = signExtended(low32(value));
+        Integer narrowed = signExtended(low32(value));
         if (!Range::int32().isWithin(to.integers))
-            orElse(isWithin(small, to.integers), otherwise);
-        results.append(m_out.anchor(small.value()));
+            orElse(isWithin(narrowed, to.integers), otherwise);
+        results.append(m_out.anchor(narrowed.value()));
         m_out.jump(continuation);
 
         m_out.appendTo(otherCase);
@@ -929,7 +929,7 @@ bool Lowering::resultBecomesItsType(const Type& guarantee, const Type& type) con
         return claimMayMakeObjects(m_program, m_function, value);
     if (m_isElementOfEntries && (value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
         return !value.readsElementKnownByTheStores() || Options::validateAOTTypedFacts();
-    return value.opcode == Opcode::CallBuiltin || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
+    return value.opcode == Opcode::CallBuiltin || fieldReadMayMakeObjects(m_program, m_function, value) || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
 }
 
 Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& type)
@@ -937,7 +937,7 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
     if (m_fusedCasts && &type == &m_fusedCasts->type && !m_fusedCasts->areBeingCarriedOut)
         return carryOutFusedCasts(operand, guarantee);
     // `never` says nothing.
-    if (&guarantee == &type || type.isNever() || guarantee.isWithin(type, m_program))
+    if (&guarantee == &type || type.isNever() || guarantee.isWithin(type, m_program, !m_isHoldingToTypeOpenedForLog))
         return convert(operand, guarantee, repOf(type));
     if (resultBecomesItsType(guarantee, type)) {
         TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
@@ -1807,7 +1807,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
     // the type as it is: that lays out what a plain object refers to, and hands back the object itself. See Coercion in AOTTypedObject.cpp.
     Operand fitted;
     {
-        SetForScope isCoerced(m_foreignObjectsDoNotFit, !isNarrowing && m_program.annotatedPlaceLooksAtForeignObjects(to));
+        SetForScope isCoerced(m_foreignObjectsDoNotFit, (!isNarrowing && m_program.annotatedPlaceLooksAtForeignObjects(to)) || m_program.isOpenedForLog(to));
         // Nothing becomes of what is only tested: a member that could still become more is done with here.
         SetForScope useCastTest(m_useCastTest, cast.castReason() == CastReason::As || isNarrowing);
         fitted = fitOrElse(operand, from, to, slowPath);
@@ -1824,7 +1824,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
         join.add(convert(convert(operand, from, repOf(from)), to, rep));
         return join.finish();
     }
-    RELEASE_ASSERT(isNarrowing || !m_program.castsMayRetag || effects.writesShapeWords);
+    RELEASE_ASSERT(isNarrowing || !m_program.castsMayRetag || effects.writesShapeWords || cast.castReason() != CastReason::As);
     Boxed coerced = AOT_TYPED_OPERATION_WITH_EFFECTS(Coerce, effects, passed, typeAndReason(cast.type, cast.castReason() == CastReason::As && cast.coercesFreshData() ? CastReason::AsFreshObject : cast.castReason()));
     join.add(convert(coerced, to, rep));
     return join.finish();
@@ -2470,8 +2470,13 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
             return placeholder(repOf(typeOf(result)));
         }
     }
-    if (handlerEnteredByBranch())
+    if (handlerEnteredByBranch()) {
+        auto& written = value.inlineFrame ? m_program.at(m_function.inlineFrames[value.inlineFrame].callee) : m_function;
+        bool isOpenedForLog = m_program.logsTypeErrors && (written.isGenericEntrypoint() || written.has(Format::FunctionIsHiddenInStackTraces) || written.has(FunctionLogsMisfits)) && typeOf(result).admitsForeignObjects(m_program);
+        SetForScope asIfClosed(m_foreignObjectsDoNotFit, m_foreignObjectsDoNotFit || isOpenedForLog);
+        SetForScope isHolding(m_isHoldingToTypeOpenedForLog, isOpenedForLog);
         return ensure(get(value.child(0)), typeOf(value.child(0)), typeOf(result));
+    }
     if (m_cloneGroup && m_cloneGroup->cast == m_currentIndexInBlock)
         return lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
     if (m_mergeGroup && m_mergeGroup->first + 2 == m_currentIndexInBlock)
@@ -2504,11 +2509,13 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     case CastReason::NonNull:
         return lowerNonNull(result, value);
     case CastReason::Flow:
-        if (!value.string() && narrowingMayRetag(m_program, to))
+        if (!value.string() && (narrowingMayRetag(m_program, to) || m_program.isOpenedForLog(to)))
             return coerce(operand, from, value);
         break;
     case CastReason::Store:
     case CastReason::Claim:
+        if (!value.string() && m_program.isOpenedForLog(to)) [[unlikely]]
+            return coerce(operand, from, value);
         break;
     }
     // The receiver of a call that was resolved, with the name of what is called: what is left of the read of the property. See resolveCalls() and resolveBuiltins().

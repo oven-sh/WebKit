@@ -104,7 +104,15 @@ void Lowering::throwNewError(const Value& error)
 {
     RELEASE_ASSERT(error.opcode == Opcode::CallBuiltin);
     ErrorType type = errorTypeOf(m_builtins.at(error.builtin()).implementation.inlined);
-    throwAt(ThrowKind::TypeMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
+    auto& placeOfThrow = m_currentBlock->terminator.cases;
+    uint32_t callSite = m_nextSite;
+    throwAt(placeOfThrow.isEmpty() ? ThrowKind::TypeMismatch : ThrowKind::KindMismatch, std::nullopt, m_function.at(error.arguments[0]).string().index(), std::nullopt, static_cast<unsigned>(type) + 1);
+    if (placeOfThrow.isEmpty())
+        return;
+    RELEASE_ASSERT(m_nextSite == callSite + 1);
+    uint32_t inlineFrame = placeOfThrow.size() > 1 ? static_cast<uint32_t>(placeOfThrow[1]) : 0;
+    m_context.sitePositions.append({ static_cast<uint32_t>(placeOfThrow[0]), inlineFrame });
+    m_context.itemSites.append({ callSite, 0, PackedSite::pack(inlineFrame, CallSiteIndex(BytecodeIndex(m_nextSite++)).bits()) });
 }
 
 } } } // namespace JSC::AOT::Typed

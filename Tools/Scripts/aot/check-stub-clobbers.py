@@ -11,10 +11,14 @@ another register may change besides. A stub that changes another register, on ho
 Follows every path from the entry of each declared stub, of each variant of it for a register, and of each thunk that names an
 operation and jumps to it, through branches and through jumps to other stubs, and keeps for every register whether it still holds
 the caller's value. A register that is stored to the stack while it holds the caller's value, and loaded back from that place, holds it again. So
-does one that is copied to another register (MOV, or FMOV between the two kinds) and copied back while that one is untouched. A
+does one that is copied to another register (MOV, or FMOV between the two kinds) and copied back while that one is untouched, be it
+by way of the stack. A
 BLR, or a BL that leaves the stubs, is a call by the C convention: it changes x0 to x17, d0 to d7 and d16 to d31. (x18 is the
 platform's, x30 is the return address: neither is ever allocated, so neither is looked at.) A BL to another stub changes what that
 stub changes.
+
+A thunk of a ColdPlainOperation stub to operationAOTTypedBarrierSlowKeepingRegisters is entered with the caller's x1 in x16: the site passes the owner in x1 and
+has moved what x1 held out of the way. On return x1 has to hold what x16 held.
 
 A path ends
   - in RET: what is changed there has to be declared, and the stack pointer has to be the caller's;
@@ -172,7 +176,7 @@ Result = collections.namedtuple('Result', 'changed exits problems')
 results = {}
 
 
-def follow(entry, stops_at_calls=False):
+def follow(entry, stops_at_calls=False, moved_by_caller=frozenset()):
     if not stops_at_calls:
         if entry in results:
             return results[entry]
@@ -185,7 +189,7 @@ def follow(entry, stops_at_calls=False):
             exits[how] += 1
 
     place = lambda index: '%s+%d' % stub_at(4 * index)
-    states, work = {}, [(entry // 4, (frozenset(), 0, frozenset(), None, frozenset()))]
+    states, work = {}, [(entry // 4, (frozenset(pair[1] for pair in moved_by_caller), 0, frozenset(), None, moved_by_caller))]
     while work:
         index, state = work.pop()
         if index in states:
@@ -280,6 +284,8 @@ def follow(entry, stops_at_calls=False):
                     saved = {other for other in saved if other[0] != at}
                     if register not in changed and width == 8:
                         saved.add((at, register))
+                    if width == 8:
+                        saved.update((at, pair[1]) for pair in kept if pair[0] == register)
             if write_back and not offset:
                 depth += write_back
         else:
@@ -302,6 +308,10 @@ def show(registers):
     return ' '.join(name_of_register(register) for register in sorted(registers)) or 'nothing'
 
 
+def moved_by_caller_of(name):
+    return frozenset({(16, 1)}) if re.fullmatch(r'(Leaf)?ColdPlainOperation(WithoutFPRs)? to operationAOTTypedBarrierSlowKeepingRegisters', name) else frozenset()
+
+
 def base_name_and_own_registers(name):
     own = {register_named(register) for register in re.findall(r' into ([xd]\d+)', name)}
     return re.sub(r' (?:of|into) [xd]\d+| of pair \d+| to \w+', '', name), own
@@ -311,8 +321,8 @@ if args.prints:
     for offset, name in names[:-1]:
         if args.stub and base_name_and_own_registers(name)[0] not in args.stub:
             continue
-        result = follow(offset)
-        print('%s\n    without a call: %s\n    on any path: %s' % (name, show(follow(offset, True).changed), 'all that a call changes' if result.changed >= CHANGED_BY_CALLS else show(result.changed)))
+        result = follow(offset, False, moved_by_caller_of(name))
+        print('%s\n    without a call: %s\n    on any path: %s' % (name, show(follow(offset, True, moved_by_caller_of(name)).changed), 'all that a call changes' if result.changed >= CHANGED_BY_CALLS else show(result.changed)))
         if result.exits:
             print('    ' + ', '.join('%s (%d)' % exit for exit in result.exits.most_common()))
         for problem in result.problems:
@@ -330,7 +340,7 @@ for offset, name in names[:-1]:
     if base not in declared:
         continue
     checked += 1
-    result = follow(offset)
+    result = follow(offset, False, moved_by_caller_of(name))
     allowed = {register_named(register) for register in declared[base][0] + (declared[base][1] if ' of ' in name else [])} | own
     problems += ['%s has a %s' % (name, exit) for exit in result.exits if exit.startswith('tail jump')]
     if not any(exit.startswith('tail jump') for exit in result.exits) and result.changed - allowed:

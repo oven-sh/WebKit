@@ -2676,7 +2676,7 @@ static Vector<unsigned> immediateDominatorsOf(const Function& function)
     Vector<unsigned> result;
     result.fill(UINT_MAX, count);
     result[0] = 0;
-    bool changed = true;
+    bool changed = !tryFindImmediateDominators(postorder.size(), [&](unsigned i) { return postorder[postorder.size() - 1 - i]; }, predecessors, result);
     while (changed) {
         changed = false;
         for (unsigned i = postorder.size(); i--;) {
@@ -3806,6 +3806,7 @@ static void findRowsOfBirths(Program& program, Vector<String>& malformed)
             name = store.string();
         };
         Vector<StringID, 8> rowOfThis;
+        Vector<std::pair<uint32_t, uint32_t>, 8> storesAndBirths;
         ValueID self = function.has(Format::FunctionHasThis) && function.captureTypes.size() < function.blocks[0].parameters.size() ? function.blocks[0].parameters[function.captureTypes.size()] : ValueID();
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
@@ -3829,9 +3830,7 @@ static void findRowsOfBirths(Program& program, Vector<String>& malformed)
                 }
                 if (object.index() < function.values.size() && function.at(object).opcode == Opcode::NewObject) {
                     note(rows.ensure(object.index(), [] { return Vector<StringID, 8>(); }).iterator->value, store);
-                    if (object.index() >= Value::greatestBirthOfFirstStore)
-                        complain("a birth stands too far behind for a first store to name it in "_s);
-                    store.setBirthOfFirstStore(1 + object.index());
+                    storesAndBirths.append({ id.index(), object.index() });
                 } else
                     complain("a first store names no birth in "_s);
             }
@@ -3873,14 +3872,9 @@ static void findRowsOfBirths(Program& program, Vector<String>& malformed)
             found.births.append(birth);
             found.rows.append(WTF::move(row));
         }
-        for (unsigned k = 0; k < function.values.size(); ++k) {
-            auto& value = function.values[k];
-            if (!value.isStoreToObjectBornWhole() || !value.birthOfFirstStore())
-                continue;
-            auto number = numbers.find(value.birthOfFirstStore() - 1);
-            value.setBirthOfFirstStore(1 + (number == numbers.end() ? 0 : number->value));
-            if (number != numbers.end())
-                found.storesThatNameRows.append(k);
+        for (auto [store, birth] : storesAndBirths) {
+            function.values[store].setBirthOfFirstStore(1 + numbers.get(birth));
+            found.storesThatNameRows.append(store);
         }
     });
     Vector<uint32_t> firstRowOf(count);

@@ -383,9 +383,12 @@ void Lowering::lowerTerminator(const Terminator& terminator)
             thrown = in<Boxed>(terminator.value);
         if (!terminator.targets.isEmpty())
             m_watchingHandler = &terminator.targets[0];
-        if (thrown)
+        if (thrown) {
+            if (!terminator.cases.isEmpty())
+                m_placeOfThrow = LoweringContext::SitePosition { static_cast<uint32_t>(terminator.cases[0]), terminator.cases.size() > 1 ? static_cast<uint32_t>(terminator.cases[1]) : 0 };
             AOT_TYPED_OPERATION(Throw, *thrown);
-        else
+            m_placeOfThrow = std::nullopt;
+        } else
             throwNewError(m_function.at(terminator.value));
         didLowerWatchedOperation();
         m_out.unreachable();
@@ -455,7 +458,7 @@ void Lowering::computeDominators(const Vector<BlockID>& order)
     Vector<unsigned> dominator;
     dominator.fill(unknown, numberOfBlocks);
     dominator[order[0].index()] = order[0].index();
-    for (bool changed = true; changed;) {
+    for (bool changed = !tryFindImmediateDominators(order.size(), [&](unsigned i) { return order[i].index(); }, predecessors, dominator); changed;) {
         changed = false;
         for (unsigned i = 1; i < order.size(); ++i) {
             unsigned found = unknown;
@@ -1147,7 +1150,7 @@ bool Lowering::lowerEntryParameters()
 TypedPointer Lowering::inStatics(const FTL::AbstractHeap& heap, ptrdiff_t offset)
 {
     if (!isX86())
-        return m_out.address(heap, m_statics ? m_statics : fixedPointer(Instance::offsetOfTypedStatics()), offset);
+        return m_out.address(heap, fixedPointer(Instance::offsetOfTypedStatics()), offset);
     return m_out.address(heap, m_instance, Instance::displacementOfTypedStatics(m_program.sizeOfStatics) + offset);
 }
 
@@ -1161,7 +1164,7 @@ TypedPointer Lowering::cardOf(uint32_t offsetInStatics)
 LValue Lowering::startOfStatics()
 {
     if (!isX86())
-        return m_statics ? m_statics : fixedPointer(Instance::offsetOfTypedStatics());
+        return fixedPointer(Instance::offsetOfTypedStatics());
     return m_out.add(m_instance, m_out.constIntPtr(Instance::displacementOfTypedStatics(m_program.sizeOfStatics)));
 }
 
@@ -2340,6 +2343,23 @@ static void mergeIdenticalBlocks(Air::Code& code)
     }
 }
 
+static void returnInPlaceOfJumpingToAReturn(Air::Code& code)
+{
+    bool didChange = false;
+    for (Air::BasicBlock* block : code) {
+        if (block->last().kind.opcode != Air::Jump)
+            continue;
+        Air::BasicBlock* target = block->successorBlock(0);
+        if (target == code.findNextBlock(block) || target->size() != 1 || !Air::isReturn(target->last().kind.opcode))
+            continue;
+        block->last() = target->last();
+        block->successors().clear();
+        didChange = true;
+    }
+    if (didChange)
+        code.resetReachability();
+}
+
 // `split`: if the function can be split, that is all that is done.
 static bool isEveryVariableSetWhereItIsRead(B3::Procedure& proc)
 {
@@ -2528,6 +2548,8 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     Air::prepareForGeneration(proc.code());
     resequenceMovesBeforePatches(proc.code());
     mergeIdenticalBlocks(proc.code());
+    if (context.hasNoFrame(proc.code()) || (isX86() && !proc.code().calleeSaveRegisterAtOffsetList().registerCount()))
+        returnInPlaceOfJumpingToAReturn(proc.code());
     uint8_t regionsForOutlining = OutliningOptions::isFromTypedLowering | (program.isHotByText(id) ? 0 : OutliningOptions::isNotHotByText) | (program.isColdByGraph(id) ? OutliningOptions::isColdByGraph : 0);
     const bool keepsRecords = Options::keepAOTInstructionRecordsForTesting() || OutliningOptions::asked();
     context.notesCode = keepsRecords;

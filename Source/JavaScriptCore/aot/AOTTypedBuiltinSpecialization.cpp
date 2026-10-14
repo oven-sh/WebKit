@@ -312,12 +312,12 @@ private:
         } else if (isKnown)
             return false;
         if (!m_isColdByText.isEmpty() && m_isColdByText[block.index()] && (m_function.at(id).opcode == Opcode::CallMethod || m_function.at(id).opcode == Opcode::Call)) {
-            if (auto method = methodAskedByStub(entry, m_function.at(id).arguments.size()); method != MethodAskedByStub::None) {
+            if (auto method = methodAskedByStub(entry, m_function.at(id).arguments); method != MethodAskedByStub::None) {
                 m_function.at(id).methodAskedByStub = method;
                 leaveReadOfMethodToCall(block, index);
                 return false;
             }
-            if (m_builtins.at(entry).implementation.kind == BuiltinImplementation::Inline && engineClass->index < std::numeric_limits<uint16_t>::max()) {
+            if (m_builtins.at(entry).implementation.kind == BuiltinImplementation::Inline && m_builtins.at(entry).implementation.inlined != InlineBuiltin::ArrayEntries && engineClass->index < std::numeric_limits<uint16_t>::max()) {
                 leaveReadOfMethodToCall(block, index);
                 if (m_function.at(id).opcode == Opcode::CallMethod) {
                     m_function.at(id).classExpectedOfReceiverPlusOne = engineClass->index + 1;
@@ -410,14 +410,18 @@ private:
         m_function.at(read) = WTF::move(nothing);
     }
 
-    MethodAskedByStub methodAskedByStub(BuiltinID entry, size_t numberOfArguments) const
+    MethodAskedByStub methodAskedByStub(BuiltinID entry, const Arguments& arguments) const
     {
         auto& implementation = m_builtins.at(entry).implementation;
-        if (implementation.kind != BuiltinImplementation::Inline)
+        if (implementation.kind != BuiltinImplementation::Inline || arguments.isEmpty())
+            return MethodAskedByStub::None;
+        size_t numberOfArguments = arguments.size();
+        if (implementation.inlined == InlineBuiltin::ArrayPush)
+            return numberOfArguments == 1 ? MethodAskedByStub::ArrayPush : MethodAskedByStub::None;
+        auto& typeOfKey = m_program.at(m_function.at(arguments[0]).type);
+        if (!typeOfKey.isAnything() && (!typeOfKey.isString() || implementation.inlined == InlineBuiltin::SetAdd))
             return MethodAskedByStub::None;
         switch (implementation.inlined) {
-        case InlineBuiltin::ArrayPush:
-            return numberOfArguments == 1 ? MethodAskedByStub::ArrayPush : MethodAskedByStub::None;
         case InlineBuiltin::MapGet:
             return numberOfArguments == 1 ? MethodAskedByStub::MapGet : MethodAskedByStub::None;
         case InlineBuiltin::MapHas:

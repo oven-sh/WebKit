@@ -375,7 +375,7 @@ private:
     uint16_t m_persistentPayloadIndex { 0 };
 };
 
-UnlinkedCodeBlock* decodeModuleForProgramData(Decoder&, SourceCodeKey&, Vector<UnlinkedFunctionExecutable*>& functions);
+UnlinkedCodeBlock* decodeModuleForProgramData(Decoder&, SourceCodeKey&);
 struct UnlinkedHandlerInfo;
 struct CodeBlockParts {
     const uint8_t* scalars;
@@ -392,15 +392,11 @@ Vector<uint8_t> encodeCodeBlockScalars(const UnlinkedCodeBlock&);
 UnlinkedFunctionCodeBlock* createFunctionCodeBlockFromParts(VM&, const CodeBlockParts&);
 UnlinkedModuleProgramCodeBlock* createModuleCodeBlockFromParts(VM&, const CodeBlockParts&);
 
-bool entryIsBuiltinFunction(Decoder&);
-UnlinkedFunctionExecutable* decodeBuiltinForProgramData(Decoder&, unsigned& sourceLength, unsigned& embedderStamp, LineStarts&, Vector<UnlinkedFunctionExecutable*>& functions);
 
 struct ProgramObjects {
     std::span<UniquedStringImpl* const> identifiers;
     std::span<const JSValue> constants;
-    std::span<UnlinkedFunctionExecutable* const> unlinkedFunctions;
     std::span<UnlinkedCodeBlock* const> topLevelCodes;
-    Function<uint32_t(UnlinkedFunctionExecutable*)> functionListEntryFor;
 };
 Vector<uint8_t> encodeProgramObjects(VM&, EncoderStringTable&, const ProgramObjects&);
 class CachedProgramObjects;
@@ -414,7 +410,6 @@ public:
     String identifierAsPlainString(uint32_t);
     JSValue constant(uint32_t);
     std::optional<uint32_t> constantAliasTarget(uint32_t);
-    UnlinkedFunctionExecutable* unlinkedFunction(uint32_t);
     UnlinkedCodeBlock* topLevelCode(uint32_t);
 private:
     const Ref<Decoder> m_decoder;

@@ -26,7 +26,6 @@
 #include "config.h"
 #include "CodeCache.h"
 
-#include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
 #include "DirectEvalExecutable.h"
 #include "IndirectEvalExecutable.h"
@@ -87,40 +86,24 @@ void CodeCacheMap::removeCodeDecodedFromPersistentPayloads()
     });
 }
 
-static void generateUnlinkedCodeBlockForFunctions(VM&, UnlinkedCodeBlock*, const SourceCode& parentSource, OptionSet<CodeGenerationMode>, ParserError&, unsigned depth, OptimizeBytecode);
-
-static void generateFunctionUnlinkedCodeBlocks(VM& vm, UnlinkedFunctionExecutable* unlinkedExecutable, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
-{
-    CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
-    SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
-    UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
-    if (unlinkedFunctionCodeBlock)
-        generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
-    if (!vm.bytecodeGenerationOptions.resolveAllScopeSlotsStatically || !unlinkedFunctionCodeBlock || kind != CodeSpecializationKind::CodeForCall)
-        return;
-    if (unlinkedExecutable->constructAbility() != ConstructAbility::CanConstruct)
-        return;
-    bool canDetectConstructCall = unlinkedExecutable->features() & (NewTargetFeature | EvalFeature);
-    for (auto& identifier : unlinkedFunctionCodeBlock->identifiers())
-        canDetectConstructCall |= identifier == vm.propertyNames->builtinNames().newTargetLocalPrivateName();
-    if (!canDetectConstructCall) {
-        if (!(unlinkedExecutable->features() & ThisFeature))
-            return;
-        if (unlinkedFunctionCodeBlock->instructionsSize() > 2048 || unlinkedFunctionCodeBlock->numberOfFunctionDecls() + unlinkedFunctionCodeBlock->numberOfFunctionExprs() > 4)
-            return;
-    }
-    if (auto* forConstruct = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, CodeSpecializationKind::CodeForConstruct, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize))
-        generateUnlinkedCodeBlockForFunctions(vm, forConstruct, source, codeGenerationMode, error, depth - 1, optimize);
-}
-
 static void generateUnlinkedCodeBlockForFunctions(VM& vm, UnlinkedCodeBlock* unlinkedCodeBlock, const SourceCode& parentSource, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
     if (!depth)
         return;
+    auto generate = [&](UnlinkedFunctionExecutable* unlinkedExecutable) {
+        // FIXME: We should also generate CodeBlocks for CodeForConstruct of ordinary functions.
+        // https://bugs.webkit.org/show_bug.cgi?id=193823
+        CodeSpecializationKind kind = unlinkedExecutable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall;
+        SourceCode source = unlinkedExecutable->linkedSourceCode(parentSource);
+        UnlinkedFunctionCodeBlock* unlinkedFunctionCodeBlock = unlinkedExecutable->unlinkedCodeBlockFor(vm, source, kind, codeGenerationMode, error, unlinkedExecutable->parseMode(), optimize);
+        if (unlinkedFunctionCodeBlock)
+            generateUnlinkedCodeBlockForFunctions(vm, unlinkedFunctionCodeBlock, source, codeGenerationMode, error, depth - 1, optimize);
+    };
+
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionDecls(); i++)
-        generateFunctionUnlinkedCodeBlocks(vm, unlinkedCodeBlock->functionDecl(i), parentSource, codeGenerationMode, error, depth, optimize);
+        generate(unlinkedCodeBlock->functionDecl(i));
     for (unsigned i = 0; i < unlinkedCodeBlock->numberOfFunctionExprs(); i++)
-        generateFunctionUnlinkedCodeBlocks(vm, unlinkedCodeBlock->functionExpr(i), parentSource, codeGenerationMode, error, depth, optimize);
+        generate(unlinkedCodeBlock->functionExpr(i));
 }
 
 template<class UnlinkedCodeBlockType, class ExecutableType = ScriptExecutable>
@@ -152,7 +135,7 @@ UnlinkedCodeBlockType* generateUnlinkedCodeBlockImpl(VM& vm, const SourceCode& s
         unlinkedCodeBlock->setSourceURLDirective(source.provider()->sourceURLDirective());
     if (!source.provider()->sourceMappingURLDirective().isNull())
         unlinkedCodeBlock->setSourceMappingURLDirective(source.provider()->sourceMappingURLDirective());
-    unlinkedCodeBlock->setLineStarts(vm.bytecodeGenerationOptions.keepAllSourceLineStarts ? source.provider()->lineStarts() : source.provider()->lineStartsIfBuilt());
+    unlinkedCodeBlock->setLineStarts(source.provider()->lineStartsIfBuilt());
 
     RefPtr<TDZEnvironmentLink> parentVariablesUnderTDZ;
     if (variablesUnderTDZ)
@@ -191,7 +174,10 @@ UnlinkedCodeBlockType* recursivelyGenerateUnlinkedCodeBlock(VM& vm, const Source
 
 void recursivelyGenerateUnlinkedCodeBlocksForFunction(VM& vm, UnlinkedFunctionExecutable* executable, const SourceCode& parentSource, ParserError& error, unsigned depth, OptimizeBytecode optimize)
 {
-    generateFunctionUnlinkedCodeBlocks(vm, executable, parentSource, { }, error, depth == std::numeric_limits<unsigned>::max() ? depth : depth + 1, optimize);
+    SourceCode source = executable->linkedSourceCode(parentSource);
+    UnlinkedFunctionCodeBlock* codeBlock = executable->unlinkedCodeBlockFor(vm, source, executable->isClassConstructorFunction() ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall, { }, error, executable->parseMode(), optimize);
+    if (codeBlock)
+        generateUnlinkedCodeBlockForFunctions(vm, codeBlock, source, { }, error, depth, optimize);
 }
 
 UnlinkedProgramCodeBlock* recursivelyGenerateUnlinkedCodeBlockForProgram(VM& vm, const SourceCode& source, LexicallyScopedFeatures lexicallyScopedFeatures, JSParserScriptMode scriptMode, OptionSet<CodeGenerationMode> codeGenerationMode, ParserError& error, EvalContextType evalContextType, unsigned depth, OptimizeBytecode optimize)

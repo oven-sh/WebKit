@@ -34,7 +34,6 @@ struct Slot;
     v(operationAOTWriteBarrierAfterPut) \
     v(operationAOTMapSet) \
     v(operationAOTSetAdd) \
-    v(operationAOTConstructViaCall) \
     v(operationAOTEnsureData) \
 
 enum class WellKnownIdentifier : uint32_t {
@@ -53,13 +52,6 @@ enum class FunctionKind : uint32_t {
     AsyncGenerator,
 };
 
-enum class InternalFieldObjectKind : uint32_t {
-    Promise,
-    Generator,
-    AsyncGenerator,
-    AsyncFunctionGenerator,
-};
-
 bool tryCopyDataProperties(Instance*, VM&, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation);
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectLiteral, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTNewObjectOfRow, JSObject*, (Instance*, EncodedJSValue* values, uint32_t count, Slot* row));
@@ -75,7 +67,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTWriteBarrierAfterPut, void, (VM*, JSCell*)
 JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance*, JSCell* map, EncodedJSValue key, EncodedJSValue value, int32_t hash));
 JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
 
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTConstructViaCall, UGPRPair, (CallFrame*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
 
 } } // namespace JSC::AOT

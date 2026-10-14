@@ -1043,3 +1043,4 @@ SpeculatedType speculationFromString(StringView speculation)
 }
 
 } // namespace JSC
+

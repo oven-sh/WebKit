@@ -269,6 +269,16 @@ RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
 
 void Code::resetReachability()
 {
+#if USE(BUN_JSC_ADDITIONS)
+    recomputePredecessorsFromRoots(m_blocks, [&](auto&& visit) {
+        if (m_entrypoints.isEmpty()) {
+            visit(m_blocks[0].get());
+            return;
+        }
+        for (const FrequentedBlock& entrypoint : m_entrypoints)
+            visit(entrypoint.block());
+    });
+#else
     clearPredecessors(m_blocks);
     if (m_entrypoints.isEmpty())
         updatePredecessorsAfter(m_blocks[0].get());
@@ -276,6 +286,7 @@ void Code::resetReachability()
         for (const FrequentedBlock& entrypoint : m_entrypoints)
             updatePredecessorsAfter(entrypoint.block());
     }
+#endif
     
     for (auto& block : m_blocks) {
         if (isBlockDead(block.get()) && !isEntrypoint(block.get()))

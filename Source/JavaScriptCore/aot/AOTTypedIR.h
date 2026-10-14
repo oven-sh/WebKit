@@ -654,6 +654,7 @@ struct Layout {
     // general way, which may run code, and what that yields is held to its type. Nothing may conclude from the type that an object has the
     // fields, or that it is of the program.
     bool admitsForeignObjects { false };
+    bool isOpenedForLog { false };
     // An object of it, and not `undefined` or `null`: Type::view(this layout). Of every layout, from before types are frozen.
     TypeID type;
     // The frame of a coroutine: the run time stores to its fixed fields, see CoroutineFrame.
@@ -913,7 +914,19 @@ public:
     // to, never by how much a pass has found out about the operand. Store and Claim take such an object as it is.
     bool isHeldAlready(const Type& from, const Type& to, CastReason reason) const
     {
-        return from.isWithin(to, *this, reason != CastReason::As || !annotatedPlaceLooksAtForeignObjects(to));
+        return from.isWithin(to, *this, !isOpenedForLog(to) && (reason != CastReason::As || !annotatedPlaceLooksAtForeignObjects(to)));
+    }
+    bool isOpenedForLog(const Type& to) const
+    {
+        bool isOpened = false;
+        for (LayoutID view : to.views) {
+            if (!at(view).admitsForeignObjects)
+                continue;
+            if (!at(view).isOpenedForLog)
+                return false;
+            isOpened = true;
+        }
+        return isOpened;
     }
     // Whether a place whose type is written down (`As`) makes anything of an object that is of the type only because the type admits foreign objects: it lays out what a plain object holds
     // (Coercion::keep()), and turns an object of the program into what it can still become. Not where no view of the type gives it anything to do: see viewsLeftAlone.

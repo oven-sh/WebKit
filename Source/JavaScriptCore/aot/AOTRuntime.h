@@ -115,9 +115,6 @@ struct State;
     v(NativeCallTrampoline) \
     v(InternalFunctionCallTrampoline) \
     v(InternalFunctionConstructTrampoline) \
-    v(EnterStaticFunctionForCall) \
-    v(EnterStaticFunctionForConstruct) \
-    v(ConstructViaCall) \
     v(MegamorphicCache) \
     v(UndefinedHolder) \
     v(HostMathSqrt) \
@@ -476,7 +473,6 @@ struct FunctionInfo {
         return typedFunction << 3 | static_cast<uint32_t>(FunctionCode) << 1;
     }
     inline uint32_t indexAndFlags() const;
-    uint32_t indexPlusOne() const { return isTyped ? 0 : indexAndFlags() >> 3; }
     // Its number in Typed::Data.
     uint32_t typedFunction() const
     {
@@ -485,7 +481,6 @@ struct FunctionInfo {
     }
     CodeType codeType() const { return static_cast<CodeType>(indexAndFlags() >> 1 & 3); }
     bool isTopLevelCode() const { return codeType() != FunctionCode; }
-    bool hasExecutable() const { return indexPlusOne() && !isTopLevelCode(); }
     CodeSpecializationKind kind() const { return indexAndFlags() & 1 ? CodeSpecializationKind::CodeForConstruct : CodeSpecializationKind::CodeForCall; }
     bool hasCodeInImage() const { return sites; }
     inline bool hasSiteConstants() const;
@@ -531,9 +526,6 @@ struct Instance {
     JS_EXPORT_PRIVATE static Instance& ensure(JSModuleLoader*);
     JS_EXPORT_PRIVATE static Instance& ensure(JSGlobalObject*);
     static Instance* of(JSFunction*);
-    Structure* functionStructure(Structure* realmStructure, FunctionExecutable*, JSScope*);
-    Structure* functionStructure(Structure* realmStructure);
-    JS_EXPORT_PRIVATE JSFunction* makeFunction(FunctionExecutable*, JSScope*);
     JS_EXPORT_PRIVATE ScriptExecutable* topLevelExecutableOf(uint32_t moduleID);
     JS_EXPORT_PRIVATE void setTopLevelExecutableOf(uint32_t moduleID, ScriptExecutable*);
     JS_EXPORT_PRIVATE uint64_t prepareModuleCode(ModuleProgramExecutable*, JSScope*);
@@ -543,7 +535,6 @@ struct Instance {
     JSModuleLoader* loader() const;
     bool loaderWasCleared() const;
     JS_EXPORT_PRIVATE static void destroyUnneededInstances(VM&);
-    static JSObject* newObjectOf(VM&, Structure*);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
 
     template<typename Visitor> void visit(Visitor&, bool newOnly);
@@ -598,11 +589,6 @@ struct Instance {
     {
         uint16_t number = states[infos[index].stateNumber];
         return number > stateOfLinkedWithoutData() ? std::bit_cast<const BiasedDataPointer*>(this)[number].get() : nullptr;
-    }
-    void setLinkedWithoutData(uint32_t index)
-    {
-        RELEASE_ASSERT(infos[index].stateNumber && !states[infos[index].stateNumber]);
-        states[infos[index].stateNumber] = stateOfLinkedWithoutData();
     }
     bool hasRoomForData() const;
     JS_EXPORT_PRIVATE void ensureDataIfThereIsRoom(uint32_t index);
@@ -674,8 +660,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfCellCageBase() { return OBJECT_OFFSETOF(Instance, cellCageBase); }
     static constexpr ptrdiff_t offsetOfNumberBoxBase() { return OBJECT_OFFSETOF(Instance, numberBoxBase); }
     static constexpr ptrdiff_t offsetOfFieldIDAtDirectLocationBase() { return OBJECT_OFFSETOF(Instance, fieldIDAtDirectLocationBase); }
-    static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
-    static constexpr ptrdiff_t offsetOfLinkTimeConstants() { return OBJECT_OFFSETOF(Instance, linkTimeConstants); }
     static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
 
     BiasedDataPointer sharedData;
@@ -1254,8 +1238,6 @@ struct Data {
 
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock();
     FunctionRef function() const;
-    FunctionExecutable* functionDecl(unsigned);
-    FunctionExecutable* functionExpr(unsigned);
 
     void finalizeUnconditionally(VM&);
     void finalizeSlot(VM&, Slot&);
@@ -1271,7 +1253,6 @@ struct Data {
         ScriptExecutable* executable;
         UnlinkedCodeBlock* unlinkedCodeBlock;
         JITCode* code;
-        FunctionExecutable** functions;
     };
     static constexpr size_t allocationSize(unsigned numSlots, bool hasLinkage) { return OBJECT_OFFSETOF(Data, slots) + numSlots * sizeof(Slot) + (hasLinkage ? sizeof(Linkage) : 0); }
     Linkage* linkage() { return hasLinkage ? std::bit_cast<Linkage*>(slots + numSlots) : nullptr; }
@@ -1300,8 +1281,6 @@ struct FunctionMetadata {
     enum Section : uint32_t {
         ExpressionInfo = 1 << 0,
         Handlers = 1 << 1,
-        FunctionDecls = 1 << 2,
-        FunctionExprs = 1 << 3,
         StringSwitchJumpTables = 1 << 4,
         ConstantIdentifierSets = 1 << 6,
         Scalars = 1 << 7,
@@ -1311,9 +1290,7 @@ struct FunctionMetadata {
     static constexpr uint32_t isPositionsOfTypedFunction = 1;
     static constexpr uint32_t isHandlersAndPositionsOfTypedFunction = 2;
     static constexpr bool isOfTypedFunctionWithHandlers(uint32_t word) { return (word & 3) == isHandlersAndPositionsOfTypedFunction; }
-    static constexpr uint32_t executableListEntry(uint32_t number) { return (number + 1) << 1; }
-    static constexpr uint32_t unlinkedFunctionListEntry(uint32_t number) { return (number + 1) << 1 | 1; }
-    static unsigned wordsFor(Section section) { return section == Handlers || section == FunctionDecls || section == FunctionExprs ? 2 : 1; }
+    static unsigned wordsFor(Section section) { return section == Handlers ? 2 : 1; }
 
     const uint32_t* find(Section section) const
     {
@@ -1373,17 +1350,11 @@ struct CompiledFunctionInfo {
         bool isConstruction { false };
     };
     Vector<InlineFrame> inlineFrames;
-    Vector<ImageKey> functionExpressionsInCode;
-    Vector<ImageKey> functionsCreated;
     unsigned frameSizeInBytes { 0 };
-    ptrdiff_t offsetOfCallee { 0 };
     unsigned numSlots { 0 };
     unsigned numberOfEmptyArrayLiteralsMadeInPlace { 0 };
     unsigned numberOfEmptyArrayLiteralsMadeByStub { 0 };
-    bool usesStaticImports { false };
     bool startsCold { false };
-    bool isGetByValOnThis { false };
-    std::optional<std::pair<uint32_t, uint32_t>> returnedVariable;
     RegisterAtOffsetList calleeSaveRegisters;
     Vector<StubCall> stubCalls;
     Vector<ArgumentMoves> argumentMoves;
@@ -1421,21 +1392,18 @@ struct CompiledFunctionInfo {
     Vector<uint32_t> constantIndices;
     Vector<std::pair<uint32_t, uint32_t>> constructionStarts;
     Vector<Quote> quotes;
-    Vector<UniquedStringImpl*> selectors;
 };
 
 
 struct ImageFrame {
     static constexpr unsigned maxCalleeSavesStart = (1u << 6) - 1;
-    static constexpr unsigned maxCalleeStart = (1u << 10) - 1;
 
     uint32_t calleeSaveRegisters;
-    uint16_t calleeSavesStart : 6;
-    uint16_t calleeStart : 10;
+    uint16_t calleeSavesStart;
     uint16_t frameSizeInUnits;
 
     unsigned frameSizeInBytes() const { return frameSizeInUnits * stackAlignmentBytes(); }
-    uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 26 | static_cast<uint64_t>(calleeStart) << 16 | frameSizeInUnits; }
+    uint64_t bits() const { return static_cast<uint64_t>(calleeSaveRegisters) << 32 | static_cast<uint64_t>(calleeSavesStart) << 16 | frameSizeInUnits; }
 };
 static_assert(sizeof(ImageFrame) == 8);
 
@@ -1452,12 +1420,9 @@ struct ImageFunction {
     uint32_t takesList : 1;
     uint32_t hasInlineFrames : 1;
     uint32_t hasSiteConstants : 1;
-    uint32_t usesStaticImports : 1;
     uint32_t numSlots : numberOfSlotsBits;
     uint32_t frame : numberOfFrameBits;
     uint32_t startsCold : 1;
-    uint32_t isGetByValOnThis : 1;
-    uint32_t returnsScopeVariable : 1;
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
 #if CPU(ARM64)
@@ -1478,9 +1443,9 @@ struct ImageFunction {
     static constexpr ptrdiff_t offsetOfNumSlotsFromSites() { return -static_cast<ptrdiff_t>(sizeof(uint32_t)); }
     const Site* sites() const { return reinterpret_cast<const Site*>(this + 1); }
     const uint32_t* siteConstants() const { return reinterpret_cast<const uint32_t*>(sites() + numSlots); }
-    const uint32_t* returnedVariable() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); }
-    uint32_t quotes() const { return hasQuotes ? returnedVariable()[returnsScopeVariable ? 2 : 0] : 0; }
-    const uint32_t* plans() const { return returnedVariable() + (returnsScopeVariable ? 2 : 0) + hasQuotes; }
+    const uint32_t* endOfSiteConstants() const { return siteConstants() + (hasSiteConstants ? numSlots : 0); }
+    uint32_t quotes() const { return hasQuotes ? *endOfSiteConstants() : 0; }
+    const uint32_t* plans() const { return endOfSiteConstants() + hasQuotes; }
     static constexpr uint32_t noSuchFunction = std::numeric_limits<uint32_t>::max();
 };
 
@@ -1491,7 +1456,7 @@ inline const ImageFunction* FunctionInfo::function() const
     return hasCodeInImage() ? reinterpret_cast<const ImageFunction*>(sitesInImage()) - 1 : nullptr;
 }
 inline bool FunctionInfo::hasSiteConstants() const { return !isTyped && hasCodeInImage() && function()->hasSiteConstants; }
-inline bool FunctionInfo::startsCold() const { return hasCodeInImage() && function()->startsCold && (isTyped || hasExecutable()); }
+inline bool FunctionInfo::startsCold() const { return hasCodeInImage() && function()->startsCold && isTyped; }
 inline uint32_t FunctionInfo::numberOfSlotsForMisses() const { return hasCodeInImage() ? std::min<uint32_t>(function()->numSlots, maxEncodedSlots) : 0; }
 
 class JITCode final : public JSC::JITCode {
@@ -1531,8 +1496,6 @@ private:
 };
 
 Instance& instanceOf(JSScope*);
-bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
-bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
 
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> moduleCodeEntrypoint();
 CodePtr<JSEntryPtrTag> closureEntrypoint();

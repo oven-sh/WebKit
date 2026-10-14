@@ -655,12 +655,15 @@ static std::optional<Stub> stubThatAsksFor(MethodAskedByStub method, bool method
     return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayPushOrCallMethod) + 2 * (static_cast<unsigned>(method) - static_cast<unsigned>(MethodAskedByStub::ArrayPush)) + methodIsRead);
 }
 
-Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, OperationEffects effects, LValue word, MethodAskedByStub method)
+Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, OperationEffects effects, LValue word, MethodAskedByStub method, StringID nameOfMethod)
 {
     m_context.emitsCalls = true;
     unsigned count = operands.size() - 2;
     RELEASE_ASSERT(count <= numberOfArgumentGPRs);
     RELEASE_ASSERT(method == MethodAskedByStub::None || stub == Stub::CallValue);
+    RELEASE_ASSERT(!nameOfMethod || (method == MethodAskedByStub::None && stub == Stub::CallValue && nameOfMethod.index() <= ThrowSite::maxNarrowA));
+    if (nameOfMethod)
+        stub = Stub::CallValueNamed;
     if (method == MethodAskedByStub::None && stub == Stub::CallValue && operands[1]->hasInt64() && operands[1]->asInt64() == static_cast<int64_t>(JSValue::encode(jsUndefined())))
         stub = Stub::CallValueWithoutThis;
     PatchpointValue* patchpoint = m_out.patchpoint(Int64);
@@ -679,8 +682,11 @@ Boxed Lowering::callValue(Stub stub, const Vector<LValue, 8>& operands, Operatio
     patchpoint->clobberLate(registersClobberedByCalls());
     patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, count, site, asks = stubThatAsksFor(method, true)](CCallHelpers& jit, const StackmapGenerationParams&) {
+    uint32_t wordOfThrow = nameOfMethod ? throwSiteWords(ThrowKind::NotAFunction, Rep::JSValue, static_cast<unsigned>(calleeGPR), nameOfMethod.index(), std::nullopt)[0] : 0;
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, count, site, wordOfThrow, asks = stubThatAsksFor(method, true)](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (stub == Stub::CallValueNamed)
+            jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(wordOfThrow)), stubTemporaryGPRs[2]);
         if (asks)
             stubCalls->call(jit, *asks, site);
         else
@@ -1532,7 +1538,8 @@ CellPointer Lowering::lowerNewClosureOnce(const Value& value)
 // A call of a value of which nothing is known.
 Boxed Lowering::callGenerally(Boxed callee, Boxed thisValue, const Arguments& arguments, StringID nameOfMethod, MethodAskedByStub method)
 {
-    if (nameOfMethod) {
+    bool nameRidesInRegister = nameOfMethod && method == MethodAskedByStub::None && arguments.size() <= numberOfArgumentGPRs && nameOfMethod.index() <= ThrowSite::maxNarrowA && thrownNil(callee).value() == callee.value();
+    if (nameOfMethod && !nameRidesInRegister) {
         // The stub could only say what the value is, not what was asked for.
         requireOrThrowAt(isCell(callee), ThrowKind::NotAFunction, Operand(thrownNil(callee)), nameOfMethod.index());
         callee = box(asCell(callee));
@@ -1548,7 +1555,7 @@ Boxed Lowering::callGenerally(Boxed callee, Boxed thisValue, const Arguments& ar
     Vector<LValue, 8> operands { callee.value(), thisValue.value() };
     for (ValueID argument : arguments)
         operands.append(in<Boxed>(argument).value());
-    return callValue(Stub::CallValue, operands, { }, nullptr, method);
+    return callValue(Stub::CallValue, operands, { }, nullptr, method, nameRidesInRegister ? nameOfMethod : StringID());
 }
 
 Boxed Lowering::callMethodGenerally(Boxed object, StringID name, const Arguments& arguments)
@@ -1640,7 +1647,7 @@ Operand Lowering::callClosure(FunctionID function, CellPointer closure, ValueID 
     // What the general entry would coerce is for the general entry, also where it would pass for the type as it is.
     auto pass = [&](ValueID id, CastReason reason) {
         auto& type = typePassedAs(callee, all.size());
-        SetForScope isCoerced(m_foreignObjectsDoNotFit, reason == CastReason::As && m_program.annotatedPlaceLooksAtForeignObjects(type));
+        SetForScope isCoerced(m_foreignObjectsDoNotFit, (reason == CastReason::As && m_program.annotatedPlaceLooksAtForeignObjects(type)) || m_program.isOpenedForLog(type));
         SetForScope useCastTest(m_useCastTest, reason == CastReason::As);
         all.append(Argument { fitOrElse(get(id), typeOf(id), type, otherwise), &type });
     };

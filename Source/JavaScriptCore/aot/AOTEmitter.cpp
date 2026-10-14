@@ -34,7 +34,6 @@ void Emitter::findPinnedRegisters()
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
 #if CPU(ARM64)
     m_cellCageBase = registerOnEntry(cellCageBaseGPR);
-    m_statics = registerOnEntry(staticsGPR);
 #endif
 }
 
@@ -696,7 +695,6 @@ void pinRegisters(Procedure& proc)
     proc.pinRegister(GPRInfo::notCellMaskRegister);
 #if CPU(ARM64)
     proc.pinRegister(cellCageBaseGPR);
-    proc.pinRegister(staticsGPR);
     if (proc.mutableGPRs().contains(ARM64Registers::x18, IgnoreVectors))
         proc.pinRegister(ARM64Registers::x18);
 #endif

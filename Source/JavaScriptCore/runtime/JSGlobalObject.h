@@ -183,6 +183,7 @@ constexpr bool typeExposedByDefault = true;
     macro(BigInt, bigInt, bigIntObject, BigIntObject, BigInt, object, typeExposedByDefault) \
     macro(Symbol, symbol, symbolObject, SymbolObject, Symbol, object, typeExposedByDefault) \
 
+
 #define FOR_EACH_BUILTIN_DERIVED_ITERATOR_TYPE(macro) \
     macro(StringIterator, stringIterator, stringIterator, JSStringIterator, StringIterator, iterator, typeExposedByDefault) \
 

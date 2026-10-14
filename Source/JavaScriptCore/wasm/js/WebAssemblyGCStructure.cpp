@@ -42,6 +42,7 @@ WebAssemblyGCStructure::WebAssemblyGCStructure(VM& vm, const TypeInfo& typeInfo,
     : Structure(vm, StructureVariant::WebAssemblyGC, nullptr, typeInfo, classInfo)
     , m_rtt(WTF::move(rtt))
 {
+    static_assert(OBJECT_OFFSETOF(WebAssemblyGCStructure, m_roomForAOTFields) == sizeof(Structure));
     setMayBePrototype(true); // Make sure that didPrototype transition does not happen.
     switch (m_rtt->kind()) {
     case Wasm::RTTKind::Function:

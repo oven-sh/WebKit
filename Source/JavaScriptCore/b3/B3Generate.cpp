@@ -95,7 +95,7 @@ void generateToAir(Procedure& procedure)
         if (Options::useB3SpecializeSelect())
             specializeSelect(procedure);
         reduceStrength(procedure, ReduceStrengthPass::Initial);
-        if (Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues() && !procedure.rotatesLoops())
+        if (Options::useB3HoistLoopInvariantValues() && !procedure.rotatesLoops())
             hoistLoopInvariantValues(procedure);
 #if USE(BUN_JSC_ADDITIONS)
         if (!procedure.positionIndependent())
@@ -120,7 +120,7 @@ void generateToAir(Procedure& procedure)
 #if USE(BUN_JSC_ADDITIONS)
         // By now a test in the body that repeats the loop test is decided. Behind the rotation it would no longer be seen to repeat it.
         if (procedure.rotatesLoops() && procedure.naturalLoops().numLoops()) {
-            bool hoists = Options::useB3HoistLoopInvariantValues() && procedure.hoistsLoopInvariantValues();
+            bool hoists = Options::useB3HoistLoopInvariantValues();
             simplifyTerminals(procedure);
             eliminateRedundantPhiCycles(procedure);
             if (hoists)

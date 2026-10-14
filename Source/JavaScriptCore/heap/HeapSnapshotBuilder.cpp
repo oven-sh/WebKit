@@ -417,19 +417,8 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
 
                 if (nodeLabel.isEmpty()) {
                     if (auto* object = dynamicDowncast<JSObject>(node.cell)) {
-                        if (auto* function = dynamicDowncast<JSFunction>(object)) {
+                        if (auto* function = dynamicDowncast<JSFunction>(object))
                             nodeLabel.append(function->calculatedDisplayName(vm));
-#if ENABLE(AOT)
-                            if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable())) {
-                                for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
-                                    if (executable->aotEntryFor(kind)) {
-                                        nodeLabel.append('#', executable->aotIndexFor(kind));
-                                        break;
-                                    }
-                                }
-                            }
-#endif
-                        }
                     }
                 }
 

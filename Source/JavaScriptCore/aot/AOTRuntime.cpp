@@ -67,10 +67,13 @@
 #include "UnlinkedModuleProgramCodeBlock.h"
 #include <mutex>
 #include <wtf/FilePrintStream.h>
+#include <wtf/HexNumber.h>
 #include <wtf/ProcessID.h>
 #include <wtf/StackTrace.h>
 #include <wtf/StringPrintStream.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 
 #if OS(LINUX)
 #include <errno.h>
@@ -141,7 +144,6 @@ void* rejectInFrameThunk()
     return tagCodePtr<ExceptionHandlerPtrTag>(stubAddress(Stub::RejectInFrame));
 }
 
-extern "C" void* g_aotStaticFunctionEntrypoints[3];
 
 template<typename Wanted, typename Function> struct TakesFirst : std::false_type { };
 template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result(First, Rest...)> : std::is_same<Wanted, First> { };
@@ -221,12 +223,6 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
     set(Entry::InternalFunctionCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_call_trampoline).taggedPtr());
     set(Entry::InternalFunctionConstructTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_construct_trampoline).taggedPtr());
-    set(Entry::EnterStaticFunctionForCall, tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterStaticFunctionForCall)));
-    set(Entry::EnterStaticFunctionForConstruct, tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterStaticFunctionForConstruct)));
-    g_aotStaticFunctionEntrypoints[0] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForCall)];
-    set(Entry::ConstructViaCall, tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::ConstructViaCall)));
-    g_aotStaticFunctionEntrypoints[1] = m_entries[static_cast<unsigned>(Entry::EnterStaticFunctionForConstruct)];
-    g_aotStaticFunctionEntrypoints[2] = m_entries[static_cast<unsigned>(Entry::ConstructViaCall)];
 
     auto addCallLinkInfo = [&](Entry entry, CallLinkInfo::CallType type) {
         auto info = makeUnique<VirtualCallInfo>();
@@ -538,8 +534,6 @@ struct Instance::Collections {
     }
     UncheckedKeyHashMap<JSFunction*, unsigned> learnedInlineCapacities;
     JSModuleLoader* loader { nullptr };
-    Vector<std::pair<Structure*, Structure*>, 12> functionStructures;
-    Vector<std::pair<Structure*, Structure*>, 6> functionStructuresWithCaptures;
     UncheckedKeyHashMap<uint32_t, ScriptExecutable*> topLevelExecutables;
     UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects;
     JSCell* token { nullptr };
@@ -801,51 +795,6 @@ void microtaskQueueingDidChange(VM& vm)
     }
 }
 
-static ScriptExecutable* topLevelExecutableOf(Data& data)
-{
-    if (auto* function = dynamicDowncast<FunctionExecutable>(data.executable()); function && function->hasAOTEntry()) {
-        uint32_t moduleID = function->sourceProvider()->aotModuleID();
-        if (ScriptExecutable* result = data.instance->topLevelExecutableOf(moduleID))
-            return result;
-        const ProgramModule* module = ProgramData::get()->moduleWithEntryOffset(moduleID - 1);
-        RELEASE_ASSERT(module && module->isBuiltinFunction && module->hasExecutable());
-        return data.instance->program->executable(module->executableIndex);
-    }
-    return data.executable()->topLevelExecutable();
-}
-
-Structure* Instance::functionStructure(Structure* realmStructure, FunctionExecutable* executable, JSScope* scope)
-{
-    if (executable->isBuiltinFunction() && !(executable->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && &instanceOf(scope) == this))
-        return realmStructure;
-    return functionStructure(realmStructure);
-}
-
-Structure* Instance::functionStructure(Structure* realmStructure)
-{
-    for (auto& [from, to] : collections->functionStructures) {
-        if (from == realmStructure)
-            return to;
-    }
-    RELEASE_ASSERT(!realmStructure->didTransition() && !realmStructure->aotInstance());
-    DeferGC deferGC(*vm);
-    Structure* result = Structure::create(*vm, globalObject, realmStructure->storedPrototype(), realmStructure->typeInfo(), realmStructure->classInfoForCells(), realmStructure->indexingModeIncludingHistory(), realmStructure->inlineCapacity());
-    result->setAOTInstance(this);
-    collections->functionStructures.append({ realmStructure, result });
-    return result;
-}
-
-JSFunction* Instance::makeFunction(FunctionExecutable* executable, JSScope* scope)
-{
-    if (isAsyncGeneratorWrapperParseMode(executable->parseMode()))
-        return JSAsyncGeneratorFunction::create(*vm, globalObject, executable, scope, functionStructure(globalObject->asyncGeneratorFunctionStructure(), executable, scope));
-    if (isGeneratorWrapperParseMode(executable->parseMode()))
-        return JSGeneratorFunction::create(*vm, globalObject, executable, scope, functionStructure(globalObject->generatorFunctionStructure(), executable, scope));
-    if (isAsyncFunctionWrapperParseMode(executable->parseMode()))
-        return JSAsyncFunction::create(*vm, globalObject, executable, scope, functionStructure(globalObject->asyncFunctionStructure(), executable, scope));
-    return JSFunction::create(*vm, globalObject, executable, scope, functionStructure(JSFunction::selectStructureForNewFuncExp(globalObject, executable), executable, scope));
-}
-
 ScriptExecutable* Instance::topLevelExecutableOf(uint32_t moduleID)
 {
     return collections->topLevelExecutables.get(moduleID);
@@ -879,7 +828,7 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint32_t index = executable->programModule()->functionIndex;
     if (typed && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
-        throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm, node:vm)"_s));
+        throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm, node:vm)"_s)));
         return 0;
     }
     if (typed)
@@ -898,7 +847,7 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
     if (Data* data = dataIfExists(index); data && data->executable() == executable)
         return data->code()->entry();
     DeferGCForAWhile deferGC(vm);
-    ImageCode found = findInImage(executable, CodeSpecializationKind::CodeForCall, nullptr, scope);
+    ImageCode found = findInImage(executable, scope);
     if (!found) {
         throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be run the way it has been loaded"_s)));
         return 0;
@@ -1216,14 +1165,6 @@ JSCell* callerOwnerCell(const CallFrame* callFrame)
     return function.ensureCodeBlock();
 }
 
-bool hasCompiledCode(VM& vm, JSFunction* function)
-{
-    if (function->isHostFunction())
-        return false;
-    FunctionExecutable* executable = function->jsExecutable();
-    return executable->hasAOTEntry() || FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForCall, nullptr) || FunctionRef::of(vm, executable, CodeSpecializationKind::CodeForConstruct, nullptr);
-}
-
 const RegisterAtOffsetList& adapterSavedRegisters()
 {
     static LazyNeverDestroyed<RegisterAtOffsetList> list;
@@ -1235,7 +1176,6 @@ const RegisterAtOffsetList& adapterSavedRegisters()
         registers.add(GPRInfo::notCellMaskRegister, IgnoreVectors);
 #if CPU(ARM64)
         registers.add(cellCageBaseGPR, IgnoreVectors);
-        registers.add(staticsGPR, IgnoreVectors);
 #endif
 #if CPU(X86_64)
         registers.add(X86Registers::ebx, IgnoreVectors);
@@ -1244,7 +1184,7 @@ const RegisterAtOffsetList& adapterSavedRegisters()
         list.construct(registers);
         list->adjustOffsets(offsetOfInstanceRegisterInAdapter - list->find(instanceGPR)->offset());
 #if CPU(ARM64)
-        RELEASE_ASSERT(list->find(cellCageBaseGPR)->offset() == offsetOfCellCageBaseRegisterInAdapter && list->find(staticsGPR)->offset() == offsetOfStaticsRegisterInAdapter);
+        RELEASE_ASSERT(list->find(cellCageBaseGPR)->offset() == offsetOfCellCageBaseRegisterInAdapter);
 #endif
 #if CPU(X86_64)
         RELEASE_ASSERT(list->find(X86Registers::ebx)->offset() == offsetOfRBXInAdapter && list->find(X86Registers::r12)->offset() == offsetOfR12InAdapter);
@@ -1287,7 +1227,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     if (code)
         code->ref();
     if (hasLinkage)
-        *data->linkage() = { codeBlock, executable, unlinkedCodeBlock, code, nullptr };
+        *data->linkage() = { codeBlock, executable, unlinkedCodeBlock, code };
 
     RELEASE_ASSERT(function.index < instance.collections->numberOfFunctions);
     RELEASE_ASSERT(!instance.dataIfExists(function.index));
@@ -1296,7 +1236,7 @@ Data* Data::create(Instance& instance, ScriptExecutable* executable, UnlinkedCod
     instance.collections->all.append(data);
     data->noteFilled();
 
-    RELEASE_ASSERT(info.sitesInImage() == data->sites && info.numberOfSlotsForMisses() == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots) && (!info.hasExecutable() || instance.program->executable(info.indexPlusOne() - 1) == executable));
+    RELEASE_ASSERT(info.sitesInImage() == data->sites && info.numberOfSlotsForMisses() == std::min<uint32_t>(numSlots, FunctionInfo::maxEncodedSlots));
     return data;
 }
 
@@ -1338,18 +1278,8 @@ Data* Instance::ensureData(uint32_t index)
     if (data)
         return data;
     const FunctionInfo& info = infos[index];
-    // What was compiled from types has no executable: only its caches live here.
-    FunctionExecutable* executable = info.hasExecutable() ? program->executable(info.indexPlusOne() - 1) : nullptr;
-    RELEASE_ASSERT(executable || !info.isTopLevelCode());
-    if (!executable)
-        return Data::create(*this, *info.function());
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = nullptr;
-    Ref<JITCode> code = executable->aotIndexFor(info.kind()) == index && executable->hasJITCodeFor(info.kind()) ? Ref { static_cast<JITCode&>(executable->generatedJITCodeFor(info.kind()).get()) } : jitCodeForImageFunction({ &Image::of(*info.function()), info.function() }, info.kind());
-    RELEASE_ASSERT(code->index() == index);
-    code->setInstance(*this);
-    data = Data::create(*this, executable, unlinkedCodeBlock, code.get());
-    RELEASE_ASSERT(data);
-    return data;
+    RELEASE_ASSERT(!info.isTopLevelCode());
+    return Data::create(*this, *info.function());
 }
 
 FunctionRef FunctionRef::at(Instance* instance, const void* address)
@@ -1517,12 +1447,79 @@ void appendFramesInProfile(uint32_t index, uint32_t site, bool& nothingIsShownYe
     }
 }
 
+String describeCodeAddresses(std::span<const void* const> addresses)
+{
+    const ProgramData* program = ProgramData::get();
+    if (!program || !Image::withCode())
+        return { };
+    StringBuilder result;
+    bool nothingIsShownYet = true;
+    for (const void* address : addresses) {
+        ImageAddressInfo what = classifyAddress(address);
+        if (what.kind != ImageAddressInfo::Function)
+            continue;
+        FunctionRef function { nullptr, what.index };
+        if (!function.info().isTyped)
+            continue;
+        Vector<FrameInTrace, 4> frames;
+        appendFramesInProfile(what.index, tryCallSiteAt(*function.info().function(), what.offset).value_or(0), nothingIsShownYet, frames);
+        for (auto& frame : frames) {
+            bool isModule = typedFunctionCodeType(frame.typedFunction) == ModuleCode;
+            String name = isModule ? String() : typedFunctionName(frame.typedFunction);
+            auto position = function.reportedPositionFor(frame.callSite());
+            String place = position && position->source ? makeString(program->sourceName(position->source), ':', position->lineColumn.line, ':', position->lineColumn.column) : String();
+            if (isModule)
+                result.append("    at "_s, place, '\n');
+            else if (place.isEmpty())
+                result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), '\n');
+            else
+                result.append("    at "_s, name.isEmpty() ? StringView("<anonymous>"_s) : StringView(name), " ("_s, place, ")\n"_s);
+        }
+    }
+    return result.toString();
+}
+
 BytecodeIndex FunctionRef::bytecodeIndexAt(const void* returnAddress, const void* frame) const
 {
     return locationForReturnAddress(returnAddress, frame).bytecodeIndex;
 }
 
-FunctionRef FunctionRef::of(VM& vm, ScriptExecutable* scriptExecutable, CodeSpecializationKind kind, JSCell* instanceToken)
+void writePerfMap()
+{
+    const ProgramData* program = ProgramData::get();
+    Image* image = Image::withCode();
+    auto file = program && image ? FilePrintStream::open(makeString("/tmp/perf-"_s, getCurrentProcessID(), ".map"_s).utf8(), "w"_s) : nullptr;
+    if (!file)
+        return;
+    auto& header = image->header();
+    uint64_t code = startOfImageCode();
+    const uint32_t* starts = image->at<uint32_t>(header.functionStartsOffset);
+    Vector<std::pair<uint32_t, String>> rows;
+    for (uint32_t index = 0; index < header.numberOfFunctions; ++index) {
+        uint32_t end = index + 1 < header.numberOfFunctions ? starts[index + 1] : header.functionsEnd;
+        FunctionRef function { nullptr, index };
+        if (end == starts[index])
+            continue;
+        if (!function.info().isTyped) {
+            rows.append({ starts[index], String("(compiled code)"_s) });
+            continue;
+        }
+        uint32_t typedFunction = function.info().typedFunction();
+        String name = typedFunctionCodeType(typedFunction) == ModuleCode ? String("(module)"_s) : typedFunctionName(typedFunction);
+        auto position = function.reportedPositionFor(BytecodeIndex(0));
+        String place = position && position->source ? makeString(' ', program->sourceName(position->source), ':', position->lineColumn.line) : emptyString();
+        rows.append({ starts[index], makeString(name.isEmpty() ? String("(anonymous)"_s) : name, place) });
+    }
+    for (unsigned i = 0; i < header.numberOfStubCopies; ++i)
+        rows.append({ header.stubCopies[i], String("(stubs of compiled code)"_s) });
+    std::ranges::sort(rows, { }, &std::pair<uint32_t, String>::first);
+    for (size_t i = 0; i < rows.size(); ++i) {
+        uint32_t end = i + 1 < rows.size() ? rows[i + 1].first : header.functionsEnd;
+        file->println(hex(code + rows[i].first, Lowercase), " ", hex(end - rows[i].first, Lowercase), " ", rows[i].second);
+    }
+}
+
+FunctionRef FunctionRef::of(VM& vm, ScriptExecutable* scriptExecutable, JSCell* instanceToken)
 {
     auto instanceWithToken = [&]() -> Instance* {
         for (Instance* instance : vm.m_aotInstances) {
@@ -1533,17 +1530,7 @@ FunctionRef FunctionRef::of(VM& vm, ScriptExecutable* scriptExecutable, CodeSpec
     };
     if (auto* moduleValue = dynamicDowncast<ModuleProgramExecutable>(scriptExecutable))
         return { instanceWithToken(), moduleValue->programModule()->functionIndex };
-    auto* executable = uncheckedDowncast<FunctionExecutable>(scriptExecutable);
-    if (executable->hasAOTEntry()) {
-        if (!executable->aotEntryFor(kind) || executable->aotIndexFor(kind) == FunctionExecutable::aotConstructViaCallIndex)
-            return { };
-        return { instanceWithToken(), executable->aotIndexFor(kind) };
-    }
-    if (!executable->hasJITCodeFor(kind) || executable->generatedJITCodeFor(kind)->jitType() != JITType::AOTJIT)
-        return { };
-    Ref generated = executable->generatedJITCodeFor(kind);
-    auto& code = static_cast<JITCode&>(generated.get());
-    return { code.instance(), code.index() };
+    return { };
 }
 
 CodeBlock* FunctionRef::ensureCodeBlock() const
@@ -1565,23 +1552,21 @@ ScriptExecutable* FunctionRef::executable() const
 {
     if (Data* data = dataIfExists())
         return data->executable();
-    const FunctionInfo& info = this->info();
-    return info.hasExecutable() && instance ? instance->program->executable(info.indexPlusOne() - 1) : nullptr;
+    return nullptr;
 }
 
 ScriptExecutable* FunctionRef::executableIfExists() const
 {
     if (Data* data = dataIfExists())
         return data->executable();
-    const FunctionInfo& info = this->info();
-    return info.hasExecutable() && instance ? instance->program->executableIfExists(info.indexPlusOne() - 1) : nullptr;
+    return nullptr;
 }
 
 bool FunctionRef::hasExecutable() const
 {
     if (Data* data = dataIfExists())
         return !!data->executable();
-    return info().hasExecutable() && instance;
+    return false;
 }
 
 CodeBlock* FunctionRef::codeBlockIfExists() const
@@ -1781,13 +1766,6 @@ void* FunctionRef::catchEntrypointAddress(unsigned bytecodeOffset) const
     return const_cast<uint8_t*>(Image::of(function).codeFor(function)) + bytecodeOffset;
 }
 
-SUPPRESS_ASAN JSCell* FunctionRef::calleeInFrame(const void* frame) const
-{
-    const ImageFunction* function = info().function();
-    unsigned start = function ? Image::of(*function).frameOf(*function).calleeStart : 0;
-    return start ? *(static_cast<JSCell* const*>(frame) - start) : nullptr;
-}
-
 template<typename Number>
 static const UnlinkedHandlerInfo* handlerInRow(std::span<const uint8_t> row, unsigned site, UnlinkedHandlerInfo& madeHere)
 {
@@ -1833,14 +1811,6 @@ const IdentifierSet& FunctionRef::constantIdentifierSet(unsigned index) const
     return instance->program->identifierSet(*metadata()->find(FunctionMetadata::ConstantIdentifierSets), index);
 }
 
-static std::span<const uint32_t> functionsIn(const FunctionMetadata& metadata, FunctionMetadata::Section which)
-{
-    const uint32_t* words = metadata.find(which);
-    if (!words)
-        return { };
-    return { ProgramData::get()->at<uint32_t>(words[0]), words[1] };
-}
-
 void Data::destroy(Data* data)
 {
     Instance& instance = *data->instance;
@@ -1872,8 +1842,6 @@ void Data::destroy(Data* data)
         return true;
     });
     if (Linkage* linkage = data->linkage()) {
-        if (linkage->functions)
-            fastFree(linkage->functions);
         if (linkage->code)
             linkage->code->deref();
     }
@@ -1888,7 +1856,7 @@ FunctionRef Data::function() const
 CodeBlock* Data::ensureCodeBlock()
 {
     RELEASE_ASSERT(hasLinkage);
-    auto& [codeBlock, executable, unlinkedCodeBlock, code, functions] = *linkage();
+    auto& [codeBlock, executable, unlinkedCodeBlock, code] = *linkage();
     if (codeBlock)
         return codeBlock;
     VM& vm = *instance->vm;
@@ -1918,69 +1886,9 @@ LineColumn FunctionRef::lineColumnFor(BytecodeIndex bytecodeIndex) const
         return position->lineColumn;
     ScriptExecutable* executable = this->executable();
     RELEASE_ASSERT(bytecodeIndex.offset() < instructionsSize());
-    SourceProvider& provider = *executable->sourceProvider();
+    SourceProvider& provider = *executable->source().provider();
     unsigned sourceOffset = executable->source().startOffset();
     return provider.documentLineColumn(provider.lineColumnInTextForOffset(sourceOffset));
-}
-
-static FunctionExecutable* functionOf(Data& data, unsigned index, uint32_t entry)
-{
-    RELEASE_ASSERT(entry);
-    VMProgram& program = *data.instance->program;
-    if (!(entry & 1))
-        return program.executable((entry >> 1) - 1);
-    RELEASE_ASSERT(data.hasLinkage);
-    FunctionExecutable**& functions = data.linkage()->functions;
-    if (!functions) {
-        const FunctionMetadata& metadata = *data.function().metadata();
-        functions = static_cast<FunctionExecutable**>(fastZeroedMalloc((functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + functionsIn(metadata, FunctionMetadata::FunctionExprs).size()) * sizeof(FunctionExecutable*)));
-    }
-    FunctionExecutable*& function = functions[index];
-    if (!function) {
-        ScriptExecutable* executable = data.executable();
-        function = program.unlinkedFunction((entry >> 1) - 1, false)->link(*data.instance->vm, topLevelExecutableOf(data), executable->source(), std::nullopt, NoIntrinsic, executable->isInsideOrdinaryFunction());
-        if (!data.hasBeenFilledSinceLastCollection)
-            data.noteFilled();
-    }
-    return function;
-}
-
-FunctionExecutable* Data::functionDecl(unsigned index)
-{
-    return functionOf(*this, index, functionsIn(*function().metadata(), FunctionMetadata::FunctionDecls)[index]);
-}
-
-FunctionExecutable* Data::functionExpr(unsigned index)
-{
-    const FunctionMetadata& metadata = *function().metadata();
-    return functionOf(*this, functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + index, functionsIn(metadata, FunctionMetadata::FunctionExprs)[index]);
-}
-
-FunctionExecutable* FunctionRef::functionDecl(unsigned index) const
-{
-    if (uint32_t entry = functionsIn(*metadata(), FunctionMetadata::FunctionDecls)[index]; !(entry & 1))
-        return instance->program->executable((entry >> 1) - 1);
-    return ensureData()->functionDecl(index);
-}
-
-FunctionExecutable* FunctionRef::functionExpr(unsigned index) const
-{
-    if (uint32_t entry = functionsIn(*metadata(), FunctionMetadata::FunctionExprs)[index]; !(entry & 1))
-        return instance->program->executable((entry >> 1) - 1);
-    return ensureData()->functionExpr(index);
-}
-
-bool install(VM& vm, FunctionExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope, Ref<JITCode>&& code)
-{
-    Instance& instance = instanceOf(scope);
-    code->setInstance(instance);
-    uint32_t index = code->index();
-    if (instance.isLinked(index))
-        RELEASE_ASSERT((FunctionRef { &instance, index }.executable() == executable));
-    else if (!Data::create(instance, executable, unlinkedCodeBlock, code.get()))
-        return false;
-    executable->installAOTCode(vm, kind, WTF::move(code));
-    return true;
 }
 
 ASCIILiteral nameOf(Stub stub)
@@ -2009,32 +1917,6 @@ ASCIILiteral nameOf(Entry entry)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool linkStaticFunction(Instance* instance, FunctionExecutable* executable, CodeSpecializationKind kind, JSScope* scope)
-{
-    if (scope->realm() != instance->globalObject)
-        return false;
-    uint32_t index = executable->aotIndexFor(kind);
-    if (index == FunctionExecutable::aotConstructViaCallIndex)
-        return true;
-    if (instance->isLinked(index))
-        return true;
-    if (const FunctionInfo& info = instance->infos[index]; info.startsCold()) {
-        RELEASE_ASSERT(info.hasExecutable() && info.kind() == kind);
-        if (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope))
-            return false;
-        instance->setLinkedWithoutData(index);
-        return true;
-    }
-    UnlinkedFunctionCodeBlock* unlinkedCodeBlock = nullptr;
-    ImageCode found = findInImage(executable, kind, unlinkedCodeBlock, scope);
-    if (!found)
-        return false;
-    Ref<JITCode> code = jitCodeForImageFunction(found, kind);
-    RELEASE_ASSERT(code->index() == executable->aotIndexFor(kind));
-    code->setInstance(*instance);
-    return !!Data::create(*instance, executable, unlinkedCodeBlock, code.get());
-}
-
 void Data::noteFilled()
 {
     hasBeenFilledSinceLastCollection = true;
@@ -2047,20 +1929,13 @@ void Data::visit(Visitor& visitor)
 {
     if (!hasLinkage)
         return;
-    auto& [codeBlock, executable, unlinkedCodeBlock, code, functions] = *linkage();
+    auto& [codeBlock, executable, unlinkedCodeBlock, code] = *linkage();
     if (executable)
         visitor.appendUnbarriered(executable);
     if (unlinkedCodeBlock)
         visitor.appendUnbarriered(unlinkedCodeBlock);
     if (codeBlock)
         visitor.appendUnbarriered(codeBlock);
-    if (functions) {
-        const FunctionMetadata& metadata = *function().metadata();
-        for (unsigned i = functionsIn(metadata, FunctionMetadata::FunctionDecls).size() + functionsIn(metadata, FunctionMetadata::FunctionExprs).size(); i--;) {
-            if (functions[i])
-                visitor.appendUnbarriered(functions[i]);
-        }
-    }
 }
 
 static ALWAYS_INLINE bool hasTransition(const Slot& slot)
@@ -2124,10 +1999,6 @@ void Instance::visit(Visitor& visitor, bool newOnly)
         }
     }
     visitor.appendUnbarriered(globalObject);
-    for (auto& [from, to] : collections->functionStructures)
-        visitor.appendUnbarriered(to);
-    for (auto& [from, to] : collections->functionStructuresWithCaptures)
-        visitor.appendUnbarriered(to);
     for (Structure* structure : collections->emptyStructuresWithoutPrototype.values())
         visitor.appendUnbarriered(structure);
     for (auto& ofType : typedArraysWithBuiltinLength) {
@@ -2263,17 +2134,6 @@ Structure* Instance::emptyStructureWithoutPrototype(unsigned inlineCapacity)
     Structure* structure = JSFinalObject::createStructure(*vm, globalObject, jsNull(), inlineCapacity);
     collections->emptyStructuresWithoutPrototype.set(inlineCapacity, structure);
     return structure;
-}
-
-JSObject* Instance::newObjectOf(VM& vm, Structure* structure)
-{
-    unsigned outOfLineCapacity = structure->outOfLineCapacity();
-    if (!outOfLineCapacity)
-        return constructEmptyObject(vm, structure);
-    DeferGC deferGC(vm);
-    Butterfly* butterfly = Butterfly::create(vm, nullptr, 0, outOfLineCapacity, false, IndexingHeader(), 0);
-    gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - outOfLineCapacity), outOfLineCapacity * sizeof(EncodedJSValue));
-    return JSFinalObject::createWithButterfly(vm, structure, butterfly);
 }
 
 void Instance::fillRow(uint32_t number, Structure* structure, uint32_t placesToClear, LocalAllocator* allocator)
@@ -2849,7 +2709,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
             collections->allSiteSlots.size(), " sites with several slots (", collections->allSiteSlots.size() * sizeof(PolymorphicSlots), " bytes); ", collections->transitions.size(), " transitions; structures of literals ", collections->shapes.size(),
             ", of copies ", collections->copyStructures.size(), "; property runs ", collections->propertyRunTargets.size(), "; copied properties ", collections->copiedProperties.size(),
             "; constructors ", collections->constructorsByFirstStructure.size(), " + ", collections->learnedInlineCapacities.size(), "; modules ", collections->topLevelExecutables.size(), "; template objects ", collections->templateObjects.size(),
-            "; environments ", Image::environmentsSize() / sizeof(void*), "; unlinked functions in the program ", program->data().numberOfUnlinkedFunctions);
+            "; environments ", Image::environmentsSize() / sizeof(void*));
     }
 }
 

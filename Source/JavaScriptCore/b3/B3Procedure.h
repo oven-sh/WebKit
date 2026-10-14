@@ -266,8 +266,6 @@ public:
     bool positionIndependent() const { return m_positionIndependent; }
     void setMaterializesConstantsByFrequency() { m_materializesConstantsByFrequency = true; }
     bool materializesConstantsByFrequency() const { return m_materializesConstantsByFrequency; }
-    void setHoistsLoopInvariantValues(bool value) { m_hoistsLoopInvariantValues = value; }
-    bool hoistsLoopInvariantValues() const { return m_hoistsLoopInvariantValues; }
     void setRotatesLoops() { m_rotatesLoops = true; }
     bool rotatesLoops() const { return m_rotatesLoops; }
     void setReachabilityIsFresh() { m_reachabilityIsFresh = true; }
@@ -279,8 +277,6 @@ public:
     void setLastPhase(RefPtr<SharedTask<void(Procedure&)>> phase) { m_lastPhase = WTF::move(phase); }
     SharedTask<void(Procedure&)>* lastPhase() const { return m_lastPhase.get(); }
 #endif
-    void didDuplicateTail() { ++m_numberOfDuplicatedTails; }
-    unsigned numberOfDuplicatedTails() const { return m_numberOfDuplicatedTails; }
     
     // You can turn off used registers calculation. This may speed up compilation a bit. But if
     // you turn it off then you cannot use StackmapGenerationParams::usedRegisters() or
@@ -399,7 +395,6 @@ private:
     unsigned m_optLevel { defaultOptLevel() };
     bool m_positionIndependent { false };
     bool m_materializesConstantsByFrequency { false };
-    bool m_hoistsLoopInvariantValues { true };
     bool m_rotatesLoops { false };
     Vector<BasicBlock*> m_blocksInPreOrder;
     Vector<BasicBlock*> m_blocksInPostOrder;
@@ -408,7 +403,6 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;
 #endif
-    unsigned m_numberOfDuplicatedTails { 0 };
     bool m_needsUsedRegisters : 1 { true };
     bool m_hasQuirks : 1 { false };
     bool m_needsPCToOriginMap : 1 { false };

@@ -102,7 +102,6 @@ public:
         uint32_t typedAOTFunction() const { return m_typedAOTFunction; }
         // A frame that only exists because of how the code was compiled. Stack traces leave it out.
         JS_EXPORT_PRIVATE bool isHiddenAOTFrame(bool isAtTheTop = false) const;
-        JS_EXPORT_PRIVATE JSCell* aotCallee() const;
         bool isTailDeleted() const { return m_isTailDeleted; }
         JS_EXPORT_PRIVATE ScriptExecutable* ownerExecutable() const;
         JS_EXPORT_PRIVATE bool isBuiltinFunction() const;
@@ -252,8 +251,11 @@ private:
     JS_EXPORT_PRIVATE void gotoNextFrame();
 
     void readFrame(CallFrame*);
-    void readInlinableNativeCalleeFrame(CallFrame*);
-    void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
+    template<bool mayVisitAOTFrames> void gotoNextFrameImpl();
+    void gotoNextPlainFrame();
+    template<bool mayVisitAOTFrames> void readFrameImpl(CallFrame*);
+    template<bool mayVisitAOTFrames> void readInlinableNativeCalleeFrame(CallFrame*);
+    template<bool mayVisitAOTFrames> void readNonInlinedFrame(CallFrame*, CodeOrigin* = nullptr);
     void findCaller(CallFrame*);
     CallFrame* skipStubFrames(CallFrame*, EntryFrame*&, void*& returnPC, CallFrame*& adapter);
 #if ENABLE(AOT)
@@ -264,12 +266,13 @@ private:
     bool isEnteredByConstruction();
     AOT::ImageAddressInfo classify(const void* address);
     bool gotoNextAOTFrame();
+    void gotoNextFrameInCompiledProgram();
     bool tryGotoCompiledCaller();
 #endif
 #if ENABLE(DFG_JIT)
-    void readInlinedFrame(CallFrame*, CodeOrigin*);
+    template<bool mayVisitAOTFrames> void readInlinedFrame(CallFrame*, CodeOrigin*);
 #endif
-    CallFrame* NODELETE updatePreviousReturnPCIfNecessary(CallFrame*);
+    template<bool mayVisitAOTFrames> CallFrame* NODELETE updatePreviousReturnPCIfNecessary(CallFrame*);
 
     Frame m_frame;
     void* m_previousReturnPC { nullptr };

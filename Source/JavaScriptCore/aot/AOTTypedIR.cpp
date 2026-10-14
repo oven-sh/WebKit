@@ -9,6 +9,7 @@
 #if ENABLE(AOT)
 
 #include "AOTTypedThreads.h"
+#include <wtf/CommaPrinter.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -182,7 +183,7 @@ private:
             index(layout.environment.index());
             m_out.print(layout.isLaidOut ? " laid out" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasForeignRoot ? " foreign root" : "", layout.hasFixedMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasStaticMemberOfUnknownName ? " unknown static names" : "");
         }
-        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
+        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.isOpenedForLog ? " opened-for-the-log" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {
             if (list.isEmpty())
                 return;
@@ -439,6 +440,8 @@ private:
             break;
         case TerminatorKind::Throw:
             m_out.print("Throw v", terminator.value.index());
+            if (!terminator.cases.isEmpty())
+                m_out.print(" at ", terminator.cases[0]);
             if (!terminator.targets.isEmpty()) {
                 m_out.print(" unwind ");
                 target(terminator.targets[0]);

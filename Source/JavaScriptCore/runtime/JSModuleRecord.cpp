@@ -215,34 +215,23 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     // The declaration's code is every record's, and what it is specialized on is the executable's symbol table.
     RELEASE_ASSERT(environment->symbolTable() == executable->moduleEnvironmentSymbolTable());
     FunctionExecutable* functionExecutable = executable->linkedFunctionDeclaration(*index);
-#if ENABLE(AOT)
-    if (m_programModule && !functionExecutable) {
-        uint32_t entry = AOT::ProgramData::get()->functionDeclarationListEntries(*m_programModule)[*index];
-        auto* program = AOT::VMProgram::of(vm);
-        functionExecutable = entry & 1 ? executable->linkFunctionDeclaration(vm, *index, program->unlinkedFunction((entry >> 1) - 1, false)) : program->executable((entry >> 1) - 1);
-    }
-#endif
     if (!functionExecutable) {
-        UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get();
-        if (!unlinkedCodeBlock)
-            unlinkedCodeBlock = executable->unlinkedCodeBlock();
-        if (unlinkedCodeBlock)
-            functionExecutable = unlinkedCodeBlock->functionDeclExecutable(*index);
-        if (!functionExecutable) {
-            UnlinkedFunctionExecutable* unlinkedExecutable = unlinkedCodeBlock ? unlinkedCodeBlock->functionDecl(*index) : m_functionDeclarationSlots->decode(vm, *index);
-            RELEASE_ASSERT(unlinkedExecutable);
-            functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
-        }
+        UnlinkedFunctionExecutable* unlinkedExecutable = nullptr;
+        if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = uninstantiated->unlinkedCodeBlock.get())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else if (UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock = executable->unlinkedCodeBlock())
+            unlinkedExecutable = unlinkedCodeBlock->functionDecl(*index);
+        else
+            unlinkedExecutable = m_functionDeclarationSlots->decode(vm, *index);
+        RELEASE_ASSERT(unlinkedExecutable);
+        functionExecutable = executable->linkFunctionDeclaration(vm, *index, unlinkedExecutable);
     }
+    UnlinkedFunctionExecutable* unlinkedExecutable = functionExecutable->unlinkedExecutable();
+
     // InitializeEnvironment step 24.a.iii, for this one declaration.
     JSGlobalObject* globalObject = environment->globalObject();
     JSFunction* function = nullptr;
     SourceParseMode parseMode = functionExecutable->parseMode();
-#if ENABLE(AOT)
-    if (functionExecutable->hasAOTEntry()) [[unlikely]]
-        function = AOT::Instance::ensure(moduleLoader()).makeFunction(functionExecutable, environment);
-    else
-#endif
     if (isAsyncGeneratorWrapperParseMode(parseMode))
         function = JSAsyncGeneratorFunction::create(vm, globalObject, functionExecutable, environment);
     else if (isGeneratorWrapperParseMode(parseMode))
@@ -255,13 +244,13 @@ JSValue JSModuleRecord::readFunctionDeclarationSlot(VM& vm, JSModuleEnvironment*
     InlineWatchpointSet* watchpointSet = nullptr;
     if (SymbolTable* symbolTable = environment->symbolTable(); !symbolTable->hasCachedEntriesPending()) {
         ConcurrentJSLocker locker(symbolTable->m_lock);
-        auto iter = symbolTable->find(locker, functionExecutable->name().impl());
+        auto iter = symbolTable->find(locker, unlinkedExecutable->name().impl());
         if (iter != symbolTable->end(locker)) {
             ASSERT(iter->value.scopeOffset() == offset);
             watchpointSet = iter->value.watchpointSet();
         }
     }
-    symbolTablePutTouchWatchpointSet(vm, environment, functionExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
+    symbolTablePutTouchWatchpointSet(vm, environment, unlinkedExecutable->name(), function, &environment->variableAt(offset), watchpointSet);
 
     // An empty slot is one that was never stored to, so each declaration gets here at most once.
     ASSERT(uninstantiated->remaining);
@@ -512,72 +501,6 @@ JSModuleEnvironment* JSModuleRecord::fillImportSlot(JSGlobalObject* globalObject
     moduleEnvironment()->importSlot(index).set(vm, moduleEnvironment(), environment);
     return environment;
 }
-
-#if ENABLE(AOT)
-bool JSModuleRecord::isLinkedAsCompiled(JSGlobalObject* globalObject)
-{
-    if (m_isLinkedAsCompiled != TriState::Indeterminate)
-        return m_isLinkedAsCompiled == TriState::True;
-    if (!AOT::ProgramData::get()) {
-        m_isLinkedAsCompiled = TriState::False;
-        return false;
-    }
-    Vector<JSModuleRecord*, 16> records { this };
-    UncheckedKeyHashSet<JSModuleRecord*> seen { this };
-    bool result = true;
-    for (size_t index = 0; result && index < records.size(); ++index) {
-        result = records[index]->isSelfLinkedAsCompiled(globalObject, [&](JSModuleRecord* exporter) {
-            if (exporter->m_isLinkedAsCompiled != TriState::Indeterminate)
-                return exporter->m_isLinkedAsCompiled == TriState::True;
-            if (seen.add(exporter).isNewEntry)
-                records.append(exporter);
-            return true;
-        });
-    }
-    if (!result) {
-        m_isLinkedAsCompiled = TriState::False;
-        return false;
-    }
-    for (JSModuleRecord* record : records)
-        record->m_isLinkedAsCompiled = TriState::True;
-    return true;
-}
-
-bool JSModuleRecord::isSelfLinkedAsCompiled(JSGlobalObject* globalObject, const Function<bool(JSModuleRecord*)>& mayImportFrom)
-{
-    SourceProvider& provider = *sourceCode().provider();
-    bool result = isPrelinked() && provider.aotModuleID() && provider.hasNoSourceText();
-    if (!result && Options::verboseAOTCompilation()) [[unlikely]]
-        dataLogLn("AOT: ", moduleKey().impl(), isPrelinked() ? " does not have the functions that were made when the program was built" : " was not linked when the program was built");
-    auto environmentIsInPlace = [&](AbstractModuleRecord* record) {
-        AOT::ImageEnvironment environment = AOT::Image::environmentOf(record->prelinkedIndex());
-        if (!environment.distance)
-            return true;
-        AOT::Instance* instance = moduleLoader()->aotInstance();
-        JSCell** slot = instance ? instance->environmentSlot(environment) : nullptr;
-        return slot && *slot && *slot == record->moduleEnvironmentMayBeNull();
-    };
-    if (result) {
-        result = environmentIsInPlace(this);
-        if (!result && Options::verboseAOTCompilation()) [[unlikely]]
-            dataLogLn("AOT: the variables of ", moduleKey().impl(), " are not where its code expects them");
-    }
-    if (result) {
-        for (const auto& import : prelinkedGraph()->imports(prelinkedModule())) {
-            if (import.resolution() != PrelinkedModuleGraph::ResolutionKind::Binding || import.isNamespace())
-                continue;
-            AbstractModuleRecord* exporter = prelinkedRecordForResolution(globalObject, import.resolvedModule);
-            if (!exporter || !exporter->inherits<JSModuleRecord>() || !exporter->isPrelinked() || !exporter->moduleEnvironmentMayBeNull() || !environmentIsInPlace(exporter) || !mayImportFrom(uncheckedDowncast<JSModuleRecord>(exporter))) {
-                if (Options::verboseAOTCompilation()) [[unlikely]]
-                    dataLogLn("AOT: ", moduleKey().impl(), " imports from a module that is not linked the way it was compiled for");
-                result = false;
-                break;
-            }
-        }
-    }
-    return result;
-}
-#endif
 
 std::optional<ModuleProgramExecutable::ImportedBindings> JSModuleRecord::importedBindings(JSGlobalObject* globalObject)
 {

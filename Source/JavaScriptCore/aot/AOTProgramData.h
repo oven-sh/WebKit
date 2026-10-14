@@ -80,7 +80,6 @@ struct ImageKey;
 struct ProgramModule {
     static constexpr uint32_t invalidIndex = UINT32_MAX;
 
-    bool hasExecutable() const { return executableIndex != invalidIndex; }
     bool hasTopLevelCode() const { return topLevelCodeIndex != invalidIndex; }
     bool isCompiledModule() const { return functionIndex != invalidIndex; }
 
@@ -88,8 +87,6 @@ struct ProgramModule {
     uint32_t keyHash;
     uint32_t keyLength;
     uint32_t keyFlags;
-    uint32_t isBuiltinFunction;
-    uint32_t executableIndex { invalidIndex };
     uint32_t topLevelCodeIndex { invalidIndex };
     uint32_t functionIndex { invalidIndex };
     uint32_t environmentSymbolTable;
@@ -100,26 +97,6 @@ struct ProgramModule {
     uint32_t features;
     uint32_t lexicallyScopedFeaturesAndFlags;
 };
-
-struct ExecutableRow {
-    static constexpr unsigned moduleBits = 17;
-    static constexpr unsigned parameterCountBits = 12;
-
-    uint64_t entry[2];
-    uint32_t index[2];
-    uint32_t name;
-    uint32_t unlinkedFunction;
-    uint32_t module : moduleBits;
-    uint32_t parameterCount : parameterCountBits;
-    uint32_t isArrowFunctionContext : 1;
-    uint32_t isInsideOrdinaryFunction : 1;
-    uint32_t isShort : 1;
-    uint32_t startOffset;
-    uint32_t sourceLength;
-    uint32_t functionStructureKind;
-};
-enum class FunctionStructureKind : uint32_t { None, Arrow, StrictFunction, StrictMethod, SloppyFunction, SloppyMethod };
-static_assert(sizeof(ExecutableRow) == 48);
 
 struct ProgramData {
     static constexpr uint64_t expectedMagic = 0x3430415441445250ULL;
@@ -143,19 +120,14 @@ struct ProgramData {
     std::span<const ProgramModule> modules() const { return spanAt<ProgramModule>(modulesOffset, numberOfModules); }
     const ProgramModule* moduleWithEntryOffset(uint32_t) const;
     std::span<const uint32_t> functionDeclarationSlots(const ProgramModule& module) const { return spanAt<uint32_t>(module.functionDeclarationSlotsOffset, module.numberOfFunctionDeclarationSlots); }
-    JS_EXPORT_PRIVATE std::span<const uint32_t> functionDeclarationListEntries(const ProgramModule&) const;
     inline const FunctionInfo* infos() const;
     const uint32_t* indexAndFlagsOfFunctions() const { return at<uint32_t>(indexAndFlagsOfFunctionsOffset); }
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
     std::span<const uint8_t> handlersOfTypedFunction(uint32_t functionIndex) const;
     const uint8_t* positionsOfTypedFunction(uint32_t functionIndex) const;
-    const ExecutableRow& executableRow(uint32_t index) const { return at<ExecutableRow>(executableRowsOffset)[index]; }
     // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code. Only from firstFunctionClosuresGoBy on; ahead of those stand the rows of the first functions of the program, which Stub::CallModuleFunction calls by their number plus rowsLeftOutAheadOfClosures. There is nothing at an index under rowsLeftOutAheadOfClosures.
     const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - rowsLeftOutAheadOfClosures * sizeof(uint64_t)); }
     uint64_t closureWordOf(uint32_t function) const { return function >= firstFunctionClosuresGoBy && function - rowsLeftOutAheadOfClosures < numberOfTypedEntries ? closureWords()[function] : 0; }
-    JS_EXPORT_PRIVATE const ExecutableRow& executableRowForFunction(uint32_t functionIndex) const;
-    JS_EXPORT_PRIVATE uint32_t executableIndexForFunction(uint32_t functionIndex) const;
-    JS_EXPORT_PRIVATE LineColumn functionStartPosition(uint32_t functionIndex) const;
     JS_EXPORT_PRIVATE String sourceName(uint32_t) const;
     JS_EXPORT_PRIVATE Vector<uint32_t> moduleEntryOffsets() const;
     std::span<const ImageKey> imageKeys() const;
@@ -174,22 +146,17 @@ struct ProgramData {
     uint32_t numberOfFunctions;
     uint32_t numberOfStates;
     uint32_t functionMetadataTableOffset;
-    uint32_t executableRowsOffset;
-    uint32_t numberOfExecutables;
     uint32_t typedEntriesOffset;
     uint32_t numberOfTypedEntries;
     uint32_t firstFunctionClosuresGoBy;
     uint32_t rowsLeftOutAheadOfClosures;
     uint32_t numberOfIdentifiers;
     uint32_t numberOfConstants;
-    uint32_t numberOfUnlinkedFunctions;
     uint32_t numberOfTopLevelCodes;
     uint32_t sourceNamesOffset;
     uint32_t numberOfSources;
     uint32_t imageKeysOffset;
     uint32_t imageKeyCapacity;
-    uint32_t engineBuiltinModulesOffset;
-    uint32_t numberOfEngineBuiltins;
 };
 
 class VMProgram {
@@ -238,27 +205,14 @@ public:
         uint16_t place = m_identifierPlaces[index];
         return isPlaceOfIdentifier(place) ? reinterpret_cast<const Identifier*>(&m_identifiers[place]) : nullptr;
     }
-    String identifierWithoutGC(uint32_t index);
     const Identifier* tryGetIdentifierConcurrently(uint32_t index) const;
     bool isIdentifierKept(uint32_t index) const { return m_identifierPlaces[index]; }
     JS_EXPORT_PRIVATE const Identifier& keepIdentifier(uint32_t index, Identifier&&);
-    JS_EXPORT_PRIVATE FunctionExecutable* executable(uint32_t index);
-    FunctionExecutable* executableIfExists(uint32_t index) const
-    {
-        FunctionExecutable** chunk = m_executableChunks[index / executablesPerChunk];
-        return chunk ? chunk[index % executablesPerChunk] : nullptr;
-    }
-    FunctionExecutable* executableForFunction(uint32_t functionIndex) { return executable(m_data.executableIndexForFunction(functionIndex)); }
-    JS_EXPORT_PRIVATE UnlinkedFunctionExecutable* unlinkedFunction(uint32_t index, bool isShared);
     JS_EXPORT_PRIVATE UnlinkedCodeBlock* topLevelCodeFor(const SourceCodeKey&);
     JS_EXPORT_PRIVATE const ProgramModule* moduleFor(SourceProvider&);
     UnlinkedCodeBlock* topLevelCode(uint32_t index);
 
-    JS_EXPORT_PRIVATE SourceProvider* moduleProvider(uint32_t moduleIndex);
     JS_EXPORT_PRIVATE void didLoadModule(SourceProvider&);
-    const SourceCode& shortExecutableSource(uint32_t executableIndex);
-
-    FunctionExecutable* engineBuiltinFor(unsigned index, std::span<const Latin1Character> text);
 
     const UnlinkedStringJumpTable& stringSwitchJumpTable(uint32_t offsetOfTables, unsigned which);
     const IdentifierSet& identifierSet(uint32_t offsetOfSets, unsigned which);
@@ -285,8 +239,6 @@ private:
     JS_EXPORT_PRIVATE UniquedStringImpl* identifierSlow(uint32_t index);
     JS_EXPORT_PRIVATE const Identifier& identifierAsIdentifierSlow(uint32_t index);
     uint32_t m_numberOfIdentifiersInPlaces { 0 };
-    static constexpr uint32_t executablesPerChunk = 64;
-    FunctionExecutable*** m_executableChunks;
     std::unique_ptr<Impl> m_impl;
 };
 

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "DFGOperations.h"
 
+
 #include "ArrayPrototypeInlines.h"
 #include "ArrayConstructor.h"
 #include "ButterflyInlines.h"
@@ -1227,6 +1228,7 @@ JSC_DEFINE_JIT_OPERATION(operationArrayPushMultiple, EncodedJSValue, (JSGlobalOb
     JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     ActiveScratchBufferScope activeScratchBufferScope(ScratchBuffer::fromData(buffer), elementCount);
+
 
     // We assume that multiple JSArray::push calls with ArrayWithInt32/ArrayWithContiguous do not cause JS traps.
     // If it can cause any JS interactions, we can call the caller JS function of this function and overwrite the
@@ -3163,6 +3165,7 @@ JSC_DEFINE_JIT_OPERATION(operationCreateClonedArgumentsDuringExit, JSCell*, (VM*
     for (unsigned i = length; i--;)
         result->putDirectIndex(globalObject, i, arguments[i].jsValue());
 
+    
     OPERATION_RETURN(scope, result);
 }
 
@@ -5976,6 +5979,7 @@ JSC_DEFINE_JIT_OPERATION(operationNewArrayWithSpecies, JSObject*, (JSGlobalObjec
     uint64_t length = truncateDoubleToUint64(JSValue::decode(encodedLength).asNumber());
     OPERATION_RETURN(scope, newArrayWithSpeciesImpl(globalObject, length, array, indexingType));
 }
+
 
 JSC_DEFINE_JIT_OPERATION(operationProcessTypeProfilerLogDFG, void, (VM* vmPointer))
 {

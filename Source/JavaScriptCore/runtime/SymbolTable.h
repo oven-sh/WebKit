@@ -576,7 +576,6 @@ public:
         ConcurrentJSLocker locker(m_lock);
         return takeNextScopeOffset(locker);
     }
-
     
     template<typename Entry>
     void add(const ConcurrentJSLocker& locker, UniquedStringImpl* key, Entry&& entry)

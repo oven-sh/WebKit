@@ -18,7 +18,6 @@ namespace AOT {
 static constexpr GPRReg instanceGPR = GPRInfo::jitDataRegister;
 #if CPU(ARM64)
 static constexpr GPRReg cellCageBaseGPR = ARM64Registers::x25;
-static constexpr GPRReg staticsGPR = ARM64Registers::x24;
 #endif
 
 constexpr GPRReg argumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
@@ -174,7 +173,7 @@ struct ClosureWord {
 
 // What Stub::NewTypedClosure0 and the like are asked for.
 //   0 to 23   the number of the function that closures go by: ClosureWord::functionOf()
-//   24 to 31  which executable: Typed::FunctionTables::kindOfExecutable()
+//   24 to 30  which executable: Typed::FunctionTables::kindOfExecutable(); 31: a slim closure, and 24 to 30 its kind
 //   32 to 55  the number of the allocation
 //   56 to 63  only for the operation behind the stub: how many captures
 struct ClosureRequest {
@@ -183,7 +182,7 @@ struct ClosureRequest {
     static constexpr unsigned countShift = 56;
     static constexpr unsigned variableIsCell32Bit = 61;
     static constexpr unsigned isMadeOnceBit = 62;
-    static constexpr unsigned isSlimBit = 63;
+    static constexpr unsigned isSlimBit = 31;
 #if CPU(ARM64)
     static constexpr unsigned maxNumberOfCaptures = 4;
 #else
@@ -193,16 +192,16 @@ struct ClosureRequest {
     static constexpr unsigned maxNumberOfCapturesOfSlimClosure = 4;
     static uint64_t encode(uint32_t function, unsigned executable, uint32_t allocation)
     {
-        RELEASE_ASSERT(function <= ClosureWord::functionMask && executable < 1u << (allocationShift - executableShift) && allocation < 1u << (countShift - allocationShift));
+        RELEASE_ASSERT(function <= ClosureWord::functionMask && executable < 1u << (isSlimBit - executableShift) && allocation < 1u << (countShift - allocationShift));
         return function | static_cast<uint64_t>(executable) << executableShift | static_cast<uint64_t>(allocation) << allocationShift;
     }
     static constexpr uint32_t functionOf(uint64_t request) { return request & ClosureWord::functionMask; }
-    static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & 0xff; }
+    static constexpr unsigned executableOf(uint64_t request) { return request >> executableShift & ((1u << (isSlimBit - executableShift)) - 1); }
     static constexpr uint32_t allocationOf(uint64_t request) { return request >> allocationShift & ((1u << (countShift - allocationShift)) - 1); }
     static constexpr unsigned countOf(uint64_t request) { return request >> countShift & 0x1f; }
     static constexpr bool variableIsCell32(uint64_t request) { return request >> variableIsCell32Bit & 1; }
     static constexpr bool isMadeOnce(uint64_t request) { return request >> isMadeOnceBit & 1; }
-    static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit; }
+    static constexpr bool isSlim(uint64_t request) { return request >> isSlimBit & 1; }
 };
 
 } } // namespace JSC::AOT

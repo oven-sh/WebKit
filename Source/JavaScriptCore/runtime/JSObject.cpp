@@ -752,7 +752,7 @@ bool ordinarySetWithOwnDescriptor(JSGlobalObject* globalObject, JSObject* object
     // 9.1.9.1-4 If IsDataDescriptor(ownDesc) is true, then
     if (ownDescriptor.isDataDescriptor()) {
         // 9.1.9.1-4-a If ownDesc.[[Writable]] is false, return false.
-        if (!ownDescriptor.writable() && (receiver == JSValue(current) || !current->structure()->inheritorsMayOverrideReadOnlyProperties()))
+        if (!ownDescriptor.writable() && (receiver == JSValue(current) || !current->structure()->inheritorsMayOverride(vm, propertyName.uid())))
             return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
 
         // 9.1.9.1-4-b If Type(Receiver) is not Object, return false.
@@ -856,9 +856,11 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
     if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]] {
-        if (JSValue held; isRefusedByLockAlone(vm, propertyName.uid(), held) && held == value)
+        JSValue held;
+        bool isByLockAlone = isRefusedByLockAlone(vm, propertyName.uid(), held);
+        if (isByLockAlone && held == value)
             return true;
-        if (!slot.isStrictMode())
+        if (!slot.isStrictMode() && (!isByLockAlone || slot.context() == PutPropertySlot::ReflectSet))
             return false;
         noteRefusalByLock(vm, propertyName.uid());
         return typeError(globalObject, scope, true, wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
@@ -904,10 +906,12 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
 
         if (hasProperty) {
             if (attributes & PropertyAttribute::ReadOnly) {
-                if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-                    if (JSValue held; !isThisValueAltered(slot, obj) && obj->isLockedBuiltin() && obj->isRefusedByLockAlone(vm, propertyName.uid(), held) && held == value)
+                if (!structure->inheritorsMayOverride(vm, propertyName.uid()) || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
+                    JSValue held;
+                    bool isByLockAlone = obj->isLockedBuiltin() && obj->isRefusedByLockAlone(vm, propertyName.uid(), held);
+                    if (isByLockAlone && !isThisValueAltered(slot, obj) && held == value)
                         return true;
-                    if (slot.isStrictMode() && obj->isLockedBuiltin()) {
+                    if ((slot.isStrictMode() && obj->isLockedBuiltin()) || (isByLockAlone && slot.context() != PutPropertySlot::ReflectSet)) {
                         obj->noteRefusalByLock(vm, propertyName.uid());
                         return typeError(globalObject, scope, true, obj->wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
                     }
@@ -1429,6 +1433,7 @@ Butterfly* JSObject::tryCreateArrayStorageButterfly(VM& vm, JSObject* intendedOw
 {
     return createArrayStorageButterflyImpl(vm, intendedOwner, structure, length, vectorLength, oldButterfly, AllocationFailureMode::ReturnNull);
 }
+
 
 ArrayStorage* JSObject::createArrayStorage(VM& vm, unsigned length, unsigned vectorLength)
 {
@@ -4565,6 +4570,7 @@ void JSObject::convertToUncacheableDictionary(VM& vm)
     if (mayBePrototype()) [[unlikely]]
         vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
 }
+
 
 void JSObject::shiftButterflyAfterFlattening(const ConcurrentJSLocker&, VM& vm, Structure* structure, size_t outOfLineCapacityAfter)
 {

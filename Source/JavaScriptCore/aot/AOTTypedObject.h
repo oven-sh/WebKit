@@ -177,6 +177,7 @@ public:
     bool isAmongKeysInOrder(State&, const FieldData&) const;
     void willKeepKeysInLayoutOrder();
     void ensureStorageFor(VM& vm, State& state, const FieldData& field) { ensureExtensionCovers(vm, state, field); }
+    void ensureStorageOfSize(VM&, State&, uint32_t size);
     // JSObject::getDirect() and putDirect(): native code that goes past the method table.
     JSValue getDirectFromNativeCode(VM&, PropertyName, unsigned* attributes);
     // False: the object cannot hold it.

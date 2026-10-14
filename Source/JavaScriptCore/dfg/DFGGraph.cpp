@@ -1217,6 +1217,7 @@ bool Graph::isLiveInBytecode(Operand operand, CodeOrigin codeOrigin)
             if (reg.isArgument()) {
                 RELEASE_ASSERT(reg.offset() < CallFrame::headerSizeInRegisters);
 
+
                 if (inlineCallFrame->isClosureCall
                     && reg == CallFrameSlot::callee) {
                     dataLogLnIf(verbose, "Looks like a callee.");

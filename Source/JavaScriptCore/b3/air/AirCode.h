@@ -361,13 +361,10 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     void setUnsavedCalleeSaves(const RegisterSet& registers) { m_unsavedCalleeSaves = registers; }
     const RegisterSet& unsavedCalleeSaves() const { return m_unsavedCalleeSaves; }
-    void setKeepsFastTmpsFastWhenCoalesced() { m_keepsFastTmpsFastWhenCoalesced = true; }
-    bool keepsFastTmpsFastWhenCoalesced() const { return m_keepsFastTmpsFastWhenCoalesced; }
     void setChargesForCalleeSaves() { m_chargesForCalleeSaves = true; }
     void setLaysRareBlocksInGaps() { m_laysRareBlocksInGaps = true; }
     bool laysRareBlocksInGaps() const { return m_laysRareBlocksInGaps; }
     void setMayPlaceSpillsAboveFrameRecord() { m_mayPlaceSpillsAboveFrameRecord = true; }
-    bool mayPlaceSpillsAboveFrameRecord() const { return m_mayPlaceSpillsAboveFrameRecord; }
     void tryToPlaceSpillsAboveFrameRecord();
     bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
     unsigned bytesAboveFrameRecord() const { return m_bytesAboveFrameRecord; }
@@ -409,7 +406,6 @@ private:
     ScalarRegisterSet m_pinnedRegs;
 #if USE(BUN_JSC_ADDITIONS)
     RegisterSet m_unsavedCalleeSaves;
-    bool m_keepsFastTmpsFastWhenCoalesced { false };
     bool m_chargesForCalleeSaves { false };
     bool m_laysRareBlocksInGaps { false };
     bool m_mayPlaceSpillsAboveFrameRecord { false };

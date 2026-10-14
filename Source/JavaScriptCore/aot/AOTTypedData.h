@@ -7,11 +7,40 @@
 
 #if ENABLE(AOT)
 
+#include "JSCJSValue.h"
 #include <span>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
 
 namespace JSC { namespace AOT { namespace Typed {
+
+inline Vector<char16_t> decodeTextOfProgram(std::span<const uint8_t> bytes)
+{
+    static constexpr char32_t leastOfLength[] = { 0, 0, 0x80, 0x800, 0x10000 };
+    Vector<char16_t> units;
+    for (size_t i = 0; i < bytes.size();) {
+        uint8_t lead = bytes[i];
+        unsigned length = lead < 0xc0 || lead >= 0xf8 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
+        char32_t character = length == 1 ? lead : lead & (0x7f >> length);
+        bool isWhole = i + length <= bytes.size();
+        for (unsigned k = 1; k < length && isWhole; ++k) {
+            isWhole = (bytes[i + k] & 0xc0) == 0x80;
+            character = character << 6 | (bytes[i + k] & 0x3f);
+        }
+        if (!isWhole || character < leastOfLength[length] || character > 0x10ffff) {
+            character = 0xfffd;
+            length = 1;
+        }
+        i += length;
+        if (character < 0x10000)
+            units.append(static_cast<char16_t>(character));
+        else {
+            units.append(static_cast<char16_t>(0xd7c0 + (character >> 10)));
+            units.append(static_cast<char16_t>(0xdc00 | (character & 0x3ff)));
+        }
+    }
+    return units;
+}
 
 // What a call may change of the memory that compiled code reads, from the least to the most. No level says anything of shape words:
 // whether those are written is a question of its own, see Function::writesShapeWords.
@@ -248,11 +277,14 @@ struct RuntimeType {
     static constexpr uint8_t hasElementsBit = 8;
     static constexpr uint8_t hasOneIntegerBit = 16;
     static constexpr uint8_t hasIntegersBit = 32;
+    static constexpr uint8_t isOpenedForLogBit = 64;
     bool allowsAnyObject() const { return bits & allowsAnyObjectBit; }
     bool allowsAnyFunction() const { return bits & allowsAnyFunctionBit; }
     // One of the views does: any object is of the type. The views say which objects of the program are accessed in place, and what `as`
     // makes of a plain object. See Layout::admitsForeignObjects in AOTTypedIR.h.
-    bool admitsForeignObjects() const { return bits & admitsForeignObjectsBit; }
+    bool admitsForeignObjects() const { return bits & (admitsForeignObjectsBit | isOpenedForLogBit); }
+    bool isOpenedForLog() const { return bits & isOpenedForLogBit; }
+    bool admitsForeignObjectsByNature() const { return bits & admitsForeignObjectsBit; }
     uint32_t numberOfViews() const { return viewsCount; }
     uint32_t numberOfJSTypes() const { return jsTypesCount; }
     // Of an array: the offset in Data of the RuntimeType its elements are expected to have. Zero: none.

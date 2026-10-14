@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "Interpreter.h"
 #include "Options.h"
 #include <wtf/BitSet.h>
 #include <wtf/BitVector.h>

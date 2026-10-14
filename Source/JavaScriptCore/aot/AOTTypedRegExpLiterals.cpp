@@ -10,6 +10,7 @@
 
 #include "AOTImage.h"
 #include "AOTTypedBuiltins.h"
+#include "AOTTypedData.h"
 #include "AOTTypedFormat.h"
 #include "DeferGC.h"
 #include "GetterSetter.h"
@@ -119,24 +120,7 @@ public:
     {
         if (String text = String::fromUTF8(bytes); !text.isNull())
             return text;
-        Vector<char16_t> units;
-        for (size_t i = 0; i < bytes.size();) {
-            uint8_t lead = bytes[i];
-            unsigned length = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
-            if (i + length > bytes.size() || (lead >= 0x80 && lead < 0xc0) || lead >= 0xf8)
-                return { };
-            char32_t character = length == 1 ? lead : lead & (0x7f >> length);
-            for (unsigned k = 1; k < length; ++k)
-                character = character << 6 | (bytes[i + k] & 0x3f);
-            i += length;
-            if (U_IS_BMP(character))
-                units.append(static_cast<char16_t>(character));
-            else {
-                units.append(U16_LEAD(character));
-                units.append(U16_TRAIL(character));
-            }
-        }
-        return String(units.span());
+        return String(decodeTextOfProgram(bytes).span());
     }
 
     void run()

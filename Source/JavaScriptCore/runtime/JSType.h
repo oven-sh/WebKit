@@ -49,7 +49,6 @@ namespace JSC {
     macro(ModuleProgramExecutableType, SpecCellOther) \
     macro(EvalExecutableType, SpecCellOther) \
     macro(FunctionExecutableType, SpecCellOther) \
-    macro(ShortFunctionExecutableType, SpecCellOther) /* A FunctionExecutable too: see its short form. */ \
     \
     macro(UnlinkedFunctionExecutableType, SpecCellOther) \
     \

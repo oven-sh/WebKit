@@ -377,7 +377,6 @@ VM::VM(VMType vmType, HeapType heapType, WTF::RunLoop* runLoop, bool* success)
     programExecutableStructure.setWithoutWriteBarrier(ProgramExecutable::createStructure(*this, nullptr, jsNull()));
     functionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createStructure(*this, nullptr, jsNull()));
     m_structureIDBase = JSC::structureIDBase();
-    shortFunctionExecutableStructure.setWithoutWriteBarrier(FunctionExecutable::createShortFormStructure(*this, nullptr, jsNull()));
 #if ENABLE(WEBASSEMBLY)
     pinballCompletionStructure.setWithoutWriteBarrier(PinballCompletion::createStructure(*this, nullptr, jsNull()));
     webAssemblyStreamingContextStructure.setWithoutWriteBarrier(JSWebAssemblyStreamingContext::createStructure(*this, nullptr, jsNull()));
@@ -2223,7 +2222,6 @@ void VM::visitAggregateImpl(Visitor& visitor)
     visitor.append(evalExecutableStructure);
     visitor.append(programExecutableStructure);
     visitor.append(functionExecutableStructure);
-    visitor.append(shortFunctionExecutableStructure);
 #if ENABLE(WEBASSEMBLY)
     visitor.append(pinballCompletionStructure);
     visitor.append(webAssemblyCalleeGroupStructure);

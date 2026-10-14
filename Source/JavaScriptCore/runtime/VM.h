@@ -512,14 +512,6 @@ public:
     Vector<AOT::Instance*> m_aotInstancesToDestroy;
     std::unique_ptr<AOT::VMProgram> m_aotProgram;
 
-    struct BytecodeGenerationOptions {
-        bool resolveAllScopeSlotsStatically { Options::resolveAllScopeSlotsStatically() };
-        bool evaluateObjectLiteralValuesFirst { Options::evaluateObjectLiteralValuesFirst() };
-        bool definePlainInstanceFieldsInConstructor { Options::definePlainInstanceFieldsInConstructor() };
-        bool keepAllSourceLineStarts { false };
-    };
-    BytecodeGenerationOptions bytecodeGenerationOptions;
-
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
     bool hasRealmWithImmutableIntrinsics { false };
     using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
@@ -593,7 +585,6 @@ public:
     WriteBarrier<Structure> evalExecutableStructure;
     WriteBarrier<Structure> programExecutableStructure;
     WriteBarrier<Structure> functionExecutableStructure;
-    WriteBarrier<Structure> shortFunctionExecutableStructure;
 #if ENABLE(WEBASSEMBLY)
     WriteBarrier<Structure> pinballCompletionStructure;
     WriteBarrier<Structure> webAssemblyCalleeGroupStructure;
@@ -1660,6 +1651,7 @@ private:
 
 } // namespace JSC
 
+
 namespace WTF {
 
 // Unfortunately we have a lot of code that uses JSC::VM without locally
@@ -1690,5 +1682,6 @@ template<> struct DefaultRefDerefTraits<JSC::VM> {
 };
 
 } // namespace WTF
+
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

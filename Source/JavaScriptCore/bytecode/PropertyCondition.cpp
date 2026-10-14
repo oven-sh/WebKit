@@ -178,7 +178,7 @@ bool PropertyCondition::isStillValidAssumingImpurePropertyWatchpoint(
         unsigned currentAttributes;
         PropertyOffset currentOffset = structure->get(structure->vm(), concurrency, uid(), currentAttributes);
         if (currentOffset != invalidOffset) {
-            if (structure->inheritorsMayOverrideReadOnlyProperties())
+            if (structure->inheritorsMayOverride(structure->vm(), uid()))
                 currentAttributes &= ~static_cast<unsigned>(PropertyAttribute::ReadOnly);
             if (currentAttributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessorOrValue)) {
                 dataLogLnIf(PropertyConditionInternal::verbose,

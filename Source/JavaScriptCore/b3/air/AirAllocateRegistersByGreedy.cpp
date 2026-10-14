@@ -819,6 +819,18 @@ struct TmpData {
             return preferredWeight;
         return reg == secondPreferredReg ? secondPreferredWeight : 0;
     }
+
+    Tmp neighbours[2];
+
+    void addNeighbour(Tmp tmp)
+    {
+        if (neighbours[0] == tmp || neighbours[1] == tmp)
+            return;
+        if (!neighbours[0])
+            neighbours[0] = tmp;
+        else if (!neighbours[1])
+            neighbours[1] = tmp;
+    }
 #endif
 };
 
@@ -1000,6 +1012,9 @@ public:
         coalesceTmps<GP>();
         if (hasFPTmps)
             coalesceTmps<FP>();
+#if USE(BUN_JSC_ADDITIONS)
+        noteNeighbours();
+#endif
 
         dataLogLnIf(verbose() || shouldDumpFunction(), "Greedy register allocator: function ", m_code.proc().name(), " state before allocate registers:\n", *this, "IR:\n", m_code);
 
@@ -2258,7 +2273,6 @@ private:
             Reg preferred;
             bool hasColdUse = false;
 #if USE(BUN_JSC_ADDITIONS)
-            bool hasFastTmp = false;
             TmpData preferences;
 #endif
             for (Tmp member : group.members()) {
@@ -2273,7 +2287,6 @@ private:
                     preferred = memberData.preferredReg;
                 hasColdUse |= memberData.hasColdUse;
 #if USE(BUN_JSC_ADDITIONS)
-                hasFastTmp |= memberData.spillability == TmpData::Spillability::FastTmp;
                 preferences.prefer(memberData.preferredReg, memberData.preferredWeight);
                 preferences.prefer(memberData.secondPreferredReg, memberData.secondPreferredWeight);
 #endif
@@ -2292,8 +2305,6 @@ private:
             representativeData.preferredWeight = preferences.preferredWeight;
             representativeData.secondPreferredReg = preferences.secondPreferredReg;
             representativeData.secondPreferredWeight = preferences.secondPreferredWeight;
-            if (hasFastTmp && m_code.keepsFastTmpsFastWhenCoalesced())
-                representativeData.spillability = TmpData::Spillability::FastTmp;
 #endif
             representativeData.validate();
 
@@ -2613,6 +2624,47 @@ private:
 
     bool m_isTakingFromHolder { false };
 
+    void noteNeighbours()
+    {
+        if (!isX86() || !m_code.chargesForCalleeSaves())
+            return;
+        for (BasicBlock* block : m_code) {
+            for (Inst& inst : *block) {
+                switch (inst.kind.opcode) {
+                case MoveConditionally32:
+                case MoveConditionally64:
+                case MoveConditionallyTest32:
+                case MoveConditionallyTest64:
+                case MoveConditionallyDouble:
+                case MoveConditionallyFloat:
+                    if (inst.args().size() != 6)
+                        continue;
+                    break;
+                default:
+                    continue;
+                }
+                Arg& yielded = inst.args()[5];
+                if (!yielded.isTmp() || yielded.isReg() || yielded.tmp().bank() != GP)
+                    continue;
+                for (unsigned i = 3; i < 5; ++i) {
+                    Arg& taken = inst.args()[i];
+                    if (!taken.isTmp() || taken.isReg() || taken.tmp().bank() != GP || taken.tmp() == yielded.tmp())
+                        continue;
+                    m_map[yielded.tmp()].addNeighbour(taken.tmp());
+                    m_map[taken.tmp()].addNeighbour(yielded.tmp());
+                }
+            }
+        }
+    }
+
+    NEVER_INLINE void tellNeighbours(TmpData& tmpData, Reg reg)
+    {
+        for (Tmp neighbour : tmpData.neighbours) {
+            if (neighbour)
+                m_map[neighbour].prefer(reg, 0);
+        }
+    }
+
 #endif
     template <Bank bank>
     bool tryAllocate(Tmp tmp, TmpData& tmpData)
@@ -2838,6 +2890,10 @@ private:
         }
         m_regRanges[reg].add(tmp, tmpData.liveRange);
         assignImpl(tmp, tmpData, reg);
+#if USE(BUN_JSC_ADDITIONS)
+        if (tmpData.neighbours[0]) [[unlikely]]
+            tellNeighbours(tmpData, reg);
+#endif
     }
 
     void evict(Tmp tmp, TmpData& tmpData, Reg reg)

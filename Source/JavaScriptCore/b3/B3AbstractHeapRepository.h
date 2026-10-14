@@ -36,10 +36,6 @@ namespace JSC::B3 {
 
 #if ENABLE(AOT)
 #define FOR_EACH_ABSTRACT_FIELD_OF_AOT(macro) \
-    macro(AOTData_slotEpoch, AOT::Data::offsetOfSlotEpoch(), Mutability::Mutable) \
-    macro(AOTInstance_infos, AOT::Instance::offsetOfInfos(), Mutability::Immutable) \
-    macro(AOTInstance_sharedData, AOT::Instance::offsetOfSharedData(), Mutability::Immutable) \
-    macro(AOTInstance_globalObject, AOT::Instance::offsetOfGlobalObject(), Mutability::Immutable) \
     macro(AOTInstance_runtimeTable, AOT::Instance::offsetOfRuntimeTable(), Mutability::Immutable) \
     macro(AOTInstance_vm, AOT::Instance::offsetOfVM(), Mutability::Immutable) \
     macro(AOTInstance_fixedFields, 0, Mutability::Immutable) \
@@ -61,17 +57,11 @@ namespace JSC::B3 {
     macro(AOTTyped_collectorState) \
     macro(AOTTyped_cards) \
     macro(AOTTyped_runtimeState) \
-    macro(AOTTyped_argumentBuffer) \
-    macro(AOTTyped_freshCell)
+    macro(AOTTyped_argumentBuffer)
 #define FOR_EACH_NUMBERED_ABSTRACT_HEAP_OF_AOT(macro) \
     macro(AOTTyped_slots) \
-    macro(AOTTyped_variables) \
-    macro(AOTTyped_catchSpillSlots)
+    macro(AOTTyped_variables)
 #define FOR_EACH_INDEXED_ABSTRACT_HEAP_OF_AOT(macro) \
-    macro(AOTData_slotWords, AOT::Data::offsetOfSlots(), sizeof(uint64_t)) \
-    macro(AOTInstance_intrinsics, AOT::Instance::offsetOfIntrinsics(), sizeof(EncodedJSValue)) \
-    macro(AOTInstance_linkTimeConstants, AOT::Instance::offsetOfLinkTimeConstants(), sizeof(EncodedJSValue)) \
-    macro(AOTIdentifiers, 0, sizeof(void*)) \
     macro(AOTRuntimeTable, 0, sizeof(void*)) \
     macro(AOTTypedClosure_captures, AOT::Typed::Closure::offsetOfCaptures(), sizeof(uint64_t)) \
     macro(AOTTypedSlimClosure_captures, AOT::Typed::SlimClosure::offsetOfCaptures(), sizeof(uint64_t))
@@ -99,8 +89,6 @@ namespace JSC::B3 {
     macro(Butterfly_vectorLength, Butterfly::offsetOfVectorLength(), Mutability::Mutable) \
     macro(CallFrame_callerFrame, CallFrame::callerFrameOffset(), Mutability::Mutable) \
     macro(ClassInfo_parentClass, ClassInfo::offsetOfParentClass(), Mutability::Immutable) \
-    macro(CodeBlock_instructionsRawPointer, CodeBlock::offsetOfInstructionsRawPointer(), Mutability::Immutable) \
-    macro(CodeBlock_jitData, CodeBlock::offsetOfJITData(), Mutability::Immutable) \
     macro(ClonedArguments_callee, ClonedArguments::offsetOfCallee(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_key, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfKey(), Mutability::Mutable) \
     macro(ConcatKeyAtomStringCache_quickCache0_value, ConcatKeyAtomStringCache::offsetOfQuickCache0() + ConcatKeyAtomStringCache::CacheEntry::offsetOfValue(), Mutability::Mutable) \
@@ -149,7 +137,6 @@ namespace JSC::B3 {
     macro(JSCell_typeInfoType, JSCell::typeInfoTypeOffset(), Mutability::Immutable) \
     macro(JSCell_usefulBytes, JSCell::indexingTypeAndMiscOffset(), Mutability::Mutable) \
     macro(JSGlobalObject_globalLexicalBindingEpoch, JSGlobalObject::offsetOfGlobalLexicalBindingEpoch(), Mutability::Mutable) \
-    macro(NativeExecutable_function, NativeExecutable::offsetOfNativeFunctionFor(CodeSpecializationKind::CodeForCall), Mutability::Immutable) \
     macro(JSFunction_executableOrRareData, JSFunction::offsetOfExecutableOrRareData(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastRegExp, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastRegExp(), Mutability::Mutable) \
     macro(JSGlobalObject_regExpGlobalData_cachedResult_lastInput, JSGlobalObject::regExpGlobalDataOffset() + RegExpGlobalData::offsetOfCachedResult() + RegExpCachedResult::offsetOfLastInput(), Mutability::Mutable) \

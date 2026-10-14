@@ -303,19 +303,6 @@ UnlinkedFunctionExecutable* BuiltinExecutables::name##Executable() \
 JSC_FOREACH_BUILTIN_CODE(DEFINE_BUILTIN_EXECUTABLES)
 #undef DEFINE_BUILTIN_EXECUTABLES
 
-void BuiltinExecutables::forEachStandaloneBuiltin(const Function<void(unsigned index, UnlinkedFunctionExecutable*, const SourceCode&)>& functor)
-{
-#define ON_ITS_OWN(name, functionName, overrideName, length) { \
-        SourceCode source = makeSource(StringImpl::createWithoutCopying(std::span { std::bit_cast<const Latin1Character*>(s_##name), static_cast<size_t>(length) }), SourceOrigin(), SourceTaintedOrigin::Untainted); \
-        Identifier executableName = m_vm.propertyNames->builtinNames().functionName##PublicName(); \
-        if (overrideName) \
-            executableName = Identifier::fromString(m_vm, overrideName); \
-        functor(static_cast<unsigned>(BuiltinCodeIndex::name), createExecutable(m_vm, source, executableName, s_##name##ImplementationVisibility, s_##name##ConstructorKind, s_##name##ConstructAbility, s_##name##InlineAttribute, NeedsClassFieldInitializer::No), source); \
-    }
-    JSC_FOREACH_BUILTIN_CODE(ON_ITS_OWN)
-#undef ON_ITS_OWN
-}
-
 std::optional<unsigned> BuiltinExecutables::indexOf(UnlinkedFunctionExecutable* executable) const
 {
     for (unsigned index = 0; index < numberOfBuiltinCodes; ++index) {
@@ -346,19 +333,6 @@ bool BuiltinExecutables::hasCompiledFunction(BuiltinCodeIndex index)
     UNUSED_PARAM(index);
     return false;
 #endif
-}
-
-FunctionExecutable* BuiltinExecutables::programExecutableFor(BuiltinCodeIndex index, const char* text, size_t length)
-{
-#if ENABLE(AOT)
-    if (auto* program = m_vm.useImmutableIntrinsics ? AOT::VMProgram::of(m_vm) : nullptr) [[unlikely]]
-        return program->engineBuiltinFor(static_cast<unsigned>(index), std::span { std::bit_cast<const Latin1Character*>(text), length });
-#else
-    UNUSED_PARAM(index);
-    UNUSED_PARAM(text);
-    UNUSED_PARAM(length);
-#endif
-    return nullptr;
 }
 
 }

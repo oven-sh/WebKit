@@ -257,7 +257,7 @@ private:
             }
             return a;
         };
-        for (bool didChange = true; didChange;) {
+        for (bool didChange = !tryFindImmediateDominators(postorder.size(), [&](unsigned i) { return postorder[postorder.size() - 1 - i]; }, predecessors, dominator); didChange;) {
             didChange = false;
             for (unsigned i = postorder.size() - 1; i--;) {
                 unsigned block = postorder[i];

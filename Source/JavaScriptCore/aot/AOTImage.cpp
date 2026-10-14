@@ -78,7 +78,6 @@ uint64_t imageStamp()
     mix(static_cast<uint64_t>(adapterSaveAreaSize) << 8 | static_cast<uint64_t>(-offsetOfInstanceInAdapter));
 #if CPU(ARM64)
     mix(static_cast<uint64_t>(cellCageBaseGPR) << 16 | Instance::offsetOfCellCageBase());
-    mix(static_cast<uint64_t>(staticsGPR));
 #endif
     mix(Instance::roomForEnvironments);
     mix(Instance::granuleBelowInstance);
@@ -732,22 +731,6 @@ Vector<uint8_t> ImageBuilder::finish()
         capacity *= 2;
 
     const IdentifierIndices* identifierIndices = m_programIdentifierIndices;
-    Vector<UniquedStringImpl*> selectors { nullptr };
-    if (identifierIndices)
-        selectors.fill(nullptr, m_numberOfProgramIdentifiers);
-    UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> numberOfSelector;
-    auto selectorFor = [&](UniquedStringImpl* name) {
-        if (identifierIndices) {
-            uint32_t number = identifierIndices->get(name);
-            RELEASE_ASSERT(number);
-            selectors[number] = name;
-            return number;
-        }
-        return numberOfSelector.ensure(name, [&] {
-            selectors.append(name);
-            return static_cast<uint32_t>(selectors.size() - 1);
-        }).iterator->value;
-    };
     for (auto& function : m_functions) {
         auto& info = function.code.info;
         RELEASE_ASSERT(info.siteConstants.size() == info.numSlots);
@@ -755,22 +738,15 @@ Vector<uint8_t> ImageBuilder::finish()
             uint32_t& constant = info.siteConstants[slot];
             if (!constant)
                 continue;
-            auto storeInSiteOnExit = makeScopeExit([&] {
-                if (!identifierIndices)
-                    return;
+            RELEASE_ASSERT(constant & CompiledFunctionInfo::siteConstantIsPlan);
+            constant &= ~CompiledFunctionInfo::siteConstantIsPlan;
+            if (identifierIndices) {
                 RELEASE_ASSERT(!info.sites[slot].identifierAndExtra);
                 info.sites[slot].identifierAndExtra = constant;
-            });
-            if (constant & CompiledFunctionInfo::siteConstantIsPlan) {
-                constant &= ~CompiledFunctionInfo::siteConstantIsPlan;
-                continue;
             }
-            constant = selectorFor(info.selectors[constant - 1]);
-            storeInSiteOnExit.release();
-            RELEASE_ASSERT(!identifierIndices || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
         }
     }
-    endStep("shapes and selectors of the functions"_s);
+    endStep("the plans at the sites of the functions"_s);
     struct EntryInsideFunction {
         ImageKey key;
         Convention convention;
@@ -818,7 +794,7 @@ Vector<uint8_t> ImageBuilder::finish()
         Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
             auto& function = m_functions[index];
             auto& info = function.code.info;
-            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || !info.hasNoFrame || info.stubCalls.size() != 1 || info.numSlots || info.typedPositions.size() != 1 || info.returnedVariable
+            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || !info.hasNoFrame || info.stubCalls.size() != 1 || info.numSlots || info.typedPositions.size() != 1
                 || !info.callSites.isEmpty() || !info.inlineFrames.isEmpty() || !info.indexReferences.isEmpty() || !info.faultingAccesses.isEmpty() || !info.spreadSites.isEmpty() || !info.plans.isEmpty())
                 return;
             auto& jump = info.stubCalls[0];
@@ -927,7 +903,6 @@ Vector<uint8_t> ImageBuilder::finish()
         String nameForMap;
     };
     Vector<FoldedFunction> foldedFunctions;
-    Vector<ImageKey> keptForFunctionsEnteredFromOutside;
     if (m_numberOfProgramIdentifiers) {
         constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
         Vector<std::array<uint32_t, 4>> keysAndIndices(m_functions.size(), [&](size_t index) {
@@ -965,7 +940,7 @@ Vector<uint8_t> ImageBuilder::finish()
         Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
             auto& function = m_functions[index];
             auto& info = function.code.info;
-            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || (!info.hasNoFrame && !info.isGenericEntrypoint) || info.numSlots || info.returnedVariable || !function.code.continuations.isEmpty() || !info.callSites.isEmpty()
+            if (function.key.kind != ImageKey::typedFunction || isDuplicated.get(index) || (!info.hasNoFrame && !info.isGenericEntrypoint) || info.numSlots || !function.code.continuations.isEmpty() || !info.callSites.isEmpty()
                 || !info.typedCatchEntrypointsForCallSites.isEmpty() || !info.inlineFrames.isEmpty() || !info.indexReferences.isEmpty() || !info.faultingAccesses.isEmpty() || !info.spreadSites.isEmpty() || !info.plans.isEmpty())
                 return;
             bool isNeverAsked = std::ranges::all_of(info.stubCalls, [&](const StubCall& call) {
@@ -977,7 +952,7 @@ Vector<uint8_t> ImageBuilder::finish()
             auto& facts = factsOf[index];
             facts.append(info.hasNoFrame);
             if (!info.hasNoFrame) {
-                facts.appendList(std::initializer_list<uint64_t> { info.frameSizeInBytes, static_cast<uint64_t>(info.offsetOfCallee), info.numberOfSitesWithoutCode, static_cast<uint64_t>(info.convention.signature), info.convention.numberOfParameters, info.convention.usesThis, info.kindByte, info.calleeSaveRegisters.registerCount() });
+                facts.appendList(std::initializer_list<uint64_t> { info.frameSizeInBytes, info.numberOfSitesWithoutCode, static_cast<uint64_t>(info.convention.signature), info.convention.numberOfParameters, info.convention.usesThis, info.kindByte, info.calleeSaveRegisters.registerCount() });
                 for (auto& entry : info.calleeSaveRegisters)
                     facts.appendList(std::initializer_list<uint64_t> { entry.reg().index(), static_cast<uint64_t>(entry.offset()) });
             }
@@ -1074,7 +1049,6 @@ Vector<uint8_t> ImageBuilder::finish()
             ImageKey keptFunction = keyOf[classOf[index]];
             bytes += function.code.bytes.size();
             entriesInsideFunctions.append({ function.key, function.code.info.convention, keptFunction, 0 });
-            keptForFunctionsEnteredFromOutside.append(keptFunction);
             foldedFunctions.append({ function.key, keptFunction, function.code.bytes.size(), WTF::move(function.nameForMap) });
         }
         dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", foldedFunctions.size(), " functions have the code of another: ", bytes, " bytes");
@@ -1192,74 +1166,6 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     endStep("the stack that is taken without asking"_s);
 
-    {
-        BitVector isCalled(m_functions.size());
-        Vector<uint32_t> worklist;
-        auto call = [&](size_t index) {
-            if (!isCalled.set(index))
-                worklist.append(static_cast<uint32_t>(index));
-        };
-        auto indexOf = [&](const ImageKey& key) -> std::optional<size_t> {
-            for (unsigned bucket = key.hash() & (capacity - 1); functionWithKey[bucket] != std::numeric_limits<uint32_t>::max(); bucket = (bucket + 1) & (capacity - 1)) {
-                if (m_functions[functionWithKey[bucket]].key.sameFunction(key))
-                    return functionWithKey[bucket];
-            }
-            return std::nullopt;
-        };
-        BitVector isCreatedOnlyAtExpression(m_functions.size());
-        for (auto& function : m_functions) {
-            for (auto& key : function.code.info.functionExpressionsInCode) {
-                if (auto index = indexOf(key))
-                    isCreatedOnlyAtExpression.set(*index);
-            }
-        }
-        for (size_t index = 0; index < m_functions.size(); ++index) {
-            if (!isCreatedOnlyAtExpression.get(index))
-                call(index);
-        }
-        for (auto& key : keptForFunctionsEnteredFromOutside) {
-            if (auto index = indexOf(key))
-                call(*index);
-        }
-        while (!worklist.isEmpty()) {
-            size_t caller = worklist.takeLast();
-            auto& info = m_functions[caller].code.info;
-            for (auto& stubCall : info.stubCalls) {
-                if (auto target = directTargetOf(caller, stubCall))
-                    call(*target);
-            }
-            for (auto& key : info.functionsCreated) {
-                if (auto index = indexOf(key))
-                    call(*index);
-            }
-        }
-        size_t functions = 0;
-        size_t bytes = 0;
-        for (size_t index = 0; index < m_functions.size(); ++index) {
-            if (isCalled.get(index))
-                continue;
-            auto& code = m_functions[index].code;
-            ++functions;
-            bytes += code.bytes.size();
-#if CPU(X86_64)
-            static constexpr uint32_t breakpoint = 0xcccccccc;
-#else
-            static constexpr uint32_t breakpoint = 0xd4200000;
-#endif
-            code.bytes.resize(sizeof(breakpoint));
-            if (!code.instructions.isEmpty())
-                code.instructions.fill(1, sizeof(breakpoint));
-            code.dataInCode.clear();
-            memcpy(code.bytes.mutableSpan().data(), &breakpoint, sizeof(breakpoint));
-            code.info.stubCalls.clear();
-            code.info.indexReferences.clear();
-            code.info.spreadSites.clear();
-            code.info.inlineFrames.clear();
-            code.info.numberOfEmptyArrayLiteralsMadeInPlace = 0;
-            code.info.numberOfEmptyArrayLiteralsMadeByStub = 0;
-        }
-        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", functions, " functions that nothing calls any more had ", bytes, " bytes of code");
-    }
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         unsigned inPlace = 0;
         unsigned byStub = 0;
@@ -1810,14 +1716,74 @@ Vector<uint8_t> ImageBuilder::finish()
         }
     }
     endStep("where the copies of the stubs go"_s);
+    BitVector fallsIntoNext(m_functions.size());
+    BitVector sharesItsKey(m_functions.size());
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        if (uint32_t first = indexOfFunctionWithKey(m_functions[index].key); first != index) {
+            sharesItsKey.quickSet(first);
+            sharesItsKey.quickSet(index);
+        }
+    }
+    for (size_t index = 0, sizeOfRun = 0; index + 1 < m_functions.size(); ++index) {
+        constexpr size_t maxSizeOfRun = 1 << 20;
+        auto& function = m_functions[index].code;
+        auto& calls = function.info.stubCalls;
+        size_t size = function.bytes.size();
+        sizeOfRun += size;
+        size_t last = calls.findIf([&](const StubCall& call) {
+            return call.isTailCall && !call.thunk && !call.body && call.function != StubCall::noFunction && call.argumentMoves == StubCall::noArgumentMoves && call.firstOmittedGPR == call.endOfOmittedGPRs
+                && call.offset + sizeOfJump <= size && size - call.offset - sizeOfJump < imageFunctionAlignment && *directTargetOf(index, call) == index + 1;
+        });
+        bool isCut = last != notFound && !sharesItsKey.quickGet(index) && farCallees[index].isEmpty() && !sizeOfOwnBodiesOf[index] && !sizeAheadOf(index + 1) && sizeOfRun <= maxSizeOfRun;
+#if CPU(X86_64)
+        if (isCut) {
+            auto behindJump = function.bytes.span().subspan(calls[last].offset + sizeOfJump);
+            while (!behindJump.empty() && behindJump.front() == 0xcc)
+                behindJump = behindJump.subspan(1);
+            std::array<uint8_t, imageFunctionAlignment> padding;
+            X86Assembler::fillNops(padding.data(), behindJump.size());
+            isCut = equalSpans(behindJump, std::span<const uint8_t> { padding }.first(behindJump.size()));
+        }
+#endif
+        if (!isCut) {
+            sizeOfRun = 0;
+            continue;
+        }
+        size_t offset = calls[last].offset;
+        size_t filling = WTF::roundUpToMultipleOf<imageFunctionAlignment>(offset) - offset;
+        calls.removeAt(last);
+        function.bytes.shrink(offset);
+        if (!function.instructions.isEmpty()) {
+            size_t count = 0;
+            for (size_t at = 0; at < offset; ++count)
+                at += function.instructions[count] & 15;
+            function.instructions.shrink(count);
+            if (filling)
+                function.instructions.append(static_cast<uint8_t>(filling));
+        }
+#if CPU(X86_64)
+        function.bytes.grow(offset + filling);
+        X86Assembler::fillNops(function.bytes.mutableSpan().data() + offset, filling);
+#else
+        RELEASE_ASSERT(!filling);
+#endif
+        fallsIntoNext.quickSet(index);
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", fallsIntoNext.bitCount(), " functions fall into the function that is placed next; ", sharesItsKey.bitCount(), " share their key with another and are left as they are");
+    endStep("functions that fall into the next"_s);
     size_t recordsSize = 0;
     size_t codeSize = 0;
     for (size_t functionIndex = 0; functionIndex < m_functions.size(); ++functionIndex) {
         auto& function = m_functions[functionIndex];
-        recordsSize += sizeof(ImageFunction) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.plans.sizeInBytes() + (function.code.info.returnedVariable ? 2 * sizeof(uint32_t) : 0) + (function.code.info.quotes.isEmpty() && function.code.info.constructSites.isEmpty() ? 0 : sizeof(uint32_t));
+        recordsSize += sizeof(ImageFunction) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.plans.sizeInBytes() + (function.code.info.quotes.isEmpty() && function.code.info.constructSites.isEmpty() ? 0 : sizeof(uint32_t));
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
         codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + sizeAheadOf(functionIndex));
-        if (stubsAt.isEmpty() || codeSize + sizeWithVeneers(functionIndex) - stubsAt.last() > reach) {
+        bool isFallenInto = functionIndex && fallsIntoNext.quickGet(functionIndex - 1);
+        RELEASE_ASSERT(!isFallenInto || codeSize == placement.last().first + m_functions[functionIndex - 1].code.bytes.size());
+        size_t sizeOfRun = sizeWithVeneers(functionIndex);
+        for (size_t last = functionIndex; !isFallenInto && fallsIntoNext.quickGet(last); ++last)
+            sizeOfRun += sizeWithVeneers(last + 1);
+        if (stubsAt.isEmpty() || (!isFallenInto && codeSize + sizeOfRun - stubsAt.last() > reach)) {
             codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
             stubsAt.append(codeSize);
             static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment));
@@ -2461,7 +2427,7 @@ Vector<uint8_t> ImageBuilder::finish()
         for (auto& function : m_functions) {
             auto& info = function.code.info;
             RELEASE_ASSERT(!(info.frameSizeInBytes % stackAlignmentBytes()));
-            ImageFrame frame { 0, 0, 0, safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes()) };
+            ImageFrame frame { 0, 0, safeCast<uint16_t>(info.frameSizeInBytes / stackAlignmentBytes()) };
             uint64_t calleeSaveRegisters = 0;
             for (unsigned i = 0; i < info.calleeSaveRegisters.registerCount(); ++i) {
                 const RegisterAtOffset& entry = info.calleeSaveRegisters.at(i);
@@ -2472,11 +2438,6 @@ Vector<uint8_t> ImageBuilder::finish()
                 ptrdiff_t offset = info.calleeSaveRegisters.at(0).offset();
                 RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))) && -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)) <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart));
                 frame.calleeSavesStart = static_cast<uint16_t>(-offset / static_cast<ptrdiff_t>(sizeof(CPURegister)));
-            }
-            if (ptrdiff_t offset = info.offsetOfCallee) {
-                RELEASE_ASSERT(offset < 0 && !(offset % static_cast<ptrdiff_t>(sizeof(CPURegister))));
-                if (ptrdiff_t start = -offset / static_cast<ptrdiff_t>(sizeof(CPURegister)); start <= static_cast<ptrdiff_t>(ImageFrame::maxCalleeStart))
-                    frame.calleeStart = static_cast<uint16_t>(start);
             }
             frame.calleeSaveRegisters = ImageFunction::packRegisters(calleeSaveRegisters);
             functionFrame.append(numbers.ensure(frame.bits(), [&] {
@@ -2677,10 +2638,7 @@ Vector<uint8_t> ImageBuilder::finish()
         record.callSites = functionCallSites[index];
         record.numSlots = info.numSlots;
         record.hasSiteConstants = !identifierIndices;
-        record.usesStaticImports = info.usesStaticImports;
         record.startsCold = info.startsCold;
-        record.isGetByValOnThis = info.isGetByValOnThis;
-        record.returnsScopeVariable = !!info.returnedVariable;
         record.hasQuotes = !info.quotes.isEmpty() || !info.constructSites.isEmpty();
 
         ImageKey key = function.key;
@@ -2712,11 +2670,6 @@ Vector<uint8_t> ImageBuilder::finish()
         if (!identifierIndices) {
             memcpy(records + recordAt, info.siteConstants.span().data(), info.siteConstants.sizeInBytes());
             recordAt += info.siteConstants.sizeInBytes();
-        }
-        if (info.returnedVariable) {
-            uint32_t words[2] = { info.returnedVariable->first, info.returnedVariable->second };
-            memcpy(records + recordAt, words, sizeof(words));
-            recordAt += sizeof(words);
         }
         if (record.hasQuotes) {
             memcpy(records + recordAt, &functionQuotes[index], sizeof(uint32_t));
@@ -2871,7 +2824,7 @@ static bool keepsFirstPagesWithoutAccess()
 
 Image* Image::registerImage(std::span<const uint8_t> data, const void* code)
 {
-    if (!Options::useImmutableIntrinsics() || Options::useJIT())
+    if (!Options::useAOT() || !Options::useImmutableIntrinsics() || Options::useJIT())
         return nullptr;
     if (data.size() < sizeof(ImageHeader))
         return nullptr;
@@ -3485,8 +3438,7 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.functionStartsOffset)[function.index];
         auto futureLocation = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(start, function.convention()), function.index,
-            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasInlineFrames,
-            static_cast<uint16_t>(reinterpret_cast<const ImageFrame*>(m_data.data() + header.framesOffset)[function.frame].calleeStart) };
+            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasInlineFrames };
     }
     return std::nullopt;
 }
@@ -3497,18 +3449,6 @@ std::span<const ImageKey> ImageView::keys() const
     if (header.tableCapacity)
         return { reinterpret_cast<const ImageKey*>(m_data.data() + header.tableOffset), header.tableCapacity };
     return { reinterpret_cast<const ImageKey*>(m_data.data() + header.size), (m_data.size() - header.size) / sizeof(ImageKey) };
-}
-
-uint32_t ImageView::functionIndexWith(const ImageKey& key) const
-{
-    auto& header = this->header();
-    auto& function = *reinterpret_cast<const ImageFunction*>(m_data.data() + header.recordsOffset + key.record - 1);
-    return function.index;
-}
-
-uint32_t ImageView::stubCodeOffset(Stub stub) const
-{
-    return header().stubOffsets[static_cast<unsigned>(stub)];
 }
 
 std::pair<Image*, const ImageFunction*> Image::find(const ImageKey& key)
@@ -3536,32 +3476,17 @@ ImageKey imageKeyForTopLevelCode(uint32_t module)
     return key;
 }
 
-std::optional<ImageKey> imageKeyFor(ScriptExecutable* scriptExecutable, CodeSpecializationKind kind)
+std::optional<ImageKey> imageKeyFor(ScriptExecutable* scriptExecutable)
 {
-    if (scriptExecutable->isShortForm())
+    if (scriptExecutable->isFunctionExecutable() || scriptExecutable->isEvalExecutable())
         return std::nullopt;
     SourceProvider* provider = scriptExecutable->source().provider();
-    if (auto* function = dynamicDowncast<FunctionExecutable>(scriptExecutable); function && function->unlinkedExecutable()->isBuiltinDefaultClassConstructor() && function->topLevelExecutable())
-        provider = function->topLevelExecutable()->source().provider();
     if (!provider)
         return std::nullopt;
     uint32_t module = moduleIDFor(*provider);
     if (!module)
         return std::nullopt;
-    auto* executable = dynamicDowncast<FunctionExecutable>(scriptExecutable);
-    if (!executable) {
-        if (scriptExecutable->isEvalExecutable())
-            return std::nullopt;
-        return imageKeyForTopLevelCode(module);
-    }
-    auto functionKey = orderFunctionKey(*executable->unlinkedExecutable(), executable->source());
-    if (!functionKey)
-        return std::nullopt;
-    ImageKey key;
-    key.module = module;
-    key.start = functionKey->start;
-    key.kind = static_cast<uint32_t>(functionKey->kind) << 1 | (kind == CodeSpecializationKind::CodeForConstruct);
-    return key;
+    return imageKeyForTopLevelCode(module);
 }
 
 unsigned codeHash(std::span<const uint8_t> code)
@@ -3588,15 +3513,7 @@ Instance& instanceOf(JSScope* scope)
     return Instance::ensure(scope->realm());
 }
 
-bool moduleIsLinkedAsCompiled(JSScope* scope)
-{
-    while (scope && scope->type() != ModuleEnvironmentType)
-        scope = scope->next();
-    auto* record = scope ? dynamicDowncast<JSModuleRecord>(uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord()) : nullptr;
-    return record && record->isLinkedAsCompiled(scope->globalObject());
-}
-
-ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind, UnlinkedCodeBlock* unlinkedCodeBlock, JSScope* scope)
+ImageCode findInImage(ScriptExecutable* executable, JSScope* scope)
 {
     if (!Options::useAOT())
         return { };
@@ -3606,23 +3523,18 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
     Image* image = nullptr;
     const ImageFunction* function = nullptr;
     ImageKey key;
-    if (auto* asFunctionExecutable = dynamicDowncast<FunctionExecutable>(executable); asFunctionExecutable && asFunctionExecutable->aotEntryFor(kind) && !(kind == CodeSpecializationKind::CodeForConstruct && asFunctionExecutable->constructsViaCall())) {
-        function = ProgramData::get()->infos()[asFunctionExecutable->aotIndexFor(kind)].function();
-        image = &Image::of(*function);
-    } else {
-        auto executableKey = imageKeyFor(executable, kind);
-        if (!executableKey) {
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
-            return { };
-        }
-        key = *executableKey;
-        std::tie(image, function) = Image::find(key);
-        if (!function) {
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key.module, " start ", key.start, " kind ", key.kind, ")");
-            return { };
-        }
+    auto executableKey = imageKeyFor(executable);
+    if (!executableKey) {
+        if (Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: no key for ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL());
+        return { };
+    }
+    key = *executableKey;
+    std::tie(image, function) = Image::find(key);
+    if (!function) {
+        if (Options::verboseAOTCompilation()) [[unlikely]]
+            dataLogLn("AOT: not in the image: ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " (module ", key.module, " start ", key.start, " kind ", key.kind, ")");
+        return { };
     }
 
     {
@@ -3630,22 +3542,12 @@ ImageCode findInImage(ScriptExecutable* executable, CodeSpecializationKind kind,
         uint32_t index = function->index;
         if (instance->isLinked(index) && FunctionRef { instance, index }.executable() != executable)
             return { };
-        if (const FunctionInfo& info = instance->infos[index]; info.hasExecutable() && instance->program->executable(info.indexPlusOne() - 1) != executable)
-            return { };
     }
 
     if (image->header().numberOfProgramIdentifiers) {
         uint32_t index = function->index;
         if (!instanceOf(scope).infos[index].sites)
             return { };
-    }
-
-    if (function->usesStaticImports) {
-        if (!moduleIsLinkedAsCompiled(scope)) {
-            if (Options::verboseAOTCompilation()) [[unlikely]]
-                dataLogLn("AOT: the module of ", nameForLogging(executable), " of ", executable->source().provider()->sourceURL(), " is not linked the way it was compiled for");
-            return { };
-        }
     }
 
     if (Options::verboseAOTCompilation()) [[unlikely]]
@@ -3703,6 +3605,25 @@ static void unmapCode(void* code, size_t size)
 {
     munmap(code, size);
 }
+
+#if OS(LINUX)
+static void* copyCodeToAnonymousMemory(std::span<const uint8_t> code, const char*& failureReason)
+{
+    void* copy = mmap(nullptr, code.size(), PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (copy == MAP_FAILED) {
+        failureReason = strerror(errno);
+        return nullptr;
+    }
+    memcpySpan(std::span { static_cast<uint8_t*>(copy), code.size() }, code);
+    if (mprotect(copy, code.size(), PROT_READ | PROT_EXEC)) {
+        failureReason = strerror(errno);
+        munmap(copy, code.size());
+        return nullptr;
+    }
+    __builtin___clear_cache(static_cast<char*>(copy), static_cast<char*>(copy) + code.size());
+    return copy;
+}
+#endif
 
 #elif OS(WINDOWS)
 
@@ -3777,7 +3698,13 @@ static AOTFileUse useAOTFile(std::span<const uint8_t> bytes, uint64_t position, 
         return neither("it holds no code");
     result.programDataSize = bytes.size() - *sizeOfImage;
 
-    void* code = mapCode(offsetOfCode, codeSizeInBytes, result.imageRejectionReason);
+    void* code = nullptr;
+#if OS(LINUX)
+    if (Options::useAOTPerfMap()) [[unlikely]]
+        code = copyCodeToAnonymousMemory(bytes.subspan(offsetOfCode, codeSizeInBytes), result.imageRejectionReason);
+    else
+#endif
+        code = mapCode(offsetOfCode, codeSizeInBytes, result.imageRejectionReason);
     if (!code)
         return result;
     if (!registerAOTImage(bytes, code)) {
@@ -3785,6 +3712,10 @@ static AOTFileUse useAOTFile(std::span<const uint8_t> bytes, uint64_t position, 
             unmapCode(code, codeSizeInBytes);
         return neither("it was compiled for another build of the engine");
     }
+#if OS(LINUX)
+    if (Options::useAOTPerfMap()) [[unlikely]]
+        AOT::writePerfMap();
+#endif
     result.codeSizeInBytes = codeSizeInBytes;
     result.code = code;
     return result;
@@ -3865,11 +3796,6 @@ AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
 
 Vector<uint8_t> buildAOTFile(VM& vm, std::span<const SourceCode> sources, bool isModule, std::span<const uint8_t> typedProgram, unsigned numberOfModulesWithoutEntry)
 {
-    auto& options = vm.bytecodeGenerationOptions;
-    options.resolveAllScopeSlotsStatically = true;
-    options.evaluateObjectLiteralValuesFirst = true;
-    options.definePlainInstanceFieldsInConstructor = true;
-    options.keepAllSourceLineStarts = true;
     vm.useImmutableIntrinsics = true;
 
     EncoderStringTable strings;
@@ -3884,8 +3810,8 @@ Vector<uint8_t> buildAOTFile(VM& vm, std::span<const SourceCode> sources, bool i
         for (auto& source : sources) {
             ParserError error;
             UnlinkedCodeBlock* codeBlock = isModule
-                ? static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, { }, error, EvalContextType::None))
-                : static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None));
+                ? static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForModuleProgram(vm, source, StrictModeLexicallyScopedFeature, JSParserScriptMode::Module, { }, error, EvalContextType::None, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes))
+                : static_cast<UnlinkedCodeBlock*>(recursivelyGenerateUnlinkedCodeBlockForProgram(vm, source, NoLexicallyScopedFeatures, JSParserScriptMode::Classic, { }, error, EvalContextType::None, std::numeric_limits<unsigned>::max(), OptimizeBytecode::Yes));
             if (error.isValid() || !codeBlock)
                 return { };
             encoder.addModule(isModule ? sourceCodeKeyForSerializedModule(vm, source) : sourceCodeKeyForSerializedProgram(vm, source), codeBlock, source, { });

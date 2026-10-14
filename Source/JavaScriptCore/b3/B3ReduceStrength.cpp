@@ -31,6 +31,7 @@
 
 #include "B3AtomicValue.h"
 #include "B3BasicBlockInlines.h"
+#include "B3BasicBlockUtils.h"
 #include "B3BulkMemoryValue.h"
 #include "B3ComputeDivisionMagic.h"
 #include "B3Dominators.h"
@@ -1165,6 +1166,7 @@ private:
                     }
                 }
             }
+
 
             break;
 
@@ -5839,6 +5841,9 @@ private:
         // predecessors during strength reduction since that minimizes the total number of fixpoint
         // iterations needed to kill a lot of code.
 
+#if USE(BUN_JSC_ADDITIONS)
+        LargePredecessorLists<BasicBlock> lists;
+#endif
         for (BasicBlock* block : m_proc.blocksInPostOrder()) {
             if (B3ReduceStrengthInternal::verbose)
                 dataLog("Considering block ", *block, ":\n");
@@ -5888,10 +5893,18 @@ private:
                     for (BasicBlock* current = successor; current != newSuccessor;) {
                         BasicBlock* next = current->successorBlock(0);
                         current->successorBlock(0) = newSuccessor;
+#if USE(BUN_JSC_ADDITIONS)
+                        lists.add(newSuccessor, current);
+#else
                         newSuccessor->addPredecessor(current);
+#endif
                         current = next;
                     }
+#if USE(BUN_JSC_ADDITIONS)
+                    lists.add(newSuccessor, block);
+#else
                     newSuccessor->addPredecessor(block);
+#endif
                     successor = newSuccessor;
                     m_changedCFG = true;
                 }
@@ -5952,8 +5965,13 @@ private:
                     successor->clearSuccessors();
 
                     // Ensure that predecessors of block's new successors know what's up.
-                    for (BasicBlock* newSuccessor : block->successorBlocks())
+                    for (BasicBlock* newSuccessor : block->successorBlocks()) {
+#if USE(BUN_JSC_ADDITIONS)
+                        lists.replace(newSuccessor, successor, block);
+#else
                         newSuccessor->replacePredecessor(successor, block);
+#endif
+                    }
 
                     dataLogLnIf(B3ReduceStrengthInternal::verbose, "Merged ", pointerDump(block), "->", pointerDump(successor));
                     m_changedCFG = true;

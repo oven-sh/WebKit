@@ -28,10 +28,15 @@
 #include "Structure.h"
 
 #include "AOTProgramData.h"
+#include "AsyncFunctionPrototype.h"
+#include "AsyncGeneratorFunctionPrototype.h"
+#include "AsyncGeneratorPrototype.h"
 
 #include "BrandedStructure.h"
 #include "BuiltinNames.h"
 #include "DumpContext.h"
+#include "GeneratorFunctionPrototype.h"
+#include "GeneratorPrototype.h"
 #include "JSCInlines.h"
 #include "JSCellButterfly.h"
 #include "PropertyNameArray.h"
@@ -246,6 +251,10 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     , m_classInfo(classInfo)
     , m_transitionWatchpointSet(IsWatched)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasAOTFields())
+        new (NotNull, &existingAOTFields()) AOTFields();
+#endif
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
     bool isArrayStorage = hasAnyArrayStorage(indexingType);
@@ -286,6 +295,10 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
 
 const ClassInfo Structure::s_info = { "Structure"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(Structure) };
 
+#if USE(BUN_JSC_ADDITIONS)
+constinit const Structure::AOTFields Structure::s_emptyAOTFields { };
+#endif
+
 Structure::Structure(VM& vm, CreatingEarlyCellTag)
     : JSCell(CreatingEarlyCell)
     , m_inlineCapacity(0)
@@ -295,6 +308,10 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     , m_classInfo(info())
     , m_transitionWatchpointSet(IsWatched)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasAOTFields())
+        new (NotNull, &existingAOTFields()) AOTFields();
+#endif
     TypeInfo typeInfo { StructureType, StructureFlags };
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
@@ -342,6 +359,14 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
     , m_classInfo(previous->m_classInfo)
     , m_transitionWatchpointSet(IsWatched)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    if (hasAOTFields()) {
+        new (NotNull, &existingAOTFields()) AOTFields();
+#if ENABLE(AOT)
+        existingAOTFields().aotInstance = previous->existingAOTFields().aotInstance;
+#endif
+    }
+#endif
     setDictionaryKind(previous->dictionaryKind());
     setIsPinnedPropertyTable(false);
     setHasBeenFlattenedBefore(previous->hasBeenFlattenedBefore());
@@ -387,9 +412,6 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 
     if (previous->m_realm)
         m_realm.set(vm, this, previous->m_realm.get());
-#if ENABLE(AOT)
-    m_aotInstance = previous->m_aotInstance;
-#endif
     ASSERT(hasAnyKindOfGetterSetterProperties() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::AccessorOrCustomAccessorOrValue)));
     ASSERT(hasReadOnlyOrGetterSetterPropertiesExcludingProto() || !m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue)));
     ASSERT(!this->typeInfo().overridesGetCallData() || m_classInfo->methodTable.getCallData != &JSCell::getCallData);
@@ -398,6 +420,21 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
 }
 
 Structure::~Structure() = default;
+
+bool Structure::inheritorsMayOverride(VM& vm, UniquedStringImpl* uid) const
+{
+    if (!inheritorsMayOverrideReadOnlyProperties())
+        return false;
+    auto& names = *vm.propertyNames;
+    if (uid->isSymbol())
+        return uid != names.toStringTagSymbol.impl() && uid != names.toPrimitiveSymbol.impl() && uid != names.hasInstanceSymbol.impl() && uid != names.unscopablesSymbol.impl();
+    if (uid == names.BYTES_PER_ELEMENT.impl() || uid == names.prototype.impl())
+        return false;
+    if (uid != names.constructor.impl())
+        return true;
+    const ClassInfo* info = classInfoForCells();
+    return info != GeneratorPrototype::info() && info != GeneratorFunctionPrototype::info() && info != AsyncFunctionPrototype::info() && info != AsyncGeneratorPrototype::info() && info != AsyncGeneratorFunctionPrototype::info();
+}
 
 void Structure::destroy(JSCell* cell)
 {
@@ -707,7 +744,8 @@ Structure* Structure::addNewPropertyTransition(VM& vm, Structure* structure, Pro
     transition->setPropertyTable(vm, structure->takePropertyTableOrCloneIfPinned(vm));
     transition->setMaxOffset(vm, structure->maxOffset());
 #if USE(BUN_JSC_ADDITIONS)
-    memcpySpan(std::span { transition->m_fieldIDInSlot }, std::span { structure->m_fieldIDInSlot });
+    if (hasAOTFields())
+        memcpySpan(std::span { transition->existingAOTFields().fieldIDInSlot }, std::span { structure->existingAOTFields().fieldIDInSlot });
 #endif
 
     offset = transition->add(vm, propertyName, attributes);
@@ -1316,7 +1354,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (m_isReplacedWithoutNotice || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
+    if (result.isNewEntry && (aotFieldsOrEmpty().isReplacedWithoutNotice || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1332,9 +1370,9 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
 #if USE(BUN_JSC_ADDITIONS)
 void Structure::copyPropertyNameIDsFrom(const Structure& other)
 {
-    if (other.isDictionary())
+    if (!hasAOTFields() || other.isDictionary())
         return;
-    memcpySpan(std::span { m_fieldIDInSlot }, std::span { other.m_fieldIDInSlot });
+    memcpySpan(std::span { existingAOTFields().fieldIDInSlot }, std::span { other.existingAOTFields().fieldIDInSlot });
 }
 #endif
 
@@ -1610,9 +1648,9 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     
     visitor.append(thisObject->m_realm);
 #if ENABLE(AOT)
-    if (thisObject->m_aotInstance) [[unlikely]] {
-        visitor.appendUnbarriered(AOT::ownerOf(thisObject->m_aotInstance));
-        visitor.appendUnbarriered(AOT::tokenOf(thisObject->m_aotInstance));
+    if (thisObject->aotFieldsOrEmpty().aotInstance) [[unlikely]] {
+        visitor.appendUnbarriered(AOT::ownerOf(thisObject->aotFieldsOrEmpty().aotInstance));
+        visitor.appendUnbarriered(AOT::tokenOf(thisObject->aotFieldsOrEmpty().aotInstance));
     }
 #endif
     if (!thisObject->isObject()) {

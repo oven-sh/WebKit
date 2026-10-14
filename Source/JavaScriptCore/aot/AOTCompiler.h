@@ -16,9 +16,12 @@ class CCallHelpers;
 class CodeBlock;
 class JSScope;
 
-namespace B3 { namespace Air {
+namespace B3 {
+class Procedure;
+namespace Air {
 class Code;
-} }
+}
+}
 
 namespace AOT {
 

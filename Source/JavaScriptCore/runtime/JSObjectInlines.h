@@ -466,9 +466,11 @@ ALWAYS_INLINE bool JSObject::putInlineFast(JSGlobalObject* globalObject, Propert
         if (error.characters() == ImmutableShapeError.characters())
             RELEASE_AND_RETURN(scope, false);
 #endif
-        if (JSValue held; isLockedBuiltin() && isRefusedByLockAlone(vm, propertyName.uid(), held) && held == value)
+        JSValue held;
+        bool isByLockAlone = isLockedBuiltin() && isRefusedByLockAlone(vm, propertyName.uid(), held);
+        if (isByLockAlone && held == value)
             return true;
-        if (slot.isStrictMode() && isLockedBuiltin()) {
+        if ((slot.isStrictMode() && isLockedBuiltin()) || (isByLockAlone && slot.context() != PutPropertySlot::ReflectSet)) {
             noteRefusalByLock(vm, propertyName.uid());
             return typeError(globalObject, scope, true, wordsOfRefusalByLock(vm, propertyName.uid(), error));
         }
@@ -1728,5 +1730,6 @@ inline bool JSObject::tryMakeWritable(VM& vm)
 }
 
 } // namespace JSC
+
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END

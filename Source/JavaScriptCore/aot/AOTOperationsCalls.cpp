@@ -61,13 +61,6 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     auto scope = DECLARE_THROW_SCOPE(vm);
     DeferTraps deferTraps(vm);
     calleeFrame->setCodeBlock(nullptr);
-    if (executable->aotEntryFor(kind)) {
-        DeferGCForAWhile deferGC(vm);
-        if (!linkStaticFunction(Instance::of(function), executable, kind, function->scopeUnchecked())) [[unlikely]] {
-            throwSyntaxError(function->realm(), scope, withAOTErrorNote(makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s)));
-            return encodeResult(nullptr, std::bit_cast<void*>(&vm));
-        }
-    }
     executable->prepareForExecution<FunctionExecutable>(vm, function, function->scopeUnchecked(), kind, *calleeFrame->addressOfCodeBlock());
     if (scope.exception()) [[unlikely]]
         return encodeResult(nullptr, std::bit_cast<void*>(&vm));

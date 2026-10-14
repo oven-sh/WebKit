@@ -120,7 +120,7 @@ Integer Lowering::indexOrElse(ValueID key, LBasicBlock otherwise)
         LBasicBlock continuation = m_out.newBlock();
         m_out.branch(isInt32(boxed).value(), usually(isSmall), rarely(isNotSmall));
         m_out.appendTo(isSmall);
-        ValueFromBlock small = m_out.anchor(signExtended(low32(boxed)).value());
+        ValueFromBlock narrow = m_out.anchor(signExtended(low32(boxed)).value());
         m_out.jump(continuation);
         // The engine may keep an integral number as a double.
         m_out.appendTo(isNotSmall);
@@ -131,7 +131,7 @@ Integer Lowering::indexOrElse(ValueID key, LBasicBlock otherwise)
         ValueFromBlock large = m_out.anchor(index.value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
-        return Integer(m_out.phi(Int64, small, large));
+        return Integer(m_out.phi(Int64, narrow, large));
     }
     default:
         RELEASE_ASSERT_NOT_REACHED();

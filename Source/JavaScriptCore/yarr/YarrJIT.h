@@ -372,7 +372,7 @@ public:
         return MatchResult(untagCFunctionPtr<YarrJITCode16, Yarr16BitPtrTag>(m_ref16.code().taggedPtr())(input.data(), start, input.size(), output, matchingContext));
     }
 
-    MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
+    ALWAYS_INLINE MatchResult execute(std::span<const Latin1Character> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has8BitCodeMatchOnly());
 #if USE(BUN_JSC_ADDITIONS)
@@ -389,7 +389,7 @@ public:
         return MatchResult(untagCFunctionPtr<YarrJITCodeMatchOnly8, YarrMatchOnly8BitPtrTag>(m_matchOnly8.code().taggedPtr())(input.data(), start, input.size(), nullptr, matchingContext));
     }
 
-    MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
+    ALWAYS_INLINE MatchResult execute(std::span<const char16_t> input, unsigned start, MatchingContextHolder* matchingContext)
     {
         ASSERT(has16BitCodeMatchOnly());
 #if USE(BUN_JSC_ADDITIONS)

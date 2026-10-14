@@ -80,7 +80,7 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
         object->didBecomePrototype(vm);
     }
 
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
+    Structure* structure = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, globalObject, prototype, typeInfo, classInfo, indexingModeIncludingHistory, inlineCapacity);
     structure->finishCreation(vm);
     ASSERT(structure->type() == StructureType);
     return structure;
@@ -89,7 +89,7 @@ inline Structure* Structure::create(VM& vm, JSGlobalObject* globalObject, JSValu
 inline Structure* Structure::createStructure(VM& vm)
 {
     ASSERT(!vm.structureStructure);
-    Structure* structure = new (NotNull, allocateCell<Structure>(vm)) Structure(vm, CreatingEarlyCell);
+    Structure* structure = new (NotNull, allocateCell<Structure>(vm, allocationSize())) Structure(vm, CreatingEarlyCell);
     structure->finishCreation(vm, CreatingEarlyCell);
     return structure;
 }

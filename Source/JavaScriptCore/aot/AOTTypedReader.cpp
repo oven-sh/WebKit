@@ -6,6 +6,7 @@
 #include "config.h"
 #include "AOTTypedIR.h"
 #include "AOTTypedThreads.h"
+#include "ImplementationVisibility.h"
 #include "Options.h"
 
 #if ENABLE(AOT)
@@ -93,6 +94,9 @@ public:
             layout.mayHaveOtherPrototype = shape.flags & Format::ShapeMayHaveOtherPrototype;
             layout.hasStaticMemberOfUnknownName = shape.flags & Format::ShapeHasStaticMemberOfUnknownName;
             layout.admitsForeignObjects = shape.flags & Format::ShapeAdmitsForeignObjects;
+            layout.isOpenedForLog = shape.flags & Format::ShapeIsOpenedForLog;
+            if (layout.isOpenedForLog && (!layout.admitsForeignObjects || !m_program.logsTypeErrors))
+                return "a shape is opened for the log, and admits no foreign objects or the program keeps no log"_s;
             for (uint32_t member : slice(m_words, shape.members))
                 layout.members.append(LayoutID(member));
             for (uint32_t member : slice(m_words, shape.membersByFit))
@@ -168,7 +172,7 @@ public:
             m_program.layouts.append(WTF::move(layout));
         }
         for (auto& layout : m_program.layouts)
-            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !Options::auditAOTTypedAssertions();
+            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !layout.isOpenedForLog && !Options::auditAOTTypedAssertions();
         for (auto& view : m_program.layouts) {
             if (view.admitsForeignObjects)
                 continue;

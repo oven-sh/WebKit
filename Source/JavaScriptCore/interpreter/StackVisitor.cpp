@@ -551,12 +551,15 @@ NEVER_INLINE bool StackVisitor::gotoNextAOTFrame()
 }
 #endif
 
-void StackVisitor::gotoNextFrame()
+template<bool mayVisitAOTFrames>
+ALWAYS_INLINE void StackVisitor::gotoNextFrameImpl()
 {
     m_frame.m_index++;
 #if ENABLE(AOT)
-    if (m_mayVisitAOTFrames && gotoNextAOTFrame())
-        return;
+    if constexpr (mayVisitAOTFrames) {
+        if (gotoNextAOTFrame())
+            return;
+    }
 #endif
 #if ENABLE(DFG_JIT)
     if (m_frame.isInlinedDFGFrame()) {
@@ -564,18 +567,39 @@ void StackVisitor::gotoNextFrame()
         CodeOrigin* callerCodeOrigin = inlineCallFrame->getCallerSkippingTailCalls();
         if (!callerCodeOrigin) {
             while (inlineCallFrame) {
-                readInlinedFrame(m_frame.callFrame(), &inlineCallFrame->directCaller);
+                readInlinedFrame<mayVisitAOTFrames>(m_frame.callFrame(), &inlineCallFrame->directCaller);
                 inlineCallFrame = m_frame.inlineCallFrame();
             }
             m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
-            readFrame(m_frame.callerFrame());
+            readFrameImpl<mayVisitAOTFrames>(m_frame.callerFrame());
         } else
-            readInlinedFrame(m_frame.callFrame(), callerCodeOrigin);
+            readInlinedFrame<mayVisitAOTFrames>(m_frame.callFrame(), callerCodeOrigin);
         return;
     }
 #endif // ENABLE(DFG_JIT)
     m_frame.m_entryFrame = m_frame.m_callerEntryFrame;
-    readFrame(m_frame.callerFrame());
+    readFrameImpl<mayVisitAOTFrames>(m_frame.callerFrame());
+}
+
+#if ENABLE(AOT)
+NEVER_INLINE void StackVisitor::gotoNextFrameInCompiledProgram()
+{
+    gotoNextFrameImpl<true>();
+}
+#endif
+
+NEVER_INLINE void StackVisitor::gotoNextPlainFrame()
+{
+    gotoNextFrameImpl<false>();
+}
+
+void StackVisitor::gotoNextFrame()
+{
+#if ENABLE(AOT)
+    if (m_mayVisitAOTFrames)
+        return gotoNextFrameInCompiledProgram();
+#endif
+    return gotoNextPlainFrame();
 }
 
 void StackVisitor::unwindToMachineCodeBlockFrame()
@@ -585,21 +609,26 @@ void StackVisitor::unwindToMachineCodeBlockFrame()
         CodeOrigin codeOrigin = m_frame.inlineCallFrame()->directCaller;
         while (codeOrigin.inlineCallFrame())
             codeOrigin = codeOrigin.inlineCallFrame()->directCaller;
-        readNonInlinedFrame(m_frame.callFrame(), &codeOrigin);
+        if (m_mayVisitAOTFrames)
+            readNonInlinedFrame<true>(m_frame.callFrame(), &codeOrigin);
+        else
+            readNonInlinedFrame<false>(m_frame.callFrame(), &codeOrigin);
     }
 #endif
 }
 
+template<bool mayVisitAOTFrames>
 inline CallFrame* StackVisitor::updatePreviousReturnPCIfNecessary(CallFrame* callFrame)
 {
     if (m_frame.m_callFrame) {
         if (m_frame.m_callFrame != callFrame)
-            m_previousReturnPC = m_frame.m_callerReturnPC;
+            m_previousReturnPC = mayVisitAOTFrames ? m_frame.m_callerReturnPC : m_frame.m_callFrame->rawReturnPC();
     }
     return callFrame;
 }
 
-void StackVisitor::readFrame(CallFrame* callFrame)
+template<bool mayVisitAOTFrames>
+void StackVisitor::readFrameImpl(CallFrame* callFrame)
 {
     if (!callFrame) {
         m_frame.setToEnd();
@@ -607,7 +636,7 @@ void StackVisitor::readFrame(CallFrame* callFrame)
     }
 
 #if ENABLE(AOT)
-    if (m_mayVisitAOTFrames) {
+    if constexpr (mayVisitAOTFrames) {
         void* returnPC = m_frame.m_callFrame && m_frame.m_callFrame != callFrame ? m_frame.m_callerReturnPC : m_previousReturnPC;
         if (AOT::ImageAddressInfo what = classify(removeCodePtrTag(returnPC)); what.kind == AOT::ImageAddressInfo::Function) {
             readAOTFrame(callFrame, removeCodePtrTag(returnPC), what.index);
@@ -617,19 +646,19 @@ void StackVisitor::readFrame(CallFrame* callFrame)
 #endif
 
     if (callFrame->isNativeCalleeFrame()) {
-        readInlinableNativeCalleeFrame(callFrame);
+        readInlinableNativeCalleeFrame<mayVisitAOTFrames>(callFrame);
         return;
     }
 
 #if !ENABLE(DFG_JIT)
-    readNonInlinedFrame(callFrame);
+    readNonInlinedFrame<mayVisitAOTFrames>(callFrame);
 
 #else // !ENABLE(DFG_JIT)
     // If the frame doesn't have a code block, then it's not a DFG frame.
     // Hence, we're not at an inlined frame.
     CodeBlock* codeBlock = callFrame->codeBlock();
     if (!codeBlock) {
-        readNonInlinedFrame(callFrame);
+        readNonInlinedFrame<mayVisitAOTFrames>(callFrame);
         return;
     }
 
@@ -638,7 +667,7 @@ void StackVisitor::readFrame(CallFrame* callFrame)
         dataLogLn("Invalid codeblock type: ", *(JSCell*)codeBlock);
         dataLogLn("Callee: ", RawPointer(callFrame->unsafeCallee().rawPtr()));
         ASSERT_NOT_REACHED();
-        readNonInlinedFrame(callFrame);
+        readNonInlinedFrame<mayVisitAOTFrames>(callFrame);
         return;
     }
 #endif
@@ -646,7 +675,7 @@ void StackVisitor::readFrame(CallFrame* callFrame)
     // If the code block does not have any code origins, then there's no
     // inlining. Hence, we're not at an inlined frame.
     if (!codeBlock->hasCodeOrigins()) {
-        readNonInlinedFrame(callFrame);
+        readNonInlinedFrame<mayVisitAOTFrames>(callFrame);
         return;
     }
 
@@ -661,12 +690,20 @@ void StackVisitor::readFrame(CallFrame* callFrame)
 
     CodeOrigin codeOrigin = codeBlock->codeOrigin(index);
     if (!codeOrigin.inlineCallFrame()) {
-        readNonInlinedFrame(callFrame, &codeOrigin);
+        readNonInlinedFrame<mayVisitAOTFrames>(callFrame, &codeOrigin);
         return;
     }
 
-    readInlinedFrame(callFrame, &codeOrigin);
+    readInlinedFrame<mayVisitAOTFrames>(callFrame, &codeOrigin);
 #endif // !ENABLE(DFG_JIT)
+}
+
+void StackVisitor::readFrame(CallFrame* callFrame)
+{
+    if (m_mayVisitAOTFrames)
+        readFrameImpl<true>(callFrame);
+    else
+        readFrameImpl<false>(callFrame);
 }
 
 #if ENABLE(AOT)
@@ -711,14 +748,21 @@ void StackVisitor::readAOTFrame(CallFrame* callFrame, void* returnPC, uint32_t i
 }
 #endif
 
+template<bool mayVisitAOTFrames>
 void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin)
 {
-    m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
+    m_frame.m_callFrame = updatePreviousReturnPCIfNecessary<mayVisitAOTFrames>(callFrame);
     m_frame.m_returnPC = m_previousReturnPC;
     m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-    m_frame.m_aotFunction = { };
-    m_frame.m_aotInlineFrame = 0;
-    findCaller(callFrame);
+    if constexpr (mayVisitAOTFrames) {
+        m_frame.m_aotFunction = { };
+        m_frame.m_aotInlineFrame = 0;
+        findCaller(callFrame);
+    } else {
+        m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
+        m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
+        m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+    }
     m_frame.m_isWasmFrame = false;
     m_frame.m_callee = callFrame->callee();
 #if ENABLE(DFG_JIT)
@@ -734,6 +778,7 @@ void StackVisitor::readNonInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOri
     RELEASE_ASSERT(!callFrame->isNativeCalleeFrame());
 }
 
+template<bool mayVisitAOTFrames>
 void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 {
     RELEASE_ASSERT(callFrame->callee().isNativeCallee());
@@ -743,12 +788,18 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
 #if ENABLE(WEBASSEMBLY)
         auto& wasmCallee = uncheckedDowncast<Wasm::Callee>(callee);
         auto depth = m_frame.m_wasmDistanceFromDeepestInlineFrame;
-        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
+        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary<mayVisitAOTFrames>(callFrame);
         m_frame.m_returnPC = m_previousReturnPC;
         m_frame.m_isWasmFrame = true;
         m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-        m_frame.m_aotFunction = { };
-        findCaller(callFrame);
+        if constexpr (mayVisitAOTFrames) {
+            m_frame.m_aotFunction = { };
+            findCaller(callFrame);
+        } else {
+            m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
+            m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
+            m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+        }
         m_frame.m_callee = callFrame->callee();
         m_frame.m_codeBlock = nullptr;
         m_frame.m_wasmDistanceFromDeepestInlineFrame = 0;
@@ -792,11 +843,17 @@ void StackVisitor::readInlinableNativeCalleeFrame(CallFrame* callFrame)
         break;
     }
     case NativeCallee::Category::InlineCache: {
-        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
+        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary<mayVisitAOTFrames>(callFrame);
         m_frame.m_returnPC = m_previousReturnPC;
         m_frame.m_argumentCountIncludingThis = callFrame->argumentCountIncludingThis();
-        m_frame.m_aotFunction = { };
-        findCaller(callFrame);
+        if constexpr (mayVisitAOTFrames) {
+            m_frame.m_aotFunction = { };
+            findCaller(callFrame);
+        } else {
+            m_frame.m_callerEntryFrame = m_frame.m_entryFrame;
+            m_frame.m_callerFrame = callFrame->callerFrame(m_frame.m_callerEntryFrame);
+            m_frame.m_callerIsEntryFrame = m_frame.m_callerEntryFrame != m_frame.m_entryFrame;
+        }
         m_frame.m_isWasmFrame = false;
         m_frame.m_callee = callFrame->callee();
 #if ENABLE(DFG_JIT)
@@ -819,6 +876,7 @@ static int NODELETE inlinedFrameOffset(CodeOrigin* codeOrigin)
     return frameOffset;
 }
 
+template<bool mayVisitAOTFrames>
 void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin)
 {
     ASSERT(codeOrigin);
@@ -830,7 +888,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
     if (isInlined) {
         InlineCallFrame* inlineCallFrame = codeOrigin->inlineCallFrame();
 
-        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary(callFrame);
+        m_frame.m_callFrame = updatePreviousReturnPCIfNecessary<mayVisitAOTFrames>(callFrame);
         m_frame.m_returnPC = m_previousReturnPC;
         m_frame.m_inlineDFGCallFrame = inlineCallFrame;
         if (inlineCallFrame->argumentCountRegister.isValid())
@@ -838,7 +896,8 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
         else
             m_frame.m_argumentCountIncludingThis = inlineCallFrame->argumentCountIncludingThis;
         m_frame.m_codeBlock = inlineCallFrame->baselineCodeBlock.get();
-        m_frame.m_aotFunction = { };
+        if constexpr (mayVisitAOTFrames)
+            m_frame.m_aotFunction = { };
         m_frame.m_bytecodeIndex = codeOrigin->bytecodeIndex();
 
         JSFunction* callee = inlineCallFrame->calleeForCallFrame(callFrame);
@@ -853,7 +912,7 @@ void StackVisitor::readInlinedFrame(CallFrame* callFrame, CodeOrigin* codeOrigin
         return;
     }
 
-    readNonInlinedFrame(callFrame, codeOrigin);
+    readNonInlinedFrame<mayVisitAOTFrames>(callFrame, codeOrigin);
 }
 #endif // ENABLE(DFG_JIT)
 
@@ -887,15 +946,6 @@ ScriptExecutable* StackVisitor::Frame::ownerExecutable() const
         return m_aotFunction.executable();
 #endif
     return m_codeBlock ? m_codeBlock->ownerExecutable() : nullptr;
-}
-
-JSCell* StackVisitor::Frame::aotCallee() const
-{
-#if ENABLE(AOT)
-    if (m_aotFunction && !m_aotInlineFrame)
-        return m_frameAOTFunction.calleeInFrame(m_callFrame);
-#endif
-    return nullptr;
 }
 
 bool StackVisitor::Frame::isBuiltinFunction() const
@@ -1177,19 +1227,26 @@ bool StackVisitor::Frame::isFrameOf(JSCell* function) const
 #endif
     if (JSCell* callee = this->callee().asCell())
         return callee == function;
-    if (JSCell* callee = aotCallee())
-        return callee == function;
     auto* jsFunction = dynamicDowncast<JSFunction>(function);
     return jsFunction && hasCode() && jsFunction->executable() == ownerExecutable();
 }
 
+static NEVER_INLINE ImplementationVisibility implementationVisibilityOfCompiledFrame(const StackVisitor::Frame& frame)
+{
+    if (frame.isTypedAOTFrame())
+        return ImplementationVisibility::Public;
+    if (auto* executable = frame.ownerExecutable())
+        return executable->implementationVisibility();
+    return ImplementationVisibility::Public;
+}
+
 bool StackVisitor::Frame::isImplementationVisibilityPrivate() const
 {
-    if (isTypedAOTFrame())
-        return false;
     ImplementationVisibility implementationVisibility = [&] () -> ImplementationVisibility {
-        if (hasCode()) {
-            if (auto* executable = ownerExecutable())
+        if (m_aotFunction) [[unlikely]]
+            return implementationVisibilityOfCompiledFrame(*this);
+        if (auto* codeBlock = m_codeBlock) {
+            if (auto* executable = codeBlock->ownerExecutable())
                 return executable->implementationVisibility();
             return ImplementationVisibility::Public;
         }

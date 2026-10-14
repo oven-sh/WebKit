@@ -462,11 +462,12 @@ public:
         if (cell->type() == ArrayType)
             return tryVisitArray(cell);
         Structure* structure = structureOf(cell);
-        if (!structure->isOfCompiledCells())
+        auto& aotFields = structure->existingAOTFields();
+        if (!aotFields.isOfCompiledCells())
             return false;
-        const LayoutData* layout = structure->compiledLayout();
+        const LayoutData* layout = aotFields.compiledLayout();
         if (!layout)
-            layout = &layoutOfEnvironment(*structure->dataOfCompiledEnvironments(), structure->firstShapeOfCompiledEnvironments(), cell);
+            layout = &layoutOfEnvironment(*aotFields.dataOfCompiledEnvironments(), aotFields.firstShapeOfCompiledEnvironments(), cell);
         const uint8_t* fields = reinterpret_cast<const uint8_t*>(cell);
         if (isObjectLayout(layout->kind) && *reinterpret_cast<const uint32_t*>(fields + offsetOfOrderWord) & orderWordHasExtraProperties) [[unlikely]] {
             structure->classInfoForCells()->methodTable.visitChildren(const_cast<JSCell*>(cell), m_visitor);

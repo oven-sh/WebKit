@@ -212,26 +212,12 @@ static ALWAYS_INLINE bool NODELETE isAllowedReceiverFunctionForCallerAndArgument
 {
     if (function->isHostOrBuiltinFunction())
         return false;
-#if ENABLE(AOT)
-    if (AOT::hasCompiledCode(function->vm(), function))
-        return false;
-#endif
 
     FunctionExecutable* executable = function->jsExecutable();
     if (executable->implementationVisibility() != ImplementationVisibility::Public)
         return false;
     return !executable->isInStrictContext() && executable->parseMode() == SourceParseMode::NormalFunctionMode && !executable->isClassConstructorFunction();
 }
-
-#if ENABLE(AOT)
-static bool wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(JSFunction* function)
-{
-    if (function->isHostOrBuiltinFunction() || !AOT::hasCompiledCode(function->vm(), function))
-        return false;
-    FunctionExecutable* executable = function->jsExecutable();
-    return executable->implementationVisibility() == ImplementationVisibility::Public && !executable->isInStrictContext() && executable->parseMode() == SourceParseMode::NormalFunctionMode && !executable->isClassConstructorFunction();
-}
-#endif
 
 class RetrieveArgumentsFunctor {
 public:
@@ -279,12 +265,6 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-#if ENABLE(AOT)
-        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj)) {
-            thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
-            return throwVMTypeError(globalObject, scope, withAOTErrorNote(RestrictedPropertyAccessError));
-        }
-#endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
 
@@ -360,12 +340,6 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-#if ENABLE(AOT)
-        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj)) {
-            thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
-            return throwVMTypeError(globalObject, scope, withAOTErrorNote(RestrictedPropertyAccessError));
-        }
-#endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
 

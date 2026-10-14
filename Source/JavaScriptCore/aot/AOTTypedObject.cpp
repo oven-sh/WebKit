@@ -22,6 +22,7 @@
 #include "AsyncIteratorPrototype.h"
 #include "BlockDirectoryInlines.h"
 #include "BuiltinNames.h"
+#include "CachedTypes.h"
 #include "CustomGetterSetter.h"
 #include "FunctionPrototype.h"
 #include "GeneratorFunctionPrototype.h"
@@ -673,23 +674,28 @@ bool Object::tryCopyFieldsOf(VM& vm, const Object& source)
 
 } } // namespace AOT::Typed
 
+static ALWAYS_INLINE const AOT::Typed::LayoutData* compiledLayoutOf(const Structure::AOTFields& aotFields, const JSCell* cell)
+{
+    if (auto* data = aotFields.dataOfCompiledEnvironments())
+        return &AOT::Typed::layoutOfEnvironment(*data, aotFields.firstShapeOfCompiledEnvironments(), cell);
+    return aotFields.compiledLayout();
+}
+
 const AOT::Typed::LayoutData* Structure::compiledLayoutOf(const JSCell* cell) const
 {
-    if (auto* data = dataOfCompiledEnvironments())
-        return &AOT::Typed::layoutOfEnvironment(*data, firstShapeOfCompiledEnvironments(), cell);
-    return compiledLayout();
+    return JSC::compiledLayoutOf(aotFieldsOrEmpty(), cell);
 }
 
 namespace AOT { namespace Typed {
 
 const LayoutData& Object::layout() const
 {
-    return *structure()->compiledLayoutOf(this);
+    return *compiledLayoutOf(structure()->existingAOTFields(), this);
 }
 
 State& Object::state() const
 {
-    return *structure()->aotInstance()->typed;
+    return *structure()->existingAOTFields().aotInstance->typed;
 }
 
 static_assert(cell32Shift == MarkedBlockCage::shift);
@@ -968,6 +974,12 @@ void Object::ensureExtensionCovers(VM& vm, State& state, const FieldData& field)
         return;
     RELEASE_ASSERT(needed <= layout().extensionSize);
     replaceExtension(vm, state, needed);
+}
+
+void Object::ensureStorageOfSize(VM& vm, State& state, uint32_t size)
+{
+    if (Extension* current = extension(); !current || size > current->size())
+        replaceExtension(vm, state, size);
 }
 
 void Object::replaceExtension(VM& vm, State& state, uint32_t size)
@@ -2076,7 +2088,7 @@ void Object::putExtraWithoutRunningCode(JSGlobalObject* globalObject, PropertyNa
             continue;
         if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)
             return refuse("TypeScript code of the program cannot call an inherited setter that is not declared in the type"_s);
-        if (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverrideReadOnlyProperties())
+        if (attributes & PropertyAttribute::ReadOnly && !structure->inheritorsMayOverride(vm, name.uid()))
             return refuseAsTheLanguageDoes("the inherited property is read only"_s);
         break;
     }
@@ -4018,7 +4030,7 @@ SlimClosure* SlimClosure::createForCompiledCode(VM& vm, Structure* structure, si
 
 State& SlimClosure::state() const
 {
-    return *structure()->aotInstance()->typed;
+    return *structure()->existingAOTFields().aotInstance->typed;
 }
 
 uint8_t SlimClosure::kindAndDeclaration() const
@@ -4370,7 +4382,17 @@ bool SlimClosure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObje
     uncheckedDowncast<SlimClosure>(object)->reifyProperties(globalObject->vm());
     if (name == globalObject->vm().propertyNames->prototype) [[unlikely]]
         ++uncheckedDowncast<SlimClosure>(object)->state().instance.typedPrototypeEpoch;
-    return Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    bool result = Base::defineOwnProperty(object, globalObject, name, descriptor, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, false);
+    SlimClosure* closure = uncheckedDowncast<SlimClosure>(object);
+    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && closure->state().closureIfMade(closure->functionIndex()) == closure) [[unlikely]] {
+        String reported = asString(descriptor.value())->value(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        setNameReportedForFrames(closure->functionIndex(), reported);
+    }
+    return result;
 }
 
 bool SlimClosure::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
@@ -4524,7 +4546,7 @@ bool Closure::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, 
     if (name == vm.propertyNames->prototype) [[unlikely]]
         state.didChangePrototypeOf(vm, closure);
     // The host hides frames of its own modules by the name of the function. A frame has no closure to ask: most calls pass none.
-    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && closure->isDeclaredAs(functionIsOfBuiltinModule)) [[unlikely]] {
+    if (result && name == vm.propertyNames->name && descriptor.value() && descriptor.value().isString() && (closure->isDeclaredAs(functionIsOfBuiltinModule) || state.closureIfMade(closure->functionIndex()) == closure)) [[unlikely]] {
         String reported = asString(descriptor.value())->value(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
         setNameReportedForFrames(closure->functionIndex(), reported);
@@ -5286,23 +5308,7 @@ static String textOf(std::span<const uint8_t> bytes)
         return StringImpl::createWithoutCopying(byteCast<Latin1Character>(bytes));
     if (String text = String::fromUTF8(bytes); !text.isNull())
         return text;
-    Vector<char16_t> units;
-    for (size_t i = 0; i < bytes.size();) {
-        uint8_t lead = bytes[i];
-        unsigned length = lead < 0x80 ? 1 : lead < 0xe0 ? 2 : lead < 0xf0 ? 3 : 4;
-        RELEASE_ASSERT(i + length <= bytes.size());
-        char32_t character = length == 1 ? lead : lead & (0x7f >> length);
-        for (unsigned k = 1; k < length; ++k)
-            character = character << 6 | (bytes[i + k] & 0x3f);
-        i += length;
-        if (U_IS_BMP(character))
-            units.append(static_cast<char16_t>(character));
-        else {
-            units.append(U16_LEAD(character));
-            units.append(U16_TRAIL(character));
-        }
-    }
-    return String(units.span());
+    return String(decodeTextOfProgram(bytes).span());
 }
 
 // The characters of an ASCII text stay where they are, in the image: an atom may outlive the State (a property table, a JSString holds it), so an image is never unmapped.
@@ -5325,13 +5331,6 @@ Identifier tryMakeIdentifier(VM& vm, uint32_t identifier)
     const Data* data = dataInImageIfAny();
     uint32_t stringPlusOne = data ? data->stringOfIdentifierPlusOne(identifier) : 0;
     return stringPlusOne ? Identifier::fromString(vm, atomOf(*data, stringPlusOne - 1)) : Identifier();
-}
-
-String tryGetTextOfIdentifier(uint32_t identifier)
-{
-    const Data* data = dataInImageIfAny();
-    uint32_t stringPlusOne = data ? data->stringOfIdentifierPlusOne(identifier) : 0;
-    return stringPlusOne ? textOfConstant(*data, stringPlusOne - 1) : String();
 }
 
 // The characters stay where they are, in the image.
@@ -5575,7 +5574,7 @@ void State::makeNamesForHeapAnalysis(VM& vm)
         if (holdsCells(store) && data.sizeOfString(string))
             name(vm, string);
     };
-    for (uint32_t shape = 0; shape < data.numberOfLayouts; ++shape) {
+    for (uint32_t shape = 1; shape < data.numberOfLayouts; ++shape) {
         const LayoutData& layout = layoutOfShape(shape);
         if (!isObjectLayout(layout.kind)) {
             for (auto& variable : layout.describedVariables())
@@ -7939,8 +7938,15 @@ public:
         bool hasCopiedWhatOthersMayHold = m_copied.containsIf([&](JSObject* object) {
             return object != m_heldByNobodyElse && (m_isOrdinaryCopy.contains(object) || m_becameTheirCopies.isEmpty());
         });
-        if (hasCopiedWhatOthersMayHold && m_mode != Mode::CoerceFreshObject && m_mode != Mode::CoerceFreshGraph) [[unlikely]]
-            m_state.noteViolation(m_vm, { .kind = "copy-on-enter"_s, .what = m_mode == Mode::Coerce ? "Coerce"_s : m_mode == Mode::Narrowing ? "Flow"_s : "As"_s, .expected = &type, .got = value, .action = State::ActionOnViolation::Copied });
+        if (hasCopiedWhatOthersMayHold && m_mode != Mode::CoerceFreshObject && m_mode != Mode::CoerceFreshGraph) [[unlikely]] {
+            StringBuilder parts;
+            for (auto& [original, ordinary] : m_ordinaryCopies) {
+                if (Object* copy = m_copies.get(ordinary))
+                    parts.append(parts.isEmpty() ? "copied: "_s : ", "_s, State::describe(JSValue(original)), " as "_s, State::describe(JSValue(copy)));
+            }
+            String reason = parts.toString();
+            m_state.noteViolation(m_vm, { .kind = "copy-on-enter"_s, .what = m_mode == Mode::Coerce ? "Coerce"_s : m_mode == Mode::Narrowing ? "Flow"_s : "As"_s, .expected = &type, .got = value, .reason = reason.isEmpty() ? nullptr : &reason, .action = State::ActionOnViolation::Copied });
+        }
         return result;
     }
 
@@ -8201,16 +8207,16 @@ private:
                 return value;
             // Nothing can be made of an object whose layout has no specializations: forEachSpecialization().
             if (m_mode != Mode::Test && m_state.layoutOfShape(shapeOf(object)).numberOfSpecializations) {
-                JSValue result = orAsItIs(value, isOfType || type.admitsForeignObjects() || mayCopyObjectOfProgram(object), [&] {
-                    SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !isOfType && !type.admitsForeignObjects());
+                JSValue result = orAsItIs(value, isOfType || type.admitsForeignObjectsByNature() || mayCopyObjectOfProgram(object), [&] {
+                    SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !isOfType && !type.admitsForeignObjectsByNature());
                     return specialize(object, type);
                 });
                 RETURN_IF_EXCEPTION(scope, { });
                 if (!result || fits(result, type))
                     return result;
             }
-            if (type.admitsForeignObjects() || !mayCopyObjectOfProgram(object))
-                return type.admitsForeignObjects() ? value : failToFit(value, type);
+            if (type.admitsForeignObjectsByNature() || !mayCopyObjectOfProgram(object))
+                return type.admitsForeignObjectsByNature() ? value : failToFit(value, type);
             JSObject* ordinary = m_ordinaryCopies.get(object);
             if (!ordinary) {
                 ordinary = object->copyAsOrdinary(m_vm, JSFinalObject::defaultInlineCapacity);
@@ -8225,7 +8231,7 @@ private:
         // getPrototypeOf() hands it out without looking. What follows goes by what kind of object it is and by what it has.
         ClassPrototype::look(asObject(value));
         if (m_mode == Mode::Narrowing)
-            return m_state.fits(type, value) ? value : failToFit(value, type);
+            return (type.isOpenedForLog() ? fits(value, type) : m_state.fits(type, value)) ? value : failToFit(value, type);
         if (fits(value, type))
             return value;
         // Somebody else may hold it: nothing is made of it. It passes where the type admits it as it is. Else the attempt fails, and State::coerce() hands back the object that was
@@ -8233,14 +8239,14 @@ private:
         bool onlyTests = m_mode == Mode::Test || m_mode == Mode::Coerce || (m_mode == Mode::CoerceFreshObject && !m_copied.isEmpty());
         JSObject* object = asObject(value);
         if (Object* copy = m_copies.get(object))
-            return fits(copy, type) || type.admitsForeignObjects() ? JSValue(copy) : failToFit(copy, type);
-        if (!type.admitsForeignObjects() && onlyTests)
+            return fits(copy, type) || type.admitsForeignObjectsByNature() ? JSValue(copy) : failToFit(copy, type);
+        if (!type.admitsForeignObjectsByNature() && onlyTests)
             return failToFit(value, type);
-        if (type.admitsForeignObjects() && (onlyTests || !isPlainObject(object) || !mayConvertProperties(type)))
+        if (type.admitsForeignObjectsByNature() && (onlyTests || !isPlainObject(object) || !mayConvertProperties(type)))
             return value;
-        RELEASE_AND_RETURN(scope, orAsItIs(value, type.admitsForeignObjects(), [&] {
-            SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !type.admitsForeignObjects());
-            return type.admitsForeignObjects() ? keep(object, type) : copy(object, type);
+        RELEASE_AND_RETURN(scope, orAsItIs(value, type.admitsForeignObjectsByNature(), [&] {
+            SetForScope copiesOnlyWhatCannotStay(m_copiesObjectsOfProgram, m_copiesObjectsOfProgram && !type.admitsForeignObjectsByNature());
+            return type.admitsForeignObjectsByNature() ? keep(object, type) : copy(object, type);
         }));
     }
 
@@ -8273,7 +8279,7 @@ private:
             return true;
         if (!value.isObject())
             return false;
-        if (type.admitsForeignObjects())
+        if (type.admitsForeignObjectsByNature())
             return true;
         if (Object* object = m_state.compiledObject(value)) {
             bool hasSpecialization = false;
@@ -8367,7 +8373,7 @@ public:
                 }
             }
         }
-        if (candidates.isEmpty() && (isOfType || staysWhereNothingCanBeMade || type.admitsForeignObjects()))
+        if (candidates.isEmpty() && (isOfType || staysWhereNothingCanBeMade || type.admitsForeignObjectsByNature()))
             return 0;
         return std::nullopt;
     }
@@ -8694,7 +8700,7 @@ private:
             ClassPrototype::look(below);
             if (fits(value, ofField))
                 return false;
-            if (!ofField.admitsForeignObjects() || m_copies.contains(below))
+            if (!ofField.admitsForeignObjectsByNature() || m_copies.contains(below))
                 return isPlainObject(below);
             if (!mayConvertProperties(ofField) || !isPlainObject(below))
                 return false;
@@ -8728,7 +8734,7 @@ private:
                     continue;
                 hasFoundAll &= found.size() < State::PropertiesWithViews::maxSize * State::PropertiesWithViews::maxParts;
                 // Where no entry is made it is asked if it comes to that.
-                bool leavesForeignObjects = hasFoundAll && ofField.admitsForeignObjects() && !mayConvertProperties(ofField);
+                bool leavesForeignObjects = hasFoundAll && ofField.admitsForeignObjectsByNature() && !mayConvertProperties(ofField);
                 if (hasFoundAll)
                     found.append({ offset, field.ownType(), leavesForeignObjects });
                 result = mayChange(object->getDirect(offset), ofField, leavesForeignObjects);
@@ -9639,7 +9645,7 @@ bool State::tryBecomeByPlans(VM& vm, JSObject* top, const RuntimeType& typeOfTop
                         return false;
                 } else if (asObject(value)->classInfo() == ClassPrototype::info())
                     return false;
-                else if (!fitsAsOneOfItsOwn(ofField, asObject(value)) && (ofField.admitsForeignObjects() || asObject(value)->type() != FinalObjectType || !lay(lay, asObject(value), ofField)))
+                else if (!fitsAsOneOfItsOwn(ofField, asObject(value)) && (ofField.admitsForeignObjectsByNature() || asObject(value)->type() != FinalObjectType || !lay(lay, asObject(value), ofField)))
                     return false;
             }
             void* slot = reinterpret_cast<uint8_t*>(bodies.mutableSpan().data() + body) + field.offset - sizeof(JSCell);
@@ -10293,11 +10299,11 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         countCoercion(value, nullptr, type, reason, "no data"_s, value);
         return value;
     }
-    if (!compiled && type.admitsForeignObjects() && reason != Format::CastReason::Flow && value.isObject() && entersAsItIs(asObject(value), type)) {
+    if (!compiled && type.admitsForeignObjectsByNature() && reason != Format::CastReason::Flow && value.isObject() && entersAsItIs(asObject(value), type)) {
         countCoercion(value, nullptr, type, reason, "admitted"_s, value);
         return value;
     }
-    if (!compiled && type.admitsForeignObjects() && reason != Format::CastReason::Flow && value.isObject() && !data.isCompiledForAudit && staysAsItIsBelow(vm, asObject(value), type)) {
+    if (!compiled && type.admitsForeignObjectsByNature() && reason != Format::CastReason::Flow && value.isObject() && !data.isCompiledForAudit && staysAsItIsBelow(vm, asObject(value), type)) {
         countCoercion(value, nullptr, type, reason, "nothing below"_s, value);
         return value;
     }
@@ -10310,7 +10316,7 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         }
         way = "no-plan"_s;
     }
-    if (!compiled && !data.isCompiledForAudit && value.isCell() && value.asCell()->type() == FinalObjectType && !type.admitsForeignObjects() && (asTold == Format::CastReason::As || asTold == Format::CastReason::CoerceFreshObject || asTold == Format::CastReason::CoerceFreshGraph)) {
+    if (!compiled && !data.isCompiledForAudit && value.isCell() && value.asCell()->type() == FinalObjectType && !type.admitsForeignObjectsByNature() && (asTold == Format::CastReason::As || asTold == Format::CastReason::CoerceFreshObject || asTold == Format::CastReason::CoerceFreshGraph)) {
         bool mayBecomeIt = !isFreshObject && asTold != Format::CastReason::CoerceFreshGraph;
         if (Object* copy = copyWhatStaysAsItIsByPlan(vm, asObject(value), type, mayBecomeIt)) {
             bool hasBecomeIt = JSValue(copy) == value;
@@ -10341,6 +10347,12 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     countCoercion(value, before, type, reason, way, result);
     if (result)
         return result;
+    if (reason == Format::CastReason::Flow && !compiled && value.isObject() && !data.isCompiledForAudit) {
+        bool hasBecomeIt = becomeWhereItIs(globalObject, asObject(value), type);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (hasBecomeIt)
+            return value;
+    }
     // An object that nothing can be made of stays what it is.
     if (reason == Format::CastReason::Coerce && !data.isCompiledForAudit) [[likely]]
         return value;
@@ -10365,7 +10377,10 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
         if (!hasRoomForNilAlone)
             return goesOn;
     }
-    noteViolation(vm, { .kind = reason == Format::CastReason::Flow ? "narrowing"_s : kindOfUnnamedViolation, .what = describeAssertion(static_cast<uint32_t>(reason)), .expected = &type, .got = value, .reason = &coercion.failure() });
+    bool goesOnAsStranger = type.isOpenedForLog() && value.isObject();
+    noteViolation(vm, { .kind = reason == Format::CastReason::Flow ? "narrowing"_s : kindOfUnnamedViolation, .what = describeAssertion(static_cast<uint32_t>(reason)), .expected = &type, .got = value, .reason = &coercion.failure(), .action = goesOnAsStranger ? ActionOnViolation::Continued : ActionOnViolation::Threw });
+    if (goesOnAsStranger)
+        return value;
     throwTypeError(globalObject, scope, withAOTErrorNote(mismatchMessage(vm, value, type, coercion.failure())));
     return { };
 }
@@ -10376,7 +10391,7 @@ JSValue State::hold(JSGlobalObject* globalObject, JSValue value, const RuntimeTy
     auto scope = DECLARE_THROW_SCOPE(vm);
     Coercion attempt(globalObject, *this, Coercion::Mode::Cast, Coercion::Completeness::HasWhatIsAdded, Coercion::Explains::No);
     attempt.allowCopiesOfObjectsOfProgram();
-    if (!type.admitsForeignObjects())
+    if (!type.admitsForeignObjectsByNature())
         attempt.allowObjectsToBecomeTheirCopies();
     JSValue result = attempt.run(value, type);
     RETURN_IF_EXCEPTION(scope, { });
@@ -10392,7 +10407,10 @@ JSValue State::hold(JSGlobalObject* globalObject, JSValue value, const RuntimeTy
     RELEASE_ASSERT(!result);
     if (data.isCompiledForAudit) [[unlikely]]
         return assertionFailed(value, type, static_cast<uint32_t>(Format::CastReason::Store), { }, coercion.failure());
-    noteViolation(vm, { .kind = kindOfUnnamedViolation, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure() });
+    bool goesOnAsStranger = type.isOpenedForLog() && value.isObject();
+    noteViolation(vm, { .kind = kindOfUnnamedViolation, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = goesOnAsStranger ? ActionOnViolation::Continued : ActionOnViolation::Threw });
+    if (goesOnAsStranger)
+        return value;
     throwTypeError(globalObject, scope, withAOTErrorNote(mismatchMessage(vm, value, type, coercion.failure())));
     return { };
 }
@@ -10401,7 +10419,9 @@ bool State::becomeWhereItIs(JSGlobalObject* globalObject, JSObject* object, cons
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (!data.isCompiledForAudit && object->type() == FinalObjectType && !type.admitsForeignObjects() && tryBecomeByPlans(vm, object, type)) {
+    if (type.isOpenedForLog()) [[unlikely]]
+        return false;
+    if (!data.isCompiledForAudit && object->type() == FinalObjectType && !type.admitsForeignObjectsByNature() && tryBecomeByPlans(vm, object, type)) {
         countCoercion(object, nullptr, type, Format::CastReason::Claim, "plans of a graph"_s, object);
         return true;
     }
@@ -11270,7 +11290,7 @@ JSValue State::holdToTypeOf(JSGlobalObject* globalObject, const FieldData& field
     if (onlyTests && fitsAsOneOfItsOwn(type, asObject(value)))
         return value;
     bool mayBecomeIt = !onlyTests && storesMakeOverPlainData;
-    if (mayBecomeIt && !type.admitsForeignObjects() && !data.isCompiledForAudit && value.asCell()->type() == FinalObjectType) {
+    if (mayBecomeIt && !type.admitsForeignObjectsByNature() && !data.isCompiledForAudit && value.asCell()->type() == FinalObjectType) {
         VM& vm = globalObject->vm();
         if (Object* copy = copyWhatStaysAsItIsByPlan(vm, asObject(value), type, true)) {
             bool hasBecomeIt = JSValue(copy) == value;
@@ -11296,6 +11316,10 @@ JSValue State::holdToTypeOf(JSGlobalObject* globalObject, const FieldData& field
         coercion.allowObjectsToBecomeTheirCopies();
     JSValue result = coercion.run(value, type);
     countCoercion(value, before, type, Format::CastReason::Store, compiled ? "stored"_s : "foreign"_s, result);
+    if (!result && type.isOpenedForLog()) [[unlikely]] {
+        noteViolation(globalObject->vm(), { .kind = kindOfUnnamedViolation, .what = "Store"_s, .expected = &type, .got = value, .reason = &coercion.failure(), .action = ActionOnViolation::Continued });
+        return value;
+    }
     if (!result)
         failure = coercion.failure();
     return result;
@@ -11617,6 +11641,7 @@ static JSString* textOfFunction(JSGlobalObject* globalObject, uint32_t function)
 
 // By the function that owns it: see Closure::defineOwnProperty(). For every thread: a frame is reported without an Instance.
 static Lock namesReportedForFramesLock;
+static std::atomic<bool> hasNamesReportedForFrames;
 static UncheckedKeyHashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>& namesReportedForFrames()
 {
     static NeverDestroyed<UncheckedKeyHashMap<uint32_t, String, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> names;
@@ -11627,6 +11652,7 @@ static void setNameReportedForFrames(uint32_t function, const String& name)
 {
     Locker locker { namesReportedForFramesLock };
     namesReportedForFrames().set(ownerOfFunction(dataInImage(), function), name.isolatedCopy());
+    hasNamesReportedForFrames.store(true, std::memory_order_release);
 }
 
 DeclaredAs declaredAs(JSCell* cell)
@@ -11718,7 +11744,7 @@ String typedFunctionName(uint32_t function)
 {
     const Typed::Data& data = Typed::dataInImage();
     RELEASE_ASSERT(function < data.numberOfFunctions);
-    if (Typed::kindByteOf(function) & Typed::functionIsOfBuiltinModule) [[unlikely]] {
+    if (Typed::hasNamesReportedForFrames.load(std::memory_order_acquire)) [[unlikely]] {
         Locker locker { Typed::namesReportedForFramesLock };
         if (String reported = Typed::namesReportedForFrames().get(Typed::ownerOfFunction(data, function)); !reported.isNull())
             return reported.isolatedCopy();
@@ -11775,6 +11801,108 @@ bool typedFunctionWraps(uint32_t wrapper, uint32_t function)
 bool typedFunctionStandsForNoFunction(uint32_t function)
 {
     return (Typed::kindByteOf(function) & Typed::functionKindMask) == Typed::functionKindOfBodiesOfSeveralSites;
+}
+
+Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> bytes)
+{
+    auto sizeOfImage = aotImageSize(bytes);
+    auto codeRange = aotImageCodeRange(bytes);
+    if (!sizeOfImage || !codeRange || !codeRange->second || *sizeOfImage >= bytes.size())
+        return { };
+    auto& header = *reinterpret_cast<const ImageHeader*>(bytes.data());
+    const ProgramData* program = ProgramData::tryUse(bytes.subspan(*sizeOfImage));
+    if (!program || !header.typedDataSize)
+        return { };
+    const Typed::Data& data = *reinterpret_cast<const Typed::Data*>(bytes.data() + header.typedDataOffset);
+
+    UncheckedKeyHashMap<uint32_t, uint32_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> classOfMethod;
+    for (uint32_t shape = 1; shape < data.numberOfLayouts; ++shape) {
+        const Typed::LayoutData& layout = *data.at<Typed::LayoutData>(data.at<uint32_t>(data.layoutsOffset)[shape]);
+        if (!layout.isClass())
+            continue;
+        for (auto methods : { layout.methods(), layout.staticMethods() }) {
+            for (auto& method : methods)
+                classOfMethod.add(Typed::ownerOfFunction(data, method.function), layout.name);
+        }
+    }
+
+    struct Row {
+        uint32_t offset;
+        uint32_t size;
+        uint32_t name;
+    };
+    Vector<Row> rows;
+    Vector<uint8_t> names;
+    UncheckedKeyHashMap<String, uint32_t> placesOfNames;
+    auto placeOf = [&](const String& name) {
+        return placesOfNames.ensure(name, [&] {
+            uint32_t place = safeCast<uint32_t>(names.size());
+            names.append(byteCast<uint8_t>(name.utf8().span()));
+            names.append(0);
+            return place;
+        }).iterator->value;
+    };
+    const uint32_t* starts = reinterpret_cast<const uint32_t*>(bytes.data() + header.functionStartsOffset);
+    for (uint32_t index = 0; index < header.numberOfFunctions; ++index) {
+        uint32_t end = index + 1 < header.numberOfFunctions ? starts[index + 1] : header.functionsEnd;
+        for (unsigned i = 0; i < header.numberOfStubCopies; ++i) {
+            if (header.stubCopies[i] >= starts[index])
+                end = std::min(end, header.stubCopies[i]);
+        }
+        if (end <= starts[index])
+            continue;
+        if (!program->infos()[index].isTyped) {
+            rows.append({ starts[index], end - starts[index], placeOf("(compiled code)"_s) });
+            continue;
+        }
+        uint32_t function = program->indexAndFlagsOfFunctions()[index] >> 3;
+        auto kind = static_cast<Typed::Format::FunctionKind>(data.at<uint8_t>(data.functionKindsOffset)[function] & Typed::functionKindMask);
+        String name = kind == Typed::Format::FunctionKind::Module ? String("(module)"_s) : Typed::textOfConstant(data, data.at<uint32_t>(data.functionsOffset)[function]);
+        if (name.isEmpty())
+            name = "(anonymous)"_s;
+        if (auto found = classOfMethod.find(Typed::ownerOfFunction(data, function)); found != classOfMethod.end() && data.sizeOfString(found->value))
+            name = makeString(Typed::textOfConstant(data, found->value), '.', name);
+        if (const uint8_t* at = kind == Typed::Format::FunctionKind::Module ? program->positionsOfTypedFunction(index) : nullptr) {
+            auto readVarint = [&] {
+                uint64_t value = 0;
+                for (unsigned shift = 0;; shift += 7) {
+                    uint8_t byte = *at++;
+                    value |= static_cast<uint64_t>(byte & 0x7f) << shift;
+                    if (!(byte & 0x80))
+                        return value;
+                }
+            };
+            for (unsigned i = 0; i < 3; ++i)
+                readVarint();
+            if (uint64_t source = readVarint(); source && source <= program->numberOfSources)
+                name = makeString(name, ' ', program->sourceName(static_cast<uint32_t>(source)));
+        } else if (data.at<uint8_t>(data.functionKindsOffset)[function] & Typed::functionIsHiddenInStackTraces)
+            name = makeString(name, " (entry)"_s);
+        rows.append({ starts[index], end - starts[index], placeOf(name) });
+    }
+    for (unsigned i = 0; i < header.numberOfStubCopies; ++i)
+        rows.append({ header.stubCopies[i], header.stubsSize, placeOf("(stubs of compiled code)"_s) });
+    std::ranges::sort(rows, { }, &Row::offset);
+    for (size_t i = 0; i < rows.size(); ++i)
+        rows[i].size = (i + 1 < rows.size() ? rows[i + 1].offset : header.functionsEnd) - rows[i].offset;
+
+    Vector<uint8_t> result;
+    auto appendWord = [&](uint32_t word) {
+        for (unsigned shift = 0; shift < 32; shift += 8)
+            result.append(static_cast<uint8_t>(word >> shift));
+    };
+    result.reserveInitialCapacity(16 + rows.size() * sizeof(Row) + names.size());
+    appendWord(safeCast<uint32_t>(rows.size()));
+    appendWord(safeCast<uint32_t>(names.size()));
+    appendWord(safeCast<uint32_t>(codeRange->first));
+    appendWord(safeCast<uint32_t>(codeRange->second));
+    for (auto& row : rows) {
+        appendWord(row.offset);
+        appendWord(row.size);
+        appendWord(row.name);
+    }
+    result.appendVector(names);
+    return result;
 }
 
 std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t function)
@@ -11910,6 +12038,8 @@ bool JSObject::isRefusedByLockAlone(VM& vm, UniquedStringImpl* name, JSValue& he
     if (!name)
         return true;
     if (name == vm.propertyNames->prototype.impl() || (name->isSymbol() && name != vm.propertyNames->iteratorSymbol.impl()))
+        return false;
+    if (structure()->inheritorsMayOverrideReadOnlyProperties() && !structure()->inheritorsMayOverride(vm, name))
         return false;
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     PropertySlot slot(this, PropertySlot::InternalMethodType::VMInquiry, &vm);

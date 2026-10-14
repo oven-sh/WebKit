@@ -53,25 +53,6 @@ JS_EXPORT_PRIVATE void setCodec(Compress, Decompress);
 using TextOfFunctionInFile = String (*)(JSGlobalObject*, const String& path, uint32_t place);
 JS_EXPORT_PRIVATE void setTextOfFunctionInFile(TextOfFunctionInFile);
 
-struct AllocationPlan {
-    static uint32_t encode(unsigned inlineCapacity, unsigned count)
-    {
-        RELEASE_ASSERT(inlineCapacity <= 0xffff && count <= 0xffff);
-        return inlineCapacity << 16 | count;
-    }
-    static uint32_t encode(unsigned identifier, bool isDefined, bool isStrict, bool isAssigned) { return identifier << 3 | isAssigned << 2 | isDefined << 1 | isStrict; }
-
-    explicit operator bool() const { return !!words; }
-    unsigned inlineCapacity() const { return words[0] >> 16; }
-    unsigned count() const { return words[0] & 0xffff; }
-    unsigned identifier(unsigned i) const { return words[i + 1] >> 3; }
-    bool isAssigned(unsigned i) const { return words[i + 1] & 4; }
-    bool isDefined(unsigned i) const { return words[i + 1] & 2; }
-    bool isStrict(unsigned i) const { return words[i + 1] & 1; }
-
-    const uint32_t* words { nullptr };
-};
-
 struct FunctionRef {
     JS_EXPORT_PRIVATE static FunctionRef at(Instance*, const void* address);
     struct Location;
@@ -79,7 +60,7 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE BytecodeIndex bytecodeIndexAt(const void* returnAddress, const void* frame) const;
     JS_EXPORT_PRIVATE Location inlineCallSiteLocation(unsigned inlineFrame, InlineFramesRead&) const;
     JS_EXPORT_PRIVATE static FunctionRef of(CodeBlock*);
-    JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, CodeSpecializationKind, JSCell* instanceToken);
+    JS_EXPORT_PRIVATE static FunctionRef of(VM&, ScriptExecutable*, JSCell* instanceToken);
     explicit operator bool() const { return index != none; }
 
     JS_EXPORT_PRIVATE ScriptExecutable* executable() const;
@@ -97,7 +78,6 @@ struct FunctionRef {
     JS_EXPORT_PRIVATE unsigned instructionsSize() const;
     JS_EXPORT_PRIVATE const UnlinkedHandlerInfo* handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& madeHere) const;
     JS_EXPORT_PRIVATE void* catchEntrypointAddress(unsigned bytecodeOffset) const;
-    JS_EXPORT_PRIVATE JSCell* calleeInFrame(const void* frame) const;
     const UnlinkedStringJumpTable& stringSwitchJumpTable(unsigned) const;
     JS_EXPORT_PRIVATE const IdentifierSet& constantIdentifierSet(unsigned) const;
 
@@ -106,8 +86,6 @@ struct FunctionRef {
     UnlinkedCodeBlock* createUnlinkedCodeBlockFromMetadata() const;
     JS_EXPORT_PRIVATE CodeBlock* ensureCodeBlock() const;
     JS_EXPORT_PRIVATE Data* ensureData() const;
-    FunctionExecutable* functionDecl(unsigned) const;
-    FunctionExecutable* functionExpr(unsigned) const;
     uint32_t siteConstantOf(const Slot*) const;
     JS_EXPORT_PRIVATE std::optional<std::pair<String, bool>> quoteAt(BytecodeIndex) const;
     struct ReportedPosition {
@@ -178,7 +156,6 @@ namespace Typed {
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
 Identifier tryMakeIdentifier(VM&, uint32_t identifier);
-String tryGetTextOfIdentifier(uint32_t identifier);
 // For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
 // Runs the module, which the image has, and yields what it exports. Empty: it has thrown. Its top level is code that runs once: asked again,
@@ -228,7 +205,9 @@ struct FrameInTrace {
     }
 };
 JS_EXPORT_PRIVATE void appendFramesInProfile(uint32_t function, uint32_t site, bool& nothingIsShownYet, Vector<FrameInTrace, 4>&);
+JS_EXPORT_PRIVATE String describeCodeAddresses(std::span<const void* const>);
 JS_EXPORT_PRIVATE std::optional<FunctionRef::ReportedPosition> definitionOfTypedFunction(uint32_t typedFunction);
+JS_EXPORT_PRIVATE Vector<uint8_t> symbolsOfImage(std::span<const uint8_t> imageAndProgramData);
 JS_EXPORT_PRIVATE uint32_t typedFunctionEnteredInsideFunctionAt(const void* pc);
 
 struct ReturnAddressTrace {
@@ -249,6 +228,7 @@ struct ReturnAddressTrace {
     static const void* addressOf(uint32_t kept, uintptr_t startOfImageCode) { return std::bit_cast<const void*>(startOfImageCode + (kept & ~isOfConstructed)); }
 };
 JS_EXPORT_PRIVATE uintptr_t startOfImageCode();
+void writePerfMap();
 
 struct ImageAddressInfo {
     enum Kind : uint8_t {
@@ -344,7 +324,6 @@ JS_EXPORT_PRIVATE Instance* tryInstanceForFrame(const void* frame);
 JS_EXPORT_PRIVATE bool topCallFrameIsAOTFrame(const void* frame);
 JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
-JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
 void countJobCall(VM&);
 void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);

@@ -1030,6 +1030,8 @@ private:
     Vector<LayoutID, 2> layoutsClonedInPlace(const Type&) const;
     bool makesItsFirstArgument(const Value&) const;
     std::optional<size_t> indexOfUseThatMakes(ValueID) const;
+    mutable const Block* m_blockOfPlacesOfNewObjects { nullptr };
+    mutable UncheckedKeyHashMap<uint32_t, size_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_placesOfNewObjects;
     bool isLeftToItsFirstUse(ValueID id) const { return !!indexOfUseThatMakes(id); }
     // For that use to ask: a later use of the same kind finds the object made.
     bool isMadeHere(ValueID id) const { return indexOfUseThatMakes(id) == m_currentIndexInBlock; }
@@ -1119,6 +1121,8 @@ private:
                     where.inlineFrame = static_cast<uint32_t>(m_context.inlineCallSites.size() - m_context.framesLeftByTailCalls.size() + index);
             }
         }
+        if (m_placeOfThrow)
+            where = *m_placeOfThrow;
         m_context.sitePositions.append(where);
         uint32_t bits = CallSiteIndex(BytecodeIndex(m_nextSite++)).bits();
         return m_context.inlineCallSites.isEmpty() ? bits : PackedSite::pack(where.inlineFrame, bits);
@@ -1146,7 +1150,7 @@ private:
     bool mayJumpTo(FunctionID, const Vector<LValue, 8>& arguments) const;
     void jumpToFunction(uint32_t indexOfCallee, const Vector<LValue, 8>& arguments);
     Operand jumpToContinuation(const Value&);
-    Boxed callValue(Stub, const Vector<LValue, 8>& operands, OperationEffects = { }, LValue word = nullptr, MethodAskedByStub = MethodAskedByStub::None);
+    Boxed callValue(Stub, const Vector<LValue, 8>& operands, OperationEffects = { }, LValue word = nullptr, MethodAskedByStub = MethodAskedByStub::None, StringID nameOfMethod = { });
     Boxed callValueWithArray(Stub, Boxed callee, Boxed thisValue, Boxed list);
     Boxed lowerGetNewTarget();
     Boxed callValueWithList(Boxed callee, Boxed thisValue, Word32 count, Pointer list, LValue wordOfConstructor = nullptr);
@@ -1633,6 +1637,8 @@ private:
     // While a value is fitted that something is made of where it does not fit (`as`, `!`): an object fits a view only if it is of a member,
     // also where the view admits foreign objects.
     bool m_foreignObjectsDoNotFit { false };
+    bool m_isHoldingToTypeOpenedForLog { false };
+    std::optional<LoweringContext::SitePosition> m_placeOfThrow;
     bool m_isElementOfEntries { false };
     // While the inline test of an As or Flow cast is emitted: Layout::castTest instead of Layout::test, so that a member the cast
     // transitions goes to the slow path.
@@ -1653,6 +1659,8 @@ private:
     // See objectLiteralAt().
     const Block* m_blockOfObjectLiterals { nullptr };
     Vector<ObjectLiteral, 1> m_objectLiterals;
+    UncheckedKeyHashMap<size_t, unsigned, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_objectLiteralAtIndex;
+    bool m_objectLiteralAtIndexIsWhole { false };
     // See namedStoresAt().
     const Block* m_blockOfNamedStores { nullptr };
     Vector<NamedStores, 1> m_namedStores;

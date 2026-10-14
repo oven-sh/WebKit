@@ -211,6 +211,7 @@ end
 
 const CalleeSaveSpaceStackAligned = (CalleeSaveSpaceAsVirtualRegisters * SlotSize + StackAlignment - 1) & ~StackAlignmentMask
 
+
 # Watchpoint states
 const ClearWatchpoint = constexpr ClearWatchpoint
 const IsWatched = constexpr IsWatched
@@ -384,6 +385,7 @@ const GigacageConfig = _g_config + constexpr Gigacage::startOffsetOfGigacageConf
 const ExecutableAllocatorConfigOffset = constexpr WebConfig::startOffsetOfExecutableAllocatorConfig
 const JSCConfigOffset = constexpr WTF::offsetOfWTFConfigExtension
 const JSCConfigGateMapOffset = JSCConfigOffset + constexpr JSC::offsetOfJSCConfigGateMap
+
 
 macro loadBoolJSCOption(name, reg)
     leap _g_config, reg
@@ -633,7 +635,6 @@ const DerivedArrayType = constexpr DerivedArrayType
 const ProxyObjectType = constexpr ProxyObjectType
 const HeapBigIntType = constexpr HeapBigIntType
 const FunctionExecutableType = constexpr FunctionExecutableType
-const ShortFunctionExecutableType = constexpr ShortFunctionExecutableType
 
 # The typed array types need to be numbered in a particular order because of the manually written
 # switch statement in get_by_val and put_by_val.
@@ -2144,6 +2145,8 @@ else
         end
     end
 
+
+
     macro includeEntriesAtOffset(kind, fn)
         macro setEntryAddress(index, label)
             setEntryAddressCommon(kind, index, label, a0)
@@ -2159,6 +2162,7 @@ else
 
         fn()
     end
+
 
 macro entry(kind, initialize)
     global _%kind%_entry
@@ -2209,15 +2213,18 @@ op(llint_program_prologue, macro ()
     dispatch(0)
 end)
 
+
 op(llint_module_program_prologue, macro ()
     prologue(_llint_entry_osr, _llint_trace_prologue)
     dispatch(0)
 end)
 
+
 op(llint_eval_prologue, macro ()
     prologue(_llint_entry_osr, _llint_trace_prologue)
     dispatch(0)
 end)
+
 
 op(llint_function_for_call_prologue, macro ()
     prologue(_llint_entry_osr_function_for_call, _llint_trace_prologue_function_for_call)
@@ -2225,12 +2232,14 @@ op(llint_function_for_call_prologue, macro ()
     dispatch(0)
 end)
     
+
 op(llint_function_for_construct_prologue, macro ()
     prologue(_llint_entry_osr_function_for_construct, _llint_trace_prologue_function_for_construct)
     functionInitialization(1)
     dispatch(0)
 end)
     
+
 op(llint_function_for_call_arity_check, macro ()
     prologue(_llint_entry_osr_function_for_call_arityCheck, _llint_trace_arityCheck_for_call)
     functionArityCheck(llint_function_for_call_arity_check, .functionForCallBegin)
@@ -2268,6 +2277,8 @@ macro getArgumentIncludingThisCountForAsyncIteratorNext(size, dst)
 end
 
 include LowLevelInterpreter64
+
+
 
 # Value-representation-agnostic code.
 macro slowPathOp(opcodeName)
@@ -2345,27 +2356,34 @@ llintOp(op_switch_string, unused, macro (unused, unused, unused)
     nextInstruction()
 end)
 
+
 equalityComparisonOp(eq, OpEq,
     macro (left, right, result) cieq left, right, result end)
+
 
 equalityComparisonOp(neq, OpNeq,
     macro (left, right, result) cineq left, right, result end)
 
+
 compareUnsignedOp(below, OpBelow,
     macro (left, right, result) cib left, right, result end)
+
 
 compareUnsignedOp(beloweq, OpBeloweq,
     macro (left, right, result) cibeq left, right, result end)
 
+
 llintOpWithJump(op_jmp, OpJmp, macro (size, get, jump, dispatch)
     jump(m_targetLabel)
 end)
+
 
 llintJumpTrueOrFalseOp(jtrue, OpJtrue, 
     # Misc primitive
     macro (value, target) btinz value, 1, target end,
     # Truthy Cell
     macro (dispatch) end)
+
 
 llintJumpTrueOrFalseOp(jfalse, OpJfalse,
     # Misc primitive
@@ -2394,56 +2412,68 @@ compareJumpOp(
     macro (left, right, target) bilt left, right, target end,
     macro (left, right, target) bdlt left, right, target end)
 
+
 compareJumpOp(
     jnless, OpJnless,
     macro (left, right, target) bigteq left, right, target end,
     macro (left, right, target) bdgtequn left, right, target end)
+
 
 compareJumpOp(
     jgreater, OpJgreater,
     macro (left, right, target) bigt left, right, target end,
     macro (left, right, target) bdgt left, right, target end)
 
+
 compareJumpOp(
     jngreater, OpJngreater,
     macro (left, right, target) bilteq left, right, target end,
     macro (left, right, target) bdltequn left, right, target end)
+
 
 compareJumpOp(
     jlesseq, OpJlesseq,
     macro (left, right, target) bilteq left, right, target end,
     macro (left, right, target) bdlteq left, right, target end)
 
+
 compareJumpOp(
     jnlesseq, OpJnlesseq,
     macro (left, right, target) bigt left, right, target end,
     macro (left, right, target) bdgtun left, right, target end)
+
 
 compareJumpOp(
     jgreatereq, OpJgreatereq,
     macro (left, right, target) bigteq left, right, target end,
     macro (left, right, target) bdgteq left, right, target end)
 
+
 compareJumpOp(
     jngreatereq, OpJngreatereq,
     macro (left, right, target) bilt left, right, target end,
     macro (left, right, target) bdltun left, right, target end)
 
+
 equalityJumpOp(
     jeq, OpJeq,
     macro (left, right, target) bieq left, right, target end)
+
 
 equalityJumpOp(
     jneq, OpJneq,
     macro (left, right, target) bineq left, right, target end)
 
+
 compareUnsignedJumpOp(
     jbelow, OpJbelow,
     macro (left, right, target) bib left, right, target end)
 
+
 compareUnsignedJumpOp(
     jbeloweq, OpJbeloweq,
     macro (left, right, target) bibeq left, right, target end)
+
 
 preOp(inc, OpInc,
     macro (value, slow) baddio 1, value, slow end)
@@ -2451,10 +2481,12 @@ preOp(inc, OpInc,
 preOp(dec, OpDec,
     macro (value, slow) bsubio 1, value, slow end)
 
+
 llintOp(op_loop_hint, OpLoopHint, macro (unused, unused, dispatch)
     checkSwitchToJITForLoop()
     dispatch()
 end)
+
 
 macro checkTraps(dispatch)
     loadp CodeBlock[cfr], t1
@@ -2475,6 +2507,7 @@ llintOp(op_check_traps, OpCheckTraps, macro (unused, unused, dispatch)
     checkTraps(dispatch)
 end)
 
+
 # Returns the packet pointer in t0.
 macro acquireShadowChickenPacket(slow)
     loadp CodeBlock[cfr], t1
@@ -2485,6 +2518,7 @@ macro acquireShadowChickenPacket(slow)
     addp sizeof ShadowChicken::Packet, t0, t1
     storep t1, ShadowChicken::m_logCursor[t2]
 end
+
 
 llintOp(op_nop, OpNop, macro (unused, unused, dispatch)
     dispatch()
@@ -2531,6 +2565,7 @@ macro branchIfException(exceptionTarget)
 .noException:    
 end
 
+
 llintOpWithMetadata(op_call_varargs, OpCallVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_call_varargs, size, get, OpCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_call_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
 end)
@@ -2541,6 +2576,7 @@ llintOpWithMetadata(op_tail_call_varargs, OpTailCallVarargs, macro (size, get, d
     # prepare the frame for a call opcode
     doCallVarargs(op_tail_call_varargs, size, get, OpTailCallVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_tail_call_varargs, prepareForTailCall, invokeForTailCall, prepareForSlowTailCall, dispatchAfterTailCall)
 end)
+
 
 llintOpWithMetadata(op_construct_varargs, OpConstructVarargs, macro (size, get, dispatch, metadata, return)
     doCallVarargs(op_construct_varargs, size, get, OpConstructVarargs, m_valueProfile, m_dst, dispatch, metadata, _llint_slow_path_size_frame_for_varargs, _llint_slow_path_construct_varargs, prepareForRegularCall, invokeForRegularCall, prepareForSlowRegularCall, dispatchAfterRegularCall)
@@ -2606,23 +2642,28 @@ _llint_op_call_direct_eval_wide32:
         _llint_slow_path_call_direct_eval_wide32,
         prepareForRegularCall)
 
+
 commonOp(llint_generic_return_point, macro () end, macro (size)
     dispatchAfterRegularCall(size, OpCallDirectEval, m_valueProfile, m_dst, macro ()
         dispatchOp(size, op_call_direct_eval)
     end)
 end)
 
+
 llintOp(op_identity_with_profile, OpIdentityWithProfile, macro (unused, unused, dispatch)
     dispatch()
 end)
+
 
 llintOp(op_yield, OpYield, macro (unused, unused, unused)
     notSupported()
 end)
 
+
 llintOp(op_create_generator_frame_environment, OpYield, macro (unused, unused, unused)
     notSupported()
 end)
+
 
 llintOp(op_debug, OpDebug, macro (unused, unused, dispatch)
     loadp CodeBlock[cfr], t0
@@ -2632,6 +2673,7 @@ llintOp(op_debug, OpDebug, macro (unused, unused, dispatch)
 .opDebugDone:                    
     dispatch()
 end)
+
 
 llintOp(op_super_sampler_begin, OpSuperSamplerBegin, macro (unused, unused, dispatch)
     superSamplerBegin(t1)
@@ -2647,13 +2689,16 @@ op(llint_native_call_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_function)
 end)
 
+
 op(llint_native_construct_trampoline, macro ()
     nativeCallTrampoline(NativeExecutable::m_constructor)
 end)
 
+
 op(llint_internal_function_call_trampoline, macro ()
     internalFunctionCallTrampoline(InternalFunction::m_functionForCall)
 end)
+
 
 op(llint_internal_function_construct_trampoline, macro ()
     internalFunctionCallTrampoline(InternalFunction::m_functionForConstruct)
@@ -2706,17 +2751,15 @@ end
 
 # t0 is callee
 # t2 is CallLinkInfo*
-macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, notFunctionCase, slowCase)
+macro virtualThunkFor(offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, internalFunctionTrampoline, notFunctionCase, slowCase)
     btqnz t0, NotCellMask, slowCase
     bbneq JSCell::m_type[t0], JSFunctionType, .notJSFunction
     loadp JSFunction::m_executableOrRareData[t0], t5
     btpz t5, (constexpr JSFunction::rareDataTag), .isExecutable
     loadp (FunctionRareData::m_executable - (constexpr JSFunction::rareDataTag))[t5], t5
 .isExecutable:
-    btpnz t5, 2, slowCase
-    bbeq JSCell::m_type[t5], ShortFunctionExecutableType, .lacksEntrypoint
     loadp offsetOfJITCodeWithArityCheck[t5], t4
-    btpz t4, .lacksEntrypoint
+    btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
     move t4, t1
     move 0, t0
     bbneq JSCell::m_type[t5], FunctionExecutableType, .callCode
@@ -2724,18 +2767,6 @@ macro virtualThunkFor(which, offsetOfJITCodeWithArityCheck, offsetOfCodeBlock, i
 .callCode:
     storep t0, CodeBlock - PrologueStackPointerDelta[sp]
     jmp t1, JSEntryPtrTag
-.lacksEntrypoint:
-    loadp (ExecutableBase::m_aotEntry + which * 8)[t5], t4
-    btpz t4, slowCase # When jumping to slowCase, t0, t1, t2, needs to be unmodified.
-    move 0, t0
-    leap _g_aotStaticFunctionEntrypoints, t1
-    loadi (ExecutableBase::m_aotIndex + which * 4)[t5], t5
-    bieq t5, -1, .constructsViaCall
-    loadp (which * 8)[t1], t1
-    jmp .callCode
-.constructsViaCall:
-    loadp 16[t1], t1
-    jmp .callCode
 .notJSFunction:
     bbneq JSCell::m_type[t0], InternalFunctionType, notFunctionCase
     jmp internalFunctionTrampoline
@@ -2767,7 +2798,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_call_trampoline, macro ()
-    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
 .notFunction:
     callSlimClosure(.slowCase)
 .slowCase:
@@ -2777,7 +2808,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_construct_trampoline, macro ()
-    virtualThunkFor(1, ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase, .slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForConstructWithArityCheck, FunctionExecutable::m_codeBlockForConstruct, _llint_internal_function_construct_trampoline, .slowCase, .slowCase)
 .slowCase:
     linkFor(_llint_virtual_call)
 end)
@@ -2785,7 +2816,7 @@ end)
 # t0 is callee
 # t2 is CallLinkInfo*
 op(llint_virtual_tail_call_trampoline, macro ()
-    virtualThunkFor(0, ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
+    virtualThunkFor(ExecutableBase::m_jitCodeForCallWithArityCheck, FunctionExecutable::m_codeBlockForCall, _llint_internal_function_call_trampoline, .notFunction, .slowCase)
 .notFunction:
     callSlimClosure(.slowCase)
 .slowCase:
@@ -2977,6 +3008,7 @@ macro notSupported()
         break
     end
 end
+
 
 macro updateUnaryArithProfile(size, opcodeStruct, type, scratch1, scratch2)
     getu(size, opcodeStruct, m_profileIndex, scratch1)

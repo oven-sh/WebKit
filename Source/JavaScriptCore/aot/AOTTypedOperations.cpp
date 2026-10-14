@@ -2460,6 +2460,11 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedEnsureStorage, void, (Instanc
     object->ensureStorageFor(*instance->vm, state, *field);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedEnsureStorageOfSize, void, (Instance* instance, JSCell* cell, uint32_t size))
+{
+    uncheckedDowncast<Typed::Object>(cell)->ensureStorageOfSize(*instance->vm, *instance->typed, size);
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedPutNumberElsewhere, void, (Instance* instance, JSCell* cell, uint32_t name, double value))
 {
     operationAOTTypedPutElsewhere(instance, cell, name, JSValue::encode(jsNumber(purifyNaN(value))));
@@ -2796,6 +2801,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNoteMisfit, void, (Instance* instance,
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue given = JSValue::decode(value);
+    if (given && given.isObject() && state.type(type).admitsForeignObjects())
+        OPERATION_RETURN(scope);
     state.noteViolation(vm, { .kind = isAtCaller ? "enter-argument"_s : "enter-function"_s, .what = isAtCaller ? "As"_s : "Claim"_s, .expected = &state.type(type), .got = given ? given : jsUndefined(), .parameter = parameter == UINT32_MAX ? std::nullopt : std::optional<unsigned>(parameter), .isAtCaller = !!isAtCaller, .action = State::ActionOnViolation::Continued });
     OPERATION_RETURN(scope);
 }

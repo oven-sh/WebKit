@@ -10,7 +10,6 @@
 #include "AOTProgram.h"
 #include "AOTRuntime.h"
 #include "AOTStubs.h"
-#include "AOTType.h"
 #include "BytecodeIndex.h"
 #include "BytecodeStructs.h"
 #include "CallFrame.h"
@@ -340,7 +339,6 @@ protected:
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
     LValue m_cellCageBase { nullptr };
-    LValue m_statics { nullptr };
     bool m_leavesNextIntervalToSlowPath { false };
 };
 

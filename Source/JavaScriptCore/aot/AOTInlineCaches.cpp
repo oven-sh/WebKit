@@ -553,95 +553,12 @@ static void cacheCodeOfGetter(GetterSetter* getterSetter, Instance* instance, ui
         getterSetter->setCodeOfGetter(instance->code + (closureWord & ClosureWord::offsetMask) * ClosureWord::offsetUnit);
 }
 
-static void cacheGetterShortcut(VM& vm, GetterSetter* getterSetter, JSFunction* getter)
+static void cacheGetterShortcut(GetterSetter* getterSetter, JSFunction* getter)
 {
     if (getterSetter->getterShortcut())
         return;
-    if (auto* closure = dynamicDowncast<Typed::Closure>(getter)) {
+    if (auto* closure = dynamicDowncast<Typed::Closure>(getter))
         cacheCodeOfGetter(getterSetter, Instance::of(closure), closure->entry());
-        return;
-    }
-    if (getter->isHostFunction())
-        return;
-    constexpr auto kind = CodeSpecializationKind::CodeForCall;
-    Instance* instance = Instance::of(getter);
-    FunctionExecutable* executable = getter->jsExecutable();
-    FunctionRef function = FunctionRef::of(vm, executable, kind, tokenOf(instance));
-    if (!function || function.instance != instance)
-        return;
-    const ImageFunction* record = function.info().function();
-    if (record->usesStaticImports && !moduleIsLinkedAsCompiled(getter->scope()))
-        return;
-    if (record->returnsScopeVariable) {
-        JSScope* scope = getter->scope();
-        for (unsigned hops = record->returnedVariable()[0]; hops && scope; --hops)
-            scope = scope->next();
-        ScopeOffset offset(record->returnedVariable()[1]);
-        if (auto* environment = dynamicDowncast<JSLexicalEnvironment>(scope); environment && environment->isValidScopeOffset(offset))
-            getterSetter->setVariableReturnedByGetter(&environment->variableAt(offset));
-        return;
-    }
-    if (record->takesList || record->numberOfParameters || !executable->aotEntryFor(kind))
-        return;
-    if (!instance->isLinked(function.index)) {
-        DeferGCForAWhile deferGC(vm);
-        if (!linkStaticFunction(instance, executable, kind, getter->scopeUnchecked()))
-            return;
-    }
-    getterSetter->setCodeOfGetter(instance->code + (executable->aotEntryFor(kind) & EntryWord::addressMask));
-}
-
-static void cachePropertyOfBoundThis(JSGlobalObject* globalObject, Instance& instance, JSFunction* getter)
-{
-    VM& vm = globalObject->vm();
-    auto* bound = dynamicDowncast<JSBoundFunction>(getter);
-    if (!bound || bound->boundArgsLength() != 1 || bound->structureID().bits() != instance.boundFunctionStructureID)
-        return;
-    bound->clearCachedPropertyOfBoundThis();
-    auto* target = dynamicDowncast<JSFunction>(bound->targetFunction());
-    if (!target || target->isHostFunction())
-        return;
-    FunctionRef function = FunctionRef::of(vm, target->jsExecutable(), CodeSpecializationKind::CodeForCall, tokenOf(Instance::of(target)));
-    if (!function || !function.info().function()->isGetByValOnThis)
-        return;
-    JSValue key;
-    bound->forEachBoundArg([&](JSValue argument) {
-        key = argument;
-        return IterationStatus::Done;
-    });
-    JSObject* object = bound->boundThis().getObject();
-    if (!object || !key.isString())
-        return;
-    String name = asString(key)->tryGetValue();
-    RefPtr uid = name.isNull() ? nullptr : AtomStringImpl::lookUp(name.impl());
-    if (!uid || parseIndex(*uid))
-        return;
-    if (Structure* structure = object->structure(); structure->isDictionary() && !structure->hasBeenFlattenedBefore())
-        structure->flattenDictionaryStructure(vm, object);
-    PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (!object->methodTable()->getOwnPropertySlot(object, globalObject, uid.get(), slot))
-        return;
-    if (slot.slotBase() != object || slot.isTaintedByOpaqueObject())
-        return;
-    bool isAccessor = slot.isCacheableGetter();
-    if (isAccessor) {
-        auto* inner = dynamicDowncast<JSFunction>(slot.getterSetter()->getter());
-        if (!inner)
-            return;
-        cacheGetterShortcut(vm, slot.getterSetter(), inner);
-        if (!slot.getterSetter()->getterReturnsVariable())
-            return;
-    } else if (!slot.isCacheableValue())
-        return;
-    Structure* structure = object->structure();
-    if (!structure->propertyAccessesAreCacheable() || structure->isDictionary() || structure->needImpurePropertyWatchpoint())
-        return;
-    unsigned attributes;
-    if (structure->get(vm, uid.get(), attributes) != slot.cachedOffset())
-        return;
-    PropertyOffset offset = slot.cachedOffset();
-    int32_t location = isInlineOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : offsetInButterfly(offset);
-    bound->cachePropertyOfBoundThis(vm, structure, location * 2 + isAccessor);
 }
 
 static void noteLengthOfTypedArray(JSGlobalObject* globalObject, Instance& instance, JSCell* cell, const PropertySlot& slot)
@@ -789,8 +706,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
         if (auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter())) {
             if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
                 executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
-            cachePropertyOfBoundThis(globalObject, *data->instance, function);
-            cacheGetterShortcut(vm, slot.getterSetter(), function);
+            cacheGetterShortcut(slot.getterSetter(), function);
         } else if (auto* closure = dynamicDowncast<Typed::SlimClosure>(slot.getterSetter()->getter()); closure && !slot.getterSetter()->getterShortcut()) {
             Instance* instance = closure->structure()->aotInstance();
             cacheCodeOfGetter(slot.getterSetter(), instance, instance->typedFunctions[closure->functionIndex()]);

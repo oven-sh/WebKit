@@ -41,7 +41,6 @@ static constexpr uint16_t All = (1 << 9) - 1;
 static constexpr int64_t maxExactInteger = 1ll << 53;
 static constexpr int64_t maxKeptInteger = 1ll << 62;
 // Added to any kept integer, an integer this small leaves the sum within maxKeptInteger once it is rounded to a double.
-static constexpr int64_t maxSmallStep = 256;
 
 struct Range {
     int64_t least { 1 };

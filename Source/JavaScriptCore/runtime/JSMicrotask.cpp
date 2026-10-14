@@ -187,8 +187,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             // Compile the callee:
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(functionObject.asCell()), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
-            if (newCodeBlock)
-                newCodeBlock->m_shouldAlwaysBeInlined = false;
+            ASSERT(newCodeBlock);
+            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         if (microtaskCallCache) {
@@ -207,8 +207,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         }
 
 #if (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-        if ((sizeof...(args) + 1) >= (newCodeBlock ? newCodeBlock->numParameters() : functionExecutable->parameterCount() + 1)) [[likely]] {
-            auto* entry = newCodeBlock ? functionExecutable->generatedJITCodeAddressForCall() : functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr();
+        if ((sizeof...(args) + 1) >= newCodeBlock->numParameters()) [[likely]] {
+            auto* entry = functionExecutable->generatedJITCodeAddressForCall();
             auto* callee = asObject(functionObject.asCell());
             if constexpr (!sizeof...(args))
                 return JSValue::decode(vmEntryToJavaScriptWith0Arguments(entry, &vm, newCodeBlock, callee, thisValue, context));
@@ -232,7 +232,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
         calleeGlobalObject = functionScope->realm();
         {
             AssertNoGC assertNoGC; // Ensure no GC happens. GC can replace CodeBlock in Executable.
-            jitCode = functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall);
+            jitCode = functionExecutable->generatedJITCodeForCall();
         }
     } else {
         ASSERT(callData.type == CallData::Type::Native);
@@ -249,8 +249,8 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     protoCallFrame.init(newCodeBlock, calleeGlobalObject, asObject(functionObject), thisValue, context, sizeof...(args) + 1, argArray.data());
 
     if (isJSCall) {
-        ASSERT(jitCode == functionExecutable->jitCodeIfExistsFor(CodeSpecializationKind::CodeForCall));
-        return JSValue::decode(vmEntryToJavaScript(functionExecutable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity).taggedPtr(), &vm, &protoCallFrame));
+        ASSERT(jitCode == functionExecutable->generatedJITCodeForCall().ptr());
+        return JSValue::decode(vmEntryToJavaScript(jitCode->addressForCall(), &vm, &protoCallFrame));
     }
 
 #if ENABLE(WEBASSEMBLY)
