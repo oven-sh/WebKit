@@ -1020,7 +1020,6 @@ runtime/NativeCalleeRegistry.cpp
 runtime/NativeErrorConstructor.cpp
 runtime/NativeErrorPrototype.cpp
 runtime/NativeExecutable.cpp
-runtime/NonEmbeddedCode.cpp
 runtime/NullGetterFunction.cpp
 runtime/NullSetterFunction.cpp
 runtime/NumberConstructor.cpp

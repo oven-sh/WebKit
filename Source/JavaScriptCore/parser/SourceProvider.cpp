@@ -88,6 +88,12 @@ bool SourceProvider::isBuiltinOrEmbedded()
     }
     return result == TriState::True;
 }
+
+bool SourceProvider::isEmbeddedBytecode(const CachedBytecode& bytecode) const
+{
+    auto isEmbeddedCode = g_jscConfig.isEmbeddedCode;
+    return isEmbeddedCode && isEmbeddedCode(sourceBytes(), bytecode.span(), bytecode.entryOffset());
+}
 #endif
 
 void SourceProvider::lockUnderlyingBufferImpl() { }

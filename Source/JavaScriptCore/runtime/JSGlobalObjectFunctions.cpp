@@ -37,7 +37,6 @@
 #include "JSPromise.h"
 #include "JSSet.h"
 #include "LiteralParser.h"
-#include "NonEmbeddedCode.h"
 #include "ObjectConstructorInlines.h"
 #include "ParseInt.h"
 #include "SourceCharacters.h"
@@ -506,12 +505,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncEval, (JSGlobalObject* globalObject, CallFram
         auto source = makeSource(programSource, sourceOrigin, sourceTaintedOrigin);
         SourceProfiler::profile(SourceProfiler::Type::Eval, source);
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    // Before the literal fast path, which makes no CodeBlock.
-    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfEvalDisallowed(globalObject, scope, programSource)) [[unlikely]]
-        return { };
-#endif
 
     JSValue parsedValue;
     if (programSource.is8Bit()) {

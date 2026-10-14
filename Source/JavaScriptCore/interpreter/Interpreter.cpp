@@ -75,7 +75,6 @@
 #include "MicrotaskCall.h"
 #include "ModuleProgramCodeBlock.h"
 #include "NativeCallee.h"
-#include "NonEmbeddedCode.h"
 #include "ProgramCodeBlock.h"
 #include "ProtoCallFrameInlines.h"
 #include "Register.h"
@@ -183,12 +182,6 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
             auto source = makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin);
             SourceProfiler::profile(SourceProfiler::Type::Eval, source);
         }
-
-#if USE(BUN_JSC_ADDITIONS)
-        // Before the literal fast path, which makes no CodeBlock.
-        if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfEvalDisallowed(globalObject, scope, programSource)) [[unlikely]]
-            return { };
-#endif
 
         if (!(lexicallyScopedFeatures & StrictModeLexicallyScopedFeature)) {
             JSValue parsedValue;
@@ -1091,8 +1084,10 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
 
 #if USE(BUN_JSC_ADDITIONS)
     // Before the JSONP fast path, which makes no CodeBlock, and before the program's global declarations.
-    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfDisallowed(globalObject, throwScope, *source.provider(), "program"_s)) [[unlikely]]
+    if (Options::disallowNonEmbeddedCode() && !source.provider()->isBuiltinOrEmbedded()) [[unlikely]] {
+        throwNonEmbeddedCodeError(globalObject, throwScope, *source.provider());
         return { };
+    }
 #endif
 
     // First check if the "program" is actually just a JSON object. If so,

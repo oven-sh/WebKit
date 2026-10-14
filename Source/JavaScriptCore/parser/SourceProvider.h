@@ -156,6 +156,7 @@ public:
     }
     // By where the characters of source() are, so no provider can declare it. Computed once: a provider's text does not change.
     bool isBuiltinOrEmbedded();
+    bool isEmbeddedBytecode(const CachedBytecode&) const;
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND

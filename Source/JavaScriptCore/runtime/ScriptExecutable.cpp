@@ -40,7 +40,6 @@
 #include "JSTemplateObjectDescriptor.h"
 #include "LLIntEntrypoint.h"
 #include "ModuleProgramCodeBlock.h"
-#include "NonEmbeddedCode.h"
 #include "ParserError.h"
 #include "ProgramCodeBlock.h"
 #include "VMInlines.h"
@@ -414,8 +413,10 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
 #if USE(BUN_JSC_ADDITIONS)
     // All new code passes here on its way to a CodeBlock. The other sites only come earlier.
-    if (NonEmbeddedCode::isDisallowedOrReported() && NonEmbeddedCode::throwIfDisallowed(scope->realm(), throwScope, *source().provider(), "run"_s)) [[unlikely]]
+    if (Options::disallowNonEmbeddedCode() && !source().provider()->isBuiltinOrEmbedded()) [[unlikely]] {
+        throwNonEmbeddedCodeError(scope->realm(), throwScope, *source().provider());
         return;
+    }
 #endif
 
     CodeBlock* codeBlock = newCodeBlockFor(kind, function, scope);

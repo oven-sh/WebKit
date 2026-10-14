@@ -96,8 +96,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
 #define FOR_EACH_JSC_EMBEDDED_CODE_OPTION(v) \
-    v(Bool, disallowNonEmbeddedCode, false, Normal, "Only JSC's builtins and the sources Config::isEmbeddedCode accepts run: anything else throws an EvalError, and cached bytecode it does not accept is a cache miss."_s) \
-    v(Bool, reportNonEmbeddedCode, false, Normal, "Log what disallowNonEmbeddedCode disallows (site, source URL, stack), each once. On its own it disallows nothing."_s)
+    v(Bool, disallowNonEmbeddedCode, false, Normal, "Only JSC's builtins and the sources Config::isEmbeddedCode accepts run: anything else throws an EvalError, and cached bytecode it does not accept is a cache miss."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
