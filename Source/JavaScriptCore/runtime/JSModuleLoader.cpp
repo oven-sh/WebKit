@@ -780,6 +780,15 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
     Identifier resolved;
 
     if (!mapEntry) {
+#if USE(BUN_JSC_ADDITIONS)
+        // Each module gets its own ModuleGraphLoadingState (see moduleLoadStep), and every state that reaches a record that's still
+        // New would ask the host to resolve the same requests again. Cache the resolved key on the referrer until the load finishes.
+        // After that it's in [[LoadedModules]], or the load failed and we ask the host again.
+        auto* resolvedRequests = record && payload->inherits<ModuleGraphLoadingState>() ? &record->resolvedRequests() : nullptr;
+        if (UniquedStringImpl* known = resolvedRequests ? resolvedRequests->get(moduleMapKey) : nullptr)
+            resolved = Identifier::fromUid(vm, known);
+        else {
+#endif
         // 8. Let url be the result of resolving a module specifier given referencingScript and moduleRequest.[[Specifier]], catching any exceptions. If they throw an exception, let resolutionError be the thrown exception.
         resolved = resolve(globalObject, specifier, referrerKey, scriptFetcher, useImportMap);
         // 9. If the previous step threw an exception, then:
@@ -803,6 +812,11 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
             // 9.3. Return.
             RELEASE_AND_RETURN(scope, promise);
         }
+#if USE(BUN_JSC_ADDITIONS)
+        if (resolvedRequests)
+            resolvedRequests->add(moduleMapKey, resolved.impl());
+        }
+#endif
 
         moduleMapKey.first = resolved.impl();
 
@@ -1058,6 +1072,11 @@ void JSModuleLoader::finishLoadingImportedModule(JSGlobalObject* globalObject, c
 
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (CyclicModuleRecord* module = referrer.getModule())
+        module->removeResolvedRequest(moduleRequest);
+#endif
 
     // 1. If result is a normal completion, then
 #if USE(BUN_JSC_ADDITIONS)
