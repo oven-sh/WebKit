@@ -1411,7 +1411,6 @@ struct CompiledFunctionInfo {
     Vector<ArgumentMoves> argumentMoves;
     Vector<Site> sites;
     Vector<ImageKey> knownCallees;
-    static constexpr uint32_t siteConstantIsShape = 1u << 31;
     static constexpr uint32_t siteConstantIsPlan = 1u << 30;
     Vector<uint32_t> siteConstants;
     Vector<uint32_t> plans;
@@ -1445,7 +1444,6 @@ struct CompiledFunctionInfo {
     Vector<std::pair<uint32_t, uint32_t>> constructionStarts;
     Vector<Quote> quotes;
     Vector<UniquedStringImpl*> selectors;
-    Vector<KnownShape> shapes;
 };
 
 

@@ -521,7 +521,6 @@ struct Instance::Collections {
     Vector<RefPtr<UniquedStringImpl>> namesOfOwnPropertyPlaces;
     UncheckedKeyHashMap<uint64_t, Structure*> shapes;
     Vector<uint32_t> filledRows;
-    UncheckedKeyHashMap<uint32_t, Structure*> knownShapes;
     UncheckedKeyHashMap<uint32_t, Structure*> emptyStructuresWithoutPrototype;
     UncheckedKeyHashMap<Structure*, Structure*> copyStructures;
     UncheckedKeyHashMap<std::pair<Structure*, uint64_t>, Instance::CopyForMore> copiesForMore;
@@ -830,9 +829,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         RELEASE_ASSERT(JSValue::encode(globalObject->getDirect(vm, Identifier::fromString(vm, entry.name))) == instance->intrinsics[number]);
     }
     instance->objectPrototype = globalObject->objectPrototype();
-    if (Image* image = Image::withShapes()) {
-        RELEASE_ASSERT(!image->header().intrinsicHash || image->header().intrinsicHash == ImmutableIntrinsics::shared()->hash());
-    }
     if (JSValue call = globalObject->linkTimeConstant(LinkTimeConstant::callFunction); call.isCell())
         instance->functionPrototypeCall = call.asCell();
     instance->collections->token = Symbol::create(vm);
@@ -2211,8 +2207,6 @@ void Instance::visit(Visitor& visitor, bool newOnly)
             visitor.appendUnbarriered(cell);
         return;
     }
-    for (Structure* structure : collections->knownShapes.values())
-        visitor.appendUnbarriered(structure);
     for (Structure* structure : collections->emptyStructures.values())
         visitor.appendUnbarriered(structure);
     for (JSFunction* constructor : collections->constructorsOfLayouts.values())
@@ -2528,7 +2522,7 @@ bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
         vm.writeBarrier(object);
     }
     if (Options::useAOTOperationCounters()) [[unlikely]] {
-        const char* birth = old->knownShape() ? "a-literal-of-known-shape" : "something-else";
+        const char* birth = "something-else";
         for (auto& entry : instance.collections->copiedProperties) {
             if (entry.value.last == old)
                 birth = "a-copy";
@@ -3142,7 +3136,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     }
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         dataLogLn("AOT: instance ", RawPointer(this), " after ", newOnly ? "an eden" : "a full", " collection: ", collections->all.size(), " of ", collections->numberOfFunctions, " functions have slots, in ", (collections->usedDataEnd - collections->dataStart) << stateWithDataShift, " bytes; ",
-            collections->allSiteSlots.size(), " sites with several slots (", collections->allSiteSlots.size() * sizeof(PolymorphicSlots), " bytes); ", collections->transitions.size(), " transitions; structures of literals ", collections->shapes.size(), " + ", collections->knownShapes.size(),
+            collections->allSiteSlots.size(), " sites with several slots (", collections->allSiteSlots.size() * sizeof(PolymorphicSlots), " bytes); ", collections->transitions.size(), " transitions; structures of literals ", collections->shapes.size(),
             ", of copies ", collections->copyStructures.size(), ", of layouts ", collections->emptyStructures.size(), " + ", collections->convertedStructures.size(), "; property runs ", collections->propertyRunTargets.size(), "; copied properties ", collections->copiedProperties.size(),
             "; constructors ", collections->constructorsByFirstStructure.size(), " + ", collections->learnedInlineCapacities.size(), "; modules ", collections->topLevelExecutables.size(), "; template objects ", collections->templateObjects.size(),
             "; environments ", Image::environmentsSize() / sizeof(void*), "; unlinked functions in the program ", program->data().numberOfUnlinkedFunctions);

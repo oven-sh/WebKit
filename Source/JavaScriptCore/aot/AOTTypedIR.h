@@ -115,6 +115,7 @@ struct Value {
     uint32_t inlineFrame { 0 };
     bool receiverIsExpectedOfOneRow { false };
     MethodAskedByStub methodAskedByStub { MethodAskedByStub::None };
+    uint16_t classExpectedOfReceiverPlusOne { 0 };
     std::array<ValueID, 3> children;
     std::array<uint32_t, 2> immediates { Format::none, Format::none };
     Arguments arguments;

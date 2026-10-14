@@ -472,20 +472,6 @@ struct Site {
     uint32_t identifierAndExtra { 0 };
 };
 
-struct KnownShape {
-    unsigned inlineCapacity { 0 };
-    Vector<UniquedStringImpl*, 8> names;
-    uint32_t number { 0 };
-    Vector<uint16_t, 8> slots;
-    uint16_t layoutID { 0 };
-    uint16_t reserved { 0 };
-    uint16_t inlineSlots { 0 };
-    uint16_t family { 0 };
-    unsigned numberOfSlots() const { return slots.isEmpty() ? names.size() : std::max<unsigned>(*std::ranges::max_element(slots) + 1, reserved); }
-
-    static constexpr unsigned maxProperties = 4096;
-};
-
 struct ImageKey {
     uint32_t module { 0 };
     uint32_t start { 0 };

@@ -555,6 +555,8 @@ std::optional<Lowering::ExpectedBuiltin> Lowering::expectedBuiltin(BuiltinKind k
         engineClass = m_builtins.classNamed(holder);
     } else {
         auto prediction = predictionOf(receiver);
+        if (m_classExpectedOfReceiver)
+            prediction = m_classExpectedOfReceiver == &m_builtins.stringClass() ? m_program.at(m_program.types.string) : Type::engineClass(*m_classExpectedOfReceiver);
         if (!prediction)
             return std::nullopt;
         engineClass = prediction->isString() ? &m_builtins.stringClass() : prediction->onlyEngineClass();

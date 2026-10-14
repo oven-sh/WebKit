@@ -947,6 +947,7 @@ private:
     GCIncomingRefCountedSet<ArrayBuffer> m_arrayBuffers;
     size_t m_extraMemorySize { 0 };
     size_t m_deprecatedExtraMemorySize { 0 };
+    size_t m_extraMemoryBytesSinceLastCollectionCheck { 0 };
 
     ProtectCountSet m_protectedValues;
     UncheckedKeyHashSet<MarkedVectorBase*> m_markListSet;

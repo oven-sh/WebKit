@@ -42,6 +42,7 @@ public:
         TypeID frameType;
         TypeID resumeModeType;
         TypeID driverType;
+        bool hasStartFunction { false };
         Vector<ASCIILiteral, 16> namesByFirstUse;
     };
 
@@ -54,7 +55,73 @@ public:
             for (ValueID id : block.values)
                 numberOfAwaits += function.at(id).opcode == Opcode::Await;
         }
-        return numberOfAwaits <= maxAwaitsWithStartFunction;
+        if (numberOfAwaits > maxAwaitsWithStartFunction)
+            return false;
+        if (!numberOfAwaits)
+            return true;
+        bool mayReturnFirst = false;
+        unsigned both = numberOfValuesInBothHalves(function, nullptr, &mayReturnFirst);
+        return both < (mayReturnFirst ? leastInBothHalvesWhereItMayReturnFirst : leastInBothHalvesWithoutStartFunction);
+    }
+
+    static unsigned numberOfValuesInBothHalves(const Function& function, BitVector* awaitsOfFirstActivationAlone, bool* mayReturnFirst)
+    {
+        unsigned numberOfBlocks = function.blocks.size();
+        Vector<unsigned> valuesAheadOfAwait(numberOfBlocks, [&](size_t b) {
+            unsigned ahead = 0;
+            for (ValueID id : function.blocks[b].values) {
+                if (function.at(id).opcode == Opcode::Await)
+                    return ahead;
+                ++ahead;
+            }
+            return UINT_MAX;
+        });
+        BitVector isInStart(numberOfBlocks);
+        BitVector isInResume(numberOfBlocks);
+        Vector<unsigned> worklist { 0u };
+        Vector<unsigned> behindAwaits;
+        while (!worklist.isEmpty()) {
+            unsigned b = worklist.takeLast();
+            if (isInStart.set(b))
+                continue;
+            for (auto& target : function.blocks[b].terminator.targets)
+                (valuesAheadOfAwait[b] != UINT_MAX ? behindAwaits : worklist).append(target.block.index());
+        }
+        while (!behindAwaits.isEmpty()) {
+            unsigned b = behindAwaits.takeLast();
+            if (isInResume.set(b))
+                continue;
+            for (auto& target : function.blocks[b].terminator.targets)
+                behindAwaits.append(target.block.index());
+        }
+        unsigned both = 0;
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            if (!isInStart.get(b))
+                continue;
+            if (isInResume.get(b))
+                both += valuesAheadOfAwait[b] != UINT_MAX ? valuesAheadOfAwait[b] : function.blocks[b].values.size();
+            else if (awaitsOfFirstActivationAlone && valuesAheadOfAwait[b] != UINT_MAX)
+                awaitsOfFirstActivationAlone->set(function.blocks[b].values[valuesAheadOfAwait[b]].index());
+        }
+        if (mayReturnFirst) {
+            Vector<unsigned> cycles = cycleOfEachBlock(function);
+            BitVector cycleAwaits(numberOfBlocks);
+            for (unsigned b = 0; b < numberOfBlocks; ++b) {
+                if (valuesAheadOfAwait[b] != UINT_MAX && cycles[b] != isInNoCycle)
+                    cycleAwaits.set(cycles[b]);
+            }
+            BitVector isSeen(numberOfBlocks);
+            worklist.append(0u);
+            while (!worklist.isEmpty()) {
+                unsigned b = worklist.takeLast();
+                if (isSeen.set(b) || valuesAheadOfAwait[b] != UINT_MAX || (cycles[b] != isInNoCycle && cycleAwaits.get(cycles[b])))
+                    continue;
+                *mayReturnFirst |= function.blocks[b].terminator.kind == TerminatorKind::Return;
+                for (auto& target : function.blocks[b].terminator.targets)
+                    worklist.append(target.block.index());
+            }
+        }
+        return both;
     }
 
     static Numbers reserveNumbers(Program& program, FunctionID ramp, FunctionID resume)
@@ -102,7 +169,9 @@ public:
         m_isAsync = m_program.at(m_ramp).has(Format::FunctionIsAsync);
         m_startsEagerly = m_program.at(m_ramp).has(Format::FunctionStartsEagerly);
         m_position = m_program.at(m_ramp).position;
-        m_hasStartFunction = hasStartFunction(m_program.at(m_ramp));
+        m_hasStartFunction = m_numbers.hasStartFunction;
+        if (!m_hasStartFunction && !m_isGenerator)
+            numberOfValuesInBothHalves(m_program.at(m_ramp), &m_awaitsOfFirstActivationAlone, nullptr);
         createFrameLayout();
         if (m_hasStartFunction)
             copyBodyToStartFunction();
@@ -138,6 +207,8 @@ private:
 
     static constexpr uint32_t firstProvisionalName = 0xc0000000;
     static constexpr unsigned maxAwaitsWithStartFunction = 32;
+    static constexpr unsigned leastInBothHalvesWithoutStartFunction = 8;
+    static constexpr unsigned leastInBothHalvesWhereItMayReturnFirst = 64;
     static constexpr unsigned maxSuspensionsKeptInRegisters = 32;
     static constexpr int64_t resumeModeNormal = 0;
     static constexpr int64_t resumeModeThrow = 1;
@@ -507,9 +578,10 @@ private:
             }
         }
 
-        if (!isYield && !m_isGenerator) {
+        if (!isYield && !m_isGenerator && !m_awaitsOfFirstActivationAlone.get(suspension.index())) {
             BlockID inPlaceBlock = addBlock(m_body);
             BlockID parkBlock = addBlock(m_body);
+            m_inPlaceBlocks.set(inPlaceBlock.index());
             branch(suspendBlock, append(m_body, suspendBlock, operation("AwaitMayContinue"_s, m_program.types.boolean, { operand, m_resumeMode })), inPlaceBlock, parkBlock);
             goOnWith(inPlaceBlock, append(m_body, inPlaceBlock, operation("AwaitedValue"_s, m_program.types.anything, { operand })));
             suspendBlock = parkBlock;
@@ -535,6 +607,17 @@ private:
         BitVector isSuspendBlock(m_body.blocks.size());
         for (auto& point : m_suspensionPoints)
             isSuspendBlock.set(point.suspendBlock.index());
+        BitVector isReachedByFirstActivation(m_body.blocks.size());
+        if (!m_hasStartFunction && !m_isGenerator) {
+            Vector<BlockID> worklist { m_start };
+            while (!worklist.isEmpty()) {
+                BlockID block = worklist.takeLast();
+                if (m_inPlaceBlocks.get(block.index()) || isReachedByFirstActivation.set(block.index()))
+                    continue;
+                for (auto& target : m_body.at(block).terminator.targets)
+                    worklist.append(target.block);
+            }
+        }
         for (unsigned b = 0; b < m_body.blocks.size(); ++b) {
             if (m_body.blocks[b].terminator.kind != TerminatorKind::Return || isSuspendBlock.get(b))
                 continue;
@@ -548,7 +631,10 @@ private:
                 m_body.at(block).terminator.value = result;
                 continue;
             }
-            ValueID promise = append(m_body, block, getField(m_frame, CoroutineFrame::promiseField));
+            Value read = getField(m_frame, CoroutineFrame::promiseField);
+            if (isReachedByFirstActivation.get(b))
+                read.prediction = m_driverType;
+            ValueID promise = append(m_body, block, WTF::move(read));
             append(m_body, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
             m_body.at(block).terminator.value = append(m_body, block, undefined());
         }
@@ -1387,11 +1473,16 @@ private:
             return;
         }
 
+        ValueID promise;
+        if (!m_isGenerator)
+            promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
         ValueID notStarted = append(ramp, entry, integer(0, m_program.types.int32));
         Value allocation = typed(Opcode::NewObjectWithShape, m_frameType);
         allocation.immediates[0] = m_frameLayout.index();
         ValueID frame = append(ramp, entry, WTF::move(allocation));
         append(ramp, entry, putField(frame, CoroutineFrame::stateField, notStarted));
+        if (promise)
+            append(ramp, entry, putField(frame, CoroutineFrame::promiseField, promise));
         for (unsigned i = 0; i < arguments.size(); ++i)
             append(ramp, entry, putField(frame, CoroutineFrame::firstArgumentField + i, arguments[i]));
         Value closure = typed(Opcode::NewClosure, m_program.types.function);
@@ -1400,8 +1491,6 @@ private:
         ValueID resumeClosure = append(ramp, entry, WTF::move(closure));
         append(ramp, entry, putField(frame, CoroutineFrame::resumeClosureField, resumeClosure));
         if (!m_isGenerator) {
-            ValueID promise = append(ramp, entry, operation("NewPromise"_s, m_driverType, { }));
-            append(ramp, entry, putField(frame, CoroutineFrame::promiseField, promise));
             ValueID mode = append(ramp, entry, integer(resumeModeNormal, m_resumeModeType));
             ValueID resumeValue = append(ramp, entry, undefined());
             append(ramp, entry, callResumeFunction(frame, mode, resumeValue));
@@ -1446,6 +1535,8 @@ private:
     bool m_isAsync { false };
     bool m_startsEagerly { false };
     bool m_hasStartFunction { false };
+    BitVector m_awaitsOfFirstActivationAlone;
+    BitVector m_inPlaceBlocks;
     BitVector m_yieldsThatAwait;
     Vector<SuspensionPoint> m_suspensionPoints;
     Vector<Vector<BlockID, 2>> m_predecessors;
@@ -1476,6 +1567,7 @@ void splitCoroutines(Program& program)
         if (!numberOfFunctionsMadeOf[i])
             continue;
         coroutines.append(CoroutineSplitter::reserveNumbers(program, FunctionID(i), FunctionID(numberOfFunctionsBehind)));
+        coroutines.last().hasStartFunction = numberOfFunctionsMadeOf[i] == 2;
         numberOfFunctionsBehind += numberOfFunctionsMadeOf[i];
     }
     program.functions.grow(numberOfFunctionsBehind);

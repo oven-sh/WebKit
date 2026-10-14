@@ -635,8 +635,6 @@ static NEVER_INLINE JSValue getPlainlyTheLongWay(Instance* instance, JSCell* ask
         for (JSObject* object = base;;) {
             Structure* structure = object->structure();
             TypeInfo info = structure->typeInfo();
-            if (object == base && structure->knownShape())
-                return cannotSay("cannot-say:known-shape");
             bool isClassObject = object->type() == JSFunctionType && info.getOwnPropertySlotIsImpureForPropertyAbsence() && object->classInfo() == Typed::Closure::info() && uncheckedDowncast<Typed::Closure>(object)->kind() == Typed::Format::FunctionKind::Constructor;
             bool goesByItsStructure = object == base && !isClassObject && info.getOwnPropertySlotIsImpureForPropertyAbsence() && Typed::closureLacksWhatItsStructureLacks(vm, object, uid);
             if (isClassObject) {
@@ -734,8 +732,6 @@ static ALWAYS_INLINE JSValue getPlainlyAndFillWhile(Instance* instance, JSCell* 
             goesTheLongWay = true;
             return { };
         }
-        if (structureID.decode()->knownShape())
-            return cannotSay("cannot-say:known-shape");
         bool isForGood = true;
         for (JSObject* object = asObject(base);;) {
             Structure* structure = object->structure();

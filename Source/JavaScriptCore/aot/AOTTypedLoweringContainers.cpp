@@ -1297,8 +1297,6 @@ void Lowering::findElementsTakenAtOnce()
         return;
     Vector<std::pair<unsigned, unsigned>, 4> found;
     for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
-        if (m_loopBlocks.get(b))
-            continue;
         auto& values = m_function.blocks[b].values;
         for (unsigned i = 0; i < values.size(); ++i) {
             auto& value = m_function.at(values[i]);
@@ -1331,6 +1329,8 @@ void Lowering::findElementsTakenAtOnce()
         case Opcode::IsUndefinedOrNull:
         case Opcode::ToBoolean:
             return true;
+        case Opcode::Cast:
+            return !mayThrow(m_program, m_function, value);
         default:
             return false;
         }
@@ -1351,7 +1351,6 @@ void Lowering::findElementsTakenAtOnce()
                     continue;
                 if (!leadsToStep.set(b))
                     worklist.append(b);
-                isRegular &= !m_loopBlocks.get(b);
                 if (step.opcode == Opcode::IteratorClose) {
                     isRegular &= !step.immediates[0];
                     continue;
@@ -1381,14 +1380,34 @@ void Lowering::findElementsTakenAtOnce()
         }
         if (!leadsToStep.get(opened))
             continue;
+        Vector<unsigned> waysInLeft;
+        waysInLeft.fill(0, m_function.blocks.size());
+        for (unsigned b : leadsToStep) {
+            for (unsigned predecessor : predecessors[b])
+                waysInLeft[b] += b != opened && leadsToStep.get(predecessor);
+        }
+        unsigned numberInOrder = 0;
+        worklist.append(opened);
+        while (!worklist.isEmpty()) {
+            unsigned b = worklist.takeLast();
+            ++numberInOrder;
+            for (auto& target : m_function.blocks[b].terminator.targets) {
+                unsigned next = target.block.index();
+                if (next != opened && leadsToStep.get(next) && !--waysInLeft[next])
+                    worklist.append(next);
+            }
+        }
+        if (numberInOrder != leadsToStep.bitCount())
+            continue;
         for (unsigned b : leadsToStep) {
             auto& block = m_function.blocks[b];
             bool goesOnToStep = false;
             for (auto& target : block.terminator.targets)
                 goesOnToStep |= target.block.index() != opened && leadsToStep.get(target.block.index());
-            if (goesOnToStep && block.terminator.kind != TerminatorKind::Jump && block.terminator.kind != TerminatorKind::Branch)
-                isRegular = false;
-            if (block.terminator.kind == TerminatorKind::Invoke)
+            if (block.terminator.kind == TerminatorKind::Invoke) {
+                auto& atOpen = m_function.blocks[opened].terminator;
+                isRegular &= atOpen.kind == TerminatorKind::Invoke && atOpen.targets[1].block == block.terminator.targets[1].block && atOpen.targets[1].arguments == block.terminator.targets[1].arguments;
+            } else if (goesOnToStep && block.terminator.kind != TerminatorKind::Jump && block.terminator.kind != TerminatorKind::Branch)
                 isRegular = false;
             unsigned end = block.values.size();
             while (!goesOnToStep && end && !isStepOf(m_function.at(block.values[end - 1]), iterator))
@@ -1400,9 +1419,16 @@ void Lowering::findElementsTakenAtOnce()
         }
         if (!isRegular)
             continue;
-        unsigned count = std::popcount(asked);
-        m_elementsTakenAtOnce.add(iterator.index(), ElementsTakenAtOnce { m_proc.addStackSlot(count * sizeof(EncodedJSValue)), count });
+        m_elementsTakenAtOnce.add(iterator.index(), ElementsTakenAtOnce { nullptr, static_cast<unsigned>(std::popcount(asked)) });
     }
+    unsigned most = 0;
+    for (auto& taken : m_elementsTakenAtOnce.values())
+        most = std::max(most, taken.count);
+    if (!most)
+        return;
+    auto* slot = m_proc.addStackSlot(most * sizeof(EncodedJSValue));
+    for (auto& taken : m_elementsTakenAtOnce.values())
+        taken.slot = slot;
 }
 
 void Lowering::findIterationsInFrame()

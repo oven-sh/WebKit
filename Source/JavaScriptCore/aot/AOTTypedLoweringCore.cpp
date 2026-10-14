@@ -1544,7 +1544,7 @@ void Lowering::lowerResolvePromise(const Value& value)
     OperationEffects effects = effectsOfBuiltinCall(value);
     // Read out of the frame: the function has been suspended, its caller has the promise and waits for it as a rule.
     auto& source = m_function.at(value.arguments[0]);
-    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame) {
+    if (source.opcode == Opcode::GetField && m_program.at(source.layout()).isCoroutineFrame && !source.prediction) {
         AOT_TYPED_OPERATION_WITH_EFFECTS(ResolvePromise, effects, promise, resolution);
         return;
     }

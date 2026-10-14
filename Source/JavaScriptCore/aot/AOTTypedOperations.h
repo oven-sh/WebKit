@@ -109,6 +109,7 @@ struct Instance;
     v(operationAOTTypedHold) \
     v(operationAOTTypedHoldOrBecome) \
     v(operationAOTTypedGetByNameHeld) \
+    v(operationAOTTypedGetByNameHeldAsNumber) \
     v(operationAOTTypedNoteMisfit) \
     v(operationAOTTypedHasExtra) \
     v(operationAOTTypedFieldHasText) \
@@ -388,6 +389,7 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetExtra, Nothing, EncodedJSValue, 
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHold, Nothing, EncodedJSValue, (Instance*, EncodedJSValue value, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedHoldOrBecome, RuntimeState, EncodedJSValue, (Instance*, EncodedJSValue value, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByNameHeld, Heap, EncodedJSValue, (Instance*, JSCell* object, uint32_t name, uint32_t type));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetByNameHeldAsNumber, Heap, double, (Instance*, JSCell* object, uint32_t name, uint32_t type));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNoteMisfit, Nothing, void, (Instance*, EncodedJSValue value, uint32_t type, uint32_t parameter, uint32_t isAtCaller));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedHasExtra, Nothing, size_t, (Instance*, JSCell* object, uint32_t name));
 // `object.name === "text"`, of an object whose layout has a field of the name. It may make a rope flat, as any comparison of strings. See Typed::fieldIsPinned.

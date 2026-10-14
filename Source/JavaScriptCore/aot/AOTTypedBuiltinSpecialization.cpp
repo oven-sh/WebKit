@@ -317,6 +317,13 @@ private:
                 leaveReadOfMethodToCall(block, index);
                 return false;
             }
+            if (m_builtins.at(entry).implementation.kind == BuiltinImplementation::Inline && engineClass->index < std::numeric_limits<uint16_t>::max()) {
+                leaveReadOfMethodToCall(block, index);
+                if (m_function.at(id).opcode == Opcode::CallMethod) {
+                    m_function.at(id).classExpectedOfReceiverPlusOne = engineClass->index + 1;
+                    return false;
+                }
+            }
         }
         TypeID typeOfClass = m_program.engineClassTypes[engineClass->index];
         RELEASE_ASSERT(typeOfClass);

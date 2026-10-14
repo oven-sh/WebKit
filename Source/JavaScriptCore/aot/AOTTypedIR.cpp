@@ -402,6 +402,8 @@ private:
         }
         if (value.methodAskedByStub != MethodAskedByStub::None)
             m_out.print(" asked by stub ", static_cast<unsigned>(value.methodAskedByStub));
+        if (value.classExpectedOfReceiverPlusOne)
+            m_out.print(" expects ", Builtins::singleton().classes()[value.classExpectedOfReceiverPlusOne - 1].text);
         m_out.print("\n");
     }
 

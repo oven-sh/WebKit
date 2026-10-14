@@ -1466,7 +1466,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (m_knownShape || m_family || m_isReplacedWithoutNotice || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
+    if (result.isNewEntry && (m_family || m_isReplacedWithoutNotice || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1843,25 +1843,6 @@ bool Structure::holdsFamily(VM& vm, std::span<UniquedStringImpl* const> namesInS
     return true;
 }
 
-void Structure::setKnownShape(VM& vm, uint16_t shape)
-{
-    if (m_knownShape == shape)
-        return;
-    RELEASE_ASSERT(!m_knownShape);
-    m_knownShape = shape;
-    if (!TypedLayoutTable::hasTypedFields())
-        m_typedLayoutID = shape;
-    if (!isWatchingReplacement())
-        return;
-    Vector<PropertyOffset, 8> offsets;
-    {
-        ConcurrentJSLocker locker(m_lock);
-        for (auto& entry : rareData()->m_replacementWatchpointSets)
-            offsets.append(entry.key);
-    }
-    for (PropertyOffset offset : offsets)
-        firePropertyReplacementWatchpointSet(vm, offset, "Code stores to it without asking");
-}
 #endif
 
 WatchpointSet* Structure::firePropertyReplacementWatchpointSet(VM& vm, PropertyOffset offset, const char* reason)

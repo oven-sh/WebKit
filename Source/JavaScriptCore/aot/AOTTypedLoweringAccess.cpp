@@ -912,6 +912,8 @@ Operand Lowering::askMarkedObject(CellPointer cell, StringID name, const Type& t
     TypeID typeOfRead = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
     if (!m_fusedCasts && &m_program.at(typeOfRead) == &type && holdsCells(repOf(type)) && !type.isNever() && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch())
         return convert(AOT_TYPED_OPERATION(GetByNameHeld, cell, word32(name.index()), word32(typeOfRead.index())), type, repOf(type));
+    if (!m_fusedCasts && &m_program.at(typeOfRead) == &type && (repOf(type) == Rep::OptionalDouble || repOf(type) == Rep::Double) && !m_useCastTest && !handlerEnteredByBranch())
+        return convert(Operand(Rep::OptionalDouble, AOT_TYPED_OPERATION(GetByNameHeldAsNumber, cell, word32(name.index()), word32(typeOfRead.index())).value()), type, repOf(type));
     return ensure(AOT_TYPED_OPERATION(GetByName, box(cell), word32(name.index())), type);
 }
 

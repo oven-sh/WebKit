@@ -52,9 +52,6 @@ struct ImageHeader {
     uint32_t environmentsSize;
     uint32_t environmentsOffset;
     uint32_t numberOfEnvironments;
-    uint32_t shapesOffset;
-    uint32_t numberOfShapes;
-    uint32_t shapeSlotsOffset;
     uint32_t auditsTypes;
     uint32_t intrinsicHash;
     uint32_t quotesOffset;
@@ -110,18 +107,6 @@ struct ImageRegExp {
     static constexpr unsigned maxLengthWithCode = 65536;
     static constexpr unsigned minLengthKeptAsTextOfImage = 4096;
     static constexpr unsigned maxParenthesesDepthWithoutPattern = 64;
-};
-
-struct ImageShape {
-    uint16_t numberOfProperties;
-    uint16_t inlineCapacity;
-    uint32_t slots;
-    uint16_t layoutID;
-    uint16_t reserved;
-    uint16_t inlineSlots;
-    uint16_t hasIds;
-    uint16_t family;
-    uint16_t unused;
 };
 
 struct ImageEnvironment {
@@ -283,7 +268,6 @@ public:
     };
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
 
-    static Image* withShapes();
     static Image& of(const ImageFunction&);
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     String quoteText(uint64_t start, size_t length) const;

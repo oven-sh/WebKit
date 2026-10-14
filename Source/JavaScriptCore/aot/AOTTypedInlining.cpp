@@ -86,6 +86,8 @@ public:
                 }
                 if (m_program.at(callee).resumeFunction || (m_caller.isGenericEntrypoint() && m_program.genericEntrypoints.get(callee.index()) == m_id))
                     continue;
+                if (m_caller.resumeFunction == callee && !(m_caller.declaredAs & functionIsGenerator))
+                    continue;
                 if (closesCycle(callee, block)) {
                     m_caller.at(call).immediates[1] = maxDepth;
                     continue;

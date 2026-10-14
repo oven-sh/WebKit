@@ -744,17 +744,6 @@ Vector<uint8_t> ImageBuilder::finish()
             return static_cast<uint32_t>(selectors.size() - 1);
         }).iterator->value;
     };
-    struct Shape {
-        unsigned inlineCapacity { 0 };
-        Vector<uint32_t, 8> names;
-        Vector<uint16_t, 8> slots;
-        uint16_t layoutID { 0 };
-        uint16_t reserved { 0 };
-        uint16_t inlineSlots { 0 };
-        uint16_t family { 0 };
-    };
-    Vector<Shape> shapes(1);
-    UncheckedKeyHashMap<String, uint32_t> numberOfShape;
     for (auto& function : m_functions) {
         auto& info = function.code.info;
         RELEASE_ASSERT(info.siteConstants.size() == info.numSlots);
@@ -772,65 +761,12 @@ Vector<uint8_t> ImageBuilder::finish()
                 constant &= ~CompiledFunctionInfo::siteConstantIsPlan;
                 continue;
             }
-            if (!(constant & CompiledFunctionInfo::siteConstantIsShape)) {
-                constant = selectorFor(info.selectors[constant - 1]);
-                storeInSiteOnExit.release();
-                RELEASE_ASSERT(!identifierIndices || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
-                continue;
-            }
-            const KnownShape& known = info.shapes[(constant & ~CompiledFunctionInfo::siteConstantIsShape) - 1];
-            Shape shape;
-            shape.inlineCapacity = known.inlineCapacity;
-            for (UniquedStringImpl* name : known.names)
-                shape.names.append(selectorFor(name));
-            if (known.number) {
-                shape.slots = known.slots;
-                shape.layoutID = known.layoutID;
-                shape.reserved = known.reserved;
-                shape.inlineSlots = known.inlineSlots;
-                constant = known.number;
-                if (shapes[constant].names.isEmpty())
-                    shapes[constant] = WTF::move(shape);
-                else
-                    RELEASE_ASSERT(shapes[constant].names == shape.names && shapes[constant].slots == shape.slots && shapes[constant].inlineCapacity == shape.inlineCapacity);
-                continue;
-            }
-            Vector<uint32_t, 16> words { known.inlineCapacity };
-            words.appendVector(shape.names);
-            if (known.family) {
-                shape.family = known.family;
-                words.append(0xfffe0000u | known.family);
-            }
-            if (known.layoutID) {
-                shape.slots = known.slots;
-                shape.layoutID = known.layoutID;
-                shape.reserved = known.reserved;
-                shape.inlineSlots = known.inlineSlots;
-                words.append(0xffff0000u | known.layoutID);
-                for (uint16_t slot : known.slots)
-                    words.append(slot);
-            }
-            String key { std::span { reinterpret_cast<const Latin1Character*>(words.span().data()), words.size() * sizeof(uint32_t) } };
-            if (auto it = numberOfShape.find(key); it != numberOfShape.end())
-                constant = it->value;
-            else if (shapes.size() > std::numeric_limits<uint16_t>::max())
-                constant = 0;
-            else {
-                shapes.append(WTF::move(shape));
-                constant = shapes.size() - 1;
-                numberOfShape.add(key, constant);
-            }
+            constant = selectorFor(info.selectors[constant - 1]);
+            storeInSiteOnExit.release();
+            RELEASE_ASSERT(!identifierIndices || (info.sites[slot].identifierAndExtra & ((1u << Site::identifierBits) - 1)) == constant);
         }
     }
     endStep("shapes and selectors of the functions"_s);
-    Vector<ImageShape> imageShapes;
-    Vector<uint16_t> shapeSlots;
-    size_t numberOfShapeProperties = 0;
-    for (auto& shape : shapes) {
-        imageShapes.append({ safeCast<uint16_t>(shape.names.size()), safeCast<uint16_t>(shape.inlineCapacity), shape.slots.isEmpty() ? 0 : safeCast<uint32_t>(shapeSlots.size() + 1), shape.layoutID, shape.reserved, shape.inlineSlots, 0, shape.family, 0 });
-        shapeSlots.appendVector(shape.slots);
-        numberOfShapeProperties += shape.names.size();
-    }
     struct EntryInsideFunction {
         ImageKey key;
         Convention convention;
@@ -2475,9 +2411,6 @@ Vector<uint8_t> ImageBuilder::finish()
         tablesEnd += size;
         return result;
     };
-    header.shapesOffset = place(imageShapes.sizeInBytes());
-    header.numberOfShapes = imageShapes.size();
-    header.shapeSlotsOffset = place(shapeSlots.sizeInBytes());
     header.auditsTypes = Options::auditAOTTypedFields();
     header.quotesOffset = place(quotes.size());
     header.quotesTextOffset = place(quotesText.size());
@@ -2574,8 +2507,6 @@ Vector<uint8_t> ImageBuilder::finish()
     uint8_t* code = base + header.codeOffset;
 
     memcpy(base + header.environmentsOffset, m_environments.span().data(), m_environments.size() * sizeof(ImageEnvironment));
-    memcpy(base + header.shapesOffset, imageShapes.span().data(), imageShapes.sizeInBytes());
-    memcpy(base + header.shapeSlotsOffset, shapeSlots.span().data(), shapeSlots.sizeInBytes());
     memcpy(base + header.quotesOffset, quotes.span().data(), quotes.size());
     memcpy(base + header.quotesTextOffset, quotesText.span().data(), quotesText.size());
     memcpy(base + header.regExpsOffset, imageRegExps.span().data(), imageRegExps.sizeInBytes());
@@ -2962,18 +2893,6 @@ Image& Image::of(const ImageFunction& function)
             return *image;
     }
     RELEASE_ASSERT_NOT_REACHED();
-}
-
-Image* Image::withShapes()
-{
-    auto& all = registry();
-    if (!all.hasAny.load(std::memory_order_acquire))
-        return nullptr;
-    for (unsigned i = 0; i < all.images.size(); ++i) {
-        if (all.images[i]->header().numberOfShapes > 1)
-            return all.images[i];
-    }
-    return nullptr;
 }
 
 const Site* FunctionInfo::sitesInImage() const

@@ -2776,6 +2776,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameHeld, EncodedJSValue, (Instan
     OPERATION_RETURN(scope, JSValue::encode(value));
 }
 
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetByNameHeldAsNumber, double, (Instance* instance, JSCell* cell, uint32_t name, uint32_t type))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    JSValue value = asObject(cell)->get(globalObject, nameAt(instance, name));
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!instance->typed->fits(instance->typed->type(type), value) || !(value.isNumber() || value.isUndefinedOrNull())) [[unlikely]] {
+        throwTypeMismatch(instance, globalObject, scope, value, type);
+        OPERATION_RETURN(scope, 0);
+    }
+    if (value.isNumber())
+        OPERATION_RETURN(scope, purifyNaN(value.asNumber()));
+    OPERATION_RETURN(scope, std::bit_cast<double>(value.isUndefined() ? Typed::undefinedDouble : Typed::nullDouble));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNoteMisfit, void, (Instance* instance, EncodedJSValue value, uint32_t type, uint32_t parameter, uint32_t isAtCaller))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -3497,7 +3511,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGiveThisItsRow, void, (Instance* insta
         OPERATION_RETURN(scope);
     JSObject* object = asObject(value);
     Structure* empty = object->structure();
-    if (empty->previousID() || isValidOffset(empty->maxOffset()) || empty->isDictionary() || empty->hasPolyProto() || !empty->isStructureExtensible() || empty->mayBePrototype() || empty->compiledLayout() || empty->typedLayoutID() || empty->knownShape() || !empty->propertyAccessesAreCacheable() || object->butterfly() || count > empty->inlineCapacity())
+    if (empty->previousID() || isValidOffset(empty->maxOffset()) || empty->isDictionary() || empty->hasPolyProto() || !empty->isStructureExtensible() || empty->mayBePrototype() || empty->compiledLayout() || empty->typedLayoutID() || !empty->propertyAccessesAreCacheable() || object->butterfly() || count > empty->inlineCapacity())
         OPERATION_RETURN(scope);
     const uint32_t* numbersOfNames = caller(instance, callFrame).info().function()->plans() + rowOfNames;
     Vector<UniquedStringImpl*, 16> names;

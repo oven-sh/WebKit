@@ -56,14 +56,19 @@ namespace {
 // is, so it is looked up here.
 
 // The ramp of an async function, if that is what a call of the function comes to: it is one, or it is bound to one. Not that of a generator: what goes wrong while the parameters of that are bound is thrown to the caller.
+static bool isRampOfAsyncFunction(const Function& function)
+{
+    return function.startFunction || (function.resumeFunction && (function.declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsAsync);
+}
+
 const Function* rampBehind(const Program& program, const Function& callee)
 {
-    if (callee.startFunction)
+    if (isRampOfAsyncFunction(callee))
         return &callee;
     if (callee.kind != FunctionKind::Bound || callee.blocks.isEmpty() || callee.blocks[0].values.isEmpty())
         return nullptr;
     auto& call = callee.at(callee.blocks[0].values.last());
-    return call.opcode == Opcode::CallDirect && program.at(call.function()).startFunction ? &program.at(call.function()) : nullptr;
+    return call.opcode == Opcode::CallDirect && isRampOfAsyncFunction(program.at(call.function())) ? &program.at(call.function()) : nullptr;
 }
 
 // Of what an async function hands back. Nothing: it is none.

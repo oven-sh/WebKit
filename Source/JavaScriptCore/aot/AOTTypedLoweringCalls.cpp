@@ -2155,7 +2155,11 @@ Operand Lowering::lowerCallMethod(ValueID result, const Value& value)
         auto generally = [&] {
             return ensure(callMethodGenerally(in<Boxed>(object), name, value.arguments), type);
         };
-        if (auto builtin = expectedBuiltin(BuiltinKind::Method, object, name, value.arguments))
+        auto builtin = [&] {
+            SetForScope classExpectedOfReceiver(m_classExpectedOfReceiver, value.classExpectedOfReceiverPlusOne ? &m_builtins.classes()[value.classExpectedOfReceiverPlusOne - 1] : nullptr);
+            return expectedBuiltin(BuiltinKind::Method, object, name, value.arguments);
+        }();
+        if (builtin)
             return lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
         return generally();
     }

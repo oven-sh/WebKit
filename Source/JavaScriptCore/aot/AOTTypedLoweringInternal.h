@@ -1482,6 +1482,7 @@ private:
     std::optional<ExpectedBuiltin> expectedBuiltin(BuiltinKind, ValueID receiver, BuiltinName, const Arguments&) const;
     std::optional<ExpectedBuiltin> expectedBuiltin(BuiltinKind, ValueID receiver, StringID, const Arguments&) const;
     bool chooseArgumentsToExpect(ExpectedBuiltin&) const;
+    const EngineClass* m_classExpectedOfReceiver { nullptr };
     std::optional<Operand> lowerCallOfBuiltinFunction(ValueID result, ValueID callee, ValueID thisValue, const Arguments&);
     template<typename Generally> Operand lowerExpectedBuiltin(ValueID result, const ExpectedBuiltin&, std::optional<Boxed> callee, const Generally&);
 
@@ -1614,6 +1615,7 @@ private:
     UncheckedKeyHashMap<LValue, LValue> m_exactIntegersOfNumbers;
     UncheckedKeyHashMap<LValue, LValue> m_wordsOfNumbers;
     bool m_fieldIsPresent { false };
+    bool m_holdsWhatStrangerYields { false };
     struct IntegerOfNumber {
         LValue number;
         LValue integer;

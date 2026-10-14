@@ -952,15 +952,16 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
         join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(HoldOrBecome, effects, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(given.index())), type, rep));
         return join.finish();
     }
-    if (m_program.isColdByGraph(m_id) && !m_isInLoop && !m_function.isBodyOfSeveralSites
+    bool isInColdBlockOfColdText = !m_out.m_block->frequency() && m_currentBlock && (m_program.isColdByGraph(m_id) || (goesGenerallyWhereTextIsCold() && !m_holdsWhatStrangerYields));
+    if ((m_program.isColdByGraph(m_id) || isInColdBlockOfColdText) && !m_isInLoop && !m_function.isBodyOfSeveralSites
         && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty() && repOf(guarantee) == Rep::JSValue && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
         && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
         Boxed given = remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>());
         LValue number = m_out.constInt64(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index());
-        LValue held = callAllocationStub(Stub::HoldToType, { { given.value(), GPRInfo::argumentGPR1 }, { number, GPRInfo::argumentGPR2 } }, { Writes::Nothing, true }, true);
+        LValue held = callAllocationStub(Stub::HoldToType, { { given.value(), GPRInfo::argumentGPR1 }, { number, GPRInfo::argumentGPR2 } }, { Writes::Nothing, true }, true, !m_out.m_block->frequency());
         return convert(Boxed(held), type, repOf(type));
     }
-    if (m_program.isColdByGraph(m_id) && !m_out.m_block->frequency() && repOf(guarantee) == Rep::JSValue && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
+    if (isInColdBlockOfColdText && repOf(guarantee) == Rep::JSValue && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
         && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
         Boxed given = convert(operand, guarantee, Rep::JSValue).as<Boxed>();
         return convert(AOT_TYPED_OPERATION(Hold, remade(given), word32(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index())), type, repOf(type));
@@ -1032,6 +1033,7 @@ Operand Lowering::ensureProperty(CellPointer holder, StringID name, Boxed yielde
 {
     TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
     Writes writes = writesOfElementRead(m_program, type);
+    SetForScope holdsWhatStrangerYields(m_holdsWhatStrangerYields, true);
     if (writes == Writes::Nothing || &m_program.at(given) != &type || Options::auditAOTTypedAssertions())
         return ensure(yielded, type);
     Rep rep = repOf(type);

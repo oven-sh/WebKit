@@ -457,9 +457,6 @@ public:
         setHasReadOnlyOrGetterSetterPropertiesExcludingProto(other.hasReadOnlyOrGetterSetterPropertiesExcludingProto());
     }
     PropertyOffset nextOffsetFor(PropertyTable*, UniquedStringImpl*);
-    uint16_t knownShape() const { return m_knownShape; }
-    JS_EXPORT_PRIVATE void setKnownShape(VM&, uint16_t);
-    static constexpr ptrdiff_t offsetOfKnownShape() { return OBJECT_OFFSETOF(Structure, m_knownShape); }
     uint16_t family() const { return m_family; }
     JS_EXPORT_PRIVATE bool setFamily(VM&, uint16_t);
     const char* reasonToRefuseFamily(uint16_t) const;
@@ -1236,7 +1233,6 @@ private:
     uint16_t m_transitionOffset;
     uint16_t m_maxOffset;
 #if USE(BUN_JSC_ADDITIONS)
-    uint16_t m_knownShape { 0 };
     uint16_t m_typedLayoutID { 0 };
     uint16_t m_family { 0 };
 #endif

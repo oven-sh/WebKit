@@ -1508,6 +1508,8 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         // `s + t` makes a string as a concatenation does.
         if (value.opcode == Opcode::Add)
             return program.at(value.type).isString() ? Candidate::AsLanded : Candidate::No;
+        if (value.opcode == Opcode::CallMethod && value.classExpectedOfReceiverPlusOne)
+            return value.arguments.size() + 1 > maxOperands ? Candidate::No : Candidate::AsLanded;
         if (value.opcode != Opcode::CallBuiltin || value.child(1) || value.child(2) || value.arguments.size() + !!value.child(0) > maxOperands)
             return Candidate::No;
         // Its site is small: the usual way in line, all else in a stub.
@@ -1585,6 +1587,8 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
                 if (isNew)
                     signature.append('n', static_cast<unsigned>(value.hasStringKeysByType), static_cast<unsigned>(value.receiverIsExpectedOfOneRow), ' ', value.predictedByKey.index(), ' ', value.predictedClosure.index(), ' ', value.assertedType.index(), ' ');
                 signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction.index(), value.children[0] ? ' ' : '-');
+                if (value.classExpectedOfReceiverPlusOne)
+                    signature.append('e', value.classExpectedOfReceiverPlusOne);
                 forEachOperand(value, [&](ValueID operandID) {
                     auto& operand = function.at(operandID);
                     signature.append(' ', operand.type.index(), '~', operand.prediction.index(), '~', operand.predictedClosure.index());

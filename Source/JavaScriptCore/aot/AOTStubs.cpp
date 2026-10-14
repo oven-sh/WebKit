@@ -3803,6 +3803,7 @@ static void generateTakeElements(CCallHelpers& jit)
     isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, storage, Address(R0, JSCell::structureIDOffset())));
     jit.and32(TrustedImm32(IndexingShapeMask), length);
     Jump keepsValues = jit.branch32(CCallHelpers::Equal, length, TrustedImm32(ContiguousShape));
+    Jump keepsDoubles = jit.branch32(CCallHelpers::Equal, length, TrustedImm32(DoubleShape));
     isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, length, TrustedImm32(Int32Shape)));
     keepsValues.link(&jit);
     jit.loadPtr(Address(R0, JSObject::butterflyOffset()), storage);
@@ -3817,6 +3818,31 @@ static void generateTakeElements(CCallHelpers& jit)
     jit.store64(element, CCallHelpers::BaseIndex(taken, index, CCallHelpers::TimesEight));
     jit.add32(TrustedImm32(1), index);
     jit.branch32(CCallHelpers::NotEqual, index, count).linkTo(next, &jit);
+    jit.ret();
+
+    keepsDoubles.link(&jit);
+    constexpr FPRReg number = FPRInfo::fpRegT0;
+    jit.loadPtr(Address(R0, JSObject::butterflyOffset()), storage);
+    jit.load32(Address(storage, Butterfly::offsetOfPublicLength()), length);
+    jit.move(TrustedImm32(0), index);
+    CCallHelpers::Label nextDouble = jit.label();
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), element);
+    Jump isPastEndOfDoubles = jit.branch32(CCallHelpers::AboveOrEqual, index, length);
+    jit.loadDouble(CCallHelpers::BaseIndex(storage, index, CCallHelpers::TimesEight), number);
+    isLeftToOperation.append(jit.branchIfNaN(number));
+    CCallHelpers::JumpList isNoInt32;
+    branchIfNoExactInt32(jit, number, element, isNoInt32, FPRInfo::fpRegT1);
+    jit.zeroExtend32ToWord(element, element);
+    jit.add64(numberTag, element);
+    Jump isBoxed = jit.jump();
+    isNoInt32.link(&jit);
+    jit.moveDoubleTo64(number, element);
+    jit.sub64(numberTag, element);
+    isBoxed.link(&jit);
+    isPastEndOfDoubles.link(&jit);
+    jit.store64(element, CCallHelpers::BaseIndex(taken, index, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), index);
+    jit.branch32(CCallHelpers::NotEqual, index, count).linkTo(nextDouble, &jit);
     jit.ret();
 
     isLeftToOperation.link(&jit);
