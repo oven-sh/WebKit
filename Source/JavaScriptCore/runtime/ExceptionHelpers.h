@@ -68,6 +68,9 @@ String errorDescriptionForValue(JSGlobalObject*, JSValue);
 JS_EXPORT_PRIVATE Exception* throwOutOfMemoryError(JSGlobalObject*, ThrowScope&);
 JS_EXPORT_PRIVATE Exception* throwOutOfMemoryError(JSGlobalObject*, ThrowScope&, const String&);
 JS_EXPORT_PRIVATE Exception* throwStackOverflowError(JSGlobalObject*, ThrowScope&);
+#if USE(BUN_JSC_ADDITIONS)
+Exception* throwNonStaticCodeError(JSGlobalObject*, ThrowScope&);
+#endif
 
 #if ASSERT_ENABLED
 

@@ -414,8 +414,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 #if USE(BUN_JSC_ADDITIONS)
     // Nothing runs without a CodeBlock, and this is the only caller of newCodeBlockFor().
     if (Options::disallowNonStaticCode() && source().provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
-        JSGlobalObject* globalObject = scope->realm();
-        throwException(globalObject, throwScope, createEvalError(globalObject, "Code generation from strings disallowed for this context"_s));
+        throwNonStaticCodeError(scope->realm(), throwScope);
         return;
     }
 #endif
