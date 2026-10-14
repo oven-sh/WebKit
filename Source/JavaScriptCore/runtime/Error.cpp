@@ -267,14 +267,19 @@ JSObject* addErrorInfo(VM& vm, JSObject* error, int line, const SourceCode& sour
         if (!sourceURL.isEmpty()) {
             errorInstance->setSourceURL(sourceURL);
         }
+
+        if (hostComputes) {
+            // The host's formatter can run user code (Error.prepareStackTrace), so it can throw. The caller made this
+            // error to throw it, or to hand it to someone who does, and expects no exception from here: what the
+            // formatter threw is dropped, short of a termination.
+            auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            errorInstance->materializeErrorInfoIfNeeded(vm);
+            catchScope.clearExceptionExceptTermination();
+            return errorInstance;
+        }
 #endif
 
         errorInstance->materializeErrorInfoIfNeeded(vm);
-
-#if USE(BUN_JSC_ADDITIONS)
-        if (hostComputes)
-            return errorInstance;
-#endif
     }
 
     // Without such a host, materializing takes line and sourceURL from the top frame of the stack (the caller of eval or
