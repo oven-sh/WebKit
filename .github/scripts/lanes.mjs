@@ -68,18 +68,21 @@ const variants = {
   "debug": { buildType: "Debug" },
   "asan": { buildType: "Release", sanitizers: SANITIZERS },
   "debug-asan": { buildType: "Debug", sanitizers: SANITIZERS },
-  // For fuzzing. Each is the variant bun would link without it ("lto", or "release" when bun has assertions on, which
-  // turns its LTO off) with assertions, coverage or both added and nothing else changed, so that what is fuzzed is as
-  // close as it can be to what ships. `assertions` is the assertions of the asan variants without the sanitizers.
-  // `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls __sanitizer_cov_trace_pc_guard on every
-  // edge. The libraries leave that for bun to define, and jsc takes --reprl.
+  // For fuzzing. Each is "release" with assertions, coverage or both added and nothing else changed, so that what is
+  // fuzzed is as close as it can be to what ships. `assertions` is the assertions of the asan variants without the
+  // sanitizers. `coverage` is ENABLE_FUZZILLI: JavaScriptCore (not WTF or bmalloc) calls
+  // __sanitizer_cov_trace_pc_guard on every edge. The libraries leave that for bun to define, and jsc takes --reprl.
+  //
+  // Not "lto": coverage does not link with ThinLTO ("undefined symbol: __sancov_gen_.1"). Of an inline function that
+  // several modules have, ThinLTO keeps one copy and makes the others available_externally, their guards included,
+  // which are private to the module. Inlining such a copy leaves a reference to guards that nothing defines.
   "assertions": { buildType: "Release", mimalloc: true, assertions: true },
+  "coverage": { buildType: "Release", mimalloc: true, coverage: true },
   "assertions-coverage": { buildType: "Release", mimalloc: true, assertions: true, coverage: true },
-  "lto-coverage": { buildType: "Release", mimalloc: true, lto: true, coverage: true },
 };
 const NO_ASAN = ["release", "lto", "debug"];
 const ALL = [...NO_ASAN, "asan", "debug-asan"];
-const FUZZING = ["assertions", "assertions-coverage", "lto-coverage"];
+const FUZZING = ["assertions", "coverage", "assertions-coverage"];
 
 // Each platform:
 //   label(arch)     the label of the release variant; the other variants append -<variant>
