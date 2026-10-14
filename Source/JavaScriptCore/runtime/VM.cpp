@@ -524,7 +524,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
         enableControlFlowProfiler();
 #if ENABLE(SAMPLING_PROFILER)
     if (Options::useSamplingProfiler()) {
-        setShouldBuildPCToCodeOriginMapping();
         Ref<Stopwatch> stopwatch = Stopwatch::create();
         stopwatch->start();
         ensureSamplingProfiler(WTF::move(stopwatch));
@@ -807,6 +806,8 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
     if (!m_samplingProfiler) {
+        // It is how the profiler tells where in a JIT frame the PC is, and in which inlined function.
+        setShouldBuildPCToCodeOriginMapping();
         lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
         requestEntryScopeService(EntryScopeService::SamplingProfiler);
     }
