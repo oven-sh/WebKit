@@ -206,8 +206,13 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
 {
     DerivedContextType derivedContextType = executable->derivedContextType();
     bool isArrowFunctionContext = executable->isArrowFunctionContext();
+    // Imports of live exports link as Dynamic instead of ModuleVar, and Baseline code cached on the UnlinkedCodeBlock bakes in
+    // the resolve type. So the set of live imports is part of the key: only records with the same set share unlinked code.
+    String liveImports;
+    if constexpr (std::is_same_v<ExecutableType, ModuleProgramExecutable>)
+        liveImports = executable->liveImports();
     SourceCodeKey key(
-        source, String(), CacheTypes<UnlinkedCodeBlockType>::codeType, executable->lexicallyScopedFeatures(), scriptMode,
+        source, liveImports, CacheTypes<UnlinkedCodeBlockType>::codeType, executable->lexicallyScopedFeatures(), scriptMode,
         derivedContextType, evalContextType, isArrowFunctionContext, codeGenerationMode,
         std::nullopt);
     // Code of a module whose loader has a module scope of its own resolves that scope's
@@ -220,7 +225,13 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
         privateToExecutable = !executable->resolvesInGlobalScope();
     // (Nor is it registered for being dropped and decoded again: what is remembered for that is remembered per payload
     // and provider, which the shared code of the same source may have as well.)
-    UnlinkedCodeBlockType* unlinkedCodeBlock = privateToExecutable ? m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No) : m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key);
+    // The provider's cached bytecode belongs to the variant with no live imports. Other variants must not read or overwrite it.
+    bool canUseProviderBytecode = liveImports.isNull();
+    UnlinkedCodeBlockType* unlinkedCodeBlock = nullptr;
+    if (!privateToExecutable)
+        unlinkedCodeBlock = m_sourceCode.findCacheAndUpdateAge<UnlinkedCodeBlockType>(vm, key, canUseProviderBytecode ? CodeCacheMap::FetchFromDisk::Yes : CodeCacheMap::FetchFromDisk::No);
+    else if (canUseProviderBytecode)
+        unlinkedCodeBlock = m_sourceCode.fetchFromDisk<UnlinkedCodeBlockType>(vm, key, Decoder::RecoverableCode::No);
     if (unlinkedCodeBlock && Options::useCodeCache()) {
         recordParseFromUnlinkedCodeBlock(executable, source, unlinkedCodeBlock);
         return unlinkedCodeBlock;
@@ -231,12 +242,14 @@ UnlinkedCodeBlockType* CodeCache::getUnlinkedGlobalCodeBlock(VM& vm, ExecutableT
     if (unlinkedCodeBlock && Options::useCodeCache() && !privateToExecutable) {
         m_sourceCode.addCache(key, SourceCodeValue(vm, unlinkedCodeBlock, m_sourceCode.age()));
 
-        key.source().provider().cacheBytecode([&] {
-            return encodeCodeBlock(vm, key, unlinkedCodeBlock);
-        });
+        if (canUseProviderBytecode) {
+            key.source().provider().cacheBytecode([&] {
+                return encodeCodeBlock(vm, key, unlinkedCodeBlock);
+            });
 #if USE(BUN_JSC_ADDITIONS)
-        key.source().provider().didGenerateUnlinkedCodeBlock(vm, key, unlinkedCodeBlock);
+            key.source().provider().didGenerateUnlinkedCodeBlock(vm, key, unlinkedCodeBlock);
 #endif
+        }
     }
 
     return unlinkedCodeBlock;
@@ -260,7 +273,7 @@ UnlinkedModuleProgramCodeBlock* CodeCache::getUnlinkedModuleProgramCodeBlock(VM&
 void CodeCache::forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable* executable, const SourceCode& source, UnlinkedModuleProgramCodeBlock* unlinkedCodeBlock)
 {
     SourceCodeKey key(
-        source, String(), SourceCodeType::ModuleType, executable->lexicallyScopedFeatures(), JSParserScriptMode::Module,
+        source, executable->liveImports(), SourceCodeType::ModuleType, executable->lexicallyScopedFeatures(), JSParserScriptMode::Module,
         executable->derivedContextType(), EvalContextType::None, executable->isArrowFunctionContext(), unlinkedCodeBlock->codeGenerationMode(),
         std::nullopt);
     m_sourceCode.removeIfHolds(key, unlinkedCodeBlock);
