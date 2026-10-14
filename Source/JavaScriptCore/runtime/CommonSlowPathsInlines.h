@@ -121,6 +121,30 @@ inline void tryCachePutToScopeGlobal(
     }
 }
 
+// The property lookup for get_from_scope's slow paths. scopeObject is what resolve_scope returned.
+template<typename CallbackWhenNoException>
+ALWAYS_INLINE typename std::invoke_result<CallbackWhenNoException, bool, PropertySlot&>::type getPropertySlotForGetFromScope(JSGlobalObject* globalObject, JSObject* scopeObject, PropertyName propertyName, CallbackWhenNoException callback)
+{
+#if USE(BUN_JSC_ADDITIONS)
+    // A Proxy's [[Get]] always finds the property. So with a Proxy in the global object's prototype chain, a global that
+    // doesn't exist would read as undefined instead of throwing a ReferenceError. Ask [[HasProperty]] first, as GetBindingValue does.
+    bool hasProxy = false;
+    for (JSValue prototype = scopeObject->isGlobalObject() ? scopeObject->getPrototypeDirect() : jsNull(); prototype.isObject() && !hasProxy; prototype = asObject(prototype)->getPrototypeDirect())
+        hasProxy = asObject(prototype)->type() == ProxyObjectType;
+    if (hasProxy) [[unlikely]] {
+        VM& vm = getVM(globalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        bool found = scopeObject->hasProperty(globalObject, propertyName);
+        RETURN_IF_EXCEPTION(scope, { });
+        if (found)
+            RELEASE_AND_RETURN(scope, scopeObject->getPropertySlot(globalObject, propertyName, callback));
+        PropertySlot slot(scopeObject, PropertySlot::InternalMethodType::Get);
+        RELEASE_AND_RETURN(scope, callback(false, slot));
+    }
+#endif
+    return scopeObject->getPropertySlot(globalObject, propertyName, callback);
+}
+
 inline void tryCacheGetFromScopeGlobal(
     JSGlobalObject* globalObject, CodeBlock* codeBlock, VM& vm, OpGetFromScope& bytecode, JSObject* scope, PropertySlot& slot, const Identifier& ident)
 {
