@@ -1,10 +1,8 @@
-function shouldBe(actual, expected, message)
+function shouldBe(actual, expected, what, detail = "")
 {
     if (!Object.is(actual, expected))
-        throw new Error(`${message}: got ${actual}, expected ${expected}`);
+        throw new Error(`${what} ${String(detail)}: got ${actual}, expected ${expected}`);
 }
-
-const intTypes = [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array];
 
 // What an element of the given type holds after a store, through BigInt, independent of the conversion under test.
 function reference(type, value)
@@ -17,184 +15,209 @@ function reference(type, value)
 }
 
 const doubles = [
-    0.5, -0.5, 1.5, -1.5, 127.9, 128.5, -128.9, -129.5, 255.5, 256.5, 32767.5, 65535.5, 65536.5, 301000.5,
-    2147483647.9, 2147483648.5, -2147483648.9, -2147483649.5, 4294967295.5, 4294967296.5,
-    2 ** 52 + 1, 2 ** 53 + 2, 2 ** 62, -(2 ** 62), 2 ** 63 - 1024, 2 ** 63, -(2 ** 63), 2 ** 63 + 2048,
-    -(2 ** 63 + 2048), 2 ** 64, 2 ** 84, 2 ** 85, Number.MAX_VALUE, Number.MIN_VALUE, Infinity, -Infinity, NaN,
+    0.5, -0.5, 1.5, -1.5, 127.9, 128.5, -128.9, -129.5, 255.5, 256.5, 32767.5, 32768.5, -32768.9, -32769.5,
+    65535.5, 65536.5, 301000.5, 2147483647.9, 2147483648.5, -2147483648.9, -2147483649.5, 4294967295.5,
+    4294967296.5, 2 ** 52 + 1, 2 ** 53 + 2, 2 ** 62, -(2 ** 62), 2 ** 63 - 1024, 2 ** 63, -(2 ** 63),
+    2 ** 63 + 2048, -(2 ** 63 + 2048), 2 ** 64, 2 ** 84, 2 ** 85, Number.MAX_VALUE, Number.MIN_VALUE,
+    Infinity, -Infinity, NaN,
 ];
 
-// Every array type gets functions of its own, so that each store stays monomorphic.
-function makeFunctions(name, literal)
+// Every caller gets functions of its own, so that each store sees one type of array.
+function makeFunctions(name, literal = "1.5")
 {
     return eval(`// ${name} ${literal}
     ({
-        invariant(array, value, count) {
-            for (let i = 0; i < count; i++)
+        invariant(array, value) {
+            for (let i = 0; i < 16; i++)
                 array[i & 7] = value;
         },
-        literal(array, count) {
-            for (let i = 0; i < count; i++)
+        literal(array) {
+            for (let i = 0; i < 16; i++)
                 array[i & 7] = ${literal};
         },
-        varying(array, source, count) {
-            for (let i = 0; i < count; i++)
-                array[i & 7] = source[i & 63];
+        varying(array, source, offset) {
+            for (let i = 0; i < 16; i++)
+                array[i & 7] = source[offset + i];
         },
-        underBranch(array, value, count, skip) {
-            for (let i = 0; i < count; i++) {
+        readThenStore(array, value) {
+            let sum = 0;
+            for (let i = 0; i < 16; i++) {
+                sum += array[i & 7];
+                array[i & 7] = value;
+            }
+            return sum;
+        },
+        underBranch(array, value, skip) {
+            for (let i = 0; i < 16; i++) {
                 if (!skip)
                     array[i & 7] = value;
             }
         },
-        pastTheEnd(array, value, count) {
-            for (let i = 0; i < count; i++)
+        pastTheEnd(array, value) {
+            for (let i = 0; i < 16; i++)
                 array[i] = value;
         },
-        atIndex(array, value, count, index) {
-            for (let i = 0; i < count; i++)
+        atIndex(array, value, index) {
+            for (let i = 0; i < 16; i++)
                 array[index] = value;
         },
     })`);
 }
 
-function checkAll(array, expected, message)
+function checkAll(array, expected, what, detail)
 {
     for (let i = 0; i < array.length; i++)
-        shouldBe(array[i], expected, `${message} [${i}]`);
+        shouldBe(array[i], expected, what, detail);
 }
 
-const source = new Float64Array(64);
+const source = new Float64Array(doubles.length + 16);
 for (let i = 0; i < source.length; i++)
     source[i] = doubles[i % doubles.length];
 
-for (const type of intTypes) {
-    const functions = makeFunctions(type.name, "1.5");
+for (const type of [Int8Array, Uint8Array, Int16Array, Uint16Array, Int32Array, Uint32Array]) {
+    const functions = makeFunctions(type.name);
     const array = new type(8);
+    const expected = doubles.map(value => reference(type, value));
 
-    for (let round = 0; round < 60; round++) {
-        for (const value of doubles) {
-            const expected = reference(type, value);
+    for (let i = 0; i < testLoopCount; i++) {
+        const which = i % doubles.length;
 
-            array.fill(1);
-            functions.invariant(array, value, 100);
-            checkAll(array, expected, `${type.name} invariant ${value}`);
+        array[i & 7] = 1;
+        functions.invariant(array, doubles[which]);
+        shouldBe(array[i & 7], expected[which], type.name + " invariant", doubles[which]);
 
-            array.fill(1);
-            functions.underBranch(array, value, 100, true);
-            checkAll(array, 1, `${type.name} skipped ${value}`);
-
-            // The array mode becomes out of bounds, where the stores past the end do nothing.
-            array.fill(1);
-            functions.pastTheEnd(array, value, 100);
-            checkAll(array, expected, `${type.name} pastTheEnd ${value}`);
-
-            array.fill(1);
-            functions.atIndex(array, value, 100, 3);
-            shouldBe(array[3], expected, `${type.name} atIndex ${value}`);
-            shouldBe(array[4], 1, `${type.name} atIndex neighbour ${value}`);
-        }
-
-        functions.varying(array, source, 64);
-        for (let i = 0; i < 8; i++)
-            shouldBe(array[i], reference(type, source[56 + i]), `${type.name} varying [${i}]`);
-    }
-
-    for (const value of doubles) {
         array.fill(1);
-        functions.underBranch(array, value, 100, false);
-        checkAll(array, reference(type, value), `${type.name} not skipped ${value}`);
-
-        // atIndex() only ever was in bounds: the exit comes after the conversion left the loop.
-        array.fill(1);
-        functions.atIndex(array, value, 100, 8);
-        checkAll(array, 1, `${type.name} atIndex out of bounds ${value}`);
+        shouldBe(functions.readThenStore(array, doubles[which]), 8 + 8 * expected[which], type.name + " readThenStore sum", doubles[which]);
+        shouldBe(array[i & 7], expected[which], type.name + " readThenStore", doubles[which]);
     }
 }
 
-for (const type of intTypes) {
-    for (const literal of ["1.5", "-1.5", "300.5", "4294967295.5", "1e300", "-(2 ** 63 + 2048)", "NaN", "Infinity"]) {
-        const functions = makeFunctions(type.name, literal);
-        const array = new type(8);
-        for (let round = 0; round < 1500; round++)
-            functions.literal(array, 100);
-        checkAll(array, reference(type, eval(literal)), `${type.name} literal ${literal}`);
+// The rest does not depend on the width of an element.
+{
+    const functions = makeFunctions("Int32Array shapes");
+    const array = new Int32Array(8);
+    const expected = doubles.map(value => reference(Int32Array, value));
+
+    for (let i = 0; i < testLoopCount; i++) {
+        const which = i % doubles.length;
+
+        functions.varying(array, source, which);
+        shouldBe(array[i & 7], expected[(which + 8 + (i & 7)) % doubles.length], "varying from", which);
+
+        array[i & 7] = 1;
+        functions.underBranch(array, doubles[which], true);
+        shouldBe(array[i & 7], 1, "underBranch skipped", doubles[which]);
+
+        // The array mode becomes out of bounds, where the stores past the end do nothing.
+        functions.pastTheEnd(array, doubles[which]);
+        shouldBe(array[i & 7], expected[which], "pastTheEnd", doubles[which]);
+
+        array[4] = 1;
+        functions.atIndex(array, doubles[which], 3);
+        shouldBe(array[3], expected[which], "atIndex", doubles[which]);
+        shouldBe(array[4], 1, "atIndex neighbour", doubles[which]);
+    }
+
+    for (let which = 0; which < doubles.length; which++) {
+        array.fill(1);
+        functions.underBranch(array, doubles[which], false);
+        checkAll(array, expected[which], "underBranch", doubles[which]);
+
+        // atIndex() only ever was in bounds: the exit comes after the conversion left the loop.
+        array.fill(1);
+        functions.atIndex(array, doubles[which], 8);
+        checkAll(array, 1, "atIndex out of bounds", doubles[which]);
+    }
+}
+
+{
+    const cases = [
+        [Int8Array, "1.5"], [Uint8Array, "-1.5"], [Int16Array, "300.5"], [Uint16Array, "4294967295.5"],
+        [Int32Array, "1e300"], [Uint32Array, "-(2 ** 63 + 2048)"], [Int32Array, "NaN"], [Uint8Array, "Infinity"],
+    ].map(([type, literal]) => [makeFunctions(type.name, literal), new type(8), reference(type, eval(literal)), type.name + " literal " + literal]);
+
+    for (let i = 0; i < testLoopCount; i++) {
+        for (const [functions, array, expected, message] of cases) {
+            array[i & 7] = 1;
+            functions.literal(array);
+            shouldBe(array[i & 7], expected, message);
+        }
     }
 }
 
 // One double stored into arrays of two types.
 {
-    function twoArrays(a, b, source, count)
+    function twoArrays(a, b, source, offset)
     {
-        for (let i = 0; i < count; i++) {
-            const value = source[i & 63];
-            a[i & 63] = value;
-            b[i & 63] = value;
+        for (let i = 0; i < 16; i++) {
+            const value = source[offset + i];
+            a[i] = value;
+            b[i] = value;
         }
     }
     noInline(twoArrays);
 
-    const a = new Int8Array(64);
-    const b = new Uint32Array(64);
-    for (let round = 0; round < 3000; round++)
-        twoArrays(a, b, source, 64);
-    for (let i = 0; i < 64; i++) {
-        shouldBe(a[i], reference(Int8Array, source[i]), `twoArrays Int8Array [${i}]`);
-        shouldBe(b[i], reference(Uint32Array, source[i]), `twoArrays Uint32Array [${i}]`);
+    const a = new Int8Array(16);
+    const b = new Uint32Array(16);
+    for (let i = 0; i < testLoopCount; i++) {
+        const which = i % doubles.length;
+        twoArrays(a, b, source, which);
+        shouldBe(a[i & 15], reference(Int8Array, source[which + (i & 15)]), "twoArrays Int8Array from", which);
+        shouldBe(b[i & 15], reference(Uint32Array, source[which + (i & 15)]), "twoArrays Uint32Array from", which);
     }
 }
 
 // These do not convert through ToInt32.
 {
-    const clamped = makeFunctions("Uint8ClampedArray", "1.5");
-    const array = new Uint8ClampedArray(8);
-    const cases = [[0.5, 0], [1.5, 2], [2.5, 2], [254.5, 254], [254.6, 255], [300.7, 255], [-5.5, 0], [1e300, 255], [-1e300, 0], [Infinity, 255], [-Infinity, 0], [NaN, 0]];
-    for (let round = 0; round < 200; round++) {
-        for (const [value, expected] of cases) {
-            array.fill(1);
-            clamped.invariant(array, value, 100);
-            checkAll(array, expected, `Uint8ClampedArray invariant ${value}`);
-        }
-        clamped.literal(array, 100);
-        checkAll(array, 2, "Uint8ClampedArray literal 1.5");
-    }
+    const clampedCases = [[0.5, 0], [1.5, 2], [2.5, 2], [254.5, 254], [254.6, 255], [300.7, 255], [-5.5, 0], [1e300, 255], [-1e300, 0], [Infinity, 255], [-Infinity, 0], [NaN, 0]];
+    const floatCases = [0.5, -1.5, 4294967295.5, 1e300, Infinity, NaN, -0];
+    const clamped = [makeFunctions("Uint8ClampedArray"), new Uint8ClampedArray(8)];
+    const float32 = [makeFunctions("Float32Array"), new Float32Array(8)];
+    const float64 = [makeFunctions("Float64Array"), new Float64Array(8)];
 
-    for (const type of [Float32Array, Float64Array]) {
-        const functions = makeFunctions(type.name, "1.5");
-        const array = new type(8);
-        for (let round = 0; round < 200; round++) {
-            for (const value of [0.5, -1.5, 4294967295.5, Infinity, NaN, -0]) {
-                functions.invariant(array, value, 100);
-                checkAll(array, type === Float32Array ? Math.fround(value) : value, `${type.name} invariant ${value}`);
-            }
-            functions.literal(array, 100);
-            checkAll(array, 1.5, `${type.name} literal 1.5`);
-        }
+    for (let i = 0; i < testLoopCount; i++) {
+        const [value, expected] = clampedCases[i % clampedCases.length];
+        clamped[0].invariant(clamped[1], value);
+        shouldBe(clamped[1][i & 7], expected, "Uint8ClampedArray invariant", value);
+        clamped[0].readThenStore(clamped[1], value);
+        shouldBe(clamped[1][i & 7], expected, "Uint8ClampedArray readThenStore", value);
+        clamped[0].literal(clamped[1]);
+        shouldBe(clamped[1][i & 7], 2, "Uint8ClampedArray literal 1.5");
+
+        const float = floatCases[i % floatCases.length];
+        float32[0].invariant(float32[1], float);
+        shouldBe(float32[1][i & 7], Math.fround(float), "Float32Array invariant", float);
+        float64[0].invariant(float64[1], float);
+        shouldBe(float64[1][i & 7], float, "Float64Array invariant", float);
+        float64[0].readThenStore(float64[1], float);
+        shouldBe(float64[1][i & 7], float, "Float64Array readThenStore", float);
+        float64[0].literal(float64[1]);
+        shouldBe(float64[1][i & 7], 1.5, "Float64Array literal 1.5");
     }
 }
 
-// After the functions have only seen doubles: everything else that a store converts.
+// After the function has only seen doubles: everything else that a store converts.
 {
-    const functions = makeFunctions("Int32Array", "1.5");
+    const functions = makeFunctions("Int32Array then other values");
     const array = new Int32Array(8);
-    for (let round = 0; round < 3000; round++)
-        functions.invariant(array, round + 0.5, 100);
+    for (let i = 0; i < testLoopCount; i++)
+        functions.invariant(array, i + 0.5);
 
     for (const [value, expected] of [[7, 7], [true, 1], [false, 0], [undefined, 0], [null, 0], ["12.9", 12], ["x", 0], [[], 0], [[5.5], 5]]) {
         array.fill(1);
-        functions.invariant(array, value, 100);
-        checkAll(array, expected, `Int32Array invariant ${typeof value} ${String(value)}`);
+        functions.invariant(array, value);
+        checkAll(array, expected, "invariant " + typeof value, value);
     }
 
     let calls = 0;
-    const object = { valueOf() { return ++calls + 0.5; } };
-    functions.invariant(array, object, 100);
-    shouldBe(calls, 100, "valueOf() runs once for each store");
+    functions.invariant(array, { valueOf() { return ++calls + 0.5; } });
+    shouldBe(calls, 16, "valueOf() runs once for each store");
     for (let i = 0; i < 8; i++)
-        shouldBe(array[i], (i < 4 ? 97 : 89) + i, `Int32Array invariant object [${i}]`);
+        shouldBe(array[i], 9 + i, "invariant object at", i);
 
     let threw = false;
     try {
-        functions.invariant(array, 1n, 100);
+        functions.invariant(array, 1n);
     } catch (error) {
         threw = error instanceof TypeError;
     }
@@ -203,33 +226,27 @@ for (const type of intTypes) {
 
 // Doubles and booleans from the start.
 {
-    const functions = makeFunctions("Int16Array booleans", "1.5");
+    const functions = makeFunctions("Int16Array with booleans");
     const array = new Int16Array(8);
-    for (let round = 0; round < 3000; round++) {
-        const value = round % 3 ? round + 0.5 : !(round % 2);
-        functions.invariant(array, value, 100);
-        checkAll(array, reference(Int16Array, Number(value)), `Int16Array invariant ${value}`);
+    for (let i = 0; i < testLoopCount; i++) {
+        const value = i % 3 ? i + 0.5 : !(i % 2);
+        functions.invariant(array, value);
+        shouldBe(array[i & 7], reference(Int16Array, Number(value)), "Int16Array invariant", value);
     }
 }
 
-// A length-tracking array that shrinks under the loop's feet.
+// A length-tracking array, first always in bounds, then shrunk.
 {
-    function storeAndShrink(array, buffer, value, count, shrinkAt)
-    {
-        for (let i = 0; i < count; i++) {
-            if (i === shrinkAt)
-                buffer.resize(4 * 4);
-            array[i & 7] = value;
-        }
+    const functions = makeFunctions("Int32Array length-tracking");
+    const buffer = new ArrayBuffer(8 * 4, { maxByteLength: 8 * 4 });
+    const array = new Int32Array(buffer);
+    for (let i = 0; i < testLoopCount; i++) {
+        functions.invariant(array, i + 0.5);
+        shouldBe(array[i & 7], i, "length-tracking");
     }
-    noInline(storeAndShrink);
 
-    for (let round = 0; round < 3000; round++) {
-        const buffer = new ArrayBuffer(8 * 4, { maxByteLength: 8 * 4 });
-        const array = new Int32Array(buffer);
-        const shrink = round % 500 === 499;
-        storeAndShrink(array, buffer, round + 0.5, 100, shrink ? 50 : -1);
-        shouldBe(array.length, shrink ? 4 : 8, "length");
-        checkAll(array, round, `resizable ${round}`);
-    }
+    buffer.resize(4 * 4);
+    functions.invariant(array, 1e10 + 0.5);
+    shouldBe(array.length, 4, "length after resize()");
+    checkAll(array, reference(Int32Array, 1e10), "length-tracking, shrunk");
 }

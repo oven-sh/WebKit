@@ -151,6 +151,10 @@ private:
             }
             break;
         }
+
+        case PutByValDirectResolved:
+            lowerIntTypedArrayStoreOperand();
+            break;
             
         default:
             break;
@@ -211,7 +215,8 @@ private:
     }
 
     // Inside the store, the conversion of a double is out of reach of every DFG phase, and B3 cannot move
-    // its branch. It comes after the bounds check, whose exit is the last thing to need the double.
+    // its branch. Ahead of the bounds check, whose exit needs the double, it would keep the double alive
+    // across its slow path call.
     void lowerIntTypedArrayStoreOperand()
     {
         TypedArrayType type = m_node->arrayMode().typedArrayType();
