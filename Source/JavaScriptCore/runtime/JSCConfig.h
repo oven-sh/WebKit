@@ -58,6 +58,11 @@ struct Config {
     // embedders that expose their own configuration surface; must be called before
     // JSC::initialize().
     JS_EXPORT_PRIVATE static void NODELETE disableEnvironmentOptions();
+#if USE(BUN_JSC_ADDITIONS)
+    // Whether `source` is all of a text embedded in the executable and `bytecode`, if there is any, the cached bytecode embedded for that text. For Options::disallowNonEmbeddedCode().
+    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
+    JS_EXPORT_PRIVATE static void NODELETE setIsEmbeddedCodeCallback(IsEmbeddedCodeCallback);
+#endif
     static void finalize() { WTF::Config::finalize(); }
 
     static void configureForTesting()
@@ -121,8 +126,6 @@ struct Config {
     StopTheWorldCallback JSC_CONFIG_METHOD(memoryDebuggerStopTheWorld);
 #if USE(BUN_JSC_ADDITIONS)
     StopTheWorldCallback JSC_CONFIG_METHOD(jsDebuggerStopTheWorld);
-    // Whether `source` is all of a text embedded in the executable and `bytecode`, if there is any, the cached bytecode embedded for that text. For Options::disallowNonEmbeddedCode().
-    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source, std::span<const uint8_t> bytecode, size_t bytecodeEntryOffset);
     IsEmbeddedCodeCallback JSC_CONFIG_METHOD(isEmbeddedCode);
 #endif
 

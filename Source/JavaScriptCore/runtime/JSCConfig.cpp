@@ -46,4 +46,12 @@ void Config::disableEnvironmentOptions()
     g_jscConfig.environmentOptionsDisabled = true;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Config::setIsEmbeddedCodeCallback(IsEmbeddedCodeCallback callback)
+{
+    RELEASE_ASSERT(!g_jscConfig.isPermanentlyFrozen());
+    g_jscConfig.isEmbeddedCode = callback;
+}
+#endif
+
 } // namespace JSC
