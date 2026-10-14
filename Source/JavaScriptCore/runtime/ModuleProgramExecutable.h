@@ -54,13 +54,15 @@ public:
     // What an imported binding read by this executable's code resolves to: the
     // exporting module's source (whose text fixes the binding's ScopeOffset) and the
     // binding's name there, or for exporters that are not source text modules the
-    // ScopeOffset itself; and the import slot the code reads the exporter from.
+    // ScopeOffset itself; and the import slot the code reads the exporter from. A live export
+    // (AbstractModuleRecord::hasLiveExports) isn't read from a slot, so it has neither a source nor an offset.
     struct ImportedBinding {
         RefPtr<UniquedStringImpl> localName;
         RefPtr<SourceProvider> exporterSource;
         RefPtr<UniquedStringImpl> exporterLocalName;
         unsigned offset { 0 };
         unsigned importSlot { 0 };
+        bool exporterHasLiveExports { false };
         bool operator==(const ImportedBinding&) const;
     };
     using ImportedBindings = Vector<ImportedBinding>;
@@ -69,7 +71,8 @@ public:
     // moduleScopeSymbolTables: the symbol tables of the lexical environments between
     // the module environment and the global lexical environment (JSModuleLoader::moduleScope);
     // linked code embeds their variables' offsets too.
-    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker = nullptr, const Vector<SymbolTable*>& moduleScopeSymbolTables = { });
+    // liveImports: see liveImports().
+    JS_EXPORT_PRIVATE static ModuleProgramExecutable* tryCreate(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker = nullptr, const Vector<SymbolTable*>& moduleScopeSymbolTables = { }, const String& liveImports = { });
 
     static void destroy(JSCell*);
 
@@ -129,6 +132,10 @@ public:
     bool hasModuleScopeSymbolTables(const Vector<SymbolTable*>&) const;
     // Whether the module environment is created directly in the global lexical environment (JSModuleLoader::moduleScope).
     bool resolvesInGlobalScope() const { return m_moduleScopeSymbolTables.isEmpty(); }
+    // Local names of the imports that resolve to live exports, each followed by a comma. Null if there are none. These link as
+    // Dynamic where another record of the same source links them as ModuleVar, and Baseline code cached on the UnlinkedCodeBlock
+    // bakes in the resolve type. So this is part of the SourceCodeKey (CodeCache::getUnlinkedGlobalCodeBlock).
+    const String& liveImports() const LIFETIME_BOUND { return m_liveImports; }
 
     TemplateObjectMap& ensureTemplateObjectMap(VM&);
 
@@ -154,7 +161,7 @@ private:
     friend class ExecutableBase;
     friend class ScriptExecutable;
 
-    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables);
+    ModuleProgramExecutable(JSGlobalObject*, const SourceCode&, JSModuleRecord* linker, const Vector<SymbolTable*>& moduleScopeSymbolTables, const String& liveImports);
 
     WriteBarrier<SymbolTable> m_moduleEnvironmentSymbolTable;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionDeclarations;
@@ -166,6 +173,7 @@ private:
     std::optional<ImportedBindings> m_linkerImportedBindings;
     FixedVector<WriteBarrier<SymbolTable>> m_moduleScopeSymbolTables;
     FixedVector<WriteBarrier<FunctionExecutable>> m_functionExpressions;
+    String m_liveImports;
     unsigned m_recordsYetToFinishEvaluation { 0 };
     bool m_hasBeenEvaluated { false };
     bool m_hasReleasedUnlinkedCode { false };
