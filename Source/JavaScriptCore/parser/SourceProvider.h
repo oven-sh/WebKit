@@ -155,7 +155,8 @@ public:
         return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
     }
     // By where the characters of source() are, so no provider can declare it. Computed once: a provider's text does not change.
-    bool isBuiltinOrEmbedded();
+    // Not inlined: it would grow the frame of ScriptExecutable::prepareForExecutionImpl(), which calls it only with disallowNonEmbeddedCode on.
+    NEVER_INLINE bool isBuiltinOrEmbedded();
     bool isEmbeddedBytecode(const CachedBytecode&) const;
 #endif
 
