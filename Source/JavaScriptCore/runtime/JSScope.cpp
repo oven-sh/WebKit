@@ -154,6 +154,13 @@ static inline bool abstractAccess(JSGlobalObject* globalObject, JSScope* scope, 
             if (iter != symbolTable->end(locker)) {
                 SymbolTableEntry& entry = iter->value;
                 ASSERT(!entry.isNull());
+#if USE(BUN_JSC_ADDITIONS)
+                if (!globalObject->structure()->propertyAccessesAreCacheable()) {
+                    // A pointer to the variable is a cache too: this global object answers through getOwnPropertySlot() and put().
+                    op = ResolveOp(makeType(GlobalProperty, needsVarInjectionChecks), 0, nullptr, nullptr, nullptr, 0);
+                    return true;
+                }
+#endif
                 if (getOrPut == Put && entry.isReadOnly()) {
                     // We know the property will be at global scope, but we don't know how to cache it.
                     op = ResolveOp(Dynamic, 0, nullptr, nullptr, nullptr, 0);
