@@ -85,7 +85,7 @@ bool SourceProvider::isEmbeddedCode()
     if (m_isEmbeddedCode == TriState::Indeterminate) {
         auto bytes = sourceBytes();
         auto callback = g_jscConfig.isEmbeddedCode;
-        m_isEmbeddedCode = triState(BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(sourceURL(), bytes, { }, 0)));
+        m_isEmbeddedCode = triState(BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(bytes, { }, 0)));
     }
     return m_isEmbeddedCode == TriState::True;
 }
@@ -93,7 +93,7 @@ bool SourceProvider::isEmbeddedCode()
 bool SourceProvider::isEmbeddedBytecode(const CachedBytecode& bytecode) const
 {
     auto callback = g_jscConfig.isEmbeddedCode;
-    return callback && callback(sourceURL(), sourceBytes(), bytecode.span(), bytecode.entryOffset());
+    return callback && callback(sourceBytes(), bytecode.span(), bytecode.entryOffset());
 }
 #endif
 
