@@ -1095,6 +1095,14 @@ static void moduleLoadStep(JSGlobalObject* globalObject, VM& vm, ThrowScope& sco
     auto* loadPromise = uncheckedDowncast<JSPromise>(arguments[0]);
     auto status = static_cast<JSPromise::Status>(payload);
 
+#if USE(BUN_JSC_ADDITIONS)
+    // A rejected load never reaches finishLoadingImportedModule(), so drop the cached key here.
+    if (status == JSPromise::Status::Rejected) {
+        if (CyclicModuleRecord* referrer = context->referrer().getModule())
+            referrer->removeResolvedRequest(context->moduleRequest());
+    }
+#endif
+
     switch (context->step()) {
     case ModuleLoadingContext::Step::Main: {
         // modulePromise settled: on fulfillment, call loadRequestedModules and chain next step
