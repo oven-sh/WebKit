@@ -168,6 +168,11 @@ public:
 
     int64_t age() { return m_age; }
 
+#if USE(BUN_JSC_ADDITIONS)
+    size_t workingSetMaxEntriesLimit() const { return m_workingSetMaxEntries; }
+    void setWorkingSetMaxEntries(size_t entries) { m_workingSetMaxEntries = std::max(entries, workingSetMaxEntries); }
+#endif
+
     template<typename UnlinkedCodeBlockType>
     UnlinkedCodeBlockType* fetchFromDisk(VM& vm, const SourceCodeKey& key, Decoder::RecoverableCode recoverableCode = Decoder::RecoverableCode::Yes)
     {
@@ -217,7 +222,11 @@ private:
     static constexpr int64_t oldObjectSamplingMultiplier = 32;
 
     size_t numberOfEntries() const { return static_cast<size_t>(m_map.size()); }
+#if USE(BUN_JSC_ADDITIONS)
+    bool canPruneQuickly() const { return numberOfEntries() < m_workingSetMaxEntries; }
+#else
     bool canPruneQuickly() const { return numberOfEntries() < workingSetMaxEntries; }
+#endif
 
     void pruneSlowCase();
     void prune()
@@ -240,6 +249,9 @@ private:
     int64_t m_minCapacity;
     int64_t m_capacity;
     int64_t m_age;
+#if USE(BUN_JSC_ADDITIONS)
+    size_t m_workingSetMaxEntries { workingSetMaxEntries };
+#endif
 };
 
 // Caches top-level code such as <script>, window.eval(), new Function, and JSEvaluateScript().
@@ -258,6 +270,11 @@ public:
     void forgetUnlinkedModuleProgramCodeBlock(ModuleProgramExecutable*, const SourceCode&, UnlinkedModuleProgramCodeBlock*);
 
 #if USE(BUN_JSC_ADDITIONS)
+    // Raises the entry limit (never below the default). An embedder that loads the same N sources into one global object after
+    // another gets no hits once N is over the limit, because each global evicts the entries the next one needs.
+    size_t workingSetMaxEntries() const { return m_sourceCode.workingSetMaxEntriesLimit(); }
+    void setWorkingSetMaxEntries(size_t entries) { m_sourceCode.setWorkingSetMaxEntries(entries); }
+
     // Lets JSModuleRecord::liveImports() return early in a VM that has never created a record with live exports.
     bool hasModuleRecordWithLiveExports() const { return m_hasModuleRecordWithLiveExports; }
     void didCreateModuleRecordWithLiveExports() { m_hasModuleRecordWithLiveExports = true; }
