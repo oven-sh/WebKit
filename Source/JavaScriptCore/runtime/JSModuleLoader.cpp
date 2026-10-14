@@ -1470,6 +1470,10 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     promise->markAsHandled();
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasLiveExports = sourceCode.provider()->moduleHasLiveExports();
+    RELEASE_ASSERT(!hasLiveExports || sourceType == SourceProviderSourceType::Module || sourceType == SourceProviderSourceType::BunTranspiledModule || sourceType == SourceProviderSourceType::Synthetic);
+#endif
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
     case SourceProviderSourceType::WebAssembly:
@@ -1498,6 +1502,7 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     case SourceProviderSourceType::Synthetic: {
         SyntheticSourceProvider* syntheticSourceProvider = reinterpret_cast<SyntheticSourceProvider*>(sourceCode.provider());
         if (syntheticSourceProvider->isDeferred()) {
+            RELEASE_ASSERT(!hasLiveExports);
             auto* moduleRecord = SyntheticModuleRecord::createWithDeferredGenerator(globalObject, this, moduleKey, Ref { *syntheticSourceProvider });
             scope.release();
             promise->fulfill(vm, moduleRecord);
@@ -1509,7 +1514,8 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         JSObject* lazyExportsSource = syntheticSourceProvider->generate(globalObject, moduleKey, exportNames, args);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
-        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource);
+        auto lazyExports = hasLiveExports ? SyntheticModuleRecord::LazyExports::Live : SyntheticModuleRecord::LazyExports::ReadOnce;
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateWithExportNamesAndValues(globalObject, this, moduleKey, exportNames, args, lazyExportsSource, lazyExports);
         RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
         scope.release();
@@ -1517,6 +1523,8 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
         return promise;
     }
     case SourceProviderSourceType::BunTranspiledModule: {
+        if (hasLiveExports) [[unlikely]]
+            break;
         RELEASE_AND_RETURN(scope, uncheckedDowncast<JSPromise>(JSValue::decode(Bun__analyzeTranspiledModule(globalObject, this, moduleKey, sourceCode, promise))));
     }
 #endif
@@ -1553,6 +1561,8 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
 #if USE(BUN_JSC_ADDITIONS)
     size_t memoryCost = result.value()->sourceCode().memoryCost();
     vm.heap.reportExtraMemoryAllocated(result.value(), memoryCost);
+    if (hasLiveExports) [[unlikely]]
+        result.value()->setHasLiveExports();
 #endif
     promise->fulfill(vm, result.value());
     RELEASE_AND_RETURN(scope, promise);
