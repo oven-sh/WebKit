@@ -154,7 +154,7 @@ public:
         return text.is8Bit() ? asByteSpan(text.span8()) : asByteSpan(text.span16());
     }
     // Both answer by where the bytes are, so no provider can declare it. JSC's builtins are embedded code too.
-    bool isEmbeddedCode() const;
+    bool isEmbeddedCode();
     bool isEmbeddedBytecode(const CachedBytecode&) const;
 #endif
 
@@ -298,6 +298,9 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    TriState m_isEmbeddedCode { TriState::Indeterminate }; // Every function of a provider asks, and its text does not change.
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;

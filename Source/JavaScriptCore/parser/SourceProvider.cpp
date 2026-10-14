@@ -80,11 +80,14 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-bool SourceProvider::isEmbeddedCode() const
+bool SourceProvider::isEmbeddedCode()
 {
-    auto bytes = sourceBytes();
-    auto callback = g_jscConfig.isEmbeddedCode;
-    return BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(bytes, { }, 0));
+    if (m_isEmbeddedCode == TriState::Indeterminate) {
+        auto bytes = sourceBytes();
+        auto callback = g_jscConfig.isEmbeddedCode;
+        m_isEmbeddedCode = triState(BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(bytes, { }, 0)));
+    }
+    return m_isEmbeddedCode == TriState::True;
 }
 
 bool SourceProvider::isEmbeddedBytecode(const CachedBytecode& bytecode) const
