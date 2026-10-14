@@ -320,7 +320,7 @@ void compile(State& state, Safepoint::Result& safepointResult)
     collectIRDumpDebugInfo(state, graph, codeBlock);
     collectSourceCodeDumpDebugInfo(state, codeBlock);
 
-    // The VM may have started to want the map since FTL::State asked it, when the origins are not there to make one from.
+    // The flag can turn on after FTL::State read it; B3 then kept no origins to build the map from.
     if (state.proc->needsPCToOriginMap() && vm.shouldBuilderPCToCodeOriginMapping()) {
         B3::PCToOriginMap originMap = state.proc->releasePCToOriginMap();
         state.jitCode->common.m_pcToCodeOriginMap = makeUnique<PCToCodeOriginMap>(PCToCodeOriginMapBuilder(PCToCodeOriginMapBuilder::JSCodeOriginMap, vm, WTF::move(originMap)), *state.b3CodeLinkBuffer);

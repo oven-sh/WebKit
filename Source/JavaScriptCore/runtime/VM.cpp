@@ -806,7 +806,7 @@ RefPtr<VM> VM::tryCreate(HeapType heapType, WTF::RunLoop* runLoop)
 SamplingProfiler& VM::ensureSamplingProfiler(Ref<Stopwatch>&& stopwatch)
 {
     if (!m_samplingProfiler) {
-        // It is how the profiler tells where in a JIT frame the PC is, and in which inlined function.
+        // The profiler reads these maps to place the top frame's PC, inlined functions included.
         setShouldBuildPCToCodeOriginMapping();
         lazyInitialize(m_samplingProfiler, adoptRef(*new SamplingProfiler(*this, WTF::move(stopwatch))));
         requestEntryScopeService(EntryScopeService::SamplingProfiler);

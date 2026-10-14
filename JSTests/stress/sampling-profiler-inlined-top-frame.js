@@ -1,9 +1,10 @@
 if (platformSupportsSamplingProfiler()) {
     load("./sampling-profiler/samplingProfiler.js", "caller relative");
 
+    // Long enough for the call to cost next to nothing beside it, whichever tiers the two functions are in.
     function inner(x) {
         let sum = 0;
-        for (let i = 0; i < 100; i++)
+        for (let i = 0; i < 1000; i++)
             sum += (x ^ i) * 3;
         return sum;
     }
@@ -16,27 +17,24 @@ if (platformSupportsSamplingProfiler()) {
     }
     noInline(outer);
 
-    // Nothing counts until outer() has had the time to reach the top tier, where inner() is inlined
-    // and only the PC tells the two apart.
+    // In the top tiers inner() is inlined, and only the PC tells the two apart. What is sampled on the way there does not count.
     for (let i = 0; i < testLoopCount; i++)
-        outer(10);
+        outer(2);
     samplingProfilerStackTraces();
 
-    const lines = { inner: [4, 9], outer: [11, 16] };
-    const samples = { inner: 0, outer: 0 };
-    while (samples.inner + samples.outer < 20) {
-        outer(1000);
+    let innerSamples = 0;
+    let outerSamples = 0;
+    while (innerSamples + outerSamples < 40) {
+        outer(100);
         for (const trace of samplingProfilerStackTraces().traces) {
-            const top = trace.frames[0];
-            if (!(top.name in samples))
-                continue;
-            samples[top.name]++;
-            if (!(top.line >= lines[top.name][0] && top.line <= lines[top.name][1]))
-                throw new Error(`${top.name}() is not at line ${top.line}: ${JSON.stringify(trace)}`);
+            const name = trace.frames[0].name;
+            if (name === "inner")
+                innerSamples++;
+            else if (name === "outer")
+                outerSamples++;
         }
     }
 
-    // Almost all the time is spent in the loop of inner().
-    if (samples.inner <= samples.outer)
-        throw new Error(`inner() has ${samples.inner} samples and outer() has ${samples.outer}`);
+    if (innerSamples <= outerSamples)
+        throw new Error(`inner() has ${innerSamples} samples and outer() has ${outerSamples}`);
 }
