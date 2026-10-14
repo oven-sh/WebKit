@@ -412,7 +412,7 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    // All new code passes here on its way to a CodeBlock.
+    // Nothing runs without a CodeBlock, and this is the only caller of newCodeBlockFor().
     if (Options::disallowNonEmbeddedCode() && !source().provider()->isEmbeddedCode()) [[unlikely]] {
         throwNonEmbeddedCodeError(scope->realm(), throwScope, *source().provider());
         return;

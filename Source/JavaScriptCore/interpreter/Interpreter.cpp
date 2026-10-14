@@ -1082,12 +1082,6 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     if (vm.disallowVMEntryCount) [[unlikely]]
         return VM::checkVMEntryPermission();
 
-#if USE(BUN_JSC_ADDITIONS)
-    // Before the JSONP fast path, which makes no CodeBlock, and before the program's global declarations.
-    if (Options::disallowNonEmbeddedCode() && !source.provider()->isEmbeddedCode()) [[unlikely]]
-        return throwNonEmbeddedCodeError(globalObject, throwScope, *source.provider());
-#endif
-
     // First check if the "program" is actually just a JSON object. If so,
     // we'll handle the JSON object here. Else, we'll handle real JS code
     // below at failedJSONP.
@@ -1099,6 +1093,11 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     // frame on the stack in case the program does an eval via a setter.
     if (source.provider()->sourceTaintedOrigin() != SourceTaintedOrigin::Untainted)
         goto failedJSONP;
+#if USE(BUN_JSC_ADDITIONS)
+    // JSONP runs the program with no CodeBlock, so ScriptExecutable::prepareForExecutionImpl would not see it.
+    if (Options::disallowNonEmbeddedCode()) [[unlikely]]
+        goto failedJSONP;
+#endif
 
     if (programSource.isNull())
         return jsUndefined();

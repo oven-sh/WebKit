@@ -1470,16 +1470,6 @@ JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identi
     promise->markAsHandled();
 
     SourceProviderSourceType sourceType = sourceCode.provider()->sourceType();
-#if USE(BUN_JSC_ADDITIONS)
-    if (Options::disallowNonEmbeddedCode()) [[unlikely]] {
-        // Before the parse, so that what the module imports is not loaded. Every type but these four is parsed as JavaScript below.
-        bool isParsedAsJavaScript = sourceType != SourceProviderSourceType::WebAssembly && sourceType != SourceProviderSourceType::JSON && sourceType != SourceProviderSourceType::Text && sourceType != SourceProviderSourceType::Synthetic;
-        if (isParsedAsJavaScript && !sourceCode.provider()->isEmbeddedCode()) {
-            throwNonEmbeddedCodeError(globalObject, scope, *sourceCode.provider());
-            return promise->rejectWithCaughtException(vm, scope);
-        }
-    }
-#endif
     switch (sourceType) {
 #if ENABLE(WEBASSEMBLY)
     case SourceProviderSourceType::WebAssembly:
