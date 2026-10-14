@@ -32,7 +32,12 @@ namespace JSC {
 
 inline Structure* JSGlobalProxy::createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    // Indexed reads go to the target, so a hole in an array that inherits from this object has to ask it.
+    return Structure::create(vm, globalObject, prototype, TypeInfo(GlobalProxyType, StructureFlags), info(), NonArray | MayHaveIndexedAccessors);
+#else
     return Structure::create(vm, globalObject, prototype, TypeInfo(GlobalProxyType, StructureFlags), info());
+#endif
 }
 
 } // namespace JSC
