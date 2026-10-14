@@ -413,8 +413,9 @@ void ScriptExecutable::prepareForExecutionImpl(VM& vm, JSFunction* function, JSS
 
 #if USE(BUN_JSC_ADDITIONS)
     // Nothing runs without a CodeBlock, and this is the only caller of newCodeBlockFor().
-    if (Options::disallowNonEmbeddedCode() && !source().provider()->isEmbeddedCode()) [[unlikely]] {
-        throwNonEmbeddedCodeError(scope->realm(), throwScope, *source().provider());
+    if (Options::disallowNonStaticCode() && source().provider()->provenance() != SourceProvenance::Static) [[unlikely]] {
+        JSGlobalObject* globalObject = scope->realm();
+        throwException(globalObject, throwScope, createEvalError(globalObject, globalObject->evalDisabledErrorMessage()));
         return;
     }
 #endif

@@ -32,11 +32,6 @@
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/MakeString.h>
 
-#if USE(BUN_JSC_ADDITIONS)
-#include "BuiltinExecutables.h"
-#include "JSCConfig.h"
-#endif
-
 namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
@@ -50,6 +45,14 @@ SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& source
     , m_taintedness(taintedness)
 {
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), taintedness, startPosition, sourceType)
+{
+    m_provenance = provenance;
+}
+#endif
 
 SourceProvider::~SourceProvider() = default;
 
@@ -78,18 +81,6 @@ void SourceProvider::withSourceConcurrently(const ScopedLambda<void(StringView)>
 {
     function(source());
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-bool SourceProvider::isEmbeddedCode()
-{
-    if (m_isEmbeddedCode == TriState::Indeterminate) {
-        auto bytes = sourceBytes();
-        auto callback = g_jscConfig.isEmbeddedCode;
-        m_isEmbeddedCode = triState(BuiltinExecutables::isBuiltinSource(bytes) || (callback && callback(bytes)));
-    }
-    return m_isEmbeddedCode == TriState::True;
-}
-#endif
 
 void SourceProvider::lockUnderlyingBufferImpl() { }
 

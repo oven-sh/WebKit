@@ -77,10 +77,6 @@ SourceCode name##Source();
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
     static SourceCode defaultConstructorSourceCode(ConstructorKind);
-#if USE(BUN_JSC_ADDITIONS)
-    // Whether these are the very bytes of all the builtins or of a default constructor, not a copy of them.
-    static bool isBuiltinSource(std::span<const uint8_t> source);
-#endif
     UnlinkedFunctionExecutable* createDefaultConstructor(ConstructorKind, const Identifier& name, NeedsClassFieldInitializer, PrivateBrandRequirement);
 
     static UnlinkedFunctionExecutable* createExecutable(VM&, const SourceCode&, const Identifier&, ImplementationVisibility, ConstructorKind, ConstructAbility, InlineAttribute, NeedsClassFieldInitializer, PrivateBrandRequirement = PrivateBrandRequirement::None);

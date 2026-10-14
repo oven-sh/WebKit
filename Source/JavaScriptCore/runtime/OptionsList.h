@@ -95,13 +95,13 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, diskCachePayloadIsPersistentForTesting, false, Normal, "jsc shell: keep files mapped from diskCachePath for the life of the process and mark them persistent, so what is decoded from them borrows from and defers into the mapping as it does with an embedded payload."_s) \
     v(Bool, usePrelinkedModuleInfo, true, Normal, "If true, module records the embedder creates from a pre-resolved module graph (PrelinkedModuleGraph) keep their entries in the graph: requested modules are wired by index, import/export resolution, GetImportedModule, InitializeEnvironment and GetModuleNamespace read the graph's tables, and the by-name entry maps are only built on demand. If false such records copy their entries out of the graph and behave like ModuleAnalyzer's."_s) \
     v(Bool, validatePrelinkedModuleInfo, false, Normal, "Cross-check every pre-resolved import/export binding of a PrelinkedModuleGraph against the specification's ResolveExport and crash on a mismatch."_s)
-#define FOR_EACH_JSC_EMBEDDED_CODE_OPTION(v) \
-    v(Bool, disallowNonEmbeddedCode, false, Normal, "Only JSC's builtins and the sources Config::isEmbeddedCode accepts run: anything else throws an EvalError."_s)
+#define FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
+    v(Bool, disallowNonStaticCode, false, Normal, "Only code whose SourceProvider was made with SourceProvenance::Static runs: anything else throws an EvalError."_s)
 #else
 #define FOR_EACH_JSC_FFI_OPTION(v)
 #define FOR_EACH_JSC_CODEBLOCK_AGING_OPTION(v)
 #define FOR_EACH_JSC_BYTECODE_CACHE_DECODER_OPTION(v)
-#define FOR_EACH_JSC_EMBEDDED_CODE_OPTION(v)
+#define FOR_EACH_JSC_STATIC_CODE_OPTION(v)
 #endif
 
 #define FOR_EACH_JSC_OPTION(v)                                          \
@@ -128,7 +128,7 @@ bool hasCapacityToUseLargeGigacage();
     v(Bool, showPrivateScriptsInStackTraces, false, Normal, "Show private scripts in stack traces."_s) \
     v(Bool, evalMode, false, Normal, "Set to true for less aggressive function call completion value discarding."_s) \
     FOR_EACH_JSC_FFI_OPTION(v) \
-    FOR_EACH_JSC_EMBEDDED_CODE_OPTION(v) \
+    FOR_EACH_JSC_STATIC_CODE_OPTION(v) \
     \
     v(Unsigned, maxPerThreadStackUsage, 5 * MB, Normal, "Max allowed stack usage by the VM"_s) \
     v(Unsigned, softReservedZoneSize, 128 * KB, Normal, "A buffer greater than reservedZoneSize that reserves space for stringifying exceptions."_s) \

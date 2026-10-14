@@ -32,10 +32,6 @@
 #include <wtf/PtrTag.h>
 #include <wtf/WTFConfig.h>
 
-#if USE(BUN_JSC_ADDITIONS)
-#include <span>
-#endif
-
 namespace JSC {
 
 class ExecutableAllocator;
@@ -58,11 +54,6 @@ struct Config {
     // embedders that expose their own configuration surface; must be called before
     // JSC::initialize().
     JS_EXPORT_PRIVATE static void NODELETE disableEnvironmentOptions();
-#if USE(BUN_JSC_ADDITIONS)
-    // Whether `source` is all of a text embedded in the executable. For Options::disallowNonEmbeddedCode().
-    using IsEmbeddedCodeCallback = bool (*)(std::span<const uint8_t> source);
-    JS_EXPORT_PRIVATE static void NODELETE setIsEmbeddedCodeCallback(IsEmbeddedCodeCallback);
-#endif
     static void finalize() { WTF::Config::finalize(); }
 
     static void configureForTesting()
@@ -126,7 +117,6 @@ struct Config {
     StopTheWorldCallback JSC_CONFIG_METHOD(memoryDebuggerStopTheWorld);
 #if USE(BUN_JSC_ADDITIONS)
     StopTheWorldCallback JSC_CONFIG_METHOD(jsDebuggerStopTheWorld);
-    IsEmbeddedCodeCallback JSC_CONFIG_METHOD(isEmbeddedCode);
 #endif
 
     static constexpr unsigned exceptionInstructionsSize = 64;

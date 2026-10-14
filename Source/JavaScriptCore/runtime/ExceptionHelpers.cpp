@@ -422,12 +422,4 @@ Exception* throwStackOverflowError(JSGlobalObject* globalObject, ThrowScope& sco
     return throwException(globalObject, scope, createStackOverflowError(globalObject));
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-Exception* throwNonEmbeddedCodeError(JSGlobalObject* globalObject, ThrowScope& scope, const SourceProvider& provider)
-{
-    const String& url = provider.sourceURL();
-    return throwException(globalObject, scope, createEvalError(globalObject, url.isEmpty() ? "Refused to run code that is not embedded in the executable"_str : makeString("Refused to run \""_s, url, "\" because it is not embedded in the executable"_s)));
-}
-#endif
-
 } // namespace JSC

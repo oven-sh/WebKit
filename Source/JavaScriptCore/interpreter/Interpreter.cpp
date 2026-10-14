@@ -1095,7 +1095,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
         goto failedJSONP;
 #if USE(BUN_JSC_ADDITIONS)
     // JSONP runs the program with no CodeBlock, so ScriptExecutable::prepareForExecutionImpl would not see it.
-    if (Options::disallowNonEmbeddedCode()) [[unlikely]]
+    if (Options::disallowNonStaticCode()) [[unlikely]]
         goto failedJSONP;
 #endif
 
