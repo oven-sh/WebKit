@@ -188,7 +188,7 @@ const Entry* PrelinkedModuleGraph::findByName(std::span<const Entry> entries, Un
         }
         return nullptr;
     }
-    uint32_t target = name->existingSymbolAwareHash();
+    uint32_t target = name->stableHash();
     size_t low = 0;
     size_t high = entries.size();
     while (low < high) {

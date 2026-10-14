@@ -55,6 +55,7 @@
 #include "YarrFlags.h"
 #include <wtf/Assertions.h>
 #include <wtf/MathExtras.h>
+#include <wtf/OrderedHashMap.h>
 #include <wtf/text/StringBuilder.h>
 
 namespace JSC {
@@ -718,7 +719,7 @@ RegisterID* PropertyListNode::emitBytecode(BytecodeGenerator& generator, Registe
     };
 
     using GetterSetterPair = std::pair<PropertyNode*, PropertyNode*>;
-    using GetterSetterMap = UncheckedKeyHashMap<UniquedStringImpl*, GetterSetterPair, IdentifierRepHash>;
+    using GetterSetterMap = OrderedHashMap<UniquedStringImpl*, GetterSetterPair, IdentifierRepHash>;
 
     if (hasPrivateAccessors()) {
         GetterSetterMap privateAccessorMap;

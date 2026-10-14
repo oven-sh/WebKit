@@ -49,6 +49,9 @@ template<typename IteratorType> struct InlineMapAddResult {
 // happens when the map size exceeds the InlineCapacity template parameter. InlineCapacity
 // does not need to be any special value such as a power of 2.
 //
+// Hashed storage is an index of m_capacity slots followed by the entries in the order they
+// were added, so iteration order does not depend on the hash function in either mode.
+//
 // InlineMap is to a large extent compatible with UncheckedKeyHashMap. Inserted keys are
 // only checked for not being empty or deleted values in debug builds. In release builds
 // such insertions would corrupt the map.
@@ -80,8 +83,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             for (unsigned i = 0; i < m_size; ++i)
                 std::construct_at(&inlineStorage()[i], WTF::move(other.inlineStorage()[i]));
         } else {
-            m_storage.hashedData.entries = std::exchange(other.m_storage.hashedData.entries, nullptr);
-            m_storage.hashedData.deletedCount = std::exchange(other.m_storage.hashedData.deletedCount, 0);
+            m_storage.hashedData.index = std::exchange(other.m_storage.hashedData.index, nullptr);
+            m_storage.hashedData.usedCount = std::exchange(other.m_storage.hashedData.usedCount, 0);
         }
         other.m_size = 0;
         other.m_capacity = InlineCapacity;
@@ -97,16 +100,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             return;
         }
 
-        m_storage.hashedData.entries = allocateAndInitializeStorage(m_capacity);
-        m_storage.hashedData.deletedCount = other.m_storage.hashedData.deletedCount;
-        Entry* srcEntries = other.m_storage.hashedData.entries;
-        Entry* destEntries = m_storage.hashedData.entries;
+        m_storage.hashedData.index = allocateStorage(m_capacity);
+        m_storage.hashedData.usedCount = other.m_storage.hashedData.usedCount;
+        memcpy(m_storage.hashedData.index, other.m_storage.hashedData.index, sizeof(unsigned) * m_capacity);
+        const Entry* srcEntries = other.entries();
+        Entry* destEntries = entries();
 
-        for (unsigned i = 0; i < m_capacity; ++i) {
-            if (isEmptyEntry(srcEntries[i]))
-                continue;
-            if constexpr (!EntryTraits::emptyValueIsZero)
-                std::destroy_at(&destEntries[i]);
+        for (unsigned i = 0; i < usedCount(); ++i) {
             if (isDeletedEntry(srcEntries[i]))
                 constructDeletedEntry(destEntries[i]);
             else
@@ -136,13 +136,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
     {
         if (isInline())
             std::destroy_n(inlineStorage(), m_size);
-        else {
-            for (unsigned i = 0; i < m_capacity; ++i) {
-                if (!isEmptyOrDeletedEntry(m_storage.hashedData.entries[i]))
-                    std::destroy_at(&m_storage.hashedData.entries[i]);
-            }
-            FastMalloc::free(m_storage.hashedData.entries);
-        }
+        else
+            destroyHashedStorage();
     }
 
     class ValuesIterator;
@@ -245,20 +240,18 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             transitionToHashed();
         }
 
-        if ((m_size + deletedCount()) * loadFactorDenominator >= m_capacity * loadFactorNumerator) [[unlikely]]
+        if (usedCount() == entryCapacity(m_capacity)) [[unlikely]]
             expand();
 
-        Entry* end = entriesEnd();
-        Entry* slot = findKeyOrEmptyOrDeleted(key);
-        if (!isEmptyOrDeletedEntry(*slot))
-            return { iterator { slot, end }, false };
+        unsigned* indexSlot = findIndexSlot(key);
+        if (*indexSlot)
+            return { iterator { &entries()[*indexSlot - 1], entriesEnd() }, false };
 
-        // Slot is either empty or deleted - we can insert here
-        if (isDeletedEntry(*slot))
-            decrementDeletedCount();
+        Entry* slot = &entries()[usedCount()];
         std::construct_at(slot, std::forward<K>(key), std::forward<V>(value));
+        *indexSlot = ++m_storage.hashedData.usedCount;
         ++m_size;
-        return { iterator { slot, end }, true };
+        return { iterator { slot, entriesEnd() }, true };
     }
 
     template<typename K>
@@ -276,7 +269,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             return false;
         }
 
-        return !isEmptyOrDeletedEntry(*findKeyOrEmpty(key));
+        return *findIndexSlot(key);
     }
 
     template<typename K>
@@ -295,11 +288,11 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
             return iterator { end, end };
         }
 
-        Entry* slot = findKeyOrEmpty(key);
-        Entry* end = m_storage.hashedData.entries + m_capacity;
-        if (isEmptyOrDeletedEntry(*slot))
+        unsigned indexSlot = *findIndexSlot(key);
+        Entry* end = entriesEnd();
+        if (!indexSlot)
             return iterator { end, end };
-        return iterator { slot, end };
+        return iterator { &entries()[indexSlot - 1], end };
     }
 
     template<typename K>
@@ -334,13 +327,13 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         }
 
         // Hashed mode - mark as deleted
-        Entry* slot = findKeyOrEmpty(key);
-        if (isEmptyOrDeletedEntry(*slot))
+        unsigned indexSlot = *findIndexSlot(key);
+        if (!indexSlot)
             return false;
 
+        Entry* slot = &entryStorage[indexSlot - 1];
         std::destroy_at(slot);
         constructDeletedEntry(*slot);
-        incrementDeletedCount();
         --m_size;
 
         if (shouldShrink())
@@ -369,7 +362,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
         std::destroy_at(slot);
         constructDeletedEntry(*slot);
-        incrementDeletedCount();
         --m_size;
 
         if (shouldShrink())
@@ -448,12 +440,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
         }
 
         // Hashed mode: destroy live entries, free heap, transition to inline
-        Entry* entryStorage = m_storage.hashedData.entries;
-        for (unsigned i = 0; i < m_capacity; ++i) {
-            if (!isEmptyOrDeletedEntry(entryStorage[i]))
-                std::destroy_at(&entryStorage[i]);
-        }
-        FastMalloc::free(entryStorage);
+        destroyHashedStorage();
         m_size = 0;
         m_capacity = InlineCapacity;
     }
@@ -475,8 +462,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
         unsigned capacity = roundUpToPowerOfTwo(keyCount * loadFactorDenominator / loadFactorNumerator + 1);
         m_capacity = capacity;
-        m_storage.hashedData.entries = allocateAndInitializeStorage(capacity);
-        m_storage.hashedData.deletedCount = 0;
+        m_storage.hashedData.index = allocateStorage(capacity);
+        m_storage.hashedData.usedCount = 0;
     }
 
 private:
@@ -494,35 +481,42 @@ private:
         return reinterpret_cast<const Entry*>(&m_storage.inlineEntries);
     }
 
+    ALWAYS_INLINE static Entry* entriesOf(unsigned* index, unsigned capacity)
+    {
+        return reinterpret_cast<Entry*>(index + capacity);
+    }
+
     ALWAYS_INLINE Entry* entries()
     {
-        return isInline() ? inlineStorage() : m_storage.hashedData.entries;
+        return isInline() ? inlineStorage() : entriesOf(m_storage.hashedData.index, m_capacity);
     }
 
     ALWAYS_INLINE const Entry* entries() const
     {
-        return isInline() ? inlineStorage() : m_storage.hashedData.entries;
+        return const_cast<InlineMap*>(this)->entries();
     }
 
     ALWAYS_INLINE Entry* entriesEnd()
     {
-        Entry* entryStorage = entries();
         return isInline()
-            ? entryStorage + m_size
-            : entryStorage + m_capacity;
+            ? inlineStorage() + m_size
+            : entriesOf(m_storage.hashedData.index, m_capacity) + usedCount();
     }
 
     ALWAYS_INLINE const Entry* entriesEnd() const
     {
-        const Entry* entryStorage = entries();
-        return isInline()
-            ? entryStorage + m_size
-            : entryStorage + m_capacity;
+        return const_cast<InlineMap*>(this)->entriesEnd();
+    }
+
+    // How many entries, deleted ones included, an index of `capacity` slots takes.
+    ALWAYS_INLINE static constexpr unsigned entryCapacity(unsigned capacity)
+    {
+        return capacity * loadFactorNumerator / loadFactorDenominator;
     }
 
     ALWAYS_INLINE static constexpr size_t allocationSizeForCapacity(size_t capacity)
     {
-        return sizeof(Entry) * capacity;
+        return sizeof(unsigned) * capacity + sizeof(Entry) * entryCapacity(capacity);
     }
 
     ALWAYS_INLINE static bool isEmptyKey(const KeyType& key)
@@ -562,14 +556,6 @@ private:
         }
     }
 
-    ALWAYS_INLINE static void constructEmptyEntry(Entry& entry)
-    {
-        if constexpr (EntryTraits::emptyValueIsZero)
-            zeroBytes(entry);
-        else
-            std::construct_at(std::addressof(entry), KeyTraits::emptyValue(), MappedTraits::emptyValue());
-    }
-
     static constexpr unsigned loadFactorNumerator = 3;
     static constexpr unsigned loadFactorDenominator = 4;
     static constexpr unsigned minLoadInverse = 6;
@@ -582,23 +568,15 @@ private:
             return MappedTraits::take(MappedTraits::emptyValue());
     }
 
+    ALWAYS_INLINE unsigned usedCount() const
+    {
+        ASSERT(!isInline());
+        return m_storage.hashedData.usedCount;
+    }
+
     ALWAYS_INLINE unsigned deletedCount() const
     {
-        ASSERT(!isInline());
-        return m_storage.hashedData.deletedCount;
-    }
-
-    ALWAYS_INLINE void incrementDeletedCount()
-    {
-        ASSERT(!isInline());
-        ++m_storage.hashedData.deletedCount;
-    }
-
-    ALWAYS_INLINE void decrementDeletedCount()
-    {
-        ASSERT(!isInline());
-        ASSERT(m_storage.hashedData.deletedCount);
-        --m_storage.hashedData.deletedCount;
+        return usedCount() - m_size;
     }
 
     bool shouldShrink() const
@@ -613,37 +591,50 @@ private:
         return m_size * minLoadInverse < m_capacity * 2;
     }
 
-    ALWAYS_INLINE static Entry* allocateAndInitializeStorage(unsigned capacity)
+    // An empty index, followed by room for its entries.
+    ALWAYS_INLINE static unsigned* allocateStorage(unsigned capacity)
     {
-        if constexpr (EntryTraits::emptyValueIsZero)
-            return static_cast<Entry*>(FastMalloc::zeroedMalloc(allocationSizeForCapacity(capacity)));
+        static_assert(alignof(Entry) <= 2 * sizeof(unsigned));
+        ASSERT(capacity >= 2);
+        unsigned* index = static_cast<unsigned*>(FastMalloc::malloc(allocationSizeForCapacity(capacity)));
+        zeroSpan(std::span { index, capacity });
+        return index;
+    }
 
-        Entry* storage = static_cast<Entry*>(FastMalloc::malloc(allocationSizeForCapacity(capacity)));
-        for (unsigned i = 0; i < capacity; ++i)
-            constructEmptyEntry(storage[i]);
-        return storage;
+    void destroyHashedStorage()
+    {
+        Entry* entryStorage = entries();
+        for (unsigned i = 0; i < usedCount(); ++i) {
+            if (!isDeletedEntry(entryStorage[i]))
+                std::destroy_at(&entryStorage[i]);
+        }
+        FastMalloc::free(m_storage.hashedData.index);
     }
 
     ALWAYS_INLINE void rehashTo(unsigned newCapacity)
     {
         bool wasInline = isInline();
-        unsigned oldIterCount = wasInline ? m_size : m_capacity;
+        unsigned oldIterCount = wasInline ? m_size : usedCount();
         Entry* oldEntries = entries();
 
-        Entry* newEntries = allocateAndInitializeStorage(newCapacity);
+        unsigned* newIndex = allocateStorage(newCapacity);
+        Entry* newEntries = entriesOf(newIndex, newCapacity);
+        unsigned newUsedCount = 0;
 
         for (unsigned i = 0; i < oldIterCount; ++i) {
-            if (wasInline || !isEmptyOrDeletedEntry(oldEntries[i])) {
-                Entry* slot = findKeyOrEmptyInStorage(oldEntries[i].key, newEntries, newCapacity);
-                ASSERT(isEmptyEntry(*slot));
-                std::construct_at(slot, WTF::move(oldEntries[i]));
+            if (wasInline || !isDeletedEntry(oldEntries[i])) {
+                unsigned* indexSlot = findIndexSlotInStorage(oldEntries[i].key, newIndex, newCapacity);
+                ASSERT(!*indexSlot);
+                std::construct_at(&newEntries[newUsedCount], WTF::move(oldEntries[i]));
+                *indexSlot = ++newUsedCount;
             }
         }
+        ASSERT(newUsedCount == m_size);
 
-        Entry* toFree = wasInline ? nullptr : oldEntries;
+        unsigned* toFree = wasInline ? nullptr : m_storage.hashedData.index;
         m_capacity = newCapacity;
-        m_storage.hashedData.entries = newEntries;
-        m_storage.hashedData.deletedCount = 0;
+        m_storage.hashedData.index = newIndex;
+        m_storage.hashedData.usedCount = newUsedCount;
         if (toFree)
             FastMalloc::free(toFree);
     }
@@ -678,77 +669,54 @@ private:
         ASSERT(!isInline());
         ASSERT(m_size <= InlineCapacity);
 
-        Entry* oldEntries = m_storage.hashedData.entries;
-        unsigned oldCapacity = m_capacity;
+        unsigned* oldIndex = m_storage.hashedData.index;
+        Entry* oldEntries = entries();
+        unsigned oldUsedCount = usedCount();
 
         m_capacity = InlineCapacity;
 
         unsigned insertIndex = 0;
-        for (unsigned i = 0; i < oldCapacity; ++i) {
-            if (!isEmptyOrDeletedEntry(oldEntries[i])) {
+        for (unsigned i = 0; i < oldUsedCount; ++i) {
+            if (!isDeletedEntry(oldEntries[i])) {
                 std::construct_at(&inlineStorage()[insertIndex], WTF::move(oldEntries[i]));
                 ++insertIndex;
             }
         }
         ASSERT(insertIndex == m_size);
 
-        FastMalloc::free(oldEntries);
+        FastMalloc::free(oldIndex);
     }
 
+    // The index slot of the key's entry (one more than the entry's position), or the empty (zero) slot where the search
+    // for it ended. The slot of a deleted entry stays taken until the next rehash.
     template<typename K>
-    ALWAYS_INLINE static Entry* findKeyOrEmptyInStorage(const K& key, Entry* data, unsigned capacity)
+    ALWAYS_INLINE static unsigned* findIndexSlotInStorage(const K& key, unsigned* index, unsigned capacity)
     {
         ASSERT(isPowerOfTwo(capacity));
 
+        Entry* data = entriesOf(index, capacity);
         unsigned hash = HashArg::hash(key);
         unsigned mask = capacity - 1;
         unsigned bucket = hash & mask;
         unsigned probe = 0;
 
         while (true) {
-            Entry* entry = &data[bucket];
-            if (isEmptyEntry(*entry)) [[likely]]
-                return entry;
-            if (!isDeletedEntry(*entry) && HashArg::equal(entry->key, key))
-                return entry;
+            unsigned* indexSlot = &index[bucket];
+            if (!*indexSlot) [[likely]]
+                return indexSlot;
+            Entry& entry = data[*indexSlot - 1];
+            if (!isDeletedEntry(entry) && HashArg::equal(entry.key, key))
+                return indexSlot;
             ++probe;
             bucket = (bucket + probe) & mask;
         }
     }
 
-    // If the key is not found, returns the empty slot where the search ended even if
-    // there were deleted slots along the way.
     template<typename K>
-    Entry* findKeyOrEmpty(const K& key) const
+    unsigned* findIndexSlot(const K& key) const
     {
         ASSERT(!isInline());
-        return findKeyOrEmptyInStorage(key, m_storage.hashedData.entries, m_capacity);
-    }
-
-    Entry* findKeyOrEmptyOrDeleted(const KeyType& key) const
-    {
-        ASSERT(!isInline());
-        ASSERT(isPowerOfTwo(m_capacity));
-
-        Entry* data = m_storage.hashedData.entries;
-        unsigned hash = HashArg::hash(key);
-        unsigned mask = m_capacity - 1;
-        unsigned bucket = hash & mask;
-        unsigned probe = 0;
-        Entry* firstDeletedSlot = nullptr;
-
-        while (true) {
-            Entry* entry = &data[bucket];
-            if (isEmptyEntry(*entry)) [[likely]]
-                return firstDeletedSlot ? firstDeletedSlot : entry;
-            if (isDeletedEntry(*entry)) {
-                if (!firstDeletedSlot)
-                    firstDeletedSlot = entry;
-            } else if (HashArg::equal(entry->key, key))
-                return entry;
-            ++probe;
-            bucket = (bucket + probe) & mask;
-        }
+        return findIndexSlotInStorage(key, m_storage.hashedData.index, m_capacity);
     }
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
@@ -760,8 +728,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
             std::byte data[sizeof(Entry)];
         };
         struct HashedModeData {
-            Entry* entries;
-            unsigned deletedCount;
+            unsigned* index;
+            unsigned usedCount; // Entries added since the last rehash, deleted ones included.
         };
         std::array<EntryBytes, InlineCapacity> inlineEntries;
         HashedModeData hashedData;

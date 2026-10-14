@@ -63,16 +63,15 @@ void JSSymbolTableObject::getOwnSpecialPropertyNames(JSObject* object, JSGlobalO
     SymbolTable* symbolTable = thisObject->symbolTable();
     {
         ConcurrentJSLocker locker(symbolTable->m_lock);
-        SymbolTable::Map::iterator end = symbolTable->end(locker);
-        for (SymbolTable::Map::iterator it = symbolTable->begin(locker); it != end; ++it) {
-            if (mode == DontEnumPropertiesMode::Include || !it->value.isDontEnum()) {
-                if (!propertyNames.includeSymbolProperties() && it->key->isSymbol())
-                    continue;
-                if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(it->key))
-                    continue;
-                propertyNames.add(Identifier::fromUid(vm, it->key.get()));
+        symbolTable->forEachInVarOffsetOrder(locker, [&](auto& entry) {
+            if (mode == DontEnumPropertiesMode::Include || !entry.value.isDontEnum()) {
+                if (!propertyNames.includeSymbolProperties() && entry.key->isSymbol())
+                    return;
+                if (propertyNames.privateSymbolMode() == PrivateSymbolMode::Exclude && symbolTable->hasPrivateName(entry.key))
+                    return;
+                propertyNames.add(Identifier::fromUid(vm, entry.key.get()));
             }
-        }
+        });
     }
 }
 
