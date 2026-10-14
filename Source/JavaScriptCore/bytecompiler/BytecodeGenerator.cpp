@@ -1564,6 +1564,14 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
         emitLabel(outside.get());
     }
 
+    if (passes.contains(AuditedValueClass::TaggedObject) && fails.contains(AuditedValueClass::Object)) {
+        Ref<Label> isNoObject = newLabel();
+        emitJumpIfFalse(emitIsObject(newTemporary(), value), isNoObject.get());
+        RefPtr<RegisterID> tag = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditTag);
+        emitJumpIfTrue(emitHasPrivateName(newTemporary(), value, tag.get()), done.get());
+        emitLabel(isNoObject.get());
+    }
+
     RefPtr<RegisterID> function = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditFunction);
     RefPtr<RegisterID> result = newTemporary();
     CallArguments arguments(*this, nullptr, 2);
@@ -4938,11 +4946,11 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(NOESCAPE co
     Ref<Label> finallyLabel = newLabel();
     FinallyContext finallyContext(*this, finallyLabel.get());
     pushFinallyControlFlowScope(finallyContext);
-    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally, MayCompleteNormally::Yes);
+    emitTryWithFinallyThatDoesNotShadowException(finallyContext, emitTry, emitFinally);
     popFinallyControlFlowScope();
 }
 
-void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally, MayCompleteNormally mayCompleteNormally)
+void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyContext& finallyContext, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitTry, NOESCAPE const ScopedLambda<void(BytecodeGenerator&)>& emitFinally)
 {
     Ref<Label> tryStartLabel = newEmittedLabel();
     TryData* tryData = pushTry(tryStartLabel.get(), *finallyContext.finallyLabel(), HandlerType::SynthesizedFinally);
@@ -4963,7 +4971,7 @@ void BytecodeGenerator::emitTryWithFinallyThatDoesNotShadowException(FinallyCont
         Ref<Label> tryInFinallyEndLabel = newEmittedLabel();
         popTry(tryInFinallyData, tryInFinallyEndLabel.get());
 
-        emitFinallyCompletion(finallyContext, done.get(), mayCompleteNormally);
+        emitFinallyCompletion(finallyContext, done.get());
 
         // Catch block for exceptions that may be thrown while executing the finally block.
         // The only reason we need this catch block is because if the above finally block
@@ -5262,7 +5270,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
                 generator.emitJump(*scope->continueTarget());
             }, [&](BytecodeGenerator& generator) {
                 generator.emitIteratorGenericClose(iterator.get(), node, EmitAwait::Yes);
-            }, MayCompleteNormally::No);
+            });
 
             emitLabel(*scope->continueTarget());
             RELEASE_ASSERT(forLoopNode->isForOfNode());
@@ -5346,7 +5354,7 @@ void BytecodeGenerator::emitEnumeration(ThrowableExpressionData* node, Expressio
             generator.emitJump(loopStart.get());
         }, [&](BytecodeGenerator& generator) {
             generator.emitIteratorClose(iterator.get(), nextOrIndex.get(), iterable.get(), node);
-        }, MayCompleteNormally::No);
+        });
 
         bool breakLabelIsBound = scope->breakTargetMayBeBound();
         if (breakLabelIsBound)
@@ -5804,18 +5812,11 @@ void BytecodeGenerator::emitIteratorGenericClose(RegisterID* iterator, const Thr
     emitLabel(done.get());
 }
 
-void BytecodeGenerator::emitJumpIfFastArrayIteration(RegisterID* iterator, Label& target)
-{
-    emitJumpIfTrue(emitIsCellWithType(newTemporary(), iterator, SentinelType), target);
-}
 
 void BytecodeGenerator::emitIteratorClose(RegisterID* iterator, RegisterID* nextOrIndex, RegisterID* iterable, const ThrowableExpressionData* node)
 {
     Ref<Label> done = newLabel();
-    if (m_vm.useImmutableIntrinsics)
-        emitJumpIfFastArrayIteration(iterator, done.get());
-    else
-        OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
+    OpIteratorCloseCheck::emit(this, iterator, nextOrIndex, iterable, done->bind(this));
     emitIteratorGenericClose(iterator, node);
     emitLabel(done.get());
 }
@@ -6025,11 +6026,10 @@ bool BytecodeGenerator::emitReturnViaFinallyIfNeeded(RegisterID* returnRegister)
     return true; // We'll be jumping to a finally block.
 }
 
-void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel, MayCompleteNormally mayCompleteNormally)
+void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& normalCompletionLabel)
 {
     if (context.numberOfBreaksOrContinues() || context.handlesReturns()) {
-        if (mayCompleteNormally == MayCompleteNormally::Yes)
-            emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
+        emitJumpIfTrue(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Normal)), normalCompletionLabel);
 
         FinallyContext* outerContext = context.outerContext();
 
@@ -6168,8 +6168,7 @@ void BytecodeGenerator::emitFinallyCompletion(FinallyContext& context, Label& no
     // By now, we've rule out all Break / Continue / Return completions above. The only remaining
     // possibilities are Normal or Throw.
 
-    if (mayCompleteNormally == MayCompleteNormally::Yes)
-        emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
+    emitJumpIfFalse(emitEqualityOp<OpStricteq>(newTemporary(), context.completionTypeRegister(), emitLoad(nullptr, CompletionType::Throw)), normalCompletionLabel);
 
     // We get here because we entered this finally context with Throw completionType (i.e. we have
     // an exception that we need to rethrow), and we didn't encounter a different abrupt completion

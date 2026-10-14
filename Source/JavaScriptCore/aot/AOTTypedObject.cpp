@@ -6065,7 +6065,7 @@ static std::optional<JSValue> readDataProperty(VM& vm, JSObject* object, Propert
     return JSValue();
 }
 
-String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type)
+String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type, bool membersAlone)
 {
     // A union would need a guess at which member was meant.
     if (!value.isObject() || type.numberOfViews() != 1)
@@ -6073,6 +6073,8 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type)
     JSObject* object = asObject(value);
     Object* compiled = compiledObject(object);
     auto& view = type.view(0);
+    if (membersAlone && isNativeObject(object))
+        return { };
     if (isNativeObject(object))
         return makeString("a native object cannot be used as "_s, nameOf(view));
     if (!compiled && object->type() != FinalObjectType)
@@ -6091,7 +6093,8 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type)
         const Identifier& name = this->name(vm, nameIndex);
         // Whether a compiled object is of a type goes by its layout, not by what it holds: a field that is declared and has not been stored
         // to yet is no reason. So the two declarations are compared.
-        if (const FieldData* ownField = compiled ? field(vm, compiled->layout(), name.impl()) : nullptr) {
+        const FieldData* ownField = compiled ? field(vm, compiled->layout(), name.impl()) : nullptr;
+        if (ownField && !membersAlone) {
             if (ownField->flags & fieldIsOptional && !isOptional) {
                 reason = makeString("property '"_s, name.string(), "' is optional in "_s, describe(value), " but required in "_s, nameOf(view));
                 return false;
@@ -6105,7 +6108,7 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type)
                 differentDeclaration = makeString("property '"_s, name.string(), "': "_s, text(ownText), " in "_s, describe(value), ", "_s, text(declaredText), " in "_s, nameOf(view));
             return true;
         }
-        auto found = readDataProperty(vm, object, name);
+        auto found = ownField ? std::optional<JSValue>(compiled->read(*ownField)) : readDataProperty(vm, object, name);
         if (!found)
             return true;
         JSValue actual = *found;
@@ -6134,7 +6137,7 @@ String State::explainMismatch(VM& vm, JSValue value, const RuntimeType& type)
                 break;
         }
     }
-    if (!reason.isNull())
+    if (!reason.isNull() || membersAlone)
         return reason;
     if (!differentDeclaration.isNull())
         return differentDeclaration;
@@ -10347,7 +10350,7 @@ JSValue State::coerce(JSGlobalObject* globalObject, JSValue value, const Runtime
     countCoercion(value, before, type, reason, way, result);
     if (result)
         return result;
-    if (reason == Format::CastReason::Flow && !compiled && value.isObject() && !data.isCompiledForAudit) {
+    if ((reason == Format::CastReason::Flow || (reason == Format::CastReason::Claim && type.isOpenedForLog())) && !compiled && value.isObject() && !data.isCompiledForAudit) {
         bool hasBecomeIt = becomeWhereItIs(globalObject, asObject(value), type);
         RETURN_IF_EXCEPTION(scope, { });
         if (hasBecomeIt)
@@ -10419,8 +10422,6 @@ bool State::becomeWhereItIs(JSGlobalObject* globalObject, JSObject* object, cons
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    if (type.isOpenedForLog()) [[unlikely]]
-        return false;
     if (!data.isCompiledForAudit && object->type() == FinalObjectType && !type.admitsForeignObjectsByNature() && tryBecomeByPlans(vm, object, type)) {
         countCoercion(object, nullptr, type, Format::CastReason::Claim, "plans of a graph"_s, object);
         return true;
@@ -11974,6 +11975,19 @@ String nameOfSlimClosure(JSObject* closure)
     return uncheckedDowncast<Typed::SlimClosure>(closure)->nameOfFunction();
 }
 
+bool isSloppyPlainClosure(JSCell* cell)
+{
+    uint32_t function;
+    if (auto* slim = dynamicDowncast<Typed::SlimClosure>(cell))
+        function = slim->functionIndex();
+    else if (auto* closure = dynamicDowncast<Typed::Closure>(cell))
+        function = closure->functionIndex();
+    else
+        return false;
+    const Typed::Data& data = Typed::dataInImage();
+    return std::ranges::binary_search(std::span { data.at<uint32_t>(data.sloppyPlainFunctionsOffset), data.numberOfSloppyPlainFunctions }, function);
+}
+
 unsigned lengthOfSlimClosure(JSObject* closure)
 {
     const Typed::Data& data = Typed::dataInImage();
@@ -12022,6 +12036,8 @@ bool JSObject::isRefusedByLockAlone(VM& vm, UniquedStringImpl* name, JSValue& he
     held = { };
     if (vm.m_aotInstances.isEmpty() || !vm.m_aotInstances[0]->typed)
         return false;
+    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this))
+        return proxy->target()->isRefusedByLockAlone(vm, name, held);
     if (isGlobalObject()) {
         if (!vm.useImmutableIntrinsics || !name)
             return false;
@@ -12051,11 +12067,20 @@ bool JSObject::isRefusedByLockAlone(VM& vm, UniquedStringImpl* name, JSValue& he
     if (!isFound)
         return true;
     if (!slot.isValue())
-        return false;
+        return slot.isAccessor() && name == vm.propertyNames->underscoreProto.impl();
     JSValue found = slot.getValue(globalObject(), PropertyName(name));
     if (slot.slotBase() == this)
         held = found;
     return found.isCallable();
+}
+
+bool JSObject::noteIfRefusedByLockAlone(VM& vm, UniquedStringImpl* name, bool isAnswered)
+{
+    JSValue held;
+    if (!isLockedBuiltin() || !isRefusedByLockAlone(vm, name, held))
+        return false;
+    noteRefusalByLock(vm, name, { }, isAnswered);
+    return true;
 }
 
 String JSObject::wordsOfRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral otherwise)
@@ -12075,13 +12100,13 @@ String JSObject::wordsOfRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILite
     return withAOTErrorNote(makeString("Cannot change '"_s, StringView(name), "' of "_s, holder, ": "_s, why));
 }
 
-void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral kind)
+void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral kind, bool isAnswered)
 {
     AOT::Typed::State* state = vm.m_aotInstances.isEmpty() ? nullptr : vm.m_aotInstances[0]->typed;
     if (!state)
         return;
     if (auto* proxy = dynamicDowncast<JSGlobalProxy>(this)) {
-        proxy->target()->noteRefusalByLock(vm, name, kind);
+        proxy->target()->noteRefusalByLock(vm, name, kind, isAnswered);
         return;
     }
     if (isGlobalObject()) {
@@ -12125,7 +12150,7 @@ void JSObject::noteRefusalByLock(VM& vm, UniquedStringImpl* name, ASCIILiteral k
     }
     unsigned attributes;
     bool isOwn = name && !PropertyName(name).isPrivateName() && (isValidOffset(structure()->get(vm, name, attributes)) || (structure()->hasNonReifiedStaticProperties() && structure()->findPropertyHashEntry(name)));
-    state->noteViolation(vm, { .kind = kind, .onBuiltin = this, .member = isOwn ? name : nullptr });
+    state->noteViolation(vm, { .kind = kind, .onBuiltin = this, .member = isOwn ? name : nullptr, .action = isAnswered ? AOT::Typed::State::ActionOnViolation::Dropped : AOT::Typed::State::ActionOnViolation::Threw });
 }
 
 ASCIILiteral JSObject::putDirectToCompiledObject(VM& vm, PropertyName name, JSValue value, unsigned attributes)

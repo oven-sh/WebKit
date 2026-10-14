@@ -3867,6 +3867,141 @@ static void boxIntegerInA1(CCallHelpers& jit)
     done.link(&jit);
 }
 
+static void generateAppendSpread(CCallHelpers& jit)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+    constexpr GPRReg target = A1;
+    constexpr GPRReg source = A2;
+    constexpr GPRReg length = R0;
+    constexpr GPRReg capacity = T9;
+    constexpr GPRReg allocator = T10;
+    constexpr GPRReg count = T11;
+    constexpr GPRReg scratch = T13;
+#if CPU(ARM64)
+    constexpr GPRReg old = T12;
+    constexpr GPRReg storage = T14;
+#else
+    constexpr GPRReg old = A3;
+    constexpr GPRReg storage = A0;
+#endif
+    constexpr GPRReg from = allocator;
+    constexpr GPRReg element = capacity;
+    constexpr unsigned maxCount = 64;
+    constexpr unsigned maxCapacity = 255;
+    static_assert(noOverlap(target, source, length, capacity, allocator, count, scratch, old, storage, instanceGPR));
+    static_assert(sizeof(IndexingHeader) == sizeof(EncodedJSValue) && MarkedSpace::sizeStep == 2 * sizeof(EncodedJSValue) && sizeof(Allocator) == sizeof(void*));
+    static_assert(sizeof(IndexingHeader) + maxCapacity * sizeof(EncodedJSValue) <= MarkedSpace::largeCutoff);
+    static_assert(Butterfly::offsetOfPublicLength() == -static_cast<ptrdiff_t>(sizeof(IndexingHeader)) && Butterfly::offsetOfVectorLength() == Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)));
+    CCallHelpers::JumpList isLeftToOperation;
+    CCallHelpers::JumpList hasRunOut;
+    CCallHelpers::Label start = jit.label();
+    isLeftToOperation.append(jit.branchIfNotCell(source));
+    jit.load8(Address(source, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.move(scratch, count);
+    jit.urshift32(TrustedImm32(Instance::arrayKindShift), count);
+    jit.and32(TrustedImm32(Instance::numberOfArrayKinds - 1), count);
+    jit.load32(CCallHelpers::BaseIndex(instanceGPR, count, CCallHelpers::TimesFour, Instance::offsetOfOriginalArrayStructureIDs()), count);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, count, Address(source, JSCell::structureIDOffset())));
+    jit.and32(TrustedImm32(IndexingShapeMask), scratch);
+    Jump keepsValues = jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(ContiguousShape));
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(Int32Shape)));
+    keepsValues.link(&jit);
+    jit.load8(Address(target, JSCell::indexingTypeAndMiscOffset()), scratch);
+    jit.and32(TrustedImm32(IndexingShapeAndWritabilityMask), scratch);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::NotEqual, scratch, TrustedImm32(ContiguousShape)));
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), scratch);
+    isLeftToOperation.append(jit.branchTest8(CCallHelpers::NonZero, Address(scratch, VM::offsetOfHeapMutatorShouldBeFenced())));
+    jit.load8(Address(target, JSCell::cellStateOffset()), count);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::BelowOrEqual, count, Address(scratch, VM::offsetOfHeapBarrierThreshold())));
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), from);
+    jit.load32(Address(from, Butterfly::offsetOfPublicLength()), count);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::Above, count, TrustedImm32(maxCount)));
+    Jump isEmpty = jit.branchTest32(CCallHelpers::Zero, count);
+    jit.loadPtr(Address(target, JSObject::butterflyOffset()), old);
+    jit.load32(Address(old, Butterfly::offsetOfPublicLength()), length);
+    jit.add32(length, count, capacity);
+    Jump hasRoom = jit.branch32(CCallHelpers::BelowOrEqual, capacity, Address(old, Butterfly::offsetOfVectorLength()));
+
+    jit.or32(TrustedImm32(1), capacity);
+    isLeftToOperation.append(jit.branch32(CCallHelpers::Above, capacity, TrustedImm32(maxCapacity)));
+    jit.add32(TrustedImm32(1), capacity, scratch);
+    jit.urshift32(TrustedImm32(1), scratch);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfAuxiliarySpace()), allocator);
+    jit.loadPtr(CCallHelpers::BaseIndex(allocator, scratch, CCallHelpers::TimesEight, CompleteSubspace::offsetOfAllocatorForSizeStep()), allocator);
+    hasRunOut.append(jit.branchTestPtr(CCallHelpers::Zero, allocator));
+    jit.emitAllocateWithNonNullAllocator(storage, JITAllocator::variable(), allocator, scratch, hasRunOut, CCallHelpers::SlowAllocationResult::UndefinedBehavior);
+    jit.store32(length, Address(storage, 0));
+    jit.store32(capacity, Address(storage, sizeof(uint32_t)));
+    jit.store64(CCallHelpers::TrustedImm64(0), CCallHelpers::BaseIndex(storage, capacity, CCallHelpers::TimesEight));
+    jit.addPtr(TrustedImm32(sizeof(IndexingHeader)), storage);
+    jit.move(TrustedImm32(0), scratch);
+    Jump isMoved = jit.branchTest32(CCallHelpers::Zero, length);
+    CCallHelpers::Label move = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(old, scratch, CCallHelpers::TimesEight), element);
+    jit.store64(element, CCallHelpers::BaseIndex(storage, scratch, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), scratch);
+    jit.branch32(CCallHelpers::Below, scratch, length).linkTo(move, &jit);
+    isMoved.link(&jit);
+    jit.storePtr(storage, Address(target, JSObject::butterflyOffset()));
+    jit.move(storage, old);
+
+    hasRoom.link(&jit);
+    jit.loadPtr(Address(source, JSObject::butterflyOffset()), from);
+    jit.getEffectiveAddress(CCallHelpers::BaseIndex(old, length, CCallHelpers::TimesEight), storage);
+    jit.move(TrustedImm32(0), scratch);
+    CCallHelpers::Label copy = jit.label();
+    jit.load64(CCallHelpers::BaseIndex(from, scratch, CCallHelpers::TimesEight), element);
+    Jump isNoHole = jit.branchTest64(CCallHelpers::NonZero, element);
+    jit.move(CCallHelpers::TrustedImm64(JSValue::ValueUndefined), element);
+    isNoHole.link(&jit);
+    jit.store64(element, CCallHelpers::BaseIndex(storage, scratch, CCallHelpers::TimesEight));
+    jit.add32(TrustedImm32(1), scratch);
+    jit.branch32(CCallHelpers::Below, scratch, count).linkTo(copy, &jit);
+    jit.add32(count, length);
+    jit.store32(length, Address(old, Butterfly::offsetOfPublicLength()));
+    isEmpty.link(&jit);
+    jit.move(target, R0);
+    jit.ret();
+
+    hasRunOut.link(&jit);
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(2 * sizeof(EncodedJSValue)), sp);
+    jit.store64(target, Address(sp, 0));
+    jit.store64(source, Address(sp, sizeof(EncodedJSValue)));
+    jit.move(capacity, A1);
+    jit.lshift64(TrustedImm32(3), A1);
+    jit.add64(TrustedImm32(sizeof(IndexingHeader)), A1);
+    jit.move(instanceGPR, A0);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
+    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedAllocateStorage) * sizeof(void*)), operationGPR);
+    prepareCallOperation(jit, assertionScratchGPR);
+    jit.call(operationGPR, OperationPtrTag);
+    jit.load64(Address(sp, 0), target);
+    jit.load64(Address(sp, sizeof(EncodedJSValue)), source);
+    jit.emitFunctionEpilogue();
+    jit.branchTestPtr(CCallHelpers::NonZero, R0).linkTo(start, &jit);
+
+    isLeftToOperation.link(&jit);
+    jit.emitFunctionPrologue();
+    jit.subPtr(TrustedImm32(2 * sizeof(EncodedJSValue)), sp);
+    jit.store64(target, Address(sp, 0));
+    jit.store64(source, Address(sp, sizeof(EncodedJSValue)));
+    jit.move(instanceGPR, A0);
+    jit.move(TrustedImm32(static_cast<int32_t>(Typed::LanguageOperation::AppendSpread)), A1);
+    jit.move(TrustedImm32(2), A2);
+    jit.move(sp, A3);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
+    jit.loadPtr(Address(operationGPR, static_cast<unsigned>(Entry::operationAOTTypedLanguageOperation) * sizeof(void*)), operationGPR);
+    prepareCallOperation(jit, assertionScratchGPR);
+    jit.call(operationGPR, OperationPtrTag);
+    jit.emitFunctionEpilogue();
+    Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, GPRInfo::returnValueGPR2);
+    jit.ret();
+    exception.link(&jit);
+    loadInstance(jit, T9);
+    jumpToEntry(jit, T9, Entry::HandleException);
+}
+
 static void generateTakeElements(CCallHelpers& jit)
 {
     constexpr GPRReg taken = A1;

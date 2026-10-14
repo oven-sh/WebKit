@@ -294,20 +294,24 @@ bool Lowering::isKeptByNothing(ValueID literal, bool isGlobal)
         return id && standIns.contains(id);
     };
     for (unsigned next = 0; next < standIns.size(); ++next) {
-        for (auto& block : m_function.blocks) {
-            for (ValueID userID : block.values) {
-                auto& user = m_function.at(userID);
-                if (user.child(0) != standIns[next])
-                    continue;
-                if (user.opcode == Opcode::Cast && user.castReason() != CastReason::Coerce && user.castReason() != CastReason::As)
-                    standIns.append(userID);
-                else if (user.opcode == Opcode::GetById && !isGlobal && isNamed(user, { "test"_s, "exec"_s }))
-                    methods.append(userID);
-            }
+        ValueID previous;
+        for (ValueID userID : usersOf(standIns[next])) {
+            if (userID == std::exchange(previous, userID))
+                continue;
+            auto& user = m_function.at(userID);
+            if (user.child(0) != standIns[next])
+                continue;
+            if (user.opcode == Opcode::Cast && user.castReason() != CastReason::Coerce && user.castReason() != CastReason::As)
+                standIns.append(userID);
+            else if (user.opcode == Opcode::GetById && !isGlobal && isNamed(user, { "test"_s, "exec"_s }))
+                methods.append(userID);
         }
     }
-    for (auto& block : m_function.blocks) {
-        for (ValueID userID : block.values) {
+    Vector<ValueID, 6> used;
+    used.appendVector(standIns);
+    used.appendVector(methods);
+    for (ValueID one : used) {
+        for (ValueID userID : usersOf(one)) {
             auto& user = m_function.at(userID);
             unsigned usesOfObject = 0;
             unsigned usesOfMethod = 0;
@@ -358,14 +362,8 @@ bool Lowering::isKeptByNothing(ValueID literal, bool isGlobal)
                 return false;
             }
         }
-        if (standsFor(block.terminator.value) || methods.contains(block.terminator.value))
+        if (isUsedByTerminator(one))
             return false;
-        for (auto& target : block.terminator.targets) {
-            for (ValueID argument : target.arguments) {
-                if (standsFor(argument) || methods.contains(argument))
-                    return false;
-            }
-        }
     }
     return true;
 }

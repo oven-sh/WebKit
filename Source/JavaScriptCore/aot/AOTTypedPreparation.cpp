@@ -320,6 +320,7 @@ public:
         }
         expandInitialize();
         linkForInKeys();
+        makeTextsOfLargeLiterals();
         fillLongLiterals();
         markFunctionsUsedAsObjects();
 
@@ -427,6 +428,267 @@ private:
     // Placement::placeArraySites(). So does one of numbers: it keeps them as numbers from its birth, which a store without a look cannot see to: what is not a number would read as a hole. So does one that a
     // handler waits for: it has to end its block. That a NewArray which does not end its block stands under no handler, nor anything in front of it there, holds of the blocks as the front end writes them: this
     // comes ahead of whatever takes an Invoke away or merges blocks.
+    void makeTextsOfLargeLiterals()
+    {
+        constexpr uint32_t minLeaves = 4096;
+        constexpr uint32_t maxDepth = 64;
+        constexpr uint32_t none = UINT32_MAX;
+        enum class Kind : uint8_t { Nothing, Leaf, Array, OpenObject, Object };
+        struct Node {
+            Kind kind { Kind::Nothing };
+            bool isTaken { false };
+            uint32_t block { none };
+            uint32_t leaves { 0 };
+            uint32_t depth { 0 };
+            uint32_t firstField { none };
+            uint32_t lastField { none };
+            uint32_t numberOfFields { 0 };
+        };
+        struct Field {
+            ValueID key;
+            ValueID value;
+            ValueID definition;
+            uint32_t next { none };
+        };
+        Vector<uint8_t> hasLargeBlock(FillWith { }, m_program.functions.size(), static_cast<uint8_t>(0));
+        forEachIndexInParallel(m_program.functions.size(), [&](unsigned i) {
+            hasLargeBlock[i] = m_program.functions[i].kind == FunctionKind::Module && m_program.functions[i].blocks.containsIf([&](auto& block) {
+                return block.values.size() >= minLeaves;
+            });
+        });
+        auto defineField = m_program.find("DefineField"_s.span8());
+        for (unsigned indexOfFunction = 0; indexOfFunction < m_program.functions.size(); ++indexOfFunction) {
+            if (!hasLargeBlock[indexOfFunction])
+                continue;
+            auto& function = m_program.functions[indexOfFunction];
+            unsigned numberOfValuesBefore = function.values.size();
+            Vector<uint32_t> uses(FillWith { }, numberOfValuesBefore, 0u);
+            for (auto& block : function.blocks) {
+                for (ValueID id : block.values) {
+                    std::as_const(function.at(id)).forEachChild([&](ValueID child) {
+                        ++uses[child.index()];
+                    });
+                }
+                block.terminator.forEachChild([&](ValueID& child) {
+                    ++uses[child.index()];
+                });
+            }
+            Vector<Node> nodes(numberOfValuesBefore);
+            Vector<Field> fields;
+            BitVector isInLoop = blocksInLoops(function);
+            for (uint32_t b = 0; b < function.blocks.size(); ++b) {
+                if (function.blocks[b].values.size() < minLeaves || isInLoop.get(b))
+                    continue;
+                fields.shrink(0);
+                auto isUsable = [&](ValueID id) {
+                    auto& node = nodes[id.index()];
+                    switch (node.kind) {
+                    case Kind::Leaf:
+                        return true;
+                    case Kind::Array:
+                        return node.block == b && !node.isTaken && uses[id.index()] == 1 && node.depth < maxDepth;
+                    case Kind::OpenObject:
+                    case Kind::Object:
+                        return node.block == b && !node.isTaken && uses[id.index()] == node.numberOfFields + 1 && node.depth < maxDepth;
+                    case Kind::Nothing:
+                        break;
+                    }
+                    return false;
+                };
+                auto take = [&](Node& parent, ValueID id) {
+                    auto& node = nodes[id.index()];
+                    parent.leaves += std::max<uint32_t>(node.leaves, 1);
+                    parent.depth = std::max(parent.depth, node.depth + 1);
+                    if (node.kind == Kind::Leaf)
+                        return;
+                    node.isTaken = true;
+                    node.kind = node.kind == Kind::OpenObject ? Kind::Object : node.kind;
+                };
+                auto close = [&](ValueID id) {
+                    if (nodes[id.index()].kind == Kind::OpenObject)
+                        nodes[id.index()].kind = Kind::Object;
+                };
+                auto& valuesOfBlock = function.blocks[b].values;
+                bool isWatchedAtEnd = function.blocks[b].terminator.kind == TerminatorKind::Invoke;
+                for (uint32_t at = 0; at < valuesOfBlock.size(); ++at) {
+                    ValueID id = valuesOfBlock[at];
+                    auto& value = std::as_const(function).at(id);
+                    auto& node = nodes[id.index()];
+                    bool isWatched = isWatchedAtEnd && at + 1 == valuesOfBlock.size();
+                    bool isAnything = value.type == m_program.types.anything;
+                    bool isPart = false;
+                    switch (value.opcode) {
+                    case Opcode::Null:
+                    case Opcode::Boolean:
+                    case Opcode::Integer:
+                    case Opcode::String:
+                        isPart = true;
+                        node = Node { Kind::Leaf, false, b, 1 };
+                        break;
+                    case Opcode::Double:
+                        isPart = std::isfinite(std::bit_cast<double>(value.bits()));
+                        if (isPart)
+                            node = Node { Kind::Leaf, false, b, 1 };
+                        break;
+                    case Opcode::NewArray:
+                        isPart = !isWatched && isAnything && std::ranges::all_of(value.arguments, isUsable);
+                        if (isPart) {
+                            node = Node { Kind::Array, false, b };
+                            for (ValueID element : value.arguments)
+                                take(node, element);
+                        }
+                        break;
+                    case Opcode::NewObject:
+                        isPart = !isWatched && isAnything && !value.child(0) && value.arguments.isEmpty() && value.immediates[0] == Format::none && value.immediates[1] == Format::none;
+                        if (isPart)
+                            node = Node { Kind::OpenObject, false, b };
+                        break;
+                    case Opcode::Operation: {
+                        if (isWatched || !defineField || value.string() != *defineField || value.arguments.size() != 3 || uses[id.index()])
+                            break;
+                        ValueID object = value.arguments[0];
+                        ValueID key = value.arguments[1];
+                        ValueID stored = value.arguments[2];
+                        auto& parent = nodes[object.index()];
+                        if (parent.kind != Kind::OpenObject || parent.block != b || function.at(key).opcode != Opcode::String || stored == object || !isUsable(stored))
+                            break;
+                        isPart = true;
+                        take(parent, stored);
+                        uint32_t field = fields.size();
+                        fields.append(Field { key, stored, id });
+                        if (parent.lastField == none)
+                            parent.firstField = field;
+                        else
+                            fields[parent.lastField].next = field;
+                        parent.lastField = field;
+                        ++parent.numberOfFields;
+                        break;
+                    }
+                    default:
+                        break;
+                    }
+                    if (!isPart)
+                        value.forEachChild(close);
+                }
+                for (ValueID id : valuesOfBlock)
+                    close(id);
+
+                BitVector isRemoved(numberOfValuesBefore);
+                Vector<uint8_t> text;
+                auto appendString = [&](StringID string) {
+                    text.append('"');
+                    for (uint8_t byte : m_program.string(string)) {
+                        if (byte == '"' || byte == '\\') {
+                            text.append('\\');
+                            text.append(byte);
+                        } else if (byte < 0x20) {
+                            text.append("\\u00"_s.span8());
+                            text.append("0123456789abcdef"[byte >> 4]);
+                            text.append("0123456789abcdef"[byte & 15]);
+                        } else
+                            text.append(byte);
+                    }
+                    text.append('"');
+                };
+                auto appendNode = [&](auto& self, ValueID id) -> void {
+                    auto& value = std::as_const(function).at(id);
+                    switch (nodes[id.index()].kind) {
+                    case Kind::Leaf:
+                        switch (value.opcode) {
+                        case Opcode::Null:
+                            text.append("null"_s.span8());
+                            break;
+                        case Opcode::Boolean:
+                            text.append(value.boolean() ? "true"_s.span8() : "false"_s.span8());
+                            break;
+                        case Opcode::Integer:
+                            text.append(byteCast<uint8_t>(String::number(value.integer()).utf8().span()));
+                            break;
+                        case Opcode::Double: {
+                            double number = std::bit_cast<double>(value.bits());
+                            NumberToStringBuffer buffer;
+                            if (!number && std::signbit(number))
+                                text.append("-0"_s.span8());
+                            else
+                                text.append(byteCast<uint8_t>(numberToStringAndSize(number, buffer)));
+                            break;
+                        }
+                        default:
+                            appendString(value.string());
+                            break;
+                        }
+                        return;
+                    case Kind::Array:
+                        text.append('[');
+                        for (unsigned i = 0; i < value.arguments.size(); ++i) {
+                            if (i)
+                                text.append(',');
+                            ValueID element = value.arguments[i];
+                            self(self, element);
+                            --uses[element.index()];
+                            if (nodes[element.index()].kind != Kind::Leaf)
+                                isRemoved.quickSet(element.index());
+                        }
+                        text.append(']');
+                        return;
+                    default:
+                        text.append('{');
+                        for (uint32_t field = nodes[id.index()].firstField; field != none; field = fields[field].next) {
+                            if (field != nodes[id.index()].firstField)
+                                text.append(',');
+                            appendString(function.at(fields[field].key).string());
+                            text.append(':');
+                            self(self, fields[field].value);
+                            --uses[fields[field].key.index()];
+                            --uses[fields[field].value.index()];
+                            --uses[id.index()];
+                            isRemoved.quickSet(fields[field].definition.index());
+                            if (nodes[fields[field].value.index()].kind != Kind::Leaf)
+                                isRemoved.quickSet(fields[field].value.index());
+                        }
+                        text.append('}');
+                        return;
+                    }
+                };
+                UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> textOfRoot;
+                for (uint32_t at = 0; at < function.blocks[b].values.size(); ++at) {
+                    ValueID id = function.blocks[b].values[at];
+                    auto& node = nodes[id.index()];
+                    if ((node.kind != Kind::Array && node.kind != Kind::Object) || node.isTaken || node.leaves < minLeaves || (node.kind == Kind::Array && node.depth <= 1))
+                        continue;
+                    text.shrink(0);
+                    appendNode(appendNode, id);
+                    Value constant;
+                    constant.opcode = Opcode::String;
+                    constant.type = m_program.types.string;
+                    constant.rep = repOf(m_program.at(constant.type));
+                    constant.position = function.at(id).position;
+                    constant.inlineFrame = function.at(id).inlineFrame;
+                    constant.immediates = { m_program.intern(text.span()).index(), Format::none };
+                    ValueID textID(function.values.size());
+                    function.values.append(WTF::move(constant));
+                    textOfRoot.add(id.index(), textID);
+                    auto& root = function.at(id);
+                    root.opcode = Opcode::Operation;
+                    root.children = { };
+                    root.immediates = { m_program.intern("ParseJSON"_s.span8()).index(), Format::none };
+                    root.arguments = Arguments { textID };
+                }
+                if (textOfRoot.isEmpty())
+                    continue;
+                ValuesOfBlock kept;
+                for (ValueID id : function.blocks[b].values) {
+                    if (isRemoved.quickGet(id.index()) || (nodes[id.index()].kind == Kind::Leaf && !uses[id.index()]))
+                        continue;
+                    if (auto found = textOfRoot.find(id.index()); found != textOfRoot.end())
+                        kept.append(found->value);
+                    kept.append(id);
+                }
+                function.blocks[b].values = WTF::move(kept);
+            }
+        }
+    }
+
     void fillLongLiterals()
     {
         constexpr unsigned maxElementsMadeAtOnce = 32;
@@ -1430,8 +1692,6 @@ static void giveConcatenationsOneBody(Program& program)
     program.functions.appendVector(WTF::move(bodies));
 }
 
-static std::optional<BitVector> functionsOfColdSet(Program&, const char* text);
-
 // A call of a method or a static function of the engine is lowered in place, with its tests and its general way: a few hundred bytes at every site. Where the text does not say hot there is
 // one body for each signature that two sites have, and the sites call it.
 static void giveCallsOfBuiltinsOneBody(Program& program)
@@ -1442,86 +1702,20 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         return builtins.find(BuiltinKind::Operation, { }, builtins.nameOf(name.span8()));
     };
     std::array<BuiltinID, 3> spreads { operation("AppendSpread"_s), operation("Apply"_s), operation("CallWithSpread"_s) };
-    static const char* const asked = getenv("BUN_AOT_SWITCH_ONE_BODY");
-    bool admitsAccessors = false;
-    bool admitsFunctions = false;
-    bool admitsPush = false;
-    bool takesFunctionsNearLoops = false;
-    bool namesAreTakenInLoops = true;
-    bool namesAreTakenNearLoops = true;
-    bool namesAreTakenInCopiesOfHot = true;
-    std::optional<BitVector> setOfWhatIsNew;
-    BitVector isNamed(builtins.size());
-    if (asked) {
-        bool isUnderstood = true;
-        const char* text = asked;
-        for (; *text && *text != ','; ++text) {
-            admitsAccessors |= *text == 'g';
-            admitsFunctions |= *text == 'f';
-            admitsPush |= *text == 'p';
-            isUnderstood &= !!strchr("gfp-", *text);
-        }
-        auto nextField = [&](char separator) {
-            const char* start = ++text;
-            while (*text && *text != ',' && *text != separator)
-                ++text;
-            return String::fromUTF8(std::span { start, static_cast<size_t>(text - start) });
-        };
-        if (*text == ',') {
-            String set = nextField(',');
-            if (set == "n"_s)
-                takesFunctionsNearLoops = true;
-            else if (set != "l"_s) {
-                CString bytes = set.utf8();
-                setOfWhatIsNew = functionsOfColdSet(program, byteCast<char>(bytes.data()));
-                isUnderstood &= !!setOfWhatIsNew;
-            }
-        }
-        if (const char* colon = *text ? strchr(text, ':') : nullptr) {
-            namesAreTakenInLoops = namesAreTakenNearLoops = namesAreTakenInCopiesOfHot = false;
-            for (++text; text != colon; ++text) {
-                namesAreTakenInLoops |= *text == 'i';
-                namesAreTakenNearLoops |= *text == 'n';
-                namesAreTakenInCopiesOfHot |= *text == 'h';
-                isUnderstood &= !!strchr("inh", *text);
-            }
-        }
-        while (*text) {
-            String name = nextField('|');
-            bool isFound = false;
-            for (unsigned i = 0; i < builtins.size(); ++i) {
-                auto& builtin = builtins.at(BuiltinID(i));
-                if (name != makeString(builtin.holder, builtin.holder.isEmpty() ? ""_s : "."_s, builtin.name))
-                    continue;
-                isNamed.set(i);
-                isFound = true;
-            }
-            isUnderstood &= isFound;
-        }
-        if (!isUnderstood) {
-            dataLogLn("AOT: BUN_AOT_SWITCH_ONE_BODY=", asked, " is not <letters of gfp, or ->[,<l | n | a cold set as AOT_X_COLD_SET has it>[,[<letters of inh>:]<public name of a built-in>|..]]");
-            exit(1);
-        }
-    }
-    enum class Candidate : uint8_t { No, AsLanded, New };
     auto isCandidate = [&](const Value& value) {
         // `s + t` makes a string as a concatenation does.
         if (value.opcode == Opcode::Add)
-            return program.at(value.type).isString() ? Candidate::AsLanded : Candidate::No;
+            return program.at(value.type).isString();
         if (value.opcode == Opcode::CallMethod && value.classExpectedOfReceiverPlusOne)
-            return value.arguments.size() + 1 > maxOperands ? Candidate::No : Candidate::AsLanded;
+            return value.arguments.size() + 1 <= maxOperands;
         if (value.opcode != Opcode::CallBuiltin || value.child(1) || value.child(2) || value.arguments.size() + !!value.child(0) > maxOperands)
-            return Candidate::No;
+            return false;
         // Its site is small: the usual way in line, all else in a stub.
         auto& implementation = builtins.at(value.builtin()).implementation;
         if (implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ArrayPush)
-            return admitsPush || isNamed.get(value.builtin().index()) ? Candidate::New : Candidate::No;
+            return false;
         BuiltinKind kind = builtins.at(value.builtin()).kind;
-        if (kind == BuiltinKind::Method || kind == BuiltinKind::StaticFunction || std::ranges::find(spreads, value.builtin()) != spreads.end())
-            return Candidate::AsLanded;
-        if (isNamed.get(value.builtin().index()) || (admitsAccessors && (kind == BuiltinKind::Getter || kind == BuiltinKind::Setter)) || (admitsFunctions && (kind == BuiltinKind::Function || kind == BuiltinKind::Constructor)))
-            return Candidate::New;
-        return Candidate::No;
+        return kind == BuiltinKind::Method || kind == BuiltinKind::StaticFunction || std::ranges::find(spreads, value.builtin()) != spreads.end();
     };
     auto isDescribedByLiteral = [&](const Function& function, const Value& value) {
         if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 3 || function.at(value.arguments[2]).opcode != Opcode::NewObject)
@@ -1529,8 +1723,8 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         auto& builtin = builtins.at(value.builtin());
         return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "defineProperty"_s;
     };
-    auto staysInBody = [](const Value& operand, bool isNew) {
-        return (isNew && operand.opcode == Opcode::String) || operand.opcode == Opcode::Integer || operand.opcode == Opcode::Double || operand.opcode == Opcode::Boolean || operand.opcode == Opcode::Undefined || operand.opcode == Opcode::Null;
+    auto staysInBody = [](const Value& operand) {
+        return operand.opcode == Opcode::Integer || operand.opcode == Opcode::Double || operand.opcode == Opcode::Boolean || operand.opcode == Opcode::Undefined || operand.opcode == Opcode::Null;
     };
     auto forEachOperand = [](auto& value, auto&& functor) {
         for (auto& child : value.children) {
@@ -1549,8 +1743,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
     Vector<Vector<Site>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = program.functions[i];
-        bool isRefusedForLoopsNearby = program.isCalledNearLoops(FunctionID(i)) && !takesFunctionsNearLoops;
-        if ((isRefusedForLoopsNearby && (isNamed.isEmpty() || !namesAreTakenNearLoops)) || function.blocks.isEmpty())
+        if (program.isCalledNearLoops(FunctionID(i)) || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
         bool hasHandlers = function.blocks.containsIf([](auto& block) {
@@ -1559,40 +1752,24 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
-                Candidate candidate = isCandidate(value);
-                if (candidate == Candidate::No || isDescribedByLiteral(function, value))
-                    continue;
-                bool isNamedHere = value.opcode == Opcode::CallBuiltin && isNamed.get(value.builtin().index());
-                bool isNew = candidate == Candidate::New;
-                if ((isRefusedForLoopsNearby && !isNamedHere) || (isNew && !isNamedHere && setOfWhatIsNew && !setOfWhatIsNew->get(i)))
+                if (!isCandidate(value) || isDescribedByLiteral(function, value))
                     continue;
                 if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                     continue;
                 if (!isInLoop)
                     isInLoop = blocksInLoops(function);
-                if (isInLoop->get(b) && !(isNamedHere && namesAreTakenInLoops))
+                if (isInLoop->get(b))
                     continue;
-                if (!(isNamedHere && namesAreTakenInCopiesOfHot) && isInCopyOfHotOriginal(program, function, value, !takesFunctionsNearLoops))
+                if (isInCopyOfHotOriginal(program, function, value, true))
                     continue;
-                if (isNew) {
-                    bool hasOperandInNoRegister = false;
-                    forEachOperand(value, [&](ValueID operandID) {
-                        auto& operand = function.at(operandID);
-                        hasOperandInNoRegister |= operand.rep == Rep::Void && operand.opcode != Opcode::Undefined && operand.opcode != Opcode::Null;
-                    });
-                    if (hasOperandInNoRegister)
-                        continue;
-                }
                 StringBuilder signature;
-                if (isNew)
-                    signature.append('n', static_cast<unsigned>(value.hasStringKeysByType), static_cast<unsigned>(value.receiverIsExpectedOfOneRow), ' ', value.predictedByKey.index(), ' ', value.predictedClosure.index(), ' ', value.assertedType.index(), ' ');
                 signature.append(static_cast<unsigned>(value.opcode), ' ', value.immediates[0], ' ', value.immediates[1], ' ', value.type.index(), ' ', value.prediction.index(), value.children[0] ? ' ' : '-');
                 if (value.classExpectedOfReceiverPlusOne)
                     signature.append('e', value.classExpectedOfReceiverPlusOne);
                 forEachOperand(value, [&](ValueID operandID) {
                     auto& operand = function.at(operandID);
                     signature.append(' ', operand.type.index(), '~', operand.prediction.index(), '~', operand.predictedClosure.index());
-                    if (staysInBody(operand, isNew))
+                    if (staysInBody(operand))
                         signature.append('=', static_cast<unsigned>(operand.opcode), ':', operand.immediates[0], ':', operand.immediates[1]);
                 });
                 sites[i].append({ id, signature.toString() });
@@ -1619,7 +1796,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             }
         }
     }
-    enum : unsigned { CallsBody, OccursOnce, IsNearLoops, IsGetterOrSetter, IsOperation, IsOfOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsOutsideSet, IsBesideHandlers, IsInLoop, IsLeft, NumberOfReasons };
+    enum : unsigned { CallsBody, OccursOnce, IsNearLoops, IsGetterOrSetter, IsOperation, IsOfOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsBesideHandlers, IsInLoop, IsLeft, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     for (unsigned i = 0; Options::verboseAOTCompilation() && i < count; ++i) {
         auto& function = program.functions[i];
@@ -1632,7 +1809,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             if (signatures[site.numberOfSignature].numberOfSites >= 2)
                 isSharedSite.set(site.value.index());
         }
-        bool isNearLoops = program.isCalledNearLoops(FunctionID(i)) && !takesFunctionsNearLoops;
+        bool isNearLoops = program.isCalledNearLoops(FunctionID(i));
         bool hasHandlers = function.blocks.containsIf([](auto& block) {
             return block.terminator.kind == TerminatorKind::Invoke;
         });
@@ -1644,14 +1821,12 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
                     continue;
                 BuiltinKind kind = builtins.at(value.builtin()).kind;
                 auto& implementation = builtins.at(value.builtin()).implementation;
-                bool isNamedHere = isNamed.get(value.builtin().index());
-                Candidate candidate = isCandidate(value);
                 unsigned reason = IsLeft;
                 if (isSite.get(id.index()))
                     reason = isSharedSite.get(id.index()) ? CallsBody : OccursOnce;
-                else if (isNearLoops && !(isNamedHere && namesAreTakenNearLoops))
+                else if (isNearLoops)
                     reason = IsNearLoops;
-                else if (candidate == Candidate::No) {
+                else if (!isCandidate(value)) {
                     if (value.child(1) || value.child(2) || value.arguments.size() + !!value.child(0) > maxOperands)
                         reason = HasTooManyOperands;
                     else if (kind == BuiltinKind::Getter || kind == BuiltinKind::Setter)
@@ -1666,25 +1841,19 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
                     }
                 } else if (isDescribedByLiteral(function, value))
                     reason = IsDescribedByLiteral;
-                else if (candidate == Candidate::New && !isNamedHere && setOfWhatIsNew && !setOfWhatIsNew->get(i))
-                    reason = IsOutsideSet;
                 else if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                     reason = IsBesideHandlers;
-                else if (isInLoop.get(b) && !(isNamedHere && namesAreTakenInLoops))
+                else if (isInLoop.get(b))
                     reason = IsInLoop;
                 ++numbers[reason];
             }
         }
     }
-    uint64_t sitesTakenAsLanded = 0;
-    uint64_t newSitesTaken = 0;
     Vector<uint32_t> signaturesWithBody;
     for (uint32_t number = 0; number < signatures.size(); ++number) {
         auto& signature = signatures[number];
         if (signature.numberOfSites < 2)
             continue;
-        bool isNew = sites[signature.functionOfFirstSite][signature.firstSite].signature[0] == 'n';
-        (isNew ? newSitesTaken : sitesTakenAsLanded) += signature.numberOfSites;
         signature.body = count + static_cast<uint32_t>(signaturesWithBody.size());
         signaturesWithBody.append(number);
     }
@@ -1694,7 +1863,6 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         auto& function = std::as_const(program).functions[signature.functionOfFirstSite];
         auto& site = sites[signature.functionOfFirstSite][signature.firstSite];
         auto& value = function.at(site.value);
-        bool isNew = site.signature[0] == 'n';
         Function made;
         made.name = program.emptyString;
         made.module = function.module;
@@ -1711,7 +1879,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             operand.inlineFrame = 0;
             operand.position = function.position;
             operandID = ValueID(made.values.size());
-            if (staysInBody(operand, isNew))
+            if (staysInBody(operand))
                 made.blocks[0].values.append(operandID);
             else {
                 Value parameter;
@@ -1742,11 +1910,10 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             auto& signature = signatures[site.numberOfSignature];
             if (signature.numberOfSites < 2)
                 continue;
-            bool isNew = site.signature[0] == 'n';
             auto& value = function.at(site.value);
             Arguments passed;
             forEachOperand(value, [&](ValueID operandID) {
-                if (!staysInBody(function.at(operandID), isNew))
+                if (!staysInBody(function.at(operandID)))
                     passed.append(operandID);
             });
             value.opcode = Opcode::CallDirect;
@@ -1755,29 +1922,8 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             value.arguments = WTF::move(passed);
         }
     });
-    for (unsigned i = 0; newSitesTaken && i < count; ++i) {
-        if (!sites[i].containsIf([](auto& site) { return site.signature[0] == 'n'; }))
-            continue;
-        auto& function = program.functions[i];
-        BitVector isUsed(function.values.size());
-        auto use = [&](ValueID id) {
-            isUsed.set(id.index());
-        };
-        for (auto& block : function.blocks) {
-            for (ValueID id : block.values)
-                function.at(id).forEachChild(use);
-            block.terminator.forEachChild(use);
-        }
-        for (auto& block : function.blocks) {
-            block.values.removeAllMatching([&](ValueID id) {
-                return function.at(id).opcode == Opcode::String && !isUsed.get(id.index());
-            });
-        }
-    }
     if (Options::verboseAOTCompilation())
-        printSitesOfPassForOneBody("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[IsOfOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "outside the cold set"_s, numbers[IsOutsideSet] }, { "beside handlers"_s, numbers[IsBesideHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot, or an operand in no register"_s, numbers[IsLeft] } });
-    if (asked)
-        dataLogLn("AOT: one body (", asked, "): ", sitesTakenAsLanded, " sites of the kinds that are landed and ", newSitesTaken, " of the kinds that are new call one of ", bodies.size(), " bodies");
+        printSitesOfPassForOneBody("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[IsOfOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "beside handlers"_s, numbers[IsBesideHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsLeft] } });
     program.functions.appendVector(WTF::move(bodies));
 }
 
@@ -3114,10 +3260,6 @@ static void splitOffWorkers(Program& program)
             program.functionsThatTakeNoCopies.set(workerID.index());
         if (program.functionsColdByGraph.get(i))
             program.functionsColdByGraph.set(workerID.index());
-        if (!program.heatLetters.isEmpty()) {
-            RELEASE_ASSERT(program.heatLetters.size() == workerID.index());
-            program.heatLetters.append(String(program.heatLetters[i]));
-        }
         program.functions[i] = WTF::move(wrapper);
         program.functions.append(WTF::move(worker));
     }
@@ -3451,7 +3593,7 @@ static void dropFunctionsWithoutCalls(Program& program)
         for (auto& callees : leftWithoutCalls)
             worklist.appendVector(callees);
     }
-    if (program.saysWhatTakesNoCopies && program.licencesTheyAreNotGiven) [[unlikely]] {
+    if (Options::verboseAOTCompilation() && program.licencesTheyAreNotGiven) [[unlikely]] {
         Vector<uint32_t> declined;
         declined.fill(0, count);
         std::array<uint64_t, 16> byLicence { };
@@ -4255,7 +4397,8 @@ static void fuseConcatenations(const Program& program, FunctionID functionID, Fu
                     });
                     return result;
                 };
-                if (numberOfUses[operand.index()] == 1 && isConcatenation(function.at(operand)) && (!keys.get(id.index()) || hasOnlyStringsAndNumbers(function.at(operand)))) {
+                constexpr size_t maxPartsTakenIn = 256;
+                if (numberOfUses[operand.index()] == 1 && function.at(operand).arguments.size() < maxPartsTakenIn && isConcatenation(function.at(operand)) && (!keys.get(id.index()) || hasOnlyStringsAndNumbers(function.at(operand)))) {
                     for (size_t k = limit; k--;) {
                         if (block.values[k] == operand) {
                             found = k;
@@ -4345,122 +4488,19 @@ static void refuteIteratorsWhoseNextMayChange(Program& program)
     });
 }
 
-static Vector<String> heatLettersForMap(const Program&);
+static constexpr uint8_t twentiethOfWhatIsNearTheRoots = 25;
 
-static const Vector<String>& heatLettersOf(Program& program, bool isByDefault = false)
+static Vector<uint8_t> twentiethsByHeat(const Program&);
+
+static void findFunctionsColdByGraph(Program& program, const Vector<uint8_t>& twentieths)
 {
-    if (program.heatLetters.isEmpty()) {
-        program.heatLetters = heatLettersForMap(program);
-        program.onlyDefaultsAskedForHeatLetters = isByDefault;
-    } else if (!isByDefault)
-        program.onlyDefaultsAskedForHeatLetters = false;
-    return program.heatLetters;
-}
-
-static int rankOfHeatLetter(char letter)
-{
-    return letter == '-' ? -2 : letter == 'x' ? -1 : letter;
-}
-
-static char s_smallestSizeThatMayBeCold;
-
-static bool isTooSmallToBeCold(const String& letters)
-{
-    return s_smallestSizeThatMayBeCold && letters.length() >= 12 && static_cast<char>(letters[11]) <= s_smallestSizeThatMayBeCold;
-}
-
-static bool parsePositionsOfHeat(const char*& text, Vector<unsigned, 4>& positions, bool& keepsHotByText)
-{
-    s_smallestSizeThatMayBeCold = 0;
-    for (;; ++text) {
-        if (*text == 'h') {
-            keepsHotByText = true;
-            ++text;
-        } else if (*text == 's' && text[1] && text[1] != ':' && text[1] != '+') {
-            s_smallestSizeThatMayBeCold = text[1];
-            text += 2;
-        } else {
-            unsigned position = 0;
-            while (*text >= '0' && *text <= '9')
-                position = position * 10 + (*text++ - '0');
-            if (!position)
-                return false;
-            positions.append(position);
-        }
-        if (*text != '+')
-            break;
-    }
-    return *text == ':' && !positions.isEmpty();
-}
-
-static std::optional<int> hottestRankOf(const String& letters, const Vector<unsigned, 4>& positions)
-{
-    int result = -3;
-    for (unsigned position : positions) {
-        if (position > letters.length())
-            return std::nullopt;
-        result = std::max(result, rankOfHeatLetter(static_cast<char>(letters[position - 1])));
-    }
-    return result;
-}
-
-static bool arePositionsOfHeat(const Vector<String>& letters, const Vector<unsigned, 4>& positions)
-{
-    return !letters.isEmpty() && std::ranges::all_of(positions, [&](unsigned position) {
-        return position <= letters.first().length() && letters.first()[position - 1] != '|';
-    });
-}
-
-static std::optional<BitVector> functionsOfColdSet(Program& program, const char* text)
-{
-    Vector<unsigned, 4> positions;
-    bool keepsHotByText = false;
-    if (!parsePositionsOfHeat(text, positions, keepsHotByText) || !text[1] || text[2])
-        return std::nullopt;
-    int coldest = rankOfHeatLetter(text[1]);
-    auto& letters = heatLettersOf(program);
-    if (!arePositionsOfHeat(letters, positions))
-        return std::nullopt;
-    BitVector result(letters.size());
-    for (unsigned i = 0; i < letters.size(); ++i) {
-        auto rank = hottestRankOf(letters[i], positions);
-        if (rank && *rank <= coldest && !(keepsHotByText && program.functionsHotByText.get(i)) && !isTooSmallToBeCold(letters[i]))
+    static constexpr uint8_t hottestThatIsCold = 4;
+    BitVector result(twentieths.size());
+    for (unsigned i = 0; i < twentieths.size(); ++i) {
+        if (twentieths[i] <= hottestThatIsCold)
             result.set(i);
     }
-    return result;
-}
-
-static void findFunctionsColdByGraph(Program& program)
-{
-    if (getenv("AOT_X_HEAT_LETTERS") || getenv("AOT_X_HEAT_GRAPH"))
-        heatLettersOf(program);
-    const char* wanted = getenv("AOT_X_COLD_SET");
-    bool isByDefault = !wanted;
-    if (isByDefault)
-        wanted = "66:e";
-    const char* asGiven = wanted;
-    Vector<unsigned, 4> positions;
-    bool keepsHotByText = false;
-    if (!parsePositionsOfHeat(wanted, positions, keepsHotByText) || !wanted[1] || wanted[2]) {
-        dataLogLn("AOT: AOT_X_COLD_SET=", asGiven, " is not understood: no function is cold by the graph");
-        return;
-    }
-    int coldest = rankOfHeatLetter(wanted[1]);
-    auto& letters = heatLettersOf(program, isByDefault);
-    if (!arePositionsOfHeat(letters, positions)) {
-        dataLogLn("AOT: AOT_X_COLD_SET=", asGiven, " names a position that the letters do not have: no function is cold by the graph");
-        return;
-    }
-    BitVector result(letters.size());
-    uint64_t functions = 0;
-    for (unsigned i = 0; i < letters.size(); ++i) {
-        auto rank = hottestRankOf(letters[i], positions);
-        if (!rank || *rank > coldest || (keepsHotByText && program.functionsHotByText.get(i)) || isTooSmallToBeCold(letters[i]))
-            continue;
-        result.set(i);
-        ++functions;
-    }
-    dataLogLnIf(!isByDefault || Options::verboseAOTCompilation(), "AOT: cold by the graph (", asGiven, "): ", functions, " of ", letters.size(), " functions");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: cold by the graph: ", result.bitCount(), " of ", twentieths.size(), " functions");
     program.functionsColdByGraph = WTF::move(result);
 }
 
@@ -4475,120 +4515,44 @@ static bool isTooSmallToHaveColdCode(const Program& program)
     return size < leastSizeWithColdCode;
 }
 
-static void takeHeatFromGraph(Program& program)
+static void takeHeatFromGraph(Program& program, const Vector<uint8_t>& twentieths)
 {
-    const char* wanted = getenv("AOT_X_HOT_BY_GRAPH");
-    bool isByDefault = !wanted;
-    if (isByDefault)
-        wanted = "66:f.";
-    const char* asGiven = wanted;
-    Vector<unsigned, 4> positions;
-    bool keepsHotByText = false;
-    if (!parsePositionsOfHeat(wanted, positions, keepsHotByText) || !wanted[1] || !wanted[2] || wanted[3]) {
-        dataLogLn("AOT: AOT_X_HOT_BY_GRAPH=", asGiven, " is not understood: the marks stay as the text gives them");
-        return;
-    }
-    int coldest = wanted[1] == '.' ? -4 : rankOfHeatLetter(wanted[1]);
-    int hottest = wanted[2] == '.' ? 256 : rankOfHeatLetter(wanted[2]);
-    auto& letters = heatLettersOf(program, isByDefault);
-    if (!arePositionsOfHeat(letters, positions)) {
-        dataLogLn("AOT: AOT_X_HOT_BY_GRAPH=", asGiven, " names a position that the letters do not have: the marks stay as the text gives them");
-        return;
-    }
+    static constexpr uint8_t hottestThatIsCooled = 5;
     uint64_t cooled = 0;
-    uint64_t heated = 0;
-    for (unsigned i = 0; i < letters.size(); ++i) {
-        auto found = hottestRankOf(letters[i], positions);
-        if (!found)
+    for (unsigned i = 0; i < twentieths.size(); ++i) {
+        if (twentieths[i] > hottestThatIsCooled)
             continue;
-        int rank = *found;
-        if (rank <= coldest && !(keepsHotByText && program.functionsHotByText.get(i)) && !isTooSmallToBeCold(letters[i])) {
-            if (program.functionsWarmByText.get(i) && !blocksInLoops(program.functions[i]).isEmpty()) {
-                program.functionsCalledNearLoops.clear(i);
-                program.functionsHotOnlyInTheirLoops.clear(i);
-                program.functionsHotByText.clear(i);
-                continue;
-            }
-            cooled += program.functionsHotByText.get(i) || program.functionsWarmByText.get(i);
-            program.functionsHotByText.clear(i);
-            program.functionsWarmByText.clear(i);
+        if (program.functionsWarmByText.get(i) && !blocksInLoops(program.functions[i]).isEmpty()) {
             program.functionsCalledNearLoops.clear(i);
             program.functionsHotOnlyInTheirLoops.clear(i);
-        } else if (rank >= hottest && !program.functionsRareByText.get(i)) {
-            heated += !program.functionsHotByText.get(i);
-            program.functionsHotByText.set(i);
-            program.functionsWarmByText.set(i);
-            program.functionsCalledNearLoops.set(i);
-            program.functionsHotOnlyInTheirLoops.clear(i);
+            program.functionsHotByText.clear(i);
+            continue;
         }
+        cooled += program.functionsHotByText.get(i) || program.functionsWarmByText.get(i);
+        program.functionsHotByText.clear(i);
+        program.functionsWarmByText.clear(i);
+        program.functionsCalledNearLoops.clear(i);
+        program.functionsHotOnlyInTheirLoops.clear(i);
     }
     for (auto [function, entry] : program.genericEntrypoints) {
         for (auto* marks : { &program.functionsHotByText, &program.functionsWarmByText, &program.functionsCalledNearLoops, &program.functionsHotOnlyInTheirLoops })
             marks->set(entry.index(), marks->get(function));
     }
-    dataLogLnIf(!isByDefault || Options::verboseAOTCompilation(), "AOT: heat by the graph (", asGiven, "): ", cooled, " functions lose the mark hot or warm, ", heated, " gain the mark hot, of ", letters.size());
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: heat by the graph: ", cooled, " functions lose the mark hot or warm, of ", twentieths.size());
 }
 
-static void findFunctionsThatTakeNoCopies(Program& program)
+static void findFunctionsThatTakeNoCopies(Program& program, const Vector<uint8_t>& twentieths)
 {
-    const char* wanted = getenv("BUN_AOT_SWITCH_NO_COPIES_INTO_COLD");
-    bool isByDefault = !wanted;
-    program.saysWhatTakesNoCopies = wanted || Options::verboseAOTCompilation();
-    if (isByDefault)
-        wanted = "66:f";
-    const char* asGiven = wanted;
-    Vector<unsigned, 4> positions;
-    bool keepsHotByText = false;
-    int coldest = 0;
-    bool isUnderstood = true;
-    bool isAll = !strncmp(wanted, "all", 3);
-    bool isByText = !isAll && *wanted == 'c';
-    if (isAll || isByText)
-        wanted += isAll ? 3 : 1;
-    else if ((isUnderstood = parsePositionsOfHeat(wanted, positions, keepsHotByText) && wanted[1])) {
-        coldest = rankOfHeatLetter(wanted[1]);
-        wanted += 2;
-    }
+    static constexpr uint8_t hottestThatTakesNoCopies = 5;
     constexpr uint16_t areNoDuplicates = 1 << licenceForMap('m') | 1 << licenceForMap('w') | 1 << licenceForMap('o');
-    uint16_t licences = ((1 << licencesForMap.length()) - 2) & ~areNoDuplicates;
-    if (isUnderstood && *wanted == ',') {
-        licences = 0;
-        for (++wanted; *wanted; ++wanted) {
-            size_t licence = 1;
-            while (licence < licencesForMap.length() && licencesForMap[licence] != *wanted)
-                ++licence;
-            if (licence == licencesForMap.length())
-                break;
-            licences |= 1 << licence;
-        }
-        isUnderstood = licences && !(licences & areNoDuplicates);
+    BitVector result(twentieths.size());
+    for (unsigned i = 0; i < twentieths.size(); ++i) {
+        if (twentieths[i] <= hottestThatTakesNoCopies)
+            result.set(i);
     }
-    if (!isUnderstood || *wanted) {
-        dataLogLn("AOT: BUN_AOT_SWITCH_NO_COPIES_INTO_COLD=", asGiven, " is not understood: every caller takes copies as ever");
-        return;
-    }
-    unsigned count = program.functions.size();
-    BitVector result(count);
-    if (isAll || isByText) {
-        for (unsigned i = 0; i < count; ++i) {
-            if (isAll || !program.functionsHotByText.get(i))
-                result.set(i);
-        }
-    } else {
-        auto& letters = heatLettersOf(program, isByDefault);
-        if (!arePositionsOfHeat(letters, positions)) {
-            dataLogLn("AOT: BUN_AOT_SWITCH_NO_COPIES_INTO_COLD=", asGiven, " names a position that the letters do not have: every caller takes copies as ever");
-            return;
-        }
-        for (unsigned i = 0; i < letters.size(); ++i) {
-            auto rank = hottestRankOf(letters[i], positions);
-            if (rank && *rank <= coldest && !(keepsHotByText && program.functionsHotByText.get(i)) && !isTooSmallToBeCold(letters[i]))
-                result.set(i);
-        }
-    }
-    dataLogLnIf(program.saysWhatTakesNoCopies, "AOT: no copies into cold callers (", asGiven, "): ", result.bitCount(), " of ", count, " functions take none");
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT: no copies into cold callers: ", result.bitCount(), " of ", twentieths.size(), " functions take none");
     program.functionsThatTakeNoCopies = WTF::move(result);
-    program.licencesTheyAreNotGiven = licences;
+    program.licencesTheyAreNotGiven = ((1 << licencesForMap.length()) - 2) & ~areNoDuplicates;
 }
 
 static void boxResultsOfFunctionsOnlyCalledByValue(Program& program)
@@ -4760,24 +4724,15 @@ Vector<String> optimize(Program& program)
     didFinish("- findFunctionsHotByText"_s);
     findFunctionsRareByText(program);
     didFinish("- findFunctionsRareByText"_s);
-    bool hasColdCode = !isTooSmallToHaveColdCode(program);
-    if (hasColdCode || getenv("AOT_X_HOT_BY_GRAPH"))
-        takeHeatFromGraph(program);
-    didFinish("- takeHeatFromGraph"_s);
-    if (hasColdCode || getenv("BUN_AOT_SWITCH_NO_COPIES_INTO_COLD"))
-        findFunctionsThatTakeNoCopies(program);
-    didFinish("- findFunctionsThatTakeNoCopies"_s);
-    if (hasColdCode || getenv("AOT_X_COLD_SET"))
-        findFunctionsColdByGraph(program);
-    else if (getenv("AOT_X_HEAT_LETTERS") || getenv("AOT_X_HEAT_GRAPH"))
-        heatLettersOf(program);
-    if (std::exchange(program.onlyDefaultsAskedForHeatLetters, false)) {
-        forEachIndexInParallel(program.heatLetters.size(), [&](unsigned i) {
-            program.heatLetters[i] = String();
-        });
-        program.heatLetters.clear();
+    if (!isTooSmallToHaveColdCode(program)) {
+        auto twentieths = twentiethsByHeat(program);
+        takeHeatFromGraph(program, twentieths);
+        didFinish("- takeHeatFromGraph"_s);
+        findFunctionsThatTakeNoCopies(program, twentieths);
+        didFinish("- findFunctionsThatTakeNoCopies"_s);
+        findFunctionsColdByGraph(program, twentieths);
+        didFinish("- findFunctionsColdByGraph"_s);
     }
-    didFinish("- findFunctionsColdByGraph"_s);
     markCallsInTailPosition(program);
     didFinish("- markCallsInTailPosition"_s);
     if (!Options::auditAOTTypedAssertions())
@@ -4939,15 +4894,13 @@ Vector<String> optimize(Program& program)
     return result;
 }
 
-static Vector<String> heatLettersForMap(const Program& program)
+static Vector<uint8_t> twentiethsByHeat(const Program& program)
 {
     unsigned count = program.functions.size();
     struct Edge {
         uint32_t to;
-        uint8_t loops;
         uint8_t kind;
         bool isCold;
-        int8_t weight;
         int8_t shown;
     };
     Vector<Vector<Edge, 2>> edges(count);
@@ -5066,9 +5019,9 @@ static Vector<String> heatLettersForMap(const Program& program)
                     continue;
                 uint32_t entered = enteredByValue(method.function);
                 if (method.name)
-                    edges[hubOf(method.kind == MethodKind::Setter ? keyOfSetter(method.name) : method.kind == MethodKind::Getter ? keyOfGetter(method.name) : keyOfName(method.name), true)].append(Edge { entered, 0, 2, false, 0, 0 });
+                    edges[hubOf(method.kind == MethodKind::Setter ? keyOfSetter(method.name) : method.kind == MethodKind::Getter ? keyOfGetter(method.name) : keyOfName(method.name), true)].append(Edge { entered, 2, false, 0 });
                 if (layout.constructor)
-                    edges[layout.constructor.index()].append(Edge { entered, 0, 3, false, 0, 0 });
+                    edges[layout.constructor.index()].append(Edge { entered, 3, false, 0 });
             }
         }
     }
@@ -5078,7 +5031,7 @@ static Vector<String> heatLettersForMap(const Program& program)
         for (LayoutID at = LayoutID(i); at; at = program.at(at).base) {
             for (auto& method : program.at(at).methods) {
                 if (method.function)
-                    edges[hubOf(keyOfClass(LayoutID(i)), true)].append(Edge { enteredByValue(method.function), 0, 3, false, 0, 0 });
+                    edges[hubOf(keyOfClass(LayoutID(i)), true)].append(Edge { enteredByValue(method.function), 3, false, 0 });
             }
         }
     }
@@ -5089,7 +5042,7 @@ static Vector<String> heatLettersForMap(const Program& program)
                 if (!method.function || !method.name)
                     continue;
                 uint64_t key = method.kind == MethodKind::Setter ? keyOfSetter(method.name) : method.kind == MethodKind::Getter ? keyOfGetter(method.name) : keyOfName(method.name);
-                edges[hubOf(keyWithin(key, isNamedByTypes ? i : noLayout), true)].append(Edge { enteredByValue(method.function), 0, 2, false, 0, 0 });
+                edges[hubOf(keyWithin(key, isNamedByTypes ? i : noLayout), true)].append(Edge { enteredByValue(method.function), 2, false, 0 });
             }
         }
     }
@@ -5132,15 +5085,15 @@ static Vector<String> heatLettersForMap(const Program& program)
     });
     for (auto& storedInFunction : storedIn) {
         for (auto& [key, entered, layouts] : storedInFunction) {
-            edges[hubOf(key, true)].append(Edge { entered, 0, kindOfKey(key), false, 0, 0 });
+            edges[hubOf(key, true)].append(Edge { entered, kindOfKey(key), false, 0 });
             if (kindOfKey(key) != 2)
                 continue;
             if (layouts.isEmpty()) {
-                edges[hubOf(keyWithin(key, noLayout), true)].append(Edge { entered, 0, 2, false, 0, 0 });
+                edges[hubOf(keyWithin(key, noLayout), true)].append(Edge { entered, 2, false, 0 });
                 continue;
             }
             for (uint32_t layout : layouts)
-                edges[hubOf(keyWithin(key, layout), true)].append(Edge { entered, 0, 2, false, 0, 0 });
+                edges[hubOf(keyWithin(key, layout), true)].append(Edge { entered, 2, false, 0 });
         }
     }
     storedIn.clear();
@@ -5186,7 +5139,6 @@ static Vector<String> heatLettersForMap(const Program& program)
     };
     Vector<Handed> functionsHanded;
     Vector<float> massOf(FillWith { }, count, 0.0f);
-    Vector<uint8_t> deepestLoop(FillWith { }, count, static_cast<uint8_t>(0));
     Vector<uint32_t> sizes(FillWith { }, count, 0u);
     Vector<char> coroutineResumedBy(FillWith { }, count, '-');
     for (unsigned i = 0; i < count; ++i) {
@@ -5402,23 +5354,22 @@ static Vector<String> heatLettersForMap(const Program& program)
                 return -30;
             return std::clamp(static_cast<int>(std::lround(std::log2(frequency[b]))), -30, 12);
         };
-        auto add = [&](uint32_t to, unsigned b, unsigned bonus, uint8_t kind, unsigned bonusShown = 0) {
+        auto add = [&](uint32_t to, unsigned b, uint8_t kind, unsigned bonusShown = 0) {
             bool cold = isCold[b];
-            int weight = std::min(15, weightOf(b) + 3 * static_cast<int>(bonus));
             int shown = std::min(15, weightOf(b) + 3 * static_cast<int>(bonusShown));
-            edges[i].append(Edge { to, static_cast<uint8_t>(std::min<unsigned>(4, loops[b] + bonus)), kind, cold, static_cast<int8_t>(weight), static_cast<int8_t>(shown) });
+            edges[i].append(Edge { to, kind, cold, static_cast<int8_t>(shown) });
         };
         auto leadByName = [&](uint64_t key, const std::optional<Vector<uint32_t>>& layouts, unsigned b) {
             if (!layouts) {
                 if (uint32_t hub = hubOf(key, false); hub != UINT32_MAX)
-                    add(hub, b, 0, 2);
+                    add(hub, b, 2);
                 return;
             }
             if (uint32_t hub = hubOf(keyWithin(key, noLayout), false); hub != UINT32_MAX)
-                add(hub, b, 0, 2);
+                add(hub, b, 2);
             for (uint32_t layout : *layouts) {
                 if (uint32_t hub = hubOf(keyWithin(key, layout), false); hub != UINT32_MAX)
-                    add(hub, b, 0, 2);
+                    add(hub, b, 2);
             }
         };
         auto parameterThatIs = [&](ValueID id) -> std::optional<uint32_t> {
@@ -5430,26 +5381,25 @@ static Vector<String> heatLettersForMap(const Program& program)
         };
         for (FunctionID other : { function.resumeFunction, function.startFunction, function.rampForClosures, function.worker }) {
             if (other)
-                add(other.index(), 0, 0, 0);
+                add(other.index(), 0, 0);
         }
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             auto& block = function.blocks[b];
             sizes[i] += block.values.size() + 1;
             massOf[i] += frequency[b] * static_cast<float>(block.values.size() + 1);
-            deepestLoop[i] = std::max(deepestLoop[i], loops[b]);
             for (ValueID id : block.values) {
                 auto& value = function.at(id);
                 uint64_t read = 0;
                 switch (value.opcode) {
                 case Opcode::CallDirect:
-                    add(value.function().index(), b, 0, 0);
+                    add(value.function().index(), b, 0);
                     if (program.moduleEvaluatorIfNeeded && program.moduleEvaluationOfFunction.contains(value.function().index()))
-                        add(program.moduleEvaluatorIfNeeded.index(), b, 0, 0);
+                        add(program.moduleEvaluatorIfNeeded.index(), b, 0);
                     break;
                 case Opcode::NewClosure:
                 case Opcode::NewClosureOnce:
                 case Opcode::FunctionReference:
-                    add(enteredByValue(value.function()), b, 0, 1);
+                    add(enteredByValue(value.function()), b, 1);
                     break;
                 case Opcode::GetById:
                 case Opcode::CallMethod: {
@@ -5483,7 +5433,7 @@ static Vector<String> heatLettersForMap(const Program& program)
                 }
                 if (read) {
                     if (uint32_t hub = hubOf(read, false); hub != UINT32_MAX)
-                        add(hub, b, 0, kindOfKey(read));
+                        add(hub, b, kindOfKey(read));
                 }
                 bool isCall = value.opcode == Opcode::Call || value.opcode == Opcode::CallMethod || value.opcode == Opcode::CallDirect || value.opcode == Opcode::Construct
                     || (value.opcode == Opcode::CallBuiltin && Builtins::singleton().at(value.builtin()).callsUserCode());
@@ -5498,7 +5448,7 @@ static Vector<String> heatLettersForMap(const Program& program)
                 bool isKnown = value.opcode == Opcode::CallDirect && !program.at(value.function()).blocks.isEmpty() && program.at(value.function()).blocks[0].parameters.size() == value.arguments.size();
                 for (unsigned argument = 0; argument < value.arguments.size(); ++argument) {
                     if (FunctionID handed = functionMadeBy(function, value.arguments[argument])) {
-                        add(enteredByValue(handed), b, 1, 1, iterates);
+                        add(enteredByValue(handed), b, 1, iterates);
                         if (isKnown)
                             foundIn[i].functionsHanded.append(Handed { i, static_cast<uint32_t>(edges[i].size() - 1), value.function().index(), argument, weightOf(b) });
                     } else if (isKnown && !isCold[b]) {
@@ -5518,7 +5468,7 @@ static Vector<String> heatLettersForMap(const Program& program)
     foundIn.clear();
     for (auto& evaluation : program.moduleEvaluations) {
         for (FunctionID callee : evaluation.callees)
-            edges[evaluation.function.index()].append(Edge { callee.index(), 0, 0, false, 0, 0 });
+            edges[evaluation.function.index()].append(Edge { callee.index(), 0, false, 0 });
     }
 
     for (unsigned round = 0; round < 6; ++round) {
@@ -5566,14 +5516,6 @@ static Vector<String> heatLettersForMap(const Program& program)
         if (evaluator)
             roots.append(evaluator.index());
     }
-    auto bucket = [](uint64_t number) -> char {
-        unsigned bits = 0;
-        while (number) {
-            ++bits;
-            number >>= 1;
-        }
-        return "0123456789abcdefghijklmnopqrstuvwxyz"[std::min(bits, 35u)];
-    };
     BitVector isReached(nodes);
     Vector<uint32_t> reachedAndNotLeft;
     for (uint32_t root : roots) {
@@ -5589,20 +5531,6 @@ static Vector<String> heatLettersForMap(const Program& program)
     uint64_t sizeOfAll = 0;
     for (unsigned i = 0; i < count; ++i)
         sizeOfAll += isReached.get(i) ? sizes[i] : 0;
-    if (const char* path = getenv("AOT_X_HEAT_GRAPH")) {
-        if (FILE* file = fopen(path, "w")) {
-            fprintf(file, "N\t%u\t%u\n", count, nodes);
-            for (unsigned i = 0; i < count; ++i)
-                fprintf(file, "F\t%u\t%u\t%g\t%u\t%c\n", i, sizes[i], static_cast<double>(massOf[i]), static_cast<unsigned>(deepestLoop[i]), coroutineResumedBy[i]);
-            for (uint32_t root : roots)
-                fprintf(file, "R\t%u\n", root);
-            for (uint32_t from = 0; from < nodes; ++from) {
-                for (auto& edge : edges[from])
-                    fprintf(file, "E\t%u\t%u\t%u\t%u\t%u\t%d\t%d\n", from, edge.to, static_cast<unsigned>(edge.kind), static_cast<unsigned>(edge.isCold), static_cast<unsigned>(edge.loops), static_cast<int>(edge.weight), static_cast<int>(edge.shown));
-            }
-            fclose(file);
-        }
-    }
     struct Term {
         uint32_t from;
         uint32_t to;
@@ -5706,7 +5634,7 @@ static Vector<String> heatLettersForMap(const Program& program)
             slicesDoneOfRound[round].fetch_add(1, std::memory_order_release);
         }
     });
-    std::array<Vector<char>, 2> twentieths;
+    std::array<Vector<uint8_t>, 2> twentieths;
     forEachIndexInParallel(2, [&](unsigned which) {
         Vector<std::pair<double, uint32_t>> order(count, [&](size_t i) {
             double flow = flows[i][which];
@@ -5718,31 +5646,23 @@ static Vector<String> heatLettersForMap(const Program& program)
             return std::pair { flow * mass / std::max(1u, sizes[i]), static_cast<uint32_t>(i) };
         });
         std::ranges::sort(order);
-        Vector<char> result(FillWith { }, count, 'a');
+        Vector<uint8_t> result(FillWith { }, count, static_cast<uint8_t>(0));
         uint64_t before = 0;
         for (auto [key, function] : order) {
-            result[function] = static_cast<char>('a' + (sizeOfAll ? std::min<uint64_t>(19, before * 20 / sizeOfAll) : 0));
+            result[function] = static_cast<uint8_t>(sizeOfAll ? std::min<uint64_t>(19, before * 20 / sizeOfAll) : 0);
             before += isReached.get(function) ? sizes[function] : 0;
         }
         twentieths[which] = WTF::move(result);
     });
-    auto& ranks = twentieths[0];
-    auto& ranksByNearness = twentieths[1];
-    Vector<String> result(count);
-    forEachIndexInParallel(count, [&](unsigned i) {
-        result[i] = makeString("|||||||||||"_s, bucket(sizes[i]), "|||||||||||||||||||||||||||||||||||||||||||||||||||||"_s, ranksByNearness[i] >= 's' ? 'z' : ranks[i], ranksByNearness[i]);
+    static constexpr uint8_t leastThatIsNearTheRoots = 18;
+    return Vector<uint8_t>(count, [&](size_t i) {
+        return twentieths[1][i] >= leastThatIsNearTheRoots ? twentiethOfWhatIsNearTheRoots : twentieths[0][i];
     });
-    return result;
 }
 
 Vector<String> describeForMap(const Program& program)
 {
     unsigned count = program.functions.size();
-    auto& heatLetters = program.heatLetters;
-    bool printsHeatLetters = getenv("AOT_X_HEAT_LETTERS") && !heatLetters.isEmpty();
-    StringBuilder lettersOfWhatWasMadeLater;
-    for (unsigned position = 0; printsHeatLetters && position < heatLetters.first().length(); ++position)
-        lettersOfWhatWasMadeLater.append('~');
     Vector<FunctionID> entered;
     entered.fill(FunctionID(), count);
     for (auto& entry : program.genericEntrypoints)
@@ -5792,8 +5712,6 @@ Vector<String> describeForMap(const Program& program)
         String className = itsClass ? text(program.at(itsClass).name) : String();
         String path = function.module ? text(program.modules[function.module.index()].path) : String();
         result.append(makeString(className, className.isEmpty() ? ""_s : "."_s, text(function.name), '\t', entered[i] ? "generic-"_s : ""_s, entrypointOf(described), '\t', i, '\t', path, '\t', function.position, '\t', program.isHotByText(FunctionID(i)) ? 'h' : program.isRareByText(FunctionID(i)) ? 'r' : 'c'));
-        if (printsHeatLetters)
-            result.last() = makeString(result.last(), '\t', i < heatLetters.size() ? heatLetters[i] : lettersOfWhatWasMadeLater.toString(), ':', program.isColdByGraph(FunctionID(i)) ? 'c' : '-');
     }
     return result;
 }

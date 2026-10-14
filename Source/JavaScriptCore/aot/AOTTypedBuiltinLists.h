@@ -516,66 +516,66 @@
     v(shadowRealmPrototypeEvaluateCode, 30) \
     v(arrayPrototypeEveryCode, 31) \
     v(jsIteratorPrototypeEveryCode, 32) \
-    v(arrayPrototypeFilterCode, 34) \
-    v(jsIteratorPrototypeFilterCode, 35) \
-    v(arrayPrototypeFindCode, 38) \
-    v(jsIteratorPrototypeFindCode, 39) \
-    v(arrayPrototypeFindIndexCode, 40) \
-    v(arrayPrototypeFindLastCode, 41) \
-    v(arrayPrototypeFindLastIndexCode, 42) \
-    v(arrayPrototypeFlatIntoArrayCode, 43) \
-    v(arrayPrototypeFlatIntoArrayWithCallbackCode, 44) \
-    v(arrayPrototypeFlatMapCode, 45) \
-    v(jsIteratorPrototypeFlatMapCode, 46) \
-    v(arrayPrototypeForEachCode, 47) \
-    v(mapPrototypeForEachCode, 48) \
-    v(setPrototypeForEachCode, 49) \
-    v(arrayConstructorFromCode, 51) \
-    v(jsIteratorConstructorFromCode, 52) \
-    v(typedArrayConstructorFromCode, 53) \
-    v(arrayConstructorFromAsyncCode, 54) \
-    v(objectConstructorFromEntriesCode, 55) \
-    v(reflectObjectGetCode, 57) \
-    v(disposableStackPrototypeGetAsyncDisposeMethodCode, 58) \
-    v(disposableStackPrototypeGetDisposeMethodCode, 59) \
-    v(jsIteratorConstructorGetIteratorFlattenableCode, 60) \
-    v(jsIteratorConstructorGetIteratorSyncCode, 61) \
-    v(jsIteratorConstructorGetOptionsObjectCode, 62) \
-    v(mapConstructorGroupByCode, 63) \
-    v(objectConstructorGroupByCode, 64) \
-    v(reflectObjectHasCode, 65) \
-    v(shadowRealmPrototypeImportValueCode, 66) \
-    v(jsIteratorConstructorIteratorCloseAllNormalCode, 67) \
-    v(jsIteratorConstructorIteratorZipCode, 68) \
-    v(arrayPrototypeMapCode, 69) \
-    v(jsIteratorPrototypeMapCode, 70) \
-    v(asyncDisposableStackPrototypeMoveCode, 73) \
-    v(disposableStackPrototypeMoveCode, 74) \
-    v(arrayIteratorPrototypeNextCode, 75) \
-    v(generatorPrototypeNextCode, 76) \
-    v(jsIteratorHelperPrototypeNextCode, 77) \
-    v(wrapForValidIteratorPrototypeNextCode, 78) \
-    v(iteratorHelpersPerformIterationCode, 79) \
-    v(arrayPrototypeReduceCode, 88) \
-    v(jsIteratorPrototypeReduceCode, 89) \
-    v(arrayPrototypeReduceRightCode, 91) \
-    v(jsIteratorConstructorRemoveFirstFromListCode, 92) \
-    v(generatorPrototypeReturnCode, 93) \
-    v(jsIteratorHelperPrototypeReturnCode, 94) \
-    v(wrapForValidIteratorPrototypeReturnCode, 95) \
-    v(arrayPrototypeSomeCode, 96) \
-    v(jsIteratorPrototypeSomeCode, 97) \
-    v(jsIteratorPrototypeTakeCode, 99) \
-    v(generatorPrototypeThrowCode, 100) \
-    v(typedArrayPrototypeToLocaleStringCode, 101) \
-    v(promiseConstructorTryCode, 102) \
-    v(asyncDisposableStackPrototypeUseCode, 103) \
-    v(disposableStackPrototypeUseCode, 104) \
-    v(jsIteratorPrototypeWindowsCode, 105) \
-    v(shadowRealmPrototypeWrapRemoteValueCode, 106) \
-    v(iteratorHelpersWrappedIteratorCode, 107) \
-    v(jsIteratorConstructorZipCode, 108) \
-    v(jsIteratorConstructorZipKeyedCode, 109)
+    v(arrayPrototypeFilterCode, 33) \
+    v(jsIteratorPrototypeFilterCode, 34) \
+    v(arrayPrototypeFindCode, 35) \
+    v(jsIteratorPrototypeFindCode, 36) \
+    v(arrayPrototypeFindIndexCode, 37) \
+    v(arrayPrototypeFindLastCode, 38) \
+    v(arrayPrototypeFindLastIndexCode, 39) \
+    v(arrayPrototypeFlatIntoArrayCode, 40) \
+    v(arrayPrototypeFlatIntoArrayWithCallbackCode, 41) \
+    v(arrayPrototypeFlatMapCode, 42) \
+    v(jsIteratorPrototypeFlatMapCode, 43) \
+    v(arrayPrototypeForEachCode, 44) \
+    v(mapPrototypeForEachCode, 45) \
+    v(setPrototypeForEachCode, 46) \
+    v(arrayConstructorFromCode, 47) \
+    v(jsIteratorConstructorFromCode, 48) \
+    v(typedArrayConstructorFromCode, 49) \
+    v(arrayConstructorFromAsyncCode, 50) \
+    v(objectConstructorFromEntriesCode, 51) \
+    v(reflectObjectGetCode, 53) \
+    v(disposableStackPrototypeGetAsyncDisposeMethodCode, 54) \
+    v(disposableStackPrototypeGetDisposeMethodCode, 55) \
+    v(jsIteratorConstructorGetIteratorFlattenableCode, 56) \
+    v(jsIteratorConstructorGetIteratorSyncCode, 57) \
+    v(jsIteratorConstructorGetOptionsObjectCode, 58) \
+    v(mapConstructorGroupByCode, 59) \
+    v(objectConstructorGroupByCode, 60) \
+    v(reflectObjectHasCode, 61) \
+    v(shadowRealmPrototypeImportValueCode, 62) \
+    v(jsIteratorConstructorIteratorCloseAllNormalCode, 63) \
+    v(jsIteratorConstructorIteratorZipCode, 64) \
+    v(arrayPrototypeMapCode, 65) \
+    v(jsIteratorPrototypeMapCode, 66) \
+    v(asyncDisposableStackPrototypeMoveCode, 67) \
+    v(disposableStackPrototypeMoveCode, 68) \
+    v(arrayIteratorPrototypeNextCode, 69) \
+    v(generatorPrototypeNextCode, 70) \
+    v(jsIteratorHelperPrototypeNextCode, 71) \
+    v(wrapForValidIteratorPrototypeNextCode, 72) \
+    v(iteratorHelpersPerformIterationCode, 73) \
+    v(arrayPrototypeReduceCode, 82) \
+    v(jsIteratorPrototypeReduceCode, 83) \
+    v(arrayPrototypeReduceRightCode, 84) \
+    v(jsIteratorConstructorRemoveFirstFromListCode, 85) \
+    v(generatorPrototypeReturnCode, 86) \
+    v(jsIteratorHelperPrototypeReturnCode, 87) \
+    v(wrapForValidIteratorPrototypeReturnCode, 88) \
+    v(arrayPrototypeSomeCode, 89) \
+    v(jsIteratorPrototypeSomeCode, 90) \
+    v(jsIteratorPrototypeTakeCode, 91) \
+    v(generatorPrototypeThrowCode, 92) \
+    v(typedArrayPrototypeToLocaleStringCode, 93) \
+    v(promiseConstructorTryCode, 94) \
+    v(asyncDisposableStackPrototypeUseCode, 95) \
+    v(disposableStackPrototypeUseCode, 96) \
+    v(jsIteratorPrototypeWindowsCode, 97) \
+    v(shadowRealmPrototypeWrapRemoteValueCode, 98) \
+    v(iteratorHelpersWrappedIteratorCode, 99) \
+    v(jsIteratorConstructorZipCode, 100) \
+    v(jsIteratorConstructorZipKeyedCode, 101)
 
 #define FOR_EACH_AOT_TYPED_ORIGINAL_STRUCTURE(v) \
     v(0, arrayBufferStructure(ArrayBufferSharingMode::Default)) \
@@ -754,7 +754,7 @@
 #define AOT_TYPED_NUMBER_OF_BUILTIN_NAMES 633
 #define AOT_TYPED_NUMBER_OF_ENGINE_CLASSES 37
 #define AOT_TYPED_NUMBER_OF_ORIGINAL_STRUCTURES 35
-#define AOT_TYPED_BUILTINS_HASH 0xeb4a1b40u
+#define AOT_TYPED_BUILTINS_HASH 0xd412bb37u
 
 #define AOT_TYPED_BUILTIN_NAME_TypedArray 207
 #define AOT_TYPED_BUILTIN_NAME_prototype 440

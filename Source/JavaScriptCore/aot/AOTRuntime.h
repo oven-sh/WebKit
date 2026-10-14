@@ -258,6 +258,16 @@ private:
 };
 static_assert(sizeof(BiasedDataPointer) == sizeof(Data*) && std::is_trivially_default_constructible_v<BiasedDataPointer>);
 
+static constexpr unsigned SoundTypeUndefined   = 1u << 0;
+static constexpr unsigned SoundTypeNull        = 1u << 1;
+static constexpr unsigned SoundTypeBoolean     = 1u << 2;
+static constexpr unsigned SoundTypeNumber      = 1u << 3;
+static constexpr unsigned SoundTypeString      = 1u << 4;
+static constexpr unsigned SoundTypeFunction    = 1u << 7;
+static constexpr unsigned SoundTypeArray       = 1u << 8;
+static constexpr unsigned SoundTypeOtherObject = 1u << 9;
+static constexpr unsigned SoundTypeAnyObject   = SoundTypeFunction | SoundTypeArray | SoundTypeOtherObject;
+
 struct Slot {
     static constexpr unsigned offsetBits = 24;
     static constexpr uint32_t offsetMask = (1u << offsetBits) - 1;

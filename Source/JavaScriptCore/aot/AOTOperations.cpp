@@ -1134,6 +1134,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instanc
     DeletePropertySlot slot;
     bool isDeleted = JSCell::deleteProperty(object, globalObject, key, slot);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!isDeleted && object->noteIfRefusedByLockAlone(vm, key.impl(), false)) {
+        throwTypeError(globalObject, scope, withAOTErrorNote(UnableToDeletePropertyError));
+        OPERATION_RETURN(scope, 0);
+    }
     if (isDeleted && base.isObject() && property.isCell())
         cacheKeyedDelete(vm, callerData(instance, callFrame), cache, object, oldStructure, property, slot.isCacheableDelete() && slot.isDeleteHit() ? std::optional(slot.cachedOffset()) : std::nullopt);
     OPERATION_RETURN(scope, isDeleted);

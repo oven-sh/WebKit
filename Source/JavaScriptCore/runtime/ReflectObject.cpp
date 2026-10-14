@@ -148,7 +148,11 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDefineProperty, (JSGlobalObject* globalObj
     // Reflect.defineProperty should not throw an error when the defineOwnProperty operation fails.
     bool shouldThrow = false;
     JSObject* targetObject = asObject(target);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow))));
+    bool isDefined = targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!isDefined)
+        targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true);
+    return JSValue::encode(jsBoolean(isDefined));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.getownpropertydescriptor
@@ -242,7 +246,11 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSet, (JSGlobalObject* globalObject, CallFr
     // Do not raise any readonly errors that happen in strict mode.
     bool shouldThrowIfCantSet = false;
     PutPropertySlot slot(receiver, shouldThrowIfCantSet, PutPropertySlot::ReflectSet);
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot))));
+    bool isStored = targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
+    RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!isStored && receiver == target)
+        targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true);
+    return JSValue::encode(jsBoolean(isStored));
 }
 
 // https://tc39.github.io/ecma262/#sec-reflect.setprototypeof
@@ -263,6 +271,8 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     bool shouldThrowIfCantSet = false;
     bool didSetPrototype = object->setPrototype(vm, globalObject, proto, shouldThrowIfCantSet);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
+    if (!didSetPrototype && object != globalObject->objectPrototype())
+        object->noteIfRefusedByLockAlone(vm, nullptr, true);
     return JSValue::encode(jsBoolean(didSetPrototype));
 }
 

@@ -1794,18 +1794,6 @@ Vector<uint8_t> ImageBuilder::finish()
             dataLogLn("PLACED @", m_functions[placement.size() - 1].key.module, ":", m_functions[placement.size() - 1].key.start, ":", m_functions[placement.size() - 1].key.kind, " ", codeSize);
         codeSize += sizeWithVeneers(functionIndex);
     }
-    static const char* const codeShiftAsked = getenv("BUN_AOT_SWITCH_CODE_SHIFT");
-    if (size_t codeShift = codeShiftAsked ? WTF::roundUpToMultipleOf<imageStubsAlignment>(static_cast<size_t>(std::max(0L, atol(codeShiftAsked)))) : 0) {
-        for (size_t& at : stubsAt)
-            at += codeShift;
-        for (auto& [at, stubsForFunction] : placement) {
-            at += codeShift;
-            if (!stubsAt.isEmpty())
-                stubsForFunction += codeShift;
-        }
-        codeSize += codeShift;
-        dataLogLn("AOT: the code lies ", codeShift, " bytes further on: the first stubs at ", stubsAt.isEmpty() ? 0 : stubsAt.first(), ", the first function at ", placement.isEmpty() ? 0 : placement.first().first);
-    }
     Vector<size_t> placeOfOwnBody(FillWith { }, ownBodies.offsets.size(), static_cast<size_t>(0));
     auto targetOfJumpOfBody = [&](const StubCall& jump, size_t copyOfStubs) -> size_t {
         if (jump.function != StubCall::noFunction) {

@@ -27,6 +27,8 @@ enum class AuditedValueClass : uint16_t {
     BigInt = 1 << 7,
     Object = 1 << 8,
     Function = 1 << 9,
+    // No class of its own: an object that has the private name JSGlobalObject::setAuditTag() was given.
+    TaggedObject = 1 << 10,
 };
 
 struct AuditedExpression {
@@ -62,7 +64,7 @@ public:
 
     static constexpr OptionSet<AuditedValueClass> valueClasses(uint32_t passes)
     {
-        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & allValueClasses();
+        return OptionSet<AuditedValueClass>::fromRaw(static_cast<uint16_t>(passes)) & (allValueClasses() | AuditedValueClass::TaggedObject);
     }
 
     std::span<const AuditedExpression> find(uint32_t start, uint32_t end) const

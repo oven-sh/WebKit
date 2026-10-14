@@ -241,7 +241,7 @@ static Writes writesOfMakingObjects(const Type& from, const Type& to)
 Writes writesOfElementRead(const Program& program, const Type& type)
 {
     for (LayoutID view : type.views) {
-        if (program.at(view).kind == LayoutKind::Record && !program.at(view).admitsForeignObjects)
+        if (program.at(view).kind == LayoutKind::Record && (!program.at(view).admitsForeignObjects || program.at(view).isOpenedForLog))
             return Writes::RuntimeState;
     }
     return Writes::Nothing;

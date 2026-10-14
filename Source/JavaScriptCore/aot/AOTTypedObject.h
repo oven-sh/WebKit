@@ -1431,7 +1431,7 @@ struct State {
     // "expected T, got V", then the reason on a second line: `reason` if given, else explainMismatch().
     String mismatchMessage(VM&, JSValue, const RuntimeType& expected, const String& reason = { });
     // The first property of the object that is missing or has the wrong type. Null: nothing to add.
-    String explainMismatch(VM&, JSValue, const RuntimeType&);
+    String explainMismatch(VM&, JSValue, const RuntimeType&, bool membersAlone = false);
     // `target` reads like "'x' of Foo".
     String assignmentMessage(VM&, const String& target, const FieldData&, JSValue, const String& reason);
     // Whether every value of `from` is a value of `to`. Only messages depend on it.

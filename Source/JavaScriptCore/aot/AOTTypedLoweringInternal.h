@@ -700,6 +700,10 @@ private:
     Word32 typeAndReason(TypeID, CastReason);
     // Casts that are carried out in the arms of the read they come behind: see lowerFusedCast().
     unsigned numberOfUsesOf(ValueID);
+    void findUsers();
+    std::span<const ValueID> usersOf(ValueID);
+    bool isUsedByTerminator(ValueID);
+    std::pair<uint32_t, uint32_t> placeOf(ValueID);
     bool isErrorThrownWhereMade(const Block&, ValueID);
     void throwNewError(const Value&);
     // Fields that are pinned to a string: see fieldIsPinned in AOTTypedData.h.
@@ -1521,6 +1525,10 @@ private:
     };
     std::optional<FusedCasts> m_fusedCasts;
     Vector<uint32_t> m_numberOfUses;
+    Vector<uint32_t> m_firstUser;
+    Vector<ValueID> m_users;
+    BitVector m_isUsedByTerminator;
+    Vector<std::pair<uint32_t, uint32_t>> m_placeOfValue;
     UncheckedKeyHashMap<uint32_t, PinnedRead, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_pinnedReads;
     Vector<LBasicBlock> m_blocks;
     Vector<Vector<LValue, 4>> m_phis;

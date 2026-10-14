@@ -965,7 +965,7 @@ public:
         if (sites.empty() || !expression || expression->isBaseFuncExprNode() || expression->isClassExprNode() || expression->isSuperNode())
             return expression;
         for (auto& site : sites) {
-            if (auto passes = AuditSites::valueClasses(site.passes); passes != AuditSites::allValueClasses()) {
+            if (auto passes = AuditSites::valueClasses(site.passes); !passes.containsAll(AuditSites::allValueClasses())) {
                 expression = new (m_parserArena) AuditedExpressionNode(expression, site.id, passes, site.least, site.most);
                 m_hasAuditedExpressions = true;
             }

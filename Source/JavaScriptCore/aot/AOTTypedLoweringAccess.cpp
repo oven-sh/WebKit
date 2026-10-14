@@ -3894,7 +3894,7 @@ std::optional<FunctionID> Lowering::lazyClosureStoredBy(const Value& store)
         return std::nullopt;
     ValueID stored = store.child(1);
     auto& closure = m_function.at(stored);
-    if (!isLazyClosureStore(closure, store) || numberOfUsesOf(stored) != 1 || !m_currentBlock->values.contains(stored))
+    if (!isLazyClosureStore(closure, store) || numberOfUsesOf(stored) != 1 || placeOf(stored).first != static_cast<uint32_t>(m_currentBlock - m_function.blocks.span().data()))
         return std::nullopt;
     return closure.function();
 }
@@ -3930,13 +3930,14 @@ bool Lowering::isStoredAsLazyClosure(ValueID closure)
 {
     if (numberOfUsesOf(closure) != 1)
         return false;
-    auto& values = m_currentBlock->values;
-    for (size_t i = m_currentIndexInBlock + 1; i < values.size(); ++i) {
-        auto& user = m_function.at(values[i]);
-        if (user.opcode == Opcode::PutById && user.child(1) == closure)
-            return !!lazyClosureStoredBy(user);
-    }
-    return false;
+    auto users = usersOf(closure);
+    if (users.empty())
+        return false;
+    auto [block, index] = placeOf(users[0]);
+    auto& user = m_function.at(users[0]);
+    if (block != static_cast<uint32_t>(m_currentBlock - m_function.blocks.span().data()) || index <= m_currentIndexInBlock || user.opcode != Opcode::PutById || user.child(1) != closure)
+        return false;
+    return !!lazyClosureStoredBy(user);
 }
 
 std::optional<Lowering::StoreInPropertyRun> Lowering::storeInPropertyRunAt(size_t index)

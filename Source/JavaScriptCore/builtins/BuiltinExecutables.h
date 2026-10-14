@@ -77,7 +77,6 @@ SourceCode name##Source();
 #undef EXPOSE_BUILTIN_EXECUTABLES
 
     std::optional<unsigned> indexOf(UnlinkedFunctionExecutable*) const;
-    static constexpr bool isStamp(unsigned stamp) { return (stamp & 0xffff0000u) == 0xeb170000u; }
     static_assert(numberOfBuiltinCodes < 0x10000);
     static std::span<const Latin1Character> textOf(unsigned index);
     bool hasCompiledFunction(BuiltinCodeIndex);

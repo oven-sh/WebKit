@@ -4063,6 +4063,8 @@ bool JSObject::putDirectNativeFunction(VM& vm, JSGlobalObject* globalObject, con
     ASSERT(name);
 
     JSFunction* function = JSFunction::create(vm, globalObject, functionLength, name, nativeFunction, implementationVisibility, intrinsic);
+    if (isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
+        attributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     return putDirect(vm, propertyName, function, attributes);
 }
 
@@ -4074,6 +4076,8 @@ bool JSObject::putDirectNativeFunction(VM& vm, JSGlobalObject* globalObject, con
     ASSERT(name);
 
     JSFunction* function = JSFunction::create(vm, globalObject, functionLength, name, nativeFunction, implementationVisibility, intrinsic, callHostFunctionAsConstructor, signature);
+    if (isLockedBuiltin() && !isGlobalObject() && type() != GlobalProxyType) [[unlikely]]
+        attributes |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     return putDirect(vm, propertyName, function, attributes);
 }
 

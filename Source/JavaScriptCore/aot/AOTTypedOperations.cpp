@@ -62,6 +62,7 @@
 #include "TopExceptionScope.h"
 #include "TypeofType.h"
 #include "VMTrapsInlines.h"
+#include <wtf/ScopedLambda.h>
 #include <wtf/SetForScope.h>
 
 namespace JSC { namespace AOT {
@@ -779,6 +780,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowMethodIsNotAFunction, void, (Inst
     throwNotAFunction(globalObject, scope, identifierAt(instance, callFrame, identifierOfSite), JSValue::decode(callee));
     OPERATION_RETURN(scope);
 }
+
+static void forEachInSpread(JSGlobalObject*, JSValue iterable, const ScopedLambda<void(JSValue)>&);
 
 static JSValue requireFunctionOfHost(JSGlobalObject* globalObject, Instance* instance)
 {
@@ -1552,7 +1555,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             if (auto* list = dynamicDowncast<JSArray>(argument(1)))
                 countOperationNamed(instance, "AppendSpread:an array is iterated", whyArrayIsIteratedForCounters(list));
         }
-        forEachInIterable(globalObject, argument(1), [&](VM&, JSGlobalObject* globalObject, JSValue value) {
+        forEachInSpread(globalObject, argument(1), [&](JSValue value) {
             array->push(globalObject, value);
         });
         OPERATION_RETURN(scope, values[0]);
@@ -1577,7 +1580,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         JSValue list = argument(isCall ? 2 : 1);
         MarkedArgumentBuffer arguments;
         if (isSpread) {
-            forEachInIterable(globalObject, list, [&](VM&, JSGlobalObject*, JSValue value) {
+            forEachInSpread(globalObject, list, [&](JSValue value) {
                 arguments.append(value);
             });
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -1996,6 +1999,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         static constexpr Latin1Character keyOfThis[] = { 0, 'e', 'v', 'a', 'l' };
         JSValue thisValue = names->getDirect(vm, Identifier::fromString(vm, String(std::span<const Latin1Character> { keyOfThis })));
         bool isInFunction = !!names->getDirect(vm, Typed::EvalScope::keyOfNewTarget(vm));
+        static constexpr Latin1Character keyOfField[] = { 0, 'f', 'i', 'e', 'l', 'd' };
+        bool isInField = !!names->getDirect(vm, Identifier::fromString(vm, String(std::span<const Latin1Character> { keyOfField })));
         static constexpr Latin1Character keyOfSloppy[] = { 0, 's', 'l', 'o', 'p', 'p', 'y' };
         bool isSloppy = !!names->getDirect(vm, Identifier::fromString(vm, String(std::span<const Latin1Character> { keyOfSloppy })));
         SourceOrigin origin;
@@ -2011,8 +2016,23 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         }
         TDZEnvironment variablesUnderTDZ;
         PrivateNameEnvironment privateNames;
-        auto* executable = DirectEvalExecutable::create(globalObject, makeSource(text.data, origin, SourceTaintedOrigin::Untainted), isSloppy ? NoLexicallyScopedFeatures : StrictModeLexicallyScopedFeature, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None, false, isInFunction, isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None, &variablesUnderTDZ, &privateNames);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
+        auto* executable = DirectEvalExecutable::create(globalObject, makeSource(text.data, origin, SourceTaintedOrigin::Untainted), isSloppy ? NoLexicallyScopedFeatures : StrictModeLexicallyScopedFeature, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None, false, isInFunction, isInField ? EvalContextType::InstanceFieldEvalContext : isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None, &variablesUnderTDZ, &privateNames);
+        if (Exception* thrown = scope.exception()) [[unlikely]] {
+            auto* error = dynamicDowncast<ErrorInstance>(thrown->value());
+            if (error && error->errorType() == ErrorType::SyntaxError) {
+                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+                String said = error->sanitizedMessageString(globalObject);
+                static constexpr Latin1Character keyOfSuper[] = { 0, 's', 'u', 'p', 'e', 'r' };
+                static constexpr Latin1Character keyOfPrivateNames[] = { 0, 'p', 'r', 'i', 'v', 'a', 't', 'e' };
+                bool isSuper = said.startsWith("super is not valid in this context"_s) && names->getDirect(vm, Identifier::fromString(vm, String(std::span<const Latin1Character> { keyOfSuper })));
+                bool isPrivateName = said.startsWith("Cannot reference undeclared private "_s) && names->getDirect(vm, Identifier::fromString(vm, String(std::span<const Latin1Character> { keyOfPrivateNames })));
+                if (isSuper || isPrivateName)
+                    throwSyntaxError(globalObject, scope, withAOTErrorNote(isSuper ? "A direct eval does not see `super` in a program compiled ahead of time"_s : "A direct eval does not see the private names (`#x`) of the class around it in a program compiled ahead of time"_s));
+                else
+                    throwException(globalObject, scope, thrown);
+            }
+            OPERATION_RETURN(scope, encodedJSValue());
+        }
         if (!executable->isInStrictContext() && (!executable->variables().empty() || !executable->topLevelFunctionDecls().empty() || !executable->functionHoistingCandidates().empty())) {
             throwSyntaxError(globalObject, scope, withAOTErrorNote("A direct eval in sloppy-mode code declares a variable or a function in the enclosing function, which a program compiled ahead of time does not support"_s));
             OPERATION_RETURN(scope, encodedJSValue());
@@ -2801,9 +2821,15 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNoteMisfit, void, (Instance* instance,
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     State& state = *instance->typed;
     JSValue given = JSValue::decode(value);
-    if (given && given.isObject() && state.type(type).admitsForeignObjects())
-        OPERATION_RETURN(scope);
-    state.noteViolation(vm, { .kind = isAtCaller ? "enter-argument"_s : "enter-function"_s, .what = isAtCaller ? "As"_s : "Claim"_s, .expected = &state.type(type), .got = given ? given : jsUndefined(), .parameter = parameter == UINT32_MAX ? std::nullopt : std::optional<unsigned>(parameter), .isAtCaller = !!isAtCaller, .action = State::ActionOnViolation::Continued });
+    String reason;
+    if (given && given.isObject() && state.type(type).admitsForeignObjects()) {
+        if (state.type(type).isOpenedForLog())
+            OPERATION_RETURN(scope);
+        reason = state.explainMismatch(vm, given, state.type(type), true);
+        if (reason.isNull())
+            OPERATION_RETURN(scope);
+    }
+    state.noteViolation(vm, { .kind = isAtCaller ? "enter-argument"_s : "enter-function"_s, .what = isAtCaller ? "As"_s : "Claim"_s, .expected = &state.type(type), .got = given ? given : jsUndefined(), .parameter = parameter == UINT32_MAX ? std::nullopt : std::optional<unsigned>(parameter), .reason = reason.isNull() ? nullptr : &reason, .isAtCaller = !!isAtCaller, .action = State::ActionOnViolation::Continued });
     OPERATION_RETURN(scope);
 }
 
@@ -3057,7 +3083,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedThrowAtSite, void, (Instance* instance
         constexpr bool useCurrentFrame = true;
         auto* error = ErrorInstance::create(globalObject, globalObject->errorStructure(errorType), instance->typed->string(vm, a), jsUndefined(), nullptr, TypeNothing, errorType, useCurrentFrame);
         OPERATION_RETURN_IF_EXCEPTION(scope);
-        throwException(globalObject, scope, error);
+        Exception* exception = throwException(globalObject, scope, error);
+        if (static_cast<ThrowKind>(word & 7) == ThrowKind::KindMismatch)
+            exception->noteThatTopFrameIsAtSiteOfItsItem();
         OPERATION_RETURN(scope);
     }
     uint64_t bits = registers[number];
@@ -4311,7 +4339,7 @@ static ALWAYS_INLINE bool standsForItsOwnIterator(JSValue iterable)
 }
 
 template<typename Functor>
-static ALWAYS_INLINE void openForeignIteration(JSGlobalObject* globalObject, JSValue iterable, const Functor& makeRecord)
+static ALWAYS_INLINE void openForeignIteration(JSGlobalObject* globalObject, JSValue iterable, const Functor& makeRecord, ASCIILiteral wordsWhereThereIsNoIterator = { })
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -4319,7 +4347,10 @@ static ALWAYS_INLINE void openForeignIteration(JSGlobalObject* globalObject, JSV
     JSValue method = iterable.get(globalObject, vm.propertyNames->iteratorSymbol);
     RETURN_IF_EXCEPTION(scope, void());
     if (auto validation = validateIterable(vm, iterable, method); validation != IterableValidationResult::Valid) [[unlikely]] {
-        throwTypeError(globalObject, scope, getIteratorErrorMessage(validation, iterable));
+        if (wordsWhereThereIsNoIterator.isNull())
+            throwTypeError(globalObject, scope, getIteratorErrorMessage(validation, iterable));
+        else
+            throwTypeError(globalObject, scope, wordsWhereThereIsNoIterator);
         return;
     }
     JSValue iterator = call(globalObject, method, JSC::getCallData(method), iterable, ArgList());
@@ -4377,6 +4408,10 @@ static ALWAYS_INLINE bool stepIteration(JSGlobalObject* globalObject, Record* st
     if (Typed::CollectionIteration::isOne(state))
         RELEASE_AND_RETURN(scope, Typed::CollectionIteration::step(globalObject, state));
     IterationRecord record { state->get(0), state->get(1) };
+    if (!record.nextMethod.isCallable()) [[unlikely]] {
+        throwException(globalObject, scope, createNotAFunctionError(globalObject, record.nextMethod));
+        return false;
+    }
     JSValue result = iteratorNextExported(globalObject, record);
     RETURN_IF_EXCEPTION(scope, false);
     // As the engine makes them: `value` and `done` are its own data properties, in these places.
@@ -4394,6 +4429,32 @@ static ALWAYS_INLINE bool stepIteration(JSGlobalObject* globalObject, Record* st
     RETURN_IF_EXCEPTION(scope, false);
     state->setIndex(vm, 2, value);
     return true;
+}
+
+static void forEachInSpread(JSGlobalObject* globalObject, JSValue iterable, const ScopedLambda<void(JSValue)>& functor)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (getIterationMode(iterable) == IterationMode::FastArray) {
+        scope.release();
+        forEachInIterable(globalObject, iterable, [&](VM&, JSGlobalObject*, JSValue value) {
+            functor(value);
+        });
+        return;
+    }
+    Typed::CollectionIteration::InFrame record { };
+    openForeignIteration(globalObject, iterable, [&] {
+        return &record;
+    }, "Spread syntax requires ...iterable[Symbol.iterator] to be a function"_s);
+    RETURN_IF_EXCEPTION(scope, void());
+    for (;;) {
+        bool hasValue = stepIteration(globalObject, &record);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (!hasValue)
+            return;
+        functor(record.get(2));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedIterHas, size_t, (Instance* instance, EncodedJSValue encodedState))

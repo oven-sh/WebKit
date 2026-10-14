@@ -2022,6 +2022,60 @@ unsigned Lowering::numberOfUsesOf(ValueID id)
     return m_numberOfUses[id.index()];
 }
 
+void Lowering::findUsers()
+{
+    if (!m_firstUser.isEmpty())
+        return;
+    unsigned count = m_function.values.size();
+    m_firstUser.fill(0, count + 1);
+    m_placeOfValue.fill({ UINT32_MAX, UINT32_MAX }, count);
+    m_isUsedByTerminator.ensureSize(count);
+    for (uint32_t b = 0; b < m_function.blocks.size(); ++b) {
+        auto& block = m_function.blocks[b];
+        for (uint32_t i = 0; i < block.values.size(); ++i) {
+            m_placeOfValue[block.values[i].index()] = { b, i };
+            m_function.at(block.values[i]).forEachChild([&](ValueID child) {
+                ++m_firstUser[child.index() + 1];
+            });
+        }
+        if (block.terminator.value)
+            m_isUsedByTerminator.quickSet(block.terminator.value.index());
+        for (auto& target : block.terminator.targets) {
+            for (ValueID argument : target.arguments)
+                m_isUsedByTerminator.quickSet(argument.index());
+        }
+    }
+    for (unsigned i = 0; i < count; ++i)
+        m_firstUser[i + 1] += m_firstUser[i];
+    m_users.grow(m_firstUser[count]);
+    Vector<uint32_t> next(m_firstUser.span().first(count));
+    for (auto& block : m_function.blocks) {
+        for (ValueID user : block.values) {
+            m_function.at(user).forEachChild([&](ValueID child) {
+                m_users[next[child.index()]++] = user;
+            });
+        }
+    }
+}
+
+std::span<const ValueID> Lowering::usersOf(ValueID id)
+{
+    findUsers();
+    return m_users.span().subspan(m_firstUser[id.index()], m_firstUser[id.index() + 1] - m_firstUser[id.index()]);
+}
+
+bool Lowering::isUsedByTerminator(ValueID id)
+{
+    findUsers();
+    return m_isUsedByTerminator.quickGet(id.index());
+}
+
+std::pair<uint32_t, uint32_t> Lowering::placeOf(ValueID id)
+{
+    findUsers();
+    return m_placeOfValue[id.index()];
+}
+
 bool Lowering::mayFuseWithRead(size_t indexOfRead)
 {
     // There every value is looked at by itself.
@@ -2507,6 +2561,8 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
     case CastReason::AsFreshObject:
         RELEASE_ASSERT_NOT_REACHED();
     case CastReason::NonNull:
+        if (m_program.isOpenedForLog(to)) [[unlikely]]
+            return coerce(operand, from, value);
         return lowerNonNull(result, value);
     case CastReason::Flow:
         if (!value.string() && (narrowingMayRetag(m_program, to) || m_program.isOpenedForLog(to)))

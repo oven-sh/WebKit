@@ -606,6 +606,8 @@ struct Data {
     static constexpr uint32_t generatorTakesItsClosure = 1u << 31;
     uint32_t numberOfGeneratorFunctions;
     uint32_t generatorFunctionsOffset;
+    uint32_t numberOfSloppyPlainFunctions;
+    uint32_t sloppyPlainFunctionsOffset;
     // Pairs of the generic entrypoint of a plain function that declares `this` to be of a layout, and the number of the allocation that
     // [[Construct]] makes the object with, in the order of the former. The prototype is for whoever constructs to say.
     uint32_t numberOfConstructorFunctions;

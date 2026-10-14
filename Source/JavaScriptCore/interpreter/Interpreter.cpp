@@ -832,6 +832,7 @@ ALWAYS_INLINE AOT::ReturnAddressTrace* Interpreter::getStackTraceAsReturnAddress
     trace->limit = static_cast<uint32_t>(std::min<size_t>(maxStackSize, (1u << AOT::ReturnAddressTrace::numberOfBitsOfLimit) - 1));
     trace->numberOfFramesLeftOut = numberLeftOut;
     trace->numberOfReturnAddresses = returnAddresses.size();
+    trace->topIsAtSiteOfItsItem = false;
     trace->hasFrameOfHostFunctionOnTop = isUnderHostFunction;
     memcpySpan(trace->returnAddresses(), returnAddresses.span());
     if (walksFurther) {

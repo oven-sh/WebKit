@@ -147,6 +147,10 @@ private:
 
     static const Entry* find(const State& state, uint32_t object)
     {
+        if (state.size() > 16) {
+            auto found = std::ranges::lower_bound(state, object, { }, &Entry::object);
+            return found != state.end() && found->object == object ? &*found : nullptr;
+        }
         for (auto& entry : state) {
             if (entry.object == object)
                 return &entry;
@@ -252,6 +256,14 @@ private:
     {
         Vector<std::pair<ValueID, unsigned>, 8> found;
         Vector<ValueID, 8> local;
+        BitVector isLocal;
+        BitVector isFound;
+        auto addLocal = [&](ValueID id) {
+            isLocal.ensureSize(m_function.values.size());
+            isFound.ensureSize(m_function.values.size());
+            isLocal.quickSet(id.index());
+            local.append(id);
+        };
         for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
             auto& block = m_function.blocks[b];
             local.shrink(0);
@@ -260,23 +272,27 @@ private:
                 if (!local.isEmpty()) {
                     std::as_const(value).forEachChild([&](ValueID child) {
                         if (!isHandledUse(value, child))
-                            local.removeFirst(child);
+                            isLocal.quickClear(child.index());
                     });
                 }
                 if (value.opcode == Opcode::NewClosure && m_policy == AllocationSinkingPolicy::AllowMaterialization && value.arguments.containsIf([&](ValueID capture) {
-                    return local.contains(capture) || found.containsIf([&](auto& other) { return other.first == capture; });
+                    return isLocal.get(capture.index()) || isFound.get(capture.index());
                 }))
-                    local.append(id);
+                    addLocal(id);
                 if (value.opcode != Opcode::NewObjectWithShape || value.child(0))
                     continue;
                 auto& layout = m_program.at(value.layout());
                 if (layout.kind != LayoutKind::Closure && !layout.isCoroutineFrame && layout.fields.size() <= maxFields)
-                    local.append(id);
+                    addLocal(id);
             }
-            if (block.terminator.value)
-                local.removeFirst(block.terminator.value);
-            for (ValueID id : local)
+            if (block.terminator.value && !local.isEmpty())
+                isLocal.quickClear(block.terminator.value.index());
+            for (ValueID id : local) {
+                if (!isLocal.quickClear(id.index()))
+                    continue;
+                isFound.quickSet(id.index());
                 found.append({ id, b });
+            }
         }
         if (found.isEmpty() || (m_policy == AllocationSinkingPolicy::EliminateOnly && !pruneEscapingCandidates(found)))
             return false;
@@ -357,6 +373,8 @@ private:
         m_loadedValue.fill(ValueID(), m_function.values.size());
         m_state.fill(ObjectState { }, m_candidates.size());
         m_tracked.clear();
+        m_isTracked.clearAll();
+        m_isTracked.ensureSize(m_candidates.size());
         m_alias.fill(none, m_function.values.size());
         for (unsigned i = 0; i < m_candidates.size(); ++i) {
             if (!m_candidates[i].isAbandoned)
@@ -457,16 +475,21 @@ private:
         }
         for (auto& object : m_candidates)
             object.liveAtHead.ensureSize(m_function.blocks.size());
+        Vector<uint32_t> parent(m_candidates.size(), [](size_t i) {
+            return static_cast<uint32_t>(i);
+        });
+        BitVector isJoined(m_candidates.size());
+        auto rootOf = [&](uint32_t object) {
+            while (parent[object] != object)
+                object = parent[object] = parent[parent[object]];
+            return object;
+        };
         auto join = [&](uint32_t one, uint32_t other) {
             if (one == other)
                 return;
-            uint32_t from = m_candidates[one].group == none ? one : m_candidates[one].group;
-            uint32_t to = m_candidates[other].group == none ? other : m_candidates[other].group;
-            m_candidates[one].group = m_candidates[other].group = to;
-            for (auto& object : m_candidates) {
-                if (object.group == from)
-                    object.group = to;
-            }
+            isJoined.quickSet(one);
+            isJoined.quickSet(other);
+            parent[rootOf(one)] = rootOf(other);
         };
         for (unsigned b : m_blockOrder) {
             for (ValueID id : m_function.blocks[b].values) {
@@ -484,6 +507,10 @@ private:
                     }
                 }
             }
+        }
+        for (unsigned i = 0; i < m_candidates.size(); ++i) {
+            if (isJoined.quickGet(i))
+                m_candidates[i].group = rootOf(i);
         }
         for (auto& object : m_candidates) {
             if (object.group == none)
@@ -523,10 +550,12 @@ private:
             });
         }
         for (unsigned i = 0; i < m_candidates.size(); ++i) {
-            for (unsigned j = 0; j < m_candidates.size(); ++j) {
-                if (i != j && m_candidates[i].group != none && m_candidates[i].group == m_candidates[j].group)
-                    m_candidates[i].liveAtHead.merge(m_candidates[j].liveAtHead);
-            }
+            if (uint32_t group = m_candidates[i].group; group != none && group != i)
+                m_candidates[group].liveAtHead.merge(m_candidates[i].liveAtHead);
+        }
+        for (unsigned i = 0; i < m_candidates.size(); ++i) {
+            if (uint32_t group = m_candidates[i].group; group != none && group != i)
+                m_candidates[i].liveAtHead.merge(m_candidates[group].liveAtHead);
         }
     }
 
@@ -545,8 +574,10 @@ private:
 
     void restoreState(const State& state)
     {
-        for (uint32_t object : m_tracked)
+        for (uint32_t object : m_tracked) {
             m_state[object] = { };
+            m_isTracked.quickClear(object);
+        }
         m_tracked.clear();
         for (auto& entry : state)
             setState(entry.object, entry.state);
@@ -565,7 +596,7 @@ private:
 
     void setState(uint32_t object, ObjectState state)
     {
-        if (m_state[object].status == Status::Unknown && !m_tracked.contains(object))
+        if (m_state[object].status == Status::Unknown && !m_isTracked.quickSet(object))
             m_tracked.append(object);
         m_state[object] = state;
     }
@@ -1629,6 +1660,7 @@ private:
     BitVector m_isHandlerEdgeDead;
     Vector<ObjectState> m_state;
     Vector<uint32_t, 8> m_tracked;
+    BitVector m_isTracked;
     Vector<Meet> m_meet;
     BitVector m_mayWriteFields;
     Vector<Edge> m_ignoredEdges;

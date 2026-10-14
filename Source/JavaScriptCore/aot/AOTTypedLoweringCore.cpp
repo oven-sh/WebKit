@@ -1744,10 +1744,15 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
     }
     if (builtin.implementation.operation == LanguageOperation::AppendSpread) {
         if (LBasicBlock slowPath = appendSpread(value)) {
+            bool isLeftToStub = std::exchange(m_spreadIsLeftToStub, false);
             Join join(m_out, value.rep, b3TypeOf(value.rep));
             join.add(ensure(get(value.arguments[0]), typeOf(value.arguments[0]), type));
             m_out.appendTo(slowPath);
-            join.add(outOfLine());
+            if (isLeftToStub) {
+                Boxed appended(callICStub(Stub::AppendSpread, Int64, { { in<Boxed>(value.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }));
+                join.add(ensure(convert(appended, typeOf(value.arguments[0]), get(value.arguments[0]).rep), typeOf(value.arguments[0]), type));
+            } else
+                join.add(outOfLine());
             return join.finish();
         }
     }
@@ -2595,6 +2600,12 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         info.typedIdentifierNames.append(String::fromUTF8(program.string(name)));
     }
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
+    constexpr unsigned maxFrameSizeInBytes = std::numeric_limits<uint16_t>::max() * stackAlignmentBytes();
+    bool savedRegistersAreTooFar = info.calleeSaveRegisters.registerCount() && -info.calleeSaveRegisters.at(0).offset() / static_cast<ptrdiff_t>(sizeof(CPURegister)) > static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart);
+    if (info.frameSizeInBytes > maxFrameSizeInBytes || savedRegistersAreTooFar) {
+        result.whyDeclined = makeString("it holds so many values at once that its frame on the stack would be "_s, info.frameSizeInBytes, " bytes, and "_s, maxFrameSizeInBytes, " is the most: a very large object or array literal does that"_s);
+        return false;
+    }
     for (auto [site, landingPad] : context.landingPadsForCallSites)
         info.typedCatchEntrypointsForCallSites.append({ site, static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(*context.landingPads[landingPad]).untaggedPtr()) - static_cast<uint8_t*>(start)) });
     for (auto& access : context.faultingAccesses) {

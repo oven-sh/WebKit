@@ -2060,11 +2060,12 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::cloneObject)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, "cloneObject"_s, globalFuncCloneObject, ImplementationVisibility::Private));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::noteClass)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 1, "noteClass"_s, globalFuncNoteClass, ImplementationVisibility::Private));
-        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].initLater([] (const Initializer<JSCell>& init) {
             init.set(init.owner->functionPrototype());
+        });
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditTag)].initLater([] (const Initializer<JSCell>& init) {
+            Ref name = PrivateSymbolImpl::create(*StringImpl::empty());
+            init.set(Symbol::create(init.vm, name.get()));
         });
 #if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::enqueueJob)].initLater([] (const Initializer<JSCell>& init) {
@@ -4071,6 +4072,11 @@ void JSGlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject*, Excepti
 void JSGlobalObject::setAuditFunction(VM& vm, JSObject* function)
 {
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditFunction)].set(vm, this, function);
+}
+
+void JSGlobalObject::setAuditTag(VM& vm, Symbol* privateName)
+{
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::auditTag)].set(vm, this, privateName);
 }
 
 void JSGlobalObject::setConsoleClient(WeakPtr<ConsoleClient>&& consoleClient)

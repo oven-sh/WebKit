@@ -55,7 +55,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByValSloppy, size_t, (Instance* 
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     auto property = JSValue::decode(key).toPropertyKey(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
-    OPERATION_RETURN(scope, JSCell::deleteProperty(object, globalObject, property));
+    bool isDeleted = JSCell::deleteProperty(object, globalObject, property);
+    OPERATION_RETURN_IF_EXCEPTION(scope, 0);
+    if (!isDeleted)
+        object->noteIfRefusedByLockAlone(vm, property.impl(), true);
+    OPERATION_RETURN(scope, isDeleted);
 }
 
 // As slow_path_get_by_val_with_this.

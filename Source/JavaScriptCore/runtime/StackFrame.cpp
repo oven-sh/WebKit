@@ -33,6 +33,7 @@
 #include "FunctionExecutable.h"
 #include "JSCellInlines.h"
 #include "JSFunctionInlines.h"
+#include <wtf/Scope.h>
 #include <wtf/text/MakeString.h>
 
 namespace JSC {
@@ -108,7 +109,14 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
     AOT::InlineFramesRead inlineFramesRead;
     uint32_t lastShown = AOT::FunctionRef::none;
     uintptr_t startOfImageCode = AOT::startOfImageCode();
+    std::optional<AOT::CallSiteOverride> atItem;
+    if (trace.topIsAtSiteOfItsItem) [[unlikely]]
+        atItem.emplace(*trace.instance, &trace);
     for (uint32_t kept : trace.returnAddresses()) {
+        const void* frameOfTop = atItem ? &trace : nullptr;
+        auto isBehindTheTop = makeScopeExit([&] {
+            atItem.reset();
+        });
         const void* returnAddress = AOT::ReturnAddressTrace::addressOf(kept, startOfImageCode);
         bool rootIsConstructed = kept & AOT::ReturnAddressTrace::isOfConstructed;
         const AOT::Instance::CachedAddressInfo* asked = trace.instance->resolveReturnAddress(returnAddress);
@@ -121,7 +129,7 @@ void StackFrame::appendTypedFrames(const AOT::ReturnAddressTrace& trace, Vector<
             continue;
         }
         AOT::FunctionRef function { trace.instance, asked->function };
-        for (auto location = function.locationForReturnAddress(returnAddress, nullptr, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
+        for (auto location = function.locationForReturnAddress(returnAddress, frameOfTop, &inlineFramesRead);; location = function.inlineCallSiteLocation(location.inlineFrame, inlineFramesRead)) {
             bool isHidden = isAtTheTop ? AOT::typedFunctionStandsForNoFunction(location.typedFunction) : AOT::typedFunctionIsHiddenInStackTraces(location.typedFunction);
             bool isConstructed = location.inlineFrame ? location.isConstructed : rootIsConstructed;
             if (!location.isTailDeleted && !isHidden && numberToLeaveOut) {

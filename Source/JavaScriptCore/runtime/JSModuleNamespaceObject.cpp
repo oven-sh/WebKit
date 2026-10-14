@@ -213,6 +213,15 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             return false;
         }
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (SyntheticModuleRecord::isLiveBinding(value)) [[unlikely]] {
+            value = SyntheticModuleRecord::readLiveBinding(globalObject, value);
+            RETURN_IF_EXCEPTION(scope, false);
+            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+            return true;
+        }
+#endif
+
 #if ENABLE(WEBASSEMBLY)
         if (is<WebAssemblyModuleRecord>(exportEntry.moduleRecord.get())) {
             if (auto* wasmGlobal = dynamicDowncast<JSWebAssemblyGlobal>(value); wasmGlobal && wasmGlobal->global()->mutability() == Wasm::Mutability::Mutable) {

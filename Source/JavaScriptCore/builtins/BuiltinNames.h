@@ -193,7 +193,6 @@ namespace JSC {
     macro(moduleFailureKind) \
     macro(copyDataProperties) \
     macro(cloneObject) \
-    macro(noteClass) \
     macro(meta) \
     macro(moduleLoader) \
     macro(instanceFieldInitializer) \

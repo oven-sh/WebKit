@@ -78,6 +78,7 @@ public:
     void setAsyncContext(VM& vm, JSValue asyncContext) { m_asyncContext.set(vm, this, asyncContext); }
 #endif
 
+    JS_EXPORT_PRIVATE void noteThatTopFrameIsAtSiteOfItsItem();
     bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndDidNotifyInspectorOfThrow.type(); }
     void setDidNotifyInspectorOfThrow() { m_returnAddressesAndDidNotifyInspectorOfThrow.setType(true); }
 

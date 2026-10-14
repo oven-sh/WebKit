@@ -232,34 +232,19 @@ private:
         return false;
     }
 
-    static unsigned shareOf(unsigned size)
-    {
-        static const unsigned percent = [] {
-            const char* text = getenv("AOT_SWITCH_INLINER_PERCENT");
-            if (!text)
-                return 100u;
-            int asked = atoi(text);
-            if (asked < 1 || asked > 100 || strlen(text) > 3 || strspn(text, "0123456789") != strlen(text)) {
-                dataLogLn("AOT: AOT_SWITCH_INLINER_PERCENT is not 1 .. 100: ", text);
-                exit(1);
-            }
-            return static_cast<unsigned>(asked);
-        }();
-        return std::max(1u, size * percent / 100);
-    }
     // A function this small is copied to every call that stands in the caller as it was written.
-    const unsigned smallSize { shareOf(13) };
+    static constexpr unsigned smallSize = 13;
     // And one this small to a call that came along with a copy.
-    const unsigned smallInCopy { shareOf(12) };
+    static constexpr unsigned smallInCopy = 12;
     // In a caller that the text does not say is hot nothing larger than this is copied, but to its only call: a copy buys time only where time is spent.
-    const unsigned tinyWhereNotHot { shareOf(7) };
+    static constexpr unsigned tinyWhereNotHot = 7;
     // One this small wherever the copy does away with more than the call: a constructor of stores (the object is born as what it is cast to,
     // with its fields), a function that calls a function made at the call (no closure is made, and the call of it is a direct one).
-    const unsigned smallWhereMoreIsGained { shareOf(40) };
-    const unsigned mostLeftByConstants { shareOf(10) };
+    static constexpr unsigned smallWhereMoreIsGained = 40;
+    static constexpr unsigned mostLeftByConstants = 10;
     // What only tests what it is handed, and what reads memory besides, is copied wherever its call stands, up to these: see isAccessor().
-    const unsigned maxPredicate { shareOf(40) };
-    const unsigned maxAccessor { shareOf(20) };
+    static constexpr unsigned maxPredicate = 40;
+    static constexpr unsigned maxAccessor = 20;
     // As much at a call as written of a function that this few calls in the whole program name: there is little to copy to.
     static constexpr unsigned fewCalls = 3;
     // A function this small is no larger than the call of it.
@@ -269,12 +254,12 @@ private:
     // In the place of the depth of a call: its head stands in front of it, and it stays a call, in this round and in those to come.
     static constexpr uint32_t behindItsHead = Format::none - 1;
     // One this small goes to its only call.
-    const unsigned maxMoved { shareOf(200) };
-    const unsigned maxFactorySize { shareOf(400) };
-    const unsigned maxHandedLiteral { shareOf(120) };
+    static constexpr unsigned maxMoved = 200;
+    static constexpr unsigned maxFactorySize = 400;
+    static constexpr unsigned maxHandedLiteral = 120;
     static constexpr unsigned minFactoryMethods = 8;
     // A function this large takes in no more.
-    const unsigned maxGrownTo { shareOf(4000) };
+    static constexpr unsigned maxGrownTo = 4000;
     static constexpr uint32_t none = UINT32_MAX;
     // A call that came along with a body that came along with a body, and so on this many times, stays a call.
     // More than that makes the code larger and no faster.

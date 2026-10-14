@@ -120,6 +120,7 @@
     BitVector valuesUsedOtherwiseThanAsIteratorsOfSteps() const;
     UncheckedKeyHashMap<uint32_t, B3::Air::StackSlot*, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_iterationsInFrame;
     void findIterationsInFrame();
+    bool m_spreadIsLeftToStub { false };
     struct ElementsTakenAtOnce {
         B3::Air::StackSlot* slot;
         unsigned count;

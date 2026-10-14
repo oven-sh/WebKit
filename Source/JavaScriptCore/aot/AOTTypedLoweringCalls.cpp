@@ -212,15 +212,7 @@ static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool is
 {
 #if CPU(X86_64) && OS(LINUX)
     static_assert(throwWordGPR == X86Registers::r11);
-    static const bool traps = [] {
-        const char* asGiven = getenv("AOT_SWITCH_THROW_TRAP");
-        if (asGiven && strcmp(asGiven, "0") && strcmp(asGiven, "1")) {
-            dataLogLn("AOT: AOT_SWITCH_THROW_TRAP is not 0 | 1: ", asGiven);
-            exit(1);
-        }
-        return !asGiven || asGiven[0] == '1';
-    }();
-    if (traps && !returnsToSite && !isLeaf && !valueIsInWordRegister) {
+    if (!returnsToSite && !isLeaf && !valueIsInWordRegister) {
         context.trapsAtThrowSites.append({ jit.labelIgnoringWatchpoints(), site.bits });
         jit.m_assembler.buffer().putByte(static_cast<int8_t>(0xf4));
         return false;

@@ -257,6 +257,20 @@ static JSValue retrieveArguments(VM& vm, CallFrame* callFrame, JSFunction* funct
     return functor.result();
 }
 
+static String restrictedPropertyAccessErrorFor(VM& vm, JSValue receiver)
+{
+#if ENABLE(AOT)
+    if (receiver.isCell() && AOT::isSloppyPlainClosure(receiver.asCell())) {
+        asObject(receiver)->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
+        return withAOTErrorNote(RestrictedPropertyAccessError);
+    }
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(receiver);
+#endif
+    return RestrictedPropertyAccessError;
+}
+
 // https://github.com/claudepache/es-legacy-function-reflection/blob/master/spec.md#get-functionprototypearguments
 JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, EncodedJSValue thisValue, PropertyName))
 {
@@ -264,9 +278,8 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
-    }
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+        return throwVMTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
 
     if (vm.auditsImmutableIntrinsics()) [[unlikely]]
         ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->arguments);
@@ -339,9 +352,8 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
-    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
-        return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
-    }
+    if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
+        return throwVMTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
 
     if (vm.auditsImmutableIntrinsics()) [[unlikely]]
         ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, vm.propertyNames->caller);
@@ -376,7 +388,7 @@ JSC_DEFINE_CUSTOM_SETTER(callerAndArgumentsSetter, (JSGlobalObject* globalObject
 
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj))
-        throwTypeError(globalObject, scope, RestrictedPropertyAccessError);
+        throwTypeError(globalObject, scope, restrictedPropertyAccessErrorFor(vm, JSValue::decode(thisValue)));
     else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
         ImmutableIntrinsicsAudit::didAccessCallerOrArguments(globalObject, thisObj, propertyName);
 

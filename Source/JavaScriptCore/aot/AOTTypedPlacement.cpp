@@ -4988,6 +4988,15 @@ public:
         }
         header.numberOfGeneratorFunctions = generatorFunctions.size();
         header.generatorFunctionsOffset = append(generatorAndResumeFunctions);
+        Vector<uint32_t> sloppyPlainFunctions;
+        for (unsigned i = 0; i < m_program.functions.size(); ++i) {
+            auto& function = m_program.functions[i];
+            if (function.has(Format::FunctionIsSloppy) && function.kind == FunctionKind::Plain && !(function.declaredAs & (functionIsAsync | functionIsGenerator)) && m_program.genericEntrypoints.contains(i))
+                sloppyPlainFunctions.append(entrypointOf(FunctionID(i)));
+        }
+        std::ranges::sort(sloppyPlainFunctions);
+        header.numberOfSloppyPlainFunctions = sloppyPlainFunctions.size();
+        header.sloppyPlainFunctionsOffset = append(sloppyPlainFunctions);
         Vector<std::pair<uint32_t, uint32_t>> constructorFunctions;
         for (unsigned i = 0; i < m_program.functions.size(); ++i) {
             if (uint32_t allocation = m_program.functions[i].allocationOfThis; allocation != Format::none)

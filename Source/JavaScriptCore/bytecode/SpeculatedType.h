@@ -31,7 +31,6 @@
 #include <JavaScriptCore/CPU.h>
 #include <JavaScriptCore/JSType.h>
 #include <wtf/Forward.h>
-#include <wtf/PrintStream.h>
 
 namespace JSC {
 
@@ -134,19 +133,6 @@ static constexpr SpeculatedType SpecTypeofMightBeFunction             = SpecFunc
 // On 64-bit platforms, the empty value passes a cell check. Also, ~SpecCellCheck is the type
 // set that representing the values that flow through when testing that something is not a cell.
 static constexpr SpeculatedType SpecCellCheck          = SpecCell | SpecEmpty;
-
-static constexpr unsigned SoundTypeUndefined   = 1u << 0;
-static constexpr unsigned SoundTypeNull        = 1u << 1;
-static constexpr unsigned SoundTypeBoolean     = 1u << 2;
-static constexpr unsigned SoundTypeNumber      = 1u << 3;
-static constexpr unsigned SoundTypeString      = 1u << 4;
-static constexpr unsigned SoundTypeSymbol      = 1u << 5;
-static constexpr unsigned SoundTypeBigInt      = 1u << 6;
-static constexpr unsigned SoundTypeFunction    = 1u << 7;
-static constexpr unsigned SoundTypeArray       = 1u << 8;
-static constexpr unsigned SoundTypeOtherObject = 1u << 9;
-static constexpr unsigned SoundTypeAnyObject   = SoundTypeFunction | SoundTypeArray | SoundTypeOtherObject;
-static constexpr unsigned SoundTypeAll         = (1u << 10) - 1;
 
 typedef bool (*SpeculatedTypeChecker)(SpeculatedType);
 

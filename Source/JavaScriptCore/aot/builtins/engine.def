@@ -2,16 +2,6 @@
 
 # The engine's builtins that are written in JavaScript: builtins/*.js. Each is compiled with every program, from <bun>/src/aot/prelude/engine/, but these.
 
-# Variants that the DFG puts in the place of a call.
-omitted ArrayPrototype.everyKnownArray
-omitted ArrayPrototype.filterKnownArray
-omitted ArrayPrototype.filterKnownArrayForEffect
-omitted ArrayPrototype.forEachKnownArray
-omitted ArrayPrototype.mapKnownArray
-omitted ArrayPrototype.mapKnownArrayForEffect
-omitted ArrayPrototype.reduceKnownArray
-omitted ArrayPrototype.someKnownArray
-
 # Called by the inline caches of the JIT.
 omitted ProxyHelpers.performProxyObjectGet
 omitted ProxyHelpers.performProxyObjectGetByVal

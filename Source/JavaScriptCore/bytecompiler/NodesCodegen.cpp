@@ -2087,7 +2087,6 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isObject, IsObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isCallable, IsCallable)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isConstructor, IsConstructor)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isJSArray, IsJSArray)
-CREATE_INTRINSIC_FOR_BRAND_CHECK(isEmpty, IsEmpty)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isProxyObject, IsProxyObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isDerivedArray, IsDerivedArray)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isGenerator, IsGenerator)
@@ -4378,10 +4377,6 @@ void ExprStatementNode::emitBytecode(BytecodeGenerator& generator, RegisterID* d
 void DeclarationStatement::emitBytecode(BytecodeGenerator& generator, RegisterID*)
 {
     ASSERT(m_expr);
-    if (generator.vm().useImmutableIntrinsics) {
-        generator.emitNodeInIgnoreResultPosition(m_expr);
-        return;
-    }
     generator.emitNode(m_expr);
 }
 
@@ -5990,8 +5985,6 @@ void ExportNamedDeclarationNode::emitBytecode(BytecodeGenerator&, RegisterID*)
 // ------------------------------ DestructuringAssignmentNode -----------------
 RegisterID* DestructuringAssignmentNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
 {
-    if (dst == generator.ignoredResult() && generator.vm().useImmutableIntrinsics && m_bindings->emitDirectBinding(generator, m_initializer))
-        return nullptr;
     RefPtr<RegisterID> initializer = generator.tempDestination(dst);
     generator.emitNode(initializer.get(), m_initializer);
     m_bindings->bindValue(generator, initializer.get());
@@ -6005,38 +5998,6 @@ static void assignDefaultValueIfUndefined(BytecodeGenerator& generator, Register
     generator.emitJumpIfFalse(generator.emitIsUndefined(generator.newTemporary(), maybeUndefined), isNotUndefined.get());
     generator.emitNode(maybeUndefined, defaultValue);
     generator.emitLabel(isNotUndefined.get());
-}
-
-bool ArrayPatternNode::emitDirectBinding(BytecodeGenerator& generator, ExpressionNode* rhs) const
-{
-    if (!rhs->isSimpleArray() || !generator.vm().isSafeToRecurse())
-        return false;
-    for (auto& target : m_targetPatterns) {
-        if (target.bindingType == BindingType::RestElement)
-            return false;
-    }
-    Vector<RefPtr<RegisterID>, 8> values;
-    for (ElementNode* element = static_cast<ArrayNode*>(rhs)->elements(); element; element = element->next()) {
-        RefPtr<RegisterID> value = generator.newTemporary();
-        generator.emitNode(value.get(), element->value());
-        values.append(WTF::move(value));
-    }
-    for (size_t i = 0; i < m_targetPatterns.size(); ++i) {
-        auto& target = m_targetPatterns[i];
-        if (target.bindingType == BindingType::Elision)
-            continue;
-        std::optional<BaseAndPropertyName> targetBaseAndPropertyName;
-        if (target.pattern->isAssignmentElementNode())
-            targetBaseAndPropertyName = static_cast<AssignmentElementNode*>(target.pattern)->emitNodesForDestructuring(generator);
-        RefPtr<RegisterID> value = i < values.size() ? values[i] : RefPtr<RegisterID> { generator.emitLoad(generator.newTemporary(), jsUndefined()) };
-        if (target.defaultValue)
-            assignDefaultValueIfUndefined(generator, value.get(), target.defaultValue);
-        if (targetBaseAndPropertyName)
-            static_cast<AssignmentElementNode*>(target.pattern)->bindValueWithEmittedNodes(generator, targetBaseAndPropertyName.value(), value.get());
-        else
-            target.pattern->bindValue(generator, value.get());
-    }
-    return true;
 }
 
 void ArrayPatternNode::bindValue(BytecodeGenerator& generator, RegisterID* rhs) const

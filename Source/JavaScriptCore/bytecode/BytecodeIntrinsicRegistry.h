@@ -62,7 +62,6 @@ enum class LinkTimeConstant : int32_t;
     macro(isCallable) \
     macro(isConstructor) \
     macro(isJSArray) \
-    macro(isEmpty) \
     macro(isProxyObject) \
     macro(isDerivedArray) \
     macro(isGenerator) \

@@ -22,7 +22,6 @@
 
 #include "Nodes.h"
 #include "Opcode.h"
-#include "SpeculatedType.h"
 
 namespace JSC {
 

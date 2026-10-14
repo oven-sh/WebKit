@@ -404,6 +404,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(SetAddOrCallMethod) \
     v(SetAddOrCallValue) \
     v(TakeElements) \
+    v(AppendSpread) \
     v(HandleException) \
     v(PollAtPrologue) \
     v(HandleExceptionAtPrologue) \

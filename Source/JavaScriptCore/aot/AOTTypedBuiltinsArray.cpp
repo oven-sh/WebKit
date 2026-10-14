@@ -1161,6 +1161,7 @@ LBasicBlock Lowering::appendSpread(const Value& value)
         orElse(equal(typeOfCell(array), word32(ArrayType)), otherwise);
         orElse(isZero(publicLength(butterflyOf(array))), otherwise);
         didEmitWrite(effectsOfBuiltinCall(value).writes);
+        m_spreadIsLeftToStub = true;
         return otherwise;
     }
     if (auto isBornForIt = m_spreadsCarriedOutAtBirth.getOptional(m_currentBlock->values[m_currentIndexInBlock].index())) {

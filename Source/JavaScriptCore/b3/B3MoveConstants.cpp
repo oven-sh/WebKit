@@ -124,7 +124,15 @@ private:
                 return false;
             }
         };
-        UncheckedKeyHashMap<ValueKey, unsigned> indexForConstant;
+        constexpr unsigned blocksServedByOneConstant = 1024;
+        constexpr unsigned mostBlocksServedAsOne = 8192;
+        IndexMap<BasicBlock*, unsigned> stretch(m_proc.size(), 1u);
+        if (isARM64() && m_proc.size() > mostBlocksServedAsOne) {
+            unsigned next = 0;
+            for (BasicBlock* block : m_proc.blocksInPreOrder())
+                stretch[block] = 1 + next++ / blocksServedByOneConstant;
+        }
+        UncheckedKeyHashMap<std::pair<ValueKey, unsigned>, unsigned> indexForConstant;
         auto take = [&](Value* original) {
             return materializationBlocks.contains(original) ? m_proc.clone(original) : original;
         };
@@ -135,7 +143,7 @@ private:
                 for (Value*& child : value->children()) {
                     if (!filter(child))
                         continue;
-                    auto result = indexForConstant.add(child->key(), usesOfConstants.size());
+                    auto result = indexForConstant.add({ child->key(), stretch[block] }, usesOfConstants.size());
                     if (result.isNewEntry) {
                         usesOfConstants.append(Vector<Use, 2> { });
                         usesAsImmediates.append(Vector<Use, 2> { });

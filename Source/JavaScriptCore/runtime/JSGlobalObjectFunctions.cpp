@@ -1014,11 +1014,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
     return JSValue::encode(target);
 }
 
-JSC_DEFINE_HOST_FUNCTION(globalFuncNoteClass, (JSGlobalObject*, CallFrame*))
-{
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(globalFuncCloneObject, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(cloneObjectForSpread(globalObject, callFrame->thisValue()));

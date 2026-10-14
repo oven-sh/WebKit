@@ -1191,13 +1191,6 @@ public:
         }
         m_link->matchedHotRanks.ensureSize(hotFunctions.size());
     }
-    std::optional<uint64_t> hotRankOf(const UnlinkedFunctionExecutable& executable) const
-    {
-        auto placement = m_link->placements.find(&executable);
-        if (placement == m_link->placements.end() || placement->value.linkClass != LinkClass::Hot)
-            return std::nullopt;
-        return placement->value.rank;
-    }
     bool hasHotFunctions() const { return !m_link->hotRanks.isEmpty(); }
     unsigned namedHotFunctions() const { return m_link->namedHotFunctions; }
     unsigned placedHotFunctions() const { return m_link->placedHotFunctions; }
@@ -5787,7 +5780,6 @@ struct BytecodeLinkEncoder::Impl {
         Strong<JSCell> root;
         SourceCode source;
         unsigned builtinEmbedderStamp { 0 };
-        bool isEngineBuiltin { false };
         bool isLate { false };
         GenericCacheEntry* entry { nullptr }; // in the encoder's pages, which stay where they are until release()
         uint32_t entryOffset { 0 };
@@ -6563,8 +6555,7 @@ auto BytecodeLinkEncoder::finish() -> Result
     result.functionsWithoutName = encoder.functionsWithoutName();
     for (unsigned index = 0; index < m_impl->modules.size(); ++index) {
         auto& module = m_impl->modules[index];
-        if (!module.isEngineBuiltin)
-            result.entryOffsets.append(module.entryOffset);
+        result.entryOffsets.append(module.entryOffset);
         result.moduleEntryOffsets.append(module.entryOffset);
 #if ENABLE(AOT)
         if (m_impl->compilesAheadOfTime)

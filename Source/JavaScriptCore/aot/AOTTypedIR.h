@@ -1123,11 +1123,8 @@ public:
     bool functionLengthsAreBytes { false };
     BitVector functionsThatTakeNoCopies;
     uint16_t licencesTheyAreNotGiven { 0 };
-    bool saysWhatTakesNoCopies { false };
     bool takesNoCopy(FunctionID id, uint8_t licence) const { return licencesTheyAreNotGiven >> licence & 1 && functionsThatTakeNoCopies.get(id.index()); }
     bool isColdByGraph(FunctionID id) const { return functionsColdByGraph.get(id.index()); }
-    Vector<String> heatLetters;
-    bool onlyDefaultsAskedForHeatLetters { false };
     // Those of them that have a loop, that no loop calls and that nothing hot makes: outside its loops such a function is like any that is not hot.
     BitVector functionsHotOnlyInTheirLoops;
     BitVector functionsInCycles;

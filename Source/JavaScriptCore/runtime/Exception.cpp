@@ -151,6 +151,14 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
 }
 
+void Exception::noteThatTopFrameIsAtSiteOfItsItem()
+{
+#if ENABLE(AOT)
+    if (auto* returnAddresses = m_returnAddressesAndDidNotifyInspectorOfThrow.pointer())
+        returnAddresses->topIsAtSiteOfItsItem = true;
+#endif
+}
+
 void Exception::materializeStack()
 {
     VM& vm = this->vm();

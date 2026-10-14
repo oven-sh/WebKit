@@ -133,6 +133,7 @@ JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
 JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE String nameOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE bool isSloppyPlainClosure(JSCell*);
 JS_EXPORT_PRIVATE unsigned lengthOfSlimClosure(JSObject*);
 JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);
 JS_EXPORT_PRIVATE void setCachedBoundFunctionStructure(JSObject*, Structure*);
@@ -217,7 +218,8 @@ struct ReturnAddressTrace {
     static constexpr unsigned maxNumberOfFramesLeftOut = 255;
     uint32_t limit : numberOfBitsOfLimit;
     uint32_t numberOfFramesLeftOut : 8;
-    uint32_t numberOfReturnAddresses : 31;
+    uint32_t numberOfReturnAddresses : 30;
+    uint32_t topIsAtSiteOfItsItem : 1;
     uint32_t hasFrameOfHostFunctionOnTop : 1;
     static size_t allocationSize(size_t numberOfReturnAddresses) { return sizeof(ReturnAddressTrace) + numberOfReturnAddresses * sizeof(uint32_t); }
     size_t sizeInBytes() const { return allocationSize(numberOfReturnAddresses); }
