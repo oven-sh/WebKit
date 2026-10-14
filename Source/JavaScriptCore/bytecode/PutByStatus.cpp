@@ -383,6 +383,12 @@ PutByStatus PutByStatus::computeFor(JSGlobalObject* globalObject, const Structur
         if (structure->typeInfo().overridesGetOwnPropertySlot() && structure->typeInfo().type() != GlobalObjectType)
             return PutByStatus(LikelyTakesSlowPath);
 
+#if USE(BUN_JSC_ADDITIONS)
+        // put() may do more than store the value, and here it has no PutPropertySlot to disable caching on.
+        if (structure->typeInfo().overridesPut() && structure->typeInfo().type() != GlobalObjectType)
+            return PutByStatus(LikelyTakesSlowPath);
+#endif
+
         if (!structure->propertyAccessesAreCacheable())
             return PutByStatus(LikelyTakesSlowPath);
     
