@@ -1405,7 +1405,7 @@ private:
     bool m_failNextNewCodeBlock { false };
     bool m_globalConstRedeclarationShouldThrow { true };
     bool m_allowRedeclaringSymbols { false };
-    std::atomic<bool> m_shouldBuildPCToCodeOriginMapping { false }; // The compiler threads read it.
+    std::atomic<bool> m_shouldBuildPCToCodeOriginMapping { false }; // Only ever turned on: the compiler threads read it, FTL more than once in a compilation.
     DeletePropertyMode m_deletePropertyMode { DeletePropertyMode::Default };
     HeapAnalyzer* m_activeHeapAnalyzer { nullptr };
     std::unique_ptr<CodeCache> m_codeCache;
