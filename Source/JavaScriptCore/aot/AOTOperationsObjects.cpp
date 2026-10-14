@@ -48,25 +48,6 @@
 
 namespace JSC { namespace AOT {
 
-struct NewObjectPlan {
-    struct Property {
-        unsigned identifier;
-        bool isDefined;
-        bool isStrict;
-        bool isAssigned;
-    };
-    Vector<Property, 8> properties;
-    struct Store {
-        unsigned offset;
-        unsigned property;
-    };
-    Vector<Store, 8> stores;
-
-    static VirtualRegister registerOf(unsigned property) { return VirtualRegister(0x20000000 + static_cast<int>(property)); }
-
-    static NewObjectPlan forCreateThis(UnlinkedCodeBlock*, unsigned offsetOfCreateThis);
-};
-
 bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObject* source, const IdentifierSet* excluded, const char* operation)
 {
     Structure* targetStructure = target->structure();
@@ -93,23 +74,6 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
         countOperationNamed(instance, operation, "no-plan");
         return false;
     }
-    Vector<JSValue, 16> values;
-    for (unsigned i = 0; i < copied.fieldsToCheck.size(); ++i) {
-        auto [from, to] = copied.offsets[i];
-        JSValue value = source->getDirect(from);
-        if (auto* field = copied.fieldsToCheck[i]) {
-            bool isRejected = TypedLayoutTable::checkStore(*field, value) == TypedLayoutTable::StoreCheck::Rejected;
-            if (!isRejected) {
-                value = TypedLayoutTable::toFieldRepresentation(*field, value);
-                isRejected = isInlineOffset(to) && TypedLayoutTable::checkStore(last->typedLayoutID(), to, value) == TypedLayoutTable::StoreCheck::Rejected;
-            }
-            if (isRejected) {
-                countOperationNamed(instance, operation, "value-is-rejected");
-                return false;
-            }
-        }
-        values.append(value);
-    }
     countOperationNamed(instance, operation, "copied");
     size_t oldCapacity = targetStructure->outOfLineCapacity();
     size_t newCapacity = last->outOfLineCapacity();
@@ -118,7 +82,7 @@ bool tryCopyDataProperties(Instance* instance, VM& vm, JSObject* target, JSObjec
         target->nukeStructureAndSetButterfly(vm, targetStructure->id(), butterfly);
     }
     for (unsigned i = 0; i < copied.offsets.size(); ++i)
-        target->putDirectOffset(vm, copied.offsets[i].second, values.isEmpty() ? source->getDirect(copied.offsets[i].first) : values[i]);
+        target->putDirectOffset(vm, copied.offsets[i].second, source->getDirect(copied.offsets[i].first));
     if (last != targetStructure || oldCapacity != newCapacity)
         target->setStructure(vm, last);
     return true;
@@ -368,53 +332,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance* instance
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     uncheckedDowncast<JSSet>(set)->addNormalized(globalObject, JSValue::decode(key), JSValue(), hash);
     OPERATION_RETURN(scope, JSValue::encode(set));
-}
-
-NewObjectPlan NewObjectPlan::forCreateThis(UnlinkedCodeBlock* codeBlock, unsigned offsetOfCreateThis)
-{
-    NewObjectPlan plan;
-    auto& instructions = codeBlock->instructions();
-    auto* handler = codeBlock->handlerForBytecodeIndex(BytecodeIndex(offsetOfCreateThis));
-    auto createThis = instructions.at(offsetOfCreateThis);
-    Vector<VirtualRegister, 4> aliases;
-    aliases.append(createThis->as<OpCreateThis>().m_dst);
-    constexpr unsigned maximumCount = 64;
-    for (unsigned offset = offsetOfCreateThis + createThis->size(); offset < instructions.size(); offset += instructions.at(offset)->size()) {
-        auto instruction = instructions.at(offset);
-        switch (instruction->opcodeID()) {
-        case op_mov: {
-            auto bytecode = instruction->as<OpMov>();
-            if (aliases.contains(bytecode.m_src)) {
-                if (!aliases.contains(bytecode.m_dst))
-                    aliases.append(bytecode.m_dst);
-            } else
-                aliases.removeAll(bytecode.m_dst);
-            if (aliases.isEmpty())
-                return plan;
-            continue;
-        }
-        case op_put_by_id: {
-            auto bytecode = instruction->as<OpPutById>();
-            if (!aliases.contains(bytecode.m_base) || aliases.contains(bytecode.m_value) || codeBlock->handlerForBytecodeIndex(BytecodeIndex(offset)) != handler)
-                return plan;
-            size_t index = plan.properties.findIf([&](auto& property) { return property.identifier == bytecode.m_property; });
-            if (index == notFound) {
-                if (plan.properties.size() == maximumCount)
-                    return plan;
-                index = plan.properties.size();
-                plan.properties.append({ bytecode.m_property, bytecode.m_flags.isDirect(), bytecode.m_flags.ecmaMode().isStrict(), !bytecode.m_flags.isDirect() });
-            } else if (!plan.properties[index].isDefined)
-                return plan;
-            else
-                plan.properties[index].isAssigned |= !bytecode.m_flags.isDirect();
-            plan.stores.append({ offset, static_cast<unsigned>(index) });
-            continue;
-        }
-        default:
-            return plan;
-        }
-    }
-    return plan;
 }
 
 } } // namespace JSC::AOT

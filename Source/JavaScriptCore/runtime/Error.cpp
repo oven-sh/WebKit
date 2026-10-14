@@ -425,6 +425,17 @@ Exception* throwTypeError(JSGlobalObject* globalObject, ThrowScope& scope, const
     return throwException(globalObject, scope, createTypeError(globalObject, message));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+String withAOTErrorNote(const String& message)
+{
+    constexpr auto note = " (bun --aot: https://bun.com/docs/bundler/executables#ahead-of-time-compilation)"_s;
+    size_t endOfFirstLine = message.find('\n');
+    if (endOfFirstLine == notFound)
+        return makeString(message, note);
+    return makeString(StringView(message).left(endOfFirstLine), note, StringView(message).substring(endOfFirstLine));
+}
+#endif
+
 Exception* throwSyntaxError(JSGlobalObject* globalObject, ThrowScope& scope)
 {
     return throwException(globalObject, scope, createSyntaxError(globalObject));

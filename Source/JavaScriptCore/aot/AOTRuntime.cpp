@@ -146,6 +146,12 @@ extern "C" void* g_aotStaticFunctionEntrypoints[3];
 template<typename Wanted, typename Function> struct TakesFirst : std::false_type { };
 template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result(First, Rest...)> : std::is_same<Wanted, First> { };
 template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result(First, Rest...) noexcept> : std::is_same<Wanted, First> { };
+#if OS(WINDOWS) && CPU(X86_64)
+template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result SYSV_ABI(First, Rest...)> : std::is_same<Wanted, First> { };
+template<typename Wanted, typename Result, typename First, typename... Rest> struct TakesFirst<Wanted, Result SYSV_ABI(First, Rest...) noexcept> : std::is_same<Wanted, First> { };
+#endif
+static_assert(TakesFirst<Instance*, std::remove_pointer_t<decltype(&operationAOTValueAdd)>>::value);
+static_assert(TakesFirst<JSCell*, std::remove_pointer_t<decltype(&operationAOTGetPlainly)>>::value);
 
 template<typename Wanted> static bool takesFirst(Entry entry)
 {
@@ -212,7 +218,6 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::VirtualTailCall, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualTailCall)));
     set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
-    set(Entry::ThrowCalledIndirectlyError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowCalledIndirectlyError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
     set(Entry::InternalFunctionCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_call_trampoline).taggedPtr());
     set(Entry::InternalFunctionConstructTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_construct_trampoline).taggedPtr());
@@ -264,8 +269,7 @@ RuntimeTable::RuntimeTable(VM& vm)
 
     installOperationFrontEnds(vm, m_entries);
 
-    if (usesStubs)
-        vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::CallBoundFunction))));
+    vm.getBoundFunction(true, SourceTaintedOrigin::Untainted)->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::CallBoundFunction))));
 }
 
 RuntimeTable::~RuntimeTable()
@@ -300,15 +304,6 @@ void RuntimeTable::countOperationAtSite(const char* name, uint32_t function, uns
     if (detail.isNull())
         detail = toUTF8CString("at:", line, ":", column, ":bc", bytecodeOffset);
     countOperation(name, byteCast<char>(detail.data()));
-}
-
-void RuntimeTable::countForFamily(const char* name, const char* nameByFamily, uint16_t family, const char* detail)
-{
-    countOperation(name, detail);
-    UTF8CString& detailByFamily = m_detailsByFamily.add(std::pair { detail, static_cast<unsigned>(family) }, UTF8CString()).iterator->value;
-    if (detailByFamily.isNull())
-        detailByFamily = toUTF8CString(static_cast<unsigned>(family), ":", detail);
-    countOperation(nameByFamily, byteCast<char>(detailByFamily.data()));
 }
 
 void RuntimeTable::countAllocatedBytes(const char* kind, const Subspace* subspace, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes)
@@ -473,11 +468,11 @@ void countAwait(VM& vm, const char* where, JSValue operand)
     runtimeTable(vm).countOperation(where, details[vm.defaultMicrotaskQueue().isEmpty()][kind]);
 }
 
-void countJobCall(VM& vm, bool entersStaticCode)
+void countJobCall(VM& vm)
 {
     if (!vm.m_aotRuntimeTable)
         return;
-    runtimeTable(vm).countOperation("job-call", entersStaticCode ? "static-code" : "other");
+    runtimeTable(vm).countOperation("job-call", "other");
 }
 
 void noteGuest(JSGlobalObject* globalObject, const char* kind, StringView group, StringView text)
@@ -528,7 +523,6 @@ struct Instance::Collections {
     Vector<RefPtr<UniquedStringImpl>> namesOfCopiesExcludingThatWent;
     std::pair<Structure*, uint64_t> keyOfLastCopyForMore { nullptr, 0 };
     const Instance::CopyForMore* lastCopyForMore { nullptr };
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, Structure*> convertedStructures;
     UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
     UncheckedKeyHashMap<String, std::unique_ptr<uint32_t>> canonicalPropertyRuns;
     UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, Instance::CopiedProperties> copiedProperties;
@@ -543,19 +537,10 @@ struct Instance::Collections {
         hasAddedWeakEntriesSinceLastCollection = true;
     }
     UncheckedKeyHashMap<JSFunction*, unsigned> learnedInlineCapacities;
-    struct LayoutConversionPlan {
-        Vector<std::pair<PropertyOffset, uint16_t>> moves;
-        Vector<const TypedLayoutTable::Field*> fields;
-    };
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, LayoutConversionPlan> conversionPlans;
-    UncheckedKeyHashMap<std::pair<Structure*, uint16_t>, ASCIILiteral> rejectedConversions;
-    UncheckedKeyHashMap<uint32_t, Structure*> emptyStructures;
-    UncheckedKeyHashMap<uint32_t, JSFunction*> constructorsOfLayouts;
     JSModuleLoader* loader { nullptr };
     Vector<std::pair<Structure*, Structure*>, 12> functionStructures;
     Vector<std::pair<Structure*, Structure*>, 6> functionStructuresWithCaptures;
     UncheckedKeyHashMap<uint32_t, ScriptExecutable*> topLevelExecutables;
-    String retainedString;
     UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects;
     JSCell* token { nullptr };
     bool loaderWasCleared { false };
@@ -584,7 +569,6 @@ struct Instance::Collections {
 
 static_assert(Instance::offsetOfVM() == 16, "JSWebAssemblyInstance::offsetOfVM()");
 static_assert(!Instance::offsetOfSharedData());
-static_assert(Instance::offsetOfDepartedFamily(Instance::numberOfFamiliesWithByte) <= 4096);
 static_assert(!(Instance::offsetOfOwnData() % sizeof(Data*)) && Instance::offsetOfOwnData() / sizeof(Data*) + Instance::maxNumberOfOwnData <= std::numeric_limits<uint16_t>::max() + 1);
 static_assert(Instance::stateOfLinkedWithoutData() + 1 == Instance::offsetOfOwnData() / sizeof(Data*));
 static_assert(Instance::cacheMissLimitFor(FunctionInfo::maxEncodedSlots) < std::numeric_limits<uint16_t>::max());
@@ -615,31 +599,6 @@ JSGlobalObject* globalObjectForInstanceToken(VM& vm, JSCell* token)
     return nullptr;
 }
 
-void noteDepartureFromFamily(VM& vm, uint16_t family, const char* road)
-{
-#if ASSERT_ENABLED
-    vm.m_aotFamilyWhoseDepartureWasNoted = family;
-#endif
-    Instance::noteDepartedFamily(vm, family);
-    if (Options::useAOTOperationCounters()) [[unlikely]]
-        runtimeTable(vm).countForFamily("Family::departed", "Family::departed-from", family, road);
-}
-
-bool hasNotedDepartureFromFamily(VM& vm, uint16_t family)
-{
-#if ASSERT_ENABLED
-    if (std::exchange(vm.m_aotFamilyWhoseDepartureWasNoted, 0) != family)
-        return false;
-#endif
-    if (!Instance::hasByteForFamily(family))
-        return true;
-    for (Instance* instance : vm.m_aotInstances) {
-        if (!instance->departedFamilies[family])
-            return false;
-    }
-    return true;
-}
-
 void didClearLoaderOf(Instance* instance)
 {
     if (instance->globalObject->aotInstance() != instance)
@@ -647,14 +606,6 @@ void didClearLoaderOf(Instance* instance)
 }
 
 bool Instance::loaderWasCleared() const { return collections->loaderWasCleared; }
-
-void Instance::noteDepartedFamily(VM& vm, uint16_t family)
-{
-    if (!hasByteForFamily(family))
-        return;
-    for (Instance* instance : vm.m_aotInstances)
-        instance->departedFamilies[family] = 1;
-}
 
 void Instance::destroyUnneededInstances(VM& vm)
 {
@@ -669,6 +620,8 @@ Instance& Instance::ensure(JSGlobalObject* globalObject)
         return *instance;
     Instance& instance = ensure(globalObject->moduleLoader());
     globalObject->setAOTInstance(&instance);
+    if (instance.typed && !globalObject->hasImmutableIntrinsics())
+        instance.typed->captureBuiltinsOfRealm();
     return instance;
 }
 
@@ -733,7 +686,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->collections->startsOfData = static_cast<uint64_t*>(OSAllocator::reserveAndCommit(instance->collections->sizeOfStartsOfData, OSAllocator::FastMallocPages));
     instance->program = program;
     instance->programData = &program->data();
-    instance->stringConstantRecords = program->data().at<uint32_t>(program->data().stringConstantRecordsOffset);
     instance->infos = program->data().infos();
     instance->addressOfStates = instance->states;
     instance->functionMetadataOffsets = program->data().functionMetadataOffsets();
@@ -741,7 +693,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->programIdentifierPlaces = program->identifierPlaces();
     instance->sharedData = SharedData::get();
     instance->sharedDataOfLinkedFunctions = instance->sharedData;
-    instance->fieldsWithObservableReads = static_cast<uint8_t*>(OSAllocator::reserveAndCommit(sizeOfFieldsWithObservableReads, OSAllocator::FastMallocPages));
     if (Image* image = Image::withCode()) {
         instance->image = image->at<uint8_t>(0);
         instance->code = static_cast<const uint8_t*>(image->code());
@@ -751,10 +702,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->structureIDBase = JSC::structureIDBase();
     instance->cellCageBase = MarkedBlockCage::base();
     instance->numberBoxBase = Typed::NumberBoxTable::base();
-    instance->familyBase = instance->structureIDBase + Structure::offsetOfFamily();
     instance->fieldIDAtDirectLocationBase = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * sizeof(uint16_t);
-    for (unsigned slot = 0; slot < Structure::numberOfSlotsWithFieldIDs; ++slot)
-        instance->fieldIDInSlotBases[slot] = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() + slot * sizeof(uint16_t);
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
         auto headerOf = [](Structure* structure) { return static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits(); };
@@ -768,19 +716,20 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->boundFunctionStructureID = idOf(globalObject->boundFunctionStructure());
         instance->hostFunctionStructureID = idOf(globalObject->hostFunctionStructure());
         NativeExecutable* boundFunctionExecutable = vm.getBoundFunction(true, SourceTaintedOrigin::Untainted);
-        if (usesStubs)
-            boundFunctionExecutable->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::CallBoundFunction))));
+        boundFunctionExecutable->setCallEntrypoint(CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::CallBoundFunction))));
         instance->boundFunctionExecutable = boundFunctionExecutable;
         instance->boundFunctionClassInfo = JSBoundFunction::info();
         for (IndexingType type : { ArrayWithUndecided, ArrayWithInt32, ArrayWithDouble, ArrayWithContiguous, ArrayWithArrayStorage, CopyOnWriteArrayWithInt32, CopyOnWriteArrayWithDouble, CopyOnWriteArrayWithContiguous })
             instance->originalArrayStructureIDs[(type & (IndexingShapeMask | CopyOnWrite)) >> Instance::arrayKindShift] = idOf(globalObject->originalArrayStructureForIndexingType(type));
+        if (!globalObject->hasImmutableIntrinsics()) {
+            zeroSpan(std::span { instance->receiverStructureIDs });
+            zeroSpan(std::span { instance->originalArrayStructureIDs });
+        }
         for (unsigned vectorLength = 1; vectorLength <= Instance::maxVectorLengthGrownByStub; ++vectorLength) {
             unsigned next = Butterfly::optimalContiguousVectorLength(static_cast<size_t>(0), static_cast<unsigned>(nextLength(vectorLength + 1)));
             instance->nextVectorLengths[vectorLength] = next <= UINT8_MAX && next & 1 ? next : 0;
         }
         if (!globalObject->isHavingABadTime()) {
-            instance->regExpMatchesArrayStructureIDs[0] = idOf(globalObject->regExpMatchesArrayStructure());
-            instance->regExpMatchesArrayStructureIDs[1] = idOf(globalObject->regExpMatchesArrayWithIndicesStructure());
             instance->newArrayWithInt32Header = headerOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32));
             instance->newArrayWithDoubleHeader = headerOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithDouble));
             instance->newArrayWithContiguousHeader = headerOf(globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous));
@@ -790,10 +739,8 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         }
         instance->collections->arraysLackIsConcatSpreadable.install(globalObject->arrayIsConcatSpreadableWatchpointSet(), instance->arraysLackIsConcatSpreadable);
         instance->collections->arraysLackInheritedElements.install(globalObject->arrayPrototypeChainIsSaneWatchpointSet(), instance->arraysLackInheritedElements);
-        instance->activationHeader = headerOf(globalObject->activationStructure());
         instance->auxiliarySpace = &vm.auxiliarySpace();
         instance->cellSpace = &vm.cellSpace();
-        instance->activationSpace = subspaceFor<JSLexicalEnvironment>(vm);
         instance->arrayAllocator = subspaceFor<JSArray>(vm)->allocatorFor(sizeof(JSArray), AllocatorForMode::EnsureAllocator).localAllocator();
         instance->ropeStringAllocator = subspaceFor<JSRopeString>(vm)->allocatorFor(sizeof(JSRopeString), AllocatorForMode::EnsureAllocator).localAllocator();
         RELEASE_ASSERT(static_cast<LocalAllocator*>(instance->arrayAllocator)->cellSize() == sizeof(JSArray));
@@ -801,7 +748,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->singleCharacterStrings = vm.smallStrings.singleCharacterStrings();
         instance->emptyString = vm.smallStrings.emptyString();
         instance->sentinelString = vm.smallStrings.sentinelString();
-        instance->arrayIterationSentinel = vm.fastArraySentinel();
         instance->stringHeader = headerOf(vm.stringStructure.get());
         instance->smallIntStrings = vm.numericStrings.smallIntCache();
         instance->intStrings = vm.numericStrings.intCache();
@@ -837,13 +783,13 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     loader->setAOTInstance(instance);
     if (instance->typed)
         instance->typed->adoptClosuresOfRealm(vm);
-    if (!vm.m_aotInstances.isEmpty())
-        memcpySpan(std::span { instance->departedFamilies }, std::span { vm.m_aotInstances[0]->departedFamilies });
     vm.traps().registerMirror(instance->stackMirror);
     instance->barrierThreshold = vm.heap.barrierThreshold();
     instance->mutatorShouldBeFenced = vm.heap.mutatorShouldBeFenced();
     vm.m_aotInstances.append(instance);
     microtaskQueueingDidChange(vm);
+    if (instance->typed && !globalObject->hasImmutableIntrinsics() && globalObject->aotInstance())
+        instance->typed->captureBuiltinsOfRealm();
     return *instance;
 }
 
@@ -932,6 +878,10 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
     VM& vm = *this->vm;
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     uint32_t index = executable->programModule()->functionIndex;
+    if (typed && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
+        throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be loaded in a realm that was created at run time (ShadowRealm, node:vm)"_s));
+        return 0;
+    }
     if (typed)
         typed->ensureStaticsOfProgramAreFilled();
     if (typed && !typed->moduleRecord && scope->type() == ModuleEnvironmentType && typed->data.isEntryPoint(executable->programModule()->entryOffset)) {
@@ -939,17 +889,18 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
         for (Instance* other : vm.m_aotInstances) {
             if (other == this || !other->typed || !other->typed->moduleRecord)
                 continue;
-            throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and has been loaded already: another realm or loader cannot load it again"_s));
+            throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and has been loaded already: another realm or loader cannot load it again"_s)));
             return 0;
         }
         typed->moduleRecord = uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord();
+        typed->importMeta = nullptr;
     }
     if (Data* data = dataIfExists(index); data && data->executable() == executable)
         return data->code()->entry();
     DeferGCForAWhile deferGC(vm);
     ImageCode found = findInImage(executable, CodeSpecializationKind::CodeForCall, nullptr, scope);
     if (!found) {
-        throwSyntaxError(globalObject, throwScope, makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be run the way it has been loaded"_s));
+        throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and cannot be run the way it has been loaded"_s)));
         return 0;
     }
     Ref<JITCode> code = jitCodeForImageFunction(found, CodeSpecializationKind::CodeForCall);
@@ -1112,6 +1063,7 @@ void Instance::freeDataMemory(void* pointer, size_t size)
 
 void Instance::destroy(Instance* instance)
 {
+    delete instance->typed;
     instance->vm->traps().unregisterMirror(instance->stackMirror);
     instance->vm->m_aotInstances.removeFirst(instance);
     instance->vm->m_aotInstancesToDestroy.removeFirst(instance);
@@ -1123,7 +1075,6 @@ void Instance::destroy(Instance* instance)
     fastFree(instance->cachedReturnAddresses);
     delete instance->collections;
     fastFree(instance->customGetters);
-    OSAllocator::decommitAndRelease(instance->fieldsWithObservableReads, sizeOfFieldsWithObservableReads);
     OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->keyedReads, sizeOfKeyedTables);
@@ -1267,8 +1218,6 @@ JSCell* callerOwnerCell(const CallFrame* callFrame)
 
 bool hasCompiledCode(VM& vm, JSFunction* function)
 {
-    if (function->hasAOTFunctionWord())
-        return true;
     if (function->isHostFunction())
         return false;
     FunctionExecutable* executable = function->jsExecutable();
@@ -1284,12 +1233,19 @@ const RegisterAtOffsetList& adapterSavedRegisters()
         registers.add(instanceGPR, IgnoreVectors);
         registers.add(GPRInfo::numberTagRegister, IgnoreVectors);
         registers.add(GPRInfo::notCellMaskRegister, IgnoreVectors);
+#if CPU(ARM64)
+        registers.add(cellCageBaseGPR, IgnoreVectors);
+        registers.add(staticsGPR, IgnoreVectors);
+#endif
 #if CPU(X86_64)
         registers.add(X86Registers::ebx, IgnoreVectors);
         registers.add(X86Registers::r12, IgnoreVectors);
 #endif
         list.construct(registers);
         list->adjustOffsets(offsetOfInstanceRegisterInAdapter - list->find(instanceGPR)->offset());
+#if CPU(ARM64)
+        RELEASE_ASSERT(list->find(cellCageBaseGPR)->offset() == offsetOfCellCageBaseRegisterInAdapter && list->find(staticsGPR)->offset() == offsetOfStaticsRegisterInAdapter);
+#endif
 #if CPU(X86_64)
         RELEASE_ASSERT(list->find(X86Registers::ebx)->offset() == offsetOfRBXInAdapter && list->find(X86Registers::r12)->offset() == offsetOfR12InAdapter);
 #endif
@@ -2053,19 +2009,6 @@ ASCIILiteral nameOf(Entry entry)
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-bool linkColdStaticFunction(Instance* instance, uint32_t index, JSScope* scope)
-{
-    if (scope->realm() != instance->globalObject)
-        return false;
-    if (instance->isLinked(index))
-        return true;
-    const FunctionInfo& info = instance->infos[index];
-    if (!info.startsCold() || (info.function()->usesStaticImports && !moduleIsLinkedAsCompiled(scope)))
-        return false;
-    instance->setLinkedWithoutData(index);
-    return true;
-}
-
 bool linkStaticFunction(Instance* instance, FunctionExecutable* executable, CodeSpecializationKind kind, JSScope* scope)
 {
     if (scope->realm() != instance->globalObject)
@@ -2207,15 +2150,6 @@ void Instance::visit(Visitor& visitor, bool newOnly)
             visitor.appendUnbarriered(cell);
         return;
     }
-    for (Structure* structure : collections->emptyStructures.values())
-        visitor.appendUnbarriered(structure);
-    for (JSFunction* constructor : collections->constructorsOfLayouts.values())
-        visitor.appendUnbarriered(constructor);
-    for (auto& [from, to] : collections->convertedStructures) {
-        visitor.appendUnbarriered(from.first);
-        if (to)
-            visitor.appendUnbarriered(to);
-    }
     if (collections->environmentsSize) {
         for (uint32_t distance = sizeof(void*); distance <= Image::environmentsSize(); distance += sizeof(void*)) {
             if (JSCell* environment = *reinterpret_cast<JSCell**>(reinterpret_cast<char*>(this) - distance))
@@ -2342,196 +2276,6 @@ JSObject* Instance::newObjectOf(VM& vm, Structure* structure)
     return JSFinalObject::createWithButterfly(vm, structure, butterfly);
 }
 
-bool Instance::convertToTypedLayout(VM& vm, JSObject* object, uint16_t layoutID)
-{
-    Structure* old = object->structure();
-    unsigned capacity = TypedLayoutTable::numberOfSlots(layoutID);
-    auto no = [&](ASCIILiteral why) {
-        TypedLayoutTable::s_lastConversionFailure = why;
-        if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::runtimeTable(vm).countOperation("Instance::convertToTypedLayout", why.characters());
-        return false;
-    };
-    if (object->type() != FinalObjectType)
-        return no("it is not a plain object"_s);
-    if (old->typedLayoutID())
-        return no("it already has the layout of another type"_s);
-    if (old->hasStableFields())
-        return no("its fields may not move"_s);
-    if (TypedLayoutTable::isGivenOnlyAtBirth(layoutID))
-        return no("the layout is given only at birth"_s);
-    if (!capacity)
-        return no("the type has no layout"_s);
-    unsigned inlineSlots = TypedLayoutTable::inlineSlots(layoutID);
-    bool usesFieldIDs = TypedLayoutTable::usesFieldIDs(layoutID);
-    if (!usesFieldIDs && TypedLayoutTable::isInstanceLayout(layoutID))
-        return no("it was not made by the constructor of the class"_s);
-    if (usesFieldIDs) {
-        if (old->cannotConvertToTypedLayout())
-            return no("objects with its structure cannot be converted"_s);
-        capacity = inlineSlots = std::min<unsigned>(inlineSlots, old->inlineCapacity());
-        if (!capacity) {
-            old->setCannotConvertToTypedLayout();
-            return no("it does not have enough inline capacity"_s);
-        }
-    }
-    if (old->hasPolyProto())
-        return no("its prototype is not supported"_s);
-    if (old->mayBePrototype())
-        return no("it is used as a prototype"_s);
-    if (old->isBrandedStructure())
-        return no("it has private methods"_s);
-    if (old->inlineCapacity() < inlineSlots)
-        return no("it does not have enough inline capacity"_s);
-    if (!old->isStructureExtensible())
-        return no("it is not extensible"_s);
-    if (old->isDictionary() && old->isUncacheableDictionary())
-        return no("it is a dictionary"_s);
-    Instance& instance = ensure(old->globalObject());
-    if (auto it = instance.collections->rejectedConversions.find({ old, layoutID }); it != instance.collections->rejectedConversions.end())
-        return no(it->value);
-    auto rejectStructure = [&](ASCIILiteral why) {
-        if (!old->isDictionary() && instance.collections->rejectedConversions.size() < 4096) {
-            instance.collections->rejectedConversions.add({ old, layoutID }, why);
-            instance.collections->hasAddedWeakEntriesSinceLastCollection = true;
-        }
-        return no(why);
-    };
-    Vector<std::pair<PropertyOffset, uint16_t>, 16> moves;
-    Vector<UniquedStringImpl*, 16> names;
-    Vector<uint16_t, 16> slots;
-    Vector<const TypedLayoutTable::Field*, 16> fields;
-    Vector<unsigned, 16> attributes;
-    Vector<const TypedLayoutTable::Field*, 4> accessors;
-    if (auto plan = instance.collections->conversionPlans.find({ old, layoutID }); plan != instance.collections->conversionPlans.end()) {
-        ASSERT(instance.collections->convertedStructures.contains({ old, layoutID }));
-        moves = plan->value.moves;
-        fields = plan->value.fields;
-    } else {
-        BitVector taken;
-        unsigned next = capacity;
-        bool isPlain = true;
-        bool hasSlotConflict = false;
-        old->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-            auto* field = TypedLayoutTable::findField(vm, layoutID, entry.key());
-            if (usesFieldIDs) {
-                if (entry.attributes() & (PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue)) {
-                    if (field)
-                        accessors.append(field);
-                    field = nullptr;
-                }
-            } else
-                isPlain &= !entry.attributes();
-            attributes.append(entry.attributes());
-            hasSlotConflict |= field && !usesFieldIDs && taken.get(field->slot);
-            unsigned slot = field && field->slot < capacity && !taken.get(field->slot) ? field->slot : next++;
-            taken.set(slot);
-            fields.append(field);
-            names.append(entry.key());
-            slots.append(safeCast<uint16_t>(slot));
-            moves.append({ entry.offset(), safeCast<uint16_t>(slot) });
-            return true;
-        });
-        if (!isPlain)
-            return rejectStructure("it has a property that is not a plain data property"_s);
-        if (hasSlotConflict)
-            return rejectStructure("it has two properties that share a slot"_s);
-        for (auto& field : TypedLayoutTable::fieldsOf(layoutID)) {
-            if (!usesFieldIDs && !field.mayBeAbsent && !taken.get(field.slot))
-                return rejectStructure("it lacks a required property"_s);
-        }
-        if (JSValue prototype = old->storedPrototype(); prototype.isObject() && asObject(prototype) != old->globalObject()->objectPrototype()) {
-            if (usesFieldIDs) {
-                if (!old->isDictionary())
-                    old->setCannotConvertToTypedLayout();
-                return no("its prototype is not supported"_s);
-            }
-            if (!TypedLayoutTable::tryToInheritFrom(vm, layoutID, prototype))
-                return no("it inherits a property that the type declares, or its prototype is not supported"_s);
-        }
-    }
-    Vector<JSValue, 16> values;
-    for (unsigned i = 0; i < moves.size(); ++i) {
-        JSValue value = object->getDirect(moves[i].first);
-        if (fields[i] && TypedLayoutTable::checkStore(*fields[i], value) == TypedLayoutTable::StoreCheck::Rejected)
-            return no("the value of a property does not match its declared type"_s);
-        values.append(fields[i] ? TypedLayoutTable::toFieldRepresentation(*fields[i], value) : value);
-    }
-    if (object->structure() != old)
-        return object->structure()->typedLayoutID() == layoutID;
-    Structure* converted;
-    if (auto it = instance.collections->convertedStructures.find({ old, layoutID }); it != instance.collections->convertedStructures.end())
-        converted = it->value;
-    else {
-        DeferGC deferGC(vm);
-        Structure* empty = old->storedPrototype().isObject()
-            ? old->globalObject()->structureCache().emptyObjectStructureForPrototype(old->globalObject(), asObject(old->storedPrototype()), old->inlineCapacity())
-            : Structure::create(vm, old->globalObject(), jsNull(), old->typeInfo(), old->classInfoForCells(), NonArray, old->inlineCapacity());
-        converted = empty->inlineCapacity() == old->inlineCapacity() && empty->indexingType() == old->indexingType() ? Structure::createWithProperties(vm, empty, names.span(), slots.span(), capacity, inlineSlots, attributes.span()) : nullptr;
-        if (converted)
-            converted->copyAccessorAndReadOnlyFlagsFrom(*old);
-        if (converted && usesFieldIDs) {
-            uint16_t fieldIDInSlot[Structure::numberOfSlotsWithFieldIDs] { };
-            for (auto* field : accessors) {
-                if (field->slot < Structure::numberOfSlotsWithFieldIDs)
-                    fieldIDInSlot[field->slot] = Structure::ambiguousFieldID;
-            }
-            for (unsigned i = 0; i < fields.size(); ++i) {
-                if (auto* field = fields[i]; field && field->slot < Structure::numberOfSlotsWithFieldIDs)
-                    fieldIDInSlot[field->slot] = !fieldIDInSlot[field->slot] && field->slot < capacity && slots[i] == field->slot ? field->id : Structure::ambiguousFieldID;
-            }
-            converted->setTypedLayoutID(layoutID, fieldIDInSlot);
-        } else if (converted)
-            converted->setTypedLayoutID(layoutID);
-        if (!old->isDictionary()) {
-            instance.collections->convertedStructures.add({ old, layoutID }, converted);
-            instance.noteCellAdded(old);
-            instance.noteCellAdded(converted);
-            if (converted) {
-                Collections::LayoutConversionPlan plan;
-                plan.moves = moves;
-                plan.fields = fields;
-                instance.collections->conversionPlans.add({ old, layoutID }, WTF::move(plan));
-            }
-        }
-    }
-    if (!converted)
-        return no("it has indexed elements, or no structure could be created"_s);
-    if (old->family()) [[unlikely]]
-        noteDepartureFromFamily(vm, old->family(), "typed-layout");
-    {
-        DeferGC deferGC(vm);
-        unsigned oldOutside = old->outOfLineCapacity();
-        unsigned newOutside = converted->outOfLineCapacity();
-        if (newOutside != oldOutside) {
-            Butterfly* butterfly = nullptr;
-            if (newOutside) {
-                butterfly = Butterfly::create(vm, nullptr, 0, newOutside, false, IndexingHeader(), 0);
-                gcSafeZeroMemory(std::bit_cast<EncodedJSValue*>(butterfly->propertyStorage() - newOutside), newOutside * sizeof(EncodedJSValue));
-            }
-            object->nukeStructureAndSetButterfly(vm, object->structureID(), butterfly);
-        } else {
-            for (unsigned i = 0; i < newOutside; ++i)
-                object->locationForOffset(firstOutOfLineOffset + i)->clear();
-        }
-        for (unsigned offset = 0; offset < old->inlineCapacity(); ++offset)
-            object->locationForOffset(offset)->clear();
-        for (unsigned i = 0; i < moves.size(); ++i)
-            object->putDirectOffset(vm, TypedLayoutTable::offsetOfSlot(moves[i].second, inlineSlots), values[i]);
-        object->setStructure(vm, converted);
-        vm.writeBarrier(object);
-    }
-    if (Options::useAOTOperationCounters()) [[unlikely]] {
-        const char* birth = "something-else";
-        for (auto& entry : instance.collections->copiedProperties) {
-            if (entry.value.last == old)
-                birth = "a-copy";
-        }
-        AOT::runtimeTable(vm).countOperation("Instance::convertToTypedLayout:born-as", birth);
-    }
-    return true;
-}
-
 void Instance::fillRow(uint32_t number, Structure* structure, uint32_t placesToClear, LocalAllocator* allocator)
 {
     Slot& row = rows[number];
@@ -2636,19 +2380,6 @@ void Instance::learnInlineCapacity(JSFunction* constructor, Structure* structure
         rareData->clear("Objects get properties outside their inline storage");
 }
 
-static const TypedLayoutTable::Field* fieldStoredAt(VM& vm, Structure* structure, UniquedStringImpl* name, PropertyOffset offset)
-{
-    uint16_t layoutID = structure->typedLayoutID();
-    if (!layoutID)
-        return nullptr;
-    if (!TypedLayoutTable::usesFieldIDs(layoutID))
-        return TypedLayoutTable::findField(vm, layoutID, name);
-    if (static_cast<unsigned>(offset) >= Structure::numberOfSlotsWithFieldIDs)
-        return nullptr;
-    uint16_t id = structure->fieldIDInSlot(offset);
-    return id && id != Structure::ambiguousFieldID ? &TypedLayoutTable::fieldWithID(offset, id) : nullptr;
-}
-
 Instance::StructuresOfClass Instance::structuresOfClass(uint32_t classIndex, JSObject* parentOfClassObject, JSCell* parentOfPrototype)
 {
     return collections->structuresOfClasses.get({ classIndex + 1, parentOfClassObject, parentOfPrototype });
@@ -2683,25 +2414,12 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
         result.offsets.append({ entry.offset(), invalidOffset });
         return true;
     });
-    bool checksFields = target->typedLayoutID() && TypedLayoutTable::hasTypedFields();
-    auto noteStore = [&](unsigned i, PropertyOffset offset, bool isOverwritten) {
-        if (!checksFields)
-            return;
-        auto* field = fieldStoredAt(*vm, last, names[i], offset);
-        if (!field && isOverwritten && isInlineOffset(offset) && TypedLayoutTable::fieldTypeInSlot(last->typedLayoutID(), offset))
-            last = nullptr;
-        else if (field && source->typedLayoutID() == last->typedLayoutID() && field == fieldStoredAt(*vm, source, names[i], result.offsets[i].first))
-            field = nullptr;
-        result.fieldsToCheck.append(field);
-    };
     for (unsigned i = 0; last && i < names.size(); ++i) {
         unsigned attributes;
         PropertyOffset offset = last->get(*vm, names[i], attributes);
         if (isValidOffset(offset)) {
             if (attributes)
                 last = nullptr;
-            else
-                noteStore(i, offset, true);
             continue;
         }
         Structure* next = Structure::addPropertyTransitionToExistingStructure(last, names[i], 0, offset);
@@ -2710,11 +2428,7 @@ const Instance::CopiedProperties& Instance::copiedProperties(Structure* target, 
             next = Structure::addNewPropertyTransition(*vm, last, names[i], 0, offset, PutPropertySlot::UnknownContext, &deferred);
         }
         last = next->isDictionary() ? nullptr : next;
-        if (last)
-            noteStore(i, offset, false);
     }
-    if (!result.fieldsToCheck.containsIf([](auto* field) { return !!field; }))
-        result.fieldsToCheck.clear();
     for (unsigned i = 0; last && i < names.size(); ++i)
         result.offsets[i].second = last->get(*vm, names[i]);
     result.last = last;
@@ -2809,7 +2523,6 @@ void Instance::didHaveBadTime()
     newArrayWithDoubleHeader = 0;
     newArrayWithContiguousHeader = 0;
     zeroSpan(std::span { newCopyOnWriteArrayHeaders });
-    zeroSpan(std::span { regExpMatchesArrayStructureIDs });
 }
 
 void Instance::noteOwnPropertyPlace(uint32_t structureID, UniquedStringImpl* uid, uint32_t place)
@@ -2842,7 +2555,7 @@ void Instance::validateKeyedTables()
         return AtomStringImpl::lookUp(text);
     };
     auto isOrdinary = [](Structure* structure) {
-        return !structure->typeInfo().overridesGetOwnPropertySlot() && !TypeInfo::hasStaticPropertyTable(structure->typeInfo().inlineTypeFlags()) && !structure->compiledLayout() && !structure->typedLayoutID() && structure->hasMonoProto();
+        return !structure->typeInfo().overridesGetOwnPropertySlot() && !TypeInfo::hasStaticPropertyTable(structure->typeInfo().inlineTypeFlags()) && !structure->compiledLayout() && structure->hasMonoProto();
     };
     auto fail = [](ASCIILiteral table, unsigned index, ASCIILiteral what, Structure* structure, JSCell* key) {
         dataLogLn("AOT: ", table, "[", index, "]: ", what, ": structure ", RawPointer(structure), " ", *structure, ", key ", JSValue(key));
@@ -3100,9 +2813,6 @@ void Instance::finalizeUnconditionally(bool newOnly)
         collections->structuresOfClasses.removeIf([&](auto& entry) {
             return !vm->heap.isMarked(entry.value.ofClassObject) || !vm->heap.isMarked(entry.value.ofPrototype);
         });
-        collections->rejectedConversions.removeIf([&](auto& entry) {
-            return !vm->heap.isMarked(entry.key.first);
-        });
         collections->shapes.removeIf([&](auto& entry) {
             return !vm->heap.isMarked(entry.value);
         });
@@ -3137,7 +2847,7 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (Options::verboseAOTCompilation()) [[unlikely]] {
         dataLogLn("AOT: instance ", RawPointer(this), " after ", newOnly ? "an eden" : "a full", " collection: ", collections->all.size(), " of ", collections->numberOfFunctions, " functions have slots, in ", (collections->usedDataEnd - collections->dataStart) << stateWithDataShift, " bytes; ",
             collections->allSiteSlots.size(), " sites with several slots (", collections->allSiteSlots.size() * sizeof(PolymorphicSlots), " bytes); ", collections->transitions.size(), " transitions; structures of literals ", collections->shapes.size(),
-            ", of copies ", collections->copyStructures.size(), ", of layouts ", collections->emptyStructures.size(), " + ", collections->convertedStructures.size(), "; property runs ", collections->propertyRunTargets.size(), "; copied properties ", collections->copiedProperties.size(),
+            ", of copies ", collections->copyStructures.size(), "; property runs ", collections->propertyRunTargets.size(), "; copied properties ", collections->copiedProperties.size(),
             "; constructors ", collections->constructorsByFirstStructure.size(), " + ", collections->learnedInlineCapacities.size(), "; modules ", collections->topLevelExecutables.size(), "; template objects ", collections->templateObjects.size(),
             "; environments ", Image::environmentsSize() / sizeof(void*), "; unlinked functions in the program ", program->data().numberOfUnlinkedFunctions);
     }
@@ -3280,7 +2990,7 @@ const RegisterAtOffsetList* calleeSaveRegistersOf(const ImageFunction& function)
 JITCode::JITCode(void* code, const ImageFunction& function, Way way)
     : JSC::JITCode(JITType::AOTJIT, CodePtr<JSEntryPtrTag>::fromTaggedPtr(tagCodePtr<JSEntryPtrTag>(stubAddress(stubFor(way)))), ShareAttribute::Shared)
     , m_code(code)
-    , m_entry(function.hasNoGeneralBody ? EntryWord::encode(stubAddress(Stub::ThrowCalledIndirectly), Convention { }) : EntryWord::encode(code, function.convention()))
+    , m_entry(EntryWord::encode(code, function.convention()))
     , m_function(&function)
     , m_calleeSaveRegisters(calleeSaveRegistersOf(function))
 {

@@ -657,14 +657,6 @@ void Functions::listValuesInOrder()
     m_isListed.fill(1, count);
 }
 
-size_t Functions::numberListed() const
-{
-    size_t number = 0;
-    for (uint8_t isListed : m_isListed)
-        number += isListed;
-    return number;
-}
-
 } } } // namespace JSC::AOT::Typed
 
 #endif // ENABLE(AOT)

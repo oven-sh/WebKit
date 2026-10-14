@@ -205,7 +205,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedObjectAssignToNew, JSCell*, (Instance*
     if (sourceValue.isObject()) {
         JSObject* source = asObject(sourceValue);
         Structure* structure = source->structure();
-        if (source->staticPropertiesReified() && !structure->typedLayoutID() && structure->canPerformFastPropertyEnumerationCommon()) {
+        if (source->staticPropertiesReified() && structure->canPerformFastPropertyEnumerationCommon()) {
             if (JSObject* copy = tryCreateObjectViaCloning(vm, globalObject, source))
                 OPERATION_RETURN(scope, copy);
         }

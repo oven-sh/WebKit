@@ -159,26 +159,6 @@ static JSValue constantOfArrayLiteral(VM& vm, Typed::State& state, uint64_t enco
 }
 
 // See Placement::placeArraySites(). The first time, or where the array cannot be allocated in place.
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayBuffer, JSCell*, (Instance* instance, uint32_t offset, uint32_t count, const EncodedJSValue* values, uint32_t indexingType))
-{
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    auto& shared = *reinterpret_cast<JSCellButterfly**>(instance->typedStatics + offset);
-    IndexingType mode = indexingType | CopyOnWrite;
-    if (!shared) {
-        JSCellButterfly* elements = JSCellButterfly::tryCreate(vm, mode, count);
-        if (!elements) {
-            throwOutOfMemoryError(globalObject, scope);
-            OPERATION_RETURN(scope, nullptr);
-        }
-        for (uint32_t i = 0; i < count; ++i)
-            elements->setIndex(vm, i, JSValue::decode(values[i]));
-        vm.mutatorFence();
-        shared = elements;
-        instance->didStoreRootInStatics(offset);
-    }
-    OPERATION_RETURN(scope, CommonSlowPaths::allocateNewArrayBuffer(vm, globalObject->arrayStructureForIndexingTypeDuringAllocation(mode), shared));
-}
-
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayBufferFromData, JSCell*, (Instance* instance, uint32_t offset, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -950,12 +930,7 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         ValueFromBlock fast = m_out.anchor(array);
         m_out.jump(continuation);
         m_out.appendTo(slowPath);
-        ValueFromBlock slow = [&] {
-            if (Options::useAOTArrayLiteralsFromData())
-                return m_out.anchor(AOT_TYPED_OPERATION(NewArrayBufferFromData, word32(value.copyOnWriteButterflyOffset()), word32(indexingType)).value());
-            auto [count, list] = argumentBuffer(value.arguments);
-            return m_out.anchor(AOT_TYPED_OPERATION(NewArrayBuffer, word32(value.copyOnWriteButterflyOffset()), count, list, word32(indexingType)).value());
-        }();
+        ValueFromBlock slow = m_out.anchor(AOT_TYPED_OPERATION(NewArrayBufferFromData, word32(value.copyOnWriteButterflyOffset()), word32(indexingType)).value());
         m_out.jump(continuation);
         m_out.appendTo(continuation);
         return CellPointer(m_out.phi(Int64, fast, slow));
@@ -966,23 +941,6 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         return newArrayOfType(value.arguments, type);
     static_assert(static_cast<unsigned>(Stub::EmptyArrayAtSite) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayAtSite));
     bool hasStubs = indexingTypeAtBirth(type) == ArrayWithContiguous;
-    if (hasStubs && Options::useAOTStubForRoomOfEmptyArrayLiterals()) {
-        LBasicBlock isDueForReview = newColdBlock();
-        LBasicBlock isCounted = m_out.newBlock();
-        TypedPointer site = m_out.address(m_heaps.AOTTyped_collectorState, statics, value.vectorLengthHintOffset() + OBJECT_OFFSETOF(ArraySite, capacityAndBorn));
-        LValue counted = m_out.add(m_out.load32(site), m_out.constInt32(1 << ArraySite::bornShift));
-        m_out.store32(counted, site);
-        ValueFromBlock asItWas = m_out.anchor(counted);
-        m_out.branch(m_out.testIsZero32(counted, m_out.constInt32((ArraySite::interval - 1) << ArraySite::bornShift)), rarely(isDueForReview), usually(isCounted));
-        m_out.appendTo(isDueForReview);
-        AOT_TYPED_OPERATION(ReviewVectorLengthHint, word32(value.vectorLengthHintOffset()));
-        ValueFromBlock reviewed = m_out.anchor(m_out.load32(site));
-        m_out.jump(isCounted);
-        m_out.appendTo(isCounted);
-        LValue capacity = m_out.bitAnd(m_out.phi(Int32, asItWas, reviewed), m_out.constInt32(ArraySite::capacityMask));
-        LValue room = m_out.select(m_out.isZero32(capacity), m_out.constInt32(vectorLengthOfArrayLiteral(0)), capacity);
-        return CellPointer(callAllocationStub(Stub::EmptyArrayWithRoom, { { m_out.zeroExtPtr(room), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true));
-    }
     if (hasStubs) {
         ++m_context.numberOfEmptyArrayLiteralsMadeByStub;
         return CellPointer(callAllocationStub(Stub::EmptyArrayAtSite, { { m_out.constInt64(value.vectorLengthHintOffset()), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true));
@@ -1787,7 +1745,7 @@ std::optional<Operand> Lowering::lowerArraySearchAsOneCall(ValueID result, const
     auto& builtin = m_builtins.at(value.builtin());
     if (builtin.implementation.kind != BuiltinImplementation::Inline || (builtin.implementation.inlined != InlineBuiltin::ArrayIndexOf && builtin.implementation.inlined != InlineBuiltin::ArrayIncludes))
         return std::nullopt;
-    if (value.arguments.size() != 1 || typeOf(value.arguments[0]).isNumber() || typeOf(value.child(0)).onlyEngineClass() != &m_builtins.arrayClass() || isCompact(14))
+    if (value.arguments.size() != 1 || typeOf(value.arguments[0]).isNumber() || typeOf(value.child(0)).onlyEngineClass() != &m_builtins.arrayClass())
         return std::nullopt;
     bool isIndexOf = builtin.implementation.inlined == InlineBuiltin::ArrayIndexOf;
     auto& type = typeOf(result);

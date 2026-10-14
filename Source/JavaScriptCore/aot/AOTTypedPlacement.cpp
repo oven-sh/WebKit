@@ -1750,6 +1750,7 @@ private:
         m_isMadeOften.ensureSize(layouts.size());
         Vector<std::pair<SlotID, TypeID>> allStoredThroughViews;
         m_numberOfBirthsInitializing.fill(0, m_firstField.last());
+        m_timesFieldOfEnvironmentIsNamed.fill(0, m_firstField.last());
         m_accessWeight.fill(0, m_program.slots.size());
         m_numberOfStoresOfDoubles.fill(0, m_program.slots.size());
         auto isDoubleAsStored = [&](Function& function, ValueID id) {
@@ -1862,7 +1863,13 @@ private:
                             add(m_testsOfType[value.type.index()], 1);
                         break;
                     }
+                    case Opcode::GetField:
+                        if (layouts[value.layout().index()].kind == LayoutKind::Environment)
+                            add(m_timesFieldOfEnvironmentIsNamed[m_firstField[value.layout().index()] + value.field()], 1);
+                        break;
                     case Opcode::PutField:
+                        if (layouts[value.layout().index()].kind == LayoutKind::Environment)
+                            add(m_timesFieldOfEnvironmentIsNamed[m_firstField[value.layout().index()] + value.field()], 1);
                         if (auto& field = m_program.at(value.layout()).fields[value.field()]; exists(field) && isDoubleAsStored(function, value.child(1)))
                             add(m_numberOfStoresOfDoubles[field.slot.index()], 1);
                         if (auto& layout = m_program.at(value.layout()); !isMade(layout))
@@ -2694,6 +2701,50 @@ private:
             offset += sizeOf(slot.store);
         }
         layout.size = WTF::roundUpToMultipleOf<16>(offset);
+        constexpr uint32_t reachOfOneByte = 128;
+        if (!isX86() || layout.size <= reachOfOneByte)
+            return;
+        uint32_t firstField = m_firstField[&layout - &m_program.layouts[0]];
+        std::ranges::stable_sort(order, [&](unsigned a, unsigned b) {
+            return m_timesFieldOfEnvironmentIsNamed[firstField + a] > m_timesFieldOfEnvironmentIsNamed[firstField + b];
+        });
+        Vector<std::pair<uint32_t, uint32_t>> holes;
+        Vector<uint32_t> offsets(FillWith { }, layout.fields.size(), 0u);
+        uint32_t end = sizeof(JSCell);
+        for (unsigned i : order) {
+            uint32_t size = sizeOf(m_program.at(layout.fields[i].slot).store);
+            if (!size) {
+                offsets[i] = sizeof(JSCell);
+                continue;
+            }
+            RELEASE_ASSERT(hasOneBitSet(size));
+            size_t best = notFound;
+            for (size_t k = 0; k < holes.size(); ++k) {
+                if (holes[k].second >= size && (best == notFound || holes[k].first < holes[best].first))
+                    best = k;
+            }
+            if (best != notFound) {
+                auto [at, room] = holes[best];
+                holes.removeAt(best);
+                offsets[i] = at;
+                for (uint32_t piece = size; piece < room; piece *= 2)
+                    holes.append({ at + piece, piece });
+                continue;
+            }
+            while (end % size) {
+                uint32_t piece = end & -end;
+                holes.append({ end, piece });
+                end += piece;
+            }
+            offsets[i] = end;
+            end += size;
+        }
+        if (WTF::roundUpToMultipleOf<16>(end) > layout.size)
+            return;
+        for (unsigned i = 0; i < layout.fields.size(); ++i) {
+            layout.fields[i].offset = offsets[i];
+            m_program.at(layout.fields[i].slot).offset = offsets[i];
+        }
     }
 
     // What has been turned into one of a specialization may be turned into one of a specialization of that.
@@ -3741,15 +3792,12 @@ private:
                         }
                     });
                     bool isShared = !isStoredTo.get(id.index()) && !isPushedTo.get(id.index());
-                    bool isFromData = Options::useAOTArrayLiteralsFromData();
-                    if (areConstants && (isShared || (isFromData && value.arguments.size() > Program::maxLengthOfArrayLiteralMadeInline))) {
+                    if (areConstants && (isShared || value.arguments.size() > Program::maxLengthOfArrayLiteralMadeInline)) {
                         (isShared ? literalsOfConstants : unsharedLiterals).append(&value);
-                        if (isFromData) {
-                            Vector<uint64_t> elements;
-                            for (ValueID element : value.arguments)
-                                elements.append(encodedConstant(function.at(element), isShared));
-                            (isShared ? elementsOfLiterals : elementsOfUnsharedLiterals).append(WTF::move(elements));
-                        }
+                        Vector<uint64_t> elements;
+                        for (ValueID element : value.arguments)
+                            elements.append(encodedConstant(function.at(element), isShared));
+                        (isShared ? elementsOfLiterals : elementsOfUnsharedLiterals).append(WTF::move(elements));
                     }
                 }
             }
@@ -4184,6 +4232,7 @@ private:
     Vector<uint32_t> m_lackedFieldOfField;
     Vector<Fingerprint> m_membersWith;
     Vector<uint32_t> m_numberOfBirthsInitializing;
+    Vector<uint32_t> m_timesFieldOfEnvironmentIsNamed;
     Vector<uint32_t> m_views;
     Vector<LackedField> m_lackedFields;
     Vector<SetOfMembers> m_setsOfMembers;
@@ -4338,11 +4387,18 @@ public:
             uint64_t stepsOnChains = 0;
             uint64_t numberHeld = 0;
             uint64_t bytesHeld = 0;
+            uint64_t charactersCompared = 0;
+            auto comesAheadOf = [&](std::span<const uint8_t> a, std::span<const uint8_t> b) {
+                auto [endOfA, endOfB] = std::ranges::mismatch(a, b);
+                charactersCompared += endOfA - a.begin();
+                return endOfB != b.end() && (endOfA == a.end() || *endOfA < *endOfB);
+            };
             for (uint32_t whole : fromLongest) {
                 if (holders[whole] != whole)
                     continue;
                 auto text = strings[whole];
-                for (size_t at = 0; at + sizeOfHead <= text.size(); ++at) {
+                uint64_t mostCharactersCompared = charactersCompared + 1024 * static_cast<uint64_t>(text.size());
+                for (size_t at = 0; at + sizeOfHead <= text.size() && charactersCompared <= mostCharactersCompared; ++at) {
                     auto found = rangesOfHeads.find(headAt(text, at));
                     if (found == rangesOfHeads.end())
                         continue;
@@ -4352,7 +4408,7 @@ public:
                     uint32_t low = first;
                     for (uint32_t high = behindLast; low < high;) {
                         uint32_t middle = low + (high - low) / 2;
-                        if (std::ranges::lexicographical_compare(rest, strings[inOrder[middle]]))
+                        if (comesAheadOf(rest, strings[inOrder[middle]]))
                             high = middle;
                         else
                             low = middle + 1;
@@ -4361,7 +4417,10 @@ public:
                         ++stepsOnChains;
                         uint32_t part = inOrder[place];
                         auto inner = strings[part];
-                        if (inner.size() >= text.size() || !beginsWith(rest, inner))
+                        if (inner.size() >= text.size())
+                            continue;
+                        charactersCompared += inner.size();
+                        if (!beginsWith(rest, inner))
                             continue;
                         if (holders[part] != part)
                             break;
@@ -4534,7 +4593,6 @@ public:
 
         size_t sizeBeforeTypes = m_result.size();
         appendTypes();
-        header.numberOfTypes = m_offsetOfType.size();
         header.typesOffset = append(m_offsetOfType);
         size_t sizeBeforeLayouts = m_result.size();
 
@@ -4735,7 +4793,6 @@ public:
         Vector<uint32_t> shapeSets(FillWith { }, (m_program.shapeSetBits.size() + 31) / 32, 0);
         for (size_t bit : m_program.shapeSetBits)
             shapeSets[bit / 32] |= 1u << bit % 32;
-        header.numberOfShapeSetWords = shapeSets.size();
         header.shapeSetsOffset = append(shapeSets);
 
         header.sizeOfStatics = m_program.sizeOfStatics;

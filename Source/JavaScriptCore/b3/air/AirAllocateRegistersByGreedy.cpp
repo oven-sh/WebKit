@@ -793,6 +793,33 @@ struct TmpData {
     Spillability spillability { Spillability::Spillable };
     Reg preferredReg;
     Reg assigned;
+#if USE(BUN_JSC_ADDITIONS)
+    Reg secondPreferredReg;
+    float preferredWeight { 0 };
+    float secondPreferredWeight { 0 };
+
+    void prefer(Reg reg, float weight)
+    {
+        if (!reg)
+            return;
+        if (!preferredReg || preferredReg == reg) {
+            preferredReg = reg;
+            preferredWeight += weight;
+            return;
+        }
+        if (!secondPreferredReg || secondPreferredReg == reg) {
+            secondPreferredReg = reg;
+            secondPreferredWeight += weight;
+        }
+    }
+
+    float wishFor(Reg reg) const
+    {
+        if (reg == preferredReg)
+            return preferredWeight;
+        return reg == secondPreferredReg ? secondPreferredWeight : 0;
+    }
+#endif
 };
 
 struct LoopData {
@@ -1091,6 +1118,7 @@ private:
                     return;
                 m_freshCalleeSaves.add(reg);
                 ++m_numberOfFreshCalleeSaves[reg.isGPR() ? GP : FP];
+                ++m_numberOfCalleeSaves[reg.isGPR() ? GP : FP];
             });
         }
 #endif
@@ -1487,8 +1515,12 @@ private:
                         if (other.isReg())
                             continue;
                         if (m_allAllowedRegisters.contains(reg, IgnoreVectors)) {
+#if USE(BUN_JSC_ADDITIONS)
+                            m_map[other].prefer(reg, adjustedBlockFrequency(block));
+#else
                             if (!m_map[other].preferredReg)
                                 m_map[other].preferredReg = inst.args()[regIdx].reg();
+#endif
                             continue;
                         }
                         if (!m_code.isPinned(reg))
@@ -2227,6 +2259,7 @@ private:
             bool hasColdUse = false;
 #if USE(BUN_JSC_ADDITIONS)
             bool hasFastTmp = false;
+            TmpData preferences;
 #endif
             for (Tmp member : group.members()) {
                 m_stats[bank].numGroupTmpsCoalesced++;
@@ -2241,6 +2274,8 @@ private:
                 hasColdUse |= memberData.hasColdUse;
 #if USE(BUN_JSC_ADDITIONS)
                 hasFastTmp |= memberData.spillability == TmpData::Spillability::FastTmp;
+                preferences.prefer(memberData.preferredReg, memberData.preferredWeight);
+                preferences.prefer(memberData.secondPreferredReg, memberData.secondPreferredWeight);
 #endif
                 memberData.stage = Stage::Coalesced;
             }
@@ -2253,6 +2288,10 @@ private:
             representativeData.preferredReg = preferred;
             representativeData.hasColdUse = hasColdUse;
 #if USE(BUN_JSC_ADDITIONS)
+            ASSERT(preferences.preferredReg == preferred);
+            representativeData.preferredWeight = preferences.preferredWeight;
+            representativeData.secondPreferredReg = preferences.secondPreferredReg;
+            representativeData.secondPreferredWeight = preferences.secondPreferredWeight;
             if (hasFastTmp && m_code.keepsFastTmpsFastWhenCoalesced())
                 representativeData.spillability = TmpData::Spillability::FastTmp;
 #endif
@@ -2486,6 +2525,8 @@ private:
         RELEASE_ASSERT(tmpData.stage == Stage::TryAllocate); // Unspillable must have succeeded
 #if USE(BUN_JSC_ADDITIONS)
         if (m_code.chargesForCalleeSaves()) {
+            if (nextCalleeSaveIsFree<bank>() && tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
+                return;
             if (trySplitAroundClobbers<bank>(tmp, tmpData, true))
                 return;
             if (tryAllocateFreshCalleeSave<bank>(tmp, tmpData))
@@ -2526,9 +2567,19 @@ private:
     }
 
     template <Bank bank>
+    bool nextCalleeSaveIsFree() const
+    {
+#if USE(BUN_JSC_ADDITIONS)
+        return isARM64() && bank == GP && ((m_numberOfCalleeSaves[GP] - m_numberOfFreshCalleeSaves[GP]) & 1);
+#else
+        return false;
+#endif
+    }
+
+    template <Bank bank>
     bool tryAllocateFreshCalleeSave(Tmp tmp, TmpData& tmpData)
     {
-        if (!m_numberOfFreshCalleeSaves[bank] || tmpData.paysForCalleeSave || tmpData.useDefCost <= m_calleeSaveCost)
+        if (!m_numberOfFreshCalleeSaves[bank] || tmpData.paysForCalleeSave || (tmpData.useDefCost <= m_calleeSaveCost && !nextCalleeSaveIsFree<bank>()))
             return false;
         tmpData.paysForCalleeSave = true;
 #if USE(BUN_JSC_ADDITIONS)
@@ -2559,6 +2610,8 @@ private:
         tmpData.hasClobberedRegs = true;
         return result;
     }
+
+    bool m_isTakingFromHolder { false };
 
 #endif
     template <Bank bank>
@@ -2599,9 +2652,56 @@ private:
             if (tryAllocateToReg(tmpData.preferredReg))
                 return true;
         }
+#if USE(BUN_JSC_ADDITIONS)
+        Reg secondPreferredReg = m_code.chargesForCalleeSaves() ? tmpData.secondPreferredReg : Reg();
+        if (secondPreferredReg && tryAllocateToReg(secondPreferredReg))
+            return true;
+        if (m_code.chargesForCalleeSaves() && !m_isTakingFromHolder && tmpData.spillability != TmpData::Spillability::Unspillable) {
+            auto tryTakeFromHolder = [&](Reg r) {
+                float wish = tmpData.wishFor(r);
+                if (!r || !(wish > 0) || !mayTake(tmpData, r) || (clobbered >> r.index() & 1))
+                    return false;
+                Tmp holder;
+                bool isPossible = true;
+                m_regRanges[r].forEachConflict(tmpData.liveRange, width, [&](auto& conflict) -> IterationStatus {
+                    if (conflict.tmp.isReg() || (holder && holder != conflict.tmp)) {
+                        isPossible = false;
+                        return IterationStatus::Done;
+                    }
+                    holder = conflict.tmp;
+                    return IterationStatus::Continue;
+                });
+                if (!isPossible || !holder)
+                    return false;
+                TmpData& holderData = m_map.get<bank>(holder);
+                if (holderData.spillability == TmpData::Spillability::Unspillable || holderData.stage != Stage::Assigned || holderData.wishFor(r) >= wish)
+                    return false;
+                Stage stage = tmpData.stage;
+                uint32_t holderFailedAtEpoch = holderData.allocationFailedAtEpoch;
+                evict(holder, holderData, r);
+                assign(tmp, tmpData, r);
+                m_isTakingFromHolder = true;
+                bool isMoved = tryAllocate<bank>(holder, holderData);
+                m_isTakingFromHolder = false;
+                if (isMoved)
+                    return true;
+                evict(tmp, tmpData, r);
+                tmpData.stage = stage;
+                holderData.allocationFailedAtEpoch = holderFailedAtEpoch;
+                assign(holder, holderData, r);
+                return false;
+            };
+            if (tryTakeFromHolder(tmpData.preferredReg) || tryTakeFromHolder(secondPreferredReg))
+                return true;
+        }
+#endif
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (r == tmpData.preferredReg)
                 continue;
+#if USE(BUN_JSC_ADDITIONS)
+            if (r == secondPreferredReg)
+                continue;
+#endif
             if (tryAllocateToReg(r))
                 return true;
         }
@@ -4194,6 +4294,9 @@ private:
     ScalarRegisterSet m_allAllowedRegisters;
     ScalarRegisterSet m_freshCalleeSaves;
     std::array<unsigned, numBanks> m_numberOfFreshCalleeSaves { };
+#if USE(BUN_JSC_ADDITIONS)
+    std::array<unsigned, numBanks> m_numberOfCalleeSaves { };
+#endif
     UseDefCost m_calleeSaveCost { 0 };
     IndexMap<BasicBlock*, Point> m_blockToHeadPoint;
     Vector<Point> m_tailPoints;

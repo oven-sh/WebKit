@@ -102,6 +102,7 @@ uint64_t numberOf(std::span<const uint8_t> bytes)
 uint64_t numberOf(const CompiledFunctionInfo& info, const StubCall& call)
 {
     uint64_t result = mix(static_cast<uint64_t>(call.stub) << 32 | static_cast<uint64_t>(call.thunk) << 8 | 0xe8);
+    result = mix(result ^ (static_cast<uint64_t>(call.firstOmittedGPR) << 8 | call.endOfOmittedGPRs));
     if (call.function != StubCall::noFunction) {
         auto& key = info.knownCallees[call.function];
         result = mix(result ^ (static_cast<uint64_t>(key.module) << 32 | key.start));
@@ -116,7 +117,7 @@ uint64_t numberOf(const CompiledFunctionInfo& info, const StubCall& call)
 
 bool callsTheSame(const CompiledFunctionInfo& a, const StubCall& first, const CompiledFunctionInfo& b, const StubCall& second)
 {
-    if (first.stub != second.stub || first.thunk != second.thunk || first.isTailCall != second.isTailCall)
+    if (first.stub != second.stub || first.thunk != second.thunk || first.isTailCall != second.isTailCall || first.firstOmittedGPR != second.firstOmittedGPR || first.endOfOmittedGPRs != second.endOfOmittedGPRs)
         return false;
     if ((first.function == StubCall::noFunction) != (second.function == StubCall::noFunction) || (first.argumentMoves == StubCall::noArgumentMoves) != (second.argumentMoves == StubCall::noArgumentMoves))
         return false;

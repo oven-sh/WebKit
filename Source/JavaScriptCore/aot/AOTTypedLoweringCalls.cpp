@@ -232,7 +232,7 @@ static bool callThrowAtSite(LoweringContext& context, CCallHelpers& jit, bool is
     }
     if (!returnsToSite && words.size() == 1 && !valueIsInWordRegister) {
         ArgumentMoves moves;
-        static const bool wordIsWrongForTesting = getenv("BUN_AOT_SWITCH_ARMS_BREAK") && !strcmp(getenv("BUN_AOT_SWITCH_ARMS_BREAK"), "word");
+        static const bool wordIsWrongForTesting = Options::aotSlowPathFaultForTesting() && !strcmp(byteCast<char>(Options::aotSlowPathFaultForTesting()), "word");
         appendArgumentMove(moves, throwWordGPR, ArgumentSource::Constant, words[0] + wordIsWrongForTesting);
         context.stubCalls.call(jit, isLeaf ? Stub::LeafThrowAtSiteByWord : Stub::ThrowAtSiteByWord, site, moves);
         return true;
@@ -570,10 +570,23 @@ LValue Lowering::callFunction(FunctionID function, LType type, const Vector<LVal
     unsigned nextGPR = 0;
     unsigned nextFPR = 0;
     unsigned onStack = 0;
+    Vector<LValue, 8> inGPRs;
+    for (LValue argument : arguments) {
+        if (argument->type() != Double)
+            inGPRs.append(argument);
+    }
+    unsigned endOfOmittedGPRs = inGPRs.size();
+    unsigned firstOmittedGPR = endOfOmittedGPRs;
+    if (endOfOmittedGPRs <= numberOfDirectArgumentGPRs) {
+        while (firstOmittedGPR && inGPRs[firstOmittedGPR - 1]->hasInt() && inGPRs[firstOmittedGPR - 1]->asInt() == static_cast<int64_t>(JSValue::ValueUndefined))
+            --firstOmittedGPR;
+    }
     for (unsigned i = 0; i < arguments.size(); ++i) {
         LValue argument = arguments[i];
         if (argument->type() == Double && nextFPR < FPRInfo::numberOfArgumentRegisters)
             patchpoint->append(ConstrainedValue(argument, ValueRep::reg(FPRInfo::toArgumentRegister(nextFPR++))));
+        else if (argument->type() != Double && nextGPR >= firstOmittedGPR)
+            ++nextGPR;
         else if (argument->type() != Double && nextGPR < numberOfDirectArgumentGPRs)
             patchpoint->append(ConstrainedValue(argument, ValueRep::reg(directArgumentGPR(nextGPR++))));
         else
@@ -593,9 +606,11 @@ LValue Lowering::callFunction(FunctionID function, LType type, const Vector<LVal
     else if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, callee, site](CCallHelpers& jit, const StackmapGenerationParams&) {
+    if (firstOmittedGPR == endOfOmittedGPRs)
+        firstOmittedGPR = endOfOmittedGPRs = 0;
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, callee, site, firstOmittedGPR, endOfOmittedGPRs](CCallHelpers& jit, const StackmapGenerationParams&) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
-        stubCalls->callFunction(jit, callee, site);
+        stubCalls->callFunction(jit, callee, site, static_cast<uint8_t>(firstOmittedGPR), static_cast<uint8_t>(endOfOmittedGPRs));
     });
     unwindToLandingPad(patchpoint, site);
     return patchpoint;
@@ -1124,10 +1139,10 @@ CellPointer Lowering::stringConstant(StringID string)
         jit.load64(CCallHelpers::BaseIndex(slots, at, CCallHelpers::TimesEight), result);
         CCallHelpers::Jump isElsewhere = jit.branch32(CCallHelpers::NotEqual, result, CCallHelpers::TrustedImm32(static_cast<int32_t>(key)));
         jit.urshift64(CCallHelpers::TrustedImm32(32), result);
-        jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfCellCageBase()), slots);
 #if CPU(ARM64)
-        jit.addLeftShift64(slots, result, CCallHelpers::TrustedImm32(cell32Shift), result);
+        jit.addLeftShift64(cellCageBaseGPR, result, CCallHelpers::TrustedImm32(cell32Shift), result);
 #else
+        jit.loadPtr(CCallHelpers::Address(instanceGPR, Instance::offsetOfCellCageBase()), slots);
         jit.lshift64(CCallHelpers::TrustedImm32(cell32Shift), result);
         jit.add64(slots, result);
 #endif
@@ -1957,7 +1972,7 @@ Operand Lowering::lowerConstructSuper(ValueID result, const Value& value)
             m_out.store64(inBuffer[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
         return AOT_TYPED_OPERATION(LanguageOperation, word32(static_cast<int32_t>(LanguageOperation::SuperConstruct)), word32(inBuffer.size()), Pointer(buffer));
     };
-    if (value.arguments.size() > numberOfArgumentGPRs || isCompact(10))
+    if (value.arguments.size() > numberOfArgumentGPRs)
         return ensure(generally(), object, typeOf(result));
     LBasicBlock otherwise = m_out.newBlock();
     Join join(m_out, Rep::JSValue, Int64);
@@ -2015,7 +2030,7 @@ Operand Lowering::lowerConstruct(ValueID result, const Value& value)
         // What comes of it is an object, whatever was constructed.
         return AOT_TYPED_OPERATION(Construct, callee, count, list);
     };
-    if (value.arguments.size() > numberOfArgumentGPRs || isCompact(10))
+    if (value.arguments.size() > numberOfArgumentGPRs)
         return ensure(generally(), object, typeOf(result));
     LBasicBlock otherwise = m_out.newBlock();
     Join join(m_out, Rep::JSValue, Int64);
@@ -2155,11 +2170,28 @@ Operand Lowering::lowerCallMethod(ValueID result, const Value& value)
         auto generally = [&] {
             return ensure(callMethodGenerally(in<Boxed>(object), name, value.arguments), type);
         };
-        auto builtin = [&] {
-            SetForScope classExpectedOfReceiver(m_classExpectedOfReceiver, value.classExpectedOfReceiverPlusOne ? &m_builtins.classes()[value.classExpectedOfReceiverPlusOne - 1] : nullptr);
-            return expectedBuiltin(BuiltinKind::Method, object, name, value.arguments);
-        }();
-        if (builtin)
+        if (value.classExpectedOfReceiverPlusOne) {
+            auto& engineClass = m_builtins.classes()[value.classExpectedOfReceiverPlusOne - 1];
+            Vector<Type, 4> argumentTypes;
+            for (ValueID argument : value.arguments)
+                argumentTypes.append(typeOf(argument));
+            BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, engineClass, m_program.builtinName(name)), argumentTypes.span());
+            if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Operation)
+                return generally();
+            Value call;
+            call.opcode = Opcode::CallBuiltin;
+            call.children = { object, ValueID(), ValueID() };
+            call.immediates = { entry.index(), engineClass.index };
+            call.arguments = value.arguments;
+            call.type = value.type;
+            Type expected = &engineClass == &m_builtins.stringClass() ? m_program.at(m_program.types.string) : Type::engineClass(engineClass);
+            return ifAsExpected({ Expectation { object, &expected, true } }, repOf(type), [&](LBasicBlock) {
+                if (auto searched = lowerArraySearchAsOneCall(result, call))
+                    return *searched;
+                return lowerResolvedBuiltin(result, call);
+            }, generally);
+        }
+        if (auto builtin = expectedBuiltin(BuiltinKind::Method, object, name, value.arguments))
             return lowerExpectedBuiltin(result, *builtin, std::nullopt, generally);
         return generally();
     }

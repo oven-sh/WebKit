@@ -20,7 +20,7 @@ namespace JSC { namespace AOT { namespace Typed {
 
 bool saysClocks()
 {
-    static const bool result = Options::verboseAOTCompilation() || getenv("BUN_AOT_SAYS_CLOCKS");
+    static const bool result = Options::verboseAOTCompilation();
     return result;
 }
 

@@ -28,7 +28,6 @@ void cacheGetById(JSGlobalObject*, Data*, JSValue base, Structure* structureBefo
 void noteCustomGetter(JSGlobalObject*, Instance&, JSObject* base, const Identifier&, const PropertySlot&);
 void cacheKnownCustomGetter(VM&, Instance&, Data*, Slot*, Structure*, const Identifier&, const Instance::CustomGetter&);
 void noteInheritedSetter(JSGlobalObject*, Instance&, JSObject* base, const Identifier&, const PutPropertySlot&);
-void cachePrivateName(VM&, Data*, Slot* cache, JSObject* base, JSValue name, std::optional<PropertyOffset>);
 void cachePrivateNameTransition(VM&, Data*, Slot* cache, JSObject* base, Structure* oldStructure, JSValue name, std::optional<PropertyOffset>);
 // After a miss of GetByValCached or PutByValCached: an entry of Instance::keyedReads or keyedStores. No offset: the pair is not for the table.
 void cacheKeyedAccess(Slot& entry, Structure*, JSCell* key, std::optional<PropertyOffset>);
@@ -55,7 +54,6 @@ void cachePutById(Instance*, Data*, JSValue base, Structure* oldStructure, const
 // After Typed::State::storeByKnownTransition() has taken a store at the site. `wordsBefore`: Typed::Object::orderAndShapeWords() as it was.
 void cacheStoreTransition(Instance*, Data*, JSCell* object, Structure* oldStructure, uint64_t wordsBefore, const Identifier&, Slot* cache);
 
-void fillConstructionCache(VM&, Data*, Slot* cache, JSFunction* callee, Structure* first, Structure* last, Allocator);
 void fillAllocationCache(VM&, Data*, Slot* cache, Structure*, Allocator, uint32_t payload = 0, JSCell* extra = nullptr);
 bool tryGetFromOrdinaryObject(JSGlobalObject*, JSValue base, UniquedStringImpl*, PropertySlot&, JSValue& result);
 const EncodedJSValue* undefinedValueHolder();

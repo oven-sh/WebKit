@@ -52,7 +52,6 @@ struct ImageHeader {
     uint32_t environmentsSize;
     uint32_t environmentsOffset;
     uint32_t numberOfEnvironments;
-    uint32_t auditsTypes;
     uint32_t intrinsicHash;
     uint32_t quotesOffset;
     uint32_t quotesTextOffset;
@@ -126,7 +125,6 @@ struct CompiledCode {
     Vector<DataInCode> dataInCode;
     uint32_t startOfGuests { std::numeric_limits<uint32_t>::max() };
     CompiledFunctionInfo info;
-    Vector<String> remarks;
     Vector<CoveredOperation> coverage;
     String whyDeclined;
     // For the map of the image: kinds of operations and the bytes of code that come from each, separated by tabs.
@@ -305,7 +303,6 @@ public:
         uint32_t numSlots;
         bool startsCold;
         bool hasSiteConstants;
-        bool hasNoGeneralBody;
         bool hasInlineFrames;
         uint16_t calleeStart;
     };

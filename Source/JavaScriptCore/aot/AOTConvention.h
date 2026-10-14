@@ -16,6 +16,10 @@ class UnlinkedCodeBlock;
 namespace AOT {
 
 static constexpr GPRReg instanceGPR = GPRInfo::jitDataRegister;
+#if CPU(ARM64)
+static constexpr GPRReg cellCageBaseGPR = ARM64Registers::x25;
+static constexpr GPRReg staticsGPR = ARM64Registers::x24;
+#endif
 
 constexpr GPRReg argumentGPR(unsigned index) { return GPRInfo::toArgumentRegister(index); }
 #if CPU(ARM64)

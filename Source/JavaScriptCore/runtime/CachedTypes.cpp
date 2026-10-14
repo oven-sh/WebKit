@@ -767,25 +767,6 @@ JSString* DecoderStringTable::jsStringFor(VM& vm, uint32_t ordinal)
 {
     RELEASE_ASSERT(ordinal < m_count);
     if (!m_slots) [[unlikely]] {
-        if (m_createsPlainStrings) {
-            Record r = record(ordinal);
-            if (r.length == 1) {
-                char16_t c = r.is8Bit ? *r.characters : *std::bit_cast<const char16_t*>(r.characters);
-                if (c <= maxSingleCharacterString)
-                    return vm.smallStrings.singleCharacterString(c);
-            }
-            if (!m_recentPlainStrings)
-                m_recentPlainStrings = makeUnique<RecentPlainStrings>();
-            RecentPlainStrings& recent = *m_recentPlainStrings;
-            recent.wasUsedSinceLastCollection = true;
-            unsigned place = ordinal % RecentPlainStrings::size;
-            if (recent.ordinalsPlusOne[place] == ordinal + 1)
-                return recent.cells[place];
-            JSString* string = JSString::createHasOtherOwner(vm, createImpl(r));
-            recent.ordinalsPlusOne[place] = ordinal + 1;
-            recent.cells[place] = string;
-            return string;
-        }
         Ref atom = atomFor(vm, ordinal);
         if (atom->length() == 1 && atom.get()[0] <= maxSingleCharacterString)
             return vm.smallStrings.singleCharacterString(atom.get()[0]);
@@ -848,20 +829,6 @@ void DecoderStringTable::visitStrongReferences(Visitor& visitor, CollectionScope
         visitor.appendUnbarriered(cell(m_slots[m_cellOrdinals[i]]));
     m_visitedCount = m_cellOrdinals.size();
     m_visitedThisCycle = true;
-}
-
-void DecoderStringTable::removeDeadRecentPlainStrings(VM& vm)
-{
-    if (!m_recentPlainStrings)
-        return;
-    if (!std::exchange(m_recentPlainStrings->wasUsedSinceLastCollection, false)) {
-        m_recentPlainStrings = nullptr;
-        return;
-    }
-    for (unsigned i = 0; i < RecentPlainStrings::size; ++i) {
-        if (m_recentPlainStrings->ordinalsPlusOne[i] && !vm.heap.isMarked(m_recentPlainStrings->cells[i]))
-            m_recentPlainStrings->ordinalsPlusOne[i] = 0;
-    }
 }
 
 void DecoderStringTable::didFinishCollection()

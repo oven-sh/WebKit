@@ -32,6 +32,10 @@ void Emitter::findPinnedRegisters()
     m_instance = registerOnEntry(instanceGPR);
     m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
+#if CPU(ARM64)
+    m_cellCageBase = registerOnEntry(cellCageBaseGPR);
+    m_statics = registerOnEntry(staticsGPR);
+#endif
 }
 
 void Emitter::orElse(LValue condition, LBasicBlock otherwise)
@@ -76,12 +80,6 @@ LValue Emitter::changing64(ptrdiff_t offset)
 LValue Emitter::structureWithID(LValue structureID)
 {
     return m_out.bitOr(m_out.zeroExtPtr(structureID), fixedPointer(Instance::offsetOfStructureIDBase()));
-}
-
-LValue Emitter::fieldIDInSlot(LValue structureID, unsigned slot)
-{
-    RELEASE_ASSERT(slot < Structure::numberOfSlotsWithFieldIDs);
-    return m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(fixedPointer(Instance::offsetOfFieldIDInSlotBase(slot)), m_out.zeroExtPtr(structureID))));
 }
 
 template<typename Functor>
@@ -697,6 +695,8 @@ void pinRegisters(Procedure& proc)
     proc.pinRegister(GPRInfo::numberTagRegister);
     proc.pinRegister(GPRInfo::notCellMaskRegister);
 #if CPU(ARM64)
+    proc.pinRegister(cellCageBaseGPR);
+    proc.pinRegister(staticsGPR);
     if (proc.mutableGPRs().contains(ARM64Registers::x18, IgnoreVectors))
         proc.pinRegister(ARM64Registers::x18);
 #endif

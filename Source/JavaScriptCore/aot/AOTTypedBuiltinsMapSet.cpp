@@ -239,7 +239,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryGetByValWithKeyParts, Enco
     JSValue base = JSValue::decode(encodedBase);
     auto isOrdinary = [](JSObject* object) {
         Structure* structure = object->structure();
-        return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !structure->typedLayoutID() && !structure->compiledLayout();
+        return !TypeInfo::overridesGetOwnPropertySlot(object->inlineTypeFlags()) && !structure->compiledLayout();
     };
     if (!base.isObject() || !isOrdinary(asObject(base)))
         return encodedJSValue();

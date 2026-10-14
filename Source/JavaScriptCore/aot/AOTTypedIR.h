@@ -811,18 +811,6 @@ public:
     void listValuesInOrder();
     void forgetAll() { m_isListed.clear(); }
     bool isListed(size_t index) const { return index < m_isListed.size() && WTF::atomicLoad(&m_isListed[index], std::memory_order_relaxed); }
-    size_t numberListed() const;
-
-    bool mayHold(size_t index, const OpcodeSet& wanted) const
-    {
-        if (!isListed(index))
-            return true;
-        for (Opcode opcode : opcodesInOrder(index)) {
-            if (wanted.contains(opcode))
-                return true;
-        }
-        return false;
-    }
 
     void forEachValueInOrder(size_t index, const OpcodeSet& wanted, NOESCAPE const Invocable<void(ValueID)> auto& functor) const
     {
@@ -1156,7 +1144,6 @@ public:
     FunctionID moduleEvaluatorForCallFromOutside() const { return moduleEvaluatorFromOutside ? moduleEvaluatorFromOutside : moduleEvaluator; }
     std::array<FunctionID, numberOfArgumentGPRs + 1> bodiesOfConstructions;
     FunctionID bodyOfConstruction(const Value& construct) const { return construct.arguments.size() < bodiesOfConstructions.size() ? bodiesOfConstructions[construct.arguments.size()] : FunctionID(); }
-    static constexpr unsigned leverOfBodiesOfCasts = 17;
     UncheckedKeyHashMap<uint64_t, uint32_t> bodiesOfCasts;
     static bool mayHaveBody(const Value& cast) { return cast.opcode == Opcode::Cast && (cast.castReason() == CastReason::As || cast.castReason() == CastReason::Claim) && cast.immediates[0] == Format::none; }
     static uint64_t keyOfBodyOfCast(const Value& cast) { return (static_cast<uint64_t>(cast.type.index()) + 1) << 32 | cast.immediates[1]; }

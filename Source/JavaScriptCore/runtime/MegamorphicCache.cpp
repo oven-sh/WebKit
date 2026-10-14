@@ -83,10 +83,6 @@ void MegamorphicCache::takeOutDead(Heap& heap)
     };
     takeOutAnswers(m_hasCachePrimaryEntries);
     takeOutAnswers(m_hasCacheSecondaryEntries);
-    for (auto& entry : m_constructionEntries) {
-        if (entry.m_epoch != invalidEpoch && (entry.m_epoch != m_epoch || isDead(entry.m_firstStructureID) || isDead(entry.m_lastStructureID)))
-            entry.m_epoch = invalidEpoch;
-    }
 }
 
 void MegamorphicCache::age(CollectionScope collectionScope)
@@ -128,8 +124,6 @@ void MegamorphicCache::age(CollectionScope collectionScope)
             entry.m_uid = nullptr;
             entry.m_epoch = invalidEpoch;
         }
-        for (auto& entry : m_constructionEntries)
-            entry.m_epoch = invalidEpoch;
         if (m_epoch == invalidEpoch)
             m_epoch = firstEpoch;
     }
@@ -152,8 +146,6 @@ void MegamorphicCache::clearEntries()
     for (auto& entry : m_getterCachePrimaryEntries)
         entry.m_epoch = invalidEpoch;
     for (auto& entry : m_getterCacheSecondaryEntries)
-        entry.m_epoch = invalidEpoch;
-    for (auto& entry : m_constructionEntries)
         entry.m_epoch = invalidEpoch;
     m_epoch = firstEpoch;
     m_hasPermanentEntries = false;

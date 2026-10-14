@@ -599,11 +599,6 @@ inline bool canBeWalked(const CompiledCode& code)
     return code.hasNotes && !code.isRewritten && InstructionsInCodeInternal::walk(code, [](const InstructionInCode&) { });
 }
 
-inline CauseOfNoWalk causeOfNoWalk(const CompiledCode& code)
-{
-    return InstructionsInCodeInternal::tryToWalk(code, [](const InstructionInCode&) { });
-}
-
 template<typename Functor>
 void forEachInstructionInCode(const CompiledCode& code, const Functor& functor)
 {

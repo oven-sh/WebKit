@@ -404,6 +404,8 @@ public:
     // The function the entry describes: a method, a static function, a getter or setter. Of a constant: the symbol.
     unsigned cellOf(BuiltinID id) const { return id.index(); }
     bool hasCell(BuiltinID id) const { return hasCell(cellOf(id)); }
+    bool hasCellAt(unsigned index) const { return hasCell(index); }
+    bool isCellOfReplaceableGlobal(unsigned index) const { return index < numberOfBuiltins && isReplaceable(at(BuiltinID(index)).holderName); }
     // What the global object has under the name: isGlobal() holds for it.
     unsigned cellOf(BuiltinName global) const { return numberOfBuiltins + global.index(); }
     unsigned cellOfOriginalStructure(unsigned index) const { return numberOfBuiltins + numberOfBuiltinNames + index; }

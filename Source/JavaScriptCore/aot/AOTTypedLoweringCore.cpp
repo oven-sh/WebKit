@@ -40,11 +40,7 @@ Lowering::Lowering(Procedure& proc, const Program& program, FunctionID id, const
     , m_length(program.find("length"_s.span8()).value_or(StringID()))
 {
     m_out.noteFoldedConstantsIn(m_context.wideIntegerConstants);
-    static const char* const compactSetAsked = getenv("BUN_AOT_SWITCH_COMPACT2");
-    static const char* const compactSet = compactSetAsked ? compactSetAsked : "g";
-    static const char* const compactLevers = getenv("BUN_AOT_SWITCH_COMPACT2_LEVERS");
-    m_isCompact = !function.isBodyOfSeveralSites && (!strcmp(compactSet, "all") || (strchr(compactSet, 'g') && program.isColdByGraph(id)) || strchr(compactSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c'));
-    m_compactLevers = compactLevers ? static_cast<unsigned>(atoi(compactLevers)) : 458781;
+    m_isCompact = !function.isBodyOfSeveralSites && program.isColdByGraph(id);
 }
 
 LType Lowering::b3TypeOf(Rep rep)
@@ -638,7 +634,7 @@ void Lowering::lowerBlock(BlockID id)
 #endif
     auto& block = m_function.at(id);
     m_currentBlock = &block;
-    m_leavesNextIntervalToSlowPath = isCompact(18);
+    m_leavesNextIntervalToSlowPath = isCompact();
     for (ValueID parameter : block.parameters)
         didDefineReceiverOfRun(parameter);
     materializeFinalStringBuilderStates(block);
@@ -1151,7 +1147,7 @@ bool Lowering::lowerEntryParameters()
 TypedPointer Lowering::inStatics(const FTL::AbstractHeap& heap, ptrdiff_t offset)
 {
     if (!isX86())
-        return m_out.address(heap, fixedPointer(Instance::offsetOfTypedStatics()), offset);
+        return m_out.address(heap, m_statics ? m_statics : fixedPointer(Instance::offsetOfTypedStatics()), offset);
     return m_out.address(heap, m_instance, Instance::displacementOfTypedStatics(m_program.sizeOfStatics) + offset);
 }
 
@@ -1165,7 +1161,7 @@ TypedPointer Lowering::cardOf(uint32_t offsetInStatics)
 LValue Lowering::startOfStatics()
 {
     if (!isX86())
-        return fixedPointer(Instance::offsetOfTypedStatics());
+        return m_statics ? m_statics : fixedPointer(Instance::offsetOfTypedStatics());
     return m_out.add(m_instance, m_out.constIntPtr(Instance::displacementOfTypedStatics(m_program.sizeOfStatics)));
 }
 
@@ -1770,7 +1766,7 @@ Operand Lowering::lower(ValueID id, const Value& value)
         return *character;
     if (auto part = partOfEntriesOfArray(id, value))
         return *part;
-    if (auto deferred = isCompact(16) ? std::nullopt : deferToBranchOnText(id, value))
+    if (auto deferred = isCompact() ? std::nullopt : deferToBranchOnText(id, value))
         return *deferred;
     if (auto concatenated = lowerAsPartOfConcatenation(id, value))
         return *concatenated;
@@ -2500,11 +2496,22 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
         }
 #endif
         jit.emitFunctionPrologue();
+        RegisterAtOffsetList saves = code.calleeSaveRegisterAtOffsetList();
+        bool arePushed = isX86() && saves.registerCount();
+        for (size_t i = 0; i < saves.registerCount(); ++i) {
+            auto& entry = saves.at(saves.registerCount() - 1 - i);
+            arePushed &= entry.reg().isGPR() && entry.offset() == -static_cast<ptrdiff_t>((i + 1) * sizeof(CPURegister));
+        }
+#if CPU(X86_64)
+        for (size_t i = 0; arePushed && i < saves.registerCount(); ++i)
+            jit.push(saves.at(saves.registerCount() - 1 - i).reg().gpr());
+#endif
         if ((context.emitsCalls && !isLeftToCallee) || code.frameSize() > 256)
             frameDoesNotFit = emitStackCheck(jit, code.frameSize());
         else if (code.frameSize())
             jit.subPtr(GPRInfo::callFrameRegister, CCallHelpers::TrustedImm32(code.frameSize()), CCallHelpers::stackPointerRegister);
-        jit.emitSave(code.calleeSaveRegisterAtOffsetList());
+        if (!arePushed)
+            jit.emitSave(saves);
     }));
     proc.code().setEpilogueGenerator(createSharedTask<Air::PrologueGeneratorFunction>([&](CCallHelpers& jit, Air::Code& code) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
@@ -2521,9 +2528,8 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     Air::prepareForGeneration(proc.code());
     resequenceMovesBeforePatches(proc.code());
     mergeIdenticalBlocks(proc.code());
-    static const char* const recordsAsked = getenv("BUN_AOT_SWITCH_INSTRUCTION_RECORDS");
     uint8_t regionsForOutlining = OutliningOptions::isFromTypedLowering | (program.isHotByText(id) ? 0 : OutliningOptions::isNotHotByText) | (program.isColdByGraph(id) ? OutliningOptions::isColdByGraph : 0);
-    const bool keepsRecords = (recordsAsked && recordsAsked[0] == '1') || OutliningOptions::asked();
+    const bool keepsRecords = Options::keepAOTInstructionRecordsForTesting() || OutliningOptions::asked();
     context.notesCode = keepsRecords;
     CCallHelpers jit;
 #if CPU(X86_64)

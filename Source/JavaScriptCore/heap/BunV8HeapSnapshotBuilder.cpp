@@ -4,6 +4,8 @@
 
 #include "BunV8HeapSnapshotBuilder.h"
 
+#include "AOTFunction.h"
+
 #include "DeferGC.h"
 #include "DeferGCInlines.h"
 #include "Heap.h"
@@ -481,6 +483,14 @@ String BunV8HeapSnapshotBuilder::getDetailedNodeType(JSCell* cell)
             if (!displayName.isEmpty())
                 return displayName;
         }
+
+#if ENABLE(AOT)
+        if (isSlimClosureType(cell->type())) {
+            String displayName = AOT::nameOfSlimClosure(object);
+            if (!displayName.isEmpty())
+                return displayName;
+        }
+#endif
     }
 
     return name;

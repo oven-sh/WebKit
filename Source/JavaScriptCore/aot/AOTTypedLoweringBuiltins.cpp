@@ -111,7 +111,7 @@ ValueID Lowering::receiverBehindCasts(ValueID id) const
 void Lowering::branchOnOriginalStructure(const Value& value, const Terminator& terminator, LBasicBlock isOriginal, LBasicBlock hasChanged)
 {
     Operand operand = get(value.arguments[0]);
-    if (value.engineClass() == Format::none || (operand.rep != Rep::Cell && operand.rep != Rep::JSValue) || isCompact(14)) {
+    if (value.engineClass() == Format::none || (operand.rep != Rep::Cell && operand.rep != Rep::JSValue)) {
         m_out.jump(hasChanged);
         return;
     }
@@ -402,8 +402,7 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
     auto& type = typeOf(result);
     Rep rep = repOf(type);
     CellPointer receiver = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
-    auto kindOfResolvedWay = m_builtins.at(value.builtin()).implementation.kind;
-    if (answer || isCompact(kindOfResolvedWay == BuiltinImplementation::Call || kindOfResolvedWay == BuiltinImplementation::Prelude ? 5 : 14))
+    if (answer)
         return lowerGenericFallback(value, receiver, type);
     if (tableStubAsksReceiver(result, value)) {
         SetForScope isInArm(m_isInArm, true);
@@ -555,8 +554,6 @@ std::optional<Lowering::ExpectedBuiltin> Lowering::expectedBuiltin(BuiltinKind k
         engineClass = m_builtins.classNamed(holder);
     } else {
         auto prediction = predictionOf(receiver);
-        if (m_classExpectedOfReceiver)
-            prediction = m_classExpectedOfReceiver == &m_builtins.stringClass() ? m_program.at(m_program.types.string) : Type::engineClass(*m_classExpectedOfReceiver);
         if (!prediction)
             return std::nullopt;
         engineClass = prediction->isString() ? &m_builtins.stringClass() : prediction->onlyEngineClass();

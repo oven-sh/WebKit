@@ -162,11 +162,83 @@ private:
         if (hasFrequencyThatIsNoNumber)
             leastFrequentDominator.clear(nullptr);
 
+        constexpr unsigned maxStepsOneByOne = 32;
+        IndexMap<BasicBlock*, BasicBlock*> jump;
+        IndexMap<BasicBlock*, BasicBlock*> leastBelowJump;
+        IndexMap<BasicBlock*, unsigned> depth;
+        IndexMap<BasicBlock*, unsigned> preOrderIndexInDominatorTree;
+        auto prepareJumps = [&] {
+            if (jump.size())
+                return;
+            jump.resize(m_proc.size());
+            leastBelowJump.resize(m_proc.size());
+            depth.resize(m_proc.size());
+            preOrderIndexInDominatorTree.resize(m_proc.size());
+            Vector<BasicBlock*> blocks = m_proc.blocksInPreOrder();
+            IndexMap<BasicBlock*, BasicBlock*> firstKid(m_proc.size(), nullptr);
+            IndexMap<BasicBlock*, BasicBlock*> nextKid(m_proc.size(), nullptr);
+            for (BasicBlock* block : blocks) {
+                if (BasicBlock* parent = dominators.idom(block))
+                    nextKid[block] = std::exchange(firstKid[parent], block);
+            }
+            Vector<BasicBlock*, 16> worklist { m_proc.at(0) };
+            for (unsigned next = 0; !worklist.isEmpty(); ++next) {
+                BasicBlock* block = worklist.takeLast();
+                preOrderIndexInDominatorTree[block] = next;
+                for (BasicBlock* kid = firstKid[block]; kid; kid = nextKid[kid])
+                    worklist.append(kid);
+            }
+            for (BasicBlock* block : blocks) {
+                BasicBlock* parent = dominators.idom(block);
+                leastBelowJump[block] = block;
+                if (!parent) {
+                    jump[block] = block;
+                    continue;
+                }
+                depth[block] = depth[parent] + 1;
+                BasicBlock* middle = jump[parent];
+                if (depth[parent] - depth[middle] != depth[middle] - depth[jump[middle]]) {
+                    jump[block] = parent;
+                    continue;
+                }
+                jump[block] = jump[middle];
+                if (parent == middle)
+                    continue;
+                if (leastBelowJump[parent]->frequency() < leastBelowJump[block]->frequency())
+                    leastBelowJump[block] = leastBelowJump[parent];
+                if (leastBelowJump[middle]->frequency() < leastBelowJump[block]->frequency())
+                    leastBelowJump[block] = leastBelowJump[middle];
+            }
+        };
+        auto nearestCommonDominator = [&](BasicBlock* a, BasicBlock* b) {
+            while (!dominators.dominates(a, b))
+                a = dominators.dominates(jump[a], b) ? dominators.idom(a) : jump[a];
+            return a;
+        };
+        auto dominatorAtDepth = [&](BasicBlock* block, unsigned wanted) {
+            while (depth[block] > wanted)
+                block = depth[jump[block]] >= wanted ? jump[block] : dominators.idom(block);
+            return block;
+        };
+        auto leastFrequentBetween = [&](BasicBlock* from, BasicBlock* to) {
+            BasicBlock* least = nullptr;
+            while (from != to) {
+                bool jumps = depth[jump[from]] >= depth[to];
+                BasicBlock* candidate = jumps ? leastBelowJump[from] : from;
+                if (!least || candidate->frequency() < least->frequency())
+                    least = candidate;
+                from = jumps ? jump[from] : dominators.idom(from);
+            }
+            return least;
+        };
+
         struct Candidate {
             unsigned epoch { 0 };
             unsigned numberOfMaterializations { 0 };
             double frequency { 0 };
             bool isChosen { false };
+            unsigned order { 0 };
+            BasicBlock* parent { nullptr };
             BasicBlock* where { nullptr };
             Value* value { nullptr };
         };
@@ -190,8 +262,14 @@ private:
                     left.append(&use);
                     if (!top)
                         top = use.block;
-                    while (top != m_proc.at(0) && !dominators.dominates(top, use.block))
+                    for (unsigned steps = 0; top != m_proc.at(0) && !dominators.dominates(top, use.block); ++steps) {
+                        if (steps == maxStepsOneByOne && dominators.dominates(m_proc.at(0), top) && dominators.dominates(m_proc.at(0), use.block)) {
+                            prepareJumps();
+                            top = nearestCommonDominator(top, use.block);
+                            break;
+                        }
                         top = dominators.idom(top) ? dominators.idom(top) : m_proc.at(0);
+                    }
                 }
                 if (left.isEmpty())
                     return;
@@ -227,14 +305,21 @@ private:
                     top = nullptr;
                     break;
                 }
-                while (!dominators.dominates(top, use.block))
+                for (unsigned steps = 0; !dominators.dominates(top, use.block); ++steps) {
+                    if (steps == maxStepsOneByOne) {
+                        prepareJumps();
+                        top = nearestCommonDominator(top, use.block);
+                        break;
+                    }
                     top = dominators.idom(top);
+                }
             }
 
             ++epoch;
             candidates.shrink(0);
+            const size_t most = top ? 64 + 4 * uses.size() : std::numeric_limits<size_t>::max();
             for (Use& use : uses) {
-                for (BasicBlock* block = use.block; block && data[block].epoch != epoch; block = dominators.idom(block)) {
+                for (BasicBlock* block = use.block; block && data[block].epoch != epoch && candidates.size() <= most; block = dominators.idom(block)) {
                     data[block] = Candidate { };
                     data[block].epoch = epoch;
                     candidates.append(block);
@@ -243,11 +328,57 @@ private:
                 }
                 data[use.block].isChosen = true;
             }
+            const bool areTooMany = candidates.size() > most;
+            if (areTooMany) {
+                prepareJumps();
+                ++epoch;
+                candidates.shrink(0);
+                auto addCandidate = [&](BasicBlock* block, BasicBlock* parent, unsigned order) {
+                    data[block] = Candidate { };
+                    data[block].epoch = epoch;
+                    data[block].parent = parent;
+                    data[block].order = order;
+                    candidates.append(block);
+                };
+                auto comesFirst = [&](BasicBlock* a, BasicBlock* b) {
+                    return preOrderIndexInDominatorTree[a] < preOrderIndexInDominatorTree[b];
+                };
+                Vector<BasicBlock*, 16> nodes;
+                for (Use& use : uses)
+                    nodes.append(use.block);
+                std::ranges::sort(nodes, comesFirst);
+                nodes.shrink(std::ranges::unique(nodes).begin() - nodes.begin());
+                for (size_t i = 1, count = nodes.size(); i < count; ++i)
+                    nodes.append(nearestCommonDominator(nodes[i - 1], nodes[i]));
+                std::ranges::sort(nodes, comesFirst);
+                nodes.shrink(std::ranges::unique(nodes).begin() - nodes.begin());
+                RELEASE_ASSERT(nodes[0] == top);
+                Vector<BasicBlock*, 16> path;
+                for (BasicBlock* node : nodes) {
+                    while (!path.isEmpty() && !dominators.dominates(path.last(), node))
+                        path.removeLast();
+                    BasicBlock* parent = path.isEmpty() ? nullptr : path.last();
+                    path.append(node);
+                    if (parent && dominators.idom(node) != parent) {
+                        BasicBlock* least = leastFrequentBetween(dominators.idom(node), parent);
+                        addCandidate(least, parent, preOrderIndex[dominatorAtDepth(node, depth[parent] + 1)]);
+                        parent = least;
+                    }
+                    addCandidate(node, parent, preOrderIndex[node]);
+                }
+                for (Use& use : uses)
+                    data[use.block].isChosen = true;
+                std::ranges::sort(candidates, [&](BasicBlock* a, BasicBlock* b) {
+                    return data[a].order > data[b].order;
+                });
+            }
 
             // A block comes after its dominators in pre-order.
-            std::ranges::sort(candidates, [&](BasicBlock* a, BasicBlock* b) {
-                return preOrderIndex[a] > preOrderIndex[b];
-            });
+            if (!areTooMany) {
+                std::ranges::sort(candidates, [&](BasicBlock* a, BasicBlock* b) {
+                    return preOrderIndex[a] > preOrderIndex[b];
+                });
+            }
             for (BasicBlock* block : candidates) {
                 Candidate& candidate = data[block];
                 if (candidate.isChosen || candidate.frequency > block->frequency() || (candidate.frequency == block->frequency() && candidate.numberOfMaterializations > 1)) {
@@ -255,7 +386,7 @@ private:
                     candidate.frequency = block->frequency();
                     candidate.numberOfMaterializations = 1;
                 }
-                if (BasicBlock* parent = block == top ? nullptr : dominators.idom(block)) {
+                if (BasicBlock* parent = areTooMany ? candidate.parent : block == top ? nullptr : dominators.idom(block)) {
                     data[parent].frequency += candidate.frequency;
                     data[parent].numberOfMaterializations += candidate.numberOfMaterializations;
                 }
@@ -275,7 +406,7 @@ private:
             }
             for (unsigned i = candidates.size(); i--;) {
                 BasicBlock* block = candidates[i];
-                BasicBlock* parent = block == top ? nullptr : dominators.idom(block);
+                BasicBlock* parent = areTooMany ? data[block].parent : block == top ? nullptr : dominators.idom(block);
                 BasicBlock* inherited = block == top ? above : parent ? data[parent].where : nullptr;
                 if (inherited)
                     data[block].where = inherited;

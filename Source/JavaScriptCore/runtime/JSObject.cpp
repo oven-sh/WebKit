@@ -74,12 +74,10 @@ STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSObjectWithButterfly);
 STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(JSFinalObject);
 
 const ASCIILiteral NonExtensibleObjectPropertyDefineError { "Attempting to define property on object that is not extensible."_s };
-const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of this object: built-ins and the prototype objects of compiled classes are immutable in compiled programs"_s };
+const ASCIILiteral ImmutablePropertyDefineError { "Cannot add or change properties of this object: built-ins and the prototype objects of classes are read-only in a program compiled ahead of time"_s };
 const ASCIILiteral ReadonlyPropertyWriteError { "Attempted to assign to readonly property."_s };
 const ASCIILiteral ReadonlyPropertyChangeError { "Attempting to change value of a readonly property."_s };
-const ASCIILiteral TypedFieldError { "Type check failed: a field of a typed object must stay a plain data property whose value matches its declared type"_s };
-const ASCIILiteral TypedFieldOfInheritorError { "Type check failed: a prototype of typed objects must be an ordinary object without a property named like one of their fields"_s };
-const ASCIILiteral ImmutableShapeError { "Attempting to change the shape of an object whose shape is immutable."_s };
+const ASCIILiteral ImmutableShapeError { "Cannot add, remove or reconfigure a property of this object: its properties are fixed in a program compiled ahead of time"_s };
 const ASCIILiteral UnableToDeletePropertyError { "Unable to delete property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError { "Attempting to change access mechanism for an unconfigurable property."_s };
 const ASCIILiteral UnconfigurablePropertyChangeConfigurabilityError { "Attempting to change configurable attribute of unconfigurable property."_s };
@@ -858,9 +856,12 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     // Every put this object is the receiver of is refused: data properties, setters and custom setters alike. It comes here because
     // canPerformFastPutInlineExcludingProto() says no for such a receiver.
     if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]] {
-        if (slot.isStrictMode())
-            noteRefusalByLock(vm, propertyName.uid());
-        return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
+        if (JSValue held; isRefusedByLockAlone(vm, propertyName.uid(), held) && held == value)
+            return true;
+        if (!slot.isStrictMode())
+            return false;
+        noteRefusalByLock(vm, propertyName.uid());
+        return typeError(globalObject, scope, true, wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
     }
 
     if (structure()->typeInfo().wouldHaveFixedProperties() && !isThisValueAltered(slot, this)) [[unlikely]]
@@ -904,8 +905,12 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
         if (hasProperty) {
             if (attributes & PropertyAttribute::ReadOnly) {
                 if (!structure->inheritorsMayOverrideReadOnlyProperties() || slot.thisValue() == obj || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue)) {
-                    if (slot.isStrictMode() && obj->isLockedBuiltin())
+                    if (JSValue held; !isThisValueAltered(slot, obj) && obj->isLockedBuiltin() && obj->isRefusedByLockAlone(vm, propertyName.uid(), held) && held == value)
+                        return true;
+                    if (slot.isStrictMode() && obj->isLockedBuiltin()) {
                         obj->noteRefusalByLock(vm, propertyName.uid());
+                        return typeError(globalObject, scope, true, obj->wordsOfRefusalByLock(vm, propertyName.uid(), ReadonlyPropertyWriteError));
+                    }
                     return typeError(globalObject, scope, slot.isStrictMode(), ReadonlyPropertyWriteError);
                 }
                 break;
@@ -1086,9 +1091,10 @@ bool JSObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned p
 
     if (thisObject->structure()->hasImmutableProperties()) [[unlikely]] {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        if (shouldThrow)
-            thisObject->noteRefusalByLock(vm);
-        return typeError(globalObject, scope, shouldThrow, ReadonlyPropertyWriteError);
+        if (!shouldThrow)
+            return false;
+        thisObject->noteRefusalByLock(vm);
+        return typeError(globalObject, scope, true, thisObject->wordsOfRefusalByLock(vm, nullptr, ReadonlyPropertyWriteError));
     }
 
     if (thisObject->structure()->typeInfo().wouldHaveImmutableProperties()) [[unlikely]]
@@ -2257,17 +2263,22 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         if (this->getPrototype(globalObject) == prototype)
             return true;
 
-        if (shouldThrowIfCantSet && isLockedBuiltin() && this != globalObject->objectPrototype())
+        if (shouldThrowIfCantSet && isLockedBuiltin() && this != globalObject->objectPrototype()) {
             noteRefusalByLock(vm);
+            if (!this->structure()->isImmutablePrototypeExoticObject())
+                return typeError(globalObject, scope, true, withAOTErrorNote("Cannot set prototype of immutable prototype object"_s));
+        }
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of immutable prototype object"_s);
     }
 
     if (this->structure()->hasImmutableProperties()) [[unlikely]] {
         if (this->getPrototypeDirect() == prototype)
             return true;
-        if (shouldThrowIfCantSet && this != globalObject->objectPrototype())
+        if (!shouldThrowIfCantSet)
+            return false;
+        if (this != globalObject->objectPrototype())
             noteRefusalByLock(vm);
-        return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of a built-in object: built-ins are immutable in compiled programs"_s);
+        return typeError(globalObject, scope, true, withAOTErrorNote("Cannot set the prototype of a built-in object: built-ins are read-only in a program compiled ahead of time"_s));
     }
 
     // Default realm global objects should have mutable prototypes despite having
@@ -2279,7 +2290,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 
 #if USE(BUN_JSC_ADDITIONS)
     if (structure()->hasImmutableShape()) [[unlikely]] {
-        throwTypeError(globalObject, scope, ImmutableShapeError);
+        throwTypeError(globalObject, scope, withAOTErrorNote(ImmutableShapeError));
         return false;
     }
 #endif
@@ -2308,10 +2319,6 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
             break; // We're done. Set the prototype.
         nextPrototype = asObject(nextPrototype)->getPrototypeDirect();
     }
-#if USE(BUN_JSC_ADDITIONS)
-    if (TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::tryToChangePrototype(vm, this, prototype)) [[unlikely]]
-        return typeError(globalObject, scope, shouldThrowIfCantSet, TypedFieldOfInheritorError);
-#endif
     setPrototypeDirect(vm, prototype);
     return true;
 }
@@ -2523,32 +2530,12 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 
     bool propertyIsPresent = isValidOffset(structure->get(vm, propertyName, attributes));
     if (propertyIsPresent) {
-#if USE(BUN_JSC_ADDITIONS)
-        if (structure->hasStableFields() && (structure->hasImmutableShape() || structure->isStableField(structure->get(vm, propertyName)))) [[unlikely]] {
-            slot.setNonconfigurable();
-            thisObject->throwImmutableShapeError(vm);
-            return false;
-        }
-#endif
         if (attributes & PropertyAttribute::DontDelete && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) {
             slot.setNonconfigurable();
             return false;
         }
         if (attributes & PropertyAttribute::WouldBeFixed && vm.deletePropertyMode() != VM::DeletePropertyMode::IgnoreConfigurable) [[unlikely]]
             ImmutableIntrinsicsAudit::willDeleteProperty(globalObject, thisObject, propertyName, slot);
-#if USE(BUN_JSC_ADDITIONS)
-        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && TypedLayoutTable::hasTypedFields()) [[unlikely]] {
-            if (auto* field = TypedLayoutTable::findField(vm, typedLayoutID, propertyName.uid()); field && !field->mayBeAbsent && !TypedLayoutTable::usesFieldIDs(typedLayoutID)) {
-                if (!TypedLayoutTable::isAuditing()) {
-                    auto scope = DECLARE_THROW_SCOPE(vm);
-                    slot.setNonconfigurable();
-                    throwTypeError(globalObject, scope, TypedFieldError);
-                    return false;
-                }
-                TypedLayoutTable::reportViolation("a field that has to be there is deleted"_s, typedLayoutID, thisObject);
-            }
-        }
-#endif
 
         PropertyOffset offset = invalidOffset;
         if (structure->isUncacheableDictionary()) {
@@ -2573,59 +2560,6 @@ bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Proper
 
     return true;
 }
-
-#if USE(BUN_JSC_ADDITIONS)
-void JSObject::evictTypedField(VM& vm, PropertyName propertyName)
-{
-    Structure* structure = this->structure();
-    unsigned attributes;
-    PropertyOffset offset = structure->get(vm, propertyName, attributes);
-    if (!isValidOffset(offset) || !isInlineOffset(offset) || (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
-        return;
-    if (!structure->isUncacheableDictionary()) {
-        DeferredStructureTransitionWatchpointFire deferredWatchpointFire(vm, structure);
-        structure = Structure::toUncacheableDictionaryTransition(vm, structure, &deferredWatchpointFire);
-        setStructure(vm, structure);
-    }
-    JSValue value = getDirect(offset);
-    StructureID structureID = this->structureID();
-    PropertyOffset movedTo = invalidOffset;
-    structure->movePropertyOutOfLineWithoutTransition(vm, propertyName, [&](const GCSafeConcurrentJSLocker&, PropertyOffset newOffset, PropertyOffset newMaxOffset) {
-        unsigned oldOutOfLineCapacity = structure->outOfLineCapacity();
-        unsigned newOutOfLineCapacity = Structure::outOfLineCapacity(newMaxOffset);
-        if (newOutOfLineCapacity != oldOutOfLineCapacity) {
-            Butterfly* butterfly = allocateMoreOutOfLineStorage(vm, oldOutOfLineCapacity, newOutOfLineCapacity);
-            nukeStructureAndSetButterfly(vm, structureID, butterfly);
-            structure->setMaxOffset(vm, newMaxOffset);
-            WTF::storeStoreFence();
-            setStructureIDDirectly(structureID);
-        } else
-            structure->setMaxOffset(vm, newMaxOffset);
-        movedTo = newOffset;
-    });
-    putDirectOffset(vm, movedTo, value);
-    locationForOffset(offset)->clear();
-    if (mayBePrototype()) [[unlikely]]
-        vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
-}
-#endif
-
-#if USE(BUN_JSC_ADDITIONS)
-unsigned JSObject::evictMistypedFields(VM& vm)
-{
-    uint16_t typedLayoutID = structure()->typedLayoutID();
-    Vector<UniquedStringImpl*, 4> names;
-    structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        if (isInlineOffset(entry.offset()) && !(entry.attributes() & PropertyAttribute::AccessorOrCustomAccessorOrValue)
-            && TypedLayoutTable::checkStore(typedLayoutID, entry.offset(), getDirect(entry.offset())) == TypedLayoutTable::StoreCheck::Rejected)
-            names.append(entry.key());
-        return true;
-    });
-    for (UniquedStringImpl* name : names)
-        evictTypedField(vm, name);
-    return names.size();
-}
-#endif
 
 bool JSObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned i)
 {
@@ -3157,12 +3091,6 @@ void JSObject::freeze(VM& vm)
         return;
     if (isFrozen(vm))
         return;
-#if USE(BUN_JSC_ADDITIONS)
-    if (structure()->hasStableFields()) [[unlikely]] {
-        throwImmutableShapeError(vm);
-        return;
-    }
-#endif
     materializeLazyOwnProperties(vm);
     enterDictionaryIndexingMode(vm);
     {
@@ -3488,7 +3416,7 @@ bool JSObject::defineOwnIndexedProperty(JSGlobalObject* globalObject, unsigned i
 
 #if USE(BUN_JSC_ADDITIONS)
     if (structure()->hasImmutableShape()) [[unlikely]] {
-        throwTypeError(globalObject, scope, ImmutableShapeError);
+        throwTypeError(globalObject, scope, withAOTErrorNote(ImmutableShapeError));
         return false;
     }
 #endif
@@ -3860,7 +3788,7 @@ bool JSObject::putByIndexBeyondVectorLength(JSGlobalObject* globalObject, unsign
             RETURN_IF_EXCEPTION(scope, false);
             if (isIntercepted)
                 return putResult;
-            throwTypeError(globalObject, scope, ImmutableShapeError);
+            throwTypeError(globalObject, scope, withAOTErrorNote(ImmutableShapeError));
             return false;
         }
 #endif
@@ -4470,8 +4398,10 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         // unless extensions are prevented!
         // Step 2.a
         if (!isExtensible) {
-            if (throwException && object && object->isLockedBuiltin())
+            if (throwException && object && object->isLockedBuiltin()) {
                 object->noteRefusalByLock(vm, propertyName.uid());
+                return typeError(globalObject, scope, true, object->wordsOfRefusalByLock(vm, propertyName.uid(), NonExtensibleObjectPropertyDefineError));
+            }
             return typeError(globalObject, scope, throwException, NonExtensibleObjectPropertyDefineError);
         }
         if (object && object->structure()->inheritorsMayOverrideReadOnlyProperties() && propertyName != vm.propertyNames->name && propertyName != vm.propertyNames->length && object->inheritsImmutableProperty(vm, propertyName)) [[unlikely]]
@@ -4479,22 +4409,15 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         ASSERT(!object || !object->structure()->hasImmutableProperties());
 
         if (object) {
-            bool isApplied;
             if (descriptor.isAccessorDescriptor()) {
                 unsigned attributes = (descriptor.attributes() | PropertyAttribute::Accessor) & ~PropertyAttribute::ReadOnly;
-                isApplied = object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
+                object->putDirectAccessor(globalObject, propertyName, descriptor.slowGetterSetter(globalObject), attributes);
             } else {
                 ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
                 JSValue value = descriptor.value() ? descriptor.value() : jsUndefined();
-                isApplied = object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
+                object->putDirect(vm, propertyName, value, descriptor.attributes() & ~PropertyAttribute::Accessor);
             }
             RETURN_IF_EXCEPTION(scope, false);
-            if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
-                return typeError(globalObject, scope, throwException, TypedFieldError);
-#if USE(BUN_JSC_ADDITIONS)
-            if (!isApplied && object->mayBePrototype() && TypedLayoutTable::hasTypedFields()) [[unlikely]]
-                return typeError(globalObject, scope, throwException, TypedFieldOfInheritorError);
-#endif
         }
 
         return true;
@@ -4513,7 +4436,7 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         bool isUnchanged = isPropertyUnchangedByDescriptor(globalObject, current, descriptor);
         RETURN_IF_EXCEPTION(scope, false);
         if (!isUnchanged)
-            return typeError(globalObject, scope, throwException, ImmutablePropertyDefineError);
+            return typeError(globalObject, scope, throwException, withAOTErrorNote(ImmutablePropertyDefineError));
         return true;
     }
 
@@ -4566,21 +4489,18 @@ bool validateAndApplyPropertyDescriptor(JSGlobalObject* globalObject, JSObject* 
         return true;
     // Step 9.
     unsigned attributes = descriptor.attributesOverridingCurrent(current);
-    bool isApplied;
     if (descriptor.isAccessorDescriptor() || (current.isAccessorDescriptor() && !descriptor.isDataDescriptor())) {
         ASSERT(attributes & PropertyAttribute::Accessor);
         JSObject* getter = descriptor.getterPresent() ? descriptor.getterObject() : (current.getterPresent() ? current.getterObject() : nullptr);
         JSObject* setter = descriptor.setterPresent() ? descriptor.setterObject() : (current.setterPresent() ? current.setterObject() : nullptr);
         GetterSetter* getterSetter = GetterSetter::create(vm, globalObject, getter, setter);
-        isApplied = object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
+        object->putDirectAccessor(globalObject, propertyName, getterSetter, attributes & ~PropertyAttribute::ReadOnly);
     } else {
         ASSERT(descriptor.isGenericDescriptor() || descriptor.isDataDescriptor());
         JSValue value = descriptor.value() ? descriptor.value() : (current.value() ? current.value() : jsUndefined());
-        isApplied = object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
+        object->putDirect(vm, propertyName, value, attributes & ~PropertyAttribute::Accessor);
     }
     RETURN_IF_EXCEPTION(scope, false);
-    if (!isApplied && object->structure()->typedLayoutID()) [[unlikely]]
-        return typeError(globalObject, scope, throwException, TypedFieldError);
 
     return true;
 }
@@ -4623,7 +4543,7 @@ ASCIILiteral JSObject::throwImmutableShapeError(VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (!scope.exception()) [[likely]]
-        throwTypeError(realm(), scope, ImmutableShapeError);
+        throwTypeError(realm(), scope, withAOTErrorNote(ImmutableShapeError));
     return ImmutableShapeError;
 }
 #endif
@@ -4796,11 +4716,11 @@ TransitionKind JSObject::suggestedArrayStorageTransition() const
     return TransitionKind::AllocateArrayStorage;
 }
 
-bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
+void JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties, const EncodedJSValue* values, unsigned size)
 {
     unsigned i = 0;
     Structure* structure = this->structure();
-    if (!((structure->typedLayoutID() && TypedLayoutTable::hasLayouts()) || structure->hasImmutableShape() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
+    if (!(structure->hasImmutableShape() || structure->isDictionary() || (structure->transitionCountEstimate() + size) > Structure::s_maxTransitionLength || !structure->canPerformFastPropertyEnumerationCommon())) {
         Vector<PropertyOffset, 16> offsets(size, [&](size_t index) -> std::optional<PropertyOffset> {
             PropertyName propertyName(properties[index]);
 
@@ -4857,12 +4777,10 @@ bool JSObject::putOwnDataPropertyBatching(VM& vm, UniquedStringImpl** properties
             vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Add);
     }
 
-    bool areAllApplied = true;
     for (; i < size; ++i) {
         PutPropertySlot putPropertySlot(this, true);
-        areAllApplied &= putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
+        putOwnDataProperty(vm, properties[i], JSValue::decode(values[i]), putPropertySlot);
     }
-    return areAllApplied;
 }
 
 ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
@@ -4874,21 +4792,13 @@ ASCIILiteral JSObject::putDirectToDictionaryWithoutExtensibility(VM& vm, Propert
         if (currentAttributes & PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessor)
             return ReadonlyPropertyChangeError;
 
-        auto storeCheck = TypedLayoutTable::StoreCheck::Unconstrained;
-        if (uint16_t typedLayoutID = structure->typedLayoutID(); typedLayoutID && isInlineOffset(offset))
-            storeCheck = TypedLayoutTable::checkStore(typedLayoutID, offset, value);
-        if (storeCheck == TypedLayoutTable::StoreCheck::Rejected) [[unlikely]] {
-            evictTypedField(vm, propertyName);
-            return putDirectToDictionaryWithoutExtensibility(vm, propertyName, value, slot);
-        }
         putDirectOffset(vm, offset, value);
         structure->didReplaceProperty(offset);
 
         // FIXME: Check attributes against PropertyAttribute::CustomAccessorOrValue. Changing GetterSetter should work w/o transition.
         // https://bugs.webkit.org/show_bug.cgi?id=214342
         ASSERT(!(currentAttributes & PropertyAttribute::AccessorOrCustomAccessorOrValue));
-        if (storeCheck == TypedLayoutTable::StoreCheck::Unconstrained)
-            slot.setExistingProperty(this, offset);
+        slot.setExistingProperty(this, offset);
         return { };
     }
 

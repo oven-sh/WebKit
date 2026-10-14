@@ -592,11 +592,6 @@ void Lowering::giveThisItsRow(const Value& store, Boxed self)
     m_out.appendTo(continuation);
 }
 
-LValue Lowering::isOfNumberedRow(LValue structureID, unsigned row)
-{
-    return m_out.equal(m_out.load16ZeroExt32(TypedPointer(m_heaps.root, m_out.add(structureWithID(structureID), m_out.constIntPtr(Structure::offsetOfNumberOfRowPlusOne())))), m_out.constInt32(row + 1));
-}
-
 void Lowering::putAtKnownPlace(const Value& access, Boxed base, Boxed value)
 {
     if (Options::validateAOTTypedFacts() && access.isStoreToObjectBornWhole()) [[unlikely]] {
@@ -1011,7 +1006,7 @@ Word32 Lowering::emitGenericCompare(Stub stub, Boxed a, Boxed b, OperationEffect
 // Nothing: nothing is expected, a test has settled it where this code runs, or the type says as much.
 std::optional<Type> Lowering::predictionOf(ValueID id, uint16_t without) const
 {
-    if (isCompact(0))
+    if (isCompact())
         return std::nullopt;
     for (auto& assumption : m_assumptions) {
         if (assumption.value == id)

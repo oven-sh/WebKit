@@ -35,6 +35,8 @@
 #include "B3SwitchValue.h"
 #include "B3UseCounts.h"
 #include "B3ValueInlines.h"
+#include <wtf/HashSet.h>
+#include <wtf/IndexSet.h>
 #include <wtf/ListDump.h>
 
 namespace JSC { namespace B3 {
@@ -124,6 +126,12 @@ private:
         }
         
         BasicBlock* predecessor = block->predecessor(0);
+#if USE(BUN_JSC_ADDITIONS)
+        if (SwitchValue* grown = predecessor->last()->as<SwitchValue>(); grown && grown->numCaseValues() >= minCasesToGrowInPlace) {
+            if (auto result = tryGrowInPlace(block, description, predecessor, grown))
+                return *result;
+        }
+#endif
         SwitchDescription predecessorDescription = describe(predecessor);
         if (B3InferSwitchesInternal::verbose)
             dataLog("    Description of predecessor block ", *predecessor, ": ", predecessorDescription, "\n");
@@ -181,6 +189,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         if (!m_useCounts)
             m_useCounts.emplace(m_proc);
+        m_grown = nullptr;
 
 #else
         
@@ -263,6 +272,68 @@ private:
         FrequentedBlock fallThrough;
     };
     
+#if USE(BUN_JSC_ADDITIONS)
+    std::optional<bool> tryGrowInPlace(BasicBlock* block, SwitchDescription& description, BasicBlock* predecessor, SwitchValue* grown)
+    {
+        auto mayBeKept = [](int64_t value) {
+            return value != std::numeric_limits<int64_t>::min() && value != std::numeric_limits<int64_t>::max();
+        };
+        if (m_grown != grown || m_numberOfGrownCases != grown->numCaseValues()) {
+            m_grown = nullptr;
+            m_grownValues.clear();
+            m_grownTargets = IndexSet<BasicBlock*>();
+            for (SwitchCase switchCase : grown->cases(predecessor)) {
+                if (!mayBeKept(switchCase.caseValue()))
+                    return std::nullopt;
+                m_grownValues.add(switchCase.caseValue());
+                m_grownTargets.add(switchCase.targetBlock());
+            }
+            m_grown = grown;
+            m_numberOfGrownCases = grown->numCaseValues();
+        }
+        for (SwitchCase switchCase : description.cases) {
+            if (!mayBeKept(switchCase.caseValue()))
+                return std::nullopt;
+        }
+        if (description.source != grown->child(0) || predecessor->fallThrough().block() != block)
+            return false;
+        if (description.fallThrough.block() == block || description.fallThrough.block() == predecessor)
+            return false;
+        for (SwitchCase switchCase : description.cases) {
+            if (switchCase.targetBlock() == block || switchCase.targetBlock() == predecessor)
+                return false;
+        }
+        if (m_grownTargets.contains(block) || m_grownTargets.contains(predecessor))
+            return false;
+
+        useCounts();
+        auto& values = predecessor->values();
+        for (unsigned i = 0; i < block->size() - 1; ++i) {
+            Value* value = block->at(i);
+            if (value == description.extra || value->opcode() == Nop)
+                continue;
+            values.append(values.last());
+            values[values.size() - 2] = value;
+        }
+        block->values().shrink(0);
+        block->appendNew<Value>(m_proc, Oops, description.branch->origin());
+        block->removePredecessor(predecessor);
+        for (BasicBlock* successorBlock : description.block->successorBlocks())
+            successorBlock->replacePredecessor(block, predecessor);
+        block->clearSuccessors();
+        grown->owner = predecessor;
+        grown->setFallThrough(predecessor, description.fallThrough);
+        for (SwitchCase switchCase : description.cases) {
+            if (!m_grownValues.add(switchCase.caseValue()).isNewEntry)
+                continue;
+            grown->appendCase(predecessor, switchCase);
+            m_grownTargets.add(switchCase.targetBlock());
+        }
+        m_numberOfGrownCases = grown->numCaseValues();
+        return true;
+    }
+
+#endif
     SwitchDescription describe(BasicBlock* block)
     {
         SwitchDescription result;
@@ -341,6 +412,11 @@ private:
     }
 
     std::optional<UseCountsWithoutUsingInstructions> m_useCounts;
+    static constexpr unsigned minCasesToGrowInPlace = 128;
+    SwitchValue* m_grown { nullptr };
+    unsigned m_numberOfGrownCases { 0 };
+    UncheckedKeyHashSet<int64_t, IntHash<int64_t>, WTF::SignedWithZeroKeyHashTraits<int64_t>> m_grownValues;
+    IndexSet<BasicBlock*> m_grownTargets;
 #else
     UseCountsWithoutUsingInstructions m_useCounts;
 #endif

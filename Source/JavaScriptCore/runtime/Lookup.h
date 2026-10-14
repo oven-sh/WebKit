@@ -440,7 +440,7 @@ inline bool isStaticPropertyOfIntrinsic(VM& vm, JSObject& object, const HashTabl
     if (object.structure()->inheritorsMayOverrideReadOnlyProperties() || object.structure()->typeInfo().wouldHaveFixedProperties())
         return true;
     const HashTable& bindings = *JSGlobalObject::info()->staticPropHashTable;
-    return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue) && value.m_key != "console"_s;
+    return std::bit_cast<uintptr_t>(&value) - std::bit_cast<uintptr_t>(bindings.values) < static_cast<size_t>(bindings.numberOfValues) * sizeof(HashTableValue) && value.m_key != "console"_s && object.realm()->fixesOrNotesIntrinsics();
 }
 
 inline bool isFixedStaticProperty(VM& vm, JSObject& object, const HashTableValue& value)

@@ -35,8 +35,10 @@ static constexpr ptrdiff_t offsetOfRBXInAdapter = -40;
 static constexpr ptrdiff_t offsetOfInstanceInAdapter = -48;
 static constexpr unsigned adapterSaveAreaSize = 48;
 #else
-static constexpr ptrdiff_t offsetOfInstanceInAdapter = -32;
-static constexpr unsigned adapterSaveAreaSize = 32;
+static constexpr ptrdiff_t offsetOfCellCageBaseRegisterInAdapter = -32;
+static constexpr ptrdiff_t offsetOfStaticsRegisterInAdapter = -40;
+static constexpr ptrdiff_t offsetOfInstanceInAdapter = -48;
+static constexpr unsigned adapterSaveAreaSize = 48;
 #endif
 
 static constexpr unsigned minCodeGranuleShift = 6;
@@ -394,7 +396,6 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(HandleExceptionAtPrologue) \
     v(ThrowStackOverflowAtPrologue) \
     v(ThrowStackOverflow) \
-    v(ThrowCalledIndirectly) \
     v(Catch) \
     v(RejectInFrame) \
     v(VirtualCall) \
@@ -453,13 +454,6 @@ static constexpr uint32_t arraySiteInterval = 64;
 static constexpr unsigned maxCapacityOfArrayOfNumbers = 127;
 static constexpr Stub arrayLiteralStub(unsigned count) { return static_cast<Stub>(static_cast<unsigned>(Stub::ArrayLiteral0) + 2 * count); }
 
-static constexpr bool usesStubs =
-#if CPU(ARM64) || CPU(X86_64)
-    true;
-#else
-    false;
-#endif
-inline bool usesDataStubs() { return usesStubs && Options::useAOTDataStubs(); }
 
 struct Site {
     static constexpr unsigned identifierBits = 20;
@@ -506,6 +500,8 @@ struct StubCall {
     uint32_t callSite { noCallSite };
     uint32_t argumentMoves { noArgumentMoves };
     uint32_t body { 0 };
+    uint8_t firstOmittedGPR { 0 };
+    uint8_t endOfOmittedGPRs { 0 };
 };
 
 std::optional<unsigned> thunkFor(Stub, uint32_t t9Value);
@@ -646,7 +642,7 @@ public:
     void call(CCallHelpers&, Stub, CallSite, const ArgumentMoves&);
     void tailCall(CCallHelpers&, Stub);
     void tailCall(CCallHelpers&, Stub, uint32_t t9Value);
-    void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite);
+    void callFunction(CCallHelpers&, uint32_t knownCallee, CallSite, uint8_t firstOmittedGPR = 0, uint8_t endOfOmittedGPRs = 0);
     void jumpToFunction(CCallHelpers&, uint32_t knownCallee);
     Vector<StubCall> link(LinkBuffer&);
     Vector<ArgumentMoves> takeArgumentMoves() { return std::exchange(m_argumentMoves, { }); }
@@ -660,6 +656,8 @@ private:
         uint32_t function { StubCall::noFunction };
         uint16_t thunk { 0 };
         uint32_t argumentMoves { StubCall::noArgumentMoves };
+        uint8_t firstOmittedGPR { 0 };
+        uint8_t endOfOmittedGPRs { 0 };
     };
     Vector<Pending, 8> m_pending;
     Vector<ArgumentMoves> m_argumentMoves;
@@ -681,6 +679,8 @@ static constexpr size_t offsetOfReturnAddressInTrap = sizeOfNearCall - 1;
 static constexpr size_t sizeOfVeneer = 3 * sizeof(uint32_t);
 static constexpr size_t stubCallReachSlack = 24 * MB;
 void writeVeneer(uint8_t* base, size_t veneer, size_t target);
+size_t sizeOfOmittedArguments(unsigned firstGPR, unsigned endOfGPRs);
+void writeOmittedArguments(uint8_t* base, size_t at, unsigned firstGPR, unsigned endOfGPRs);
 
 } } // namespace JSC::AOT
 

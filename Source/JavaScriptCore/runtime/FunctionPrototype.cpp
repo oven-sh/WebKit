@@ -280,8 +280,10 @@ JSC_DEFINE_CUSTOM_GETTER(argumentsGetter, (JSGlobalObject* globalObject, Encoded
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
 #if ENABLE(AOT)
-        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj))
+        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj)) {
             thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
+            return throwVMTypeError(globalObject, scope, withAOTErrorNote(RestrictedPropertyAccessError));
+        }
 #endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }
@@ -359,8 +361,10 @@ JSC_DEFINE_CUSTOM_GETTER(callerGetter, (JSGlobalObject* globalObject, EncodedJSV
     JSFunction* thisObj = dynamicDowncast<JSFunction>(JSValue::decode(thisValue));
     if (!thisObj || !isAllowedReceiverFunctionForCallerAndArguments(thisObj)) {
 #if ENABLE(AOT)
-        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj))
+        if (thisObj && wouldBeAllowedReceiverFunctionForCallerAndArgumentsIfNotCompiled(thisObj)) {
             thisObj->noteRefusalByLock(vm, nullptr, "function-caller-arguments"_s);
+            return throwVMTypeError(globalObject, scope, withAOTErrorNote(RestrictedPropertyAccessError));
+        }
 #endif
         return throwVMTypeError(globalObject, scope, RestrictedPropertyAccessError);
     }

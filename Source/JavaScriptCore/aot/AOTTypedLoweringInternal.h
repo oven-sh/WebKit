@@ -167,6 +167,10 @@ struct OperationSignature<Result(Parameters...)> {
     static constexpr bool mayThrow = false;
     static Vector<LValue, 8> list(typename ParameterOfOperation<Parameters>::Type... arguments) { return { arguments.value()... }; }
 };
+#if OS(WINDOWS) && CPU(X86_64)
+template<typename Result, typename... Parameters>
+struct OperationSignature<Result SYSV_ABI(Parameters...)> : OperationSignature<Result(Parameters...)> { };
+#endif
 
 struct LoweringContext {
     StubCalls stubCalls;
@@ -777,7 +781,6 @@ private:
     // A number that is compared with integer constants: the integer it is, or one that no constant is.
     unsigned numberOfComparisonsWithIntegers(ValueID);
     bool isTakenAsInt32(ValueID);
-    bool isTakenAsIndex(ValueID);
     ValueID valueBeingLowered() const;
     Word32 toInt32InArm(Number, bool isRare);
     Integer exactIntegerInArm(Number);
@@ -848,7 +851,7 @@ private:
             return Word32(m_out.equal(indexOrBits(a), indexOrBits(b)));
         return equal(a, b);
     }
-    LValue cellCageBase() { return marked(fixedPointer(Instance::offsetOfCellCageBase()), IsFixed | IsSafe); }
+    LValue cellCageBase() { return m_cellCageBase ? m_cellCageBase : marked(fixedPointer(Instance::offsetOfCellCageBase()), IsFixed | IsSafe); }
     LValue decodeCell32(LValue index) { return m_out.add(cellCageBase(), m_out.shl(index, m_out.constInt32(cell32Shift))); }
     Word32 refersToNumberBox(Word32 word) { return below(Word32(m_out.sub(word.value(), m_out.constInt32(nullInt32 + 1))), word32(static_cast<uint32_t>(leastInt32InPlace) - static_cast<uint32_t>(nullInt32 + 1))); }
     TypedPointer numberBoxAt(const Field& field, Word32 word) { return m_out.address(heapOf(field.slot), m_out.add(marked(fixedPointer(Instance::offsetOfNumberBoxBase()), IsFixed | IsSafe), m_out.shl(m_out.zeroExtPtr(m_out.bitAnd(word.value(), m_out.constInt32(INT32_MAX))), m_out.constInt32(numberBoxShift))), 0); }
@@ -1173,9 +1176,7 @@ private:
     // A leaf that stands for a cell of a lazily filled table, and that is lowered where it is asked for: see get() and findLeavesFetchedLate().
     bool isFetchedWhereNeeded(ValueID id) const { return m_isFetchedLate.get(id.index()); }
     bool m_isCompact { false };
-    unsigned m_compactLevers { 0 };
-    bool isCompactFunction(unsigned lever) const { return m_isCompact && (m_compactLevers >> lever & 1); }
-    bool isCompact(unsigned lever) const { return isCompactFunction(lever) && m_currentBlock && !m_isInLoop; }
+    bool isCompact() const { return m_isCompact && m_currentBlock && !m_isInLoop; }
     bool goesGenerallyWhereTextIsCold() const { return !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id); }
     void poll();
     std::pair<Word32, Pointer> argumentBuffer(const Arguments&);
@@ -1280,7 +1281,6 @@ private:
     void reportUnlessAtKnownPlace(LValue found, LValue expected, Boxed base);
     Boxed getAtKnownPlace(const Value&, Boxed base);
     void putAtKnownPlace(const Value&, Boxed base, Boxed value);
-    LValue isOfNumberedRow(LValue structureID, unsigned row);
     void giveThisItsRow(const Value& store, Boxed self);
     bool isStillAsBorn(const Value& store);
     Vector<uint32_t> m_onlyPredecessors;
@@ -1482,7 +1482,6 @@ private:
     std::optional<ExpectedBuiltin> expectedBuiltin(BuiltinKind, ValueID receiver, BuiltinName, const Arguments&) const;
     std::optional<ExpectedBuiltin> expectedBuiltin(BuiltinKind, ValueID receiver, StringID, const Arguments&) const;
     bool chooseArgumentsToExpect(ExpectedBuiltin&) const;
-    const EngineClass* m_classExpectedOfReceiver { nullptr };
     std::optional<Operand> lowerCallOfBuiltinFunction(ValueID result, ValueID callee, ValueID thisValue, const Arguments&);
     template<typename Generally> Operand lowerExpectedBuiltin(ValueID result, const ExpectedBuiltin&, std::optional<Boxed> callee, const Generally&);
 
@@ -1610,7 +1609,6 @@ private:
     Vector<uint8_t> m_numberOfComparisonsWithIntegers;
     bool m_didFindWhatIsTakenAsInt32 { false };
     BitVector m_isTakenAsInt32;
-    BitVector m_isTakenAsIndex;
     UncheckedKeyHashMap<LValue, LValue> m_int32sOfNumbers;
     UncheckedKeyHashMap<LValue, LValue> m_exactIntegersOfNumbers;
     UncheckedKeyHashMap<LValue, LValue> m_wordsOfNumbers;

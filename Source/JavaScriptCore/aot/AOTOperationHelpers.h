@@ -76,14 +76,14 @@ inline NamedAccess classifyNamedAccess(JSValue base, JSValue key, UniquedStringI
     } else if (base.isObject()) {
         constexpr unsigned namedSlots = Structure::numberOfSlotsWithPropertyNameIDs;
         Structure* structure = asObject(base)->structure();
-        receiver = structure->isDictionary() ? "receiver-is-dictionary" : !structure->recordsPropertyNames() ? "receiver-has-field-ids" : structure->outOfLineSize() ? "receiver-has-out-of-line-properties"
+        receiver = structure->isDictionary() ? "receiver-is-dictionary" : structure->outOfLineSize() ? "receiver-has-out-of-line-properties"
             : structure->inlineSize() > namedSlots ? "receiver-has-properties-beyond-named-slots" : "receiver-is-all-in-named-slots";
         if (name) {
             unsigned attributes = 0;
             PropertyOffset offset = structure->getConcurrently(name, attributes);
             auto inSlot = [&] {
                 uint16_t id = structure->fieldIDInSlot(offset);
-                return !id ? "property-is-in-slot-not-known-yet" : id == Structure::noPropertyNameID ? "property-is-in-slot-marked-nameless" : id == Structure::ambiguousFieldID ? "property-is-in-slot-of-structure-that-records-nothing" : "property-has-id-in-slot";
+                return !id ? "property-is-in-slot-not-known-yet" : id == Structure::noPropertyNameID ? "property-is-in-slot-marked-nameless" : "property-has-id-in-slot";
             };
             auto notOwn = [&]() -> const char* {
                 unsigned depth = 0;

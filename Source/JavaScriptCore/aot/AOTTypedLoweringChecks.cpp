@@ -2448,7 +2448,7 @@ Operand Lowering::lowerCastBehindCoercion(ValueID result, const Value& cast, con
 
 std::optional<Operand> Lowering::castByBody(const Value& cast, Operand operand, const Type& from, const Type& to)
 {
-    if (!isCompact(Program::leverOfBodiesOfCasts) || (operand.rep != Rep::JSValue && operand.rep != Rep::Cell) || m_program.isHeldAlready(from, to, cast.castReason()))
+    if (!isCompact() || (operand.rep != Rep::JSValue && operand.rep != Rep::Cell) || m_program.isHeldAlready(from, to, cast.castReason()))
         return std::nullopt;
     if (m_environmentAwaitingBarrier || m_isFillingArrayAtBirth || !m_fieldsAwaitingFirstStore.isEmpty())
         return std::nullopt;

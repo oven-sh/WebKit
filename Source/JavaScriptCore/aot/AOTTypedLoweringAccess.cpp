@@ -1253,20 +1253,41 @@ void Lowering::didCreateFieldInCell(CellPointer cell, const Field& field, Operat
     auto ensureStorage = [&] {
         if (!field.isOutOfLine)
             return;
-        LBasicBlock lacksStorage = m_out.newBlock();
         LBasicBlock hasNoExtension = m_out.newBlock();
         LBasicBlock slowPath = newColdBlock();
         LBasicBlock hasStorage = m_out.newBlock();
-        m_out.branch(extensionCovers(cell, field).value(), unsure(hasStorage), unsure(lacksStorage));
-        m_out.appendTo(lacksStorage);
-        m_out.branch(isZero(extensionWordOf(cell)).value(), usually(hasNoExtension), rarely(slowPath));
+        Word32 word = extensionWordOf(cell);
+        if (field.offset + sizeOf(field.store) <= leastExtensionSize)
+            m_out.branch(isZero(word).value(), unsure(hasNoExtension), unsure(hasStorage));
+        else {
+            LBasicBlock hasExtension = m_out.newBlock();
+            m_out.branch(isZero(word).value(), unsure(hasNoExtension), unsure(hasExtension));
+            m_out.appendTo(hasExtension);
+            Word32 reach = loadField<Word32>(extensionAt(word), m_heaps.AOTTypedExtension_size, IsFixed);
+            m_out.branch(aboveOrEqual(reach, word32(field.offset + sizeOf(field.store))).value(), usually(hasStorage), rarely(slowPath));
+        }
         m_out.appendTo(hasNoExtension);
         size_t size = WTF::roundUpToMultipleOf<leastExtensionSize>(field.offset + sizeOf(field.store));
         LValue storage = allocateHeapCell(allocatorForSize(fixedPointer(Instance::offsetOfAuxiliarySpace()), size), slowPath);
         applyEffects(storage->as<PatchpointValue>(), { Writes::RuntimeState, false });
         static_assert(!offsetOfExtensionSize);
-        for (size_t offset = 0; offset < size; offset += sizeof(uint64_t))
-            m_out.store64(m_out.constInt64(offset ? 0 : size), TypedPointer(m_heaps.root, m_out.add(storage, m_out.constIntPtr(offset))));
+        if (isX86_64() && size > 2 * sizeof(uint64_t)) {
+            PatchpointValue* zeroes = m_out.patchpoint(Void);
+            zeroes->effects = Effects::none();
+            m_heaps.decoratePatchpointWrite(&m_heaps.root, zeroes);
+            zeroes->append(ConstrainedValue(storage, ValueRep::SomeRegister));
+            zeroes->numGPScratchRegisters = 1;
+            zeroes->setGenerator([size](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                GPRReg zero = params.gpScratch(0);
+                jit.move(CCallHelpers::TrustedImm32(0), zero);
+                for (size_t offset = sizeof(uint64_t); offset < size; offset += sizeof(uint64_t))
+                    jit.store64(zero, CCallHelpers::Address(params[0].gpr(), offset));
+                jit.store64(CCallHelpers::TrustedImm32(size), CCallHelpers::Address(params[0].gpr()));
+            });
+        } else {
+            for (size_t offset = 0; offset < size; offset += sizeof(uint64_t))
+                m_out.store64(m_out.constInt64(offset ? 0 : size), TypedPointer(m_heaps.root, m_out.add(storage, m_out.constIntPtr(offset))));
+        }
         fenceAfterInitialization();
         storeField(cell, m_heaps.AOTTypedObject_extension, Word32(m_out.castToInt32(m_out.lShr(storage, m_out.constInt32(cell32Shift)))));
         barrier(cell);
@@ -1906,6 +1927,32 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         });
     };
     auto sunk = sunkCoercionAt(m_currentIndexInBlock);
+    if (!sunk && field->isLackedBySomeMember && !field->isElsewhereInSomeMember && !field->membersWithIt.passesNothing()
+        && m_program.at(field->stored).primitives & Primitive::Absent && mayInherit(m_program, view, name) && !inheritsByItsLayout(m_program, view, name)
+        && !onlyFieldsSupply(m_program, view, name) && onlyFieldsSupply(m_program, view, name, true)) {
+        bool mostlyLacksIt = mostMembersLack(view, *field);
+        LBasicBlock hasIt = mostlyLacksIt ? newUnlikelyBlock() : m_out.newBlock();
+        LBasicBlock isPresent = mostlyLacksIt ? newUnlikelyBlock() : m_out.newBlock();
+        LBasicBlock isNotThere = m_out.newBlock();
+        LBasicBlock isUnmarked = m_out.newBlock();
+        LBasicBlock asks = newColdBlock();
+        OperandJoin join(*this, joinedAs(type));
+        m_out.branch(passes(shapeWordOf(cell), field->membersWithIt, isNotThere).value(), unsure(hasIt), unsure(isNotThere));
+        m_out.appendTo(hasIt);
+        m_out.branch(hasField(cell, *field).value(), unsure(isPresent), unsure(isNotThere));
+        m_out.appendTo(isPresent);
+        {
+            SetForScope fieldIsPresent(m_fieldIsPresent, true);
+            join.add(readField(cell, *field, type));
+        }
+        m_out.appendTo(isNotThere);
+        m_out.branch(lacksBits(orderWordOf(cell), orderWordHasExtraProperties).value(), usually(isUnmarked), rarely(asks));
+        m_out.appendTo(isUnmarked);
+        join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));
+        m_out.appendTo(asks);
+        join.add(askMarkedObject(cell, name, type));
+        return join.finish();
+    }
     if (!sunk)
         return throughView(cell, object, view, *field, joinedAs(type), has, lacks);
     // The written cast the receiver comes from has left its work to this read: an object that has the field is none that the cast makes anything of. One that it does make something of may

@@ -78,8 +78,6 @@ extern JS_EXPORT_PRIVATE const ASCIILiteral NonExtensibleObjectPropertyDefineErr
 extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutablePropertyDefineError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyWriteError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ReadonlyPropertyChangeError;
-extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldError;
-extern JS_EXPORT_PRIVATE const ASCIILiteral TypedFieldOfInheritorError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral ImmutableShapeError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnableToDeletePropertyError;
 extern JS_EXPORT_PRIVATE const ASCIILiteral UnconfigurablePropertyChangeAccessMechanismError;
@@ -365,10 +363,6 @@ public:
     bool hasOwnProperty(JSGlobalObject*, unsigned) const;
 
     JS_EXPORT_PRIVATE static bool deleteProperty(JSCell*, JSGlobalObject*, PropertyName, DeletePropertySlot&);
-#if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE void evictTypedField(VM&, PropertyName);
-    JS_EXPORT_PRIVATE unsigned evictMistypedFields(VM&);
-#endif
     JS_EXPORT_PRIVATE static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned propertyName);
     bool deleteProperty(JSGlobalObject*, PropertyName);
     bool deleteProperty(JSGlobalObject*, uint32_t propertyName);
@@ -505,7 +499,7 @@ public:
     bool putOwnDataProperty(VM&, PropertyName, JSValue, PutPropertySlot&);
     bool putOwnDataPropertyMayBeIndex(JSGlobalObject*, PropertyName, JSValue, PutPropertySlot&);
 
-    bool putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
+    void putOwnDataPropertyBatching(VM&, UniquedStringImpl**, const EncodedJSValue*, unsigned size);
 private:
     void validatePutOwnDataProperty(VM&, PropertyName, JSValue);
 public:
@@ -616,9 +610,13 @@ public:
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
     JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
     JS_EXPORT_PRIVATE void noteRefusalByLock(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { });
+    JS_EXPORT_PRIVATE String wordsOfRefusalByLock(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
+    JS_EXPORT_PRIVATE bool isRefusedByLockAlone(VM&, UniquedStringImpl* name, JSValue& held);
     bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
 #else
     void noteRefusalByLock(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }) { }
+    String wordsOfRefusalByLock(VM&, UniquedStringImpl*, ASCIILiteral otherwise) { return otherwise; }
+    bool isRefusedByLockAlone(VM&, UniquedStringImpl*, JSValue&) { return false; }
     bool isLockedBuiltin() const { return false; }
 #endif
 

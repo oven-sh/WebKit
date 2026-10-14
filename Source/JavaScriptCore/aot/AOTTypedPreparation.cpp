@@ -1889,17 +1889,12 @@ static void giveConstructionsOneBody(Program& program)
 static void giveCastsOneBody(Program& program)
 {
     constexpr unsigned minSites = 4;
-    static const char* const compactSetAsked = getenv("BUN_AOT_SWITCH_COMPACT2");
-    static const char* const compactSet = compactSetAsked ? compactSetAsked : "g";
-    static const char* const compactLevers = getenv("BUN_AOT_SWITCH_COMPACT2_LEVERS");
-    if (!((compactLevers ? static_cast<unsigned>(atoi(compactLevers)) : 458781u) >> Program::leverOfBodiesOfCasts & 1))
-        return;
     unsigned count = program.functions.size();
     Vector<Vector<std::pair<ValueID, uint64_t>>> sites(count);
     forEachIndexInParallel(count, [&](unsigned i) {
         auto& function = program.functions[i];
         FunctionID id(i);
-        bool isInSet = !function.isBodyOfSeveralSites && (!strcmp(compactSet, "all") || (strchr(compactSet, 'g') && program.isColdByGraph(id)) || strchr(compactSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c'));
+        bool isInSet = !function.isBodyOfSeveralSites && program.isColdByGraph(id);
         if (!isInSet || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
@@ -1979,7 +1974,7 @@ static void giveCastsOneBody(Program& program)
         if (function.blocks.isEmpty())
             continue;
         FunctionID id(i);
-        bool isInSet = !function.isBodyOfSeveralSites && (!strcmp(compactSet, "all") || (strchr(compactSet, 'g') && program.isColdByGraph(id)) || strchr(compactSet, program.isHotByText(id) ? 'h' : program.isRareByText(id) ? 'r' : 'c'));
+        bool isInSet = !function.isBodyOfSeveralSites && program.isColdByGraph(id);
         BitVector isSite;
         for (auto& site : sites[i])
             isSite.set(site.first.index());
@@ -4477,10 +4472,7 @@ static void findFunctionsColdByGraph(Program& program)
 
 static bool isTooSmallToHaveColdCode(const Program& program)
 {
-    static const uint64_t leastSizeWithColdCode = [] {
-        const char* text = getenv("AOT_X_LEAST_SIZE_WITH_COLD_CODE");
-        return text ? strtoull(text, nullptr, 10) : 65536ull;
-    }();
+    static constexpr uint64_t leastSizeWithColdCode = 65536;
     uint64_t size = 0;
     for (auto& function : program.functions) {
         if (!function.isGenericEntrypoint() && !function.has(Format::FunctionIsBuiltin | Format::FunctionIsOfBuiltinModule))

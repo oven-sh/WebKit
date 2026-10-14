@@ -75,6 +75,11 @@ uint64_t imageStamp()
     mix(BiasedDataPointer::bias);
     mix(Instance::offsetOfTypedStatics());
     mix(Instance::offsetOfTypedCards());
+    mix(static_cast<uint64_t>(adapterSaveAreaSize) << 8 | static_cast<uint64_t>(-offsetOfInstanceInAdapter));
+#if CPU(ARM64)
+    mix(static_cast<uint64_t>(cellCageBaseGPR) << 16 | Instance::offsetOfCellCageBase());
+    mix(static_cast<uint64_t>(staticsGPR));
+#endif
     mix(Instance::roomForEnvironments);
     mix(Instance::granuleBelowInstance);
     mix(Instance::typedCardShift);
@@ -102,7 +107,6 @@ uint64_t imageStamp()
 #elif CPU(X86_64)
     mix(2 | MacroAssembler::featuresOfBuildTarget() << 8);
 #endif
-    mix(usesDataStubs());
     mix(Typed::builtinsHash);
     mix(Typed::Format::version);
     return stamp;
@@ -978,7 +982,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     facts.appendList(std::initializer_list<uint64_t> { entry.reg().index(), static_cast<uint64_t>(entry.offset()) });
             }
             for (auto& call : info.stubCalls)
-                facts.appendList(std::initializer_list<uint64_t> { call.offset, static_cast<uint64_t>(call.stub), call.isTailCall, call.thunk, call.function == StubCall::noFunction, call.callSite, call.argumentMoves == StubCall::noArgumentMoves ? 0 : info.argumentMoves[call.argumentMoves].size() });
+                facts.appendList(std::initializer_list<uint64_t> { call.offset, static_cast<uint64_t>(call.stub), call.isTailCall, call.thunk, call.function == StubCall::noFunction, call.callSite, call.argumentMoves == StubCall::noArgumentMoves ? 0 : info.argumentMoves[call.argumentMoves].size(), call.firstOmittedGPR, call.endOfOmittedGPRs });
             for (auto& call : info.stubCalls) {
                 if (call.argumentMoves != StubCall::noArgumentMoves)
                     facts.appendVector(info.argumentMoves[call.argumentMoves]);
@@ -1070,8 +1074,7 @@ Vector<uint8_t> ImageBuilder::finish()
             ImageKey keptFunction = keyOf[classOf[index]];
             bytes += function.code.bytes.size();
             entriesInsideFunctions.append({ function.key, function.code.info.convention, keptFunction, 0 });
-            if (!function.code.info.isOnlyCalledDirectly)
-                keptForFunctionsEnteredFromOutside.append(keptFunction);
+            keptForFunctionsEnteredFromOutside.append(keptFunction);
             foldedFunctions.append({ function.key, keptFunction, function.code.bytes.size(), WTF::move(function.nameForMap) });
         }
         dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", foldedFunctions.size(), " functions have the code of another: ", bytes, " bytes");
@@ -1189,7 +1192,7 @@ Vector<uint8_t> ImageBuilder::finish()
     }
     endStep("the stack that is taken without asking"_s);
 
-    if (Options::useAOTInlining()) {
+    {
         BitVector isCalled(m_functions.size());
         Vector<uint32_t> worklist;
         auto call = [&](size_t index) {
@@ -1211,7 +1214,7 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         }
         for (size_t index = 0; index < m_functions.size(); ++index) {
-            if (!m_functions[index].code.info.isOnlyCalledDirectly && !isCreatedOnlyAtExpression.get(index))
+            if (!isCreatedOnlyAtExpression.get(index))
                 call(index);
         }
         for (auto& key : keptForFunctionsEnteredFromOutside) {
@@ -1226,7 +1229,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     call(*target);
             }
             for (auto& key : info.functionsCreated) {
-                if (auto index = indexOf(key); index && !m_functions[*index].code.info.isOnlyCalledDirectly)
+                if (auto index = indexOf(key))
                     call(*index);
             }
         }
@@ -1267,6 +1270,27 @@ Vector<uint8_t> ImageBuilder::finish()
         dataLogLn("AOT: empty array literals that are pushed to and born contiguous: ", inPlace, " are made in place, ", byStub, " by the stub");
     }
 
+    Vector<std::array<uint8_t, 2>> omittedArgumentsOf(FillWith { }, m_functions.size(), std::array<uint8_t, 2> { });
+    for (size_t index = 0; index < m_functions.size(); ++index) {
+        for (auto& call : m_functions[index].code.info.stubCalls) {
+            if (call.firstOmittedGPR == call.endOfOmittedGPRs)
+                continue;
+            auto& [first, end] = omittedArgumentsOf[*directTargetOf(index, call)];
+            first = end ? std::min(first, call.firstOmittedGPR) : call.firstOmittedGPR;
+            end = std::max(end, call.endOfOmittedGPRs);
+        }
+    }
+    auto sizeAheadOf = [&](size_t index) {
+        return sizeOfOmittedArguments(omittedArgumentsOf[index][0], omittedArgumentsOf[index][1]);
+    };
+    auto sizeAheadFor = [&](size_t target, const StubCall& call) -> size_t {
+        return call.firstOmittedGPR == call.endOfOmittedGPRs ? 0 : sizeOfOmittedArguments(call.firstOmittedGPR, omittedArgumentsOf[target][1]);
+    };
+    constexpr unsigned shiftOfEntryInFarCallee = 27;
+    RELEASE_ASSERT(!(m_functions.size() >> shiftOfEntryInFarCallee));
+    auto farCalleeOf = [&](size_t target, const StubCall& call) {
+        return static_cast<uint32_t>(target) | (call.firstOmittedGPR == call.endOfOmittedGPRs ? 0 : call.firstOmittedGPR + 1u) << shiftOfEntryInFarCallee;
+    };
     endStep("inlining"_s);
     Outlining outlining;
     auto indexOfFunctionWithKey = [&](const ImageKey& key) -> uint32_t {
@@ -1303,7 +1327,7 @@ Vector<uint8_t> ImageBuilder::finish()
         }), WTF::move(entries), *options);
         endStep("choosing what is outlined"_s);
     }
-    static const char* const outlinesForTesting = getenv("BUN_AOT_SWITCH_OUTLINE_TEST");
+    static const char* const outlinesForTesting = byteCast<char>(Options::aotOutlineForTesting());
     if (outlinesForTesting && outlining.bodies.isEmpty()) {
         const bool takesCalls = !!strchr(outlinesForTesting, 'k');
         struct Found {
@@ -1321,7 +1345,7 @@ Vector<uint8_t> ImageBuilder::finish()
             auto& info = code.info;
             if (!canBeWalked(code) || info.typedFunction == FunctionReportableSites::notTyped || (isARM64() && info.hasNoFrame))
                 return;
-            static const char* const forgetsForTesting = getenv("BUN_AOT_SWITCH_OUTLINE_BREAK");
+            static const char* const forgetsForTesting = byteCast<char>(Options::aotOutlinerFaultForTesting());
             const uint32_t firstGuest = isARM64() && !(forgetsForTesting && !strcmp(forgetsForTesting, "guest")) ? firstGuestIn(index) : std::numeric_limits<uint32_t>::max();
             BitVector isTarget(code.bytes.size() + 1);
             BitVector isBarred(code.bytes.size() + 8);
@@ -1355,6 +1379,7 @@ Vector<uint8_t> ImageBuilder::finish()
                     found.words.append(code.bytes[offset + i]);
                 if (call) {
                     found.words.append(static_cast<uint64_t>(call->stub) << 32 | static_cast<uint64_t>(call->thunk) << 2 | (call->function != StubCall::noFunction) << 1 | (call->argumentMoves != StubCall::noArgumentMoves));
+                    found.words.append(static_cast<uint64_t>(call->firstOmittedGPR) << 8 | call->endOfOmittedGPRs);
                     if (call->function != StubCall::noFunction) {
                         auto& key = info.knownCallees[call->function];
                         found.words.append(static_cast<uint64_t>(key.module) << 32 | key.start);
@@ -1463,7 +1488,7 @@ Vector<uint8_t> ImageBuilder::finish()
             uint32_t from;
             uint32_t shift;
         };
-        static const char* const breaksForTesting = getenv("BUN_AOT_SWITCH_OUTLINE_BREAK");
+        static const char* const breaksForTesting = byteCast<char>(Options::aotOutlinerFaultForTesting());
         auto breaks = [](const char* what) {
             return breaksForTesting && !strcmp(breaksForTesting, what);
         };
@@ -1751,15 +1776,15 @@ Vector<uint8_t> ImageBuilder::finish()
         size_t size = m_functions[index].code.bytes.size();
         return (farCallees[index].isEmpty() ? size : WTF::roundUpToMultipleOf<sizeof(uint32_t)>(size) + farCallees[index].size() * sizeOfVeneer) + sizeOfOwnBodiesOf[index];
     };
-    if (usesStubs) {
+    {
         Vector<size_t> at;
         size_t end = 0;
         size_t lastStubs = std::numeric_limits<size_t>::max();
         for (auto& function : m_functions) {
-            end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end);
+            end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeAheadOf(at.size()));
             if (lastStubs == std::numeric_limits<size_t>::max() || end + function.code.bytes.size() + sizeOfOwnBodiesOf[at.size()] - lastStubs > reach) {
                 end = lastStubs = WTF::roundUpToMultipleOf<imageStubsAlignment>(end);
-                end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeOfStubs);
+                end = WTF::roundUpToMultipleOf<imageFunctionAlignment>(end + sizeOfStubs + sizeAheadOf(at.size()));
             }
             at.append(end);
             end += function.code.bytes.size() + sizeOfOwnBodiesOf[at.size() - 1];
@@ -1773,9 +1798,9 @@ Vector<uint8_t> ImageBuilder::finish()
                     continue;
                 size_t from = at[index] + call.offset;
                 size_t to = at[*target];
-                if (((from > to ? from - to : to - from) <= reach && !Options::forceAOTVeneers()) || farCallees[index].contains(static_cast<uint32_t>(*target)))
+                if (((from > to ? from - to : to - from) <= reach && !Options::forceAOTVeneers()) || farCallees[index].contains(farCalleeOf(*target, call)))
                     continue;
-                farCallees[index].append(static_cast<uint32_t>(*target));
+                farCallees[index].append(farCalleeOf(*target, call));
                 sizeOfVeneers += sizeOfVeneer + sizeof(uint32_t) + imageStubsAlignment;
             }
         });
@@ -1791,12 +1816,12 @@ Vector<uint8_t> ImageBuilder::finish()
         auto& function = m_functions[functionIndex];
         recordsSize += sizeof(ImageFunction) + function.code.info.sites.size() * (sizeof(Site) + (identifierIndices ? 0 : sizeof(uint32_t))) + function.code.info.plans.sizeInBytes() + (function.code.info.returnedVariable ? 2 * sizeof(uint32_t) : 0) + (function.code.info.quotes.isEmpty() && function.code.info.constructSites.isEmpty() ? 0 : sizeof(uint32_t));
         RELEASE_ASSERT(function.code.info.sites.size() == function.code.info.numSlots);
-        codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize);
-        if (usesStubs && (stubsAt.isEmpty() || codeSize + sizeWithVeneers(functionIndex) - stubsAt.last() > reach)) {
+        codeSize = WTF::roundUpToMultipleOf<imageFunctionAlignment>(codeSize + sizeAheadOf(functionIndex));
+        if (stubsAt.isEmpty() || codeSize + sizeWithVeneers(functionIndex) - stubsAt.last() > reach) {
             codeSize = WTF::roundUpToMultipleOf<imageStubsAlignment>(codeSize);
             stubsAt.append(codeSize);
             static_assert(!((1 << minCodeGranuleShift) % imageFunctionAlignment));
-            codeSize = WTF::roundUpToMultipleOf(static_cast<size_t>(1) << codeGranuleShift, codeSize + sizeOfStubs);
+            codeSize = WTF::roundUpToMultipleOf(static_cast<size_t>(1) << codeGranuleShift, codeSize + sizeOfStubs + sizeAheadOf(functionIndex));
         }
         placement.append({ codeSize, stubsAt.isEmpty() ? 0 : stubsAt.last() });
         if (Options::logAOTTypeInference()) [[unlikely]]
@@ -1820,7 +1845,7 @@ Vector<uint8_t> ImageBuilder::finish()
         if (jump.function != StubCall::noFunction) {
             uint32_t callee = indexOfFunctionWithKey(calleesOfBodies[jump.function]);
             RELEASE_ASSERT(callee != ImageFunction::noSuchFunction);
-            return placement[callee].first;
+            return placement[callee].first - sizeAheadFor(callee, jump);
         }
         if (jump.argumentMoves != StubCall::noArgumentMoves)
             return copyOfStubs + argumentThunksAt + argumentThunks.offsets[numberOfArgumentMoves(argumentMovesOfBodies[jump.argumentMoves])];
@@ -2411,7 +2436,6 @@ Vector<uint8_t> ImageBuilder::finish()
         tablesEnd += size;
         return result;
     };
-    header.auditsTypes = Options::auditAOTTypedFields();
     header.quotesOffset = place(quotes.size());
     header.quotesTextOffset = place(quotesText.size());
     header.quoteTextBlockSize = quoteTextBlockSize;
@@ -2637,7 +2661,7 @@ Vector<uint8_t> ImageBuilder::finish()
 
         ImageFunction record { };
         RELEASE_ASSERT(functionStarts[index] == codeAt);
-        static const char* const limitForTesting = getenv("BUN_AOT_SWITCH_RECORD_LIMITS_TEST");
+        static const char* const limitForTesting = byteCast<char>(Options::aotImageLimitToExceedForTesting());
         auto isOver = [&](const char* name, uint64_t value, unsigned numberOfBits) {
             return value >> numberOfBits || (limitForTesting && !strcmp(limitForTesting, name));
         };
@@ -2657,7 +2681,6 @@ Vector<uint8_t> ImageBuilder::finish()
         record.startsCold = info.startsCold;
         record.isGetByValOnThis = info.isGetByValOnThis;
         record.returnsScopeVariable = !!info.returnedVariable;
-        record.hasNoGeneralBody = info.isOnlyCalledDirectly;
         record.hasQuotes = !info.quotes.isEmpty() || !info.constructSites.isEmpty();
 
         ImageKey key = function.key;
@@ -2718,7 +2741,6 @@ Vector<uint8_t> ImageBuilder::finish()
         RELEASE_ASSERT(!(at % imageFunctionAlignment));
         static_assert(hasOneBitSet(imageFunctionAlignment));
         static_assert(GetterSetter::getterShortcutIsCode < imageFunctionAlignment);
-        static_assert((JSFunction::rareDataTag | JSFunction::aotFunctionTag) < imageFunctionAlignment && ((static_cast<uintptr_t>(1) << JSFunction::aotFunctionIndexShift) - 1) - JSFunction::aotCodeOffsetMask == imageFunctionAlignment - 1);
         ImageKey key { entry.convention.numberOfParameters | (entry.convention.signature == Signature::List ? 1u << 8 : 0u), entry.key.start, entry.key.kind, static_cast<uint32_t>(at) | ImageKey::isEntryInsideFunction };
         unsigned bucket = key.hash() & (capacity - 1);
         while (table[bucket].record)
@@ -2769,13 +2791,14 @@ Vector<uint8_t> ImageBuilder::finish()
     Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned index) {
         auto& info = m_functions[index].code.info;
         size_t codeAt = placement[index].first;
+        writeOmittedArguments(code, codeAt - sizeAheadOf(index), omittedArgumentsOf[index][0], omittedArgumentsOf[index][1]);
         for (auto& call : info.stubCalls) {
             if (call.function == StubCall::noFunction)
                 continue;
             if (auto target = directTargetOf(index, call)) {
-                size_t targetAt = placement[*target].first;
+                size_t targetAt = placement[*target].first - sizeAheadFor(*target, call);
                 size_t from = codeAt + call.offset;
-                if (size_t veneer = farCallees[index].find(static_cast<uint32_t>(*target)); veneer != notFound) {
+                if (size_t veneer = farCallees[index].find(farCalleeOf(*target, call)); veneer != notFound) {
                     size_t veneerAt = codeAt + WTF::roundUpToMultipleOf<sizeof(uint32_t)>(m_functions[index].code.bytes.size()) + veneer * sizeOfVeneer;
                     writeVeneer(code, veneerAt, targetAt);
                     targetAt = veneerAt;
@@ -2823,8 +2846,11 @@ static bool keepsFirstPagesWithoutAccess()
     size_t sizeOfPage = pageSize();
     for (uintptr_t page = 0; page < FaultingAccessInImage::reach; page += sizeOfPage) {
         void* mapped = mmap(std::bit_cast<void*>(page), sizeOfPage, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
-        if (mapped == MAP_FAILED) {
-            if (errno != EPERM && errno != EACCES)
+        bool isElsewhereForZero = !page && mapped != MAP_FAILED && mapped;
+        if (isElsewhereForZero)
+            munmap(mapped, sizeOfPage);
+        if (mapped == MAP_FAILED || isElsewhereForZero) {
+            if (!isElsewhereForZero && errno != EPERM && errno != EACCES)
                 return false;
             unsigned char isResident;
             if (mincore(std::bit_cast<void*>(page), sizeOfPage, &isResident) != -1 || errno != ENOMEM)
@@ -3385,7 +3411,7 @@ bool Image::hasAny()
 
 const void* Image::stubAddress(Stub stub)
 {
-    if (!usesStubs || !hasAny())
+    if (!hasAny())
         return nullptr;
     auto& all = registry();
     Locker locker { all.lock };
@@ -3459,7 +3485,7 @@ std::optional<ImageView::Function> ImageView::find(const ImageKey& key) const
         uint64_t start = reinterpret_cast<const uint32_t*>(m_data.data() + header.functionStartsOffset)[function.index];
         auto futureLocation = [&](const void* pointer) { return m_address + (static_cast<const uint8_t*>(pointer) - m_data.data()); };
         return Function { EntryWord::encode(start, function.convention()), function.index,
-            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasNoGeneralBody, !!function.hasInlineFrames,
+            reinterpret_cast<const Site*>(futureLocation(function.sites())), reinterpret_cast<const ImageFunction*>(futureLocation(&function)), function.numSlots, !!function.startsCold, !!function.hasSiteConstants, !!function.hasInlineFrames,
             static_cast<uint16_t>(reinterpret_cast<const ImageFrame*>(m_data.data() + header.framesOffset)[function.frame].calleeStart) };
     }
     return std::nullopt;
@@ -3781,6 +3807,41 @@ AOTFileUse useAOTFile(std::span<const uint8_t>, AOTFileHandle, int64_t)
 
 #endif
 
+#if OS(DARWIN)
+
+AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
+{
+    return useAOTFile(bytes, reinterpret_cast<uintptr_t>(bytes.data()), [&](size_t offsetOfCode, size_t, const char*&) -> void* {
+        return const_cast<uint8_t*>(bytes.data()) + offsetOfCode;
+    }, [](void*, size_t) { });
+}
+
+#elif OS(LINUX) || OS(FREEBSD)
+
+AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
+{
+    return useAOTFile(bytes, reinterpret_cast<uintptr_t>(bytes.data()), [&](size_t offsetOfCode, size_t size, const char*& failureReason) -> void* {
+        void* code = const_cast<uint8_t*>(bytes.data()) + offsetOfCode;
+        if (mprotect(code, size, PROT_READ | PROT_EXEC)) {
+            failureReason = strerror(errno);
+            return nullptr;
+        }
+        return code;
+    }, [](void* code, size_t size) {
+        mprotect(code, size, PROT_READ);
+    });
+}
+
+#elif !OS(WINDOWS)
+
+AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t>)
+{
+    constexpr const char* reason = "not supported on this platform";
+    return { reason, reason };
+}
+
+#endif
+
 #if OS(WINDOWS)
 
 AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes)
@@ -3897,6 +3958,7 @@ namespace JSC {
 bool isAOTImagePC(const void*) { return false; }
 bool registerAOTImage(std::span<const uint8_t>, const void*) { return false; }
 AOTFileUse useAOTFile(std::span<const uint8_t>, int, int64_t) { return { "not supported on this platform", "not supported on this platform" }; }
+AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t>) { return { "not supported on this platform", "not supported on this platform" }; }
 Vector<uint8_t> buildAOTFile(VM&, std::span<const SourceCode>, bool, std::span<const uint8_t>, unsigned) { return { }; }
 std::optional<size_t> aotImageSize(std::span<const uint8_t>) { return std::nullopt; }
 std::optional<unsigned> aotImageRegExpCount(std::span<const uint8_t>) { return std::nullopt; }

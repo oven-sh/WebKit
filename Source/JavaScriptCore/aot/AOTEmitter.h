@@ -121,7 +121,6 @@ public:
     LValue constIntPtr(T value) { return constInt64(static_cast<intptr_t>(value)); }
 
     LValue valueOf(TypedPointer pointer) { return pointer.offset() ? FTL::Output::add(pointer.base(), constIntPtr(pointer.offset())) : pointer.base(); }
-    FTL::TypedPointer withValue(TypedPointer pointer) { return FTL::TypedPointer(*pointer.heap(), valueOf(pointer)); }
     TypedPointer address(const B3::AbstractHeap& heap, LValue base, ptrdiff_t offset = 0) { return TypedPointer(heap, base, offset); }
     TypedPointer address(LValue base, const B3::AbstractHeap& field, ptrdiff_t offset = 0) { return TypedPointer(field, base, offset + field.offset()); }
     LValue baseIndex(LValue base, LValue index, FTL::Scale scale, ptrdiff_t offset = 0) { return FTL::Output::baseIndex(base, index, scale, offset); }
@@ -266,8 +265,12 @@ protected:
     LValue boxInt32(LValue v) { return m_out.add(m_out.zeroExt(v, B3::Int64), m_numberTag); }
     LValue unboxDouble(LValue v) { return v->hasInt64() ? m_out.constDouble(std::bit_cast<double>(static_cast<uint64_t>(v->asInt64()) + static_cast<uint64_t>(JSValue::NumberTag))) : m_out.bitCast(m_out.add(v, m_numberTag), B3::Double); }
     LValue boxDouble(LValue v) { return m_out.sub(m_out.bitCast(v, B3::Int64), m_numberTag); }
-    LValue unboxBoolean(LValue v) { return m_out.notZero64(m_out.bitAnd(v, m_out.constInt64(1))); }
-    LValue boxBoolean(LValue v) { return m_out.select(v, m_out.constInt64(JSValue::ValueTrue), m_out.constInt64(JSValue::ValueFalse)); }
+    LValue unboxBoolean(LValue v) { return m_out.bitAnd(m_out.castToInt32(v), m_out.constInt32(1)); }
+    LValue boxBoolean(LValue v)
+    {
+        static_assert(JSValue::ValueTrue == (JSValue::ValueFalse | 1));
+        return m_out.bitOr(m_out.zeroExt(v, B3::Int64), m_out.constInt64(JSValue::ValueFalse));
+    }
     LValue numberToDouble(LValue jsNumber);
     LValue cellType(LValue cell) { return m_out.load8ZeroExt32(cell, m_heaps.JSCell_typeInfoType); }
     LValue isCellOfType(LValue cell, JSType type) { return m_out.equal(cellType(cell), m_out.constInt32(type)); }
@@ -275,7 +278,6 @@ protected:
     LValue registerOnEntry(Reg);
     LValue structureOf(LValue cell);
     LValue structureWithID(LValue structureID);
-    LValue fieldIDInSlot(LValue structureID, unsigned slot);
     LValue entry(Entry);
 
     void orElse(LValue condition, LBasicBlock otherwise);
@@ -337,6 +339,8 @@ protected:
     LValue m_table { nullptr };
     LValue m_numberTag { nullptr };
     LValue m_notCellMask { nullptr };
+    LValue m_cellCageBase { nullptr };
+    LValue m_statics { nullptr };
     bool m_leavesNextIntervalToSlowPath { false };
 };
 

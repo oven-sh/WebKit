@@ -714,6 +714,7 @@ public:
     bool m_needsSiteSpecificQuirks { false };
     bool m_canDoASCIIUCADUCETLocaleCompare { false };
     bool m_isNumberingIntrinsics { false };
+    bool m_hasImmutableIntrinsics { false };
     unsigned m_globalLexicalBindingEpoch { 1 };
     String m_evalDisabledErrorMessage;
     String m_webAssemblyDisabledErrorMessage;
@@ -1180,7 +1181,6 @@ public:
     static constexpr ptrdiff_t offsetOfCanDoASCIIUCADUCETLocaleCompare() { return OBJECT_OFFSETOF(JSGlobalObject, m_canDoASCIIUCADUCETLocaleCompare); }
     static constexpr ptrdiff_t offsetOfVarInjectionWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varInjectionWatchpointSet); }
     static constexpr ptrdiff_t offsetOfArrayIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_arrayIteratorProtocolWatchpointSet); }
-    static constexpr ptrdiff_t offsetOfOriginalArrayStructureForIndexingShape() { return OBJECT_OFFSETOF(JSGlobalObject, m_originalArrayStructureForIndexingShape); }
     static constexpr ptrdiff_t offsetOfStringIteratorProtocolWatchpointSet() { return OBJECT_OFFSETOF(JSGlobalObject, m_stringIteratorProtocolWatchpointSet); }
     static constexpr ptrdiff_t offsetOfVarReadOnlyWatchpoint() { return OBJECT_OFFSETOF(JSGlobalObject, m_varReadOnlyWatchpointSet); }
     static constexpr ptrdiff_t offsetOfFunctionProtoHasInstanceSymbolFunction() { return OBJECT_OFFSETOF(JSGlobalObject, m_functionProtoHasInstanceSymbolFunction); }
@@ -1307,6 +1307,8 @@ public:
     // - the properties of the global object that name them are read-only and non-configurable.
     // What exists when the realm is made is dealt with then, anything else when it is made, and nothing is made for this but what
     // ImmutableIntrinsics numbers.
+    bool hasImmutableIntrinsics() const { return m_hasImmutableIntrinsics; }
+    bool fixesOrNotesIntrinsics() const { return m_hasImmutableIntrinsics || vm().auditsImmutableIntrinsics(); }
     JS_EXPORT_PRIVATE void makeIntrinsicsImmutable();
     enum class IntrinsicKind : bool { Prototype, Other };
     JS_EXPORT_PRIVATE void makeIntrinsicImmutable(JSObject*, IntrinsicKind);

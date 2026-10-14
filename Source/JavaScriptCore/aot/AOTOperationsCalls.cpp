@@ -33,8 +33,6 @@
 
 namespace JSC { namespace AOT {
 
-extern "C" void* g_aotStaticFunctionEntrypoints[3];
-
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo* callLinkInfo)
 {
     JSValue callee = calleeFrame->guaranteedJSValueCallee();
@@ -45,11 +43,12 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     if (callee.inherits<InternalFunction>())
         return encodeResult(vm.getCTIInternalFunctionTrampolineFor(kind).taggedPtr(), nullptr);
     auto* function = dynamicDowncast<JSFunction>(callee.asCell());
-    if (!function)
+    if (!function) {
+        if (isCall(kind) && isSlimClosureType(callee.asCell()->type())) {
+            calleeFrame->setCodeBlock(nullptr);
+            return encodeResult(taggedSlimClosureEntrypoint(), nullptr);
+        }
         return LLInt::llint_virtual_call(calleeFrame, callLinkInfo);
-    if (function->hasAOTFunctionWord() && isCall(kind) && linkColdStaticFunction(Instance::of(function), function->aotFunctionIndex(), function->scopeUnchecked())) {
-        calleeFrame->setCodeBlock(nullptr);
-        return encodeResult(g_aotStaticFunctionEntrypoints[0], nullptr);
     }
     if (function->isHostFunction())
         return encodeResult(function->executable()->entrypointFor(kind, ArityCheckMode::MustCheckArity).taggedPtr(), nullptr);
@@ -65,7 +64,7 @@ extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo
     if (executable->aotEntryFor(kind)) {
         DeferGCForAWhile deferGC(vm);
         if (!linkStaticFunction(Instance::of(function), executable, kind, function->scopeUnchecked())) [[unlikely]] {
-            throwSyntaxError(function->realm(), scope, makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s));
+            throwSyntaxError(function->realm(), scope, withAOTErrorNote(makeString("The function "_s, executable->ecmaName().string(), " was compiled ahead of time, but its module is linked differently at run time, and the executable has no other code for it"_s)));
             return encodeResult(nullptr, std::bit_cast<void*>(&vm));
         }
     }
@@ -90,17 +89,6 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (In
     AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
     auto scope = DECLARE_THROW_SCOPE(vm);
     throwStackOverflowError(instance->globalObject, scope);
-}
-
-JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, (Instance* instance, EncodedJSValue callee))
-{
-    countOperationNamed(instance, __func__);
-    JSGlobalObject* globalObject = instance->globalObject;
-    VM& vm = *instance->vm;
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    throwTypeError(globalObject, scope, makeString("The function '"_s, uncheckedDowncast<JSFunction>(JSValue::decode(callee).asCell())->jsExecutable()->ecmaName().string(), "' was compiled for direct calls only"_s));
 }
 
 } } // namespace JSC::AOT

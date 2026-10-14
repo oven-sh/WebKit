@@ -168,10 +168,6 @@ public:
         uint32_t nameSid;
         uint32_t flags;
         Kind kind() const { return static_cast<Kind>(flags & KindMask); }
-        bool keepsDeclaredValue() const
-        {
-            return !(flags & IsAssigned);
-        }
     };
 
     static_assert(sizeof(Header) == 16 * sizeof(uint32_t));

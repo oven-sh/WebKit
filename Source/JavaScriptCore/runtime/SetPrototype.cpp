@@ -252,7 +252,7 @@ static EncodedJSValue fastSetIntersection(JSGlobalObject* globalObject, JSSet* t
     JSSet* targetSet = thisSet->size() <= otherSet->size() ? otherSet : thisSet;
 
 #if ENABLE(AOT)
-    forEachInSet(vm, globalObject, sourceSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
+    forEachInSet(vm, globalObject, sourceSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
 #else
     JSCell* sourceStorageCell = sourceSet->storageOrSentinel(vm);
     if (sourceStorageCell == vm.orderedHashTableSentinel())
@@ -373,7 +373,7 @@ static EncodedJSValue fastSetUnion(JSGlobalObject* globalObject, JSSet* thisSet,
 
 #if ENABLE(AOT)
     scope.release();
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
+    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
 #else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
@@ -447,7 +447,7 @@ static EncodedJSValue fastSetIsSubsetOf(JSGlobalObject* globalObject, JSSet* thi
 
 #if ENABLE(AOT)
     bool isSubset = true;
-    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
+    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
 #else
     JSCell* thisStorageCell = thisSet->storageOrSentinel(vm);
     if (thisStorageCell == vm.orderedHashTableSentinel())
@@ -477,7 +477,7 @@ static EncodedJSValue fastSetDifference(JSGlobalObject* globalObject, JSSet* thi
     JSSet* result = JSSet::create(vm, globalObject->setStructure());
 
 #if ENABLE(AOT)
-    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
+    forEachInSet(vm, globalObject, thisSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
 #else
     JSCell* thisStorageCell = thisSet->storageOrSentinel(vm);
     if (thisStorageCell == vm.orderedHashTableSentinel())
@@ -633,7 +633,7 @@ static EncodedJSValue fastSetSymmetricDifference(JSGlobalObject* globalObject, J
 
 #if ENABLE(AOT)
     scope.release();
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) {
+    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA {
 #else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
@@ -834,7 +834,7 @@ static EncodedJSValue fastSetIsSupersetOf(JSGlobalObject* globalObject, JSSet* t
 
 #if ENABLE(AOT)
     bool isSuperset = true;
-    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
+    forEachInSet(vm, globalObject, otherSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
 #else
     JSCell* otherStorageCell = otherSet->storageOrSentinel(vm);
     if (otherStorageCell == vm.orderedHashTableSentinel())
@@ -958,7 +958,7 @@ static EncodedJSValue fastSetIsDisjointFrom(JSGlobalObject* globalObject, JSSet*
 
 #if ENABLE(AOT)
     bool isDisjoint = true;
-    forEachInSet(vm, globalObject, smallerSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) -> IterationStatus {
+    forEachInSet(vm, globalObject, smallerSet, [&](VM&, JSGlobalObject* globalObject, JSValue entryKey) ALWAYS_INLINE_LAMBDA -> IterationStatus {
 #else
     JSCell* smallerStorageCell = smallerSet->storageOrSentinel(vm);
     if (smallerStorageCell == vm.orderedHashTableSentinel())

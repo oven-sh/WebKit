@@ -188,7 +188,6 @@ struct ProgramData {
     uint32_t numberOfSources;
     uint32_t imageKeysOffset;
     uint32_t imageKeyCapacity;
-    uint32_t stringConstantRecordsOffset;
     uint32_t engineBuiltinModulesOffset;
     uint32_t numberOfEngineBuiltins;
 };

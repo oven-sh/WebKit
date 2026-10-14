@@ -777,15 +777,10 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncProtoSetter, (JSGlobalObject* globalObject, C
 JSC_DEFINE_HOST_FUNCTION(globalFuncSetPrototypeDirect, (JSGlobalObject* globalObject, CallFrame* callFrame))
 {
     VM& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
 
     JSValue value = callFrame->uncheckedArgument(0);
     if (value.isObject() || value.isNull()) {
         JSObject* object = asObject(callFrame->thisValue());
-#if USE(BUN_JSC_ADDITIONS)
-        if (TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::tryToChangePrototype(vm, object, value)) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, TypedFieldOfInheritorError);
-#endif
         object->setPrototypeDirect(vm, value);
     }
 
@@ -802,10 +797,6 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncSetPrototypeDirectOrThrow, (JSGlobalObject* g
         return throwVMError(globalObject, scope, createInvalidPrototypeError(globalObject, value));
 
     JSObject* object = asObject(callFrame->thisValue());
-#if USE(BUN_JSC_ADDITIONS)
-    if (TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::tryToChangePrototype(vm, object, value)) [[unlikely]]
-        return throwVMTypeError(globalObject, scope, TypedFieldOfInheritorError);
-#endif
     object->setPrototypeDirect(vm, value);
 
     return JSValue::encode(jsUndefined());
@@ -983,10 +974,9 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
         // excludedSet is no longer used.
         ensureStillAliveHere(unlinkedCodeBlock);
 
-        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]] {
-            if (!target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size()) && target->structure()->typedLayoutID()) [[unlikely]]
-                return throwVMTypeError(globalObject, scope, TypedFieldError);
-        } else {
+        if (target->inherits<JSFinalObject>() && target->canPerformFastPutInlineExcludingProto() && target->isStructureExtensible()) [[likely]]
+            target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
+        else {
             for (size_t i = 0; i < properties.size(); ++i)
                 target->putDirect(vm, properties[i], values.at(i));
         }
@@ -1017,10 +1007,8 @@ JSC_DEFINE_HOST_FUNCTION(globalFuncCopyDataProperties, (JSGlobalObject* globalOb
             value = source->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, { });
 
-        bool isApplied = target->putDirectMayBeIndex(globalObject, propertyName, value);
+        target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!isApplied && target->structure()->typedLayoutID()) [[unlikely]]
-            return throwVMTypeError(globalObject, scope, TypedFieldError);
     }
     ensureStillAliveHere(unlinkedCodeBlock);
     return JSValue::encode(target);
@@ -1053,7 +1041,7 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
     }
 
     Structure* sourceStructure = source->structure();
-    if (!into && !sourceStructure->typedLayoutID() && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
+    if (!into && sourceStructure->canPerformFastPropertyEnumerationCommon()) [[likely]] {
         if (auto* cloned = tryCreateObjectViaCloning(vm, globalObject, source))
             return cloned;
     }
@@ -1070,7 +1058,7 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
 
 #if ENABLE(AOT)
     // As objectAssignFast(): its fields are enumerable data properties with string keys, and reading them runs nothing. The names live as long as the program.
-    if (sourceStructure->compiledLayout() && !target->structure()->typedLayoutID() && !target->structure()->compiledLayout()) {
+    if (sourceStructure->compiledLayout() && !target->structure()->compiledLayout()) {
         Vector<UniquedStringImpl*, 8> properties;
         MarkedArgumentBuffer values;
         bool hasOnlyFields = uncheckedDowncast<AOT::Typed::Object>(source)->forEachFieldAsProperty([&](UniquedStringImpl& name, JSValue value) {
@@ -1112,10 +1100,7 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
         });
         RETURN_IF_EXCEPTION(scope, { });
 
-        if (!target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size()) && target->structure()->typedLayoutID()) [[unlikely]] {
-            throwTypeError(globalObject, scope, TypedFieldError);
-            return nullptr;
-        }
+        target->putOwnDataPropertyBatching(vm, properties.mutableSpan().data(), values.data(), properties.size());
 
         return target;
     }
@@ -1140,12 +1125,8 @@ JSObject* cloneObjectForSpread(JSGlobalObject* globalObject, JSValue sourceValue
             value = source->get(globalObject, propertyName);
         RETURN_IF_EXCEPTION(scope, { });
 
-        bool isApplied = target->putDirectMayBeIndex(globalObject, propertyName, value);
+        target->putDirectMayBeIndex(globalObject, propertyName, value);
         RETURN_IF_EXCEPTION(scope, { });
-        if (!isApplied && target->structure()->typedLayoutID()) [[unlikely]] {
-            throwTypeError(globalObject, scope, TypedFieldError);
-            return nullptr;
-        }
     }
     return target;
 }

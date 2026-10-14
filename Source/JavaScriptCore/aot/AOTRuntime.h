@@ -112,7 +112,6 @@ struct State;
     v(StructureIDBase) \
     v(LookupExceptionHandler) \
     v(ThrowStackOverflowError) \
-    v(ThrowCalledIndirectlyError) \
     v(NativeCallTrampoline) \
     v(InternalFunctionCallTrampoline) \
     v(InternalFunctionConstructTrampoline) \
@@ -191,7 +190,6 @@ public:
     void countOperation(const char* name, const char* detail = nullptr, uint64_t count = 1) { m_operationCounts.add(std::pair { name, detail }, 0).iterator->value += count; }
     void countOperationBySlotState(const char* name, const Slot*);
     void countOperationAtSite(const char* name, uint32_t function, unsigned bytecodeOffset, unsigned line, unsigned column);
-    void countForFamily(const char* name, const char* nameByFamily, uint16_t family, const char* detail);
     void countAllocatedBytes(const char* kind, const Subspace*, size_t cellSize, const ClassInfo* classOfOwner, size_t bytes);
     bool shouldWriteOperationCountsAfterAllocating(size_t bytes)
     {
@@ -232,7 +230,6 @@ private:
     UncheckedKeyHashMap<UTF8CString, std::pair<uint64_t, uint64_t>> m_allocatedBytesByStack;
     size_t m_bytesAllocatedSinceLastWrite { 0 };
     UncheckedKeyHashMap<uint64_t, UTF8CString> m_detailsOfSites;
-    UncheckedKeyHashMap<std::pair<const char*, unsigned>, UTF8CString> m_detailsByFamily;
     uint16_t m_lastMegamorphicCacheEpoch { 0 };
     uint16_t m_epochOfFilledPairs { 0 };
     UncheckedKeyHashSet<std::tuple<const char*, const void*, size_t>> m_filledPairs;
@@ -546,7 +543,6 @@ struct Instance {
     JSModuleLoader* loader() const;
     bool loaderWasCleared() const;
     JS_EXPORT_PRIVATE static void destroyUnneededInstances(VM&);
-    static bool convertToTypedLayout(VM&, JSObject*, uint16_t layoutID);
     static JSObject* newObjectOf(VM&, Structure*);
     JS_EXPORT_PRIVATE static void destroy(Instance*);
 
@@ -639,7 +635,6 @@ struct Instance {
     struct CopiedProperties {
         Structure* last { nullptr };
         Vector<std::pair<PropertyOffset, PropertyOffset>, 8> offsets;
-        Vector<const TypedLayoutTable::Field*> fieldsToCheck;
     };
     const CopiedProperties& copiedProperties(Structure* target, Structure* source, const IdentifierSet* excluded);
     struct StructuresOfClass {
@@ -648,7 +643,7 @@ struct Instance {
     };
     StructuresOfClass structuresOfClass(uint32_t classIndex, JSObject* parentOfClassObject, JSCell* parentOfPrototype);
     void noteStructuresOfClass(uint32_t classIndex, JSObject* parentOfClassObject, JSCell* parentOfPrototype, StructuresOfClass);
-    static constexpr unsigned maxLearnedInlineCapacity = Structure::numberOfSlotsWithFieldIDs;
+    static constexpr unsigned maxLearnedInlineCapacity = 16;
     void noteOutOfLineProperty(Structure*);
     JS_EXPORT_PRIVATE void forgetResolvedGlobalScopes();
     JS_EXPORT_PRIVATE void forgetValuesOfGlobalProperties();
@@ -678,12 +673,7 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(Instance, structureIDBase); }
     static constexpr ptrdiff_t offsetOfCellCageBase() { return OBJECT_OFFSETOF(Instance, cellCageBase); }
     static constexpr ptrdiff_t offsetOfNumberBoxBase() { return OBJECT_OFFSETOF(Instance, numberBoxBase); }
-    static constexpr unsigned numberOfFamiliesWithByte = 2048;
-    static constexpr bool hasByteForFamily(unsigned family) { return family && family < numberOfFamiliesWithByte; }
-    static constexpr ptrdiff_t offsetOfDepartedFamily(unsigned family) { return OBJECT_OFFSETOF(Instance, departedFamilies) + family; }
-    JS_EXPORT_PRIVATE static void noteDepartedFamily(VM&, uint16_t family);
     static constexpr ptrdiff_t offsetOfFieldIDAtDirectLocationBase() { return OBJECT_OFFSETOF(Instance, fieldIDAtDirectLocationBase); }
-    static constexpr ptrdiff_t offsetOfFieldIDInSlotBase(unsigned slot) { return OBJECT_OFFSETOF(Instance, fieldIDInSlotBases) + slot * sizeof(uintptr_t); }
     static constexpr ptrdiff_t offsetOfIntrinsics() { return OBJECT_OFFSETOF(Instance, intrinsics); }
     static constexpr ptrdiff_t offsetOfLinkTimeConstants() { return OBJECT_OFFSETOF(Instance, linkTimeConstants); }
     static constexpr ptrdiff_t offsetOfObjectPrototype() { return OBJECT_OFFSETOF(Instance, objectPrototype); }
@@ -696,17 +686,17 @@ struct Instance {
     uint32_t barrierThreshold { 0 };
     uint8_t mutatorShouldBeFenced { 0 };
     uint8_t awaitMustSuspend { 0 };
-    uint8_t* typedCards { nullptr };
+    // By function: its ClosureWord. Read-only: ProgramData::closureWords().
+    const uint64_t* typedFunctions { nullptr };
     // MarkedBlockCage::base().
     uintptr_t cellCageBase;
-    uintptr_t numberBoxBase;
-    uint8_t* typedStatics { nullptr };
+    void* arrayAllocator { nullptr };
+    // By the number Typed::Builtins gives a function or symbol of the engine. They live as long as the global object.
+    JSCell** typedBuiltins { nullptr };
     // See Typed::startInStringTable().
     uint64_t* typedStrings { nullptr };
-    uint64_t stringHeader { 0 };
     void* singleCharacterStrings { nullptr };
     JSCell* emptyString { nullptr };
-    const double* powersOfTen { nullptr };
     // Goes up whenever the `prototype` property of a closure gets another value. See Typed::State::structureForThis().
     uint32_t typedPrototypeEpoch { 0 };
     static constexpr unsigned arrayKindShift = 1;
@@ -716,6 +706,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfOriginalArrayStructureIDs() { return OBJECT_OFFSETOF(Instance, originalArrayStructureIDs); }
     uint32_t firstRowOfThisPlusOne { UINT32_MAX };
     static constexpr ptrdiff_t offsetOfFirstRowOfThisPlusOne() { return OBJECT_OFFSETOF(Instance, firstRowOfThisPlusOne); }
+    uint64_t stringHeader { 0 };
+    const double* powersOfTen { nullptr };
     const uint32_t* functionMetadataOffsets;
     const uint8_t* code;
     const uint32_t* codeGranules;
@@ -764,13 +756,11 @@ struct Instance {
     const uint32_t* typedTexts { nullptr };
     const uint8_t* typedData { nullptr };
     JSCell** typedWideStrings { nullptr };
-    // By function: its ClosureWord. Read-only: ProgramData::closureWords().
-    const uint64_t* typedFunctions { nullptr };
+    uint8_t* typedCards { nullptr };
     // What closures have for an executable: by Typed::FunctionTables::kindOfExecutable().
     static constexpr unsigned numberOfTypedExecutables = 5;
     JSCell* typedExecutables[numberOfTypedExecutables] { };
-    // By the number Typed::Builtins gives a function or symbol of the engine. They live as long as the global object.
-    JSCell** typedBuiltins { nullptr };
+    uint8_t* typedStatics { nullptr };
     struct KeyedRead;
     struct KeyedAddition;
     KeyedRead* keyedReads { nullptr };
@@ -829,11 +819,7 @@ struct Instance {
     UniquedStringImpl* const* programIdentifiers;
     const uint16_t* programIdentifierPlaces;
     uintptr_t structureIDBase;
-    uintptr_t familyBase;
-    uintptr_t fieldIDInSlotBases[Structure::numberOfSlotsWithFieldIDs];
     JSObject* objectPrototype;
-    uint8_t* fieldsWithObservableReads;
-    static constexpr size_t sizeOfFieldsWithObservableReads = (static_cast<size_t>(Structure::numberOfSlotsWithFieldIDs) << 16) / 8;
     JSCell* functionPrototypeCall { nullptr };
     uint32_t boundFunctionStructureID { 0 };
     uint32_t hostFunctionStructureID { 0 };
@@ -852,8 +838,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfBoundFunctionExecutable() { return OBJECT_OFFSETOF(Instance, boundFunctionExecutable); }
     const ClassInfo* boundFunctionClassInfo { nullptr };
     static constexpr ptrdiff_t offsetOfBoundFunctionClassInfo() { return OBJECT_OFFSETOF(Instance, boundFunctionClassInfo); }
-    uint8_t departedFamilies[numberOfFamiliesWithByte] { };
-    uint32_t guardChecksExecutedForTesting { 0 };
     EncodedJSValue intrinsics[ImmutableIntrinsics::maximumCount];
     EncodedJSValue linkTimeConstants[numberOfLinkTimeConstants];
     static constexpr unsigned numberOfReceivers = 16;
@@ -866,12 +850,10 @@ struct Instance {
     const uint8_t* image;
     VMProgram* program;
     const ProgramData* programData;
-    const uint32_t* stringConstantRecords;
     void** runtimeTable;
     static constexpr unsigned maxVectorLengthGrownByStub = 31;
     uint8_t nextVectorLengths[maxVectorLengthGrownByStub + 1] { };
     static constexpr ptrdiff_t offsetOfNextVectorLengths() { return OBJECT_OFFSETOF(Instance, nextVectorLengths); }
-    uint32_t regExpMatchesArrayStructureIDs[2] { };
     uint64_t newArrayWithInt32Header { 0 };
     uint64_t newArrayWithDoubleHeader { 0 };
     uint64_t newArrayWithContiguousHeader { 0 };
@@ -882,7 +864,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfArrayInTheMakingHeaders() { return OBJECT_OFFSETOF(Instance, arrayInTheMakingHeaders); }
     JS_EXPORT_PRIVATE bool isArrayInTheMaking(JSCell*) const;
     Structure* arrayInTheMakingStructure(IndexingType);
-    uint64_t activationHeader { 0 };
     // Typed::Data::shapeSetsOffset, as an address.
     const uint32_t* typedShapeSets { nullptr };
     static ptrdiff_t offsetOfNewArrayHeader(IndexingType indexingType)
@@ -920,7 +901,6 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfBufferAccessor(unsigned row) { return OBJECT_OFFSETOF(Instance, bufferAccessors) + row * sizeof(JSCell*); }
     void watchBufferAccessor(unsigned row, const ObjectPropertyCondition&);
     void* auxiliarySpace { nullptr };
-    void* activationSpace { nullptr };
     void* cellSpace { nullptr };
     // See Typed::State::rememberElement().
     JSCell** youngRootsCursor { nullptr };
@@ -929,9 +909,8 @@ struct Instance {
     static constexpr ptrdiff_t offsetOfYoungRootsEnd() { return OBJECT_OFFSETOF(Instance, youngRootsEnd); }
     static constexpr ptrdiff_t offsetOfBarrierThreshold() { return OBJECT_OFFSETOF(Instance, barrierThreshold); }
     static constexpr ptrdiff_t offsetOfMutatorShouldBeFenced() { return OBJECT_OFFSETOF(Instance, mutatorShouldBeFenced); }
-    void* arrayAllocator { nullptr };
+    uintptr_t numberBoxBase;
     void* ropeStringAllocator { nullptr };
-    JSCell* arrayIterationSentinel { nullptr };
     JSCell* sentinelString { nullptr };
     // Zero until the first Typed::CompactTable is made.
     uint32_t compactTableStructureID { 0 };
@@ -1396,7 +1375,6 @@ struct CompiledFunctionInfo {
     Vector<InlineFrame> inlineFrames;
     Vector<ImageKey> functionExpressionsInCode;
     Vector<ImageKey> functionsCreated;
-    bool isOnlyCalledDirectly { false };
     unsigned frameSizeInBytes { 0 };
     ptrdiff_t offsetOfCallee { 0 };
     unsigned numSlots { 0 };
@@ -1480,7 +1458,6 @@ struct ImageFunction {
     uint32_t startsCold : 1;
     uint32_t isGetByValOnThis : 1;
     uint32_t returnsScopeVariable : 1;
-    uint32_t hasNoGeneralBody : 1;
 
     Convention convention() const { return { takesList ? Signature::List : Signature::Registers, numberOfParameters, true }; }
 #if CPU(ARM64)
@@ -1556,7 +1533,6 @@ private:
 Instance& instanceOf(JSScope*);
 bool install(VM&, FunctionExecutable*, CodeSpecializationKind, UnlinkedCodeBlock*, JSScope*, Ref<JITCode>&&);
 bool linkStaticFunction(Instance*, FunctionExecutable*, CodeSpecializationKind, JSScope*);
-bool linkColdStaticFunction(Instance*, uint32_t functionIndex, JSScope*);
 
 JS_EXPORT_PRIVATE CodePtr<JSEntryPtrTag> moduleCodeEntrypoint();
 CodePtr<JSEntryPtrTag> closureEntrypoint();

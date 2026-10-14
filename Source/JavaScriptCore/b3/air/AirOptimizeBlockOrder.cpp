@@ -319,28 +319,6 @@ static bool detectExclusiveSuccessor(BasicBlock* blockA, ChainWorklist& worklist
     return false;
 }
 
-#if USE(BUN_JSC_ADDITIONS)
-enum class GapArms : uint8_t { IsLaidInGap, IsNotLaidInGap, IsGuardInChain, IsGuardInChainWhoseUsualWayIsNotNext, IsBlockOfChainWithSuccessorNext };
-static std::atomic<uint64_t> s_gapArms[5];
-
-static void count(GapArms what)
-{
-    static const bool isAsked = [] {
-        if (!getenv("BUN_AOT_SWITCH_GAP_ARMS_COUNT"))
-            return false;
-        atexit([] {
-            auto number = [](GapArms what) {
-                return s_gapArms[static_cast<unsigned>(what)].load();
-            };
-            dataLogLn("gap arms: laid in gaps: ", number(GapArms::IsLaidInGap), ", waited and not laid: ", number(GapArms::IsNotLaidInGap), "; guards in chains: ", number(GapArms::IsGuardInChain), ", of them with the usual way not next: ", number(GapArms::IsGuardInChainWhoseUsualWayIsNotNext), "; blocks of chains with a successor next: ", number(GapArms::IsBlockOfChainWithSuccessorNext));
-        });
-        return true;
-    }();
-    if (isAsked)
-        s_gapArms[static_cast<unsigned>(what)].fetch_add(1, std::memory_order_relaxed);
-}
-
-#endif
 Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
 {
     Vector<BasicBlock*> blocksInOrder;
@@ -351,12 +329,9 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     IndexSet<BasicBlock*> done;
 #if USE(BUN_JSC_ADDITIONS)
     constexpr unsigned reachOfGap = 24;
-    static const char* const askedForTesting = getenv("BUN_AOT_SWITCH_GAP_ARMS_BREAK");
-    static const bool talliesGuards = !!getenv("BUN_AOT_SWITCH_GAP_ARMS_COUNT");
+    static const char* const askedForTesting = byteCast<char>(Options::airBlockOrderFaultForTesting());
     const bool laysInGaps = code.laysRareBlocksInGaps() && !(askedForTesting && !strcmp(askedForTesting, "off"));
-    const bool tallies = talliesGuards && code.chargesForCalleeSaves();
     IndexSet<BasicBlock*> laidInGaps;
-    IndexSet<BasicBlock*> inChains;
     Vector<std::pair<BasicBlock*, unsigned>, 8> waitingForGap;
     unsigned numberOfInstsLaid = 0;
     auto isGuard = [](BasicBlock* asked) {
@@ -403,8 +378,6 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
 
 #if USE(BUN_JSC_ADDITIONS)
         numberOfInstsLaid += block->size();
-        if (tallies)
-            inChains.add(block);
         if (laysInGaps && isGuard(block))
             waitingForGap.append({ block->successor(block->successor(0).isRare() ? 0 : 1).block(), numberOfInstsLaid });
         static const bool breaksForTesting = askedForTesting && !strcmp(askedForTesting, "1");
@@ -442,11 +415,8 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
                 bool anotherWayOutIsNotLaid = false;
                 for (BasicBlock* successor : block->successorBlocks())
                     anotherWayOutIsNotLaid |= successor != rare && !done.contains(successor);
-                if (anotherWayOutIsNotLaid || rare->size() > 16 || numberOfInstsLaid - endOfGuard + rare->size() > reachOfGap || !hasOnlyRareWaysIn(rare)) {
-                    count(GapArms::IsNotLaidInGap);
+                if (anotherWayOutIsNotLaid || rare->size() > 16 || numberOfInstsLaid - endOfGuard + rare->size() > reachOfGap || !hasOnlyRareWaysIn(rare))
                     continue;
-                }
-                count(GapArms::IsLaidInGap);
                 done.add(rare);
                 laidInGaps.add(rare);
                 blocksInOrder.append(rare);
@@ -478,6 +448,21 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
             done.add(block);
             blocksInOrder.append(block);
         }
+        while (code.laysRareBlocksInGaps()) {
+            BasicBlock* next = nullptr;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (!done.contains(successor) && (!next || successor->frequency() > next->frequency()))
+                    next = successor;
+            }
+            if (!next)
+                break;
+            for (BasicBlock* successor : block->successorBlocks())
+                sortedSlowSuccessors.append(successor);
+            sortedSlowSuccessors.process(slowWorklist);
+            block = next;
+            done.add(block);
+            blocksInOrder.append(block);
+        }
 #else
         if (done.contains(block))
             continue;
@@ -494,24 +479,6 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     ASSERT(chainWorklist.isEmpty());
     ASSERT(slowWorklist.isEmpty());
 
-#if USE(BUN_JSC_ADDITIONS)
-    for (unsigned i = 0; tallies && i < blocksInOrder.size(); ++i) {
-        BasicBlock* block = blocksInOrder[i];
-        if (!inChains.contains(block))
-            continue;
-        for (BasicBlock* successor : block->successorBlocks()) {
-            if (i + 1 < blocksInOrder.size() && successor == blocksInOrder[i + 1]) {
-                count(GapArms::IsBlockOfChainWithSuccessorNext);
-                break;
-            }
-        }
-        if (!isGuard(block))
-            continue;
-        count(GapArms::IsGuardInChain);
-        if (i + 1 == blocksInOrder.size() || blocksInOrder[i + 1] != block->successor(block->successor(0).isRare() ? 1 : 0).block())
-            count(GapArms::IsGuardInChainWhoseUsualWayIsNotNext);
-    }
-#endif
     return blocksInOrder;
 }
 

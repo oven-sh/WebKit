@@ -307,6 +307,8 @@ Operand Lowering::getArrayElement(CellPointer array, ValueID key, const Type& ty
     }
     if (!looksForNumbersLast)
         whenKeptAs(keptAsValues, readValue);
+    if (leavesNumbersToLoadElement && otherwise)
+        orElse(isPlainArray(array), otherwise);
     if (leavesNumbersToLoadElement)
         join.add(ensure(Boxed(callAllocationStub(Stub::LoadElement, { { array.value(), GPRInfo::argumentGPR1 }, { index.value(), GPRInfo::argumentGPR2 } }, effectsOfOperation<operationAOTTypedArrayGetAtIndex>(), true)), type));
     else if (leavesNumbersToStub)
@@ -660,7 +662,7 @@ Operand Lowering::pushArrayElements(CellPointer array, const Value& value, const
 // end holds on to one across calls that collect, so after each use of one the collector still has to find the owner. No code comes of this.
 bool Lowering::isForcedForTesting(const char* file, unsigned line)
 {
-    static const char* const places = getenv("BUN_AOT_SWITCH_FORCE_GUARDS");
+    static const char* const places = byteCast<char>(Options::aotGuardsToFailForTesting());
     if (!places) [[likely]]
         return false;
     const char* slash = strrchr(file, '/');
@@ -2005,8 +2007,6 @@ Operand Lowering::valueOfArrayOrRecord(ValueID result, const Value& value)
     auto& type = typeOf(result);
     // The iterator of arrays asks the array for the element, whatever has become of the array since.
     return eitherOperand(isArrayStandingForItsIterator(iterator), repOf(type), [&] {
-        if (isCompact(12) || goesGenerallyWhereTextIsCold())
-            return ensure(getByValGenerally(iterator, value.child(1)), type);
         return ifAsExpected({ }, repOf(type), [&](LBasicBlock otherwise) {
             m_leavesNumbersToLoadElement = m_function.at(result).type == m_program.types.anything && !predictionOf(result);
             return getArrayElement(asCell(in<Boxed>(iterator)), value.child(1), type, otherwise, isExpectedToBeNumber(result));

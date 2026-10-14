@@ -258,7 +258,6 @@
     v(operationAOTTypedArrayFromTypedArray) \
     v(operationAOTTypedArrayIndexOfDouble) \
     v(operationAOTTypedArrayIndexOfInt32) \
-    v(operationAOTTypedNewArrayBuffer) \
     v(operationAOTTypedNewArrayBufferFromData) \
     v(operationAOTTypedUpdateVectorLengthHint) \
     v(operationAOTTypedReviewVectorLengthHint) \

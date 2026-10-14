@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTRuntime.h"
 #include "AOTTypedType.h"
 #include "BuiltinNames.h"
 #include "DeferTermination.h"
@@ -305,7 +306,7 @@ static std::expected<JSValue, ASCIILiteral> findOwnProperty(JSGlobalObject* glob
     if (slot.isAccessor() != (kind != PropertyKind::Data))
         return makeUnexpected(slot.isAccessor() ? "is an accessor"_s : "is not an accessor"_s);
     unsigned fixed = kind == PropertyKind::Data ? PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete : static_cast<unsigned>(PropertyAttribute::DontDelete);
-    if (vm.useImmutableIntrinsics && mutability == Mutability::Fixed && (slot.attributes() & fixed) != fixed)
+    if (globalObject->hasImmutableIntrinsics() && mutability == Mutability::Fixed && (slot.attributes() & fixed) != fixed)
         return makeUnexpected("can be replaced"_s);
     switch (kind) {
     case PropertyKind::Getter:
@@ -412,7 +413,7 @@ std::expected<JSValue, String> Builtins::findProperty(JSGlobalObject* globalObje
     if (!given)
         holder = findGlobal(globalObject, isSharedByTypedArrays ? "Int8Array"_s : builtin.holder, mutability);
     if (holder && isSharedByTypedArrays) {
-        if (vm.useImmutableIntrinsics && !(*holder)->structure()->inheritorsMayOverrideReadOnlyProperties())
+        if (globalObject->hasImmutableIntrinsics() && !(*holder)->structure()->inheritorsMayOverrideReadOnlyProperties())
             return makeUnexpected(String("Int8Array can be given another prototype"_s));
         JSObject* shared = (*holder)->getPrototypeDirect().getObject();
         if (!shared)
@@ -544,6 +545,11 @@ JSCell* Builtins::findCell(JSGlobalObject* globalObject, unsigned index) const
 {
     if (index < numberOfBuiltins && isReplaceable(builtinEntries[index].holderName))
         return globalObject->vm().structureStructure.get();
+    if (globalObject->vm().useImmutableIntrinsics && !globalObject->hasImmutableIntrinsics()) [[unlikely]] {
+        Instance* instance = globalObject->aotInstance();
+        JSCell* captured = instance && instance->typedBuiltins ? instance->typedBuiltins[index] : nullptr;
+        return captured ? captured : globalObject->vm().structureStructure.get();
+    }
     DeferTerminationForAWhile deferTermination(globalObject->vm());
     auto found = lookUp(globalObject, index);
     if (!found) [[unlikely]] {

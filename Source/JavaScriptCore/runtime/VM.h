@@ -507,9 +507,6 @@ public:
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
-#if ASSERT_ENABLED
-    uint16_t m_aotFamilyWhoseDepartureWasNoted { 0 };
-#endif
     uintptr_t m_structureIDBase { 0 };
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
     Vector<AOT::Instance*> m_aotInstancesToDestroy;
@@ -524,6 +521,7 @@ public:
     BytecodeGenerationOptions bytecodeGenerationOptions;
 
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
+    bool hasRealmWithImmutableIntrinsics { false };
     using ImmutableIntrinsicsAuditReporter = void (*)(JSGlobalObject*, ASCIILiteral kind, const String& message, const String& functionName, const String& sourceURL, unsigned line, unsigned column);
     ImmutableIntrinsicsAuditReporter immutableIntrinsicsAuditReporter() const { return m_immutableIntrinsicsAuditReporter; }
     void setImmutableIntrinsicsAuditReporter(ImmutableIntrinsicsAuditReporter reporter) { m_immutableIntrinsicsAuditReporter = useImmutableIntrinsics ? nullptr : reporter; }
@@ -746,7 +744,6 @@ public:
         return m_orderedHashTableSentinel.get();
     }
     static constexpr ptrdiff_t offsetOfOrderedHashTableDeletedValue() { return OBJECT_OFFSETOF(VM, m_orderedHashTableDeletedValue); }
-    static constexpr ptrdiff_t offsetOfOrderedHashTableSentinel() { return OBJECT_OFFSETOF(VM, m_orderedHashTableSentinel); }
 
     Structure* sentinelStructure() { return m_sentinelStructure.get(); }
     JSSentinel* fastArrayValuesSentinel() { return m_fastArrayValuesSentinel.get(); }

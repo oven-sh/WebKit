@@ -504,7 +504,6 @@ struct Data {
     uint32_t numberOfAllocations;
     uint32_t allocationsOffset;
     // By TypeID::index(), which is how compiled code names a type: the offset of its RuntimeType.
-    uint32_t numberOfTypes;
     uint32_t typesOffset;
     // By LayoutData::index: the offset of the LayoutData of a class (an Instance layout), with its methods: that of its first shape, or
     // one with shape 0 if nothing allocates it, since its prototype is on the chain of its subclasses all the same. 0 for all else.
@@ -528,7 +527,6 @@ struct Data {
     uint32_t extendedClassesOffset;
     // The bits of the tests that are no range, in 32-bit words: bit n is bit n % 32 of word n / 32.
     uint32_t shapeSetsOffset;
-    uint32_t numberOfShapeSetWords;
     uint32_t sizeOfStatics;
     uint32_t sizeOfStaticsFilledLate;
     // What the statics hold before any code runs, where that is not zero bits. Four words each: the first 64-bit word, how many, the low and

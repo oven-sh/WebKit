@@ -169,14 +169,6 @@ public:
         }).iterator->value;
     }
 
-    uint32_t numberOfConstant(JSValue value)
-    {
-        return m_otherConstantIndices.ensure(JSValue::encode(value), [&] {
-            m_constants.append(value);
-            return safeCast<uint32_t>(m_constants.size() - 1);
-        }).iterator->value;
-    }
-
     // From 1: 0 stands for the module's own source.
     uint32_t numberOfSource(const UTF8CString& name)
     {
@@ -599,8 +591,7 @@ public:
             m_executables.append({ executable, moduleIndex });
             for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                 if (auto& function = code[static_cast<unsigned>(kind)]) {
-                    RELEASE_ASSERT(!function->hasNoGeneralBody || m_image.stubCodeOffset(Stub::ThrowCalledIndirectly));
-                    executable->setAOTCode(kind, function->hasNoGeneralBody ? m_image.stubCodeOffset(Stub::ThrowCalledIndirectly) : function->entry, function->index);
+                    executable->setAOTCode(kind, function->entry, function->index);
                     fillInfo(*function, unlinked->codeBlockIfExists(kind), executable, executableIndex, kind, lineStarts);
                 }
             }
@@ -801,7 +792,6 @@ public:
     Vector<RefPtr<AtomStringImpl>> m_switchAtoms;
     UncheckedKeyHashMap<UniquedStringImpl*, uint32_t> m_identifierIndices;
     Vector<JSValue> m_constants;
-    UncheckedKeyHashMap<EncodedJSValue, uint32_t, DefaultHash<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<EncodedJSValue>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_otherConstantIndices;
     Vector<UnlinkedFunctionExecutable*> m_unlinkedFunctions;
     UncheckedKeyHashMap<UnlinkedFunctionExecutable*, uint32_t, DefaultHash<UnlinkedFunctionExecutable*>, HashTraits<UnlinkedFunctionExecutable*>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_unlinkedFunctionIndices;
     Vector<UnlinkedCodeBlock*> m_topLevelCodes;
@@ -1007,23 +997,6 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         RELEASE_ASSERT(encoderStringTable.count() == table.count());
         header.objectsOffset = builder.append(encoded.span(), 16);
         header.objectsSize = safeCast<uint32_t>(encoded.size());
-    }
-    {
-        Vector<uint32_t> records;
-        records.fill(0, builder.m_constants.size());
-        auto* offsets = reinterpret_cast<const uint32_t*>(strings.data()) + 1;
-        for (size_t i = 0; i < builder.m_constants.size(); ++i) {
-            JSValue constant = builder.m_constants[i];
-            if (!constant || !constant.isString())
-                continue;
-            String said = asString(constant)->tryGetValue();
-            if (said.isEmpty())
-                continue;
-            uint32_t ordinal = encoderStringTable.ordinalFor(*said.impl());
-            RELEASE_ASSERT(ordinal < table.count());
-            records[i] = header.stringsOffset + offsets[ordinal];
-        }
-        header.stringConstantRecordsOffset = builder.append(records);
     }
     header.modulesOffset = builder.append(modules);
     header.numberOfModules = modules.size();
@@ -1716,43 +1689,10 @@ void VMProgram::visit(Visitor& visitor, CollectionScope scope)
 template void VMProgram::visit(AbstractSlotVisitor&, CollectionScope);
 template void VMProgram::visit(SlotVisitor&, CollectionScope);
 
-static void verifyTypedFields(VM& vm)
-{
-    vm.heap.cellSpace.forEachMarkedCell([&](HeapCell* heapCell, HeapCell::Kind) {
-        JSCell* cell = static_cast<JSCell*>(heapCell);
-        if (cell->type() != FinalObjectType)
-            return;
-        Structure* structure = cell->structure();
-        uint16_t layoutID = structure->typedLayoutID();
-        if (!layoutID)
-            return;
-        bool usesFieldIDs = TypedLayoutTable::usesFieldIDs(layoutID);
-        unsigned numberOfSlots = std::min<unsigned>(structure->inlineCapacity(), std::min<unsigned>(TypedLayoutTable::inlineSlots(layoutID), usesFieldIDs ? Structure::numberOfSlotsWithFieldIDs : TypedLayoutTable::numberOfSlots(layoutID)));
-        for (unsigned slot = 0; slot < numberOfSlots; ++slot) {
-            JSValue value = asObject(cell)->getDirect(static_cast<PropertyOffset>(slot));
-            if (!value || (!usesFieldIDs && value.isUndefined()))
-                continue;
-            const TypedLayoutTable::FieldType* fieldType = nullptr;
-            if (!usesFieldIDs)
-                fieldType = TypedLayoutTable::fieldTypeInSlot(layoutID, slot);
-            else if (uint16_t id = structure->fieldIDInSlot(slot); id && id != Structure::ambiguousFieldID)
-                fieldType = TypedLayoutTable::fieldTypeOf(TypedLayoutTable::fieldWithID(slot, id));
-            if (!fieldType || (!value.isInt32() && TypedLayoutTable::isValueOf(*fieldType, value)))
-                continue;
-            dataLogLn("GC Verifier: ERROR slot ", slot, " of ", RawPointer(cell), " with layout ", layoutID, " holds ", value, ", which is not a value of its type");
-            CRASH();
-        }
-    });
-}
-
 void VMProgram::didFinishCollection()
 {
-    if (Options::verifyGC() && TypedLayoutTable::hasTypedFields() && !TypedLayoutTable::isAuditing()) [[unlikely]]
-        verifyTypedFields(m_vm);
     m_impl->createdSinceLastCollection.clear();
     m_impl->hasVisitedEverythingInThisCollection = false;
-    if (m_impl->ownStrings)
-        m_impl->ownStrings->removeDeadRecentPlainStrings(m_vm);
     if (Options::useAOTOperationCounters() && m_vm.m_aotRuntimeTable && m_vm.heap.collectionScope().value_or(CollectionScope::Full) == CollectionScope::Full) [[unlikely]] {
         RuntimeTable& table = *m_vm.m_aotRuntimeTable;
         table.clearLiveBytes();

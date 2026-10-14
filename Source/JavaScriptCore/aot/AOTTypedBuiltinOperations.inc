@@ -12,7 +12,6 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewEntriesOfArray, RuntimeState, JS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedArrayFromTypedArray, RuntimeState, JSCell*, (Instance*, JSCell* view, uint32_t indexingType));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedArrayIndexOfDouble, Nothing, size_t, (Instance*, JSCell* array, double searched));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedArrayIndexOfInt32, Nothing, size_t, (Instance*, JSCell* array, EncodedJSValue searched));
-AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArrayBuffer, RuntimeState, JSCell*, (Instance*, uint32_t offset, uint32_t count, const EncodedJSValue* values, uint32_t indexingType));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewArrayBufferFromData, RuntimeState, JSCell*, (Instance*, uint32_t offset, uint32_t indexingType));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedUpdateVectorLengthHint, RuntimeState, void, (Instance*, JSCell* array, uint32_t offset));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedReviewVectorLengthHint, RuntimeState, void, (Instance*, uint32_t offset));

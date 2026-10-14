@@ -1187,6 +1187,7 @@ struct State {
     Object* tryBecomeOrCopyByPlan(VM&, JSObject*, const PlanOfCoercion&, bool mayBecomeIt);
     bool tryBecomeByPlans(VM&, JSObject*, const RuntimeType&);
     bool hasRoomToBecome(JSObject*, Object* copy);
+    bool refusesCopiesOfWhatOthersMayHold() const { return !data.logsTypeErrors && !data.isCompiledForAudit; }
     void become(VM&, JSObject*, Object* copy);
     // What has got somewhere behind the type of the place, and nobody has cast: it is made of the type as by As, but an object of the
     // program only becomes what it has everything for. Empty: it has thrown.
@@ -1235,6 +1236,7 @@ struct State {
         uint32_t expectedName { UINT32_MAX };
         JSValue got { };
         std::optional<unsigned> parameter { };
+        const String* reason { nullptr };
         bool isAtCaller { false };
         ActionOnViolation action { ActionOnViolation::Threw };
     };
@@ -1438,6 +1440,8 @@ struct State {
     const Data& data;
     // The module whose code the program's entry function is. External modules are its dependencies.
     AbstractModuleRecord* moduleRecord { nullptr };
+    String pathOfFileAskedFor;
+    Identifier keyOfImporter(VM&) const;
     ModuleEvaluation* moduleEvaluation { nullptr };
     int32_t moduleAsyncEvaluationCount { 0 };
     Vector<JSArray*, 4> modulesExecutingAsync;
@@ -1449,6 +1453,7 @@ struct State {
     static constexpr ptrdiff_t offsetOfNewTarget() { return OBJECT_OFFSETOF(State, newTarget); }
     // The name that name() has made of the string, or the null Identifier.
     const Identifier& nameIfMade(uint32_t string) const;
+    void makeNamesForHeapAnalysis(VM&);
     // By shape: StructureID::bits(), or 0. Every layout that has an object has one.
     uint32_t* structures { nullptr };
     // By LayoutData::index. Compiled code does not read it, and few of the numbers are ever asked for.
@@ -1513,6 +1518,8 @@ struct State {
     uintptr_t& typeAskedAboutProperties(const RuntimeType& type) const { return m_typesAskedAboutProperties[placeOf<numberOfTypesAskedAboutProperties>(std::bit_cast<uintptr_t>(&type))]; }
     // See Builtins::cellsOfReplaceableGlobals().
     void captureBuiltinsOf(ASCIILiteral global, JSObject*);
+    void captureBuiltinsOfRealm();
+    bool isOfLockedRealm { true };
     // Of CompactTable. Made at the first use.
     Structure* compactTableStructure();
 

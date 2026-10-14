@@ -55,7 +55,6 @@ JSC_DECLARE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instan
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
-JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowCalledIndirectlyError, void, (Instance*, EncodedJSValue callee));
 
 } } // namespace JSC::AOT
 

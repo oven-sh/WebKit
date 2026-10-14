@@ -507,7 +507,7 @@ void ImmutableIntrinsicsAudit::willReplacePrototypeProperty(JSGlobalObject* glob
         return;
     if (function->getDirect(vm, vm.propertyNames->prototype) == value)
         return;
-    reportRefusal(globalObject, "generator-prototype-write"_s, "set"_s, function, vm.propertyNames->prototype, makeString("Cannot replace 'prototype' of generator function '"_s, nameOfFunction(vm, function), "': loops call the generator's body directly"_s), shouldThrow);
+    reportRefusal(globalObject, "generator-prototype-write"_s, "set"_s, function, vm.propertyNames->prototype, makeString("Cannot replace 'prototype' of generator function '"_s, nameOfFunction(vm, function), "': it is fixed when the program is compiled"_s), shouldThrow);
     if (JSObject* object = value.getObject(); object && object->type() == FinalObjectType && object->isStructureExtensible()) {
         object->putDirect(vm, vm.propertyNames->builtinNames().generatorPrivateName(), function, static_cast<unsigned>(PropertyAttribute::DontEnum));
         object->fixProperties(vm, JSObject::FixedObject::BecomesNonExtensible);

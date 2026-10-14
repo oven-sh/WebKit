@@ -91,8 +91,6 @@ static ALWAYS_INLINE JSCell* NODELETE dynamicCastToCell(JSValue value)
 }
 
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-extern "C" void* g_aotStaticFunctionEntrypoints[3];
-
 template<typename... Args>
 static ALWAYS_INLINE JSValue callStaticCode(void* entry, VM& vm, JSObject* function, JSValue thisValue, JSCell* context, Args... args)
 {
@@ -125,16 +123,6 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
     static_assert(sizeof...(args) <= MicrotaskCall::maxCallArguments);
 
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64)) && CPU(ADDRESS64) && !ENABLE(C_LOOP)
-    if (functionObject.isCell() && functionObject.asCell()->type() == JSFunctionType) [[likely]] {
-        if (auto* jsFunction = uncheckedDowncast<JSFunction>(functionObject.asCell()); jsFunction->hasAOTFunctionWord()) {
-            if (!vm.isSafeToRecurseSoft()) [[unlikely]]
-                return throwStackOverflowError(globalObject, scope);
-            if (Options::useAOTOperationCounters()) [[unlikely]]
-                AOT::countJobCall(vm, true);
-            scope.release();
-            return callStaticCode(g_aotStaticFunctionEntrypoints[0], vm, jsFunction, thisValue, context, args...);
-        }
-    }
     if (vm.useImmutableIntrinsics) {
         if (functionObject.isCell() && functionObject.asCell()->type() == JSFunctionType) {
             if (auto* closure = dynamicDowncast<AOT::Typed::Closure>(functionObject); closure && closure->mayBeCalled()) {
@@ -151,7 +139,7 @@ static JSValue callMicrotask(JSGlobalObject* globalObject, JSValue functionObjec
             return callStaticCode(AOT::slimClosureEntrypoint().taggedPtr(), vm, asObject(functionObject.asCell()), thisValue, context, args...);
         }
         if (Options::useAOTOperationCounters()) [[unlikely]]
-            AOT::countJobCall(vm, false);
+            AOT::countJobCall(vm);
     }
 #endif
 

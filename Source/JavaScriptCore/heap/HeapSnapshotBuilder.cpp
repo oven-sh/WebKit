@@ -420,9 +420,7 @@ void HeapSnapshotBuilder::dumpToStream(PrintStream& out)
                         if (auto* function = dynamicDowncast<JSFunction>(object)) {
                             nodeLabel.append(function->calculatedDisplayName(vm));
 #if ENABLE(AOT)
-                            if (function->hasAOTFunctionWord())
-                                nodeLabel.append('#', function->aotFunctionIndex());
-                            else if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable())) {
+                            if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable())) {
                                 for (auto kind : { CodeSpecializationKind::CodeForCall, CodeSpecializationKind::CodeForConstruct }) {
                                     if (executable->aotEntryFor(kind)) {
                                         nodeLabel.append('#', executable->aotIndexFor(kind));

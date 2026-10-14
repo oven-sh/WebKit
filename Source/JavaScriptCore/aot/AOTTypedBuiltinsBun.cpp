@@ -25,7 +25,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRequireBuiltinModule, EncodedJSValue, 
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto* requireBuiltinModule = globalObject->globalObjectMethodTable()->requireBuiltinModule;
     if (!requireBuiltinModule) [[unlikely]] {
-        throwTypeError(globalObject, scope, "This realm has no builtin modules"_s);
+        throwTypeError(globalObject, scope, withAOTErrorNote("This realm has no builtin modules"_s));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     JSValue result = requireBuiltinModule(globalObject, id);
@@ -38,7 +38,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNativeBinding, EncodedJSValue, (Instan
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto* nativeBinding = globalObject->globalObjectMethodTable()->nativeBinding;
     if (!nativeBinding) [[unlikely]] {
-        throwTypeError(globalObject, scope, "This realm has no native bindings"_s);
+        throwTypeError(globalObject, scope, withAOTErrorNote("This realm has no native bindings"_s));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     JSValue result = nativeBinding(globalObject, index);

@@ -376,8 +376,15 @@ public:
         assignStackLocations(assignedEscapedStackSlots);
 
         updateFrameSizeBasedOnStackSlots(m_code);
+#if USE(BUN_JSC_ADDITIONS)
+        orderWordsByUse();
+#endif
         m_stats.frameSize = m_code.frameSize();
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    void keepInPlace(const BitVector& slots) { m_staysInPlace = slots; }
+#endif
 
 private:
     void buildInterferenceGraph(StackSlotLiveness& liveness)
@@ -576,6 +583,175 @@ private:
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void countHowOftenSlotsAreNamed()
+    {
+        if (!m_timesNamed.isEmpty())
+            return;
+        m_timesNamed.fill(0, m_code.stackSlots().size());
+        for (BasicBlock* block : m_code) {
+            for (Inst& inst : *block) {
+                for (Arg& arg : inst.args()) {
+                    if (arg.isStack())
+                        ++m_timesNamed[arg.stackSlot()->index()];
+                }
+            }
+        }
+    }
+
+    void orderWordsByUse()
+    {
+        constexpr size_t bytesPerWord = 8;
+        constexpr size_t wordsWithinOneByteOfFramePointer = 16;
+        size_t frameSize = m_code.frameSize();
+        size_t numberOfWords = frameSize / bytesPerWord;
+        if (!isX86() || !m_code.chargesForCalleeSaves() || numberOfWords <= wordsWithinOneByteOfFramePointer || frameSize % bytesPerWord)
+            return;
+        countHowOftenSlotsAreNamed();
+        auto wordsOf = [&](StackSlot* slot) {
+            size_t below = -slot->offsetFromFP();
+            return std::pair { (below - slot->byteSize()) / bytesPerWord, (below - 1) / bytesPerWord };
+        };
+        auto forEachSlotInFrame = [&](const auto& functor) {
+            for (StackSlot* slot : m_code.stackSlots()) {
+                if (!isRemappedSlotIndex(slot->index()) && slot->offsetFromFP() < 0)
+                    functor(slot);
+            }
+        };
+        Vector<unsigned> timesWordIsNamed(FillWith { }, numberOfWords, 0u);
+        Vector<bool> isInLockedSlot(FillWith { }, numberOfWords, false);
+        Vector<bool> isOfSlotOverWords(FillWith { }, numberOfWords, false);
+        forEachSlotInFrame([&](StackSlot* slot) {
+            auto [first, last] = wordsOf(slot);
+            RELEASE_ASSERT(last < numberOfWords);
+            for (size_t word = first; word <= last; ++word) {
+                timesWordIsNamed[word] += m_timesNamed[slot->index()];
+                isInLockedSlot[word] |= slot->isLocked();
+                isOfSlotOverWords[word] |= first != last;
+            }
+        });
+        Vector<intptr_t> wordsFurtherDown(FillWith { }, numberOfWords, static_cast<intptr_t>(0));
+        auto moveSlots = [&] {
+            forEachSlotInFrame([&](StackSlot* slot) {
+                slot->setOffsetFromFP(slot->offsetFromFP() - wordsFurtherDown[wordsOf(slot).first] * static_cast<intptr_t>(bytesPerWord));
+                RELEASE_ASSERT(!(static_cast<size_t>(-slot->offsetFromFP()) % slot->alignment()));
+            });
+        };
+
+        struct Item {
+            size_t firstWord;
+            size_t numberOfWords;
+            unsigned timesNamed;
+            bool isAlignedTo16;
+            size_t place;
+        };
+        Vector<Item> blocks;
+        Vector<Item> singles;
+        Vector<bool> stays(FillWith { }, numberOfWords, false);
+        size_t wordsOnTop = 0;
+        bool isPossible = true;
+        forEachSlotInFrame([&](StackSlot* slot) {
+            auto [first, last] = wordsOf(slot);
+            if (!slot->isLocked()) {
+                isPossible &= first == last;
+                return;
+            }
+            if (m_staysInPlace.get(slot->index())) {
+                for (size_t word = first; word <= last; ++word)
+                    stays[word] = true;
+                wordsOnTop = std::max(wordsOnTop, last + 1);
+                return;
+            }
+            isPossible &= !(slot->byteSize() % bytesPerWord) && !(static_cast<size_t>(-slot->offsetFromFP()) % bytesPerWord) && slot->alignment() <= 2 * bytesPerWord;
+            blocks.append({ first, last - first + 1, m_timesNamed[slot->index()], slot->alignment() > bytesPerWord, 0 });
+        });
+        if (isPossible && !blocks.isEmpty()) {
+            for (size_t word = 0; word < numberOfWords; ++word) {
+                if (!isInLockedSlot[word])
+                    singles.append({ word, 1, timesWordIsNamed[word], false, 0 });
+            }
+            auto isDenser = [](const Item& a, const Item& b) {
+                return static_cast<uint64_t>(a.timesNamed) * b.numberOfWords > static_cast<uint64_t>(b.timesNamed) * a.numberOfWords;
+            };
+            std::stable_sort(blocks.begin(), blocks.end(), isDenser);
+            std::stable_sort(singles.begin(), singles.end(), isDenser);
+            size_t nextBlock = 0;
+            size_t nextSingle = 0;
+            size_t top = wordsOnTop;
+            size_t bottom = numberOfWords;
+            for (size_t word = 0; word < wordsOnTop; ++word) {
+                if (stays[word])
+                    continue;
+                if (nextSingle == singles.size()) {
+                    isPossible = false;
+                    break;
+                }
+                singles[nextSingle++].place = word;
+            }
+            auto layOne = [&](bool fromTop) {
+                bool takesBlock = nextBlock < blocks.size() && (nextSingle == singles.size() || isDenser(blocks[nextBlock], singles[nextSingle]));
+                if (takesBlock && blocks[nextBlock].isAlignedTo16 && ((fromTop ? top + blocks[nextBlock].numberOfWords : bottom) & 1)) {
+                    if (nextSingle == singles.size())
+                        return false;
+                    takesBlock = false;
+                }
+                Item& item = takesBlock ? blocks[nextBlock++] : singles[nextSingle++];
+                if (bottom - top < item.numberOfWords)
+                    return false;
+                if (fromTop) {
+                    item.place = top;
+                    top += item.numberOfWords;
+                } else {
+                    bottom -= item.numberOfWords;
+                    item.place = bottom;
+                }
+                return true;
+            };
+            auto isLeft = [&] { return nextBlock < blocks.size() || nextSingle < singles.size(); };
+            while (isPossible && isLeft() && top < wordsWithinOneByteOfFramePointer)
+                isPossible = layOne(true);
+            while (isPossible && isLeft() && numberOfWords - bottom < wordsWithinOneByteOfFramePointer)
+                isPossible = layOne(false);
+            while (isPossible && isLeft())
+                isPossible = layOne(true);
+            if (isPossible && top == bottom) {
+                auto note = [&](const Item& item) {
+                    for (size_t i = 0; i < item.numberOfWords; ++i)
+                        wordsFurtherDown[item.firstWord + i] = static_cast<intptr_t>(item.place) - static_cast<intptr_t>(item.firstWord);
+                };
+                for (auto& item : blocks)
+                    note(item);
+                for (auto& item : singles)
+                    note(item);
+                moveSlots();
+                return;
+            }
+        }
+
+        Vector<size_t> words;
+        for (size_t word = 0; word < numberOfWords; ++word) {
+            if (!isInLockedSlot[word] && !isOfSlotOverWords[word])
+                words.append(word);
+        }
+        Vector<size_t> places = words;
+        auto priceOf = [&](size_t place) -> unsigned {
+            size_t below = (place + 1) * bytesPerWord;
+            if (below <= wordsWithinOneByteOfFramePointer * bytesPerWord)
+                return 0;
+            return frameSize - below <= 127 - (bytesPerWord - 1) ? 1 : 3;
+        };
+        std::stable_sort(places.begin(), places.end(), [&](size_t a, size_t b) {
+            return priceOf(a) < priceOf(b);
+        });
+        std::stable_sort(words.begin(), words.end(), [&](size_t a, size_t b) {
+            return timesWordIsNamed[a] > timesWordIsNamed[b];
+        });
+        for (size_t i = 0; i < words.size(); ++i)
+            wordsFurtherDown[words[i]] = static_cast<intptr_t>(places[i]) - static_cast<intptr_t>(words[i]);
+        moveSlots();
+    }
+
+#endif
     void assignStackLocations(const Vector<StackSlot*>& assignedEscapedStackSlots)
     {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::assign"_s);
@@ -586,11 +762,25 @@ private:
         Vector<StackSlot*> otherSlots;
 #if USE(BUN_JSC_ADDITIONS)
         constexpr size_t bytesPerWord = 8;
+        constexpr size_t fewSlots = 12;
         Vector<unsigned> markOfWord;
-#endif
+        Vector<StackSlot*> slotsInOrder;
+        for (StackSlot* slot : m_code.stackSlots())
+            slotsInOrder.append(slot);
+        if (isX86() && m_code.chargesForCalleeSaves() && slotsInOrder.size() > fewSlots) {
+            countHowOftenSlotsAreNamed();
+            std::stable_sort(slotsInOrder.begin(), slotsInOrder.end(), [&](StackSlot* a, StackSlot* b) {
+                return m_timesNamed[a->index()] > m_timesNamed[b->index()];
+            });
+        }
+        for (StackSlot* slot : slotsInOrder) {
+            if (isRemappedSlotIndex(slot->index()))
+                continue;
+#else
         for (StackSlot* slot : m_code.stackSlots()) {
             if (isRemappedSlotIndex(slot->index()))
                 continue;
+#endif
 
             if (slot->offsetFromFP()) {
                 // Already assigned an offset.
@@ -680,6 +870,10 @@ private:
 
     InterferenceGraph m_interference;
     Vector<CoalescableMove> m_coalescableMoves;
+#if USE(BUN_JSC_ADDITIONS)
+    Vector<unsigned> m_timesNamed;
+    BitVector m_staysInPlace;
+#endif
     AirStackAllocatorStats m_stats;
 };
 
@@ -701,10 +895,22 @@ void allocateStackByGraphColoring(Code& code)
 {
     PhaseScope phaseScope(code, "allocateStackByGraphColoring"_s);
 
+#if USE(BUN_JSC_ADDITIONS)
+    BitVector wasThereAhead;
+    for (StackSlot* slot : code.stackSlots())
+        wasThereAhead.set(slot->index());
+#endif
     {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::calleeSaves"_s);
         handleCalleeSaves(code);
     }
+#if USE(BUN_JSC_ADDITIONS)
+    BitVector staysInPlace;
+    for (StackSlot* slot : code.stackSlots()) {
+        if (slot->offsetFromFP() || !wasThereAhead.get(slot->index()))
+            staysInPlace.set(slot->index());
+    }
+#endif
 
     Vector<StackSlot*> assignedEscapedStackSlots = [&] {
         CompilerTimingScope timingScope("Air"_s, "StackAllocator::escapedSlots"_s);
@@ -714,12 +920,21 @@ void allocateStackByGraphColoring(Code& code)
     if (!doTrivialStackAllocation(code)) {
         if (code.stackSlots().size() < WTF::maxSizeForSmallInterferenceGraph) {
             GraphColoringStackAllocator<SmallIterableInterferenceGraph> allocator(code);
+#if USE(BUN_JSC_ADDITIONS)
+            allocator.keepInPlace(staysInPlace);
+#endif
             allocator.run(assignedEscapedStackSlots);
         } else if (code.stackSlots().size() < std::numeric_limits<uint16_t>::max()) {
             GraphColoringStackAllocator<LargeIterableInterferenceGraph> allocator(code);
+#if USE(BUN_JSC_ADDITIONS)
+            allocator.keepInPlace(staysInPlace);
+#endif
             allocator.run(assignedEscapedStackSlots);
         } else {
             GraphColoringStackAllocator<HugeIterableInterferenceGraph> allocator(code);
+#if USE(BUN_JSC_ADDITIONS)
+            allocator.keepInPlace(staysInPlace);
+#endif
             allocator.run(assignedEscapedStackSlots);
         }
     }

@@ -283,6 +283,12 @@ public:
         if (!isFat() && isWatchable())
             inflate();
     }
+
+    void prepareToWatchWithoutJIT()
+    {
+        if (!isFat() && (bits() & KindBitsMask) == ScopeKindBits)
+            inflate();
+    }
     
     // This watchpoint set is initialized clear, and goes through the following state transitions:
     // 

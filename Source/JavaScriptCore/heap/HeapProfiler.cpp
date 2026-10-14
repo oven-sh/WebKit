@@ -26,6 +26,8 @@
 #include "config.h"
 #include "HeapProfiler.h"
 
+#include "AOTRuntime.h"
+#include "AOTTypedObject.h"
 #include "HeapIterationScope.h"
 #include "HeapSnapshot.h"
 #include "SubspaceInlines.h"
@@ -75,8 +77,15 @@ static void materializeLazySymbolTablesForHeapAnalysis(VM& vm)
 void HeapProfiler::setActiveHeapAnalyzer(HeapAnalyzer* analyzer)
 {
     ASSERT(!!m_activeAnalyzer != !!analyzer);
-    if (analyzer)
+    if (analyzer) {
         materializeLazySymbolTablesForHeapAnalysis(m_vm);
+#if ENABLE(AOT)
+        for (AOT::Instance* instance : m_vm.m_aotInstances) {
+            if (instance->typed && instance->typed->isOfLockedRealm)
+                instance->typed->makeNamesForHeapAnalysis(m_vm);
+        }
+#endif
+    }
     m_activeAnalyzer = analyzer;
     m_vm.setActiveHeapAnalyzer(analyzer);
 }

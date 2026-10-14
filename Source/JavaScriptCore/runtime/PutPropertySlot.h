@@ -38,7 +38,7 @@ using CustomAccessorValueFunc = FunctionPtr<CustomAccessorPtrTag, bool(JSGlobalO
 
 class PutPropertySlot {
 public:
-    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField, NewTypedField };
+    enum Type : uint8_t { Uncachable, ExistingProperty, NewProperty, SetterProperty, CustomValue, CustomAccessor, ExistingTypedField };
     enum Context : uint8_t { UnknownContext, PutById, PutByIdEval };
 
     PutPropertySlot(JSValue thisValue, bool isStrictMode = false, Context context = UnknownContext, bool isInitialization = false)
@@ -61,14 +61,7 @@ public:
         m_offset = offset;
         m_fieldType = fieldType;
     }
-    void setNewTypedField(JSObject* base, PropertyOffset offset, uint32_t fieldType)
-    {
-        m_type = NewTypedField;
-        m_base = base;
-        m_offset = offset;
-        m_fieldType = fieldType;
-    }
-    bool isTypedFieldCacheablePut() const { return isCacheable() && (m_type == ExistingTypedField || m_type == NewTypedField); }
+    bool isTypedFieldCacheablePut() const { return isCacheable() && m_type == ExistingTypedField; }
     uint32_t fieldType() const { return m_fieldType; }
 
     void setExistingProperty(JSObject* base, PropertyOffset offset)

@@ -127,7 +127,7 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
 
     OperationEffects effects { writesOfArithmetic(left, &right), true };
     // An object is asked for a primitive first, which is not what it is asked for to become a string.
-    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects() && !isCompact(4) && !goesGenerallyWhereTextIsCold()) {
+    if (value.opcode == Opcode::Add && !left.hasObjects() && !right.hasObjects() && !isCompact() && !goesGenerallyWhereTextIsCold()) {
         bool isColdByText = !m_isInLoop && !m_program.isHotOutsideItsLoops(m_id);
         if (left.isString() || right.isString()) {
             if (isColdByText) {
@@ -818,7 +818,7 @@ Word32 Lowering::lowerRelational(const Value& value)
             return emitGenericCompare(Stub::GreaterEq, x, y, effects);
         }
     };
-    if (isCompact(4))
+    if (isCompact())
         return generally();
     for (unsigned i = 0; i < 2; ++i) {
         auto text = constantASCIIText(value.child(i));
@@ -912,7 +912,6 @@ bool Lowering::isTakenAsInt32(ValueID id)
     if (!m_didFindWhatIsTakenAsInt32) {
         m_didFindWhatIsTakenAsInt32 = true;
         m_isTakenAsInt32.ensureSize(m_function.values.size());
-        m_isTakenAsIndex.ensureSize(m_function.values.size());
         for (auto& block : m_function.blocks) {
             for (ValueID user : block.values) {
                 auto& value = m_function.at(user);
@@ -928,10 +927,6 @@ bool Lowering::isTakenAsInt32(ValueID id)
                 case Opcode::BitNot:
                     m_isTakenAsInt32.quickSet(value.child(0).index());
                     break;
-                case Opcode::GetByVal:
-                case Opcode::PutByVal:
-                    m_isTakenAsIndex.quickSet(value.child(1).index());
-                    break;
                 default:
                     break;
                 }
@@ -939,12 +934,6 @@ bool Lowering::isTakenAsInt32(ValueID id)
         }
     }
     return m_isTakenAsInt32.quickGet(id.index());
-}
-
-bool Lowering::isTakenAsIndex(ValueID id)
-{
-    isTakenAsInt32(id);
-    return m_isTakenAsIndex.quickGet(id.index());
 }
 
 Word32 Lowering::toInt32InArm(Number value, bool isRare)
@@ -1083,7 +1072,7 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     // Equal bits are equal values and the other way round, unless both may be numbers, strings or big integers.
     if (!(both & (Primitive::Number | Primitive::String | Primitive::BigInt)))
         return haveEqualBits(in<Boxed>(a), in<Boxed>(b));
-    if (isCompact(m_function.at(a).opcode == Opcode::String || m_function.at(b).opcode == Opcode::String ? 16 : 2)) {
+    if (isCompact()) {
         Boxed first = in<Boxed>(a);
         return emitGenericCompare(Stub::StrictEqual, first, in<Boxed>(b), OperationEffects { Writes::RuntimeState, true });
     }
@@ -1228,7 +1217,7 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
     };
     if (goesGenerallyWhereTextIsCold())
         return throughStub();
-    if (isCompact(3))
+    if (isCompact())
         return throughStub();
     // `undefined` and `null` are an answer like any other here.
     auto expected = predictionOf(id, 0);

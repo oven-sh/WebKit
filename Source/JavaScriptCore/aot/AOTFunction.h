@@ -184,6 +184,7 @@ JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
 // Runs the module, which the image has, and yields what it exports. Empty: it has thrown. Its top level is code that runs once: asked again,
 // this yields the same, or throws the same, without running anything, as for a module of the language.
 JS_EXPORT_PRIVATE JSValue evaluateBuiltinModule(JSGlobalObject*, uint32_t id);
+JS_EXPORT_PRIVATE void willAskProgramForFile(JSGlobalObject*, const String& path);
 // For whoever makes the functions that the engine or the host implements in JavaScript. Whether the image has the function of this number.
 JS_EXPORT_PRIVATE bool hasBuiltinFunction(VM&, uint32_t id);
 // A new function object for it, which the image has. With another prototype than its kind of function has, if one is given. It can be made
@@ -345,7 +346,7 @@ JS_EXPORT_PRIVATE FunctionRef callerFunction(const CallFrame*);
 JS_EXPORT_PRIVATE JSCell* callerOwnerCell(const CallFrame*);
 JS_EXPORT_PRIVATE bool hasCompiledCode(VM&, JSFunction*);
 void countAwait(VM&, const char* where, JSValue operand);
-void countJobCall(VM&, bool entersStaticCode);
+void countJobCall(VM&);
 void noteGuest(JSGlobalObject*, const char* kind, StringView group, StringView text);
 
 } } // namespace JSC::AOT

@@ -389,7 +389,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPrivateFieldAdd, void, (Instance* inst
     OPERATION_RETURN_IF_EXCEPTION(scope);
     Structure* after = object->structure();
     auto isPlain = [](Structure* structure) {
-        return !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype() && !structure->typedLayoutID() && !structure->family();
+        return !structure->compiledLayout() && structure->propertyAccessesAreCacheable() && !structure->isDictionary() && !structure->mayBePrototype();
     };
     if (!isPlain(before) || !isPlain(after) || after->previousID() != before || before->outOfLineCapacity() != after->outOfLineCapacity() || before->typeInfoBlob() != after->typeInfoBlob())
         OPERATION_RETURN(scope);
@@ -637,7 +637,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByName, size_t, (Instance* insta
     if (!deleted) {
         if (object->isLockedBuiltin())
             object->noteRefusalByLock(vm, nameAt(instance, name).impl());
-        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+        JSValue held;
+        throwTypeError(globalObject, scope, object->isLockedBuiltin() && object->isRefusedByLockAlone(vm, nameAt(instance, name).impl(), held) ? withAOTErrorNote(UnableToDeletePropertyError) : String(UnableToDeletePropertyError));
     }
     OPERATION_RETURN(scope, deleted);
 }
@@ -734,7 +735,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByKey, size_t, (Instance* instan
     if (!deleted) {
         if (object->isLockedBuiltin())
             object->noteRefusalByLock(vm, property.impl());
-        throwTypeError(globalObject, scope, UnableToDeletePropertyError);
+        JSValue held;
+        throwTypeError(globalObject, scope, object->isLockedBuiltin() && object->isRefusedByLockAlone(vm, property.impl(), held) ? withAOTErrorNote(UnableToDeletePropertyError) : String(UnableToDeletePropertyError));
     }
     OPERATION_RETURN(scope, deleted);
 }
@@ -785,7 +787,7 @@ static JSValue requireFunctionOfHost(JSGlobalObject* globalObject, Instance* ins
     auto& state = *instance->typed;
     if (!state.importMeta) {
         auto* importer = uncheckedDowncast<JSModuleRecord>(state.moduleRecord);
-        state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, importer->moduleKey()), importer, nullptr);
+        state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.keyOfImporter(vm)), importer, nullptr);
         RETURN_IF_EXCEPTION(scope, { });
     }
     RELEASE_AND_RETURN(scope, state.importMeta->get(globalObject, Identifier::fromString(vm, "require"_s)));
@@ -799,7 +801,7 @@ static JSValue requireFromHost(JSGlobalObject* globalObject, Instance* instance,
     RETURN_IF_EXCEPTION(scope, { });
     auto callData = JSC::getCallData(require);
     if (callData.type == CallData::Type::None) {
-        throwTypeError(globalObject, scope, makeString("Cannot find module '"_s, specifier.toWTFString(globalObject), "': require() is not available here"_s));
+        throwTypeError(globalObject, scope, withAOTErrorNote(makeString("Cannot find module '"_s, specifier.toWTFString(globalObject), "': require() is not available here"_s)));
         return { };
     }
     MarkedArgumentBuffer arguments;
@@ -912,18 +914,17 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetExternalModule, EncodedJSValue, (In
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     AbstractModuleRecord* importer = instance->typed->moduleRecord;
-    RELEASE_ASSERT(importer);
     const Identifier& name = nameAt(instance, specifier);
-    AbstractModuleRecord* imported = importer->hostResolveImportedModule(globalObject, name, ScriptFetchParameters::Type::JavaScript);
-    if (!imported) {
+    AbstractModuleRecord* imported = importer ? importer->hostResolveImportedModule(globalObject, name, ScriptFetchParameters::Type::JavaScript) : nullptr;
+    if (importer && !imported) {
         // A bundler may have written a built-in module the other way.
         String other = name.string().startsWith("node:"_s) ? name.string().string().substring(5) : makeString("node:"_s, name.string());
         imported = importer->hostResolveImportedModule(globalObject, Identifier::fromString(vm, other), ScriptFetchParameters::Type::JavaScript);
     }
     if (imported)
         OPERATION_RETURN(scope, JSValue::encode(imported->getModuleNamespace(globalObject)));
-    JSModuleLoader* loader = importer->moduleLoader();
-    Identifier key = loader->resolve(globalObject, name, importer->moduleKey(), nullptr, true);
+    JSModuleLoader* loader = importer ? importer->moduleLoader() : globalObject->moduleLoader();
+    Identifier key = loader->resolve(globalObject, name, instance->typed->keyOfImporter(vm), nullptr, true);
     OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
     bool isEvaluating = false;
     auto recordThatHasRun = [&]() -> AbstractModuleRecord* {
@@ -950,7 +951,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetExternalModule, EncodedJSValue, (In
         imported = recordThatHasRun();
     }
     if (!imported) {
-        throwTypeError(globalObject, scope, makeString("The module \""_s, key.string(), "\" is not compiled with the program and cannot be loaded at once: use \"await import()\" instead."_s));
+        throwTypeError(globalObject, scope, withAOTErrorNote(makeString("The module \""_s, key.string(), "\" is not compiled with the program and cannot be loaded synchronously: use \"await import()\" instead"_s)));
         OPERATION_RETURN(scope, encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(imported->getModuleNamespace(globalObject)));
@@ -1237,7 +1238,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* insta
 
 static Instance::CopyForMore planCopyForMore(Instance* instance, JSGlobalObject* globalObject, VM& vm, Structure* source, uint64_t more)
 {
-    if (!source->canPerformFastPropertyEnumerationCommon() || source->hasStableFields() || source->typedLayoutID() || !checkStructureForClone(source) || !source->didTransition())
+    if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || !source->didTransition())
         return { };
     if (source->realm() != globalObject || source->storedPrototype() != JSValue(globalObject->objectPrototype()))
         return { };
@@ -1301,7 +1302,7 @@ static JSObject* tryCopyExcluding(Instance* instance, JSGlobalObject* globalObje
     if (!plan) {
         Instance::CopyExcluding made;
         made.excluded.appendRange(excluded.begin(), excluded.end());
-        bool isEligible = structure->canPerformFastPropertyEnumerationCommon() && !structure->hasStableFields() && !structure->typedLayoutID() && checkStructureForClone(structure)
+        bool isEligible = structure->canPerformFastPropertyEnumerationCommon() && checkStructureForClone(structure)
             && structure->realm() == globalObject && structure->storedPrototype() == JSValue(globalObject->objectPrototype());
         if (isEligible) {
             Vector<UniquedStringImpl*, 16> names;
@@ -1672,8 +1673,6 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
     case Typed::LanguageOperation::SuperGet:
     case Typed::LanguageOperation::SuperSet: {
         bool isGet = static_cast<Typed::LanguageOperation>(which) == Typed::LanguageOperation::SuperGet;
-        auto key = argument(1).toPropertyKey(globalObject);
-        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         // What the method was defined on: the class object, or its `prototype`, which stays what it is.
         JSValue home = argument(0);
         if (!argument(isGet ? 3 : 4).isTrue()) {
@@ -1687,6 +1686,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             throwTypeError(globalObject, scope, "The prototype of the home object is not an object"_s);
             OPERATION_RETURN(scope, encodedJSValue());
         }
+        auto key = argument(1).toPropertyKey(globalObject);
+        OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (isGet) {
             PropertySlot slot(argument(2), PropertySlot::InternalMethodType::Get);
             bool has = asObject(parent)->getPropertySlot(globalObject, key, slot);
@@ -2013,7 +2014,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         auto* executable = DirectEvalExecutable::create(globalObject, makeSource(text.data, origin, SourceTaintedOrigin::Untainted), isSloppy ? NoLexicallyScopedFeatures : StrictModeLexicallyScopedFeature, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None, false, isInFunction, isInFunction ? EvalContextType::FunctionEvalContext : EvalContextType::None, &variablesUnderTDZ, &privateNames);
         OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         if (!executable->isInStrictContext() && (!executable->variables().empty() || !executable->topLevelFunctionDecls().empty() || !executable->functionHoistingCandidates().empty())) {
-            throwSyntaxError(globalObject, scope, "A direct eval in code that is not strict declares a variable or a function, which would be one of the function around it: a program that is compiled ahead of time does not support that"_s);
+            throwSyntaxError(globalObject, scope, withAOTErrorNote("A direct eval in sloppy-mode code declares a variable or a function in the enclosing function, which a program compiled ahead of time does not support"_s));
             OPERATION_RETURN(scope, encodedJSValue());
         }
         JSScope* around = Typed::EvalScope::create(vm, instance->typed->evalScopeStructure(vm), globalObject->globalScope(), names);
@@ -2038,7 +2039,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
             OPERATION_RETURN(scope, JSValue::encode(state.importMetaOfModule(globalObject, asString(argument(0)))));
         if (!state.importMeta) {
             auto* importer = uncheckedDowncast<JSModuleRecord>(state.moduleRecord);
-            state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, importer->moduleKey()), importer, nullptr);
+            state.importMeta = globalObject->moduleLoader()->createImportMetaProperties(globalObject, identifierToJSValue(vm, state.keyOfImporter(vm)), importer, nullptr);
             OPERATION_RETURN_IF_EXCEPTION(scope, encodedJSValue());
         }
         OPERATION_RETURN(scope, JSValue::encode(state.importMeta));
@@ -2051,7 +2052,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedLanguageOperation, EncodedJSValue, (In
         if (scope.exception()) [[unlikely]]
             OPERATION_RETURN(scope, rejectWithCaughtException());
         auto* importer = uncheckedDowncast<JSModuleRecord>(instance->typed->moduleRecord);
-        SourceOrigin referrer { importer->sourceCode().provider()->sourceOrigin() };
+        SourceOrigin referrer = importer ? importer->sourceCode().provider()->sourceOrigin() : SourceOrigin { URL::fileURLWithFileSystemPath(instance->typed->pathOfFileAskedFor) };
         if (count > 2)
             referrer = SourceOrigin { URL::fileURLWithFileSystemPath(String { asString(argument(2))->value(globalObject) }) };
         JSPromise* promise = globalObject->moduleLoader()->importModule(globalObject, specifier, argument(1), referrer);
@@ -2492,7 +2493,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGetExtra, EncodedJSValue, (Instance* i
     if (!value)
         OPERATION_RETURN(scope, JSValue::encode(jsUndefined()));
     if (attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue) {
-        bool goesOn = instance->typed->reportOrThrow(globalObject, { .kind = "runtime-accessor"_s, .on = &object->layout(), .member = nameAt(instance, name).impl() }, makeString("Cannot read property '"_s, nameAt(instance, name).string(), "' of "_s, instance->typed->nameOf(object->layout()), ": typed code cannot call a getter that was added at run time"_s), State::InAudit::Ignored);
+        bool goesOn = instance->typed->reportOrThrow(globalObject, { .kind = "runtime-accessor"_s, .on = &object->layout(), .member = nameAt(instance, name).impl() }, makeString("Cannot read property '"_s, nameAt(instance, name).string(), "' of "_s, instance->typed->nameOf(object->layout()), ": TypeScript code of the program cannot call a getter that was added at run time"_s), State::InAudit::Ignored);
         OPERATION_RETURN(scope, goesOn ? JSValue::encode(jsUndefined()) : encodedJSValue());
     }
     OPERATION_RETURN(scope, JSValue::encode(value));
@@ -2754,7 +2755,7 @@ static void throwTypeMismatch(Instance* instance, JSGlobalObject* globalObject, 
 {
     State& state = *instance->typed;
     state.noteViolation(globalObject->vm(), { .kind = State::kindOfUnnamedViolation, .expected = &state.type(type), .got = value });
-    throwTypeError(globalObject, scope, makeString(auditPrefix(state), state.mismatchMessage(globalObject->vm(), value, state.type(type))));
+    throwTypeError(globalObject, scope, withAOTErrorNote(makeString(auditPrefix(state), state.mismatchMessage(globalObject->vm(), value, state.type(type)))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedHold, EncodedJSValue, (Instance* instance, EncodedJSValue value, uint32_t type))
@@ -2817,14 +2818,14 @@ static void throwKindMismatch(Instance* instance, JSGlobalObject* globalObject, 
 {
     State& state = *instance->typed;
     state.noteViolation(globalObject->vm(), { .kind = State::kindOfUnnamedViolation, .expectedKinds = kinds, .expectedName = name, .got = value });
-    throwTypeError(globalObject, scope, makeString(auditPrefix(state), "expected "_s, state.describeKinds(kinds, name), ", got "_s, State::describe(value)));
+    throwTypeError(globalObject, scope, withAOTErrorNote(makeString(auditPrefix(state), "expected "_s, state.describeKinds(kinds, name), ", got "_s, State::describe(value))));
 }
 
 static void throwNonNullFailed(Instance* instance, JSGlobalObject* globalObject, ThrowScope& scope, JSValue value, uint32_t type, uint32_t text)
 {
     State& state = *instance->typed;
     state.noteViolation(globalObject->vm(), { .kind = "non-null"_s, .what = "NonNull"_s, .expected = &state.type(type), .got = value });
-    throwTypeError(globalObject, scope, value.isUndefinedOrNull() ? State::nonNullMessage(value, text == UINT32_MAX ? String() : state.text(text)) : state.mismatchMessage(globalObject->vm(), value, state.type(type)));
+    throwTypeError(globalObject, scope, withAOTErrorNote(value.isUndefinedOrNull() ? State::nonNullMessage(value, text == UINT32_MAX ? String() : state.text(text)) : state.mismatchMessage(globalObject->vm(), value, state.type(type))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedMethodOfTable, EncodedJSValue, (Instance* instance, JSCell* table, uint32_t which))
@@ -2940,7 +2941,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedLearnRun, size_t, (Instance* 
     if (!base.isCell() || base.asCell()->type() != FinalObjectType)
         return counted(false);
     Structure* structure = base.asCell()->structure();
-    if (structure->compiledLayout() || structure->isDictionary() || structure->typedLayoutID() || !structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
+    if (structure->compiledLayout() || structure->isDictionary() || !structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint())
         return counted(false);
     header->structureID = structure->id();
     VM& vm = *instance->vm;
@@ -3001,7 +3002,7 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCheckKnownPlace, size_t, (Ins
         unsigned attributes = 0;
         PropertyOffset offset = structure->get(vm, nameAt(instance, name).impl(), attributes);
         unsigned refused = static_cast<unsigned>(placeAndFlags & isStore ? PropertyAttribute::ReadOnlyOrAccessorOrCustomAccessorOrValue : PropertyAttribute::AccessorOrCustomAccessorOrValue);
-        if (offset == static_cast<PropertyOffset>(placeAndFlags & 0xff) && static_cast<unsigned>(offset) < structure->inlineCapacity() && !(attributes & refused) && !(placeAndFlags & isFirstStore && attributes) && !structure->typedLayoutID() && !(placeAndFlags & isStore && structure->mayBePrototype()))
+        if (offset == static_cast<PropertyOffset>(placeAndFlags & 0xff) && static_cast<unsigned>(offset) < structure->inlineCapacity() && !(attributes & refused) && !(placeAndFlags & isFirstStore && attributes) && !(placeAndFlags & isStore && structure->mayBePrototype()))
             return 1;
     }
     operationAOTTypedFactDoesNotHold(instance, encodedBase, function, number);
@@ -3511,7 +3512,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGiveThisItsRow, void, (Instance* insta
         OPERATION_RETURN(scope);
     JSObject* object = asObject(value);
     Structure* empty = object->structure();
-    if (empty->previousID() || isValidOffset(empty->maxOffset()) || empty->isDictionary() || empty->hasPolyProto() || !empty->isStructureExtensible() || empty->mayBePrototype() || empty->compiledLayout() || empty->typedLayoutID() || !empty->propertyAccessesAreCacheable() || object->butterfly() || count > empty->inlineCapacity())
+    if (empty->previousID() || isValidOffset(empty->maxOffset()) || empty->isDictionary() || empty->hasPolyProto() || !empty->isStructureExtensible() || empty->mayBePrototype() || empty->compiledLayout() || !empty->propertyAccessesAreCacheable() || object->butterfly() || count > empty->inlineCapacity())
         OPERATION_RETURN(scope);
     const uint32_t* numbersOfNames = caller(instance, callFrame).info().function()->plans() + rowOfNames;
     Vector<UniquedStringImpl*, 16> names;
@@ -3593,7 +3594,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryPutProperties, size_t, (Instance* i
     Structure* structure = object->structure();
     if (hasElementStores && (hasAnyArrayStorage(structure->indexingType()) || structure->holesMustForwardToPrototype(object)))
         OPERATION_RETURN(scope, refuse());
-    if (structure->compiledLayout() || structure->isDictionary() || !structure->isStructureExtensible() || structure->hasImmutableShape() || structure->typedLayoutID() || structure->hasPolyProto() || (structure->mayBePrototype() && !mayBePrototype)
+    if (structure->compiledLayout() || structure->isDictionary() || !structure->isStructureExtensible() || structure->hasImmutableShape() || structure->hasPolyProto() || (structure->mayBePrototype() && !mayBePrototype)
         || structure->transitionCountEstimate() > Structure::s_maxTransitionLength)
         OPERATION_RETURN(scope, refuse());
     if (hasElementStores) {
@@ -3837,7 +3838,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArraySearchByCall, EncodedJSValue, (In
 
 static bool reportOrThrowWouldRunCode(JSGlobalObject* globalObject, State& state)
 {
-    return state.reportOrThrow(globalObject, { .kind = "array-not-plain"_s }, "Cannot read array element: the array or its prototype chain has accessors or a Proxy, which typed array access does not run"_s, State::InAudit::Ignored);
+    return state.reportOrThrow(globalObject, { .kind = "array-not-plain"_s }, "Cannot read array element: the array or its prototype chain has accessors or a Proxy, which are not run for an array of a declared element type"_s, State::InAudit::Ignored);
 }
 
 // [[Get]] as far as that runs no code of the program. Nothing: it would, and that has been thrown.
@@ -4033,12 +4034,21 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryAddNamedProperties, size_t
     return 1;
 }
 
+static bool isValuesOfAnotherRealmWhoseIterationIsUntouched(JSValue found)
+{
+    auto* function = dynamicDowncast<JSFunction>(found);
+    if (!function)
+        return false;
+    JSGlobalObject* realm = function->realm();
+    return function == realm->arrayProtoValuesFunction() && realm->arrayIteratorProtocolWatchpointSet().isStillValid();
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedOpenChangedArray, void, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     auto found = getWithoutRunningCode(globalObject, *instance->typed, uncheckedDowncast<JSArray>(cell), vm.propertyNames->iteratorSymbol, std::nullopt);
     OPERATION_RETURN_IF_EXCEPTION(scope);
-    if (*found != JSValue(globalObject->linkTimeConstant(LinkTimeConstant::arrayProtoValues)))
+    if (*found != JSValue(globalObject->linkTimeConstant(LinkTimeConstant::arrayProtoValues)) && !isValuesOfAnotherRealmWhoseIterationIsUntouched(*found))
         reportOrThrowWouldRunCode(globalObject, *instance->typed);
     OPERATION_RETURN(scope);
 }

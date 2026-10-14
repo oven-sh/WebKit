@@ -150,8 +150,6 @@ public:
     // instead). Once a slot holds a cell it keeps it — the cell adopts the StringImpl the slot held, if any — and the
     // table visits it for as long as the VM lives.
     JSString* jsStringFor(VM&, uint32_t ordinal);
-    bool& createsPlainStrings() { return m_createsPlainStrings; }
-    void removeDeadRecentPlainStrings(VM&);
     // The characters as a plain string, touching neither the slot, a cell nor the atom table (a reader that must not
     // atomize: a stack trace the collector builds).
     String stringFor(uint32_t ordinal) const;
@@ -200,15 +198,6 @@ private:
 
     std::span<const uint8_t> m_bytes;
     uintptr_t* m_slots { nullptr };
-    bool m_createsPlainStrings { false };
-    struct RecentPlainStrings {
-        WTF_MAKE_STRUCT_TZONE_ALLOCATED(RecentPlainStrings);
-        static constexpr unsigned size = 8192;
-        std::array<uint32_t, size> ordinalsPlusOne { };
-        std::array<JSString*, size> cells { };
-        bool wasUsedSinceLastCollection { false };
-    };
-    std::unique_ptr<RecentPlainStrings> m_recentPlainStrings;
     size_t m_slotsReservation { 0 };
     uint32_t m_count { 0 };
     // atomFor's outcomes so far (mutator only); expectedAtomTableInserts scales by them.
@@ -550,6 +539,7 @@ using AOTFileHandle = void*;
 JS_EXPORT_PRIVATE AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes);
 #else
 using AOTFileHandle = int;
+JS_EXPORT_PRIVATE AOTFileUse useAOTFileInLoadedSection(std::span<const uint8_t> bytes);
 #endif
 JS_EXPORT_PRIVATE AOTFileUse useAOTFile(std::span<const uint8_t> bytes, AOTFileHandle, int64_t offsetInFile);
 JS_EXPORT_PRIVATE Vector<uint8_t> buildAOTFile(VM&, std::span<const SourceCode>, bool isModule, std::span<const uint8_t> typedProgram = { }, unsigned numberOfModulesWithoutEntry = 0);

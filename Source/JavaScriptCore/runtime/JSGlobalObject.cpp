@@ -1115,6 +1115,14 @@ void JSGlobalObject::init(VM& vm)
 
     convertToDictionary(vm);
 
+    if (vm.useImmutableIntrinsics) [[unlikely]] {
+        bool isFirstRealm = !std::exchange(vm.hasRealmWithImmutableIntrinsics, true);
+        m_hasImmutableIntrinsics = isFirstRealm;
+#if ENABLE(AOT)
+        m_hasImmutableIntrinsics |= AOT::Image::usesNumberedIntrinsics();
+#endif
+    }
+
     m_debugger = nullptr;
     updateCanFastQueueMicrotask();
 
@@ -1258,7 +1266,7 @@ void JSGlobalObject::init(VM& vm)
             JSTypedArrayViewConstructor* constructor = JSTypedArrayViewConstructor::create(init.vm, init.owner, JSTypedArrayViewConstructor::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()), prototype);
             prototype->putDirectWithoutTransition(init.vm, init.vm.propertyNames->constructor, constructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
             init.set(constructor);
-            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
+            if (init.owner->fixesOrNotesIntrinsics()) [[unlikely]]
                 init.owner->makeIntrinsicImmutable(constructor, IntrinsicKind::Other);
         });
 
@@ -1364,8 +1372,13 @@ void JSGlobalObject::init(VM& vm)
         Options::allowDoubleShape() ? JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithDouble) : arrayWithContiguousStructure);
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ContiguousShape)].set(vm, this, arrayWithContiguousStructure);
 
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithArrayStorage));
-    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), ArrayWithSlowPutArrayStorage));
+    auto createStructureOfArraysInArrayStorage = [&](IndexingType indexingType) {
+        if (!vm.useImmutableIntrinsics || m_hasImmutableIntrinsics) [[likely]]
+            return JSArray::createStructure(vm, this, m_arrayPrototype.get(), indexingType);
+        return Structure::create(vm, this, m_arrayPrototype.get(), TypeInfo(DerivedArrayType, JSArray::StructureFlags), JSArray::info(), indexingType);
+    };
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(ArrayStorageShape)].set(vm, this, createStructureOfArraysInArrayStorage(ArrayWithArrayStorage));
+    m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(SlowPutArrayStorageShape)].set(vm, this, createStructureOfArraysInArrayStorage(ArrayWithSlowPutArrayStorage));
     m_originalArrayStructureForIndexingShape[arrayIndexFromIndexingType(CopyOnWriteArrayWithInt32)].set(vm, this, JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithInt32));
 
     Structure* copyOnWriteArrayWithContiguous = JSArray::createStructure(vm, this, m_arrayPrototype.get(), CopyOnWriteArrayWithContiguous);
@@ -1615,7 +1628,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_shadowRealmPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     unsigned attributesOfIntrinsic = static_cast<unsigned>(PropertyAttribute::DontEnum);
-    if (vm.useImmutableIntrinsics) [[unlikely]]
+    if (m_hasImmutableIntrinsics) [[unlikely]]
         attributesOfIntrinsic |= PropertyAttribute::ReadOnly | PropertyAttribute::DontDelete;
     else if (vm.auditsImmutableIntrinsics()) [[unlikely]]
         attributesOfIntrinsic |= static_cast<unsigned>(PropertyAttribute::WouldBeFixed);
@@ -1718,7 +1731,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentIteratorPrototype* segmentIteratorPrototype = IntlSegmentIteratorPrototype::create(init.vm, IntlSegmentIteratorPrototype::createStructure(init.vm, globalObject, globalObject->iteratorPrototype()));
             init.set(IntlSegmentIterator::createStructure(init.vm, globalObject, segmentIteratorPrototype));
-            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
+            if (globalObject->fixesOrNotesIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentIteratorPrototype, IntrinsicKind::Prototype);
         });
     m_segmenterStructure.initLater(
@@ -1732,7 +1745,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
             JSGlobalObject* globalObject = init.owner;
             IntlSegmentsPrototype* segmentsPrototype = IntlSegmentsPrototype::create(init.vm, globalObject, IntlSegmentsPrototype::createStructure(init.vm, globalObject, globalObject->objectPrototype()));
             init.set(IntlSegments::createStructure(init.vm, globalObject, segmentsPrototype));
-            if (init.vm.fixesOrNotesIntrinsics()) [[unlikely]]
+            if (globalObject->fixesOrNotesIntrinsics()) [[unlikely]]
                 globalObject->makeIntrinsicImmutable(segmentsPrototype, IntrinsicKind::Prototype);
         });
     m_segmentDataObjectStructure.initLater(
@@ -2354,7 +2367,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     }
 #endif // ENABLE(WEBASSEMBLY)
 
-    if (vm.fixesOrNotesIntrinsics()) [[unlikely]]
+    if (fixesOrNotesIntrinsics()) [[unlikely]]
         makeIntrinsicsImmutable();
 
     // Detect property change.
@@ -2415,7 +2428,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     // The iterator protocol fast paths assume that IteratorClose is unobservable, so they must be
     // invalidated when a "return" property appears anywhere on the iterator's prototype chain.
-    if (!vm.useImmutableIntrinsics) [[likely]] {
+    if (!m_hasImmutableIntrinsics) [[likely]] {
         installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, arrayIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_arrayIteratorProtocolWatchpointSet);
         installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, mapIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_mapIteratorProtocolWatchpointSet);
         installObjectAdaptiveStructureWatchpoint(setupAbsenceAdaptiveWatchpoint(this, setIteratorPrototype, vm.propertyNames->returnKeyword, m_iteratorPrototype.get()), m_setIteratorProtocolWatchpointSet);
@@ -2471,6 +2484,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
 
     if (Options::alwaysHaveABadTime()) [[unlikely]]
         this->haveABadTime(vm);
+    else if (vm.useImmutableIntrinsics && !m_hasImmutableIntrinsics) [[unlikely]]
+        fireWatchpointAndMakeAllArrayStructuresSlowPut(vm);
 
 #if ENABLE(AOT)
     if (AOT::ProgramData::get() && !BytecodeOrderRecorder::ofVM(vm))
@@ -2612,6 +2627,8 @@ void JSGlobalObject::addSymbolTableEntry(const Identifier& ident)
     ScopeOffset offset = symbolTable()->takeNextScopeOffset(locker);
     SymbolTableEntry newEntry(VarOffset(offset), 0);
     newEntry.prepareToWatch();
+    if (vm().useImmutableIntrinsics && !m_hasImmutableIntrinsics) [[unlikely]]
+        newEntry.prepareToWatchWithoutJIT();
     symbolTable()->add(locker, ident.impl(), WTF::move(newEntry));
 
     ScopeOffset offsetForAssert = addVariables(1, jsUndefined());

@@ -1218,7 +1218,7 @@ void Heap::deleteAllUnlinkedCodeBlocks(DeleteAllCodeEffort effort, OptionSet<Unl
             if (!function)
                 return;
 #if ENABLE(AOT)
-            if (function->hasAOTFunctionWord() || function->executable()->isShortFunctionExecutable())
+            if (function->executable()->isShortFunctionExecutable())
                 return;
 #endif
             if (function->isHostOrBuiltinFunction())
@@ -2754,13 +2754,6 @@ void Heap::setInitialAllocationBudget(size_t bytes)
         m_reenableFullActivityCallback = true;
     }
 }
-
-bool Heap::isPastTypicalFirstCollection()
-{
-    if (m_sizeAfterLastCollect || m_lastCollectionScope || m_collectionScope || m_maxEdenSize <= m_minBytesPerCycle)
-        return false;
-    return totalBytesAllocatedThisCycle() > m_minBytesPerCycle;
-}
 #endif
 
 void Heap::addDetachedWeakBlock(WeakBlock* block)
@@ -3175,8 +3168,11 @@ void Heap::addCoreConstraints()
                 if (auto* program = vm().m_aotProgram.get())
                     program->visit(visitor, newOnly ? CollectionScope::Eden : CollectionScope::Full);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
-                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance))))
+                    if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))) {
                         instance->visit(visitor, newOnly);
+                        if (instance->typed && !instance->typed->isOfLockedRealm)
+                            instance->typed->visit(visitor);
+                    }
                 }
             })),
             ConstraintVolatility::GreyedByMarking,
@@ -3187,7 +3183,7 @@ void Heap::addCoreConstraints()
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
-                    if (instance->typed)
+                    if (instance->typed && instance->typed->isOfLockedRealm)
                         instance->typed->visit(visitor);
                 }
             })),
