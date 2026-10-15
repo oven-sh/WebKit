@@ -848,7 +848,7 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
                     // mode). Replay that step inline. The queued
                     // normal-microtask copy will see modulePromise already
                     // settled and bail in moduleRegistryFetchSettled's handler.
-                    JSPromise* makePromise = makeModule(globalObject, resolved, uncheckedDowncast<JSSourceCode>(fetchPromise->result()));
+                    JSPromise* makePromise = makeModule(globalObject, resolved, fetchPromise->result());
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     if (makePromise->status() == JSPromise::Status::Fulfilled) {
                         mapEntry->fetchComplete(globalObject, uncheckedDowncast<AbstractModuleRecord>(makePromise->result()));

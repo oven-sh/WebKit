@@ -780,7 +780,8 @@ NEVER_INLINE void Collector::resumeThePeriphery()
     m_collectorSlotVisitor->setMutatorsAreStopped(false);
 
 #if USE(BUN_JSC_ADDITIONS) && OS(WINDOWS)
-    // Until 323742@main there was one SpinBackoff::spinOnce() here, which is a yield on Windows.
+    // A thread that never blocks keeps its core for a whole quantum, which is long on Windows Server, while one that just
+    // woke waits for it. The wait that was here until 323742@main yielded once, so such a thread gave way at each collection.
     Thread::yield();
 #endif
 
