@@ -94,10 +94,7 @@ class JSGlobalObject;
     v(isArray, nullptr) \
     v(Set, nullptr) \
     v(Map, nullptr) \
-    v(importInRealm, nullptr) \
     v(evalFunction, nullptr) \
-    v(evalInRealm, nullptr) \
-    v(moveFunctionToRealm, nullptr) \
     v(isConstructor, nullptr) \
     v(sameValue, nullptr) \
     v(regExpProtoFlagsGetter, nullptr) \
@@ -132,8 +129,6 @@ class JSGlobalObject;
     v(createPrivateSymbol, nullptr) \
     v(emptyPropertyNameEnumerator, nullptr) \
     v(sentinelString, nullptr) \
-    v(createRemoteFunction, nullptr) \
-    v(isRemoteFunction, nullptr) \
     v(arrayFromFastWithoutMapFn, nullptr) \
     v(jsonParse, nullptr) \
     v(jsonStringify, nullptr) \

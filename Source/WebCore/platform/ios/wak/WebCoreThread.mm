@@ -52,6 +52,7 @@
 #import <wtf/RunLoop.h>
 #import <wtf/ThreadSpecific.h>
 #import <wtf/Threading.h>
+#import <wtf/Vector.h>
 #import <wtf/WorkQueue.h>
 #import <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #import <wtf/spi/cf/CFRunLoopSPI.h>
@@ -137,10 +138,10 @@ static RetainPtr<CFRunLoopSourceRef>& webThreadReleaseSource()
     return webThreadReleaseSource;
 }
 
-static RetainPtr<CFMutableArrayRef>& webThreadReleaseObjArray()
+static Vector<RetainPtr<id>>& webThreadReleaseObjects()
 {
-    static NeverDestroyed<RetainPtr<CFMutableArrayRef>> webThreadReleaseObjArray;
-    return webThreadReleaseObjArray;
+    static NeverDestroyed<Vector<RetainPtr<id>>> webThreadReleaseObjects;
+    return webThreadReleaseObjects;
 }
 
 static Lock delegateLock;
@@ -340,9 +341,8 @@ void WebThreadAdoptAndRelease(id obj)
 
     Locker locker { webThreadReleaseLock };
 
-    if (!webThreadReleaseObjArray())
-        webThreadReleaseObjArray() = adoptCF(CFArrayCreateMutable(kCFAllocatorSystemDefault, 0, nullptr));
-    CFArrayAppendValue(webThreadReleaseObjArray().get(), obj);
+    // The caller transfers its reference to obj, which is released on the web thread.
+    SUPPRESS_RETAINPTR_CTOR_ADOPT webThreadReleaseObjects().append(adoptNS(obj));
     CFRunLoopSourceSignal(webThreadReleaseSource().get());
     CFRunLoopWakeUp(webThreadRunLoop());
 }
@@ -437,24 +437,16 @@ static void HandleWebThreadReleaseSource(void*)
 {
     ASSERT(WebThreadIsCurrent());
 
-    RetainPtr<CFMutableArrayRef> objects;
+    Vector<RetainPtr<id>> objects;
     {
         Locker locker { webThreadReleaseLock };
-        if (CFArrayGetCount(webThreadReleaseObjArray().get())) {
-            objects = adoptCF(CFArrayCreateMutableCopy(nullptr, 0, webThreadReleaseObjArray().get()));
-            CFArrayRemoveAllValues(webThreadReleaseObjArray().get());
-        }
+        objects = std::exchange(webThreadReleaseObjects(), { });
     }
 
-    if (!objects)
-        return;
-
-    for (unsigned i = 0, count = CFArrayGetCount(objects.get()); i < count; ++i) {
-        auto obj = adoptCF(CFArrayGetValueAtIndex(objects.get(), i));
 #if LOG_RELEASES
-        NSLog(@"Release recv [web thread] : %@", obj.get());
+    for (auto& object : objects)
+        NSLog(@"Release recv [web thread] : %@", object.get());
 #endif
-    }
 }
 
 void WebThreadCallDelegate(NSInvocation* invocation)

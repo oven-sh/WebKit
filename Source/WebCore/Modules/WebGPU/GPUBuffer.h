@@ -31,6 +31,7 @@
 #include "JSDOMPromiseDeferredForward.h"
 #include "WebGPUBuffer.h"
 #include <JavaScriptCore/ArrayBuffer.h>
+#include <atomic>
 #include <cstdint>
 #include <optional>
 #include <wtf/HashSet.h>
@@ -55,7 +56,7 @@ public:
         return adoptRef(*new GPUBuffer(WTF::move(backing), bufferSize, usage, mappedAtCreation, device));
     }
 
-    String NODELETE label() const;
+    String LEGACY_NODELETE label() const;
     void setLabel(String&&);
 
     using MapAsyncPromise = DOMPromiseDeferred<void>;
@@ -74,6 +75,10 @@ public:
     GPUBufferUsageFlags usage() const { return m_usage; }
 
     GPUBufferMapState mapState() const { return m_mapState; };
+
+    // The GPU memory to tell the GC about, since it can't otherwise see it. May be called from GC threads.
+    size_t memoryCost() const { return m_memoryCost.load(std::memory_order_relaxed); }
+    void setMemoryCost(size_t memoryCost) { m_memoryCost.store(memoryCost, std::memory_order_relaxed); }
 
     ~GPUBuffer();
 
@@ -101,6 +106,7 @@ private:
     HashSet<size_t, DefaultHash<size_t>, WTF::UnsignedWithZeroKeyHashTraits<size_t>> m_mappedPoints;
     bool m_destroyed { false };
     bool m_mappedAtCreation { false };
+    std::atomic<size_t> m_memoryCost { 0 }; // Atomic, accessed from arbitrary thread by GC.
 };
 
 }

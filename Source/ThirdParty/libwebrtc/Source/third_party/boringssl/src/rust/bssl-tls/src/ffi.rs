@@ -23,21 +23,17 @@ use core::{
         NonNull,
         null,
         null_mut, //
-    },
-    slice::{
-        from_raw_parts,
-        from_raw_parts_mut, //
     }, //
 };
 
-use bssl_crypto::FfiSlice;
+use bssl_crypto::{
+    FfiSlice,
+    FromFfiSlice, //
+};
 
 use crate::{
     context::CertificateCache,
-    errors::{
-        Error,
-        IoError, //
-    }, //
+    errors::Error, //
 };
 
 pub(crate) fn slice_into_ffi_raw_parts<T>(slice: &[T]) -> (*const T, usize) {
@@ -66,50 +62,6 @@ impl<T> Drop for Alloc<T> {
             // Safety: `self.0` is still valid at dropping, even if it is `NULL`.
             bssl_sys::OPENSSL_free(self.0 as _);
         }
-    }
-}
-
-/// Sanitize the data pointer and length and reconstitute the slice.
-///
-/// This method returns an empty slice if the length is 0 or the pointer is NULL.
-/// # Safety
-/// Caller must ensure that `'a` outlives `input`.
-#[inline]
-pub(crate) unsafe fn sanitize_slice<'a, T>(input: *const T, len: usize) -> Option<&'a [T]> {
-    if len == 0 || input.is_null() {
-        return Some(&[]);
-    }
-    if !input.is_aligned() || len.checked_mul(size_of::<T>())? > isize::MAX as usize {
-        return None;
-    }
-    unsafe {
-        // Safety: the pointer and the size has been sanitised.
-        Some(from_raw_parts(input, len))
-    }
-}
-
-/// Sanitize the data pointer and length and reconstitute the mutable slice.
-///
-/// `capacity` counts the number of `T`s that `out` can hold, **not number of bytes**.
-///
-/// This method returns an empty slice if the length is 0 or the pointer is NULL.
-/// # Safety
-/// Caller must ensure that `'a` outlives `input`.
-#[inline]
-pub(crate) unsafe fn sanitise_mut_byteslice<'a>(
-    out: *mut u8,
-    capacity: usize,
-) -> Option<&'a mut [u8]> {
-    if capacity == 0 || out.is_null() {
-        return Some(&mut []);
-    }
-    if capacity > isize::MAX as usize {
-        return None;
-    }
-    unsafe {
-        // Safety: `out` is 1-aligned and `0` is a valid pattern for `u8`.
-        core::ptr::write_bytes(out, 0, capacity);
-        Some(from_raw_parts_mut(out, capacity))
     }
 }
 
@@ -142,21 +94,18 @@ impl<'a> Bio<'a> {
         Bio(bio, PhantomData)
     }
 
-    pub fn from_bytes(buf: &'a [u8]) -> Result<Self, Error> {
-        let len = if let Ok(len) = buf.len().try_into() {
-            len
-        } else {
-            return Err(Error::Io(IoError::TooLong));
-        };
+    pub fn from_bytes(buf: &'a [u8]) -> Self {
+        #[allow(clippy::expect_used, reason = "breach of fundamental invariant")]
+        let len = buf.len().try_into().expect("impossible allocation size");
         let mem_buf = unsafe {
             // Safety: buf is still valid
             bssl_sys::BIO_new_mem_buf(buf.as_ffi_void_ptr(), len)
         };
         let mem_buf = NonNull::new(mem_buf).expect("allocation failure");
-        Ok(unsafe {
+        unsafe {
             // Safety: our returned object is outlived by the input buffer.
             Self::new(mem_buf)
-        })
+        }
     }
 
     pub fn ptr(&mut self) -> *mut bssl_sys::BIO {
@@ -180,6 +129,9 @@ pub struct ReceiveBuffer<'a> {
     cursor: usize,
     _p: PhantomData<&'a mut [u8]>,
 }
+
+// Safety: by construction `ReceiveBuffer` owns the buffer region for exclusive access.
+unsafe impl Send for ReceiveBuffer<'_> {}
 
 impl<'a> ReceiveBuffer<'a> {
     /// Create a new receiver buffer, with uninitialised bytes.
@@ -253,7 +205,7 @@ impl<'a> ReceiveBuffer<'a> {
         unsafe {
             // Safety: `self` still exclusively owns the buffer region and the range of bytes
             // is known to be initialised by us. See `advance`.
-            sanitize_slice(self.ptr, self.cursor).unwrap_or(&[])
+            u8::from_ffi_ptr(self.ptr, self.cursor)
         }
     }
 

@@ -341,7 +341,19 @@ inline bool isAnyOf(const RefPtr<ArgType, PtrTraits, RefDerefTraits>& source)
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>* uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* uncheckedDowncast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -350,7 +362,19 @@ inline RefPtr<match_constness_t<Source, Target>> uncheckedDowncast(RefPtr<Source
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>> downcast(RefPtr<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>* downcast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* downcast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline RefPtr<match_constness_t<Source, Target>> downcast(RefPtr<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -358,9 +382,21 @@ inline RefPtr<match_constness_t<Source, Target>> downcast(RefPtr<Source, PtrTrai
     return unsafeRefPtrDowncast<match_constness_t<Source, Target>>(WTF::move(source));
 }
 
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(const RefPtr<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
 template<typename Target, typename Source, typename TargetPtrTraits = RawPtrTraits<match_constness_t<Source, Target>>, typename TargetRefDerefTraits = DefaultRefDerefTraits<match_constness_t<Source, Target>>,
     typename SourcePtrTraits, typename SourceRefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDerefTraits> dynamicDowncast(RefPtr<Source, SourcePtrTraits, SourceRefDerefTraits> source)
+inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDerefTraits> dynamicDowncast(RefPtr<Source, SourcePtrTraits, SourceRefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -370,7 +406,7 @@ inline RefPtr<match_constness_t<Source, Target>, TargetPtrTraits, TargetRefDeref
 }
 
 template<typename T, typename U>
-SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE lazyInitialize(const RefPtr<T>& ptr, Ref<U>&& obj)
+SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE lazyInitialize(const RefPtr<T>& ptr, Ref<U>&& obj)
 {
     RELEASE_ASSERT(!ptr);
     const_cast<RefPtr<T>&>(ptr) = WTF::move(obj);

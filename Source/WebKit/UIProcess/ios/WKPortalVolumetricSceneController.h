@@ -27,6 +27,7 @@
 
 #if PLATFORM(VISION) && ENABLE(CONNECTED_VOLUMETRIC_SCENE)
 
+#import <WebCore/FloatPoint3D.h>
 #import <WebCore/FloatSize.h>
 #import <WebCore/LayerHostingContextIdentifier.h>
 
@@ -48,6 +49,8 @@ NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
 // Reports spatial drags inside the volume, with locations in points.
 - (void)installInputSurfaceWithBegan:(void (^)(CGPoint))began changed:(void (^)(CGPoint))changed ended:(void (^)(void))ended;
+
+- (void)setHitSphereCenter:(const WebCore::FloatPoint3D&)center radius:(float)radius;
 
 - (void)updateLayoutForVolumeSize;
 

@@ -252,7 +252,7 @@ void WebExtensionAPITest::assertDeepEq(JSContextRef context, JSValueRef actualVa
 String WebExtensionAPITest::combineMessages(const String& messageOne, const String& messageTwo)
 {
     if (!messageOne.isEmpty() && !messageTwo.isEmpty()) {
-        Vector<String> stringList = { messageOne, messageTwo };
+        const Vector<String> stringList = { messageOne, messageTwo };
         return makeStringByJoining(stringList, "\n"_s);
     }
 
@@ -383,7 +383,7 @@ void WebExtensionAPITest::recordAssertionIfNeeded(bool result, const String& mes
     m_hitAssertion = true;
     m_assertionMessage = message;
 
-    Vector<String> locationVector = { location.first, String::number(location.second) };
+    const Vector<String> locationVector = { location.first, String::number(location.second) };
     auto locationString = makeStringByJoining(locationVector, ":"_s);
     outExceptionString = message.isNull()
         ? makeString("Assertion Failed: "_s, locationString)
@@ -401,7 +401,7 @@ void WebExtensionContextProxy::dispatchTestMessageEvent(const String& message, c
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onMessage().invokeListenersWithJSONArgument(message, argumentJSON);
+        protect(protect(namespaceObject.test())->onMessage())->invokeListenersWithJSONArgument(message, argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 
@@ -416,7 +416,7 @@ void WebExtensionContextProxy::dispatchTestStartedEvent(const String& argumentJS
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onTestStarted().invokeListenersWithJSONArgument(argumentJSON);
+        protect(protect(namespaceObject.test())->onTestStarted())->invokeListenersWithJSONArgument(argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 
@@ -431,7 +431,7 @@ void WebExtensionContextProxy::dispatchTestFinishedEvent(const String& argumentJ
     }
 
     enumerateFramesAndNamespaceObjects([&](auto&, auto& namespaceObject) {
-        namespaceObject.test().onTestFinished().invokeListenersWithJSONArgument(argumentJSON);
+        protect(protect(namespaceObject.test())->onTestFinished())->invokeListenersWithJSONArgument(argumentJSON);
     }, toDOMWrapperWorld(contentWorldType));
 }
 

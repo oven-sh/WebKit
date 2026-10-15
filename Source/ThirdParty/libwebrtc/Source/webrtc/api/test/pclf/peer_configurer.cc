@@ -37,6 +37,7 @@
 #include "api/test/peer_network_dependencies.h"
 #include "api/transport/bitrate_settings.h"
 #include "api/transport/network_control.h"
+#include "api/video/timing/video_jitter_timing_factory.h"
 #include "api/video_codecs/video_decoder_factory.h"
 #include "api/video_codecs/video_encoder_factory.h"
 #include "p2p/base/port_allocator.h"
@@ -188,6 +189,12 @@ PeerConfigurer* PeerConfigurer::SetNetEqFactory(
   components_->pcf_dependencies->neteq_factory = std::move(neteq_factory);
   return this;
 }
+PeerConfigurer* PeerConfigurer::SetVideoJitterTimingFactory(
+    std::unique_ptr<VideoJitterTimingFactory> video_jitter_timing_factory) {
+  components_->pcf_dependencies->video_jitter_timing_factory =
+      std::move(video_jitter_timing_factory);
+  return this;
+}
 PeerConfigurer* PeerConfigurer::SetAudioProcessing(
     std::unique_ptr<AudioProcessingBuilderInterface> audio_processing) {
   components_->pcf_dependencies->audio_processing = std::move(audio_processing);
@@ -196,11 +203,6 @@ PeerConfigurer* PeerConfigurer::SetAudioProcessing(
 PeerConfigurer* PeerConfigurer::SetAudioMixer(
     scoped_refptr<AudioMixer> audio_mixer) {
   components_->pcf_dependencies->audio_mixer = audio_mixer;
-  return this;
-}
-
-PeerConfigurer* PeerConfigurer::SetUseNetworkThreadAsWorkerThread() {
-  components_->worker_thread = components_->network_thread;
   return this;
 }
 

@@ -177,7 +177,7 @@ Ref<SourceBuffer> SourceBuffer::create(Ref<SourceBufferPrivate>&& sourceBufferPr
 }
 
 SourceBuffer::SourceBuffer(Ref<SourceBufferPrivate>&& sourceBufferPrivate, MediaSource& source)
-    : ActiveDOMObject(source.scriptExecutionContext())
+    : ActiveDOMObject(protect(source.scriptExecutionContext()))
     , m_private(WTF::move(sourceBufferPrivate))
     , m_client(SourceBufferClientImpl::create(*this))
     , m_source(&source)
@@ -1441,7 +1441,8 @@ size_t SourceBuffer::memoryCost() const
 
 WebCoreOpaqueRoot SourceBuffer::opaqueRoot() const
 {
-    return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return WebCoreOpaqueRoot { const_cast<SourceBuffer*>(this) };
 }
 
 void SourceBuffer::memoryPressure()

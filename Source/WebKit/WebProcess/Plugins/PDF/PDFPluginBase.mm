@@ -92,6 +92,7 @@
 #import <WebCore/SharedBuffer.h>
 #import <WebCore/StyleColorOptions.h>
 #import <WebCore/VoidCallback.h>
+#import <wtf/Borrow.h>
 #import <wtf/CheckedArithmetic.h>
 #import <wtf/HexNumber.h>
 #import <wtf/StdLibExtras.h>
@@ -774,7 +775,7 @@ void PDFPluginBase::updateHUDVisibility()
         return;
 
     if (shouldShowHUD())
-        page->createPDFHUD(*this, frame->frameID(), frameForHUDInRootViewCoordinates());
+        page->createPDFHUD(*this, frame->frameID(), frameForHUDInMainFrameViewCoordinates());
     else
         page->removePDFHUD(*this);
 }
@@ -1244,7 +1245,7 @@ void PDFPluginBase::writeItemsToGeneralPasteboard(Vector<PasteboardItem>&& paste
         return content;
     };
 
-    for (auto&& [data, type] : WTF::move(pasteboardItems)) {
+    for (auto&& [data, type] : borrow(pasteboardItems)) {
         if (![data length]) {
             ASSERT_NOT_REACHED();
             continue;
@@ -1296,12 +1297,12 @@ void PDFPluginBase::updateHUDLocation()
 {
     if (!shouldShowHUD())
         return;
-    protect(protect(m_frame.get())->page())->updatePDFHUDLocation(*this, frameForHUDInRootViewCoordinates());
+    protect(protect(m_frame.get())->page())->updatePDFHUDLocation(*this, frameForHUDInMainFrameViewCoordinates());
 }
 
-IntRect PDFPluginBase::frameForHUDInRootViewCoordinates() const
+IntRect PDFPluginBase::frameForHUDInMainFrameViewCoordinates() const
 {
-    return convertFromPluginToRootView(IntRect(IntPoint(), size()));
+    return enclosingIntRect(convertFromRootViewToMainFrameView(convertFromPluginToRootView(FloatRect { { }, size() })));
 }
 
 bool PDFPluginBase::hudEnabled() const
@@ -1670,8 +1671,8 @@ Color PDFPluginBase::pluginBackgroundColor() const
     RefPtr element = m_element.get();
     OptionSet<WebCore::StyleColorOptions> options;
     if (RefPtr element = m_element.get())
-        options = protect(element->renderer())->styleColorOptions();
-    return WebCore::RenderTheme::singleton().systemColor(CSSValueAppleSystemBackground, WTF::move(options));
+        options = protect(element->renderer())->styleColorOptions(WebCore::StyleColorOptionsPurpose::Rendering);
+    return WebCore::RenderTheme::singleton().systemColor(CSSValueID::AppleSystemBackground, WTF::move(options));
 #else
     static NeverDestroyed color = roundAndClampToSRGBALossy(RetainPtr { [CocoaColor grayColor].CGColor }.get());
     return color.get();
@@ -1689,7 +1690,7 @@ void PDFPluginBase::updateFullFramePluginBackgroundColor()
 
     Ref document = element->document();
     if (RefPtr body = document->bodyOrFrameset())
-        body->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(pluginBackgroundColor()));
+        body->setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(pluginBackgroundColor()));
 }
 
 unsigned PDFPluginBase::countFindMatches(const String& target, WebCore::FindOptions options, unsigned maxMatchCount)

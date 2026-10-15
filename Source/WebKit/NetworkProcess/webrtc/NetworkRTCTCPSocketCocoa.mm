@@ -68,8 +68,8 @@ std::unique_ptr<NetworkRTCProvider::Socket> NetworkRTCTCPSocketCocoa::createClie
 
 static inline void processIncomingData(RetainPtr<nw_connection_t>&& nwConnection, Function<Vector<uint8_t>(Vector<uint8_t>&&)>&& processData, Vector<uint8_t>&& buffer = { })
 {
-    auto nwConnectionReference = nwConnection.get();
-    nw_connection_receive(nwConnectionReference, 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([nwConnection = WTF::move(nwConnection), processData = WTF::move(processData), buffer = WTF::move(buffer)](dispatch_data_t content, nw_content_context_t context, bool isComplete, nw_error_t error) mutable {
+    RetainPtr nwConnectionReference = nwConnection;
+    nw_connection_receive(nwConnectionReference.get(), 1, std::numeric_limits<uint32_t>::max(), makeBlockPtr([nwConnection = WTF::move(nwConnection), processData = WTF::move(processData), buffer = WTF::move(buffer)](dispatch_data_t content, nw_content_context_t context, bool isComplete, nw_error_t error) mutable {
         if (content) {
             dispatch_data_apply_span(content, [&](std::span<const uint8_t> data) {
                 buffer.append(data);

@@ -36,6 +36,9 @@ messages -> ModelProcessModelPlayer {
 #if ENABLE(SPATIAL_PORTAL)
     [EnabledBy=SpatialPortalEnabled] DidUpdatePortalTransform(WebCore::TransformationMatrix transform)
 #endif
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+    [EnabledBy=SpatialPortalEnabled] DidUpdateVolumetricHitSphere(WebCore::FloatPoint3D center, float radius)
+#endif
     DidUpdateAnimationPlaybackState(WebCore::NodeIdentifier nodeID, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp)
     DidFinishEnvironmentMapLoading(bool succeeded)
     DidUnload()

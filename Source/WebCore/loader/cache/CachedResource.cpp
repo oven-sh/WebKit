@@ -140,8 +140,10 @@ void CachedResource::deref() const
 {
     // Invoke the inspector notification while the object is still fully intact
     // (i.e. before derived class destructors have run).
-    if (hasOneRef())
-        InspectorInstrumentation::willDestroyCachedResource(const_cast<CachedResource&>(*this));
+    if (hasOneRef()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST InspectorInstrumentation::willDestroyCachedResource(const_cast<CachedResource&>(*this));
+    }
     RefCountedAndCanMakeWeakPtr::deref();
 }
 
@@ -742,22 +744,23 @@ void CachedResource::switchClientsToRevalidatedResource()
     }
 
     for (auto& client : clientsToMove) {
-        if (client)
-            removeClient(*client);
+        if (RefPtr protectedClient = client)
+            removeClient(*protectedClient);
     }
     ASSERT(!m_clients.computeSize());
 
     for (auto& client : clientsToMove) {
-        if (client)
-            protect(m_resourceToRevalidate)->addClientToSet(*client);
+        if (RefPtr protectedClient = client)
+            protect(m_resourceToRevalidate)->addClientToSet(*protectedClient);
     }
     for (auto& client : clientsToMove) {
         // Calling didAddClient may do anything, including trying to cancel revalidation.
         // Assert that it didn't succeed.
         ASSERT(m_resourceToRevalidate);
         // Calling didAddClient for a client may end up removing another client. In that case it won't be in the set anymore.
-        if (client && m_resourceToRevalidate->m_clients.contains(*client))
-            protect(m_resourceToRevalidate)->didAddClient(*client);
+        RefPtr protectedClient = client;
+        if (protectedClient && m_resourceToRevalidate->m_clients.contains(*protectedClient))
+            protect(m_resourceToRevalidate)->didAddClient(*protectedClient);
     }
     m_switchingClientsToRevalidatedResource = false;
 }
@@ -866,8 +869,10 @@ CachedResource::ResponseData::ResponseData(CachedResource& resource)
 
 CachedResource::ResponseData& CachedResource::mutableResponseData() const
 {
-    if (!m_response)
-        m_response = makeUnique<ResponseData>(*const_cast<CachedResource*>(this));
+    if (!m_response) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST m_response = makeUnique<ResponseData>(*const_cast<CachedResource*>(this));
+    }
     return *m_response;
 }
 
@@ -934,8 +939,8 @@ unsigned CachedResource::decodedSize() const
 
 inline CachedResourceCallback::CachedResourceCallback(CachedResource& resource, CachedResourceClient& client)
     : m_timer([resource = RefPtr { resource }, client = WeakPtr { client }] {
-        if (client)
-            resource->didAddClient(*client);
+        if (RefPtr protectedClient = client)
+            resource->didAddClient(*protectedClient);
     })
 {
     m_timer.startOneShot(0_s);

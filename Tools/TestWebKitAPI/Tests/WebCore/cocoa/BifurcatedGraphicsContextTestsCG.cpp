@@ -55,7 +55,7 @@ TEST(BifurcatedGraphicsContextTests, Basic)
     RetainPtr primaryCGContext = adoptCF(CGBitmapContextCreate(nullptr, contextWidth, contextHeight, 8, 4 * contextWidth, colorSpace.platformColorSpace(), kCGImageAlphaPremultipliedLast));
 
     GraphicsContextCG primaryContext(primaryCGContext.get());
-    RecorderImpl secondaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref secondaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
 
@@ -67,7 +67,7 @@ TEST(BifurcatedGraphicsContextTests, Basic)
     EXPECT_EQ(primaryData[0], 255);
     EXPECT_EQ(primaryData[1], 0);
     EXPECT_EQ(primaryData[2], 0);
-    Ref displayList = secondaryContext.takeDisplayList();
+    Ref displayList = secondaryContext->takeDisplayList();
     // The secondary context should have a red FillRectWithColor.
     EXPECT_FALSE(displayList->items().empty());
     bool sawFillRect = false;
@@ -85,8 +85,8 @@ TEST(BifurcatedGraphicsContextTests, Basic)
 
 TEST(BifurcatedGraphicsContextTests, Text)
 {
-    RecorderImpl primaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
-    RecorderImpl secondaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref primaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref secondaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
 
@@ -112,8 +112,8 @@ TEST(BifurcatedGraphicsContextTests, Text)
     };
 
     // Ensure that both contexts have text painting commands.
-    runTest(primaryContext.takeDisplayList());
-    runTest(secondaryContext.takeDisplayList());
+    runTest(primaryContext->takeDisplayList());
+    runTest(secondaryContext->takeDisplayList());
 }
 
 static RefPtr<BitmapImage> createRedImage()
@@ -201,7 +201,7 @@ TEST(BifurcatedGraphicsContextTests, Borders)
     RetainPtr primaryCGContext = adoptCF(CGBitmapContextCreate(nullptr, contextWidth, contextHeight, 8, 4 * contextWidth, colorSpace.platformColorSpace(), kCGImageAlphaPremultipliedLast));
 
     GraphicsContextCG primaryContext(primaryCGContext.get());
-    RecorderImpl secondaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref secondaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
 
@@ -227,7 +227,7 @@ TEST(BifurcatedGraphicsContextTests, TransformedClip)
     GraphicsContextCG primaryContextCG(primaryCGContext.get());
     GraphicsContext& primaryContext = primaryContextCG;
 
-    RecorderImpl secondaryContextDL({ }, FloatRect(0, 0, 100, 100), { });
+    Ref secondaryContextDL = RecorderImpl::create({ }, FloatRect(0, 0, 100, 100), { });
     GraphicsContext& secondaryContext = secondaryContextDL;
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
@@ -285,7 +285,7 @@ TEST(BifurcatedGraphicsContextTests, ApplyDeviceScaleFactor)
     GraphicsContextCG primaryContextCG(primaryCGContext.get());
     GraphicsContext& primaryContext = primaryContextCG;
 
-    RecorderImpl secondaryContextDL({ }, FloatRect(0, 0, 100, 100), { });
+    Ref secondaryContextDL = RecorderImpl::create({ }, FloatRect(0, 0, 100, 100), { });
     GraphicsContext& secondaryContext = secondaryContextDL;
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
@@ -304,8 +304,8 @@ TEST(BifurcatedGraphicsContextTests, ApplyDeviceScaleFactor)
 
 TEST(BifurcatedGraphicsContextTests, ClipToImageBuffer)
 {
-    RecorderImpl primaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
-    RecorderImpl secondaryContext({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref primaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
+    Ref secondaryContext = RecorderImpl::create({ }, FloatRect(0, 0, contextWidth, contextHeight), { });
 
     BifurcatedGraphicsContext ctx(primaryContext, secondaryContext);
 
@@ -325,8 +325,8 @@ TEST(BifurcatedGraphicsContextTests, ClipToImageBuffer)
     };
 
     // Ensure that both contexts have clip-to-image-buffer commands.
-    runTest(primaryContext.takeDisplayList());
-    runTest(secondaryContext.takeDisplayList());
+    runTest(primaryContext->takeDisplayList());
+    runTest(secondaryContext->takeDisplayList());
 }
 
 } // namespace TestWebKitAPI

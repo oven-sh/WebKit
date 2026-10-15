@@ -73,12 +73,12 @@ public:
     static void registerMediaEngine(MediaEngineRegistrar);
 
     using NativeImageCreator = RefPtr<NativeImage> (*)(const VideoFrame&);
-    WEBCORE_EXPORT static void NODELETE setNativeImageCreator(NativeImageCreator&&);
+    WEBCORE_EXPORT static void LEGACY_NODELETE setNativeImageCreator(NativeImageCreator&&);
 
     // MediaPlayer Factory Methods
     static bool isAvailable();
     static void getSupportedTypes(HashSet<String>& types);
-    static MediaPlayer::SupportsType NODELETE supportsType(const MediaEngineSupportParameters&);
+    static MediaPlayer::SupportsType LEGACY_NODELETE supportsType(const MediaEngineSupportParameters&);
 
     MediaPlayer::NetworkState networkState() const override;
     void setNetworkState(MediaPlayer::NetworkState);
@@ -113,7 +113,7 @@ private:
     void cancelLoad() override;
 
     void prepareToPlay() override;
-    PlatformLayer* platformLayer() const override;
+    PlatformLayer* platformLayer() override;
     
     bool supportsPictureInPicture() const final { return true; }
     bool supportsFullscreen() const override { return true; }

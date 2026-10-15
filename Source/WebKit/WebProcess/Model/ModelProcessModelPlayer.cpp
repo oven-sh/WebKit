@@ -175,6 +175,18 @@ void ModelProcessModelPlayer::didUpdatePortalTransform(const WebCore::Transforma
 
 #endif
 
+#if ENABLE(CONNECTED_VOLUMETRIC_SCENE)
+
+void ModelProcessModelPlayer::didUpdateVolumetricHitSphere(const WebCore::FloatPoint3D& center, float radius)
+{
+    RELEASE_ASSERT(modelProcessEnabled());
+
+    if (RefPtr page = m_page.get())
+        page->updateVolumetricSceneHitSphere(*this, center, radius);
+}
+
+#endif
+
 void ModelProcessModelPlayer::didUpdateAnimationPlaybackState(WebCore::NodeIdentifier nodeID, bool isPaused, double playbackRate, Seconds duration, Seconds currentTime, MonotonicTime clockTimestamp)
 {
     RELEASE_ASSERT(modelProcessEnabled());

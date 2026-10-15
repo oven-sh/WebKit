@@ -483,6 +483,7 @@ struct SiteIsolationParams {
     bool sharedProcessEnabled;
 
     String pdfURL() const { return makeString("https://"_s, crossOrigin ? "webkit.org"_s : "example.com"_s, "/test.pdf"_s); }
+    String frameURL() const { return makeString("https://"_s, crossOrigin ? "webkit.org"_s : "example.com"_s, "/frame"_s); }
 
     void applyTo(WKWebViewConfiguration *configuration) const
     {
@@ -1126,10 +1127,10 @@ class EmbeddedPDFHUDSiteIsolation : public testing::TestWithParam<EmbeddedPDFHUD
 public:
     PDFEmbedElement embedElement() const { return GetParam().embedElement; }
 
-    String mainHTML() const
+    String embeddedPDFHTML(ASCIILiteral position) const
     {
         auto pdfURL = GetParam().siteIsolationParameters.pdfURL();
-        auto layout = "width='300' height='150' style='position:absolute; left:10px; top:28px; border:0'"_s;
+        auto layout = makeString("width='300' height='150' style='position:absolute; "_s, position, "; border:0'"_s);
         switch (embedElement()) {
         case PDFEmbedElement::IFrame:
             return makeString("<iframe "_s, layout, " src='"_s, pdfURL, "'></iframe>"_s);
@@ -1142,10 +1143,25 @@ public:
         return { };
     }
 
+    String mainHTML() const
+    {
+        return embeddedPDFHTML("left:10px; top:28px"_s);
+    }
+
     String scrollableMainHTML() const
     {
         // Same embedded PDF, but tall enough that the main frame actually scrolls.
         return makeString(mainHTML(), "<div style='height:2000px'></div>"_s);
+    }
+
+    String mainHTMLWithIframe() const
+    {
+        return makeString("<iframe src='"_s, GetParam().siteIsolationParameters.frameURL(), "' style='position:absolute; left:10px; top:28px; width:400px; height:300px; border:0'></iframe>"_s);
+    }
+
+    String scrollableFrameHTML() const
+    {
+        return makeString("<body style='margin:0'>"_s, embeddedPDFHTML("left:0; top:100px"_s), "<div style='height:2000px'></div></body>"_s);
     }
 
     void SetUp() override
@@ -1222,6 +1238,30 @@ TEST_P(EmbeddedPDFHUDSiteIsolation, HUDTracksMainFrameScroll)
         return currentHUD && [currentHUD frame].origin.y < 10;
     });
     checkFrame([webView _pdfHUDs].anyObject.frame, 10, 8, 300, 150, 1);
+}
+
+TEST_P(EmbeddedPDFHUDSiteIsolation, HUDTracksScrolledIframe)
+{
+    server->setResponse("/main"_s, HTTPResponse { { { "Content-Type"_s, "text/html"_s } }, mainHTMLWithIframe() });
+    server->addResponse("/frame"_s, HTTPResponse { { { "Content-Type"_s, "text/html"_s } }, scrollableFrameHTML() });
+
+    RetainPtr hud = loadAndWaitForHUD();
+
+    checkFrame([hud frame], 10, 128, 300, 150);
+
+    bool scrolled = TestWebKitAPI::Util::waitFor([this] {
+        RetainPtr frame = [webView firstChildFrame];
+        [webView objectByEvaluatingJavaScript:@"window.scrollTo(0, 50)" inFrame:frame.get()];
+        return [[webView objectByEvaluatingJavaScript:@"window.scrollY" inFrame:frame.get()] integerValue] == 50;
+    });
+    EXPECT_TRUE(scrolled);
+
+    TestWebKitAPI::Util::waitFor([this] {
+        [webView waitForNextPresentationUpdate];
+        RetainPtr<NSView> currentHUD = [webView _pdfHUDs].anyObject;
+        return currentHUD && [currentHUD frame].origin.y < 128;
+    });
+    checkFrame([webView _pdfHUDs].anyObject.frame, 10, 78, 300, 150, 1);
 }
 
 INSTANTIATE_TEST_SUITE_P(UnifiedPDF, EmbeddedPDFHUDSiteIsolation, testing::ValuesIn(withEachPDFEmbedElement<EmbeddedPDFHUDSiteIsolationParams>()), &EmbeddedPDFHUDSiteIsolation::testNameGenerator);
@@ -1954,6 +1994,30 @@ UNIFIED_PDF_TEST(DISABLED_RespectsPageFragment)
 
     EXPECT_NE(colorsWithoutFragment, colorsWithFragment);
 }
+
+#if PLATFORM(MAC)
+UNIFIED_PDF_TEST(RemoteSnapshotPaintsPageContent)
+{
+    RetainPtr configuration = configurationForWebViewTestingUnifiedPDF();
+    for (_WKFeature *feature in [WKPreferences _features]) {
+        if ([feature.key isEqualToString:@"RemoteSnapshottingEnabled"]) {
+            [[configuration preferences] _setEnabled:YES forFeature:feature];
+            break;
+        }
+    }
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView synchronouslyLoadRequest:[NSURLRequest requestWithURL:[NSBundle.test_resourcesBundle URLForResource:@"multiple-pages-colored" withExtension:@"pdf"]]];
+
+    // The first page of this document is filled with green.
+    auto colors = [webView sampleColors];
+    bool foundPageContent = colors.containsIf([](auto& color) {
+        auto [red, green, blue, alpha] = color.template toColorTypeLossy<WebCore::SRGBA<uint8_t>>().resolved();
+        return green > 64 && red < 32 && blue < 32;
+    });
+    EXPECT_TRUE(foundPageContent);
+}
+#endif
 
 #if HAVE(UISCROLLVIEW_ALLOWS_KEYBOARD_SCROLLING)
 

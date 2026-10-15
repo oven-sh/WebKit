@@ -27,10 +27,13 @@
 
 #if ENABLE(GPU_PROCESS)
 
+#include "ImageBufferBackendHandle.h"
+#include <WebCore/ColorSpace.h>
 #include <WebCore/DisplayList.h>
 #include <WebCore/FrameIdentifier.h>
 #include <WebCore/GraphicsContext.h>
 #include <WebCore/ProcessIdentifier.h>
+#include <WebCore/ProcessIdentity.h>
 #include <WebCore/ShareableBitmap.h>
 #include <WebCore/SharedBuffer.h>
 #include <wtf/CompletionHandler.h>
@@ -60,8 +63,8 @@ public:
     // The size the root was recorded at, which is what the snapshot is drawn at.
     WebCore::FloatSize size() const;
     void setSize(const WebCore::FloatSize&);
-    [[nodiscard]] bool addFrameReference(WebCore::FrameIdentifier);
-    [[nodiscard]] bool setFrame(WebCore::FrameIdentifier, Ref<const WebCore::DisplayList::DisplayList>&&, SerialFunctionDispatcher&);
+    void addFrameReference(WebCore::FrameIdentifier);
+    void setFrame(WebCore::FrameIdentifier, Ref<const WebCore::DisplayList::DisplayList>&&, SerialFunctionDispatcher&);
     // Resolves a frame that will not be recorded, so that the snapshot does not wait for it.
     void abandonFrame(WebCore::FrameIdentifier);
     // Notes which process was asked to record a frame, so that the frame can be abandoned if that process goes away.
@@ -80,6 +83,11 @@ public:
     bool isAwaited() const;
     std::optional<RefPtr<WebCore::SharedBuffer>> drawToPDF(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
     std::optional<WebCore::ShareableBitmap::Handle> drawToBitmap(const WebCore::FloatSize&, WebCore::FrameIdentifier rootFrameIdentifier);
+#if HAVE(IOSURFACE)
+    // Rasterizes into a shareable surface, so that a rendering assembled from several sites can be
+    // displayed without any of them seeing the pixels.
+    std::optional<ImageBufferBackendHandle> drawToIOSurface(const WebCore::FloatSize&, float scale, const WebCore::ColorSpace&, WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::ProcessIdentity& resourceOwner);
+#endif
     [[nodiscard]] bool applyFrame(WebCore::FrameIdentifier, WebCore::GraphicsContext&) const;
 
 private:

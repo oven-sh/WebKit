@@ -39,6 +39,7 @@
 #include "ProxyingPageAgent.h"
 #include "WebFrameProxy.h"
 #include "WebPageInspectorAgentBase.h"
+#include "WebPageMessages.h"
 #include "WebPageProxy.h"
 #include "WebProcessProxy.h"
 #include "WebsiteDataStore.h"
@@ -322,9 +323,24 @@ void WebPageInspectorController::didCommitProvisionalPage(std::optional<WebCore:
         targetIDsToRemove.append(targetID);
     }
 
+    RefPtr oldProcess = WebProcessProxy::processForIdentifier(oldProcessID);
+    bool hasFrontends = m_frontendRouter->hasFrontends();
+
     for (auto& targetID : targetIDsToRemove) {
-        if (CheckedPtr target = m_targets.get(targetID))
-            targetAgent->targetDestroyed(*target);
+        CheckedPtr target = m_targets.get(targetID);
+        if (!target)
+            continue;
+
+        if (hasFrontends) {
+            // PageInspectorTargetProxy would route through the WebPageProxy, which already points at the new process.
+            if (targetID == oldPageTargetID) {
+                if (oldProcess)
+                    oldProcess->send(Messages::WebPage::DisconnectInspector(), oldWebPageID);
+            } else
+                target->disconnect();
+        }
+
+        targetAgent->targetDestroyed(*target);
     }
 
     for (auto& targetID : targetIDsToRemove)
@@ -334,7 +350,6 @@ void WebPageInspectorController::didCommitProvisionalPage(std::optional<WebCore:
     // longer hosts the page, so unregister there to keep our message-receiver
     // count balanced, and register on the new process. Mirrors
     // didCommitProvisionalFrame.
-    RefPtr oldProcess = WebProcessProxy::processForIdentifier(oldProcessID);
     Ref newProcess = protect(m_inspectedPage)->mainFrame()->process();
 
     if (m_pageAgent && m_pageAgent->isEnabled()) {
@@ -482,6 +497,8 @@ void WebPageInspectorController::didCommitProvisionalFrame(WebFrameProxy& frame,
         // process in didCreateProvisionalFrame -- so the frame's initial Page.frameNavigated
         // is delivered. Re-registering here would double-count the receiver, so we only
         // release the old process. See webkit.org/b/308896.
+        if (oldProcessID != newProcessID)
+            m_pageAgent->frameSwappedOutOfProcess(frameID, oldProcessID);
     }
 }
 

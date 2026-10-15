@@ -23,7 +23,7 @@
 
 # Each key is a QuirkBehaviorID
 
-#   available           BuildCondition expression; the table drops the behavior when false. Default: always.
+#   available           Expression over the names in QuirkBuildConditions.yaml; the table drops the behavior when false. Default: always.
 #   conditions          QuirkConditionsSupported that .when() may add.
 #   conditionsRequired  Every row must add all of the behavior's conditions.
 #
@@ -110,6 +110,11 @@ NeedsAirIndiaExpressLayeringQuirk:
 # spotify.com rdar://138918575
 NeedsBodyScrollbarWidthNoneDisabledQuirk:
 
+# box.com rdar://187475153
+NeedsBoxAnnotationQuirk:
+  available: mac
+  conditions: [ElementSelector]
+
 # hulu.com rdar://55041979
 NeedsCanPlayAfterSeekedQuirk:
 
@@ -163,6 +168,7 @@ NeedsDisableDOMPasteAccessQuirk:
 NeedsFacebookRemoveNotSupportedQuirk:
 
 # facebook.com rdar://141103350
+# Matched against the live top URL because quirks are not re-resolved on same-document navigations.
 NeedsFacebookStoriesCreationFormQuirk:
   available: iOSFamily
   conditions: [SecondaryURL]
@@ -195,6 +201,10 @@ NeedsFullscreenObjectFitQuirk:
 # mail.google.com rdar://49403416
 NeedsGMailOverflowScrollQuirk:
   available: iOSFamily
+
+# docs.google.com
+NeedsGoogleDocsNavigationWidgetScrollQuirk:
+  available: mac
 
 # google.com/maps/embed rdar://184166392
 NeedsGoogleMapsEmbedManipulationSurfaceQuirk:
@@ -299,6 +309,10 @@ NeedsSupportsProgressMonitoringQuirk:
   accessor: needsSupportsProgressMonitoring
 
 NeedsSuppressPostLayoutBoundaryEventsQuirk:
+
+# tiktok.com rdar://problem/183445905
+NeedsTikTokCaptchaSliderTouchActionQuirk:
+  conditions: [ElementSelector]
 
 NeedsTikTokCommentsOverflowingContentQuirk:
   conditions: [ElementSelector]
@@ -457,16 +471,6 @@ ShouldDisableDataURLPaddingValidation:
 ShouldDisableDOMAudioSession:
   accessor: shouldDisableDOMAudioSessionQuirk
 
-# Vimeo.com has incorrect layout on iOS on certain videos with wider
-# aspect ratios than the device's screen in landscape mode.
-# (Ref: rdar://116531089)
-# Instagram.com stories flow under the notch and status bar
-# (Ref: rdar://121014613)
-# x.com (Twitter) video embeds have controls that are too tiny and
-# show page behind fullscreen.
-# (Ref: rdar://121473410)
-# YouTube.com does not provide AirPlay controls in fullscreen
-# (Ref: rdar://121471373)
 ShouldDisableElementFullscreenQuirk:
   available: iOSFamily
 
@@ -670,6 +674,11 @@ ShouldPreventKeyframeEffectAccelerationQuirk:
 ShouldPreventOrientationMediaQueryFromEvaluatingToLandscapeQuirk:
   accessor: shouldPreventOrientationMediaQueryFromEvaluatingToLandscape
 
+# configurator.audi.com rdar://181630431
+# The site uses <model> as an unknown element and expects its children to render.
+ShouldRenderModelElementFallbackContentQuirk:
+  available: modelElement
+
 ShouldReportDocumentAsVisibleIfActivePIPQuirk:
   available: pictureInPictureAPI
   accessor: shouldReportVisibleDueToActivePictureInPictureContent
@@ -794,6 +803,7 @@ NeedsStorageAccessForYouTubeWatchLaterQuirk:
   implementation: custom
 
 # Outlook on the web: rdar://187832523
+# icloud.com: rdar://188875593
 ShouldTreatLongClickAsSecondaryClickQuirk:
   available: appKitGestures
   conditions: [ElementSelector]

@@ -87,7 +87,7 @@ public:
     template<typename SizeType> std::optional<LayoutUnit> computeMainAxisExtentForFlexItem(const FlexLayoutItem&, const SizeType&, LayoutUnit mainAxisSizeForLengthResolution);
     LayoutUnit resolveCalcSizeMainAxisExtentForFlexItem(const FlexLayoutItem&, const Style::UnevaluatedCalcSize&, LayoutUnit keywordMainAxisExtent, LayoutUnit mainAxisSizeForLengthResolution);
     LayoutUnit maxContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
-    LayoutUnit minContentMainAxisContributionForFlexItem(const FlexLayoutItem&);
+    LayoutUnit minContentMainAxisExtentForFlexItem(const FlexLayoutItem&);
     LayoutUnit flexItemIntrinsicLogicalHeight(const FlexLayoutItem&, bool needToStretchLogicalHeight) const;
     LayoutUnit flexItemIntrinsicLogicalWidth(const FlexLayoutItem&, bool crossSizeIsDefinite);
     LayoutUnit constrainFlexItemLogicalHeightByMinMax(const FlexLayoutItem&, LayoutUnit logicalHeight, std::optional<LayoutUnit> intrinsicContentHeight) const;
@@ -139,8 +139,6 @@ private:
     const CheckedRef<RenderBox> m_flexItem;
     std::optional<LayoutUnit> m_previousOverridingBorderBoxLogicalWidth;
     std::optional<LayoutUnit> m_previousOverridingBorderBoxLogicalHeight;
-    bool m_shouldRestoreInlineSize { false };
-    bool m_shouldRestoreBlockSize { false };
 #if ASSERT_ENABLED
     bool m_didInvalidateContentLogicalWidths { false };
 #endif

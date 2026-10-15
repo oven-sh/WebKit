@@ -81,7 +81,7 @@ public:
     ~StreamPipeToState();
 
     // ContextDestructionObserver.
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
     void doWrite(JSC::JSValue);
@@ -637,7 +637,7 @@ RefPtr<DOMPromise> StreamPipeToState::waitForPendingReadAndWrite(Action&& action
                     return;
                 }
 
-                m_pendingWritePromise->whenSettled([waitForAction = WTF::move(waitForAction), deferred = WTF::move(deferred)]() mutable {
+                protect(m_pendingWritePromise)->whenSettled([waitForAction = WTF::move(waitForAction), deferred = WTF::move(deferred)]() mutable {
                     waitForAction(WTF::move(deferred));
                 });
             };

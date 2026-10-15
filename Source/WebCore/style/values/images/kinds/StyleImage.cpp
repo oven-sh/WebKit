@@ -27,33 +27,15 @@
 #include "StyleImage.h"
 
 #include "GraphicsContext.h"
+#include "ImageBuffer.h"
 #include "ImagePaintingOptions.h"
+#include "ImageSizingContext.h"
 #include "NinePieceGeometry.h"
 #include "RenderElement.h"
 #include "StyleComputedStyle+GettersInlines.h"
 
 namespace WebCore {
 namespace Style {
-
-static ConcreteObjectSize concreteObjectSizeToDrawAt(const WebCore::Image& image, const RenderElement& renderer, ConcreteObjectSize concreteObjectSize)
-{
-    if (!image.drawsSVGImage())
-        return ConcreteObjectSize::fixed(image.size());
-    auto zoom = renderer.style().usedZoom();
-    return ConcreteObjectSize::fixed(concreteObjectSize.size() * concreteObjectSize.zoom() / zoom, zoom);
-}
-
-static NaturalDimensions tileNaturalDimensions(const WebCore::Image& image)
-{
-    if (image.drawsSVGImage())
-        return NaturalDimensions::none();
-    auto size = image.size();
-    return {
-        .width = image.hasRelativeWidth() ? std::nullopt : std::optional { size.width() },
-        .height = image.hasRelativeHeight() ? std::nullopt : std::optional { size.height() },
-        .aspectRatio = std::nullopt,
-    };
-}
 
 static ImageDrawResult drawImageAsPattern(GraphicsContext& context, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options, const WebCore::ImageDrawingExtras* extras)
 {
@@ -296,22 +278,30 @@ FloatRect Image::mapSourceToSize(const FloatRect& source, ConcreteObjectSize con
     return { minX, minY, mapX(source.maxX()) - minX, mapY(source.maxY()) - minY };
 }
 
+RefPtr<NativeImage> Image::nativeImage(const RenderElement& renderer, ConcreteObjectSize concreteObjectSize, float resolutionScale, ImagePaintingOptions options) const
+{
+    auto pixelSize = FloatSize { calculateImageBufferBackendSize(concreteObjectSize.size(), resolutionScale) };
+    RefPtr imageBuffer = ImageBuffer::create(pixelSize, RenderingMode::Unaccelerated, RenderingPurpose::Unspecified, 1, ColorSpace::SRGB(), PixelFormat::BGRA8);
+    if (!imageBuffer)
+        return nullptr;
+
+    draw(imageBuffer->context(), renderer, concreteObjectSize, FloatRect { { }, pixelSize }, FloatRect { { }, concreteObjectSize.size() }, options);
+    return ImageBuffer::sinkIntoNativeImage(WTF::move(imageBuffer));
+}
+
 ImageDrawResult Image::drawResolved(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions options) const
 {
-    auto imageSource = image.drawsSVGImage() ? source : mapSourceToSize(source, concreteObjectSize, image.size(options.orientation()));
-
-    auto imageConcreteObjectSize = concreteObjectSizeToDrawAt(image, renderer, concreteObjectSize);
     auto extras = drawingExtrasForRenderer(renderer);
-    return context.drawImage(image, imageConcreteObjectSize, destination, imageSource, options, &extras);
+    return context.drawImage(image, concreteObjectSize, destination, source, options, &extras);
 }
 
 ImageDrawResult Image::drawResolvedAsPattern(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions options) const
 {
     auto extras = drawingExtrasForRenderer(renderer);
-    return drawImageAsPattern(context, image, concreteObjectSizeToDrawAt(image, renderer, concreteObjectSize), destination, tile, patternTransform, phase, spacing, options, &extras);
+    return drawImageAsPattern(context, image, concreteObjectSize, destination, tile, patternTransform, phase, spacing, options, &extras);
 }
 
-ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options) const
+ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, NaturalDimensions tileNaturalDimensions, ConcreteObjectSize concreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options) const
 {
     if (auto color = image.singlePixelSolidColor()) {
         WebCore::Image::fillWithSolidColor(context, destination, *color, options.compositeOperator());
@@ -320,11 +310,11 @@ ImageDrawResult Image::drawResolvedTiled(GraphicsContext& context, const RenderE
     ASSERT_IMPLIES(image.isBitmapImage(), !image.hasSolidColor());
 
     auto extras = drawingExtrasForRenderer(renderer);
-    return drawTiledUsing(context, tileNaturalDimensions(image), [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
+    return drawTiledUsing(context, tileNaturalDimensions, [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& source) {
         return context.drawImage(image, tileConcreteObjectSize, destination, source, options, &extras);
     }, [&](GraphicsContext& context, ConcreteObjectSize tileConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
         return drawImageAsPattern(context, image, tileConcreteObjectSize, destination, tile, patternTransform, phase, spacing, options, &extras);
-    }, concreteObjectSizeToDrawAt(image, renderer, concreteObjectSize), destination, phase, tileSize, spacing, options);
+    }, concreteObjectSize, destination, phase, tileSize, spacing, options);
 }
 
 ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const RenderElement& renderer, WebCore::Image& image, ConcreteObjectSize concreteObjectSize, const NinePieceGeometry& geometry, ImagePaintingOptions options) const
@@ -356,7 +346,7 @@ ImageDrawResult Image::drawResolvedNinePiece(GraphicsContext& context, const Ren
             return ImageDrawResult::DidDraw;
         }
         return drawImageAsPattern(context, image, pieceConcreteObjectSize, destination, tile, patternTransform, phase, spacing, { options.compositeOperator(), options.interpolationQuality() }, &extras);
-    }, concreteObjectSizeToDrawAt(image, renderer, concreteObjectSize), pieceGeometry);
+    }, concreteObjectSize, pieceGeometry);
 }
 
 ImageDrawResult Image::drawTiled(GraphicsContext& context, const RenderElement& renderer, ConcreteObjectSize, const FloatRect& destination, const FloatPoint& phase, const FloatSize& tileSize, const FloatSize& spacing, ImagePaintingOptions options, bool isForFirstLine) const
@@ -382,6 +372,11 @@ ImageDrawResult Image::drawNinePiece(GraphicsContext& context, const RenderEleme
     }, [&](GraphicsContext& context, ConcreteObjectSize pieceConcreteObjectSize, const FloatRect& destination, const FloatRect& tile, const AffineTransform& patternTransform, const FloatPoint& phase, const FloatSize& spacing) {
         return drawAsPattern(context, renderer, pieceConcreteObjectSize, destination, tile, patternTransform, phase, spacing, { options.compositeOperator(), options.interpolationQuality() }, false);
     }, ConcreteObjectSize::fixed(size), geometry);
+}
+
+ConcreteObjectSize Image::negotiate(const RenderElement& renderer, const ImageSizingContext& context) const
+{
+    return context.resolve(naturalDimensions(renderer, context));
 }
 
 } // namespace Style

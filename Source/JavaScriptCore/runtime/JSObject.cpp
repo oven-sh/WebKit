@@ -152,7 +152,7 @@ ALWAYS_INLINE Structure* JSObjectWithButterfly::visitButterflyImpl(Visitor& visi
         }
     };
 
-    if (visitor.mutatorIsStopped()) {
+    if (visitor.mutatorsAreStopped()) {
         butterfly = this->butterfly();
         structure = this->structure();
         maxOffset = structure->maxOffset();
@@ -2219,9 +2219,7 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
         return typeError(globalObject, scope, shouldThrowIfCantSet, "Cannot set prototype of object with immutable properties"_s);
     }
 
-    // Default realm global objects should have mutable prototypes despite having
-    // a Proxy globalThis.
-    ASSERT(this->isGlobalObject() || JSValue(this).toThis(globalObject, ECMAMode::sloppy()) == this);
+    ASSERT(JSValue(this).toThis(globalObject, ECMAMode::sloppy()) == this);
 
     if (this->getPrototypeDirect() == prototype)
         return true;
@@ -2740,6 +2738,8 @@ bool JSObject::hasInstance(JSGlobalObject* globalObject, JSValue value, JSValue 
 
     TypeInfo info = structure()->typeInfo();
     if (info.implementsDefaultHasInstance()) {
+        if (!value.isObject())
+            return false;
         JSValue prototype = get(globalObject, vm.propertyNames->prototype);
         RETURN_IF_EXCEPTION(scope, false);
         RELEASE_AND_RETURN(scope, defaultHasInstance(globalObject, value, prototype));

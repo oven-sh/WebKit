@@ -47,7 +47,7 @@ function installDependencies {
 }
 
 function installDependenciesWithApt {
-    apt-get install -y --no-install-recommends "$@" ${PACKAGES[@]}
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends "$@" ${PACKAGES[@]}
 }
 
 function installDependenciesWithDnf {

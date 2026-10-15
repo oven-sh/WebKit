@@ -219,6 +219,8 @@ static ScriptFetchParameters::Type getSourceType(const SourceCode& source)
         return ScriptFetchParameters::Type::JSON;
     case SourceProviderSourceType::Text:
         return ScriptFetchParameters::Type::Text;
+    case SourceProviderSourceType::CSS:
+        return ScriptFetchParameters::Type::CSS;
     case SourceProviderSourceType::WebAssembly:
         return ScriptFetchParameters::Type::WebAssembly;
     case SourceProviderSourceType::Module:
@@ -273,7 +275,7 @@ JSPromise* loadModule(JSGlobalObject* globalObject, const Identifier& moduleKey,
     return globalObject->moduleLoader()->loadModule(globalObject, moduleKey, WTF::move(parameters), WTF::move(scriptFetcher), { });
 }
 
-JSPromise* loadModule(JSGlobalObject* globalObject, SourceCode&& source, RefPtr<ScriptFetcher> scriptFetcher)
+JSPromise* loadModule(JSGlobalObject* globalObject, const Identifier& moduleKey, SourceCode&& source, RefPtr<ScriptFetcher> scriptFetcher)
 {
     VM& vm = globalObject->vm();
     JSLockHolder lock(vm);
@@ -281,12 +283,18 @@ JSPromise* loadModule(JSGlobalObject* globalObject, SourceCode&& source, RefPtr<
     RELEASE_ASSERT(vm.atomStringTable() == Thread::currentSingleton().atomStringTable());
     RELEASE_ASSERT(!vm.isCollectorBusyOnCurrentThread());
 
-    Identifier key = createEntrypointModuleKey(vm);
-
     // Insert the given source code to the ModuleLoader registry as the fetched registry entry.
-    globalObject->moduleLoader()->provideFetch(globalObject, key, getSourceType(source), WTF::move(source));
+    globalObject->moduleLoader()->provideFetch(globalObject, moduleKey, getSourceType(source), WTF::move(source));
     RETURN_IF_EXCEPTION(scope, rejectPromise(scope, globalObject));
-    RELEASE_AND_RETURN(scope, globalObject->moduleLoader()->loadModule(globalObject, key, nullptr, WTF::move(scriptFetcher), { }));
+    RELEASE_AND_RETURN(scope, globalObject->moduleLoader()->loadModule(globalObject, moduleKey, nullptr, WTF::move(scriptFetcher), { }));
+}
+
+JSPromise* loadModule(JSGlobalObject* globalObject, SourceCode&& source, RefPtr<ScriptFetcher> scriptFetcher)
+{
+    VM& vm = globalObject->vm();
+    JSLockHolder lock(vm);
+    Identifier key = createEntrypointModuleKey(vm);
+    return loadModule(globalObject, key, WTF::move(source), WTF::move(scriptFetcher));
 }
 
 JSPromise* linkAndEvaluateModule(JSGlobalObject* globalObject, const Identifier& moduleKey, RefPtr<ScriptFetcher> scriptFetcher)
@@ -386,8 +394,12 @@ std::optional<ScriptFetchParameters::Type> retrieveTypeImportAttribute(JSGlobalO
 
     String value = iterator->value;
     auto result = ScriptFetchParameters::parseType(value);
+
     if (result == ScriptFetchParameters::Type::Text && !Options::useImportText())
         result = std::nullopt;
+    else if (result == ScriptFetchParameters::Type::CSS && !Options::useCSSModuleScripts())
+        result = std::nullopt;
+
     if (result)
         return result;
 

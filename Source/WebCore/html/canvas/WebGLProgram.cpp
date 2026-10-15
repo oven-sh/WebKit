@@ -70,7 +70,7 @@ Ref<WebGLProgram> WebGLProgram::create(WebGLRenderingContextBase& context)
 
 WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context, PlatformGLObject object)
     : WebGLObject(context, object)
-    , ContextDestructionObserver(context.scriptExecutionContext())
+    , ContextDestructionObserver(protect(context.scriptExecutionContext()))
 {
     ASSERT(scriptExecutionContext());
 
@@ -81,7 +81,7 @@ WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context, PlatformGLObject 
 }
 
 WebGLProgram::WebGLProgram(WebGLRenderingContextBase& context)
-    : ContextDestructionObserver(context.scriptExecutionContext())
+    : ContextDestructionObserver(protect(context.scriptExecutionContext()))
 {
     ASSERT(scriptExecutionContext());
     {
@@ -104,13 +104,6 @@ WebGLProgram::~WebGLProgram()
         return;
 
     runDestructor();
-}
-
-void WebGLProgram::contextDestroyed()
-{
-    InspectorInstrumentation::willDestroyWebGLProgram(*this);
-
-    ContextDestructionObserver::contextDestroyed();
 }
 
 void WebGLProgram::deleteObjectImpl(const AbstractLocker& locker, GraphicsContextGL* context3d, PlatformGLObject obj)

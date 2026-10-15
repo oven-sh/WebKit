@@ -36,7 +36,7 @@ namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
 
-SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType)
+SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL, SourceTaintedness taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType)
     : m_sourceType(sourceType)
     , m_sourceOrigin(sourceOrigin)
     , m_sourceURL(WTF::move(sourceURL))

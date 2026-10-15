@@ -14,15 +14,15 @@
 
 use core::{
     ffi::c_int,
-    marker::PhantomData,
     ptr::null_mut, //
 };
 
 use once_cell::sync::Lazy;
 
 use crate::{
+    CertCallback,
     EarlyCallbackMethods,
-    Methods,
+    MethodsRef,
     PrivateKeyMethods,
     VerifyCertificateMethods,
     context::{
@@ -40,6 +40,10 @@ use crate::{
             complete,
             decrypt,
             sign, //
+        },
+        select_cert::{
+            ClientCertificateSelector,
+            ServerCertificateSelector, //
         }, //
     },
     methods::drop_box_rust_methods, //
@@ -49,7 +53,8 @@ pub(crate) struct RustContextMethods<M> {
     pub(crate) private_key_methods: Option<Box<dyn PrivateKeyDelegate>>,
     pub(crate) verify_certificate_methods: Option<Box<dyn VerifyCertificate>>,
     pub(crate) early_callback_handler: Option<Box<dyn EarlyCallback<M>>>,
-    _p: PhantomData<fn() -> M>,
+    pub(crate) server_cert_cb: Option<Box<dyn ServerCertificateSelector<M>>>,
+    pub(crate) client_cert_cb: Option<Box<dyn ClientCertificateSelector<M>>>,
 }
 
 // NOTE(@xfding): the reason we do not use `register_ex_data` for this type is because we need to
@@ -60,12 +65,13 @@ impl<M> RustContextMethods<M> {
             private_key_methods: None,
             verify_certificate_methods: None,
             early_callback_handler: None,
-            _p: PhantomData,
+            server_cert_cb: None,
+            client_cert_cb: None,
         }
     }
 }
 
-impl<M: HasTlsContextMethod> Methods for RustContextMethods<M> {
+impl<M: HasTlsContextMethod> MethodsRef for RustContextMethods<M> {
     unsafe extern "C" fn from_ssl<'a>(ssl: *mut bssl_sys::SSL) -> Option<&'a Self> {
         unsafe {
             // Safety: `ssl` must be still valid by BoringSSL invariant.
@@ -75,8 +81,8 @@ impl<M: HasTlsContextMethod> Methods for RustContextMethods<M> {
             }
             // Safety: `ctx` is originated from `TlsContext::new_inner`.
             let methods = bssl_sys::SSL_CTX_get_ex_data(ctx, M::registration());
-            // Safety: `ctx` is originated from `Box::into_raw`
-            Some(&mut *(methods as *mut RustContextMethods<_>))
+            // Safety: `methods` is originated from `Box::into_raw`
+            Some(&*(methods as *const RustContextMethods<_>))
         }
     }
 }
@@ -96,6 +102,16 @@ impl<M: HasTlsContextMethod> VerifyCertificateMethods for RustContextMethods<M> 
 impl<M: HasTlsContextMethod> EarlyCallbackMethods<M> for RustContextMethods<M> {
     fn early_callback_handler(&self) -> Option<&dyn EarlyCallback<M>> {
         self.early_callback_handler.as_deref()
+    }
+}
+
+impl<M: HasTlsContextMethod> CertCallback<M> for RustContextMethods<M> {
+    fn server_cert_cb(&self) -> Option<&(dyn ServerCertificateSelector<M> + 'static)> {
+        self.server_cert_cb.as_deref()
+    }
+
+    fn client_cert_cb(&self) -> Option<&(dyn ClientCertificateSelector<M> + 'static)> {
+        self.client_cert_cb.as_deref()
     }
 }
 

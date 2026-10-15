@@ -83,7 +83,7 @@ static bool isWebKitInjectedScript(const String& sourceURL)
     return sourceURL.startsWith("__InjectedScript_"_s) && sourceURL.endsWith(".js"_s);
 }
 
-static JSC::Debugger::BlackboxRange NODELETE blackboxRange(const JSC::Debugger::Script& script)
+static JSC::Debugger::BlackboxRange LEGACY_NODELETE blackboxRange(const JSC::Debugger::Script& script)
 {
     return {
         { OrdinalNumber::fromZeroBasedInt(script.startLine), OrdinalNumber::fromZeroBasedInt(script.startColumn) },
@@ -109,6 +109,8 @@ static Protocol::Debugger::ScriptType scriptTypeForScript(const JSC::Debugger::S
     case JSC::SourceProviderSourceType::JSON:
     case JSC::SourceProviderSourceType::Text:
     case JSC::SourceProviderSourceType::ImportMap:
+    // FIXME: Maybe it should be treated as a separate CSS type and not just Program?
+    case JSC::SourceProviderSourceType::CSS:
         return Protocol::Debugger::ScriptType::Program;
     }
 
@@ -696,17 +698,17 @@ static String functionName(JSC::InternalFunction& internalFunction)
     return internalFunction.name();
 }
 
-static String NODELETE functionName(JSC::NativeExecutable& nativeExecutable)
+static String LEGACY_NODELETE functionName(JSC::NativeExecutable& nativeExecutable)
 {
     return nativeExecutable.name();
 }
 
-static String NODELETE functionName(JSC::FunctionExecutable& functionExecutable)
+static String LEGACY_NODELETE functionName(JSC::FunctionExecutable& functionExecutable)
 {
     return functionExecutable.ecmaName().string();
 }
 
-static String NODELETE functionName(JSC::CodeBlock& codeBlock)
+static String LEGACY_NODELETE functionName(JSC::CodeBlock& codeBlock)
 {
     if (auto* functionExecutable = dynamicDowncast<JSC::FunctionExecutable>(codeBlock.ownerExecutable()))
         return functionName(*functionExecutable);
@@ -714,7 +716,7 @@ static String NODELETE functionName(JSC::CodeBlock& codeBlock)
     return nullString();
 }
 
-static String NODELETE functionName(JSC::CallFrame* callFrame)
+static String LEGACY_NODELETE functionName(JSC::CallFrame* callFrame)
 {
     if (callFrame->isNativeCalleeFrame())
         return nullString();
@@ -796,7 +798,7 @@ struct ReplacedThunk {
 };
 
 static Lock s_replacedThunksLock;
-static Vector<Box<ReplacedThunk>>& NODELETE replacedThunks() WTF_REQUIRES_LOCK(s_replacedThunksLock)
+static Vector<Box<ReplacedThunk>>& LEGACY_NODELETE replacedThunks() WTF_REQUIRES_LOCK(s_replacedThunksLock)
 {
     ASSERT(s_replacedThunksLock.isHeld());
     static NeverDestroyed<Vector<Box<ReplacedThunk>>> replacedThunks;
@@ -833,7 +835,7 @@ struct ReplacedInternalFunction {
 };
 
 static Lock s_replacedInternalFunctionsLock;
-static Vector<Box<ReplacedInternalFunction>>& NODELETE replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
+static Vector<Box<ReplacedInternalFunction>>& LEGACY_NODELETE replacedInternalFunctions() WTF_REQUIRES_LOCK(s_replacedInternalFunctionsLock)
 {
     ASSERT(s_replacedInternalFunctionsLock.isHeld());
     static NeverDestroyed<Vector<Box<ReplacedInternalFunction>>> replacedInternalFunctions;

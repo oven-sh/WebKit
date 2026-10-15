@@ -300,7 +300,7 @@ std::expected<RefPtr<VideoDecoderVTBSession>, OSStatus> WebCoreDecompressionSess
     return m_videoDecoderVTB;
 }
 
-static bool NODELETE isNonRecoverableError(OSStatus status)
+static bool LEGACY_NODELETE isNonRecoverableError(OSStatus status)
 {
     return status != noErr && status != kVTVideoDecoderReferenceMissingErr;
 }
@@ -322,7 +322,7 @@ static RetainPtr<CFDictionaryRef> cfDictionaryCreateCombined(CFDictionaryRef a, 
 }
 #endif
 
-static RetainPtr<CMFormatDescriptionRef> NODELETE copyDescriptionExtensionValuesIfNeeded(RetainPtr<CMFormatDescriptionRef>&& description, const CMVideoFormatDescriptionRef originalDescription, const CMTaggedBufferGroupRef group)
+static RetainPtr<CMFormatDescriptionRef> LEGACY_NODELETE copyDescriptionExtensionValuesIfNeeded(RetainPtr<CMFormatDescriptionRef>&& description, const CMVideoFormatDescriptionRef originalDescription, const CMTaggedBufferGroupRef group)
 {
 #if PLATFORM(VISION)
     RetainPtr metadata = extractImmersiveVideoMetadata(originalDescription);
@@ -373,7 +373,8 @@ static std::expected<RetainPtr<CMSampleBufferRef>, OSStatus> handleDecompression
             groupFormatDescription = copyDescriptionExtensionValuesIfNeeded(adoptCF(rawBufferGroupFormatDescription), description, group);
         }
         ASSERT(PAL::CMFormatDescriptionGetMediaType(groupFormatDescription.get()) == kCMMediaType_TaggedBufferGroup);
-        CMSampleBufferRef rawGroupSampleBuffer;
+        // This is an out-parameter which is immediately adopted below.
+        SUPPRESS_UNRETAINED_LOCAL CMSampleBufferRef rawGroupSampleBuffer;
         if (auto status = PAL::CMSampleBufferCreateForTaggedBufferGroup(kCFAllocatorDefault, group, presentationTimeStamp, presentationDuration, groupFormatDescription.get(), &rawGroupSampleBuffer); status != noErr)
             return makeUnexpected(status);
         return adoptCF(rawGroupSampleBuffer);
@@ -630,7 +631,7 @@ Ref<MediaPromise> WebCoreDecompressionSession::initializeVideoDecoder(FourCharCo
 
                 auto presentationTime = PAL::toCMTime(MediaTime(result->timestamp, 1000000));
                 auto presentationDuration = PAL::toCMTime(MediaTime(result->duration.value_or(0), 1000000));
-                auto sampleResult = handleDecompressionOutput(protectedThis->m_pendingDecodeData->flags, noErr, 0, result->frame->pixelBuffer(), nullptr, presentationTime, presentationDuration, nullptr);
+                auto sampleResult = handleDecompressionOutput(protectedThis->m_pendingDecodeData->flags, noErr, 0, protect(result->frame->pixelBuffer()), nullptr, presentationTime, presentationDuration, nullptr);
                 if (!sampleResult)
                     protectedThis->m_lastDecodingError = sampleResult.error();
                 else

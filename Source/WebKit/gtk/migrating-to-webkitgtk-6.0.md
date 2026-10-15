@@ -162,4 +162,4 @@ or `webkit_web_process_extension_initialize_with_user_data()`.
 
 Beware that as of WebKitGTK 2.40, the entire web process API may unfortunately
 be removed in the future. For more information on why, see
-[this mailing list thread](https://lists.webkit.org/pipermail/webkit-dev/2022-August/032329.html).
+[this mailing list thread](https://lists.webkit.org/archives/list/webkit-dev@lists.webkit.org/thread/SDXWZE54IUJZTD2245RXXTFSWJ4TZZSR/).

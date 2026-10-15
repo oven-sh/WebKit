@@ -14,8 +14,10 @@
 
 use core::{
     marker::PhantomData,
-    ptr::{NonNull, null},
-    slice::from_raw_parts,
+    ptr::{
+        NonNull,
+        null, //
+    }, //
 };
 
 use bssl_crypto::FfiSlice;
@@ -47,25 +49,6 @@ pub(crate) fn slice_into_ffi_raw_parts<T>(slice: &[T]) -> (*const T, usize) {
         (null(), 0)
     } else {
         (slice.as_ptr(), slice.len())
-    }
-}
-
-/// Sanitize the data pointer and length and reconstitute the slice.
-///
-/// This method returns an empty slice if the length is 0 or the pointer is NULL.
-/// # Safety
-/// Caller must ensure that `'a` outlives `input`.
-#[inline]
-pub(crate) unsafe fn sanitize_slice<'a, T>(input: *const T, len: usize) -> Option<&'a [T]> {
-    if len == 0 || input.is_null() {
-        return Some(&[]);
-    }
-    if !input.is_aligned() || len.checked_mul(size_of::<T>())? > isize::MAX as usize {
-        return None;
-    }
-    unsafe {
-        // Safety: the pointer and the size has been sanitised.
-        Some(from_raw_parts(input, len))
     }
 }
 

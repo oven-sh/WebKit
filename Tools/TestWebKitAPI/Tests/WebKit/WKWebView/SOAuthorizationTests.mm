@@ -122,6 +122,18 @@ static constexpr auto parentTemplate =
 "</script>"
 "</html>";
 
+static constexpr auto wasmModuleParentTemplate =
+"<html>"
+"<iframe src='%s'></iframe>"
+"<script>"
+"window.addEventListener('message', (event) => {"
+"    window.webkit.messageHandlers.testHandler.postMessage(event.data);"
+"    if (event.data == 'Hello.')"
+"        event.source.postMessage(new WebAssembly.Module(new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00])), '*');"
+"});"
+"</script>"
+"</html>";
+
 static constexpr auto iframeTemplate =
 "<html>"
 "<script>"
@@ -203,9 +215,6 @@ private:
 @property bool allowSOAuthorizationLoad;
 @property bool isAsyncExecution;
 @property bool disableExtensibleSSODuringPolicyDecision;
-#if PLATFORM(MAC)
-@property (nonatomic, retain) NSViewController *presentingViewController;
-#endif
 - (instancetype)init;
 @end
 
@@ -285,11 +294,6 @@ private:
 - (UIViewController *)_presentingViewControllerForWebView:(WKWebView *)webView
 {
     return nil;
-}
-#elif PLATFORM(MAC)
-- (NSViewController *)_presentingViewControllerForWebView:(WKWebView *)webView
-{
-    return self.presentingViewController;
 }
 #endif
 
@@ -472,7 +476,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s")
 static String generateHTML(const char* templateHTML, const String& substitute)
 {
     StringPrintStream stream;
-    stream.printf(templateHTML, substitute.utf8().legacyCStringPointer());
+    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, substitute.utf8());
     return stream.toString();
 }
 
@@ -480,7 +484,7 @@ WTF_ATTRIBUTE_PRINTF_MATCHES(1, "%s %s %s")
 static String generateOpenerHTML(const char* templateHTML, const String& substitute, const String& optionalSubstitute1 = emptyString(), const String& optionalSubstitute2 = emptyString())
 {
     StringPrintStream stream;
-    stream.printf(templateHTML, substitute.utf8().legacyCStringPointer(), optionalSubstitute1.utf8().legacyCStringPointer(), optionalSubstitute2.utf8().legacyCStringPointer());
+    SAFE_PRINTSTREAM_PRINTF(stream, templateHTML, substitute.utf8(), optionalSubstitute1.utf8(), optionalSubstitute2.utf8());
     return stream.toString();
 }
 
@@ -1839,48 +1843,6 @@ TEST(SOAuthorizationRedirect, InterceptionSucceedWithUI)
     Util::run(&navigationCompleted);
     EXPECT_WK_STREQ(redirectURL.get().absoluteString, finalURL);
     EXPECT_FALSE(uiShowed);
-}
-
-TEST(SOAuthorizationRedirect, InterceptionSucceedWithUIViaPresentingViewController)
-{
-    resetState();
-    SWIZZLE_SOAUTH(PAL::getSOAuthorizationClassSingleton());
-
-    RetainPtr<NSURL> testURL = [NSBundle.test_resourcesBundle URLForResource:@"simple" withExtension:@"html"];
-
-    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500)]);
-    RetainPtr delegate = adoptNS([[TestSOAuthorizationDelegate alloc] init]);
-    configureSOAuthorizationWebView(webView.get(), delegate.get(), OpenExternalSchemesPolicy::Allow);
-
-    RetainPtr presentingViewController = adoptNS([[NSViewController alloc] init]);
-    RetainPtr presentingView = adoptNS([[NSView alloc] initWithFrame:NSZeroRect]);
-    [presentingViewController setView:presentingView.get()];
-    [[webView hostWindow].contentView addSubview:presentingView.get()];
-    [delegate setPresentingViewController:presentingViewController.get()];
-
-    [webView loadRequest:[NSURLRequest requestWithURL:testURL.get()]];
-    Util::run(&authorizationPerformed);
-    EXPECT_TRUE(policyForAppSSOPerformed);
-
-    RetainPtr viewController = adoptNS([[TestSOAuthorizationViewController alloc] init]);
-    RetainPtr view = adoptNS([[NSView alloc] initWithFrame:NSZeroRect]);
-    [viewController setView:view.get()];
-
-    [gDelegate authorization:gAuthorization presentViewController:viewController.get() withCompletion:^(BOOL success, NSError *) {
-        EXPECT_TRUE(success);
-    }];
-    Util::run(&uiShowed);
-
-    // The view controller should be presented on the client-supplied presenting view controller rather than in a WebKit-owned window.
-    EXPECT_TRUE([[presentingViewController presentedViewControllers] containsObject:viewController.get()]);
-
-    RetainPtr<NSURL> redirectURL = [NSBundle.test_resourcesBundle URLForResource:@"simple2" withExtension:@"html"];
-    RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.get() statusCode:302 HTTPVersion:@"HTTP/1.1" headerFields:@{ @"Location" : [redirectURL absoluteString] }]);
-    [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:adoptNS([[NSData alloc] init]).get()];
-    Util::run(&navigationCompleted);
-    EXPECT_WK_STREQ(redirectURL.get().absoluteString, finalURL);
-    EXPECT_FALSE(uiShowed);
-    EXPECT_FALSE([[presentingViewController presentedViewControllers] containsObject:viewController.get()]);
 }
 
 TEST(SOAuthorizationRedirect, InterceptionCancelWithUI)
@@ -3249,6 +3211,36 @@ TEST(SOAuthorizationSubFrame, InterceptionSuccessTwice)
         [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
         Util::run(&allMessagesReceived);
     }
+}
+
+// A WebAssembly.Module can only be posted within an agent cluster.
+TEST(SOAuthorizationSubFrame, InterceptionSuccessAgentCluster)
+{
+    resetState();
+    SWIZZLE_SOAUTH(PAL::getSOAuthorizationClassSingleton());
+    SWIZZLE_AKAUTH();
+
+    URL testURL { "http://www.example.com"_str };
+    auto testHtml = generateHTML(wasmModuleParentTemplate, testURL.string());
+
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    RetainPtr messageHandler = adoptNS([[TestSOAuthorizationScriptMessageHandler alloc] initWithExpectation:@[@"SOAuthorizationDidStart"]]);
+    [[configuration userContentController] addScriptMessageHandler:messageHandler.get() name:@"testHandler"];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 320, 500) configuration:configuration.get()]);
+    RetainPtr delegate = adoptNS([[TestSOAuthorizationDelegate alloc] init]);
+    configureSOAuthorizationWebView(webView.get(), delegate.get());
+
+    // Same site as the iframe.
+    [webView loadHTMLString:testHtml.createNSString().get() baseURL:URL { "http://example.com"_str }.createNSURL().get()];
+    Util::run(&allMessagesReceived);
+
+    [messageHandler extendExpectations:@[@"Hello.", @"Received a WebAssembly.Module."]];
+
+    RetainPtr response = adoptNS([[NSHTTPURLResponse alloc] initWithURL:testURL.createNSURL().get() statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:nil]);
+    auto iframeHtmlCString = generateHTML(iframeTemplate, "onmessage = (event) => parent.postMessage(event.data instanceof WebAssembly.Module ? 'Received a WebAssembly.Module.' : 'Received something else.', '*'); onmessageerror = () => parent.postMessage('Could not receive a WebAssembly.Module.', '*');"_s).utf8();
+    [gDelegate authorization:gAuthorization didCompleteWithHTTPResponse:response.get() httpBody:toNSData(byteCast<uint8_t>(iframeHtmlCString.span())).get()];
+    Util::run(&allMessagesReceived);
 }
 
 TEST(SOAuthorizationSubFrame, AuthorizationOptions)

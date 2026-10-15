@@ -32,7 +32,9 @@ private import struct TestWebKitAPILibrary.DOMRect
 import Testing
 private import TestWebKitAPILibrary
 private import Recap
+private import Synchronization
 private import AppKit_Private.NSMenu_Private
+private import WebKit_Private.WKFrameInfoPrivate
 
 extension AppKitGesturesTests {
     @MainActor
@@ -71,7 +73,7 @@ extension AppKitGesturesTests.Basic {
     func singleClickFiresPointerMouseAndClickEvents(contentEditable: Bool) async throws {
         try await loadHTML(contentEditable: contentEditable)
 
-        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
+        let expectedEvents: [DOMEventType] = [.pointerdown, .pointerup, .mousedown, .mouseup, .click]
 
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: expectedEvents))
 
@@ -129,8 +131,8 @@ extension AppKitGesturesTests.Basic {
         #expect(
             fieldLog == [
                 "pointerdown:1:0.5:0",
-                "mousedown:1:-:1",
                 "pointerup:0:0:0",
+                "mousedown:1:-:1",
                 "mouseup:0:-:0",
                 "click:0:0:0",
             ]
@@ -141,7 +143,7 @@ extension AppKitGesturesTests.Basic {
     func singleClickFiresEventsForListenersOnTheDocument() async throws {
         try await loadHTML()
 
-        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
+        let expectedEvents: [DOMEventType] = [.pointerdown, .pointerup, .mousedown, .mouseup, .click]
 
         try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: .document, for: expectedEvents))
 
@@ -202,7 +204,7 @@ extension AppKitGesturesTests.Basic {
 
     @Test(arguments: [Recap.KeyboardModifiers(), .shift, .option, .command, .all])
     func singleClickReportsHeldModifierKeys(modifiers: Recap.KeyboardModifiers) async throws {
-        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
+        let expectedEvents: [DOMEventType] = [.pointerdown, .pointerup, .mousedown, .mouseup, .click]
 
         try await loadHTML()
 
@@ -246,6 +248,796 @@ extension AppKitGesturesTests.Basic {
 
         let active = modifiers.domNames.sorted().joined(separator: ",")
         #expect(observed == expectedEvents.map { "\($0.rawValue)(\(active))" })
+    }
+
+    @Test(
+        arguments: [Duration.seconds(0.5), .seconds(1.0)]
+    )
+    func pressAndHoldReportsPointerEventsSpanningTheHold(holdDuration: Duration) async throws {
+        try await loadHTML()
+
+        try await page.callJavaScript(
+            """
+            window.eventLog = [];
+
+            const target = document.getElementById("div");
+            // As every press-and-hold widget does, so that the hold isn't claimed by text selection.
+            target.style.webkitUserSelect = "none";
+
+            for (const type of ["pointerdown", "pointerup"])
+                target.addEventListener(type, event => window.eventLog.push(event));
+            """
+        )
+
+        let toBounds = try await screenBoundsOfText("to")
+
+        await recap.play { composer in
+            composer._wk_click(at: toBounds.center, for: holdDuration)
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let types = try await page.callJavaScript(returning: [String].self) {
+            "return window.eventLog.map(event => event.type);"
+        }
+        #expect(types == ["pointerdown", "pointerup"])
+
+        let elapsed = try await page.callJavaScript(returning: Double.self) {
+            "return window.eventLog[1].timeStamp - window.eventLog[0].timeStamp;"
+        }
+        #expect(Duration.milliseconds(elapsed) > holdDuration / 2)
+
+        let pressures = try await page.callJavaScript(returning: [Double].self) {
+            "return window.eventLog.map(event => event.pressure);"
+        }
+        #expect(pressures == [0.5, 0])
+
+        let buttons = try await page.callJavaScript(returning: [Double].self) {
+            "return window.eventLog.map(event => event.buttons);"
+        }
+        #expect(buttons == [1, 0])
+    }
+
+    @Test
+    func singleClickWithoutPointerTrackingDerivesPointerEventsFromMouseEvents() async throws {
+        page.setWebFeature("UseAppKitGesturesForPointerEvents", enabled: false)
+        try await loadHTML()
+
+        let expectedEvents: [DOMEventType] = [.pointerdown, .mousedown, .pointerup, .mouseup, .click]
+        try await page.callJavaScript(JavaScriptMessages.InstallEventLog(in: "div", for: expectedEvents))
+
+        let toBounds = try await screenBoundsOfText("to")
+
+        await recap.play { composer in
+            composer._wk_click(at: toBounds.center, for: .seconds(0.05))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let actual = try await page.callJavaScript(JavaScriptMessages.EventLog())
+        #expect(actual.map(\.type) == expectedEvents)
+    }
+
+    @Test
+    func pressAndHoldInSubframeReportsPointerEventsSpanningTheHold() async throws {
+        try await page.load(html: subframeHostMarkup).wait()
+
+        try await page.callJavaScript {
+            """
+            const frame = document.getElementById("frame");
+            const subframeDocument = frame.contentDocument;
+            subframeDocument.body.style.margin = "0";
+            subframeDocument.body.innerHTML = `\(subframeTargetMarkup)`;
+
+            window.eventLog = [];
+            for (const type of ["pointerdown", "pointerup"]) {
+                subframeDocument.getElementById("target").addEventListener(type, event => {
+                    window.eventLog.push({ type: event.type, timeStamp: event.timeStamp, x: event.clientX, y: event.clientY, inSubframe: event.view === frame.contentWindow });
+                });
+            }
+            """
+        }
+        await page.waitForNextPresentationUpdate()
+
+        let frameBounds = try await screenBounds(ofElementWithID: "frame")
+
+        await recap.play { composer in
+            composer._wk_click(at: frameBounds.center, for: .seconds(0.5))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        try await expectPressAndHoldInSubframe(heldFor: .seconds(0.5)) {
+            "return window.eventLog;"
+        }
+    }
+
+    @Test
+    func pressAndHoldInCrossSiteSubframeReportsPointerEventsSpanningTheHold() async throws {
+        page.setWebFeature("SiteIsolationEnabled", enabled: true)
+
+        var server = try HTTPServer(protocol: .http) {
+            Route("/") {
+                """
+                \(subframeHostMarkup)
+                <script>
+                window.subframeIsReady = false;
+                window.eventLog = [];
+                window.addEventListener("message", event => {
+                    if (event.data === "ready")
+                        window.subframeIsReady = true;
+                    else
+                        window.eventLog.push(event.data);
+                });
+                document.getElementById("frame").src = `http://localhost:${location.port}/subframe.html`;
+                </script>
+                """
+            }
+            Route("/subframe.html") {
+                """
+                <body style="margin: 0">
+                \(subframeTargetMarkup)
+                <script>
+                for (const type of ["pointerdown", "pointerup"]) {
+                    document.getElementById("target").addEventListener(type, event => {
+                        parent.postMessage({ type: event.type, timeStamp: event.timeStamp, x: event.clientX, y: event.clientY, inSubframe: true }, "*");
+                    });
+                }
+                parent.postMessage("ready", "*");
+                </script>
+                </body>
+                """
+            }
+        }
+
+        try await server.run { configuration in
+            try await page.load(configuration.address).wait()
+            try #require(try await waitUntil("return window.subframeIsReady;"))
+            await page.waitForNextPresentationUpdate()
+
+            let mainFrame = try #require(await page.mainFrame)
+            let subframe = try #require(mainFrame.childFrames.first)
+            try #require(subframe.info._processIdentifier != mainFrame.info._processIdentifier)
+
+            let frameBounds = try await screenBounds(ofElementWithID: "frame")
+
+            await recap.play { composer in
+                composer._wk_click(at: frameBounds.center, for: .seconds(0.5))
+            }
+
+            await page.waitForPendingMouseEvents()
+            try #require(try await waitUntil("return window.eventLog.length >= 2;"))
+
+            try await expectPressAndHoldInSubframe(heldFor: .seconds(0.5)) {
+                "return window.eventLog;"
+            }
+        }
+    }
+
+    private var subframeHostMarkup: String {
+        """
+        <style>
+        body { margin: 0; }
+        iframe { display: block; border: 0; margin: 100px 0 0 100px; width: 300px; height: 200px; }
+        </style>
+        <iframe id="frame"></iframe>
+        """
+    }
+
+    private var subframeTargetMarkup: String {
+        #"<div id="target" style="height: 200px; user-select: none; -webkit-user-select: none;"></div>"#
+    }
+
+    private func expectPressAndHoldInSubframe(heldFor holdDuration: Duration, eventLogScript: () -> String) async throws {
+        let log = try await page.callJavaScript(returning: [[String: Any]].self, script: eventLogScript)
+        let types = log.compactMap { $0["type"] as? String }
+        #expect(types == ["pointerdown", "pointerup"])
+        try #require(log.count == 2)
+
+        let elapsed = (log[1]["timeStamp"] as? Double ?? 0) - (log[0]["timeStamp"] as? Double ?? 0)
+        #expect(Duration.milliseconds(elapsed) > holdDuration / 2)
+
+        // The press lands at the center of the 300x200 subframe, in the subframe's own coordinates.
+        for event in log {
+            #expect(event["inSubframe"] as? Bool == true)
+            #expect(abs((event["x"] as? Double ?? 0) - 150) <= 2)
+            #expect(abs((event["y"] as? Double ?? 0) - 100) <= 2)
+        }
+    }
+
+    private func waitUntil(_ script: String) async throws -> Bool {
+        for _ in 0..<50 {
+            if try await page.callJavaScript(returning: Bool.self, script: { script }) {
+                return true
+            }
+            try await Task.sleep(for: .milliseconds(100))
+        }
+        return false
+    }
+
+    private func loadLongPressSurface(baseURL: URL? = nil) async throws {
+        let html = """
+            <style>
+            body { margin: 0; }
+            #surface { width: 400px; height: 300px; user-select: none; -webkit-user-select: none; }
+            </style>
+            <div id="surface"></div>
+            <script>
+            window.longPressState = "idle";
+            window.moveCount = 0;
+            window.positions = {};
+
+            const surface = document.getElementById("surface");
+            let timer = null;
+            let start = null;
+
+            surface.addEventListener("pointerdown", event => {
+                window.positions.down = { x: event.clientX, y: event.clientY };
+                start = window.positions.down;
+                window.longPressState = "pressed";
+                timer = setTimeout(() => window.longPressState = "recognized", 500);
+            });
+
+            surface.addEventListener("pointermove", event => {
+                window.moveCount++;
+                if (!start || Math.hypot(event.clientX - start.x, event.clientY - start.y) <= 10)
+                    return;
+                clearTimeout(timer);
+                start = null;
+                if (window.longPressState !== "recognized")
+                    window.longPressState = "moved";
+            });
+
+            for (const type of ["pointerup", "pointercancel"]) {
+                surface.addEventListener(type, event => {
+                    window.positions[type] = { x: event.clientX, y: event.clientY };
+                    clearTimeout(timer);
+                    start = null;
+                    if (window.longPressState === "pressed")
+                        window.longPressState = "released";
+                });
+            }
+            </script>
+            """
+
+        if let baseURL {
+            try await page.load(html: html, baseURL: baseURL).wait()
+        } else {
+            try await page.load(html: html).wait()
+        }
+
+        try await page.callJavaScript(
+            arguments: ["elementID": "surface", "styleValue": "none"],
+            script: styleAdjustmentForManipulationSurfaceScript
+        )
+        await page.waitForNextPresentationUpdate()
+    }
+
+    private func longPressState() async throws -> String {
+        try await page.callJavaScript(returning: String.self) { "return window.longPressState;" }
+    }
+
+    @Test
+    func longPressOnManipulationSurfaceIsRecognized() async throws {
+        try await loadLongPressSurface()
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+
+        await recap.play { composer in
+            composer._wk_click(at: surfaceBounds.center, for: .seconds(1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await longPressState() == "recognized")
+    }
+
+    @Test
+    func clickOnManipulationSurfaceIsNotRecognizedAsLongPress() async throws {
+        try await loadLongPressSurface()
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+
+        await recap.play { composer in
+            composer._wk_click(at: surfaceBounds.center, for: .milliseconds(100))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await longPressState() == "released")
+    }
+
+    @Test(arguments: [(travel: CGFloat(3), reportsMovement: false), (travel: CGFloat(60), reportsMovement: true)])
+    func pressReportsMovementOnlyPastClickAllowableMovement(travel: CGFloat, reportsMovement: Bool) async throws {
+        try await loadLongPressSurface()
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+        let start = CGPoint(x: surfaceBounds.midX - 30, y: surfaceBounds.midY)
+        let end = CGPoint(x: start.x + travel, y: start.y)
+
+        await recap.play { composer in
+            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let moveCount = try await page.callJavaScript(returning: Int.self) { "return window.moveCount;" }
+        let travelled = try await page.callJavaScript(returning: Double.self) {
+            "return window.positions.pointerup.x - window.positions.down.x;"
+        }
+
+        if reportsMovement {
+            #expect(moveCount > 0)
+            #expect(abs(travelled - travel) <= 2)
+        } else {
+            #expect(moveCount == 0)
+            #expect(travelled == 0)
+        }
+    }
+
+    @Test
+    func untrackedDragOnManipulationSurfaceStillReportsPointerMovement() async throws {
+        page.setWebFeature("UseAppKitGesturesForGestureEvents", enabled: true)
+        try await loadLongPressSurface()
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+        let start = CGPoint(x: surfaceBounds.midX - 80, y: surfaceBounds.midY)
+        let end = CGPoint(x: surfaceBounds.midX + 80, y: surfaceBounds.midY)
+
+        await recap.play { composer in
+            composer._wk_scroll(withStart: start, end: end, duration: .seconds(0.5), multiFinger: true)
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let moveCount = try await page.callJavaScript(returning: Int.self) { "return window.moveCount;" }
+        #expect(moveCount > 0)
+    }
+
+    @Test
+    func trackedDragOnManipulationSurfaceReportsPointerUpOnce() async throws {
+        try await loadLongPressSurface()
+
+        try await page.callJavaScript {
+            """
+            window.eventLog = [];
+            const surface = document.getElementById("surface");
+            for (const type of ["pointerdown", "pointerup", "pointercancel", "mousedown", "mouseup"])
+                surface.addEventListener(type, event => window.eventLog.push(event.type));
+            """
+        }
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+        let start = CGPoint(x: surfaceBounds.midX - 60, y: surfaceBounds.midY)
+        let end = CGPoint(x: surfaceBounds.midX + 60, y: surfaceBounds.midY)
+
+        await recap.play { composer in
+            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let log = try await page.callJavaScript(returning: [String].self) { "return window.eventLog;" }
+
+        // Unless mouse tracking took the drag over, there would be no mouse up to report the pointer again.
+        try #require(log.contains("mousedown"), "mouse tracking did not take over the drag: \(log)")
+
+        #expect(log == ["pointerdown", "mousedown", "pointerup", "mouseup"])
+    }
+
+    @Test
+    func trackedPointerMovesReportThemselvesAsCoalescedEvents() async throws {
+        // `getCoalescedEvents()` is only exposed in a secure context, which a page loaded from a string is not by default.
+        try await loadLongPressSurface(baseURL: try #require(URL(string: "https://example.com")))
+        try #require(try await page.callJavaScript(returning: Bool.self) { "return window.isSecureContext;" })
+
+        try await page.callJavaScript {
+            """
+            window.coalescedEventLog = [];
+            const surface = document.getElementById("surface");
+            for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+                surface.addEventListener(type, event => {
+                    const coalescedEvents = event.getCoalescedEvents();
+                    const last = coalescedEvents[coalescedEvents.length - 1];
+                    const matchesEvent = !!last && last.clientX === event.clientX && last.clientY === event.clientY;
+                    window.coalescedEventLog.push({ type: event.type, count: coalescedEvents.length, matchesEvent });
+                });
+            }
+            """
+        }
+
+        let surfaceBounds = try await screenBounds(ofElementWithID: "surface")
+        let start = CGPoint(x: surfaceBounds.midX - 60, y: surfaceBounds.midY)
+        let end = CGPoint(x: surfaceBounds.midX + 60, y: surfaceBounds.midY)
+
+        await recap.play { composer in
+            composer._wk_drag(withStart: start, end: end, duration: .seconds(0.5))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let log = try await page.callJavaScript(returning: [[String: Any]].self) { "return window.coalescedEventLog;" }
+        let moves = log.filter { $0["type"] as? String == "pointermove" }
+        try #require(!moves.isEmpty, "the drag reported no pointermove: \(log)")
+
+        for move in moves {
+            #expect((move["count"] as? Int ?? 0) >= 1, "\(move)")
+            #expect(move["matchesEvent"] as? Bool == true, "\(move)")
+        }
+
+        for event in log where event["type"] as? String != "pointermove" {
+            #expect(event["count"] as? Int == 0, "\(event)")
+        }
+    }
+
+    @Test
+    func pressAndHoldThatOpensContextMenuCancelsPointer() async throws {
+        let html = """
+            <a id="link" href="https://webkit.org" style="font-size: 30px; display: block;">WebKit Link</a>
+            <script>
+            window.eventLog = [];
+            for (const type of ["pointerdown", "pointerup", "pointercancel"])
+                document.getElementById("link").addEventListener(type, event => window.eventLog.push(`${event.type}:${event.button}`));
+            </script>
+            """
+        try await page.load(html: html).wait()
+
+        let linkBounds = try await screenBounds(ofElementWithID: "link")
+
+        await withSwizzledContextMenu {
+            await recap.play { composer in
+                composer._wk_drag(withStart: linkBounds.center, end: linkBounds.center, duration: .seconds(1.5), release: false)
+            }
+        }
+
+        await recap.play { composer in
+            composer._wk_mouseUp()
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let log = try await page.callJavaScript(returning: [String].self) { "return window.eventLog;" }
+        #expect(log.first == "pointerdown:0")
+        #expect(log.contains { $0.hasPrefix("pointercancel") })
+        #expect(log.contains("pointerup:0") == false)
+    }
+
+    @Test
+    func pointerStaysOverReleasedElementUntilNextPressElsewhere() async throws {
+        let html = """
+            <style>
+            body { margin: 0; }
+            .box { width: 200px; height: 200px; margin: 50px; user-select: none; -webkit-user-select: none; }
+            </style>
+            <div id="first" class="box"></div>
+            <div id="second" class="box"></div>
+            <script>
+            window.eventLog = [];
+            for (const id of ["first", "second"]) {
+                for (const type of ["pointerover", "pointerenter", "pointerdown", "pointerup", "pointerout", "pointerleave"])
+                    document.getElementById(id).addEventListener(type, event => window.eventLog.push(`${event.type}:${id}`));
+            }
+            </script>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let firstBounds = try await screenBounds(ofElementWithID: "first")
+        let secondBounds = try await screenBounds(ofElementWithID: "second")
+
+        await recap.play { composer in
+            composer._wk_click(at: firstBounds.center, for: .milliseconds(100))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let firstPressLog = try await page.callJavaScript(returning: [String].self) { "return window.eventLog;" }
+        #expect(firstPressLog == ["pointerover:first", "pointerenter:first", "pointerdown:first", "pointerup:first"])
+
+        await recap.play { composer in
+            composer._wk_click(at: secondBounds.center, for: .milliseconds(100))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let log = try await page.callJavaScript(returning: [String].self) { "return window.eventLog;" }
+        #expect(
+            log == [
+                "pointerover:first", "pointerenter:first", "pointerdown:first", "pointerup:first",
+                "pointerout:first", "pointerleave:first", "pointerover:second", "pointerenter:second", "pointerdown:second",
+                "pointerup:second",
+            ]
+        )
+    }
+
+    @Test
+    func clickLeavesPopupOfHoverActivatedControlOpen() async throws {
+        let html = """
+            <style>
+            body { margin: 0; }
+            #control { display: block; width: 200px; height: 100px; margin: 100px; }
+            </style>
+            <button id="control">Options</button>
+            <script>
+            window.popupIsOpen = false;
+
+            const control = document.getElementById("control");
+            let openTimer = null;
+            let closeTimer = null;
+
+            control.addEventListener("pointerenter", () => {
+                clearTimeout(closeTimer);
+                openTimer = setTimeout(() => window.popupIsOpen = true, 250);
+            });
+
+            control.addEventListener("pointerleave", () => {
+                clearTimeout(openTimer);
+                clearTimeout(closeTimer);
+                closeTimer = setTimeout(() => window.popupIsOpen = false, 150);
+            });
+
+            control.addEventListener("click", () => window.popupIsOpen = true);
+            </script>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let controlBounds = try await screenBounds(ofElementWithID: "control")
+
+        await recap.play { composer in
+            composer._wk_click(at: controlBounds.center, for: .milliseconds(100))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        // Outlast both timers.
+        try await Task.sleep(for: .milliseconds(500))
+
+        #expect(try await page.callJavaScript(returning: Bool.self) { "return window.popupIsOpen;" })
+    }
+
+    @Test(arguments: [false, true])
+    func pressHeldAcrossNavigationDoesNotAffectMouseEventsOnNextPage(cancelsPointerDown: Bool) async throws {
+        let cancelPointerDownStatement = cancelsPointerDown ? "event.preventDefault();" : ""
+
+        var server = try HTTPServer(protocol: .http) {
+            Route("/") {
+                """
+                <body style="margin: 0">
+                <div id="target" style="width: 300px; height: 200px; user-select: none; -webkit-user-select: none;"></div>
+                <script>
+                document.getElementById("target").addEventListener("pointerdown", event => {
+                    \(cancelPointerDownStatement)
+                    location.href = "/next";
+                });
+                </script>
+                </body>
+                """
+            }
+            Route("/next") {
+                """
+                <body style="margin: 0">
+                <div id="target" style="width: 300px; height: 200px; user-select: none; -webkit-user-select: none;"></div>
+                <script>
+                window.loadTime = Date.now();
+                window.eventLog = [];
+                for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+                    document.getElementById("target").addEventListener(type, event => window.eventLog.push(event.type));
+                </script>
+                </body>
+                """
+            }
+        }
+
+        try await server.run { configuration in
+            try await page.load(configuration.address).wait()
+            await page.waitForNextPresentationUpdate()
+
+            let targetBounds = try await screenBounds(ofElementWithID: "target")
+
+            await recap.play { composer in
+                composer._wk_click(at: targetBounds.center, for: .seconds(1.5))
+            }
+
+            await page.waitForPendingMouseEvents()
+            try #require(try await waitUntil("return location.pathname === '/next';"))
+            await page.waitForNextPresentationUpdate()
+
+            // Unless the next page was loaded well before the press was released, this would not be testing anything.
+            let millisecondsSinceLoad = try await page.callJavaScript(returning: Double.self) { "return Date.now() - window.loadTime;" }
+            try #require(millisecondsSinceLoad > 500)
+
+            try await page.callJavaScript { "window.eventLog = [];" }
+
+            let targetPoint = try await windowPoint(ofElementWithID: "target")
+            page.mouseMove(to: targetPoint)
+            page.click(at: targetPoint)
+
+            await page.waitForPendingMouseEvents()
+            await page.waitForNextPresentationUpdate()
+
+            let log = try await page.callJavaScript(returning: [String].self) { "return window.eventLog;" }
+            #expect(log == ["pointerdown", "mousedown", "pointerup", "mouseup", "click"])
+        }
+    }
+
+    private enum PointerEventFamily {
+        case pointer
+        case mouse
+    }
+
+    private func loadPressAndHoldCaptcha(
+        requiredHoldMilliseconds: Int,
+        family: PointerEventFamily,
+        textIsSelectable: Bool = false,
+        cancelsDownEvent: Bool = false
+    ) async throws {
+        let downEvent = family == .pointer ? "pointerdown" : "mousedown"
+        let upEvents = family == .pointer ? ["pointerup", "pointercancel"] : ["mouseup", "mouseleave"]
+        let upEventsLiteral = upEvents.map { "\"\($0)\"" }.joined(separator: ", ")
+
+        let userSelectDeclarations = textIsSelectable ? "" : "user-select: none; -webkit-user-select: none;"
+        let cancelDownEventStatement = cancelsDownEvent ? "event.preventDefault();" : ""
+
+        let html = """
+            <style>
+            body { margin: 0; }
+            #captcha {
+                width: 300px; height: 200px; background: #ddd;
+                \(userSelectDeclarations)
+            }
+            #filler { height: 4000px; }
+            </style>
+            <div id="captcha"><span id="holdText">HOLD ME</span></div>
+            <div id="filler"></div>
+            <script>
+            window.captchaState = "idle";
+            window.observedEvents = [];
+
+            const target = document.getElementById("captcha");
+            let holdTimer = null;
+
+            target.addEventListener("\(downEvent)", event => {
+                \(cancelDownEventStatement)
+                window.observedEvents.push(event.type);
+                window.captchaState = "holding";
+                holdTimer = setTimeout(() => { window.captchaState = "verified"; }, \(requiredHoldMilliseconds));
+            });
+
+            for (const type of [\(upEventsLiteral)]) {
+                target.addEventListener(type, event => {
+                    window.observedEvents.push(event.type);
+                    if (window.captchaState === "verified")
+                        return;
+                    clearTimeout(holdTimer);
+                    window.captchaState = "cancelled";
+                });
+            }
+            </script>
+            """
+
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+    }
+
+    private func captchaState() async throws -> String {
+        try await page.callJavaScript(returning: String.self) { "return window.captchaState;" }
+    }
+
+    private func selectedText() async throws -> String {
+        try await page.callJavaScript(returning: String.self) { "return window.getSelection().toString();" }
+    }
+
+    @Test
+    func pressAndHoldCompletesPointerDrivenCaptcha() async throws {
+        try await loadPressAndHoldCaptcha(requiredHoldMilliseconds: 400, family: .pointer)
+
+        let captchaBounds = try await screenBounds(ofElementWithID: "captcha")
+
+        await recap.play { composer in
+            composer._wk_click(at: captchaBounds.center, for: .seconds(1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await captchaState() == "verified")
+    }
+
+    @Test
+    func quickClickDoesNotCompletePointerDrivenCaptcha() async throws {
+        try await loadPressAndHoldCaptcha(requiredHoldMilliseconds: 400, family: .pointer)
+
+        let captchaBounds = try await screenBounds(ofElementWithID: "captcha")
+
+        await recap.play { composer in
+            composer._wk_click(at: captchaBounds.center, for: .milliseconds(50))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await captchaState() == "cancelled")
+    }
+
+    @Test
+    func scrollingAfterPressCancelsPointerDrivenCaptcha() async throws {
+        try await loadPressAndHoldCaptcha(requiredHoldMilliseconds: 5000, family: .pointer)
+
+        let captchaBounds = try await screenBounds(ofElementWithID: "captcha")
+
+        // The press travels up the screen, which scrolls the page down.
+        let scrollEnd = CGPoint(x: captchaBounds.center.x, y: captchaBounds.center.y - 200)
+
+        await recap.play { composer in
+            composer._wk_drag(withStart: captchaBounds.center, end: scrollEnd, duration: .seconds(0.5), release: true)
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let observed = try await page.callJavaScript(returning: [String].self) {
+            "return window.observedEvents;"
+        }
+
+        #expect(observed == ["pointerdown", "pointercancel"])
+        #expect(try await captchaState() == "cancelled")
+    }
+
+    @Test
+    func cancelingPointerDownKeepsTheHoldOnSelectableText() async throws {
+        try await loadPressAndHoldCaptcha(
+            requiredHoldMilliseconds: 400,
+            family: .pointer,
+            textIsSelectable: true,
+            cancelsDownEvent: true
+        )
+
+        let textBounds = try await screenBounds(ofElementWithID: "holdText")
+
+        await recap.play { composer in
+            composer._wk_click(at: textBounds.center, for: .seconds(1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await captchaState() == "verified")
+        #expect(try await selectedText() == "")
+    }
+
+    @Test
+    func pressAndHoldOnSelectableTextWithoutCancelingSelectsAWord() async throws {
+        try await loadPressAndHoldCaptcha(
+            requiredHoldMilliseconds: 400,
+            family: .pointer,
+            textIsSelectable: true,
+            cancelsDownEvent: false
+        )
+
+        let textBounds = try await screenBounds(ofElementWithID: "holdText")
+
+        await recap.play { composer in
+            composer._wk_click(at: textBounds.center, for: .seconds(1))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await selectedText() != "")
     }
 
     @Test(arguments: [true, false])
@@ -761,7 +1553,7 @@ extension AppKitGesturesTests.Basic {
 
         #expect(Self.pdfDocumentText.hasPrefix(extended))
         #expect(extended.hasPrefix("one\nTwo tWo\ntHree "))
-        #expect(!extended.contains("threE"))
+        #expect(extended.contains("threE") == false)
     }
 
     @Test
@@ -783,7 +1575,7 @@ extension AppKitGesturesTests.Basic {
 
         #expect(Self.pdfDocumentText.hasSuffix(extended))
         #expect(extended.hasSuffix("tHree THREE threE"))
-        #expect(!extended.hasPrefix("one"))
+        #expect(extended.hasPrefix("one") == false)
     }
 
     @Test
@@ -806,7 +1598,7 @@ extension AppKitGesturesTests.Basic {
 
         #expect(Self.pdfDocumentText.hasPrefix(extended))
         #expect(extended.hasPrefix("one"))
-        #expect(!extended.contains("Two"))
+        #expect(extended.contains("Two") == false)
     }
 
     @Test(arguments: [true, false])
@@ -880,6 +1672,34 @@ extension AppKitGesturesTests.Basic {
             composer._wk_click(at: crazyBoundsInScreenCoordinates.center, for: .seconds(1))
         }
 
+        await page.waitForNextPresentationUpdate()
+
+        let newSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+
+        #expect(newSelection == crazySelection)
+    }
+
+    @Test(arguments: [false, true])
+    func controlClickOnWordSelectsWordAndOpensContextMenu(contentEditable: Bool) async throws {
+        try await loadHTML(contentEditable: contentEditable)
+
+        let crazyRange = try #require(Self.text.utf16Range(of: "crazy"))
+        let crazySelection = JavaScriptSelection.range(
+            base: .init(in: "div", at: crazyRange.lowerBound),
+            extent: .init(in: "div", at: crazyRange.upperBound)
+        )
+
+        let crazyBounds = try await screenBoundsOfText("crazy")
+
+        await withSwizzledContextMenu {
+            await recap.play { composer in
+                composer.holdingModifiers(.control) {
+                    composer._wk_click(at: crazyBounds.center, for: .seconds(0.05))
+                }
+            }
+        }
+
+        await page.waitForPendingMouseEvents()
         await page.waitForNextPresentationUpdate()
 
         let newSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
@@ -1070,6 +1890,114 @@ extension AppKitGesturesTests.Basic {
         let newSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
         #expect(newSelection == expectedSelection)
         #expect(contextMenuEventCount == 0)
+    }
+
+    @Test
+    func clickingTwiceAtCaretInMisspelledWordOpensContextMenuWithSpellingItems() async throws {
+        try await loadHTML(contentEditable: true)
+
+        let endOfCrazy = try await pointJustInsideEndOfText("crazy")
+        let spellChecker = SpellCheckerStub(misspelledWord: "crazy", guesses: [])
+
+        let (caretSelection, menuItems) = try await contextMenuAfterClickingTwiceInMisspelledWord(
+            at: endOfCrazy,
+            spellChecker: spellChecker
+        )
+
+        let spellingItemTitles: Set = ["No Guesses Found", "Ignore Spelling", "Learn Spelling"]
+        #expect(
+            menuItems.filter { spellingItemTitles.contains($0.title) } == [
+                PresentedMenuItem(title: "No Guesses Found", isEnabled: false),
+                PresentedMenuItem(title: "Ignore Spelling", isEnabled: true),
+                PresentedMenuItem(title: "Learn Spelling", isEnabled: true),
+            ]
+        )
+
+        let selection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+        #expect(selection == caretSelection)
+    }
+
+    @Test
+    func choosingLearnSpellingAtCaretLearnsMisspelledWord() async throws {
+        try await loadHTML(contentEditable: true)
+
+        let endOfCrazy = try await pointJustInsideEndOfText("crazy")
+        let spellChecker = SpellCheckerStub(misspelledWord: "crazy", guesses: [])
+
+        let (caretSelection, _) = try await contextMenuAfterClickingTwiceInMisspelledWord(
+            at: endOfCrazy,
+            spellChecker: spellChecker,
+            choosingItemTitled: "Learn Spelling"
+        )
+
+        #expect(spellChecker.learnedWords == ["crazy"])
+
+        let selection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+        #expect(selection == caretSelection)
+    }
+
+    @Test
+    func choosingLearnSpellingAtCaretAfterMisspelledWordChangesLearnsNothing() async throws {
+        try await loadHTML(contentEditable: true)
+
+        let endOfCrazy = try await pointJustInsideEndOfText("crazy")
+        let spellChecker = SpellCheckerStub(misspelledWord: "crazy", guesses: [])
+
+        let (caretSelection, _) = try await contextMenuAfterClickingTwiceInMisspelledWord(
+            at: endOfCrazy,
+            spellChecker: spellChecker,
+            choosingItemTitled: "Learn Spelling",
+            whileMenuIsOpen: {
+                do {
+                    try await page.callJavaScript {
+                        """
+                        const text = document.getElementById("div").firstChild;
+                        text.replaceData(text.data.indexOf("crazy") + 1, 1, "l");
+                        """
+                    }
+                } catch {
+                    Issue.record(error)
+                }
+            }
+        )
+
+        #expect(spellChecker.learnedWords.isEmpty)
+
+        let text = try await page.callJavaScript(returning: String.self) {
+            "return document.getElementById('div').textContent;"
+        }
+        #expect(text == "Here's to the clazy ones.")
+
+        let selection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+        #expect(selection == caretSelection)
+    }
+
+    @Test
+    func choosingSpellingGuessAtCaretReplacesMisspelledWord() async throws {
+        try await loadHTML(contentEditable: true)
+
+        let crazyRange = try #require(Self.text.utf16Range(of: "crazy"))
+        let endOfCrazy = try await pointJustInsideEndOfText("crazy")
+        let spellChecker = SpellCheckerStub(misspelledWord: "crazy", guesses: ["crazier"])
+
+        _ = try await contextMenuAfterClickingTwiceInMisspelledWord(
+            at: endOfCrazy,
+            spellChecker: spellChecker,
+            choosingItemTitled: "crazier"
+        )
+
+        let textAndCaret = try await page.callJavaScript(returning: String.self) {
+            """
+            const div = document.getElementById("div");
+            const selection = getSelection();
+            const range = document.createRange();
+            range.setStart(div, 0);
+            range.setEnd(selection.focusNode, selection.focusOffset);
+            return `${div.textContent}|${selection.isCollapsed}|${range.toString().length}`;
+            """
+        }
+
+        #expect(textAndCaret == "Here's to the crazier ones.|true|\(crazyRange.lowerBound + "crazier".utf16.count)")
     }
 
     @Test
@@ -1650,6 +2578,55 @@ extension AppKitGesturesTests.Basic {
         #expect(page.url != initialURL)
     }
 
+    @Test
+    func scrollAfterMomentumScrollTargetsElementUnderNewGesture() async throws {
+        let html = """
+            <style>
+              body { margin: 0; height: 5000px; }
+              .box { position: fixed; top: 0; bottom: 0; width: 50%; }
+            </style>
+            <div id="left" class="box" style="left: 0; background: silver;"></div>
+            <div id="right" class="box" style="right: 0; background: gold;"></div>
+            <script>
+              window.wheelTargets = [];
+              document.addEventListener("wheel", event => wheelTargets.push(event.target.id), { passive: true });
+              window.scrollEnded = false;
+              document.addEventListener("scrollend", () => scrollEnded = true);
+            </script>
+            """
+        try await page.load(html: html).wait()
+        await page.waitForNextPresentationUpdate()
+
+        let left = try await screenBounds(ofElementWithID: "left").center
+        let right = try await screenBounds(ofElementWithID: "right").center
+
+        // Flick over the left box so that the gesture ends in momentum, and let the momentum settle.
+        await page.withWheelEventMonitoring(expectingMomentumEnd: true) {
+            await recap.play { composer in
+                composer._wk_scroll(withStart: left, end: CGPoint(x: left.x, y: left.y - 200), duration: .seconds(0.1))
+            }
+        }
+        await page.waitForNextPresentationUpdate()
+
+        let flickTargets = try await page.callJavaScript(returning: [String].self) {
+            "const targets = wheelTargets; wheelTargets = []; scrollEnded = false; return targets;"
+        }
+        try #require(flickTargets.contains("left"), "the flick over #left did not dispatch wheel events to it")
+
+        // A new gesture over the right box must not stay latched to the element under the previous gesture.
+        // This deliberately avoids withWheelEventMonitoring(), since starting to monitor clears latching state.
+        await recap.play { composer in
+            composer._wk_scroll(withStart: right, end: CGPoint(x: right.x, y: right.y + 100), duration: .seconds(0.3))
+        }
+        try #require(try await waitUntil("return scrollEnded;"), "the scroll over #right never ended")
+
+        let scrollTargets = try await page.callJavaScript(returning: [String].self) {
+            "return wheelTargets;"
+        }
+        try #require(!scrollTargets.isEmpty, "the scroll over #right did not dispatch any wheel events")
+        #expect(Set(scrollTargets) == ["right"])
+    }
+
     @Test(arguments: [true, false])
     func clickThenDragSelectsTextUnlessItInterruptsDeceleratingScroll(interruptsScroll: Bool) async throws {
         let text = String(repeating: "\(Self.text) ", count: 2000)
@@ -1838,7 +2815,7 @@ extension AppKitGesturesTests.Basic {
         }
 
         await page.waitForNextPresentationUpdate()
-        #expect(!isDataListDropdownShowing())
+        #expect(isDataListDropdownShowing() == false)
 
         let (activeElementID, blurCount) = try await page.callJavaScript(returning: (String, Int).self) {
             """
@@ -2287,6 +3264,56 @@ extension AppKitGesturesTests.Basic {
         #expect(abs(reported - (lastClientY - firstClientY)) <= 2)
     }
 
+    @Test
+    func dragOverRangeInputChangesValueAfterPageCancelsDragStart() async throws {
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        let html = """
+            <body style="margin: 0;">
+                <img id="img" src="400x400-green.png" style="display: block; margin: 50px; width: 200px; height: 200px;">
+                <input id="slider" type="range" min="0" max="10" value="0" style="display: block; margin: 50px; width: 300px;">
+                <script>
+                    const slider = document.getElementById("slider");
+                    window.sliderValue = Number(slider.value);
+                    window.sliderEvents = [];
+                    slider.addEventListener("input", () => { window.sliderValue = Number(slider.value); });
+                    slider.addEventListener("mousedown", event => window.sliderEvents.push(event.type));
+                    document.addEventListener("dragstart", event => event.preventDefault());
+                </script>
+            </body>
+            """
+        try await page.load(html: html, baseURL: baseURL).wait()
+        await page.waitForNextPresentationUpdate()
+
+        // Dragging the image attempts to start a drag, but the page cancels dragstart.
+        let imgBounds = try await screenBounds(ofElementWithID: "img")
+        await recap.play { composer in
+            composer._wk_drag(
+                withStart: imgBounds.center,
+                end: CGPoint(x: imgBounds.center.x + 300, y: imgBounds.center.y),
+                duration: .seconds(1.5),
+                pressAndWait: .seconds(1.0)
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        // A subsequent drag should allow mouse tracking.
+        let sliderBounds = try await screenBounds(ofElementWithID: "slider")
+        await recap.play { composer in
+            composer._wk_drag(
+                withStart: CGPoint(x: sliderBounds.minX + 10, y: sliderBounds.center.y),
+                end: CGPoint(x: sliderBounds.maxX, y: sliderBounds.center.y),
+                duration: .seconds(0.5),
+                release: true
+            )
+        }
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        #expect(try await sliderEvents() == ["mousedown"])
+        #expect(try await sliderValue() > 0)
+    }
+
     @Test(
         .bug("https://webkit.org/b/315155", "Gesture-driven drag-and-drop does not recognize <img> elements")
     )
@@ -2552,6 +3579,45 @@ extension AppKitGesturesTests.Basic {
     }
 
     @Test
+    func clickThatMovesBeforeImageAnalysisBeginsInitiatesDragAndDropWhileHeld() async throws {
+        let baseURL = try #require(Bundle.testResources.resourceURL)
+        let html = """
+            <img id="img" src="400x400-green.png" style="display: block; height: 100vh; margin: 0; \(nonManipulableSurfaceStyle)">
+            """
+        try await page.load(html: html, baseURL: baseURL).wait()
+
+        let imageViewportBounds = try await page.callJavaScript(JavaScriptMessages.BoundingClientRect(elementID: "img"))
+        let imageScreenBounds = screenBounds(ofRectInViewportCoordinates: imageViewportBounds)
+
+        await page.waitForNextPresentationUpdate()
+
+        let start = imageScreenBounds.center
+        // Any movement before the click settles for 0.1s fails the image analysis gesture, so no analysis runs.
+        let nudged = CGPoint(x: start.x, y: start.y + 3)
+        let dragEnd = CGPoint(x: start.x, y: imageScreenBounds.midY + 200)
+
+        var gestureStateAtDragStart: NSGestureRecognizer.State?
+
+        await withMockedImageAnalyzer(response: .success(.init(lines: [])), after: .zero) {
+            gestureStateAtDragStart = await withSwizzledDraggingSession {
+                await recap.play { composer in
+                    // Click and hold past the drag gesture's minimum duration, then drag.
+                    composer._wk_drag(
+                        withStart: start,
+                        end: dragEnd,
+                        duration: .seconds(1),
+                        pressAndWait: .seconds(0.5),
+                        movingFirstTo: nudged
+                    )
+                }
+            }
+        }
+
+        let state = try #require(gestureStateAtDragStart)
+        #expect(state == .began || state == .changed, "the drag began from a gesture in state \(state.rawValue)")
+    }
+
+    @Test
     func clickingAfterImageInEditableContentPlacesCaretAfterImage() async throws {
         let html = """
             <body style="margin: 0">
@@ -2654,6 +3720,27 @@ extension AppKitGesturesTests.Basic {
 
         await recap.play { composer in
             composer._wk_eventFrequency = coalescedFlickEventFrequency
+            composer._wk_drag(withStart: center, end: end, duration: coalescedFlickDuration, release: false)
+            composer.advanceTime(0.5)
+            composer._wk_mouseUp()
+        }
+
+        let settled = try await settledScrollPosition()
+
+        #expect(settled.y < dragDistance * 1.5)
+    }
+
+    @Test
+    func flickThatRestsBeforeLiftoffDoesNotFling() async throws {
+        try await loadTallDocument()
+        await page.waitForNextPresentationUpdate()
+
+        let dragDistance = 250.0
+        let center = screenBounds(ofPointInWindowCoordinates: window.frame.center)
+        let end = CGPoint(x: center.x, y: center.y - dragDistance)
+
+        // Unlike the coalesced case above, this sees "changed" events, so it relies on the velocity going stale.
+        await recap.play { composer in
             composer._wk_drag(withStart: center, end: end, duration: coalescedFlickDuration, release: false)
             composer.advanceTime(0.5)
             composer._wk_mouseUp()
@@ -2920,8 +4007,10 @@ extension AppKitGesturesTests.Basic {
         try await observeBoundaryEvents(onElementWithID: "bar")
         try await performScroll(from: barBounds.center, to: end)
 
+        // The press that begins the scroll is reported to the bar, and canceled once it scrolls, so the bar sees the
+        // pointer come and go. The mouse's hover state must not follow it there.
         let actual = try await page.callJavaScript(JavaScriptMessages.EventLog())
-        #expect(actual.isEmpty)
+        #expect(actual.map(\.type) == [.pointerover, .pointerout])
     }
 
     @Test
@@ -2973,14 +4062,30 @@ extension AppKitGesturesTests.Basic {
 private let coalescedFlickEventFrequency = 20
 private let coalescedFlickDuration = Duration.seconds(0.1)
 
-nonisolated(nonsending) private func withSwizzledContextMenu(perform body: () async -> Void) async {
+private struct PresentedMenuItem: Sendable, Equatable {
+    let title: String
+    let isEnabled: Bool
+}
+
+/// Captures the items of the context menu that `body` presents instead of showing it. Then runs `whileMenuIsOpen`,
+/// and chooses the item titled `itemTitle`, if any, as if it were picked from the menu.
+@discardableResult
+nonisolated(nonsending) private func withSwizzledContextMenu(
+    choosingItemTitled itemTitle: String? = nil,
+    whileMenuIsOpen: () async -> Void = {},
+    perform body: () async -> Void
+) async -> [PresentedMenuItem] {
     typealias CompletionHandler = @convention(block) () -> Void
-    typealias ObjCImplementation = @convention(block) (NSMenu.Type, NSMenu, _NSViewMenuContext, NSView, CompletionHandler?) -> Void
+    typealias ObjCImplementation =
+        @MainActor @convention(block) (
+            NSMenu.Type, NSMenu, _NSViewMenuContext, NSView, CompletionHandler?
+        ) -> Void
 
     let future = Future()
+    let presentedMenu = PresentedContextMenu()
 
-    let implementation: ObjCImplementation = { _, _, _, _, completion in
-        completion?()
+    let implementation: ObjCImplementation = { _, menu, _, _, completion in
+        presentedMenu.open(menu, completion: completion)
 
         future.signal()
     }
@@ -2993,15 +4098,52 @@ nonisolated(nonsending) private func withSwizzledContextMenu(perform body: () as
         await body()
 
         await future.wait()
+
+        await whileMenuIsOpen()
+
+        await presentedMenu.close(choosingItemTitled: itemTitle)
+    }
+
+    return await presentedMenu.items
+}
+
+@MainActor
+private final class PresentedContextMenu {
+    private(set) var items: [PresentedMenuItem] = []
+    private var menu: NSMenu?
+    private var completion: (() -> Void)?
+
+    nonisolated init() {
+    }
+
+    func open(_ menu: NSMenu, completion: (() -> Void)?) {
+        self.menu = menu
+        self.completion = completion
+        items = menu.items.filter { !$0.isSeparatorItem }.map { PresentedMenuItem(title: $0.title, isEnabled: $0.isEnabled) }
+    }
+
+    func close(choosingItemTitled itemTitle: String?) {
+        if let itemTitle, let menu, let index = menu.items.firstIndex(where: { $0.title == itemTitle }) {
+            menu.performActionForItem(at: index)
+        }
+
+        completion?()
+
+        menu = nil
+        completion = nil
     }
 }
 
-nonisolated(nonsending) private func withSwizzledDraggingSession(perform body: () async -> Void) async {
+@discardableResult
+nonisolated(nonsending) private func withSwizzledDraggingSession(perform body: () async -> Void) async -> NSGestureRecognizer.State? {
     typealias ObjCImplementation = @convention(block) (NSView, NSArray, NSGestureRecognizer, AnyObject) -> NSDraggingSession?
 
     let dragInitiated = Future()
+    let gestureState = Mutex<NSGestureRecognizer.State?>(nil)
 
-    let implementation: ObjCImplementation = { _, _, _, _ in
+    let implementation: ObjCImplementation = { _, _, gesture, _ in
+        let state = MainActor.assumeIsolated { gesture.state }
+        gestureState.withLock { $0 = state }
         dragInitiated.signal()
         return NSDraggingSession()
     }
@@ -3014,6 +4156,70 @@ nonisolated(nonsending) private func withSwizzledDraggingSession(perform body: (
         await body()
 
         await dragInitiated.wait()
+    }
+
+    return gestureState.withLock { $0 }
+}
+
+private final class SpellCheckerStub: Sendable {
+    let misspelledWord: String
+    let guesses: [String]
+    private let learnedWordsStorage = Mutex<[String]>([])
+
+    init(misspelledWord: String, guesses: [String]) {
+        self.misspelledWord = misspelledWord
+        self.guesses = guesses
+    }
+
+    var learnedWords: [String] {
+        learnedWordsStorage.withLock { $0 }
+    }
+
+    fileprivate func recordLearnedWord(_ word: String) {
+        learnedWordsStorage.withLock { $0.append(word) }
+    }
+}
+
+nonisolated(nonsending) private func withSpellChecker(_ stub: SpellCheckerStub, perform body: () async -> Void) async {
+    typealias CheckString =
+        @convention(block) (AnyObject, NSString, NSRange, NSTextCheckingTypes, NSDictionary?, Int, Int, Int) -> NSArray
+    typealias GuessesForWordRange = @convention(block) (AnyObject, NSRange, NSString, NSString?, Int) -> NSArray
+    typealias LearnWord = @convention(block) (AnyObject, NSString) -> Void
+
+    let checkString: CheckString = { _, string, _, types, _, _, _, _ in
+        let misspelledRange = string.range(of: stub.misspelledWord)
+        guard misspelledRange.location != NSNotFound, types & NSTextCheckingResult.CheckingType.spelling.rawValue != 0 else {
+            return [] as NSArray
+        }
+        return [NSTextCheckingResult.spellCheckingResult(range: misspelledRange)] as NSArray
+    }
+
+    let guessesForWordRange: GuessesForWordRange = { _, _, _, _, _ in
+        stub.guesses as NSArray
+    }
+
+    let learnWord: LearnWord = { _, word in
+        stub.recordLearnedWord(word as String)
+    }
+
+    await withSwizzledObjectiveCInstanceMethod(
+        replacing: NSSpellChecker.self,
+        name: NSSelectorFromString("checkString:range:types:options:inSpellDocumentWithTag:orthography:wordCount:"),
+        with: checkString
+    ) {
+        await withSwizzledObjectiveCInstanceMethod(
+            replacing: NSSpellChecker.self,
+            name: NSSelectorFromString("guessesForWordRange:inString:language:inSpellDocumentWithTag:"),
+            with: guessesForWordRange
+        ) {
+            await withSwizzledObjectiveCInstanceMethod(
+                replacing: NSSpellChecker.self,
+                name: NSSelectorFromString("learnWord:"),
+                with: learnWord
+            ) {
+                await body()
+            }
+        }
     }
 }
 
@@ -3110,6 +4316,47 @@ extension AppKitGesturesTests.Basic {
         return try await page.callJavaScript(returning: Int.self) {
             "return window.contextMenuEventCount;"
         }
+    }
+
+    private func pointJustInsideEndOfText(_ text: String) async throws -> CGPoint {
+        let bounds = try await screenBoundsOfText(text)
+        return CGPoint(x: bounds.maxX - 2, y: bounds.midY)
+    }
+
+    private func contextMenuAfterClickingTwiceInMisspelledWord(
+        at point: CGPoint,
+        spellChecker: SpellCheckerStub,
+        choosingItemTitled itemTitle: String? = nil,
+        whileMenuIsOpen: () async -> Void = {}
+    ) async throws -> (caretSelection: JavaScriptSelection, menuItems: [PresentedMenuItem]) {
+        await recap.play { composer in
+            composer._wk_click(at: point, for: .seconds(0.05))
+        }
+
+        await page.waitForPendingMouseEvents()
+        await page.waitForNextPresentationUpdate()
+
+        let caretSelection = try await page.callJavaScript(JavaScriptMessages.GetSelection())
+        guard case .collapsed = caretSelection else {
+            Issue.record("expected the click to place the caret, got \(caretSelection)")
+            return (caretSelection, [])
+        }
+
+        // Wait until the next click can no longer complete a double click.
+        try await Task.sleep(for: .seconds(1))
+
+        var menuItems: [PresentedMenuItem] = []
+        await withSpellChecker(spellChecker) {
+            menuItems = await withSwizzledContextMenu(choosingItemTitled: itemTitle, whileMenuIsOpen: whileMenuIsOpen) {
+                await recap.play { composer in
+                    composer._wk_click(at: point, for: .seconds(0.05))
+                }
+            }
+
+            await page.waitForNextPresentationUpdate()
+        }
+
+        return (caretSelection, menuItems)
     }
 
     private func waitForVideoToLoadData(elementID: String) async throws {

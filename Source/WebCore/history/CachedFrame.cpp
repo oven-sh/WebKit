@@ -203,6 +203,12 @@ CachedFrame::CachedFrame(Frame& frame)
         localFrame->clearTimers();
     }
 
+    // Unlike a subframe, the main frame stays attached to its page and is reused for the next document.
+    if (localFrame && !m_isMainFrame && localFrame->isRootFrame()) {
+        if (RefPtr page = localFrame->page())
+            page->removeRootFrame(*localFrame);
+    }
+
     // Deconstruct the FrameTree, to restore it later.
     // We do this for two reasons:
     // 1 - We reuse the main frame, so when it navigates to a new page load it needs to start with a blank FrameTree.
@@ -241,9 +247,15 @@ void CachedFrame::open()
     ASSERT(m_view);
     ASSERT(m_document || is<RemoteFrameView>(m_view.get()));
 
-    if (RefPtr localFrameView = dynamicDowncast<LocalFrameView>(m_view.get()))
-        localFrameView->frame().loader().open(*this);
-    else {
+    if (RefPtr localFrameView = dynamicDowncast<LocalFrameView>(m_view.get())) {
+        Ref localFrame = localFrameView->frame();
+        // Must precede FrameLoader::open(), which rebuilds the render tree and attaches the root compositing layer.
+        if (!m_isMainFrame && localFrame->isRootFrame()) {
+            if (RefPtr page = localFrame->page())
+                page->addRootFrame(localFrame);
+        }
+        localFrame->loader().open(*this);
+    } else {
         // RemoteFrame main frame in iframe process — restore() handles
         // frame tree reconstruction and opening child CachedFrames.
         // FIXME: Unify with the LocalFrame path by moving restore() out

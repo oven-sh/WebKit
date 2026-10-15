@@ -122,6 +122,7 @@ NSString * const NSInspectorBarTextAlignmentItemIdentifier = @"NSInspectorBarTex
 @end
 
 @interface NSScrollPocket : NSView
+@property (readonly, strong) NSView *captureView;
 @property (copy, nullable) NSColor *captureColor;
 @property BOOL prefersSolidColorHardPocket;
 @end

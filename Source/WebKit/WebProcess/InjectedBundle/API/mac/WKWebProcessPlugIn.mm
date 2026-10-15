@@ -102,7 +102,8 @@ static Ref<API::Array> createWKArray(NSArray *array)
     Vector<RefPtr<API::Object>> strings;
     strings.reserveInitialCapacity(count);
     
-    for (id entry in array) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id entry in array) {
         if ([entry isKindOfClass:[NSString class]])
             strings.append(adoptRef(WebKit::toImpl(WKStringCreateWithCFString((__bridge CFStringRef)entry))));
     }

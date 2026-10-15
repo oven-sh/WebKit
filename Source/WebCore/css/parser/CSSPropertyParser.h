@@ -35,8 +35,8 @@ struct CSSParserContext;
 struct CSSCustomPropertySyntax;
 struct ComputedStyleDependencies;
 
-enum CSSPropertyID : uint16_t;
-enum CSSValueID : uint16_t;
+enum class CSSPropertyID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum class CSSWideKeyword : uint8_t;
 enum class IsImportant : bool;
 enum class StyleRuleType : uint8_t;
@@ -81,6 +81,6 @@ WEBCORE_EXPORT CSSValueID cssValueKeywordID(StringView);
 
 // MARK: - Custom property name validation
 
-bool NODELETE isCustomPropertyName(StringView);
+bool LEGACY_NODELETE isCustomPropertyName(StringView);
 
 } // namespace WebCore

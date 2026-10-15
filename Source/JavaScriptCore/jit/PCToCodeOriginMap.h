@@ -120,9 +120,9 @@ public:
     PCToCodeOriginMap(PCToCodeOriginMapBuilder&&, LinkBuffer&);
     ~PCToCodeOriginMap();
 
-    std::optional<CodeOrigin> NODELETE findPC(void* pc) const;
+    std::optional<CodeOrigin> findPC(void* pc) const;
 
-    double NODELETE memorySize();
+    double LEGACY_NODELETE memorySize();
 
 private:
     size_t m_compressedPCBufferSize;

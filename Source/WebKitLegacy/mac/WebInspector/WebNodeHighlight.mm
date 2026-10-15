@@ -100,15 +100,14 @@
     [highlightWindow setIgnoresMouseEvents:YES];
     [highlightWindow setReleasedWhenClosed:NO];
 
-    _highlightView = [[WebNodeHighlightView alloc] initWithWebNodeHighlight:self];
-    RetainPtr highlightView = _highlightView;
+    RetainPtr highlightView = adoptNS([[WebNodeHighlightView alloc] initWithWebNodeHighlight:self]);
+    _highlightView = highlightView.get();
     [highlightWindow setContentView:highlightView];
-    [highlightView release];
 #else
     ASSERT([_targetView isKindOfClass:[WebView class]]);
     WebView *webView = checked_objc_cast<WebView>(targetView);
 
-    _highlightView = [[WebNodeHighlightView alloc] initWithWebNodeHighlight:self];
+    _highlightView = adoptNS([[WebNodeHighlightView alloc] initWithWebNodeHighlight:self]);
     _highlightLayer = adoptNS([[WebHighlightLayer alloc] initWithHighlightView:protect(_highlightView) webView:webView]);
     [_highlightLayer setContentsScale:[[_targetView window] screenScale]]; // HiDPI.
     [_highlightLayer setCanDrawConcurrently:NO];
@@ -206,10 +205,6 @@
     // We didn't retain _highlightView, but we do need to tell it to forget about us, so it doesn't
     // try to send our delegate messages after we've been dealloc'ed, e.g.
     [protect(_highlightView) detachFromWebNodeHighlight];
-#if PLATFORM(IOS_FAMILY)
-    // iOS did retain the highlightView, and we should release it here.
-    [_highlightView release];
-#endif
     _highlightView = nil;
 }
 

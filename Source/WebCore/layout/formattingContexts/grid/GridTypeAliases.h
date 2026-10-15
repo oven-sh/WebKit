@@ -54,6 +54,7 @@ struct UnsizedTrack;
 using BorderBoxPositions = Vector<LayoutUnit>;
 using FlexTracks = Vector<FlexTrack>;
 using GridAreas = Vector<std::pair<UnplacedGridItem, GridAreaLines>>;
+using GridItemIndexes = Vector<size_t>;
 using GridItemRects = Vector<GridItemRect>;
 // One row of the implicit grid: the bit is set where a grid item covers the cell.
 using GridRow = BitVector;
@@ -61,6 +62,7 @@ using GridMatrix = Vector<GridRow>;
 using LogicalGridItems = Vector<WTF::CheckedRef<const ElementBox>>;
 using PlacedGridItems = Vector<PlacedGridItem>;
 using PlacedGridItemSpanList = Vector<WTF::Range<size_t>>;
+using TrackIndexes = Vector<size_t>;
 using TrackSizes = Vector<LayoutUnit>;
 using TrackSizingFunctionsList = Vector<TrackSizingFunctions>;
 using TrackSizingItemList = Vector<TrackSizingItem>;

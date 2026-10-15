@@ -88,15 +88,16 @@ public:
         if (!derefBase())
             return;
 
+        // T derives from ThreadSafeRefCounted<T> (CRTP), so this is always a T.
         if constexpr (destructionThread == DestructionThread::Any) {
-            delete static_cast<const T*>(this);
+            SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
         } else if constexpr (destructionThread == DestructionThread::Main) {
             SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE ensureOnMainThread([this] {
-                delete static_cast<const T*>(this);
+                SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
             });
         } else if constexpr (destructionThread == DestructionThread::MainRunLoop) {
             SUPPRESS_UNCOUNTED_LAMBDA_CAPTURE ensureOnMainRunLoop([this] {
-                delete static_cast<const T*>(this);
+                SUPPRESS_MEMORY_UNSAFE_CAST delete static_cast<const T*>(this);
             });
         } else
             STATIC_ASSERT_NOT_REACHED_FOR_VALUE(destructionThread, "Unexpected destructionThread enumerator value");

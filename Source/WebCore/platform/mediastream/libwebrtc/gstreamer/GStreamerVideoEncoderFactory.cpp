@@ -97,7 +97,7 @@ public:
 
         auto codecName = builder.toString();
         if (codecName.isEmpty()) {
-            gst_printerrln("Unable to create GStreamer video encoder for format %s", sdpVideoFormat.ToString().c_str());
+            SAFE_GST_PRINTERRLN("Unable to create GStreamer video encoder for format %s", UTF8CStringView::unsafeFromUTF8(sdpVideoFormat.ToString().c_str()));
             return;
         }
 
@@ -106,7 +106,7 @@ public:
             notifyEncodedFrame(WTF::move(encodedFrame));
         });
         if (!result) {
-            gst_printerrln("Unable to create GStreamer video encoder: %s", result.error().utf8().legacyCStringPointer());
+            SAFE_GST_PRINTERRLN("Unable to create GStreamer video encoder: %s", result.error().utf8());
             return;
         }
         lazyInitialize(m_internalEncoder, WTF::move(*result));
@@ -169,13 +169,13 @@ public:
                 mode = WebCore::VideoEncoderScalabilityMode::L1T3;
                 break;
             default:
-                gst_printerrln("Unsupported scalability mode for 1 spatial layer and %zu temporal layers", totalTemporalLayers);
+                SAFE_GST_PRINTERRLN("Unsupported scalability mode for 1 spatial layer and %zu temporal layers", totalTemporalLayers);
                 return;
             }
             break;
         }
         default:
-            gst_printerrln("Unsupported scalability mode for %zu spatial layers", totalSpatialLayers);
+            SAFE_GST_PRINTERRLN("Unsupported scalability mode for %zu spatial layers", totalSpatialLayers);
             return;
         }
         auto bitRateAllocation = WebCore::WebKitVideoEncoderBitRateAllocation::create(mode);

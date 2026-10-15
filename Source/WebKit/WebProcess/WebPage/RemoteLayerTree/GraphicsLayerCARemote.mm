@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GraphicsLayerCARemote.h"
 
+#include "DisplayOnlyImageProxy.h"
 #include "ImageBufferBackendHandleSharing.h"
 #include "PlatformCAAnimationRemote.h"
 #include "PlatformCALayerRemote.h"
@@ -175,7 +176,7 @@ public:
         }
     }
 
-    void NODELETE setDestinationLayerID(WebCore::PlatformLayerIdentifier layerID)
+    void LEGACY_NODELETE setDestinationLayerID(WebCore::PlatformLayerIdentifier layerID)
     {
         m_layerID = layerID;
     }
@@ -296,6 +297,17 @@ void GraphicsLayerCARemote::setLayerContentsToImageBuffer(PlatformCALayer& layer
     layer.setTonemappingEnabled(true);
 #endif
     downcast<PlatformCALayerRemote>(layer).setRemoteDelegatedContents({ ImageBufferBackendHandle { *backendHandle }, fence, std::nullopt });
+}
+
+void GraphicsLayerCARemote::setLayerContentsToNativeImage(PlatformCALayer& layer, NativeImage& image)
+{
+#if ENABLE(GPU_PROCESS) && HAVE(IOSURFACE)
+    if (RefPtr proxy = dynamicDowncast<DisplayOnlyImageProxy>(image)) {
+        downcast<PlatformCALayerRemote>(layer).setDisplayOnlyImage(proxy->identifier());
+        return;
+    }
+#endif
+    layer.setContents(image.platformImage().get());
 }
 
 GraphicsLayer::LayerMode GraphicsLayerCARemote::layerMode() const

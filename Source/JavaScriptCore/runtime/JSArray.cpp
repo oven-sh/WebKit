@@ -25,6 +25,7 @@
 
 #include "ArrayPrototypeInlines.h"
 #include "GCDeferralContextInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSArrayInlines.h"
 #include "JSCInlines.h"
 #include "PropertyNameArray.h"
@@ -356,7 +357,7 @@ bool JSArray::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, Propert
     return JSObject::deleteProperty(thisObject, globalObject, propertyName, slot);
 }
 
-static int NODELETE compareKeysForQSort(const void* a, const void* b)
+static int LEGACY_NODELETE compareKeysForQSort(const void* a, const void* b)
 {
     unsigned da = *static_cast<const unsigned*>(a);
     unsigned db = *static_cast<const unsigned*>(b);

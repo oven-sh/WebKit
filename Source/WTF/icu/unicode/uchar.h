@@ -25,6 +25,9 @@
 #ifndef UCHAR_H
 #define UCHAR_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 #include "unicode/stringoptions.h"
 #include "unicode/ucpmap.h"

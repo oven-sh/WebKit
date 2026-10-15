@@ -33,19 +33,17 @@
 #include "RemoteSnapshot.h"
 #include "RemoteSnapshotRecorderMessages.h"
 
-#define MESSAGE_CHECK(assertion) MESSAGE_CHECK_BASE(assertion, m_renderingBackend->streamConnection());
-
 namespace WebKit {
 using namespace WebCore;
 
 Ref<RemoteSnapshotRecorder> RemoteSnapshotRecorder::create(RemoteSnapshotRecorderIdentifier identifier, RemoteSnapshot& snapshot, RemoteRenderingBackend& renderingBackend)
 {
-    Ref instance = adoptRef(*new RemoteSnapshotRecorder(makeUniqueRef<DisplayList::RecorderImpl>(FloatRect { }), identifier, snapshot, renderingBackend));
+    Ref instance = adoptRef(*new RemoteSnapshotRecorder(DisplayList::RecorderImpl::create(FloatRect { }), identifier, snapshot, renderingBackend));
     instance->startListeningForIPC();
     return instance;
 }
 
-RemoteSnapshotRecorder::RemoteSnapshotRecorder(UniqueRef<DisplayList::RecorderImpl>&& recorder, RemoteSnapshotRecorderIdentifier identifier, RemoteSnapshot& snapshot, RemoteRenderingBackend& renderingBackend)
+RemoteSnapshotRecorder::RemoteSnapshotRecorder(Ref<DisplayList::RecorderImpl>&& recorder, RemoteSnapshotRecorderIdentifier identifier, RemoteSnapshot& snapshot, RemoteRenderingBackend& renderingBackend)
     : RemoteGraphicsContext(recorder, renderingBackend)
     , m_snapshot(snapshot)
     , m_recorder(WTF::move(recorder))
@@ -74,8 +72,7 @@ Ref<RemoteSnapshot> RemoteSnapshotRecorder::snapshot() const
 
 void RemoteSnapshotRecorder::drawSnapshotFrame(FrameIdentifier frameIdentifier)
 {
-    bool result = m_snapshot->addFrameReference(frameIdentifier);
-    MESSAGE_CHECK(result);
+    m_snapshot->addFrameReference(frameIdentifier);
     m_recorder->drawPlaceholder([snapshot = m_snapshot, frameIdentifier] (GraphicsContext& context) {
         bool result = snapshot->applyFrame(frameIdentifier, context);
         ASSERT_UNUSED(result, result); // Programming error, consistency checked with isComplete().
@@ -83,7 +80,5 @@ void RemoteSnapshotRecorder::drawSnapshotFrame(FrameIdentifier frameIdentifier)
 }
 
 }
-
-#undef MESSAGE_CHECK
 
 #endif

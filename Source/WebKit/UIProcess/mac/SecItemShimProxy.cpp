@@ -109,17 +109,17 @@ void SecItemShimProxy::secItemRequest(IPC::Connection& connection, const SecItem
         SecItemResponseData::Result resultData;
         if (result) {
             auto resultType = CFGetTypeID(result.get());
-            CFArrayRef resultArray = (CFArrayRef)result.get();
-            if (resultType == CFArrayGetTypeID() && CFArrayGetCount(resultArray)) {
-                auto containedType = CFGetTypeID(RetainPtr { CFArrayGetValueAtIndex(resultArray, 0) }.get());
+            RetainPtr<CFArrayRef> resultArray = (CFArrayRef)result.get();
+            if (resultType == CFArrayGetTypeID() && CFArrayGetCount(resultArray.get())) {
+                auto containedType = CFGetTypeID(RetainPtr { CFArrayGetValueAtIndex(resultArray.get(), 0) }.get());
                 if (containedType == SecCertificateGetTypeID()) {
-                    resultData = Vector<RetainPtr<SecCertificateRef>>(makeVector(resultArray, [] (SecCertificateRef element) {
+                    resultData = Vector<RetainPtr<SecCertificateRef>>(makeVector(resultArray.get(), [] (SecCertificateRef element) {
                         return std::optional(RetainPtr<SecCertificateRef> { element });
                     }));
 #if HAVE(SEC_KEYCHAIN)
                     ALLOW_DEPRECATED_DECLARATIONS_BEGIN
                 } else if (containedType == SecKeychainItemGetTypeID()) {
-                    resultData = Vector<RetainPtr<SecKeychainItemRef>>(makeVector(resultArray, [] (SecKeychainItemRef element) {
+                    resultData = Vector<RetainPtr<SecKeychainItemRef>>(makeVector(resultArray.get(), [] (SecKeychainItemRef element) {
                         return std::optional(RetainPtr<SecKeychainItemRef> { element });
                     }));
                     ALLOW_DEPRECATED_DECLARATIONS_END

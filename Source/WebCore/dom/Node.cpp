@@ -397,7 +397,7 @@ Node::Node(ClangVTableWorkaroundTag, Document& document)
 {
 }
 
-static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& NODELETE nodeIdentifiersMap()
+static HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>& LEGACY_NODELETE nodeIdentifiersMap()
 {
     static MainThreadNeverDestroyed<HashMap<WeakPtr<Node, WeakPtrImplWithEventTargetData>, NodeIdentifier>> map;
     return map;
@@ -506,7 +506,8 @@ Ref<NodeList> Node::childNodes()
 
 Node* Node::lastDescendant() const
 {
-    Node* node = const_cast<Node*>(this);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST Node* node = const_cast<Node*>(this);
     while (auto* child = node->lastChild())
         node = child;
     return node;
@@ -514,7 +515,8 @@ Node* Node::lastDescendant() const
 
 Node* Node::firstDescendant() const
 {
-    Node* node = const_cast<Node*>(this);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST Node* node = const_cast<Node*>(this);
     while (auto* child = node->firstChild())
         node = child;
     return node;
@@ -570,7 +572,7 @@ static HashSet<Ref<Node>> nodeSetPreTransformedFromNodeOrStringVector(const Fixe
     return nodeSet;
 }
 
-static RefPtr<Node> NODELETE firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+static RefPtr<Node> LEGACY_NODELETE firstPrecedingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.previousSibling(); sibling; sibling = sibling->previousSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -579,7 +581,7 @@ static RefPtr<Node> NODELETE firstPrecedingSiblingNotInNodeSet(Node& context, co
     return nullptr;
 }
 
-static RefPtr<Node> NODELETE firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
+static RefPtr<Node> LEGACY_NODELETE firstFollowingSiblingNotInNodeSet(Node& context, const HashSet<Ref<Node>>& nodeSet)
 {
     for (auto* sibling = context.nextSibling(); sibling; sibling = sibling->nextSibling()) {
         if (!nodeSet.contains(*sibling))
@@ -804,7 +806,7 @@ ExceptionOr<void> Node::normalize()
 Ref<Node> Node::cloneNode(CloneSubtree subtree) const
 {
     ASSERT(!isShadowRoot());
-    RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*this, treeScope());
+    RefPtr registry = CustomElementRegistry::registryForNodeOrTreeScope(*this, protect(treeScope()));
     return cloneNodeInternal(protect(document()), subtree == CloneSubtree::Yes ? CloningOperation::Everything : CloningOperation::SelfOnly, registry.get());
 }
 
@@ -847,7 +849,7 @@ void Node::inspect()
         page->inspectorController().inspect(this);
 }
 
-static Node::Editability NODELETE computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
+static Node::Editability LEGACY_NODELETE computeEditabilityFromComputedStyle(const Style::ComputedStyle& style, Node::UserSelectAllTreatment treatment, PageIsEditable pageIsEditable)
 {
     // Ideally we'd call ASSERT(!needsStyleRecalc()) here, but
     // ContainerNode::setFocus() calls invalidateStyleForSubtree(), so the assertion
@@ -875,7 +877,7 @@ static Node::Editability NODELETE computeEditabilityFromComputedStyle(const Styl
 
 Node::Editability Node::computeEditabilityWithStyle(const Style::ComputedStyle* incomingStyle, UserSelectAllTreatment treatment, ShouldUpdateStyle shouldUpdateStyle) const
 {
-    if (!document().canEverRender() || isPseudoElement())
+    if (!protect(document())->canEverRender() || isPseudoElement())
         return Editability::ReadOnly;
 
     Ref document = this->document();
@@ -898,7 +900,8 @@ Node::Editability Node::computeEditabilityWithStyle(const Style::ComputedStyle* 
         RefPtr element = dynamicDowncast<Element>(*this);
         if (!element)
             element = parentElementInComposedTree();
-        return element ? const_cast<Element&>(*element).computedStyleForEditability() : nullptr;
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return element ? const_cast<Element&>(*element).computedStyleForEditability() : nullptr;
     }();
 
     if (!style)
@@ -1028,7 +1031,7 @@ unsigned Node::computeNodeIndex() const
 }
 
 template<unsigned type>
-bool NODELETE shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
+bool LEGACY_NODELETE shouldInvalidateNodeListCachesForAttr(std::span<const unsigned, numNodeListInvalidationTypes> nodeListCounts, const QualifiedName& attrName)
 {
     if constexpr (type >= numNodeListInvalidationTypes)
         return false;
@@ -1070,7 +1073,7 @@ void Node::invalidateNodeListAndCollectionCachesInAncestors()
             lists->clearChildNodeListCache();
     }
 
-    SUPPRESS_UNCOUNTED_ARG document().invalidateQuerySelectorAllResults(*this);
+    SUPPRESS_UNCOUNTED_ARG document().invalidateQuerySelectorResults(*this);
 
     if (!document().shouldInvalidateNodeListAndCollectionCaches())
         return;
@@ -1317,21 +1320,21 @@ bool Node::isClosedShadowHidden(const Node& otherNode) const
     return true;
 }
 
-static inline ShadowRoot* NODELETE parentShadowRoot(const Node& node)
+static inline ShadowRoot* LEGACY_NODELETE parentShadowRoot(const Node& node)
 {
     if (auto* parent = node.parentElement())
         return parent->shadowRoot();
     return nullptr;
 }
 
-HTMLSlotElement* NODELETE Node::assignedSlot() const
+HTMLSlotElement* LEGACY_NODELETE Node::assignedSlot() const
 {
     if (auto* shadowRoot = parentShadowRoot(*this))
         return shadowRoot->findAssignedSlot(*this);
     return nullptr;
 }
 
-HTMLSlotElement* NODELETE Node::assignedSlotForBindings() const
+HTMLSlotElement* LEGACY_NODELETE Node::assignedSlotForBindings() const
 {
     auto* shadowRoot = parentShadowRoot(*this);
     if (shadowRoot && shadowRoot->mode() == ShadowRootMode::Open)
@@ -1513,7 +1516,7 @@ void Node::removingSteps(RemovalType removalType, ContainerNode& oldParentOfRemo
     updateShadowIncludingRoot();
 
     if (removalType.disconnectedFromDocument) {
-        if (CheckedPtr cache = oldParentOfRemovedTree.document().existingAXObjectCache())
+        if (CheckedPtr cache = protect(oldParentOfRemovedTree.document())->existingAXObjectCache())
             cache->remove(*this);
     }
 }
@@ -1903,8 +1906,8 @@ unsigned short Node::compareDocumentPosition(Node& otherNode)
 FloatPoint Node::convertToPage(const FloatPoint& p) const
 {
     // If there is a renderer, just ask it to do the conversion
-    if (renderer())
-        return renderer()->localToAbsolute(p, MapCoordinatesMode::UseTransforms);
+    if (CheckedPtr renderer = this->renderer())
+        return renderer->localToAbsolute(p, MapCoordinatesMode::UseTransforms);
 
     // Otherwise go up the tree looking for a renderer
     if (RefPtr parent = parentElement())
@@ -1917,8 +1920,8 @@ FloatPoint Node::convertToPage(const FloatPoint& p) const
 FloatPoint Node::convertFromPage(const FloatPoint& p) const
 {
     // If there is a renderer, just ask it to do the conversion
-    if (renderer())
-        return renderer()->absoluteToLocal(p, MapCoordinatesMode::UseTransforms);
+    if (CheckedPtr renderer = this->renderer())
+        return renderer->absoluteToLocal(p, MapCoordinatesMode::UseTransforms);
 
     // Otherwise go up the tree looking for a renderer
     if (RefPtr parent = parentElement())
@@ -2309,7 +2312,7 @@ void Node::moveNodeToNewDocumentFastCase(Document& oldDocument, Document& newDoc
         adoptCustomElementRegistryIntoScopedRegistryDocument();
 
     if (!hasTypeFlag(TypeFlag::HasDidMoveToNewDocument) && !hasEventTargetFlag(EventTargetFlag::HasLangAttr) && !hasEventTargetFlag(EventTargetFlag::HasXMLLangAttr)
-        && !isDefinedCustomElement())
+        && !isDefinedCustomElement() && !isCustomElementUpgradeCandidate())
         return;
 
     if (auto* element = dynamicDowncast<Element>(*this))
@@ -3044,7 +3047,7 @@ template<> ContainerNode* parent<ComposedTreeIncludingPseudoElements>(const Node
     return node.parentElementInComposedTree();
 }
 
-template<TreeType treeType> size_t NODELETE depth(const Node& node)
+template<TreeType treeType> size_t LEGACY_NODELETE depth(const Node& node)
 {
     size_t depth = 0;
     SUPPRESS_UNCHECKED_LOCAL auto ancestor = &node;
@@ -3099,7 +3102,7 @@ template Node* commonInclusiveAncestor<ComposedTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ShadowIncludingTree>(const Node&, const Node&);
 template Node* commonInclusiveAncestor<ComposedTreeIncludingPseudoElements>(const Node&, const Node&);
 
-template<TreeType treeType> bool NODELETE isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
+template<TreeType treeType> bool LEGACY_NODELETE isSiblingSubsequent(const Node& siblingA, const Node& siblingB)
 {
     ASSERT(&siblingA != &siblingB);
     ASSERT(parent<treeType>(siblingA));
@@ -3184,7 +3187,8 @@ TextStream& operator<<(TextStream& ts, const Node& node)
 
 NodeIdentifier Node::nodeIdentifier() const
 {
-    return nodeIdentifiersMap().ensure(const_cast<Node&>(*this), [&] {
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return nodeIdentifiersMap().ensure(const_cast<Node&>(*this), [&] {
         setStateFlag(StateFlag::HasNodeIdentifier);
         return NodeIdentifier::generate();
     }).iterator->value;

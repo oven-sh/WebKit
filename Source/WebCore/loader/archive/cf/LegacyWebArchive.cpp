@@ -85,7 +85,7 @@ static const CFStringRef LegacyWebArchiveResourceTextEncodingNameKey = CFSTR("We
 static const CFStringRef LegacyWebArchiveResourceResponseKey = CFSTR("WebResourceResponse");
 static const CFStringRef LegacyWebArchiveResourceResponseVersionKey = CFSTR("WebResourceResponseVersion");
 
-static bool NODELETE isUnreservedURICharacter(char16_t character)
+static bool LEGACY_NODELETE isUnreservedURICharacter(char16_t character)
 {
     return isASCIIAlphanumeric(character) || character == '-' || character == '.' || character == '_' || character == '~';
 }
@@ -541,7 +541,7 @@ RefPtr<LegacyWebArchive> LegacyWebArchive::create(LocalFrame& frame, ArchiveOpti
             continue;
         }
 
-        if (auto localChild = dynamicDowncast<LocalFrame>(child.get())) {
+        if (RefPtr localChild = dynamicDowncast<LocalFrame>(child)) {
             if (auto childFrameArchive = create(*localChild, { }))
                 subframeArchives.append(childFrameArchive.releaseNonNull());
         }

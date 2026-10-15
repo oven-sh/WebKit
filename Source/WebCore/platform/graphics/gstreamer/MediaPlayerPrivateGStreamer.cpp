@@ -2719,7 +2719,7 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
             static auto skipAutoPlug = *gstGetAutoplugSelectResult("skip"_s);
 
             auto name = StringView::fromLatin1(gst_plugin_feature_get_name(GST_PLUGIN_FEATURE_CAST(factory)));
-            if (name == "webkitthunderparser"_s && player->m_url.protocolIsBlob())
+            if (name == "webkitthunderparser"_s && !player->isMediaSource())
                 return skipAutoPlug;
 
             auto* structure = gst_caps_get_structure(caps, 0);
@@ -2733,7 +2733,6 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
             if (!isParsed || !*isParsed)
                 return tryAutoPlug;
 
-#if GST_CHECK_VERSION(1, 20, 0)
             static auto exposeAutoPlug = *gstGetAutoplugSelectResult("expose"_s);
             auto& scanner = GStreamerRegistryScanner::singleton();
             auto codecName = GMallocString::unsafeAdoptFromUTF8(gst_codec_utils_caps_get_mime_codec(caps));
@@ -2746,7 +2745,6 @@ void MediaPlayerPrivateGStreamer::configureParsebin(GstElement* parsebin)
 
             if (decoderFactoryAcceptsCaps)
                 return exposeAutoPlug;
-#endif
 
             return tryAutoPlug;
         }), this);
@@ -3701,7 +3699,6 @@ void MediaPlayerPrivateGStreamer::createGSTPlayBin(const URL& url)
 
 void MediaPlayerPrivateGStreamer::setupCodecProbe(GstElement* element)
 {
-#if GST_CHECK_VERSION(1, 20, 0)
     GRefPtr sinkPad = adoptGRef(gst_element_get_static_pad(element, "sink"));
     auto probe = PadProbeHandle<MediaPlayerPrivateGStreamer>::create(*this, WTF::move(sinkPad), GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, [](const auto& player, const auto& pad, auto info) -> GstPadProbeReturn {
         auto* event = gst_pad_probe_info_get_event(info);
@@ -3732,9 +3729,6 @@ void MediaPlayerPrivateGStreamer::setupCodecProbe(GstElement* element)
         Locker locker { m_decoderConfigurationLock };
         m_codecProbes.append(WTF::move(probe));
     }
-#else
-    UNUSED_PARAM(element);
-#endif
 }
 
 void MediaPlayerPrivateGStreamer::configureAudioDecoder(GstElement* decoder)

@@ -28,13 +28,13 @@
 #include "ModuleScriptLoader.h"
 #include "ModuleScriptLoaderClient.h"
 #include <JavaScriptCore/JSCJSValue.h>
+#include <wtf/CheckedRef.h>
 #include <wtf/HashSet.h>
 #include <wtf/Noncopyable.h>
 #include <wtf/RefPtr.h>
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/TZoneMalloc.h>
 #include <wtf/URLHash.h>
-#include <wtf/WeakPtr.h>
 
 namespace JSC {
 
@@ -59,11 +59,10 @@ class ScriptModuleLoader final : private ModuleScriptLoaderClient {
     WTF_MAKE_NONCOPYABLE(ScriptModuleLoader);
 public:
     enum class OwnerType : uint8_t { Document, WorkerOrWorklet };
-    enum class ModuleType : uint8_t { Invalid, JavaScript, WebAssembly, JSON, Text };
-    explicit ScriptModuleLoader(ScriptExecutionContext*, OwnerType);
+    enum class ModuleType : uint8_t { Invalid, JavaScript, WebAssembly, JSON, Text, CSS };
+    explicit ScriptModuleLoader(ScriptExecutionContext&, OwnerType);
     ~ScriptModuleLoader();
 
-    UniqueRef<ScriptModuleLoader> shadowRealmLoader(JSC::JSGlobalObject* realmGlobal) const;
 
     ScriptExecutionContext* context();
 
@@ -81,11 +80,10 @@ private:
     URL responseURLFromRequestURL(const String& requestURL);
     URL baseURLForScriptWithoutURL();
 
-    WeakPtr<ScriptExecutionContext> m_context;
+    const CheckedRef<ScriptExecutionContext> m_context;
     MemoryCompactRobinHoodHashMap<String, URL> m_requestURLToResponseURLMap;
     HashSet<Ref<ModuleScriptLoader>> m_loaders;
     OwnerType m_ownerType;
-    JSC::JSGlobalObject* m_shadowRealmGlobal { nullptr };
 };
 
 } // namespace WebCore

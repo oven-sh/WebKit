@@ -48,17 +48,20 @@ import (
 var skipWeakSymbols = []*regexp.Regexp{
 	// Symbols on Linux and other platforms with IA-64 name mangling.
 	regexp.MustCompile(`^DW\.ref\.__gxx_personality_.*`), // libstdc++ exception handling
+	regexp.MustCompile(`^_Z4ceil.*`),                     // ceil()
 	regexp.MustCompile(`^_Z6memchr.*`),                   // memchr()
 	regexp.MustCompile(`^_Z6strchr.*`),                   // strchr()
 	regexp.MustCompile(`^_ZNr?V?K?9__gnu_cxx.*`),         // __gnu_cxx::
 	regexp.MustCompile(`^_ZTI.*`),                        // typeinfo
 	regexp.MustCompile(`^_ZTS.*`),                        // typeinfo name
 	regexp.MustCompile(`^_ZTV.*`),                        // vtable
+	regexp.MustCompile(`^_ZTv.*`),                        // virtual thunks
 	regexp.MustCompile(`^_Z[A-Z]*St.*`),                  // std::
 	regexp.MustCompile(`^_Zd.*`),                         // operator delete()
 	regexp.MustCompile(`^_Zn.*`),                         // operator new()
 	regexp.MustCompile(`^__\w+\.get_pc_thunk\..*`),       // PIC
 	regexp.MustCompile(`^___asan_.*`),                    // AddressSanitizer
+	regexp.MustCompile(`^__clang_call_terminate$`),       // noexcept boundaries
 	regexp.MustCompile(`^__cxa_.*`),                      // libc++abi
 	regexp.MustCompile(`^__dynamic_cast$`),               // libc++abi
 	regexp.MustCompile(`^__emutls_get_address$`),         // emulated TLS
@@ -76,19 +79,24 @@ var skipWeakSymbols = []*regexp.Regexp{
 	regexp.MustCompile(`^\?\?2.*`),                                      // operator new()
 	regexp.MustCompile(`^\?\?3.*`),                                      // operator delete()
 	regexp.MustCompile(`^\?\?_C\@_.*`),                                  // String literals
+	regexp.MustCompile(`^\?\?_R[0-4].*$`),                               // RTTI
+	regexp.MustCompile(`^\?__empty_global_delete(@.*)?$`),               // operator delete()
 	regexp.MustCompile(`^\?memchr(@.*)?$`),                              // memchr()
 	regexp.MustCompile(`^\?strchr(@.*)?$`),                              // strchr()
+	regexp.MustCompile(`^_Avx2WmemEnabledWeakValue$`),                   // MSVC 14.50+ CRT
 	regexp.MustCompile(`^_Check_memory_order$`),                         // std::atomic
 	regexp.MustCompile(`^__isa_available_default$`),                     // SSE
+	regexp.MustCompile(`^__real@.*`),                                    // Number literals
 	regexp.MustCompile(`^__xmm@.*`),                                     // SSE
+	regexp.MustCompile(`^_real$`),                                       // Number literals
 	regexp.MustCompile(`^_vfprintf_l$`),                                 // vfprintf()
 	regexp.MustCompile(`^_xmm$`),                                        // SSE
+	regexp.MustCompile(`^ceilf$`),                                       // std::unordered_* uses this
 	regexp.MustCompile(`^fprintf$`),                                     // fprintf()
 	regexp.MustCompile(`^snprintf$`),                                    // snprintf()
-	regexp.MustCompile(`^vsnprintf$`),                                   // vsnprintf()
-	regexp.MustCompile(`^\?\?_R[0-4].*$`),                               // RTTI
-	regexp.MustCompile(`^_Avx2WmemEnabledWeakValue$`),                   // MSVC 14.50+ CRT
 	regexp.MustCompile(`^time$`),                                        // MSVC 14.50+ CRT
+	regexp.MustCompile(`^vsnprintf$`),                                   // vsnprintf()
+	regexp.MustCompile(`^wmemchr$`),                                     // wmemchr()
 
 	// Symbols in the FIPS module.
 	// They are provided for tooling only and should not be read internally.
@@ -132,12 +140,57 @@ func printAndExit(format string, args ...any) {
 	os.Exit(1)
 }
 
+func guessArchiveFiles() []string {
+	var paths []string
+	for _, name := range []string{
+		// List of libraries for which symbol prefixing is stable.
+		"crypto",
+		"decrepit",
+		"pki",
+		"ssl",
+	} {
+		found := ""
+		// Trying patterns for all platforms as the current build might be a cross compile.
+		for _, pattern := range []string{
+			"lib%s.a",     // Linux and macOS static.
+			"lib%s.so",    // Linux shared.
+			"%s.lib",      // Windows static.
+			"%s.dll",      // Windows shared.
+			"lib%s.dylib", // macOS shared.
+		} {
+			path := fmt.Sprintf(pattern, name)
+			if _, err := os.Stat(path); err == nil {
+				// Note: `.lib` and `.dll` can coexist in standard MSVC builds
+				// as Windows uses "import libraries" - use the `.dll` then.
+				if found != "" && !(strings.HasSuffix(found, ".lib") && strings.HasSuffix(path, ".dll")) {
+					fmt.Fprintf(os.Stderr, "Multiple library files for lib%s found in the current directory: %s and %s - please specify explicitly, or do a clean build first.\n", name, found, path)
+					return nil // Will show usage.
+				}
+				found = path
+			}
+		}
+		if found == "" {
+			// Fail if _any_ of the libraries that should be there isn't there.
+			// This guards against an accidentally successful result from an incomplete build.
+			fmt.Fprintf(os.Stderr, "No library file for lib%s found in the current directory - please specify explicitly, or chdir to where it is first.\n", name)
+			return nil // Will show usage.
+		}
+		paths = append(paths, found)
+	}
+	return paths
+}
+
 func main() {
 	flag.Parse()
-	if flag.NArg() < 1 {
+	archiveFiles := flag.Args()
+
+	if len(archiveFiles) == 0 {
+		archiveFiles = guessArchiveFiles()
+	}
+
+	if len(archiveFiles) == 0 {
 		printAndExit("Usage: %s [-out OUT] [-obj-file-format FORMAT] ARCHIVE_FILE [ARCHIVE_FILE [...]]", os.Args[0])
 	}
-	archiveFiles := flag.Args()
 
 	out := os.Stdout
 	if *outFlag != "-" {
@@ -150,20 +203,28 @@ func main() {
 	}
 
 	// Only add first instance of any symbol; keep track of them in this map.
-	symbols := make(map[string]strength)
+	symbols := make(map[string]symbolInfo)
 	collectSymbols := func(name, archive string, contents []byte) {
 		syms, err := listSymbols(contents)
 		if err != nil {
 			printAndExit("Error listing symbols from %q in %q: %s", name, archive, err)
 		}
 		for s, strength := range syms {
-			if _, ok := symbols[s]; !ok {
-				symbols[s] = strength
+			info, found := symbols[s]
+			if !found || strength > info.strength {
+				info.strength = strength
 			}
+			if info.origins == nil {
+				info.origins = map[string]struct{}{}
+			}
+			info.origins[archive] = struct{}{}
+			symbols[s] = info
 		}
 	}
 
 	for _, archive := range archiveFiles {
+		fmt.Fprintf(os.Stderr, "Checking %s...\n", archive)
+
 		f, err := os.Open(archive)
 		if err != nil {
 			printAndExit("Error opening %s: %s", archive, err)
@@ -196,7 +257,7 @@ SYMBOLS:
 		if *ignoreSymbolsWith != "" && strings.Contains(s, *ignoreSymbolsWith) {
 			continue
 		}
-		if symbols[s] == weakSymbol {
+		if symbols[s].strength == weakSymbol {
 			for _, symRE := range skipWeakSymbols {
 				if symRE.MatchString(s) {
 					continue SYMBOLS
@@ -210,7 +271,7 @@ SYMBOLS:
 		}
 		msg := s
 		if *ignoreSymbolsWith != "" {
-			msg = fmt.Sprintf("Found %s symbol without %q: %s", symbols[s], *ignoreSymbolsWith, s)
+			msg = fmt.Sprintf("Found %s symbol without %q in %v: %s", symbols[s].strength, *ignoreSymbolsWith, slices.Sorted(maps.Keys(symbols[s].origins)), s)
 		}
 		if _, err := fmt.Fprintln(out, msg); err != nil {
 			printAndExit("Error writing to %s: %s", *outFlag, err)
@@ -246,6 +307,11 @@ func weakIf(weak bool) strength {
 		return weakSymbol
 	}
 	return strongSymbol
+}
+
+type symbolInfo struct {
+	strength strength
+	origins  map[string]struct{}
 }
 
 // listSymbols lists the exported symbols from an object file.

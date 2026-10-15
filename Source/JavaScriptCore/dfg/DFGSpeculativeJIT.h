@@ -318,7 +318,7 @@ public:
 
     void checkArgumentTypes();
 
-    void NODELETE clearGenerationInfo();
+    void LEGACY_NODELETE clearGenerationInfo();
 
     // These methods are used when generating 'unexpected'
     // calls out from JIT code to C++ helper routines -
@@ -653,8 +653,8 @@ public:
 
     void emitCall(Node*);
 
-    void emitAllocateButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, GPRReg scratch3, JumpList& slowCases);
-    void emitInitializeButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg emptyValueGPR, GPRReg scratchGPR);
+    void emitAllocateButterfly(GPRReg storageGPR, GPRReg vectorLengthResultGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, JumpList& slowCases);
+    void emitInitializeButterfly(GPRReg storageGPR, GPRReg vectorLengthGPR, GPRReg emptyValueGPR, GPRReg scratchGPR);
     void compileAllocateNewArrayWithSize(Node*, GPRReg resultGPR, GPRReg sizeGPR, RegisteredStructure, bool shouldConvertLargeSizeToArrayStorage = true);
     void compileAllocateNewArrayWithSize(Node*, GPRReg resultGPR, GPRReg sizeGPR, IndexingType, bool shouldConvertLargeSizeToArrayStorage = true);
     
@@ -1628,7 +1628,7 @@ public:
     void compileThrow(Node*);
     void compileThrowStaticError(Node*);
 
-    void NODELETE compileExtractFromTuple(Node*);
+    void LEGACY_NODELETE compileExtractFromTuple(Node*);
     void compileStringIteratorNext(Node*);
     void compileEnumeratorNextUpdateIndexAndMode(Node*);
     void compileEnumeratorNextUpdatePropertyName(Node*);
@@ -1708,6 +1708,10 @@ public:
     void compileGlobalIsFinite(Node*);
     void compileNumberIsFinite(Node*);
     void compileNumberIsSafeInteger(Node*);
+    void emitDoubleIsNaN(FPRReg numberFPR, GPRReg resultGPR);
+    void emitDoubleIsFinite(FPRReg numberFPR, GPRReg resultGPR, FPRReg scratchFPR);
+    void emitDoubleIsSafeInteger(FPRReg numberFPR, GPRReg resultGPR, GPRReg scratchGPR, FPRReg scratchFPR, FPRReg limitFPR);
+    JumpList unboxDoubleForNumberPredicate(Edge, GPRReg argumentGPR, GPRReg resultGPR, FPRReg numberFPR, bool resultForInt32);
     void compileToIntegerOrInfinity(Node*);
     void compileToLength(Node*);
     void compileResolvePromiseFirstResolving(Node*);
@@ -2193,7 +2197,7 @@ public:
         return *this;
     }
 
-    void NODELETE adopt(GPRTemporary&);
+    void LEGACY_NODELETE adopt(GPRTemporary&);
 
     ~GPRTemporary()
     {

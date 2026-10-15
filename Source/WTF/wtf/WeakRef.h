@@ -221,22 +221,47 @@ inline bool isAnyOf(const WeakRef<ArgType, WeakPtrImpl>& source)
 }
 
 template<typename Target, typename Source, typename WeakPtrImpl>
-inline WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> downcast(WeakRef<Source, WeakPtrImpl> source)
+inline match_constness_t<Source, Target>& downcast(WeakRef<Source, WeakPtrImpl>& source)
 {
-    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
-    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
-    RELEASE_ASSERT(is<Target>(source));
-    return WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> { unsafeRefDowncast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return downcast<Target>(source.get());
 }
 
 template<typename Target, typename Source, typename WeakPtrImpl>
-inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> dynamicDowncast(WeakRef<Source, WeakPtrImpl> source)
+inline match_constness_t<Source, Target>& downcast(const WeakRef<Source, WeakPtrImpl>& source)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl>
+inline WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> downcast(WeakRef<Source, WeakPtrImpl>&& source)
+{
+    static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
+    static_assert(std::derived_from<Target, Source>, "Should be a downcast");
+    static_assert(std::same_as<typename Target::WeakValueType, typename Source::WeakValueType>, "Invalid weak pointer cast");
+    RELEASE_ASSERT_WITH_UNQUALIFIED_FUNCTION_NAME(is<Target>(source));
+    return WeakRef<match_constness_t<Source, Target>, WeakPtrImpl> { source.releaseImpl(), source.enableWeakPtrThreadingAssertions() };
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl>
+inline match_constness_t<Source, Target>* dynamicDowncast(WeakRef<Source, WeakPtrImpl>& source)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl>
+inline match_constness_t<Source, Target>* dynamicDowncast(const WeakRef<Source, WeakPtrImpl>& source)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename WeakPtrImpl>
+inline WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> dynamicDowncast(WeakRef<Source, WeakPtrImpl>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
     if (!is<Target>(source))
         return nullptr;
-    return WeakPtr<match_constness_t<Source, Target>, WeakPtrImpl> { unsafeRefDowncast<match_constness_t<Source, Target>>(source.releaseImpl()), source.enableWeakPtrThreadingAssertions() };
+    return WTF::move(source);
 }
 
 template<typename T, typename WeakPtrImpl, typename PtrTraits = RawPtrTraits<T>>

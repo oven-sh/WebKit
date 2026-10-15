@@ -69,17 +69,6 @@ static NSError *managerError(NSString *description)
 
 @end
 
-NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id value)
-{
-    @try {
-        [object setValue:value forKey:key];
-    } @catch (NSException *exception) {
-        return exception.name;
-    }
-
-    return nil;
-}
-
 @implementation TestWebExtensionManager {
     bool _done;
     bool _receivedMessage;
@@ -89,7 +78,7 @@ NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id v
     void (^_doneHandler)(NSError *);
     NSMutableArray<NSString *> *_collectedFailures;
     NSString *_pendingTestMessage;
-    void (^_pendingTestMessageHandler)(id, NSError *);
+    void (^_pendingTestMessageHandler)(NSError *);
 }
 
 + (BOOL)shouldEnableSiteIsolation
@@ -400,10 +389,10 @@ NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id v
     _doneHandler = [completionHandler copy];
 }
 
-- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(id, NSError *))completionHandler
+- (void)waitForTestMessage:(NSString *)message completionHandler:(void (^)(NSError *))completionHandler
 {
-    if (id argument = [self _takeTestMessage:message]) {
-        completionHandler(argument, [self _collectedFailuresError]);
+    if ([self _takeTestMessage:message]) {
+        completionHandler([self _collectedFailuresError]);
         return;
     }
 
@@ -421,37 +410,6 @@ NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id v
     }
 
     [self runWithCompletionHandler:completionHandler];
-}
-
-- (void)waitForContextErrorWithCompletionHandler:(void (^)(NSError *))completionHandler
-{
-    if (_context.errors.count) {
-        completionHandler([self _collectedFailuresError]);
-        return;
-    }
-
-    __block void (^handler)(NSError *) = [completionHandler copy];
-    __block id observer;
-    __weak TestWebExtensionManager *weakSelf = self;
-
-    auto finish = ^{
-        if (!handler)
-            return;
-
-        [NSNotificationCenter.defaultCenter removeObserver:observer];
-        observer = nil;
-
-        auto completionHandler = handler;
-        handler = nil;
-        completionHandler([weakSelf _collectedFailuresError]);
-    };
-
-    observer = [NSNotificationCenter.defaultCenter addObserverForName:WKWebExtensionContextErrorsDidUpdateNotification object:_context queue:nil usingBlock:^(NSNotification *) {
-        finish();
-    }];
-
-    // Like -runUntilContextError, stop waiting after 5 seconds, so that a test whose error never arrives fails its own expectations instead of hanging.
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(5 * NSEC_PER_SEC)), mainDispatchQueueSingleton(), finish);
 }
 
 - (id)_takeTestMessage:(NSString *)message
@@ -487,7 +445,7 @@ NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id v
         _pendingTestMessageHandler = nil;
         _pendingTestMessage = nil;
 
-        handler(nil, [self _collectedFailuresError] ?: managerError([NSString stringWithFormat:@"The extension finished without sending the test message \"%@\".", message]));
+        handler([self _collectedFailuresError] ?: managerError([NSString stringWithFormat:@"The extension finished without sending the test message \"%@\".", message]));
         return;
     }
 
@@ -583,14 +541,13 @@ NSExceptionName testExceptionRaisedBySettingValue(id object, NSString *key, id v
     if (!_pendingTestMessageHandler)
         return;
 
-    id pendingArgument = [self _takeTestMessage:_pendingTestMessage];
-    if (!pendingArgument)
+    if (![self _takeTestMessage:_pendingTestMessage])
         return;
 
     auto handler = _pendingTestMessageHandler;
     _pendingTestMessageHandler = nil;
     _pendingTestMessage = nil;
-    handler(pendingArgument, [self _collectedFailuresError]);
+    handler([self _collectedFailuresError]);
 }
 
 - (void)_webExtensionController:(WKWebExtensionController *)controller recordTestAddedWithName:(NSString *)testName andSourceURL:(NSString *)sourceURL lineNumber:(unsigned)lineNumber

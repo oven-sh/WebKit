@@ -65,15 +65,25 @@ VisitedLinkState::VisitedLinkState(Document& document)
 {
 }
 
+template<typename Predicate>
+static void invalidateStyleForLinksInShadowIncludingDescendants(ContainerNode& root, NOESCAPE const Predicate& predicate)
+{
+    for (Ref element : descendantsOfType<Element>(root)) {
+        if (element->isLink() && predicate(element.get()))
+            element->invalidateStyleForSubtree();
+        if (RefPtr shadowRoot = element->shadowRoot())
+            invalidateStyleForLinksInShadowIncludingDescendants(*shadowRoot, predicate);
+    }
+}
+
 void VisitedLinkState::invalidateStyleForAllLinks()
 {
     if (m_linksCheckedForVisitedState.isEmpty())
         return;
     Ref document = m_document.get();
-    for (Ref element : descendantsOfType<Element>(document.get())) {
-        if (element->isLink())
-            element->invalidateStyleForSubtree();
-    }
+    invalidateStyleForLinksInShadowIncludingDescendants(document.get(), [](const Element&) {
+        return true;
+    });
 }
 
 inline static std::optional<SharedStringHash> linkHashForElement(const Element& element)
@@ -90,10 +100,9 @@ void VisitedLinkState::invalidateStyleForLink(SharedStringHash linkHash)
     if (!m_linksCheckedForVisitedState.contains(linkHash))
         return;
     Ref document = m_document.get();
-    for (Ref element : descendantsOfType<Element>(document.get())) {
-        if (element->isLink() && linkHashForElement(element) == linkHash)
-            element->invalidateStyleForSubtree();
-    }
+    invalidateStyleForLinksInShadowIncludingDescendants(document.get(), [&](const Element& element) {
+        return linkHashForElement(element) == linkHash;
+    });
 }
 
 InsideLink VisitedLinkState::determineLinkStateSlowCase(const Element& element)

@@ -24,25 +24,31 @@
  */
 
 #include "config.h"
+#include "Helpers/Test.h"
 #include "TestPageHarness.h"
 
 #include <WebCore/DocumentQuirks.h>
 #include <WebCore/NodeInlines.h>
 #include <WebCore/QuirkBehaviorDefinitions.h>
+#include <WebCore/QuirkBehaviors.h>
 #include <WebCore/QuirkSelectors.h>
 #include <WebCore/QuirkTable.h>
 #include <WebCore/Quirks.h>
 #include <WebCore/ResourceRequest.h>
+#include <WebCore/RuntimeQuirkTable.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Settings.h>
 #include <array>
+#include <wtf/FileSystem.h>
 #include <wtf/MainThread.h>
 #include <wtf/StdLibExtras.h>
 #include <wtf/URL.h>
 #include <wtf/text/MakeString.h>
+#include <wtf/text/StringBuilder.h>
 #include <wtf/text/WTFString.h>
 
 #if PLATFORM(COCOA)
+#include <wtf/RetainPtr.h>
 #include <wtf/cocoa/RuntimeApplicationChecksCocoa.h>
 #endif
 
@@ -68,21 +74,31 @@ static WebCore::QuirksData resolveQuirksForTopURL(ASCIILiteral urlString)
     return WebCore::resolveTopURLQuirks(URL { urlString });
 }
 
-static bool matchesTopURL(const WebCore::QuirkURLMatch& match, ASCIILiteral urlString)
+static Vector<WebCore::QuirkMatchPattern> patterns(const Vector<ASCIILiteral>& strings)
 {
-    return match.matches(WebCore::URLMatchContext { URL { urlString } }, WebCore::URLMatchContext { URL { urlString } }, WebCore::IsTopDocument::Yes);
+    return WTF::map(strings, [](ASCIILiteral string) {
+        auto pattern = WebCore::QuirkMatchPattern::parse(string);
+        EXPECT_TRUE(pattern) << string.characters();
+        return *pattern;
+    });
 }
 
-static bool matchesEmbeddedDocument(const WebCore::QuirkURLMatch& match, ASCIILiteral topURLString, ASCIILiteral documentURLString)
+static bool matchesTopURL(const WebCore::RuntimeQuirk& quirk, ASCIILiteral urlString)
 {
-    return match.matches(WebCore::URLMatchContext { URL { topURLString } }, WebCore::URLMatchContext { URL { documentURLString } }, WebCore::IsTopDocument::No);
+    return quirk.appliesTo(WebCore::URLMatchContext { URL { urlString } }, WebCore::URLMatchContext { URL { urlString } }, WebCore::IsTopDocument::Yes);
 }
 
-static constexpr std::array youTubeEmbedDomains { "youtube.com"_s, "youtube-nocookie.com"_s };
+static bool matchesEmbeddedDocument(const WebCore::RuntimeQuirk& quirk, ASCIILiteral topURLString, ASCIILiteral documentURLString)
+{
+    return quirk.appliesTo(WebCore::URLMatchContext { URL { topURLString } }, WebCore::URLMatchContext { URL { documentURLString } }, WebCore::IsTopDocument::No);
+}
+
+static const Vector<ASCIILiteral> youTubeEmbedPatterns { "*://*.youtube.com/*"_s, "*://*.youtube-nocookie.com/*"_s };
 
 TEST_F(QuirksTest, TopURLMatchIgnoresTheDocumentURL)
 {
-    WebCore::QuirkURLMatch match = WebCore::URLMatch::domain("theguardian.com"_s);
+    WebCore::RuntimeQuirk match { };
+    match.matches = patterns({ "*://*.theguardian.com/*"_s });
 
     EXPECT_TRUE(matchesTopURL(match, "https://www.theguardian.com/film"_s));
 
@@ -93,7 +109,8 @@ TEST_F(QuirksTest, TopURLMatchIgnoresTheDocumentURL)
 
 TEST_F(QuirksTest, EmbeddedDocumentMatchesTheDocumentURLNotTheTopURL)
 {
-    auto match = WebCore::QuirkURLMatch::embeddedDocument(WebCore::URLMatch::domain(youTubeEmbedDomains));
+    WebCore::RuntimeQuirk match { };
+    match.embeddedMatches = patterns(youTubeEmbedPatterns);
 
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.theguardian.com/film"_s, "https://www.youtube.com/embed/abc"_s));
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.example.com/"_s, "https://www.youtube-nocookie.com/embed/abc"_s));
@@ -108,7 +125,9 @@ TEST_F(QuirksTest, EmbeddedDocumentMatchesTheDocumentURLNotTheTopURL)
 
 TEST_F(QuirksTest, EmbeddedDocumentInTopMatchRequiresBothURLsToMatch)
 {
-    auto match = WebCore::QuirkURLMatch::embeddedDocumentInTopMatch(WebCore::URLMatch::anyTopLevelDomain("theguardian"_s), WebCore::URLMatch::domain(youTubeEmbedDomains));
+    WebCore::RuntimeQuirk match { };
+    match.matches = patterns({ "*://*.theguardian.*/*"_s });
+    match.embeddedMatches = patterns(youTubeEmbedPatterns);
 
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.theguardian.com/film"_s, "https://www.youtube.com/embed/abc"_s));
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.theguardian.co.uk/film"_s, "https://www.youtube-nocookie.com/embed/abc"_s));
@@ -120,7 +139,9 @@ TEST_F(QuirksTest, EmbeddedDocumentInTopMatchRequiresBothURLsToMatch)
 
 TEST_F(QuirksTest, EmbeddedMatchesNeverApplyToTheTopDocument)
 {
-    auto match = WebCore::QuirkURLMatch::embeddedDocumentInTopMatch(WebCore::URLMatch::anyURL(), WebCore::URLMatch::domain("youtube.com"_s));
+    WebCore::RuntimeQuirk match { };
+    match.matches = patterns({ "*://*/*"_s });
+    match.embeddedMatches = patterns({ "*://*.youtube.com/*"_s });
 
     EXPECT_TRUE(matchesEmbeddedDocument(match, "https://www.example.com/"_s, "https://www.youtube.com/embed/abc"_s));
     EXPECT_FALSE(matchesTopURL(match, "https://www.youtube.com/watch?v=abc"_s));
@@ -144,6 +165,265 @@ TEST_F(QuirksTest, EmbeddedQuirksResolveFromTheDocumentURL)
 }
 #endif
 
+TEST_F(QuirksTest, EveryCompiledPatternParses)
+{
+    auto expectEveryPatternParses = [](WebCore::URLPatternList patterns) {
+        for (auto pattern : patterns.span())
+            EXPECT_TRUE(WebCore::QuirkMatchPattern::parse(pattern)) << "invalid pattern in the compiled quirk table: " << pattern.characters();
+    };
+
+    for (auto& quirk : WebCore::compiledQuirks()) {
+        expectEveryPatternParses(quirk.matches);
+        expectEveryPatternParses(quirk.embeddedMatches);
+        expectEveryPatternParses(quirk.excludeMatches);
+        for (auto& behavior : quirk.behaviors.span())
+            expectEveryPatternParses(behavior.conditions.secondaryURL);
+    }
+}
+
+#if !PLATFORM(PLAYSTATION)
+static String shippedQuirkTableJSON()
+{
+#if PLATFORM(COCOA)
+    RetainPtr resourcesBundleURL = adoptCF(CFBundleCopyResourceURL(CFBundleGetMainBundle(), CFSTR("TestWebKitAPIResources"), CFSTR("bundle"), nullptr));
+    if (!resourcesBundleURL)
+        return { };
+    RetainPtr resourcesBundle = adoptCF(CFBundleCreate(kCFAllocatorDefault, resourcesBundleURL.get()));
+    RetainPtr url = adoptCF(CFBundleCopyResourceURL(resourcesBundle.get(), CFSTR("QuirkTable"), CFSTR("json"), nullptr));
+    if (!url)
+        return { };
+    String path = adoptCF(CFURLCopyFileSystemPath(url.get(), kCFURLPOSIXPathStyle)).get();
+#else
+    auto path = FileSystem::pathByAppendingComponents(StringView::fromLatin1(WEBKIT_SRC_DIR), std::array<StringView, 4> { "Source"_s, "WebCore"_s, "page"_s, "QuirkTable.json"_s });
+#endif
+    auto contents = FileSystem::readEntireFile(path);
+    if (!contents)
+        return { };
+    return String::fromUTF8(contents->span());
+}
+
+static String describe(const WebCore::RuntimeQuirk& quirk)
+{
+    auto& patterns = quirk.matches.isEmpty() ? quirk.embeddedMatches : quirk.matches;
+    return patterns.isEmpty() ? "(no patterns)"_str : patterns[0].string();
+}
+
+// FIXME: Remove this once the compiled table is removed
+TEST_F(QuirksTest, ParsedQuirkTableMatchesCompiledTable)
+{
+    auto json = shippedQuirkTableJSON();
+    ASSERT_FALSE(json.isNull());
+
+    auto result = WebCore::parseQuirkTable(json);
+    for (auto& error : result.errors)
+        ADD_FAILURE() << error.description();
+
+    auto compiled = WTF::map(WebCore::compiledQuirks(), WebCore::RuntimeQuirk::from);
+
+    auto& parsed = result.table.quirks;
+    ASSERT_EQ(parsed.size(), compiled.size());
+    for (size_t index = 0; index < parsed.size(); ++index)
+        EXPECT_TRUE(parsed[index] == compiled[index]) << "row " << index << ": parsed " << describe(parsed[index]) << ", compiled " << describe(compiled[index]);
+}
+
+TEST_F(QuirksTest, ShippedQuirkTableParsesWithoutErrors)
+{
+    auto json = shippedQuirkTableJSON();
+    ASSERT_FALSE(json.isNull());
+
+    auto result = WebCore::parseQuirkTable(json);
+    for (auto& error : result.errors)
+        ADD_FAILURE() << error.description();
+    EXPECT_FALSE(result.table.quirks.isEmpty());
+}
+#endif
+
+static WebCore::QuirkTableParseResult parseRow(ASCIILiteral rowJSON)
+{
+    return WebCore::parseQuirkTable(makeString("{ \"quirks\": ["_s, rowJSON, "] }"_s));
+}
+
+static String describeErrors(const Vector<WebCore::QuirkTableParseError>& errors)
+{
+    auto descriptions = WTF::map(errors, [](auto& error) {
+        return error.description();
+    });
+    return makeStringByJoining(descriptions, " | "_s);
+}
+
+static void expectRowRejected(ASCIILiteral rowJSON, WebCore::QuirkTableParseErrorKind kind, ASCIILiteral field = { }, ASCIILiteral value = { })
+{
+    auto result = parseRow(rowJSON);
+    EXPECT_TRUE(result.table.quirks.isEmpty()) << rowJSON.characters();
+    EXPECT_TRUE(std::ranges::any_of(result.errors, [&](auto& error) {
+        return error.kind == kind && (field.isNull() || error.field == field) && (value.isNull() || error.value == value);
+    })) << "expected a " << WTF::enumName(kind).characters() << " error, got: " << describeErrors(result.errors);
+}
+
+static bool rowIsKept(ASCIILiteral rowJSON)
+{
+    auto result = parseRow(rowJSON);
+    EXPECT_TRUE(result.errors.isEmpty()) << describeErrors(result.errors);
+    return !result.table.quirks.isEmpty();
+}
+
+TEST_F(QuirksTest, MalformedQuirkTablesAreRejected)
+{
+    for (auto json : { "{"_s, "[]"_s, R"({ "rows": [] })"_s, R"({ "quirks": {} })"_s, R"({ "quirks": [], "extra": 1 })"_s }) {
+        auto result = WebCore::parseQuirkTable(json);
+        EXPECT_TRUE(result.table.quirks.isEmpty()) << json.characters();
+        ASSERT_EQ(result.errors.size(), 1u) << json.characters();
+        EXPECT_EQ(result.errors[0].kind, WebCore::QuirkTableParseErrorKind::InvalidDocument);
+    }
+
+    auto empty = WebCore::parseQuirkTable(R"({ "quirks": [] })"_s);
+    EXPECT_TRUE(empty.table.quirks.isEmpty());
+    EXPECT_TRUE(empty.errors.isEmpty());
+}
+
+TEST_F(QuirksTest, RowsWithStructuralErrorsAreRejected)
+{
+    using enum WebCore::QuirkTableParseErrorKind;
+
+    expectRowRejected(R"("not an object")"_s, InvalidRow);
+    expectRowRejected(R"({ "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, MissingMatches);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [] })"_s, InvalidBehaviors, "behaviors"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "matchez": [], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, UnknownField, "matchez"_s);
+    expectRowRejected(R"({ "matches": [], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidStringArray, "matches"_s);
+    expectRowRejected(R"({ "matches": ["example.com"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidMatchPattern, "matches"_s, "example.com"_s);
+    expectRowRejected(R"({ "comment": 5, "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidString, "comment"_s);
+    expectRowRejected(R"({ "comment": ["two", "lines"], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidString, "comment"_s);
+    expectRowRejected(R"({ "bugs": [], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidBugs);
+    expectRowRejected(R"({ "bugs": ["rdar://problem/123"], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidBugs);
+    expectRowRejected(R"({ "bugs": ["https://bugs.webkit.org/show_bug.cgi?id=123"], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidBugs);
+    expectRowRejected(R"({ "bugs": ["rdar://"], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidBugs);
+    expectRowRejected(R"({ "bugs": ["rdar://123", "rdar://123"], "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, DuplicateBug, "bugs"_s, "rdar://123"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "queryContains": "", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidString, "queryContains"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "environment": "Toaster", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidEnvironment, "environment"_s, "Toaster"_s);
+}
+
+TEST_F(QuirksTest, RowsWithBehaviorErrorsAreRejected)
+{
+    using enum WebCore::QuirkTableParseErrorKind;
+
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NoSuchQuirk" }] })"_s, UnknownBehavior, "id"_s, "NoSuchQuirk"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "comment": "No id." }] })"_s, MissingField, "id"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": 5 }] })"_s, InvalidString, "id"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "" }] })"_s, InvalidString, "id"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }, { "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, DuplicateBehavior, "behaviors"_s, "NeedsAirIndiaExpressLayeringQuirk"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsUserAgentStringOverrideQuirk", "userAgent": "A" }, { "id": "NeedsUserAgentStringOverrideQuirk", "userAgent": "B" }] })"_s, DuplicateBehavior, "behaviors"_s, "NeedsUserAgentStringOverrideQuirk"_s);
+
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsGoogleTranslateScrollingQuirk" }, { "id": "NeedsGoogleTranslateScrollingQuirk" }] })"_s, DuplicateBehavior, "behaviors"_s, "NeedsGoogleTranslateScrollingQuirk"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk", "colour": "red" }] })"_s, UnknownField, "colour"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk", "bugs": ["nope"] }] })"_s, InvalidBugs);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsUserAgentStringOverrideQuirk" }] })"_s, MissingField, "userAgent"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk", "script": "x" }] })"_s, DisallowedField, "script"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk", "elementSelector": ".x" }] })"_s, DisallowedField, "elementSelector"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsMediaRewriteRangeRequestQuirk" }] })"_s, MissingField, "secondaryURL"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsUserAgentStringOverrideQuirk", "userAgent": "" }] })"_s, InvalidString, "userAgent"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsScriptToEvaluateBeforeRunningScriptFromURLQuirk", "script": "x", "secondaryURL": ["nope"] }] })"_s, InvalidMatchPattern, "secondaryURL"_s, "nope"_s);
+}
+
+TEST_F(QuirksTest, ParseErrorsDescribeWhereTheyAre)
+{
+    auto onlyErrorDescription = [](ASCIILiteral json) -> String {
+        auto result = WebCore::parseQuirkTable(json);
+        EXPECT_EQ(result.errors.size(), 1u) << describeErrors(result.errors);
+        return result.errors.isEmpty() ? String { } : result.errors[0].description();
+    };
+
+    EXPECT_EQ(onlyErrorDescription("[]"_s), "the top level must be an object whose only key is \"quirks\", an array of rows"_str);
+    EXPECT_EQ(onlyErrorDescription(R"({ "quirks": [5] })"_s), "quirks[0]: a row must be an object"_str);
+    EXPECT_EQ(onlyErrorDescription(R"({ "quirks": [{ "matches": ["example.com"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] }] })"_s), "quirks[0] (example.com): invalid match pattern \"example.com\" in \"matches\""_str);
+    EXPECT_EQ(onlyErrorDescription(R"({ "quirks": [{ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsUserAgentStringOverrideQuirk" }] }] })"_s), "quirks[0] (*://*.example.com/*).behaviors[0] NeedsUserAgentStringOverrideQuirk: needs \"userAgent\""_str);
+    EXPECT_EQ(onlyErrorDescription(R"({ "quirks": [{ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NoSuchQuirk" }] }] })"_s), "quirks[0] (*://*.example.com/*).behaviors[0]: \"id\" \"NoSuchQuirk\" is not a behavior in QuirkBehaviors.yaml"_str);
+}
+
+TEST_F(QuirksTest, BugsAndCommentsAreAcceptedOnRowsAndBehaviors)
+{
+    EXPECT_TRUE(rowIsKept(R"({
+        "bugs": ["rdar://123", "https://webkit.org/b/456"],
+        "comment": "Why this row looks the way it does.",
+        "matches": ["*://*.example.com/*"],
+        "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk", "bugs": ["rdar://789"], "comment": "Why this behavior applies." }]
+    })"_s));
+}
+
+TEST_F(QuirksTest, ABadRowDoesNotAffectTheOtherRows)
+{
+    auto result = WebCore::parseQuirkTable(R"({ "quirks": [
+        { "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NoSuchQuirk" }] },
+        { "matches": ["*://*.example.org/*"], "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] }
+    ] })"_s);
+
+    ASSERT_EQ(result.errors.size(), 1u);
+    EXPECT_EQ(result.errors[0].kind, WebCore::QuirkTableParseErrorKind::UnknownBehavior);
+    EXPECT_EQ(result.errors[0].location.row, 0u);
+    ASSERT_EQ(result.table.quirks.size(), 1u);
+    EXPECT_EQ(result.table.quirks[0].matches[0].string(), "*://*.example.org/*"_str);
+}
+
+TEST_F(QuirksTest, AvailableExpressionsFollowTheBuildConditions)
+{
+    using enum WebCore::BuildConditionID;
+    using enum WebCore::QuirkTableParseErrorKind;
+
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "iOS", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(iOS));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "iOS || vision", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(iOS) || isEnabled(vision));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "iOSFamily && touchEvents", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(iOSFamily) && isEnabled(touchEvents));
+
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "vision || iOSFamily && touchEvents", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(vision) || (isEnabled(iOSFamily) && isEnabled(touchEvents)));
+
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "mac", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(mac));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "mediaStream && webRTC", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(mediaStream) && isEnabled(webRTC));
+
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "!mac", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), !isEnabled(mac));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "!!mac", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), isEnabled(mac));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "!mac && cocoa", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), !isEnabled(mac) && isEnabled(cocoa));
+    EXPECT_EQ(rowIsKept(R"json({ "matches": ["*://*.example.com/*"], "available": "!(mac || iOS)", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })json"_s), !(isEnabled(mac) || isEnabled(iOS)));
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "available": "(iOS || vision) && touchEvents", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s), (isEnabled(iOS) || isEnabled(vision)) && isEnabled(touchEvents));
+    EXPECT_EQ(rowIsKept(R"json({ "matches": ["*://*.example.com/*"], "available": "((mac))", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })json"_s), isEnabled(mac));
+
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "!", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "(mac", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"json({ "matches": ["*://*.example.com/*"], "available": "mac)", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })json"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"json({ "matches": ["*://*.example.com/*"], "available": "()", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })json"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "mac iOS", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "mac ! iOS", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "mac & iOS", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "mac &", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "mac |", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "!toaster", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+
+    StringBuilder deeplyNested;
+    deeplyNested.append("{ \"quirks\": [{ \"matches\": [\"*://*.example.com/*\"], \"available\": \""_s);
+    for (size_t index = 0; index < 100000; ++index)
+        deeplyNested.append('(');
+    deeplyNested.append("mac\", \"behaviors\": [{ \"id\": \"NeedsAirIndiaExpressLayeringQuirk\" }] }] }"_s);
+    auto deeplyNestedResult = WebCore::parseQuirkTable(deeplyNested.toString());
+    EXPECT_TRUE(deeplyNestedResult.table.quirks.isEmpty());
+    ASSERT_EQ(deeplyNestedResult.errors.size(), 1u);
+    EXPECT_EQ(deeplyNestedResult.errors[0].kind, InvalidAvailableExpression);
+
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "iOS &&", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "toaster", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+    expectRowRejected(R"({ "matches": ["*://*.example.com/*"], "available": "", "behaviors": [{ "id": "NeedsAirIndiaExpressLayeringQuirk" }] })"_s, InvalidAvailableExpression, "available"_s);
+}
+
+TEST_F(QuirksTest, BehaviorsUnavailableInThisBuildAreDroppedWithoutAnError)
+{
+    auto result = parseRow(R"({ "matches": ["*://*.example.com/*"], "behaviors": [
+        { "id": "NeedsGoogleTranslateScrollingQuirk" },
+        { "id": "NeedsAirIndiaExpressLayeringQuirk" }
+    ] })"_s);
+
+    EXPECT_TRUE(result.errors.isEmpty());
+    ASSERT_EQ(result.table.quirks.size(), 1u);
+    EXPECT_EQ(result.table.quirks[0].behaviors.size(), WebCore::isEnabled(WebCore::BuildConditionID::iOSFamily) ? 2u : 1u);
+
+    EXPECT_EQ(rowIsKept(R"({ "matches": ["*://*.example.com/*"], "behaviors": [{ "id": "NeedsGoogleTranslateScrollingQuirk" }] })"_s), WebCore::isEnabled(WebCore::BuildConditionID::iOSFamily));
+}
+
 TEST_F(QuirksTest, SiteSpecificQuirksResolveWithoutADocument)
 {
     EXPECT_TRUE(resolveQuirksForTopURL("https://www.airindiaexpress.com/"_s).isBehaviorEnabled(WebCore::QuirkBehaviorID::NeedsAirIndiaExpressLayeringQuirk));
@@ -158,11 +438,8 @@ static Vector<String> scriptsForScriptURL(const WebCore::QuirksData& quirks, ASC
     WebCore::URLMatchContext scriptURLContext { URL { scriptURLString } };
 
     for (const auto& behavior : quirks.behaviors()) {
-        if (!behavior.parameters)
-            continue;
-
-        if (behavior.parameters->script.length() && behavior.secondaryURLConditionMatches(scriptURLContext))
-            scripts.append(behavior.parameters->script);
+        if (!behavior.script.isEmpty() && behavior.secondaryURLConditionMatches(scriptURLContext))
+            scripts.append(behavior.script);
     }
 
     return scripts;
@@ -215,8 +492,8 @@ TEST_F(QuirksTest, ParametersAreOnlyReturnedForTheBehaviorThatSuppliedThem)
 TEST_F(QuirksTest, OneQuirkCanCarryDifferentParametersForDifferentScriptURLs)
 {
     using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto firstScriptURL = WebCore::URLMatch::host("first.example.com"_s);
-    static constexpr auto secondScriptURL = WebCore::URLMatch::host("second.example.com"_s);
+    static constexpr auto firstScriptURL = "*://first.example.com/*"_s;
+    static constexpr auto secondScriptURL = "*://second.example.com/*"_s;
 
     static constexpr auto behaviors = WTF::toArray({
         WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("firstScript"_s)).when(secondaryURLMatches(firstScriptURL)),
@@ -244,7 +521,7 @@ TEST_F(QuirksTest, OneQuirkCanCarryDifferentParametersForDifferentScriptURLs)
 TEST_F(QuirksTest, EveryMatchingRowContributesWhenSeveralSupplyTheSameBehavior)
 {
     using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto anyScriptURL = WebCore::URLMatch::anyURL();
+    static constexpr auto anyScriptURL = "*://*/*"_s;
 
     static constexpr auto behaviors = WTF::toArray({
         WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("firstScript"_s)).when(secondaryURLMatches(anyScriptURL)),
@@ -262,7 +539,7 @@ TEST_F(QuirksTest, EveryMatchingRowContributesWhenSeveralSupplyTheSameBehavior)
 TEST_F(QuirksTest, IdenticalBehaviorsWithParametersAreRecordedOnce)
 {
     using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto anyScriptURL = WebCore::URLMatch::anyURL();
+    static constexpr auto anyScriptURL = "*://*/*"_s;
     static constexpr auto behavior = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s)).when(secondaryURLMatches(anyScriptURL));
 
     WebCore::QuirksData quirks;
@@ -298,8 +575,8 @@ TEST_F(QuirksTest, AnIdenticalBehaviorFromSeveralRowsIsRecordedOnce)
 static Vector<String> elementSelectorsFor(const WebCore::QuirksData& quirks, WebCore::QuirkBehaviorID id)
 {
     return WTF::compactMap(quirks.behaviors(), [&](const auto& behavior) -> std::optional<String> {
-        if (behavior.id == id && behavior.conditions.elementSelector)
-            return *behavior.conditions.elementSelector;
+        if (behavior.id == id && !behavior.elementSelector.isNull())
+            return behavior.elementSelector;
         return std::nullopt;
     });
 }
@@ -317,17 +594,18 @@ TEST_F(QuirksTest, AnElementSelectorConditionIsRecordedOnTheBehavior)
 TEST_F(QuirksTest, ASecondaryURLConditionIsRecordedOnTheBehavior)
 {
     using namespace WebCore::QuirkBehaviorConditions;
-    static constexpr auto scriptURL = WebCore::URLMatch::host("cdn.example.com"_s);
+    static constexpr auto scriptURL = "*://cdn.example.com/*"_s;
     static constexpr auto behavior = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s)).when(secondaryURLMatches(scriptURL));
 
     ASSERT_TRUE(behavior.parameters.has_value());
-    ASSERT_TRUE(behavior.conditions.secondaryURL.has_value());
-    EXPECT_TRUE(behavior.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://cdn.example.com/a.js"_s } }));
-    EXPECT_FALSE(behavior.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
+    ASSERT_FALSE(behavior.conditions.secondaryURL.isEmpty());
+    auto resolved = WebCore::RuntimeQuirkBehavior::from(behavior);
+    EXPECT_TRUE(resolved.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://cdn.example.com/a.js"_s } }));
+    EXPECT_FALSE(resolved.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
 
     static constexpr auto unscoped = WebCore::QuirkBehaviors::needsScriptToEvaluateBeforeRunningScriptFromURLQuirk(WebCore::QuirkParameters::fromScript("script"_s));
-    EXPECT_FALSE(unscoped.conditions.secondaryURL.has_value());
-    EXPECT_TRUE(unscoped.secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
+    EXPECT_TRUE(unscoped.conditions.secondaryURL.isEmpty());
+    EXPECT_TRUE(WebCore::RuntimeQuirkBehavior::from(unscoped).secondaryURLConditionMatches(WebCore::URLMatchContext { URL { "https://other.example.com/a.js"_s } }));
 }
 
 TEST_F(QuirksTest, BehaviorAppliesToURLRequiresTheBehaviorToBeEnabled)
@@ -380,13 +658,9 @@ TEST_F(QuirksTest, LogoutCookieCleanupCarriesTheCookiesToDelete)
 {
     auto behaviors = resolveQuirksForTopURL("https://claude.ai/"_s).behaviorsMatching(WebCore::QuirkBehaviorID::NeedsLogoutCookieCleanupQuirk);
     ASSERT_EQ(behaviors.size(), 1u);
-    ASSERT_TRUE(behaviors[0].parameters.has_value());
 
-    auto cookieNames = WTF::map(behaviors[0].parameters->cookieNames, [](auto name) {
-        return String { name };
-    });
     Vector<String> expected { "__ssid"_str, "__cf_bm"_str, "anthropic-device-id"_str, "lastActiveOrg"_str, "activitySessionId"_str };
-    EXPECT_EQ(cookieNames, expected);
+    EXPECT_EQ(behaviors[0].cookieNames, expected);
 }
 
 #if PLATFORM(IOS_FAMILY)
@@ -602,8 +876,8 @@ TEST_F(QuirksTest, TheSameSelectorIsEvaluatedPerDocument)
 static Vector<String> documentSelectorsFor(const WebCore::QuirksData& quirks, WebCore::QuirkBehaviorID id)
 {
     return WTF::compactMap(quirks.behaviors(), [&](const auto& behavior) -> std::optional<String> {
-        if (behavior.id == id && behavior.conditions.documentSelector)
-            return *behavior.conditions.documentSelector;
+        if (behavior.id == id && !behavior.documentSelector.isNull())
+            return behavior.documentSelector;
         return std::nullopt;
     });
 }
@@ -1251,5 +1525,33 @@ TEST_F(QuirksTest, InstagramReelsGrowToFillTheirFlexContainerOnlyWhenTheyContain
     EXPECT_EQ(elsewhere.withoutVideo, 100);
 }
 #endif // ENABLE(VIDEO)
+
+static bool hasActiveQuirk(WebCore::Document& document, ASCIILiteral quirkName)
+{
+    return document.quirks().activeQuirks().contains(String { quirkName });
+}
+
+static TestPageHarness createPageWithQuirksEnabled()
+{
+    return TestPageHarness::create({ .configureSettings = [](auto& settings) {
+        settings.setNeedsSiteSpecificQuirks(true);
+    } });
+}
+
+TEST_F(QuirksTest, SameDocumentNavigationReresolvesQuirks)
+{
+    auto page = createPageWithQuirksEnabled();
+    page.loadHTML("<!DOCTYPE html>"_s);
+
+    Ref document = page.document();
+    document->setURL(URL { "https://www.apple.com/"_s });
+    EXPECT_FALSE(hasActiveQuirk(document, "ShouldDisableScrollAnchoringQuirk"_s));
+
+    document->updateURLForPushOrReplaceState(URL { "https://www.apple.com/retail"_s });
+    EXPECT_TRUE(hasActiveQuirk(document, "ShouldDisableScrollAnchoringQuirk"_s));
+
+    document->updateURLForPushOrReplaceState(URL { "https://www.apple.com/"_s });
+    EXPECT_FALSE(hasActiveQuirk(document, "ShouldDisableScrollAnchoringQuirk"_s));
+}
 
 } // namespace TestWebKitAPI

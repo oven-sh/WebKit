@@ -39,6 +39,7 @@
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderChildIterator.h"
+#include "RenderDescendantIterator.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
 #include "RenderInline.h"
@@ -577,10 +578,22 @@ String RenderListItem::markerText(ListMarkerIncludeSuffix includeSuffix) const
     if (!marker)
         return { };
 
-    if (listMarkerHasContent(marker->style(), protect(document())) || listMarkerImage(marker->style()))
+    // css-lists-3 §3.3: with a non-normal `content` the marker says whatever its content renderers hold, unless the
+    // author gave it alternative text (css-content-3 §1.2).
+    if (listMarkerHasContent(marker->style(), protect(document()))) {
+        if (auto altText = marker->style().content().altText(); !altText.isNull())
+            return altText;
+        StringBuilder text;
+        for (auto& textRenderer : descendantsOfType<RenderText>(*marker))
+            text.append(textRenderer.text());
+        return text.toString();
+    }
+
+    if (listMarkerImage(marker->style()))
         return { };
 
-    auto textContent = listMarkerTextContent(marker->style(), const_cast<RenderListItem&>(*this));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto textContent = listMarkerTextContent(marker->style(), const_cast<RenderListItem&>(*this));
     return includeSuffix == ListMarkerIncludeSuffix::Yes ? textContent.textWithSuffix : textContent.textWithoutSuffix().toString();
 }
 
@@ -649,7 +662,7 @@ void RenderListItem::placeExcludedMarker(RenderListOutsideMarker& marker)
         // Inside a fragmented flow the coordinates are in flow thread space, where the content is one continuous
         // strip. The column the line ended up in is a sibling of the flow thread rather than an ancestor, so leave
         // the flow thread for that column set and carry on from there, in visual space.
-        if (CheckedPtr fragmentedFlow = dynamicDowncast<RenderMultiColumnFlow>(ancestor.get())) {
+        if (CheckedPtr fragmentedFlow = dynamicDowncast<RenderMultiColumnFlow>(ancestor)) {
             CheckedPtr columnSet = dynamicDowncast<RenderMultiColumnSet>(static_cast<const RenderFragmentedFlow&>(*fragmentedFlow).fragmentAtBlockOffset(fragmentedFlow.get(), logicalTop, true));
             if (!columnSet)
                 continue;
@@ -736,7 +749,7 @@ RenderListItem::FirstFormattedLineCandidate RenderListItem::firstFormattedLineRo
 CheckedPtr<RenderListOutsideMarker> RenderListItem::excludedMarkerAnchoredTo(const RenderBlockFlow& firstFormattedLineRoot)
 {
     for (CheckedPtr<const RenderBlock> ancestor = &firstFormattedLineRoot; ancestor; ancestor = ancestor->containingBlock()) {
-        CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor.get());
+        CheckedPtr listItem = dynamicDowncast<RenderListItem>(ancestor);
         CheckedPtr marker = listItem ? listItem->markerBox() : nullptr;
         if (!marker || !marker->isExcludedMarker())
             continue;

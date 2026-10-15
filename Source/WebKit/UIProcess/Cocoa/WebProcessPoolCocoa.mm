@@ -156,10 +156,6 @@
 #import <pal/cocoa/MediaToolboxSoftLink.h>
 #import <pal/spi/cocoa/AccessibilitySupportSoftLink.h>
 
-#if __has_include(<WebKitAdditions/WebProcessPoolAdditions.h>)
-#import <WebKitAdditions/WebProcessPoolAdditions.h>
-#endif
-
 static NSString * const WebKitJSCJITEnabledDefaultsKey = @"WebKitJSCJITEnabledDefaultsKey";
 static NSString * const WebKitJSCFTLJITEnabledDefaultsKey = @"WebKitJSCFTLJITEnabledDefaultsKey";
 
@@ -236,14 +232,14 @@ static void registerUserDefaults()
     [[NSUserDefaults standardUserDefaults] registerDefaults:registrationDictionary.get()];
 }
 
-static std::optional<bool>& NODELETE cachedLockdownModeEnabledGlobally()
+static std::optional<bool>& LEGACY_NODELETE cachedLockdownModeEnabledGlobally()
 {
     static std::optional<bool> cachedLockdownModeEnabledGlobally;
     return cachedLockdownModeEnabledGlobally;
 }
 
 #if PLATFORM(MAC)
-static NSApplication* NODELETE NSAppSingleton()
+static NSApplication* LEGACY_NODELETE NSAppSingleton()
 {
     return NSApp;
 }
@@ -361,17 +357,20 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization needsGlo
         installMemoryPressureHandler();
 
 #if ENABLE(UIPROCESS_PERIODIC_MEMORY_MONITOR)
-        auto monitorConfiguration = MemoryFootprintMonitor::defaultConfiguration();
-        if (auto pollInterval = m_configuration->memoryFootprintPollIntervalForTesting())
-            monitorConfiguration.pollInterval = pollInterval;
-        if (auto memoryLimit = m_configuration->memoryLimitForTesting()) {
-            monitorConfiguration.foregroundPageMemoryLimit = memoryLimit;
-            monitorConfiguration.backgroundPageMemoryLimit = memoryLimit;
-            monitorConfiguration.webProcessMemoryLimit = memoryLimit;
-        }
-
         auto& memoryMeasurementMonitor = MemoryFootprintMonitor::singleton();
-        memoryMeasurementMonitor.setConfiguration(WTF::move(monitorConfiguration));
+        auto pollInterval = m_configuration->memoryFootprintPollIntervalForTesting();
+        auto memoryLimit = m_configuration->memoryLimitForTesting();
+        if (pollInterval || memoryLimit) {
+            auto monitorConfiguration = MemoryFootprintMonitor::defaultConfiguration();
+            if (pollInterval)
+                monitorConfiguration.pollInterval = pollInterval;
+            if (memoryLimit) {
+                monitorConfiguration.foregroundPageMemoryLimit = memoryLimit;
+                monitorConfiguration.backgroundPageMemoryLimit = memoryLimit;
+                monitorConfiguration.webProcessMemoryLimit = memoryLimit;
+            }
+            memoryMeasurementMonitor.setConfigurationForTesting(WTF::move(monitorConfiguration));
+        }
         memoryMeasurementMonitor.start();
 #endif
     }
@@ -391,12 +390,6 @@ void WebProcessPool::platformInitialize(NeedsGlobalStaticInitialization needsGlo
         for (const auto& pool : WebProcessPool::allProcessPools())
             logProcessPoolState(pool.get());
     });
-
-#if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-    PAL::registerNotifyCallback("com.apple.WebKit.restrictedDomains"_s, [] {
-        RestrictedOpenerDomainsController::singleton();
-    });
-#endif
 }
 
 void WebProcessPool::platformResolvePathsForSandboxExtensions()
@@ -1159,7 +1152,8 @@ void WebProcessPool::clearPermanentCredentialsForProtectionSpace(WebCore::Protec
     RetainPtr sharedStorage = [NSURLCredentialStorage sharedCredentialStorage];
     RetainPtr space = protectionSpace.nsSpace();
     RetainPtr credentials = [sharedStorage credentialsForProtectionSpace:space.get()];
-    for (NSString* user in credentials.get()) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString* user in credentials.get()) {
         RetainPtr<NSURLCredential> credential = credentials.get()[user];
         if (credential.get().persistence == NSURLCredentialPersistencePermanent)
             [sharedStorage removeCredential:retainPtr(credentials.get()[user]).get() forProtectionSpace:space.get()];
@@ -1190,14 +1184,14 @@ int webProcessThroughputQOS()
     return qos;
 }
 
-static WeakHashSet<LockdownModeObserver>& NODELETE lockdownModeObservers()
+static WeakHashSet<LockdownModeObserver>& LEGACY_NODELETE lockdownModeObservers()
 {
     RELEASE_ASSERT(isMainRunLoop());
     static NeverDestroyed<WeakHashSet<LockdownModeObserver>> observers;
     return observers;
 }
 
-static std::optional<bool>& NODELETE isLockdownModeEnabledGloballyForTesting()
+static std::optional<bool>& LEGACY_NODELETE isLockdownModeEnabledGloballyForTesting()
 {
     static NeverDestroyed<std::optional<bool>> enabledForTesting;
     return enabledForTesting;
@@ -1610,10 +1604,13 @@ void WebProcessPool::platformCompileResourceMonitorRuleList(const String& rulesT
     }).get()];
 }
 
-String WebProcessPool::platformResourceMonitorRuleListSourceForTesting()
+SUPPRESS_NODELETE String WebProcessPool::platformResourceMonitorRuleListSourceForTesting()
 {
-#if HAVE(RESOURCE_MONITOR_RULE_LIST_SOURCE_FOR_TESTING)
-    return resourceMonitorRuleListSourceForTestingCocoa();
+#if ENABLE(HEAVY_AD_UNLOADING)
+    return R"json([
+        { "action": { "type": "block" }, "trigger": { "url-filter": "googlesyndication.com" } },
+        { "action": { "type": "block" }, "trigger": { "url-filter": "\/adserver-network\/" } }
+    ])json"_s;
 #else
     return emptyString();
 #endif
@@ -1706,7 +1703,8 @@ void WebProcessPool::registerAdditionalFonts(NSArray *fontNames)
         m_sandboxExtensionURLs = Vector<URL>();
     }
 
-    for (NSString *nsFontName : fontNames) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *nsFontName : fontNames) {
         RetainPtr ctFont = adoptCF(CTFontCreateWithName(bridge_cast(nsFontName), 0.0, nullptr));
         RetainPtr downloaded = adoptCF(static_cast<CFBooleanRef>(CTFontCopyAttribute(ctFont.get(), kCTFontDownloadedAttribute)));
         if (downloaded == kCFBooleanFalse)

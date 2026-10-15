@@ -44,7 +44,7 @@
 namespace WebKit {
 using namespace WebCore;
 
-static inline bool NODELETE computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
+static inline bool LEGACY_NODELETE computeIsAlwaysOnLoggingAllowed(NetworkSession& session)
 {
     if (session.networkProcess().sessionIsControlledByAutomation(session.sessionID()))
         return true;
@@ -98,7 +98,8 @@ WebCore::RegistrableDomain NetworkTaskCocoa::lastCNAMEDomain(String cname)
 static RetainPtr<NSArray<NSHTTPCookie *>> cookiesByCappingExpiry(NSArray<NSHTTPCookie *> *cookies, Seconds ageCap)
 {
     RetainPtr cappedCookies = [NSMutableArray arrayWithCapacity:cookies.count];
-    for (NSHTTPCookie *cookie in cookies)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies)
         [cappedCookies addObject:NetworkStorageSession::capExpiryOfPersistentCookie(cookie, ageCap).get()];
     return cappedCookies;
 }
@@ -107,7 +108,8 @@ static RetainPtr<NSArray<NSHTTPCookie *>> cookiesByCappingExpiry(NSArray<NSHTTPC
 static RetainPtr<NSArray<NSHTTPCookie *>> cookiesBySettingPartition(NSArray<NSHTTPCookie *> *cookies, NSString* partition)
 {
     RetainPtr<NSMutableArray> partitionedCookies = [NSMutableArray arrayWithCapacity:cookies.count];
-    for (NSHTTPCookie *cookie in cookies) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cookies) {
         RetainPtr partitionedCookie = NetworkStorageSession::setCookiePartition(cookie, partition);
         if (partitionedCookie)
             [partitionedCookies addObject:partitionedCookie.get()];
@@ -165,7 +167,7 @@ void NetworkTaskCocoa::setCookieTransformForThirdPartyRequest(const WebCore::Res
 
     protect(task()).get()._cookieTransformCallback = makeBlockPtr([
         requestURL = crossThreadCopy(request.url())
-        , weakTask = WeakObjCPtr<NSURLSessionTask>(task())
+        , weakTask = WeakObjCPtr<NSURLSessionTask>(protect(task()).get())
         , cookiePartition = crossThreadCopy(cookiePartition)]
         (NSArray<NSHTTPCookie*> *cookiesSetInResponse) -> NSArray<NSHTTPCookie*> * {
         auto task = weakTask.get();
@@ -175,9 +177,9 @@ void NetworkTaskCocoa::setCookieTransformForThirdPartyRequest(const WebCore::Res
 
         // FIXME: Consider making these session cookies, as well.
         if (!cookiePartition.isEmpty())
-            cookiesSetInResponse = protect(cookiesBySettingPartition(protect(cookiesSetInResponse), cookiePartition.createNSString().get()).autorelease()).get();
+            protectedCookiesSetInResponse = cookiesBySettingPartition(protectedCookiesSetInResponse.get(), cookiePartition.createNSString().get());
 
-        return cookiesSetInResponse;
+        return protectedCookiesSetInResponse.autorelease();
     }).get();
 }
 #endif
@@ -212,7 +214,7 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
         , firstPartyAddress = crossThreadCopy(networkSession->firstPartyHostIPAddress(firstPartyHostName))
         , thirdPartyCNAMEDomainForTesting = crossThreadCopy(m_networkSession->thirdPartyCNAMEDomainForTesting())
         , ageCapForCNAMECloakedCookies = crossThreadCopy(m_ageCapForCNAMECloakedCookies)
-        , weakTask = WeakObjCPtr<NSURLSessionTask>(task())
+        , weakTask = WeakObjCPtr<NSURLSessionTask>(protect(task()).get())
         , firstPartyRegistrableDomainName = crossThreadCopy(RegistrableDomain { firstPartyURL }.string())
         , debugLoggingEnabled = networkSession->networkStorageSession()->trackingPreventionDebugLoggingEnabled()]
         (NSArray<NSHTTPCookie*> *cookiesSetInResponse) -> NSArray<NSHTTPCookie*> * {
@@ -251,7 +253,8 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
             if (shouldCapCookieExpiryForThirdPartyIPAddress(*remoteAddress, *firstPartyAddress) && !needsThirdPartyIPAddressQuirk(requestURL, firstPartyRegistrableDomainName)) {
                 RetainPtr cappedCookies = cookiesByCappingExpiry(cookiesSetInResponse, ageCapForCNAMECloakedCookies);
                 if (debugLoggingEnabled) {
-                    for (NSHTTPCookie *cookie in cappedCookies.get())
+                    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                    for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cappedCookies.get())
                         RELEASE_LOG_INFO(ITPDebug, "Capped the expiry of third-party IP address cookie named %{public}@.", cookie.name);
                 }
                 return cappedCookies.autorelease();
@@ -269,7 +272,8 @@ void NetworkTaskCocoa::setCookieTransformForFirstPartyRequest(const WebCore::Res
             // executing the block.
             RetainPtr cappedCookies = cookiesByCappingExpiry(cookiesSetInResponse, ageCapForCNAMECloakedCookies).autorelease();
             if (debugLoggingEnabled) {
-                for (NSHTTPCookie *cookie in cappedCookies.get())
+                // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+                for (SUPPRESS_UNRETAINED_LOCAL NSHTTPCookie *cookie in cappedCookies.get())
                     RELEASE_LOG_INFO(ITPDebug, "Capped the expiry of third-party CNAME cloaked cookie named %{public}@.", cookie.name);
             }
             return cappedCookies.autorelease();

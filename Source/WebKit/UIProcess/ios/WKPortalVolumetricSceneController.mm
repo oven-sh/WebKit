@@ -32,7 +32,6 @@
 #import "MRUIKitSPI.h"
 #import "UIKitSPI.h"
 #import "WKPortalVolumetricGestureController.h"
-#import <algorithm>
 #import <cmath>
 #import <wtf/BlockPtr.h>
 #import <wtf/HashMap.h>
@@ -159,6 +158,8 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
     BlockPtr<void()> _closeHandler;
     BlockPtr<void(WebCore::FloatSize)> _volumeSizeChangedHandler;
     WebCore::FloatSize _volumeSizeInMeters;
+    simd_float3 _hitSphereCenter;
+    float _hitSphereRadius;
     std::optional<VolumetricSceneToken> _sceneToken;
 }
 
@@ -224,22 +225,26 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
 
     [_hostedContentView setCenter:CGPointMake(CGRectGetMidX([container bounds]), CGRectGetMidY([container bounds]))];
 
-    // FIXME: Read the volume's depth from the scene instead of inferring it from the in-plane extent.
-    CGSize boundsSize = [container bounds].size;
-    [_hostedContentView layer].zPosition = std::min(boundsSize.width, boundsSize.height) / 2;
+    [_hostedContentView layer].zPosition = [_volumetricScene effectiveGeometry]._size.depth / 2;
 }
 
-- (void)_applyInputSurfaceExtents
+- (void)setHitSphereCenter:(const WebCore::FloatPoint3D&)center radius:(float)radius
 {
-    if (!_inputGestureController)
+    if (!std::isfinite(center.x()) || !std::isfinite(center.y()) || !std::isfinite(center.z()) || !std::isfinite(radius) || radius <= 0)
         return;
 
-    float width = _volumeSizeInMeters.width();
-    float height = _volumeSizeInMeters.height();
-    if (!std::isfinite(width) || !std::isfinite(height) || width <= 0 || height <= 0)
+    _hitSphereCenter = simd_make_float3(center.x(), center.y(), center.z());
+    _hitSphereRadius = radius;
+
+    [self _applyInputSurfaceHitSphere];
+}
+
+- (void)_applyInputSurfaceHitSphere
+{
+    if (!_inputGestureController || _hitSphereRadius <= 0)
         return;
 
-    [_inputGestureController updateProxyExtentsWithWidth:width height:height depth:std::min(width, height)];
+    [_inputGestureController setHitSphereCenter:_hitSphereCenter radius:_hitSphereRadius];
 }
 
 - (void)updateLayoutForVolumeSize
@@ -258,7 +263,6 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
     _volumeSizeInMeters = volumeSizeInMeters;
 
     [self _applyContentPlacement];
-    [self _applyInputSurfaceExtents];
 
     if (_volumeSizeChangedHandler)
         _volumeSizeChangedHandler(_volumeSizeInMeters);
@@ -285,7 +289,6 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
         [container bringSubviewToFront:[_inputHostingController view]];
 
     _volumeSizeInMeters = [self _currentVolumeSizeInMeters];
-    [self _applyInputSurfaceExtents];
     return _volumeSizeInMeters;
 }
 
@@ -309,7 +312,7 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
     [container addSubview:[_inputHostingController view]];
     [_inputHostingController didMoveToParentViewController:rootViewController.get()];
 
-    [self _applyInputSurfaceExtents];
+    [self _applyInputSurfaceHitSphere];
 }
 
 - (void)_removeInputSurface
@@ -390,6 +393,8 @@ static std::optional<VolumetricSceneToken> volumetricSceneTokenFromActivities(NS
 
     [_volumetricWindow setRootViewController:rootViewController.get()];
     [_volumetricWindow makeKeyAndVisible];
+
+    [rootView _setClipsToREBounds:YES];
 
     if (!_pendingCompletion)
         return;

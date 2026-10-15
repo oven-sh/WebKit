@@ -72,7 +72,7 @@ public:
         JS_EXPORT_PRIVATE CallbackBase(Ref<BackendDispatcher>&&, long requestId);
         virtual ~CallbackBase() { }
 
-        JS_EXPORT_PRIVATE bool NODELETE isActive() const;
+        JS_EXPORT_PRIVATE bool LEGACY_NODELETE isActive() const;
         void disable() { m_alreadySent = true; }
 
         JS_EXPORT_PRIVATE void sendSuccess(Ref<JSON::Object>&&);
@@ -108,6 +108,7 @@ public:
     void sendResponse(long requestId, Ref<JSON::Object>&& result);
     JS_EXPORT_PRIVATE void sendResponse(long requestId, Ref<JSON::Object>&& result, bool unused);
     JS_EXPORT_PRIVATE void sendPendingErrors();
+    JS_EXPORT_PRIVATE void sendErrorResponse(long requestId, CommonErrorCode, const String& errorMessage);
 
     JS_EXPORT_PRIVATE void reportProtocolError(CommonErrorCode, const String& errorMessage);
     JS_EXPORT_PRIVATE void reportProtocolError(std::optional<long> relatedRequestId, CommonErrorCode, const String& errorMessage);
@@ -129,9 +130,9 @@ private:
     const Ref<FrontendRouter> m_frontendRouter;
     UncheckedKeyHashMap<String, SupplementalBackendDispatcher*> m_dispatchers;
 
-    // Protocol errors reported for the top-level request being processed.
-    // If processing a request triggers async responses, then any related errors will
-    // be attributed to the top-level request, but generate separate error messages.
+    // Protocol errors reported for the top-level request being processed. Async responses
+    // send their errors with sendErrorResponse() instead, because the request being
+    // processed when they complete can be a different one.
     Vector<std::tuple<CommonErrorCode, String>> m_protocolErrors;
 
     // For synchronously handled requests, avoid plumbing requestId through every

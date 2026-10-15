@@ -126,7 +126,7 @@ jsTestIsAsync = true;
     shouldBe("multiple.selectedOptions.length", "1");
 
     debug("");
-    debug("A single-select list box keeps at most one option selected, and unselects it when clicked again.");
+    debug("A single-select list box keeps at most one option selected, and keeps it selected when clicked again.");
     await activate(singleOne);
     await UIHelper.animationFrame();
     shouldBeTrue("singleOne.selected");
@@ -139,15 +139,16 @@ jsTestIsAsync = true;
     shouldBe("single.selectedOptions.length", "1");
 
     debug("");
-    debug("Unselecting fires input and change, like any other list box selection change.");
+    debug("Clicking the selected option again changes nothing, so it fires neither input nor change.");
     single.addEventListener("input", () => inputEvents++);
     single.addEventListener("change", () => changeEvents++);
 
     await activate(singleTwo);
     await UIHelper.animationFrame();
-    shouldBe("single.selectedOptions.length", "0");
-    shouldBe("inputEvents", "1");
-    shouldBe("changeEvents", "1");
+    shouldBeTrue("singleTwo.selected");
+    shouldBe("single.selectedOptions.length", "1");
+    shouldBe("inputEvents", "0");
+    shouldBe("changeEvents", "0");
 
     finishJSTest();
 })();

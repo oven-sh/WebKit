@@ -15,12 +15,12 @@ select, select::picker(select) {
     <option>Apple</option>
     <option selected>Banana</option>
     <optgroup label="More">
-        <option>Cherry</option>
+        <option id="cherry">Cherry</option>
     </optgroup>
 </select>
 
 <script>
-var output = "This test verifies that a base-appearance list box exposes its options as list box options, also after size changes.\n\n";
+var output = "This test verifies that a base-appearance list box exposes its options as list box options and the label of its optgroup as an item, as a native list box does, also after size changes.\n\n";
 
 function expectListBox()
 {
@@ -29,9 +29,11 @@ function expectListBox()
     result += expect("axSelect.childrenCount", "4");
     result += expect("platformTextAlternatives(axSelect.childAtIndex(0)).includes('Apple')", "true");
     result += expect("axSelect.childAtIndex(1).isSelected", "true");
-    result += expect("platformTextAlternatives(axSelect.childAtIndex(2)).includes('More')", "true");
-    result += expect("platformTextAlternatives(axSelect.childAtIndex(3)).includes('Cherry')", "true");
-    result += expect("axSelect.childAtIndex(3).parentElement().isEqual(axSelect)", "true");
+    result += expect("axSelect.childAtIndex(2)?.stringValue", "'AXValue: More'");
+    result += expect("axSelect.childAtIndex(2)?.isEnabled", "false");
+    window.axCherry = accessibilityController.accessibleElementById("cherry");
+    result += expect("platformTextAlternatives(axCherry).includes('Cherry')", "true");
+    result += expect("axCherry.parentElement().isEqual(axSelect)", "true");
     return result;
 }
 
@@ -44,6 +46,13 @@ if (window.accessibilityController) {
         output += "\nsize=1\n";
         document.getElementById("select").size = 1;
         output += await expectAsync("accessibilityController.accessibleElementById('select').role.toLowerCase().includes('popup')", "true");
+        window.axSelect = accessibilityController.accessibleElementById("select");
+        output += await expectAsync("findBaseSelectMenu(axSelect) != null", "true");
+        axSelect.press();
+        output += await expectAsync("axSelect.isExpanded", "true");
+        output += expect("findBaseSelectMenu(axSelect) != null", "true");
+        axSelect.press();
+        output += await expectAsync("axSelect.isExpanded", "false");
 
         output += "\nsize=4\n";
         document.getElementById("select").size = 4;

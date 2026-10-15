@@ -36,3 +36,6 @@ const createPortalWithReadyModel = async test => {
     await model.ready;
     return [portal, model];
 };
+
+const nextVolumetricChange = watcher =>
+    watcher.wait_for("volumetricchange").then(event => ({ event, inVolumetricScene: event.target.inVolumetricScene }));

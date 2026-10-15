@@ -34,7 +34,7 @@ import re
 import socket
 import sys
 
-from Shared.steps import ShellMixin, SetBuildSummary, InstallSwiftToolchain, InstallMetalToolchain, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
+from Shared.steps import ShellMixin, SetBuildSummary, InstallSwiftToolchain, InstallMetalToolchain, cmake_tools_path, SCAN_BUILD_PATH, SWIFT_TOOLCHAIN_NAME, SWIFT_TOOLCHAIN_BUNDLE_IDENTIFIER, USER_TOOLCHAINS_DIR, needs_swift_toolchain_setup
 from Shared import generate_s3_url
 
 if sys.version_info < (3, 9):  # noqa: UP036
@@ -393,6 +393,8 @@ class CompileWebKit(shell.Compile, CustomFlagsMixin, ShellMixin, AddToLogMixin):
 
         if additionalArguments:
             build_command += additionalArguments
+        if '--cmake' in (additionalArguments or []):
+            self.env['PATH'] = cmake_tools_path(self.getProperty('builddir'))
         if platform in self.APPLE_PLATFORMS:
             # FIXME: Once WK_VALIDATE_DEPENDENCIES is set via xcconfigs, it can
             # be removed here. We can't have build-webkit pass this by default

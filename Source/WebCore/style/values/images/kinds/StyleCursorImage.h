@@ -50,7 +50,7 @@ public:
 
     bool usesDataProtocol() const final;
 
-    std::optional<HotSpot> hotSpot() const { return m_hotSpot; }
+    std::optional<HotSpot> specifiedHotSpot() const { return m_hotSpot; }
 
 private:
     explicit CursorImage(const Ref<Image>&, std::optional<HotSpot>, const URL&);

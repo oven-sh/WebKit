@@ -67,12 +67,23 @@ RefPtr<SecurityOrigin> NetworkResourceLoadParameters::parentOrigin() const
     return frameAncestorOrigins.first().ptr();
 }
 
-SecurityOriginData NetworkResourceLoadParameters::topOriginForServiceWorkers(const URL& requestURL) const
+SecurityOriginData NetworkResourceLoadParameters::topOriginForServiceWorkers(const ResourceRequest& request) const
 {
     if (isMainFrameNavigation) {
+        auto& requestURL = request.url();
         auto url = requestURL.protocolIsBlob() ? URL { requestURL.path().toString() } : requestURL;
         return SecurityOriginData::fromURLWithoutStrictOpaqueness(url);
     }
+
+    if (options.mode == FetchOptions::Mode::Navigate) {
+        // Subframe navigations with unpartitioned storage access are marked as top site.
+        if (request.isTopSite())
+            return SecurityOriginData::fromURLWithoutStrictOpaqueness(request.url());
+        return topOrigin->data();
+    }
+
+    if (hasUnpartitionedStorageAccess && sourceOrigin)
+        return sourceOrigin->data();
     return topOrigin->data();
 }
 

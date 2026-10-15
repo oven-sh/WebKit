@@ -63,12 +63,25 @@ if (!defined($bundlePolicy)) {
         exit($? >> 8);
     }
 
+    # Only dirty unified-source bundles matter: links, code signing, Swift and copy steps that
+    # follow any edit used to push a one-file change past the threshold (a WebKit .cpp edit is
+    # 9 commands, a JavaScriptCore one 30), so NoBundle never kicked in for the big frameworks.
+    my $dirtyBundles = () = $dryRun =~ m{^\[\d+/\d+\] Building \S+ object \S*/unified-sources/UnifiedSource}mg;
+
     if ($dryRun =~ /\bRe-running CMake\b/) {
         $bundlePolicy = "Bundle";
-    } elsif ($totalCommands > 8) {
+    } elsif ($dirtyBundles > 8) {
         $bundlePolicy = "Bundle";
     } else {
         $bundlePolicy = "NoBundle";
+        # Each NoBundle bundle runs its own inner ninja; share the machine between them
+        # instead of letting each one default to all cores.
+        $ENV{WK_UNIFIED_SOURCES_DIRTY_BUNDLES} = $dirtyBundles;
+        if ($dirtyBundles > 0 && !defined($ENV{WK_UNIFIED_SOURCES_MEMBER_JOBS})) {
+            chomp(my $cores = `sysctl -n hw.activecpu 2>/dev/null` || 8);
+            my $jobs = int($cores / $dirtyBundles);
+            $ENV{WK_UNIFIED_SOURCES_MEMBER_JOBS} = $jobs < 2 ? 2 : $jobs;
+        }
     }
 
     $ENV{WK_UNIFIED_SOURCES_BUNDLE_POLICY} = $bundlePolicy;

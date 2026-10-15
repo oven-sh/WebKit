@@ -1636,6 +1636,25 @@ static void webkitWebViewBaseScrollEnd(WebKitWebViewBase* webViewBase, GtkEventC
 }
 #endif
 
+// Returns a point just outside the view, to synthesize a mouse event that lets WebCore know the pointer left it.
+// It takes the edge of the view closest to the last known pointer position and goes one pixel past it. This is not
+// necessarily the closest point outside the view, but it's simple to calculate and surely good enough.
+static IntPoint pointOutsideViewClosestTo(const IntPoint& position, const IntSize& viewSize)
+{
+    int xDistanceFromRightEdge = viewSize.width() - position.x();
+    int yDistanceFromBottomEdge = viewSize.height() - position.y();
+    if (position.x() <= xDistanceFromRightEdge && position.x() <= position.y() && position.x() <= yDistanceFromBottomEdge)
+        return { -1, position.y() };
+    if (xDistanceFromRightEdge <= position.x() && xDistanceFromRightEdge <= position.y() && xDistanceFromRightEdge <= yDistanceFromBottomEdge)
+        return { viewSize.width(), position.y() };
+    if (position.y() <= position.x() && position.y() <= xDistanceFromRightEdge && position.y() <= yDistanceFromBottomEdge)
+        return { position.x(), -1 };
+    ASSERT(yDistanceFromBottomEdge <= position.x());
+    ASSERT(yDistanceFromBottomEdge <= position.y());
+    ASSERT(yDistanceFromBottomEdge <= xDistanceFromRightEdge);
+    return { position.x(), viewSize.height() };
+}
+
 #if !USE(GTK4)
 #if ENABLE(CONTEXT_MENUS)
 static gboolean webkitWebViewBasePopupMenu(GtkWidget* widget)
@@ -1716,6 +1735,16 @@ static gboolean webkitWebViewBaseCrossingNotifyEvent(GtkWidget* widget, GdkEvent
     else if (y >= height && y < height + 1)
         y = height + 1;
 
+    // On Wayland, leave events carry no position: GDK fills them with the last known pointer position, which is still
+    // inside the view when the pointer leaves quickly, so WebCore would keep hovering the element under it. Use a point
+    // just outside the edge closest to that position instead, like webkitWebViewBaseLeave() does for GTK4.
+    if (crossingEvent->type == GDK_LEAVE_NOTIFY && crossingEvent->mode == GDK_CROSSING_NORMAL && crossingEvent->detail != GDK_NOTIFY_INFERIOR
+        && x >= 0 && x < width && y >= 0 && y < height) {
+        auto pointOutside = pointOutsideViewClosestTo(roundedIntPoint(DoublePoint(x, y)), IntSize(allocation.width, allocation.height));
+        x = pointOutside.x();
+        y = pointOutside.y();
+    }
+
     GdkEvent* event = reinterpret_cast<GdkEvent*>(crossingEvent);
     GUniquePtr<GdkEvent> copiedEvent;
     if (x != xEvent || y != yEvent) {
@@ -1788,32 +1817,9 @@ static void webkitWebViewBaseLeave(WebKitWebViewBase* webViewBase, GtkEventContr
     if (!priv->lastMotionEvent)
         return;
 
-    // We need to synthesize a fake mouse event here to let WebCore know that the mouse has left the
-    // web view. Let's compute a point outside the web view that is close to the previous
-    // coordinates of the pointer before it left the web view. First we'll figure out which
-    // coordinate is closest to an edge of the web view, then we'll adjust the coordinate to be one
-    // pixel outside the view. This is not necessarily the closest point outside the web view, but
-    // it's simple to calculate and surely good enough.
-
-    int previousX = std::round(priv->lastMotionEvent->position.x());
-    int previousY = std::round(priv->lastMotionEvent->position.y());
-    int width = gtk_widget_get_width(GTK_WIDGET(webViewBase));
-    int height = gtk_widget_get_height(GTK_WIDGET(webViewBase));
-    int xDistanceFromRightEdge = width - previousX;
-    int yDistanceFromBottomEdge = height - previousY;
-
-    if (previousX <= xDistanceFromRightEdge && previousX <= previousY && previousX <= yDistanceFromBottomEdge)
-        priv->pageProxy->handleMouseEvent(NativeWebMouseEvent::create(DoublePoint(-1, previousY)));
-    else if (xDistanceFromRightEdge <= previousX && xDistanceFromRightEdge <= previousY && xDistanceFromRightEdge <= yDistanceFromBottomEdge)
-        priv->pageProxy->handleMouseEvent(NativeWebMouseEvent::create(DoublePoint(width, previousY)));
-    else if (previousY <= previousX && previousY <= xDistanceFromRightEdge && previousY <= yDistanceFromBottomEdge)
-        priv->pageProxy->handleMouseEvent(NativeWebMouseEvent::create(DoublePoint(previousX, -1)));
-    else {
-        ASSERT(yDistanceFromBottomEdge <= previousX);
-        ASSERT(yDistanceFromBottomEdge <= previousY);
-        ASSERT(yDistanceFromBottomEdge <= xDistanceFromRightEdge);
-        priv->pageProxy->handleMouseEvent(NativeWebMouseEvent::create(DoublePoint(previousX, height)));
-    }
+    IntSize viewSize(gtk_widget_get_width(GTK_WIDGET(webViewBase)), gtk_widget_get_height(GTK_WIDGET(webViewBase)));
+    auto pointOutside = pointOutsideViewClosestTo(roundedIntPoint(priv->lastMotionEvent->position), viewSize);
+    priv->pageProxy->handleMouseEvent(NativeWebMouseEvent::create(DoublePoint(pointOutside)));
 }
 #endif
 
@@ -3778,11 +3784,11 @@ void webkitWebViewBaseSetCursor(WebKitWebViewBase* webViewBase, const Cursor& cu
         return;
     }
 
-    RefPtr nativeImage = cursor.image()->currentNativeImage(WebCore::ConcreteObjectSize::fixed(cursor.image()->size()));
+    RefPtr nativeImage = cursor.image();
     if (!nativeImage)
         return;
 
-    IntPoint effectiveHotSpot = determineHotSpot(cursor.image().get(), cursor.hotSpot());
+    IntPoint effectiveHotSpot = cursor.hotSpot();
     auto platformImage = nativeImage->platformImage();
 
 #if USE(GTK4)

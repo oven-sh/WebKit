@@ -348,17 +348,17 @@ void AsyncScrollingCoordinator::frameViewRootLayerDidChange(LocalFrameView& fram
     RefPtr node = dynamicDowncast<ScrollingStateFrameScrollingNode>(stateNodeForScrollableArea(frameView));
     if (!node)
         return;
-    node->setScrollContainerLayer(scrollContainerLayerForFrameView(frameView));
-    node->setScrolledContentsLayer(scrolledContentsLayerForFrameView(frameView));
-    node->setRootContentsLayer(rootContentsLayerForFrameView(frameView));
-    node->setCounterScrollingLayer(counterScrollingLayerForFrameView(frameView));
-    node->setInsetClipLayer(insetClipLayerForFrameView(frameView));
-    node->setContentShadowLayer(contentShadowLayerForFrameView(frameView));
-    node->setHeaderLayer(headerLayerForFrameView(frameView));
-    node->setFooterLayer(footerLayerForFrameView(frameView));
+    node->setScrollContainerLayer(protect(scrollContainerLayerForFrameView(frameView)).get());
+    node->setScrolledContentsLayer(protect(scrolledContentsLayerForFrameView(frameView)).get());
+    node->setRootContentsLayer(protect(rootContentsLayerForFrameView(frameView)).get());
+    node->setCounterScrollingLayer(protect(counterScrollingLayerForFrameView(frameView)).get());
+    node->setInsetClipLayer(protect(insetClipLayerForFrameView(frameView)).get());
+    node->setContentShadowLayer(protect(contentShadowLayerForFrameView(frameView)).get());
+    node->setHeaderLayer(protect(headerLayerForFrameView(frameView)).get());
+    node->setFooterLayer(protect(footerLayerForFrameView(frameView)).get());
     node->setScrollBehaviorForFixedElements(frameView.scrollBehaviorForFixedElements());
-    node->setVerticalScrollbarLayer(frameView.layerForVerticalScrollbar());
-    node->setHorizontalScrollbarLayer(frameView.layerForHorizontalScrollbar());
+    node->setVerticalScrollbarLayer(protect(frameView.layerForVerticalScrollbar()).get());
+    node->setHorizontalScrollbarLayer(protect(frameView.layerForHorizontalScrollbar()).get());
     node->setScrollbarLayoutDirection(frameView.shouldPlaceVerticalScrollbarOnLeft() ? UserInterfaceLayoutDirection::RTL : UserInterfaceLayoutDirection::LTR);
 }
 
@@ -1003,9 +1003,9 @@ void AsyncScrollingCoordinator::scrollableAreaScrollbarLayerDidChange(Scrollable
 
     if (RefPtr scrollingNode = dynamicDowncast<ScrollingStateScrollingNode>(stateNodeForScrollableArea(scrollableArea))) {
         if (orientation == ScrollbarOrientation::Vertical)
-            scrollingNode->setVerticalScrollbarLayer(scrollableArea.layerForVerticalScrollbar());
+            scrollingNode->setVerticalScrollbarLayer(protect(scrollableArea.layerForVerticalScrollbar()).get());
         else
-            scrollingNode->setHorizontalScrollbarLayer(scrollableArea.layerForHorizontalScrollbar());
+            scrollingNode->setHorizontalScrollbarLayer(protect(scrollableArea.layerForHorizontalScrollbar()).get());
         scrollingNode->setScrollbarLayoutDirection(scrollableArea.shouldPlaceVerticalScrollbarOnLeft() ? UserInterfaceLayoutDirection::RTL : UserInterfaceLayoutDirection::LTR);
     }
 
@@ -1150,10 +1150,12 @@ void AsyncScrollingCoordinator::setFrameScrollingNodeState(ScrollingNodeID nodeI
     frameScrollingNode->setMinLayoutViewportOrigin(frameView.minStableLayoutViewportOrigin());
     frameScrollingNode->setMaxLayoutViewportOrigin(frameView.maxStableLayoutViewportOrigin());
 
-    if (auto visualOverrideRect = frameView.visualViewportOverrideRect())
-        frameScrollingNode->setOverrideVisualViewportSize(FloatSize(visualOverrideRect.value().size()));
-    else
+    if (auto visualOverrideRect = frameView.visualViewportOverrideRect()) {
+        // FIXME: Remove suppression once rdar://189998444 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST frameScrollingNode->setOverrideVisualViewportSize(FloatSize(visualOverrideRect.value().size()));
+    } else {
         frameScrollingNode->setOverrideVisualViewportSize(std::nullopt);
+    }
 
     auto visualViewportIsSmallerThanLayoutViewport = [](const LocalFrameView& frameView) {
         auto layoutViewport = frameView.layoutViewportRect();

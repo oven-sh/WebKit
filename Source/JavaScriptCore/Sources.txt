@@ -718,7 +718,7 @@ parser/ParserArena.cpp
 parser/SourceCharacters.cpp
 parser/SourceProvider.cpp
 parser/SourceProviderCache.cpp
-parser/SourceTaintedOrigin.cpp
+parser/SourceTaintedness.cpp
 parser/UnlinkedSourceCode.cpp
 parser/VariableEnvironment.cpp
 
@@ -965,7 +965,6 @@ runtime/JSPromiseReaction.cpp
 runtime/JSPropertyNameEnumerator.cpp
 runtime/JSRawJSONObject.cpp
 runtime/JSRegExpStringIterator.cpp
-runtime/JSRemoteFunction.cpp
 runtime/JSRunLoopTimer.cpp
 runtime/JSScope.cpp
 runtime/JSSegmentedVariableObject.cpp
@@ -1046,9 +1045,6 @@ runtime/ProxyConstructor.cpp
 runtime/ProxyObject.cpp
 runtime/ProxyRevoke.cpp
 runtime/RandomizingFuzzerAgent.cpp
-runtime/ShadowRealmObject.cpp
-runtime/ShadowRealmConstructor.cpp
-runtime/ShadowRealmPrototype.cpp
 runtime/ReflectObject.cpp
 runtime/RegExp.cpp
 runtime/RegExpCache.cpp

@@ -59,7 +59,8 @@ Ref<ImmutableStyleProperties> StyleProperties::immutableCopyIfNeeded() const
 {
     if (m_isMutable)
         return uncheckedDowncast<MutableStyleProperties>(*this).immutableDeduplicatedCopy();
-    return const_cast<ImmutableStyleProperties&>(uncheckedDowncast<ImmutableStyleProperties>(*this));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<ImmutableStyleProperties&>(uncheckedDowncast<ImmutableStyleProperties>(*this));
 }
 
 String serializeLonghandValue(const CSS::SerializationContext& context, CSSPropertyID property, const CSSValue& value)
@@ -129,7 +130,7 @@ RefPtr<CSSValue> StyleProperties::getPropertyCSSValue(CSSPropertyID propertyID) 
     RefPtr value = property.value();
     // System fonts are represented as CSSPrimitiveValue for various font subproperties, but these must serialize as the empty string.
     // It might be better to implement this as a special CSSValue type instead of turning them into null here.
-    if (property.shorthandID() == CSSPropertyFont && CSSPropertyParserHelpers::isSystemFontShorthand(valueID(value)))
+    if (property.shorthandID() == CSSPropertyID::Font && CSSPropertyParserHelpers::isSystemFontShorthand(valueID(value)))
         return nullptr;
     return value;
 }
@@ -193,65 +194,65 @@ AtomString StyleProperties::asTextAtom(const CSS::SerializationContext& context)
     return asTextInternal(context).toAtomString();
 }
 
-static constexpr bool NODELETE canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
+static constexpr bool LEGACY_NODELETE canUseShorthandForLonghand(CSSPropertyID shorthandID, CSSPropertyID longhandID)
 {
     ASSERT(isShorthand(shorthandID));
     ASSERT(isLonghand(longhandID));
     switch (shorthandID) {
-    // We are not yet using the CSSPropertyFont shorthand here because our editing code is currently incompatible.
-    case CSSPropertyFont:
+    // We are not yet using the CSSPropertyID::Font shorthand here because our editing code is currently incompatible.
+    case CSSPropertyID::Font:
         return false;
 
     // Avoid legacy shorthands according to https://www.w3.org/TR/css-cascade-5/#legacy-shorthand
-    case CSSPropertyPageBreakAfter:
-    case CSSPropertyPageBreakBefore:
-    case CSSPropertyPageBreakInside:
-    case CSSPropertyWebkitBackgroundSize:
-    case CSSPropertyWebkitBorderRadius:
-    case CSSPropertyWebkitColumnBreakAfter:
-    case CSSPropertyWebkitColumnBreakBefore:
-    case CSSPropertyWebkitColumnBreakInside:
-    case CSSPropertyWebkitMaskPosition:
-    case CSSPropertyWebkitPerspective:
-    case CSSPropertyWebkitTextOrientation:
+    case CSSPropertyID::PageBreakAfter:
+    case CSSPropertyID::PageBreakBefore:
+    case CSSPropertyID::PageBreakInside:
+    case CSSPropertyID::WebkitBackgroundSize:
+    case CSSPropertyID::WebkitBorderRadius:
+    case CSSPropertyID::WebkitColumnBreakAfter:
+    case CSSPropertyID::WebkitColumnBreakBefore:
+    case CSSPropertyID::WebkitColumnBreakInside:
+    case CSSPropertyID::WebkitMaskPosition:
+    case CSSPropertyID::WebkitPerspective:
+    case CSSPropertyID::WebkitTextOrientation:
         return false;
 
     // No other browser currently supports text-decoration-skip, so it's currently more web
     // compatible to avoid collapsing text-decoration-skip-ink, its only longhand.
-    case CSSPropertyTextDecorationSkip:
+    case CSSPropertyID::TextDecorationSkip:
         return false;
 
     // Avoid collapsing width/height into the new `size` shorthand for copy/paste interop
     // with engines and older WebKit that don't support it yet. See csswg-drafts#820.
     // The min-size and max-size shorthands are avoided for the same reason.
-    case CSSPropertySize:
-    case CSSPropertyMinSize:
-    case CSSPropertyMaxSize:
+    case CSSPropertyID::Size:
+    case CSSPropertyID::MinSize:
+    case CSSPropertyID::MaxSize:
         return false;
 
     // FIXME: -webkit-mask is a legacy shorthand but it's used to serialize -webkit-mask-clip,
     // which should be a legacy shorthand of mask-clip, but it's implemented as a longhand.
-    case CSSPropertyWebkitMask:
-        return longhandID == CSSPropertyWebkitMaskClip;
+    case CSSPropertyID::WebkitMask:
+        return longhandID == CSSPropertyID::WebkitMaskClip;
 
     // FIXME: more mask nonsense.
-    case CSSPropertyMask:
-        return longhandID != CSSPropertyMaskComposite && longhandID != CSSPropertyMaskMode && longhandID != CSSPropertyMaskSize;
+    case CSSPropertyID::Mask:
+        return longhandID != CSSPropertyID::MaskComposite && longhandID != CSSPropertyID::MaskMode && longhandID != CSSPropertyID::MaskSize;
 
     // FIXME: If font-variant-ligatures is none, this depends on the value of the longhand.
-    case CSSPropertyFontVariant:
+    case CSSPropertyID::FontVariant:
     // FIXME: These shorthands are avoided for unknown legacy reasons, probably shouldn't be avoided.
-    case CSSPropertyColumnRule:
-    case CSSPropertyColumns:
-    case CSSPropertyContainer:
-    case CSSPropertyFontSynthesis:
-    case CSSPropertyGridArea:
-    case CSSPropertyGridColumn:
-    case CSSPropertyGridRow:
-    case CSSPropertyMaskPosition:
-    case CSSPropertyOffset:
-    case CSSPropertyTextEmphasis:
-    case CSSPropertyWebkitTextStroke:
+    case CSSPropertyID::ColumnRule:
+    case CSSPropertyID::Columns:
+    case CSSPropertyID::Container:
+    case CSSPropertyID::FontSynthesis:
+    case CSSPropertyID::GridArea:
+    case CSSPropertyID::GridColumn:
+    case CSSPropertyID::GridRow:
+    case CSSPropertyID::MaskPosition:
+    case CSSPropertyID::Offset:
+    case CSSPropertyID::TextEmphasis:
+    case CSSPropertyID::WebkitTextStroke:
         return false;
 
     default:
@@ -263,14 +264,14 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
 {
     StringBuilder result;
 
-    constexpr unsigned shorthandPropertyCount = lastShorthandProperty - firstShorthandProperty + 1;
+    constexpr unsigned shorthandPropertyCount = std::to_underlying(lastShorthandProperty) - std::to_underlying(firstShorthandProperty) + 1;
     std::bitset<shorthandPropertyCount> shorthandPropertyUsed;
     std::bitset<shorthandPropertyCount> shorthandPropertyAppeared;
 
     unsigned numDecls = 0;
     for (auto property : *this) {
         auto propertyID = property.id();
-        ASSERT(isLonghand(propertyID) || propertyID == CSSPropertyCustom);
+        ASSERT(isLonghand(propertyID) || propertyID == CSSPropertyID::Custom);
         Vector<CSSPropertyID, maxShorthandsForLonghand> shorthands;
 
         if (RefPtr substitutionValue = dynamicDowncast<CSSShorthandSubstitutionValue>(property.value()))
@@ -286,7 +287,7 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
         bool alreadyUsedShorthand = false;
         for (auto& shorthandPropertyID : shorthands) {
             ASSERT(isShorthand(shorthandPropertyID));
-            unsigned shorthandPropertyIndex = shorthandPropertyID - firstShorthandProperty;
+            unsigned shorthandPropertyIndex = std::to_underlying(shorthandPropertyID) - std::to_underlying(firstShorthandProperty);
 
             ASSERT(shorthandPropertyIndex < shorthandPropertyUsed.size());
             if (shorthandPropertyUsed[shorthandPropertyIndex]) {
@@ -313,11 +314,11 @@ StringBuilder StyleProperties::asTextInternal(const CSS::SerializationContext& c
         if (numDecls++)
             result.append(' ');
 
-        if (propertyID == CSSPropertyCustom)
+        if (propertyID == CSSPropertyID::Custom)
             serializeIdentifier(result, downcast<CSSCustomPropertyValue>(*property.value()).name());
-        else if (propertyID == CSSPropertyPageSize) {
+        else if (propertyID == CSSPropertyID::PageSize) {
             // `page-size` is stored under its own id but exposed to authors as `size`.
-            result.append(nameLiteral(CSSPropertySize));
+            result.append(nameLiteral(CSSPropertyID::Size));
         } else
             result.append(nameLiteral(propertyID));
 
@@ -421,11 +422,11 @@ void StyleProperties::showStyle()
 
 const AtomString& StyleProperties::PropertyReference::cssName() const
 {
-    if (id() == CSSPropertyCustom)
+    if (id() == CSSPropertyID::Custom)
         return downcast<CSSCustomPropertyValue>(*value()).name();
     // `page-size` is stored under its own id but exposed to authors as `size`.
-    if (id() == CSSPropertyPageSize)
-        return nameString(CSSPropertySize);
+    if (id() == CSSPropertyID::PageSize)
+        return nameString(CSSPropertyID::Size);
     return nameString(id());
 }
 

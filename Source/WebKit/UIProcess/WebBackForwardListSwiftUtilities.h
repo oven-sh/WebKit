@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include "BrowsingContextGroup.h"
 #include "Logging.h"
 #include "WebBackForwardListFrameItem.h"
 #include "WebBackForwardListItem.h"

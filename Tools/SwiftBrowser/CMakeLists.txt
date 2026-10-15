@@ -86,6 +86,7 @@ webkit_target_add_swift_options(SwiftBrowser
 )
 
 WEBKIT_EXECUTABLE(SwiftBrowser)
+WEBKIT_RAISE_SWIFT_NINJA_PRIORITY(SwiftBrowser 6)
 
 # As for MiniBrowser: SIP strips DYLD_* for XPC children, so point them at this
 # build's frameworks the way Tools/Scripts/webkitdirs.pm's

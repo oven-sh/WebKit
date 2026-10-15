@@ -36,7 +36,6 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     WebKit::DrawingAreaIdentifier drawingAreaIdentifier;
     WebKit::WebPageProxyIdentifier webPageProxyIdentifier;
     WebKit::WebPageGroupData pageGroupData;
-    std::optional<WebCore::BrowsingContextGroupIdentifier> browsingContextGroupIdentifier;
 
     bool isEditable;
 
@@ -65,6 +64,7 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     double gapBetweenPages;
 
     String userAgent;
+    bool hasCustomUserAgent;
 
     WebKit::VisitedLinkTableIdentifier visitedLinkTableID;
     bool canRunBeforeUnloadConfirmPanel;
@@ -96,6 +96,7 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     WebCore::IntSize sizeToContentAutoSizeMaximumSize;
     bool autoSizingShouldExpandToViewHeight;
     std::optional<WebCore::FloatSize> viewportSizeForCSSViewportUnits;
+    WebCore::ViewportSegments viewportSegments;
 
     WebCore::ScrollPinningBehavior scrollPinningBehavior;
 
@@ -141,6 +142,10 @@ enum class WebCore::UserInterfaceLayoutDirection : bool;
     bool canShowWhileLocked;
     bool isCapturingScreen;
     WebCore::Color insertionPointColor;
+    String contentSizeCategory;
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
+    WebKit::PDFPluginDisplayMode initialPDFDisplayMode;
 #endif
 #if PLATFORM(COCOA)
     bool smartInsertDeleteEnabled;

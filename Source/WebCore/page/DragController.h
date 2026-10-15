@@ -59,7 +59,7 @@ struct PromisedAttachmentInfo;
 struct RemoteUserInputEventData;
 
 enum class DragEventHandled : bool;
-using DragEventTargetData = Variant<DragEventHandled, FrameIdentifier>;
+using DragEventTargetData = Variant<DragEventHandled, RemoteUserInputEventData>;
 
 class DragController : public CanMakeSingleThreadWeakPtr<DragController> {
     WTF_MAKE_TZONE_ALLOCATED(DragController);
@@ -68,7 +68,7 @@ public:
     DragController(Page&, std::unique_ptr<DragClient>&&);
     ~DragController();
 
-    static DragOperation NODELETE platformGenericDragOperation();
+    static DragOperation LEGACY_NODELETE platformGenericDragOperation();
 
     WEBCORE_EXPORT Variant<std::optional<DragOperation>, RemoteUserInputEventData> dragEnteredOrUpdated(LocalFrame&, DragData&&);
     WEBCORE_EXPORT void dragExited(LocalFrame&, DragData&&);
@@ -94,7 +94,7 @@ public:
     OptionSet<DragSourceAction> delegateDragSourceAction(const IntPoint& rootViewPoint);
 
     RefPtr<Element> draggableElement(const LocalFrame*, Element* start, const IntPoint&, DragState&) const;
-    WEBCORE_EXPORT void dragEnded();
+    WEBCORE_EXPORT void dragEnded(MayExtendDragSession = MayExtendDragSession::No);
 
     WEBCORE_EXPORT void placeDragCaret(const IntPoint&);
 
@@ -106,7 +106,7 @@ public:
 
     void prepareForDragStart(LocalFrame& sourceFrame, OptionSet<DragSourceAction>, Element& sourceElement, DataTransfer&, const IntPoint& dragOrigin) const;
     bool startDrag(LocalFrame& src, const DragState&, OptionSet<DragOperation>, const PlatformMouseEvent& dragEvent, const IntPoint& dragOrigin, HasNonDefaultPasteboardData, const std::optional<FrameIdentifier>& rootFrameID);
-    static const IntSize& NODELETE maxDragImageSize();
+    static const IntSize& LEGACY_NODELETE maxDragImageSize();
 
     static const int MaxOriginalImageArea;
     static const int DragIconRightInset;
@@ -116,7 +116,7 @@ public:
 private:
     void updateSupportedTypeIdentifiersForDragHandlingMethod(DragHandlingMethod, const DragData&) const;
     bool dispatchTextInputEventFor(LocalFrame*, const DragData&);
-    bool canProcessDrag(const DragData&);
+    bool canProcessDrag(LocalFrame&, const DragData&);
     bool concludeEditDrag(const DragData&);
     std::optional<DragOperation> operationForLoad(const DragData&);
     DragHandlingMethod tryDocumentDrag(LocalFrame&, const DragData&, OptionSet<DragDestinationAction>, std::optional<DragOperation>&);
@@ -124,7 +124,7 @@ private:
     std::optional<DragOperation> dragOperation(const DragData&);
     void clearDragCaret();
     bool dragIsMove(FrameSelection&, const DragData&);
-    bool NODELETE isCopyKeyDown(const DragData&);
+    bool LEGACY_NODELETE isCopyKeyDown(const DragData&);
 
     void mouseMovedIntoDocument(RefPtr<Document>&&);
     bool shouldUseCachedImageForDragImage(const Image&) const;

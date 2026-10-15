@@ -164,12 +164,16 @@
 		15954E23A855A416515D5A96 /* es2fLightAmountTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DD3D47F69D4EA4FEF130EF4A /* es2fLightAmountTest.cpp */; };
 		15AD4E5D835474651221BBE3 /* es3fTextureSpecificationTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D0DA4CD9A4C20632F5827281 /* es3fTextureSpecificationTests.cpp */; };
 		15E2493F90CFE56F05BC046A /* deSpinBarrier.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7E14439D845A5684997AD0AB /* deSpinBarrier.cpp */; };
+		160C7F9EDE964CAC99926EA9 /* ExpandFragmentOutputsToVec4.h in Headers */ = {isa = PBXBuildFile; fileRef = 5F4E1B6AFF1722E579F40CC5 /* ExpandFragmentOutputsToVec4.h */; };
 		162E4C2B9CF20CEEA1C2357D /* es2fNegativeShaderApiTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DD4B447198FE6A59BE2C984C /* es2fNegativeShaderApiTests.cpp */; };
 		165F4EC4AF8B0AC657A15F7A /* tcuTexVerifierUtil.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5EB948DC937795D1327B6EC7 /* tcuTexVerifierUtil.cpp */; };
 		16DA4D2F9A4D087B836C39D5 /* tes3TestPackage.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6ED14F02827B8C85CF73779D /* tes3TestPackage.cpp */; };
 		171A4AA4BC42B69E49E82F17 /* es3fInteger64StateQueryTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 69C84200BA79E31CBB632E27 /* es3fInteger64StateQueryTests.cpp */; };
 		172C423CAAA876496B832706 /* es2fTextureStateQueryTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 717C49CBB5C93335E7F5F19B /* es2fTextureStateQueryTests.cpp */; };
 		18074337BB9DCBA4DE6BFE99 /* tcuTestSessionExecutor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7D1D40FD89149377817B4862 /* tcuTestSessionExecutor.cpp */; };
+		44B55C1A9B7A852DB1803359 /* FoldConstantSwitch.h in Headers */ = {isa = PBXBuildFile; fileRef = 677DD8DB048973272047A041 /* FoldConstantSwitch.h */; };
+		4D04F39F4EACFB111837CAF2 /* ExpandFragmentOutputsToVec4.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79EA9AEA4565E75732D902A9 /* ExpandFragmentOutputsToVec4.cpp */; };
+		8E838D562B2996D3AD654E5D /* FoldConstantSwitch.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 423BDDF1136B036DA440557C /* FoldConstantSwitch.cpp */; };
 		A1B2C3D40001E5F600010001 /* tcuSubprocessTestExecutor.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E40001F5A600020001 /* tcuSubprocessTestExecutor.cpp */; };
 		A1B2C3D40002E5F600010002 /* tcuSubprocessTestExecutorLin.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B1C2D3E40002F5A600020002 /* tcuSubprocessTestExecutorLin.cpp */; };
 		187D4B96B208288B4186975E /* rsgToken.cpp in Sources */ = {isa = PBXBuildFile; fileRef = D92A4F00BB594EC5B402FCB0 /* rsgToken.cpp */; };
@@ -640,6 +644,7 @@
 		4557460D814F5DF1D5787863 /* es3sLongRunningShaderTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7134402C9425888101366367 /* es3sLongRunningShaderTests.cpp */; };
 		457CC0343015771C001DE9FC /* angle_end2end_tests_expectations.txt in State Test Expectations */ = {isa = PBXBuildFile; fileRef = 7BD3D2E82FCDBB4E00C386DC /* angle_end2end_tests_expectations.txt */; };
 		4592BD742FC4F27700DC76EB /* IntegerOverflowClampTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 4592BD732FC4F27700DC76EB /* IntegerOverflowClampTest.cpp */; };
+		D59D4EB48664844AFAC7447B /* DeleteBuffersTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 683EA8379656AEEEC5A762DC /* DeleteBuffersTest.cpp */; };
 		45F4464AB2B8513CB3E3762B /* es3fNegativeStateApiTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 2F264D619701179ECB7F6033 /* es3fNegativeStateApiTests.cpp */; };
 		46574F8EBAA668D2A75348A0 /* es3pShaderOperatorTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7F384DF192F867DA1896E9B2 /* es3pShaderOperatorTests.cpp */; };
 		46724657AF064907DE2EA506 /* deThreadTest.c in Sources */ = {isa = PBXBuildFile; fileRef = ADE748218E43074A54016343 /* deThreadTest.c */; };
@@ -1054,6 +1059,7 @@
 		7BB9735D2DE4875E00455D13 /* SystemInfo_apple.mm in Sources */ = {isa = PBXBuildFile; fileRef = 31647F9E2511A1A60010F8FB /* SystemInfo_apple.mm */; };
 		7BB9735E2DE4875E00455D13 /* SystemInfo.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5CCD59982284FC750018F2D8 /* SystemInfo.cpp */; };
 		7BB9735F2DE4877900455D13 /* sha1.cc in Sources */ = {isa = PBXBuildFile; fileRef = 3A0EBF922980B445002C72BC /* sha1.cc */; };
+		6DD84D6FA01F04A45F0B2F5A /* sha1.cc in Sources */ = {isa = PBXBuildFile; fileRef = 3A0EBF922980B445002C72BC /* sha1.cc */; };
 		7BCA710E2E5B3F1000455D13 /* trace_categories.cc in Sources */ = {isa = PBXBuildFile; fileRef = 7BCA710B2E5B3F1000455D13 /* trace_categories.cc */; };
 		7BB973602DE4880F00455D13 /* validationES32.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A30B57E8238CB09C0079FDDC /* validationES32.cpp */; };
 		7BB973612DE4881500455D13 /* validationES31.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5CCD816A1DBFE999006066B8 /* validationES31.cpp */; };
@@ -1237,6 +1243,7 @@
 		7BD3D2762FCDB8A300C386DC /* IndexBufferOffsetTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF5682DE59E0900327F7F /* IndexBufferOffsetTest.cpp */; };
 		7BD3D2772FCDB8A300C386DC /* IndexedPointsTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF5692DE59E0900327F7F /* IndexedPointsTest.cpp */; };
 		7BD3D2782FCDB8A300C386DC /* InstancingTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF56A2DE59E0900327F7F /* InstancingTest.cpp */; };
+		C804E96922B0BAAA42FBA28B /* DeleteBuffersTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 683EA8379656AEEEC5A762DC /* DeleteBuffersTest.cpp */; };
 		7BD3D2792FCDB8A300C386DC /* KTXCompressedTextureTest.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BFAF56B2DE59E0900327F7F /* KTXCompressedTextureTest.cpp */; };
 		7BD3D27A2FCDB8A300C386DC /* libEGL_autogen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BB9723C2DE4827800455D13 /* libEGL_autogen.cpp */; };
 		7BD3D27B2FCDB8A300C386DC /* libGLESv2_autogen.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BB972342DE480F000455D13 /* libGLESv2_autogen.cpp */; };
@@ -2037,6 +2044,7 @@
 		D59C433EB138ACCA586F7419 /* es3fVertexArrayObjectTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7F4343A18DF3C231B932B751 /* es3fVertexArrayObjectTests.cpp */; };
 		D5C24A3B8E9D451A7233E997 /* dePoolArray.c in Sources */ = {isa = PBXBuildFile; fileRef = CD074868893EDDFF78FE22ED /* dePoolArray.c */; };
 		D607401C8191DDFDF9463611 /* es3fDrawTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 14AB4C249E67AB96A7BCF65D /* es3fDrawTests.cpp */; };
+		D63C319AF3C78D7814D5F39E /* ExpandFragmentOutputsToVec4.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 79EA9AEA4565E75732D902A9 /* ExpandFragmentOutputsToVec4.cpp */; };
 		D66C463888CA339369FD6765 /* rsgStatement.cpp in Sources */ = {isa = PBXBuildFile; fileRef = E04C48B4BFF8E77C6FC522BC /* rsgStatement.cpp */; };
 		D699401CA4343F9E81ADAC18 /* xeXMLWriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7DCE47AB936F8F0AC9F67BBE /* xeXMLWriter.cpp */; };
 		D6EC467AADFE36F0F96996D1 /* es2fFloatStateQueryTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 8BF44EBC913244B34C226CC2 /* es2fFloatStateQueryTests.cpp */; };
@@ -2061,6 +2069,7 @@
 		DBF9400EB6B5931C005DF81C /* es3fBufferObjectQueryTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 43FA452ABF7843E832C97FC7 /* es3fBufferObjectQueryTests.cpp */; };
 		DC4449AC9313549447484030 /* es2fDefaultVertexAttributeTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 397D4CBFB1B052787F4E4224 /* es2fDefaultVertexAttributeTests.cpp */; };
 		DC444D87B50AE6CC9313EDF7 /* es3fFunctionalTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = B78F42E78DB3601E52621A4E /* es3fFunctionalTests.cpp */; };
+		DC6ACE37ED674930CF7302D9 /* FoldConstantSwitch.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 423BDDF1136B036DA440557C /* FoldConstantSwitch.cpp */; };
 		DC6C4931BEE4F51965ACCF97 /* es3sLongShaderTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = BD7A4A77909AB767A9C641E9 /* es3sLongShaderTests.cpp */; };
 		DCB743ACA077C38C6BBE5EA9 /* angle_deqp_libtester_main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = FD4F40329004F4EBCBC04C84 /* angle_deqp_libtester_main.cpp */; };
 		DD7C4D76BE88B6571A82B6C7 /* es3fOcclusionQueryTests.cpp in Sources */ = {isa = PBXBuildFile; fileRef = EDA04B7CB519EDE2913AE44C /* es3fOcclusionQueryTests.cpp */; };
@@ -3203,6 +3212,10 @@
 		397D4CBFB1B052787F4E4224 /* es2fDefaultVertexAttributeTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es2fDefaultVertexAttributeTests.cpp; sourceTree = "<group>"; };
 		398F4D02926F78077944C943 /* tcuRasterizationVerifier.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tcuRasterizationVerifier.cpp; sourceTree = "<group>"; };
 		3A014F248B54FD3CF22BA4D1 /* tcuRGBA.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tcuRGBA.cpp; sourceTree = "<group>"; };
+		423BDDF1136B036DA440557C /* FoldConstantSwitch.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FoldConstantSwitch.cpp; sourceTree = "<group>"; };
+		5F4E1B6AFF1722E579F40CC5 /* ExpandFragmentOutputsToVec4.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = ExpandFragmentOutputsToVec4.h; sourceTree = "<group>"; };
+		677DD8DB048973272047A041 /* FoldConstantSwitch.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FoldConstantSwitch.h; sourceTree = "<group>"; };
+		79EA9AEA4565E75732D902A9 /* ExpandFragmentOutputsToVec4.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = ExpandFragmentOutputsToVec4.cpp; sourceTree = "<group>"; };
 		7BCA710B2E5B3F1000455D13 /* trace_categories.cc */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; path = trace_categories.cc; sourceTree = "<group>"; };
 		7BCA710A2E5B3F1000455D13 /* trace_categories.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = trace_categories.h; sourceTree = "<group>"; };
 		3A0EBF812980B445002C72BC /* logging.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = logging.h; sourceTree = "<group>"; };
@@ -3280,6 +3293,7 @@
 		44E247508F92F73A06DB9605 /* sglrReferenceContext.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = sglrReferenceContext.cpp; sourceTree = "<group>"; };
 		451D41F7AE0365931A4AA60B /* tes3InfoTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = tes3InfoTests.cpp; sourceTree = "<group>"; };
 		4592BD732FC4F27700DC76EB /* IntegerOverflowClampTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = IntegerOverflowClampTest.cpp; sourceTree = "<group>"; };
+		683EA8379656AEEEC5A762DC /* DeleteBuffersTest.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = DeleteBuffersTest.cpp; sourceTree = "<group>"; };
 		45A743169381B27478632DE1 /* glsUniformBlockCase.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = glsUniformBlockCase.cpp; sourceTree = "<group>"; };
 		45DE4E258609976D2067B1DE /* es3sSpecialFloatTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3sSpecialFloatTests.cpp; sourceTree = "<group>"; };
 		463D416587F5C55E8292E1C8 /* es3fShaderDerivateTests.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = es3fShaderDerivateTests.cpp; sourceTree = "<group>"; };
@@ -5963,6 +5977,10 @@
 				5C55D60E22826B9100B5BA2C /* EmulateGLFragColorBroadcast.h */,
 				A30306F42305F5EE002DA972 /* EmulateMultiDrawShaderBuiltins.cpp */,
 				A30306EF2305F5EE002DA972 /* EmulateMultiDrawShaderBuiltins.h */,
+				79EA9AEA4565E75732D902A9 /* ExpandFragmentOutputsToVec4.cpp */,
+				5F4E1B6AFF1722E579F40CC5 /* ExpandFragmentOutputsToVec4.h */,
+				423BDDF1136B036DA440557C /* FoldConstantSwitch.cpp */,
+				677DD8DB048973272047A041 /* FoldConstantSwitch.h */,
 				5C55D64022826B9C00B5BA2C /* FoldExpressions.cpp */,
 				5C55D64822826B9E00B5BA2C /* FoldExpressions.h */,
 				5C55D64422826B9D00B5BA2C /* InitializeVariables.cpp */,
@@ -6611,6 +6629,7 @@
 				7BFAF5162DE59DA000327F7F /* CubeMapTextureTest.cpp */,
 				7BFAF5242DE59DB800327F7F /* DebugMarkerTest.cpp */,
 				7BFAF5252DE59DB800327F7F /* DebugTest.cpp */,
+				683EA8379656AEEEC5A762DC /* DeleteBuffersTest.cpp */,
 				7BFAF5262DE59DB800327F7F /* DepthStencilFormatsTest.cpp */,
 				7BFAF5272DE59DB800327F7F /* DepthStencilTest.cpp */,
 				7BFAF5282DE59DB800327F7F /* DepthWriteTest.cpp */,
@@ -8158,6 +8177,7 @@
 				31CD0093249184FD00486F27 /* Error.h in Headers */,
 				31CD00A2249184FD00486F27 /* ErrorStrings.h in Headers */,
 				31CDFF592491848C00486F27 /* event_tracer.h in Headers */,
+				160C7F9EDE964CAC99926EA9 /* ExpandFragmentOutputsToVec4.h in Headers */,
 				31CDFE10249183E900486F27 /* export.h in Headers */,
 				31CDFF6B2491849200486F27 /* ExpressionParser.h in Headers */,
 				31CDFFE5249184A700486F27 /* ExtensionBehavior.h in Headers */,
@@ -8172,6 +8192,7 @@
 				31CDFF682491848C00486F27 /* FixedVector.h in Headers */,
 				7B359DAF2A7CEDAA0016DC59 /* FixTypeConstructors.h in Headers */,
 				31CDFFC0249184A700486F27 /* FlagStd140Structs.h in Headers */,
+				44B55C1A9B7A852DB1803359 /* FoldConstantSwitch.h in Headers */,
 				31CDFF7F2491849800486F27 /* FoldExpressions.h in Headers */,
 				31CD0040249184F400486F27 /* Format.h in Headers */,
 				31CD0080249184FD00486F27 /* formatutils.h in Headers */,
@@ -9361,6 +9382,7 @@
 				DF83E2E72639FE17000825EF /* Error.cpp in Sources */,
 				DF83E3142639FE17000825EF /* es3_copy_conversion_table_autogen.cpp in Sources */,
 				DF83E2152639FC74000825EF /* event_tracer.cpp in Sources */,
+				D63C319AF3C78D7814D5F39E /* ExpandFragmentOutputsToVec4.cpp in Sources */,
 				DF83E2BE2639FD83000825EF /* ExtensionBehavior.cpp in Sources */,
 				7B359DDB2A7CEE9D0016DC59 /* ExtensionGLSL.cpp in Sources */,
 				DF83E31A2639FE17000825EF /* Fence.cpp in Sources */,
@@ -9371,6 +9393,7 @@
 				7B359D9E2A7CEDAA0016DC59 /* FixTypeConstructors.cpp in Sources */,
 				DF83E2CE2639FD84000825EF /* FlagStd140Structs.cpp in Sources */,
 				DF83E2122639FC74000825EF /* Float16ToFloat32.cpp in Sources */,
+				DC6ACE37ED674930CF7302D9 /* FoldConstantSwitch.cpp in Sources */,
 				DF83E26D2639FD33000825EF /* FoldExpressions.cpp in Sources */,
 				DF83E2E52639FE17000825EF /* format_map_autogen.cpp in Sources */,
 				DF83E38D2639FED4000825EF /* Format_table_autogen.cpp in Sources */,
@@ -10576,6 +10599,7 @@
 				7BD3D22A2FCDB8A300C386DC /* CubeMapTextureTest.cpp in Sources */,
 				7BD3D22B2FCDB8A300C386DC /* DebugMarkerTest.cpp in Sources */,
 				7BD3D22C2FCDB8A300C386DC /* DebugTest.cpp in Sources */,
+				C804E96922B0BAAA42FBA28B /* DeleteBuffersTest.cpp in Sources */,
 				7BD3D22D2FCDB8A300C386DC /* DepthStencilFormatsTest.cpp in Sources */,
 				7BD3D22E2FCDB8A300C386DC /* DepthStencilTest.cpp in Sources */,
 				7BD3D22F2FCDB8A300C386DC /* DepthWriteTest.cpp in Sources */,
@@ -10780,6 +10804,7 @@
 				7BFAF51E2DE59DA000327F7F /* CubeMapTextureTest.cpp in Sources */,
 				7BFAF53E2DE59DB800327F7F /* DebugMarkerTest.cpp in Sources */,
 				7BFAF53F2DE59DB800327F7F /* DebugTest.cpp in Sources */,
+				D59D4EB48664844AFAC7447B /* DeleteBuffersTest.cpp in Sources */,
 				7BFAF5362DE59DB800327F7F /* DepthStencilFormatsTest.cpp in Sources */,
 				7BFAF5352DE59DB800327F7F /* DepthStencilTest.cpp in Sources */,
 				7BFAF53C2DE59DB800327F7F /* DepthWriteTest.cpp in Sources */,
@@ -10989,6 +11014,7 @@
 				BC339118044EC79C7484C9EE /* EmulateMutableFunctionParams.cpp in Sources */,
 				7B8EC8462DF2E5FC00105EB6 /* EnsureLoopForwardProgress.cpp in Sources */,
 				7BF555422C81F198002B101E /* entry_points_enum_autogen.cpp in Sources */,
+				4D04F39F4EACFB111837CAF2 /* ExpandFragmentOutputsToVec4.cpp in Sources */,
 				7BF5556A2C81F198002B101E /* ExtensionBehavior.cpp in Sources */,
 				7BFAF9172DE6F85B00327F7F /* ExtensionGLSL.cpp in Sources */,
 				7BF555602C81F198002B101E /* FindFunction.cpp in Sources */,
@@ -10997,6 +11023,7 @@
 				7BF555172C81F198002B101E /* FixTypeConstructors.cpp in Sources */,
 				7BF555532C81F198002B101E /* FlagStd140Structs.cpp in Sources */,
 				7BF555412C81F198002B101E /* Float16ToFloat32.cpp in Sources */,
+				8E838D562B2996D3AD654E5D /* FoldConstantSwitch.cpp in Sources */,
 				7BF555742C81F198002B101E /* FoldExpressions.cpp in Sources */,
 				7BF555012C81F198002B101E /* FunctionLookup.cpp in Sources */,
 				D8884543A4D028E7F2518ED5 /* GatherDefaultUniforms.cpp in Sources */,
@@ -11087,6 +11114,7 @@
 				7B62E9E02DA91F0900793212 /* ScalarizeVecAndMatConstructorArgs.cpp in Sources */,
 				7BF5557F2C81F198002B101E /* SeparateCompoundExpressions.cpp in Sources */,
 				7BF555642C81F198002B101E /* SeparateDeclarations.cpp in Sources */,
+				6DD84D6FA01F04A45F0B2F5A /* sha1.cc in Sources */,
 				7BF554F42C81F198002B101E /* ShaderLang.cpp in Sources */,
 				7BF5552C2C81F198002B101E /* ShaderVars.cpp in Sources */,
 				7BF555432C81F198002B101E /* SimplifyLoopConditions.cpp in Sources */,

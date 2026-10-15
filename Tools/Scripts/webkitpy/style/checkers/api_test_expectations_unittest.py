@@ -87,6 +87,11 @@ class ShouldLogWarningTest(unittest.TestCase):
         files = {self.filename: None}
         self.assertTrue(APITestExpectationsChecker._should_log_warning(warning, files, self.cwd, self.host))
 
+    def test_deletion_only_file_is_skipped(self):
+        warning = _Warning(self.filename, 5, message='x')
+        files = {self.filename: []}
+        self.assertFalse(APITestExpectationsChecker._should_log_warning(warning, files, self.cwd, self.host))
+
 
 class LintTestExpectationsTest(unittest.TestCase):
     def setUp(self):

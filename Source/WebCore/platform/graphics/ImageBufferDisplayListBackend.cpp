@@ -46,7 +46,7 @@ std::unique_ptr<ImageBufferDisplayListBackend> ImageBufferDisplayListBackend::cr
 ImageBufferDisplayListBackend::ImageBufferDisplayListBackend(const ImageBufferParameters& parameters, ControlFactory& controlFactory)
     : ImageBufferBackend(parameters)
     , m_controlFactory(controlFactory)
-    , m_drawingContext(FloatRect { { }, parameters.backendSize() })
+    , m_drawingContext(DisplayList::RecorderImpl::create(FloatRect { { }, parameters.backendSize() }))
 {
 }
 
@@ -62,7 +62,7 @@ RefPtr<NativeImage> ImageBufferDisplayListBackend::copyNativeImage()
         return nullptr;
 
     auto& context = buffer->context();
-    context.drawDisplayList(m_drawingContext.copyDisplayList(), m_controlFactory);
+    context.drawDisplayList(m_drawingContext->copyDisplayList(), m_controlFactory);
 
     return ImageBuffer::sinkIntoNativeImage(WTF::move(buffer));
 }
@@ -74,7 +74,7 @@ RefPtr<SharedBuffer> ImageBufferDisplayListBackend::sinkIntoPDFDocument()
         return nullptr;
 
     auto& context = buffer->context();
-    context.drawDisplayList(m_drawingContext.copyDisplayList(), m_controlFactory);
+    context.drawDisplayList(m_drawingContext->copyDisplayList(), m_controlFactory);
 
     return ImageBuffer::sinkIntoPDFDocument(WTF::move(buffer));
 }

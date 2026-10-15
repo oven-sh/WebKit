@@ -25,6 +25,7 @@ additional_forward_declaration: namespace WebCore { using BackForwardFrameItemId
 additional_forward_declaration: namespace WebCore { using BackForwardItemIdentifierID = ObjectIdentifier<BackForwardItemIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using DOMCacheIdentifierID = AtomicObjectIdentifier<DOMCacheIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using MediaSessionIdentifier = ObjectIdentifier<MediaSessionIdentifierType>; }
+additional_forward_declaration: namespace WebCore { using NavigationIdentifierID = ObjectIdentifier<NavigationIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using OpaqueOriginIdentifier = AtomicObjectIdentifier<OpaqueOriginIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using PageIdentifier = ObjectIdentifier<PageIdentifierType>; }
 additional_forward_declaration: namespace WebCore { using PlatformLayerIdentifierID = ObjectIdentifier<PlatformLayerIdentifierType>; }
@@ -49,6 +50,11 @@ header: <WebCore/ProcessQualified.h>
 
 [Alias=class ProcessQualified<DOMCacheIdentifierID>, AdditionalEncoder=StreamConnectionEncoder, CustomHeader] alias WebCore::DOMCacheIdentifier {
     WebCore::DOMCacheIdentifierID object();
+    WebCore::ProcessIdentifier processIdentifier();
+};
+
+[Alias=class ProcessQualified<NavigationIdentifierID>, AdditionalEncoder=StreamConnectionEncoder, CustomHeader] alias WebCore::NavigationIdentifier {
+    WebCore::NavigationIdentifierID object();
     WebCore::ProcessIdentifier processIdentifier();
 };
 
@@ -102,10 +108,14 @@ header: <WebCore/ProcessQualified.h>
     WebCore::ProcessIdentifier processIdentifier();
 };
 
-[Alias=class ProcessQualified<WTF::UUID>, CustomHeader] alias WebCore::ScriptExecutionContextIdentifier {
+[Alias=class ProcessQualified<WTF::UUID>, AdditionalEncoder=StreamConnectionEncoder, CustomHeader] alias WebCore::ScriptExecutionContextIdentifier {
     WTF::UUID object();
     WebCore::ProcessIdentifier processIdentifier();
 };
+
+header: "RemoteSnapshotIdentifier.h"
+# A ProcessQualified<WTF::UUID>, whose coder is declared as ScriptExecutionContextIdentifier.
+using WebKit::RemoteSnapshotIdentifier = WebCore::ScriptExecutionContextIdentifier;
 
 [Alias=class WebCore::ProcessQualified<TransactionIdentifier>, CustomHeader] alias WebKit::TransactionID {
     WebKit::TransactionIdentifier object();

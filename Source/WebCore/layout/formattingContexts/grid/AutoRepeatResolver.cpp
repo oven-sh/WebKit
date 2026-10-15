@@ -26,7 +26,7 @@
 #include "config.h"
 #include "AutoRepeatResolver.h"
 
-#include "AxisConstraint.h"
+#include "GridLayoutConstraints.h"
 #include "StyleGridTemplateList.h"
 #include "StyleGridTrackBreadth.h"
 #include "StyleGridTrackSize.h"
@@ -104,25 +104,23 @@ static size_t repetitionsToFill(const Vector<Style::GridTrackSize>& autoRepeatTr
 }
 
 // https://drafts.csswg.org/css-grid-1/#auto-repeat
-size_t AutoRepeatResolver::resolveRepetitions(const Style::GridTemplateList& gridTemplateList, const AxisConstraint& axisConstraint, LayoutUnit usedGap, Style::ZoomFactor zoom)
+size_t AutoRepeatResolver::resolveRepetitions(const Style::GridTemplateList& gridTemplateList, const AutoRepeatConstraint& autoRepeatConstraint, LayoutUnit usedGap, Style::ZoomFactor zoom)
 {
     auto& gridTemplateListSizes = gridTemplateList.sizes;
     auto& autoRepeatSizes = gridTemplateList.autoRepeatSizes;
     // "if the grid container has a definite preferred size or maximum size in the relevant axis, then the
     // number of repetitions is the largest possible positive integer that does not cause the grid to overflow
     // the content box of its grid container taking gap into account"
-    if (axisConstraint.scenario() == AxisConstraint::FreeSpaceScenario::Definite) {
-        auto containerSizeForAutoRepeat = axisConstraint.availableSpace();
-        return repetitionsToFill(autoRepeatSizes, containerSizeForAutoRepeat, nonRepeatedTracksSpace(gridTemplateListSizes, containerSizeForAutoRepeat, usedGap, zoom), usedGap, RepeatStrategy::LargestWithoutOverflow, zoom);
-    }
-    if (auto containerMaximumSize = axisConstraint.containerMaximumSize()) {
+    if (auto containerPreferredSize = autoRepeatConstraint.preferredSize)
+        return repetitionsToFill(autoRepeatSizes, *containerPreferredSize, nonRepeatedTracksSpace(gridTemplateListSizes, *containerPreferredSize, usedGap, zoom), usedGap, RepeatStrategy::LargestWithoutOverflow, zoom);
+    if (auto containerMaximumSize = autoRepeatConstraint.maximumSize) {
         // The minimum size wins when it is larger than the maximum size.
-        auto containerSizeForAutoRepeat = std::max(*containerMaximumSize, axisConstraint.containerMinimumSize().value_or(0_lu));
+        auto containerSizeForAutoRepeat = std::max(*containerMaximumSize, autoRepeatConstraint.minimumSize.value_or(0_lu));
         return repetitionsToFill(autoRepeatSizes, containerSizeForAutoRepeat, nonRepeatedTracksSpace(gridTemplateListSizes, containerSizeForAutoRepeat, usedGap, zoom), usedGap, RepeatStrategy::LargestWithoutOverflow, zoom);
     }
     // "Otherwise, if the grid container has a definite minimum size in the relevant axis, the number of
     // repetitions is the smallest possible positive integer that fulfills that minimum requirement."
-    if (auto containerMinimumSize = axisConstraint.containerMinimumSize())
+    if (auto containerMinimumSize = autoRepeatConstraint.minimumSize)
         return repetitionsToFill(autoRepeatSizes, *containerMinimumSize, nonRepeatedTracksSpace(gridTemplateListSizes, *containerMinimumSize, usedGap, zoom), usedGap, RepeatStrategy::SmallestFulfillingSize, zoom);
     // "Otherwise, the specified track list repeats only once."
     return 1;

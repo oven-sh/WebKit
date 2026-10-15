@@ -59,10 +59,10 @@ class ExecutionCounter {
     WTF_MAKE_NONMOVABLE(ExecutionCounter);
 public:
     ExecutionCounter();
-    void NODELETE forceSlowPathConcurrently(); // If you use this, checkIfThresholdCrossedAndSet() may still return false.
+    void LEGACY_NODELETE forceSlowPathConcurrently(); // If you use this, checkIfThresholdCrossedAndSet() may still return false.
     bool checkIfThresholdCrossedAndSet(CodeBlock*, double startupDeferralScale = 1); // See VM::startupJITDeferralScale(); when != 1 the counter is re-armed to re-check after at most one unscaled period.
     void setNewThreshold(int32_t threshold, CodeBlock* = nullptr);
-    void NODELETE deferIndefinitely();
+    void LEGACY_NODELETE deferIndefinitely();
     double count() const { return static_cast<double>(m_totalCount) + m_counter; }
     void dump(PrintStream&) const;
 
@@ -78,7 +78,7 @@ public:
 private:
     bool hasCrossedThreshold(CodeBlock*, double startupDeferralScale) const;
     bool setThreshold(CodeBlock*, double startupDeferralScale = 1);
-    void NODELETE reset();
+    void LEGACY_NODELETE reset();
 
 public:
     // NB. These are intentionally public because it will be modified from machine code.

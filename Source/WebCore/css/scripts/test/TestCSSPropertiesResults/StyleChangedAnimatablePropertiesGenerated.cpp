@@ -12,8 +12,8 @@ class ChangedAnimatablePropertiesFunctions final {
 public:
     static void collect_coordinateValueList_aggregates(const auto&, const auto&, CSSPropertiesBitSet& changingProperties)
     {
-        changingProperties.m_properties.set(CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete);
-        changingProperties.m_properties.set(CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo);
+        changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete));
+        changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo));
     }
 
     static void collect_coordinateValueList(const auto& a, const auto& b, CSSPropertiesBitSet& changingProperties)
@@ -25,22 +25,22 @@ public:
     static void collect_level1_level2(const auto& a, const auto& b, CSSPropertiesBitSet& changingProperties)
     {
         if (a.testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin != b.testRenderStyleHasExplicitlySetPolicyAllAuthorOrigin)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin));
         if (a.testRenderStyleHasExplicitlySetPolicyAllBorderRadius != b.testRenderStyleHasExplicitlySetPolicyAllBorderRadius)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius));
         if (a.testRenderStyleHasExplicitlySetPolicyValueOnly != b.testRenderStyleHasExplicitlySetPolicyValueOnly)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly));
         if (a.testRenderStyleStorageTwoLevelEnum != b.testRenderStyleStorageTwoLevelEnum)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageTwoLevelEnum);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageTwoLevelEnum));
         if (a.testRenderStyleStorageTwoLevelRaw != b.testRenderStyleStorageTwoLevelRaw)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageTwoLevelRaw);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageTwoLevelRaw));
         if (a.testRenderStyleStorageTwoLevelReference != b.testRenderStyleStorageTwoLevelReference)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageTwoLevelReference);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageTwoLevelReference));
         if (a.testRenderStyleStorageTwoLevelValue != b.testRenderStyleStorageTwoLevelValue)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageTwoLevelValue);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageTwoLevelValue));
 
         if (a.visitedLinkTestColorPropertyWithVisitedLinkSupport != b.visitedLinkTestColorPropertyWithVisitedLinkSupport)
-            changingProperties.m_properties.set(CSSPropertyTestColorPropertyWithVisitedLinkSupport);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestColorPropertyWithVisitedLinkSupport));
     }
 
     static void collect_level1(const auto& a, const auto& b, CSSPropertiesBitSet& changingProperties)
@@ -49,25 +49,25 @@ public:
             collect_level1_level2(*a.level2, *b.level2, changingProperties);
 
         if (a.testColor != b.testColor)
-            changingProperties.m_properties.set(CSSPropertyTestColor);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestColor));
         if (a.testColorAllowsTypesAbsolute != b.testColorAllowsTypesAbsolute)
-            changingProperties.m_properties.set(CSSPropertyTestColorAllowsTypesAbsolute);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestColorAllowsTypesAbsolute));
         if (a.testColorPropertyWithVisitedLinkSupport != b.testColorPropertyWithVisitedLinkSupport)
-            changingProperties.m_properties.set(CSSPropertyTestColorPropertyWithVisitedLinkSupport);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestColorPropertyWithVisitedLinkSupport));
         if (a.testLogicalPropertyGroupPhysicalHorizontal != b.testLogicalPropertyGroupPhysicalHorizontal)
-            changingProperties.m_properties.set(CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal));
         if (a.testLogicalPropertyGroupPhysicalVertical != b.testLogicalPropertyGroupPhysicalVertical)
-            changingProperties.m_properties.set(CSSPropertyTestLogicalPropertyGroupPhysicalVertical);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical));
         if (a.testRenderStyleGetterNodeleteFalse != b.testRenderStyleGetterNodeleteFalse)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleGetterNodeleteFalse);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleGetterNodeleteFalse));
         if (a.testRenderStyleStorageOneLevelEnum != b.testRenderStyleStorageOneLevelEnum)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageOneLevelEnum);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageOneLevelEnum));
         if (a.testRenderStyleStorageOneLevelRaw != b.testRenderStyleStorageOneLevelRaw)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageOneLevelRaw);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageOneLevelRaw));
         if (a.testRenderStyleStorageOneLevelReference != b.testRenderStyleStorageOneLevelReference)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageOneLevelReference);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageOneLevelReference));
         if (a.testRenderStyleStorageOneLevelValue != b.testRenderStyleStorageOneLevelValue)
-            changingProperties.m_properties.set(CSSPropertyTestRenderStyleStorageOneLevelValue);
+            changingProperties.m_properties.set(std::to_underlying(CSSPropertyID::TestRenderStyleStorageOneLevelValue));
     }
 
     static void collect(const auto& a, const auto& b, CSSPropertiesBitSet& changingProperties)

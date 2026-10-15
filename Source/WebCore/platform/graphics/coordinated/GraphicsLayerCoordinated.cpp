@@ -828,13 +828,13 @@ void GraphicsLayerCoordinated::setNeedsUpdateLayerTransform()
 {
     m_needsUpdateLayerTransform = true;
 
-    if (auto maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+    if (RefPtr maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
         maskLayer->setNeedsUpdateLayerTransform();
-    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
+    if (RefPtr replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
         replicaLayer->setNeedsUpdateLayerTransform();
 
     for (auto& child : m_children)
-        downcast<GraphicsLayerCoordinated>(child)->setNeedsUpdateLayerTransform();
+        downcast<GraphicsLayerCoordinated>(child).setNeedsUpdateLayerTransform();
 }
 
 void GraphicsLayerCoordinated::flushCompositingState(const FloatRect& visibleRect)
@@ -1239,7 +1239,7 @@ void GraphicsLayerCoordinated::commitLayerChanges(CommitState& commitState, floa
 
     if (m_pendingChanges.contains(Change::Children)) {
         m_platformLayer->setChildren(m_children.map<Vector<Ref<CoordinatedPlatformLayer>>>([](const auto& child) {
-            return Ref { downcast<GraphicsLayerCoordinated>(child)->coordinatedPlatformLayer() };
+            return Ref { downcast<GraphicsLayerCoordinated>(child).coordinatedPlatformLayer() };
         }));
     }
 
@@ -1297,9 +1297,9 @@ void GraphicsLayerCoordinated::recursiveCommitChanges(CommitState& commitState, 
     if (runningTransformAnimation)
         childCommitState.ancestorHasTransformAnimation = true;
 
-    if (auto maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+    if (RefPtr maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
         maskLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
-    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
+    if (RefPtr replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
         replicaLayer->commitLayerChanges(childCommitState, pageScaleFactor, baseRelativePosition, affectedByTransformAnimation);
 
     bool hasDescendantsWithPendingTilesCreation = false;
@@ -1322,9 +1322,9 @@ void GraphicsLayerCoordinated::recursiveCommitChanges(CommitState& commitState, 
 bool GraphicsLayerCoordinated::updateBackingStoresIfNeeded()
 {
     bool hasPendingTilesCreation = false;
-    if (auto maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
+    if (RefPtr maskLayer = downcast<GraphicsLayerCoordinated>(m_maskLayer))
         hasPendingTilesCreation |= maskLayer->updateBackingStoreIfNeeded();
-    if (auto replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
+    if (RefPtr replicaLayer = downcast<GraphicsLayerCoordinated>(m_replicaLayer))
         hasPendingTilesCreation |= replicaLayer->updateBackingStoreIfNeeded();
 
     hasPendingTilesCreation |= updateBackingStoreIfNeeded();

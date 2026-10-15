@@ -21,7 +21,8 @@
 // ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
 // THE POSSIBILITY OF SUCH DAMAGE.
 
-// The Swift counterparts of SiteIsolationTestUtilities.h, for site isolation tests written in Swift.
+// The Swift counterparts of SiteIsolationTestUtilities.h and the helpers in SiteIsolation.mm, for site isolation tests
+// written in Swift.
 
 public import CoreGraphics
 import Foundation
@@ -70,7 +71,32 @@ public func siteIsolatedWebViewAndDelegate(
     configuration: WKWebViewConfiguration,
     frame: CGRect = .zero
 ) -> (webView: TestWKWebView, navigationDelegate: TestNavigationDelegate) {
-    configuration.preferences._siteIsolationEnabled = true
+    webViewAndDelegate(configuration: configuration, frame: frame, siteIsolationEnabled: true)
+}
+
+/// Creates a web view with site isolation enabled or disabled, and a navigation delegate that trusts any server
+/// certificate.
+///
+/// Use this to run the same test with and without site isolation. A test that only needs site isolation can use
+/// ``siteIsolatedWebViewAndDelegate(configuration:frame:)`` instead.
+///
+/// A web view only holds its navigation delegate weakly, so keep the delegate alive for as long as the web view
+/// loads anything.
+///
+/// - Parameters:
+///   - configuration: The configuration for the web view, such as one created with
+///     ``WebKit/WKWebViewConfiguration/init(httpsProxyFor:)``. This sets whether site isolation is enabled in its
+///     preferences.
+///   - frame: The frame of the web view.
+///   - siteIsolationEnabled: Whether to enable site isolation.
+/// - Returns: The web view and its navigation delegate.
+@MainActor
+public func webViewAndDelegate(
+    configuration: WKWebViewConfiguration,
+    frame: CGRect = .zero,
+    siteIsolationEnabled: Bool
+) -> (webView: TestWKWebView, navigationDelegate: TestNavigationDelegate) {
+    configuration.preferences._siteIsolationEnabled = siteIsolationEnabled
 
     let navigationDelegate = TestNavigationDelegate()
     navigationDelegate.allowAnyTLSCertificate()
@@ -170,3 +196,202 @@ extension WKWebView {
         }
     }
 }
+
+// MARK: Frame trees
+
+/// A frame and its descendants, as one web process sees them.
+///
+/// With site isolation, each web process that hosts part of a page has its own frame tree for the page. A frame is
+/// local in the process that hosts its document, and remote in every other process. Compare the trees of every process
+/// with the trees a test expects:
+///
+/// ```swift
+/// #expect(await webView.frameTreesInProcesses() == [
+///     .local("https://example.com", children: [.remote]),
+///     .remote(children: [.local("https://webkit.org")]),
+/// ])
+/// ```
+public struct FrameTree: Sendable, Equatable, CustomStringConvertible {
+    /// The origin of the frame, such as `https://example.com`, or `nil` if the frame is remote.
+    public let origin: String?
+
+    /// The child frames of the frame.
+    ///
+    /// Their order doesn't matter when comparing trees.
+    public let children: [FrameTree]
+
+    /// The identifier of the process the tree comes from, or `nil` for a tree that a test expects.
+    ///
+    /// Comparing trees ignores this.
+    public let processIdentifier: pid_t?
+
+    /// A remote frame without child frames.
+    public static let remote = FrameTree.remote(children: [])
+
+    private init(origin: String?, children: [FrameTree], processIdentifier: pid_t?) {
+        self.origin = origin
+        self.children = children
+        self.processIdentifier = processIdentifier
+    }
+
+    @MainActor
+    fileprivate init(_ node: _WKFrameTreeNode) {
+        // _WKFrameTreeNode.h has no nullability annotations, but every node has frame info.
+        let info: WKFrameInfo = node.info
+
+        let origin: String?
+        if info._isLocalFrame {
+            let securityOrigin = info.securityOrigin
+            let port = securityOrigin.port != 0 ? ":\(securityOrigin.port)" : ""
+            origin = "\(securityOrigin.protocol)://\(securityOrigin.host)\(port)"
+        } else {
+            origin = nil
+        }
+
+        self.init(origin: origin, children: node.childFrames.map(FrameTree.init), processIdentifier: info._processIdentifier)
+    }
+
+    /// Creates a frame that is local to the process.
+    ///
+    /// - Parameters:
+    ///   - origin: The origin of the frame, such as `https://example.com`.
+    ///   - children: The child frames of the frame.
+    /// - Returns: The frame.
+    public static func local(_ origin: String, children: [FrameTree] = []) -> FrameTree {
+        FrameTree(origin: origin, children: children, processIdentifier: nil)
+    }
+
+    /// Creates a frame that is remote in the process, because another process hosts its document.
+    ///
+    /// - Parameter children: The child frames of the frame.
+    /// - Returns: The frame.
+    public static func remote(children: [FrameTree]) -> FrameTree {
+        FrameTree(origin: nil, children: children, processIdentifier: nil)
+    }
+
+    // Compare the children as multisets rather than sets: their order doesn't matter, but sibling frames are often
+    // identical, such as the remote frames for two iframes from the same site.
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public static func == (lhs: FrameTree, rhs: FrameTree) -> Bool {
+        lhs.origin == rhs.origin && lhs.children.hasSameElementsInAnyOrder(as: rhs.children)
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public var description: String {
+        var result = origin ?? "remote"
+        if let processIdentifier {
+            result += " (pid \(processIdentifier))"
+        }
+        if !children.isEmpty {
+            result += " { \(children.map(\.description).joined(separator: ", ")) }"
+        }
+        return result
+    }
+
+    fileprivate func containsLocalFrame(withOrigin origin: String) -> Bool {
+        self.origin == origin || children.contains { $0.containsLocalFrame(withOrigin: origin) }
+    }
+}
+
+/// The frame trees of a page in each of its web processes.
+///
+/// Their order doesn't matter when comparing them, so a test can write them in any order.
+public struct FrameTreesInProcesses: Sendable, Equatable, ExpressibleByArrayLiteral, CustomStringConvertible {
+    /// The frame tree in each process.
+    public let trees: [FrameTree]
+
+    fileprivate init(_ trees: [FrameTree]) {
+        self.trees = trees
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public init(arrayLiteral trees: FrameTree...) {
+        self.init(trees)
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public static func == (lhs: FrameTreesInProcesses, rhs: FrameTreesInProcesses) -> Bool {
+        lhs.trees.hasSameElementsInAnyOrder(as: rhs.trees)
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public var description: String {
+        "[\(trees.map(\.description).joined(separator: "; "))]"
+    }
+
+    /// Returns the identifier of the process that hosts frames with an origin.
+    ///
+    /// - Parameter origin: An origin, such as `https://webkit.org`.
+    /// - Returns: The identifier of the process, or `nil` if no process has a local frame with the origin.
+    public func processIdentifier(hosting origin: String) -> pid_t? {
+        trees.first { $0.containsLocalFrame(withOrigin: origin) }?.processIdentifier
+    }
+}
+
+extension WKWebView {
+    /// Gets the frame tree of the page in each of its web processes.
+    ///
+    /// - Returns: The frame trees, starting with the one from the process that hosts the main frame.
+    public func frameTreesInProcesses() async -> FrameTreesInProcesses {
+        let trees: Set<_WKFrameTreeNode>? = await _frameTrees()
+        // Put the main frame's process first, so that the trees read like the expected trees in most tests.
+        let mainFrameProcessFirst = (trees ?? []).map(FrameTree.init).sorted { $0.origin != nil && $1.origin == nil }
+        return FrameTreesInProcesses(mainFrameProcessFirst)
+    }
+}
+
+// MARK: Processes
+
+/// Returns whether a process is running.
+///
+/// - Parameter processIdentifier: The identifier of the process, such as one from ``FrameTree/processIdentifier``.
+/// - Returns: Whether the process is running.
+public func isProcessRunning(_ processIdentifier: pid_t) -> Bool {
+    kill(processIdentifier, 0) == 0
+}
+
+// MARK: Alerts
+
+/// A UI delegate that records the message of each JavaScript alert, so that a test can wait for them in order.
+///
+/// The recorder keeps alerts that arrive before a test waits for them, so a test can start a load or script that shows
+/// an alert, and then wait for it. A web view only holds its UI delegate weakly, so keep the recorder alive for as long
+/// as the web view can show alerts.
+///
+/// It can also present the dialogs of a `WebPage`.
+@MainActor
+public final class AlertRecorder: NSObject, WKUIDelegate {
+    private var messages: [String] = []
+
+    /// Waits for the next alert, if it hasn't already been shown.
+    ///
+    /// - Parameter timeout: How long to wait for the alert.
+    /// - Returns: The message of the alert.
+    /// - Throws: ``ConditionTimedOut`` if no alert is shown before the timeout.
+    public func nextAlert(timeout: Duration = .seconds(10)) async throws -> String {
+        try await waitForCondition("a JavaScript alert", timeout: timeout) {
+            !messages.isEmpty
+        }
+        return messages.removeFirst()
+    }
+
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public func webView(
+        _ webView: WKWebView,
+        runJavaScriptAlertPanelWithMessage message: String,
+        initiatedByFrame frame: WKFrameInfo
+    ) async {
+        messages.append(message)
+    }
+}
+
+#if ENABLE_SWIFTUI
+
+extension AlertRecorder: WebPage.DialogPresenting {
+    // swift-format-ignore: AllPublicDeclarationsHaveDocumentation
+    public func handleJavaScriptAlert(message: String, initiatedBy frame: WebPage.FrameInfo) async {
+        messages.append(message)
+    }
+}
+
+#endif // ENABLE_SWIFTUI

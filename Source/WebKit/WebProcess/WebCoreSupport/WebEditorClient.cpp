@@ -66,6 +66,10 @@
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/StringView.h>
 
+#if PLATFORM(COCOA)
+#include <WebCore/AttributedString.h>
+#endif
+
 namespace WebKit {
 using namespace WebCore;
 using namespace HTMLNames;
@@ -550,7 +554,7 @@ static bool getActionTypeForKeyEvent(KeyboardEvent* event, WKInputFieldActionTyp
     return true;
 }
 
-static API::InjectedBundle::FormClient::InputFieldAction NODELETE toInputFieldAction(WKInputFieldActionType action)
+static API::InjectedBundle::FormClient::InputFieldAction LEGACY_NODELETE toInputFieldAction(WKInputFieldActionType action)
 {
     switch (action) {
     case WKInputFieldActionTypeMoveUp:

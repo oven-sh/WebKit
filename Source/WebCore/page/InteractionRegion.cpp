@@ -60,6 +60,7 @@
 #include "PseudoClassChangeInvalidation.h"
 #include "RenderAncestorIterator.h"
 #include "RenderBoxInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
 #include "RenderLayerBacking.h"
@@ -86,7 +87,7 @@ InteractionRegion::~InteractionRegion() = default;
 
 class InteractionRegionPathCache {
 public:
-    static InteractionRegionPathCache& NODELETE singleton();
+    static InteractionRegionPathCache& LEGACY_NODELETE singleton();
 
     std::optional<Path> get(const Image&, const FloatSize&);
     void add(const Image&, const FloatSize&, Path);
@@ -131,7 +132,7 @@ void InteractionRegion::clearCache()
     InteractionRegionPathCache::singleton().clear();
 }
 
-static bool NODELETE hasInteractiveCursorType(Element& element)
+static bool LEGACY_NODELETE hasInteractiveCursorType(Element& element)
 {
     auto* renderer = element.renderer();
     auto* style = renderer ? &renderer->style() : nullptr;
@@ -146,7 +147,7 @@ static bool NODELETE hasInteractiveCursorType(Element& element)
         || cursorType == CursorType::VerticalText;
 }
 
-static bool NODELETE shouldAllowElement(const Element& element)
+static bool LEGACY_NODELETE shouldAllowElement(const Element& element)
 {
     if (is<HTMLFieldSetElement>(element))
         return false;
@@ -202,7 +203,8 @@ static bool elementMatchesHoverRules(Element& element)
 
         for (auto& invalidationRuleSet : *invalidationRuleSets) {
             element.document().userActionElements().setHovered(element, invalidationRuleSet.isNegation == Style::IsNegation::No);
-            Style::ElementRuleCollector ruleCollector(element, *invalidationRuleSet.ruleSet, nullptr, SelectorChecker::Mode::StyleInvalidation);
+            Ref ruleSet = *invalidationRuleSet.ruleSet;
+            Style::ElementRuleCollector ruleCollector(element, ruleSet, nullptr, SelectorChecker::Mode::StyleInvalidation);
             if (ruleCollector.matchesAnyAuthorRules()) {
                 foundHoverRules = true;
                 break;
@@ -242,7 +244,7 @@ static bool shouldAllowNonInteractiveCursorForElement(const Element& element)
     return false;
 }
 
-static bool NODELETE shouldGetOcclusion(const RenderElement& renderer)
+static bool LEGACY_NODELETE shouldGetOcclusion(const RenderElement& renderer)
 {
     if (auto* renderLayerModelObject = dynamicDowncast<RenderBox>(renderer)) {
         if (renderLayerModelObject->hasLayer() && renderLayerModelObject->layer()->isComposited())
@@ -267,7 +269,7 @@ static bool hasTransparentContainerStyle(const Style::ComputedStyle& style)
         && !style.hasExplicitlySetBorderRadius()
         // No visible borders or borders that do not create a complete box.
         && (!style.border().hasVisibleBorder()
-            || !(style.usedBorderTopWidth() && style.usedBorderRightWidth() && style.usedBorderBottomWidth() && style.usedBorderLeftWidth()));
+            || !(Style::effectiveBorderWidths(style).top() && Style::effectiveBorderWidths(style).right() && Style::effectiveBorderWidths(style).bottom() && Style::effectiveBorderWidths(style).left()));
 }
 
 static bool canTweakShapeForStyle(const Style::ComputedStyle& style)
@@ -462,7 +464,8 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
         return std::nullopt;
     }
 
-    auto viewportSize = FloatSize(pageView->baseLayoutViewportSize());
+    // FIXME: Remove suppression once rdar://189998444 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST auto viewportSize = FloatSize(pageView->baseLayoutViewportSize());
     auto viewportArea = viewportSize.area();
     bool isTooBigForInteraction = bounds.area() > viewportArea / 3;
     bool isTooBigForOcclusion = bounds.area() > viewportArea * 3;
@@ -511,7 +514,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
     float minimumContentHintArea = 200 * 200;
     bool needsContentHint = bounds.area() > minimumContentHintArea;
     if (needsContentHint) {
-        if (auto* renderImage = dynamicDowncast<RenderImage>(regionRenderer)) {
+        if (CheckedPtr renderImage = dynamicDowncast<RenderImage>(regionRenderer)) {
             isPhoto = [&]() -> bool {
 #if ENABLE(VIDEO)
                 if (is<RenderVideo>(renderImage))
@@ -621,7 +624,7 @@ std::optional<InteractionRegion> interactionRegionForRenderedRegion(const Render
 
         clipPath = path;
     } else if ((regionRendererBox = dynamicDowncast<RenderBox>(regionRenderer))) {
-        auto borderShape = BorderShape::shapeForBorderRect(protect(regionRendererBox->style()), regionRendererBox->borderBoxRect());
+        auto borderShape = BorderShape::shapeForBorderRect(regionRendererBox->usedStyle(), regionRendererBox->borderBoxRect());
         auto borderRadii = borderShape.radii();
         auto minRadius = borderRadii.minimumRadius();
         auto maxRadius = borderRadii.maximumRadius();

@@ -75,6 +75,7 @@ set(WEBKIT_SWIFT_EXPERIMENTAL_FEATURE_FLAGS
     "-enable-experimental-feature DebugDescriptionMacro"
     "-enable-experimental-feature ForeignReferenceTypeInheritance"
     "-enable-experimental-feature ImportCxxMembersLazily"
+    "-enable-experimental-feature SafeInteropWrappers"
     "-enable-experimental-feature SuppressedAssociatedTypes"
     "-enable-experimental-feature SuppressedAssociatedTypesWithDefaults"
 )
@@ -88,6 +89,7 @@ set(WEBKIT_SWIFT_MEMORY_SAFETY_FLAGS
 
 set(WEBKIT_SWIFT_MEMORY_SAFETY_ERROR_FLAGS
     "-Werror ForeignReferenceType"
+    "-Werror RegionIsolation"
     "-Werror StrictMemorySafety"
 )
 
@@ -111,6 +113,14 @@ set(WEBKIT_SWIFT_MACRO_FLAGS
     -disable-sandbox
 )
 
+# Mirrors -Xfrontend -disable-round-trip-debug-types in CommonBase.xcconfig's OTHER_SWIFT_FLAGS.
+# An asserts swiftc aborts in IRGenDebugInfo getMangledName on a captured mutable variable of a
+# namespaced C++ type such as IPC.Connection.
+# FIXME(rdar://189511928, rdar://189512247): remove when both are resolved.
+set(WEBKIT_SWIFT_DEBUG_INFO_FLAGS
+    "-Xfrontend -disable-round-trip-debug-types"
+)
+
 set(WEBKIT_SWIFT_CONCURRENCY_FLAGS
     "-default-isolation nonisolated"
     -strict-concurrency=complete
@@ -132,6 +142,7 @@ webkit_add_swift_options(
     ${WEBKIT_SWIFT_FATAL_DIAGNOSTIC_FLAGS}
     ${WEBKIT_SWIFT_CLANG_IMPORTER_FLAGS}
     ${WEBKIT_SWIFT_MACRO_FLAGS}
+    ${WEBKIT_SWIFT_DEBUG_INFO_FLAGS}
 )
 
 webkit_add_swift_options(
@@ -150,6 +161,10 @@ if (APPLE)
 
     webkit_add_swift_options(
         -explicit-module-build
+        # Reuse the previous build's dependency scan, revalidated against its
+        # inputs, instead of rescanning from scratch: the WebKit target's scan
+        # reads ~16K files and takes ~14 s, on every rebuild of its Swift module.
+        -incremental-dependency-scan
     )
 
     webkit_add_swift_options(

@@ -32,6 +32,7 @@
 #include "BuiltinNames.h"
 #include "BytecodeGenerator.h"
 #include "BytecodeGeneratorBaseInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSArrayIterator.h"
 #include "JSAsyncDisposableStack.h"
 #include "JSAsyncFromSyncIterator.h"
@@ -462,15 +463,17 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
     bool allDenseStrings = true;
     unsigned length = 0;
 
+    AssertNoGC assertNoGC;
+    Vector<JSValue, 16> constants;
+
     IndexingType recommendedIndexingType = ArrayWithUndecided;
     ElementNode* firstPutElement;
     for (firstPutElement = m_element; firstPutElement; firstPutElement = firstPutElement->next()) {
-        if (firstPutElement->elision() || firstPutElement->value()->isSpreadExpression())
+        if (firstPutElement->elision())
             break;
-        if (!firstPutElement->value()->isConstant())
-            hadVariableExpression = true;
-        else {
-            JSValue constant = static_cast<ConstantNode*>(firstPutElement->value())->jsValue(generator);
+        ExpressionNode* value = firstPutElement->value();
+        if (value->isConstant()) {
+            JSValue constant = static_cast<ConstantNode*>(value)->jsValue(generator);
             if (!constant) [[unlikely]]
                 hadVariableExpression = true;
             else {
@@ -479,7 +482,13 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
                     allDenseStrings = false;
                 else if (auto* impl = asString(constant)->tryGetValueImpl(); !impl || !impl->isAtom())
                     allDenseStrings = false;
+                if (!hadVariableExpression)
+                    constants.append(constant);
             }
+        } else {
+            if (value->isSpreadExpression())
+                break;
+            hadVariableExpression = true;
         }
 
         ++length;
@@ -491,23 +500,31 @@ RegisterID* ArrayNode::emitBytecode(BytecodeGenerator& generator, RegisterID* ds
         if (length && !hadVariableExpression) {
             VM& vm = generator.vm();
             recommendedIndexingType |= CopyOnWrite;
-            ASSERT(vm.heap.isDeferred()); // We run bytecode generator under a DeferGC. If we stopped doing that, we'd need to put a DeferGC here as we filled in these slots.
 
             Structure* cellButterflyStructure = allDenseStrings ? vm.cellButterflyOnlyAtomStringsStructure.get() : vm.cellButterflyStructure(recommendedIndexingType);
             auto* array = JSCellButterfly::tryCreate(generator.vm(), cellButterflyStructure, length);
             RELEASE_ASSERT(array);
 
-            unsigned index = 0;
-            for (ElementNode* element = elements; index < length; element = element->next()) {
-                ASSERT(element->value()->isConstant());
-                JSValue constant = static_cast<ConstantNode*>(element->value())->jsValue(generator);
-                ASSERT(constant);
-                if (allDenseStrings) {
-                    JSString* string = asString(constant);
+            ASSERT(elements == m_element);
+            ASSERT(constants.size() == length);
+            if (allDenseStrings) {
+                for (auto& slot : constants) {
+                    JSString* string = asString(slot);
                     StringImpl* stringImpl = const_cast<StringImpl*>(string->getValueImpl());
-                    constant = vm.atomStringToJSStringMap.ensureValue(stringImpl, [&] { return string; });
+                    slot = vm.atomStringToJSStringMap.ensureValue(stringImpl, [&] { return string; });
                 }
-                array->setIndex(generator.vm(), index++, constant);
+            }
+
+            if (hasInt32(array->indexingType())) {
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
+                memcpy(std::bit_cast<EncodedJSValue*>(array->toButterfly()->contiguous().data()), std::bit_cast<const EncodedJSValue*>(constants.span().data()), length * sizeof(EncodedJSValue));
+WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            } else if (hasContiguous(array->indexingType())) {
+                gcSafeMemcpy(std::bit_cast<EncodedJSValue*>(array->toButterfly()->contiguous().data()), std::bit_cast<const EncodedJSValue*>(constants.span().data()), length * sizeof(EncodedJSValue));
+                vm.writeBarrier(array);
+            } else {
+                for (unsigned index = 0; index < length; ++index)
+                    array->setIndex(vm, index, constants[index]);
             }
             return generator.emitNewArrayBuffer(dst, array, recommendedIndexingType);
         }
@@ -1604,7 +1621,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getPrototypeOf(BytecodeGenerat
     return generator.emitGetPrototypeOf(generator.finalDestination(dst), value.get());
 }
 
-static JSGenerator::Field NODELETE generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSGenerator::Field LEGACY_NODELETE generatorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_generatorFieldState)
@@ -1619,7 +1636,7 @@ static JSGenerator::Field NODELETE generatorInternalFieldIndex(BytecodeIntrinsic
     return JSGenerator::Field::State;
 }
 
-static JSIteratorHelper::Field NODELETE iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSIteratorHelper::Field LEGACY_NODELETE iteratorHelperInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_iteratorHelperFieldGenerator)
@@ -1630,7 +1647,7 @@ static JSIteratorHelper::Field NODELETE iteratorHelperInternalFieldIndex(Bytecod
     return JSIteratorHelper::Field::Generator;
 }
 
-static JSArrayIterator::Field NODELETE arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSArrayIterator::Field LEGACY_NODELETE arrayIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_arrayIteratorFieldIndex)
@@ -1643,7 +1660,7 @@ static JSArrayIterator::Field NODELETE arrayIteratorInternalFieldIndex(BytecodeI
     return JSArrayIterator::Field::Index;
 }
 
-static ProxyObject::Field NODELETE proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
+static ProxyObject::Field LEGACY_NODELETE proxyInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_proxyFieldTarget)
@@ -1666,7 +1683,7 @@ RegisterID* BytecodeIntrinsicNode::emit_intrinsic_getInternalField(BytecodeGener
     return generator.emitGetInternalField(generator.finalDestination(dst), base.get(), index);
 }
 
-static JSWrapForValidIterator::Field NODELETE wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSWrapForValidIterator::Field LEGACY_NODELETE wrapForValidIteratorInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_wrapForValidIteratorFieldIteratedIterator)
@@ -1677,7 +1694,7 @@ static JSWrapForValidIterator::Field NODELETE wrapForValidIteratorInternalFieldI
     return JSWrapForValidIterator::Field::IteratedNextMethod;
 }
 
-static JSDisposableStack::Field NODELETE disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSDisposableStack::Field LEGACY_NODELETE disposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_disposableStackFieldState)
@@ -1688,7 +1705,7 @@ static JSDisposableStack::Field NODELETE disposableStackInternalFieldIndex(Bytec
     return JSDisposableStack::Field::State;
 }
 
-static JSAsyncDisposableStack::Field NODELETE asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
+static JSAsyncDisposableStack::Field LEGACY_NODELETE asyncDisposableStackInternalFieldIndex(BytecodeIntrinsicNode* node)
 {
     ASSERT(node->entry().type() == BytecodeIntrinsicRegistry::Type::Emitter);
     if (node->entry().emitter() == &BytecodeIntrinsicNode::emit_intrinsic_asyncDisposableStackFieldState)
@@ -2095,7 +2112,6 @@ CREATE_INTRINSIC_FOR_BRAND_CHECK(isPromise, IsPromise)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isRegExpObject, IsRegExpObject)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isMap, IsMap)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isSet, IsSet)
-CREATE_INTRINSIC_FOR_BRAND_CHECK(isShadowRealm, IsShadowRealm)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isArrayIterator, IsArrayIterator)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isUndefinedOrNull, IsUndefinedOrNull)
 CREATE_INTRINSIC_FOR_BRAND_CHECK(isWrapForValidIterator, IsWrapForValidIterator)
@@ -3344,7 +3360,7 @@ void BinaryOpNode::emitBytecodeInConditionContext(BytecodeGenerator& generator, 
         generator.emitNodeInConditionContext(branchExpression, falseTarget, trueTarget, invert(fallThroughMode));
 }
 
-static inline bool NODELETE canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
+static inline bool LEGACY_NODELETE canFoldToBranch(OpcodeID opcodeID, ExpressionNode* branchExpression, JSValue constant)
 {
     ResultType expressionType = branchExpression->resultDescriptor();
 
@@ -4010,7 +4026,7 @@ RegisterID* ShortCircuitReadModifyResolveNode::emitBytecode(BytecodeGenerator& g
 
 // ------------------------------ AssignResolveNode -----------------------------------
 
-static InitializationMode NODELETE initializationModeForAssignmentContext(AssignmentContext assignmentContext)
+static InitializationMode LEGACY_NODELETE initializationModeForAssignmentContext(AssignmentContext assignmentContext)
 {
     switch (assignmentContext) {
     case AssignmentContext::DeclarationStatement:
@@ -4027,7 +4043,7 @@ static InitializationMode NODELETE initializationModeForAssignmentContext(Assign
     return InitializationMode::NotInitialization;
 }
 
-static inline bool NODELETE isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
+static inline bool LEGACY_NODELETE isUsingOrAwaitUsingAssignmentContext(AssignmentContext context)
 {
     return context == AssignmentContext::UsingDeclarationStatement || context == AssignmentContext::AwaitUsingDeclarationStatement;
 }
@@ -5466,7 +5482,7 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
             // and completionValue=V. Normal fallthrough keeps completionType=Normal (its initial value).
             Ref<Label> catchLabel = generator.newLabel();
             Ref<Label> tryStartLabel = generator.newEmittedLabel();
-            TryData* tryData = generator.pushTry(tryStartLabel.get(), catchLabel.get(), HandlerType::Finally);
+            TryData* tryData = generator.pushTry(tryStartLabel.get(), catchLabel.get(), HandlerType::SynthesizedCatch);
             generator.emitBodyWithUsingIfNeeded(usingDeclarationCount(), hasAwaitUsingDeclaration(),
                 [&](BytecodeGenerator& generator) {
                     emitStatementsBytecode(generator, generator.ignoredResult());
@@ -5476,10 +5492,10 @@ void FunctionNode::emitBytecode(BytecodeGenerator& generator, RegisterID*)
             Ref<Label> tryEndLabel = generator.newEmittedLabel();
             generator.popTry(tryData, tryEndLabel.get());
 
-            // Catch handler. Runtime populates completionValueRegister with the thrown value
-            // and completionTypeRegister with CompletionType::Throw.
+            // Catch handler. Runtime populates completionValueRegister with the thrown value.
             generator.emitLabel(catchLabel.get());
-            generator.emitOutOfLineCatchHandler(finallyContext.completionValueRegister(), finallyContext.completionTypeRegister(), tryData);
+            generator.emitOutOfLineCatchHandler(finallyContext.completionValueRegister(), nullptr, tryData);
+            generator.emitLoad(finallyContext.completionTypeRegister(), CompletionType::Throw);
 
             generator.popFinallyControlFlowScope();
 

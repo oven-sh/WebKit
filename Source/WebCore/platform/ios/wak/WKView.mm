@@ -51,9 +51,6 @@ void _WKViewSetWindow(WKViewRef view, WAKWindow *window)
     if (view->window == window)
         return;
 
-    [window retain];
-    [view->window release];
-
     view->window = window;
 
     // Set the window on all subviews.
@@ -80,14 +77,11 @@ static void _WKViewClearSuperview(const void *value, void *context)
 static void _WKViewDealloc(WAKObjectRef v)
 {
     WKViewRef view = (WKViewRef)v;
-    
-    if (view->subviews) {
-        CFArrayApplyFunction(view->subviews, CFRangeMake(0, CFArrayGetCount(view->subviews)), _WKViewClearSuperview, NULL);
-        CFRelease (view->subviews);
-        view->subviews = 0;
-    }
 
-    [view->window release];
+    // _WKView is allocated with calloc() and freed with free(), so its RetainPtr members are never destroyed. Clear them explicitly to avoid leaks.
+    if (RetainPtr subviews = std::exchange(view->subviews, nullptr))
+        CFArrayApplyFunction(subviews, CFRangeMake(0, CFArrayGetCount(subviews)), _WKViewClearSuperview, NULL);
+
     view->window = nil;
 }
 
@@ -412,13 +406,13 @@ void WKViewAddSubview(WKViewRef view, WKViewRef subview)
     }
     
     if (!view->subviews)
-        view->subviews = CFArrayCreateMutable(NULL, 0, &WKCollectionArrayCallBacks);
+        view->subviews = adoptCF(CFArrayCreateMutable(NULL, 0, &WKCollectionArrayCallBacks));
 
-    CFArrayAppendValue(view->subviews, subview);
+    CFArrayAppendValue(protect(view->subviews), subview);
     _WKViewSetSuperview(subview, view);
 
     // Set the window on subview and all it's children.
-    _WKViewSetWindow(subview, view->window);
+    _WKViewSetWindow(subview, protect(view->window));
 }
 
 void WKViewRemoveFromSuperview(WKViewRef view)

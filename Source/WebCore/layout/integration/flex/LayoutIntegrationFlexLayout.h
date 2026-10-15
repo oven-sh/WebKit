@@ -87,6 +87,7 @@ private:
     void prepareOutOfFlowBoxForPositionedLayout(RenderBox&);
     CheckedPtr<const RenderBox> flexItemForFirstBaseline() const;
     CheckedPtr<const RenderBox> flexItemForLastBaseline() const;
+    LayoutUnit baselineFromFlexItem(const RenderBox&, ItemPosition baselinePreference) const;
     CheckedPtr<const RenderBox> baselineFlexItemInLine(size_t lineStart, size_t itemCount, bool reverse) const;
     LayoutUnit staticMainAxisPositionForPositionedFlexItem(const RenderBox&);
     LayoutUnit staticCrossAxisPositionForPositionedFlexItem(const RenderBox&);

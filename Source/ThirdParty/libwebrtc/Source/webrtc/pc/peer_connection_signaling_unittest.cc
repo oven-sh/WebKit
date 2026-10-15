@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "absl/functional/any_invocable.h"
 #include "absl/strings/str_cat.h"
 #include "absl/strings/str_replace.h"
 #include "absl/strings/string_view.h"
@@ -119,6 +120,48 @@ class ExecuteFunctionOnCreateSessionDescriptionObserver
  private:
   bool was_called_ = false;
   std::function<void(SessionDescriptionInterface*)> function_;
+};
+
+class DeferredCreateSessionDescriptionObserver
+    : public MockCreateSessionDescriptionObserver {
+ public:
+  void OnOperationComplete(absl::AnyInvocable<void() &&> callback) override {
+    RTC_DCHECK(!operation_complete_callback_);
+    operation_complete_callback_ = std::move(callback);
+  }
+
+  bool result_delivery_pending() const {
+    return operation_complete_callback_ != nullptr;
+  }
+
+  void CompleteResultDelivery() {
+    RTC_CHECK(operation_complete_callback_);
+    std::exchange(operation_complete_callback_, nullptr)();
+  }
+
+ private:
+  absl::AnyInvocable<void() &&> operation_complete_callback_;
+};
+
+class DeferredSetLocalDescriptionObserver
+    : public FakeSetLocalDescriptionObserver {
+ public:
+  void OnOperationComplete(absl::AnyInvocable<void() &&> callback) override {
+    RTC_DCHECK(!operation_complete_callback_);
+    operation_complete_callback_ = std::move(callback);
+  }
+
+  bool result_delivery_pending() const {
+    return operation_complete_callback_ != nullptr;
+  }
+
+  void CompleteResultDelivery() {
+    RTC_CHECK(operation_complete_callback_);
+    std::exchange(operation_complete_callback_, nullptr)();
+  }
+
+ private:
+  absl::AnyInvocable<void() &&> operation_complete_callback_;
 };
 
 class PeerConnectionSignalingBaseTest : public ::testing::Test {
@@ -353,9 +396,34 @@ TEST_P(PeerConnectionSignalingStateTest, CreateOffer) {
   if (wrapper->signaling_state() != SignalingState::kClosed) {
     EXPECT_TRUE(wrapper->CreateOffer());
   } else {
-    std::string error;
-    ASSERT_FALSE(wrapper->CreateOffer(RTCOfferAnswerOptions(), &error));
-    EXPECT_EQ(error, "CreateOffer called when PeerConnection is closed.");
+    auto observer = make_ref_counted<MockCreateSessionDescriptionObserver>();
+    wrapper->pc()->CreateOffer(observer.get(), RTCOfferAnswerOptions());
+    EXPECT_TRUE(observer->called());
+    EXPECT_EQ(observer->error(),
+              "CreateOffer called when PeerConnection is closed.");
+  }
+}
+
+TEST_P(PeerConnectionSignalingStateTest,
+       CreateOfferWithWebApiSignalingStateRestriction) {
+  auto wrapper = CreatePeerConnectionUnderTest();
+  RTCOfferAnswerOptions options;
+  options.restrict_offer_to_stable_or_have_local_offer = true;
+  if (wrapper->signaling_state() == SignalingState::kStable ||
+      wrapper->signaling_state() == SignalingState::kHaveLocalOffer) {
+    EXPECT_TRUE(wrapper->CreateOffer(options));
+  } else {
+    auto observer = make_ref_counted<MockCreateSessionDescriptionObserver>();
+    wrapper->pc()->CreateOffer(observer.get(), options);
+    EXPECT_TRUE(observer->called());
+    if (wrapper->signaling_state() == SignalingState::kClosed) {
+      EXPECT_EQ(observer->error(),
+                "CreateOffer called when PeerConnection is closed.");
+    } else {
+      EXPECT_EQ(observer->error(),
+                "PeerConnection cannot create an offer in a state other than "
+                "stable or have-local-offer.");
+    }
   }
 }
 
@@ -365,11 +433,17 @@ TEST_P(PeerConnectionSignalingStateTest, CreateAnswer) {
       wrapper->signaling_state() == SignalingState::kHaveRemoteOffer) {
     EXPECT_TRUE(wrapper->CreateAnswer());
   } else {
-    std::string error;
-    ASSERT_FALSE(wrapper->CreateAnswer(RTCOfferAnswerOptions(), &error));
-    EXPECT_EQ(error,
-              "PeerConnection cannot create an answer in a state other than "
-              "have-remote-offer or have-local-pranswer.");
+    auto observer = make_ref_counted<MockCreateSessionDescriptionObserver>();
+    wrapper->pc()->CreateAnswer(observer.get(), RTCOfferAnswerOptions());
+    EXPECT_TRUE(observer->called());
+    if (wrapper->signaling_state() == SignalingState::kClosed) {
+      EXPECT_EQ(observer->error(),
+                "CreateAnswer called when PeerConnection is closed.");
+    } else {
+      EXPECT_EQ(observer->error(),
+                "PeerConnection cannot create an answer in a state other "
+                "than have-remote-offer or have-local-pranswer.");
+    }
   }
 }
 
@@ -765,6 +839,70 @@ TEST_P(PeerConnectionSignalingTest, CreateOfferBlocksSetRemoteDescription) {
   // Now that the offer has been completed, SetRemoteDescription() will have
   // been executed next in the chain.
   EXPECT_EQ(2u, callee->pc()->GetReceivers().size());
+}
+
+TEST_P(PeerConnectionSignalingTest,
+       CreateOfferWaitsForResultDeliveryBeforeStartingNextOperation) {
+  auto pc = CreatePeerConnection();
+  auto queued_observer =
+      make_ref_counted<MockCreateSessionDescriptionObserver>();
+  auto offer_observer =
+      make_ref_counted<DeferredCreateSessionDescriptionObserver>();
+
+  pc->pc()->CreateOffer(offer_observer.get(), RTCOfferAnswerOptions());
+  pc->pc()->CreateAnswer(queued_observer.get(), RTCOfferAnswerOptions());
+
+  EXPECT_TRUE(WaitUntil([&] { return offer_observer->called(); },
+                        {.timeout = TimeDelta::Millis(kWaitTimeout)}));
+  ASSERT_TRUE(offer_observer->result_delivery_pending());
+  EXPECT_FALSE(queued_observer->called());
+
+  offer_observer->CompleteResultDelivery();
+  EXPECT_TRUE(WaitUntil([&] { return queued_observer->called(); },
+                        {.timeout = TimeDelta::Millis(kWaitTimeout)}));
+}
+
+TEST_P(PeerConnectionSignalingTest,
+       CreateAnswerWaitsForResultDeliveryBeforeStartingNextOperation) {
+  auto caller = CreatePeerConnection();
+  auto callee = CreatePeerConnection();
+  ASSERT_TRUE(callee->SetRemoteDescription(caller->CreateOffer()));
+
+  auto queued_observer =
+      make_ref_counted<MockCreateSessionDescriptionObserver>();
+  auto answer_observer =
+      make_ref_counted<DeferredCreateSessionDescriptionObserver>();
+
+  callee->pc()->CreateAnswer(answer_observer.get(), RTCOfferAnswerOptions());
+  callee->pc()->CreateOffer(queued_observer.get(), RTCOfferAnswerOptions());
+
+  EXPECT_TRUE(WaitUntil([&] { return answer_observer->called(); },
+                        {.timeout = TimeDelta::Millis(kWaitTimeout)}));
+  ASSERT_TRUE(answer_observer->result_delivery_pending());
+  EXPECT_FALSE(queued_observer->called());
+
+  answer_observer->CompleteResultDelivery();
+  EXPECT_TRUE(WaitUntil([&] { return queued_observer->called(); },
+                        {.timeout = TimeDelta::Millis(kWaitTimeout)}));
+}
+
+TEST_P(PeerConnectionSignalingTest,
+       SetLocalDescriptionWaitsForResultDeliveryBeforeStartingNextOperation) {
+  auto pc = CreatePeerConnection();
+  auto observer = make_ref_counted<DeferredSetLocalDescriptionObserver>();
+  pc->pc()->SetLocalDescription(pc->CreateOffer(), observer);
+
+  ASSERT_TRUE(observer->called());
+  ASSERT_TRUE(observer->result_delivery_pending());
+
+  auto queued_observer =
+      make_ref_counted<MockCreateSessionDescriptionObserver>();
+  pc->pc()->CreateOffer(queued_observer.get(), RTCOfferAnswerOptions());
+  EXPECT_FALSE(queued_observer->called());
+
+  observer->CompleteResultDelivery();
+  EXPECT_TRUE(WaitUntil([&] { return queued_observer->called(); },
+                        {.timeout = TimeDelta::Millis(kWaitTimeout)}));
 }
 
 TEST_P(PeerConnectionSignalingTest,
@@ -1404,7 +1542,9 @@ TEST_F(PeerConnectionSignalingUnifiedPlanTest, LoopbackSdpIsPossible) {
 
 TEST_F(PeerConnectionSignalingUnifiedPlanTest,
        ParameterlessSetLocalDescriptionUsesLastCreatedOffer) {
-  auto caller = CreatePeerConnection();
+  RTCConfiguration config;
+  config.type = PeerConnectionInterface::kNone;
+  auto caller = CreatePeerConnection(config);
   caller->AddTransceiver(MediaType::AUDIO);
 
   // Create offer. This populates last_created_offer_.

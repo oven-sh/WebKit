@@ -33,11 +33,14 @@
 #include "CommonVM.h"
 #include "DocumentPage.h"
 #include "FrameCSSAgent.h"
+#include "FrameCanvasAgent.h"
 #include "FrameConsoleAgent.h"
 #include "FrameDOMAgent.h"
+#include "FrameDOMDebuggerAgent.h"
 #include "FrameDOMStorageAgent.h"
 #include "FrameDebugger.h"
 #include "FrameDebuggerAgent.h"
+#include "FrameIndexedDBAgent.h"
 #include "FrameInlines.h"
 #include "FrameRuntimeAgent.h"
 #include "FrameWorkerAgent.h"
@@ -75,6 +78,7 @@ FrameInspectorController::FrameInspectorController(LocalFrame& frame, PageInspec
     , m_injectedScriptManager(WebInjectedScriptManager::create(*this, WebInjectedScriptHost::create()))
     , m_frontendRouter(FrontendRouter::create())
     , m_backendDispatcher(BackendDispatcher::create(m_frontendRouter.copyRef(), &parentPageController.backendDispatcher()))
+    , m_overlay(makeUniqueRefWithoutRefCountedCheck<InspectorOverlay>(*this))
     , m_executionStopwatch(Stopwatch::create())
 {
     if (frame.settings().siteIsolationEnabled())
@@ -94,6 +98,42 @@ void FrameInspectorController::ref() const
 void FrameInspectorController::deref() const
 {
     m_frame->deref();
+}
+
+Page* FrameInspectorController::overlayOwnerPage() const
+{
+    return m_frame->page();
+}
+
+LocalFrame* FrameInspectorController::overlayOwnerFrame() const
+{
+    return m_frame.ptr();
+}
+
+InspectorBackendClient* FrameInspectorController::overlayOwnerBackendClient() const
+{
+    // Not cached: inspectedPageDestroyed() destroys the client before frames detach.
+    Page* page = m_frame->page();
+    return page ? page->inspectorController().inspectorBackendClient() : nullptr;
+}
+
+Vector<size_t> FrameInspectorController::overlayOwnerFlexLineStarts(const RenderObject& renderer) const
+{
+    // Deliberately does not create the DOM agent: with no agent there is nothing cached to report.
+    CheckedPtr domAgent = m_domAgent;
+    if (!domAgent)
+        return { };
+    return domAgent->flexibleBoxRendererCachedItemsAtStartOfLine(renderer);
+}
+
+void FrameInspectorController::drawHighlight(GraphicsContext& context) const
+{
+    m_overlay->paint(context);
+}
+
+bool FrameInspectorController::hasOverlayContentToDraw() const
+{
+    return m_overlay->shouldShowOverlay();
 }
 
 FrameAgentContext FrameInspectorController::frameAgentContext()
@@ -154,11 +194,20 @@ void FrameInspectorController::createLazyAgents()
         scriptProfilerAgent->installProfilingClientIfTracking(*m_debugger);
 
     auto context = frameAgentContext();
-    m_agents.append(makeUniqueRef<FrameDebuggerAgent>(context));
-    m_agents.append(makeUniqueRef<FrameDOMAgent>(context));
+    auto debuggerAgent = makeUniqueRef<FrameDebuggerAgent>(context);
+    CheckedPtr debuggerAgentPtr = debuggerAgent.ptr();
+    m_agents.append(WTF::move(debuggerAgent));
+
+    auto domAgent = makeUniqueRef<FrameDOMAgent>(context, m_overlay.get());
+    m_domAgent = domAgent.ptr();
+    m_agents.append(WTF::move(domAgent));
+
+    m_agents.append(makeUniqueRef<FrameDOMDebuggerAgent>(context, debuggerAgentPtr));
     m_agents.append(makeUniqueRef<FrameDOMStorageAgent>(context));
+    m_agents.append(makeUniqueRef<FrameIndexedDBAgent>(context));
     m_agents.append(makeUniqueRef<FrameRuntimeAgent>(context));
     m_agents.append(makeUniqueRef<FrameCSSAgent>(context));
+    m_agents.append(makeUniqueRef<FrameCanvasAgent>(context));
     m_agents.append(makeUniqueRef<FrameWorkerAgent>(context));
 }
 

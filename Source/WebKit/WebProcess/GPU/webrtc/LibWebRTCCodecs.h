@@ -98,13 +98,18 @@ public:
             FramePromise::AutoRejectProducer producer;
         };
 
-        explicit Decoder(VideoDecoderIdentifier identifier)
+        Decoder(VideoDecoderIdentifier identifier, WebCore::VideoCodecType type, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride)
             : identifier(identifier)
+            , type(type)
+            , codec(codec.isolatedCopy())
+            , isAnnexB(isAnnexB)
+            , colorSpaceOverride(WTF::move(colorSpaceOverride))
         { }
 
         VideoDecoderIdentifier identifier;
-        WebCore::VideoCodecType type;
-        String codec;
+        const WebCore::VideoCodecType type;
+        const String codec;
+        const bool isAnnexB { false };
         std::optional<WebCore::PlatformVideoColorSpace> colorSpaceOverride;
         void* decodedImageCallback WTF_GUARDED_BY_LOCK(decodedImageCallbackLock) { nullptr };
         DecoderCallback decoderCallback WTF_GUARDED_BY_LOCK(decodedImageCallbackLock);
@@ -114,8 +119,8 @@ public:
         Vector<EncodedFrame> pendingFrames;
     };
 
-    Decoder* createDecoder(WebCore::VideoCodecType);
-    void createDecoderAndWaitUntilReady(WebCore::VideoCodecType, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&&);
+    Decoder* createDecoder(WebCore::VideoCodecType, bool isAnnexB = false);
+    void createDecoderAndWaitUntilReady(WebCore::VideoCodecType, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder*)>&&);
 
     int32_t releaseDecoder(Decoder&);
     Ref<GenericPromise> flushDecoder(Decoder&);
@@ -225,7 +230,7 @@ private:
     LibWebRTCCodecs();
     void ensureGPUProcessConnectionAndDispatchToThread(Function<void()>&&);
     void ensureGPUProcessConnectionOnMainThreadWithLock() WTF_REQUIRES_LOCK(m_connectionLock);
-    void NODELETE gpuProcessConnectionMayNoLongerBeNeeded();
+    void LEGACY_NODELETE gpuProcessConnectionMayNoLongerBeNeeded();
 
     void failedDecoding(VideoDecoderIdentifier);
     void flushDecoderCompleted(VideoDecoderIdentifier);
@@ -242,16 +247,16 @@ private:
 
     void clearConnection();
 
-    IPC::Connection* NODELETE encoderConnection(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
+    IPC::Connection* LEGACY_NODELETE encoderConnection(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     void setEncoderConnection(Encoder&, Ref<IPC::Connection>&&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     std::optional<EncoderInitializationData>& encoderInitializationData(Encoder&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
     void setEncoderInitializationData(Encoder&, EncoderInitializationData&&) WTF_REQUIRES_LOCK(m_encodersConnectionLock);
-    IPC::Connection* NODELETE decoderConnection(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
+    IPC::Connection* LEGACY_NODELETE decoderConnection(Decoder&) WTF_REQUIRES_LOCK(m_connectionLock);
     void setDecoderConnection(Decoder&, RefPtr<IPC::Connection>&&) WTF_REQUIRES_LOCK(m_connectionLock);
 
     template<typename Buffer> bool copySharedVideoFrame(LibWebRTCCodecs::Encoder&, IPC::Connection&, Buffer&&);
 
-    Decoder* createDecoderInternal(WebCore::VideoCodecType, const String& codec, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder(*))>&&);
+    Decoder* createDecoderInternal(WebCore::VideoCodecType, const String& codec, bool isAnnexB, std::optional<WebCore::PlatformVideoColorSpace>&& colorSpaceOverride, Function<void(Decoder(*))>&&);
     Encoder* createEncoderInternal(WebCore::VideoCodecType, const String& codec, const std::map<std::string, std::string>&, bool isRealtime, bool useAnnexB, WebCore::VideoEncoderScalabilityMode, Function<void(Encoder*)>&&);
     template<typename Frame> RefPtr<FramePromise> encodeFrameInternal(Encoder&, const Frame&, bool shouldEncodeAsKeyFrame, WebCore::VideoFrameRotation, MediaTime, int64_t timestamp, std::optional<uint64_t> duration);
     template<typename Frame> RefPtr<FramePromise> encodeFrameInternalWithLock(Encoder&, const Frame&, bool shouldEncodeAsKeyFrame, WebCore::VideoFrameRotation, MediaTime, int64_t timestamp, std::optional<uint64_t> duration) WTF_REQUIRES_LOCK(m_encodersConnectionLock);

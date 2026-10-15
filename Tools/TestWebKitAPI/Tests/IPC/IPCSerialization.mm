@@ -2761,6 +2761,7 @@ TEST(IPCSerialization, PKPaymentMethod)
     data1.type = WebKit::PKPaymentMethodType::Credit;
     data1.displayName = @"WebKitPay";
     data1.network = @"WebKitCard";
+    data1.issuingRegionCode = @"GB";
     data1.billingAddress = billingContact.get();
     data1.installmentBindToken = @"TestBindToken123";
     data1.usePeerPaymentBalance = true;
@@ -2773,6 +2774,10 @@ TEST(IPCSerialization, PKPaymentMethod)
     EXPECT_TRUE([reconstructedMethod1.displayName isEqualToString:@"WebKitPay"]);
     EXPECT_TRUE([reconstructedMethod1.network isEqualToString:@"WebKitCard"]);
     EXPECT_EQ(reconstructedMethod1.type, PKPaymentMethodTypeCredit);
+#if HAVE(PASSKIT_ISSUING_REGION_CODE)
+    if ([reconstructedMethod1 respondsToSelector:@selector(issuingRegionCode)])
+        EXPECT_TRUE([reconstructedMethod1.issuingRegionCode isEqualToString:@"GB"]);
+#endif
     runTestNS({ reconstructedMethod1 });
 
     // Test with different types set

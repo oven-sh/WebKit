@@ -134,7 +134,7 @@ PatternData* LegacyRenderSVGResourcePattern::buildPattern(RenderElement& rendere
     if (!patternTransform.isIdentity())
         patternData->transform = patternTransform * patternData->transform;
 
-    // Account for text drawing resetting the context to non-scaled, see SVGInlineTextBox::paintTextWithShadows.
+    // Account for text drawing resetting the context to non-scaled, see SVGTextBoxPainter::paintTextWithShadows.
     if (resourceMode.contains(RenderSVGResourceMode::ApplyToText)) {
         auto textScale = computeTextPaintingScale(renderer);
         if (textScale != 1)

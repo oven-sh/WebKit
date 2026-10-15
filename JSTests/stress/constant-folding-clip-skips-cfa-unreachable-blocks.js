@@ -29,4 +29,6 @@ for (let i = 0; i < testLoopCount * 20; i++) {
 }
 
 // The crashing compile is the OSR entry into the loop above, and it only reproduces with a call after the loop.
-print("done");
+function foo() {}
+$vm.noInline(foo);
+foo();

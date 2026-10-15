@@ -64,10 +64,8 @@ def main():
     AutoInstall.register(Package('reporelaypy', Version(0, 4, 1)), local=True)
     AutoInstall.register(Package('webkitflaskpy', Version(0, 3, 0)), local=True)
 
-    # Register testing-only packages.
-    AutoInstall.register(Package('mypy', Version(1, 16, 1)))
-    AutoInstall.register(Package('mypy_extensions', Version(1, 1, 0)))
-    AutoInstall.register(Package('pathspec', Version(0, 12, 1)))
+    # Register testing-only packages, including mypy and its dependencies.
+    import webkitcorepy.testing  # noqa: F401
 
     tester = Tester()
     tester.add_tree(os.path.join(_webkit_root, 'Tools', 'Scripts'), 'swift')

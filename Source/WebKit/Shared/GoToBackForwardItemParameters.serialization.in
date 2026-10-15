@@ -32,4 +32,5 @@
     WebCore::PublicSuffix publicSuffix;
     WebKit::SandboxExtensionHandle sandboxExtensionHandle;
     WebCore::ProcessSwapDisposition processSwapDisposition;
+    std::optional<WebCore::AgentClusterAssignment> agentClusterAssignment;
 };

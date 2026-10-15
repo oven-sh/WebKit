@@ -45,7 +45,6 @@
 #include "HTMLCanvasElement.h"
 #include "IDBValue.h"
 #include "ImageBuffer.h"
-#include "JSAudioWorkletGlobalScope.h"
 #include "JSBlob.h"
 #include "JSCryptoKey.h"
 #include "JSDOMBinding.h"
@@ -61,6 +60,7 @@
 #include "JSFileList.h"
 #include "JSFileSystemDirectoryHandle.h"
 #include "JSFileSystemFileHandle.h"
+#include "JSFileSystemHandle.h"
 #include "JSIDBSerializationGlobalObject.h"
 #include "JSImageBitmap.h"
 #include "JSImageData.h"
@@ -69,6 +69,7 @@
 #include "JSMediaStreamTrackHandle.h"
 #include "JSMessagePort.h"
 #include "JSNavigator.h"
+#include "JSQuotaExceededError.h"
 #include "JSRTCCertificate.h"
 #include "JSRTCDataChannel.h"
 #include "JSRTCEncodedAudioFrame.h"
@@ -163,13 +164,25 @@ using namespace JSC;
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 
-static bool NODELETE isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObject, SerializationTag tag)
-{
-#if ENABLE(WEB_AUDIO)
-    if (!is<JSAudioWorkletGlobalScope>(globalObject))
-        return true;
+struct PlatformObjectSerializationTraits {
+    bool (*isExposedInGlobalObject)(JSDOMGlobalObject&);
+    bool isRestrictedToSameAgentCluster;
+};
 
-    // Only built-in JS types are exposed to audio worklets.
+template<typename JSWrapper>
+constexpr PlatformObjectSerializationTraits platformObjectSerializationTraits { &JSWrapper::isExposedInGlobalObject, JSWrapper::isRestrictedToSameAgentCluster };
+
+static bool isInterfaceExposedInGlobalObject(JSC::JSGlobalObject& globalObject, const PlatformObjectSerializationTraits& traits)
+{
+    auto* domGlobalObject = dynamicDowncast<JSDOMGlobalObject>(globalObject);
+    // JSIDBSerializationGlobalObject is only used for fuzzing, so let every reader run there.
+    if (!domGlobalObject || !domGlobalObject->scriptExecutionContext() || is<JSIDBSerializationGlobalObject>(*domGlobalObject))
+        return true;
+    return traits.isExposedInGlobalObject(*domGlobalObject);
+}
+
+static const PlatformObjectSerializationTraits* platformObjectSerializationTraitsForTag(SerializationTag tag)
+{
     switch (tag) {
     case ArrayTag:
     case ObjectTag:
@@ -210,66 +223,102 @@ static bool NODELETE isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObje
     case ResizableArrayBufferTag:
     case ErrorInstanceTag:
     case ErrorTag:
-    case MessagePortReferenceTag:
-        return true;
+        return nullptr;
     case FileTag:
+        return &platformObjectSerializationTraits<JSFile>;
     case FileListTag:
+        return &platformObjectSerializationTraits<JSFileList>;
     case ImageDataTag:
+        return &platformObjectSerializationTraits<JSImageData>;
     case BlobTag:
+        return &platformObjectSerializationTraits<JSBlob>;
     case CryptoKeyTag:
+        return &platformObjectSerializationTraits<JSCryptoKey>;
     case DOMPointReadOnlyTag:
+        return &platformObjectSerializationTraits<JSDOMPointReadOnly>;
     case DOMPointTag:
+        return &platformObjectSerializationTraits<JSDOMPoint>;
     case DOMRectReadOnlyTag:
+        return &platformObjectSerializationTraits<JSDOMRectReadOnly>;
     case DOMRectTag:
+        return &platformObjectSerializationTraits<JSDOMRect>;
     case DOMMatrixReadOnlyTag:
+        return &platformObjectSerializationTraits<JSDOMMatrixReadOnly>;
     case DOMMatrixTag:
+        return &platformObjectSerializationTraits<JSDOMMatrix>;
     case DOMQuadTag:
+        return &platformObjectSerializationTraits<JSDOMQuad>;
     case ImageBitmapTransferTag:
+    case ImageBitmapTag:
+        return &platformObjectSerializationTraits<JSImageBitmap>;
 #if ENABLE(WEB_RTC)
     case RTCCertificateTag:
+        return &platformObjectSerializationTraits<JSRTCCertificate>;
 #endif
-    case ImageBitmapTag:
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     case OffscreenCanvasTransferTag:
     case InMemoryOffscreenCanvasTag:
+        return &platformObjectSerializationTraits<JSOffscreenCanvas>;
 #endif
+    case MessagePortReferenceTag:
     case InMemoryMessagePortTag:
+        return &platformObjectSerializationTraits<JSMessagePort>;
 #if ENABLE(WEB_RTC)
     case RTCDataChannelTransferTag:
+        return &platformObjectSerializationTraits<JSRTCDataChannel>;
 #endif
     case DOMExceptionTag:
+        return &platformObjectSerializationTraits<JSDOMException>;
     case QuotaExceededErrorTag:
+        return &platformObjectSerializationTraits<JSQuotaExceededError>;
 #if ENABLE(WEB_CODECS)
     case WebCodecsEncodedVideoChunkTag:
+        return &platformObjectSerializationTraits<JSWebCodecsEncodedVideoChunk>;
     case WebCodecsVideoFrameTag:
+        return &platformObjectSerializationTraits<JSWebCodecsVideoFrame>;
     case WebCodecsEncodedAudioChunkTag:
+        return &platformObjectSerializationTraits<JSWebCodecsEncodedAudioChunk>;
     case WebCodecsAudioDataTag:
+        return &platformObjectSerializationTraits<JSWebCodecsAudioData>;
 #endif
 #if ENABLE(MEDIA_STREAM)
     case MediaStreamTrackTag:
+        return &platformObjectSerializationTraits<JSMediaStreamTrack>;
     case MediaStreamTrackHandleTag:
+        return &platformObjectSerializationTraits<JSMediaStreamTrackHandle>;
 #endif
 #if ENABLE(MEDIA_SOURCE_IN_WORKERS)
     case MediaSourceHandleTransferTag:
+        return &platformObjectSerializationTraits<JSMediaSourceHandle>;
 #endif
 #if ENABLE(WEB_RTC)
     case RTCEncodedAudioFrameTag:
-#endif
-#if ENABLE(WEB_RTC)
+        return &platformObjectSerializationTraits<JSRTCEncodedAudioFrame>;
     case RTCEncodedVideoFrameTag:
+        return &platformObjectSerializationTraits<JSRTCEncodedVideoFrame>;
 #endif
     case ReadableStreamTag:
+        return &platformObjectSerializationTraits<JSReadableStream>;
     case WritableStreamTag:
+        return &platformObjectSerializationTraits<JSWritableStream>;
     case TransformStreamTag:
+        return &platformObjectSerializationTraits<JSTransformStream>;
     case FileSystemHandleTag:
-        break;
+        return &platformObjectSerializationTraits<JSFileSystemHandle>;
     }
-    return false;
-#else
-    UNUSED_PARAM(globalObject);
-    UNUSED_PARAM(tag);
-    return true;
-#endif
+    return nullptr;
+}
+
+static bool isTypeExposedToGlobalObject(JSC::JSGlobalObject& globalObject, SerializationTag tag)
+{
+    auto* traits = platformObjectSerializationTraitsForTag(tag);
+    return !traits || isInterfaceExposedInGlobalObject(globalObject, *traits);
+}
+
+static bool isTagRestrictedToSameAgentCluster(SerializationTag tag)
+{
+    auto* traits = platformObjectSerializationTraitsForTag(tag);
+    return traits && traits->isRestrictedToSameAgentCluster;
 }
 
 enum class PredefinedColorSpaceTag : uint8_t {
@@ -386,7 +435,7 @@ enum class CryptoAlgorithmIdentifierTag {
 
 const uint8_t cryptoAlgorithmIdentifierTagMaximumValue = 23;
 
-static unsigned NODELETE countUsages(CryptoKeyUsageBitmap usages)
+static unsigned LEGACY_NODELETE countUsages(CryptoKeyUsageBitmap usages)
 {
     // Fast bit count algorithm for sparse bit maps.
     unsigned count = 0;
@@ -1317,7 +1366,7 @@ public:
             write(handle.name());
             write(std::span<const uint8_t> { handle.globalIdentifier().span() });
             ASSERT(!context->securityOrigin()->isOpaque());
-            write(context->securityOrigin()->toString());
+            write(protect(context->securityOrigin())->toString());
             if (RefPtr connection = fileSystemStorageConnectionForContext(*context)) {
                 auto origin = clientOriginForContext(*context);
                 m_fileSystemHandleKeepAlives.append({ WTF::move(origin), handle.globalIdentifier(), connection.releaseNonNull() });
@@ -1325,15 +1374,24 @@ public:
             return true;
         };
         if (auto* fileHandle = dynamicDowncast<JSFileSystemFileHandle>(obj))
-            return serializeFileSystemHandle(fileHandle->wrapped());
+            return serializeFileSystemHandle(protect(fileHandle->wrapped()));
         if (auto* dirHandle = dynamicDowncast<JSFileSystemDirectoryHandle>(obj))
-            return serializeFileSystemHandle(dirHandle->wrapped());
+            return serializeFileSystemHandle(protect(dirHandle->wrapped()));
 
         return false;
     }
 
 private:
     using Base::write;
+
+    void write(SerializationTag tag)
+    {
+        Base::write(tag);
+        if (!isTagRestrictedToSameAgentCluster(tag))
+            return;
+        ASSERT(m_forStorage == SerializationForStorage::No);
+        write(agentClusterID());
+    }
 
     void write(ColorSpaceTag tag)
     {
@@ -2048,7 +2106,7 @@ private:
 
     using Base::read;
 
-    std::optional<uint32_t> NODELETE readImageDataIndex()
+    std::optional<uint32_t> LEGACY_NODELETE readImageDataIndex()
     {
         return readConstantPoolIndex(m_imageDataPool);
     }
@@ -2100,7 +2158,7 @@ private:
         return true;
     }
 
-    bool NODELETE read(PredefinedColorSpace& result)
+    bool LEGACY_NODELETE read(PredefinedColorSpace& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2126,7 +2184,7 @@ private:
         }
     }
 
-    bool NODELETE read(ColorSpaceTag& tag)
+    bool LEGACY_NODELETE read(ColorSpaceTag& tag)
     {
         if (m_data.empty())
             return false;
@@ -2211,7 +2269,7 @@ private:
         return false;
     }
 
-    bool NODELETE read(CryptoKeyOKP::NamedCurve& result)
+    bool LEGACY_NODELETE read(CryptoKeyOKP::NamedCurve& result)
     {
         uint8_t nameTag;
         if (!read(nameTag))
@@ -2231,7 +2289,7 @@ private:
         return true;
     }
 
-    bool NODELETE read(CryptoAlgorithmIdentifier& result)
+    bool LEGACY_NODELETE read(CryptoAlgorithmIdentifier& result)
     {
         uint8_t algorithmTag;
         if (!read(algorithmTag))
@@ -2306,7 +2364,7 @@ private:
         return true;
     }
 
-    bool NODELETE read(CryptoKeyClassSubtag& result)
+    bool LEGACY_NODELETE read(CryptoKeyClassSubtag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2317,7 +2375,7 @@ private:
         return true;
     }
 
-    bool NODELETE read(CryptoKeyUsageTag& result)
+    bool LEGACY_NODELETE read(CryptoKeyUsageTag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2328,7 +2386,7 @@ private:
         return true;
     }
 
-    bool NODELETE read(CryptoKeyAsymmetricTypeSubtag& result)
+    bool LEGACY_NODELETE read(CryptoKeyAsymmetricTypeSubtag& result)
     {
         uint8_t tag;
         if (!read(tag))
@@ -2725,7 +2783,7 @@ private:
         return toJSNewlyCreated(m_lexicalGlobalObject, downcast<JSDOMGlobalObject>(m_globalObject), T::create(x, y, width, height));
     }
 
-    std::optional<DOMPointInit> NODELETE readDOMPointInit()
+    std::optional<DOMPointInit> LEGACY_NODELETE readDOMPointInit()
     {
         DOMPointInit point;
         if (!read(point.x))
@@ -3236,7 +3294,7 @@ private:
             return JSValue();
         }
 
-        if (context->securityOrigin()->toString() != origin->string()) {
+        if (protect(context->securityOrigin())->toString() != origin->string()) {
             fail();
             return JSValue();
         }
@@ -3278,6 +3336,15 @@ public:
 
     JSValue readDerivedTerminal(SerializationTag tag)
     {
+        if (isTagRestrictedToSameAgentCluster(tag)) {
+            CachedStringRef restrictedAgentClusterID;
+            if (!readStringData(restrictedAgentClusterID) || !m_isDOMGlobalObject || restrictedAgentClusterID->string() != agentClusterID()) {
+                SERIALIZE_TRACE("FAIL deserialize");
+                fail();
+                return JSValue();
+            }
+        }
+
         switch (tag) {
         case FileTag: {
             RefPtr<File> file;
@@ -3395,13 +3462,6 @@ public:
             return getJSValue(m_inMemoryMessagePorts[index].get());
         }
         case CryptoKeyTag: {
-            if (auto* globalObject = dynamicDowncast<JSDOMGlobalObject>(m_globalObject)) {
-                if (RefPtr context = globalObject->scriptExecutionContext(); context && !context->isSecureContext()) {
-                    SERIALIZE_TRACE("FAIL deserialize");
-                    fail();
-                    return JSValue();
-                }
-            }
             Vector<uint8_t> wrappedKey;
             if (!read(wrappedKey)) {
                 SERIALIZE_TRACE("FAIL deserialize");
@@ -3550,7 +3610,7 @@ private:
     Vector<RefPtr<MediaStreamTrackHandle>> m_mediaStreamTrackHandles;
 #endif
 
-    String NODELETE blobFilePathForBlobURL(const String& blobURL)
+    String LEGACY_NODELETE blobFilePathForBlobURL(const String& blobURL)
     {
         size_t i = 0;
         for (; i < m_blobURLs.size(); ++i) {

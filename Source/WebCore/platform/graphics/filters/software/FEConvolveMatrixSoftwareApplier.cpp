@@ -167,8 +167,6 @@ inline void FEConvolveMatrixSoftwareApplier::setInteriorPixels(PaintingData& pai
     pixel += (clipBottom - yEnd) * (xIncrease + (clipRight + 1) * 4);
     int startKernelPixel = (clipBottom - yEnd) * (xIncrease + (clipRight + 1) * 4);
 
-    Ref sourcePixelBuffer = paintingData.sourcePixelBuffer;
-    Ref destinationPixelBuffer = paintingData.destinationPixelBuffer;
     for (int y = yEnd + 1; y > yStart; --y) {
         for (int x = clipRight + 1; x > 0; --x) {
             int kernelValue = paintingData.kernelMatrix.size() - 1;
@@ -181,11 +179,11 @@ inline void FEConvolveMatrixSoftwareApplier::setInteriorPixels(PaintingData& pai
             totals[3] = 0;
 
             while (kernelValue >= 0) {
-                totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
-                totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
-                totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel++));
+                totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
+                totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
+                totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel++));
                 if (!paintingData.preserveAlpha)
-                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(kernelPixel));
+                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(kernelPixel));
                 ++kernelPixel;
                 --kernelValue;
                 if (!--width) {
@@ -194,7 +192,7 @@ inline void FEConvolveMatrixSoftwareApplier::setInteriorPixels(PaintingData& pai
                 }
             }
 
-            setDestinationPixels(sourcePixelBuffer, destinationPixelBuffer, pixel, std::span { totals }, paintingData.divisor, paintingData.bias, paintingData.preserveAlpha);
+            setDestinationPixels(paintingData.sourcePixelBuffer, paintingData.destinationPixelBuffer, pixel, std::span { totals }, paintingData.divisor, paintingData.bias, paintingData.preserveAlpha);
             startKernelPixel += 4;
         }
         pixel += xIncrease;
@@ -214,8 +212,6 @@ inline void FEConvolveMatrixSoftwareApplier::setOuterPixels(PaintingData& painti
     int xIncrease = (paintingData.width - width) * 4;
     // Contains the sum of rgb(a) components
     std::array<float, 4> totals;
-    Ref sourcePixelBuffer = paintingData.sourcePixelBuffer;
-    Ref destinationPixelBuffer = paintingData.destinationPixelBuffer;
 
     // paintingData.divisor cannot be 0, SVGFEConvolveMatrixElement ensures this
     ASSERT(paintingData.divisor);
@@ -235,12 +231,12 @@ inline void FEConvolveMatrixSoftwareApplier::setOuterPixels(PaintingData& painti
             while (kernelValue >= 0) {
                 int pixelIndex = getPixelValue(paintingData, kernelPixelX, kernelPixelY);
                 if (pixelIndex >= 0) {
-                    totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex));
-                    totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 1));
-                    totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 2));
+                    totals[0] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex));
+                    totals[1] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 1));
+                    totals[2] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 2));
                 }
                 if (!paintingData.preserveAlpha && pixelIndex >= 0)
-                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer.item(pixelIndex + 3));
+                    totals[3] += paintingData.kernelMatrix[kernelValue] * static_cast<float>(paintingData.sourcePixelBuffer->item(pixelIndex + 3));
                 ++kernelPixelX;
                 --kernelValue;
                 if (!--width) {
@@ -250,7 +246,7 @@ inline void FEConvolveMatrixSoftwareApplier::setOuterPixels(PaintingData& painti
                 }
             }
 
-            setDestinationPixels(sourcePixelBuffer, destinationPixelBuffer, pixel, std::span { totals }, paintingData.divisor, paintingData.bias, paintingData.preserveAlpha);
+            setDestinationPixels(paintingData.sourcePixelBuffer, paintingData.destinationPixelBuffer, pixel, std::span { totals }, paintingData.divisor, paintingData.bias, paintingData.preserveAlpha);
             ++startKernelPixelX;
         }
         pixel += xIncrease;

@@ -35,22 +35,12 @@
 #include "RenderLineBreak.h"
 #include "RenderListOutsideMarker.h"
 #include "RenderObjectInlines.h"
-#include "RenderSVGBlock.h"
-#include "RenderSVGForeignObject.h"
 #include "RenderText.h"
-#include "Settings.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleComputedStyle+InitialInlines.h"
 
 namespace WebCore {
 namespace LayoutIntegration {
-
-bool canUseForLineLayout(const RenderBlockFlow& rootContainer)
-{
-    if (is<RenderSVGBlock>(rootContainer) && !rootContainer.isRenderOrLegacyRenderSVGForeignObject())
-        return rootContainer.document().settings().useIFCForSVGText();
-    return true;
-}
 
 bool canUseForIntrinsicWidthComputation(const RenderBlockFlow& blockContainer)
 {

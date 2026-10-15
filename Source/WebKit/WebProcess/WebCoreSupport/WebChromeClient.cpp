@@ -35,6 +35,7 @@
 #include "APIObject.h"
 #include "APISecurityOrigin.h"
 #include "APIString.h"
+#include "DisplayOnlyImageProxy.h"
 #include "DrawingArea.h"
 #include "FindController.h"
 #include "FrameInfoData.h"
@@ -137,6 +138,7 @@
 #include <WebCore/ViewportConfiguration.h>
 #include <WebCore/WindowFeatures.h>
 #include <wtf/JSONValues.h>
+#include <wtf/NativePromise.h>
 #include <wtf/TZoneMallocInlines.h>
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
@@ -299,7 +301,7 @@ void WebChromeClient::unfocus()
         page->send(Messages::WebPageProxy::SetFocus(false, std::nullopt));
 }
 
-#if PLATFORM(COCOA)
+#if PLATFORM(COCOA) || PLATFORM(GTK) || PLATFORM(WPE)
 
 void WebChromeClient::elementDidFocus(Element& element, const FocusOptions& options)
 {
@@ -325,11 +327,29 @@ void WebChromeClient::focusedElementDidChangeInputMode(Element& element, InputMo
         page->focusedElementDidChangeInputMode(element, mode);
 }
 
+#endif
+
+#if PLATFORM(IOS_FAMILY)
+
 void WebChromeClient::focusedSelectElementDidChangeOptions(const WebCore::HTMLSelectElement& element)
 {
     if (RefPtr page = m_page.get())
         page->focusedSelectElementDidChangeOptions(element);
 }
+
+#endif
+
+#if PLATFORM(GTK) || PLATFORM(WPE)
+
+void WebChromeClient::focusedElementDidChangeReadOnly(Element& element)
+{
+    if (RefPtr page = m_page.get())
+        page->focusedElementDidChangeReadOnly(element);
+}
+
+#endif
+
+#if PLATFORM(COCOA)
 
 void WebChromeClient::makeFirstResponder()
 {
@@ -435,6 +455,7 @@ RefPtr<Page> WebChromeClient::createWindow(LocalFrame& frame, const String& open
         { }, /* originatorAdvancedPrivacyProtections */
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
         std::nullopt, /* webHitTestResultData */
+        std::nullopt, /* hitTestJSHandleInfo */
 #endif
         webFrame->info(), /* originatingFrameInfoData */
         webFrame->page()->webPageProxyIdentifier(),
@@ -590,7 +611,7 @@ void WebChromeClient::rootFrameRemoved(const WebCore::LocalFrame& frame)
         drawingArea->removeRootFrame(frame.frameID());
 }
 
-static bool NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
+static bool LEGACY_NODELETE shouldSuppressJavaScriptDialogs(LocalFrame& frame)
 {
     if (frame.opener() && frame.loader().stateMachine().isDisplayingInitialEmptyDocument() && frame.loader().provisionalDocumentLoader())
         return true;
@@ -1243,6 +1264,17 @@ void WebChromeClient::offscreenCanvasPlaceholderLayerChanged(WebCore::Placeholde
 {
     if (RefPtr page = m_page.get())
         page->send(Messages::WebPageProxy::SetOffscreenCanvasPlaceholderLayer(identifier, layerID));
+}
+#endif
+
+#if HAVE(IOSURFACE)
+RefPtr<NativePromise<Ref<WebCore::NativeImage>, void>> WebChromeClient::createDisplayOnlyImage(WebCore::FrameIdentifier rootFrameIdentifier, const WebCore::FloatSize& size, float scale, const WebCore::ColorSpace& colorSpace, NOESCAPE const Function<void(WebCore::GraphicsContext&)>& paint)
+{
+    RefPtr page = m_page.get();
+    // Only layers composited in the UI process can display the result.
+    if (!page || !page->corePage()->settings().remoteSnapshottingEnabled() || !isUsingUISideCompositing())
+        return nullptr;
+    return DisplayOnlyImageProxy::create(*page, rootFrameIdentifier, size, scale, colorSpace, paint);
 }
 #endif
 #endif

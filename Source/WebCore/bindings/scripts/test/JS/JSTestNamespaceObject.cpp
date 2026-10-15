@@ -203,7 +203,7 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overl
     auto strArgConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument1.value());
     if (strArgConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, TestNamespaceObject::overloadedNamespaceOperation(objArgConversionResult.releaseReturnValue(), strArgConversionResult.releaseReturnValue()))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, TestNamespaceObject::overloadedNamespaceOperation(objArgConversionResult.releaseReturnValue().get(), strArgConversionResult.releaseReturnValue()))));
 }
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperation2Body(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
@@ -220,7 +220,7 @@ static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overl
     auto longArgConversionResult = convert<IDLOptional<IDLLong>>(*lexicalGlobalObject, argument1.value());
     if (longArgConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, TestNamespaceObject::overloadedNamespaceOperation(objArgConversionResult.releaseReturnValue(), longArgConversionResult.releaseReturnValue()))));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, TestNamespaceObject::overloadedNamespaceOperation(objArgConversionResult.releaseReturnValue().get(), longArgConversionResult.releaseReturnValue()))));
 }
 
 static inline JSC::EncodedJSValue jsTestNamespaceObjectConstructorFunction_overloadedNamespaceOperationOverloadDispatcher(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)

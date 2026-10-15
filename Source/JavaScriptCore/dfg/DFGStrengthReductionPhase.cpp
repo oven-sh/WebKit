@@ -85,7 +85,7 @@ public:
     }
 
 private:
-    static bool NODELETE foldPurifyNaN(Edge& edge)
+    static bool LEGACY_NODELETE foldPurifyNaN(Edge& edge)
     {
         if (edge->op() == PurifyNaN) {
             edge = edge->child1();
@@ -94,7 +94,7 @@ private:
         return false;
     }
 
-    static bool NODELETE foldPurifyNaNOnBinary(Node* node)
+    static bool LEGACY_NODELETE foldPurifyNaNOnBinary(Node* node)
     {
         bool result = false;
         if (node->isBinaryUseKind(DoubleRepUse)) {
@@ -104,7 +104,7 @@ private:
         return result;
     }
 
-    static bool NODELETE foldPurifyNaNOnUnary(Node* node)
+    static bool LEGACY_NODELETE foldPurifyNaNOnUnary(Node* node)
     {
         if (node->child1().useKind() == DoubleRepUse)
             return foldPurifyNaN(node->child1());
@@ -338,6 +338,28 @@ private:
                     break;
                 }
             }
+            break;
+        }
+
+        case NewTypedArray:
+        case NewTypedArrayBuffer: {
+            if (!(m_node->flags() & NodeMustGenerate))
+                break;
+            if (m_node->child1().useKind() != Int32Use && m_node->child1().useKind() != Int52RepUse)
+                break;
+            if (!m_node->child1()->isAnyIntConstant())
+                break;
+
+            // Only a length that cannot throw a RangeError lets an unused allocation be removed.
+            int64_t length = m_node->child1()->asAnyInt();
+            if (length < 0)
+                break;
+            size_t elementByteSize = m_node->op() == NewTypedArray ? elementSize(m_node->typedArrayType()) : 1;
+            if (static_cast<uint64_t>(length) > MAX_ARRAY_BUFFER_SIZE / elementByteSize)
+                break;
+
+            m_node->clearFlags(NodeMustGenerate);
+            m_changed = true;
             break;
         }
 

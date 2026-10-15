@@ -34,7 +34,8 @@ namespace WebCore {
 template<typename Visitor>
 void JSRange::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    wrapped().visitNodesInGCThread(visitor);
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG wrapped().visitNodesInGCThread(visitor);
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSRange);

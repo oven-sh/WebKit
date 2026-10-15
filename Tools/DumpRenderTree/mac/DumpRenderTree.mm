@@ -1307,6 +1307,7 @@ int DumpRenderTreeMain(int argc, const char *argv[])
     WTF::setProcessPrivileges(allPrivileges());
     WebCore::CookieStorageSession::permitProcessToUseCookieAPI(true);
     WebCoreTestSupport::setLinkedOnOrAfterEverythingForTesting();
+    WebCoreTestSupport::setupWorkerInternals();
 
 #if PLATFORM(IOS_FAMILY)
 IGNORE_WARNINGS_BEGIN("deprecated-implementations")

@@ -54,9 +54,9 @@ namespace WebKit {
 struct NetworkResourceLoadParameters {
     void createSandboxExtensionHandlesIfNecessary();
 
-    RefPtr<WebCore::SecurityOrigin> NODELETE parentOrigin() const;
+    RefPtr<WebCore::SecurityOrigin> LEGACY_NODELETE parentOrigin() const;
     NetworkLoadParameters networkLoadParameters() const;
-    WebCore::SecurityOriginData topOriginForServiceWorkers(const URL& requestURL) const;
+    WebCore::SecurityOriginData topOriginForServiceWorkers(const WebCore::ResourceRequest&) const;
 
     WebPageProxyIdentifier webPageProxyID;
     WebCore::PageIdentifier webPageID;
@@ -133,16 +133,15 @@ struct NetworkResourceLoadParameters {
 
     bool isInitiatorPrefetch { false };
     bool isInitiatedByDedicatedWorker { false };
+    bool hasUnpartitionedStorageAccess { false };
     bool globalPrivacyControlEnabled { false };
     bool shouldConsiderEnhancedSecurityForInsecureResponse { false };
     MonotonicTime originalNavigationStartTime { };
 
     // The connection's own address space is only known once a response arrives, so it is not a field here.
-    // FIXME: A compromised web process can under-report this to claim it is already at least as private
-    // as the target, which skips the check. Deriving it in the network process needs policy container
-    // inheritance, tracked in https://bugs.webkit.org/show_bug.cgi?id=319908
     WebCore::IPAddressSpace clientAddressSpace { WebCore::IPAddressSpace::Public };
     bool clientIsSecureContext { false };
+    // FIXME: A compromised web process can claim these to skip the permissions policy refusal. https://bugs.webkit.org/show_bug.cgi?id=326009
     bool localNetworkAllowedByPermissionsPolicy { false };
     bool loopbackNetworkAllowedByPermissionsPolicy { false };
 };

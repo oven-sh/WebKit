@@ -48,6 +48,7 @@
 #import <WebCore/ApplePayShippingMethodUpdate.h>
 #import <WebCore/PaymentHeaders.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/RunLoop.h>
 #import <wtf/URL.h>
 #import <wtf/cocoa/VectorCocoa.h>
@@ -112,18 +113,21 @@ void WebPaymentCoordinatorProxy::platformOpenPaymentSetup(const String& merchant
 
 static RetainPtr<NSSet> toPKContactFields(const WebCore::ApplePaySessionPaymentRequest::ContactFields& contactFields)
 {
-    Vector<NSString *> result;
+    const auto result = [&] {
+        Vector<NSString *> result;
 
-    if (contactFields.postalAddress)
-        result.append(PKContactFieldPostalAddress);
-    if (contactFields.phone)
-        result.append(PKContactFieldPhoneNumber);
-    if (contactFields.email)
-        result.append(PKContactFieldEmailAddress);
-    if (contactFields.name)
-        result.append(PKContactFieldName);
-    if (contactFields.phoneticName)
-        result.append(PKContactFieldPhoneticName);
+        if (contactFields.postalAddress)
+            result.append(PKContactFieldPostalAddress);
+        if (contactFields.phone)
+            result.append(PKContactFieldPhoneNumber);
+        if (contactFields.email)
+            result.append(PKContactFieldEmailAddress);
+        if (contactFields.name)
+            result.append(PKContactFieldName);
+        if (contactFields.phoneticName)
+            result.append(PKContactFieldPhoneticName);
+        return result;
+    }();
 
     return adoptNS([[NSSet alloc] initWithObjects:result.span().data() count:result.size()]);
 }
@@ -147,7 +151,7 @@ PKMerchantCapability toPKMerchantCapabilities(const WebCore::ApplePaySessionPaym
     return result;
 }
 
-static PKShippingType NODELETE toPKShippingType(WebCore::ApplePaySessionPaymentRequest::ShippingType shippingType)
+static PKShippingType LEGACY_NODELETE toPKShippingType(WebCore::ApplePaySessionPaymentRequest::ShippingType shippingType)
 {
     switch (shippingType) {
     case WebCore::ApplePaySessionPaymentRequest::ShippingType::Shipping:
@@ -218,7 +222,7 @@ RetainPtr<PKShippingMethods> toPKShippingMethods(const Vector<WebCore::ApplePayS
 
 #if HAVE(PASSKIT_SHIPPING_CONTACT_EDITING_MODE)
 
-static PKShippingContactEditingMode NODELETE toPKShippingContactEditingMode(WebCore::ApplePayShippingContactEditingMode shippingContactEditingMode)
+static PKShippingContactEditingMode LEGACY_NODELETE toPKShippingContactEditingMode(WebCore::ApplePayShippingContactEditingMode shippingContactEditingMode)
 {
     switch (shippingContactEditingMode) {
     case WebCore::ApplePayShippingContactEditingMode::Available:
@@ -237,7 +241,7 @@ static PKShippingContactEditingMode NODELETE toPKShippingContactEditingMode(WebC
 
 #if HAVE(PASSKIT_APPLE_PAY_LATER_AVAILABILITY)
 
-static PKApplePayLaterAvailability NODELETE toPKApplePayLaterAvailability(WebCore::ApplePayLaterAvailability applePayLaterAvailability)
+static PKApplePayLaterAvailability LEGACY_NODELETE toPKApplePayLaterAvailability(WebCore::ApplePayLaterAvailability applePayLaterAvailability)
 {
     switch (applePayLaterAvailability) {
     case WebCore::ApplePayLaterAvailability::Available:
@@ -268,13 +272,13 @@ static RetainPtr<NSSet> toNSSet(const Vector<String>& strings)
         return nil;
 
     auto mutableSet = adoptNS([[NSMutableSet alloc] initWithCapacity:strings.size()]);
-    for (auto& string : strings)
+    for (auto& string : borrow(strings))
         [mutableSet addObject:string.createNSString().get()];
 
     return WTF::move(mutableSet);
 }
 
-static PKPaymentRequestAPIType NODELETE toAPIType(WebCore::ApplePaySessionPaymentRequest::Requester requester)
+static PKPaymentRequestAPIType LEGACY_NODELETE toAPIType(WebCore::ApplePaySessionPaymentRequest::Requester requester)
 {
     switch (requester) {
     case WebCore::ApplePaySessionPaymentRequest::Requester::ApplePayJS:

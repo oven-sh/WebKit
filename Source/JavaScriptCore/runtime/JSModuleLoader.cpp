@@ -355,11 +355,11 @@ void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier
         entry->provideFetch(globalObject, WTF::move(sourceCode)); // can throw
 }
 
-void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSSourceCode* jsSourceCode)
+void JSModuleLoader::provideFetch(JSGlobalObject* globalObject, const Identifier& key, ScriptFetchParameters::Type type, JSValue moduleData)
 {
     ModuleRegistryEntry* entry = ensureRegistered(globalObject, key, type);
     if (entry->status() == ModuleRegistryEntry::Status::New)
-        entry->provideFetch(globalObject, jsSourceCode); // can throw
+        entry->provideFetch(globalObject, moduleData); // can throw
 }
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -727,10 +727,10 @@ JSPromise* JSModuleLoader::hostLoadImportedModule(JSGlobalObject* globalObject, 
         auto error = createTypeError(globalObject, "Module type not supported by environment"_s);
         promise->reject(vm, error);
 
+        scope.release();
         auto exception = Exception::create(vm, error);
         finishLoadingImportedModule(globalObject, referrer, moduleRequest, payload, exception, scriptFetcher);
-
-        RELEASE_AND_RETURN(scope, promise);
+        return promise;
     }
 
     ModuleMapKey moduleMapKey { specifier.impl(), type };
@@ -1459,10 +1459,20 @@ extern "C" __attribute__((weak)) EncodedJSValue Bun__analyzeTranspiledModule(JSG
 }
 #endif
 
-JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSSourceCode* jsSourceCode)
+JSPromise* JSModuleLoader::makeModule(JSGlobalObject* globalObject, const Identifier& moduleKey, JSValue moduleData)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSSourceCode* jsSourceCode = dynamicDowncast<JSSourceCode>(moduleData);
+    if (!jsSourceCode) {
+        JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
+        promise->markAsHandled();
+        auto* moduleRecord = SyntheticModuleRecord::tryCreateDefaultExportSyntheticModule(globalObject, this, moduleKey, moduleData, SourceProviderSourceType::CSS);
+        RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
+        promise->fulfill(vm, moduleRecord);
+        RELEASE_AND_RETURN(scope, promise);
+    }
 
     const SourceCode& sourceCode = jsSourceCode->sourceCode();
 

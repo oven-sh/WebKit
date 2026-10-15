@@ -29,6 +29,7 @@
 #include "absl/base/config.h"
 #include "absl/base/internal/hardening.h"
 #include "absl/base/macros.h"
+#include "absl/base/optimization.h"
 #include "absl/container/internal/compressed_tuple.h"
 #include "absl/memory/memory.h"
 #include "absl/meta/type_traits.h"
@@ -76,7 +77,7 @@ using MoveIterator = typename std::move_iterator<Iterator<A>>;
 template <typename A>
 using IsMoveAssignOk = std::is_move_assignable<ValueType<A>>;
 template <typename A>
-using IsSwapOk = absl::type_traits_internal::IsSwappable<ValueType<A>>;
+using IsSwapOk = std::is_swappable<ValueType<A>>;
 
 template <typename A, bool IsTriviallyDestructible =
                           std::is_trivially_destructible_v<ValueType<A>> &&

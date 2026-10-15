@@ -190,9 +190,9 @@ void JSDOMWindow::finishCreation(VM& vm, JSWindowProxy* proxy)
 {
     Base::finishCreation(vm, proxy);
 
-    auto* scriptExecutionContext = realm()->scriptExecutionContext();
+    RefPtr scriptExecutionContext = realm()->scriptExecutionContext();
 
-    if (((scriptExecutionContext && scriptExecutionContext->isSecureContext()) && TestEnabledForContext::enabledForContext(*realm()->scriptExecutionContext())))
+    if (((scriptExecutionContext && scriptExecutionContext->isSecureContext()) && TestEnabledForContext::enabledForContext(*protect(realm()->scriptExecutionContext()))))
         putDirectCustomAccessor(vm, builtinNames(vm).TestEnabledForContextPublicName(), CustomGetterSetter::create(vm, jsDOMWindow_TestEnabledForContextConstructor, nullptr), attributesForStructure(static_cast<unsigned>(JSC::PropertyAttribute::DontEnum)));
 }
 

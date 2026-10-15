@@ -35,38 +35,12 @@ namespace Style {
 
 // MARK: - GeneratedImage.
 
-GeneratedImage::GeneratedImage(Image::Type type, bool fixedSize)
+GeneratedImage::GeneratedImage(Image::Type type)
     : Image { type }
-    , m_fixedSize { fixedSize }
 {
 }
 
 GeneratedImage::~GeneratedImage() = default;
-
-FloatSize GeneratedImage::imageSize(const RenderElement* renderer, float multiplier, WebCore::CachedImage::SizeType) const
-{
-    if (!m_fixedSize)
-        return m_containerSize;
-
-    if (!renderer)
-        return { };
-
-    FloatSize fixedSize = this->fixedSize(*renderer);
-    if (multiplier == 1.0f)
-        return fixedSize;
-
-    float width = fixedSize.width() * multiplier;
-    float height = fixedSize.height() * multiplier;
-
-    // Don't let images that have a width/height >= 1 shrink below 1 device pixel when zoomed.
-    float deviceScaleFactor = protect(renderer->document())->deviceScaleFactor();
-    if (fixedSize.width() > 0)
-        width = std::max<float>(1 / deviceScaleFactor, width);
-    if (fixedSize.height() > 0)
-        height = std::max<float>(1 / deviceScaleFactor, height);
-
-    return { width, height };
-}
 
 NaturalDimensions GeneratedImage::naturalDimensions(const RenderElement&, const ImageSizingContext&) const
 {

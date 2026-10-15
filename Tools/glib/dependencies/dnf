@@ -19,6 +19,7 @@ PACKAGES=(
     gstreamer1-plugins-bad-free-devel
     gstreamer1-plugins-base-devel
     harfbuzz-devel
+    hyphen-devel
     intltool
     libatomic
     libavif-devel
@@ -26,6 +27,7 @@ PACKAGES=(
     libepoxy-devel
     libevent-devel
     libgcrypt-devel
+    libinput-devel
     libjpeg-turbo-devel
     libjxl-devel
     libkate-devel
@@ -39,6 +41,7 @@ PACKAGES=(
     libtasn1-devel
     libvorbis-devel
     libv4l-devel
+    libva-devel
     libvpx-devel
     libwebp-devel
     libxkbcommon-x11-devel
@@ -52,6 +55,7 @@ PACKAGES=(
     opus-devel
     patch
     perl-autouse
+    perl-bignum
     perl-English
     perl-File-Copy-Recursive
     perl-FindBin

@@ -16,10 +16,15 @@
 
 #include <assert.h>
 #include <limits.h>
+#include <stdint.h>
 #include <string.h>
 
 #include <algorithm>
+#include <optional>
+#include <utility>
+#include <variant>
 
+#include <openssl/bytestring.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
 #include <openssl/mem.h>
@@ -27,7 +32,7 @@
 
 #include "../crypto/bytestring/internal.h"
 #include "../crypto/internal.h"
-#include "../crypto/bytestring/internal.h"
+#include "../crypto/mem_internal.h"
 #include "internal.h"
 
 
@@ -176,44 +181,109 @@ DTLSMessageBitmap::Range DTLSMessageBitmap::NextUnmarkedRange(
 
 // Receiving handshake messages.
 
-static UniquePtr<DTLSIncomingMessage> dtls_new_incoming_message(
-    const struct hm_header_st *msg_hdr) {
-  ScopedCBB cbb;
-  UniquePtr<DTLSIncomingMessage> frag = MakeUnique<DTLSIncomingMessage>();
-  if (!frag) {
-    return nullptr;
-  }
-  frag->type = msg_hdr->type;
-  frag->seq = msg_hdr->seq;
+DTLSIncomingMessage::DTLSIncomingMessage(const DTLSHandshakeHeader &hdr)
+    : type_(hdr.type), seq_(hdr.seq), msg_(FragmentList{{}, hdr.msg_len}) {}
 
-  // Allocate space for the reassembled message and fill in the header.
-  if (!frag->data.InitForOverwrite(DTLS1_HM_HEADER_LENGTH + msg_hdr->msg_len)) {
-    return nullptr;
+static bool AppendU24(Vector<uint8_t> *out, uint32_t v) {
+  uint8_t bytes[3] = {static_cast<uint8_t>(v >> 16),
+                      static_cast<uint8_t>(v >> 8), static_cast<uint8_t>(v)};
+  return out->Append(bytes);
+}
+
+bool DTLSIncomingMessage::AddFragment(uint32_t offset,
+                                      Span<const uint8_t> data) {
+  assert(offset <= msg_len());
+  assert(data.size() <= msg_len() - offset);
+
+  if (auto *list = std::get_if<FragmentList>(&msg_); list != nullptr) {
+    if (list->fragments.size() + data.size() < list->msg_len) {
+      // Including this new fragment, it is not yet possible for the message to
+      // be complete yet. Avoid allocating a ReassemblyBuffer.
+      //
+      // `list->fragments.size()` includes a six-byte header per fragment, so
+      // this comparison is loose. We may switch to ReassemblyBuffer before it
+      // is possible for to have complete message, but this is fine.
+      return AppendU24(&list->fragments, offset) &&
+             AppendU24(&list->fragments, static_cast<uint32_t>(data.size())) &&
+             list->fragments.Append(data);
+    }
+
+    // Convert the saved fragments to a ReassemblyBuffer. We have received
+    // enough that the memory use is proportional to data received.
+    ReassemblyBuffer new_buf;
+    if (!new_buf.msg.InitForOverwrite(DTLS1_HM_HEADER_LENGTH + list->msg_len) ||
+        !new_buf.reassembly.Init(list->msg_len)) {
+      return false;
+    }
+
+    // Reconstruct an unfragmented message header.
+    CBB cbb;
+    BSSL_CHECK(CBB_init_fixed(&cbb, new_buf.msg.data(), new_buf.msg.size()));
+    BSSL_CHECK(CBB_add_u8(&cbb, type_));
+    BSSL_CHECK(CBB_add_u24(&cbb, list->msg_len));
+    BSSL_CHECK(CBB_add_u16(&cbb, seq_));
+    BSSL_CHECK(CBB_add_u24(&cbb, 0 /* frag_off */));
+    BSSL_CHECK(CBB_add_u24(&cbb, list->msg_len));
+
+    // Replay the saved fragments.
+    CBS fragments(list->fragments);
+    while (CBS_len(&fragments) != 0) {
+      uint32_t saved_offset;
+      CBS saved_data;
+      BSSL_CHECK(CBS_get_u24(&fragments, &saved_offset));
+      BSSL_CHECK(CBS_get_u24_length_prefixed(&fragments, &saved_data));
+      new_buf.AddFragment(saved_offset, saved_data);
+    }
+
+    msg_ = std::move(new_buf);
   }
 
-  if (!CBB_init_fixed(cbb.get(), frag->data.data(), DTLS1_HM_HEADER_LENGTH) ||
-      !CBB_add_u8(cbb.get(), msg_hdr->type) ||
-      !CBB_add_u24(cbb.get(), msg_hdr->msg_len) ||
-      !CBB_add_u16(cbb.get(), msg_hdr->seq) ||
-      !CBB_add_u24(cbb.get(), 0 /* frag_off */) ||
-      !CBB_add_u24(cbb.get(), msg_hdr->msg_len) ||
-      !CBB_finish(cbb.get(), nullptr, nullptr)) {
-    return nullptr;
+  auto &buf = std::get<ReassemblyBuffer>(msg_);
+  buf.AddFragment(offset, data);
+  return true;
+}
+
+bool DTLSIncomingMessage::IsComplete() const {
+  auto *buf = std::get_if<ReassemblyBuffer>(&msg_);
+  return buf != nullptr && buf->reassembly.IsComplete();
+}
+
+std::optional<SSLMessage> DTLSIncomingMessage::GetMessage() const {
+  auto *buf = std::get_if<ReassemblyBuffer>(&msg_);
+  if (buf == nullptr || !buf->reassembly.IsComplete()) {
+    return std::nullopt;
   }
 
-  if (!frag->reassembly.Init(msg_hdr->msg_len)) {
-    return nullptr;
+  SSLMessage msg;
+  msg.type = type_;
+  msg.raw = CBS(buf->msg);
+  msg.body = CBS(Span(buf->msg).subspan(DTLS1_HM_HEADER_LENGTH));
+  msg.is_v2_hello = false;
+  return msg;
+}
+
+void DTLSIncomingMessage::ReassemblyBuffer::AddFragment(
+    uint32_t offset, Span<const uint8_t> data) {
+  if (reassembly.IsComplete()) {
+    // The message is already assembled.
+    return;
   }
 
-  return frag;
+  // Copy the body into the fragment.
+  Span<uint8_t> dest =
+      Span(msg).subspan(DTLS1_HM_HEADER_LENGTH).subspan(offset, data.size());
+  assert(dest.size() == data.size());
+  OPENSSL_memcpy(dest.data(), data.data(), data.size());
+  reassembly.MarkRange(offset, offset + data.size());
 }
 
 // dtls1_is_current_message_complete returns whether the current handshake
 // message is complete.
-static bool dtls1_is_current_message_complete(const SSLImpl *ssl) {
+[[maybe_unused]] static bool dtls1_is_current_message_complete(
+    const SSLImpl *ssl) {
   size_t idx = ssl->d1->handshake_read_seq % SSL_MAX_HANDSHAKE_FLIGHT;
-  DTLSIncomingMessage *frag = ssl->d1->incoming_messages[idx].get();
-  return frag != nullptr && frag->reassembly.IsComplete();
+  const DTLSIncomingMessage *frag = ssl->d1->incoming_messages[idx].get();
+  return frag != nullptr && frag->IsComplete();
 }
 
 // dtls1_get_incoming_message returns the incoming message corresponding to
@@ -221,21 +291,20 @@ static bool dtls1_is_current_message_complete(const SSLImpl *ssl) {
 // queue. Otherwise, it checks `msg_hdr` is consistent with the existing one. It
 // returns NULL on failure. The caller does not take ownership of the result.
 static DTLSIncomingMessage *dtls1_get_incoming_message(
-    SSLImpl *ssl, uint8_t *out_alert, const struct hm_header_st *msg_hdr) {
-  if (msg_hdr->seq < ssl->d1->handshake_read_seq ||
-      msg_hdr->seq - ssl->d1->handshake_read_seq >= SSL_MAX_HANDSHAKE_FLIGHT) {
+    SSLImpl *ssl, uint8_t *out_alert, const DTLSHandshakeHeader &msg_hdr) {
+  if (msg_hdr.seq < ssl->d1->handshake_read_seq ||
+      msg_hdr.seq - ssl->d1->handshake_read_seq >= SSL_MAX_HANDSHAKE_FLIGHT) {
     *out_alert = SSL_AD_INTERNAL_ERROR;
     return nullptr;
   }
 
-  size_t idx = msg_hdr->seq % SSL_MAX_HANDSHAKE_FLIGHT;
+  size_t idx = msg_hdr.seq % SSL_MAX_HANDSHAKE_FLIGHT;
   DTLSIncomingMessage *frag = ssl->d1->incoming_messages[idx].get();
   if (frag != nullptr) {
-    assert(frag->seq == msg_hdr->seq);
+    assert(frag->seq() == msg_hdr.seq);
     // The new fragment must be compatible with the previous fragments from this
     // message.
-    if (frag->type != msg_hdr->type ||  //
-        frag->msg_len() != msg_hdr->msg_len) {
+    if (frag->type() != msg_hdr.type || frag->msg_len() != msg_hdr.msg_len) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_FRAGMENT_MISMATCH);
       *out_alert = SSL_AD_ILLEGAL_PARAMETER;
       return nullptr;
@@ -244,7 +313,7 @@ static DTLSIncomingMessage *dtls1_get_incoming_message(
   }
 
   // This is the first fragment from this message.
-  ssl->d1->incoming_messages[idx] = dtls_new_incoming_message(msg_hdr);
+  ssl->d1->incoming_messages[idx] = MakeUnique<DTLSIncomingMessage>(msg_hdr);
   if (!ssl->d1->incoming_messages[idx]) {
     *out_alert = SSL_AD_INTERNAL_ERROR;
     return nullptr;
@@ -260,7 +329,7 @@ bool dtls1_process_handshake_fragments(SSLImpl *ssl, uint8_t *out_alert,
   CBS cbs = record;
   while (CBS_len(&cbs) > 0) {
     // Read a handshake fragment.
-    struct hm_header_st msg_hdr;
+    DTLSHandshakeHeader msg_hdr;
     CBS body;
     if (!dtls1_parse_fragment(&cbs, &msg_hdr, &body)) {
       OPENSSL_PUT_ERROR(SSL, SSL_R_BAD_HANDSHAKE_RECORD);
@@ -325,23 +394,14 @@ bool dtls1_process_handshake_fragments(SSLImpl *ssl, uint8_t *out_alert,
     }
 
     DTLSIncomingMessage *frag =
-        dtls1_get_incoming_message(ssl, out_alert, &msg_hdr);
+        dtls1_get_incoming_message(ssl, out_alert, msg_hdr);
     if (frag == nullptr) {
       return false;
     }
-    assert(frag->msg_len() == msg_len);
-
-    if (frag->reassembly.IsComplete()) {
-      // The message is already assembled.
-      continue;
+    if (!frag->AddFragment(frag_off, body)) {
+      *out_alert = SSL_AD_INTERNAL_ERROR;
+      return false;
     }
-    assert(msg_len > 0);
-
-    // Copy the body into the fragment.
-    Span<uint8_t> dest = frag->msg().subspan(frag_off, CBS_len(&body));
-    assert(dest.size() == CBS_len(&body));
-    OPENSSL_memcpy(dest.data(), CBS_data(&body), CBS_len(&body));
-    frag->reassembly.MarkRange(frag_off, frag_off + frag_len);
   }
 
   if (implicit_ack) {
@@ -434,16 +494,20 @@ ssl_open_record_t dtls1_open_handshake(SSLImpl *ssl, size_t *out_consumed,
 }
 
 bool dtls1_get_message(const SSLImpl *ssl, SSLMessage *out) {
-  if (!dtls1_is_current_message_complete(ssl)) {
+  size_t idx = ssl->d1->handshake_read_seq % SSL_MAX_HANDSHAKE_FLIGHT;
+  const DTLSIncomingMessage *frag = ssl->d1->incoming_messages[idx].get();
+  if (frag == nullptr) {
+    assert(!dtls1_is_current_message_complete(ssl));
     return false;
   }
 
-  size_t idx = ssl->d1->handshake_read_seq % SSL_MAX_HANDSHAKE_FLIGHT;
-  const DTLSIncomingMessage *frag = ssl->d1->incoming_messages[idx].get();
-  out->type = frag->type;
-  out->raw = CBS(frag->data);
-  out->body = CBS(frag->msg());
-  out->is_v2_hello = false;
+  std::optional<SSLMessage> msg = frag->GetMessage();
+  assert(dtls1_is_current_message_complete(ssl) == msg.has_value());
+  if (!msg.has_value()) {
+    return false;
+  }
+
+  *out = *msg;
   if (!ssl->s3->has_message) {
     ssl_do_msg_callback(ssl, 0 /* read */, SSL3_RT_HANDSHAKE, out->raw);
     ssl->s3->has_message = true;
@@ -483,10 +547,9 @@ bool dtls_has_unprocessed_handshake_data(const SSLImpl *ssl) {
   return false;
 }
 
-bool dtls1_parse_fragment(CBS *cbs, struct hm_header_st *out_hdr,
+bool dtls1_parse_fragment(CBS *cbs, DTLSHandshakeHeader *out_hdr,
                           CBS *out_body) {
-  OPENSSL_memset(out_hdr, 0x00, sizeof(struct hm_header_st));
-
+  *out_hdr = DTLSHandshakeHeader{};
   if (!CBS_get_u8(cbs, &out_hdr->type) ||
       !CBS_get_u24(cbs, &out_hdr->msg_len) ||
       !CBS_get_u16(cbs, &out_hdr->seq) ||
@@ -745,7 +808,7 @@ static seal_result_t seal_next_record(SSLImpl *ssl, Span<uint8_t> out,
 
     // Decode `msg`'s header.
     CBS cbs(msg.data), body_cbs;
-    struct hm_header_st hdr;
+    DTLSHandshakeHeader hdr;
     if (!dtls1_parse_fragment(&cbs, &hdr, &body_cbs) ||  //
         hdr.frag_off != 0 ||                             //
         hdr.frag_len != CBS_len(&body_cbs) ||            //

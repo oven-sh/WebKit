@@ -183,8 +183,7 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
     configureVideoDecoderForHarnessing(element);
 
 #if USE(GSTREAMER_GL)
-    static ASCIILiteral gstGlDisplayContextType = ASCIILiteral::fromLiteralUnsafe(GST_GL_DISPLAY_CONTEXT_TYPE);
-    if (!setGstElementGLContext(element.get(), gstGlDisplayContextType))
+    if (!setGstElementGLContext(element.get(), GST_GL_DISPLAY_CONTEXT_TYPE))
         return;
     if (!setGstElementGLContext(element.get(), "gst.gl.app_context"_s))
         return;
@@ -198,9 +197,12 @@ GStreamerInternalVideoDecoder::GStreamerInternalVideoDecoder(const String& codec
             gst_caps_set_simple(m_inputCaps.get(), "codec_data", GST_TYPE_BUFFER, codecData.get(), nullptr);
         if (!gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get()))
             parser = "h264parse"_s;
-    } else if (codecName.startsWith("av01"_s))
+    } else if (codecName.startsWith("av01"_s)) {
         m_inputCaps = adoptGRef(gst_caps_new_simple("video/x-av1", "stream-format", G_TYPE_STRING, "obu-stream", "alignment", G_TYPE_STRING, "frame", nullptr));
-    else if (codecName.startsWith("vp8"_s))
+        // vaav1dec requires a profile field and av1dec (libaom) requires TU alignment; av1parse provides both.
+        if (!gst_element_factory_can_sink_all_caps(factory, m_inputCaps.get()))
+            parser = "av1parse"_s;
+    } else if (codecName.startsWith("vp8"_s))
         m_inputCaps = adoptGRef(gst_caps_new_empty_simple("video/x-vp8"));
     else if (codecName.startsWith("vp09"_s)) {
         m_inputCaps = adoptGRef(gst_caps_new_empty_simple("video/x-vp9"));

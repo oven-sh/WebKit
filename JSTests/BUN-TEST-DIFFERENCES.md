@@ -1,6 +1,6 @@
 # Where this fork's tests differ from upstream's, and why
 
-`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 121 of them and
+`JSTests/`, `LayoutTests/js` and the PerformanceTests collections are upstream's tests. This fork changes 122 of them and
 three runner scripts. Every change is listed here by the reason for it, so that after an upstream sync a failing test can
 be sorted into one of three piles:
 
@@ -93,7 +93,8 @@ Rules for an edit to an upstream test:
   - A sticky or global `/u` regexp whose `lastIndex` is inside a pair matches from the pair's start, as the spec's
     `RegExpBuiltinExec` and V8 do. Upstream: no match.
   - A match is not reported at an index between the two halves. Here the fork differs from V8 too.
-- File: `stress/regexp-unicode-code-unit-read-for-bmp-terms.js`, two expectations.
+- Files: `stress/regexp-unicode-code-unit-read-for-bmp-terms.js`, two expectations;
+  `stress/regexp-stringlist-eol-length-groups.js`, one.
 
 ### A7. A host time-zone change is seen when the VM is next entered
 

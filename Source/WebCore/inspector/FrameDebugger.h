@@ -61,9 +61,6 @@ private:
 
     void runEventLoopWhilePausedInternal();
 
-    void setJavaScriptPausedInAllPages(bool);
-    void setJavaScriptPaused(LocalFrame&, bool paused);
-
     bool platformShouldContinueRunningEventLoopWhilePaused();
 
     WeakRef<LocalFrame> m_frame;

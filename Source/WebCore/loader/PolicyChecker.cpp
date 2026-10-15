@@ -322,6 +322,9 @@ void PolicyChecker::checkNavigationPolicy(ResourceRequest&& request, const Resou
     }
 
     auto documentLoader = frameLoader->loaderForWebsitePolicies();
+    // The client may keep track of this navigation from here on, and learns that it ended only through this identifier.
+    if (documentLoader && !documentLoader->navigationID())
+        documentLoader->setNavigationID(NavigationIdentifier::generate());
     auto clientRedirectSourceForHistory = documentLoader ? documentLoader->clientRedirectSourceForHistory() : String();
     auto navigationID = documentLoader ? documentLoader->navigationID() : std::nullopt;
     bool hasOpener = !!frame->opener();
@@ -403,7 +406,7 @@ void PolicyChecker::checkNewWindowPolicy(NavigationAction&& navigationAction, Re
 void PolicyChecker::stopCheck()
 {
     m_javaScriptURLPolicyCheckIdentifier++;
-    m_frame->loader().client().cancelPolicyCheck();
+    protect(m_frame->loader().client())->cancelPolicyCheck();
 }
 
 void PolicyChecker::cannotShowMIMEType(const ResourceResponse& response)
@@ -414,7 +417,7 @@ void PolicyChecker::cannotShowMIMEType(const ResourceResponse& response)
 void PolicyChecker::handleUnimplementablePolicy(const ResourceError& error)
 {
     m_delegateIsHandlingUnimplementablePolicy = true;
-    m_frame->loader().client().dispatchUnableToImplementPolicy(error);
+    protect(m_frame->loader().client())->dispatchUnableToImplementPolicy(error);
     m_delegateIsHandlingUnimplementablePolicy = false;
 }
 

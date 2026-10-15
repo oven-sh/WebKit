@@ -61,7 +61,7 @@ Ref<ImmutableStyleProperties> ImmutableStyleProperties::create(std::span<const C
     return adoptRef(*new (NotNull, slot) ImmutableStyleProperties(properties, mode));
 }
 
-static auto& NODELETE deduplicationMap()
+static auto& LEGACY_NODELETE deduplicationMap()
 {
     static NeverDestroyed<HashMap<unsigned, Ref<ImmutableStyleProperties>, AlreadyHashed>> map;
     return map.get();
@@ -133,7 +133,7 @@ int ImmutableStyleProperties::findCustomPropertyIndex(StringView propertyName) c
     auto metadataSpan = this->metadataSpan();
     auto valueSpan = this->valueSpan();
     for (int n = metadataSpan.size() - 1 ; n >= 0; --n) {
-        if (metadataSpan[n].m_propertyID == CSSPropertyCustom) {
+        if (metadataSpan[n].m_propertyID == std::to_underlying(CSSPropertyID::Custom)) {
             // We found a custom property. See if the name matches.
             RefPtr value = valueSpan[n].get();
             if (!value)

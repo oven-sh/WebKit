@@ -60,7 +60,6 @@ namespace JSC {
     macro(Number) \
     macro(Array) \
     macro(ArrayBuffer) \
-    macro(ShadowRealm) \
     macro(RegExp) \
     macro(Iterator) \
     macro(min) \
@@ -133,10 +132,7 @@ namespace JSC {
     macro(this) \
     macro(toIntegerOrInfinity) \
     macro(toLength) \
-    macro(importInRealm) \
     macro(evalFunction) \
-    macro(evalInRealm) \
-    macro(moveFunctionToRealm) \
     macro(newTargetLocal) \
     macro(derivedConstructor) \
     macro(isTypedArrayView) \
@@ -204,8 +200,6 @@ namespace JSC {
     macro(entries) \
     macro(emptyPropertyNameEnumerator) \
     macro(sentinelString) \
-    macro(createRemoteFunction) \
-    macro(isRemoteFunction) \
     macro(arrayFromFastWithoutMapFn) \
     macro(jsonParse) \
     macro(jsonStringify) \

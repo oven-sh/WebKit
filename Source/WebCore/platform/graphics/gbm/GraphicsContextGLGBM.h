@@ -44,8 +44,10 @@ public:
     static bool checkRequirements();
 
     WTF::UnixFileDescriptor createExportedFence() const;
+
     void prepareForDisplayWithFinishedSignal(NOESCAPE const Function<void()>&);
-    DMABufBuffer* displayBuffer() { return m_displayBuffer.dmabuf.get(); }
+    DMABufBuffer* displayBufferDMABuf() { return displayBuffer().dmabuf(); }
+    Vector<uint64_t> drawingBufferIDs() const;
 
 #if ENABLE(WEBXR)
     GCGLExternalImage createExternalImage(ExternalImageSource&&, GCGLenum internalFormat, GCGLint layer) final;
@@ -68,19 +70,41 @@ private:
     void freeDrawingBuffers();
     bool bindNextDrawingBuffer();
 
-    struct DrawingBuffer {
-        RefPtr<DMABufBuffer> dmabuf;
-        EGLImageKHR image { nullptr };
+    static constexpr size_t maxReusedDrawingBuffers { 3 };
+
+    class DrawingBuffer {
+        WTF_MAKE_NONCOPYABLE(DrawingBuffer);
+    public:
+        DrawingBuffer() = default;
+        DrawingBuffer(Ref<DMABufBuffer>&&, EGLImageKHR);
+        DrawingBuffer(DrawingBuffer&&);
+        DrawingBuffer& operator=(DrawingBuffer&&);
+        ~DrawingBuffer();
+
+        operator bool() const { return !!m_dmabuf; }
+
+        DMABufBuffer* dmabuf() const LIFETIME_BOUND { return m_dmabuf.get(); }
+        EGLImageKHR image() const LIFETIME_BOUND { return m_image; }
+
+        bool isInUse() const;
+        EGLImageKHR release();
+
+    private:
+        RefPtr<DMABufBuffer> m_dmabuf;
+        EGLImageKHR m_image { nullptr };
     };
     DrawingBuffer createDrawingBuffer() const;
+    void destroyDrawingBuffer(DrawingBuffer&) const;
+    DrawingBuffer& drawingBuffer() { return m_drawingBuffers[m_currentDrawingBufferIndex % maxReusedDrawingBuffers]; }
+    DrawingBuffer& displayBuffer() { return m_drawingBuffers[(m_currentDrawingBufferIndex + maxReusedDrawingBuffers - 1u) % maxReusedDrawingBuffers]; }
 
     struct {
         uint32_t fourcc { 0 };
         Vector<uint64_t, 1> modifiers;
     } m_drawingBufferFormat;
 
-    DrawingBuffer m_drawingBuffer;
-    DrawingBuffer m_displayBuffer;
+    std::array<DrawingBuffer, maxReusedDrawingBuffers> m_drawingBuffers;
+    size_t m_currentDrawingBufferIndex { 0 };
 };
 
 } // namespace WebCore

@@ -37,8 +37,9 @@ namespace WebCore {
 template<typename Visitor>
 void JSMessageChannel::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped().port1());
-    addWebCoreOpaqueRoot(visitor, wrapped().port2());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, wrapped().port1());
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, wrapped().port2());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSMessageChannel);

@@ -31,6 +31,7 @@
 #include <WebCore/FrameTreeSyncClient.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/SandboxFlags.h>
+#include <WebCore/UserGestureTokenIdentifier.h>
 #include <wtf/MonotonicTime.h>
 
 namespace WebCore {
@@ -55,8 +56,9 @@ public:
     virtual void updateSandboxFlags(SandboxFlags) = 0;
     virtual void updateOpener(std::optional<FrameIdentifier>) = 0;
     virtual void setPrinting(bool printing, FloatSize pageSize, FloatSize originalPageSize, float maximumShrinkRatio, AdjustViewSize) = 0;
-    virtual void didNotifyUserActivation(MonotonicTime) { }
+    virtual void didNotifyUserActivation(MonotonicTime, std::optional<UserGestureTokenIdentifier>) { }
     virtual void didConsumeUserActivation() { }
+    virtual void didRevokeForcedUserActivation(UserGestureTokenIdentifier) { }
     virtual void didHandleFirstUserGesture(MonotonicTime) { }
     virtual ~FrameLoaderClient() = default;
 };

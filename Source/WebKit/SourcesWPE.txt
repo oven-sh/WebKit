@@ -138,6 +138,7 @@ UIProcess/API/glib/IconDatabase.cpp @no-unify
 UIProcess/API/glib/InputMethodFilter.cpp @no-unify
 UIProcess/API/glib/KeyAutoRepeatHandler.cpp @no-unify
 UIProcess/API/glib/WebKitApplicationInfo.cpp @no-unify
+UIProcess/API/glib/WebKitApplicationManifest.cpp @no-unify
 UIProcess/API/glib/WebKitAuthenticationRequest.cpp @no-unify
 UIProcess/API/glib/WebKitAutomationSession.cpp @no-unify
 UIProcess/API/glib/WebKitBackForwardList.cpp @no-unify
@@ -158,8 +159,10 @@ UIProcess/API/glib/WebKitFileChooserRequest.cpp @no-unify
 UIProcess/API/glib/WebKitFindController.cpp @no-unify
 UIProcess/API/glib/WebKitFormClient.cpp @no-unify
 UIProcess/API/glib/WebKitFormSubmissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitFrameInfo.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationManager.cpp @no-unify
 UIProcess/API/glib/WebKitGeolocationPermissionRequest.cpp @no-unify
+UIProcess/API/glib/WebKitIconLoadingClient.cpp @no-unify
 UIProcess/API/glib/WebKitImage.cpp @no-unify
 UIProcess/API/glib/WebKitInitialize.cpp @no-unify
 UIProcess/API/glib/WebKitInjectedBundleClient.cpp @no-unify
@@ -199,6 +202,9 @@ UIProcess/API/glib/WebKitUserContentManager.cpp @no-unify
 UIProcess/API/glib/WebKitUserMediaPermissionRequest.cpp @no-unify
 UIProcess/API/glib/WebKitVersion.cpp @no-unify
 UIProcess/API/glib/WebKitWebContext.cpp @no-unify
+UIProcess/API/glib/WebKitWebExtension.cpp @no-unify
+UIProcess/API/glib/WebKitWebExtensionContext.cpp @no-unify
+UIProcess/API/glib/WebKitWebExtensionMatchPattern.cpp @no-unify
 UIProcess/API/glib/WebKitWebResource.cpp @no-unify
 UIProcess/API/glib/WebKitWebResourceLoadManager.cpp @no-unify
 UIProcess/API/glib/WebKitWebView.cpp @no-unify
@@ -225,8 +231,6 @@ UIProcess/API/wpe/WebKitPopupMenu.cpp @no-unify
 UIProcess/API/wpe/WebKitRectangle.cpp @no-unify
 UIProcess/API/wpe/WebKitScriptDialogWPE.cpp @no-unify
 UIProcess/API/wpe/WebKitWebViewBackend.cpp @no-unify
-UIProcess/API/wpe/WebKitWebViewWPE1.cpp @no-unify
-UIProcess/API/wpe/WebKitWebViewWPE2.cpp @no-unify
 UIProcess/API/wpe/WebKitWebViewWPE.cpp @no-unify
 UIProcess/API/wpe/WPEWebView.cpp @no-unify
 UIProcess/API/wpe/WPEWebViewLegacy.cpp @no-unify
@@ -324,6 +328,7 @@ WebProcess/InjectedBundle/API/glib/WebKitWebEditor.cpp @no-unify
 WebProcess/InjectedBundle/API/glib/WebKitWebFormManager.cpp @no-unify
 WebProcess/InjectedBundle/API/glib/WebKitWebHitTestResult.cpp @no-unify
 WebProcess/InjectedBundle/API/glib/WebKitWebPage.cpp @no-unify
+WebProcess/InjectedBundle/API/glib/WebKitWebProcessExtension.cpp @no-unify
 WebProcess/InjectedBundle/API/glib/WebProcessExtensionManager.cpp @no-unify
 
 WebProcess/InjectedBundle/glib/InjectedBundleGlib.cpp

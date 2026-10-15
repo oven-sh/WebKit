@@ -91,8 +91,8 @@ public:
 
     void addRule(const StyleRule&, unsigned selectorIndex, unsigned selectorListIndex);
     void addPageRule(StyleRulePage&);
-    void NODELETE setViewTransitionRule(StyleRuleViewTransition&);
-    RefPtr<StyleRuleViewTransition> NODELETE viewTransitionRule() const;
+    void setViewTransitionRule(StyleRuleViewTransition&);
+    RefPtr<StyleRuleViewTransition> LEGACY_NODELETE viewTransitionRule() const;
 
     void addToRuleSet(const AtomString& key, AtomRuleMap&, const RuleData&);
     void shrinkToFit();
@@ -153,10 +153,10 @@ public:
     bool hasScopeRules() const { return !m_scopeRules.isEmpty(); }
     Vector<Ref<const StyleRuleScope>> scopeRulesFor(const RuleData&) const;
 
-    const RefPtr<const StyleRulePositionTry> NODELETE positionTryRuleForName(const AtomString&) const;
+    const RefPtr<const StyleRulePositionTry> positionTryRuleForName(const AtomString&) const;
 
 #if ENABLE(SPATIAL_PORTAL)
-    RefPtr<const StyleRuleEnvironmentMap> NODELETE environmentMapRuleForName(const AtomString&) const;
+    RefPtr<const StyleRuleEnvironmentMap> LEGACY_NODELETE environmentMapRuleForName(const AtomString&) const;
 #endif
 
     WTF::String selectorsForDebugging() const;

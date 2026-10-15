@@ -66,8 +66,7 @@ void BackendDispatcher::CallbackBase::sendFailure(const ErrorString& error)
     m_alreadySent = true;
 
     // Immediately send an error message since this is an async response with a single error.
-    m_backendDispatcher->reportProtocolError(m_requestId, ServerError, error);
-    m_backendDispatcher->sendPendingErrors();
+    m_backendDispatcher->sendErrorResponse(m_requestId, ServerError, error);
 }
 
 void BackendDispatcher::CallbackBase::sendSuccess(Ref<JSON::Object>&& partialMessage)
@@ -227,7 +226,7 @@ void BackendDispatcher::sendResponse(long requestId, Ref<JSON::Object>&& result,
     m_frontendRouter->sendResponse(responseMessage->toJSONString());
 }
 
-void BackendDispatcher::sendPendingErrors()
+static String errorMessageForRequest(std::optional<long> requestId, const Vector<std::tuple<BackendDispatcher::CommonErrorCode, String>>& errors)
 {
     // These error codes are specified in JSON-RPC 2.0, Section 5.1.
     static constexpr auto errorCodes = WTF::toArray<int>({
@@ -242,11 +241,11 @@ void BackendDispatcher::sendPendingErrors()
     // To construct the error object, only use the last error's code and message.
     // Per JSON-RPC 2.0, Section 5.1, the 'data' member may contain nested errors,
     // but only one top-level Error object should be sent per request.
-    CommonErrorCode errorCode = InternalError;
+    auto errorCode = BackendDispatcher::InternalError;
     String errorMessage;
     Ref<JSON::Array> payload = JSON::Array::create();
     
-    for (auto& data : m_protocolErrors) {
+    for (auto& data : errors) {
         errorCode = std::get<0>(data);
         errorMessage = std::get<1>(data);
 
@@ -266,17 +265,31 @@ void BackendDispatcher::sendPendingErrors()
 
     Ref<JSON::Object> message = JSON::Object::create();
     message->setObject("error"_s, WTF::move(topLevelError));
-    if (m_currentRequestId)
-        message->setInteger("id"_s, m_currentRequestId.value());
+    if (requestId)
+        message->setInteger("id"_s, requestId.value());
     else {
         // The 'null' value for an unknown id is specified in JSON-RPC 2.0, Section 5.
         message->setValue("id"_s, JSON::Value::null());
     }
 
-    m_frontendRouter->sendResponse(message->toJSONString());
+    return message->toJSONString();
+}
+
+void BackendDispatcher::sendPendingErrors()
+{
+    m_frontendRouter->sendResponse(errorMessageForRequest(m_currentRequestId, m_protocolErrors));
 
     m_protocolErrors.clear();
     m_currentRequestId = std::nullopt;
+}
+
+void BackendDispatcher::sendErrorResponse(long requestId, CommonErrorCode errorCode, const String& errorMessage)
+{
+    ASSERT_ARG(errorCode, errorCode >= 0);
+
+    // Unlike reportProtocolError(), this does not touch the errors of the request being processed:
+    // an async response can complete while another request is being dispatched.
+    m_frontendRouter->sendResponse(errorMessageForRequest(requestId, { { errorCode, errorMessage } }));
 }
     
 void BackendDispatcher::reportProtocolError(CommonErrorCode errorCode, const String& errorMessage)

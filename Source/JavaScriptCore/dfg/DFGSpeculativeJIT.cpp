@@ -1274,7 +1274,7 @@ bool SpeculativeJIT::genericJSValueStrictEq(Node* node, bool invert)
     return false;
 }
 
-static const char* NODELETE dataFormatString(DataFormat format)
+static const char* LEGACY_NODELETE dataFormatString(DataFormat format)
 {
     // These values correspond to the DataFormat enum.
     const char* strings[] = {
@@ -9649,8 +9649,8 @@ void SpeculativeJIT::compileArraySlice(Node* node)
         GPRReg scratchGPR = scratch.gpr();
         GPRReg scratch2GPR = scratch2.gpr();
 
-        emitAllocateButterfly(storageResultGPR, sizeGPR, scratchGPR, scratch2GPR, resultGPR, slowCases);
-        emitInitializeButterfly(storageResultGPR, sizeGPR, emptyValueGPR, scratchGPR);
+        emitAllocateButterfly(storageResultGPR, scratchGPR, sizeGPR, scratch2GPR, resultGPR, slowCases);
+        emitInitializeButterfly(storageResultGPR, scratchGPR, emptyValueGPR, scratchGPR);
         emitAllocateJSObject<JSArray>(resultGPR, tempValue, storageResultGPR, scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
         mutatorFence(vm());
 
@@ -10610,13 +10610,13 @@ void SpeculativeJIT::compileCheckIsConstant(Node* node)
 {
     if (node->child1().useKind() == CellUse) {
         SpeculateCellOperand cell(this, node->child1());
-        speculationCheck(BadConstantValue, JSValueSource(cell.gpr()), node->child1(), branchLinkableConstant(NotEqual, cell.gpr(), LinkableConstant(*this, node->cellOperand()->cell())));
+        speculationCheck(node->checkIsConstantExitKind(), JSValueSource(cell.gpr()), node->child1(), branchLinkableConstant(NotEqual, cell.gpr(), LinkableConstant(*this, node->cellOperand()->cell())));
     } else {
         ASSERT(!node->constant()->value().isCell() || !node->constant()->value());
         JSValueOperand operand(this, node->child1());
         GPRReg valueGPR = operand.gpr();
 
-        speculationCheck(BadConstantValue, JSValueSource(valueGPR), node->child1(), branch64(NotEqual, valueGPR, TrustedImm64(JSValue::encode(node->constant()->value()))));
+        speculationCheck(node->checkIsConstantExitKind(), JSValueSource(valueGPR), node->child1(), branch64(NotEqual, valueGPR, TrustedImm64(JSValue::encode(node->constant()->value()))));
     }
 
 
@@ -11272,9 +11272,6 @@ void SpeculativeJIT::compileFunctionToString(Node* node)
     loadPtr(Address(result.gpr(), Structure::classInfoOffset()), result.gpr());
     static_assert(std::is_final_v<JSBoundFunction>, "We don't handle subclasses when comparing classInfo below");
     slowCases.append(branchPtr(Equal, result.gpr(), TrustedImmPtr(JSBoundFunction::info())));
-
-    static_assert(std::is_final_v<JSRemoteFunction>, "We don't handle subclasses when comparing classInfo below");
-    slowCases.append(branchPtr(Equal, result.gpr(), TrustedImmPtr(JSRemoteFunction::info())));
 
     getExecutable(*this, function.gpr(), executable.gpr());
     Jump isNativeExecutable = branch8(Equal, Address(executable.gpr(), JSCell::typeInfoTypeOffset()), TrustedImm32(NativeExecutableType));
@@ -12764,7 +12761,7 @@ void SpeculativeJIT::emitSwitchChar(Node* node, SwitchData* data)
 namespace {
 
 struct CharacterCase {
-    bool NODELETE operator<(const CharacterCase& other) const
+    bool LEGACY_NODELETE operator<(const CharacterCase& other) const
     {
         return character < other.character;
     }
@@ -14173,6 +14170,33 @@ void SpeculativeJIT::compileDefineDataProperty(Node* node)
         callOperation(operationDefineDataPropertySymbol, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, valueGPR, attributesGPR);
         break;
     }
+    case Int32Use: {
+        SpeculateInt32Operand property(this, propertyEdge);
+        GPRTemporary boxedProperty(this);
+        GPRReg propertyGPR = boxedProperty.gpr();
+        boxInt32(property.gpr(), propertyGPR);
+
+        speculateObject(baseEdge, baseGPR);
+
+        useChildren(node);
+
+        flushRegisters();
+        callOperation(operationDefineDataProperty, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, valueGPR, attributesGPR);
+        break;
+    }
+    case NumberUse: {
+        speculateNumber(propertyEdge);
+        JSValueOperand property(this, propertyEdge, ManualOperandSpeculation);
+        GPRReg propertyGPR = property.gpr();
+
+        speculateObject(baseEdge, baseGPR);
+
+        useChildren(node);
+
+        flushRegisters();
+        callOperation(operationDefineDataProperty, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, valueGPR, attributesGPR);
+        break;
+    }
     case UntypedUse: {
         JSValueOperand property(this, propertyEdge);
         GPRReg propertyGPR = property.gpr();
@@ -14253,6 +14277,33 @@ void SpeculativeJIT::compileDefineAccessorProperty(Node* node)
         callOperation(operationDefineAccessorPropertySymbol, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, getterGPR, setterGPR, attributesGPR);
         break;
     }
+    case Int32Use: {
+        SpeculateInt32Operand property(this, propertyEdge);
+        GPRTemporary boxedProperty(this);
+        GPRReg propertyGPR = boxedProperty.gpr();
+        boxInt32(property.gpr(), propertyGPR);
+
+        speculateObject(baseEdge, baseGPR);
+
+        useChildren(node);
+
+        flushRegisters();
+        callOperation(operationDefineAccessorProperty, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, getterGPR, setterGPR, attributesGPR);
+        break;
+    }
+    case NumberUse: {
+        speculateNumber(propertyEdge);
+        JSValueOperand property(this, propertyEdge, ManualOperandSpeculation);
+        GPRReg propertyGPR = property.gpr();
+
+        speculateObject(baseEdge, baseGPR);
+
+        useChildren(node);
+
+        flushRegisters();
+        callOperation(operationDefineAccessorProperty, LinkableConstant::globalObject(*this, node), baseGPR, propertyGPR, getterGPR, setterGPR, attributesGPR);
+        break;
+    }
     case UntypedUse: {
         JSValueOperand property(this, propertyEdge);
         GPRReg propertyGPR = property.gpr();
@@ -14275,18 +14326,60 @@ void SpeculativeJIT::compileDefineAccessorProperty(Node* node)
 void SpeculativeJIT::compileObjectDefineProperty(Node* node)
 {
     SpeculateCellOperand target(this, node->child1());
-    JSValueOperand key(this, node->child2());
     SpeculateCellOperand descriptor(this, node->child3());
 
     GPRReg targetGPR = target.gpr();
-    GPRReg keyGPR = key.gpr();
     GPRReg descriptorGPR = descriptor.gpr();
 
     speculateObject(node->child1(), targetGPR);
     speculateObject(node->child3(), descriptorGPR);
 
-    flushRegisters();
-    callOperation(operationObjectDefineProperty, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, descriptorGPR);
+    Edge keyEdge = node->child2();
+    switch (keyEdge.useKind()) {
+    case StringUse:
+    case SymbolUse: {
+        SpeculateCellOperand key(this, keyEdge);
+        GPRReg keyGPR = key.gpr();
+        if (keyEdge.useKind() == StringUse)
+            speculateString(keyEdge, keyGPR);
+        else
+            speculateSymbol(keyEdge, keyGPR);
+
+        flushRegisters();
+        callOperation(operationObjectDefineProperty, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, descriptorGPR);
+        break;
+    }
+    case Int32Use: {
+        SpeculateInt32Operand key(this, keyEdge);
+        GPRTemporary boxedKey(this);
+        GPRReg keyGPR = boxedKey.gpr();
+        boxInt32(key.gpr(), keyGPR);
+
+        flushRegisters();
+        callOperation(operationObjectDefineProperty, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, descriptorGPR);
+        break;
+    }
+    case NumberUse: {
+        speculateNumber(keyEdge);
+        JSValueOperand key(this, keyEdge, ManualOperandSpeculation);
+        GPRReg keyGPR = key.gpr();
+
+        flushRegisters();
+        callOperation(operationObjectDefineProperty, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, descriptorGPR);
+        break;
+    }
+    case UntypedUse: {
+        JSValueOperand key(this, keyEdge);
+        GPRReg keyGPR = key.gpr();
+
+        flushRegisters();
+        callOperation(operationObjectDefineProperty, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, descriptorGPR);
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    }
     noResult(node);
 }
 
@@ -14297,54 +14390,109 @@ void SpeculativeJIT::compileObjectDefinePropertyFromFields(Node* node)
 
     // Children layout:
     //   [0] target (ObjectUse)
-    //   [1] key (UntypedUse)
+    //   [1] key (StringUse, SymbolUse, Int32Use, NumberUse, or UntypedUse)
     //   [2..7] descriptor slots, indexed by Node::DescriptorSlot
     //          (UntypedUse or JSConstant(empty) if absent).
     SpeculateCellOperand target(this, m_graph.varArgChild(node, 0));
-    JSValueOperand key(this, m_graph.varArgChild(node, 1));
-    GPRTemporary buffer(this);
-
     GPRReg targetGPR = target.gpr();
-    GPRReg keyGPR = key.gpr();
-    GPRReg bufferGPR = buffer.gpr();
-
     speculateObject(m_graph.varArgChild(node, 0), targetGPR);
 
-    constexpr size_t scratchSize = sizeof(EncodedJSValue) * Node::numberOfDescriptorSlots;
-    ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
-    EncodedJSValue* scratchData = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+    Edge keyEdge = m_graph.varArgChild(node, 1);
+    auto lower = [&](GPRReg keyGPR, const auto& useKey) {
+        GPRTemporary buffer(this);
+        GPRReg bufferGPR = buffer.gpr();
 
-    move(TrustedImmPtr(scratchData), bufferGPR);
-    for (unsigned slot = 0; slot < Node::numberOfDescriptorSlots; ++slot) {
-        JSValueOperand operand(this, m_graph.varArgChild(node, slot + 2));
-        storeValue(operand.gpr(), Address(bufferGPR, sizeof(EncodedJSValue) * slot));
-        operand.use();
+        constexpr size_t scratchSize = sizeof(EncodedJSValue) * Node::numberOfDescriptorSlots;
+        ScratchBuffer* scratchBuffer = vm().scratchBufferForSize(scratchSize);
+        EncodedJSValue* scratchData = static_cast<EncodedJSValue*>(scratchBuffer->dataBuffer());
+
+        move(TrustedImmPtr(scratchData), bufferGPR);
+        for (unsigned slot = 0; slot < Node::numberOfDescriptorSlots; ++slot) {
+            JSValueOperand operand(this, m_graph.varArgChild(node, slot + 2));
+            storeValue(operand.gpr(), Address(bufferGPR, sizeof(EncodedJSValue) * slot));
+            operand.use();
+        }
+
+        target.use();
+        useKey();
+
+        flushRegisters();
+        callOperation(operationObjectDefinePropertyFromFields, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, bufferGPR);
+    };
+
+    switch (keyEdge.useKind()) {
+    case StringUse:
+    case SymbolUse: {
+        SpeculateCellOperand key(this, keyEdge);
+        GPRReg keyGPR = key.gpr();
+        if (keyEdge.useKind() == StringUse)
+            speculateString(keyEdge, keyGPR);
+        else
+            speculateSymbol(keyEdge, keyGPR);
+        lower(keyGPR, [&] {
+            key.use();
+        });
+        break;
     }
-
-    target.use();
-    key.use();
-
-    flushRegisters();
-    callOperation(operationObjectDefinePropertyFromFields, LinkableConstant::globalObject(*this, node), targetGPR, keyGPR, bufferGPR);
+    case Int32Use: {
+        SpeculateInt32Operand key(this, keyEdge);
+        GPRTemporary boxedKey(this);
+        GPRReg keyGPR = boxedKey.gpr();
+        boxInt32(key.gpr(), keyGPR);
+        lower(keyGPR, [&] {
+            key.use();
+        });
+        break;
+    }
+    case NumberUse: {
+        speculateNumber(keyEdge);
+        JSValueOperand key(this, keyEdge, ManualOperandSpeculation);
+        lower(key.gpr(), [&] {
+            key.use();
+        });
+        break;
+    }
+    case UntypedUse: {
+        JSValueOperand key(this, keyEdge);
+        lower(key.gpr(), [&] {
+            key.use();
+        });
+        break;
+    }
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        break;
+    }
     noResult(node, UseChildrenCalledExplicitly);
 }
 
-void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, GPRReg scratch3, JumpList& slowCases)
+void SpeculativeJIT::emitAllocateButterfly(GPRReg storageResultGPR, GPRReg vectorLengthResultGPR, GPRReg sizeGPR, GPRReg scratch1, GPRReg scratch2, JumpList& slowCases)
 {
-    RELEASE_ASSERT(RegisterSet(storageResultGPR, sizeGPR, scratch1, scratch2, scratch3).numberOfSetGPRs() == 5);
-    ASSERT((1 << 3) == sizeof(JSValue));
-    lshift32(sizeGPR, TrustedImm32(3), scratch1);
-    add32(TrustedImm32(sizeof(IndexingHeader)), scratch1, scratch2);
-#if ASSERT_ENABLED
-    Jump didNotOverflow = branch32(AboveOrEqual, scratch2, sizeGPR);
-    abortWithReason(UncheckedOverflow);
-    didNotOverflow.link(this);
-#endif
-    emitAllocateVariableSized(
-        storageResultGPR, vm().auxiliarySpace(), scratch2, scratch1, scratch3, slowCases);
+    RELEASE_ASSERT(RegisterSet(storageResultGPR, vectorLengthResultGPR, sizeGPR, scratch1, scratch2).numberOfSetGPRs() == 5);
+    GPRReg vectorLengthGPR = vectorLengthResultGPR;
+    GPRReg allocatorGPR = scratch1;
+
+    // Apply the same minimum vector length as Butterfly::optimalContiguousVectorLength so that the
+    // C++ slow path allocates from the same size class and refills this allocator.
+    moveConditionally32(Below, sizeGPR, TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN), TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN), sizeGPR, vectorLengthGPR);
+    moveConditionally32(Equal, sizeGPR, TrustedImm32(0), TrustedImm32(BASE_CONTIGUOUS_VECTOR_LEN_EMPTY), vectorLengthGPR, vectorLengthGPR);
+
+    // The butterfly is (vectorLength + 1) JSValues, so its size step index is
+    // ceil((vectorLength + 1) * 8 / 16) == (vectorLength >> 1) + 1. The + 1 is folded into the table base.
+    static_assert(sizeof(IndexingHeader) == sizeof(JSValue));
+    static_assert(MarkedSpace::sizeStep == 2 * sizeof(JSValue));
+    static_assert(sizeof(Allocator) == sizeof(void*));
+    constexpr unsigned largestSizeStepIndex = MarkedSpace::largeCutoff / MarkedSpace::sizeStep;
+    static_assert(largestSizeStepIndex < MarkedSpace::numSizeClasses);
+    slowCases.append(branch32(AboveOrEqual, sizeGPR, TrustedImm32(2 * largestSizeStepIndex)));
+    urshift32(vectorLengthGPR, TrustedImm32(1), allocatorGPR);
+    move(TrustedImmPtr(&vm().auxiliarySpace().allocatorsForSizeSteps()[1]), scratch2);
+    loadPtr(BaseIndex(scratch2, allocatorGPR, ScalePtr), allocatorGPR);
+    emitAllocate(storageResultGPR, JITAllocator::variable(), allocatorGPR, scratch2, slowCases);
+
     addPtr(TrustedImm32(sizeof(IndexingHeader)), storageResultGPR);
     static_assert(Butterfly::offsetOfPublicLength() + static_cast<ptrdiff_t>(sizeof(uint32_t)) == Butterfly::offsetOfVectorLength());
-    storePair32(sizeGPR, sizeGPR, storageResultGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
+    storePair32(sizeGPR, vectorLengthGPR, storageResultGPR, TrustedImm32(Butterfly::offsetOfPublicLength()));
 }
 
 void SpeculativeJIT::compileNormalizeMapKey(Node* node)
@@ -16636,9 +16784,10 @@ void SpeculativeJIT::compileBitwiseStrictEq(Node* node)
     unblessedBooleanResult(result.gpr(), node);
 }
 
-void SpeculativeJIT::emitInitializeButterfly(GPRReg storageGPR, GPRReg sizeGPR, GPRReg emptyValueGPR, GPRReg scratchGPR)
+void SpeculativeJIT::emitInitializeButterfly(GPRReg storageGPR, GPRReg vectorLengthGPR, GPRReg emptyValueGPR, GPRReg scratchGPR)
 {
-    zeroExtend32ToWord(sizeGPR, scratchGPR);
+    // No zero extension is needed: sub32 clears the upper bits before the index is first used as 64-bit.
+    move(vectorLengthGPR, scratchGPR);
     Jump done = branchTest32(Zero, scratchGPR);
     Label loop = label();
     sub32(TrustedImm32(1), scratchGPR);
@@ -16674,14 +16823,14 @@ void SpeculativeJIT::compileAllocateNewArrayWithSize(Node* node, GPRReg resultGP
 #endif // ASSERT_ENABLED
 
     // We can use resultGPR as a scratch right now.
-    emitAllocateButterfly(storageGPR, sizeGPR, scratchGPR, scratch2GPR, resultGPR, slowCases);
+    emitAllocateButterfly(storageGPR, resultGPR, sizeGPR, scratchGPR, scratch2GPR, slowCases);
 
     GPRReg emptyValueGPR(scratchGPR);
     if (hasDouble(structure->indexingType()))
         moveTrustedValue(jsNaN(), emptyValueGPR);
     else
         moveTrustedValue(JSValue(), emptyValueGPR);
-    emitInitializeButterfly(storageGPR, sizeGPR, emptyValueGPR, resultGPR);
+    emitInitializeButterfly(storageGPR, resultGPR, emptyValueGPR, resultGPR);
 
     emitAllocateJSObject<JSArray>(resultGPR, TrustedImmPtr(structure), storageGPR, scratchGPR, scratch2GPR, slowCases, SlowAllocationResult::UndefinedBehavior);
 
@@ -17987,39 +18136,73 @@ void SpeculativeJIT::compileGlobalIsNaN(Node* node)
     }
 }
 
+void SpeculativeJIT::emitDoubleIsNaN(FPRReg numberFPR, GPRReg resultGPR)
+{
+    compareDouble(DoubleNotEqualOrUnordered, numberFPR, numberFPR, resultGPR);
+}
+
+void SpeculativeJIT::emitDoubleIsFinite(FPRReg numberFPR, GPRReg resultGPR, FPRReg scratchFPR)
+{
+    subDouble(numberFPR, numberFPR, scratchFPR);
+    compareDouble(DoubleEqualAndOrdered, scratchFPR, scratchFPR, resultGPR);
+}
+
+void SpeculativeJIT::emitDoubleIsSafeInteger(FPRReg numberFPR, GPRReg resultGPR, GPRReg scratchGPR, FPRReg scratchFPR, FPRReg limitFPR)
+{
+    ASSERT(supportsFloatingPointRounding());
+    truncDouble(numberFPR, scratchFPR);
+    compareDouble(DoubleEqualAndOrdered, numberFPR, scratchFPR, resultGPR);
+
+    absDouble(numberFPR, scratchFPR);
+    move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(maxSafeInteger())), limitFPR);
+    compareDouble(DoubleLessThanOrEqualAndOrdered, scratchFPR, limitFPR, scratchGPR);
+    and32(scratchGPR, resultGPR);
+}
+
+// Falls through with the unboxed double in numberFPR. Every returned jump leaves the final result in resultGPR.
+SpeculativeJIT::JumpList SpeculativeJIT::unboxDoubleForNumberPredicate(Edge edge, GPRReg argumentGPR, GPRReg resultGPR, FPRReg numberFPR, bool resultForInt32)
+{
+    SpeculatedType type = m_interpreter.forNode(edge).m_type;
+    JumpList done;
+    if (type & SpecInt32Only) {
+        move(TrustedImm32(resultForInt32), resultGPR);
+        done.append(branchIfInt32(argumentGPR));
+    }
+    if (type & ~SpecFullNumber) {
+        move(TrustedImm32(0), resultGPR);
+        done.append(branchIfNotNumber(argumentGPR));
+    }
+    unboxDouble(argumentGPR, resultGPR, numberFPR);
+    return done;
+}
+
 void SpeculativeJIT::compileNumberIsNaN(Node* node)
 {
     switch (node->child1().useKind()) {
     case DoubleRepUse: {
         SpeculateDoubleOperand argument(this, node->child1());
-        GPRTemporary scratch(this);
+        GPRTemporary result(this);
 
         FPRReg argumentFPR = argument.fpr();
-        GPRReg scratchGPR = scratch.gpr();
+        GPRReg resultGPR = result.gpr();
 
-        compareDouble(DoubleNotEqualOrUnordered, argumentFPR, argumentFPR, scratchGPR);
-        unblessedBooleanResult(scratchGPR, node);
+        emitDoubleIsNaN(argumentFPR, resultGPR);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     case UntypedUse: {
         JSValueOperand argument(this, node->child1());
-        GPRTemporary scratch1(this);
-
-        bool mayBeInt32 = m_interpreter.forNode(node->child1()).m_type & SpecInt32Only;
+        GPRTemporary result(this);
+        FPRTemporary number(this);
 
         GPRReg argumentGPR = argument.gpr();
-        GPRReg scratch1GPR = scratch1.gpr();
+        GPRReg resultGPR = result.gpr();
+        FPRReg numberFPR = number.fpr();
 
-        flushRegisters();
-        Jump isInt32;
-        if (mayBeInt32) {
-            move(TrustedImm32(0), scratch1GPR);
-            isInt32 = branchIfInt32(argumentGPR);
-        }
-        callOperation(operationNumberIsNaN, scratch1GPR, argumentGPR);
-        if (mayBeInt32)
-            isInt32.link(this);
-        unblessedBooleanResult(scratch1GPR, node);
+        JumpList done = unboxDoubleForNumberPredicate(node->child1(), argumentGPR, resultGPR, numberFPR, /* resultForInt32 */ false);
+        emitDoubleIsNaN(numberFPR, resultGPR);
+        done.link(this);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     default:
@@ -18063,37 +18246,32 @@ void SpeculativeJIT::compileNumberIsFinite(Node* node)
     switch (node->child1().useKind()) {
     case DoubleRepUse: {
         SpeculateDoubleOperand argument(this, node->child1());
-        GPRTemporary scratch(this);
-        FPRTemporary diff(this);
+        GPRTemporary result(this);
+        FPRTemporary scratch(this);
 
         FPRReg argumentFPR = argument.fpr();
-        GPRReg scratchGPR = scratch.gpr();
-        FPRReg diffFPR = diff.fpr();
+        GPRReg resultGPR = result.gpr();
+        FPRReg scratchFPR = scratch.fpr();
 
-        subDouble(argumentFPR, argumentFPR, diffFPR);
-        compareDouble(DoubleEqualAndOrdered, diffFPR, diffFPR, scratchGPR);
-        unblessedBooleanResult(scratchGPR, node);
+        emitDoubleIsFinite(argumentFPR, resultGPR, scratchFPR);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     case UntypedUse: {
         JSValueOperand argument(this, node->child1());
-        GPRTemporary scratch1(this);
-
-        bool mayBeInt32 = m_interpreter.forNode(node->child1()).m_type & SpecInt32Only;
+        GPRTemporary result(this);
+        FPRTemporary number(this);
+        FPRTemporary scratch(this);
 
         GPRReg argumentGPR = argument.gpr();
-        GPRReg scratch1GPR = scratch1.gpr();
+        GPRReg resultGPR = result.gpr();
+        FPRReg numberFPR = number.fpr();
+        FPRReg scratchFPR = scratch.fpr();
 
-        flushRegisters();
-        Jump isInt32;
-        if (mayBeInt32) {
-            move(TrustedImm32(1), scratch1GPR);
-            isInt32 = branchIfInt32(argumentGPR);
-        }
-        callOperation(operationNumberIsFinite, scratch1GPR, argumentGPR);
-        if (mayBeInt32)
-            isInt32.link(this);
-        unblessedBooleanResult(scratch1GPR, node);
+        JumpList done = unboxDoubleForNumberPredicate(node->child1(), argumentGPR, resultGPR, numberFPR, /* resultForInt32 */ true);
+        emitDoubleIsFinite(numberFPR, resultGPR, scratchFPR);
+        done.link(this);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     default:
@@ -18106,57 +18284,67 @@ void SpeculativeJIT::compileNumberIsSafeInteger(Node* node)
 {
     switch (node->child1().useKind()) {
     case DoubleRepUse: {
+        if (!supportsFloatingPointRounding()) {
+            SpeculateDoubleOperand argument(this, node->child1());
+
+            FPRReg argumentFPR = argument.fpr();
+
+            flushRegisters();
+            GPRFlushedCallResult result(this);
+            GPRReg resultGPR = result.gpr();
+            callOperationWithoutExceptionCheck(operationNumberIsSafeIntegerDouble, resultGPR, argumentFPR);
+            unblessedBooleanResult(resultGPR, node);
+            break;
+        }
+
         SpeculateDoubleOperand argument(this, node->child1());
+        GPRTemporary result(this);
         GPRTemporary scratch(this);
-        GPRTemporary isValid(this);
-        FPRTemporary temp(this);
+        FPRTemporary scratchFloat(this);
         FPRTemporary limit(this);
 
         FPRReg argumentFPR = argument.fpr();
+        GPRReg resultGPR = result.gpr();
         GPRReg scratchGPR = scratch.gpr();
-        GPRReg isValidGPR = isValid.gpr();
-        FPRReg tempFPR = temp.fpr();
+        FPRReg scratchFPR = scratchFloat.fpr();
         FPRReg limitFPR = limit.fpr();
 
-        // check if the value is an integer
-        if (supportsFloatingPointRounding()) {
-            truncDouble(argumentFPR, tempFPR);
-            compareDouble(DoubleEqualAndOrdered, argumentFPR, tempFPR, isValidGPR);
-        } else {
-            silentSpillAllRegisters(tempFPR);
-            callOperationWithoutExceptionCheck(Math::truncDouble, tempFPR, argumentFPR);
-            silentFillAllRegisters();
-            compareDouble(DoubleEqualAndOrdered, argumentFPR, tempFPR, isValidGPR);
-        }
-
-        // check if the value is in the range
-        absDouble(argumentFPR, tempFPR);
-        move64ToDouble(TrustedImm64(std::bit_cast<uint64_t>(maxSafeInteger())), limitFPR);
-        compareDouble(DoubleLessThanOrEqualAndOrdered, tempFPR, limitFPR, scratchGPR);
-        and32(scratchGPR, isValidGPR);
-
-        unblessedBooleanResult(isValidGPR, node);
+        emitDoubleIsSafeInteger(argumentFPR, resultGPR, scratchGPR, scratchFPR, limitFPR);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     case UntypedUse: {
-        JSValueOperand argument(this, node->child1());
-        GPRTemporary scratch1(this);
+        if (!supportsFloatingPointRounding()) {
+            JSValueOperand argument(this, node->child1());
 
-        bool mayBeInt32 = m_interpreter.forNode(node->child1()).m_type & SpecInt32Only;
+            GPRReg argumentGPR = argument.gpr();
+
+            flushRegisters();
+            GPRFlushedCallResult result(this);
+            GPRReg resultGPR = result.gpr();
+            callOperation(operationNumberIsSafeInteger, resultGPR, argumentGPR);
+            unblessedBooleanResult(resultGPR, node);
+            break;
+        }
+
+        JSValueOperand argument(this, node->child1());
+        GPRTemporary result(this);
+        GPRTemporary scratch(this);
+        FPRTemporary number(this);
+        FPRTemporary scratchFloat(this);
+        FPRTemporary limit(this);
 
         GPRReg argumentGPR = argument.gpr();
-        GPRReg scratch1GPR = scratch1.gpr();
+        GPRReg resultGPR = result.gpr();
+        GPRReg scratchGPR = scratch.gpr();
+        FPRReg numberFPR = number.fpr();
+        FPRReg scratchFPR = scratchFloat.fpr();
+        FPRReg limitFPR = limit.fpr();
 
-        flushRegisters();
-        Jump isInt32;
-        if (mayBeInt32) {
-            move(TrustedImm32(1), scratch1GPR);
-            isInt32 = branchIfInt32(argumentGPR);
-        }
-        callOperation(operationNumberIsSafeInteger, scratch1GPR, argumentGPR);
-        if (mayBeInt32)
-            isInt32.link(this);
-        unblessedBooleanResult(scratch1GPR, node);
+        JumpList done = unboxDoubleForNumberPredicate(node->child1(), argumentGPR, resultGPR, numberFPR, /* resultForInt32 */ true);
+        emitDoubleIsSafeInteger(numberFPR, resultGPR, scratchGPR, scratchFPR, limitFPR);
+        done.link(this);
+        unblessedBooleanResult(resultGPR, node);
         break;
     }
     default:

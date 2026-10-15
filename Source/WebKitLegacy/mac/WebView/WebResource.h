@@ -28,19 +28,12 @@
 
 #import <Foundation/Foundation.h>
 
-@class WebResourcePrivate;
-
-
 /*!
     @class WebResource
     @discussion A WebResource represents a fully downloaded URL. 
     It includes the data of the resource as well as the metadata associated with the resource.
 */
 @interface WebResource : NSObject <NSCoding, NSCopying>
-{
-@package
-    WebResourcePrivate *_private;
-}
 
 /*!
     @method initWithData:URL:MIMEType:textEncodingName:frameName

@@ -63,6 +63,7 @@
 #include <WebCore/RemoteUserInputEventData.h>
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/SecurityOriginData.h>
+#include <WebCore/ViewportSegments.h>
 #include <pal/HysteresisActivity.h>
 #include <wtf/UUID.h>
 
@@ -260,6 +261,7 @@ public:
     WebCore::IntSize minimumSizeForAutoLayout;
     WebCore::FloatSize minimumUnobscuredSize;
     Deque<Ref<NativeWebMouseEvent>> mouseEventQueue;
+    std::optional<WebCore::FrameIdentifier> lastFrameHandlingMouseMove;
     Vector<Ref<WebMouseEvent>> coalescedMouseEvents;
     RunLoop::Timer remoteFrameMouseEventTimeoutTimer;
     WebCore::MediaProducerMutedStateFlags mutedState;
@@ -300,6 +302,7 @@ public:
     HashMap<WebURLSchemeHandlerIdentifier, Ref<WebURLSchemeHandler>> urlSchemeHandlersByIdentifier;
     std::optional<WebCore::FloatRect> viewExposedRect;
     std::optional<WebCore::FloatSize> viewportSizeForCSSViewportUnits;
+    WebCore::ViewportSegments viewportSegments;
     VisibleWebPageToken visiblePageToken;
     WebCore::IntRect visibleScrollerThumbRect;
     WindowKind windowKind { WindowKind::Unparented };
@@ -465,6 +468,7 @@ public:
 
 #if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
     PDFPluginDisplayMode pdfDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
+    PDFPluginDisplayMode initialPDFDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
 #endif
 
 #if HAVE(NSVIEW_CORNER_CONFIGURATION)

@@ -80,7 +80,8 @@ template<typename ElementType> ElementType* ElementDescendantRange<ElementType>:
 
 template<typename ElementType> ElementDescendantIterator<ElementType> InclusiveElementDescendantRange<ElementType>::begin() const
 {
-    return ElementDescendantIterator<ElementType>(m_root, Traversal<ElementType>::inclusiveFirstWithin(const_cast<ContainerNode&>(m_root.get())));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return ElementDescendantIterator<ElementType>(m_root, Traversal<ElementType>::inclusiveFirstWithin(const_cast<ContainerNode&>(m_root.get())));
 }
 
 template<typename ElementType> ElementDescendantIterator<ElementType> InclusiveElementDescendantRange<ElementType>::beginAt(ElementType& descendant) const
@@ -141,7 +142,7 @@ template<typename ElementType, bool filter(const ElementType&)> FilteredElementD
 {
     do {
         ElementIterator<ElementType>::traverseNext();
-    } while (*this && !filter(**this));
+    } while (*this && !filter(protect(**this)));
     return *this;
 }
 

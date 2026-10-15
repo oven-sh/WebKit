@@ -30,11 +30,12 @@
 #if PLATFORM(VISION) && ENABLE(CONNECTED_VOLUMETRIC_SCENE)
 
 #import <UIKit/UIKit.h>
+#import <simd/simd.h>
 
 NS_HEADER_AUDIT_BEGIN(nullability, sendability)
 
 // Captures spatial drags over a volumetric scene, which has no glass for a UIPanGestureRecognizer to sit on. An
-// invisible RealityKit entity fills the volume instead; nothing arrives until it is given a non-degenerate box.
+// invisible RealityKit entity covers the content instead; nothing arrives until it is given a sphere.
 NS_SWIFT_UI_ACTOR
 @interface WKPortalVolumetricGestureController : NSObject
 
@@ -44,8 +45,8 @@ NS_SWIFT_UI_ACTOR
 
 - (UIViewController *)makeHostingController;
 
-// Extents in meters, not points.
-- (void)updateProxyExtentsWithWidth:(float)width height:(float)height depth:(float)depth;
+// In meters, relative to the volume's center.
+- (void)setHitSphereCenter:(simd_float3)center radius:(float)radius;
 
 @end
 

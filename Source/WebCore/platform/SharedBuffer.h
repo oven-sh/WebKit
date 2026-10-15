@@ -113,7 +113,7 @@ public:
     WEBCORE_EXPORT RetainPtr<NSData> createNSData() const;
 #endif
 
-    WEBCORE_EXPORT bool NODELETE containsMappedFileData() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE containsMappedFileData() const;
 
 private:
     void iterate(NOESCAPE const Function<void(std::span<const uint8_t>)>& apply) const;
@@ -300,7 +300,8 @@ public:
     WEBCORE_EXPORT sk_sp<SkData> createSkData() const;
 #endif
 
-    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { return const_cast<SharedBuffer&>(*this); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    Ref<FragmentedSharedBuffer> asFragmentedSharedBuffer() const { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<SharedBuffer&>(*this); }
 
     template<typename T>
     bool isSpanWithinBounds(std::span<T> otherSpan) const;

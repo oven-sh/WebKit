@@ -394,7 +394,19 @@ inline bool isAnyOf(const Ref<ArgType, PtrTraits, RefDerefTraits>& source)
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline Ref<match_constness_t<Source, Target>> uncheckedDowncast(Ref<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>& uncheckedDowncast(Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>& uncheckedDowncast(const Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return uncheckedDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline Ref<match_constness_t<Source, Target>> uncheckedDowncast(Ref<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -403,7 +415,19 @@ inline Ref<match_constness_t<Source, Target>> uncheckedDowncast(Ref<Source, PtrT
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>& downcast(Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>& downcast(const Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return downcast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");
@@ -412,7 +436,19 @@ inline Ref<match_constness_t<Source, Target>> downcast(Ref<Source, PtrTraits, Re
 }
 
 template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
-inline RefPtr<match_constness_t<Source, Target>> dynamicDowncast(Ref<Source, PtrTraits, RefDerefTraits> source)
+inline match_constness_t<Source, Target>* dynamicDowncast(Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline match_constness_t<Source, Target>* dynamicDowncast(const Ref<Source, PtrTraits, RefDerefTraits>& source LIFETIME_BOUND)
+{
+    return dynamicDowncast<Target>(source.get());
+}
+
+template<typename Target, typename Source, typename PtrTraits, typename RefDerefTraits>
+inline RefPtr<match_constness_t<Source, Target>> dynamicDowncast(Ref<Source, PtrTraits, RefDerefTraits>&& source)
 {
     static_assert(!std::same_as<Source, Target>, "Unnecessary cast to same type");
     static_assert(std::derived_from<Target, Source>, "Should be a downcast");

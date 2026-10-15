@@ -69,6 +69,7 @@
 #include "WasmTable.h"
 #include "WasmTypeDefinition.h"
 #include "WebAssemblyModuleRecord.h"
+#include <wtf/TZoneMallocInlines.h>
 
 namespace JSC::B3 {
 

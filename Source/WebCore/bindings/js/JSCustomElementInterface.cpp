@@ -126,7 +126,7 @@ RefPtr<Element> JSCustomElementInterface::tryToConstructCustomElement(Document& 
         return nullptr;
 
     RefPtr contextDocument = downcast<Document>(scriptExecutionContext());
-    auto* lexicalGlobalObject = scriptExecutionContext()->globalObject();
+    auto* lexicalGlobalObject = protect(scriptExecutionContext())->globalObject();
     ASSERT(lexicalGlobalObject);
     if (!lexicalGlobalObject)
         return nullptr;
@@ -168,7 +168,7 @@ static RefPtr<Element> constructCustomElementSynchronously(Document& document, V
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     if (parserConstructElementWithEmptyStack == ParserConstructElementWithEmptyStack::Yes)
-        document.eventLoop().performMicrotaskCheckpoint(vm);
+        protect(document.eventLoop())->performMicrotaskCheckpoint(vm);
 
     ASSERT(!newElement.isEmpty());
     RefPtr wrappedElement = JSHTMLElement::toWrapped(vm, newElement);
@@ -228,7 +228,7 @@ void JSCustomElementInterface::upgradeElement(Element& element)
     CheckedPtr context = scriptExecutionContext();
     if (!context)
         return;
-    auto* globalObject = toJSDOMWindow(downcast<Document>(*context).frame(), m_isolatedWorld);
+    auto* globalObject = toJSDOMWindow(protect(downcast<Document>(*context).frame()), m_isolatedWorld);
     if (!globalObject)
         return;
     JSGlobalObject* lexicalGlobalObject = globalObject;
@@ -310,7 +310,7 @@ void JSCustomElementInterface::invokeCallback(Element& element, JSObject* callba
     VM& vm = m_isolatedWorld->vm();
     JSLockHolder lock(vm);
 
-    auto* globalObject = toJSDOMWindow(downcast<Document>(*context).frame(), m_isolatedWorld);
+    auto* globalObject = toJSDOMWindow(protect(downcast<Document>(*context).frame()), m_isolatedWorld);
     if (!globalObject)
         return;
     JSGlobalObject* lexicalGlobalObject = globalObject;

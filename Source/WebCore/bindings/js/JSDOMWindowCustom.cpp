@@ -50,6 +50,7 @@
 #include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/BuiltinNames.h>
 #include <JavaScriptCore/ConsoleTypes.h>
+#include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/HeapCellInlines.h>
@@ -461,7 +462,7 @@ JSValue JSDOMWindow::getPrototype(JSObject* object, JSGlobalObject* lexicalGloba
     return Base::getPrototype(object, lexicalGlobalObject);
 }
 
-bool NODELETE JSDOMWindow::preventExtensions(JSObject*, JSGlobalObject*)
+bool LEGACY_NODELETE JSDOMWindow::preventExtensions(JSObject*, JSGlobalObject*)
 {
     return false;
 }
@@ -473,7 +474,8 @@ JSValue JSDOMWindow::event(JSGlobalObject& lexicalGlobalObject) const
     RefPtr event = currentEvent();
     if (!event)
         return jsUndefined();
-    return toJS(&lexicalGlobalObject, const_cast<JSDOMWindow*>(this), *event);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return toJS(&lexicalGlobalObject, const_cast<JSDOMWindow*>(this), *event);
 }
 
 // Custom functions
@@ -611,7 +613,7 @@ JSValue JSDOMWindow::queueMicrotask(JSGlobalObject& lexicalGlobalObject, CallFra
     return jsUndefined();
 }
 
-DOMWindow* NODELETE JSDOMWindow::toWrapped(VM&, JSValue value)
+DOMWindow* LEGACY_NODELETE JSDOMWindow::toWrapped(VM&, JSValue value)
 {
     if (!value.isObject())
         return nullptr;
@@ -640,17 +642,17 @@ void JSDOMWindow::setOpener(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSVal
     createDataProperty(&lexicalGlobalObject, builtinNames(lexicalGlobalObject.vm()).openerPublicName(), value, shouldThrow);
 }
 
-JSValue NODELETE JSDOMWindow::self(JSC::JSGlobalObject&) const
+JSValue LEGACY_NODELETE JSDOMWindow::self(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }
 
-JSValue NODELETE JSDOMWindow::window(JSC::JSGlobalObject&) const
+JSValue LEGACY_NODELETE JSDOMWindow::window(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }
 
-JSValue NODELETE JSDOMWindow::frames(JSC::JSGlobalObject&) const
+JSValue LEGACY_NODELETE JSDOMWindow::frames(JSC::JSGlobalObject&) const
 {
     return globalThis();
 }

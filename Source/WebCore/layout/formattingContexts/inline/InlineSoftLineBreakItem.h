@@ -26,6 +26,7 @@
 #pragma once
 
 #include "InlineItem.h"
+#include "LayoutInlineTextBox.h"
 #include <wtf/unicode/CharacterNames.h>
 
 namespace WebCore {

@@ -30,6 +30,7 @@
 #pragma once
 
 #include <WebCore/AdvancedPrivacyProtections.h>
+#include <WebCore/AgentClusterAssignment.h>
 #include <WebCore/AutoplayPolicy.h>
 #include <WebCore/CachedRawResourceClient.h>
 #include <WebCore/CachedResourceHandle.h>
@@ -38,6 +39,7 @@
 #include <WebCore/CrossOriginOpenerPolicy.h>
 #include <WebCore/DeviceOrientationOrMotionPermissionState.h>
 #include <WebCore/DocumentEnums.h>
+#include <WebCore/DocumentIsolationPolicy.h>
 #include <WebCore/DocumentLoadTiming.h>
 #include <WebCore/DocumentWriter.h>
 #include <WebCore/ElementTargetingTypes.h>
@@ -170,7 +172,7 @@ public:
 
     USING_CAN_MAKE_WEAKPTR(CachedRawResourceClient);
 
-    WEBCORE_EXPORT static DocumentLoader* NODELETE fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
+    WEBCORE_EXPORT static DocumentLoader* LEGACY_NODELETE fromScriptExecutionContextIdentifier(ScriptExecutionContextIdentifier);
 
     WEBCORE_EXPORT virtual ~DocumentLoader();
 
@@ -184,8 +186,8 @@ public:
 
     WEBCORE_EXPORT virtual void detachFromFrame(LoadWillContinueInAnotherProcess);
 
-    WEBCORE_EXPORT FrameLoader* NODELETE frameLoader() const;
-    WEBCORE_EXPORT SubresourceLoader* NODELETE mainResourceLoader() const;
+    WEBCORE_EXPORT FrameLoader* LEGACY_NODELETE frameLoader() const;
+    WEBCORE_EXPORT SubresourceLoader* LEGACY_NODELETE mainResourceLoader() const;
     WEBCORE_EXPORT RefPtr<FragmentedSharedBuffer> mainResourceData() const;
     
     DocumentWriter& writer() const LIFETIME_BOUND { return m_writer; }
@@ -216,7 +218,7 @@ public:
     void stopLoading();
     void setCommitted(bool committed) { m_committed = committed; }
     bool isCommitted() const { return m_committed; }
-    WEBCORE_EXPORT bool NODELETE isLoading() const;
+    WEBCORE_EXPORT bool LEGACY_NODELETE isLoading() const;
 
     const ResourceError& mainDocumentError() const LIFETIME_BOUND { return m_mainDocumentError; }
 
@@ -230,7 +232,7 @@ public:
 
     bool isClientRedirect() const { return m_isClientRedirect; }
     void setIsClientRedirect(bool isClientRedirect) { m_isClientRedirect = isClientRedirect; }
-    void NODELETE dispatchOnloadEvents();
+    void LEGACY_NODELETE dispatchOnloadEvents();
     bool wasOnloadDispatched() { return m_wasOnloadDispatched; }
     WEBCORE_EXPORT bool isLoadingInAPISense() const;
     WEBCORE_EXPORT void setTitle(const StringWithDirection&);
@@ -246,7 +248,7 @@ public:
     WEBCORE_EXPORT void addAllArchiveResources(Archive&);
     WEBCORE_EXPORT void addArchiveResource(Ref<ArchiveResource>&&);
     RefPtr<Archive> popArchiveForSubframe(const String& frameName, const URL&);
-    WEBCORE_EXPORT SharedBuffer* NODELETE parsedArchiveData() const;
+    WEBCORE_EXPORT SharedBuffer* LEGACY_NODELETE parsedArchiveData() const;
 
     bool hasArchiveResourceCollection() const { return !!m_archiveResourceCollection; }
     WEBCORE_EXPORT bool scheduleArchiveLoad(ResourceLoader&, const ResourceRequest&);
@@ -312,7 +314,7 @@ public:
     void setDidCreateGlobalHistoryEntry(bool didCreateGlobalHistoryEntry) { m_didCreateGlobalHistoryEntry = didCreateGlobalHistoryEntry; }
 
     void setDefersLoading(bool);
-    void NODELETE setMainResourceDataBufferingPolicy(DataBufferingPolicy);
+    void LEGACY_NODELETE setMainResourceDataBufferingPolicy(DataBufferingPolicy);
 
     void startLoadingMainResource();
     WEBCORE_EXPORT void cancelMainResourceLoad(const ResourceError&, LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
@@ -383,11 +385,11 @@ public:
     void setModalContainerObservationPolicy(ModalContainerObservationPolicy policy) { m_modalContainerObservationPolicy = policy; }
 
     // FIXME: Why is this in a Loader?
-    WEBCORE_EXPORT ColorSchemePreference NODELETE colorSchemePreference() const;
+    WEBCORE_EXPORT ColorSchemePreference LEGACY_NODELETE colorSchemePreference() const;
     void setColorSchemePreference(ColorSchemePreference preference) { m_colorSchemePreference = preference; }
 
     HTTPSByDefaultMode httpsByDefaultMode() { return m_httpsByDefaultMode; }
-    WEBCORE_EXPORT void NODELETE setHTTPSByDefaultMode(HTTPSByDefaultMode);
+    WEBCORE_EXPORT void LEGACY_NODELETE setHTTPSByDefaultMode(HTTPSByDefaultMode);
 
     PushAndNotificationsEnabledPolicy pushAndNotificationsEnabledPolicy() const { return m_pushAndNotificationsEnabledPolicy; }
     void setPushAndNotificationsEnabledPolicy(PushAndNotificationsEnabledPolicy policy) { m_pushAndNotificationsEnabledPolicy = policy; }
@@ -431,7 +433,7 @@ public:
 
 #if USE(QUICK_LOOK)
     void setPreviewConverter(RefPtr<PreviewConverter>&&);
-    PreviewConverter* NODELETE previewConverter() const;
+    PreviewConverter* LEGACY_NODELETE previewConverter() const;
 #endif
 
 #if ENABLE(CONTENT_EXTENSIONS)
@@ -494,8 +496,8 @@ public:
 
     ContentSecurityPolicy* contentSecurityPolicy() const { return m_contentSecurityPolicy.get(); }
     const std::optional<CrossOriginOpenerPolicy>& crossOriginOpenerPolicy() const LIFETIME_BOUND { return m_responseCOOP; }
-    OriginKeyed isOriginKeyedFromUIProcess() const { return m_isOriginKeyedFromUIProcess; }
-    void setIsOriginKeyedFromUIProcess(OriginKeyed value) { m_isOriginKeyedFromUIProcess = value; }
+    const AgentClusterAssignment& agentClusterAssignment() const LIFETIME_BOUND { return m_agentClusterAssignment; }
+    void setAgentClusterAssignment(const AgentClusterAssignment& assignment) { m_agentClusterAssignment = assignment; }
     bool hasUnpartitionedStorageAccess(const URL& url) const { return m_unpartitionedStorageSite && m_unpartitionedStorageSite->matches(url); }
     void setUnpartitionedStorageSite(std::optional<RegistrableDomain>&& site) { m_unpartitionedStorageSite = WTF::move(site); }
     OptionSet<ClearSiteDataValue> responseClearSiteDataValues() const { return m_responseClearSiteDataValues; }
@@ -529,12 +531,14 @@ public:
 #endif
 
     std::optional<NavigationIdentifier> navigationID() const { return m_navigationID.asOptional(); }
-    WEBCORE_EXPORT void NODELETE setNavigationID(NavigationIdentifier);
+    WEBCORE_EXPORT void LEGACY_NODELETE setNavigationID(NavigationIdentifier);
     std::optional<NavigationIdentifier> takeNavigationID() { return std::exchange(m_navigationID, { }).asOptional(); }
 
     IsInitialAboutBlank isInitialAboutBlank() const { return m_isInitialAboutBlank; }
 
     CanTriggerCrossDocumentViewTransition navigationCanTriggerCrossDocumentViewTransition(Document& oldDocument, bool fromBackForwardCache);
+    bool hasDispatchedPageswapEvent() const { return m_hasDispatchedPageswapEvent; }
+    void setHasDispatchedPageswapEvent(bool hasDispatched) { m_hasDispatchedPageswapEvent = hasDispatched; }
     WEBCORE_EXPORT void whenDocumentIsCreated(Function<void(Document*)>&&);
 
     WEBCORE_EXPORT void setNewResultingClientId(ScriptExecutionContextIdentifier);
@@ -549,7 +553,7 @@ protected:
     WEBCORE_EXPORT virtual void attachToFrame();
 
 private:
-    Document* NODELETE document() const;
+    Document* LEGACY_NODELETE document() const;
 
     void matchRegistration(const URL&, CompletionHandler<void(std::optional<ServiceWorkerRegistrationData>&&)>&&);
     void unregisterReservedServiceWorkerClient();
@@ -610,11 +614,14 @@ private:
 
     bool shouldClearContentSecurityPolicyForResponse(const ResourceResponse&) const;
 
-    bool NODELETE isMultipartReplacingLoad() const;
+    bool LEGACY_NODELETE isMultipartReplacingLoad() const;
     bool isPostOrRedirectAfterPost(const ResourceRequest&, const ResourceResponse&);
 
     bool tryLoadingSubstituteData();
-    void continueAfterContentPolicy(PolicyAction);
+    // completionHandler lets the rest of the response through. It may be called after this returns,
+    // when the current document first has to capture a view transition into this one.
+    void continueAfterContentPolicy(PolicyAction, CompletionHandler<void()>&& = { });
+    void commitSubstituteDataIfNeeded();
 
     void stopLoadingForPolicyChange(LoadWillContinueInAnotherProcess = LoadWillContinueInAnotherProcess::No);
     ResourceError interruptedForPolicyChangeError() const;
@@ -691,7 +698,7 @@ private:
     Vector<ResourceResponse> m_responses;
 
     std::optional<CrossOriginOpenerPolicy> m_responseCOOP;
-    OriginKeyed m_isOriginKeyedFromUIProcess { OriginKeyed::No };
+    AgentClusterAssignment m_agentClusterAssignment;
     std::optional<RegistrableDomain> m_unpartitionedStorageSite;
     OptionSet<ClearSiteDataValue> m_responseClearSiteDataValues;
     
@@ -815,6 +822,8 @@ private:
     bool m_loadingMainResource { false };
 
     bool m_waitingForContentPolicy { false };
+    bool m_waitingForOutboundViewTransitionCapture { false };
+    bool m_hasDispatchedPageswapEvent { false };
     bool m_waitingForNavigationPolicy { false };
 
 #if ENABLE(APPLICATION_MANIFEST)

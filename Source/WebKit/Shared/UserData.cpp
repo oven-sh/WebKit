@@ -84,9 +84,9 @@ static bool shouldTransform(const API::Object& object, const UserData::Transform
 static RefPtr<API::Object> transformGraph(API::Object& object, const UserData::Transformer& transformer)
 {
     if (object.type() == API::Object::Type::Array) {
-        auto& array = downcast<API::Array>(object);
+        Ref array = downcast<API::Array>(object);
 
-        auto elements = array.elements().map([&](auto& element) -> RefPtr<API::Object> {
+        auto elements = array->elements().map([&](auto& element) -> RefPtr<API::Object> {
             if (!element)
                 return nullptr;
             return transformGraph(*element, transformer);
@@ -95,10 +95,10 @@ static RefPtr<API::Object> transformGraph(API::Object& object, const UserData::T
     }
 
     if (object.type() == API::Object::Type::Dictionary) {
-        auto& dictionary = downcast<API::Dictionary>(object);
+        Ref dictionary = downcast<API::Dictionary>(object);
 
         API::Dictionary::MapType map;
-        for (const auto& keyValuePair : dictionary.map()) {
+        for (const auto& keyValuePair : dictionary->map()) {
             RefPtr value = keyValuePair.value;
             if (!value)
                 map.add(keyValuePair.key, nullptr);

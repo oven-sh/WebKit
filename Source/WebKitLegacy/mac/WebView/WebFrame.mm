@@ -217,7 +217,7 @@ NSString *NSAccessibilityEnhancedUserInterfaceAttribute = @"AXEnhancedUserInterf
 
 @end
 
-WebCore::EditableLinkBehavior NODELETE core(WebKitEditableLinkBehavior editableLinkBehavior)
+WebCore::EditableLinkBehavior LEGACY_NODELETE core(WebKitEditableLinkBehavior editableLinkBehavior)
 {
     using namespace WebCore;
     switch (editableLinkBehavior) {
@@ -236,7 +236,7 @@ WebCore::EditableLinkBehavior NODELETE core(WebKitEditableLinkBehavior editableL
     return EditableLinkBehavior::Default;
 }
 
-WebCore::TextDirectionSubmenuInclusionBehavior NODELETE core(WebTextDirectionSubmenuInclusionBehavior behavior)
+WebCore::TextDirectionSubmenuInclusionBehavior LEGACY_NODELETE core(WebTextDirectionSubmenuInclusionBehavior behavior)
 {
     using namespace WebCore;
     switch (behavior) {
@@ -429,7 +429,7 @@ static NSURL *createUniqueWebDataURL();
     if (!self)
         return nil;
 
-    _private = [[WebFramePrivate alloc] init];
+    _private = adoptNS([[WebFramePrivate alloc] init]);
 
     // Set includedInWebKitStatistics before calling WebFrameView _setWebFrame, since
     // it calls WebFrame _isIncludedInWebKitStatistics.
@@ -1057,7 +1057,7 @@ static NSURL *createUniqueWebDataURL();
     CheckedPtr bodyRenderer = body->renderer();
     if (!bodyRenderer)
         return nil;
-    auto color = protect(bodyRenderer->style())->visitedDependentBackgroundColorApplyingColorFilter();
+    auto color = protect(bodyRenderer->style())->visitedDependentUsedBackgroundColorApplyingColorFilter();
     if (!color.isValid())
         return nil;
 #if !PLATFORM(IOS_FAMILY)
@@ -1085,7 +1085,7 @@ static NSURL *createUniqueWebDataURL();
     return NO;
 }
 
-static WebFrameLoadType NODELETE toWebFrameLoadType(WebCore::FrameLoadType frameLoadType)
+static WebFrameLoadType LEGACY_NODELETE toWebFrameLoadType(WebCore::FrameLoadType frameLoadType)
 {
     using namespace WebCore;
     switch (frameLoadType) {
@@ -2392,9 +2392,6 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 {
     if (_private && _private->includedInWebKitStatistics)
         --WebFrameCount;
-
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
 
     [super dealloc];
 }

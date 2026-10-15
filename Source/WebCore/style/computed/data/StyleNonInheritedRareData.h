@@ -213,6 +213,10 @@ public:
     PositionTryFallbacks positionTryFallbacks;
     std::optional<size_t> usedPositionOptionIndex;
 
+    std::optional<BlendMode> overrideBlendMode;
+    // If set, this overrides the background color in NonInheritedData::backgroundData
+    Markable<Color> overrideBackgroundColor;
+
     BlockStepSize blockStepSize;
 
     PREFERRED_TYPE(BlockStepAlign) unsigned blockStepAlign : 2;
@@ -270,7 +274,6 @@ public:
     PREFERRED_TYPE(EnumSet<BoxAxis>) unsigned anchorFunctionScrollCompensatedAxes : 2;
     PREFERRED_TYPE(bool) unsigned isPopoverInvoker : 1;
 
-    PREFERRED_TYPE(bool) unsigned useSVGZoomRulesForLength : 1;
     PREFERRED_TYPE(ScrollAxisLock) unsigned scrollAxisLock : 1;
 
 private:

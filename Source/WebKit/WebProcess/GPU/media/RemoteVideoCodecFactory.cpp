@@ -31,6 +31,7 @@
 #include "LibWebRTCCodecs.h"
 #include "WebProcess.h"
 #include <WebCore/SharedBuffer.h>
+#include <wtf/Borrow.h>
 #include <wtf/StdUnorderedMap.h>
 #include <wtf/TZoneMallocInlines.h>
 
@@ -42,7 +43,7 @@ public:
 
     void notifyDecodingResult(RefPtr<WebCore::VideoFrame>&&, int64_t timestamp);
 
-    void NODELETE close() { m_isClosed = true; }
+    void LEGACY_NODELETE close() { m_isClosed = true; }
     void addDuration(int64_t timestamp, uint64_t duration)
     {
         Locker locker { m_timestampToDurationLock };
@@ -83,7 +84,7 @@ public:
     void notifyEncodedChunk(Vector<uint8_t>&&, bool isKeyFrame, int64_t timestamp, std::optional<uint64_t> duration, std::optional<unsigned> temporalIndex);
     void notifyEncoderDescription(WebCore::VideoEncoderActiveConfiguration&&);
 
-    void NODELETE close() { m_isClosed = true; }
+    void LEGACY_NODELETE close() { m_isClosed = true; }
 
 private:
     RemoteVideoEncoderCallbacks(WebCore::VideoEncoder::DescriptionCallback&&, WebCore::VideoEncoder::OutputCallback&&);
@@ -125,7 +126,7 @@ RemoteVideoCodecFactory::RemoteVideoCodecFactory(WebProcess& process)
 
 RemoteVideoCodecFactory::~RemoteVideoCodecFactory() = default;
 
-static bool NODELETE shouldUseLocalDecoder(std::optional<WebCore::VideoCodecType> type, const WebCore::VideoDecoder::Config& config)
+static bool LEGACY_NODELETE shouldUseLocalDecoder(std::optional<WebCore::VideoCodecType> type, const WebCore::VideoDecoder::Config& config)
 {
     if (!type)
         return true;
@@ -149,13 +150,14 @@ void RemoteVideoCodecFactory::createDecoder(const String& codec, const WebCore::
         return;
     }
     auto colorSpace = config.colorSpace;
-    libWebRTCCodecs->createDecoderAndWaitUntilReady(*type, codec, WTF::move(colorSpace), [width = config.width, height = config.height, description = Vector<uint8_t> { config.description }, createCallback = WTF::move(createCallback), outputCallback = WTF::move(outputCallback)](auto* internalDecoder) mutable {
+    bool isAnnexB = (*type == WebCore::VideoCodecType::H264 || *type == WebCore::VideoCodecType::H265) && config.description.isEmpty();
+    libWebRTCCodecs->createDecoderAndWaitUntilReady(*type, codec, isAnnexB, WTF::move(colorSpace), [width = config.width, height = config.height, description = Vector<uint8_t> { config.description }, createCallback = WTF::move(createCallback), outputCallback = WTF::move(outputCallback)](auto* internalDecoder) mutable {
         if (!internalDecoder) {
             createCallback(makeUnexpected("Decoder creation failed"_s));
             return;
         }
         if (description.size())
-            protect(WebProcess::singleton().libWebRTCCodecs())->setDecoderFormatDescription(*internalDecoder, description.span(), width, height);
+            protect(WebProcess::singleton().libWebRTCCodecs())->setDecoderFormatDescription(*internalDecoder, borrow(description)->span(), width, height);
 
         auto callbacks = RemoteVideoDecoderCallbacks::create(WTF::move(outputCallback));
         createCallback(RemoteVideoDecoder::create(*internalDecoder, callbacks.copyRef()));

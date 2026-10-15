@@ -130,9 +130,9 @@ RefPtr<HTMLSelectElement> HTMLSelectedContentElement::recalculateDisabledness()
     RefPtr<HTMLSelectElement> nearestAncestorSelect;
     m_isDisabled = false;
     for (Ref ancestor : ancestorsOfType<HTMLElement>(*this)) {
-        if (auto* select = dynamicDowncast<HTMLSelectElement>(ancestor.get())) {
+        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(ancestor)) {
             if (!nearestAncestorSelect) {
-                nearestAncestorSelect = select;
+                nearestAncestorSelect = WTF::move(select);
                 continue;
             }
             m_isDisabled = true;

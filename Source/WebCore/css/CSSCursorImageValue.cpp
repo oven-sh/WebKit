@@ -35,7 +35,7 @@ namespace WebCore {
 
 Ref<CSSCursorImageValue> CSSCursorImageValue::create(Ref<CSSValue>&& value, std::optional<HotSpot>&& hotSpot)
 {
-    auto* imageValue = dynamicDowncast<CSSImageValue>(value.get());
+    RefPtr imageValue = dynamicDowncast<CSSImageValue>(value);
     auto originalURL = imageValue ? imageValue->url() : CSS::URL::none();
     return adoptRef(*new CSSCursorImageValue(WTF::move(value), WTF::move(hotSpot), WTF::move(originalURL)));
 }

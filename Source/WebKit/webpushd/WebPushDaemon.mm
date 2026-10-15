@@ -50,6 +50,7 @@
 #import <pal/spi/cocoa/LaunchServicesSPI.h>
 #import <span>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/CompletionHandler.h>
 #import <wtf/HexNumber.h>
 #import <wtf/NeverDestroyed.h>
@@ -57,6 +58,7 @@
 #import <wtf/URL.h>
 #import <wtf/WorkQueue.h>
 #import <wtf/cocoa/SpanCocoa.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/darwin/DispatchExtras.h>
 #import <wtf/darwin/XPCExtras.h>
 #import <wtf/text/MakeString.h>
@@ -118,7 +120,7 @@ static constexpr Seconds s_incomingPushTransactionTimeout { 10_s };
 
 #if HAVE(FULL_FEATURED_USER_NOTIFICATIONS)
 
-static bool NODELETE platformShouldPlaySound(const WebCore::NotificationData& data)
+static bool LEGACY_NODELETE platformShouldPlaySound(const WebCore::NotificationData& data)
 {
 #if PLATFORM(IOS)
     return data.silent == std::nullopt || !(*data.silent);
@@ -506,7 +508,7 @@ void WebPushDaemon::injectEncryptedPushMessageForTesting(PushClientConnection& c
         if (!obj || ![obj isKindOfClass:[NSDictionary class]])
             return replySender(false);
 
-        daemon.m_pushService->didReceivePushMessage(retainPtr(obj[@"topic"]).get(), retainPtr(obj[@"userInfo"]).get(), [replySender = WTF::move(replySender)]() mutable {
+        daemon.m_pushService->didReceivePushMessage(protect(dynamic_objc_cast<NSString>(obj[@"topic"])), protect(dynamic_objc_cast<NSDictionary>(obj[@"userInfo"])), [replySender = WTF::move(replySender)] mutable {
             replySender(true);
         });
     });
@@ -563,7 +565,7 @@ void WebPushDaemon::handleIncomingPushImpl(const PushSubscriptionSetIdentifier& 
 #if ENABLE(DECLARATIVE_WEB_PUSH)
     String payloadString;
     if (message.pushData)
-        payloadString = String::fromUTF8(message.pushData->span());
+        payloadString = String::fromUTF8(borrow(*message.pushData)->span());
 
     if (!payloadString.isNull()) {
         auto exceptionOrPayload = WebCore::NotificationPayload::parseJSON(payloadString);
@@ -1082,7 +1084,8 @@ void WebPushDaemon::getNotifications(PushClientConnection& connection, const URL
     auto blockPtr = makeBlockPtr([identifier = crossThreadCopy(identifier), registrationURL = crossThreadCopy(registrationURL), tag = crossThreadCopy(tag), completionHandler = WTF::move(completionHandler)](NSArray<UNNotification *> *notifications) mutable {
         ensureOnMainRunLoop([identifier = crossThreadCopy(identifier), notifications = RetainPtr { notifications }, registrationURL = crossThreadCopy(WTF::move(registrationURL)), tag = crossThreadCopy(WTF::move(tag)), completionHandler = WTF::move(completionHandler)] mutable {
             Vector<WebCore::NotificationData> notificationDatas;
-            for (UNNotification *notification in notifications.get()) {
+            // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+            for (SUPPRESS_UNRETAINED_LOCAL UNNotification *notification in notifications.get()) {
                 auto notificationData = WebCore::NotificationData::fromDictionary(retainPtr(notification.request.content.userInfo).get());
                 if (!notificationData) {
                     RELEASE_LOG_ERROR(Push, "WebPushDaemon::getNotifications error: skipping notification with invalid Notification userInfo for subscription %{public}s", identifier.debugDescription().utf8());

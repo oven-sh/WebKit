@@ -177,7 +177,6 @@ namespace JSC {
     macro(IsTypedArrayViewIntrinsic) \
     macro(ArrayBufferIsViewIntrinsic) \
     macro(BoundFunctionCallIntrinsic) \
-    macro(RemoteFunctionCallIntrinsic) \
     macro(IteratorIntrinsic) \
     macro(JSMapGetIntrinsic) \
     macro(JSMapHasIntrinsic) \
@@ -310,7 +309,7 @@ enum Intrinsic : uint8_t {
 #undef JSC_DEFINE_INTRINSIC
 };
 
-std::optional<IterationKind> NODELETE iterationKindForIntrinsic(Intrinsic);
+std::optional<IterationKind> LEGACY_NODELETE iterationKindForIntrinsic(Intrinsic);
 
 ASCIILiteral intrinsicName(Intrinsic);
 

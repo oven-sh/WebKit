@@ -56,8 +56,8 @@ TEST_SUPPORT_EXPORT void monitorWheelEvents(WebCore::LocalFrame&, bool clearLatc
 TEST_SUPPORT_EXPORT void setWheelEventMonitorTestCallbackAndStartMonitoring(bool expectWheelEndOrCancel, bool expectMomentumEnd, WebCore::LocalFrame&, JSContextRef, JSObjectRef);
 TEST_SUPPORT_EXPORT void clearWheelEventTestMonitor(WebCore::LocalFrame&);
 
-TEST_SUPPORT_EXPORT void NODELETE setLogChannelToAccumulate(const String& name);
-TEST_SUPPORT_EXPORT void NODELETE clearAllLogChannelsToAccumulate();
+TEST_SUPPORT_EXPORT void LEGACY_NODELETE setLogChannelToAccumulate(const String& name);
+TEST_SUPPORT_EXPORT void LEGACY_NODELETE clearAllLogChannelsToAccumulate();
 TEST_SUPPORT_EXPORT void initializeLogChannelsIfNecessary();
 TEST_SUPPORT_EXPORT void setAllowsAnySSLCertificate(bool);
 TEST_SUPPORT_EXPORT bool allowsAnySSLCertificate();
@@ -78,6 +78,8 @@ TEST_SUPPORT_EXPORT void setMockGamepadAxisValue(unsigned index, unsigned axisIn
 TEST_SUPPORT_EXPORT void setMockGamepadButtonValue(unsigned index, unsigned buttonIndex, double value);
 
 TEST_SUPPORT_EXPORT void setupNewlyCreatedServiceWorker(uint64_t serviceWorkerIdentifier);
+// Makes the dedicated and shared workers created after the call have the internals object.
+TEST_SUPPORT_EXPORT void setupWorkerInternals();
     
 TEST_SUPPORT_EXPORT void setAdditionalSupportedImageTypesForTesting(const String&);
 

@@ -33,6 +33,8 @@
 #include "Document.h"
 #include "DocumentPage.h"
 #include "Element.h"
+#include "Event.h"
+#include "EventNames.h"
 #include "HTMLModelElement.h"
 #include "JSDOMPromiseDeferred.h"
 #include "LocalDOMWindow.h"
@@ -100,6 +102,20 @@ RefPtr<ModelPlayer> ElementVolumetricScene::playerForElement(const Element& elem
 bool ElementVolumetricScene::isPresentedInVolumetricScene(const Element& element)
 {
     return presentationMode(element) == ModelPresentationMode::Volumetric;
+}
+
+bool ElementVolumetricScene::inVolumetricScene(const Element& element)
+{
+    return element.isVolumetricSceneEstablished();
+}
+
+void ElementVolumetricScene::setInVolumetricScene(Element& element, bool inVolumetricScene)
+{
+    if (element.isVolumetricSceneEstablished() == inVolumetricScene)
+        return;
+
+    element.setVolumetricSceneEstablished(inVolumetricScene);
+    element.queueTaskToDispatchEvent(TaskSource::ModelElement, Event::create(eventNames().volumetricchangeEvent, Event::CanBubble::Yes, Event::IsCancelable::No, Event::IsComposed::Yes));
 }
 
 // "unavailable" distinguishes an element that cannot host a scene from one that simply is not presenting.
@@ -177,6 +193,7 @@ void ElementVolumetricScene::requestVolumetricScene(Element& element, DOMPromise
             promise.reject(Exception { ExceptionCode::InvalidStateError, "Failed to open a volumetric scene"_s });
             return;
         }
+        setInVolumetricScene(protectedElement, true);
         promise.resolve();
     });
 }
@@ -194,6 +211,7 @@ void ElementVolumetricScene::exitVolumetricScene(Element& element)
 void ElementVolumetricScene::volumetricSceneDidClose(Element& element)
 {
     setPresentationMode(element, ModelPresentationMode::Inline);
+    setInVolumetricScene(element, false);
 }
 
 void ElementVolumetricScene::documentVisibilityDidChange(Element& element)

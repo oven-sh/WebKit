@@ -29,6 +29,7 @@
 #include "SandboxExtension.h"
 #include "SessionState.h"
 #include "WebsitePoliciesData.h"
+#include <WebCore/AgentClusterAssignment.h>
 #include <WebCore/FrameLoaderTypes.h>
 #include <WebCore/NavigationIdentifier.h>
 #include <WebCore/ProcessSwapDisposition.h>
@@ -50,6 +51,7 @@ struct GoToBackForwardItemParameters {
     WebCore::PublicSuffix publicSuffix;
     SandboxExtension::Handle sandboxExtensionHandle;
     WebCore::ProcessSwapDisposition processSwapDisposition;
+    std::optional<WebCore::AgentClusterAssignment> agentClusterAssignment;
 };
 
 } // namespace WebKit

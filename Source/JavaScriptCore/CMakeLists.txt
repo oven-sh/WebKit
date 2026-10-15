@@ -112,8 +112,6 @@ set(JavaScriptCore_OBJECT_LUT_SOURCES
     runtime/RegExpPrototype.cpp
     runtime/RegExpStringIteratorPrototype.cpp
     runtime/SetPrototype.cpp
-    runtime/ShadowRealmObject.cpp
-    runtime/ShadowRealmPrototype.cpp
     runtime/StringConstructor.cpp
     runtime/StringPrototype.cpp
     runtime/SymbolConstructor.cpp
@@ -395,7 +393,6 @@ set(JavaScriptCore_BUILTINS_SOURCES
     ${JAVASCRIPTCORE_DIR}/builtins/ProxyHelpers.js
     ${JAVASCRIPTCORE_DIR}/builtins/ReflectObject.js
     ${JAVASCRIPTCORE_DIR}/builtins/SetPrototype.js
-    ${JAVASCRIPTCORE_DIR}/builtins/ShadowRealmPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayConstructor.js
     ${JAVASCRIPTCORE_DIR}/builtins/TypedArrayPrototype.js
     ${JAVASCRIPTCORE_DIR}/builtins/WrapForValidIteratorPrototype.js
@@ -1115,7 +1112,7 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     parser/SourceProvider.h
     parser/SourceProviderCache.h
     parser/SourceProviderCacheItem.h
-    parser/SourceTaintedOrigin.h
+    parser/SourceTaintedness.h
     parser/SyntaxChecker.h
     parser/UnlinkedSourceCode.h
     parser/VariableEnvironment.h
@@ -1536,8 +1533,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/JSRawJSONObject.h
     runtime/JSRegExpStringIterator.h
     runtime/JSRegExpStringIteratorInlines.h
-    runtime/JSRemoteFunction.h
-    runtime/JSRemoteFunctionInlines.h
     runtime/JSRunLoopTimer.h
     runtime/JSScope.h
     runtime/JSScopeInlines.h
@@ -1714,12 +1709,6 @@ set(JavaScriptCore_PRIVATE_FRAMEWORK_HEADERS
     runtime/SetIteratorPrototypeInlines.h
     runtime/SetPrototype.h
     runtime/SetPrototypeInlines.h
-    runtime/ShadowRealmConstructor.h
-    runtime/ShadowRealmConstructorInlines.h
-    runtime/ShadowRealmObject.h
-    runtime/ShadowRealmObjectInlines.h
-    runtime/ShadowRealmPrototype.h
-    runtime/ShadowRealmPrototypeInlines.h
     runtime/SideDataRepository.h
     runtime/SimpleTypedArrayController.h
     runtime/SlowPathFunction.h
@@ -2234,10 +2223,10 @@ if (WEBKIT_PLATFORM_FEATURE_DEFINES_FILE)
 endif ()
 
 add_custom_command(
-    OUTPUT ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    OUTPUT ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py
     DEPENDS ${JavaScriptCore_INSPECTOR_DOMAINS} ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${_platform_defines_file_arg} ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_SCRIPTS_DIR}/generate-combined-inspector-json.py ${_platform_defines_file_arg} ${JavaScriptCore_INSPECTOR_DOMAINS} "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     VERBATIM)
 
 # Inspector Backend Dispatchers, Frontend Dispatchers, Type Builders
@@ -2251,9 +2240,9 @@ add_custom_command(
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.cpp
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorProtocolObjects.h
     ${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector/InspectorBackendCommands.js
-    MAIN_DEPENDENCY ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    MAIN_DEPENDENCY ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     DEPENDS ${JavaScriptCore_INSPECTOR_PROTOCOL_SCRIPTS}
-    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore ${JavaScriptCore_DERIVED_SOURCES_DIR}/CombinedDomains.json
+    COMMAND ${PYTHON_EXECUTABLE} ${JavaScriptCore_INSPECTOR_SCRIPTS_DIR}/generate-inspector-protocol-bindings.py --outputDir "${JavaScriptCore_DERIVED_SOURCES_DIR}/inspector" --framework JavaScriptCore ${JavaScriptCore_SCRIPTS_DIR}/CombinedDomains.json
     VERBATIM)
 
 set(JavaScriptCore_INTERFACE_LIBRARIES JavaScriptCore)

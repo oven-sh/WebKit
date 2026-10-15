@@ -148,11 +148,11 @@ void HTMLOptionElement::updateUserAgentShadowTree()
 
     labelContainer->setTextContent(String { labelValue });
     if (m_ownerSelect && !labelValue.isNull()) {
-        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueInline);
-        slot->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+        labelContainer->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::Inline);
+        slot->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
     } else {
-        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
-        slot->setInlineStyleProperty(CSSPropertyDisplay, CSSValueContents);
+        labelContainer->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
+        slot->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::Contents);
     }
 }
 
@@ -345,10 +345,8 @@ bool HTMLOptionElement::accessKeyAction(bool)
     if (isActuallyDisabled())
         return false;
 
-    if (select->usesBaseAppearancePicker())
-        select->pickOrToggleOption(*this);
-    else
-        select->accessKeySetSelectedIndex(index());
+    select->pickOrToggleOption(*this);
+    select->scrollToSelection();
     return true;
 }
 
@@ -520,6 +518,18 @@ void HTMLOptionElement::setSelected(bool selected)
 
     if (RefPtr select = ownerSelectElement())
         select->optionSelectionStateChanged(*this, selected);
+}
+
+void HTMLOptionElement::setSelectedByUser(bool selected)
+{
+    RefPtr select = ownerSelectElement();
+    if (!select || this->selected() == selected || isActuallyDisabled())
+        return;
+
+    if (!selected && !select->multiple())
+        return;
+
+    select->pickOrToggleOption(*this);
 }
 
 bool HTMLOptionElement::selectedForBindings() const

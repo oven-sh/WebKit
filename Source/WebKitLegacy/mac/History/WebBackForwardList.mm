@@ -58,20 +58,22 @@ using BackForwardListMap = HashMap<WeakRef<BackForwardList>, WebBackForwardList*
 
 // FIXME: Instead of this we could just create a class derived from BackForwardList
 // with a pointer to a WebBackForwardList in it.
-static BackForwardListMap& NODELETE backForwardLists()
+static BackForwardListMap& LEGACY_NODELETE backForwardLists()
 {
     static NeverDestroyed<BackForwardListMap> staticBackForwardLists;
     return staticBackForwardLists;
 }
 
-@implementation WebBackForwardList
+@implementation WebBackForwardList {
+    RefPtr<BackForwardList> _backForwardList;
+}
 
 BackForwardList* core(WebBackForwardList *webBackForwardList)
 {
     if (!webBackForwardList)
         return 0;
 
-    return reinterpret_cast<BackForwardList*>(webBackForwardList->_private);
+    return webBackForwardList->_backForwardList.get();
 }
 
 WebBackForwardList *kit(BackForwardList* backForwardList)
@@ -92,7 +94,7 @@ WebBackForwardList *kit(BackForwardList* backForwardList)
     if (!self)
         return nil;
 
-    _private = reinterpret_cast<WebBackForwardListPrivate*>(&backForwardList.leakRef());
+    _backForwardList = WTF::move(backForwardList);
     backForwardLists().set(*core(self), self);
     return self;
 }
@@ -112,7 +114,7 @@ WebBackForwardList *kit(BackForwardList* backForwardList)
     if (WebCoreObjCScheduleDeallocateOnMainThread([WebBackForwardList class], self))
         return;
 
-    RefPtr backForwardList = adoptRef(core(self));
+    RefPtr backForwardList = core(self);
     ASSERT(backForwardList);
     if (backForwardList) {
         ASSERT(backForwardList->closed());

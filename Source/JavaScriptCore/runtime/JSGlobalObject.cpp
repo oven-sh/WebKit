@@ -191,7 +191,6 @@
 #include "JSPromiseReaction.h"
 #include "JSRawJSONObject.h"
 #include "JSRegExpStringIteratorInlines.h"
-#include "JSRemoteFunctionInlines.h"
 #include "JSSetInlines.h"
 #include "JSSetIteratorInlines.h"
 #include "JSStringIteratorInlines.h"
@@ -257,9 +256,6 @@
 #include "SetConstructorInlines.h"
 #include "SetIteratorPrototypeInlines.h"
 #include "SetPrototypeInlines.h"
-#include "ShadowRealmConstructorInlines.h"
-#include "ShadowRealmObjectInlines.h"
-#include "ShadowRealmPrototypeInlines.h"
 #include "SourceCodeKey.h"
 #include "StrictEvalActivationInlines.h"
 #include "StringConstructorInlines.h"
@@ -716,7 +712,6 @@ const GlobalObjectMethodTable* JSGlobalObject::baseGlobalObjectMethodTable()
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
-        &deriveShadowRealmGlobalObject,
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,
@@ -951,8 +946,6 @@ JSC_DEFINE_HOST_FUNCTION(performPromiseThen, (JSGlobalObject* globalObject, Call
     return encodedJSUndefined();
 }
 
-JS_GLOBAL_OBJECT_ADDITIONS_2;
-
 JSGlobalObject::JSGlobalObject(VM& vm, Structure* structure, const GlobalObjectMethodTable* globalObjectMethodTable)
     : Base(vm, structure, nullptr)
     , m_vm(&vm)
@@ -1150,10 +1143,6 @@ void JSGlobalObject::init(VM& vm)
         [] (const Initializer<Structure>& init) {
             init.set(JSNativeStdFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
         });
-    m_remoteFunctionStructure.initLater(
-        [] (const Initializer<Structure>& init) {
-            init.set(JSRemoteFunction::createStructure(init.vm, init.owner, init.owner->m_functionPrototype.get()));
-        });
     JSFunction* callFunction = nullptr;
     JSFunction* applyFunction = nullptr;
     JSFunction* hasInstanceSymbolFunction = nullptr;
@@ -1216,8 +1205,6 @@ void JSGlobalObject::init(VM& vm)
     m_functionPrototype->structure()->setPrototypeWithoutTransition(vm, m_objectPrototype.get());
     m_objectStructureForObjectConstructor.set(vm, this, m_structureCache.emptyObjectStructureForPrototype(this, m_objectPrototype.get(), JSFinalObject::defaultInlineCapacity));
     m_objectProtoValueOfFunction.set(vm, this, uncheckedDowncast<JSFunction>(objectPrototype()->getDirect(vm, vm.propertyNames->valueOf)));
-
-    JS_GLOBAL_OBJECT_ADDITIONS_3;
 
     m_arraySpeciesGetterSetter.set(vm, this, GetterSetter::create(vm, this, JSFunction::create(vm, this, 0, "get [Symbol.species]"_s, globalFuncSpeciesGetter, ImplementationVisibility::Public, SpeciesGetterIntrinsic), nullptr));
     m_typedArraySpeciesGetterSetter.set(vm, this, GetterSetter::create(vm, this, JSFunction::create(vm, this, 0, "get [Symbol.species]"_s, globalFuncSpeciesGetter, ImplementationVisibility::Public, SpeciesGetterIntrinsic), nullptr));
@@ -1359,9 +1346,6 @@ void JSGlobalObject::init(VM& vm)
 
     for (unsigned i = 0; i < NumberOfArrayIndexingModes; ++i)
         m_arrayStructureForIndexingShapeDuringAllocation[i] = m_originalArrayStructureForIndexingShape[i];
-
-    m_shadowRealmPrototype.set(vm, this, ShadowRealmPrototype::create(vm, ShadowRealmPrototype::createStructure(vm, this, m_objectPrototype.get())));
-    m_shadowRealmObjectStructure.set(vm, this, ShadowRealmObject::createStructure(vm, this, m_shadowRealmPrototype.get()));
 
     m_regExpPrototype.set(vm, this, RegExpPrototype::create(vm, this, RegExpPrototype::createStructure(vm, this, m_objectPrototype.get())));
     m_regExpStructure.set(vm, this, RegExpObject::createStructure(vm, this, m_regExpPrototype.get()));
@@ -1511,9 +1495,6 @@ void JSGlobalObject::init(VM& vm)
     m_arrayConstructor.set(vm, this, arrayConstructor);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::Array)].set(vm, this, arrayConstructor);
 
-    ShadowRealmConstructor* shadowRealmConstructor = ShadowRealmConstructor::create(vm, ShadowRealmConstructor::createStructure(vm, this, m_functionPrototype.get()), m_shadowRealmPrototype.get());
-    m_shadowRealmConstructor.set(vm, this, shadowRealmConstructor);
-
     RegExpConstructor* regExpConstructor = RegExpConstructor::create(vm, RegExpConstructor::createStructure(vm, this, m_functionPrototype.get()), m_regExpPrototype.get());
     m_regExpConstructor.set(vm, this, regExpConstructor);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::RegExp)].set(vm, this, regExpConstructor);
@@ -1595,7 +1576,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_functionPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, functionConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_arrayPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, arrayConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     m_regExpPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, regExpConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
-    m_shadowRealmPrototype->putDirectWithoutTransition(vm, vm.propertyNames->constructor, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     putDirectWithoutTransition(vm, vm.propertyNames->Object, objectConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
     putDirectWithoutTransition(vm, vm.propertyNames->Function, functionConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
@@ -1874,8 +1854,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         TemporalObject* temporal = TemporalObject::create(vm, TemporalObject::createStructure(vm, this));
         putDirectWithoutTransition(vm, vm.propertyNames->Temporal, temporal, static_cast<unsigned>(PropertyAttribute::DontEnum));
     }
-    if (Options::useShadowRealm())
-        putDirectWithoutTransition(vm, vm.propertyNames->ShadowRealm, shadowRealmConstructor, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     m_moduleLoader.initLater(
         [] (const Initializer<JSModuleLoader>& init) {
@@ -2146,17 +2124,8 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::repeatCharacter)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "repeatCharacter"_s, stringProtoFuncRepeatCharacter, ImplementationVisibility::Private));
         });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::importInRealm)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "importInRealm"_s, importInRealm, ImplementationVisibility::Private));
-        });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::evalFunction)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 1, init.vm.propertyNames->eval.string(), globalFuncEval, ImplementationVisibility::Public));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::evalInRealm)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "evalInRealm"_s, evalInRealm, ImplementationVisibility::Private));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::moveFunctionToRealm)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "moveFunctionToRealm"_s, moveFunctionToRealm, ImplementationVisibility::Private));
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::sameValue)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "is"_s, objectConstructorIs, ImplementationVisibility::Private, ObjectIsIntrinsic));
@@ -2213,14 +2182,6 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
         });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::jsonStringify)].initLater([] (const Initializer<JSCell>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 2, "stringify"_s, jsonStringify, ImplementationVisibility::Private));
-        });
-
-    // ShadowRealms
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::createRemoteFunction)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "createRemoteFunction"_s, createRemoteFunction, ImplementationVisibility::Private));
-        });
-    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::isRemoteFunction)].initLater([] (const Initializer<JSCell>& init) {
-            init.set(JSFunction::create(init.vm, init.owner, 0, "isRemoteFunction"_s, isRemoteFunction, ImplementationVisibility::Private));
         });
 
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::emptyPropertyNameEnumerator)].initLater([] (const Initializer<JSCell>& init) {
@@ -2586,7 +2547,7 @@ void JSGlobalObject::notifyArrayBufferDetachingSlow()
     m_arrayBufferDetachWatchpointSet->fireAll(vm(), "ArrayBuffer detached");
 }
 
-static inline JSObject* NODELETE lastInPrototypeChain(JSObject* object)
+static inline JSObject* LEGACY_NODELETE lastInPrototypeChain(JSObject* object)
 {
     JSObject* o = object;
     while (o->getPrototypeDirect().isObject())
@@ -2671,7 +2632,7 @@ public:
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, JSGlobalObject*);
     ObjectsWithBrokenIndexingFinder(Vector<JSObject*>&, UncheckedKeyHashSet<JSGlobalObject*>&);
 
-    bool NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
+    bool LEGACY_NODELETE needsMultiGlobalsScan() const { return m_needsMultiGlobalsScan; }
     IterationStatus operator()(HeapCell*, HeapCell::Kind) const;
 
 private:
@@ -2697,12 +2658,12 @@ ObjectsWithBrokenIndexingFinder<BadTimeFinderMode::MultipleGlobals>::ObjectsWith
 {
 }
 
-inline bool NODELETE hasBrokenIndexing(IndexingType type)
+inline bool LEGACY_NODELETE hasBrokenIndexing(IndexingType type)
 {
     return type && !hasSlowPutArrayStorage(type);
 }
 
-inline bool NODELETE hasBrokenIndexing(JSObject* object)
+inline bool LEGACY_NODELETE hasBrokenIndexing(JSObject* object)
 {
     IndexingType type = object->indexingType();
     return hasBrokenIndexing(type);
@@ -3039,7 +3000,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_globalCallee);
     visitor.append(thisObject->m_evalCallee);
     visitor.append(thisObject->m_zombieFrameCallee);
-    JS_GLOBAL_OBJECT_ADDITIONS_4;
     thisObject->m_evalErrorStructure.visit(visitor);
     thisObject->m_rangeErrorStructure.visit(visitor);
     thisObject->m_referenceErrorStructure.visit(visitor);
@@ -3049,7 +3009,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_aggregateErrorStructure.visit(visitor);
     thisObject->m_suppressedErrorStructure.visit(visitor);
     visitor.append(thisObject->m_arrayConstructor);
-    visitor.append(thisObject->m_shadowRealmConstructor);
     visitor.append(thisObject->m_regExpConstructor);
     visitor.append(thisObject->m_objectConstructor);
     visitor.append(thisObject->m_functionConstructor);
@@ -3063,6 +3022,7 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_defaultDateFormat.visit(visitor);
     thisObject->m_defaultTimeFormat.visit(visitor);
     thisObject->m_defaultNumberFormat.visit(visitor);
+    visitor.append(thisObject->m_cachedToLocaleStringNumberFormat);
     thisObject->m_collatorStructure.visit(visitor);
     thisObject->m_displayNamesStructure.visit(visitor);
     thisObject->m_durationFormatStructure.visit(visitor);
@@ -3179,8 +3139,6 @@ void JSGlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_customGetterFunctionStructure.visit(visitor);
     thisObject->m_customSetterFunctionStructure.visit(visitor);
     thisObject->m_nativeStdFunctionStructure.visit(visitor);
-    thisObject->m_remoteFunctionStructure.visit(visitor);
-    visitor.append(thisObject->m_shadowRealmObjectStructure);
     visitor.append(thisObject->m_regExpStructure);
     visitor.append(thisObject->m_generatorFunctionStructure);
     visitor.append(thisObject->m_asyncFunctionStructure);
@@ -3291,7 +3249,7 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     String localeString = locale->value(this);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (m_cachedLocaleCompareCollator && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
+    if (m_cachedLocaleCompareCollator && !vm.intlCache().hasLanguageChange() && m_cachedLocaleCompareCollatorLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedLocaleCompareCollatorLocale == localeString)
         return m_cachedLocaleCompareCollator.get();
 
     IntlCollator* collator = IntlCollator::create(vm, collatorStructure());
@@ -3302,6 +3260,27 @@ IntlCollator* JSGlobalObject::cachedLocaleCompareCollator(JSString* locale)
     m_cachedLocaleCompareCollatorLanguagesEpoch = vm.intlCache().languagesEpoch();
     m_cachedLocaleCompareCollator.set(vm, this, collator);
     return collator;
+}
+
+IntlNumberFormat* JSGlobalObject::cachedToLocaleStringNumberFormat(JSString* locale)
+{
+    VM& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    String localeString = locale->value(this);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    if (m_cachedToLocaleStringNumberFormat && !vm.intlCache().hasLanguageChange() && m_cachedToLocaleStringNumberFormatLanguagesEpoch == vm.intlCache().languagesEpoch() && m_cachedToLocaleStringNumberFormatLocale == localeString)
+        return m_cachedToLocaleStringNumberFormat.get();
+
+    IntlNumberFormat* numberFormat = IntlNumberFormat::create(vm, numberFormatStructure());
+    numberFormat->initializeNumberFormat(this, locale, jsUndefined());
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    m_cachedToLocaleStringNumberFormatLocale = WTF::move(localeString);
+    m_cachedToLocaleStringNumberFormatLanguagesEpoch = vm.intlCache().languagesEpoch();
+    m_cachedToLocaleStringNumberFormat.set(vm, this, numberFormat);
+    return numberFormat;
 }
 
 // JSGlobalObject::exposeDollarVM is defined in tools/JSDollarVM.cpp so that
@@ -3741,7 +3720,7 @@ void JSGlobalObject::tryInstallPropertyDescriptorFastPathWatchpoint()
         installObjectAdaptiveStructureWatchpoint(condition, m_propertyDescriptorFastPathWatchpointSet);
 }
 
-void NODELETE slowValidateCell(JSGlobalObject* globalObject)
+void LEGACY_NODELETE slowValidateCell(JSGlobalObject* globalObject)
 {
     RELEASE_ASSERT(globalObject->isGlobalObject());
     ASSERT_GC_OBJECT_INHERITS(globalObject, JSGlobalObject::info());
@@ -3940,13 +3919,6 @@ JSGlobalObject* JSGlobalObject::create(VM& vm, Structure* structure)
     return globalObject;
 }
 
-JSGlobalObject* JSGlobalObject::createWithCustomMethodTable(VM& vm, Structure* structure, const GlobalObjectMethodTable* methodTable)
-{
-    JSGlobalObject* globalObject = new (NotNull, allocateCell<JSGlobalObject>(vm)) JSGlobalObject(vm, structure, methodTable);
-    globalObject->finishCreation(vm);
-    return globalObject;
-}
-
 void JSGlobalObject::finishCreation(VM& vm)
 {
     DeferTermination deferTermination(vm);
@@ -3997,7 +3969,7 @@ void JSGlobalObject::clearWeakTickets()
     vm().deferredWorkTimer->cancelPendingWorkSafe(this);
 }
 
-FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin& sourceOrigin, SourceTaintedOrigin sourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures lexicallyScopedFeatures, FunctionConstructionMode functionConstructionMode)
+FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionConstructor(const Identifier& name, StringView program, const SourceOrigin& sourceOrigin, SourceTaintedness sourceTaintedOrigin, const String& sourceURL, const TextPosition& startPosition, LexicallyScopedFeatures lexicallyScopedFeatures, FunctionConstructionMode functionConstructionMode)
 {
     if (!defaultCodeGenerationMode().isEmpty())
         return nullptr;
@@ -4035,7 +4007,7 @@ FunctionExecutable* JSGlobalObject::tryGetCachedFunctionExecutableForFunctionCon
     if (storedProvider->sourceURL() != sourceURL)
         return nullptr;
 
-    if (storedProvider->sourceTaintedOrigin() != sourceTaintedOrigin)
+    if (storedProvider->taintedness() != sourceTaintedOrigin)
         return nullptr;
 
     return executable;

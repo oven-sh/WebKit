@@ -204,7 +204,8 @@ private:
 {
     Vector<uint32_t> matchIndices;
     matchIndices.reserveInitialCapacity(matches.count);
-    for (id match in matches) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id match in matches) {
         if ([match isKindOfClass:WKTextFinderMatch.class])
             matchIndices.append([(WKTextFinderMatch *)match index]);
     }
@@ -329,7 +330,7 @@ private:
 
     ASSERT([findMatch isKindOfClass:[WKTextFinderMatch class]]);
 
-    WKTextFinderMatch *textFinderMatch = static_cast<WKTextFinderMatch *>(findMatch);
+    RetainPtr textFinderMatch = static_cast<WKTextFinderMatch *>(findMatch);
 
     auto copiedImageCallback = Block_copy(completionHandler);
     _imageReplyCallbacks.append([copiedImageCallback] (NSImage *image) {
@@ -340,7 +341,7 @@ private:
     // FIXME: There is no guarantee that this will ever result in didGetImageForMatchResult
     // being called (and thus us calling our completion handler); we should harden this
     // against all of the early returns in FindController::getImageForFindMatch.
-    protect(_page)->getImageForFindMatch(textFinderMatch.index);
+    protect(_page)->getImageForFindMatch([textFinderMatch index]);
 }
 
 @end

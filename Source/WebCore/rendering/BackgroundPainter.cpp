@@ -39,6 +39,7 @@
 #include "PaintInfo.h"
 #include "RenderBoxInlines.h"
 #include "RenderBoxModelObjectInlines.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImage.h"
 #include "RenderLayer.h"
@@ -100,7 +101,7 @@ void BackgroundPainter::paintBackground(const LayoutRect& paintRect, BleedAvoida
             return;
     }
 
-    auto backgroundColor = m_renderer.style().visitedDependentBackgroundColorApplyingColorFilter();
+    auto backgroundColor = m_renderer.style().visitedDependentUsedBackgroundColorApplyingColorFilter();
     auto compositeOp = document().compositeOperatorForBackgroundColor(backgroundColor, m_renderer);
 
     paintFillLayers(backgroundColor, m_renderer.style().backgroundLayers(), m_renderer.style().usedZoomForLength(), paintRect, bleedAvoidance, compositeOp);
@@ -121,7 +122,7 @@ void BackgroundPainter::paintRootBoxFillLayers() const
         return;
 
     auto& style = rootBackgroundRenderer->style();
-    auto backgroundColor = style.visitedDependentBackgroundColorApplyingColorFilter();
+    auto backgroundColor = style.visitedDependentUsedBackgroundColorApplyingColorFilter();
     auto compositeOp = document().compositeOperatorForBackgroundColor(backgroundColor, m_renderer);
 
     paintFillLayers(backgroundColor, style.backgroundLayers(), style.usedZoomForLength(), view().backgroundRect(), BleedAvoidance::None, compositeOp, rootBackgroundRenderer);
@@ -311,7 +312,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
             borderRect = shrinkRectByOneDevicePixel(m_paintInfo.context(), borderRect, snappingScaleFactor);
         }
 
-        return BorderShape::shapeForBorderRect(style, borderRect, closedEdges);
+        return BorderShape::shapeForBorderRect(m_renderer.usedStyle(), borderRect, closedEdges);
     };
 
     // Fast path for drawing simple color backgrounds.
@@ -470,7 +471,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         break;
     }
     case FillBox::BorderArea: {
-        auto borderAreaPath = BorderPainter::pathForBorderArea(rect, style, snappingScaleFactor, closedEdges);
+        auto borderAreaPath = BorderPainter::pathForBorderArea(rect, m_renderer.usedStyle(), snappingScaleFactor, closedEdges);
         if (borderAreaPath) {
             backgroundClipStateSaver.save();
             context.clipPath(borderAreaPath.value());
@@ -480,7 +481,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         setupMaskingBackgroundClip(rect, [&](GraphicsContext& context, const LayoutRect& borderRect, const FloatRect& paintRect) {
             auto borderPaintInfo = PaintInfo { context, LayoutRect { paintRect }, PaintPhase::BlockBackground, PaintBehavior::ForceBlackBorder };
             auto borderPainter = BorderPainter { m_renderer, borderPaintInfo };
-            borderPainter.paintBorder(borderRect, style);
+            borderPainter.paintBorder(borderRect, m_renderer.usedStyle());
         });
         break;
     }
@@ -548,7 +549,6 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
         auto geometry = calculateFillLayerImageGeometry(m_renderer, m_paintInfo.paintContainer, layer.layer, layer.zoom, paintOffset, imageRect, m_overrideOrigin);
 
         auto& clientForBackgroundImage = backgroundObject ? *backgroundObject : m_renderer;
-        bgImage->setContainerSizeForRenderer(clientForBackgroundImage, geometry.tileSizeWithoutPixelSnapping);
 
         geometry.clip(LayoutRect(pixelSnappedRect));
         bool isFirstLine = inlineBoxIterator && inlineBoxIterator->lineBox()->isFirst();
@@ -561,16 +561,18 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                     return m_renderer.imageOrientation();
             }();
 
+            auto concreteObjectSize = ConcreteObjectSize::fixed(geometry.tileSizeWithoutPixelSnapping);
+
             ImagePaintingOptions options = {
                 op == CompositeOperator::SourceOver ? layer.layer.compositeForPainting(layer.isLast) : op,
                 layerBlendMode,
                 bgImage->decodingModeForImageDraw(m_renderer, m_paintInfo),
                 orientation,
-                bgImage->interpolationQualityForImageDraw(context, m_renderer, &layer.layer, geometry.tileSize),
+                bgImage->interpolationQualityForImageDraw(context, m_renderer, concreteObjectSize, &layer.layer, geometry.tileSize),
                 layer.layer.maskMode() == Style::MaskMode::Luminance ? DrawLuminanceMask::Yes : DrawLuminanceMask::No,
                 document().settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-                bgImage->drawsSVGImage() && AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage) ? InvertContent::Yes : InvertContent::No,
+                bgImage->drawsSVGImage() && AXCustomColorModeController::shouldInvertSVGImage(clientForBackgroundImage, *bgImage) ? InvertContent::Yes : InvertContent::No,
 #endif
                 document().settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
                 document().settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
@@ -578,7 +580,7 @@ template<typename Layer> void BackgroundPainter::paintFillLayerImpl(const Color&
                 style.dynamicRangeLimit().toPlatformDynamicRangeLimit()
             };
 
-            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, ConcreteObjectSize::fixed(geometry.tileSizeWithoutPixelSnapping), geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options, isFirstLine);
+            auto drawResult = bgImage->drawTiled(context, clientForBackgroundImage, concreteObjectSize, geometry.destinationRect, toLayoutPoint(geometry.relativePhase()), geometry.tileSize, geometry.spaceSize, options, isFirstLine);
             if (drawResult == ImageDrawResult::DidRequestDecoding) {
                 ASSERT(bgImage->hasCachedImage());
                 protect(bgImage->cachedImage())->addClientWaitingForAsyncDecoding(protect(m_renderer)->cachedImageClient());
@@ -609,7 +611,7 @@ void BackgroundPainter::clipRoundedInnerRect(GraphicsContext& context, const Flo
     context.clipRoundedRect(clipRect);
 }
 
-static inline std::optional<LayoutUnit> NODELETE getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
+static inline std::optional<LayoutUnit> LEGACY_NODELETE getSpace(LayoutUnit areaSize, LayoutUnit tileSize)
 {
     if (int numberOfTiles = areaSize / tileSize; numberOfTiles > 1)
         return (areaSize - numberOfTiles * tileSize) / (numberOfTiles - 1);
@@ -849,7 +851,7 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
             Sizing sizing {
                 FloatSize { positioningAreaSize },
                 ObjectSizeNegotiation::SpecifiedSize::none(),
-                keyword.value == CSSValueContain ? ObjectSizeNegotiation::SizingConstraint::Contain : ObjectSizeNegotiation::SizingConstraint::Cover
+                keyword.value == CSSValueID::Contain ? ObjectSizeNegotiation::SizingConstraint::Contain : ObjectSizeNegotiation::SizingConstraint::Cover
             };
 
             auto naturalDimensions = NaturalDimensions {
@@ -937,19 +939,20 @@ template<typename Layer> LayoutSize BackgroundPainter::calculateFillTileSize(con
     );
 }
 
-void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Style::ComputedStyle& style, Style::ShadowStyle shadowStyle, RectEdges<bool> closedEdges) const
+void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const UsedStyle& usedStyle, Style::ShadowStyle shadowStyle, RectEdges<bool> closedEdges) const
 {
+    auto& style = usedStyle.computedStyle();
     // FIXME: Deal with border-image. Would be great to use border-image as a mask.
     GraphicsContext& context = m_paintInfo.context();
     if (context.paintingDisabled() || style.boxShadow().isNone())
         return;
 
-    const auto borderShape = BorderShape::shapeForBorderRect(style, paintRect, closedEdges);
+    const auto borderShape = BorderShape::shapeForBorderRect(usedStyle, paintRect, closedEdges);
 
     bool hasBorderRadius = style.border().hasBorderRadius();
     float snappingScaleFactor = document().pixelSnappingScaleFactor();
 
-    bool hasOpaqueBackground = style.visitedDependentBackgroundColorApplyingColorFilter().isOpaque();
+    bool hasOpaqueBackground = style.visitedDependentUsedBackgroundColorApplyingColorFilter().isOpaque();
     const auto& zoomFactor = style.usedZoomForLength();
     for (const auto& shadow : style.boxShadow()) {
         if (Style::shadowStyle(shadow) != shadowStyle)
@@ -1047,7 +1050,7 @@ void BackgroundPainter::paintBoxShadow(const LayoutRect& paintRect, const Style:
             adjustedBorderShape.clipOutOuterShape(context, snappingScaleFactor);
 
             if (hasBorderRadius) {
-                auto influenceShape = BorderShape::shapeForBorderRect(style, shadowRect);
+                auto influenceShape = BorderShape::shapeForBorderRect(usedStyle, shadowRect);
                 auto influenceRadii = influenceShape.radii();
                 influenceRadii.expand(2 * shadowPaintingExtent + shadowSpread);
                 influenceShape.setRadii(influenceRadii);
@@ -1139,7 +1142,7 @@ bool BackgroundPainter::boxShadowShouldBeAppliedToBackground(const RenderBoxMode
     if (!hasOneNormalBoxShadow)
         return false;
 
-    Color backgroundColor = style.visitedDependentBackgroundColorApplyingColorFilter();
+    Color backgroundColor = style.visitedDependentUsedBackgroundColorApplyingColorFilter();
     if (!backgroundColor.isOpaque())
         return false;
 
@@ -1173,8 +1176,10 @@ bool BackgroundPainter::boxShadowShouldBeAppliedToBackground(const RenderBoxMode
     if (is<RenderTableCell>(renderer))
         return false;
 
-    if (auto* imageRenderer = dynamicDowncast<RenderImage>(renderer))
-        return !const_cast<RenderImage&>(*imageRenderer).backgroundIsKnownToBeObscured(paintOffset);
+    if (auto* imageRenderer = dynamicDowncast<RenderImage>(renderer)) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return !const_cast<RenderImage&>(*imageRenderer).backgroundIsKnownToBeObscured(paintOffset);
+    }
 
     return true;
 }

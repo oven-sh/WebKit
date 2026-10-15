@@ -483,6 +483,7 @@ WTF_EXTERN_C_END
 
 @interface UIKeyboardInputMode : UITextInputMode <NSCopying>
 + (UIKeyboardInputMode *)keyboardInputModeWithIdentifier:(NSString *)identifier;
+@property (nonatomic, readonly, retain) NSString *identifier;
 @property (nonatomic, readonly, retain) NSArray <NSString *> *multilingualLanguages;
 @property (nonatomic, readonly, retain) NSString *languageWithRegion;
 @end

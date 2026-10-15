@@ -124,7 +124,6 @@ class WebProcessProxy;
 class WebResourceLoadStatisticsStore;
 enum class CacheModel : uint8_t;
 enum class CallDownloadDidStart : bool;
-enum class RestrictedOpenerType : uint8_t;
 enum class ShouldGrandfatherStatistics : bool;
 enum class StorageAccessStatus : uint8_t;
 enum class StorageAccessPromptStatus;
@@ -148,9 +147,9 @@ using LocalNetworkAccessPromptIdentifier = ObjectIdentifier<LocalNetworkAccessPr
 class WebsiteDataStore : public API::ObjectImpl<API::Object::Type::WebsiteDataStore>, public CanMakeWeakPtr<WebsiteDataStore> {
 public:
     static WebsiteDataStore& defaultDataStore();
-    static bool NODELETE defaultDataStoreExists();
+    static bool LEGACY_NODELETE defaultDataStoreExists();
     static void deleteDefaultDataStoreForTesting();
-    static RefPtr<WebsiteDataStore> NODELETE existingDataStoreForIdentifier(const WTF::UUID&);
+    static RefPtr<WebsiteDataStore> LEGACY_NODELETE existingDataStoreForIdentifier(const WTF::UUID&);
     
     static Ref<WebsiteDataStore> createNonPersistent();
     static Ref<WebsiteDataStore> create(Ref<WebsiteDataStoreConfiguration>&&, PAL::SessionID);
@@ -163,18 +162,17 @@ public:
 
     static void forEachWebsiteDataStore(NOESCAPE const Function<void(WebsiteDataStore&)>&);
     
-    NetworkProcessProxy& networkProcess() const;
     NetworkProcessProxy& networkProcess();
     NetworkProcessProxy* networkProcessIfExists() { return m_networkProcess.get(); }
     void setNetworkProcess(NetworkProcessProxy&);
     
-    static WebsiteDataStore* NODELETE existingDataStoreForSessionID(PAL::SessionID);
+    static WebsiteDataStore* LEGACY_NODELETE existingDataStoreForSessionID(PAL::SessionID);
 
     bool isPersistent() const { return !m_sessionID.isEphemeral(); }
     PAL::SessionID sessionID() const { return m_sessionID; }
 
     enum class ProcessAccessType : uint8_t { None, OnlyIfLaunched, Launch };
-    static ProcessAccessType NODELETE computeWebProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */);
+    static ProcessAccessType LEGACY_NODELETE computeWebProcessAccessTypeForDataRemoval(OptionSet<WebsiteDataType> dataTypes, bool /* isNonPersistentStore */);
     
     void registerProcess(WebProcessProxy&);
     void unregisterProcess(WebProcessProxy&);
@@ -188,15 +186,15 @@ public:
     void sendNetworkProcessWillSuspendImminentlyForTesting();
     void sendNetworkProcessDidResume();
     void networkProcessDidTerminate(NetworkProcessProxy&);
-    static void NODELETE makeNextNetworkProcessLaunchFailForTesting();
-    static bool NODELETE shouldMakeNextNetworkProcessLaunchFailForTesting();
+    static void LEGACY_NODELETE makeNextNetworkProcessLaunchFailForTesting();
+    static bool LEGACY_NODELETE shouldMakeNextNetworkProcessLaunchFailForTesting();
 
     bool trackingPreventionEnabled() const;
     void setTrackingPreventionEnabled(bool);
-    bool NODELETE resourceLoadStatisticsDebugMode() const;
+    bool LEGACY_NODELETE resourceLoadStatisticsDebugMode() const;
     void setResourceLoadStatisticsDebugMode(bool);
     void setResourceLoadStatisticsDebugMode(bool, CompletionHandler<void()>&&);
-    void isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&&) const;
+    void isResourceLoadStatisticsEphemeral(CompletionHandler<void(bool)>&&);
 
     void setPrivateClickMeasurementDebugMode(bool);
     void storePrivateClickMeasurement(const WebCore::PrivateClickMeasurement&);
@@ -302,9 +300,9 @@ public:
     void setCrossSiteLoadWithLinkDecorationForTesting(const URL& fromURL, const URL& toURL, bool wasFiltered, CompletionHandler<void()>&&);
     void resetCrossSiteLoadsWithLinkDecorationForTesting(CompletionHandler<void()>&&);
     void deleteCookiesForTesting(const URL&, bool includeHttpOnlyCookies, CompletionHandler<void()>&&);
-    void hasLocalStorageOrCookies(const URL&, CompletionHandler<void(bool)>&&) const;
-    void hasLocalStorageForTesting(const URL&, CompletionHandler<void(bool)>&&) const;
-    void hasIsolatedSessionForTesting(const URL&, CompletionHandler<void(bool)>&&) const;
+    void hasLocalStorageOrCookies(const URL&, CompletionHandler<void(bool)>&&);
+    void hasLocalStorageForTesting(const URL&, CompletionHandler<void(bool)>&&);
+    void hasIsolatedSessionForTesting(const URL&, CompletionHandler<void(bool)>&&);
     void setResourceLoadStatisticsShouldDowngradeReferrerForTesting(bool, CompletionHandler<void()>&&);
     void setResourceLoadStatisticsShouldBlockThirdPartyCookiesForTesting(bool enabled, WebCore::ThirdPartyCookieBlockingMode, CompletionHandler<void()>&&);
     void setThirdPartyCookieBlockingMode(WebCore::ThirdPartyCookieBlockingMode, CompletionHandler<void()>&&);
@@ -326,7 +324,7 @@ public:
     void removeScreenTimeDataWithInterval(WallTime);
 #endif
 
-    static void NODELETE setCachedProcessSuspensionDelayForTesting(Seconds);
+    static void LEGACY_NODELETE setCachedProcessSuspensionDelayForTesting(Seconds);
 
 #if !PLATFORM(COCOA)
     void allowSpecificHTTPSCertificateForHost(const WebCore::CertificateInfo&, const String& host);
@@ -362,7 +360,7 @@ public:
     void setHTTPCookieAcceptPolicy(WebCore::HTTPCookieAcceptPolicy);
 #endif
 
-    static void NODELETE allowWebsiteDataRecordsForAllOrigins();
+    static void LEGACY_NODELETE allowWebsiteDataRecordsForAllOrigins();
 
 #if HAVE(SEC_KEY_PROXY)
     void addSecKeyProxyStore(Ref<SecKeyProxyStore>&&);
@@ -440,7 +438,7 @@ public:
     }
     static std::optional<double> defaultOriginQuotaRatio();
     static std::optional<double> defaultTotalQuotaRatio();
-    static UnifiedOriginStorageLevel NODELETE defaultUnifiedOriginStorageLevel();
+    static UnifiedOriginStorageLevel LEGACY_NODELETE defaultUnifiedOriginStorageLevel();
 
 #if USE(GLIB)
     static const String& defaultBaseCacheDirectory();
@@ -454,7 +452,7 @@ public:
 #endif
 
 #if ENABLE(APP_BOUND_DOMAINS)
-    void hasAppBoundSession(CompletionHandler<void(bool)>&&) const;
+    void hasAppBoundSession(CompletionHandler<void(bool)>&&);
     void clearAppBoundSession(CompletionHandler<void()>&&);
     void beginAppBoundDomainCheck(const String& host, const String& protocol, WebFramePolicyListenerProxy&);
     void getAppBoundDomains(CompletionHandler<void(const HashSet<WebCore::RegistrableDomain>&)>&&) const;
@@ -519,9 +517,6 @@ public:
 
     void setOriginQuotaRatioEnabledForTesting(bool enabled, CompletionHandler<void()>&&);
 
-    RestrictedOpenerType openerTypeForDomain(const WebCore::RegistrableDomain&) const;
-    void setRestrictedOpenerTypeForDomainForTesting(const WebCore::RegistrableDomain&, RestrictedOpenerType);
-
     bool operator==(const WebsiteDataStore& other) const { return (m_sessionID == other.sessionID()); }
     void resolveDirectoriesAsynchronously();
 
@@ -547,7 +542,7 @@ public:
 
     void setStorageAccessPermissionForTesting(bool, WebPageProxyIdentifier, const String& topFrameDomain, const String& subFrameDomain, CompletionHandler<void()>&&);
     void clearStorageAccessForTesting(CompletionHandler<void()>&&);
-    void isStorageSuspendedForTesting(CompletionHandler<void(bool)>&&) const;
+    void isStorageSuspendedForTesting(CompletionHandler<void(bool)>&&);
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
     void installMockParentalControlsURLFilterForTesting(Vector<URL>&& blockedURLs, std::span<const uint8_t> replacementData, CompletionHandler<void()>&&);
@@ -570,7 +565,7 @@ private:
     void fetchDataAndApply(OptionSet<WebsiteDataType>, OptionSet<WebsiteDataFetchOption>, Ref<WorkQueue>&&, Function<void(Vector<WebsiteDataRecord>)>&& apply);
 
     void platformInitialize();
-    void NODELETE platformDestroy();
+    void LEGACY_NODELETE platformDestroy();
     void platformSetNetworkParameters(WebsiteDataStoreParameters&);
     void removeRecentSearches(WallTime, CompletionHandler<void()>&&);
 
@@ -604,7 +599,7 @@ private:
 #endif
 
 #if ENABLE(MANAGED_DOMAINS)
-    static const HashSet<WebCore::RegistrableDomain>* NODELETE managedDomainsIfInitialized();
+    static const HashSet<WebCore::RegistrableDomain>* LEGACY_NODELETE managedDomainsIfInitialized();
     static void forwardManagedDomainsToITPIfInitialized(CompletionHandler<void()>&&);
     void setManagedDomainsForITP(const HashSet<WebCore::RegistrableDomain>&, CompletionHandler<void()>&&);
 #endif
@@ -725,8 +720,6 @@ private:
 #if ENABLE(OPT_IN_PARTITIONED_COOKIES)
     std::optional<bool> m_cachedIsOptInCookiePartitioningEnabled;
 #endif
-
-    HashMap<WebCore::RegistrableDomain, RestrictedOpenerType> m_restrictedOpenerTypesForTesting;
 
 #if PLATFORM(COCOA)
     const RefPtr<EnhancedSecuritySitesHolder> m_enhancedSecuritySites;

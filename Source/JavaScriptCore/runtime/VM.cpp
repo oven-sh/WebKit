@@ -851,7 +851,7 @@ Exception* VM::ensureTerminationException()
 }
 
 #if ENABLE(JIT)
-static ThunkGenerator NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
+static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
 {
     switch (intrinsic) {
     case CharCodeAtIntrinsic:
@@ -908,8 +908,6 @@ static ThunkGenerator NODELETE thunkGeneratorForIntrinsic(Intrinsic intrinsic)
         return objectIsThunkGenerator;
     case BoundFunctionCallIntrinsic:
         return boundFunctionCallGenerator;
-    case RemoteFunctionCallIntrinsic:
-        return remoteFunctionCallGenerator;
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
     case StringConstructorIntrinsic:
@@ -1016,30 +1014,6 @@ NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin ta
     if (slowCase)
         return getOrCreate(m_slowCanConstructBoundExecutable);
     return getOrCreate(m_fastCanConstructBoundExecutable);
-}
-
-NativeExecutable* VM::getRemoteFunction(bool isJSFunction)
-{
-    bool slowCase = !isJSFunction;
-    auto getOrCreate = [&] (Weak<NativeExecutable>& slot) -> NativeExecutable* {
-        if (auto* cached = slot.get())
-            return cached;
-
-        Intrinsic intrinsic = NoIntrinsic;
-        if (!slowCase)
-            intrinsic = RemoteFunctionCallIntrinsic;
-
-        NativeExecutable* result = getHostFunction(
-            slowCase ? remoteFunctionCallGeneric : remoteFunctionCallForJSFunction,
-            ImplementationVisibility::Public, intrinsic,
-            callHostFunctionAsConstructor, nullptr, 0, String());
-        slot = Weak<NativeExecutable>(result);
-        return result;
-    };
-
-    if (slowCase)
-        return getOrCreate(m_slowRemoteFunctionExecutable);
-    return getOrCreate(m_fastRemoteFunctionExecutable);
 }
 
 CodePtr<JSEntryPtrTag> VM::getCTIInternalFunctionTrampolineFor(CodeSpecializationKind kind)
@@ -1190,7 +1164,7 @@ bool VM::shrinkFootprintNow(OptionSet<ShrinkFootprint> mode)
             return false;
         deleteAllCode(DeleteAllCodeIfNotCollecting);
     }
-    clearSourceProviderCaches();
+    sourceProviderCacheMap.clear();
     if (mode.contains(ShrinkFootprint::LeaveCollectionToCaller))
         return true;
     heap.collectNow(Synchronousness::Sync, CollectionScope::Full);
@@ -1212,12 +1186,15 @@ SourceProviderCache* VM::addSourceProviderCache(SourceProvider* sourceProvider)
     auto addResult = sourceProviderCacheMap.add(sourceProvider, nullptr);
     if (addResult.isNewEntry)
         addResult.iterator->value = SourceProviderCache::create(sourceProvider->source().length());
+    addResult.iterator->value->markUsed();
     return addResult.iterator->value.get();
 }
 
-void VM::clearSourceProviderCaches()
+void VM::pruneUnusedSourceProviderCaches()
 {
-    sourceProviderCacheMap.clear();
+    sourceProviderCacheMap.removeIf([](auto& entry) {
+        return !entry.value->takeUsedSinceLastPrune();
+    });
 }
 
 bool VM::hasExceptionsAfterHandlingTraps()
@@ -1346,8 +1323,12 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
 Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
-    if (!exception)
-        exception = Exception::create(*this, thrownValue);
+    if (!exception) {
+        auto action = Exception::StackCaptureAction::CaptureStack;
+        if (!globalObject->debugger() && interpreter.isExceptionCaughtByUserCatchClause())
+            action = Exception::StackCaptureAction::DoNotCaptureStack;
+        exception = Exception::create(*this, thrownValue, action);
+    }
 
     return throwException(globalObject, exception);
 }
@@ -2320,8 +2301,8 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
         static constexpr auto extraDurationToAvoidExceedingDeadlineDuringEdenGC = 1_ms;
 
         auto timeSinceFinishingLastFullGC = secondsSinceEpoch - heap.m_lastFullGCEndTime.secondsSinceEpoch();
-        if (timeSinceFinishingLastFullGC > minimumDelayBeforeOpportunisticFullGC && heap.m_shouldDoOpportunisticFullCollection && heap.m_totalBytesVisitedAfterLastFullCollect) {
-            auto estimatedGCDuration = (heap.lastFullGCLength() * heap.m_totalBytesVisited) / heap.m_totalBytesVisitedAfterLastFullCollect;
+        if (timeSinceFinishingLastFullGC > minimumDelayBeforeOpportunisticFullGC && heap.m_shouldDoOpportunisticFullCollection && heap.m_oldGenerationCellBytesAtStartOfLastFullCollect) {
+            auto estimatedGCDuration = (heap.lastFullGCLength() * heap.m_oldGenerationCellBytes) / heap.m_oldGenerationCellBytesAtStartOfLastFullCollect;
             if (estimatedGCDuration + extraDurationToAvoidExceedingDeadlineDuringFullGC < remainingTime) {
                 dataLogLnIf(verbose, "[OPPORTUNISTIC TASK] FULL", " signpost:(", JSC::activeJSGlobalObjectSignpostIntervalCount.load(), ")");
                 heap.collectSync(CollectionScope::Full);
@@ -2333,7 +2314,7 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
         if (timeSinceLastGC > minimumDelayBeforeOpportunisticEdenGC && heap.totalBytesAllocatedThisCycle() && heap.m_bytesAllocatedBeforeLastEdenCollect) {
             auto estimatedGCDuration = (heap.lastEdenGCLength() * heap.totalBytesAllocatedThisCycle()) / heap.m_bytesAllocatedBeforeLastEdenCollect;
             if (estimatedGCDuration + extraDurationToAvoidExceedingDeadlineDuringEdenGC < remainingTime) {
-                dataLogLnIf(verbose, "[OPPORTUNISTIC TASK] EDEN: ", timeSinceFinishingLastFullGC, " ", timeSinceLastGC, " ", heap.m_shouldDoOpportunisticFullCollection, " ", heap.m_totalBytesVisitedAfterLastFullCollect, " ", heap.totalBytesAllocatedThisCycle(), " ", heap.m_bytesAllocatedBeforeLastEdenCollect, " ", heap.m_lastGCEndTime, " ", heap.m_currentGCStartTime, " ", (heap.lastFullGCLength() * heap.m_totalBytesVisited) / heap.m_totalBytesVisitedAfterLastFullCollect, " ", remainingTime, " ", (heap.lastEdenGCLength() * heap.totalBytesAllocatedThisCycle()) / heap.m_bytesAllocatedBeforeLastEdenCollect, " signpost:(", JSC::activeJSGlobalObjectSignpostIntervalCount.load(), ")");
+                dataLogLnIf(verbose, "[OPPORTUNISTIC TASK] EDEN: ", timeSinceFinishingLastFullGC, " ", timeSinceLastGC, " ", heap.m_shouldDoOpportunisticFullCollection, " ", heap.m_oldGenerationCellBytesAtStartOfLastFullCollect, " ", heap.totalBytesAllocatedThisCycle(), " ", heap.m_bytesAllocatedBeforeLastEdenCollect, " ", heap.m_lastGCEndTime, " ", heap.m_currentGCStartTime, " ", (heap.lastFullGCLength() * heap.m_oldGenerationCellBytes) / heap.m_oldGenerationCellBytesAtStartOfLastFullCollect, " ", remainingTime, " ", (heap.lastEdenGCLength() * heap.totalBytesAllocatedThisCycle()) / heap.m_bytesAllocatedBeforeLastEdenCollect, " signpost:(", JSC::activeJSGlobalObjectSignpostIntervalCount.load(), ")");
                 heap.collectSync(CollectionScope::Eden);
                 return;
             } else if (estimatedGCDuration < 2 * remainingTime) {
@@ -2344,7 +2325,7 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
             }
         }
 
-        dataLogLnIf(verbose, "[OPPORTUNISTIC TASK] GaveUp: nothing met. ", timeSinceFinishingLastFullGC, " ", timeSinceLastGC, " ", heap.m_shouldDoOpportunisticFullCollection, " ", heap.m_totalBytesVisitedAfterLastFullCollect, " ", heap.totalBytesAllocatedThisCycle(), " ", heap.m_bytesAllocatedBeforeLastEdenCollect, " ", heap.m_lastGCEndTime, " ", heap.m_currentGCStartTime, " ", (heap.lastFullGCLength() * heap.m_totalBytesVisited) / heap.m_totalBytesVisitedAfterLastFullCollect, " ", remainingTime, " ", (heap.lastEdenGCLength() * heap.totalBytesAllocatedThisCycle()) / heap.m_bytesAllocatedBeforeLastEdenCollect, " signpost:(", JSC::activeJSGlobalObjectSignpostIntervalCount.load(), ")");
+        dataLogLnIf(verbose, "[OPPORTUNISTIC TASK] GaveUp: nothing met. ", timeSinceFinishingLastFullGC, " ", timeSinceLastGC, " ", heap.m_shouldDoOpportunisticFullCollection, " ", heap.m_oldGenerationCellBytesAtStartOfLastFullCollect, " ", heap.totalBytesAllocatedThisCycle(), " ", heap.m_bytesAllocatedBeforeLastEdenCollect, " ", heap.m_lastGCEndTime, " ", heap.m_currentGCStartTime, " ", (heap.lastFullGCLength() * heap.m_oldGenerationCellBytes) / heap.m_oldGenerationCellBytesAtStartOfLastFullCollect, " ", remainingTime, " ", (heap.lastEdenGCLength() * heap.totalBytesAllocatedThisCycle()) / heap.m_bytesAllocatedBeforeLastEdenCollect, " signpost:(", JSC::activeJSGlobalObjectSignpostIntervalCount.load(), ")");
     }();
 
     heap.sweeper().doWorkUntil(*this, deadline);

@@ -577,6 +577,287 @@ TEST(WKWebExtensionUnpartitionedStorage, RedirectOutOfHostPermittedFrameDoesNotU
 
 #endif // ENABLE(OPT_IN_PARTITIONED_COOKIES) && defined(CFN_COOKIE_ACCEPTS_POLICY_PARTITION) && CFN_COOKIE_ACCEPTS_POLICY_PARTITION
 
+static NSString * const writeLocalStorageScript = @"localStorage.setItem('key', 'local-storage-value')";
+static NSString * const readLocalStorageScript = @"return localStorage.getItem('key') ?? ''";
+
+static NSString * const writeIndexedDBScript = @""
+    "const database = await new Promise((resolve, reject) => {"
+    "  const request = indexedDB.open('database');"
+    "  request.onupgradeneeded = () => request.result.createObjectStore('store');"
+    "  request.onsuccess = () => resolve(request.result);"
+    "  request.onerror = () => reject(request.error);"
+    "});"
+    "const transaction = database.transaction('store', 'readwrite');"
+    "transaction.objectStore('store').put('indexeddb-value', 'key');"
+    "await new Promise((resolve, reject) => {"
+    "  transaction.oncomplete = resolve;"
+    "  transaction.onerror = () => reject(transaction.error);"
+    "});"
+    "database.close();";
+static NSString * const readIndexedDBScript = @""
+    "if (!(await indexedDB.databases()).some(database => database.name === 'database'))"
+    "  return '';"
+    "const database = await new Promise((resolve, reject) => {"
+    "  const request = indexedDB.open('database');"
+    "  request.onsuccess = () => resolve(request.result);"
+    "  request.onerror = () => reject(request.error);"
+    "});"
+    "const request = database.transaction('store').objectStore('store').get('key');"
+    "const value = await new Promise((resolve, reject) => {"
+    "  request.onsuccess = () => resolve(request.result);"
+    "  request.onerror = () => reject(request.error);"
+    "});"
+    "database.close();"
+    "return value ?? '';";
+
+static NSString * const writeCacheStorageScript = @"await (await caches.open('cache')).put('/cached', new Response('cache-storage-value'))";
+static NSString * const readCacheStorageScript = @""
+    "const response = await caches.match('/cached');"
+    "return response ? await response.text() : '';";
+
+static NSString * const writeFileSystemScript = @""
+    "const root = await navigator.storage.getDirectory();"
+    "const writable = await (await root.getFileHandle('file', { create: true })).createWritable();"
+    "await writable.write('file-system-value');"
+    "await writable.close();";
+static NSString * const readFileSystemScript = @""
+    "const root = await navigator.storage.getDirectory();"
+    "try {"
+    "  return await (await (await root.getFileHandle('file')).getFile()).text();"
+    "} catch (error) {"
+    "  if (error.name === 'NotFoundError')"
+    "    return '';"
+    "  throw error;"
+    "}";
+
+static NSString * const holdWebLockScript = @"await new Promise(resolve => navigator.locks.request('lock', () => { resolve(); return new Promise(() => { }) }))";
+static NSString * const readHeldWebLocksScript = @"return (await navigator.locks.query()).held.map(lock => lock.name).join(', ')";
+
+static String scriptReportingResult(NSString *script, ASCIILiteral report)
+{
+    return makeString("let value;"_s
+        "try {"_s
+        "  value = await (async () => { "_s, String(script), " })();"_s
+        "} catch (error) {"_s
+        "  value = String(error);"_s
+        "}"_s, report);
+}
+
+static TestWebKitAPI::HTTPServer storageTestServer(NSString *frameScript, NSString *workerScript = nil)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+        { "/read"_s, { { { "Content-Type"_s, "text/html"_s } }, makeString("<script type='module'>"_s, scriptReportingResult(frameScript, "parent.postMessage({ host: location.hostname, value }, '*')"_s), "</script>"_s) } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    if (workerScript) {
+        server.addResponse("/worker.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, scriptReportingResult(workerScript, "postMessage(value)"_s) });
+        server.addResponse("/shared-worker.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, makeString("const result = (async () => { "_s, scriptReportingResult(workerScript, "return value;"_s), " })();"_s
+            "onconnect = async event => event.ports[0].postMessage(await result);"_s) });
+    }
+
+    return server;
+}
+
+static WKWebExtensionControllerConfiguration *controllerConfigurationWithPersistentDataStore()
+{
+    RetainPtr identifier = adoptNS([[NSUUID alloc] initWithUUIDString:@"3f2b8c1e-5a47-4d0e-9b6a-2c81e4f7d913"]);
+    auto *dataStore = [WKWebsiteDataStore dataStoreForIdentifier:identifier.get()];
+
+    __block bool removedData = false;
+    [dataStore removeDataOfTypes:WKWebsiteDataStore.allWebsiteDataTypes modifiedSince:NSDate.distantPast completionHandler:^{
+        removedData = true;
+    }];
+    Util::run(&removedData);
+
+    auto *configuration = WKWebExtensionControllerConfiguration.nonPersistentConfiguration;
+    configuration.defaultWebsiteDataStore = dataStore;
+    return configuration;
+}
+
+static RetainPtr<TestWebExtensionManager> loadStorageTestExtension(TestWebKitAPI::HTTPServer& server)
+{
+    auto manager = Util::loadExtension(manifestWithLocalhostHostPermission(), extensionResources(server), controllerConfigurationWithPersistentDataStore());
+
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:server.requestWithLocalhost("/read"_s).URL];
+
+    [manager runUntilTestMessage:@"Ready"];
+
+    return manager;
+}
+
+static RetainPtr<TestWKWebView> loadFirstPartyPage(TestWebExtensionManager *manager, NSURLRequest *request, NSString *script)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    [configuration setWebsiteDataStore:manager.controller.configuration.defaultWebsiteDataStore];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:CGRectMake(0, 0, 800, 600) configuration:configuration.get()]);
+    [webView synchronouslyLoadRequest:request];
+
+    NSError *error = nil;
+    [webView objectByCallingAsyncFunction:script withArguments:nil error:&error];
+    EXPECT_NULL(error);
+
+    return webView;
+}
+
+static void runUnpartitionedStorageTest(NSString *firstPartyScript, NSString *frameScript, NSString *expectedValue, NSString *workerScript = nil)
+{
+    auto server = storageTestServer(frameScript, workerScript);
+    auto manager = loadStorageTestExtension(server);
+
+    auto permittedFirstPartyWebView = loadFirstPartyPage(manager.get(), server.requestWithLocalhost(), firstPartyScript);
+    auto otherFirstPartyWebView = loadFirstPartyPage(manager.get(), server.request(), firstPartyScript);
+
+    auto *results = loadExtensionPageAndCollectFrameReports(manager.get());
+
+    EXPECT_NS_EQUAL(results[@"localhost"][@"value"], expectedValue);
+    EXPECT_NS_EQUAL(results[@"127.0.0.1"][@"value"], @"");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, LocalStorageIsUnpartitionedInHostPermittedFrame)
+{
+    runUnpartitionedStorageTest(writeLocalStorageScript, readLocalStorageScript, @"local-storage-value");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, IndexedDBIsUnpartitionedInHostPermittedFrame)
+{
+    runUnpartitionedStorageTest(writeIndexedDBScript, readIndexedDBScript, @"indexeddb-value");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, CacheStorageIsUnpartitionedInHostPermittedFrame)
+{
+    runUnpartitionedStorageTest(writeCacheStorageScript, readCacheStorageScript, @"cache-storage-value");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, FileSystemIsUnpartitionedInHostPermittedFrame)
+{
+    runUnpartitionedStorageTest(writeFileSystemScript, readFileSystemScript, @"file-system-value");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, WebLocksAreUnpartitionedInHostPermittedFrame)
+{
+    runUnpartitionedStorageTest(holdWebLockScript, readHeldWebLocksScript, @"lock");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, DedicatedWorkerOfHostPermittedFrameIsUnpartitioned)
+{
+    auto *workerScript = [NSString stringWithFormat:@"return [await (async () => { %@ })(), await (async () => { %@ })()].filter(Boolean).join(', ')", readIndexedDBScript, readFileSystemScript];
+    auto *frameScript = @"return await new Promise(resolve => new Worker('/worker.js', { type: 'module' }).onmessage = event => resolve(event.data))";
+
+    runUnpartitionedStorageTest([writeIndexedDBScript stringByAppendingString:writeFileSystemScript], frameScript, @"indexeddb-value, file-system-value", workerScript);
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, SharedWorkerOfHostPermittedFrameIsUnpartitioned)
+{
+    auto *workerScript = [NSString stringWithFormat:@"return [await (async () => { %@ })(), await (async () => { %@ })()].filter(Boolean).join(', ')", readIndexedDBScript, readCacheStorageScript];
+    auto *frameScript = @""
+        "return await new Promise(resolve => {"
+        "  const worker = new SharedWorker('/shared-worker.js');"
+        "  worker.onerror = () => resolve('error');"
+        "  worker.port.onmessage = event => resolve(event.data);"
+        "})";
+
+    runUnpartitionedStorageTest([writeIndexedDBScript stringByAppendingString:writeCacheStorageScript], frameScript, @"indexeddb-value, cache-storage-value", workerScript);
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, ServiceWorkerControlsHostPermittedFrame)
+{
+    NSString *fetchFromServiceWorkerScript = @"return await (await fetch('/from-service-worker')).text()";
+    NSString *registerServiceWorkerScript = @""
+        "await navigator.serviceWorker.register('/service-worker.js');"
+        "await navigator.serviceWorker.ready;";
+
+    auto *frameScript = [NSString stringWithFormat:@""
+        "const frameValue = await (async () => { %@ })();"
+        "const workerValue = await new Promise(resolve => new Worker('/worker.js', { type: 'module' }).onmessage = event => resolve(event.data));"
+        "return [frameValue, workerValue].filter(Boolean).join(', ')", fetchFromServiceWorkerScript];
+
+    auto server = storageTestServer(frameScript, fetchFromServiceWorkerScript);
+    server.addResponse("/from-service-worker"_s, { { { "Content-Type"_s, "text/plain"_s } }, ""_s });
+    server.addResponse("/service-worker.js"_s, { { { "Content-Type"_s, "text/javascript"_s } }, ""
+        "self.addEventListener('install', () => self.skipWaiting());"
+        "self.addEventListener('activate', event => event.waitUntil(self.clients.claim()));"
+        "self.addEventListener('fetch', event => {"
+        "  if (new URL(event.request.url).pathname === '/from-service-worker')"
+        "    event.respondWith(new Response('service-worker-value'));"
+        "});"_s });
+
+    auto manager = loadStorageTestExtension(server);
+
+    auto permittedFirstPartyWebView = loadFirstPartyPage(manager.get(), server.requestWithLocalhost(), registerServiceWorkerScript);
+    auto otherFirstPartyWebView = loadFirstPartyPage(manager.get(), server.request(), registerServiceWorkerScript);
+
+    auto *results = loadExtensionPageAndCollectFrameReports(manager.get());
+
+    EXPECT_NS_EQUAL(results[@"localhost"][@"value"], @"service-worker-value, service-worker-value");
+    EXPECT_NS_EQUAL(results[@"127.0.0.1"][@"value"], @"");
+}
+
+static void copySessionStorage(WKWebView *fromWebView, WKWebView *toWebView)
+{
+    __block RetainPtr<NSData> sessionStorageData;
+    __block bool done = false;
+    [fromWebView fetchDataOfTypes:WKWebViewDataTypeSessionStorage completionHandler:^(NSData *data, NSError *error) {
+        EXPECT_NULL(error);
+        sessionStorageData = data;
+        done = true;
+    }];
+    Util::run(&done);
+
+    done = false;
+    [toWebView restoreData:sessionStorageData.get() completionHandler:^(NSError *error) {
+        EXPECT_NULL(error);
+        done = true;
+    }];
+    Util::run(&done);
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, SessionStorageIsUnpartitionedInHostPermittedFrame)
+{
+    auto server = storageTestServer(@"return sessionStorage.getItem('key') ?? ''");
+    auto manager = loadStorageTestExtension(server);
+
+    auto *extensionPageURL = [NSURL URLWithString:@"extension-page.html" relativeToURL:manager.get().context.baseURL];
+    [manager.get().defaultTab changeWebViewIfNeededForURL:extensionPageURL forExtensionContext:manager.get().context];
+
+    for (NSURLRequest *request in @[ server.requestWithLocalhost(), server.request() ]) {
+        auto firstPartyWebView = loadFirstPartyPage(manager.get(), request, @"sessionStorage.setItem('key', 'session-storage-value')");
+        copySessionStorage(firstPartyWebView.get(), manager.get().defaultTab.webView);
+    }
+
+    [manager.get().defaultTab.webView loadRequest:[NSURLRequest requestWithURL:extensionPageURL]];
+
+    NSDictionary *results = [manager runUntilTestMessage:@"Frames Reported"];
+
+    EXPECT_NS_EQUAL(results[@"localhost"][@"value"], @"session-storage-value");
+    EXPECT_NS_EQUAL(results[@"127.0.0.1"][@"value"], @"");
+}
+
+TEST(WKWebExtensionUnpartitionedStorage, BroadcastChannelIsUnpartitionedInHostPermittedFrame)
+{
+    NSString *listenScript = @""
+        "window.receivedMessages = [];"
+        "window.firstMessage = new Promise(resolve => {"
+        "  window.channel = new BroadcastChannel('channel');"
+        "  channel.onmessage = event => {"
+        "    receivedMessages.push(event.data);"
+        "    resolve(event.data);"
+        "  };"
+        "});";
+
+    auto server = storageTestServer(@"window.channel = new BroadcastChannel('channel'); channel.postMessage(location.hostname); return ''");
+    auto manager = loadStorageTestExtension(server);
+
+    auto permittedFirstPartyWebView = loadFirstPartyPage(manager.get(), server.requestWithLocalhost(), listenScript);
+    auto otherFirstPartyWebView = loadFirstPartyPage(manager.get(), server.request(), listenScript);
+
+    loadExtensionPageAndCollectFrameReports(manager.get());
+
+    EXPECT_NS_EQUAL([permittedFirstPartyWebView objectByCallingAsyncFunction:@"return await firstMessage" withArguments:nil], @"localhost");
+    EXPECT_NS_EQUAL([otherFirstPartyWebView objectByEvaluatingJavaScript:@"receivedMessages.join(', ')"], @"");
+}
+
 } // namespace TestWebKitAPI
 
 #endif // ENABLE(WK_WEB_EXTENSIONS)

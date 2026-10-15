@@ -189,7 +189,8 @@ template<typename DOMClass, typename T> inline auto createWrapper(JSDOMGlobalObj
         using WrapperClass = typename JSDOMWrapperConverterTraits<DOMClass>::WrapperClass;
 
         ASSERT(!getCachedWrapper(globalObject->world(), domObject));
-        auto* domObjectPtr = domObject.ptr();
+        // domObject is moved into the wrapper, which keeps it alive. Avoid ref churn in this hot code path.
+        SUPPRESS_UNCOUNTED_LOCAL auto* domObjectPtr = domObject.ptr();
         auto* wrapper = WrapperClass::create(getDOMStructure<WrapperClass>(globalObject->vm(), *globalObject), globalObject, WTF::move(domObject));
         cacheWrapper(globalObject->world(), domObjectPtr, wrapper);
         return wrapper;

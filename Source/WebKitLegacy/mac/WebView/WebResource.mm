@@ -94,14 +94,16 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
 
 @end
 
-@implementation WebResource
+@implementation WebResource {
+    RetainPtr<WebResourcePrivate> _private;
+}
 
 - (instancetype)init
 {
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebResourcePrivate alloc] init];
+    _private = adoptNS([[WebResourcePrivate alloc] init]);
     return self;
 }
 
@@ -155,7 +157,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()]);
     return self;
 }
 
@@ -184,13 +186,6 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     [encoder encodeObject:textEncoding.get() forKey:WebResourceTextEncodingNameKey];
     [encoder encodeObject:frameName.get() forKey:WebResourceFrameNameKey];
     [encoder encodeObject:response.get() forKey:WebResourceResponseKey];
-}
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
-    [super dealloc];
 }
 
 - (id)copyWithZone:(NSZone *)zone
@@ -258,7 +253,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
     if (!self)
         return nil;
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:WTF::move(coreResource)];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:WTF::move(coreResource)]);
     return self;
 }
 
@@ -307,7 +302,7 @@ static NSString * const WebResourceResponseKey =          @"WebResourceResponse"
         return nil;
     }
 
-    _private = [[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()];
+    _private = adoptNS([[WebResourcePrivate alloc] initWithCoreResource:coreResource.releaseNonNull()]);
     return self;
 }
 

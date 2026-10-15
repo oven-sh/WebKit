@@ -114,6 +114,8 @@
     }
 
     _inUserInteraction = YES;
+    _pendingSnapContentOffset = std::nullopt;
+    _isAnimatingToSnapContentOffset = NO;
 
     if (scrollView.panGestureRecognizer.state == UIGestureRecognizerStateBegan)
         scrollingTreeNodeDelegate->scrollViewWillStartPanGesture();
@@ -159,6 +161,15 @@
             targetContentOffset->y = potentialSnapPosition;
     }
 
+    // FIXME: Remove this workaround once UIKit no longer decelerates very slowly towards a target that lies against the
+    // direction of the velocity (rdar://189252768). This happens when flicking past the last snap position. Stop the
+    // momentum here and animate to the snap position once dragging ends.
+    CGPoint currentContentOffset = scrollView.contentOffset;
+    if (!snapOffsetsInfo.isEmpty() && ((targetContentOffset->x - currentContentOffset.x) * velocity.x < 0 || (targetContentOffset->y - currentContentOffset.y) * velocity.y < 0)) {
+        _pendingSnapContentOffset = *targetContentOffset;
+        *targetContentOffset = currentContentOffset;
+    }
+
     if (originalHorizontalSnapPosition != scrollingNode->currentHorizontalSnapPointIndex()
         || originalVerticalSnapPosition != scrollingNode->currentVerticalSnapPointIndex()) {
         scrollingTreeNodeDelegate->currentSnapPointIndicesDidChange(scrollingNode->currentHorizontalSnapPointIndex(), scrollingNode->currentVerticalSnapPointIndex());
@@ -180,6 +191,12 @@
             WTFBeginSignpostAlways(nullptr, ScrollingPerformanceTestMomentumInterval, "isAnimation=YES;");
             _scrollPerfIntervalState = ScrollPerfIntervalState::Momentum;
         }
+    }
+
+    if (auto pendingSnapContentOffset = std::exchange(_pendingSnapContentOffset, std::nullopt); pendingSnapContentOffset && !willDecelerate) {
+        _isAnimatingToSnapContentOffset = YES;
+        [scrollView setContentOffset:*pendingSnapContentOffset animated:YES];
+        return;
     }
 
     if (_inUserInteraction && !willDecelerate) {
@@ -214,6 +231,11 @@
     CheckedPtr scrollingTreeNodeDelegate = _scrollingTreeNodeDelegate.get();
     if (!scrollingTreeNodeDelegate) [[unlikely]]
         return;
+
+    if (std::exchange(_isAnimatingToSnapContentOffset, NO) && _inUserInteraction) {
+        _inUserInteraction = NO;
+        scrollingTreeNodeDelegate->scrollViewDidScroll(scrollView.contentOffset, _inUserInteraction);
+    }
 
     scrollingTreeNodeDelegate->scrollDidEnd();
 }

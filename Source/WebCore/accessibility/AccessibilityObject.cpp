@@ -559,7 +559,7 @@ AccessibilityObject* AccessibilityObject::nextSiblingUnignored(unsigned limit) c
 {
     AX_ASSERT(limit);
 
-    for (auto sibling = iterator(nextSibling()); limit && sibling; --limit, ++sibling) {
+    for (auto sibling = iterator(protect(nextSibling())); limit && sibling; --limit, ++sibling) {
         if (!protect(*sibling)->isIgnored())
             return sibling.ptr();
     }
@@ -570,7 +570,7 @@ AccessibilityObject* AccessibilityObject::previousSiblingUnignored(unsigned limi
 {
     AX_ASSERT(limit);
 
-    for (auto sibling = iterator(previousSibling()); limit && sibling; --limit, --sibling) {
+    for (auto sibling = iterator(protect(previousSibling())); limit && sibling; --limit, --sibling) {
         if (!protect(*sibling)->isIgnored())
             return sibling.ptr();
     }
@@ -706,7 +706,8 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
     if (!cache)
         return nullptr;
 
-    RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST RefPtr accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     while (accessibleObject && !isAccessible(*accessibleObject)) {
         axNode = NodeTraversal::next(*axNode);
 
@@ -716,7 +717,8 @@ AccessibilityObject* firstAccessibleObjectFromNode(const Node* node, NOESCAPE co
         if (!axNode)
             return nullptr;
 
-        accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST accessibleObject = cache->getOrCreate(const_cast<Node&>(*axNode));
     }
 
     return accessibleObject.unsafeGet();
@@ -1029,14 +1031,14 @@ std::optional<BoundaryPoint> AccessibilityObject::lastBoundaryPointContainedInRe
     return lastBoundaryPointContainedInRect(boundaryPoints, startBoundary, rect, midIndex + 1, rightIndex, isFlippedWritingMode);
 }
 
-static IntPoint NODELETE textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
+static IntPoint LEGACY_NODELETE textStartPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.minXMinYCorner();
     return rect.maxXMinYCorner();
 }
 
-static IntPoint NODELETE textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
+static IntPoint LEGACY_NODELETE textEndPoint(const IntRect& rect, bool isFlippedWritingMode)
 {
     if (!isFlippedWritingMode)
         return rect.maxXMaxYCorner();
@@ -1697,7 +1699,7 @@ bool AccessibilityObject::pressPreservingFocus()
         // and there's nothing left to clean up.
         return result;
     }
-    cache->endSuppressingFocusChange();
+    protect(cache)->endSuppressingFocusChange();
 
     if (!actionTarget || document->focusedElement() != actionTarget) {
         // Pressing didn't move focus, or author script moved it somewhere else (which we don't
@@ -1718,13 +1720,13 @@ bool AccessibilityObject::pressPreservingFocus()
         // focus() / setFocusedElement() can also run author script that tears down the cache.
         return result;
     }
-    cache->endSuppressingFocusChange();
+    protect(cache)->endSuppressingFocusChange();
 
     // If focus didn't end up where we intended (e.g. author script disconnected the origin during
     // the press so it couldn't take focus back), surface the real focus now so assistive technology
     // moves to it, rather than being left pointed at the stale origin whose focus change we suppressed above.
     if (RefPtr currentFocusedElement = document->focusedElement(); currentFocusedElement && currentFocusedElement != originalFocusedElement)
-        cache->onFocusChange(nullptr, currentFocusedElement.get());
+        protect(cache)->onFocusChange(nullptr, currentFocusedElement.get());
 
     return result;
 }
@@ -2201,7 +2203,7 @@ ModelPlayerAccessibilityChildren AccessibilityObject::modelElementChildren()
 #endif
 
 // Finds a RenderListItem parent given a node.
-static RenderListItem* NODELETE renderListItemContainer(Node* node)
+static RenderListItem* LEGACY_NODELETE renderListItemContainer(Node* node)
 {
     for (; node; node = node->parentNode()) {
         if (auto* listItem = dynamicDowncast<RenderListItem>(node->renderer()))
@@ -2681,7 +2683,7 @@ void AccessibilityObject::updateChildrenIfNecessary()
 {
     if (!childrenInitialized()) {
         // Enable the cache in case we end up adding a lot of children, we don't want to recompute axIsIgnored each time.
-        AXAttributeCacheScope enableCache(axObjectCache());
+        AXAttributeCacheScope enableCache(protect(axObjectCache()));
 
         // setIsIgnoredFromParentDataForChild() derives each child's data from ours when we have any.
         // Compute and set it now so each child doesn't repeat unnecessary work.
@@ -2712,7 +2714,7 @@ AccessibilityObject* AccessibilityObject::anchorElementForNode(Node& node)
     if (!renderer)
         return nullptr;
 
-    WeakPtr cache = protect(renderer->document())->axObjectCache();
+    CheckedPtr cache = protect(renderer->document())->axObjectCache();
     RefPtr axObject = cache ? cache->getOrCreate(node) : nullptr;
     RefPtr anchor = axObject ? axObject->anchorElement() : nullptr;
     return anchor ? cache->getOrCreate(*anchor) : nullptr;
@@ -3402,7 +3404,7 @@ FloatSize AccessibilityObject::imageDataSize() const
 RefPtr<SharedBuffer> AccessibilityObject::imageData(const AXImageDataParameters& parameters) const
 {
     RefPtr image = imageFromRenderer(renderer());
-    if (!image || image->isNull())
+    if (!image || !image->hasSomethingToDraw())
         return nullptr;
 
     auto nativeSize = image->size();
@@ -3529,7 +3531,7 @@ String AccessibilityObject::selectedOptionCheckmark() const
     RefPtr option = dynamicDowncast<HTMLOptionElement>(node());
     CheckedPtr renderer = option ? option->renderer() : nullptr;
     CheckedPtr checkmark = renderer ? renderer->pseudoElementRenderer(PseudoElementType::Checkmark).get() : nullptr;
-    if (!checkmark || checkmark->style().usedVisibility() != Visibility::Visible || !option->selected())
+    if (!checkmark || checkmark->usedStyle().visibility() != UsedVisibility::Visible || !option->selected())
         return { };
 
     StringBuilder glyph;
@@ -3919,7 +3921,7 @@ bool AccessibilityObject::supportsExpanded() const
     if (isColumnHeader() || isRowHeader())
         return hasValidAriaExpandedValue();
 
-    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node()); select && select->usesMenuList())
+    if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node()); select && select->isDropdownBox())
         return true;
 
     switch (role()) {
@@ -3970,7 +3972,7 @@ bool AccessibilityObject::isExpanded() const
     }
 
     if (supportsExpanded()) {
-        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node()); select && select->usesMenuList())
+        if (RefPtr select = dynamicDowncast<HTMLSelectElement>(node()); select && select->isDropdownBox())
             return select->isOpen();
         if (RefPtr commandForElement = this->commandForElement())
             return commandForElement->isPopoverShowing();
@@ -4022,9 +4024,9 @@ HashMap<String, AXEditingStyleValueVariant> AccessibilityObject::resolvedEditing
         return { };
 
     HashMap<String, AXEditingStyleValueVariant> styles;
-    styles.add("bold"_s, selectionStyle->hasStyle(CSSPropertyFontWeight, "bold"_s));
-    styles.add("italic"_s, selectionStyle->hasStyle(CSSPropertyFontStyle, "italic"_s));
-    styles.add("underline"_s, selectionStyle->hasStyle(CSSPropertyWebkitTextDecorationsInEffect, "underline"_s));
+    styles.add("bold"_s, selectionStyle->hasStyle(CSSPropertyID::FontWeight, "bold"_s));
+    styles.add("italic"_s, selectionStyle->hasStyle(CSSPropertyID::FontStyle, "italic"_s));
+    styles.add("underline"_s, selectionStyle->hasStyle(CSSPropertyID::WebkitTextDecorationsInEffect, "underline"_s));
     styles.add("fontsize"_s, selectionStyle->legacyFontSize(*document));
     return styles;
 }
@@ -4476,7 +4478,7 @@ AccessibilityObjectInclusion AccessibilityObject::defaultObjectInclusion() const
     if (CheckedPtr style = this->style()) {
         if (style->effectiveInert())
             return AccessibilityObjectInclusion::IgnoreObject;
-        if (isVisibilityHidden(*style)) {
+        if (renderer() ? isVisibilityHidden(*renderer()) : isVisibilityHidden(*style)) {
             isHiddenUntilFound = isHiddenUntilFoundContainer();
             if (!isHiddenUntilFound)
                 return AccessibilityObjectInclusion::IgnoreObject;
@@ -4498,7 +4500,7 @@ AccessibilityObjectInclusion AccessibilityObject::defaultObjectInclusion() const
 
     bool ignoreARIAHidden = isFocused();
     if (Accessibility::findAncestor<AccessibilityObject>(*this, false, [&] (const auto& object) {
-        const auto* style = object.style();
+        CheckedPtr style = object.style();
         if (style && style->display() == Style::DisplayType::None) {
             // We don't want to use AccessibilityObject::isRenderHidden(), as that also checks and returns true
             // for visibility:hidden, which would be wrong if |this| has a visibility:visible ancestor before
@@ -4545,7 +4547,7 @@ bool AccessibilityObject::isWithinHiddenWebArea() const
     CheckedPtr frameRenderer = renderView ? renderView->frameView().frame().ownerRenderer() : nullptr;
     while (frameRenderer) {
         const CheckedRef style = frameRenderer->style();
-        if (isVisibilityHidden(style) || style->effectiveInert())
+        if (isVisibilityHidden(*frameRenderer) || style->effectiveInert())
             return true;
 
         renderView = frameRenderer->document().renderView();

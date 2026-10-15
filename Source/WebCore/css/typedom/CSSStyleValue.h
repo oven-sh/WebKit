@@ -163,7 +163,7 @@ struct AssociatedProperty {
 
     AssociatedProperty(AtomString&& customPropertyName) : property { WTF::move(customPropertyName) } { }
     AssociatedProperty(const AtomString& customPropertyName) : property { customPropertyName } { }
-    AssociatedProperty(CSSPropertyID propertyID) : property { propertyID } { ASSERT(propertyID != CSSPropertyCustom); }
+    AssociatedProperty(CSSPropertyID propertyID) : property { propertyID } { ASSERT(propertyID != CSSPropertyID::Custom); }
 
     const AtomString& nameString() const LIFETIME_BOUND
     {

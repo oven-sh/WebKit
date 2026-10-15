@@ -599,6 +599,8 @@
     /* GL_ANGLE_texture_compression_dxt5 */                                                        \
     /* GL_ANGLE_texture_multisample */                                                             \
     /* GL_ANGLE_texture_rectangle */                                                               \
+    /* GL_ANGLE_trim_memory */                                                                     \
+    void trimMemory(MemoryTrimLevel trimLevelPacked);                                              \
     /* GL_ANGLE_variable_rasterization_rate_metal */                                               \
     void bindMetalRasterizationRateMap(GLuint framebuffer, GLMTLRasterizationRateMapANGLE map);    \
     /* GL_ANGLE_vulkan_image */                                                                    \

@@ -239,8 +239,8 @@ void Permissions::query(JSC::Strong<JSC::JSObject> permissionDescriptorValue, Re
     auto queryPermissionOnMainThread = [originData = WTF::move(originData).isolatedCopy(), permissionDescriptor, contextIdentifier, source = *source, promiseIdentifier, weakThis = WeakPtr { *this }] (ScriptExecutionContext& mainThreadContext) mutable {
         ASSERT(isMainThread());
 
-        auto& document = downcast<Document>(mainThreadContext);
-        if (!document.page()) {
+        Ref document = downcast<Document>(mainThreadContext);
+        if (!document->page()) {
             ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [weakThis = WTF::move(weakThis), promiseIdentifier](auto&) mutable {
                 RefPtr protectedThis = weakThis;
                 if (!protectedThis)
@@ -252,7 +252,7 @@ void Permissions::query(JSC::Strong<JSC::JSObject> permissionDescriptorValue, Re
         }
 
         if (source == PermissionQuerySource::Window && !isAllowedByPermissionsPolicy(document, permissionDescriptor.name)) {
-            ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [weakThis = WTF::move(weakThis), promiseIdentifier, permissionDescriptor, page = WeakPtr { *document.page() }](auto& context) mutable {
+            ScriptExecutionContext::ensureOnContextThread(contextIdentifier, [weakThis = WTF::move(weakThis), promiseIdentifier, permissionDescriptor, page = WeakPtr { *document->page() }](auto& context) mutable {
                 RefPtr protectedThis = weakThis;
                 if (!protectedThis)
                     return;
@@ -262,9 +262,9 @@ void Permissions::query(JSC::Strong<JSC::JSObject> permissionDescriptorValue, Re
             return;
         }
 
-        RefPtr page = source == PermissionQuerySource::DedicatedWorker || source == PermissionQuerySource::Window ? document.page() : nullptr;
+        RefPtr page = source == PermissionQuerySource::DedicatedWorker || source == PermissionQuerySource::Window ? document->page() : nullptr;
 
-        PermissionController::singleton().query(ClientOrigin { document.topOrigin().data(), WTF::move(originData) }, permissionDescriptor, page, source, [contextIdentifier, permissionDescriptor, weakThis = WTF::move(weakThis), promiseIdentifier, source, weakPage = WeakPtr { page.get() }, document = Ref { document }](auto permissionState) mutable {
+        PermissionController::singleton().query(ClientOrigin { document->topOrigin().data(), WTF::move(originData) }, permissionDescriptor, page, source, [contextIdentifier, permissionDescriptor, weakThis = WTF::move(weakThis), promiseIdentifier, source, weakPage = WeakPtr { page.get() }, document = document.copyRef()](auto permissionState) mutable {
             ASSERT(isMainThread());
 
             auto result = processPermissionQueryResult(permissionState, permissionDescriptor, document);

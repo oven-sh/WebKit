@@ -313,7 +313,7 @@ class RadarModel(object):
             return [Radar.Relationship(r_dict['relationship'], self.client.radar_for_id(self.id), self.client.radar_for_id(r_dict['related_radar'])) for r_dict in self.client.parent.issues[self.id]['related']]
         result = []
         if relationships[0] not in Radar.Relationship.TYPES:
-            raise ValueError("Unknown relationship type '{}'".format(r))
+            raise ValueError("Unknown relationship type '{}'".format(relationships[0]))
         for data in self.client.parent.issues.values():
             if (data.get('original') or {}).get('id') != self.id:
                 continue

@@ -32,7 +32,7 @@ namespace WebCore {
 class CSSParserTokenRange;
 class CSSValue;
 class Document;
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 struct CSSParserContext;
 
 namespace CSS {
@@ -49,7 +49,7 @@ struct ViewTimelineInsetItem;
 
 namespace CSSPropertyParserHelpers {
 
-bool NODELETE isTimelineRangeName(CSSValueID);
+bool LEGACY_NODELETE isTimelineRangeName(CSSValueID);
 std::optional<Style::SingleAnimationRangeName> parseTimelineRangeNameRaw(StringView);
 std::optional<Style::SingleAnimationRangeName> parseTimelineRangeNameOrNormalRaw(StringView);
 

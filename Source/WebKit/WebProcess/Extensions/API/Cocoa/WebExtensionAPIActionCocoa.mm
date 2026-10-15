@@ -45,6 +45,7 @@
 #import "WebFrame.h"
 #import "WebProcess.h"
 #import <WebCore/LocalFrameInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 #if PLATFORM(IOS_FAMILY)
 #import <UIKit/UIKit.h>
@@ -447,10 +448,10 @@ NSMutableDictionary *WebExtensionAPIAction::parseIconImageDataDictionary(NSDicti
         }
 
         id value = input[key];
-        if (!validateObject(value, adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
+        if (!validateObject(dynamic_objc_cast<NSObject>(value), adoptNS([[NSString alloc] initWithFormat:@"%@[%@]", inputKey, key]).get(), JSValue.class, outExceptionString))
             return nil;
 
-        auto *dataURLString = dataURLFromImageData(value, nullptr, key, outExceptionString);
+        auto *dataURLString = dataURLFromImageData(checked_objc_cast<JSValue>(value), nullptr, key, outExceptionString);
         if (!dataURLString)
             return nil;
 
@@ -691,7 +692,7 @@ void WebExtensionContextProxy::dispatchActionClickedEvent(const std::optional<We
     enumerateFramesAndNamespaceObjects([&](auto& frame, auto& namespaceObject) {
         RefPtr coreFrame = frame.coreLocalFrame();
         WebCore::UserGestureIndicator gestureIndicator(WebCore::IsProcessingUserGesture::Yes, protect(coreFrame ? coreFrame->document() : nullptr));
-        namespaceObject.action().onClicked().invokeListenersWithArgument(tab);
+        protect(protect(namespaceObject.action())->onClicked())->invokeListenersWithArgument(tab);
     });
 }
 

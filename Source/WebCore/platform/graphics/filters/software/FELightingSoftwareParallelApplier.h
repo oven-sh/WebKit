@@ -30,6 +30,7 @@
 #if !(CPU(ARM_NEON) && CPU(ARM_TRADITIONAL) && COMPILER(GCC_COMPATIBLE))
 
 #include "FELightingSoftwareApplier.h"
+#include <optional>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
@@ -42,7 +43,7 @@ public:
 
 private:
     struct ApplyParameters {
-        LightingData data;
+        std::optional<LightingData> data;
         LightSource::PaintingData paintingData;
         int yStart;
         int yEnd;
