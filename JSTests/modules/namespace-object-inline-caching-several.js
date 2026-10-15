@@ -19,6 +19,8 @@ function read(object)
 noInline(read);
 
 // One site reads through more and more namespace objects, in the end more than an inline cache lists.
+// This checks what a list of several namespace cases reads. It passes too when the list only ever holds one of them:
+// the other reads are then slower, not different, and a script cannot see which it was.
 for (let count = 1; count <= namespaces.length; ++count) {
     for (let i = 0; i < testLoopCount / 10; ++i) {
         for (let j = 0; j < count; ++j)
