@@ -5563,7 +5563,7 @@ class YarrGenerator final : public YarrJITInfo {
             // YarrOpCode::ParenthesesSubpatternTerminalBegin/End
             case YarrOpCode::ParenthesesSubpatternTerminalBegin: {
                 PatternTerm* term = op.m_term;
-                ASSERT(!term->capture());
+                ASSERT(!term->capture() || !shouldRecordSubpatterns());
                 ASSERT(term->quantityType == QuantifierType::Greedy);
                 ASSERT(term->quantityMaxCount == quantifyInfinite);
                 ASSERT(!term->quantityMinCount || term->quantityMinCount == 1);
@@ -6469,6 +6469,8 @@ class YarrGenerator final : public YarrJITInfo {
                     // With a minimum of zero, any number of iterations is accepted.
                     // Just accepting and returning back to the forward matching path.
                     m_backtrackingState.linkTo(endOp.m_reentry, &m_jit);
+                    // What ParenthesesSubpatternTerminalEnd took goes on to the term before the group.
+                    m_backtrackingState.append(op.m_jumps);
                     break;
                 }
 
@@ -6481,11 +6483,21 @@ class YarrGenerator final : public YarrJITInfo {
                 m_backtrackingState.fallthrough();
                 break;
             }
-            case YarrOpCode::ParenthesesSubpatternTerminalEnd:
-                // We should never be backtracking to here (hence the 'terminal' in the name).
-                ASSERT(m_backtrackingState.isEmpty());
+            case YarrOpCode::ParenthesesSubpatternTerminalEnd: {
+                // We should never be backtracking to here (hence the 'terminal' in the name), unless an enclosing group
+                // rejects an iteration that matched the empty string. See YarrPatternConstructor::markTailLoops().
+                PatternTerm* term = op.m_term;
+                ASSERT(m_backtrackingState.isEmpty() || term->parentheses.isTailLoop);
+                if (!term->quantityMinCount) {
+                    // None of this group's iterations has completed, and the one it tried has failed. It has nothing else to try.
+                    m_backtrackingState.takeBacktracksToJumpList(m_ops[op.m_previousOp].m_jumps, &m_jit);
+                } else {
+                    // A group that has matched at least once has not matched the empty string.
+                    m_backtrackingState.takeBacktracksToJumpList(m_abortExecution, &m_jit);
+                }
                 m_backtrackingState.append(op.m_jumps);
                 break;
+            }
 
             // YarrOpCode::ParenthesesSubpatternFixedCountBegin/End
             //
@@ -6859,7 +6871,7 @@ class YarrGenerator final : public YarrJITInfo {
                 alternativeNextOpCode = YarrOpCode::NestedAlternativeNext;
                 alternativeEndOpCode = YarrOpCode::NestedAlternativeEnd;
             }
-        } else if (term->parentheses.isTerminal) {
+        } else if (term->parentheses.isTerminal || term->parentheses.isTailLoop) {
             // Select the 'Terminal' nodes.
             parenthesesBeginOpCode = YarrOpCode::ParenthesesSubpatternTerminalBegin;
             parenthesesEndOpCode = YarrOpCode::ParenthesesSubpatternTerminalEnd;
