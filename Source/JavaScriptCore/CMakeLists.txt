@@ -2288,6 +2288,23 @@ if (COMPILER_IS_GCC_OR_CLANG)
     endif()
 endif()
 
+if (ENABLE_FUZZILLI)
+    # For compiling only. A link that is given this flag takes __sanitizer_cov_trace_pc_guard and
+    # __sanitizer_cov_trace_pc_guard_init from clang's runtime, whose signal handlers turn a crash into exit(1).
+    target_compile_options(JavaScriptCore PRIVATE -fsanitize-coverage=trace-pc-guard)
+
+    # They are in fuzzilli/Fuzzilli.cpp, which every target here that links JavaScriptCore gets. It is not in the
+    # archive: an embedder that links libJavaScriptCore.a defines its own.
+    add_library(FuzzilliLib OBJECT fuzzilli/Fuzzilli.cpp)
+    target_include_directories(FuzzilliLib PRIVATE "$<TARGET_PROPERTY:JavaScriptCore,INCLUDE_DIRECTORIES>")
+    add_dependencies(FuzzilliLib JavaScriptCore)
+    target_link_libraries(JavaScriptCore INTERFACE $<TARGET_OBJECTS:FuzzilliLib>)
+    if (CMAKE_SYSTEM_NAME MATCHES "Linux")
+        # shm_open, before glibc 2.34.
+        target_link_libraries(JavaScriptCore INTERFACE rt)
+    endif ()
+endif ()
+
 WEBKIT_COPY_FILES(JavaScriptCore_CopyHeaders
     DESTINATION ${JavaScriptCore_HEADERS_DIR}
     FILES ${JavaScriptCore_PUBLIC_FRAMEWORK_HEADERS}
