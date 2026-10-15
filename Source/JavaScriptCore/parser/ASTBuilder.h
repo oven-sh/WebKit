@@ -1502,6 +1502,16 @@ ExpressionNode* ASTBuilder::makeFunctionCallNode(const JSTokenLocation& location
     ASSERT(func->isDotAccessorNode());
     DotAccessorNode* dot = static_cast<DotAccessorNode*>(func);
     FunctionCallDotNode* node = nullptr;
+#if USE(BUN_JSC_ADDITIONS)
+    if (dot->identifier() == m_vm.propertyNames->builtinNames().bindPrivateName()) {
+        // fn.@bind(thisArg, ...args) is @bindFunction.@call(fn, thisArg, ...args): nothing is looked up on fn.
+        ArgumentListNode* target = new (m_parserArena) ArgumentListNode(location, dot->base());
+        target->m_next = args->m_listNode;
+        args->m_listNode = target;
+        ExpressionNode* bindFunction = createResolve(location, m_vm.propertyNames->builtinNames().bindFunctionPrivateName(), divotStart, divotEnd);
+        node = new (m_parserArena) CallFunctionCallDotNode(location, bindFunction, m_vm.propertyNames->builtinNames().callPrivateName(), DotType::Name, args, divot, divotStart, divotEnd, isOptionalCall, callOrApplyChildDepth);
+    } else
+#endif
     if (!previousBaseWasSuper && (dot->identifier() == m_vm.propertyNames->builtinNames().callPublicName() || dot->identifier() == m_vm.propertyNames->builtinNames().callPrivateName()))
         node = new (m_parserArena) CallFunctionCallDotNode(location, dot->base(), dot->identifier(), dot->type(), args, divot, divotStart, divotEnd, isOptionalCall, callOrApplyChildDepth);
     else if (!previousBaseWasSuper && (dot->identifier() == m_vm.propertyNames->builtinNames().applyPublicName() || dot->identifier() == m_vm.propertyNames->builtinNames().applyPrivateName())) {
