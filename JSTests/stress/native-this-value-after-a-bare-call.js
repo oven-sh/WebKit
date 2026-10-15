@@ -131,7 +131,7 @@ function deadZoneBinding() {
     const exec = function () { };
 }
 
-for (let i = 0; i < 100; i++) {
+for (let i = 0; i < testLoopCount; i++) {
     regExpNatives();
     iteratorNatives();
     nativeSetter();
