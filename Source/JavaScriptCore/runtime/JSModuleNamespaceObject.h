@@ -84,7 +84,8 @@ private:
     bool getOwnPropertySlotCommon(JSGlobalObject*, PropertyName, PropertySlot&);
 #if USE(BUN_JSC_ADDITIONS)
     bool getOwnPropertySlotForLiveExports(JSGlobalObject*, PropertyName, PropertySlot&);
-    JSObject* liveExportsSource() const { return m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
+    std::optional<bool> getOwnPropertySlotIfDeferredOrLive(JSGlobalObject*, PropertyName, PropertySlot&);
+    JSObject* liveExportsSource() const { return m_isDeferredOrLive && m_moduleRecord->hasLiveExports() ? m_moduleRecord->liveExportsSource() : nullptr; }
 #endif
     ALWAYS_INLINE bool isSymbolLikeNamespaceKey(VM&, PropertyName);
     void ensureDeferredNamespaceEvaluation(JSGlobalObject*);
@@ -101,6 +102,9 @@ private:
     const bool m_isDeferred;
 #if USE(BUN_JSC_ADDITIONS)
     bool m_isOverridingValue = false;
+    // m_isDeferred, or the record or one it re-exports from has live exports. A record has them from the time it is created.
+    // Where upstream tests m_isDeferred, this is tested instead. So any other namespace object does no more work than upstream's.
+    bool m_isDeferredOrLive;
 #endif
 
     friend size_t cellSize(JSCell*);
