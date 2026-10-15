@@ -545,6 +545,7 @@ public:
     PatternTermList m_terms;
     PatternDisjunction* m_parent;
     unsigned m_minimumSize;
+    unsigned m_callFrameSize { 0 }; // Where the frame slots of its terms end.
     unsigned m_firstSubpatternId;
     unsigned m_lastSubpatternId;
     MatchDirection m_direction;

@@ -2329,6 +2329,7 @@ public:
         }
 
         alternative->m_minimumSize = currentInputPosition - initialInputPosition;
+        alternative->m_callFrameSize = currentCallFrameSize.value();
         newCallFrameSize = currentCallFrameSize.value();
         return error;
     }
