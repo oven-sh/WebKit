@@ -53,6 +53,7 @@
 #include "RenderObjectInlines.h"
 #include "RenderSVGInline.h"
 #include "RenderStyleConstants.h"
+#include "RenderText.h"
 #include "RenderTreeUpdaterGeneratedContent.h"
 #include "RenderTreeUpdaterViewTransition.h"
 #include "RenderView.h"
@@ -100,7 +101,7 @@ RenderTreeUpdater::RenderTreeUpdater(Document& document, Style::PostResolutionCa
 
 RenderTreeUpdater::~RenderTreeUpdater() = default;
 
-static RefPtr<Element> NODELETE findRenderingAncestor(Node& node)
+static RefPtr<Element> LEGACY_NODELETE findRenderingAncestor(Node& node)
 {
     for (SUPPRESS_UNCOUNTED_LOCAL auto& ancestor : composedTreeAncestors(node)) {
         if (ancestor.renderer())
@@ -191,7 +192,7 @@ void RenderTreeUpdater::updateRebuildRoots()
         if (!existingStyle)
             return false;
 
-        auto* parent = composedTreeAncestors(element).first();
+        RefPtr parent = composedTreeAncestors(element).first();
         m_styleUpdate->addElement(element, parent, Style::ElementUpdate {
             makeUnique<Style::ComputedStyle>(Style::ComputedStyle::cloneIncludingPseudoElements(*existingStyle)),
             Style::Change::Renderer
@@ -206,7 +207,7 @@ void RenderTreeUpdater::updateRebuildRoots()
         auto it = descendants.begin();
         auto end = descendants.end();
         while (it != end) {
-            auto* descendant = dynamicDowncast<Element>(*it);
+            RefPtr descendant = dynamicDowncast<Element>(*it);
             if (!descendant) {
                 it.traverseNext();
                 continue;

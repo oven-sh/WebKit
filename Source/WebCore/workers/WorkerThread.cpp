@@ -48,10 +48,16 @@
 namespace WebCore {
 
 static std::atomic<unsigned> workerThreadCounter { 0 };
+static WorkerThread::GlobalScopeCreatedCallback* globalScopeCreatedCallbackForTesting;
 
 unsigned WorkerThread::workerThreadCount()
 {
     return workerThreadCounter;
+}
+
+void WorkerThread::setGlobalScopeCreatedCallbackForTesting(GlobalScopeCreatedCallback* callback)
+{
+    globalScopeCreatedCallbackForTesting = callback;
 }
 
 WorkerParameters WorkerParameters::isolatedCopy() const
@@ -78,7 +84,9 @@ WorkerParameters WorkerParameters::isolatedCopy() const
         advancedPrivacyProtections,
         noiseInjectionHashSalt,
         agentClusterID.isolatedCopy(),
-        networkLoadPolicy.isolatedCopy()
+        networkLoadPolicy.isolatedCopy(),
+        isSecureContext,
+        hasUnpartitionedStorageAccess
     };
 }
 
@@ -159,6 +167,11 @@ void WorkerThread::evaluateScriptIfNecessary(String& exceptionMessage)
     // We invoke module loader as if we are executing inline module script tag in Document.
 
     Ref globalScope = *this->globalScope();
+
+    // A worker that was stopped before its global scope was created does not evaluate its script, and
+    // nothing clears its script. A callback that created the global object would keep the global scope alive.
+    if (globalScopeCreatedCallbackForTesting && !protect(globalScope->script())->isExecutionForbidden())
+        globalScopeCreatedCallbackForTesting(globalScope);
 
     WeakPtr<ScriptBufferSourceProvider> sourceProvider;
     if (m_startupData->params.workerType == WorkerType::Classic) {

@@ -26,6 +26,7 @@
 #import <wtf/text/TextStream.h>
 
 #import <objc/runtime.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 #import <wtf/text/cf/StringConcatenateCF.h>
 
 namespace WTF {
@@ -50,8 +51,8 @@ TextStream& TextStream::operator<<(id object)
         *this << ']';
     };
 
-    if ([object isKindOfClass:[NSArray class]]) {
-        outputArray(object);
+    if (auto *array = dynamic_objc_cast<NSArray>(object)) {
+        outputArray(array);
         return *this;
     }
 
@@ -72,8 +73,8 @@ TextStream& TextStream::operator<<(id object)
         *this << '}';
     };
 
-    if ([object isKindOfClass:[NSDictionary class]]) {
-        outputDictionary(object);
+    if (auto *dictionary = dynamic_objc_cast<NSDictionary>(object)) {
+        outputDictionary(dictionary);
         return *this;
     }
 

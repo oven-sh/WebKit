@@ -66,7 +66,7 @@ public:
         WebCore::FrameIdentifier frameID;
         WebPageProxyIdentifier webPageProxyID;
     };
-    void NODELETE setHasFrameSpecificStorageAccess(FrameSpecificStorageAccessIdentifier&&);
+    void LEGACY_NODELETE setHasFrameSpecificStorageAccess(FrameSpecificStorageAccessIdentifier&&);
     void didLoadFromRegistrableDomain(WebCore::RegistrableDomain&&) final;
     Vector<WebCore::RegistrableDomain> loadedSubresourceDomains() const final;
 
@@ -288,18 +288,19 @@ private:
 
     void getLoadDecisionForIcons(const Vector<std::pair<WebCore::LinkIcon&, uint64_t>>&) final;
 
-    inline bool NODELETE hasPlugInView() const;
+    inline bool LEGACY_NODELETE hasPlugInView() const;
 
     void documentLoaderDetached(WebCore::NavigationIdentifier, WebCore::LoadWillContinueInAnotherProcess) final;
 
-    bool NODELETE siteIsolationEnabled() const;
+    bool LEGACY_NODELETE siteIsolationEnabled() const;
 
     void broadcastAllFrameTreeSyncDataToOtherProcesses(WebCore::FrameTreeSyncData&) final;
     void broadcastFrameTreeSyncDataToOtherProcesses(WebCore::FrameTreeSyncSerializationData&&) final;
     void broadcastFrameViewportInfoToOtherProcessesIfNeeded(const WebCore::FrameViewportInfo&, bool hasOnScreenRemoteDescendant) final;
 
-    void didNotifyUserActivation(MonotonicTime) final;
+    void didNotifyUserActivation(MonotonicTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken) final;
     void didConsumeUserActivation() final;
+    void didRevokeForcedUserActivation(WebCore::UserGestureTokenIdentifier) final;
     void didHandleFirstUserGesture(MonotonicTime) final;
 
     void dispatchDecidePolicyForBackForwardNavigationAction(WebCore::FrameLoadRequest&&, const String& referer, WebCore::FrameLoadType);

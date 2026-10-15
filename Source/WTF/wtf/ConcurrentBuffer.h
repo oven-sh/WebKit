@@ -89,6 +89,8 @@ public:
         std::span<T> span() LIFETIME_BOUND { return unsafeMakeSpan(data, size); }
         std::span<const T> span() const LIFETIME_BOUND { return unsafeMakeSpan(data, size); }
     };
+    // Instantiate Array eagerly so the static analyzer does not treat it as forward declared.
+    static_assert(sizeof(Array));
 
     using ArrayPtr = std::unique_ptr<Array, NonDestructingDeleter<Array, ConcurrentBufferMalloc>>;
     

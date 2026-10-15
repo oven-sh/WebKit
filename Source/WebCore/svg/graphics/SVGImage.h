@@ -50,13 +50,15 @@ public:
     WEBCORE_EXPORT static bool isDataDecodable(const Settings&, std::span<const uint8_t>);
 
     RenderReplaced* embeddedSVGRoot() const;
-    LocalFrameView* NODELETE frameView() const;
+    LocalFrameView* LEGACY_NODELETE frameView() const;
 
-    bool NODELETE isSVGImage() const final { return true; }
+    bool LEGACY_NODELETE isSVGImage() const final { return true; }
 
     void subresourcesAreFinished(Document*, CompletionHandler<void()>&&) final;
 
     FloatSize size(ImageOrientation = ImageOrientation::Orientation::FromImage) const final { return m_intrinsicSize; }
+
+    bool hasSomethingToDraw() const final { return !m_intrinsicSize.isEmpty(); }
 
     bool renderingTaintsOrigin() const final;
 
@@ -68,21 +70,22 @@ public:
     Page* internalPage() { return m_page.get(); }
     WEBCORE_EXPORT RefPtr<SVGSVGElement> rootElement() const;
 
-    FloatSize resolvedIntrinsicSize(float density = 1.0f) const;
-
     RefPtr<NativeImage> nativeImage(const FloatSize&, const ColorSpace& = ColorSpace::SRGB(), const ImageDrawingExtras* = nullptr, ImagePaintingOptions = { });
 
 private:
     friend class SVGImageChromeClient;
 
+    WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
     virtual ~SVGImage();
 
     String filenameExtension() const final;
 
     void setContainerSize(const FloatSize&);
     IntSize containerSize() const;
-    void computeIntrinsicDimensions(float& intrinsicWidth, float& intrinsicHeight, FloatSize& intrinsicRatio) final;
+
     NaturalDimensions unorientedNaturalDimensions() const final;
+
+    bool usesConcreteObjectSizeAsViewport() const final { return true; }
 
     void reportApproximateMemoryCost() const;
     EncodedDataStatus dataChanged(bool allDataReceived) final;
@@ -101,20 +104,29 @@ private:
 
     void startAnimationTimerFired();
 
-    WEBCORE_EXPORT explicit SVGImage(ImageObserver*);
     ImageDrawResult draw(GraphicsContext&, ConcreteObjectSize, const FloatRect& destination, const FloatRect& source, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
     void drawPattern(GraphicsContext&, ConcreteObjectSize, const FloatRect& destRect, const FloatRect& srcRect, const AffineTransform&, const FloatPoint& phase, const FloatSize& spacing, ImagePaintingOptions = { }, const ImageDrawingExtras* = nullptr) final;
 
-    void applyFragmentURL(const URL&);
-    void applyLinkParameters(const Style::LinkParameters&);
+    // FIXME: This should also hold the variable state dataChanged() sets on the Page and its Settings.
+    struct DocumentState {
+        IntSize containerSize;
+        URL fragmentURL;
+        Style::LinkParameters linkParameters;
+        IgnoreRootPreserveAspectRatio ignoreRootPreserveAspectRatio { IgnoreRootPreserveAspectRatio::No };
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-    void applyInvertContent(InvertContent);
+        bool invertContent { false };
 #endif
+
+        bool operator==(const DocumentState&) const = default;
+    };
+
+    DocumentState documentStateForDraw(ConcreteObjectSize, ImagePaintingOptions, const ImageDrawingExtras*) const;
+    void applyDocumentState(Document&, LocalFrameView&, const DocumentState&);
 
     RefPtr<Page> m_page;
     FloatSize m_intrinsicSize;
 
-    Style::LinkParameters m_appliedLinkParameters;
+    DocumentState m_appliedDocumentState;
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
     bool m_fallbackInvertContent { false };
 #endif

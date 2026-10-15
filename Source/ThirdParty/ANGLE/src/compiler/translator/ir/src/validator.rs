@@ -65,6 +65,8 @@
 //     and they both end in a Merge with an ID.  (Technically, we should be able to also support one
 //     block being merge and the other discard/return/break/continue, but no such code can be
 //     generated right now): validate_merge_block_with_input()
+//   - Loop blocks ends in the appropriate instructions:
+//     validate_loop_block_ends_in_appropriate_instruction()
 //
 // Instructions:
 //   - Access to struct fields are in bounds: validate_struct_field_in_bounds()
@@ -93,15 +95,18 @@
 
 // TODO(http://anglebug.com/349994211): to validate:
 //   - If there's a cached "has side effect", that it's correct.
-//   - Loop blocks ends in the appropriate instructions.
 //   - Type matches?
 //   - Whatever else is in the AST validation currently.
 //   - Validate built-ins that accept an out or inout parameter, that the corresponding parameter is
 //     passed a Pointer at the call site.  For that matter, do the same for user function calls too.
 //   - Instruction result / operand types are correct and consistent. For example:
 //     BinaryOpCode::Equal should return a bool type.
+//   - There is no foldable control flow (`If constant`, `Switch constant ...`, `Loop`+`LoopIf
+//     false`)
+//   - A NameSource::Internal interface block or struct variable is never given an empty ("") name.
 
 use crate::ir::*;
+use crate::traverser::BlockKind;
 use crate::*;
 use std::fmt;
 
@@ -314,6 +319,7 @@ impl<'a> Validator<'a> {
         self.validate_no_dead_code();
         self.validate_all_branch_instructions_have_valid_target();
         self.validate_merge_block_with_input();
+        self.validate_loop_block_ends_in_appropriate_instruction();
         self.validate_all_instructions();
         self.validate_function_parameter_variables();
         self.validate_function_return_types();
@@ -2308,6 +2314,48 @@ impl<'a> Validator<'a> {
         }
     }
 
+    fn validate_loop_block_ends_in_appropriate_instruction(&self) {
+        traverser::visitor::for_each_function(
+            &mut (),
+            &self.ir.function_entries,
+            |_, _| {},
+            |_, block, block_kind, _| {
+                let loop_end_op = block.get_merge_chain_terminating_op();
+                match block_kind {
+                    BlockKind::LoopCondition if !matches!(*loop_end_op, OpCode::LoopIf(_)) => {
+                        self.on_error(format_args!(
+                            "invalid instruction {:?}, loop condition block must ends with LoopIf \
+                             instruction",
+                            *loop_end_op
+                        ));
+                    }
+                    BlockKind::Continue if !matches!(*loop_end_op, OpCode::Continue) => {
+                        self.on_error(format_args!(
+                            "invalid instruction {:?}, loop continue block must ends with \
+                             Continue instruction",
+                            *loop_end_op
+                        ));
+                    }
+                    BlockKind::LoopBody
+                        if !matches!(
+                            *loop_end_op,
+                            OpCode::Continue | OpCode::Break | OpCode::Discard | OpCode::Return(_)
+                        ) =>
+                    {
+                        self.on_error(format_args!(
+                            "invalid instruction {:?}, loop body block must ends with Continue, \
+                             Break, Discard or Return instruction",
+                            *loop_end_op
+                        ));
+                    }
+                    _ => {}
+                }
+                traverser::visitor::VISIT_SUB_BLOCKS
+            },
+            |_, _| {},
+        );
+    }
+
     fn validate_function_parameter_variables(&self) {
         traverser::visitor::for_each_function(
             &mut (),
@@ -2414,21 +2462,17 @@ impl<'a> Validator<'a> {
         {
             validate_name_prefix(variable.name, USER_VARIABLE_PREFIX, TEMP_VARIABLE_PREFIX);
         }
-        // Check all struct and field names
+        // Check all struct names.  Struct fields are unrestricted as they do cannot collide with
+        // user defined variables, given ANGLE internal structs and interface blocks are always
+        // given a variable name themselves (so the field is accessed as something.field, not just
+        // field alone).
         for ir_type in self.ir.meta.all_types().iter().filter(|t| !t.is_dead_code_eliminated()) {
-            if let &Type::Struct(struct_name, ref fields, specialization) = ir_type {
+            if let &Type::Struct(struct_name, _, specialization) = ir_type {
                 let user_prefix = match specialization {
                     StructSpecialization::Struct => USER_VARIABLE_PREFIX,
                     StructSpecialization::InterfaceBlock => USER_BLOCK_PREFIX,
                 };
                 validate_name_prefix(struct_name, user_prefix, TEMP_STRUCT_PREFIX);
-                for field in fields {
-                    validate_name_prefix(
-                        field.name,
-                        USER_VARIABLE_PREFIX,
-                        TEMP_STRUCT_FIELD_PREFIX,
-                    );
-                }
             }
         }
         // Check all function names

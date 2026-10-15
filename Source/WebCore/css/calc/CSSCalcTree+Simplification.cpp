@@ -35,6 +35,7 @@
 #include "CSSCalcTree+NumericIdentity.h"
 #include "CSSCalcTree+Traversal.h"
 #include "CSSCalcTree.h"
+#include "CSSNormalizedMixPercentages.h"
 #include "CSSPrimitiveNumericCategory.h"
 #include "CSSPrimitiveValue.h"
 #include "CSSUnevaluatedCalc.h"
@@ -42,6 +43,7 @@
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleLengthResolution.h"
 #include <wtf/StdLibExtras.h>
+#include <wtf/ZippedRange.h>
 
 namespace WebCore {
 namespace CSSCalc {
@@ -77,7 +79,7 @@ template<typename... F> static decltype(auto) switchTogether(const Child& a, con
 
 // MARK: Predicate: percentageResolveToDimension
 
-static bool NODELETE percentageResolveToDimension(const SimplificationOptions& options)
+static bool LEGACY_NODELETE percentageResolveToDimension(const SimplificationOptions& options)
 {
     switch (options.category) {
     case CSS::Category::Integer:
@@ -102,66 +104,66 @@ static bool NODELETE percentageResolveToDimension(const SimplificationOptions& o
 
 // MARK: Predicate: unitsMatch
 
-constexpr bool NODELETE unitsMatch(const Number&, const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE unitsMatch(const Number&, const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool NODELETE unitsMatch(const Percentage&, const Percentage&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE unitsMatch(const Percentage&, const Percentage&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool NODELETE unitsMatch(const CanonicalDimension& a, const CanonicalDimension& b, const SimplificationOptions&)
+static bool LEGACY_NODELETE unitsMatch(const CanonicalDimension& a, const CanonicalDimension& b, const SimplificationOptions&)
 {
     return a.dimension == b.dimension;
 }
 
-static bool NODELETE unitsMatch(const NonCanonicalDimension& a, const NonCanonicalDimension& b, const SimplificationOptions&)
+static bool LEGACY_NODELETE unitsMatch(const NonCanonicalDimension& a, const NonCanonicalDimension& b, const SimplificationOptions&)
 {
     return a.unit == b.unit;
 }
 
 // MARK: Predicate: magnitudeComparable
 
-constexpr bool NODELETE magnitudeComparable(const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool NODELETE magnitudeComparable(const Percentage&, const SimplificationOptions& options)
+static bool LEGACY_NODELETE magnitudeComparable(const Percentage&, const SimplificationOptions& options)
 {
     return !percentageResolveToDimension(options);
 }
 
-constexpr bool NODELETE magnitudeComparable(const CanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const CanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool NODELETE magnitudeComparable(const NonCanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE magnitudeComparable(const NonCanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
 // MARK: Predicate: fullyResolved
 
-constexpr bool NODELETE fullyResolved(const Number&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const Number&, const SimplificationOptions&)
 {
     return true;
 }
 
-static bool NODELETE fullyResolved(const Percentage&, const SimplificationOptions& options)
+static bool LEGACY_NODELETE fullyResolved(const Percentage&, const SimplificationOptions& options)
 {
     return !percentageResolveToDimension(options);
 }
 
-constexpr bool NODELETE fullyResolved(const CanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const CanonicalDimension&, const SimplificationOptions&)
 {
     return true;
 }
 
-constexpr bool NODELETE fullyResolved(const NonCanonicalDimension&, const SimplificationOptions&)
+constexpr bool LEGACY_NODELETE fullyResolved(const NonCanonicalDimension&, const SimplificationOptions&)
 {
     return false;
 }
@@ -938,12 +940,10 @@ std::optional<Child> simplify(Negate& root, const SimplificationOptions&)
             if (!std::ranges::all_of(a->children, isNumeric))
                 return { };
 
-            for (auto& child : a->children) {
-                WTF::switchOn(child,
-                    [&]<Numeric T>(T& child) { child.value = -child.value; },
-                    [](auto&) { }
-                );
-            }
+            WTF::switchOn(a->children[0],
+                [&]<Numeric T>(T& child) { child.value = -child.value; },
+                [](auto&) { }
+            );
 
             return { Child { WTF::move(a) } };
         },
@@ -1438,13 +1438,6 @@ std::optional<Child> simplify(ProgressNoClamp& root, const SimplificationOptions
 
 std::optional<Child> simplify(CalcMix& root, const SimplificationOptions& options)
 {
-    // 1. Let `specified sum` be the sum of the percentages specified in items (clamped to 100%), or 0% if the percentages are omitted for all items.
-    // 2. For each omitted percentage in items, set it to (100% - specified sum) / (number of omitted percentages).
-    // 3. Let `total` be the sum of the percentages of all the items
-    // 4. If `total` is greater than 100%, or if total is greater than 0% and the force normalization flag is true, multiply every percentage in items by (100% / total).
-    // 5. If total is less than 100%, let leftover be (100% - total). Otherwise, let leftover be 0%.
-    // NOTE: Per spec, "Any “leftover” mix percentage is applied to a consistently-typed zero value, and thus effectively discarded".
-
     auto zeroValueMatchingChild = [options](auto& child) -> Child {
         auto childType = getType(child.value);
         auto category = childType.calculationCategory();
@@ -1476,26 +1469,20 @@ std::optional<Child> simplify(CalcMix& root, const SimplificationOptions& option
     };
 
     bool canNormalize = true;
-    double total = 0;
-    unsigned numberOfOmittedWeights = 0;
     unsigned numberOfKnownZeroWeights = 0;
 
     for (auto& item : root.children) {
-        if (item.weight) {
-            WTF::switchOn(*item.weight,
-                [&](const CalcMix::Item::Weight::Raw& raw) {
-                    if (!raw.value)
-                        ++numberOfKnownZeroWeights;
-
-                    // Build a running sum of all the percentage values for use in normalization.
-                    total += raw.value;
-                },
-                [&](const CalcMix::Item::Weight::Calc&) {
-                    canNormalize = false;
-                }
-            );
-        } else
-            ++numberOfOmittedWeights;
+        if (!item.weight)
+            continue;
+        WTF::switchOn(*item.weight,
+            [&](const CalcMix::Item::Weight::Raw& raw) {
+                if (!raw.value)
+                    ++numberOfKnownZeroWeights;
+            },
+            [&](const CalcMix::Item::Weight::Calc&) {
+                canNormalize = false;
+            }
+        );
     }
 
     // If not all the percentage weights are fully resolvable (e.g. `calc-mix(10px calc(50% * sibling-index()), 20px)`
@@ -1522,87 +1509,29 @@ std::optional<Child> simplify(CalcMix& root, const SimplificationOptions& option
         return { };
     }
 
-    if (total >= 100) {
-        // If the total of the specific weights is >= 100, all items with omitted weights will
-        // be given a weight of 0 and can be removed.
-        //
-        // Also take this opportunity to remove items with specified weights of 0.
-        //
-        // Also apply the normalization factor to any remaining weights.
+    struct InputCalcMixWeight {
+        std::optional<CalcMix::Item::Weight::Raw> percentage;
+    };
 
-        auto normalizationFactor = 100.0 / total;
+    // NOTE: Per spec, "Any “leftover” mix percentage is applied to a consistently-typed zero value, and thus effectively discarded".
+    auto [percentages, _] = CSS::normalizedMixPercentages<CSS::ForceNormalization::No>(root.children | std::views::transform([](const auto& item) {
+        return InputCalcMixWeight { .percentage = item.weight ? item.weight->raw() : std::nullopt };
+    }));
 
-        if (numberOfOmittedWeights > 0 || numberOfKnownZeroWeights > 0) {
-            auto newNumberOfChildren = root.children.size() - (numberOfOmittedWeights + numberOfKnownZeroWeights);
-
-            Vector<CalcMix::Item> newChildren;
-            newChildren.reserveInitialCapacity(newNumberOfChildren);
-            for (auto& item : root.children) {
-                // Skip omitted weights and any known zero weights.
-                if (!item.weight || item.weight->isKnownZero())
-                    continue;
-
-                // Update weight using normalization factor.
-                item.weight = CalcMix::Item::Weight { item.weight->raw()->value * normalizationFactor };
-
-                newChildren.append(WTF::move(item));
-            }
-            root.children = WTF::move(newChildren);
-        } else {
-            for (auto& item : root.children) {
-                // Update weight using normalization factor.
-                item.weight = CalcMix::Item::Weight { item.weight->raw()->value * normalizationFactor };
-            }
-        }
-    } else {
-        if (numberOfKnownZeroWeights > 0) {
-            if (numberOfOmittedWeights > 0) {
-                auto newNumberOfChildren = root.children.size() - numberOfKnownZeroWeights;
-
-                Vector<CalcMix::Item> newChildren;
-                newChildren.reserveInitialCapacity(newNumberOfChildren);
-
-                auto weightForOmitted = (100.0 - total) / static_cast<double>(numberOfOmittedWeights);
-
-                for (auto& item : root.children) {
-                    if (item.weight) {
-                        // Skip any known zero weights.
-                        if (item.weight->isKnownZero())
-                            continue;
-                    } else
-                        item.weight = CalcMix::Item::Weight { weightForOmitted };
-
-                    newChildren.append(WTF::move(item));
-                }
-                root.children = WTF::move(newChildren);
-            } else {
-                auto newNumberOfChildren = root.children.size() - numberOfKnownZeroWeights;
-
-                // If all the weights are known to be zero, we can simplify all the way down zero value for the calc-mix itself.
-                if (!newNumberOfChildren)
-                    return zeroValueMatchingChild(root.children[0]);
-
-                Vector<CalcMix::Item> newChildren;
-                newChildren.reserveInitialCapacity(newNumberOfChildren);
-
-                for (auto& item : root.children) {
-                    // Skip any known zero weights.
-                    if (item.weight && item.weight->isKnownZero())
-                        continue;
-
-                    newChildren.append(WTF::move(item));
-                }
-                root.children = WTF::move(newChildren);
-            }
-        } else if (numberOfOmittedWeights > 0) {
-            auto weightForOmitted = (100.0 - total) / static_cast<double>(numberOfOmittedWeights);
-
-            for (auto& item : root.children) {
-                if (!item.weight)
-                    item.weight = CalcMix::Item::Weight { weightForOmitted };
-            }
-        }
+    // Remove any items with a weight of 0, including items with omitted weights when the specified weights sum to 100% or more.
+    Vector<CalcMix::Item> newChildren;
+    for (auto [item, normalizedWeight] : zippedRange(root.children, percentages)) {
+        if (!normalizedWeight)
+            continue;
+        item.weight = CalcMix::Item::Weight { normalizedWeight };
+        newChildren.append(WTF::move(item));
     }
+
+    // If all the weights are zero, we can simplify all the way down zero value for the calc-mix itself.
+    if (newChildren.isEmpty())
+        return zeroValueMatchingChild(root.children[0]);
+
+    root.children = WTF::move(newChildren);
 
     // Types used to check if all the values are fully simplified down to the same type.
     // This can fail in cases like:
@@ -1754,7 +1683,7 @@ Vector<CalcMix::Item> copyAndSimplify(const Vector<CalcMix::Item>& items, const 
     return WTF::map(items, [&](auto& item) { return copyAndSimplify(item, options); });
 }
 
-CSS::Keyword::None NODELETE copyAndSimplify(const CSS::Keyword::None& root, const SimplificationOptions&)
+CSS::Keyword::None LEGACY_NODELETE copyAndSimplify(const CSS::Keyword::None& root, const SimplificationOptions&)
 {
     return root;
 }

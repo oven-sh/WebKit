@@ -30,4 +30,8 @@
 ] partial interface Element {
     Promise<undefined> requestVolumetricScene();
     undefined exitVolumetricScene();
+
+    readonly attribute boolean inVolumetricScene;
+
+    attribute EventHandler onvolumetricchange;
 };

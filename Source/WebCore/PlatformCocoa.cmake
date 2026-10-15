@@ -906,7 +906,6 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     bindings/js/CachedModuleScriptLoader.h
     bindings/js/JSDOMConvertXPathNSResolver.h
     bindings/js/JSEventListener.h
-    bindings/js/JSShadowRealmGlobalScopeBase.h
     bindings/js/ReadableStreamDefaultController.h
     bindings/js/WebAssemblyCachedScriptSourceProvider.h
     bindings/js/WebAssemblyScriptSourceCode.h
@@ -945,21 +944,12 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     html/Origin.h
     html/PDFJSDocument.h
 
-    layout/FormattingState.h
 
     layout/floats/FloatingContext.h
 
-    layout/formattingContexts/FormattingContext.h
-    layout/formattingContexts/FormattingGeometry.h
-    layout/formattingContexts/FormattingQuirks.h
 
-    layout/formattingContexts/block/BlockFormattingContext.h
-    layout/formattingContexts/block/BlockFormattingGeometry.h
-    layout/formattingContexts/block/BlockFormattingQuirks.h
     layout/formattingContexts/block/BlockFormattingState.h
 
-    layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingContext.h
-    layout/formattingContexts/block/tablewrapper/TableWrapperBlockFormattingQuirks.h
 
 
     layout/formattingContexts/grid/AxisConstraint.h
@@ -987,8 +977,6 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
 
     layout/formattingContexts/inline/ruby/RubyFormattingContext.h
 
-    layout/formattingContexts/table/TableFormattingGeometry.h
-    layout/formattingContexts/table/TableFormattingQuirks.h
 
     layout/integration/LayoutIntegrationBoxGeometryUpdater.h
     layout/integration/LayoutIntegrationBoxTreeUpdater.h
@@ -1017,7 +1005,6 @@ list(REMOVE_ITEM WebCore_PRIVATE_FRAMEWORK_HEADERS
     page/NavigationNavigationType.h
     page/NavigatorLoginStatus.h
     page/NavigatorUAData.h
-    page/ShadowRealmGlobalScope.h
     page/UADataValues.h
     page/UALowEntropyJSON.h
     page/WebKitNamespace.h
@@ -1642,10 +1629,46 @@ if (WEBKIT_SDK_IS_MACOS)
 set_target_properties(WebCore PROPERTIES
     MACOSX_FRAMEWORK_INFO_PLIST ${WEBCORE_DIR}/Info.plist)
 
-# Localizable.strings for copyLocalizedString(). Xcode copies via CopyFiles build phase.
-# Configure-time -- files rarely change, no build edge needed.
-file(COPY "${WEBCORE_DIR}/en.lproj"
-     DESTINATION "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/Versions/A/Resources")
+if (WEBKIT_SDK_IS_MACOS)
+    set(WebCore_LOCALIZED_RESOURCES_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/Versions/A/Resources/en.lproj")
+else ()
+    set(WebCore_LOCALIZED_RESOURCES_DIR "${CMAKE_LIBRARY_OUTPUT_DIRECTORY}/WebCore.framework/en.lproj")
+endif ()
+WEBKIT_COPY_FILES(WebCore_CopyLocalizedResources
+    DESTINATION "${WebCore_LOCALIZED_RESOURCES_DIR}"
+    FILES
+        ${WEBCORE_DIR}/en.lproj/Localizable.stringsdict
+        ${WEBCORE_DIR}/en.lproj/modern-media-controls-localized-strings.js
+    FLATTENED NO_SYMLINK)
+add_dependencies(WebCore WebCore_CopyLocalizedResources)
+
+# Localizable.strings for copyLocalizedString(), with the WebKitAdditions strings
+# appended, like Xcode's "Concatenate and Copy Localizable.strings" build phase.
+set(WebCore_LOCALIZABLE_STRINGS ${WEBCORE_DIR}/en.lproj/Localizable.strings)
+if (USE_APPLE_INTERNAL_SDK)
+    set(_localizable_additions ${WebCore_DERIVED_SOURCES_DIR}/LocalizableAdditions.strings.out)
+    add_custom_command(
+        OUTPUT ${_localizable_additions}
+        MAIN_DEPENDENCY ${WEBCORE_DIR}/preprocess-localizable-strings.pl
+        DEPENDS
+            ${WEBCORE_DIR}/bindings/scripts/preprocessor.pm
+            ${WebKitAdditions_HEADERS_DIR}/LocalizableAdditions.strings.txt
+            ${WEBKITADDITIONS_HEADERS_DEPENDENCIES}
+            ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
+        COMMAND ${PERL_EXECUTABLE} ${WEBCORE_DIR}/preprocess-localizable-strings.pl
+            --defines "${FEATURE_DEFINES_WITH_SPACE_SEPARATOR}" --defines-file ${WEBKIT_PLATFORM_FEATURE_DEFINES_FILE}
+            ${_localizable_additions} ${WebKitAdditions_HEADERS_DIR}/LocalizableAdditions.strings.txt
+        VERBATIM)
+    list(APPEND WebCore_LOCALIZABLE_STRINGS ${_localizable_additions})
+endif ()
+add_custom_command(
+    OUTPUT ${WebCore_LOCALIZED_RESOURCES_DIR}/Localizable.strings
+    DEPENDS ${WebCore_LOCALIZABLE_STRINGS}
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${WebCore_LOCALIZED_RESOURCES_DIR}
+    COMMAND ${CMAKE_COMMAND} -E cat ${WebCore_LOCALIZABLE_STRINGS} > ${WebCore_LOCALIZED_RESOURCES_DIR}/Localizable.strings
+    VERBATIM)
+add_custom_target(WebCore_CopyLocalizableStrings DEPENDS ${WebCore_LOCALIZED_RESOURCES_DIR}/Localizable.strings)
+add_dependencies(WebCore WebCore_CopyLocalizableStrings)
 
 # Copy the proper resources over, mirroring Xcode's Resources build phase.
 # Listed explicitly (rather than globbed) so null builds stay clean.

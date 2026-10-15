@@ -142,9 +142,9 @@ void MediaSourcePrivateGStreamer::handleLogMessage(const WTFLogChannel& channel,
     const char* file = location ? location->file : __FILE__;
     int line = location ? location->line : __LINE__;
 #if GST_CHECK_VERSION(1, 22, 0)
-    gst_debug_log_id_literal(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
+    SAFE_GST_DEBUG_LOG_ID_LITERAL(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8(), line, identifierString.utf8(), message.utf8());
 #else
-    gst_debug_log(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8().legacyCStringPointer(), line, nullptr, "%s: %s", identifierString.utf8().legacyCStringPointer(), message.utf8().legacyCStringPointer());
+    SAFE_GST_DEBUG_LOG(GST_CAT_DEFAULT, gstDebugLevel, file, methodName.utf8(), line, nullptr, "%s: %s", identifierString.utf8(), message.utf8());
 #endif
 }
 #endif // !RELEASE_LOG_DISABLED && !defined(GST_DISABLE_GST_DEBUG)
@@ -265,7 +265,7 @@ void MediaSourcePrivateGStreamer::startPlaybackIfHasAllTracks()
     {
         Locker locker { m_lock };
         for (auto& privateSourceBuffer : m_sourceBuffers) {
-            auto sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
+            auto* sourceBuffer = downcast<SourceBufferPrivateGStreamer>(privateSourceBuffer);
             for (auto& [_, track] : sourceBuffer->tracks())
                 tracks.append(track);
         }

@@ -165,7 +165,8 @@ static FragmentAndResources createFragmentInternal(LocalFrame& frame, NSAttribut
     fragment->parseHTML(markup, dummyBodyToForceInBodyInsertionMode, { });
 
     result.fragment = WTF::move(fragment);
-    for (WebArchiveResourceFromNSAttributedString *resource in subresources)
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL WebArchiveResourceFromNSAttributedString *resource in subresources)
         result.resources.append(protect(*resource->resource));
 
     return result;
@@ -222,7 +223,7 @@ static bool shouldReplaceSubresourceURLWithBlobDuringSanitization(const URL& url
     return !url.protocolIsData() && !url.protocolIsInHTTPFamily();
 }
 
-static bool NODELETE shouldReplaceRichContentWithAttachments()
+static bool LEGACY_NODELETE shouldReplaceRichContentWithAttachments()
 {
 #if ENABLE(ATTACHMENT_ELEMENT)
     return DeprecatedGlobalSettings::attachmentElementEnabled();

@@ -33,7 +33,7 @@
 
 namespace WebCore {
 
-enum CSSValueID : uint16_t;
+enum class CSSValueID : uint16_t;
 enum class CSSUnitType : uint8_t;
 
 template<CSSValueID> struct Constant;

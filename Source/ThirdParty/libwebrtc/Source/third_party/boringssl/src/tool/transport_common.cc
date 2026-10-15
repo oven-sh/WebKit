@@ -95,7 +95,6 @@ static void SplitHostPort(std::string *out_hostname, std::string *out_port,
                           const std::string &hostname_and_port) {
   size_t colon_offset = hostname_and_port.find_last_of(':');
   const size_t bracket_offset = hostname_and_port.find_last_of(']');
-  std::string hostname, port;
 
   // An IPv6 literal may have colons internally, guarded by square brackets.
   if (bracket_offset != std::string::npos &&

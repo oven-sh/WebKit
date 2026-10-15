@@ -49,6 +49,9 @@ class TextFileReaderTest(LoggingTestCase):
         def process(self, lines, file_path, test_kwarg=None):
             self.processed.append((lines, file_path, test_kwarg))
 
+        def do_association_check(self, files, cwd, host=None):
+            self.associated_files = files
+
     def setUp(self):
         LoggingTestCase.setUp(self)
         # FIXME: This should be a MockFileSystem once TextFileReader is moved entirely on top of FileSystem.
@@ -153,6 +156,18 @@ class TextFileReaderTest(LoggingTestCase):
         self._file_reader.delete_file()
         delete_only_file_count = self._file_reader.delete_only_file_count
         self.assertEqual(delete_only_file_count, 1)
+
+    def test_delete_file_records_removed_file_as_none(self):
+        file_path = self.filesystem.join(self._temp_dir, 'removed.txt')
+        self._file_reader.delete_file(file_path)
+        self._file_reader.do_association_check(self._temp_dir)
+        self.assertEqual(self._processor.associated_files, {self.filesystem.abspath(file_path): None})
+
+    def test_delete_file_records_deletion_only_file_as_empty(self):
+        file_path = self._create_file('deletion_only.txt', 'foo')
+        self._file_reader.delete_file(file_path)
+        self._file_reader.do_association_check(self._temp_dir)
+        self.assertEqual(self._processor.associated_files, {self.filesystem.abspath(file_path): []})
 
     def test_process_malformed_file(self):
         file_path = tempfile.mktemp(prefix='filereader_unittest_')

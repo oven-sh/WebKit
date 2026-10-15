@@ -63,7 +63,8 @@ protected:
 
     void initializeWeakPtrFactory() const
     {
-        m_weakPtrFactory.initializeIfNeeded(static_cast<const WeakValueType&>(*this));
+        // WeakValueType derives from CanMakeWeakPtrBase (CRTP), so this is always a WeakValueType.
+        SUPPRESS_MEMORY_UNSAFE_CAST m_weakPtrFactory.initializeIfNeeded(static_cast<const WeakValueType&>(*this));
     }
 
     const WeakPtrFactoryType& weakPtrFactory() const LIFETIME_BOUND { return m_weakPtrFactory; }

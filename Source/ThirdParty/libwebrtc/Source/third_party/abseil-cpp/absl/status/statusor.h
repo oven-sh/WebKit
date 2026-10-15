@@ -47,6 +47,7 @@
 
 #include "absl/base/attributes.h"
 #include "absl/base/call_once.h"
+#include "absl/base/config.h"
 #include "absl/base/nullability.h"
 #include "absl/meta/type_traits.h"
 #include "absl/status/internal/statusor_internal.h"
@@ -61,6 +62,7 @@
 
 namespace absl {
 ABSL_NAMESPACE_BEGIN
+#ifndef SWIG
 
 // BadStatusOrAccess
 //
@@ -111,8 +113,10 @@ class BadStatusOrAccess : public std::exception {
   mutable absl::once_flag init_what_;
   mutable std::string what_;
 };
+#endif  // !SWIG
 
 // Returned StatusOr objects may not be ignored.
+#ifndef SWIG
 template <typename T>
 #if ABSL_HAVE_CPP_ATTRIBUTE(nodiscard)
 // TODO(b/176172494): ABSL_MUST_USE_RESULT should expand to the more strict
@@ -121,6 +125,7 @@ class [[nodiscard]] StatusOr;
 #else
 class ABSL_MUST_USE_RESULT StatusOr;
 #endif  // ABSL_HAVE_CPP_ATTRIBUTE(nodiscard)
+#endif  // !SWIG
 
 // absl::StatusOr<T>
 //
@@ -232,6 +237,8 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   // `StatusOr<T>` is copy assignable if `T` is copy constructible and copy
   // assignable.
   StatusOr& operator=(const StatusOr&) = default;
+
+#ifndef SWIG
 
   // `StatusOr<T>` is move constructible if `T` is move constructible.
   StatusOr(StatusOr&&) = default;
@@ -362,8 +369,8 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   // of passing absl::StatusCode::kInternal as a fallback.
   template <typename U = absl::Status,
             std::enable_if_t<internal_statusor::IsConstructionFromStatusValid<
-                                  false, T, U>::value,
-                              int> = 0>
+                                 false, T, U>::value,
+                             int> = 0>
   StatusOr(U&& v) : Base(std::forward<U>(v)) {}
 
   template <typename U = absl::Status,
@@ -454,6 +461,8 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   explicit StatusOr(U&& u ABSL_ATTRIBUTE_LIFETIME_BOUND)  // NOLINT
       : StatusOr(std::in_place, std::forward<U>(u)) {}
 
+#endif  // SWIG
+
   // StatusOr<T>::ok()
   //
   // Returns whether or not this `absl::StatusOr<T>` holds a `T` value. This
@@ -475,8 +484,12 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   // Returns a reference to the current `absl::Status` contained within the
   // `absl::StatusOr<T>`. If `absl::StatusOr<T>` contains a `T`, then this
   // function returns `absl::OkStatus()`.
+#ifdef SWIG
+  ABSL_MUST_USE_RESULT const absl::Status& status() const;
+#else  // SWIG
   ABSL_MUST_USE_RESULT const Status& status() const&;
   Status status() &&;
+#endif  // SWIG
 
   absl::Span<const absl::SourceLocation> GetSourceLocations() const {
     return this->status_.GetSourceLocations();
@@ -487,6 +500,8 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
       absl::SourceLocation loc = absl::SourceLocation::current()) {
     this->status_.AddSourceLocation(loc);
   }
+
+#ifndef SWIG
 
   // StatusOr<T>::WithSourceLocation()
   //
@@ -507,6 +522,7 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
     AddSourceLocation(loc);
     return std::move(*this);
   }
+#endif  // SWIG
 
   // StatusOr<T>::value()
   //
@@ -534,7 +550,13 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   //
   // The `std::move` on statusor instead of on the whole expression enables
   // warnings about possible uses of the statusor object after the move.
+#ifdef SWIG
+  const T& value() const ABSL_ATTRIBUTE_LIFETIME_BOUND;
+#else  // SWIG
   using StatusOr::OperatorBase::value;
+#endif  // SWIG
+
+#ifndef SWIG
 
   // StatusOr<T>:: operator*()
   //
@@ -598,6 +620,7 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   T value_or(U&& default_value ABSL_ATTRIBUTE_LIFETIME_BOUND) && {
     return std::move(*this).ValueOrImpl(std::forward<U>(default_value));
   }
+#endif  // SWIG
 
   // StatusOr<T>::IgnoreError()
   //
@@ -605,6 +628,8 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   // complaints from any tools that are checking that errors are not dropped on
   // the floor.
   void IgnoreError() const;
+
+#ifndef SWIG
 
   // StatusOr<T>::emplace()
   //
@@ -658,13 +683,16 @@ class StatusOr : private internal_statusor::OperatorBase<T>,
   // In optimized builds, passing absl::OkStatus() here will have the effect
   // of passing absl::StatusCode::kInternal as a fallback.
   using internal_statusor::StatusOrData<T>::AssignStatus;
+#endif  // SWIG
 
  private:
+#ifndef SWIG
   using internal_statusor::StatusOrData<T>::Assign;
   template <typename U>
   void Assign(const absl::StatusOr<U>& other);
   template <typename U>
   void Assign(absl::StatusOr<U>&& other);
+#endif  // SWIG
 };
 
 // operator==()
@@ -696,7 +724,7 @@ template <typename T,
           std::enable_if_t<absl::HasOstreamOperator<T>::value, int> = 0>
 std::ostream& operator<<(std::ostream& os, const StatusOr<T>& status_or) {
   if (status_or.ok()) {
-    os << status_or.value();
+    os << *status_or;
   } else {
     os << internal_statusor::StringifyRandom::OpenBrackets()
        << status_or.status()
@@ -713,7 +741,7 @@ template <typename Sink, typename T,
           std::enable_if_t<absl::HasAbslStringify<T>::value, int> = 0>
 void AbslStringify(Sink& sink, const StatusOr<T>& status_or) {
   if (status_or.ok()) {
-    absl::Format(&sink, "%v", status_or.value());
+    absl::Format(&sink, "%v", *status_or);
   } else {
     absl::Format(&sink, "%s%v%s",
                  internal_statusor::StringifyRandom::OpenBrackets(),
@@ -722,6 +750,7 @@ void AbslStringify(Sink& sink, const StatusOr<T>& status_or) {
   }
 }
 
+#ifndef SWIG
 //------------------------------------------------------------------------------
 // Implementation details for StatusOr<T>
 //------------------------------------------------------------------------------
@@ -773,6 +802,8 @@ template <typename T>
 void StatusOr<T>::IgnoreError() const {
   // no-op
 }
+
+#endif  // SWIG
 
 ABSL_NAMESPACE_END
 }  // namespace absl

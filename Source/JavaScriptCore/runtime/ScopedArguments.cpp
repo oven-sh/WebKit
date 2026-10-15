@@ -27,6 +27,7 @@
 #include "ScopedArguments.h"
 
 #include "GenericArgumentsImplInlines.h"
+#include "IndexingTypeInlines.h"
 #include "JSArray.h"
 
 WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN

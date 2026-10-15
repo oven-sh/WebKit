@@ -393,7 +393,7 @@ private:
     // where Widget::convertToRootView() stops.
     RefPtr<WebCore::FrameView> rootView() const;
 
-    bool NODELETE haveStreamedDataForRange(uint64_t offset, size_t count) const WTF_REQUIRES_LOCK(m_streamedDataLock);
+    bool LEGACY_NODELETE haveStreamedDataForRange(uint64_t offset, size_t count) const WTF_REQUIRES_LOCK(m_streamedDataLock);
     // This just checks whether the CFData is large enough; it doesn't know if we filled this range with data.
 
     void insertRangeRequestData(uint64_t offset, const Vector<uint8_t>&);
@@ -414,7 +414,7 @@ protected:
     explicit PDFPluginBase(WebCore::HTMLPlugInElement&);
 
     WebPage* webPage() const;
-    WebCore::Page* NODELETE page() const;
+    WebCore::Page* LEGACY_NODELETE page() const;
 
     virtual void teardown();
 
@@ -484,8 +484,8 @@ protected:
     virtual void incrementalLoadingDidFinish() { }
 
 #if ENABLE(PDF_HUD)
-    WebCore::IntRect frameForHUDInRootViewCoordinates() const;
-    bool NODELETE hudEnabled() const;
+    WebCore::IntRect frameForHUDInMainFrameViewCoordinates() const;
+    bool LEGACY_NODELETE hudEnabled() const;
     bool shouldShowHUD() const;
     void updateHUDVisibility();
 #endif
@@ -498,16 +498,16 @@ protected:
 
     String annotationStyle() const;
 
-    static NSString *NODELETE htmlPasteboardType();
-    static NSString *NODELETE rtfPasteboardType();
-    static NSString *NODELETE stringPasteboardType();
-    static NSString *NODELETE urlPasteboardType();
+    static NSString *LEGACY_NODELETE htmlPasteboardType();
+    static NSString *LEGACY_NODELETE rtfPasteboardType();
+    static NSString *LEGACY_NODELETE stringPasteboardType();
+    static NSString *LEGACY_NODELETE urlPasteboardType();
 
 #if PLATFORM(MAC)
     void writeStringToFindPasteboard(const String&) const;
 #endif
 
-    std::optional<WebCore::PageIdentifier> NODELETE pageIdentifier() const;
+    std::optional<WebCore::PageIdentifier> LEGACY_NODELETE pageIdentifier() const;
 
     virtual WebCore::Color pluginBackgroundColor() const;
     void updateFullFramePluginBackgroundColor();

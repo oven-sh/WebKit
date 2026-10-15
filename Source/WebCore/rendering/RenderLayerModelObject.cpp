@@ -215,7 +215,7 @@ void RenderLayerModelObject::styleDidChange(Style::Difference diff, const Style:
         }
     } else if (layer() && layer()->parent()) {
         gainedOrLostLayer = true;
-        if (oldStyle && oldStyle->blendMode() != BlendMode::Normal)
+        if (oldStyle && oldStyle->usedBlendMode() != BlendMode::Normal)
             layer()->willRemoveChildWithBlendMode();
         // For CSS renderers every transform-related property forces a layer, so reaching the
         // layer-removal branch means there is no transform and these flags can be cleared. Under
@@ -289,11 +289,6 @@ bool RenderLayerModelObject::shouldPlaceVerticalScrollbarOnLeft() const
 #endif
 }
 
-std::optional<LayoutRect> RenderLayerModelObject::cachedLayerClippedOverflowRect() const
-{
-    return hasLayer() ? layer()->cachedClippedOverflowRect() : std::nullopt;
-}
-
 bool RenderLayerModelObject::startAnimation(double timeOffset, const GraphicsLayerAnimation& animation, const BlendingKeyframes& keyframes)
 {
     if (!layer() || !layer()->backing())
@@ -342,18 +337,40 @@ void RenderLayerModelObject::updateLayerTransform()
         layer()->updateTransform();
 }
 
-bool RenderLayerModelObject::shouldPaintSVGRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
+bool RenderLayerModelObject::shouldPaintSVGLeafRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
 {
     if (paintInfo.context().paintingDisabled())
         return false;
 
-    if (!relevantPaintPhases.isEmpty() && !relevantPaintPhases.contains(paintInfo.phase))
+    if (!relevantPaintPhases.contains(paintInfo.phase))
         return false;
 
     if (!paintInfo.shouldPaintWithinRoot(*this))
         return false;
 
-    if (style().usedVisibility() == Visibility::Hidden || style().display() == Style::DisplayType::None)
+    if (usedStyle().visibility() == UsedVisibility::Hidden || style().display() == Style::DisplayType::None)
+        return false;
+
+    return true;
+}
+
+bool RenderLayerModelObject::shouldPaintSVGContainerRenderer(const PaintInfo& paintInfo, const OptionSet<PaintPhase> relevantPaintPhases) const
+{
+    if (paintInfo.phase != PaintPhase::EventRegion && paintInfo.context().paintingDisabled())
+        return false;
+
+    if (!relevantPaintPhases.contains(paintInfo.phase))
+        return false;
+
+    if (!paintInfo.shouldPaintWithinRoot(*this))
+        return false;
+
+    if (style().display() == Style::DisplayType::None)
+        return false;
+
+    // Children can override with "visibility: visible", per SVG spec.
+    static constexpr OptionSet<PaintPhase> phasesPaintedIfHidden { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask };
+    if (!phasesPaintedIfHidden.contains(paintInfo.phase) && usedStyle().visibility() == UsedVisibility::Hidden)
         return false;
 
     return true;
@@ -922,6 +939,11 @@ static void invalidateNonScalingStrokeCachesInSubtree(RenderElement& renderer)
     }
 }
 
+bool RenderLayerModelObject::transformReferenceBoxIsSVGViewport() const
+{
+    return transformBoxToCSSBoxType(style().transformBox()) == CSSBoxType::ViewBox;
+}
+
 void RenderLayerModelObject::invalidateNonScalingStrokeCachesInSubtreeForSVG(const std::optional<AffineTransform>& oldTransform, const AffineTransform& newTransform)
 {
     if (!mayHaveNonScalingStrokeInSubtree())
@@ -940,7 +962,8 @@ void RenderLayerModelObject::paintSVGClippingMask(PaintInfo& paintInfo, const Fl
 {
     ASSERT(paintInfo.phase == PaintPhase::ClippingMask);
     auto& context = paintInfo.context();
-    if (!paintInfo.shouldPaintWithinRoot(*this) || style().usedVisibility() != Visibility::Visible || context.paintingDisabled())
+    // No visibility check: visible descendants of hidden containers must still be clipped.
+    if (!paintInfo.shouldPaintWithinRoot(*this) || context.paintingDisabled())
         return;
 
     ASSERT(document().settings().layerBasedSVGEngineEnabled());
@@ -963,7 +986,7 @@ void RenderLayerModelObject::paintSVGMask(PaintInfo& paintInfo, const LayoutPoin
 void RenderLayerModelObject::paintSVGEventRegion(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
     ASSERT(paintInfo.phase == PaintPhase::EventRegion);
-    if (style().usedVisibility() == Visibility::Hidden || objectBoundingBox().isEmpty())
+    if (usedStyle().visibility() == UsedVisibility::Hidden || objectBoundingBox().isEmpty())
         return;
 
     auto adjustedPaintOffset = paintOffset + currentSVGLayoutLocation();

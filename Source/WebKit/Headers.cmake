@@ -56,7 +56,7 @@ set(_webkit_c_api_headers
     UIProcess/API/C/WKGeolocationPermissionRequest.h
     UIProcess/API/C/WKGeolocationPosition.h
     UIProcess/API/C/WKHTTPCookieStoreRef.h
-    UIProcess/API/C/WKHitTestResult.h
+    UIProcess/API/C/WKHitTestResultRef.h
     UIProcess/API/C/WKIconDatabase.h
     UIProcess/API/C/WKInspector.h
     UIProcess/API/C/WKJSHandleRef.h
@@ -183,6 +183,7 @@ list(APPEND WebKit_PUBLIC_FRAMEWORK_HEADERS
     UIProcess/API/Cocoa/WKFormInfo.h
     UIProcess/API/Cocoa/WKFrameInfo.h
     UIProcess/API/Cocoa/WKHTTPCookieStore.h
+    UIProcess/API/Cocoa/WKHitTestResult.h
     UIProcess/API/Cocoa/WKImmersiveEnvironment.h
     UIProcess/API/Cocoa/WKImmersiveEnvironmentDelegate.h
     UIProcess/API/Cocoa/WKJSHandle.h
@@ -565,6 +566,7 @@ set(WebKit_PROJECT_HEADERS
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentDelegate.h
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentError.h
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentMobileDocumentRequest.h
+    WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentOpenID4VPRequest.h
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentRawRequest.h
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentRequest.h
     WebKitSwift/IdentityDocumentServices/WKIdentityDocumentPresentmentResponse.h

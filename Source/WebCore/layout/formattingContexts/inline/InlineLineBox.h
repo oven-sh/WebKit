@@ -27,7 +27,7 @@
 
 #include <WebCore/FontBaseline.h>
 #include <WebCore/InlineLevelBox.h>
-#include <WebCore/InlineLine.h>
+#include <WebCore/InlineLineRun.h>
 #include <WebCore/InlineRect.h>
 #include <WebCore/LayoutElementBox.h>
 #include <wtf/TZoneMalloc.h>
@@ -67,15 +67,16 @@ public:
     bool hasNonInlineBox() const { return m_boxTypes.containsAny({ InlineLevelBox::Type::AtomicInlineBox, InlineLevelBox::Type::LineBreakBox, InlineLevelBox::Type::GenericInlineLevelBox }); }
     bool hasAtomicInlineBox() const { return m_boxTypes.contains(InlineLevelBox::Type::AtomicInlineBox); }
 
-    InlineRect logicalRectForTextRun(const Line::Run&) const;
+    InlineRect logicalRectForTextRun(const LineRun&) const;
     InlineRect logicalRectForLineBreakBox(const Box&) const;
     InlineRect logicalRectForRootInlineBox() const { return m_rootInlineBox.logicalRect(); }
     InlineRect logicalBorderBoxForAtomicInlineBox(const Box&, const BoxGeometry&) const;
     InlineRect logicalBorderBoxForInlineBox(const Box&, const BoxGeometry&) const;
     InlineRect logicalContentBoxForInlineBox(const Box&) const;
 
-    const InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) const LIFETIME_BOUND { return const_cast<LineBox&>(*this).inlineLevelBoxFor(layoutBox); }
-    const InlineLevelBox& inlineLevelBoxFor(const Line::Run& lineRun) const LIFETIME_BOUND { return const_cast<LineBox&>(*this).inlineLevelBoxFor(lineRun); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).inlineLevelBoxFor(layoutBox); }
+    const InlineLevelBox& inlineLevelBoxFor(const LineRun& lineRun) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).inlineLevelBoxFor(lineRun); }
 
     const InlineLevelBox& rootInlineBox() const LIFETIME_BOUND { return m_rootInlineBox; }
     using InlineLevelBoxList = Vector<InlineLevelBox>;
@@ -102,13 +103,15 @@ private:
 
     InlineLevelBox& rootInlineBox() LIFETIME_BOUND { return m_rootInlineBox; }
 
-    const InlineLevelBox& parentInlineBox(const InlineLevelBox& inlineLevelBox) const LIFETIME_BOUND { return const_cast<LineBox&>(*this).parentInlineBox(inlineLevelBox); }
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox& parentInlineBox(const InlineLevelBox& inlineLevelBox) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).parentInlineBox(inlineLevelBox); }
     InlineLevelBox& parentInlineBox(const InlineLevelBox&) LIFETIME_BOUND;
 
-    const InlineLevelBox& parentInlineBox(const Line::Run& lineRun) const LIFETIME_BOUND { return const_cast<LineBox&>(*this).parentInlineBox(lineRun); }
-    InlineLevelBox& parentInlineBox(const Line::Run&) LIFETIME_BOUND;
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    const InlineLevelBox& parentInlineBox(const LineRun& lineRun) const LIFETIME_BOUND { SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<LineBox&>(*this).parentInlineBox(lineRun); }
+    InlineLevelBox& parentInlineBox(const LineRun&) LIFETIME_BOUND;
 
-    InlineLevelBox& inlineLevelBoxFor(const Line::Run&) LIFETIME_BOUND;
+    InlineLevelBox& inlineLevelBoxFor(const LineRun&) LIFETIME_BOUND;
     InlineLevelBox* inlineLevelBoxFor(const Box& layoutBox) LIFETIME_BOUND;
 
     InlineRect logicalRectForInlineLevelBox(const Box& layoutBox) const;
@@ -147,12 +150,12 @@ inline InlineLevelBox& LineBox::parentInlineBox(const InlineLevelBox& inlineLeve
     return *inlineLevelBoxFor(inlineLevelBox.layoutBox().parent());
 }
 
-inline InlineLevelBox& LineBox::parentInlineBox(const Line::Run& lineRun)
+inline InlineLevelBox& LineBox::parentInlineBox(const LineRun& lineRun)
 {
     return *inlineLevelBoxFor(lineRun.layoutBox().parent());
 }
 
-inline InlineLevelBox& LineBox::inlineLevelBoxFor(const Line::Run& lineRun)
+inline InlineLevelBox& LineBox::inlineLevelBoxFor(const LineRun& lineRun)
 {
     return *inlineLevelBoxFor(lineRun.layoutBox());
 }

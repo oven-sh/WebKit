@@ -458,7 +458,8 @@ static SRGBA<uint8_t> legacyMenuBackgroundColor()
         bitsPerSample:8 samplesPerPixel:4 hasAlpha:YES isPlanar:NO colorSpaceName:NSDeviceRGBColorSpace bytesPerRow:4 bitsPerPixel:32]);
 
     {
-        LocalCurrentCGContext localContext { [NSGraphicsContext graphicsContextWithBitmapImageRep:offscreenRep.get()].CGContext };
+        RetainPtr<CGContextRef> cgContext = [NSGraphicsContext graphicsContextWithBitmapImageRep:offscreenRep.get()].CGContext;
+        LocalCurrentCGContext localContext { cgContext.get() };
 
         [[NSColor clearColor] set];
 
@@ -479,44 +480,44 @@ static std::optional<Color> legacyDeprecatedSystemColor(CSSValueID cssValueID, O
 {
     auto selectCocoaColor = [cssValueID, useDarkAppearance = options.contains(StyleColorOptions::UseDarkAppearance)] () -> SEL {
         switch (cssValueID) {
-        case CSSValueActivecaption:
+        case CSSValueID::Activecaption:
             return @selector(windowFrameTextColor);
-        case CSSValueAppworkspace:
+        case CSSValueID::Appworkspace:
             return @selector(headerColor);
-        case CSSValueThreedface:
+        case CSSValueID::Threedface:
             // Fallback to hardcoded color below in light mode.
             return useDarkAppearance ? @selector(controlColor) : nullptr;
-        case CSSValueButtonhighlight:
+        case CSSValueID::Buttonhighlight:
             return @selector(controlHighlightColor);
-        case CSSValueButtonshadow:
+        case CSSValueID::Buttonshadow:
             return @selector(controlShadowColor);
-        case CSSValueCaptiontext:
+        case CSSValueID::Captiontext:
             return @selector(textColor);
-        case CSSValueInactiveborder:
+        case CSSValueID::Inactiveborder:
             return @selector(controlBackgroundColor);
-        case CSSValueInactivecaption:
+        case CSSValueID::Inactivecaption:
             return @selector(controlBackgroundColor);
-        case CSSValueInactivecaptiontext:
+        case CSSValueID::Inactivecaptiontext:
             return @selector(textColor);
-        case CSSValueInfotext:
+        case CSSValueID::Infotext:
             return @selector(textColor);
-        case CSSValueMenutext:
+        case CSSValueID::Menutext:
             return @selector(labelColor);
-        case CSSValueScrollbar:
+        case CSSValueID::Scrollbar:
             return @selector(scrollBarColor);
-        case CSSValueThreeddarkshadow:
+        case CSSValueID::Threeddarkshadow:
             return @selector(controlDarkShadowColor);
-        case CSSValueThreedshadow:
+        case CSSValueID::Threedshadow:
             return @selector(shadowColor);
-        case CSSValueThreedhighlight:
+        case CSSValueID::Threedhighlight:
             return @selector(highlightColor);
-        case CSSValueThreedlightshadow:
+        case CSSValueID::Threedlightshadow:
             return @selector(controlLightHighlightColor);
-        case CSSValueWindow:
+        case CSSValueID::Window:
             return @selector(windowBackgroundColor);
-        case CSSValueWindowframe:
+        case CSSValueID::Windowframe:
             return @selector(windowFrameColor);
-        case CSSValueWindowtext:
+        case CSSValueID::Windowtext:
             return @selector(windowFrameTextColor);
         default:
             return nullptr;
@@ -529,14 +530,14 @@ static std::optional<Color> legacyDeprecatedSystemColor(CSSValueID cssValueID, O
     }
 
     switch (cssValueID) {
-    case CSSValueActiveborder:
+    case CSSValueID::Activeborder:
         return defaultFocusRingColor(options);
-    case CSSValueThreedface:
+    case CSSValueID::Threedface:
         return Color::lightGray;
-    case CSSValueInfobackground:
+    case CSSValueID::Infobackground:
         // No corresponding NSColor for this so we use a hard coded value.
         return SRGBA<uint8_t> { 251, 252, 197 };
-    case CSSValueMenu:
+    case CSSValueID::Menu:
         return legacyMenuBackgroundColor();
     default:
         return std::nullopt;
@@ -565,47 +566,47 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
 
         switch (cssValueID) {
         // Web views that want system appearance get the system version of link colors, which differ from the HTML spec.
-        case CSSValueWebkitLink:
+        case CSSValueID::WebkitLink:
             if (forVisitedLink)
                 return systemAppearanceColor(cache.systemVisitedLinkColor, @selector(systemPurpleColor));
             return systemAppearanceColor(cache.systemLinkColor, @selector(linkColor));
 
-        case CSSValueLinktext:
+        case CSSValueID::Linktext:
             return systemAppearanceColor(cache.systemLinkColor, @selector(linkColor));
-        case CSSValueVisitedtext:
+        case CSSValueID::Visitedtext:
             return systemAppearanceColor(cache.systemVisitedLinkColor, @selector(systemPurpleColor));
-        case CSSValueWebkitActivelink:
-        case CSSValueActivetext:
+        case CSSValueID::WebkitActivelink:
+        case CSSValueID::Activetext:
             // FIXME: Use a semantic system color for this, instead of systemRedColor. <rdar://problem/39256684>
             return systemAppearanceColor(cache.systemActiveLinkColor, @selector(systemRedColor));
 
         // The following colors would expose user appearance preferences to the web, and could be used for fingerprinting.
         // These are available only when the web view opts into the system appearance.
-        case CSSValueWebkitFocusRingColor:
+        case CSSValueID::WebkitFocusRingColor:
             return focusRingColor(options);
 
-        case CSSValueActiveborder:
+        case CSSValueID::Activeborder:
             if (usesLegacyDeprecatedSystemColors())
                 return focusRingColor(options);
             break;
 
-        case CSSValueAppleSystemControlAccent:
+        case CSSValueID::AppleSystemControlAccent:
             return systemAppearanceColor(cache.systemControlAccentColor, @selector(controlAccentColor));
 
-        case CSSValueAppleSystemSelectedContentBackground:
+        case CSSValueID::AppleSystemSelectedContentBackground:
             return activeListBoxSelectionBackgroundColor(options);
 
-        case CSSValueAppleSystemSelectedTextBackground:
-        case CSSValueHighlight:
+        case CSSValueID::AppleSystemSelectedTextBackground:
+        case CSSValueID::Highlight:
             return activeSelectionBackgroundColor(options);
 
         default:
             // Handle other system colors below, that don't need special system appearance handling.
             break;
         }
-    } else if (forVisitedLink && cssValueID == CSSValueWebkitLink) {
+    } else if (forVisitedLink && cssValueID == CSSValueID::WebkitLink) {
         // The system color cache below can't handle visited links. The only color value
-        // that cares about visited links is CSSValueWebkitLink, so handle it here.
+        // that cares about visited links is CSSValueID::WebkitLink, so handle it here.
         return RenderTheme::systemColor(cssValueID, options);
     }
 
@@ -625,94 +626,94 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
 
         auto selectCocoaColor = [cssValueID, useDarkAppearance] () -> SEL {
             switch (cssValueID) {
-            case CSSValueButtonface:
+            case CSSValueID::Buttonface:
                 // Fallback to hardcoded color below in light mode.
                 return useDarkAppearance ? @selector(controlColor) : nullptr;
-            case CSSValueButtontext:
+            case CSSValueID::Buttontext:
                 return @selector(controlTextColor);
-            case CSSValueCanvas:
+            case CSSValueID::Canvas:
                 return @selector(textBackgroundColor);
-            case CSSValueCanvastext:
+            case CSSValueID::Canvastext:
                 return @selector(textColor);
-            case CSSValueField:
+            case CSSValueID::Field:
                 return @selector(controlColor);
-            case CSSValueFieldtext:
+            case CSSValueID::Fieldtext:
                 return @selector(controlTextColor);
-            case CSSValueGraytext:
+            case CSSValueID::Graytext:
                 return @selector(disabledControlTextColor);
-            case CSSValueHighlighttext:
+            case CSSValueID::Highlighttext:
                 return @selector(selectedTextColor);
-            case CSSValueText:
+            case CSSValueID::Text:
                 return @selector(textColor);
-            case CSSValueAppleSystemHeaderText:
+            case CSSValueID::AppleSystemHeaderText:
                 return @selector(headerTextColor);
-            case CSSValueAppleSystemBackground:
-            case CSSValueAppleSystemSecondaryBackground:
-            case CSSValueAppleSystemTertiaryBackground:
-            case CSSValueAppleSystemGroupedBackground:
-            case CSSValueAppleSystemSecondaryGroupedBackground:
-            case CSSValueAppleSystemTertiaryGroupedBackground:
-            case CSSValueAppleSystemTextBackground:
+            case CSSValueID::AppleSystemBackground:
+            case CSSValueID::AppleSystemSecondaryBackground:
+            case CSSValueID::AppleSystemTertiaryBackground:
+            case CSSValueID::AppleSystemGroupedBackground:
+            case CSSValueID::AppleSystemSecondaryGroupedBackground:
+            case CSSValueID::AppleSystemTertiaryGroupedBackground:
+            case CSSValueID::AppleSystemTextBackground:
                 return @selector(textBackgroundColor);
-            case CSSValueAppleSystemControlBackground:
-            case CSSValueWebkitControlBackground:
+            case CSSValueID::AppleSystemControlBackground:
+            case CSSValueID::WebkitControlBackground:
                 return @selector(controlBackgroundColor);
-            case CSSValueAppleSystemAlternateSelectedText:
+            case CSSValueID::AppleSystemAlternateSelectedText:
                 return @selector(alternateSelectedControlTextColor);
-            case CSSValueAppleSystemUnemphasizedSelectedContentBackground:
+            case CSSValueID::AppleSystemUnemphasizedSelectedContentBackground:
                 return @selector(unemphasizedSelectedContentBackgroundColor);
-            case CSSValueAppleSystemSelectedText:
+            case CSSValueID::AppleSystemSelectedText:
                 return @selector(selectedTextColor);
-            case CSSValueAppleSystemUnemphasizedSelectedText:
+            case CSSValueID::AppleSystemUnemphasizedSelectedText:
                 return @selector(unemphasizedSelectedTextColor);
-            case CSSValueAppleSystemUnemphasizedSelectedTextBackground:
+            case CSSValueID::AppleSystemUnemphasizedSelectedTextBackground:
                 return @selector(unemphasizedSelectedTextBackgroundColor);
-            case CSSValueAppleSystemPlaceholderText:
+            case CSSValueID::AppleSystemPlaceholderText:
                 return @selector(placeholderTextColor);
-            case CSSValueAppleSystemFindHighlightBackground:
+            case CSSValueID::AppleSystemFindHighlightBackground:
                 return @selector(findHighlightColor);
-            case CSSValueAppleSystemContainerBorder:
+            case CSSValueID::AppleSystemContainerBorder:
                 return @selector(containerBorderColor);
-            case CSSValueAppleSystemLabel:
+            case CSSValueID::AppleSystemLabel:
                 return @selector(labelColor);
-            case CSSValueAppleSystemSecondaryLabel:
+            case CSSValueID::AppleSystemSecondaryLabel:
                 return @selector(secondaryLabelColor);
-            case CSSValueAppleSystemTertiaryLabel:
+            case CSSValueID::AppleSystemTertiaryLabel:
                 return @selector(tertiaryLabelColor);
-            case CSSValueAppleSystemQuaternaryLabel:
+            case CSSValueID::AppleSystemQuaternaryLabel:
                 return @selector(quaternaryLabelColor);
-            case CSSValueAppleSystemQuinaryLabel:
+            case CSSValueID::AppleSystemQuinaryLabel:
                 return @selector(quinaryLabelColor);
 #if HAVE(NSCOLOR_FILL_COLOR_HIERARCHY)
-            case CSSValueAppleSystemOpaqueFill:
+            case CSSValueID::AppleSystemOpaqueFill:
                 return @selector(systemFillColor);
-            case CSSValueAppleSystemOpaqueSecondaryFill:
+            case CSSValueID::AppleSystemOpaqueSecondaryFill:
                 return @selector(secondarySystemFillColor);
-            case CSSValueAppleSystemTertiaryFill:
+            case CSSValueID::AppleSystemTertiaryFill:
                 return @selector(tertiarySystemFillColor);
 #endif
-            case CSSValueAppleSystemGrid:
+            case CSSValueID::AppleSystemGrid:
                 return @selector(gridColor);
-            case CSSValueAppleSystemSeparator:
+            case CSSValueID::AppleSystemSeparator:
                 return @selector(separatorColor);
-            case CSSValueAppleWirelessPlaybackTargetActive:
-            case CSSValueAppleSystemBlue:
+            case CSSValueID::AppleWirelessPlaybackTargetActive:
+            case CSSValueID::AppleSystemBlue:
                 return @selector(systemBlueColor);
-            case CSSValueAppleSystemBrown:
+            case CSSValueID::AppleSystemBrown:
                 return @selector(systemBrownColor);
-            case CSSValueAppleSystemGray:
+            case CSSValueID::AppleSystemGray:
                 return @selector(systemGrayColor);
-            case CSSValueAppleSystemGreen:
+            case CSSValueID::AppleSystemGreen:
                 return @selector(systemGreenColor);
-            case CSSValueAppleSystemOrange:
+            case CSSValueID::AppleSystemOrange:
                 return @selector(systemOrangeColor);
-            case CSSValueAppleSystemPink:
+            case CSSValueID::AppleSystemPink:
                 return @selector(systemPinkColor);
-            case CSSValueAppleSystemPurple:
+            case CSSValueID::AppleSystemPurple:
                 return @selector(systemPurpleColor);
-            case CSSValueAppleSystemRed:
+            case CSSValueID::AppleSystemRed:
                 return @selector(systemRedColor);
-            case CSSValueAppleSystemYellow:
+            case CSSValueID::AppleSystemYellow:
                 return @selector(systemYellowColor);
             default:
                 return nullptr;
@@ -733,56 +734,56 @@ Color RenderThemeMac::systemColor(CSSValueID cssValueID, OptionSet<StyleColorOpt
         };
 
         switch (cssValueID) {
-        case CSSValueActivebuttontext:
+        case CSSValueID::Activebuttontext:
             return textColorForActiveButton();
 
-        case CSSValueButtonface:
+        case CSSValueID::Buttonface:
             // Dark mode uses [NSColor controlColor].
             // We selected this value instead of [NSColor controlColor] to avoid website incompatibilities.
             // We may want to consider changing to [NSColor controlColor] some day.
             ASSERT(!localAppearance.usingDarkAppearance());
             return Color::lightGray;
 
-        case CSSValueWebkitFocusRingColor:
+        case CSSValueID::WebkitFocusRingColor:
             return defaultFocusRingColor(options);
 
-        case CSSValueAppleSystemControlAccent:
+        case CSSValueID::AppleSystemControlAccent:
             // Hardcoded to avoid exposing a user appearance preference to the web for fingerprinting.
             // Same color in light and dark appearances.
             return { SRGBA<uint8_t> { 0, 122, 255 }, Color::Flags::Semantic };
 
-        case CSSValueAppleSystemSelectedContentBackground:
+        case CSSValueID::AppleSystemSelectedContentBackground:
             // Hardcoded to avoid exposing a user appearance preference to the web for fingerprinting.
             if (localAppearance.usingDarkAppearance())
                 return { SRGBA<uint8_t> { 0, 88, 208 }, Color::Flags::Semantic };
             return { SRGBA<uint8_t> { 0, 99, 225 }, Color::Flags::Semantic };
 
-        case CSSValueHighlight:
-        case CSSValueAppleSystemSelectedTextBackground:
+        case CSSValueID::Highlight:
+        case CSSValueID::AppleSystemSelectedTextBackground:
             // Hardcoded to avoid exposing a user appearance preference to the web for fingerprinting.
             if (localAppearance.usingDarkAppearance())
                 return { SRGBA<uint8_t> { 63, 99, 139, 204 }, Color::Flags::Semantic };
             return { SRGBA<uint8_t> { 128, 188, 254, 153 }, Color::Flags::Semantic };
 
-        case CSSValueAppleSystemEvenAlternatingContentBackground: {
+        case CSSValueID::AppleSystemEvenAlternatingContentBackground: {
             NSArray<NSColor *> *alternateColors = [NSColor alternatingContentBackgroundColors];
             ASSERT(alternateColors.count >= 2);
             return semanticColorFromNSColor(retainPtr(alternateColors[0]).get());
         }
 
-        case CSSValueAppleSystemOddAlternatingContentBackground: {
+        case CSSValueID::AppleSystemOddAlternatingContentBackground: {
             NSArray<NSColor *> *alternateColors = [NSColor alternatingContentBackgroundColors];
             ASSERT(alternateColors.count >= 2);
             return semanticColorFromNSColor(retainPtr(alternateColors[1]).get());
         }
 
         // FIXME: Remove this fallback when AppKit without tertiary-fill is not used anymore; see rdar://108340604.
-        case CSSValueAppleSystemTertiaryFill:
+        case CSSValueID::AppleSystemTertiaryFill:
             if (localAppearance.usingDarkAppearance())
                 return { SRGBA<uint8_t> { 255, 255, 255, 12 }, Color::Flags::Semantic };
             return { SRGBA<uint8_t> { 0, 0, 0, 12 }, Color::Flags::Semantic };
 
-        case CSSValueBackground:
+        case CSSValueID::Background:
             // Use platform-independent value returned by base class.
             [[fallthrough]];
 
@@ -829,7 +830,7 @@ bool RenderThemeMac::isControlStyled(const Style::ComputedStyle& style) const
     return RenderTheme::isControlStyled(style);
 }
 
-static FloatRect NODELETE inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
+static FloatRect LEGACY_NODELETE inflateRect(const FloatRect& rect, const IntSize& size, std::span<const int, 4> margins, float zoomLevel)
 {
     // Only do the inflation if the available width/height are too small. Otherwise try to
     // fit the glow/check space into the available box's width/height.
@@ -900,7 +901,7 @@ static Style::PreferredSizePair sizeFromFont(const FontCascade& font, const Styl
 
 // Popup button
 
-static std::span<const int, 4> NODELETE popupButtonMargins(NSControlSize size)
+static std::span<const int, 4> LEGACY_NODELETE popupButtonMargins(NSControlSize size)
 {
     static constexpr std::array margins {
         std::array { 0, 3, 1, 3 },
@@ -911,7 +912,7 @@ static std::span<const int, 4> NODELETE popupButtonMargins(NSControlSize size)
     return margins[size];
 }
 
-static std::span<const IntSize, 4> NODELETE popupButtonSizes()
+static std::span<const IntSize, 4> LEGACY_NODELETE popupButtonSizes()
 {
     static constexpr std::array sizes {
         IntSize { 0, 21 },
@@ -922,7 +923,7 @@ static std::span<const IntSize, 4> NODELETE popupButtonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> NODELETE popupButtonPadding(NSControlSize size)
+static std::span<const int, 4> LEGACY_NODELETE popupButtonPadding(NSControlSize size)
 {
     static constexpr std::array padding {
         std::array { 2, 26, 3, 8 },
@@ -935,7 +936,7 @@ static std::span<const int, 4> NODELETE popupButtonPadding(NSControlSize size)
 
 // Checkboxes and radio buttons
 
-static const std::span<const IntSize, 4> NODELETE checkboxSizes()
+static const std::span<const IntSize, 4> LEGACY_NODELETE checkboxSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 14, 14 },
@@ -946,7 +947,7 @@ static const std::span<const IntSize, 4> NODELETE checkboxSizes()
     return sizes;
 }
 
-static std::span<const int, 4> NODELETE checkboxMargins(NSControlSize controlSize)
+static std::span<const int, 4> LEGACY_NODELETE checkboxMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -979,7 +980,7 @@ static const std::span<const IntSize, 4> radioSizes()
     return sizes;
 }
 
-static std::span<const int, 4> NODELETE radioMargins(NSControlSize controlSize)
+static std::span<const int, 4> LEGACY_NODELETE radioMargins(NSControlSize controlSize)
 {
     static constexpr std::array margins {
         // top right bottom left
@@ -1003,7 +1004,7 @@ static Style::PreferredSizePair radioSize(const Style::PreferredSizePair& zoomed
 // Buttons
 
 // Buttons really only constrain height. They respect width.
-static const std::span<const IntSize, 4> NODELETE buttonSizes()
+static const std::span<const IntSize, 4> LEGACY_NODELETE buttonSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 0, 20 },
@@ -1014,7 +1015,7 @@ static const std::span<const IntSize, 4> NODELETE buttonSizes()
     return sizes;
 }
 
-static std::span<const int, 4> NODELETE buttonMargins(NSControlSize controlSize)
+static std::span<const int, 4> LEGACY_NODELETE buttonMargins(NSControlSize controlSize)
 {
     // FIXME: These values may need to be reevaluated. They appear to have been originally chosen
     // to reflect the size of shadows around native form controls on macOS, but as of macOS 10.15,
@@ -1030,7 +1031,7 @@ static std::span<const int, 4> NODELETE buttonMargins(NSControlSize controlSize)
 
 // Stepper
 
-static const std::span<const IntSize, 4> NODELETE stepperSizes()
+static const std::span<const IntSize, 4> LEGACY_NODELETE stepperSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 19, 27 },
@@ -1057,7 +1058,7 @@ static NSControlSize stepperControlSizeForFont(const FontCascade& font)
 
 // Switch
 
-static const std::span<const IntSize, 4> NODELETE switchSizes()
+static const std::span<const IntSize, 4> LEGACY_NODELETE switchSizes()
 {
     static constexpr std::array sizes = {
         IntSize { 38, 22 },
@@ -1068,7 +1069,7 @@ static const std::span<const IntSize, 4> NODELETE switchSizes()
     return sizes;
 }
 
-static std::span<const int, 4> NODELETE visualSwitchMargins(NSControlSize controlSize, bool isVertical)
+static std::span<const int, 4> LEGACY_NODELETE visualSwitchMargins(NSControlSize controlSize, bool isVertical)
 {
     static constexpr std::array switchMarginsNonMini { 2, 2, 1, 2 };
     static constexpr std::array switchMarginsMini { 1, 1, 0, 1 };
@@ -1317,9 +1318,9 @@ void RenderThemeMac::createColorWellSwatchSubtree(HTMLElement& swatch)
     Ref div = HTMLDivElement::create(document);
     swatch.appendChild(ContainerNode::ChildChange::Source::Parser, div);
     div->setUserAgentPart(UserAgentParts::internalColorSwatchOverlay());
-    div->setInlineStyleProperty(CSSPropertyHeight, "100%"_s);
-    div->setInlineStyleProperty(CSSPropertyWidth, "100%"_s);
-    div->setInlineStyleProperty(CSSPropertyClipPath, "polygon(0 0, 100% 0, 0 100%)"_s);
+    div->setInlineStyleProperty(CSSPropertyID::Height, "100%"_s);
+    div->setInlineStyleProperty(CSSPropertyID::Width, "100%"_s);
+    div->setInlineStyleProperty(CSSPropertyID::ClipPath, "polygon(0 0, 100% 0, 0 100%)"_s);
 }
 
 void RenderThemeMac::setColorWellSwatchBackground(HTMLElement& swatch, Color color)
@@ -1329,8 +1330,8 @@ void RenderThemeMac::setColorWellSwatchBackground(HTMLElement& swatch, Color col
     auto backgroundColor = color.isOpaque() ? color : blendSourceOver(Color::white, color);
     auto foregroundColor = color.isOpaque() ? Color::transparentBlack : blendSourceOver(Color::black, color);
 
-    swatch.setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(backgroundColor));
-    swatchChild->setInlineStyleProperty(CSSPropertyBackgroundColor, serializationForHTML(foregroundColor));
+    swatch.setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(backgroundColor));
+    swatchChild->setInlineStyleProperty(CSSPropertyID::BackgroundColor, serializationForHTML(foregroundColor));
 }
 
 IntRect RenderThemeMac::progressBarRectForBounds(const RenderProgress& renderProgress, const IntRect& bounds) const
@@ -1353,7 +1354,7 @@ const int styledPopupPaddingLeft = 8;
 const int styledPopupPaddingTop = 1;
 const int styledPopupPaddingBottom = 2;
 
-static std::span<const IntSize, 4> NODELETE menuListButtonSizes()
+static std::span<const IntSize, 4> LEGACY_NODELETE menuListButtonSizes()
 {
     static constexpr std::array sizes { IntSize(0, 21), IntSize(0, 18), IntSize(0, 15), IntSize(0, 28) };
     return sizes;
@@ -1393,7 +1394,7 @@ void RenderThemeMac::adjustMenuListStyle(Style::ComputedStyle& style, const Elem
     style.setBoxShadow(CSS::Keyword::None { });
 }
 
-static Style::PaddingEdge NODELETE toTruncatedPaddingEdge(auto value)
+static Style::PaddingEdge LEGACY_NODELETE toTruncatedPaddingEdge(auto value)
 {
     return Style::PaddingEdge::Fixed { static_cast<float>(std::trunc(value)) };
 }

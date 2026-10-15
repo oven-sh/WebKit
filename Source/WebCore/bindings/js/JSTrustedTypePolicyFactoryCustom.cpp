@@ -34,7 +34,8 @@ namespace WebCore {
 template<typename Visitor>
 void JSTrustedTypePolicyFactory::visitAdditionalChildrenInGCThread(Visitor& visitor)
 {
-    addWebCoreOpaqueRoot(visitor, wrapped().defaultPolicyConcurrently());
+    // Cannot ref on the GC thread.
+    SUPPRESS_UNCOUNTED_ARG addWebCoreOpaqueRoot(visitor, wrapped().defaultPolicyConcurrently());
 }
 
 DEFINE_VISIT_ADDITIONAL_CHILDREN_IN_GC_THREAD(JSTrustedTypePolicyFactory);

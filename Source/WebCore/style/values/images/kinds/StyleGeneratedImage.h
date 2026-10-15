@@ -43,14 +43,12 @@ public:
     const SingleThreadWeakHashCountedSet<RenderElement>& clients() const LIFETIME_BOUND { return m_clients; }
 
 protected:
-    explicit GeneratedImage(Image::Type, bool fixedSize);
+    explicit GeneratedImage(Image::Type);
     virtual ~GeneratedImage();
 
     WrappedImagePtr data() const final { return this; }
 
-    FloatSize imageSize(const RenderElement*, float multiplier, WebCore::CachedImage::SizeType = WebCore::CachedImage::UsedSize) const final;
     NaturalDimensions naturalDimensions(const RenderElement&, const ImageSizingContext&) const override;
-    void setContainerSizeForRenderer(const RenderElement&, const FloatSize& containerSize) final { m_containerSize = containerSize; }
 
     void addClient(RenderElement&) final;
     void removeClient(RenderElement&) final;
@@ -60,11 +58,6 @@ protected:
     virtual void didAddClient(RenderElement&) = 0;
     virtual void didRemoveClient(RenderElement&) = 0;
 
-    // All generated images must be able to compute their fixed size.
-    virtual FloatSize fixedSize(const RenderElement&) const = 0;
-
-    FloatSize m_containerSize;
-    bool m_fixedSize;
     SingleThreadWeakHashCountedSet<RenderElement> m_clients;
 };
 

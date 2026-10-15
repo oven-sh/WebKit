@@ -212,7 +212,7 @@ void ImageDocument::finishedParsing()
     HTMLDocument::finishedParsing();
 }
 
-inline ImageDocument& NODELETE ImageDocumentParser::document() const
+inline ImageDocument& LEGACY_NODELETE ImageDocumentParser::document() const
 {
     // Only used during parsing, so document is guaranteed to be non-null.
     ASSERT(RawDataDocumentParser::document());
@@ -264,7 +264,7 @@ void ImageDocument::createDocumentStructure()
     Ref body = HTMLBodyElement::create(*this);
     body->setAttribute(styleAttr, "margin: 0px; height: 100%"_s);
     if (documentLoader && MIMETypeRegistry::isPDFMIMEType(documentLoader->responseMIMEType()))
-        body->setInlineStyleProperty(CSSPropertyBackgroundColor, "white"_s);
+        body->setInlineStyleProperty(CSSPropertyID::BackgroundColor, "white"_s);
     rootElement->appendChild(body);
     
     Ref imageElement = ImageDocumentElement::create(*this);
@@ -351,7 +351,7 @@ void ImageDocument::resizeImageToFit()
     imageElement->setIntegralAttribute(widthAttr, imageSize.width() * scale);
     imageElement->setIntegralAttribute(heightAttr, imageSize.height() * scale);
 
-    imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomIn);
+    imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomIn);
 }
 
 void ImageDocument::restoreImageSize()
@@ -368,9 +368,9 @@ void ImageDocument::restoreImageSize()
     imageElement->setUnsignedIntegralAttribute(heightAttr, imageSize.height().toUnsigned());
 
     if (imageFitsInWindow())
-        imageElement->removeInlineStyleProperty(CSSPropertyCursor);
+        imageElement->removeInlineStyleProperty(CSSPropertyID::Cursor);
     else
-        imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomOut);
+        imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomOut);
 
     m_didShrinkImage = false;
 }
@@ -404,9 +404,9 @@ void ImageDocument::didChangeViewSize()
     // and set it to a zoom out cursor if the image doesn't fit
     if (!m_shouldShrinkImage) {
         if (fitsInWindow)
-            imageElement->removeInlineStyleProperty(CSSPropertyCursor);
+            imageElement->removeInlineStyleProperty(CSSPropertyID::Cursor);
         else
-            imageElement->setInlineStyleProperty(CSSPropertyCursor, CSSValueZoomOut);
+            imageElement->setInlineStyleProperty(CSSPropertyID::Cursor, CSSValueID::ZoomOut);
         return;
     }
 

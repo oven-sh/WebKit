@@ -104,12 +104,14 @@
 #include <WebCore/ResourceRequest.h>
 #include <WebCore/ResourceTiming.h>
 #include <WebCore/ScriptController.h>
+#include <WebCore/SecurityOrigin.h>
 #include <WebCore/SecurityOriginData.h>
 #include <WebCore/Settings.h>
 #include <WebCore/SubresourceLoader.h>
 #include <WebCore/UIEventWithKeyState.h>
 #include <WebCore/Widget.h>
 #include <WebCore/WindowFeatures.h>
+#include <wtf/Borrow.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/ProcessID.h>
 #include <wtf/ProcessPrivilege.h>
@@ -531,6 +533,7 @@ void WebLocalFrameLoaderClient::didSameDocumentNavigationForFrameViaJS(SameDocum
         { }, /* originatorAdvancedPrivacyProtections */
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
         std::nullopt, /* webHitTestResultData */
+        std::nullopt, /* hitTestJSHandleInfo */
 #endif
         m_frame->info(),
         std::nullopt, /* originatingPageID */
@@ -697,12 +700,10 @@ void WebLocalFrameLoaderClient::dispatchDidCommitLoad(const std::optional<BackFo
     // Notify the UIProcess.
     auto frameInfo = frame->info();
     if (backForwardCacheData) {
-        // A page enters the back/forward cache whole, so the restored document is the main frame's and
-        // is therefore also the top origin.
+        // A page enters the back/forward cache whole, so the restored document is the main frame's.
         ASSERT(frame->isMainFrame());
         frameInfo.documentID = backForwardCacheData->documentID;
         frameInfo.securityOrigin = backForwardCacheData->documentOrigin;
-        frameInfo.topOrigin = backForwardCacheData->documentOrigin;
     }
     webPage->send(Messages::WebPageProxy::DidCommitLoadForFrame(frame->frameID(), WTF::move(frameInfo), documentLoader->request(), documentLoader->navigationID(), documentLoader->response().mimeType(), m_frameHasCustomContentProvider, m_localFrame->loader().loadType(), !certificateInfo.isEmpty(), usedLegacyTLS, wasPrivateRelayed, documentLoader->response().proxyName(), documentLoader->response().source(), containsPluginDocument, hasInsecureContent, documentLoader->mouseEventPolicy(), WTF::move(documentSecurityPolicy), cspOriginsThatUpgradeInsecureNavigations, UserData(WebProcess::singleton().transformObjectsToHandles(userData.get()).get()), m_localFrame->loader().loadingFromCachedPage() ? RestoredFromBackForwardCache::Yes : RestoredFromBackForwardCache::No, WTF::move(redirectReplaceFrameState)));
     webPage->didCommitLoad(m_frame.ptr());
@@ -788,6 +789,13 @@ void WebLocalFrameLoaderClient::dispatchDidFinishDocumentLoad()
     RefPtr webPage = m_frame->page();
     if (!webPage)
         return;
+
+#if ASSERT_ENABLED
+    if (RefPtr document = m_localFrame->document()) {
+        auto& url = document->url();
+        ASSERT_WITH_MESSAGE(document->agentClusterIdentifier() || protect(document->securityOrigin())->isOpaque() || !url.protocolIsInHTTPFamilyOrBlob(), "The UI process did not assign an agent cluster to %s", url.string().utf8());
+    }
+#endif
 
     RefPtr<API::Object> userData;
 
@@ -999,7 +1007,12 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForResponse(const ResourceRe
         return;
     }
 
-    if ((!m_frame->isMainFrame() || m_frame->isSafeBrowsingCheckOngoing() == SafeBrowsingCheckOngoing::No) && webPage->shouldSkipDecidePolicyForResponse(response)) {
+    RefPtr policyDocumentLoader = m_localFrame->loader().provisionalDocumentLoader();
+
+    // Without an assignment from the UI process, only this decision assigns the document's agent cluster.
+    // FIXME: Once the UI process assigns agent clusters to opaque origins, they will need this decision too.
+    bool needsAgentClusterAssignment = !(policyDocumentLoader && policyDocumentLoader->agentClusterAssignment().identifier) && !SecurityOrigin::create(response.url())->isOpaque();
+    if (!needsAgentClusterAssignment && (!m_frame->isMainFrame() || m_frame->isSafeBrowsingCheckOngoing() == SafeBrowsingCheckOngoing::No) && webPage->shouldSkipDecidePolicyForResponse(response)) {
         WebLocalFrameLoaderClient_RELEASE_LOG(Network, "dispatchDecidePolicyForResponse: continuing because injected bundle says so");
         function(PolicyAction::Use);
         return;
@@ -1007,7 +1020,6 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForResponse(const ResourceRe
 
     bool canShowResponse = webPage->canShowResponse(response);
 
-    RefPtr policyDocumentLoader = m_localFrame->loader().provisionalDocumentLoader();
     auto navigationID = policyDocumentLoader ? policyDocumentLoader->navigationID() : std::nullopt;
 
     Ref frame = m_frame;
@@ -1038,6 +1050,9 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
     auto listenerID = m_frame->setUpPolicyListener(WTF::move(function), WebFrame::ForNavigationAction::No, WebFrame::PolicyCheckKind::NewWindow, initiatingDocument);
 
     auto& mouseEventData = navigationAction.mouseEventData();
+#if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
+    auto hitTestJSHandleInfo = jsHandleInfoForHitTestResult(hitTestResult);
+#endif
     NavigationActionData navigationActionData {
         navigationAction.type(),
         modifiersForNavigationAction(navigationAction),
@@ -1072,6 +1087,7 @@ void WebLocalFrameLoaderClient::dispatchDecidePolicyForNewWindowAction(const Nav
         { }, /* originatorAdvancedPrivacyProtections */
 #if PLATFORM(MAC) || HAVE(UIKIT_WITH_MOUSE_SUPPORT)
         hitTestResult ? std::optional(WebKit::WebHitTestResultData(WTF::move(*hitTestResult), false)) : std::nullopt,
+        WTF::move(hitTestJSHandleInfo),
 #endif
         m_frame->info(),
         std::nullopt, /* originatingPageID */
@@ -1179,14 +1195,19 @@ void WebLocalFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(Frame
     WebFrameLoaderClient::broadcastFrameTreeSyncDataToOtherProcesses(WTF::move(data));
 }
 
-void WebLocalFrameLoaderClient::didNotifyUserActivation(MonotonicTime activationTime)
+void WebLocalFrameLoaderClient::didNotifyUserActivation(MonotonicTime activationTime, std::optional<WebCore::UserGestureTokenIdentifier> forcedActivationToken)
 {
-    WebFrameLoaderClient::didNotifyUserActivation(activationTime);
+    WebFrameLoaderClient::didNotifyUserActivation(activationTime, forcedActivationToken);
 }
 
 void WebLocalFrameLoaderClient::didConsumeUserActivation()
 {
     WebFrameLoaderClient::didConsumeUserActivation();
+}
+
+void WebLocalFrameLoaderClient::didRevokeForcedUserActivation(WebCore::UserGestureTokenIdentifier forcedActivationToken)
+{
+    WebFrameLoaderClient::didRevokeForcedUserActivation(forcedActivationToken);
 }
 
 void WebLocalFrameLoaderClient::didHandleFirstUserGesture(MonotonicTime gestureTime)
@@ -2146,7 +2167,7 @@ void WebLocalFrameLoaderClient::getLoadDecisionForIcons(const Vector<std::pair<W
         return;
 
     HashMap<CallbackID, WebCore::LinkIcon> callbackIdIconMap;
-    for (auto& icon : icons)
+    for (auto& icon : borrow(icons))
         callbackIdIconMap.add(CallbackID::fromInteger(icon.second), icon.first);
 
     webPage->send(Messages::WebPageProxy::GetLoadDecisionForIcons(WTF::move(callbackIdIconMap)));

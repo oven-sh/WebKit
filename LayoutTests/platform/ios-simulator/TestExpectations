@@ -18,4 +18,4 @@
 ##
 
 # FairPlay Streaming is not supported on simulators
-ipc/legacy-cdm-session-avcontentkeysession-destruction-race.html [ Skip ]
+ipc/cocoa/legacy-cdm-session-avcontentkeysession-destruction-race.html [ Skip ]

@@ -315,8 +315,10 @@ inline JSC::JSValue DOMPromiseProxyWithResolveCallback<IDLType>::promise(JSC::JS
         // Calls to reject() / resolve() may destroy |this|.
         if (m_valueOrException->hasException())
             deferredPromise->reject(m_valueOrException->exception());
-        else
-            deferredPromise->template resolve<IDLType>(m_resolveCallback());
+        else {
+            // The value is converted to JS, which refs it, before the promise settles.
+            SUPPRESS_UNCOUNTED_ARG SUPPRESS_UNCHECKED_ARG deferredPromise->template resolve<IDLType>(m_resolveCallback());
+        }
     }
 
     return deferredPromise->promise();

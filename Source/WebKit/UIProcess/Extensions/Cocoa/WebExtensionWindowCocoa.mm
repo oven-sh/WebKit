@@ -41,6 +41,7 @@
 #import "WebExtensionUtilities.h"
 #import <wtf/BlockPtr.h>
 #import <wtf/TZoneMallocInlines.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebKit {
 
@@ -183,7 +184,7 @@ WebExtensionWindow::TabVector WebExtensionWindow::tabs(SkipValidation skipValida
     result.reserveInitialCapacity(tabs.count);
 
     for (id tab in tabs)
-        result.append(extensionContext->getOrCreateTab(tab));
+        result.append(extensionContext->getOrCreateTab(checked_objc_cast<WKWebExtensionTab>(tab)));
 
     if (skipValidation == SkipValidation::No) {
         // SkipValidation::Yes is needed to avoid reentry, since activeTab() calls tabs().
@@ -226,7 +227,7 @@ RefPtr<WebExtensionTab> WebExtensionWindow::activeTab(SkipValidation skipValidat
     return result;
 }
 
-WKWebExtensionWindowType NODELETE toAPI(WebExtensionWindow::Type type)
+WKWebExtensionWindowType LEGACY_NODELETE toAPI(WebExtensionWindow::Type type)
 {
     switch (type) {
     case WebExtensionWindow::Type::Normal:
@@ -239,7 +240,7 @@ WKWebExtensionWindowType NODELETE toAPI(WebExtensionWindow::Type type)
     return WKWebExtensionWindowTypeNormal;
 }
 
-static inline WebExtensionWindow::Type NODELETE toImpl(WKWebExtensionWindowType type)
+static inline WebExtensionWindow::Type LEGACY_NODELETE toImpl(WKWebExtensionWindowType type)
 {
     switch (type) {
     case WKWebExtensionWindowTypeNormal:
@@ -260,7 +261,7 @@ WebExtensionWindow::Type WebExtensionWindow::type() const
     return toImpl([m_delegate windowTypeForWebExtensionContext:m_extensionContext->wrapper()]);
 }
 
-static inline WebExtensionWindow::State NODELETE toImpl(WKWebExtensionWindowState state)
+static inline WebExtensionWindow::State LEGACY_NODELETE toImpl(WKWebExtensionWindowState state)
 {
     switch (state) {
     case WKWebExtensionWindowStateNormal:
@@ -285,7 +286,7 @@ WebExtensionWindow::State WebExtensionWindow::state() const
     return toImpl([m_delegate windowStateForWebExtensionContext:m_extensionContext->wrapper()]);
 }
 
-WKWebExtensionWindowState NODELETE toAPI(WebExtensionWindow::State state)
+WKWebExtensionWindowState LEGACY_NODELETE toAPI(WebExtensionWindow::State state)
 {
     switch (state) {
     case WebExtensionWindow::State::Normal:

@@ -55,7 +55,8 @@
 #import <pal/spi/cocoa/NSAccessibilitySPI.h>
 #import <wtf/cf/TypeCastsCF.h>
 #import <wtf/cocoa/NSURLExtras.h>
-#import <wtf/spi/darwin/SandboxSPI.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/unicode/CharacterNames.h>
 
 #if PLATFORM(IOS_FAMILY)
@@ -64,6 +65,8 @@
 
 #if ENABLE(DATA_DETECTION)
 #import <pal/cocoa/DataDetectorsCoreSoftLink.h>
+
+SPECIALIZE_OBJC_TYPE_TRAITS(DDScannerResult, PAL::getDDScannerResultClassSingleton())
 #endif
 
 #import <pal/cocoa/VisionKitCoreSoftLink.h>
@@ -74,7 +77,7 @@
 - (instancetype)initWithString:(NSString *)fullText;
 @end
 
-static NSRange NODELETE clampRange(NSRange rangeToClamp, NSRange extentRange)
+static NSRange LEGACY_NODELETE clampRange(NSRange rangeToClamp, NSRange extentRange)
 {
     NSUInteger minRange1 = rangeToClamp.location;
     NSUInteger maxRange1 = NSMaxRange(rangeToClamp);
@@ -250,7 +253,7 @@ bool Internals::hasSandboxIOKitOpenAccessToClass(const String& process, const St
     UNUSED_PARAM(process); // TODO: add support for getting PID of other WebKit processes.
     pid_t pid = getpid();
 
-    return !sandbox_check(pid, "iokit-open", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_IOKIT_CONNECTION | SANDBOX_CHECK_NO_REPORT), ioKitClass.utf8().legacyCStringPointer());
+    return !sandboxCheck(pid, "iokit-open", static_cast<enum sandbox_filter_type>(SANDBOX_FILTER_IOKIT_CONNECTION | SANDBOX_CHECK_NO_REPORT), ioKitClass.utf8());
 }
 
 #if ENABLE(DATA_DETECTION)
@@ -268,7 +271,7 @@ DDScannerResult *Internals::fakeDataDetectorResultForTesting()
         if (!CFArrayGetCount(results.get()))
             return nil;
 
-        return { [[PAL::getDDScannerResultClassSingleton() resultsFromCoreResults:results.get()] firstObject] };
+        return { checked_objc_cast<DDScannerResult>([[PAL::getDDScannerResultClassSingleton() resultsFromCoreResults:results.get()] firstObject]) };
     }();
     return result->get();
 }

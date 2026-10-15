@@ -68,7 +68,8 @@ void WebCoreTypedArrayController::JSArrayBufferOwner::finalize(JSC::Handle<JSC::
 {
     // We cannot rely on jsCast() during JSObject destruction.
     SUPPRESS_MEMORY_UNSAFE_CAST auto& wrapper = *static_cast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
-    uncacheWrapper(*static_cast<DOMWrapperWorld*>(context), wrapper.impl(), &wrapper);
+    // Avoid ref churn on the wrapped object while its wrapper is being finalized.
+    SUPPRESS_UNCOUNTED_ARG uncacheWrapper(*static_cast<DOMWrapperWorld*>(context), wrapper.impl(), &wrapper);
 }
 
 } // namespace WebCore

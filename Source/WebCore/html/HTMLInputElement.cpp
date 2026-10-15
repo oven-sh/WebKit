@@ -706,14 +706,14 @@ void HTMLInputElement::collectPresentationalHintsForAttribute(const QualifiedNam
     switch (name.nodeName()) {
     case AttributeNames::vspaceAttr:
         if (isImageButton()) {
-            addHTMLLengthToStyle(style, CSSPropertyMarginTop, value);
-            addHTMLLengthToStyle(style, CSSPropertyMarginBottom, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::MarginTop, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::MarginBottom, value);
         }
         break;
     case AttributeNames::hspaceAttr:
         if (isImageButton()) {
-            addHTMLLengthToStyle(style, CSSPropertyMarginLeft, value);
-            addHTMLLengthToStyle(style, CSSPropertyMarginRight, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::MarginLeft, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::MarginRight, value);
         }
         break;
     case AttributeNames::alignAttr:
@@ -722,13 +722,13 @@ void HTMLInputElement::collectPresentationalHintsForAttribute(const QualifiedNam
         break;
     case AttributeNames::widthAttr:
         if (m_inputType->shouldRespectHeightAndWidthAttributes())
-            addHTMLLengthToStyle(style, CSSPropertyWidth, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::Width, value);
         if (isImageButton())
             applyAspectRatioFromWidthAndHeightAttributesToStyle(value, attributeWithoutSynchronization(heightAttr), style);
         break;
     case AttributeNames::heightAttr:
         if (m_inputType->shouldRespectHeightAndWidthAttributes())
-            addHTMLLengthToStyle(style, CSSPropertyHeight, value);
+            addHTMLLengthToStyle(style, CSSPropertyID::Height, value);
         if (isImageButton())
             applyAspectRatioFromWidthAndHeightAttributesToStyle(attributeWithoutSynchronization(widthAttr), value, style);
         break;
@@ -1446,12 +1446,12 @@ ExceptionOr<void> HTMLInputElement::showPicker()
     return { };
 }
 
-static inline bool NODELETE isRFC2616TokenCharacter(char16_t ch)
+static inline bool LEGACY_NODELETE isRFC2616TokenCharacter(char16_t ch)
 {
     return isASCII(ch) && ch > ' ' && ch != '"' && ch != '(' && ch != ')' && ch != ',' && ch != '/' && (ch < ':' || ch > '@') && (ch < '[' || ch > ']') && ch != '{' && ch != '}' && ch != 0x7f;
 }
 
-static bool NODELETE isValidMIMEType(StringView type)
+static bool LEGACY_NODELETE isValidMIMEType(StringView type)
 {
     size_t slashPosition = type.find('/');
     if (slashPosition == notFound || !slashPosition || slashPosition == type.length() - 1)
@@ -1463,7 +1463,7 @@ static bool NODELETE isValidMIMEType(StringView type)
     return true;
 }
 
-static bool NODELETE isValidFileExtension(StringView type)
+static bool LEGACY_NODELETE isValidFileExtension(StringView type)
 {
     if (type.length() < 2)
         return false;
@@ -1950,7 +1950,7 @@ RefPtr<InputType> HTMLInputElement::inputType() const
     return m_inputType;
 }
 
-bool NODELETE HTMLInputElement::isSteppable() const
+bool LEGACY_NODELETE HTMLInputElement::isSteppable() const
 {
     return m_inputType->isSteppable();
 }
@@ -2194,8 +2194,10 @@ RefPtr<HTMLInputElement> HTMLInputElement::checkedRadioButtonForGroup() const
 {
     ASSERT(isRadioButton());
 
-    if (checked())
-        return const_cast<HTMLInputElement*>(this);
+    if (checked()) {
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<HTMLInputElement*>(this);
+    }
 
     auto& name = this->name();
     if (auto* buttons = radioButtonGroups())
@@ -2261,8 +2263,8 @@ ListAttributeTargetObserver::ListAttributeTargetObserver(const AtomString& id, H
 void ListAttributeTargetObserver::idTargetChanged(Element&)
 {
     protect(protect(m_element->document())->eventLoop())->queueTask(TaskSource::DOMManipulation, [element = m_element] {
-        if (element)
-            element->dataListMayHaveChanged();
+        if (RefPtr protectedElement = element.get())
+            protectedElement->dataListMayHaveChanged();
     });
 }
 
@@ -2353,7 +2355,7 @@ ExceptionOr<void> HTMLInputElement::setSelectionRangeForBindings(unsigned start,
 static Ref<Style::GradientImage> autoFillStrongPasswordMaskImage()
 {
     return Style::GradientImage::create(
-        FunctionNotation<CSSValueLinearGradient, Style::LinearGradient> {
+        FunctionNotation<CSSValueID::LinearGradient, Style::LinearGradient> {
             .parameters = {
                 .colorInterpolationMethod = Style::GradientColorInterpolationMethod::legacyMethod(AlphaPremultiplication::Unpremultiplied),
                 .gradientLine = 90_css_deg,

@@ -186,8 +186,12 @@ static std::pair<GRefPtr<GstCaps>, GRefPtr<GstCaps>> vpxCapsFromCodecString(cons
 {
     auto parameters = parseVPCodecParameters(codecString);
     if (!parameters)
-        return { nullptr, nullptr };
+        parameters = parseVPCodecParametersIgnoringColorFields(codecString);
 
+    if (!parameters) {
+        GST_DEBUG("Unable to parse codec string %s", codecString.utf8());
+        return { nullptr, nullptr };
+    }
     GRefPtr inputCaps = adoptGRef(gst_caps_new_any());
 
     if (parameters->codecName.startsWith("vp8"_s) || parameters->codecName.startsWith("vp08"_s))

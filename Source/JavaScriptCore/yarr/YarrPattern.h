@@ -35,6 +35,7 @@
 #include <atomic>
 #include <wtf/BitSet.h>
 #include <wtf/CheckedArithmetic.h>
+#include <wtf/FixedVector.h>
 #include <wtf/HashMap.h>
 #include <wtf/OptionSet.h>
 #include <wtf/PrintStream.h>
@@ -143,7 +144,7 @@ public:
     {
     }
 
-    bool NODELETE hasNonBMPCharacters() const { return m_characterWidths & CharacterClassWidths::HasNonBMPChars; }
+    bool LEGACY_NODELETE hasNonBMPCharacters() const { return m_characterWidths & CharacterClassWidths::HasNonBMPChars; }
 
     bool hasOneCharacterSize() const { return m_characterWidths == CharacterClassWidths::HasBMPChars || m_characterWidths == CharacterClassWidths::HasNonBMPChars; }
     bool hasOnlyNonBMPCharacters() const { return m_characterWidths == CharacterClassWidths::HasNonBMPChars; }
@@ -171,6 +172,27 @@ public:
     bool m_tableInverted : 1;
     bool m_anyCharacter : 1;
     bool m_inCanonicalForm : 1;
+};
+
+// A code point c < limit() is in the class iff bit (c & 63) of words()[wordIndices()[c >> 6]] is set.
+class CharacterClassBitTable final {
+    WTF_MAKE_TZONE_ALLOCATED(CharacterClassBitTable);
+    WTF_MAKE_NONCOPYABLE(CharacterClassBitTable);
+public:
+    static constexpr unsigned wordShift = 6;
+    static constexpr char32_t maxLimit = 0x20000;
+
+    explicit CharacterClassBitTable(const CharacterClass&);
+
+    char32_t limit() const { return m_wordIndices.size() << wordShift; }
+    std::span<const uint16_t> wordIndices() const LIFETIME_BOUND { return m_wordIndices.span(); }
+    std::span<const uint64_t> words() const LIFETIME_BOUND { return m_words.span(); }
+
+    friend bool operator==(const CharacterClassBitTable&, const CharacterClassBitTable&) = default;
+
+private:
+    FixedVector<uint16_t> m_wordIndices;
+    FixedVector<uint64_t> m_words;
 };
 
 struct ClassSet : public CharacterClass {
@@ -352,7 +374,7 @@ struct PatternTerm {
 
     static PatternTerm NamedBackReference(unsigned subpatternId, OptionSet<Flags> currFlags)
     {
-        PatternTerm NODELETE term(subpatternId, currFlags);
+        PatternTerm LEGACY_NODELETE term(subpatternId, currFlags);
         ASSERT(term.type == Type::NumberedBackReference);
         term.type = Type::NamedBackReference;
         return term;
@@ -399,17 +421,17 @@ struct PatternTerm {
         type = Type::NamedBackReference;
     }
 
-    bool NODELETE invert() const
+    bool LEGACY_NODELETE invert() const
     {
         return m_invert;
     }
 
-    void NODELETE setMatchDirection(MatchDirection matchDirection)
+    void LEGACY_NODELETE setMatchDirection(MatchDirection matchDirection)
     {
         m_matchDirection = matchDirection;
     }
 
-    MatchDirection NODELETE matchDirection() const
+    MatchDirection LEGACY_NODELETE matchDirection() const
     {
         return m_matchDirection;
     }
@@ -424,17 +446,17 @@ struct PatternTerm {
         return m_possessive;
     }
 
-    bool NODELETE ignoreCase() const
+    bool LEGACY_NODELETE ignoreCase() const
     {
         return m_currentFlags.contains(Flags::IgnoreCase);
     }
 
-    bool NODELETE multiline() const
+    bool LEGACY_NODELETE multiline() const
     {
         return m_currentFlags.contains(Flags::Multiline);
     }
 
-    bool NODELETE dotAll() const
+    bool LEGACY_NODELETE dotAll() const
     {
         return m_currentFlags.contains(Flags::DotAll);
     }

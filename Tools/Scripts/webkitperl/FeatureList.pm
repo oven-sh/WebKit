@@ -116,6 +116,7 @@ my (
     $pdfkitPluginSupport,
     $pictureInPictureAPISupport,
     $pointerLockSupport,
+    $proofOfPossessionSupport,
     $quotaSupport,
     $remoteInspectorSupport,
     $resourceUsageSupport,
@@ -333,6 +334,9 @@ my @features = (
 
     { option => "pointer-lock", desc => "Toggle pointer lock support",
       define => "ENABLE_POINTER_LOCK", value => \$pointerLockSupport },
+
+    { option => "proof-of-possession", desc => "Toggle Proof of Possession API support",
+      define => "ENABLE_PROOF_OF_POSSESSION", value => \$proofOfPossessionSupport },
 
     { option => "remote-inspector", desc => "Toggle remote inspector support",
       define => "ENABLE_REMOTE_INSPECTOR", value => \$remoteInspectorSupport },

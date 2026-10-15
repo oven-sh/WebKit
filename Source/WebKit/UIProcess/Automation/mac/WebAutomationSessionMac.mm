@@ -45,6 +45,7 @@
 #import <objc/runtime.h>
 #import <pal/spi/mac/NSEventSPI.h>
 #import <wtf/Scope.h>
+#import <wtf/cocoa/TypeCastsCocoa.h>
 
 namespace WebKit {
 using namespace WebCore;
@@ -102,7 +103,8 @@ void WebAutomationSession::sendSynthesizedEventsToPage(WebPageProxy& page, NSArr
         method_setImplementation(methodToSwizzle, originalImplementation);
     });
 
-    for (NSEvent *event in eventsToSend) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSEvent *event in eventsToSend) {
         LOG(Automation, "Sending event[%p] to window[%p]: %@", event, window.get(), event);
 
         // Take focus back in case the Inspector became focused while the prior command or
@@ -132,7 +134,7 @@ void WebAutomationSession::markEventAsSynthesizedForAutomation(NSEvent *event)
 
 bool WebAutomationSession::wasEventSynthesizedForAutomation(NSEvent *event)
 {
-    RetainPtr<NSString> senderSessionIdentifier = objc_getAssociatedObject(event, &synthesizedAutomationEventAssociatedObjectKey);
+    RetainPtr senderSessionIdentifier = checked_objc_cast<NSString>(objc_getAssociatedObject(event, &synthesizedAutomationEventAssociatedObjectKey));
     if ([senderSessionIdentifier isEqualToString:m_sessionIdentifier.createNSString().get()])
         return true;
 
@@ -175,7 +177,7 @@ static WebCore::IntPoint viewportLocationToWindowLocation(WebCore::IntPoint loca
 
 #if ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
-static unsigned NODELETE nsEventButtonNumberFromAutomationMouseButton(MouseButton button)
+static unsigned LEGACY_NODELETE nsEventButtonNumberFromAutomationMouseButton(MouseButton button)
 {
     switch (button) {
     case MouseButton::Right:
@@ -191,7 +193,7 @@ static unsigned NODELETE nsEventButtonNumberFromAutomationMouseButton(MouseButto
     }
 }
 
-static WebMouseEventButton NODELETE automationMouseButtonToPlatformMouseButton(MouseButton button)
+static WebMouseEventButton LEGACY_NODELETE automationMouseButtonToPlatformMouseButton(MouseButton button)
 {
     switch (button) {
     case MouseButton::Left:   return WebMouseEventButton::Left;
@@ -323,7 +325,7 @@ OptionSet<WebEventModifier> WebAutomationSession::platformWebModifiersFromRaw(We
 #endif // ENABLE(WEBDRIVER_MOUSE_INTERACTIONS)
 
 #if ENABLE(WEBDRIVER_KEYBOARD_INTERACTIONS)
-static bool NODELETE virtualKeyHasStickyModifier(VirtualKey key)
+static bool LEGACY_NODELETE virtualKeyHasStickyModifier(VirtualKey key)
 {
     // Returns whether the key's modifier flags should affect other events while pressed down.
     switch (key) {
@@ -672,7 +674,7 @@ static unsigned short keyCodeForVirtualKey(VirtualKey key)
     }
 }
 
-static NSEventModifierFlags NODELETE eventModifierFlagsForVirtualKey(VirtualKey key)
+static NSEventModifierFlags LEGACY_NODELETE eventModifierFlagsForVirtualKey(VirtualKey key)
 {
     // Computes the modifiers changed by the virtual key when it is pressed or released.
     // The mapping from keys to modifiers is specified in the documentation for NSEvent.

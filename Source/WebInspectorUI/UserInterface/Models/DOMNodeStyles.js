@@ -39,6 +39,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         this._matchedRules = [];
         this._inheritedRules = [];
         this._pseudoElements = new Map;
+        this._keyframes = [];
         this._inlineStyle = null;
         this._attributesStyle = null;
         this._computedStyle = null;
@@ -137,6 +138,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
     get node() { return this._node; }
     get matchedRules() { return this._matchedRules; }
     get inheritedRules() { return this._inheritedRules; }
+    get keyframes() { return this._keyframes; }
     get inlineStyle() { return this._inlineStyle; }
     get attributesStyle() { return this._attributesStyle; }
     get pseudoElements() { return this._pseudoElements; }
@@ -197,7 +199,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
             // Iterate in reverse order to match the cascade order.
             var ruleOccurrences = {};
             for (var i = matchArray.length - 1; i >= 0; --i) {
-                var rule = this._parseRulePayload(matchArray[i].rule, matchArray[i].matchingSelectors, node, inherited, pseudoId, ruleOccurrences);
+                var rule = this._parseRulePayload(matchArray[i].rule, node, matchArray[i].matchingSelectors, inherited, pseudoId, ruleOccurrences);
                 if (!rule)
                     continue;
                 result.push(rule);
@@ -206,7 +208,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
             return result;
         };
 
-        function fetchedMatchedStyles(error, matchedRulesPayload, pseudoElementRulesPayload, inheritedRulesPayload)
+        function fetchedMatchedStyles(error, matchedRulesPayload, pseudoElementRulesPayload, inheritedRulesPayload, keyframesPayload)
         {
             matchedRulesPayload = matchedRulesPayload || [];
             pseudoElementRulesPayload = pseudoElementRulesPayload || [];
@@ -219,10 +221,13 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
             this._matchedRules = parseRuleMatchArrayPayload(matchedRulesPayload, this._node);
 
             this._pseudoElements.clear();
-            for (let {pseudoId, matches} of pseudoElementRulesPayload) {
+            for (let {pseudoId, matches, keyframes} of pseudoElementRulesPayload) {
                 let pseudoElementRules = parseRuleMatchArrayPayload(matches, this._node, false, pseudoId);
                 let pseudoElementOrderedStyles = this._collectStylesInCascadeOrder(pseudoElementRules, null, null);
-                this._pseudoElements.set(pseudoId, WI.DOMNodeStyles.uniqueOrderedStyles(pseudoElementOrderedStyles));
+                this._pseudoElements.set(pseudoId, {
+                    uniqueOrderedStyles: WI.DOMNodeStyles.uniqueOrderedStyles(pseudoElementOrderedStyles),
+                    keyframes: (keyframes || []).map((keyframePayload) => this._parseRulePayload(keyframePayload, this._node)),
+                });
             }
 
             this._inheritedRules = [];
@@ -242,6 +247,8 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
                 currentNode = currentNode.parentNode;
                 ++i;
             }
+
+            this._keyframes = (keyframesPayload || []).map((keyframePayload) => this._parseRulePayload(keyframePayload, this._node));
 
             fetchedMatchedStylesPromise.resolve();
         }
@@ -349,7 +356,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
 
         let target = this._node.owningTarget || WI.assumingMainTarget();
         let nodeId = this._node.backendNodeId;
-        target.CSSAgent.getMatchedStylesForNode.invoke({nodeId, includePseudo: true, includeInherited: true}, wrap.call(this, fetchedMatchedStyles, fetchedMatchedStylesPromise));
+        target.CSSAgent.getMatchedStylesForNode.invoke({nodeId, includePseudo: true, includeInherited: true, includeKeyframes: true}, wrap.call(this, fetchedMatchedStyles, fetchedMatchedStylesPromise));
         target.CSSAgent.getInlineStylesForNode.invoke({nodeId}, wrap.call(this, fetchedInlineStyles, fetchedInlineStylesPromise));
         target.CSSAgent.getComputedStyleForNode.invoke({nodeId}, wrap.call(this, fetchedComputedStyle, fetchedComputedStylesPromise));
 
@@ -469,6 +476,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         function ruleSelectorChanged(error, rulePayload)
         {
             if (error) {
+                this._ignoreNextContentDidChangeForStyleSheet = null;
                 result.reject(error);
                 return;
             }
@@ -675,7 +683,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         return style;
     }
 
-    _parseRulePayload(payload, matchedSelectorIndices, node, inherited, pseudoId, ruleOccurrences)
+    _parseRulePayload(payload, node, matchedSelectorIndices, inherited, pseudoId, ruleOccurrences)
     {
         if (!payload)
             return null;
@@ -691,7 +699,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         // Rules can match multiple times if they have multiple selectors or because of inheritance. We keep a count
         // of occurrences so we have unique rules per occurrence, that way properties will be correctly marked as overridden.
         var occurrence = 0;
-        if (mapKey) {
+        if (mapKey && ruleOccurrences) {
             if (mapKey in ruleOccurrences)
                 occurrence = ++ruleOccurrences[mapKey];
             else
@@ -832,14 +840,19 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         this._orderedStyles = cascadeOrderedStyleDeclarations;
 
         this._propertyNameToEffectivePropertyMap = {};
+        this._processStyleProperties(cascadeOrderedStyleDeclarations, this._propertyNameToEffectivePropertyMap);
 
-        this._associateRelatedProperties(cascadeOrderedStyleDeclarations, this._propertyNameToEffectivePropertyMap);
-        this._markOverriddenProperties(cascadeOrderedStyleDeclarations, this._propertyNameToEffectivePropertyMap);
-        this._collectCSSVariables(cascadeOrderedStyleDeclarations);
+        this._processKeyframeProperties(this._keyframes);
 
-        for (let pseudoElementOrderedStyles of this._pseudoElements.values()) {
-            this._associateRelatedProperties(pseudoElementOrderedStyles);
-            this._markOverriddenProperties(pseudoElementOrderedStyles);
+        this._collectCSSVariables([
+            ...this._keyframes.map((keyframe) => keyframe.style),
+            ...this._orderedStyles,
+        ]);
+
+        for (let {uniqueOrderedStyles, keyframes} of this._pseudoElements.values()) {
+            this._processStyleProperties(uniqueOrderedStyles);
+
+            this._processKeyframeProperties(keyframes);
         }
     }
 
@@ -904,6 +917,15 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
             return shorthandStyleIndex > propertyStyleIndex;
         }
 
+        function isImportantInDifferentLayer(effectiveProperty, property) {
+            if (!effectiveProperty.important || !property.important || effectiveProperty.ownerStyle.node !== property.ownerStyle.node)
+                return false;
+
+            let effectiveLayers = effectiveProperty.ownerStyle.groupings.filter((grouping) => grouping.isLayer);
+            let propertyLayers = property.ownerStyle.groupings.filter((grouping) => grouping.isLayer);
+            return effectiveLayers.length !== propertyLayers.length || effectiveLayers.some((effectiveLayer, i) => effectiveLayer.text !== propertyLayers[i].text);
+        }
+
         for (var i = 0; i < styles.length; ++i) {
             var style = styles[i];
             var properties = style.enabledProperties;
@@ -947,7 +969,7 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
                             continue;
                         }
 
-                        if (effectiveProperty.important || !property.important || effectiveProperty.ownerStyle.node !== property.ownerStyle.node) {
+                        if ((effectiveProperty.important || !property.important || effectiveProperty.ownerStyle.node !== property.ownerStyle.node) && !isImportantInDifferentLayer(effectiveProperty, property)) {
                             property.overridden = true;
                             property.overridingProperty = effectiveProperty;
                             continue;
@@ -967,6 +989,42 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
                     property.overridden = false;
 
                 propertyNameToEffectiveProperty[canonicalName] = property;
+            }
+        }
+    }
+
+    _processStyleProperties(styles, propertyNameToEffectiveProperty)
+    {
+        this._associateRelatedProperties(styles, propertyNameToEffectiveProperty);
+        this._markOverriddenProperties(styles, propertyNameToEffectiveProperty);
+    }
+
+    _processKeyframeProperties(keyframes)
+    {
+        let keyframesForName = new Map;
+        for (let keyframe of keyframes) {
+            let grouping = keyframe.groupings.find((grouping) => grouping.type === WI.CSSGrouping.Type.KeyframesRule);
+            keyframesForName.getOrInsert(grouping.text, []).push({
+                keyframe,
+                id: WI.CSSStyleDeclaration.stringIdForStyleId(grouping.id),
+            });
+        }
+
+        for (let keyframesWithName of keyframesForName.values()) {
+            let stylesForKey = new Map;
+            for (let {keyframe, id} of keyframesWithName) {
+                if (id !== keyframesWithName.lastValue.id) {
+                    for (let property of keyframe.style.enabledProperties)
+                        property.overridden = true;
+                    continue;
+                }
+
+                stylesForKey.getOrInsert(keyframe.selectorText, []).push(keyframe.style);
+            }
+
+            for (let styles of stylesForKey.values()) {
+                styles.reverse(); // Put the winning the winning style first.
+                this._processStyleProperties(styles);
             }
         }
     }
@@ -1033,6 +1091,8 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
         this._allCSSVariables = new Set;
         this._usedCSSVariables = new Set;
 
+        let dependenciesForInheritedVariable = new Map;
+
         for (let style of styles) {
             for (let property of style.enabledProperties) {
                 if (property.isVariable)
@@ -1052,13 +1112,13 @@ WI.DOMNodeStyles = class DOMNodeStyles extends WI.Object
                     continue;
                 }
 
-                // For variables from inherited styles, leverage the fact that styles are already sorted in cascade order to support inherited variables referencing other variables.
-                // If the variable was found to be used before, collect any variables used in its declaration value
-                // (if any variables are found, this isn't the end of the variable reference chain in the inheritance stack).
-                if (property.isVariable && this._usedCSSVariables.has(property.name))
-                    this._usedCSSVariables.addAll(variables);
+                if (property.isVariable && variables.length)
+                    dependenciesForInheritedVariable.getOrInsert(property.name, new Set).addAll(variables);
             }
         }
+
+        for (let variableName of this._usedCSSVariables)
+            this._usedCSSVariables.addAll(dependenciesForInheritedVariable.get(variableName) || []);
     }
 
     _isPropertyFoundInMatchingRules(propertyName)

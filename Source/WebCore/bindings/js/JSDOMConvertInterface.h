@@ -74,7 +74,7 @@ template<typename T> struct Converter<IDLInterface<T>> : DefaultConverter<IDLInt
             return Result::exception();
         }
 
-        return Result { *object };
+        return Result { object.releaseNonNull() };
     }
 };
 

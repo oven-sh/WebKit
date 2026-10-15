@@ -132,7 +132,7 @@ static String restrictionNames(MediaElementSession::BehaviorRestrictions restric
 
 #endif
 
-static bool NODELETE pageExplicitlyAllowsElementToAutoplayInline(const HTMLMediaElement& element)
+static bool LEGACY_NODELETE pageExplicitlyAllowsElementToAutoplayInline(const HTMLMediaElement& element)
 {
     auto& document = element.document();
     auto* page = document.page();
@@ -153,7 +153,7 @@ public:
         m_mediaSession->removeObserver(*this);
     }
 
-    void NODELETE ref() const final { RefCounted::ref(); }
+    void LEGACY_NODELETE ref() const final { RefCounted::ref(); }
     void deref() const final { RefCounted::deref(); }
 
     void metadataChanged(const RefPtr<MediaMetadata>& metadata) final
@@ -569,12 +569,18 @@ std::expected<void, MediaPlaybackDenialExplanation> MediaElementSession::playbac
 
 static bool autoplayPermittedWhileInvisible(const HTMLMediaElement& element)
 {
+#if ENABLE(MEDIA_STREAM)
+    bool isTryingToPlayLiveAudioWhileCapturing = element.hasAudio() && element.hasMediaStreamSrcObject() && protect(element.document())->isCapturing();
+#else
+    bool isTryingToPlayLiveAudioWhileCapturing = false;
+#endif
+
     // If the media element is already playing audibly, allow it to continue even when not visible as
     // pausing it would be observable by the user. Also allow elements that were previously playing
     // audibly and got interrupted by becoming invisible to resume (e.g. after unmuting), since the
     // interruption is what made them paused. However, elements that have not yet started playing
-    // should not autoplay while invisible.
-    if (element.paused() && !element.wasInterruptedForInvisibleAutoplay())
+    // should not autoplay while invisible, if not playing live stream while capturing.
+    if (!isTryingToPlayLiveAudioWhileCapturing && element.paused() && !element.wasInterruptedForInvisibleAutoplay())
         return false;
     if (element.isVideo() && !element.hasAudio())
         return false;
@@ -612,7 +618,7 @@ bool MediaElementSession::autoplayPermitted() const
         ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because element is not visible");
         return false;
     }
-    if (renderer->view().frameView().isOffscreen()) {
+    if (protect(renderer->view().frameView())->isOffscreen()) {
         ALWAYS_LOG(LOGIDENTIFIER, "Returning FALSE because frame is offscreen");
         return false;
     }
@@ -1117,8 +1123,8 @@ bool MediaElementSession::requiresFullscreenForVideoPlayback() const
         return false;
 
     if (element->document().isMediaDocument()) {
-        const HTMLVideoElement& videoElement = downcast<const HTMLVideoElement>(*element);
-        if (element->readyState() < HTMLVideoElement::HAVE_METADATA || !videoElement.hasEverHadVideo())
+        Ref videoElement = downcast<const HTMLVideoElement>(*element);
+        if (element->readyState() < HTMLVideoElement::HAVE_METADATA || !videoElement->hasEverHadVideo())
             return false;
     }
 
@@ -1493,7 +1499,7 @@ bool MediaElementSession::allowsPlaybackControlsForAutoplayingAudio() const
 
 #if ENABLE(MEDIA_SESSION)
 #if ENABLE(MEDIA_STREAM)
-static bool NODELETE isDocumentPlayingSeveralMediaStreamsAndCapturing(Document& document)
+static bool LEGACY_NODELETE isDocumentPlayingSeveralMediaStreamsAndCapturing(Document& document)
 {
     // We restrict to capturing document for now, until we have a good way to state to the UIProcess application that audio rendering is muted from here.
     auto* page = document.page();

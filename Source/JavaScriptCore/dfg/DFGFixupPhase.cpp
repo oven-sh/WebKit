@@ -2248,12 +2248,10 @@ private:
             watchHavingABadTime(node);
             if (node->child1()->shouldSpeculateInt32()) {
                 fixEdge<Int32Use>(node->child1());
-                node->clearFlags(NodeMustGenerate);
                 break;
             }
             if (node->child1()->shouldSpeculateInt52()) {
                 fixEdge<Int52RepUse>(node->child1());
-                node->clearFlags(NodeMustGenerate);
                 break;
             }
             break;
@@ -2263,25 +2261,21 @@ private:
             watchHavingABadTime(node);
             if (node->child1()->shouldSpeculateInt32()) {
                 fixEdge<Int32Use>(node->child1());
-                node->clearFlags(NodeMustGenerate);
                 break;
             }
             if (node->child1()->shouldSpeculateInt52()) {
                 fixEdge<Int52RepUse>(node->child1());
-                node->clearFlags(NodeMustGenerate);
                 break;
             }
 
             if (!m_graph.hasExitSite(node->origin.semantic, BadType)) {
                 if (node->child1()->shouldSpeculateInt32OrOther() && !node->child1()->shouldSpeculateOther()) {
                     fixEdge<Int32Use>(node->child1());
-                    node->clearFlags(NodeMustGenerate);
                     break;
                 }
 
                 if (node->child1()->shouldSpeculateInt52OrOther() && !node->child1()->shouldSpeculateOther()) {
                     fixEdge<Int52RepUse>(node->child1());
-                    node->clearFlags(NodeMustGenerate);
                     break;
                 }
             }
@@ -3430,7 +3424,18 @@ private:
 
         case ObjectDefineProperty: {
             fixEdge<ObjectUse>(node->child1()); // target
-            fixEdge<UntypedUse>(node->child2()); // key
+            if (m_graph.hasExitSite(node->origin.semantic, BadType))
+                fixEdge<UntypedUse>(node->child2());
+            else if (node->child2()->shouldSpeculateString())
+                fixEdge<StringUse>(node->child2());
+            else if (node->child2()->shouldSpeculateSymbol())
+                fixEdge<SymbolUse>(node->child2());
+            else if (node->child2()->shouldSpeculateInt32())
+                fixEdge<Int32Use>(node->child2());
+            else if (isBytecodeNumberSpeculation(node->child2()->prediction()))
+                fixEdge<NumberUse>(node->child2());
+            else
+                fixEdge<UntypedUse>(node->child2());
             fixEdge<ObjectUse>(node->child3()); // descriptor
             break;
         }
@@ -4998,7 +5003,7 @@ private:
         return std::tuple { arrayModes, flags };
     }
 
-    static std::optional<ArrayModes> NODELETE refineArrayModesForMultiPutByVal(Node*, ArrayModes arrayModes)
+    static std::optional<ArrayModes> LEGACY_NODELETE refineArrayModesForMultiPutByVal(Node*, ArrayModes arrayModes)
     {
         constexpr ArrayModes supportedArrays = 0
             | asArrayModesIgnoringTypedArrays(ArrayWithInt32)
@@ -5036,25 +5041,25 @@ private:
         return arrayModes;
     }
 
-    bool NODELETE alwaysUnboxSimplePrimitives()
+    bool LEGACY_NODELETE alwaysUnboxSimplePrimitives()
     {
         return false;
     }
 
     template<UseKind useKind>
-    void NODELETE observeUseKindOnNode(Node* node)
+    void LEGACY_NODELETE observeUseKindOnNode(Node* node)
     {
         if (useKind == UntypedUse)
             return;
         observeUseKindOnNode(node, useKind);
     }
 
-    void NODELETE observeUseKindOnEdge(Edge edge)
+    void LEGACY_NODELETE observeUseKindOnEdge(Edge edge)
     {
         observeUseKindOnNode(edge.node(), edge.useKind());
     }
 
-    void NODELETE observeUseKindOnNode(Node* node, UseKind useKind)
+    void LEGACY_NODELETE observeUseKindOnNode(Node* node, UseKind useKind)
     {
         if (node->op() != GetLocal)
             return;
@@ -5109,13 +5114,13 @@ private:
     }
     
     template<UseKind useKind>
-    void NODELETE fixEdge(Edge& edge)
+    void LEGACY_NODELETE fixEdge(Edge& edge)
     {
         observeUseKindOnNode<useKind>(edge.node());
         edge.setUseKind(useKind);
     }
     
-    unsigned NODELETE indexForChecks()
+    unsigned LEGACY_NODELETE indexForChecks()
     {
         unsigned index = m_indexInBlock;
         while (!m_block->at(index)->origin.exitOK)
@@ -5123,7 +5128,7 @@ private:
         return index;
     }
     
-    NodeOrigin NODELETE originForCheck(unsigned index)
+    NodeOrigin originForCheck(unsigned index)
     {
         return m_block->at(index)->origin.withSemantic(m_currentNode->origin.semantic);
     }
@@ -5565,7 +5570,7 @@ private:
         return false;
     }
 
-    void NODELETE fixupCheckJSCast(Node* node)
+    void LEGACY_NODELETE fixupCheckJSCast(Node* node)
     {
         fixEdge<CellUse>(node->child1());
     }

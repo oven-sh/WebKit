@@ -39,7 +39,6 @@
 #include "SVGElementTypeHelpers.h"
 #include "SVGFontElement.h"
 #include "SVGFontFaceSrcElement.h"
-#include "SVGGlyphElement.h"
 #include "SVGNames.h"
 #include "SVGPropertyOwnerRegistry.h"
 #include "StyleDocumentScope.h"
@@ -75,7 +74,7 @@ Ref<SVGFontFaceElement> SVGFontFaceElement::create(const QualifiedName& tagName,
 void SVGFontFaceElement::attributeChanged(const QualifiedName& name, const AtomString& oldValue, const AtomString& newValue, AttributeModificationReason attributeModificationReason)
 {
     auto propertyId = cssPropertyIdForSVGAttributeName(name);
-    if (propertyId > 0) {
+    if (propertyId != CSSPropertyID::Invalid) {
         Ref fontFaceRule = m_fontFaceRule;
         Ref properties = fontFaceRule->mutableProperties();
 
@@ -243,7 +242,7 @@ int SVGFontFaceElement::descent() const
 
 String SVGFontFaceElement::fontFamily() const
 {
-    return protect(protect(fontFaceRule())->properties())->getPropertyValue(CSSPropertyFontFamily);
+    return protect(protect(fontFaceRule())->properties())->getPropertyValue(CSSPropertyID::FontFamily);
 }
 
 SVGFontElement* SVGFontFaceElement::associatedFontElement() const
@@ -277,13 +276,15 @@ void SVGFontFaceElement::rebuildFontFace()
 
     // Parse in-memory CSS rules
     Ref fontFaceRule = this->fontFaceRule();
-    protect(fontFaceRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertySrc, list.releaseNonNull()));
+    protect(fontFaceRule->mutableProperties())->addParsedProperty(CSSProperty(CSSPropertyID::Src, list.releaseNonNull()));
 
     if (describesParentFont) {
         // Traverse parsed CSS values and associate CSSFontFaceSrcLocalValue elements with ourselves.
-        if (RefPtr srcList = downcast<CSSValueList>(protect(fontFaceRule->properties())->getPropertyCSSValue(CSSPropertySrc).get())) {
-            for (Ref item : *srcList)
-                downcast<CSSFontFaceSrcLocalValue>(const_cast<CSSValue&>(item.get())).setSVGFontFaceElement(*this);
+        if (RefPtr srcList = downcast<CSSValueList>(protect(fontFaceRule->properties())->getPropertyCSSValue(CSSPropertyID::Src).get())) {
+            for (Ref item : *srcList) {
+                // FIXME: Remove suppression once rdar://189998365 is fixed.
+                SUPPRESS_MEMORY_UNSAFE_CAST downcast<CSSFontFaceSrcLocalValue>(const_cast<CSSValue&>(item.get())).setSVGFontFaceElement(*this);
+            }
         }
     }
 

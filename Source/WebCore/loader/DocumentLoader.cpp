@@ -107,6 +107,7 @@
 #include "TextResourceDecoder.h"
 #include "UserContentProvider.h"
 #include "UserContentURLPattern.h"
+#include "ViewTransition.h"
 #include "ViolationReportType.h"
 #include <wtf/Assertions.h>
 #include <wtf/CompletionHandler.h>
@@ -152,7 +153,7 @@
 namespace WebCore {
 
 #if ENABLE(CONTENT_FILTERING)
-static bool& NODELETE contentFilterInDocumentLoader()
+static bool& LEGACY_NODELETE contentFilterInDocumentLoader()
 {
     static bool filter = false;
     RELEASE_ASSERT(isMainThread());
@@ -172,7 +173,7 @@ static void setAllDefersLoading(const ResourceLoaderMap& loaders, bool defers)
         loader->setDefersLoading(defers);
 }
 
-static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& NODELETE scriptExecutionContextIdentifierToLoaderMap()
+static HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>& LEGACY_NODELETE scriptExecutionContextIdentifierToLoaderMap()
 {
     static MainThreadNeverDestroyed<HashMap<ScriptExecutionContextIdentifier, SingleThreadWeakPtr<DocumentLoader>>> map;
     return map.get();
@@ -387,11 +388,11 @@ void DocumentLoader::stopLoading()
         if (isLoadingMainResource()) {
             // Stop the main resource loader and let it send the cancelled message.
             cancelMainResourceLoad(frameLoader->cancelledError(m_request));
-        } else if (!m_subresourceLoaders.isEmpty() || !m_plugInStreamLoaders.isEmpty()) {
+        } else if (!m_plugInStreamLoaders.isEmpty() || std::ranges::any_of(m_subresourceLoaders, [](auto& loader) { return !loader->options().keepAlive; })) {
             // The main resource loader already finished loading. Set the cancelled error on the
             // document and let the subresourceLoaders and pluginLoaders send individual cancelled messages below.
             setMainDocumentError(frameLoader->cancelledError(m_request));
-        } else {
+        } else if (m_subresourceLoaders.isEmpty()) {
             // If there are no resource loaders, we need to manufacture a cancelled message.
             // (A back/forward navigation has no resource loaders because its resources are cached.)
             mainReceivedError(frameLoader->cancelledError(m_request));
@@ -496,7 +497,7 @@ void DocumentLoader::finishedLoading()
                 MemoryCache::singleton().remove(*resource);
         }
         Ref document = *frame->document();
-        FrameLoadRequest frameLoadRequest { document.copyRef(), document->securityOrigin(), WTF::move(request), { }, InitiatedByMainFrame::Unknown };
+        FrameLoadRequest frameLoadRequest { document.copyRef(), protect(document->securityOrigin()), WTF::move(request), { }, InitiatedByMainFrame::Unknown };
         frameLoadRequest.setIsRequestFromClientOrUserInput();
         frameLoadRequest.setShouldTreatAsContinuingLoad(ShouldTreatAsContinuingLoad::YesAfterProvisionalLoadStarted);
         frame->loader().load(WTF::move(frameLoadRequest));
@@ -622,7 +623,7 @@ void DocumentLoader::matchRegistration(const URL& url, SWClientConnection::Regis
     }
 
     RefPtr frame = m_frame.get();
-    auto origin = (!frame->isMainFrame() && frame->document()) ? protect(frame->document())->topOrigin().data() : SecurityOriginData::fromURL(url);
+    auto origin = (!frame->isMainFrame() && frame->document() && !hasUnpartitionedStorageAccess(url)) ? protect(frame->document())->topOrigin().data() : SecurityOriginData::fromURL(url);
     if (!protect(ServiceWorkerProvider::singleton().serviceWorkerConnection())->mayHaveServiceWorkerRegisteredForOrigin(origin)) {
         callback(std::nullopt);
         return;
@@ -782,7 +783,7 @@ void DocumentLoader::willSendRequest(ResourceRequest&& newRequest, const Resourc
         // We shouldn't check for mixed content against the current frame when navigating; we only need to be concerned with the ancestor frames.
         RefPtr parentFrame = frame->tree().parent();
         if (!parentFrame)
-            parentFrame = frameLoader()->client().provisionalParentFrame();
+            parentFrame = protect(frameLoader()->client())->provisionalParentFrame();
 
         if (!parentFrame)
             return completionHandler(WTF::move(newRequest));
@@ -1084,7 +1085,7 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
 
     // Always show content with valid substitute data.
     if (m_substituteData.isValid()) {
-        continueAfterContentPolicy(PolicyAction::Use);
+        continueAfterContentPolicy(PolicyAction::Use, completionHandlerCaller.release());
         return;
     }
 
@@ -1101,11 +1102,12 @@ void DocumentLoader::responseReceived(ResourceResponse&& response, CompletionHan
 
     protect(frameLoader())->checkContentPolicy(m_response, [this, protectedThis = Ref { *this }, mainResourceLoader = WTF::move(mainResourceLoader),
         completionHandler = completionHandlerCaller.release()] (PolicyAction policy) mutable {
-        continueAfterContentPolicy(policy);
-        if (mainResourceLoader)
-            mainResourceLoader->didReceiveResponsePolicy();
-        if (completionHandler)
-            completionHandler();
+        continueAfterContentPolicy(policy, [mainResourceLoader = WTF::move(mainResourceLoader), completionHandler = WTF::move(completionHandler)] mutable {
+            if (mainResourceLoader)
+                mainResourceLoader->didReceiveResponsePolicy();
+            if (completionHandler)
+                completionHandler();
+        });
     });
 }
 
@@ -1161,8 +1163,9 @@ bool DocumentLoader::disallowDataRequest() const
     return true;
 }
 
-void DocumentLoader::continueAfterContentPolicy(PolicyAction policy)
+void DocumentLoader::continueAfterContentPolicy(PolicyAction policy, CompletionHandler<void()>&& completionHandler)
 {
+    CompletionHandlerCallingScope callCompletionHandler(WTF::move(completionHandler));
     ASSERT(m_waitingForContentPolicy);
     m_waitingForContentPolicy = false;
     if (isStopping())
@@ -1251,6 +1254,23 @@ void DocumentLoader::continueAfterContentPolicy(PolicyAction policy)
         }
     }
 
+    // https://html.spec.whatwg.org/multipage/browsing-the-web.html#deactivate-a-document-for-a-cross-document-navigation
+    // Nothing is committed until the rest of the response comes through, so holding it back holds the
+    // navigation back while the current document captures a view transition into this one.
+    RefPtr frameLoader = this->frameLoader();
+    if (!frameLoader)
+        return;
+    m_waitingForOutboundViewTransitionCapture = true;
+    frameLoader->waitForOutboundViewTransitionCapture(*this, false, [this, protectedThis = Ref { *this }, completionHandler = callCompletionHandler.release()] mutable {
+        if (std::exchange(m_waitingForOutboundViewTransitionCapture, false))
+            commitSubstituteDataIfNeeded();
+        if (completionHandler)
+            completionHandler();
+    });
+}
+
+void DocumentLoader::commitSubstituteDataIfNeeded()
+{
     if (!isStopping() && m_substituteData.isValid() && isLoadingMainResource()) {
         RefPtr content = m_substituteData.content();
         if (content && content->size()) {
@@ -1320,7 +1340,7 @@ static inline bool shouldUseActiveServiceWorkerFromParent(const Document& docume
 }
 
 #if ENABLE(CONTENT_EXTENSIONS)
-static inline bool NODELETE shouldEnableResourceMonitor(const Frame& frame)
+static inline bool LEGACY_NODELETE shouldEnableResourceMonitor(const Frame& frame)
 {
     if (frame.isMainFrame())
         return false;
@@ -1538,7 +1558,7 @@ void DocumentLoader::applyPoliciesToSettings()
     if (!m_frame->isMainFrame())
         return;
 
-    m_frame->settings().applyMainFrameWebsitePolicies({
+    protect(m_frame->settings())->applyMainFrameWebsitePolicies({
         m_mediaSourcePolicy,
         m_legacyOverflowScrollingTouchPolicy,
         m_pushAndNotificationsEnabledPolicy,
@@ -1548,7 +1568,7 @@ void DocumentLoader::applyPoliciesToSettings()
     });
 }
 
-ColorSchemePreference NODELETE DocumentLoader::colorSchemePreference() const
+ColorSchemePreference LEGACY_NODELETE DocumentLoader::colorSchemePreference() const
 {
     return m_colorSchemePreference;
 }
@@ -2421,6 +2441,15 @@ void DocumentLoader::cancelPolicyCheckIfNeeded()
         m_waitingForContentPolicy = false;
         m_waitingForNavigationPolicy = false;
     }
+
+    // The current document stays, so it stops holding its rendering for a transition that will not happen.
+    if (std::exchange(m_waitingForOutboundViewTransitionCapture, false)) {
+        RefPtr frame = m_frame.get();
+        if (RefPtr document = frame ? frame->document() : nullptr) {
+            if (RefPtr viewTransition = document->activeViewTransition())
+                viewTransition->skipTransition();
+        }
+    }
 }
 
 void DocumentLoader::cancelMainResourceLoad(const ResourceError& resourceError, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
@@ -2476,8 +2505,8 @@ void DocumentLoader::subresourceLoaderFinishedLoadingOnePart(ResourceLoader& loa
     }
 
     checkLoadComplete();
-    if (m_frame)
-        m_frame->loader().checkLoadComplete();
+    if (RefPtr frame = m_frame)
+        protect(frame->loader())->checkLoadComplete();
 }
 
 void DocumentLoader::maybeFinishLoadingMultipartContent()
@@ -2517,7 +2546,7 @@ void DocumentLoader::startIconLoading()
         auto result = m_iconsPendingLoadDecision.add(nextIconCallbackID++, icon);
         return { icon, result.iterator->key };
     });
-    m_frame->loader().client().getLoadDecisionForIcons(WTF::move(iconDecisions));
+    protect(m_frame->loader().client())->getLoadDecisionForIcons(WTF::move(iconDecisions));
 }
 
 void DocumentLoader::didGetLoadDecisionForIcon(bool decision, uint64_t loadIdentifier, CompletionHandler<void(FragmentedSharedBuffer*)>&& completionHandler)
@@ -2688,7 +2717,7 @@ ResourceError DocumentLoader::contentFilterDidBlock(ContentFilterUnblockHandler&
 
 void DocumentLoader::handleProvisionalLoadFailureFromContentFilter(const URL& blockedPageURL, SubstituteData&& substituteData)
 {
-    protect(frameLoader())->load(FrameLoadRequest(*frame(), URL { blockedPageURL }, WTF::move(substituteData)));
+    protect(frameLoader())->load(FrameLoadRequest(protect(*frame()), URL { blockedPageURL }, WTF::move(substituteData)));
 }
 
 #if HAVE(WEBCONTENTRESTRICTIONS)
@@ -2725,7 +2754,7 @@ ResourceError DocumentLoader::handleContentFilterDidBlock(ContentFilterUnblockHa
             }
         });
     }
-    frameLoader()->client().contentFilterDidBlockLoad(WTF::move(unblockHandler));
+    protect(frameLoader()->client())->contentFilterDidBlockLoad(WTF::move(unblockHandler));
     auto error = protect(frameLoader())->blockedByContentFilterError(request());
 
     m_blockedByContentFilter = true;

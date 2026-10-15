@@ -1918,8 +1918,10 @@
    },
    {
       "emails" : [
-         "cbiesinger@chromium.org"
+         "cbiesinger@chromium.org",
+         "cbiesinger@igalia.com"
       ],
+      "github" : "cbiesinger",
       "name" : "Christian Biesinger",
       "nicks" : [
          "cbiesinger"

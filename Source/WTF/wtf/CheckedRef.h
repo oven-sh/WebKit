@@ -186,6 +186,8 @@ public:
 private:
     template<typename OtherType, typename OtherPtrTraits> friend class CheckedRef;
     template<typename OtherType, typename OtherPtrTraits> friend class CheckedPtr;
+    template<typename ExpectedType, typename ArgType, typename ArgPtrTraits> friend CheckedRef<match_constness_t<ArgType, ExpectedType>> downcast(CheckedRef<ArgType, ArgPtrTraits>&&);
+    template<typename ExpectedType, typename ArgType, typename ArgPtrTraits> friend CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedRef<ArgType, ArgPtrTraits>&&);
 
     T* releasePtr()
     {
@@ -258,39 +260,41 @@ inline bool isAnyOf(const CheckedRef<ArgType, ArgPtrTraits>& source)
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline ExpectedType& downcast(CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline match_constness_t<ArgType, ExpectedType>& downcast(CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return downcast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline ExpectedType& downcast(const CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline match_constness_t<ArgType, ExpectedType>& downcast(const CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return downcast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline const ExpectedType& downcast(CheckedRef<const ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
+inline CheckedRef<match_constness_t<ArgType, ExpectedType>> downcast(CheckedRef<ArgType, ArgPtrTraits>&& source)
 {
-    return downcast<ExpectedType>(source.get());
+    return { downcast<ExpectedType>(*source.releasePtr()), CheckedRef<match_constness_t<ArgType, ExpectedType>>::Adopt };
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedRef<ArgType, ArgPtrTraits>& source)
+inline match_constness_t<ArgType, ExpectedType>* dynamicDowncast(CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return dynamicDowncast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(const CheckedRef<ArgType, ArgPtrTraits>& source)
+inline match_constness_t<ArgType, ExpectedType>* dynamicDowncast(const CheckedRef<ArgType, ArgPtrTraits>& source LIFETIME_BOUND)
 {
     return dynamicDowncast<ExpectedType>(source.get());
 }
 
 template<typename ExpectedType, typename ArgType, typename ArgPtrTraits>
-inline const CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedRef<const ArgType, ArgPtrTraits>& source)
+inline CheckedPtr<match_constness_t<ArgType, ExpectedType>> dynamicDowncast(CheckedRef<ArgType, ArgPtrTraits>&& source)
 {
-    return dynamicDowncast<ExpectedType>(source.get());
+    if (!is<ExpectedType>(source))
+        return nullptr;
+    return CheckedRef { uncheckedDowncast<ExpectedType>(*source.releasePtr()), CheckedRef<match_constness_t<ArgType, ExpectedType>>::Adopt };
 }
 
 template<typename T, typename PtrTraits = RawPtrTraits<T>>
@@ -366,15 +370,15 @@ public:
         ASSERT_WITH_SECURITY_IMPLICATION(m_didBeginDeletion || deleteException == CheckedPtrDeleteCheckException::Yes);
     }
 
-    PtrCounterType NODELETE checkedPtrCount() const { return m_checkedPtrCount; }
-    void NODELETE incrementCheckedPtrCount() const
+    PtrCounterType LEGACY_NODELETE checkedPtrCount() const { return m_checkedPtrCount; }
+    void LEGACY_NODELETE incrementCheckedPtrCount() const
     {
         if constexpr (AtomicLike<StorageType>)
             m_checkedPtrCount.fetch_add(1, std::memory_order_relaxed);
         else
             ++m_checkedPtrCount;
     }
-    SUPPRESS_NODELETE ALWAYS_INLINE void NODELETE decrementCheckedPtrCount() const
+    SUPPRESS_NODELETE ALWAYS_INLINE void LEGACY_NODELETE decrementCheckedPtrCount() const
     {
         // In normal execution, a CheckedPtr always points to an object with a non-zero checkedPtrCount().
         // When it detects a dangling pointer, WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR scribbles an object with zeroes and then leaks it.

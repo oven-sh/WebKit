@@ -9,6 +9,9 @@
 #ifndef __TZNAMES_H
 #define __TZNAMES_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 /**
  * \file
  * \brief C++ API: TimeZoneNames

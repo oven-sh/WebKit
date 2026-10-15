@@ -245,7 +245,7 @@ const auto WebEventMouseDown = NSEventTypeLeftMouseDown;
 - (void)forwardContextMenuAction:(id)sender;
 @end
 
-static std::optional<WebCore::ContextMenuAction> NODELETE toAction(NSInteger tag)
+static std::optional<WebCore::ContextMenuAction> LEGACY_NODELETE toAction(NSInteger tag)
 {
     using namespace WebCore;
     if (tag >= ContextMenuItemBaseCustomTag && tag <= ContextMenuItemLastCustomTag) {
@@ -430,7 +430,7 @@ static std::optional<WebCore::ContextMenuAction> NODELETE toAction(NSInteger tag
     return std::nullopt;
 }
 
-static std::optional<NSInteger> NODELETE toTag(WebCore::ContextMenuAction action)
+static std::optional<NSInteger> LEGACY_NODELETE toTag(WebCore::ContextMenuAction action)
 {
     using namespace WebCore;
     switch (action) {
@@ -721,7 +721,7 @@ static BOOL forceNSViewHitTest;
 // if YES, do the "top WebHTMLView" hit test (which we'd like to do all the time but can't because of Java requirements [see bug 4349721])
 static BOOL forceWebHTMLViewHitTest;
 
-static RetainPtr<WebHTMLView>& NODELETE lastHitView()
+static RetainPtr<WebHTMLView>& LEGACY_NODELETE lastHitView()
 {
     static NeverDestroyed<RetainPtr<WebHTMLView>> lastHitView;
     return lastHitView;
@@ -1043,7 +1043,7 @@ struct WebHTMLViewInterpretKeyEventsParameters {
 
 #if PLATFORM(MAC)
 
-static NSControlStateValue NODELETE kit(TriState state)
+static NSControlStateValue LEGACY_NODELETE kit(TriState state)
 {
     switch (state) {
     case TriState::False:
@@ -1058,6 +1058,11 @@ static NSControlStateValue NODELETE kit(TriState state)
 }
 
 #endif
+
+@interface WebHTMLView () {
+    RetainPtr<WebHTMLViewPrivate> _private;
+}
+@end
 
 @implementation WebHTMLViewPrivate
 
@@ -1565,8 +1570,8 @@ static NSControlStateValue NODELETE kit(TriState state)
     _private->savedSubviews = self._subviewsIvar;
     // We need to keep the layer-hosting view in the subviews, otherwise the layers flash.
     if (_private->layerHostingView) {
-        NSMutableArray* newSubviews = [[NSMutableArray alloc] initWithObjects:protect(_private->layerHostingView).get(), nil];
-        self._subviewsIvar = newSubviews;
+        // Released in -_restoreSubviews.
+        self._subviewsIvar = [[NSMutableArray arrayWithObject:protect(_private->layerHostingView)] retain];
     } else
         self._subviewsIvar = nil;
     _private->subviewsSetAside = YES;
@@ -2581,7 +2586,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
     // Make all drawing go through us instead of subviews.
     [self _setDrawsOwnDescendants:YES];
     
-    _private = [[WebHTMLViewPrivate alloc] init];
+    _private = adoptNS([[WebHTMLViewPrivate alloc] init]);
 
     _private->pluginController = adoptNS([[WebPluginController alloc] initWithDocumentView:self]);
 
@@ -2591,7 +2596,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
                    name:WebMarkedTextUpdatedNotification object:nil];
     auto notificationName = adoptNS([[NSString alloc] initWithCString:kGSEventHardwareKeyboardAvailabilityChangedNotification encoding:NSUTF8StringEncoding]);
     auto notificationBehavior = static_cast<CFNotificationSuspensionBehavior>(CFNotificationSuspensionBehaviorCoalesce | _CFNotificationObserverIsObjC);
-    CFNotificationCenterAddObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(self), hardwareKeyboardAvailabilityChangedCallback, (__bridge CFStringRef)notificationName.get(), nullptr, notificationBehavior);
+    CFNotificationCenterAddObserver(protect(CFNotificationCenterGetDarwinNotifyCenter()), (__bridge const void *)(self), hardwareKeyboardAvailabilityChangedCallback, (__bridge CFStringRef)notificationName.get(), nullptr, notificationBehavior);
 #endif
 
 #if PLATFORM(MAC)
@@ -2609,15 +2614,13 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 #if PLATFORM(IOS_FAMILY)
     [[NSNotificationCenter defaultCenter] removeObserver:self name:WebMarkedTextUpdatedNotification object:nil];
     auto notificationName = adoptNS([[NSString alloc] initWithCString:kGSEventHardwareKeyboardAvailabilityChangedNotification encoding:NSUTF8StringEncoding]);
-    CFNotificationCenterRemoveObserver(CFNotificationCenterGetDarwinNotifyCenter(), (__bridge const void *)(self), (__bridge CFStringRef)notificationName.get(), nullptr);
+    CFNotificationCenterRemoveObserver(protect(CFNotificationCenterGetDarwinNotifyCenter()), (__bridge const void *)(self), (__bridge CFStringRef)notificationName.get(), nullptr);
 #endif
 
     // We can't assert that close has already been called because
     // this view can be removed from it's superview, even though
     // it could be needed later, so close if needed.
     [self close];
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
     _private = nil;
 
     [super dealloc];
@@ -2923,7 +2926,7 @@ IGNORE_WARNINGS_END
         NSMenuItem *menuItem = (NSMenuItem *)item;
         if ([menuItem isKindOfClass:[NSMenuItem class]]) {
             String direction = writingDirection == NSWritingDirectionLeftToRight ? "ltr"_s : "rtl"_s;
-            [menuItem setState:(protect(frame->editor())->selectionHasStyle(WebCore::CSSPropertyDirection, direction) != TriState::False)];
+            [menuItem setState:(protect(frame->editor())->selectionHasStyle(WebCore::CSSPropertyID::Direction, direction) != TriState::False)];
         }
         return [self _canEdit];
     }
@@ -2940,7 +2943,7 @@ IGNORE_WARNINGS_END
         if ([menuItem isKindOfClass:[NSMenuItem class]]) {
             // Take control of the title of the menu item instead of just checking/unchecking it because
             // a check would be ambiguous.
-            [menuItem setTitle:protect((protect(frame->editor())->selectionHasStyle(WebCore::CSSPropertyDirection, "rtl"_s) != TriState::False)
+            [menuItem setTitle:protect((protect(frame->editor())->selectionHasStyle(WebCore::CSSPropertyID::Direction, "rtl"_s) != TriState::False)
                 ? UI_STRING_INTERNAL("Left to Right", "Left to Right context menu item")
                 : UI_STRING_INTERNAL("Right to Left", "Right to Left context menu item"))];
         }
@@ -4231,7 +4234,7 @@ ALLOW_DEPRECATED_DECLARATIONS_END
 
 #if ENABLE(DRAG_SUPPORT) && PLATFORM(MAC)
 
-static NSDragOperation NODELETE kit(OptionSet<WebCore::DragOperation> operationMask)
+static NSDragOperation LEGACY_NODELETE kit(OptionSet<WebCore::DragOperation> operationMask)
 {
     NSDragOperation result = NSDragOperationNone;
     if (operationMask.contains(WebCore::DragOperation::Copy))
@@ -6760,6 +6763,11 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
 
 #if PLATFORM(MAC)
 
+static void setEnabledInputSources(CFArrayRef inputSources)
+{
+    TSMSetDocumentProperty(0, kTSMDocumentEnabledInputSourcesPropertyTag, sizeof(CFArrayRef), &inputSources);
+}
+
 - (void)_updateSecureInputState
 {
     if (![[self window] isKeyWindow] || ([[self window] firstResponder] != self && !_private->_forceUpdateSecureInputState)) {
@@ -6782,8 +6790,7 @@ ALLOW_DEPRECATED_IMPLEMENTATIONS_END
         // no need to call TSMGetActiveDocument(), which may return an incorrect result when selection hasn't been yet updated
         // after focusing a node.
         static NeverDestroyed<RetainPtr<CFArrayRef>> inputSources = adoptCF(TISCreateASCIICapableInputSourceList());
-        CFArrayRef inputSourcesRef = inputSources->get();
-        TSMSetDocumentProperty(0, kTSMDocumentEnabledInputSourcesPropertyTag, sizeof(CFArrayRef), &inputSourcesRef);
+        setEnabledInputSources(inputSources->get());
     } else {
         if (_private->isInSecureInputState)
             DisableSecureEventInput();

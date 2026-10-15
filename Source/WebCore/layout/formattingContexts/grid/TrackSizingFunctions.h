@@ -27,6 +27,7 @@
 
 #include "StyleGridTrackBreadth.h"
 #include "StyleGridTrackSize.h"
+#include "StylePrimitiveNumericTypes+Evaluation.h"
 #include "StyleZoomPrimitives.h"
 
 namespace WebCore {

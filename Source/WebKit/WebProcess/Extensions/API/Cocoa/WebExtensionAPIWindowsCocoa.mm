@@ -44,10 +44,11 @@
 #import "WebExtensionUtilities.h"
 #import "WebExtensionWindowIdentifier.h"
 #import "WebProcess.h"
+#import <wtf/Borrow.h>
 
 namespace WebKit {
 
-static inline NSString *NODELETE toWebAPI(WebExtensionWindow::State state)
+static inline NSString *LEGACY_NODELETE toWebAPI(WebExtensionWindow::State state)
 {
     switch (state) {
     case WebExtensionWindow::State::Normal:
@@ -64,7 +65,7 @@ static inline NSString *NODELETE toWebAPI(WebExtensionWindow::State state)
     }
 }
 
-static inline NSString *NODELETE toWebAPI(WebExtensionWindow::Type type)
+static inline NSString *LEGACY_NODELETE toWebAPI(WebExtensionWindow::Type type)
 {
     switch (type) {
     case WebExtensionWindow::Type::Normal:
@@ -107,7 +108,7 @@ static NSDictionary *toWebAPI(const WebExtensionWindowParameters& parameters)
     if (parameters.tabs) {
         NSMutableArray *tabs = [[NSMutableArray alloc] initWithCapacity:parameters.tabs.value().size()];
 
-        for (auto& tab : parameters.tabs.value())
+        for (auto& tab : borrow(parameters.tabs.value()))
             [tabs addObject:toWebAPI(tab)];
 
         result[tabsKey] = [tabs copy];
@@ -531,7 +532,7 @@ WebExtensionAPIWindowsEvent& WebExtensionAPIWindows::onFocusChanged()
     return *m_onFocusChanged;
 }
 
-inline OptionSet<WebExtensionWindowTypeFilter> NODELETE toWindowTypeFilter(WebExtensionWindow::Type type)
+inline OptionSet<WebExtensionWindowTypeFilter> LEGACY_NODELETE toWindowTypeFilter(WebExtensionWindow::Type type)
 {
     switch (type) {
     case WebExtensionWindow::Type::Normal:
@@ -547,25 +548,25 @@ void WebExtensionContextProxy::dispatchWindowsEvent(WebExtensionEventListenerTyp
     auto filter = windowParameters ? toWindowTypeFilter(windowParameters.value().type.value()) : allWebExtensionWindowTypeFilters();
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        auto& windowsObject = namespaceObject.windows();
+        Ref windowsObject = namespaceObject.windows();
 
         switch (type) {
         case WebExtensionEventListenerType::WindowsOnCreated:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/windows/onCreated
             ASSERT(windowParameters);
-            windowsObject.onCreated().invokeListenersWithArgument(toWebAPI(windowParameters), filter);
+            protect(windowsObject->onCreated())->invokeListenersWithArgument(toWebAPI(windowParameters), filter);
             break;
 
         case WebExtensionEventListenerType::WindowsOnFocusChanged:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/windows/onFocusChanged
             ASSERT(!windowParameters || windowParameters.value().identifier);
-            windowsObject.onFocusChanged().invokeListenersWithArgument(@(toWebAPI(windowParameters ? windowParameters.value().identifier.value() : WebExtensionWindowConstants::NoneIdentifier)), filter);
+            protect(windowsObject->onFocusChanged())->invokeListenersWithArgument(@(toWebAPI(windowParameters ? windowParameters.value().identifier.value() : WebExtensionWindowConstants::NoneIdentifier)), filter);
             break;
 
         case WebExtensionEventListenerType::WindowsOnRemoved:
             // Documentation: https://developer.mozilla.org/docs/Mozilla/Add-ons/WebExtensions/API/windows/onRemoved
             ASSERT(windowParameters && windowParameters.value().identifier);
-            windowsObject.onRemoved().invokeListenersWithArgument(@(toWebAPI(windowParameters.value().identifier.value())), filter);
+            protect(windowsObject->onRemoved())->invokeListenersWithArgument(@(toWebAPI(windowParameters.value().identifier.value())), filter);
             break;
 
         default:

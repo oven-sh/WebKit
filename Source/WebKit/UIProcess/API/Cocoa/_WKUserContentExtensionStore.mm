@@ -36,7 +36,7 @@
 
 NSString * const _WKUserContentExtensionsDomain = @"WKErrorDomain";
 
-static NSError *toUserContentRuleListStoreError(const NSError *error)
+static RetainPtr<NSError> toUserContentRuleListStoreError(const NSError *error)
 {
     if (!error)
         return nil;
@@ -76,7 +76,7 @@ static NSError *toUserContentRuleListStoreError(const NSError *error)
 {
     [_contentRuleListStore compileContentRuleListForIdentifier:identifier encodedContentRuleList:encodedContentRuleList completionHandler:^(WKContentRuleList *contentRuleList, NSError *error) {
         auto contentFilter = contentRuleList ? adoptNS([[_WKUserContentFilter alloc] _initWithWKContentRuleList:contentRuleList]) : nil;
-        completionHandler(contentFilter.get(), toUserContentRuleListStoreError(error));
+        completionHandler(contentFilter.get(), toUserContentRuleListStoreError(error).get());
     }];
 }
 
@@ -84,14 +84,14 @@ static NSError *toUserContentRuleListStoreError(const NSError *error)
 {
     [_contentRuleListStore lookUpContentRuleListForIdentifier:identifier completionHandler:^(WKContentRuleList *contentRuleList, NSError *error) {
         auto contentFilter = contentRuleList ? adoptNS([[_WKUserContentFilter alloc] _initWithWKContentRuleList:contentRuleList]) : nil;
-        completionHandler(contentFilter.get(), toUserContentRuleListStoreError(error));
+        completionHandler(contentFilter.get(), toUserContentRuleListStoreError(error).get());
     }];
 }
 
 - (void)removeContentExtensionForIdentifier:(NSString *)identifier completionHandler:(void (^)(NSError *))completionHandler
 {
     [_contentRuleListStore removeContentRuleListForIdentifier:identifier completionHandler:^(NSError *error) {
-        completionHandler(toUserContentRuleListStoreError(error));
+        completionHandler(toUserContentRuleListStoreError(error).get());
     }];
 }
 

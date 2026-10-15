@@ -64,7 +64,7 @@ static uint64_t nextLogIdentifier()
 }
 
 #if !RELEASE_LOG_DISABLED
-static WTFLogChannel& NODELETE logChannel()
+static WTFLogChannel& LEGACY_NODELETE logChannel()
 {
     return LogMedia;
 }
@@ -93,7 +93,7 @@ static PlatformMediaSession::RemoteControlCommandType platformCommandForMediaSes
     return map.get(action, PlatformMediaSession::RemoteControlCommandType::NoCommand);
 }
 
-static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> NODELETE platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
+static std::optional<std::pair<PlatformMediaSession::RemoteControlCommandType, PlatformMediaSession::RemoteCommandArgument>> LEGACY_NODELETE platformCommandForMediaSessionAction(const MediaSessionActionDetails& actionDetails)
 {
     PlatformMediaSession::RemoteControlCommandType command = PlatformMediaSession::RemoteControlCommandType::NoCommand;
     PlatformMediaSession::RemoteCommandArgument argument;
@@ -174,7 +174,7 @@ Ref<MediaSession> MediaSession::create(Navigator& navigator)
 }
 
 MediaSession::MediaSession(Navigator& navigator)
-    : ActiveDOMObject(navigator.scriptExecutionContext())
+    : ActiveDOMObject(protect(navigator.scriptExecutionContext()))
     , m_navigator(navigator)
     , m_platformSession { PlatformMediaSession::create(*this) }
     , m_logger(Document::sharedLogger())
@@ -612,8 +612,14 @@ void MediaSession::updateNowPlayingInfo(NowPlayingInfo& info)
     }
 
     if (RefPtr metadataWithImage = m_metadata && m_metadata->artworkImage() ? m_metadata : (m_defaultMetadata && m_defaultMetadata->artworkImage() ? m_defaultMetadata : nullptr)) {
-        ASSERT(metadataWithImage->artworkImage()->data(), "An image must always have associated data");
-        info.metadata.artwork = { { metadataWithImage->artworkSrc(), protect(metadataWithImage->artworkImage())->mimeType(), metadataWithImage->artworkImage() } };
+        auto& artworkImage = *metadataWithImage->artworkImage();
+        Ref image = artworkImage.image;
+        ASSERT(image->data(), "An image must always have associated data");
+        info.metadata.artwork = { {
+            .src = metadataWithImage->artworkSrc(),
+            .mimeType = image->mimeType(),
+            .image = image->nativeImage(artworkImage.concreteObjectSize),
+        } };
     }
     if (m_metadata) {
         info.metadata.title = m_metadata->title();

@@ -76,7 +76,7 @@ namespace WebCore {
 using LayerToPlatformCALayerMap = HashMap<void*, PlatformCALayer*>;
 
 static Lock layerToPlatformLayerMapLock;
-static LayerToPlatformCALayerMap& NODELETE layerToPlatformLayerMap() WTF_REQUIRES_LOCK(layerToPlatformLayerMapLock)
+static LayerToPlatformCALayerMap& LEGACY_NODELETE layerToPlatformLayerMap() WTF_REQUIRES_LOCK(layerToPlatformLayerMapLock)
 {
     static NeverDestroyed<LayerToPlatformCALayerMap> layerMap;
     return layerMap;
@@ -142,7 +142,8 @@ static MonotonicTime mediaTimeToCurrentTime(CFTimeInterval t)
     RetainPtr layer = owner->platformLayer();
 
     String animationKey;
-    for (NSString *key in [layer.get() animationKeys]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer.get() animationKeys]) {
         if ([layer.get() animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -167,7 +168,8 @@ static MonotonicTime mediaTimeToCurrentTime(CFTimeInterval t)
     RetainPtr layer = owner->platformLayer();
 
     String animationKey;
-    for (NSString *key in [layer.get() animationKeys]) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL NSString *key in [layer.get() animationKeys]) {
         if ([layer.get() animationForKey:key] == animation) {
             animationKey = key;
             break;
@@ -196,7 +198,7 @@ void PlatformCALayerCocoa::setOwner(PlatformCALayerClient* owner)
         [static_cast<WebAnimationDelegate*>(m_delegate.get()) setOwner:this];        
 }
 
-static NSString *NODELETE toCAFilterType(PlatformCALayer::FilterType type)
+static NSString *LEGACY_NODELETE toCAFilterType(PlatformCALayer::FilterType type)
 {
     switch (type) {
     case PlatformCALayer::FilterType::Linear: return kCAFilterLinear;

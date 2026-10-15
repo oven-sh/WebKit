@@ -468,7 +468,7 @@ RUN --mount=type=tmpfs,target=/webkitbuild \
     cp -rfL $WEBKIT_OUT_DIR/JavaScriptCore/PrivateHeaders/JavaScriptCore/* /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.h /output/include/JavaScriptCore/ && \
     cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*/*.h /output/include/JavaScriptCore/ && \
-    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/DerivedSources/*.json /output/ && \
+    cp -fL $WEBKIT_OUT_DIR/JavaScriptCore/Scripts/CombinedDomains.json /output/ && \
     { cp -rL $WEBKIT_OUT_DIR/WTF/DerivedSources/* /output/include/wtf/ 2>/dev/null || true; } && \
     cp -rL $WEBKIT_OUT_DIR/WTF/Headers/wtf/* /output/include/wtf/ && \
     cp -rL $WEBKIT_OUT_DIR/bmalloc/Headers/bmalloc/* /output/include/bmalloc/ && \

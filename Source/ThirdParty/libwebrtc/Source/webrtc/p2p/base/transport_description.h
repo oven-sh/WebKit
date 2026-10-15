@@ -94,9 +94,11 @@ struct IceParameters {
   RTCError Validate() const;
 };
 
-constexpr auto* ICE_OPTION_TRICKLE = "trickle";
-constexpr auto* ICE_OPTION_RENOMINATION = "renomination";
-constexpr auto* ICE_OPTION_GOOG_SPED_V1 = "goog-sped-v1";
+inline constexpr absl::string_view ICE_OPTION_TRICKLE = "trickle";
+inline constexpr absl::string_view ICE_OPTION_RENOMINATION = "renomination";
+inline constexpr absl::string_view ICE_OPTION_GOOG_SPED_V1 = "googspedv1";
+// STUN Protocol for Embedding DTLS.
+inline constexpr absl::string_view ICE_OPTION_SPED = "sped";
 
 std::optional<ConnectionRole> StringToConnectionRole(
     absl::string_view role_str);
@@ -120,9 +122,7 @@ struct TransportDescription {
   bool HasOption(absl::string_view option) const {
     return absl::c_linear_search(transport_options, option);
   }
-  void AddOption(absl::string_view option) {
-    transport_options.emplace_back(option);
-  }
+  void AddOption(absl::string_view option);
   bool secure() const { return identity_fingerprint != nullptr; }
 
   IceParameters GetIceParameters() const {

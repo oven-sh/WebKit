@@ -88,6 +88,9 @@ public:
     WEBCORE_EXPORT size_t sizeInBytes() const;
     std::optional<Color> singlePixelSolidColor() const;
     WEBCORE_EXPORT virtual ColorSpace colorSpace() const;
+    // The pixels are held elsewhere and cannot be read in this process: platformImage() is null, and
+    // only a compositor can display the image.
+    virtual bool isDisplayOnly() const { return false; }
 
     // Tightly packed unpremultiplied pixels at the depth they were decoded at.
     struct UnpremultipliedPixels {

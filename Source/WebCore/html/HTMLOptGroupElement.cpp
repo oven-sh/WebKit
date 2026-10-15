@@ -102,9 +102,9 @@ void HTMLOptGroupElement::updateUserAgentShadowTree()
         labelContainer->setTextContent(WTF::move(label));
 
     if (showLabel)
-        labelContainer->removeInlineStyleProperty(CSSPropertyDisplay);
+        labelContainer->removeInlineStyleProperty(CSSPropertyID::Display);
     else
-        labelContainer->setInlineStyleProperty(CSSPropertyDisplay, CSSValueNone);
+        labelContainer->setInlineStyleProperty(CSSPropertyID::Display, CSSValueID::None);
 }
 
 void HTMLOptGroupElement::didAddUserAgentShadowRoot(ShadowRoot& root)
@@ -161,6 +161,31 @@ void HTMLOptGroupElement::removingSteps(RemovalType removalType, ContainerNode& 
         select->setRecalcListItems();
         invalidateShadowTree();
     }
+}
+
+void HTMLOptGroupElement::movingSteps(MovingType movingType, ContainerNode& oldParent)
+{
+    HTMLElement::movingSteps(movingType, oldParent);
+
+    if (!document().settings().htmlEnhancedSelectParsingEnabled())
+        return;
+
+    RefPtr oldSelect = m_ownerSelect;
+    RefPtr newSelect = HTMLSelectElement::findOwnerSelect(parentNode(), HTMLSelectElement::ExcludeOptGroup::Yes);
+    if (oldSelect == newSelect) {
+        if (newSelect)
+            newSelect->setRecalcListItems();
+        return;
+    }
+
+    m_ownerSelect = newSelect.get();
+
+    if (oldSelect)
+        oldSelect->setRecalcListItems();
+    if (newSelect)
+        newSelect->setRecalcListItems();
+
+    invalidateShadowTree();
 }
 
 bool HTMLOptGroupElement::isDisabledFormControl() const
@@ -271,6 +296,15 @@ String HTMLOptGroupElement::groupLabelText() const
         return htmlAwareTextContent(*legend, IncludeAltText::Yes);
 
     return protect(document())->displayStringModifiedByEncoding(attributeWithoutSynchronization(labelAttr)).simplifyWhiteSpace(deprecatedIsSpaceOrNewline);
+}
+
+HTMLOptGroupElement* HTMLOptGroupElement::optGroupForLabel(const Element& element)
+{
+    if (auto* optGroup = dynamicDowncast<HTMLOptGroupElement>(element.shadowHost()); optGroup && optGroup->m_labelContainer == &element)
+        return optGroup;
+    if (auto* optGroup = dynamicDowncast<HTMLOptGroupElement>(element.parentElement()); optGroup && optGroup->legendElement() == &element)
+        return optGroup;
+    return nullptr;
 }
 
 HTMLSelectElement* HTMLOptGroupElement::ownerSelectElement() const

@@ -70,20 +70,20 @@ Ref<MutableStyleProperties> FontChanges::createStyleProperties() const
     if (!m_fontFamily.isNull()) {
         AtomString familyNameForCSS { platformFontFamilyNameForCSS() };
         if (!familyNameForCSS.isNull())
-            style->setProperty(CSSPropertyFontFamily, CSSValuePool::singleton().createFontFamilyNameValue(familyNameForCSS));
+            style->setProperty(CSSPropertyID::FontFamily, CSSValuePool::singleton().createFontFamilyNameValue(familyNameForCSS));
     }
 
     if (m_italic)
-        style->setProperty(CSSPropertyFontStyle, *m_italic ? CSSValueItalic : CSSValueNormal);
+        style->setProperty(CSSPropertyID::FontStyle, *m_italic ? CSSValueID::Italic : CSSValueID::Normal);
 
     if (m_bold)
-        style->setProperty(CSSPropertyFontWeight, *m_bold ? CSSValueBold : CSSValueNormal);
+        style->setProperty(CSSPropertyID::FontWeight, *m_bold ? CSSValueID::Bold : CSSValueID::Normal);
 
     if (m_fontSize)
-        style->setProperty(CSSPropertyFontSize, CSSPrimitiveValue::create(*m_fontSize, CSSUnitType::Px));
+        style->setProperty(CSSPropertyID::FontSize, CSSPrimitiveValue::create(*m_fontSize, CSSUnitType::Px));
 
     if (m_fontSizeDelta)
-        style->setProperty(CSSPropertyWebkitFontSizeDelta, CSSPrimitiveValue::create(*m_fontSizeDelta, CSSUnitType::Px));
+        style->setProperty(CSSPropertyID::WebkitFontSizeDelta, CSSPrimitiveValue::create(*m_fontSizeDelta, CSSUnitType::Px));
 
     return style;
 }
@@ -138,28 +138,28 @@ Ref<EditingStyle> FontAttributeChanges::createEditingStyle() const
     auto& cssValuePool = CSSValuePool::singleton();
 
     if (m_backgroundColor)
-        style->setProperty(CSSPropertyBackgroundColor, cssValuePool.createColorValue(*m_backgroundColor));
+        style->setProperty(CSSPropertyID::BackgroundColor, cssValuePool.createColorValue(*m_backgroundColor));
 
     if (m_foregroundColor)
-        style->setProperty(CSSPropertyColor, cssValuePool.createColorValue(*m_foregroundColor));
+        style->setProperty(CSSPropertyID::Color, cssValuePool.createColorValue(*m_foregroundColor));
 
     if (m_shadow) {
         if (auto shadowValue = cssValueForTextShadow(*m_shadow))
-            style->setProperty(CSSPropertyTextShadow, shadowValue.releaseNonNull());
+            style->setProperty(CSSPropertyID::TextShadow, shadowValue.releaseNonNull());
         else
-            style->setProperty(CSSPropertyTextShadow, CSSValueNone);
+            style->setProperty(CSSPropertyID::TextShadow, CSSValueID::None);
     }
 
     if (m_verticalAlign) {
         switch (*m_verticalAlign) {
         case VerticalAlignChange::Superscript:
-            style->setProperty(CSSPropertyVerticalAlign, CSSValueSuper);
+            style->setProperty(CSSPropertyID::VerticalAlign, CSSValueID::Super);
             break;
         case VerticalAlignChange::Subscript:
-            style->setProperty(CSSPropertyVerticalAlign, CSSValueSub);
+            style->setProperty(CSSPropertyID::VerticalAlign, CSSValueID::Sub);
             break;
         case VerticalAlignChange::Baseline:
-            style->setProperty(CSSPropertyVerticalAlign, CSSValueBaseline);
+            style->setProperty(CSSPropertyID::VerticalAlign, CSSValueID::Baseline);
             break;
         default:
             ASSERT_NOT_REACHED();

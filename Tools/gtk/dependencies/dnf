@@ -9,7 +9,6 @@ PACKAGES+=(
     gettext-devel
     gtk3-devel
     gtk4-devel
-    hyphen-devel
     libffi-devel
     libgudev1-devel
     libsecret-devel
@@ -35,7 +34,6 @@ PACKAGES+=(
     flex
     libdrm-devel
     libgpg-error-devel
-    libinput-devel
     libpciaccess-devel
     libunwind-devel
 )

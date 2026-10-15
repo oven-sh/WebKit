@@ -1856,6 +1856,9 @@ class SdpNegotiationGoogSpedV1Test
       public ::testing::WithParamInterface<SpedV1TestConfig> {};
 
 TEST_P(SdpNegotiationGoogSpedV1Test, VerifySdp) {
+  if (!SSLStreamAdapter::IsBoringSsl()) {
+    GTEST_SKIP() << "DTLS-in-STUN needs boringssl.";
+  }
   const auto& param = GetParam();
   SetFieldTrials(
       "Caller", param.caller_enabled ? "WebRTC-IceHandshakeDtls/Enabled/" : "");

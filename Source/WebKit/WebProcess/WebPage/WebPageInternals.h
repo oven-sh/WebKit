@@ -34,6 +34,10 @@
 #include <WebCore/UserActivity.h>
 #include <WebCore/VisibleSelection.h>
 
+#if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
+#include "PDFDisplayMode.h"
+#endif
+
 #if ENABLE(APP_HIGHLIGHTS)
 #include <WebCore/AppHighlight.h>
 #endif
@@ -49,6 +53,9 @@ struct WebPage::Internals {
 #if ENABLE(UI_SIDE_COMPOSITING)
     std::optional<TransactionID> lastTransactionIDWithScaleChange;
     std::optional<std::pair<TransactionID, double>> lastLayerTreeTransactionIdAndPageScaleBeforeScalingPage;
+#endif
+#if PLATFORM(IOS_FAMILY) && ENABLE(UNIFIED_PDF)
+    PDFPluginDisplayMode initialPDFDisplayMode { PDFPluginDisplayMode::SinglePageContinuous };
 #endif
 #if ENABLE(APP_HIGHLIGHTS)
     WebCore::CreateNewGroupForHighlight highlightIsNewGroup { WebCore::CreateNewGroupForHighlight::No };

@@ -24,8 +24,10 @@
  */
 
 // https://webidl.spec.whatwg.org/#idl-QuotaExceededError
+
 [
-    Exposed=(Window,Worker)
+    Exposed=*,
+    Serializable
 ] interface QuotaExceededError : DOMException {
     constructor(optional DOMString message = "", optional QuotaExceededErrorOptions options = {});
 

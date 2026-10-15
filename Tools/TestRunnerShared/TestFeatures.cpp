@@ -142,7 +142,7 @@ static bool shouldEnableEnhancedSecurity(const std::string& pathOrURL)
 
 static bool shouldEnableSiteIsolation(const std::string& pathOrURL)
 {
-    return pathContains(pathOrURL, "site-isolation/inspector/");
+    return pathContains(pathOrURL, "site-isolation/inspector/") || pathContains(pathOrURL, "/document-isolation-policy/");
 }
 
 static bool shouldUseBackForwardCache(const std::string& pathOrURL)
@@ -158,6 +158,12 @@ static bool shouldEnableTouchEventRegions(const std::string& pathOrURL)
 static bool shouldEnableGlobalPrivacyControl(const std::string& pathOrURL)
 {
     return pathContains(pathOrURL, "/gpc/");
+}
+
+static bool shouldEnableLocalNetworkAccess(const std::string& pathOrURL)
+{
+    // Enabled by path rather than as testable, because Local Network Access exempts loopback addresses from mixed content blocking, which changes the results of the mixed content tests. https://bugs.webkit.org/show_bug.cgi?id=326578
+    return pathContains(pathOrURL, "/local-network-access/");
 }
 
 TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
@@ -195,6 +201,8 @@ TestFeatures hardcodedFeaturesBasedOnPathForTest(const TestCommand& command)
         features.boolWebPreferenceFeatures.insert({ "AlwaysUseTouchEventRegions", true });
     if (shouldEnableGlobalPrivacyControl(command.pathOrURL))
         features.boolTestRunnerFeatures.insert({ "globalPrivacyControl", true });
+    if (shouldEnableLocalNetworkAccess(command.pathOrURL))
+        features.boolWebPreferenceFeatures.insert({ "LocalNetworkAccessEnabled", true });
 
     return features;
 }

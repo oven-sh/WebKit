@@ -551,7 +551,7 @@ UIProcess/API/C/WKGeolocationManager.cpp
 UIProcess/API/C/WKGeolocationPermissionRequest.cpp
 UIProcess/API/C/WKGeolocationPosition.cpp
 UIProcess/API/C/WKHTTPCookieStoreRef.cpp
-UIProcess/API/C/WKHitTestResult.cpp
+UIProcess/API/C/WKHitTestResultRef.cpp
 UIProcess/API/C/WKIconDatabase.cpp
 UIProcess/API/C/WKInspector.cpp
 UIProcess/API/C/WKJSHandleRef.cpp
@@ -595,6 +595,7 @@ UIProcess/Authentication/WebProtectionSpace.cpp
 UIProcess/Automation/BidiBrowserAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiBrowsingContextAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiDigitalCredentialsAgent.cpp @no-unify-when(bundle<=8)
+UIProcess/Automation/BidiInputAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiPermissionsAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiScriptAgent.cpp @no-unify-when(bundle<=8)
 UIProcess/Automation/BidiSessionAgent.cpp @no-unify-when(bundle<=8)
@@ -792,6 +793,7 @@ WebProcess/GPU/RemoteSharedResourceCacheProxy.cpp
 WebProcess/GPU/ShapeDetection/RemoteBarcodeDetectorProxy.cpp
 WebProcess/GPU/ShapeDetection/RemoteFaceDetectorProxy.cpp
 WebProcess/GPU/ShapeDetection/RemoteTextDetectorProxy.cpp
+WebProcess/GPU/graphics/DisplayOnlyImageProxy.cpp
 WebProcess/GPU/graphics/Model/RemoteMeshProxy.cpp
 WebProcess/GPU/graphics/Model/ModelDowncastConvertToBackingContext.cpp
 WebProcess/GPU/graphics/WebGPU/RemoteAdapterProxy.cpp

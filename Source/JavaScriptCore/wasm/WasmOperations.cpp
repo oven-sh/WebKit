@@ -82,7 +82,7 @@ JSC_DEFINE_JIT_OPERATION(operationJSToWasmEntryWrapperBuildFrame, JSToWasmCallee
     auto* globalObject = function->realm();
     VM& vm = globalObject->vm();
 
-    if (function->taintedness() >= SourceTaintedOrigin::IndirectlyTainted)
+    if (function->taintedness().isTainted())
         vm.setMightBeExecutingTaintedCode();
 
     WasmOperationPrologueCallFrameTracer tracer(vm, callFrame, OUR_RETURN_ADDRESS);

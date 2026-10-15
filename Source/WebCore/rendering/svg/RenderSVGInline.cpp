@@ -23,17 +23,14 @@
 #include "config.h"
 #include "RenderSVGInline.h"
 
-#include "FrameSelection.h"
 #include "InlineIteratorInlineBox.h"
 #include "LegacyRenderSVGResource.h"
-#include "LocalFrame.h"
 #include "RenderBoxModelObjectInlines.h"
 #include "RenderObjectInlines.h"
 #include "RenderSVGInlineInlines.h"
 #include "RenderSVGInlineText.h"
 #include "RenderSVGText.h"
 #include "SVGGraphicsElement.h"
-#include "SVGInlineFlowBox.h"
 #include "SVGRenderSupport.h"
 #include "SVGResourcesCache.h"
 #include "Settings.h"
@@ -56,26 +53,6 @@ RenderSVGInline::RenderSVGInline(Type type, Document& document, Style::ComputedS
 }
 
 RenderSVGInline::~RenderSVGInline() = default;
-
-std::unique_ptr<LegacyInlineFlowBox> RenderSVGInline::createInlineFlowBox()
-{
-    auto box = makeUnique<SVGInlineFlowBox>(*this);
-    box->setHasVirtualLogicalHeight();
-    return box;
-}
-
-LegacyInlineFlowBox* RenderSVGInline::createAndAppendInlineFlowBox()
-{
-    auto newFlowBox = createInlineFlowBox();
-    auto flowBox = newFlowBox.get();
-    m_legacyLineBoxes.appendLineBox(WTF::move(newFlowBox));
-    return flowBox;
-}
-
-void RenderSVGInline::deleteLegacyLineBoxes()
-{
-    m_legacyLineBoxes.deleteLineBoxes();
-}
 
 bool RenderSVGInline::isChildAllowed(const RenderObject& child, const Style::ComputedStyle& style) const
 {
@@ -198,28 +175,6 @@ void RenderSVGInline::willBeDestroyed()
     if (!document().settings().layerBasedSVGEngineEnabled())
         SVGResourcesCache::clientDestroyed(*this);
 
-    if (!renderTreeBeingDestroyed()) {
-        if (auto* inlineBox = firstLegacyInlineBox()) {
-            // We can't wait for RenderBoxModelObject::destroy to clear the selection,
-            // because by then we will have nuked the line boxes.
-            if (isSelectionBorder())
-                frame().selection().setNeedsSelectionUpdate();
-
-            // If line boxes are contained inside a root, that means we're an inline.
-            // In that case, we need to remove all the line boxes so that the parent
-            // lines aren't pointing to deleted children. If the first line box does
-            // not have a parent that means they are either already disconnected or
-            // root lines that can just be destroyed without disconnecting.
-            if (inlineBox->parent()) {
-                for (auto* box = inlineBox; box; box = box->nextLineBox())
-                    box->removeFromParent();
-            }
-        } else if (auto* parent = this->parent(); parent && parent->isSVGRenderer())
-            parent->dirtyLineFromChangedChild();
-    }
-
-    m_legacyLineBoxes.deleteLineBoxes();
-
     RenderInline::willBeDestroyed();
 }
 
@@ -253,18 +208,6 @@ void RenderSVGInline::updateFromStyle()
 
     // SVG text layout code expects us to be an inline-level element.
     setInline(true);
-}
-
-LegacyInlineFlowBox* firstLegacyInlineBoxFor(const RenderBoxModelObject& renderer)
-{
-    auto* svgInline = dynamicDowncast<RenderSVGInline>(renderer);
-    return svgInline ? svgInline->firstLegacyInlineBox() : nullptr;
-}
-
-LegacyInlineFlowBox* lastLegacyInlineBoxFor(const RenderBoxModelObject& renderer)
-{
-    auto* svgInline = dynamicDowncast<RenderSVGInline>(renderer);
-    return svgInline ? svgInline->lastLegacyInlineBox() : nullptr;
 }
 
 }

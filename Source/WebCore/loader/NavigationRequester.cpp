@@ -78,6 +78,7 @@ NavigationRequester NavigationRequester::from(Document& document)
         document.isSecureContext(),
         PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LocalNetwork, document, PermissionsPolicy::ShouldReportViolation::No),
         PermissionsPolicy::isFeatureEnabled(PermissionsPolicy::Feature::LoopbackNetwork, document, PermissionsPolicy::ShouldReportViolation::No),
+        document.agentClusterIdentifier(),
     };
 }
 

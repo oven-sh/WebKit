@@ -35,6 +35,7 @@
 #include "ImageBuffer.h"
 #include "LayoutRepainter.h"
 #include "PointerEventsHitRules.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderImageResource.h"
 #include "RenderLayer.h"
@@ -80,7 +81,7 @@ SVGImageElement& RenderSVGImage::imageElement() const
 
 FloatRect RenderSVGImage::calculateObjectBoundingBox() const
 {
-    return calculateSVGImageObjectBoundingBox(imageElement(), style(), imageResource().cachedImage());
+    return calculateSVGImageObjectBoundingBox(protect(imageElement()), protect(style()), protect(imageResource().cachedImage()));
 }
 
 void RenderSVGImage::layout()
@@ -109,7 +110,7 @@ void RenderSVGImage::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
     }
 
     OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline };
-    if (!shouldPaintSVGRenderer(paintInfo, relevantPaintPhases) || !imageResource().cachedImage())
+    if (!shouldPaintSVGLeafRenderer(paintInfo, relevantPaintPhases) || !imageResource().cachedImage())
         return;
 
     if (paintInfo.phase == PaintPhase::ClippingMask) {
@@ -156,23 +157,34 @@ ImageDrawResult RenderSVGImage::paintIntoRect(PaintInfo& paintInfo, const FloatR
     if (!styleImage || !styleImage->canDrawAtSize(*this, rect.size()))
         return ImageDrawResult::DidNothing;
 
+    auto concreteObjectSize = ConcreteObjectSize::fixed(imageRenderingSize);
+
+#if ENABLE(AX_CUSTOM_COLOR_MODE)
+    auto invertContent = [&] {
+        if (styleImage->drawsSVGImage())
+            return AXCustomColorModeController::shouldInvertSVGImage(*this, *styleImage);
+
+        return AXCustomColorModeController::shouldInvertContentImage(*this, rect.size());
+    };
+#endif
+
     ImagePaintingOptions options {
         CompositeOperator::SourceOver,
         DecodingMode::Synchronous,
         imageOrientation(),
-        styleImage->interpolationQualityForImageDraw(paintInfo.context(), *this, styleImage.get(), LayoutSize(rect.size())),
+        styleImage->interpolationQualityForImageDraw(paintInfo.context(), *this, concreteObjectSize, styleImage.get(), LayoutSize(rect.size())),
         settings().imageSubsamplingEnabled() ? AllowImageSubsampling::Yes : AllowImageSubsampling::No,
 #if ENABLE(AX_CUSTOM_COLOR_MODE)
-        // FIXME: Remove the Image::nullImage() parameter once AXCustomColorModeController::shouldInvertContentImage() is updated.
-        (styleImage->drawsSVGImage() && AXCustomColorModeController::shouldInvertSVGImage(*this)) || AXCustomColorModeController::shouldInvertContentImage(*this, Image::nullImage(), rect.size()) ? InvertContent::Yes : InvertContent::No,
+        invertContent() ? InvertContent::Yes : InvertContent::No,
 #endif
         settings().showDebugBorders() ? ShowDebugBackground::Yes : ShowDebugBackground::No,
+        IgnoreRootPreserveAspectRatio::Yes,
         settings().hdrAcceleratedApplyGainMapEnabled() ? AllowAcceleratedApplyGainMap::Yes : AllowAcceleratedApplyGainMap::No,
         paintInfo.paintBehavior.contains(PaintBehavior::DrawsHDRContent) ? DrawsHDRContent::Yes : DrawsHDRContent::No,
         style().dynamicRangeLimit().toPlatformDynamicRangeLimit()
     };
 
-    auto drawResult = styleImage->draw(paintInfo.context(), *this, ConcreteObjectSize::fixed(imageRenderingSize), rect, sourceRect, options);
+    auto drawResult = styleImage->draw(paintInfo.context(), *this, concreteObjectSize, rect, sourceRect, options);
     if (drawResult == ImageDrawResult::DidRequestDecoding)
         protect(imageResource().cachedImage())->addClientWaitingForAsyncDecoding(protect(cachedImageClient()));
 
@@ -199,20 +211,17 @@ void RenderSVGImage::paintForeground(PaintInfo& paintInfo, const LayoutPoint& pa
         return;
     }
 
-    auto imageRenderingSize = svgImageRenderingSize(*styleImage, *this, FloatSize { imageContainerSize() });
     FloatRect contentBoxRect = borderBoxRectEquivalent();
-    FloatRect replacedContentRect { { }, imageRenderingSize };
-    imageElement().preserveAspectRatio().transformRect(contentBoxRect, replacedContentRect);
-
+    auto placement = calculateSVGImagePlacement(*styleImage, *this, imageElement().preserveAspectRatio(), contentBoxRect);
+    placement.destination.moveBy(paintOffset);
     contentBoxRect.moveBy(paintOffset);
 
-    ImageDrawResult result = paintIntoRect(paintInfo, contentBoxRect, replacedContentRect, imageRenderingSize);
+    ImageDrawResult result = paintIntoRect(paintInfo, placement.destination, placement.source, placement.imageRenderingRectangle.size());
 
     if (cachedImage() && !context.paintingDisabled()) {
         // For now, count images as unpainted if they are still progressively loading. We may want
         // to refine this in the future to account for the portion of the image that has painted.
-        replacedContentRect.moveBy(paintOffset);
-        auto visibleRect = intersection(replacedContentRect, contentBoxRect);
+        auto visibleRect = intersection(placement.destination, contentBoxRect);
         if (cachedImage()->isLoading() || result == ImageDrawResult::DidRequestDecoding)
             protect(page())->addRelevantUnpaintedObject(*this, enclosingLayoutRect(visibleRect));
         else
@@ -253,7 +262,7 @@ bool RenderSVGImage::nodeAtPoint(const HitTestRequest& request, HitTestResult& r
         return false;
 
     PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGImage, request, usedPointerEvents());
-    if (request.isVisibleForStyle(style()) || !hitRules.requireVisible) {
+    if (request.isVisibleForStyle(usedStyle()) || !hitRules.requireVisible) {
         if (hitRules.canHitFill) {
             if (m_objectBoundingBox.contains(localPoint)) {
                 updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
@@ -264,17 +273,6 @@ bool RenderSVGImage::nodeAtPoint(const HitTestRequest& request, HitTestResult& r
     }
 
     return false;
-}
-
-IntSize RenderSVGImage::imageContainerSize() const
-{
-    // https://w3c.github.io/svgwg/svg2-draft/coords.html#PreserveAspectRatioAttribute
-    if (imageElement().preserveAspectRatio().align() == SVGPreserveAspectRatioValue::SVG_PRESERVEASPECTRATIO_NONE) {
-        if (RefPtr cachedImage = imageResource().cachedImage())
-            return roundedIntSize(cachedImage->clampedImageSize(ImageOrientation::Orientation::FromImage, style().usedZoom()));
-    }
-
-    return enclosingIntRect(m_objectBoundingBox).size();
 }
 
 bool RenderSVGImage::updateImageViewport()
@@ -296,17 +294,19 @@ void RenderSVGImage::repaintOrMarkForLayout(const IntRect* rect)
 
     FloatRect repaintRect = borderBoxRectEquivalent();
     if (RefPtr styleImage = imageResource().styleImage(); styleImage && rect) {
-        // The image changed rect is in source image coordinates (pre-zooming),
-        // so map from the bounds of the image to the contentsBox.
-        auto imageRenderingSize = svgImageRenderingSize(*styleImage, *this, FloatSize { imageContainerSize() });
-        repaintRect.intersect(enclosingIntRect(mapRect(*rect, FloatRect(FloatPoint(), imageRenderingSize), repaintRect)));
+        auto naturalDimensions = calculateSVGImageNaturalDimensions(*styleImage, *this);
+        auto placement = calculateSVGImagePlacement(*styleImage, *this, imageElement().preserveAspectRatio(), repaintRect);
+
+        auto changedRectSpace = naturalDimensions.width && naturalDimensions.height ? FloatSize { *naturalDimensions.width, *naturalDimensions.height } : placement.imageRenderingRectangle.size();
+
+        repaintRect.intersect(enclosingIntRect(mapRect(*rect, FloatRect(FloatPoint(), changedRectSpace), placement.imageRenderingRectangle)));
     }
 
     repaintRectangle(enclosingLayoutRect(repaintRect));
 
     // Tell any potential compositing layers that the image needs updating.
     if (hasLayer())
-        layer()->contentChanged(ContentChangeType::Image);
+        protect(layer())->contentChanged(ContentChangeType::Image);
 }
 
 void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadMetrics& metrics, LoadWillContinueInAnotherProcess loadWillContinueInAnotherProcess)
@@ -320,7 +320,7 @@ void RenderSVGImage::notifyFinished(CachedResource& newImage, const NetworkLoadM
         // tell any potential compositing layers
         // that the image is done and they can reference it directly.
         if (hasLayer())
-            layer()->contentChanged(ContentChangeType::Image);
+            protect(layer())->contentChanged(ContentChangeType::Image);
     }
 
     RenderSVGModelObject::notifyFinished(newImage, metrics, loadWillContinueInAnotherProcess);
@@ -354,42 +354,35 @@ bool RenderSVGImage::bufferForeground(PaintInfo& paintInfo, const LayoutPoint& p
 {
     auto& destinationContext = paintInfo.context();
 
-    auto repaintBoundingBox = borderBoxRectEquivalent();
+    FloatRect repaintBoundingBox = borderBoxRectEquivalent();
     repaintBoundingBox.moveBy(paintOffset);
 
-    // Invalidate an existing buffer if the scale is not correct.
-    const auto& absoluteTransform = destinationContext.getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-
-    auto absoluteTargetRect = enclosingIntRect(absoluteTransform.mapRect(repaintBoundingBox));
-    if (m_bufferedForeground) {
-        if (absoluteTargetRect.size() != protect(m_bufferedForeground)->backendSize())
-            m_bufferedForeground = nullptr;
-        else {
-            const auto& absoluteTransformBuffer = protect(m_bufferedForeground)->context().getCTM(GraphicsContext::DefinitelyIncludeDeviceScale);
-            if (absoluteTransformBuffer != absoluteTransform)
-                m_bufferedForeground = nullptr;
-        }
-    }
+    auto scaledSize = destinationContext.compatibleImageBufferSize(repaintBoundingBox.size());
+    if (m_bufferedForeground && (m_bufferedForegroundSize != repaintBoundingBox.size() || m_bufferedForegroundScaledSize != scaledSize))
+        m_bufferedForeground = nullptr;
 
     // Create a new buffer and paint the foreground into it.
     if (!m_bufferedForeground) {
-        m_bufferedForeground = destinationContext.createAlignedImageBuffer(expandedIntSize(repaintBoundingBox.size()));
+        m_bufferedForeground = destinationContext.createAlignedImageBuffer(repaintBoundingBox.size());
         if (!m_bufferedForeground)
             return false;
+        m_bufferedForegroundSize = repaintBoundingBox.size();
+        m_bufferedForegroundScaledSize = scaledSize;
     }
 
-    auto& bufferedContext = protect(m_bufferedForeground)->context();
-    bufferedContext.clearRect(absoluteTargetRect);
-
-    PaintInfo bufferedInfo(paintInfo);
-    bufferedInfo.setContext(bufferedContext);
-    paintForeground(bufferedInfo, paintOffset);
-
-    destinationContext.concatCTM(absoluteTransform.inverse().value_or(AffineTransform()));
     RefPtr bufferedForeground = m_bufferedForeground.copyRef();
-    destinationContext.drawImageBuffer(*bufferedForeground, absoluteTargetRect);
-    destinationContext.concatCTM(absoluteTransform);
+    {
+        auto& bufferedContext = bufferedForeground->context();
+        GraphicsContextStateSaver stateSaver(bufferedContext);
+        bufferedContext.translate(-toFloatSize(repaintBoundingBox.location()));
+        bufferedContext.clearRect(repaintBoundingBox);
 
+        PaintInfo bufferedInfo(paintInfo);
+        bufferedInfo.setContext(bufferedContext);
+        paintForeground(bufferedInfo, paintOffset);
+    }
+
+    destinationContext.drawImageBuffer(*bufferedForeground, repaintBoundingBox);
     return true;
 }
 

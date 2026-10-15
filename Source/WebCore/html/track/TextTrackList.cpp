@@ -190,7 +190,7 @@ void TextTrackList::append(Ref<TextTrack>&& track)
 {
     if (track->trackType() == TextTrack::AddTrack)
         m_addTrackTracks.append(track.copyRef());
-    else if (auto* textTrack = dynamicDowncast<LoadableTextTrack>(track.get())) {
+    else if (RefPtr textTrack = dynamicDowncast<LoadableTextTrack>(track)) {
         // Insert tracks added for <track> element in tree order.
         size_t index = textTrack->trackElementIndex();
         m_elementTracks.insert(index, track.copyRef());
@@ -211,9 +211,9 @@ void TextTrackList::append(Ref<TextTrack>&& track)
 
 void TextTrackList::remove(TrackBase& track, bool scheduleEvent)
 {
-    auto& textTrack = downcast<TextTrack>(track);
+    Ref textTrack = downcast<TextTrack>(track);
     Vector<Ref<TrackBase>>* tracks = nullptr;
-    switch (textTrack.trackType()) {
+    switch (textTrack->trackType()) {
     case TextTrack::TrackElement:
         tracks = &m_elementTracks;
         break;

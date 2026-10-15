@@ -164,8 +164,7 @@ static int aes_xts_init_key(EVP_CIPHER_CTX *ctx, const uint8_t *key,
 static int aes_xts_cipher_update(EVP_CIPHER_CTX *ctx, uint8_t *out,
                                  const uint8_t *in, size_t len) {
   EVP_AES_XTS_CTX *xctx = reinterpret_cast<EVP_AES_XTS_CTX *>(ctx->cipher_data);
-  if (!xctx->xts.key1 || !xctx->xts.key2 || !out || !in ||
-      len < AES_BLOCK_SIZE ||
+  if (!xctx->xts.key1 || !xctx->xts.key2 || len < AES_BLOCK_SIZE ||
       !CRYPTO_xts128_encrypt(&xctx->xts, ctx->iv, in, out, len, ctx->encrypt)) {
     return 0;
   }

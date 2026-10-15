@@ -37,7 +37,7 @@
 #define HTML_FORMAT_STRING @" \
     <body> \
         <script> \
-        fetch('%s').then(v => v.arrayBuffer()).then(txt => { \
+        fetch('%@').then(v => v.arrayBuffer()).then(txt => { \
             window.local_file_content = (btoa(String.fromCharCode.apply(null, new Uint8Array(txt)))); \
             window.webkit.messageHandlers.testHandler.postMessage('done'); \
         }).catch(e => { \
@@ -61,14 +61,14 @@ TEST(WebKit, FetchLocalFile)
     auto [tempFileHandle, tempFilePath] = FileSystem::createTemporaryFileInDirectory("/tmp"_s, ".html"_s);
     ASCIILiteral fileData = "Testdata"_s;
     auto fileDataSpan = fileData.span8();
-    tempFileHandle.write(fileDataSpan);
+    tempFileHandle.write(byteCast<uint8_t>(fileDataSpan));
     tempFileHandle = { };
 
     URL fileURL = URL::fileURLWithFileSystemPath(tempFilePath);
-    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().utf8().legacyCStringPointer()]);
+    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().createNSString().get()]);
 
     auto [fetchFilePath, fetchFileHandle] = FileSystem::openTemporaryFile("fetch"_s, ".html"_s);
-    fetchFileHandle.write(String(payload.get()).span8());
+    fetchFileHandle.write(byteCast<uint8_t>(String(payload.get()).span8()));
     fetchFileHandle = { };
     URL fetchFileURL = URL::fileURLWithFileSystemPath(fetchFilePath);
 
@@ -107,7 +107,7 @@ TEST(WebKit, FetchLocalFileInParentDirectory)
     auto [tempFileHandle, tempFilePath] = FileSystem::createTemporaryFileInDirectory(NSTemporaryDirectory(), ".html"_s);
     ASCIILiteral fileData = "Testdata"_s;
     auto fileDataSpan = fileData.span8();
-    tempFileHandle.write(fileDataSpan);
+    tempFileHandle.write(byteCast<uint8_t>(fileDataSpan));
     tempFileHandle = { };
 
     RetainPtr tempFileName = FileSystem::pathFileName(tempFilePath).createNSString();
@@ -117,10 +117,10 @@ TEST(WebKit, FetchLocalFileInParentDirectory)
     RetainPtr parentFilePath = [tempDirectory stringByAppendingPathComponent:@"../.."];
     parentFilePath = [parentFilePath stringByAppendingPathComponent:tempFileName];
 
-    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, parentFilePath.get().UTF8String]);
+    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, parentFilePath.get()]);
 
     auto [fetchFileHandle, fetchFilePath] = FileSystem::createTemporaryFileInDirectory(tempDirectory.get(), ".html"_s);
-    fetchFileHandle.write(String(payload.get()).span8());
+    fetchFileHandle.write(byteCast<uint8_t>(String(payload.get()).span8()));
     fetchFileHandle = { };
     URL fetchFileURL = URL::fileURLWithFileSystemPath(fetchFilePath);
 
@@ -159,14 +159,14 @@ TEST(WebKit, FetchLocalFileFromTempDirectory)
     auto [tempFilePath, tempFileHandle] = FileSystem::openTemporaryFile("Temp"_s, ".html"_s);
     ASCIILiteral fileData = "Testdata"_s;
     auto fileDataSpan = fileData.span8();
-    tempFileHandle.write(fileDataSpan);
+    tempFileHandle.write(byteCast<uint8_t>(fileDataSpan));
     tempFileHandle = { };
 
     URL fileURL = URL::fileURLWithFileSystemPath(tempFilePath);
-    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().utf8().legacyCStringPointer()]);
+    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().createNSString().get()]);
 
     auto [fetchFilePath, fetchFileHandle] = FileSystem::openTemporaryFile("fetch"_s, ".html"_s);
-    fetchFileHandle.write(String(payload.get()).span8());
+    fetchFileHandle.write(byteCast<uint8_t>(String(payload.get()).span8()));
     fetchFileHandle = { };
     URL fetchFileURL = URL::fileURLWithFileSystemPath(fetchFilePath);
 
@@ -226,10 +226,10 @@ TEST(WebKit, FetchCookieFile)
     String cookieFilePath = makeString(libraryRootDirectory(), "/Cookies/Cookies.binarycookies"_s);
 
     URL fileURL = URL::fileURLWithFileSystemPath(cookieFilePath);
-    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().utf8().legacyCStringPointer()]);
+    RetainPtr payload = adoptNS([[NSString alloc] initWithFormat:HTML_FORMAT_STRING, fileURL.string().createNSString().get()]);
 
     auto [fetchFilePath, fetchFileHandle] = FileSystem::openTemporaryFile("fetch"_s, ".html"_s);
-    fetchFileHandle.write(String(payload.get()).span8());
+    fetchFileHandle.write(byteCast<uint8_t>(String(payload.get()).span8()));
     fetchFileHandle = { };
     URL fetchFileURL = URL::fileURLWithFileSystemPath(fetchFilePath);
 
@@ -279,7 +279,7 @@ TEST(WebKit, ReloadLocalFileAfterWebContentProcessTermination)
     }];
 
     auto [filePath, fileHandle] = FileSystem::openTemporaryFile("ReloadLocalFileAfterCrash"_s, ".html"_s);
-    fileHandle.write("<body>local file loaded</body>"_s.span8());
+    fileHandle.write(byteCast<uint8_t>("<body>local file loaded</body>"_s.span8()));
     fileHandle = { };
     RetainPtr nsFileURL = URL::fileURLWithFileSystemPath(filePath).createNSURL();
 

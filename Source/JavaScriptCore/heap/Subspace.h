@@ -91,7 +91,7 @@ public:
     template<typename Func>
     void forEachLiveCell(NOESCAPE const Func&);
     
-    void sweepBlocks();
+    JS_EXPORT_PRIVATE void sweepBlocks();
     
     virtual void didResizeBits(unsigned newSize);
     virtual void didRemoveBlock(unsigned blockIndex);

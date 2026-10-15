@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/ed25519"
 	"crypto/elliptic"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/subtle"
 	"crypto/x509"
@@ -22,7 +23,6 @@ import (
 
 	"boringssl.googlesource.com/boringssl.git/ssl/test/runner/hpke"
 	"boringssl.googlesource.com/boringssl.git/ssl/test/runner/spake2plus"
-	"filippo.io/mldsa"
 	"golang.org/x/crypto/cryptobyte"
 )
 
@@ -48,12 +48,6 @@ type serverHandshakeState struct {
 
 // serverHandshake performs a TLS handshake as a server.
 func (c *Conn) serverHandshake() error {
-	config := c.config
-
-	// If this is the first server handshake, we generate a random key to
-	// encrypt the tickets with.
-	config.serverInitOnce.Do(config.serverInit)
-
 	c.sendHandshakeSeq = 0
 	c.recvHandshakeSeq = 0
 
@@ -1820,7 +1814,7 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 		if len(sendClientCertType) == 0 {
 			serverExtensions.clientCertificateType = nil
 		} else {
-			serverExtensions.clientCertificateType = ptrTo(sendClientCertType[0])
+			serverExtensions.clientCertificateType = new(sendClientCertType[0])
 			c.clientCertificateType = serverExtensions.clientCertificateType
 		}
 	}
@@ -1831,7 +1825,7 @@ func (hs *serverHandshakeState) processClientExtensions(serverExtensions *server
 		if len(sendServerCertType) == 0 {
 			serverExtensions.serverCertificateType = nil
 		} else {
-			serverExtensions.serverCertificateType = ptrTo(sendServerCertType[0])
+			serverExtensions.serverCertificateType = new(sendServerCertType[0])
 			c.serverCertificateType = serverExtensions.serverCertificateType
 		}
 	}
@@ -2368,7 +2362,7 @@ func (hs *serverHandshakeState) processCertsFromClient(certificates [][]byte) (c
 	certs := make([]*x509.Certificate, len(certificates))
 	var err error
 	for i, asn1Data := range certificates {
-		if certs[i], err = ParseX509Certificate(asn1Data); err != nil {
+		if certs[i], err = x509.ParseCertificate(asn1Data); err != nil {
 			c.sendAlert(alertBadCertificate)
 			return nil, errors.New("tls: failed to parse client certificate: " + err.Error())
 		}

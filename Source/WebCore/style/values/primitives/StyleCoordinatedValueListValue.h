@@ -49,7 +49,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyAccessor;
 template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY(ownerType, property, type, lowercaseName, uppercaseName) \
-    PropertyNameConstant<CSSProperty##property>{},
+    PropertyNameConstant<CSSPropertyID::property>{},
 \
 
 #define INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
@@ -61,7 +61,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_REFERENCE(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -73,13 +73,13 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \
@@ -88,7 +88,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
@@ -96,7 +96,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_VALUE(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -108,13 +108,13 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \
@@ -123,7 +123,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         \
         INTERNAL_DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_COMMON(ownerType, property, type, lowercaseName, uppercaseName) \
         \
-        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSProperty##property>& other) const \
+        bool operator==(const CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property>& other) const \
         { \
             return get() == other.get() && state() == other.state(); \
         } \
@@ -135,7 +135,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
 \
 
 #define DECLARE_COORDINATED_VALUE_LIST_PROPERTY_ACCESSOR_SHORTHAND(ownerType, property, type, lowercaseName, uppercaseName) \
-    template<> struct CoordinatedValueListPropertyAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         ownerType& value; \
@@ -151,7 +151,7 @@ template<CSSPropertyID> struct CoordinatedValueListPropertyConstAccessor;
         bool isFilled() const { return value.is##uppercaseName##Filled(); } \
     }; \
     \
-    template<> struct CoordinatedValueListPropertyConstAccessor<CSSProperty##property> { \
+    template<> struct CoordinatedValueListPropertyConstAccessor<CSSPropertyID::property> { \
         using Type = type; \
         \
         const ownerType& value; \

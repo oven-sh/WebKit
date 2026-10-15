@@ -42,9 +42,6 @@
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
 #import <WebCore/LinkDecorationFilteringData.h>
 #import <WebCore/OrganizationStorageAccessPromptQuirk.h>
-#ifdef __OBJC__
-#import <pal/spi/cocoa/WebPrivacySPI.h>
-#endif
 #endif
 
 OBJC_CLASS WKWebPrivacyNotificationListener;
@@ -59,8 +56,6 @@ enum class IsKnownCrossSiteTracker : bool;
 namespace WebKit {
 
 #if ENABLE(ADVANCED_PRIVACY_PROTECTIONS)
-
-enum class RestrictedOpenerType : uint8_t;
 
 void configureForAdvancedPrivacyProtections(NSURLSession *);
 bool isKnownTrackerAddressOrDomain(StringView host);
@@ -164,27 +159,6 @@ private:
     void updateList(CompletionHandler<void()>&&) final;
     void didUpdateCachedListData() final;
     unsigned resourceTypeValue() const final;
-#ifdef __OBJC__
-    // FIXME: Remove when WebPrivacyHelpersAdditions.mm no longer depends on it.
-    WPResourceType NODELETE resourceType() const;
-#endif
-};
-
-class RestrictedOpenerDomainsController {
-public:
-    static RestrictedOpenerDomainsController& singleton();
-
-    RestrictedOpenerType lookup(const WebCore::RegistrableDomain&) const;
-
-private:
-    friend class NeverDestroyed<RestrictedOpenerDomainsController, MainRunLoopAccessTraits>;
-    RestrictedOpenerDomainsController();
-    void scheduleNextUpdate(ContinuousApproximateTime);
-    void update();
-
-    const RetainPtr<WKWebPrivacyNotificationListener> m_notificationListener;
-    HashMap<WebCore::RegistrableDomain, RestrictedOpenerType> m_restrictedOpenerTypes;
-    ContinuousApproximateTime m_nextScheduledUpdateTime;
 };
 
 class HighValueFraudTargetDomainsController {
@@ -241,7 +215,7 @@ private:
 
 class ResourceMonitorURLsController : public WebPrivacyContentRuleListController<bool> {
 public:
-    static ResourceMonitorURLsController& NODELETE singleton();
+    static ResourceMonitorURLsController& LEGACY_NODELETE singleton();
 
     void getSource(CompletionHandler<void(String&&)>&&);
 
@@ -262,7 +236,7 @@ private:
 
 class TrackingPreventionContentRuleListController : public ListDataControllerBase, public WebPrivacyContentRuleListController<> {
 public:
-    static TrackingPreventionContentRuleListController& NODELETE singleton();
+    static TrackingPreventionContentRuleListController& LEGACY_NODELETE singleton();
 
 private:
     friend class NeverDestroyed<TrackingPreventionContentRuleListController, MainRunLoopAccessTraits>;

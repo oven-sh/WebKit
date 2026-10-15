@@ -98,7 +98,7 @@ namespace WebCore {
 using namespace Inspector;
 
 static Lock allWorkerGlobalScopeIdentifiersLock;
-static HashSet<ScriptExecutionContextIdentifier>& NODELETE allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
+static HashSet<ScriptExecutionContextIdentifier>& LEGACY_NODELETE allWorkerGlobalScopeIdentifiers() WTF_REQUIRES_LOCK(allWorkerGlobalScopeIdentifiersLock)
 {
     static NeverDestroyed<HashSet<ScriptExecutionContextIdentifier>> identifiers;
     ASSERT(allWorkerGlobalScopeIdentifiersLock.isLocked());
@@ -121,6 +121,8 @@ WorkerGlobalScope::WorkerGlobalScope(WorkerThreadType type, const WorkerParamete
     , m_userAgent(params.userAgent)
     , m_isOnline(params.isOnline)
     , m_shouldBypassMainWorldContentSecurityPolicy(params.shouldBypassMainWorldContentSecurityPolicy)
+    , m_isSecureContext(params.isSecureContext == IsSecureContext::Yes)
+    , m_hasUnpartitionedStorageAccess(params.hasUnpartitionedStorageAccess)
     , m_topOrigin(WTF::move(topOrigin))
     , m_connectionProxy(connectionProxy)
     , m_socketProvider(socketProvider)
@@ -206,7 +208,7 @@ bool WorkerGlobalScope::isSecureContext() const
     if (!settingsValues().secureContextChecksEnabled)
         return true;
 
-    return m_topOrigin->isPotentiallyTrustworthy();
+    return m_isSecureContext;
 }
 
 // https://html.spec.whatwg.org/multipage/webappapis.html#parse-a-url
@@ -475,8 +477,8 @@ ExceptionOr<void> WorkerGlobalScope::importScripts(const FixedVector<Variant<Ref
                 return { };
             }
         }
-        if (sourceProvider)
-            addImportedScriptSourceProvider(url, *sourceProvider);
+        if (RefPtr provider = sourceProvider)
+            addImportedScriptSourceProvider(url, *provider);
     }
 
     return { };
@@ -776,7 +778,7 @@ void WorkerGlobalScope::updateServiceWorkerClientData()
 
     ASSERT(type() == WebCore::WorkerGlobalScope::Type::DedicatedWorker || type() == WebCore::WorkerGlobalScope::Type::SharedWorker);
     auto controllingServiceWorkerRegistrationIdentifier = activeServiceWorker() ? std::make_optional<ServiceWorkerRegistrationIdentifier>(activeServiceWorker()->registrationIdentifier()) : std::nullopt;
-    swClientConnection().registerServiceWorkerClient(clientOrigin(), ServiceWorkerClientData::from(*this), controllingServiceWorkerRegistrationIdentifier, String { m_userAgent });
+    swClientConnection().registerServiceWorkerClient(storageClientOrigin(), ServiceWorkerClientData::from(*this), controllingServiceWorkerRegistrationIdentifier, String { m_userAgent });
 }
 
 void WorkerGlobalScope::enqueueSecurityPolicyViolationEvent(SecurityPolicyViolationEventInit&& eventInit)

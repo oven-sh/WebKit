@@ -33,8 +33,6 @@ class VideoBitrateAllocatorFactory;
 // Callbacks for packet events in the channel.
 // These are injected at construction time.
 struct ChannelCallbacks {
-  absl::AnyInvocable<void(const RtpPacketReceived&) &&>
-      on_first_packet_received;
   absl::AnyInvocable<void() &&> on_first_packet_sent;
   absl::AnyInvocable<void(const RtpPacketReceived&)> on_packet_received;
 };
@@ -77,6 +75,11 @@ class ChannelInterface {
 
   // Enables or disables this channel
   virtual void Enable(bool enable) = 0;
+
+  // Enables Sframe encryption enforcement on all send and receive streams.
+  // Called on the signaling thread, applied asynchronously on the worker
+  // thread.
+  virtual void EnableSframe() = 0;
 
   // Channel control
   virtual RTCError SetLocalContent(const MediaContentDescription* content,

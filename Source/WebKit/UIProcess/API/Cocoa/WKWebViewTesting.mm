@@ -237,7 +237,8 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     if (traverse && layer.sublayers.count > 0) {
         TextStream::GroupScope scope(ts);
         ts << "sublayers"_s;
-        for (CALayer *sublayer in layer.sublayers) {
+        // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+        for (SUPPRESS_UNRETAINED_LOCAL CALayer *sublayer in layer.sublayers) {
             TextStream::GroupScope scope(ts);
             dumpCALayer(ts, sublayer, true);
         }
@@ -751,7 +752,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 {
     RefPtr pageForTesting = _page->pageForTesting();
     if (!pageForTesting)
-        return completionHandler({ });
+        return completionHandler(nil);
 
     pageForTesting->dumpPrivateClickMeasurement([completionHandler = makeBlockPtr(completionHandler)](const String& privateClickMeasurement) {
         completionHandler(privateClickMeasurement.createNSString().get());
@@ -881,7 +882,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     });
 }
 
-- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle
+- (NSData *)_drawPagesToPDFSynchronouslyForTesting:(_WKFrameHandle *)handle pageCount:(NSUInteger)pageCount
 {
     RefPtr frame = WebKit::WebFrameProxy::webFrame(*handle->_frameHandle->frameID());
     if (!frame)
@@ -893,7 +894,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
     printInfo.availablePaperHeight = 792;
     // Outlives this call if the wait gives up.
     auto result = Box<RetainPtr<NSData>>::create();
-    auto replyID = _page->drawPagesToPDF(*frame, printInfo, 0, 1, [result](API::Data* data) {
+    auto replyID = _page->drawPagesToPDF(*frame, printInfo, 0, pageCount, [result](API::Data* data) {
         if (data)
             *result = toNSData(data->span());
     });
@@ -1002,7 +1003,7 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
                 coordinatorClient->coordinatorStateChanged(state);
         }
 
-        std::optional<WebCore::ExceptionData> NODELETE result(bool success) const
+        std::optional<WebCore::ExceptionData> LEGACY_NODELETE result(bool success) const
         {
             if (!success)
                 return { WebCore::ExceptionData { WebCore::ExceptionCode::InvalidStateError, String() } };
@@ -1337,9 +1338,6 @@ static void dumpCALayer(TextStream& ts, CALayer *layer, bool traverse)
 #if ENABLE(HORIZONTAL_BANNER_VIEW_OVERLAYS)
     [_systemBackgroundColorExtensionViews.left() cancelFadeAnimation];
     [_systemBackgroundColorExtensionViews.right() cancelFadeAnimation];
-#if PLATFORM(IOS_FAMILY)
-    [_systemBackgroundColorExtensionViews.top() cancelFadeAnimation];
-#endif
 #endif
 }
 

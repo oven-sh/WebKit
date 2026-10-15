@@ -38,11 +38,6 @@
 namespace WebCore {
 namespace InlineIterator {
 
-BoxIterator::BoxIterator(Box::PathVariant&& pathVariant)
-    : m_box(WTF::move(pathVariant))
-{
-}
-
 BoxIterator::BoxIterator(const Box& run)
     : m_box(run)
 {
@@ -53,37 +48,29 @@ bool BoxIterator::operator==(const BoxIterator& other) const
     if (atEnd() && other.atEnd())
         return true;
 
-    return m_box.m_pathVariant == other.m_box.m_pathVariant;
+    return m_box.m_inlineContent == other.m_box.m_inlineContent && m_box.m_boxIndex == other.m_box.m_boxIndex;
 }
 
 bool BoxIterator::atEnd() const
 {
-    return WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        return path.atEnd();
-    });
+    return m_box.atEnd();
 }
 
 BoxIterator& BoxIterator::traverseLineRightwardOnLine()
 {
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traverseNextBoxOnLine();
-    });
+    m_box.traverseNextBoxOnLine();
     return *this;
 }
 
 BoxIterator& BoxIterator::traverseLineRightwardOnLineSkippingChildren()
 {
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traverseNextBoxOnLineSkippingChildren();
-    });
+    m_box.traverseNextBoxOnLineSkippingChildren();
     return *this;
 }
 
 BoxIterator& BoxIterator::traverseLineLeftwardOnLine()
 {
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traversePreviousBoxOnLine();
-    });
+    m_box.traversePreviousBoxOnLine();
     return *this;
 }
 
@@ -114,20 +101,28 @@ LeafBoxIterator Box::nextLineLeftwardOnLineIgnoringLineBreak() const
 
 InlineBoxIterator Box::parentInlineBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](auto& path) -> InlineBoxIterator {
-        return { path.parentInlineBox() };
-    });
+    ASSERT(!atEnd());
+
+    auto candidate = *this;
+
+    if (isRootInlineBox()) {
+        candidate.setAtEnd();
+        return { candidate };
+    }
+
+    CheckedRef parentLayoutBox = displayBox().layoutBox().parent();
+    do {
+        candidate.traversePreviousBox();
+    } while (!candidate.atEnd() && &candidate.displayBox().layoutBox() != parentLayoutBox.ptr());
+
+    ASSERT(candidate.atEnd() || candidate.displayBox().isInlineBox());
+
+    return { candidate };
 }
 
 LineBoxIterator Box::lineBox() const
 {
-    return WTF::switchOn(m_pathVariant, [](const BoxLegacyPath& path) {
-        return LineBoxIterator(LineBoxIteratorLegacyPath(&path.rootInlineBox()));
-    }
-    , [](const BoxModernPath& path) {
-        return LineBoxIterator(LineBoxIteratorModernPath(path.inlineContent(), path.box().lineIndex()));
-    }
-    );
+    return lineBoxFor(*m_inlineContent, lineIndex());
 }
 
 FloatRect Box::visualRect() const
@@ -149,11 +144,6 @@ RenderObject::HighlightState Box::selectionState() const
     return renderer().selectionState();
 }
 
-LeafBoxIterator::LeafBoxIterator(Box::PathVariant&& pathVariant)
-    : BoxIterator(WTF::move(pathVariant))
-{
-}
-
 LeafBoxIterator::LeafBoxIterator(const Box& run)
     : BoxIterator(run)
 {
@@ -161,17 +151,13 @@ LeafBoxIterator::LeafBoxIterator(const Box& run)
 
 LeafBoxIterator& LeafBoxIterator::traverseLineRightwardOnLine()
 {
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traverseNextLeafOnLine();
-    });
+    m_box.traverseNextLeafOnLine();
     return *this;
 }
 
 LeafBoxIterator& LeafBoxIterator::traverseLineLeftwardOnLine()
 {
-    WTF::switchOn(m_box.m_pathVariant, [](auto& path) {
-        path.traversePreviousLeafOnLine();
-    });
+    m_box.traversePreviousLeafOnLine();
     return *this;
 }
 
@@ -207,17 +193,7 @@ LeafBoxIterator boxFor(const RenderBox& renderer)
 
 LeafBoxIterator boxFor(const LayoutIntegration::InlineContent& content, size_t boxIndex)
 {
-    return { BoxModernPath { content, boxIndex } };
-}
-
-const BoxModernPath& Box::modernPath() const
-{
-    return std::get<BoxModernPath>(m_pathVariant);
-}
-
-const BoxLegacyPath& Box::legacyPath() const
-{
-    return std::get<BoxLegacyPath>(m_pathVariant);
+    return { Box { content, boxIndex } };
 }
 
 }

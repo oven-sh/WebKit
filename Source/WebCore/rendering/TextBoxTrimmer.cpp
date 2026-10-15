@@ -38,14 +38,14 @@
 
 namespace WebCore {
 
-static TextBoxTrim NODELETE textBoxTrim(const RenderBlockFlow& textBoxTrimRoot)
+static TextBoxTrim LEGACY_NODELETE textBoxTrim(const RenderBlockFlow& textBoxTrimRoot)
 {
     if (auto* multiColumnFlow = dynamicDowncast<RenderMultiColumnFlow>(textBoxTrimRoot))
         return multiColumnFlow->multiColumnBlockFlow()->style().textBoxTrim();
     return textBoxTrimRoot.style().textBoxTrim();
 }
 
-static void NODELETE removeTextBoxTrimStart(LocalFrameViewLayoutContext& layoutContext)
+static void removeTextBoxTrimStart(LocalFrameViewLayoutContext& layoutContext)
 {
     auto textBoxTrim = layoutContext.textBoxTrim();
     if (!textBoxTrim || !textBoxTrim->trimFirstFormattedLine) {
@@ -97,7 +97,8 @@ static CheckedPtr<RenderBlockFlow> lastFormattedLineRoot(const RenderBlockFlow& 
         };
         if (auto box = firstBoxOnLastFormattedLineWithContent(); box && box->isBlockLevelBox()) {
             ASSERT(is<RenderBlockFlow>(box->renderer()));
-            if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(const_cast<RenderObject&>(box->renderer()))) {
+            // FIXME: Remove suppression once rdar://189998365 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST if (CheckedPtr blockFlow = dynamicDowncast<RenderBlockFlow>(const_cast<RenderObject&>(box->renderer()))) {
                 if (CheckedPtr candidate = lastFormattedLineRoot(*blockFlow))
                     return candidate;
                 // This block itself might be the enclosing block on the last formatted line.

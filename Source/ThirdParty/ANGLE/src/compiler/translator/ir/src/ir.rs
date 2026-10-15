@@ -86,13 +86,15 @@ pub const CONSTANT_ID_FALSE: ConstantId = ConstantId { id: 0 };
 pub const CONSTANT_ID_TRUE: ConstantId = ConstantId { id: 1 };
 pub const CONSTANT_ID_FLOAT_ZERO: ConstantId = ConstantId { id: 2 };
 pub const CONSTANT_ID_FLOAT_ONE: ConstantId = ConstantId { id: 3 };
-pub const CONSTANT_ID_INT_ZERO: ConstantId = ConstantId { id: 4 };
-pub const CONSTANT_ID_INT_ONE: ConstantId = ConstantId { id: 5 };
-pub const CONSTANT_ID_UINT_ZERO: ConstantId = ConstantId { id: 6 };
-pub const CONSTANT_ID_UINT_ONE: ConstantId = ConstantId { id: 7 };
-pub const CONSTANT_ID_YUV_CSC_ITU601: ConstantId = ConstantId { id: 8 };
-pub const CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE: ConstantId = ConstantId { id: 9 };
-pub const CONSTANT_ID_YUV_CSC_ITU709: ConstantId = ConstantId { id: 10 };
+pub const CONSTANT_ID_FLOAT_NEGATIVE_ONE: ConstantId = ConstantId { id: 4 };
+pub const CONSTANT_ID_FLOAT_HALF: ConstantId = ConstantId { id: 5 };
+pub const CONSTANT_ID_INT_ZERO: ConstantId = ConstantId { id: 6 };
+pub const CONSTANT_ID_INT_ONE: ConstantId = ConstantId { id: 7 };
+pub const CONSTANT_ID_UINT_ZERO: ConstantId = ConstantId { id: 8 };
+pub const CONSTANT_ID_UINT_ONE: ConstantId = ConstantId { id: 9 };
+pub const CONSTANT_ID_YUV_CSC_ITU601: ConstantId = ConstantId { id: 10 };
+pub const CONSTANT_ID_YUV_CSC_ITU601_FULL_RANGE: ConstantId = ConstantId { id: 11 };
+pub const CONSTANT_ID_YUV_CSC_ITU709: ConstantId = ConstantId { id: 12 };
 const MAX_PREDEFINED_CONSTANT_ID: u32 = CONSTANT_ID_YUV_CSC_ITU709.id;
 
 // Typed variant of the above constants.
@@ -104,6 +106,10 @@ pub const TYPED_CONSTANT_ID_FLOAT_ZERO: TypedId =
     TypedId::from_constant_id(CONSTANT_ID_FLOAT_ZERO, TYPE_ID_FLOAT, Precision::Low);
 pub const TYPED_CONSTANT_ID_FLOAT_ONE: TypedId =
     TypedId::from_constant_id(CONSTANT_ID_FLOAT_ONE, TYPE_ID_FLOAT, Precision::Low);
+pub const TYPED_CONSTANT_ID_FLOAT_NEGATIVE_ONE: TypedId =
+    TypedId::from_constant_id(CONSTANT_ID_FLOAT_NEGATIVE_ONE, TYPE_ID_FLOAT, Precision::Low);
+pub const TYPED_CONSTANT_ID_FLOAT_HALF: TypedId =
+    TypedId::from_constant_id(CONSTANT_ID_FLOAT_HALF, TYPE_ID_FLOAT, Precision::Low);
 pub const TYPED_CONSTANT_ID_INT_ZERO: TypedId =
     TypedId::from_constant_id(CONSTANT_ID_INT_ZERO, TYPE_ID_INT, Precision::Low);
 pub const TYPED_CONSTANT_ID_INT_ONE: TypedId =
@@ -658,9 +664,9 @@ pub enum OpCode {
     // is true, that block jumps to the body of loop or the merge block otherwise.  For and
     // while loops can be distinguished by the presence of a "continue" block in Block.  The
     // body of the loop itself must terminate with `Continue` (if not otherwise terminated
-    // with `Break`, `Return` etc).  The continue block itself, if any, should also terminate
-    // with `Continue`, though that's immaterial (as there cannot be any other terminator).
-    //   Loop
+    // with `Break`, `Return`, `Discard`, etc).  The continue block itself, if any, should also
+    // terminate with `Continue`, though that's immaterial (as there cannot be any other
+    // terminator).   Loop
     Loop,
     // Similarly to `Loop`, marks the beginning of a do-loop.  Unlike `Loop`, the initial jump is
     // to the body of the do-while loop.  The body and condition blocks are similar to `Loop`.
@@ -1536,11 +1542,26 @@ impl Name {
         Name { name, suffix: None, source: NameSource::ShaderInterface }
     }
     // A name that must be preserved exactly in the output, for example `main`, or ANGLE internal
-    // interface variables.
+    // interface variables.  Avoid prefixes that can be added to user symbols, so that there cannot
+    // be collisions between them.
+    fn verify_no_user_prefix(name: &'static str) {
+        debug_assert!(!name.starts_with(USER_VARIABLE_PREFIX));
+        debug_assert!(!name.starts_with(USER_BLOCK_PREFIX));
+        debug_assert!(!name.starts_with(TEMP_VARIABLE_PREFIX));
+        debug_assert!(!name.starts_with(TEMP_FUNCTION_PREFIX));
+        debug_assert!(!name.starts_with(TEMP_STRUCT_PREFIX));
+    }
     pub fn new_exact(name: &'static str) -> Name {
+        Self::verify_no_user_prefix(name);
+        Name { name, suffix: None, source: NameSource::Internal }
+    }
+    pub fn new_exact_struct_field(name: &'static str) -> Name {
+        // Same as new_exact(), but without a prefix check.  A struct field can have any name (for
+        // example the `far` field of `gl_DepthRangeParameters`)
         Name { name, suffix: None, source: NameSource::Internal }
     }
     pub fn new_exact_with_suffix(name: &'static str, suffix: u32) -> Name {
+        Self::verify_no_user_prefix(name);
         Name { name, suffix: Some(suffix), source: NameSource::Internal }
     }
 }
@@ -2230,6 +2251,9 @@ impl Type {
     pub fn is_pixel_local_storage_plane(&self) -> bool {
         matches!(self, Type::Image(_, ImageType { dimension: ImageDimension::PixelLocal, .. }))
     }
+    pub fn is_opaque(&self) -> bool {
+        matches!(self, Type::Image(..) | Type::Scalar(BasicType::AtomicCounter))
+    }
 
     pub fn is_array(&self) -> bool {
         matches!(self, Type::Array(..))
@@ -2634,6 +2658,10 @@ impl IRMeta {
             Constant::new_float(0.0),
             // Corresponding to CONSTANT_ID_FLOAT_ONE
             Constant::new_float(1.0),
+            // Corresponding to CONSTANT_ID_FLOAT_NEGATIVE_ONE
+            Constant::new_float(-1.0),
+            // Corresponding to CONSTANT_ID_FLOAT_HALF
+            Constant::new_float(0.5),
             // Corresponding to CONSTANT_ID_INT_ZERO
             Constant::new_int(0),
             // Corresponding to CONSTANT_ID_INT_ONE
@@ -2670,6 +2698,8 @@ impl IRMeta {
         let float_constant_map = HashMap::from([
             (0.0_f32.to_bits(), CONSTANT_ID_FLOAT_ZERO),
             (1.0_f32.to_bits(), CONSTANT_ID_FLOAT_ONE),
+            ((-1.0_f32).to_bits(), CONSTANT_ID_FLOAT_NEGATIVE_ONE),
+            (0.5_f32.to_bits(), CONSTANT_ID_FLOAT_HALF),
         ]);
         let int_constant_map = HashMap::from([(0, CONSTANT_ID_INT_ZERO), (1, CONSTANT_ID_INT_ONE)]);
         let uint_constant_map =
@@ -3354,17 +3384,18 @@ impl IRMeta {
     // variable is replaced with the global variable and a new id is assigned to the interface
     // variable and returned.  This way, the shader does not need to be modified except for
     // possibly writing to the cache variable at the start of shader and reading from it at the
-    // end.
+    // end.  If requested, the original variable's type is overridden with a given type.
     pub fn declare_cached_global_for_variable(
         &mut self,
         variable_id: VariableId,
         cache_name: &'static str,
+        original_variable_type_override: Option<TypeId>,
     ) -> (VariableId, TypedId) {
         let variable = self.get_variable_mut(variable_id);
 
         // Replace the variable with a private global.
         let original_name = std::mem::replace(&mut variable.name, Name::new_temp(cache_name));
-        let type_id = variable.type_id;
+        let type_id = original_variable_type_override.unwrap_or(variable.type_id);
         let precision = variable.precision;
         let precise = variable.precise;
         let original_decorations =
@@ -3585,14 +3616,10 @@ impl IR {
         IR { meta: IRMeta::new(shader_type), function_entries: Vec::with_capacity(20) }
     }
 
-    pub fn add_function(&mut self, function: Function) -> FunctionId {
-        let new_id = self.meta.add_function(function);
-        debug_assert!(new_id.id as usize == self.function_entries.len());
-        self.function_entries.push(None);
-        new_id
-    }
-
     pub fn set_function_entry(&mut self, id: FunctionId, entry: Block) {
+        if id.id as usize >= self.function_entries.len() {
+            self.function_entries.resize_with(id.id as usize + 1, || None);
+        }
         debug_assert!(self.function_entries[id.id as usize].is_none());
         self.function_entries[id.id as usize] = Some(entry);
     }

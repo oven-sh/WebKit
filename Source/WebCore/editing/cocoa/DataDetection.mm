@@ -677,8 +677,8 @@ static NSArray * processDataDetectorScannerResults(DDScannerRef scanner, OptionS
                         // FIXME: Consider keeping color in LCHA (if that change is made) or converting back to the initial underlying color type to avoid unnecessarily clamping colors outside of sRGB.
                         auto underlineColor = convertColor<SRGBA<uint8_t>>(hsla);
 
-                        anchorElement->setInlineStyleProperty(CSSPropertyColor, CSSValueCurrentcolor);
-                        anchorElement->setInlineStyleProperty(CSSPropertyTextDecorationColor, serializationForCSS(static_cast<Color>(underlineColor)));
+                        anchorElement->setInlineStyleProperty(CSSPropertyID::Color, CSSValueID::Currentcolor);
+                        anchorElement->setInlineStyleProperty(CSSPropertyID::TextDecorationColor, serializationForCSS(static_cast<Color>(underlineColor)));
                     }
                 }
             }
@@ -892,7 +892,8 @@ Vector<SimpleRange> DataDetection::detectRanges(const SimpleRange& contextRange,
         return ranges;
 
     RetainPtr results = adoptCF(PAL::softLink_DataDetectorsCore_DDScannerCopyResultsWithOptions(scanner.get(), DDScannerCopyResultsOptionsNoOverlap));
-    for (id resultObject in static_cast<NSArray *>(results.get())) {
+    // FIXME: Remove the suppression once https://github.com/llvm/llvm-project/pull/230818 is deployed (rdar://189710680).
+    for (SUPPRESS_UNRETAINED_LOCAL id resultObject in static_cast<NSArray *>(results.get())) {
         RetainPtr ddResult = static_cast<DDResultRef>(resultObject);
         auto dataType = typeForResult(ddResult.get());
         if (!dataType)

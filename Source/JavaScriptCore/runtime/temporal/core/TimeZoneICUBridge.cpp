@@ -35,7 +35,7 @@
 #include <wtf/DateMath.h>
 #include <wtf/Lock.h>
 #include <wtf/NeverDestroyed.h>
-#include <wtf/TZoneMalloc.h>
+#include <wtf/TZoneMallocInlines.h>
 #include <wtf/ThreadSafeRefCounted.h>
 #include <wtf/TinyLRUCache.h>
 #include <wtf/unicode/icu/ICUHelpers.h>

@@ -45,6 +45,7 @@
 #import "Logging.h"
 #import "XPCEndpoint.h"
 #import <wtf/OSObjectPtr.h>
+#import <wtf/darwin/DarwinExtras.h>
 #import <wtf/darwin/XPCExtras.h>
 #import <wtf/darwin/XPCObjectPtr.h>
 #import <wtf/spi/cocoa/OSLogSPI.h>
@@ -226,7 +227,7 @@ bool AuxiliaryProcessProxy::LogXPCEventHandler::handleXPCEvent(xpc_object_t even
 
         OSObjectPtr<os_log_t> osLog;
         if (!subsystem.isEmpty() && !category.isEmpty())
-            osLog = adoptOSObject(os_log_create(subsystem.utf8().legacyCStringPointer(), category.utf8().legacyCStringPointer()));
+            osLog = adoptOSObject(osLogCreate(subsystem.utf8(), category.utf8()));
 
         process->didReceiveLogsDuringLaunchForTesting();
         auto message = messageString.utf8();

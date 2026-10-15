@@ -71,7 +71,7 @@ static const StyleProperties& leftToRightDeclaration()
 IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
     static auto& declaration = [] () -> const StyleProperties& {
         auto properties = MutableStyleProperties::create();
-        properties->setProperty(CSSPropertyDirection, CSSValueLtr);
+        properties->setProperty(CSSPropertyID::Direction, CSSValueID::Ltr);
         return properties.leakRef();
     }();
 IGNORE_GCC_WARNINGS_END
@@ -83,7 +83,7 @@ static const StyleProperties& rightToLeftDeclaration()
 IGNORE_GCC_WARNINGS_BEGIN("dangling-reference")
     static auto& declaration = [] () -> const StyleProperties& {
         auto properties = MutableStyleProperties::create();
-        properties->setProperty(CSSPropertyDirection, CSSValueRtl);
+        properties->setProperty(CSSPropertyID::Direction, CSSValueID::Rtl);
         return properties.leakRef();
     }();
 IGNORE_GCC_WARNINGS_END
@@ -861,13 +861,14 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
                     addScopingRootWithDistance(implicitParentNode);
                 } else {
                     // Constructed stylesheet without owner node.
-                    // Check if it's adopted by shadow roots and use the shadow host as scoping root.
+                    // Use the shadow host as scoping root for adopting shadow roots, and the document itself for adopting documents.
                     for (const auto& adoptingTreeScope : client->adoptingTreeScopes()) {
                         if (auto* shadowRoot = dynamicDowncast<ShadowRoot>(adoptingTreeScope)) {
                             const auto* shadowHost = shadowRoot->host();
                             if (shadowHost && &shadowHost->document() == &this->element().document())
                                 addScopingRootWithDistance(shadowHost);
-                        }
+                        } else if (&adoptingTreeScope == &this->element().document())
+                            addScopingRootWithDistance(&adoptingTreeScope);
                     }
                 }
             };
@@ -897,7 +898,7 @@ std::pair<bool, std::optional<Vector<ElementRuleCollector::ScopingRootWithDistan
     return { true, WTF::move(scopingRoots) };
 }
 
-static inline bool NODELETE compareRules(MatchedRule r1, MatchedRule r2)
+static inline bool LEGACY_NODELETE compareRules(MatchedRule r1, MatchedRule r2)
 {
     // For normal properties the earlier scope wins. This may be reversed by !important which is handled when resolving cascade.
     if (r1.styleScopeOrdinal != r2.styleScopeOrdinal)

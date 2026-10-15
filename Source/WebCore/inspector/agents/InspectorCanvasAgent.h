@@ -40,6 +40,7 @@
 #include <wtf/RobinHoodHashMap.h>
 #include <wtf/RobinHoodHashSet.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/WeakHashSet.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
 
@@ -116,14 +117,18 @@ public:
     bool isWebGLProgramDisabled(WebGLProgram&);
     bool isWebGLProgramHighlighted(WebGLProgram&);
 #endif // ENABLE(WEBGL)
+    void didChangeCSSCanvasClientNodes(CanvasBase&);
     void didCreateWebGPUDevice(GPUDevice&);
     void willDestroyWebGPUDevice(GPUDevice&);
+    void didChangeWebGPUDeviceLabel(GPUDevice&);
     virtual void didChangeGPUDeviceClientNodes(GPUDevice&);
     void didChangeWebGPUMemory(GPUDevice&);
     void didCreateWebGPUComputePipeline(GPUDevice&, GPUComputePipeline&);
     void willDestroyWebGPUComputePipeline(GPUComputePipeline&);
+    void didChangeWebGPUComputePipelineLabel(GPUComputePipeline&);
     void didCreateWebGPURenderPipeline(GPUDevice&, GPURenderPipeline&);
     void willDestroyWebGPURenderPipeline(GPURenderPipeline&);
+    void didChangeWebGPURenderPipelineLabel(GPURenderPipeline&);
     bool isWebGPURenderPipelineDisabled(GPURenderPipeline&);
     void didFinishRecordingCanvasFrame(GPUDevice&, bool forceDispatch = false);
     RefPtr<WebGPU::RenderPipeline> renderPipelineForWebGPUHighlighting(GPURenderPipeline&, unsigned canvasColorAttachmentMask);
@@ -151,9 +156,15 @@ protected:
     virtual Ref<Inspector::Protocol::Canvas::Canvas> buildObjectForCanvas(InspectorCanvas&, bool captureBacktrace);
     virtual bool matchesCurrentContext(ScriptExecutionContext*) const = 0;
 
+    void dispatchNodesChanged(InspectorCanvas&);
+    void dispatchCSSCanvasClientNodesChanged(InspectorCanvas&);
+    void dispatchCSSCanvasNamesChanged(InspectorCanvas&);
+
     const UniqueRef<Inspector::CanvasFrontendDispatcher> m_frontendDispatcher;
 
     MemoryCompactRobinHoodHashMap<String, Ref<InspectorCanvas>> m_identifierToInspectorCanvas;
+    WeakHashSet<InspectorCanvas> m_pendingNodesChange;
+    WeakHashSet<InspectorCanvas> m_pendingCSSCanvasClientNodesChange;
 
 private:
     struct RecordingOptions {

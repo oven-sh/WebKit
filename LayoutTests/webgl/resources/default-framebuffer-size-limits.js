@@ -8,8 +8,9 @@
 // Requires js-test.js and webgl-test-utils.js.
 
 // The errors that the GPU process reports are printed asynchronously, which would make the output
-// depend on timing. The tests check the errors with getError().
-if (self.internals)
+// depend on timing. The tests check the errors with getError(). Workers do not have internals.settings,
+// so the page disables the errors before starting the worker.
+if (self.internals && internals.settings)
     internals.settings.setWebGLErrorsToConsoleEnabled(false);
 
 var wtu = WebGLTestUtils;
@@ -41,10 +42,11 @@ function drawingBufferLimits()
     var maxViewportDims = gl.getParameter(gl.MAX_VIEWPORT_DIMS);
     var glLimit = [Math.min(maxTextureSize, maxRenderbufferSize, maxViewportDims[0]), Math.min(maxTextureSize, maxRenderbufferSize, maxViewportDims[1])];
     var limit = glLimit.slice();
-    if (self.internals && internals.webglMaxDrawingBufferSize) {
-        var compositorLimit = internals.webglMaxDrawingBufferSize(gl);
+    var compositorLimit = null;
+    if (self.internals && internals.webglMaxDrawingBufferSize)
+        compositorLimit = internals.webglMaxDrawingBufferSize(gl);
+    if (compositorLimit)
         limit = [Math.min(limit[0], compositorLimit[0]), Math.min(limit[1], compositorLimit[1])];
-    }
     return { glLimit: glLimit, limit: limit };
 }
 
@@ -265,8 +267,9 @@ async function runConfiguration(version, parameters)
     debug("restored with a canvas over the limit: after drawing:");
     await checkRendersAtFullSize();
 
-    // A tall drawing buffer at the height limit followed by a wide one at the width limit.
-    // FIXME: With antialias, the resize from the tall to the wide drawing buffer loses the context.
+    // A tall drawing buffer at the height limit followed by a wide one at the width limit. The
+    // canvas is resized with separate width and height assignments, so the intermediate size is at
+    // both limits. That size must not be allocated, as it may not fit in memory.
     for (var testCase of [
         { label: "tall at the limit", size: [2, limit[1]], expected: [2, limit[1]] },
         { label: "wide at the limit after tall at the limit", size: [limit[0], 2], expected: [limit[0], 2] },

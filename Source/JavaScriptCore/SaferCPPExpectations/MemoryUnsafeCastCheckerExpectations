@@ -3,15 +3,26 @@ API/JSAPIWrapperObject.mm
 API/JSCallbackConstructor.cpp
 API/JSCallbackObject.h
 API/JSObjectRef.cpp
+[ macOS ] API/JSVirtualMachine.mm
+[ macOS ] API/JSWrapperMap.mm
 API/ObjCCallbackFunction.mm
 b3/B3InsertionSetInlines.h
 b3/B3LowerToAir.cpp
 b3/B3ProcedureInlines.h
+[ macOS ] b3/B3Value.cpp
+[ macOS ] b3/B3ValueInlines.h
+[ macOS ] b3/air/AirArg.cpp
 b3/air/AirCode.cpp
+[ macOS ] b3/air/AirInstAnalyzer.h
 builtins/BuiltinExecutables.cpp
-builtins/BuiltinNames.cpp
+[ iOS ] builtins/BuiltinNames.cpp
+[ macOS ] bytecode/AccessCase.cpp
+[ macOS ] bytecode/AccessCase.h
+[ macOS ] bytecode/BytecodeGraph.h
 bytecode/CallLinkInfo.cpp
+[ macOS ] bytecode/CallLinkInfoBase.cpp
 bytecode/CodeBlock.cpp
+[ macOS ] bytecode/CodeBlock.h
 bytecode/CodeBlockInlines.h
 bytecode/Instruction.h
 bytecode/MetadataTable.h
@@ -21,40 +32,58 @@ bytecode/UnlinkedFunctionCodeBlock.cpp
 bytecode/UnlinkedFunctionExecutable.cpp
 bytecode/UnlinkedModuleProgramCodeBlock.cpp
 bytecode/UnlinkedProgramCodeBlock.cpp
+[ macOS ] bytecode/Watchpoint.cpp
 bytecompiler/BytecodeGenerator.cpp
 bytecompiler/BytecodeGenerator.h
 bytecompiler/NodesCodegen.cpp
 debugger/Debugger.cpp
 dfg/DFGByteCodeParser.cpp
-dfg/DFGConstantFoldingPhase.cpp
+[ iOS ] dfg/DFGConstantFoldingPhase.cpp
+[ macOS ] dfg/DFGGraph.h
+[ macOS ] dfg/DFGNode.h
 dfg/DFGOSRExitCompilerCommon.cpp
 dfg/DFGOperations.cpp
+[ macOS ] ftl/FTLLowerDFGToB3.cpp
 ftl/FTLState.cpp
+[ macOS ] heap/AbstractSlotVisitorInlines.h
 heap/ConservativeRoots.cpp
+[ macOS ] heap/HandleTypes.h
 heap/Heap.cpp
 heap/LocalAllocator.cpp
+[ macOS ] heap/MarkedBlock.h
 heap/MarkedSpace.cpp
 heap/PreciseAllocation.cpp
 heap/SlotVisitor.cpp
+[ macOS ] heap/SlotVisitorInlines.h
 heap/VerifierSlotVisitor.cpp
 heap/WeakBlock.h
 heap/WeakInlines.h
+[ macOS ] heap/WeakSetInlines.h
 inspector/JSInjectedScriptHost.cpp
 inspector/JSJavaScriptCallFrame.cpp
 inspector/agents/InspectorDebuggerAgent.cpp
+[ macOS ] inspector/agents/JSGlobalObjectDebuggerAgent.cpp
 interpreter/CallFrame.cpp
 interpreter/CallFrame.h
 interpreter/Interpreter.cpp
+[ macOS ] jit/AssemblyHelpersSpoolers.h
+[ macOS ] jit/GCAwareJITStubRoutine.cpp
+[ macOS ] jit/JITCode.cpp
 jit/JITOperations.cpp
+[ macOS ] jit/JITStubRoutine.cpp
 jit/JITThunks.cpp
+[ macOS ] llint/LLIntSlowPaths.cpp
 parser/ASTBuilder.h
 parser/NodesAnalyzeModule.cpp
+[ macOS ] parser/Parser.cpp
+[ macOS ] runtime/ArrayBufferView.cpp
 runtime/ArrayStorage.h
 runtime/Butterfly.h
 runtime/CacheableIdentifierInlines.h
 runtime/CachedTypes.cpp
 runtime/CodeCache.cpp
 runtime/DirectArguments.cpp
+[ macOS ] runtime/DirectArguments.h
 runtime/ErrorInstance.h
 runtime/EvalExecutable.cpp
 runtime/Exception.cpp
@@ -62,8 +91,8 @@ runtime/ExecutableBase.cpp
 runtime/FunctionExecutable.cpp
 runtime/FunctionRareData.cpp
 runtime/GenericArgumentsImplInlines.h
-runtime/Identifier.cpp
-runtime/Identifier.h
+[ iOS ] runtime/Identifier.cpp
+[ iOS ] runtime/Identifier.h
 runtime/IdentifierInlines.h
 runtime/IndexingHeader.h
 runtime/IntlCollator.h
@@ -79,8 +108,13 @@ runtime/IntlSegmentIterator.h
 runtime/IntlSegmenter.h
 runtime/IntlSegments.h
 runtime/JSArrayBufferView.cpp
+[ macOS ] runtime/JSArrayBufferView.h
+[ macOS ] runtime/JSArrayInlines.h
+[ macOS ] runtime/JSBigInt.cpp
 runtime/JSCJSValueInlines.h
+[ macOS ] runtime/JSCell.cpp
 runtime/JSCell.h
+[ macOS ] runtime/JSCellInlines.h
 runtime/JSCustomGetterFunction.cpp
 runtime/JSCustomSetterFunction.cpp
 runtime/JSDestructibleObjectHeapCellType.cpp
@@ -89,9 +123,13 @@ runtime/JSFunction.cpp
 runtime/JSFunctionInlines.h
 runtime/JSGlobalLexicalEnvironment.cpp
 runtime/JSGlobalObject.cpp
+[ macOS ] runtime/JSGlobalObjectInlines.h
 runtime/JSModuleNamespaceObject.cpp
 runtime/JSModuleRecord.cpp
 runtime/JSNativeStdFunction.h
+[ macOS ] runtime/JSObject.cpp
+[ macOS ] runtime/JSObject.h
+[ macOS ] runtime/JSObjectInlines.h
 runtime/JSRemoteFunction.cpp
 runtime/JSSourceCode.cpp
 runtime/JSString.cpp
@@ -102,8 +140,8 @@ runtime/ModuleProgramExecutable.cpp
 runtime/NativeExecutable.cpp
 runtime/ObjectConstructor.cpp
 runtime/ProgramExecutable.cpp
-runtime/PropertyName.h
-runtime/PropertyNameArray.h
+[ iOS ] runtime/PropertyName.h
+[ iOS ] runtime/PropertyNameArray.h
 runtime/PropertyTable.cpp
 runtime/RegExp.cpp
 runtime/RegExpCache.cpp
@@ -111,25 +149,36 @@ runtime/SamplingProfiler.cpp
 runtime/ScopedArguments.cpp
 runtime/ScopedArgumentsTable.cpp
 runtime/ScriptExecutable.cpp
-runtime/SmallStrings.cpp
+[ iOS ] runtime/SmallStrings.cpp
 runtime/SparseArrayValueMap.cpp
-runtime/StringReplaceCacheInlines.h
-runtime/StringSplitCacheInlines.h
+[ macOS ] runtime/StringPrototype.cpp
+[ iOS ] runtime/StringReplaceCacheInlines.h
+[ iOS ] runtime/StringSplitCacheInlines.h
 runtime/Structure.cpp
 runtime/Structure.h
+[ macOS ] runtime/StructureArrayStorageInlines.h
+[ macOS ] runtime/StructureInlines.h
 runtime/StructureRareData.cpp
 runtime/Symbol.cpp
 runtime/SymbolConstructor.cpp
 runtime/SymbolTable.cpp
 runtime/SyntheticModuleRecord.cpp
 runtime/WeakMapImpl.cpp
+[ macOS ] runtime/WriteBarrier.h
+[ macOS ] runtime/WriteBarrierInlines.h
 tools/CellProfile.h
 tools/HeapVerifier.cpp
+[ macOS ] tools/Integrity.cpp
 tools/JSDollarVM.cpp
 tools/VMInspector.cpp
+[ macOS ] wasm/WasmCallee.cpp
 wasm/WasmModule.cpp
+[ macOS ] wasm/WasmModuleInformation.cpp
 wasm/WasmOperations.cpp
 wasm/WasmStreamingCompiler.cpp
+[ macOS ] wasm/WasmTable.cpp
+[ macOS ] wasm/WasmTypeDefinition.cpp
+[ macOS ] wasm/js/JSWebAssemblyArray.h
 wasm/js/JSWebAssemblyException.cpp
 wasm/js/JSWebAssemblyGlobal.cpp
 wasm/js/JSWebAssemblyHelpers.h
@@ -138,5 +187,6 @@ wasm/js/JSWebAssemblyMemory.cpp
 wasm/js/JSWebAssemblyModule.cpp
 wasm/js/JSWebAssemblyTable.cpp
 wasm/js/JSWebAssemblyTag.cpp
+[ macOS ] wasm/js/WebAssemblyBuiltin.cpp
 wasm/js/WebAssemblyFunction.cpp
 wasm/js/WebAssemblyModuleRecord.cpp

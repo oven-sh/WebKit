@@ -22,7 +22,24 @@ test(() => {
 
     assert_true('exitVolumetricScene' in div, 'exitVolumetricScene should exist on Element');
     assert_equals(typeof div.exitVolumetricScene, 'function', 'exitVolumetricScene should be a function');
+
+    assert_true('inVolumetricScene' in div, 'inVolumetricScene should exist on Element');
+    assert_false(div.inVolumetricScene, 'inVolumetricScene should be false for an element that is not presented');
+
+    assert_true('onvolumetricchange' in div, 'onvolumetricchange should exist on Element');
+    assert_equals(div.onvolumetricchange, null, 'onvolumetricchange should default to null');
 }, 'The volumetric scene API is exposed on Element');
+
+test(() => {
+    const div = document.createElement("div");
+
+    assert_throws_js(TypeError, () => { div.inVolumetricScene = true; }, 'Assigning inVolumetricScene should throw in strict mode');
+    assert_false(div.inVolumetricScene, 'inVolumetricScene should be read-only');
+
+    const handler = () => { };
+    div.onvolumetricchange = handler;
+    assert_equals(div.onvolumetricchange, handler, 'onvolumetricchange should store the assigned handler');
+}, 'inVolumetricScene is read-only and onvolumetricchange is assignable');
 
 test(t => {
     const div = document.createElement("div");

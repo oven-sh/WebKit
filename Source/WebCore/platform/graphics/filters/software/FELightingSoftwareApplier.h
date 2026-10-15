@@ -92,18 +92,18 @@ protected:
 
     struct LightingData {
         // This structure contains only read-only (SMP safe) data
-        const Filter* filter;
-        const FilterImage* result;
+        const RefPtr<const Filter> filter;
+        const RefPtr<const FilterImage> result;
         FilterEffect::Type filterType;
         Color lightingColor;
         float surfaceScale;
         float diffuseConstant;
         float specularConstant;
         float specularExponent;
-        const LightSource* lightSource;
+        const RefPtr<const LightSource> lightSource;
         const ColorSpace* operatingColorSpace;
 
-        PixelBuffer* pixels;
+        const RefPtr<PixelBuffer> pixels;
         int widthMultipliedByPixelSize;
         int width;
         int height;

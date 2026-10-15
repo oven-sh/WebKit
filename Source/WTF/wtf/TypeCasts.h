@@ -29,6 +29,7 @@
 #include <memory>
 #include <type_traits>
 #include <utility>
+#include <wtf/Assertions.h>
 #include <wtf/Compiler.h>
 
 namespace WTF {

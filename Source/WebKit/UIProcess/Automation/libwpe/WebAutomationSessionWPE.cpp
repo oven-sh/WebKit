@@ -526,6 +526,17 @@ void WebAutomationSession::platformSimulateTouchInteraction(WebPageProxy&page, T
         break;
     }
 
+    if (interaction == TouchInteraction::TouchDown) {
+        // Touches are routed against the touch event regions of the last rendering update, so make
+        // sure the effects of previous commands are rendered before starting a touch sequence.
+        page.callAfterNextPresentationUpdate([page = Ref { page }, event = WTF::move(event), completionHandler = WTF::move(completionHandler)] mutable {
+            if (auto* view = page->wpeView())
+                wpe_view_event(view, event.get());
+            completionHandler(std::nullopt);
+        });
+        return;
+    }
+
     wpe_view_event(page.wpeView(), event.get());
 #endif
     completionHandler(std::nullopt);

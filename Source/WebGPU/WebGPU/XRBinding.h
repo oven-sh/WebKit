@@ -56,10 +56,10 @@ public:
 
     ~XRBinding();
 
-    void NODELETE setLabel(String&&) final;
+    void LEGACY_NODELETE setLabel(String&&) final;
 
-    bool NODELETE isValid() const final;
-    Ref<XRProjectionLayer> createXRProjectionLayer(WGPUTextureFormat, WGPUTextureFormat*, WGPUTextureUsage, double);
+    bool LEGACY_NODELETE isValid() const final;
+    Ref<XRProjectionLayer> createProjectionLayer(const WebGPU::XRProjectionLayerDescriptor&);
     RefPtr<XRSubImage> getViewSubImage(XRProjectionLayer&);
     Device& device() { return m_device; }
 

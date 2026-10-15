@@ -36,6 +36,7 @@
 #include <wtf/EnumTraits.h>
 #include <wtf/Platform.h>
 #include <wtf/TZoneMalloc.h>
+#include <wtf/TypeCasts.h>
 #include <wtf/URL.h>
 #include <wtf/WallTime.h>
 
@@ -273,8 +274,8 @@ public:
     void upgradeInsecureRequest();
     void upgradeInsecureRequestIfNeeded(ShouldUpgradeLocalhostAndIPAddress, const std::optional<uint16_t>&);
 
-    WEBCORE_EXPORT static double NODELETE defaultTimeoutInterval(); // May return 0 when using platform default.
-    WEBCORE_EXPORT static void NODELETE setDefaultTimeoutInterval(double);
+    WEBCORE_EXPORT static double LEGACY_NODELETE defaultTimeoutInterval(); // May return 0 when using platform default.
+    WEBCORE_EXPORT static void LEGACY_NODELETE setDefaultTimeoutInterval(double);
 
     WEBCORE_EXPORT static bool equal(const ResourceRequest&, const ResourceRequest&);
 
@@ -288,13 +289,13 @@ public:
     WEBCORE_EXPORT void setUseAdvancedPrivacyProtections(bool);
 
     bool didFilterLinkDecoration() const { return m_requestData.m_didFilterLinkDecoration; }
-    WEBCORE_EXPORT void NODELETE setDidFilterLinkDecoration(bool);
+    WEBCORE_EXPORT void LEGACY_NODELETE setDidFilterLinkDecoration(bool);
 
     bool isPrivateTokenUsageByThirdPartyAllowed() const { return m_requestData.m_isPrivateTokenUsageByThirdPartyAllowed; }
-    void NODELETE setIsPrivateTokenUsageByThirdPartyAllowed(bool);
+    void LEGACY_NODELETE setIsPrivateTokenUsageByThirdPartyAllowed(bool);
 
     bool wasSchemeOptimisticallyUpgraded() const { return m_requestData.m_wasSchemeOptimisticallyUpgraded; }
-    void NODELETE setWasSchemeOptimisticallyUpgraded(bool);
+    void LEGACY_NODELETE setWasSchemeOptimisticallyUpgraded(bool);
 
 protected:
     // Used when ResourceRequest is initialized from a platform representation of the request
@@ -337,7 +338,7 @@ protected:
     bool m_hiddenFromInspector : 1;
 
 private:
-    const ResourceRequest& NODELETE asResourceRequest() const;
+    const ResourceRequest& LEGACY_NODELETE asResourceRequest() const;
 
     WEBCORE_EXPORT static double s_defaultTimeoutInterval;
 };
@@ -392,3 +393,8 @@ template<> struct EnumTraitsForPersistence<WebCore::ResourceRequestRequester> {
 };
 
 } // namespace WTF
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebCore::ResourceRequest)
+    // ResourceRequest is the only subclass of ResourceRequestBase.
+    static bool isType(const WebCore::ResourceRequestBase&) { return true; }
+SPECIALIZE_TYPE_TRAITS_END()

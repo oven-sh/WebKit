@@ -43,7 +43,7 @@
 #include <WebKit/WKGeolocationManager.h>
 #include <WebKit/WKGeolocationPermissionRequest.h>
 #include <WebKit/WKGeolocationPosition.h>
-#include <WebKit/WKHitTestResult.h>
+#include <WebKit/WKHitTestResultRef.h>
 #include <WebKit/WKMutableArray.h>
 #include <WebKit/WKMutableDictionary.h>
 #include <WebKit/WKNavigationDataRef.h>

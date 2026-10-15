@@ -306,6 +306,15 @@ void PortalPresentationManagerProxy::hideAllVolumetricScenes()
     }
 }
 
+void PortalPresentationManagerProxy::updateVolumetricSceneHitSphere(WebCore::NodeIdentifier nodeID, const WebCore::FloatPoint3D& center, float radius)
+{
+    auto it = m_volumetricScenes.find(nodeID);
+    if (it == m_volumetricScenes.end())
+        return;
+
+    [it->value->sceneController setHitSphereCenter:center radius:radius];
+}
+
 #endif // ENABLE(CONNECTED_VOLUMETRIC_SCENE)
 
 PortalPresentationManagerProxy::PortalPresentation& PortalPresentationManagerProxy::ensurePortalPresentation(Ref<WebCore::ModelContext> modelContext, const WebPageProxy& webPageProxy)
@@ -393,6 +402,10 @@ void PortalPresentationManagerProxy::hideVolumetricScene(WebCore::NodeIdentifier
 }
 
 void PortalPresentationManagerProxy::hideAllVolumetricScenes()
+{
+}
+
+void PortalPresentationManagerProxy::updateVolumetricSceneHitSphere(WebCore::NodeIdentifier, const WebCore::FloatPoint3D&, float)
 {
 }
 

@@ -621,6 +621,7 @@ void av1_get_horver_correlation_full_c(const int16_t *diff, int stride,
   }
 }
 
+#if CONFIG_AV1_HIGHBITDEPTH
 static void get_variance_stats_hbd(const MACROBLOCK *x, int64_t *src_var,
                                    int64_t *rec_var) {
   const MACROBLOCKD *xd = &x->e_mbd;
@@ -631,15 +632,26 @@ static void get_variance_stats_hbd(const MACROBLOCK *x, int64_t *src_var,
   BLOCK_SIZE bsize = mbmi->bsize;
   int bw = block_size_wide[bsize];
   int bh = block_size_high[bsize];
+  const int shift = 2 * (xd->bd - 8);
 
   *rec_var = aom_highbd_calc_variance_stat(CONVERT_TO_SHORTPTR(pd->dst.buf),
                                            pd->dst.stride, bw, bh);
   *src_var = aom_highbd_calc_variance_stat(CONVERT_TO_SHORTPTR(p->src.buf),
                                            p->src.stride, bw, bh);
-}
 
-static void get_variance_stats(const MACROBLOCK *x, int64_t *src_var,
-                               int64_t *rec_var) {
+  *rec_var = ROUND_POWER_OF_TWO(*rec_var, shift);
+  *src_var = ROUND_POWER_OF_TWO(*src_var, shift);
+}
+#endif  // CONFIG_AV1_HIGHBITDEPTH
+
+void av1_get_variance_stats(const MACROBLOCK *x, int64_t *src_var,
+                            int64_t *rec_var) {
+#if CONFIG_AV1_HIGHBITDEPTH
+  if (is_cur_buf_hbd(&x->e_mbd)) {
+    get_variance_stats_hbd(x, src_var, rec_var);
+    return;
+  }
+#endif  // CONFIG_AV1_HIGHBITDEPTH
   const MACROBLOCKD *xd = &x->e_mbd;
   const MB_MODE_INFO *mbmi = xd->mi[0];
   const struct macroblockd_plane *const pd = &xd->plane[AOM_PLANE_Y];
@@ -651,6 +663,54 @@ static void get_variance_stats(const MACROBLOCK *x, int64_t *src_var,
 
   *rec_var = aom_calc_variance_stat(pd->dst.buf, pd->dst.stride, bw, bh);
   *src_var = aom_calc_variance_stat(p->src.buf, p->src.stride, bw, bh);
+}
+
+int av1_is_skip_txfm_penalized(const AV1_COMP *cpi, const MACROBLOCK *x,
+                               BLOCK_SIZE bsize) {
+#if CONFIG_AV1_HIGHBITDEPTH
+  const MACROBLOCKD *xd = &x->e_mbd;
+  if (xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3 &&
+      !frame_is_kf_gf_arf(cpi)) {
+    int64_t src_var, rec_var;
+    av1_get_variance_stats(x, &src_var, &rec_var);
+    if (src_var > rec_var) {
+      const int num_pixels = block_size_wide[bsize] * block_size_high[bsize];
+      const int64_t src_var_per_px = src_var / num_pixels;
+      if (src_var_per_px >= 0) return 1;
+    }
+  }
+#else
+  (void)cpi;
+  (void)x;
+  (void)bsize;
+#endif
+  return 0;
+}
+
+void av1_get_tx_skip_dist(const AV1_COMP *cpi, const MACROBLOCK *x,
+                          BLOCK_SIZE bsize, int64_t dist, int64_t sse,
+                          int64_t *no_skip_dist, int64_t *skip_dist) {
+  *no_skip_dist = dist;
+  *skip_dist = sse;
+#if CONFIG_AV1_HIGHBITDEPTH
+  const MACROBLOCKD *xd = &x->e_mbd;
+  if (xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3 &&
+      !frame_is_kf_gf_arf(cpi)) {
+    int64_t src_var, rec_var;
+    av1_get_variance_stats(x, &src_var, &rec_var);
+    if (src_var > rec_var) {
+      int64_t var_offset = src_var - rec_var;
+      const int num_pixels = block_size_wide[bsize] * block_size_high[bsize];
+      const int64_t src_var_per_px = src_var / num_pixels;
+      *no_skip_dist += var_offset;
+      *skip_dist += (src_var_per_px >= 0) ? (var_offset * 4) : var_offset;
+    }
+  }
+#else
+  (void)cpi;
+  (void)x;
+  (void)bsize;
+#endif
 }
 
 static void adjust_rdcost(const AV1_COMP *cpi, const MACROBLOCK *x,
@@ -676,17 +736,56 @@ static void adjust_rdcost(const AV1_COMP *cpi, const MACROBLOCK *x,
     return;
   }
 
+#if CONFIG_AV1_HIGHBITDEPTH
+  const MACROBLOCKD *xd = &x->e_mbd;
+  if (xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3) {
+    if (frame_is_intra_only(&cpi->common)) return;
+
+    int64_t src_var, rec_var;
+    av1_get_variance_stats(x, &src_var, &rec_var);
+
+    int64_t var_offset = (src_var > rec_var) ? (src_var - rec_var) : 0;
+
+    const MB_MODE_INFO *mbmi = xd->mi[0];
+    const int is_smooth_intra_mode =
+        (mbmi->mode == DC_PRED || mbmi->mode == SMOOTH_PRED ||
+         mbmi->mode == SMOOTH_V_PRED || mbmi->mode == SMOOTH_H_PRED ||
+         mbmi->mode == PAETH_PRED);
+
+    const int is_skip_txfm = mbmi->skip_txfm || rd_cost->skip_txfm;
+    const int num_pixels =
+        block_size_wide[mbmi->bsize] * block_size_high[mbmi->bsize];
+    const int64_t src_var_per_px = src_var / num_pixels;
+
+    if (var_offset > 0 &&
+        ((is_skip_txfm && src_var_per_px >= 0) || is_smooth_intra_mode ||
+         is_interintra_mode(mbmi) || has_second_ref(mbmi))) {
+      var_offset *= 4;
+    }
+
+    if (is_inter_pred && !has_second_ref(mbmi)) {
+      const int mv_mag =
+          abs(mbmi->mv[0].as_mv.row) + abs(mbmi->mv[0].as_mv.col);
+      if (mv_mag > 0 && src_var_per_px < 64) {
+        var_offset += (int64_t)mv_mag * (64 - src_var_per_px);
+      }
+    }
+
+    if (var_offset <= 0) return;
+
+    rd_cost->dist += var_offset;
+
+    rd_cost->rdcost = RDCOST(x->rdmult, rd_cost->rate, rd_cost->dist);
+    return;
+  }
+#endif
+
   if (cpi->oxcf.algo_cfg.sharpness != 3) return;
 
   if (frame_is_kf_gf_arf(cpi)) return;
 
   int64_t src_var, rec_var;
-
-  const bool is_hbd = is_cur_buf_hbd(&x->e_mbd);
-  if (is_hbd)
-    get_variance_stats_hbd(x, &src_var, &rec_var);
-  else
-    get_variance_stats(x, &src_var, &rec_var);
+  av1_get_variance_stats(x, &src_var, &rec_var);
 
   if (src_var <= rec_var) return;
 
@@ -706,17 +805,54 @@ static void adjust_cost(const AV1_COMP *cpi, const MACROBLOCK *x,
     return;
   }
 
+#if CONFIG_AV1_HIGHBITDEPTH
+  const MACROBLOCKD *xd = &x->e_mbd;
+  if (xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3) {
+    if (frame_is_intra_only(&cpi->common)) return;
+
+    int64_t src_var, rec_var;
+    av1_get_variance_stats(x, &src_var, &rec_var);
+
+    int64_t var_offset = (src_var > rec_var) ? (src_var - rec_var) : 0;
+
+    const MB_MODE_INFO *mbmi = xd->mi[0];
+    const int is_smooth_intra_mode =
+        (mbmi->mode == DC_PRED || mbmi->mode == SMOOTH_PRED ||
+         mbmi->mode == SMOOTH_V_PRED || mbmi->mode == SMOOTH_H_PRED ||
+         mbmi->mode == PAETH_PRED);
+
+    const int is_skip_txfm = mbmi->skip_txfm;
+    const int num_pixels =
+        block_size_wide[mbmi->bsize] * block_size_high[mbmi->bsize];
+    const int64_t src_var_per_px = src_var / num_pixels;
+
+    if (var_offset > 0 &&
+        ((is_skip_txfm && src_var_per_px >= 0) || is_smooth_intra_mode ||
+         is_interintra_mode(mbmi) || has_second_ref(mbmi))) {
+      var_offset *= 4;
+    }
+
+    if (is_inter_pred && !has_second_ref(mbmi)) {
+      const int mv_mag =
+          abs(mbmi->mv[0].as_mv.row) + abs(mbmi->mv[0].as_mv.col);
+      if (mv_mag > 0 && src_var_per_px < 64) {
+        var_offset += (int64_t)mv_mag * (64 - src_var_per_px);
+      }
+    }
+
+    if (var_offset <= 0) return;
+
+    *rd_cost += RDCOST(x->rdmult, 0, var_offset);
+    return;
+  }
+#endif
+
   if (cpi->oxcf.algo_cfg.sharpness != 3) return;
 
   if (frame_is_kf_gf_arf(cpi)) return;
 
   int64_t src_var, rec_var;
-  const bool is_hbd = is_cur_buf_hbd(&x->e_mbd);
-
-  if (is_hbd)
-    get_variance_stats_hbd(x, &src_var, &rec_var);
-  else
-    get_variance_stats(x, &src_var, &rec_var);
+  av1_get_variance_stats(x, &src_var, &rec_var);
 
   if (src_var <= rec_var) return;
 
@@ -1710,6 +1846,8 @@ static int64_t motion_mode_rd(
                               rd_stats_uv, mbmi);
       }
       mbmi->skip_txfm = 0;
+      rd_stats->skip_txfm = 0;
+      if (rd_stats_y) rd_stats_y->skip_txfm = 0;
       increase_motion_mode_rdstats(cpi, mbmi, rd_stats, NULL, NULL);
 
     } else {
@@ -3851,14 +3989,18 @@ static inline void refine_winner_mode_tx(
         this_sse = rd_stats_y.sse + rd_stats_uv.sse * 15 / 16;
       }
 
+      int64_t no_skip_dist, skip_sse;
+      av1_get_tx_skip_dist(cpi, x, mbmi->bsize, this_dist, this_sse,
+                           &no_skip_dist, &skip_sse);
+
       if (is_inter_mode(mbmi->mode) &&
           (!cpi->oxcf.algo_cfg.sharpness || !comp_pred) &&
           RDCOST(x->rdmult,
                  mode_costs->skip_txfm_cost[skip_ctx][0] + rd_stats_y.rate +
                      rd_stats_uv.rate,
-                 this_dist) > RDCOST(x->rdmult,
-                                     mode_costs->skip_txfm_cost[skip_ctx][1],
-                                     this_sse)) {
+                 no_skip_dist) > RDCOST(x->rdmult,
+                                        mode_costs->skip_txfm_cost[skip_ctx][1],
+                                        skip_sse)) {
         skip_blk = 1;
         rd_stats_y.rate = mode_costs->skip_txfm_cost[skip_ctx][1];
         rd_stats_uv.rate = 0;
@@ -3873,7 +4015,23 @@ static inline void refine_winner_mode_tx(
                                    &rd_stats_uv);
       int this_rate = rd_stats.rate + rd_stats_y.rate + rd_stats_uv.rate -
                       winner_rate_y - winner_rate_uv;
-      int64_t this_rd = RDCOST(x->rdmult, this_rate, this_dist);
+      int64_t this_rd;
+#if CONFIG_AV1_HIGHBITDEPTH
+      if (xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3) {
+        RD_STATS tmp_rd_stats;
+        av1_init_rd_stats(&tmp_rd_stats);
+        tmp_rd_stats.rate = this_rate;
+        tmp_rd_stats.dist = this_dist;
+        tmp_rd_stats.sse = this_sse;
+        tmp_rd_stats.skip_txfm = skip_blk;
+        adjust_rdcost(cpi, x, &tmp_rd_stats, is_inter_mode(mbmi->mode));
+        this_rd = tmp_rd_stats.rdcost;
+        this_dist = tmp_rd_stats.dist;
+      } else
+#endif
+      {
+        this_rd = RDCOST(x->rdmult, this_rate, this_dist);
+      }
       if (best_rd > this_rd) {
         *best_mbmode = *mbmi;
         *best_mode_index = winner_mode_index;
@@ -4702,6 +4860,7 @@ static inline void init_mbmi(MB_MODE_INFO *mbmi, PREDICTION_MODE curr_mode,
   mbmi->motion_mode = SIMPLE_TRANSLATION;
   mbmi->interintra_mode = (INTERINTRA_MODE)(II_DC_PRED - 1);
   set_default_interp_filters(mbmi, cm->features.interp_filter);
+  mbmi->skip_txfm = 0;
 }
 
 static inline void collect_single_states(MACROBLOCK *x,
@@ -5661,7 +5820,13 @@ static inline void search_intra_modes_in_interframe(
     top_intra_model_rd[i] = INT64_MAX;
   }
 
-  if (cpi->oxcf.algo_cfg.sharpness) {
+#if CONFIG_AV1_HIGHBITDEPTH
+  const int allow_larger_intra =
+      xd->bd > 8 && cpi->oxcf.algo_cfg.sharpness == 3;
+#else
+  const int allow_larger_intra = 0;
+#endif
+  if (cpi->oxcf.algo_cfg.sharpness && !allow_larger_intra) {
     int bh = mi_size_high[bsize];
     int bw = mi_size_wide[bsize];
     if (bh > 4 || bw > 4) return;
@@ -6213,6 +6378,7 @@ void av1_rd_pick_inter_mode(struct AV1_COMP *cpi, struct TileDataEnc *tile_data,
     const int comp_pred = second_ref_frame > INTRA_FRAME;
 
     txfm_info->skip_txfm = 0;
+    mbmi->skip_txfm = 0;
     sf_args.num_single_modes_processed += is_single_pred;
 #if CONFIG_COLLECT_COMPONENT_TIMING
     start_timing(cpi, skip_inter_mode_time);
@@ -6297,9 +6463,6 @@ void av1_rd_pick_inter_mode(struct AV1_COMP *cpi, struct TileDataEnc *tile_data,
         this_rd < ref_frame_rd[ref_frame]) {
       ref_frame_rd[ref_frame] = this_rd;
     }
-
-    adjust_cost(cpi, x, &this_rd, /*is_inter_pred=*/true);
-    adjust_rdcost(cpi, x, &rd_stats, /*is_inter_pred=*/true);
 
     // Did this mode help, i.e., is it the new best mode
     if (this_rd < search_state.best_rd) {

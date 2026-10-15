@@ -19,27 +19,27 @@ class BuilderFunctions {
 public:
     static void applyInitialBackgroundCoordinatedValueListPropertyTestDiscrete(BuilderState& builderState)
     {
-        applyInitialCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, BackgroundLayers>(builderState);
+        applyInitialCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, BackgroundLayers>(builderState);
     }
     static void applyInheritBackgroundCoordinatedValueListPropertyTestDiscrete(BuilderState& builderState)
     {
-        applyInheritCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, &ComputedStyle::backgroundLayers, BackgroundLayers>(builderState);
+        applyInheritCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, &ComputedStyle::backgroundLayers, BackgroundLayers>(builderState);
     }
     static void applyValueBackgroundCoordinatedValueListPropertyTestDiscrete(BuilderState& builderState, CSSValue& value)
     {
-        applyValueCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, WebCore::Style::Number<>, BackgroundLayers>(builderState, value);
+        applyValueCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete, &ComputedStyle::ensureBackgroundLayers, WebCore::Style::Number<>, BackgroundLayers>(builderState, value);
     }
     static void applyInitialBackgroundCoordinatedValueListPropertyTestTwo(BuilderState& builderState)
     {
-        applyInitialCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, BackgroundLayers>(builderState);
+        applyInitialCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, BackgroundLayers>(builderState);
     }
     static void applyInheritBackgroundCoordinatedValueListPropertyTestTwo(BuilderState& builderState)
     {
-        applyInheritCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, &ComputedStyle::backgroundLayers, BackgroundLayers>(builderState);
+        applyInheritCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, &ComputedStyle::backgroundLayers, BackgroundLayers>(builderState);
     }
     static void applyValueBackgroundCoordinatedValueListPropertyTestTwo(BuilderState& builderState, CSSValue& value)
     {
-        applyValueCoordinatedValueListProperty<CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, WebCore::Style::Number<>, BackgroundLayers>(builderState, value);
+        applyValueCoordinatedValueListProperty<CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo, &ComputedStyle::ensureBackgroundLayers, WebCore::Style::Number<>, BackgroundLayers>(builderState, value);
     }
     static void applyInitialTestAnimationWrapper(BuilderState& builderState)
     {
@@ -324,18 +324,18 @@ public:
 void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderState, CSSValue& value, ApplyValueType valueType)
 {
     switch (id) {
-    case CSSPropertyID::CSSPropertyInvalid:
+    case CSSPropertyID::Invalid:
         break;
-    case CSSPropertyID::CSSPropertyCustom:
+    case CSSPropertyID::Custom:
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyTestTopPriority:
+    case CSSPropertyID::TestTopPriority:
         break;
-    case CSSPropertyID::CSSPropertyTestHighPriority:
+    case CSSPropertyID::TestHighPriority:
         break;
-    case CSSPropertyID::CSSPropertyTestMediumPriority:
+    case CSSPropertyID::TestMediumPriority:
         break;
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestDiscrete:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestDiscrete:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialBackgroundCoordinatedValueListPropertyTestDiscrete(builderState);
@@ -348,7 +348,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyBackgroundCoordinatedValueListPropertyTestTwo:
+    case CSSPropertyID::BackgroundCoordinatedValueListPropertyTestTwo:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialBackgroundCoordinatedValueListPropertyTestTwo(builderState);
@@ -361,11 +361,11 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForFirstDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForFirstDescriptor:
         break;
-    case CSSPropertyID::CSSPropertyFirstTestDescriptorForSecondDescriptor:
+    case CSSPropertyID::FirstTestDescriptorForSecondDescriptor:
         break;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapper:
+    case CSSPropertyID::TestAnimationWrapper:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestAnimationWrapper(builderState);
@@ -378,7 +378,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationAlways:
+    case CSSPropertyID::TestAnimationWrapperAccelerationAlways:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestAnimationWrapperAccelerationAlways(builderState);
@@ -391,7 +391,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestAnimationWrapperAccelerationThreadedOnly:
+    case CSSPropertyID::TestAnimationWrapperAccelerationThreadedOnly:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestAnimationWrapperAccelerationThreadedOnly(builderState);
@@ -404,31 +404,31 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommas:
+    case CSSPropertyID::TestBoundedRepetitionWithCommas:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasFixed:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithCommasSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithCommasSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpaces:
+    case CSSPropertyID::TestBoundedRepetitionWithSpaces:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesFixed:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesFixed:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithType:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithType:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPrevious:
         break;
-    case CSSPropertyID::CSSPropertyTestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
+    case CSSPropertyID::TestBoundedRepetitionWithSpacesWithTypeWithDefaultPreviousTwo:
         break;
-    case CSSPropertyID::CSSPropertyTestColor:
+    case CSSPropertyID::TestColor:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestColor(builderState);
@@ -441,7 +441,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestColorAllowsTypesAbsolute:
+    case CSSPropertyID::TestColorAllowsTypesAbsolute:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestColorAllowsTypesAbsolute(builderState);
@@ -454,7 +454,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
+    case CSSPropertyID::TestColorPropertyWithVisitedLinkSupport:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestColorPropertyWithVisitedLinkSupport(builderState);
@@ -467,125 +467,125 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestCustomExtractor:
+    case CSSPropertyID::TestCustomExtractor:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionBoundedParameters:
+    case CSSPropertyID::TestFunctionBoundedParameters:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionFixedParameters:
+    case CSSPropertyID::TestFunctionFixedParameters:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionNoParameters:
+    case CSSPropertyID::TestFunctionNoParameters:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllAnyOrderWithOptional:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrdered:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrdered:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestFunctionParametersMatchAllOrderedWithOptional:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionParametersMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestFunctionParametersMatchOneOrMoreAnyOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameter:
+    case CSSPropertyID::TestFunctionSingleParameter:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterMatchOne:
+    case CSSPropertyID::TestFunctionSingleParameterMatchOne:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionSingleParameterOptional:
+    case CSSPropertyID::TestFunctionSingleParameterOptional:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersNoMin:
+    case CSSPropertyID::TestFunctionUnboundedParametersNoMin:
         break;
-    case CSSPropertyID::CSSPropertyTestFunctionUnboundedParametersWithMinimum:
+    case CSSPropertyID::TestFunctionUnboundedParametersWithMinimum:
         break;
-    case CSSPropertyID::CSSPropertyTestImage:
+    case CSSPropertyID::TestImage:
         break;
-    case CSSPropertyID::CSSPropertyTestImageNoImageSet:
+    case CSSPropertyID::TestImageNoImageSet:
         break;
-    case CSSPropertyID::CSSPropertyTestKeyword:
+    case CSSPropertyID::TestKeyword:
         break;
-    case CSSPropertyID::CSSPropertyTestKeywordWithAliasedTo:
+    case CSSPropertyID::TestKeywordWithAliasedTo:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrder:
+    case CSSPropertyID::TestMatchAllAnyOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptional:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptional:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndCustomTypeNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndMultipleRequiredAndPreserveOrderAndCustomTypeNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalAndPreserveOrderAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithOptionalWithPreserveOrderNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllAnyOrderWithPreserveOrderNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrdered:
+    case CSSPropertyID::TestMatchAllOrdered:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptional:
+    case CSSPropertyID::TestMatchAllOrderedWithOptional:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndCustomTypeAndNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequired:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequired:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalAndMultipleRequiredAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalNoSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchAllOrderedWithOptionalSingleItemOpt:
+    case CSSPropertyID::TestMatchAllOrderedWithOptionalSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOne:
+    case CSSPropertyID::TestMatchOne:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithCustomTypeNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrder:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrder:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomType:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderAndCustomTypeNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
+    case CSSPropertyID::TestMatchOneOrMoreAnyOrderWithPreserveOrderNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithGroupWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithGroupWithSettingsFlag:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithKeywordWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithKeywordWithSettingsFlag:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithMultipleKeywords:
+    case CSSPropertyID::TestMatchOneWithMultipleKeywords:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithReferenceWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithReferenceWithSettingsFlag:
         break;
-    case CSSPropertyID::CSSPropertyTestMatchOneWithSettingsFlag:
+    case CSSPropertyID::TestMatchOneWithSettingsFlag:
         break;
-    case CSSPropertyID::CSSPropertyTestNumericValueRange:
+    case CSSPropertyID::TestNumericValueRange:
         break;
-    case CSSPropertyID::CSSPropertyTestProperty:
+    case CSSPropertyID::TestProperty:
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleGetterNodeleteFalse:
+    case CSSPropertyID::TestRenderStyleGetterNodeleteFalse:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleGetterNodeleteFalse(builderState);
@@ -598,7 +598,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin(builderState);
@@ -611,7 +611,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllBorderRadius:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleHasExplicitlySetPolicyAllBorderRadius(builderState);
@@ -624,7 +624,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyValueOnly:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyValueOnly:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleHasExplicitlySetPolicyValueOnly(builderState);
@@ -637,7 +637,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelEnum:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageOneLevelEnum(builderState);
@@ -650,7 +650,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelRaw:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageOneLevelRaw(builderState);
@@ -663,7 +663,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelReference:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageOneLevelReference(builderState);
@@ -676,7 +676,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageOneLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageOneLevelValue:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageOneLevelValue(builderState);
@@ -689,7 +689,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelEnum:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelEnum:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageTwoLevelEnum(builderState);
@@ -702,7 +702,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelRaw:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelRaw:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageTwoLevelRaw(builderState);
@@ -715,7 +715,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelReference:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelReference:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageTwoLevelReference(builderState);
@@ -728,7 +728,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleStorageTwoLevelValue:
+    case CSSPropertyID::TestRenderStyleStorageTwoLevelValue:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestRenderStyleStorageTwoLevelValue(builderState);
@@ -741,7 +741,7 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestSettingsOne:
+    case CSSPropertyID::TestSettingsOne:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestSettingsOne(builderState);
@@ -754,37 +754,37 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMin:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithCommasWithMinSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMin:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesNoMinNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMin:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMin:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinNoSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
+    case CSSPropertyID::TestUnboundedRepetitionWithSpacesWithMinSingleItemOpt:
         break;
-    case CSSPropertyID::CSSPropertyTestUrlWithModifiers:
+    case CSSPropertyID::TestUrlWithModifiers:
         break;
-    case CSSPropertyID::CSSPropertyTestUrlWithNoModifiers:
+    case CSSPropertyID::TestUrlWithNoModifiers:
         break;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRule:
+    case CSSPropertyID::TestUsingSharedRule:
         break;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleExported:
+    case CSSPropertyID::TestUsingSharedRuleExported:
         break;
-    case CSSPropertyID::CSSPropertyTestUsingSharedRuleWithOverrideFunction:
+    case CSSPropertyID::TestUsingSharedRuleWithOverrideFunction:
         break;
-    case CSSPropertyID::CSSPropertyTestSinkPriority:
+    case CSSPropertyID::TestSinkPriority:
         break;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalHorizontal:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalHorizontal:
         break;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupPhysicalVertical:
+    case CSSPropertyID::TestLogicalPropertyGroupPhysicalVertical:
         switch (valueType) {
         case ApplyValueType::Initial:
             BuilderFunctions::applyInitialTestLogicalPropertyGroupPhysicalVertical(builderState);
@@ -797,23 +797,23 @@ void BuilderGenerated::applyProperty(CSSPropertyID id, BuilderState& builderStat
             break;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalBlock:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalBlock:
         break;
-    case CSSPropertyID::CSSPropertyTestLogicalPropertyGroupLogicalInline:
+    case CSSPropertyID::TestLogicalPropertyGroupLogicalInline:
         break;
-    case CSSPropertyID::CSSPropertyAll:
+    case CSSPropertyID::All:
         ASSERT(isShorthand(id));
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyFont:
+    case CSSPropertyID::Font:
         ASSERT(isShorthand(id));
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyTestShorthandOne:
+    case CSSPropertyID::TestShorthandOne:
         ASSERT(isShorthand(id));
         ASSERT_NOT_REACHED();
         break;
-    case CSSPropertyID::CSSPropertyTestShorthandTwo:
+    case CSSPropertyID::TestShorthandTwo:
         ASSERT(isShorthand(id));
         ASSERT_NOT_REACHED();
         break;
@@ -834,13 +834,13 @@ void BuilderGenerated::applyHighlightProperty(CSSPropertyID id, BuilderState& bu
     ASSERT(CSSProperty::appliesToHighlightPseudoElements(id));
 
     switch (id) {
-    case CSSPropertyID::CSSPropertyTestColorPropertyWithVisitedLinkSupport:
+    case CSSPropertyID::TestColorPropertyWithVisitedLinkSupport:
         if (valueType == ApplyValueType::Inherit) {
             BuilderFunctions::applyHighlightInheritTestColorPropertyWithVisitedLinkSupport(builderState);
             return;
         }
         break;
-    case CSSPropertyID::CSSPropertyTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
+    case CSSPropertyID::TestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin:
         if (valueType == ApplyValueType::Inherit) {
             BuilderFunctions::applyHighlightInheritTestRenderStyleHasExplicitlySetPolicyAllAuthorOrigin(builderState);
             return;

@@ -31,7 +31,6 @@
 #import "InteractionInformationAtPosition.h"
 #import "InteractionInformationRequest.h"
 #import "PluginView.h"
-#import "ShareableBitmapUtilities.h"
 #import "WebPage.h"
 #import <WebCore/AccessibilityObject.h>
 #import <WebCore/ContainerNodeInlines.h>
@@ -85,7 +84,7 @@
 #import <WebCore/VisibleUnits.h>
 #import <wtf/text/StringToIntegerConversion.h>
 
-#if ENABLE(SPATIAL_PORTAL)
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
 #import <WebCore/SpatialPortalController.h>
 #endif
 
@@ -243,7 +242,7 @@ static void videoPositionInformation(WebPage& page, WebCore::HTMLVideoElement& e
     info.isPausedVideo = true;
 
     if (request.includeImageData)
-        info.image = createShareableBitmap(*renderVideo);
+        info.image = renderVideo->createShareableBitmap();
 
     info.hostImageOrVideoElementContext = page.contextForElement(element);
 }
@@ -269,7 +268,7 @@ static void imagePositionInformation(WebPage& page, const WebCore::LocalFrame& l
     info.isImage = true;
 #if PLATFORM(IOS_FAMILY)
     // UIImageDataWriteToSavedPhotosAlbum works with resource data, and thus only for bitmap images.
-    info.hasSaveableImage = image.isBitmapImage() && !image.isNull();
+    info.hasSaveableImage = image.isBitmapImage() && image.hasSomethingToDraw();
 #endif
     info.imageURL = page.applyLinkDecorationFiltering(protect(element.document())->encodingParseURL(protect(renderImage.cachedImage())->url().string()), WebCore::LinkDecorationFilteringTrigger::Unspecified);
     info.imageMIMEType = image.mimeType();
@@ -282,7 +281,7 @@ static void imagePositionInformation(WebPage& page, const WebCore::LocalFrame& l
 #endif
 
     if (request.includeSnapshot || request.includeImageData)
-        info.image = createShareableBitmap(renderImage, { platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
+        info.image = renderImage.createShareableBitmap({ platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), WebCore::CreateShareableBitmapFromImageOptions::AllowAnimatedImages::Yes, WebCore::CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages::Yes });
 
     info.hostImageOrVideoElementContext = page.contextForElement(element);
 }
@@ -350,7 +349,7 @@ static void elementPositionInformation(WebPage& page, const WebCore::LocalFrame&
                     auto& [renderImage, image] = *rendererAndImage;
                     info.imageURL = page.applyLinkDecorationFiltering(document->encodingParseURL(protect(renderImage.cachedImage())->url().string()), WebCore::LinkDecorationFilteringTrigger::Unspecified);
                     info.imageMIMEType = image.mimeType();
-                    info.image = createShareableBitmap(renderImage, { platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), AllowAnimatedImages::Yes, UseSnapshotForTransparentImages::Yes });
+                    info.image = renderImage.createShareableBitmap({ platformBitmapSizeCap(localRoot) * page.corePage()->deviceScaleFactor(), WebCore::CreateShareableBitmapFromImageOptions::AllowAnimatedImages::Yes, WebCore::CreateShareableBitmapFromImageOptions::UseSnapshotForTransparentImages::Yes });
                 }
             }
         }
@@ -843,7 +842,7 @@ Variant<InteractionInformationAtPosition, WebCore::RemoteUserInputEventData> pos
         info.isInteractiveModel = modelElement->model() && modelElement->isInteractive();
 #endif
 
-#if ENABLE(SPATIAL_PORTAL)
+#if ENABLE(SPATIAL_PORTAL) && ENABLE(MODEL_ELEMENT_STAGE_MODE_INTERACTION)
     if (!info.isInteractiveModel) {
         RefPtr element = dynamicDowncast<WebCore::Element>(hitTestNode);
         info.isInteractiveModel = !!WebCore::SpatialPortalController::interactiveControllerForHitTestedElement(element);

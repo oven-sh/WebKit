@@ -561,7 +561,7 @@ void WebSWServerToContextConnection::navigate(ScriptExecutionContextIdentifier c
         }
 
         std::optional<ServiceWorkerClientData> clientData;
-        protectedThis->server()->forEachClientForOrigin(clientOrigin, [pageIdentifier, frameIdentifier, url, &clientData](auto& data) {
+        protect(protectedThis->server())->forEachClientForOrigin(clientOrigin, [pageIdentifier, frameIdentifier, url, &clientData](auto& data) {
             if (!clientData && data.pageIdentifier && *data.pageIdentifier == *pageIdentifier && data.frameIdentifier && *data.frameIdentifier == *frameIdentifier && equalIgnoringFragmentIdentifier(data.url, url))
                 clientData = data;
         });

@@ -11,7 +11,7 @@ PARAMETER_LIST_INCLUDE_NAME = 2
 # modify, so the message and the receiver take an owning UTF8CString instead. See 315201@main.
 STRING_AS_VIEW = 0      # UTF8CStringView arg0
 STRING_AS_OWNED = 1     # UTF8CString arg0
-STRING_AS_RECEIVED = 2  # UTF8CString&& arg0, arg0.legacyCStringPointer()
+STRING_AS_RECEIVED = 2  # UTF8CString&& arg0
 STRING_AS_SENT = 3      # UTF8CString { arg0.span() }
 
 STRING_PARAMETER_TYPE = "UTF8CStringView"
@@ -32,8 +32,6 @@ def get_arguments_string(parameter_string, flags, string_mode=STRING_AS_VIEW):
                 argument = "UTF8CString"
             elif string_mode == STRING_AS_RECEIVED:
                 argument = "UTF8CString&&"
-                # os_log() is variadic, so the string has to be passed as a C string pointer.
-                decorated_name = name + ".legacyCStringPointer()"
             elif string_mode == STRING_AS_SENT:
                 decorated_name = "UTF8CString { " + name + ".span() }"
         if flags & PARAMETER_LIST_INCLUDE_TYPE:

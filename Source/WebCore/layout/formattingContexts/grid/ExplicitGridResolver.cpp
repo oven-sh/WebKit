@@ -34,13 +34,12 @@
 namespace WebCore {
 namespace Layout {
 
-ExplicitGridTrackSizes ExplicitGridResolver::resolve(const Style::ComputedStyle& gridContainerStyle, const GridLayoutConstraints& layoutConstraints, LayoutUnit usedColumnGap, LayoutUnit usedRowGap)
+ExplicitGridTrackSizes ExplicitGridResolver::resolve(const Style::ComputedStyle& gridContainerStyle, const AutoRepeatConstraint& inlineAxisAutoRepeatConstraint, const AutoRepeatConstraint& blockAxisAutoRepeatConstraint, LayoutUnit usedColumnGap, LayoutUnit usedRowGap)
 {
     auto zoom = gridContainerStyle.usedZoomForLength();
-    return {
-        resolveTrackSizes(gridContainerStyle.gridTemplateColumns(), layoutConstraints.inlineAxis, usedColumnGap, zoom),
-        resolveTrackSizes(gridContainerStyle.gridTemplateRows(), layoutConstraints.blockAxis, usedRowGap, zoom)
-    };
+    auto resolvedColumns = resolveTrackSizes(gridContainerStyle.gridTemplateColumns(), inlineAxisAutoRepeatConstraint, usedColumnGap, zoom);
+    auto resolvedRows = resolveTrackSizes(gridContainerStyle.gridTemplateRows(), blockAxisAutoRepeatConstraint, usedRowGap, zoom);
+    return { WTF::move(resolvedColumns.trackSizes), WTF::move(resolvedRows.trackSizes), resolvedColumns.autoRepeatTracksIndexes, resolvedRows.autoRepeatTracksIndexes };
 }
 
 // Style keeps the auto-repeated tracks apart from the rest of the track list, so splice
@@ -61,17 +60,15 @@ static Vector<Style::GridTrackSize> trackSizesWithAutoRepetitions(const Style::G
     return trackSizes;
 }
 
-Vector<Style::GridTrackSize> ExplicitGridResolver::resolveTrackSizes(const Style::GridTemplateList& gridTemplateList, const AxisConstraint& axisConstraint, LayoutUnit usedGap, Style::ZoomFactor zoom)
+ExplicitGridResolver::ResolveTrackSizesResult ExplicitGridResolver::resolveTrackSizes(const Style::GridTemplateList& gridTemplateList, const AutoRepeatConstraint& autoRepeatConstraint, LayoutUnit usedGap, Style::ZoomFactor zoom)
 {
-    bool hasAutoFillRepeat = gridTemplateList.autoRepeatType == AutoRepeatType::Fill && !gridTemplateList.autoRepeatSizes.isEmpty();
-    auto trackSizes = hasAutoFillRepeat ? trackSizesWithAutoRepetitions(gridTemplateList, AutoRepeatResolver::resolveRepetitions(gridTemplateList, axisConstraint, usedGap, zoom)) : gridTemplateList.sizes;
+    auto& autoRepeatSizes = gridTemplateList.autoRepeatSizes;
+    if (gridTemplateList.autoRepeatType == AutoRepeatType::None || autoRepeatSizes.isEmpty())
+        return { gridTemplateList.sizes, { } };
 
-    // https://drafts.csswg.org/css-grid-1/#track-sizes
-    // "If the size of the grid container depends on the size of its tracks, then the <percentage> must
-    // be treated as auto, for the purpose of calculating the intrinsic sizes of the grid container".
-    if (axisConstraint.scenario() != AxisConstraint::FreeSpaceScenario::Definite)
-        return trackSizes.map(GridLayoutUtils::trackSizeWithPercentagesConvertedToAuto);
-    return trackSizes;
+    auto repetitionCount = AutoRepeatResolver::resolveRepetitions(gridTemplateList, autoRepeatConstraint, usedGap, zoom);
+    auto firstAutoRepeatTrackIndex = gridTemplateList.autoRepeatInsertionPoint;
+    return { trackSizesWithAutoRepetitions(gridTemplateList, repetitionCount), { firstAutoRepeatTrackIndex, firstAutoRepeatTrackIndex + repetitionCount * autoRepeatSizes.size() } };
 }
 
 } // namespace Layout

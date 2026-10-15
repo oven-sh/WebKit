@@ -28,6 +28,7 @@
 #include "APIObject.h"
 #include "FrameInfoData.h"
 #include <WebCore/ResourceRequest.h>
+#include <wtf/WeakPtr.h>
 
 namespace WebCore {
 class SecurityOriginData;
@@ -58,7 +59,7 @@ public:
     const WebKit::WebPageProxy* page() const;
     RefPtr<FrameHandle> parentFrameHandle() const;
     Markable<WebCore::ScriptExecutionContextIdentifier> documentID() const { return m_data.documentID; }
-    ProcessID processID() const { return m_data.processID; }
+    ProcessID processID() const { return m_stateSnapshot.processID; }
     bool isFocused() const { return m_data.isFocused; }
     bool errorOccurred() const { return m_data.errorOccurred; }
     WTF::String title() const { return m_stateSnapshot.title; }
@@ -74,6 +75,8 @@ private:
         Markable<WebCore::FrameIdentifier> parentFrameID;
         WTF::String title;
         bool isMainFrame { true };
+        ProcessID processID { 0 };
+        WeakPtr<WebKit::WebPageProxy> page;
     };
     static StateSnapshot stateSnapshot(WebCore::FrameIdentifier);
 

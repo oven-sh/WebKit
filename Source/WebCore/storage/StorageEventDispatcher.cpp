@@ -47,7 +47,7 @@ static void dispatchStorageEvents(const String& key, const String& oldValue, con
 {
     Vector<Ref<LocalDOMWindow>> windows;
     LocalDOMWindow::forEachWindowInterestedInStorageEvents([&](auto& window) {
-        auto storage = isLocalStorage(storageType) ? window.optionalLocalStorage() : window.optionalSessionStorage();
+        RefPtr storage = isLocalStorage(storageType) ? window.optionalLocalStorage() : window.optionalSessionStorage();
         if (!storage)
             return;
         // Send events only to our page.

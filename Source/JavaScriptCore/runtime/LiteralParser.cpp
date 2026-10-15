@@ -214,12 +214,12 @@ ALWAYS_INLINE JSString* LiteralParser<CharType, reviverMode>::tryMakeJSString(VM
     return cache.tryMakeJSString(vm, token->string16());
 }
 
-[[maybe_unused]] static ALWAYS_INLINE bool NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
+[[maybe_unused]] static ALWAYS_INLINE bool LEGACY_NODELETE cannotBeIdentPartOrEscapeStart(Latin1Character)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-[[maybe_unused]] static ALWAYS_INLINE bool NODELETE cannotBeIdentPartOrEscapeStart(char16_t)
+[[maybe_unused]] static ALWAYS_INLINE bool LEGACY_NODELETE cannotBeIdentPartOrEscapeStart(char16_t)
 {
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -747,7 +747,7 @@ static constexpr const bool safeStringLatin1CharactersInStrictJSON[256] = {
 };
 
 template <typename CharType>
-static ALWAYS_INLINE bool NODELETE isJSONWhiteSpace(const CharType& c)
+static ALWAYS_INLINE bool LEGACY_NODELETE isJSONWhiteSpace(const CharType& c)
 {
     return tokenTypesOfLatin1Characters[static_cast<uint8_t>(c)] == TokErrorSpace && isLatin1(c);
 }
@@ -1039,7 +1039,7 @@ ALWAYS_INLINE void setParserTokenString<char16_t>(LiteralParserToken<char16_t>& 
 enum class SafeStringCharacterSet { Strict, Sloppy };
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool NODELETE isSafeStringCharacter(Latin1Character c, Latin1Character terminator)
+static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(Latin1Character c, Latin1Character terminator)
 {
     if constexpr (set == SafeStringCharacterSet::Strict)
         return safeStringLatin1CharactersInStrictJSON[c];
@@ -1048,7 +1048,7 @@ static ALWAYS_INLINE bool NODELETE isSafeStringCharacter(Latin1Character c, Lati
 }
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool NODELETE isSafeStringCharacter(char16_t c, char16_t terminator)
+static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacter(char16_t c, char16_t terminator)
 {
     if (!isLatin1(c))
         return true;
@@ -1056,7 +1056,7 @@ static ALWAYS_INLINE bool NODELETE isSafeStringCharacter(char16_t c, char16_t te
 }
 
 template <SafeStringCharacterSet set>
-static ALWAYS_INLINE bool NODELETE isSafeStringCharacterForIdentifier(char16_t c, char16_t terminator)
+static ALWAYS_INLINE bool LEGACY_NODELETE isSafeStringCharacterForIdentifier(char16_t c, char16_t terminator)
 {
     if constexpr (set == SafeStringCharacterSet::Strict)
         return isSafeStringCharacter<set>(static_cast<Latin1Character>(c), static_cast<Latin1Character>(terminator)) || !isLatin1(c);

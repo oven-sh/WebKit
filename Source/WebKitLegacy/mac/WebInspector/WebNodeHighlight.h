@@ -45,8 +45,8 @@ class PageInspectorController;
 
 #if PLATFORM(IOS_FAMILY)
 @interface WebHighlightLayer : CALayer {
-    WebNodeHighlightView *_view;
-    WebView *_webView;
+    __weak WebNodeHighlightView *_view;
+    __weak WebView *_webView;
 }
 - (id)initWithHighlightView:(WebNodeHighlightView *)view webView:(WebView *)webView;
 @end
@@ -59,7 +59,11 @@ class PageInspectorController;
 #else
     RetainPtr<WebHighlightLayer> _highlightLayer;
 #endif
-    WebNodeHighlightView *_highlightView;
+#if PLATFORM(IOS_FAMILY)
+    RetainPtr<WebNodeHighlightView> _highlightView;
+#else
+    __weak WebNodeHighlightView *_highlightView;
+#endif
     NakedPtr<WebCore::PageInspectorController> _inspectorController;
     id _delegate;
 }

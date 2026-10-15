@@ -71,6 +71,11 @@ const MQ::MediaQueryList& MediaList::mediaQueries() const
 
 void MediaList::setMediaQueries(MQ::MediaQueryList&& queries)
 {
+    if (m_detachedMediaQueries) {
+        m_detachedMediaQueries = WTF::move(queries);
+        return;
+    }
+
     if (RefPtr parentStyleSheet = m_parentStyleSheet.get()) {
         parentStyleSheet->setMediaQueries(WTF::move(queries));
         parentStyleSheet->didMutate();

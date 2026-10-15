@@ -62,9 +62,12 @@ public:
     static String toTargetID(WebCore::FrameIdentifier, WebCore::ProcessIdentifier);
 
 private:
+    void connectToCurrentFrame();
+
     WeakRef<WebFrame> m_frame;
     std::unique_ptr<UIProcessForwardingFrontendChannel> m_channel;
-    // The WebCore::LocalFrame we registered m_channel with at connect() time.
+    // The WebCore::LocalFrame that m_channel is connected to. A frame can leave this process and return
+    // with a new LocalFrame, so connectToCurrentFrame() moves m_channel to the current one.
     WeakPtr<WebCore::LocalFrame> m_inspectedFrame;
 };
 

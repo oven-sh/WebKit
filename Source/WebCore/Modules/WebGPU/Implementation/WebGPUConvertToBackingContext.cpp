@@ -169,6 +169,24 @@ WGPUCompilationMessageType ConvertToBackingContext::convertToBacking(Compilation
     }
 }
 
+WGPUComponentSwizzle ConvertToBackingContext::convertToBacking(ComponentSwizzle componentSwizzle)
+{
+    switch (componentSwizzle) {
+    case ComponentSwizzle::Zero:
+        return WGPUComponentSwizzle_Zero;
+    case ComponentSwizzle::One:
+        return WGPUComponentSwizzle_One;
+    case ComponentSwizzle::R:
+        return WGPUComponentSwizzle_R;
+    case ComponentSwizzle::G:
+        return WGPUComponentSwizzle_G;
+    case ComponentSwizzle::B:
+        return WGPUComponentSwizzle_B;
+    case ComponentSwizzle::A:
+        return WGPUComponentSwizzle_A;
+    }
+}
+
 WGPUCullMode ConvertToBackingContext::convertToBacking(CullMode cullMode)
 {
     switch (cullMode) {
@@ -772,7 +790,7 @@ WGPUVertexStepMode ConvertToBackingContext::convertToBacking(VertexStepMode vert
     }
 }
 
-static constexpr bool NODELETE compare(BufferUsage a, unsigned b)
+static constexpr bool LEGACY_NODELETE compare(BufferUsage a, unsigned b)
 {
     return static_cast<unsigned>(a) == b;
 }
@@ -789,11 +807,12 @@ WGPUBufferUsage ConvertToBackingContext::convertBufferUsageFlagsToBacking(Buffer
     static_assert(compare(BufferUsage::Storage, WGPUBufferUsage_Storage), "BufferUsageFlags mismatch");
     static_assert(compare(BufferUsage::Indirect, WGPUBufferUsage_Indirect), "BufferUsageFlags mismatch");
     static_assert(compare(BufferUsage::QueryResolve, WGPUBufferUsage_QueryResolve), "BufferUsageFlags mismatch");
+    static_assert(compare(BufferUsage::Invalid, WGPUBufferUsage_Invalid), "BufferUsageFlags mismatch");
 
     return static_cast<WGPUBufferUsage>(bufferUsageFlags);
 }
 
-static constexpr bool NODELETE compare(auto a, auto b)
+static constexpr bool LEGACY_NODELETE compare(auto a, auto b)
 {
     return static_cast<unsigned>(a) == static_cast<unsigned>(b);
 }
@@ -934,6 +953,16 @@ WGPUOrigin3D ConvertToBackingContext::convertToBacking(const Origin3D& origin3D)
             origin.z,
         };
     });
+}
+
+WGPUTextureComponentSwizzle ConvertToBackingContext::convertToBacking(const TextureComponentSwizzle& swizzle)
+{
+    return WGPUTextureComponentSwizzle {
+        convertToBacking(swizzle.r),
+        convertToBacking(swizzle.g),
+        convertToBacking(swizzle.b),
+        convertToBacking(swizzle.a),
+    };
 }
 
 } // namespace WebCore::WebGPU

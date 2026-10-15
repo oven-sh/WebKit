@@ -29,14 +29,16 @@
 #include "HitTestRequest.h"
 #include "HitTestResult.h"
 #include "LayoutRepainter.h"
+#include "RenderElementInlines.h"
 #include "RenderElementStyleInlines.h"
 #include "RenderIterator.h"
 #include "RenderLayer.h"
+#include "RenderObjectInlines.h"
 #include "RenderTreeBuilder.h"
 #include "RenderView.h"
 #include "SVGContainerLayout.h"
-#include "SVGLayerTransformUpdater.h"
 #include "SVGRenderSupport.h"
+#include "SVGTransformLayoutScope.h"
 #include "SVGVisitedRendererTracking.h"
 #include <wtf/SetForScope.h>
 #include <wtf/StackStats.h>
@@ -75,8 +77,8 @@ void RenderSVGContainer::layout()
         SetForScope trackLayoutSizeChanges(m_isLayoutSizeChanged, updateLayoutSizeIfNeeded());
 
         ASSERT(!m_didTransformToRootUpdate);
-        SVGLayerTransformUpdater transformUpdater(*this);
-        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformUpdater.layerTransformChanged() || SVGContainerLayout::transformToRootChanged(parent()));
+        SVGTransformLayoutScope transformScope(*this);
+        SetForScope trackTransformChanges(m_didTransformToRootUpdate, transformScope.layerTransformChanged() || SVGContainerLayout::transformToRootChanged(parent()));
         layoutChildren();
     }
 
@@ -129,21 +131,8 @@ FloatRect RenderSVGContainer::strokeBoundingBox() const
 
 void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOffset)
 {
-    if (paintInfo.phase != PaintPhase::EventRegion && paintInfo.context().paintingDisabled())
-        return;
-
     static constexpr OptionSet<PaintPhase> relevantPaintPhases { PaintPhase::Foreground, PaintPhase::ClippingMask, PaintPhase::Mask, PaintPhase::Outline, PaintPhase::SelfOutline, PaintPhase::EventRegion };
-    if (!relevantPaintPhases.contains(paintInfo.phase))
-        return;
-
-    if (!paintInfo.shouldPaintWithinRoot(*this))
-        return;
-
-    if (style().display() == Style::DisplayType::None)
-        return;
-
-    // Children can override with "visibility: visible", per SVG spec.
-    if (paintInfo.phase != PaintPhase::Foreground && style().usedVisibility() == Visibility::Hidden)
+    if (!shouldPaintSVGContainerRenderer(paintInfo, relevantPaintPhases))
         return;
 
     if (paintInfo.phase == PaintPhase::ClippingMask) {
@@ -182,8 +171,10 @@ void RenderSVGContainer::paint(PaintInfo& paintInfo, const LayoutPoint& paintOff
 
     // For layer-backed containers, clipping is handled by RenderLayer::calculateClipRects().
     if (isRenderSVGViewportContainer() && SVGRenderSupport::isOverflowHidden(*this)) {
-        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite())
-            childPaintInfo.context().clip(FloatRect(clipRect));
+        if (auto clipRect = overflowClipRectForPainting(adjustedPaintOffset); !clipRect.isInfinite()) {
+            // FIXME: Remove suppression once rdar://189998444 is fixed.
+            SUPPRESS_MEMORY_UNSAFE_CAST childPaintInfo.context().clip(FloatRect(clipRect));
+        }
     }
 
     childPaintInfo.updateSubtreePaintRootForChildren(this);
@@ -232,7 +223,9 @@ bool RenderSVGContainer::nodeAtPoint(const HitTestRequest& request, HitTestResul
 
 
     for (CheckedPtr child = lastChild(); child; child = child->previousSibling()) {
-        if (!child->hasLayer() && child->nodeAtPoint(request, result, locationInContainer, adjustedLocation, hitTestAction)) {
+        if (child->hasLayer() || (hasLayer() && child->isTransformed()))
+            continue;
+        if (child->nodeAtPoint(request, result, locationInContainer, adjustedLocation, hitTestAction)) {
             updateHitTestResult(result, locationInContainer.point() - toLayoutSize(adjustedLocation));
             if (result.addNodeToListBasedTestResult(protect(child->node()).get(), request, locationInContainer, visualOverflowRect) == HitTestProgress::Stop)
                 return true;

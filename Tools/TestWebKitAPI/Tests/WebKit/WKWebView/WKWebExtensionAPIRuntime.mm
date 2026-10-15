@@ -532,6 +532,52 @@ TEST(WKWebExtensionAPIRuntime, SendMessageFromContentScript)
     [manager run];
 }
 
+TEST(WKWebExtensionAPIRuntime, SendMessageWithEmptyContainers)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onMessage.addListener((message, sender, sendResponse) => {",
+        @"  const containers = [message.firstArray, message.secondArray, message.firstObject, message.secondObject, message.nested.array, message.nested.object, message.list[0], message.list[1]]",
+        @"  for (let i = 0; i < containers.length; ++i) {",
+        @"    for (let j = i + 1; j < containers.length; ++j)",
+        @"      browser.test.assertFalse(containers[i] === containers[j], `Message containers ${i} and ${j} should be distinct`)",
+        @"  }",
+
+        @"  message.firstArray.push(1)",
+        @"  browser.test.assertEq(message.secondArray.length, 0, 'Mutating one empty array should not change the other')",
+
+        @"  sendResponse({ firstArray: [], secondArray: [], firstObject: {}, secondObject: {} })",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *contentScript = Util::constructScript(@[
+        @"(async () => {",
+        @"  const response = await browser.runtime.sendMessage({ firstArray: [], secondArray: [], firstObject: {}, secondObject: {}, nested: { array: [], object: {} }, list: [[], []] })",
+
+        @"  browser.test.assertFalse(response.firstArray === response.secondArray, 'Empty arrays in the response should be distinct')",
+        @"  browser.test.assertFalse(response.firstObject === response.secondObject, 'Empty objects in the response should be distinct')",
+
+        @"  browser.test.notifyPass()",
+        @"})()"
+    ]);
+
+    auto manager = Util::loadExtension(runtimeContentScriptManifest, @{ @"background.js": backgroundScript, @"content.js": contentScript });
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
 TEST(WKWebExtensionAPIRuntime, SendMessageFromContentScriptWhileBackgroundIsLoading)
 {
     // A content script sends runtime.sendMessage while the non-persistent background content
@@ -1306,6 +1352,53 @@ TEST(WKWebExtensionAPIRuntime, ConnectFromContentScriptWithImmediateMessage)
     };
 
     auto manager = Util::loadExtension(runtimeContentScriptManifest, resources);
+
+    auto *urlRequest = server.requestWithLocalhost();
+    [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];
+
+    [manager runUntilTestMessage:@"Load Tab"];
+
+    [manager.get().defaultTab.webView loadRequest:urlRequest];
+
+    [manager run];
+}
+
+TEST(WKWebExtensionAPIRuntime, PortMessageWithEmptyContainers)
+{
+    TestWebKitAPI::HTTPServer server({
+        { "/"_s, { { { "Content-Type"_s, "text/html"_s } }, ""_s } },
+    }, TestWebKitAPI::HTTPServer::Protocol::Http);
+
+    auto *backgroundScript = Util::constructScript(@[
+        @"browser.runtime.onConnect.addListener((port) => {",
+        @"  port.onMessage.addListener((message) => {",
+        @"    const containers = [message.firstArray, message.secondArray, message.firstObject, message.secondObject, message.nested.array, message.nested.object, message.list[0], message.list[1]]",
+        @"    for (let i = 0; i < containers.length; ++i) {",
+        @"      for (let j = i + 1; j < containers.length; ++j)",
+        @"        browser.test.assertFalse(containers[i] === containers[j], `Message containers ${i} and ${j} should be distinct`)",
+        @"    }",
+
+        @"    port.postMessage({ firstArray: [], secondArray: [], firstObject: {}, secondObject: {} })",
+        @"  })",
+        @"})",
+
+        @"browser.test.sendMessage('Load Tab')"
+    ]);
+
+    auto *contentScript = Util::constructScript(@[
+        @"const port = browser.runtime.connect({ name: 'testPort' })",
+
+        @"port.onMessage.addListener((response) => {",
+        @"  browser.test.assertFalse(response.firstArray === response.secondArray, 'Empty arrays in the response should be distinct')",
+        @"  browser.test.assertFalse(response.firstObject === response.secondObject, 'Empty objects in the response should be distinct')",
+
+        @"  browser.test.notifyPass()",
+        @"})",
+
+        @"port.postMessage({ firstArray: [], secondArray: [], firstObject: {}, secondObject: {}, nested: { array: [], object: {} }, list: [[], []] })"
+    ]);
+
+    auto manager = Util::loadExtension(runtimeContentScriptManifest, @{ @"background.js": backgroundScript, @"content.js": contentScript });
 
     auto *urlRequest = server.requestWithLocalhost();
     [manager.get().context setPermissionStatus:WKWebExtensionContextPermissionStatusGrantedExplicitly forURL:urlRequest.URL];

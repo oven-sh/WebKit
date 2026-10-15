@@ -48,7 +48,7 @@ DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StyleInterpolationWrapperBase);
 
 static void interpolateStandardProperty(CSSPropertyID property, Style::ComputedStyle& destination, const Style::ComputedStyle& from, const Style::ComputedStyle& to, double progress, CompositeOperation compositeOperation, IterationCompositeOperation iterationCompositeOperation, double currentIteration, const Client& client)
 {
-    ASSERT(property != CSSPropertyInvalid && property != CSSPropertyCustom);
+    ASSERT(property != CSSPropertyID::Invalid && property != CSSPropertyID::Custom);
 
     auto* wrapper = WrapperMap::singleton().wrapper(property);
     if (!wrapper)
@@ -176,7 +176,7 @@ static Ref<const CustomProperty> interpolatedCustomProperty(const Style::Compute
     return context.progress < 0.5 ? from : to;
 }
 
-static std::pair<const CustomProperty*, const CustomProperty*> customPropertyValuesForInterpolation(const AtomString& customProperty, const Style::ComputedStyle& fromStyle, const Style::ComputedStyle& toStyle)
+static std::pair<RefPtr<const CustomProperty>, RefPtr<const CustomProperty>> customPropertyValuesForInterpolation(const AtomString& customProperty, const Style::ComputedStyle& fromStyle, const Style::ComputedStyle& toStyle)
 {
     return { fromStyle.customPropertyValue(customProperty), toStyle.customPropertyValue(customProperty) };
 }
@@ -269,7 +269,7 @@ bool canInterpolate(const AnimatableCSSProperty& property)
 {
     return WTF::switchOn(property,
         [](CSSPropertyID propertyId) {
-            return propertyId == CSSPropertyCustom || !!WrapperMap::singleton().wrapper(propertyId);
+            return propertyId == CSSPropertyID::Custom || !!WrapperMap::singleton().wrapper(propertyId);
         },
         [](const AtomString&) {
             // FIXME: This should only be true for properties that are registered custom properties.

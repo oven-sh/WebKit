@@ -104,11 +104,11 @@ public:
 
     // We represent embedded doms as a part of the same hierarchy. Hence we treat children of frame owners differently.
     // We also skip whitespace text nodes conditionally. Following methods encapsulate these specifics.
-    static Node* NODELETE innerFirstChild(Node*);
-    static Node* NODELETE innerNextSibling(Node*);
-    static Node* NODELETE innerPreviousSibling(Node*);
+    static Node* LEGACY_NODELETE innerFirstChild(Node*);
+    static Node* LEGACY_NODELETE innerNextSibling(Node*);
+    static Node* LEGACY_NODELETE innerPreviousSibling(Node*);
     static unsigned innerChildNodeCount(Node*);
-    static Node* NODELETE innerParentNode(Node*);
+    static Node* LEGACY_NODELETE innerParentNode(Node*);
 
     static Node* scriptValueAsNode(JSC::JSValue);
     static JSC::JSValue nodeAsScriptValue(JSC::JSGlobalObject&, Node*);
@@ -190,7 +190,7 @@ public:
     void didInsertDOMNode(Node&);
     void didRemoveDOMNode(Node&);
     void willDestroyDOMNode(Node&);
-    void NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
+    void LEGACY_NODELETE willModifyDOMAttr(Element&, const AtomString& oldValue, const AtomString& newValue);
     void didModifyDOMAttr(Element&, const AtomString& name, const AtomString& value);
     void didRemoveDOMAttr(Element&, const AtomString& name);
     void characterDataModified(CharacterData&);
@@ -227,12 +227,13 @@ public:
     RefPtr<Inspector::Protocol::Runtime::RemoteObject> resolveNode(Node*, const String& objectGroup);
     bool handleMousePress();
     void mouseDidMoveOverElement(const HitTestResult&, OptionSet<PlatformEventModifier>);
+    void mouseDidMoveOverRemoteFrame();
     void inspect(Node*);
     void focusNode();
 
     InspectorHistory* history() LIFETIME_BOUND { return m_history.get(); }
     Vector<Document*> documents();
-    Vector<size_t> flexibleBoxRendererCachedItemsAtStartOfLine(const RenderObject&);
+    Vector<size_t> flexibleBoxRendererCachedItemsAtStartOfLine(const RenderObject&) const;
     void reset();
 
     Node* assertNode(Inspector::Protocol::ErrorString&, Inspector::Protocol::DOM::NodeId);
@@ -249,9 +250,6 @@ private:
 
     void highlightMousedOverNode();
     void setSearchingForNode(Inspector::Protocol::ErrorString&, bool enabled, RefPtr<JSON::Object>&& highlightConfig, RefPtr<JSON::Object>&& gridOverlayConfig, RefPtr<JSON::Object>&& flexOverlayConfig, bool showRulers);
-    std::unique_ptr<InspectorOverlay::Highlight::Config> highlightConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& highlightInspectorObject);
-    std::optional<InspectorOverlay::Grid::Config> gridOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& gridOverlayInspectorObject);
-    std::optional<InspectorOverlay::Flex::Config> flexOverlayConfigFromInspectorObject(Inspector::Protocol::ErrorString&, RefPtr<JSON::Object>&& flexOverlayInspectorObject);
 
     // Node-related methods.
     Inspector::Protocol::DOM::NodeId bind(Node&);
@@ -326,6 +324,8 @@ private:
 
     // The pointer key for this map should not be used for anything other than matching.
     WeakHashMap<HTMLMediaElement, MediaMetrics> m_mediaMetrics;
+
+    RefPtr<EventListener> m_eventFiredCallback;
 #endif
 
     struct InspectorEventListener {

@@ -114,6 +114,8 @@ private:
 @interface WKScrollingNodeScrollViewDelegate : NSObject <WKBEScrollViewDelegate> {
     WeakPtr<WebKit::ScrollingTreeScrollingNodeDelegateIOS> _scrollingTreeNodeDelegate;
     ScrollPerfIntervalState _scrollPerfIntervalState;
+    std::optional<CGPoint> _pendingSnapContentOffset;
+    BOOL _isAnimatingToSnapContentOffset;
 }
 
 @property (nonatomic, getter=_isInUserInteraction) BOOL inUserInteraction;

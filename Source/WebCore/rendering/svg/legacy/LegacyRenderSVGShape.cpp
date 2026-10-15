@@ -41,6 +41,7 @@
 #include "LegacyRenderSVGRoot.h"
 #include "LegacyRenderSVGShapeInlines.h"
 #include "PointerEventsHitRules.h"
+#include "RenderElementInlines.h"
 #include "SVGElementTypeHelpers.h"
 #include "SVGPathFromElement.h"
 #include "SVGRenderingContext.h"
@@ -308,7 +309,7 @@ void LegacyRenderSVGShape::fillStrokeMarkers(PaintInfo& childPaintInfo)
 
 void LegacyRenderSVGShape::paint(PaintInfo& paintInfo, const LayoutPoint&)
 {
-    if (style().usedVisibility() == Visibility::Hidden || isEmpty())
+    if (usedStyle().visibility() == UsedVisibility::Hidden || isEmpty())
         return;
 
     if (paintInfo.phase == PaintPhase::EventRegion) {
@@ -404,7 +405,7 @@ bool LegacyRenderSVGShape::nodeAtFloatPoint(const HitTestRequest& request, HitTe
     SVGVisitedRendererTracking::Scope recursionScope(recursionTracking, *this);
 
     PointerEventsHitRules hitRules(PointerEventsHitRules::HitTestingTargetType::SVGPath, request, usedPointerEvents());
-    if (request.isVisibleForStyle(style()) || !hitRules.requireVisible) {
+    if (request.isVisibleForStyle(usedStyle()) || !hitRules.requireVisible) {
         WindRule fillRule = style().fillRule();
         if (request.svgClipContent())
             fillRule = style().clipRule();

@@ -87,11 +87,10 @@ extension WKPortalVolumetricGestureController {
         return hostingController
     }
 
-    func updateProxyExtents(withWidth width: Float, height: Float, depth: Float) {
+    func setHitSphereCenter(_ center: simd_float3, radius: Float) {
         proxyEntity.components[InputTargetComponent.self] = InputTargetComponent(allowedInputTypes: .indirect)
-        proxyEntity.components[CollisionComponent.self] = CollisionComponent(
-            shapes: [.generateBox(width: width, height: height, depth: depth)]
-        )
+        proxyEntity.components[CollisionComponent.self] = CollisionComponent(shapes: [.generateSphere(radius: radius)])
+        proxyEntity.position = center
     }
 }
 

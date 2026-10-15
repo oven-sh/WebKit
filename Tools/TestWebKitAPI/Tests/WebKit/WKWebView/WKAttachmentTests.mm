@@ -27,6 +27,7 @@
 
 #if PLATFORM(MAC) || PLATFORM(IOS) || PLATFORM(VISION)
 
+#import "Helpers/cocoa/CGImagePixelReader.h"
 #import "Helpers/cocoa/DragAndDropSimulator.h"
 #import "InstanceMethodSwizzler.h"
 #import "Helpers/cocoa/NSItemProviderAdditions.h"
@@ -40,8 +41,10 @@
 #import <Contacts/Contacts.h>
 #import <MapKit/MapKit.h>
 #import <UniformTypeIdentifiers/UniformTypeIdentifiers.h>
+#import <WebCore/Color.h>
 #import <WebKit/WKPreferencesPrivate.h>
 #import <WebKit/WKPreferencesRefPrivate.h>
+#import <WebKit/WKSnapshotConfigurationPrivate.h>
 #import <WebKit/WKUserContentControllerPrivate.h>
 #import <WebKit/WKWebViewPrivateForTesting.h>
 #import <WebKit/WebArchive.h>
@@ -2711,11 +2714,12 @@ TEST(WKAttachmentTestsIOS, CopyAttachmentUsingElementAction)
 
     [webView _simulateElementAction:_WKElementActionTypeCopy atLocation:CGPointMake(20, 20)];
 
-    // It takes two IPC round trips between the UI process and web process until the pasteboard data is written,
+    // It takes multiple IPC round trips between the UI process and web process until the pasteboard data is written,
     // since we first need to hit-test to discover the activated element, and then use the activated element to
     // simulate the "copy" action.
-    [webView waitForNextPresentationUpdate];
-    [webView waitForNextPresentationUpdate];
+    TestWebKitAPI::Util::waitForConditionWithLogging([] {
+        return [UIPasteboard.generalPasteboard.itemProviders.firstObject.suggestedName isEqualToString:@"hello.pdf"];
+    }, 2, @"Expected the attachment to be written to the pasteboard.");
 
     NSArray<NSItemProvider *> *itemProviders = UIPasteboard.generalPasteboard.itemProviders;
     EXPECT_EQ(1U, itemProviders.count);
@@ -2747,6 +2751,105 @@ TEST(WKAttachmentTestsIOS, PasteRichTextCopiedFromNotes)
 }
 
 #endif // PLATFORM(IOS_FAMILY)
+
+#if PLATFORM(MAC)
+
+static RetainPtr<TestWKWebView> webViewWithLoadedWideLayoutAttachment(WKWebViewConfiguration *configuration)
+{
+    [configuration _setAttachmentElementEnabled:YES];
+    [configuration _setAttachmentWideLayoutEnabled:YES];
+
+    RetainPtr webView = adoptNS([[TestWKWebView alloc] initWithFrame:NSMakeRect(0, 0, 400, 300) configuration:configuration]);
+    [webView synchronouslyLoadHTMLString:@"<body style='margin: 0'>"
+        "<attachment title='document.pdf' type='application/pdf'></attachment>"
+        "<script>document.querySelector('attachment').addEventListener('load', () => window.attachmentIconLoaded = true);</script>"
+        "</body>"];
+
+    EXPECT_TRUE(Util::waitFor([&] {
+        return [[webView objectByEvaluatingJavaScript:@"!!window.attachmentIconLoaded"] boolValue];
+    }));
+    [webView waitForNextPresentationUpdate];
+    return webView;
+}
+
+TEST(WKAttachmentTestsMac, WideLayoutIconInNodeSnapshot)
+{
+    RetainPtr configuration = [WKWebViewConfiguration _test_configurationWithTestPlugInClassName:@"WebProcessPlugInWithInternals" configureJSCForTesting:YES];
+    RetainPtr webView = webViewWithLoadedWideLayoutAttachment(configuration.get());
+
+    // The wide layout icon is inset by --icon-margin (14px on macOS) and is --icon-size (52px) square.
+    // Count the pixels there that differ from the attachment background just to its left; a missing icon leaves the area uniform.
+    NSString *countIconPixelsScript = @"(() => {"
+        "    const attachment = document.querySelector('attachment');"
+        "    const snapshot = internals.snapshotNode(attachment);"
+        "    const scale = snapshot.width / attachment.getBoundingClientRect().width;"
+        "    const pixelAt = (x, y) => {"
+        "        const index = (Math.floor(y) * snapshot.width + Math.floor(x)) * 4;"
+        "        return snapshot.data.subarray(index, index + 3);"
+        "    };"
+        "    const background = pixelAt(4 * scale, 40 * scale);"
+        "    let iconPixels = 0;"
+        "    for (let y = 14 * scale; y < 66 * scale; ++y) {"
+        "        for (let x = 14 * scale; x < 66 * scale; ++x) {"
+        "            if (pixelAt(x, y).some((component, index) => Math.abs(component - background[index]) > 6))"
+        "                ++iconPixels;"
+        "        }"
+        "    }"
+        "    return iconPixels / (scale * scale);"
+        "})()";
+
+    EXPECT_GT([[webView objectByEvaluatingJavaScript:countIconPixelsScript] doubleValue], 200);
+}
+
+TEST(WKAttachmentTestsMac, WideLayoutSnapshotExcludesSelectionBackground)
+{
+    RetainPtr configuration = adoptNS([[WKWebViewConfiguration alloc] init]);
+    RetainPtr webView = webViewWithLoadedWideLayoutAttachment(configuration.get());
+
+    NSArray<NSNumber *> *bounds = [webView objectByEvaluatingJavaScript:@"(() => {"
+        "    const rect = document.querySelector('attachment').getBoundingClientRect();"
+        "    return [rect.x, rect.y, rect.width, rect.height];"
+        "})()"];
+    CGRect attachmentRect = CGRectMake(bounds[0].doubleValue, bounds[1].doubleValue, bounds[2].doubleValue, bounds[3].doubleValue);
+
+    auto snapshotExcludingSelection = [&] {
+        RetainPtr snapshotConfiguration = adoptNS([[WKSnapshotConfiguration alloc] init]);
+        [snapshotConfiguration setRect:attachmentRect];
+        [snapshotConfiguration _setIncludesSelectionHighlighting:NO];
+
+        __block RetainPtr<CGImageRef> snapshot;
+        __block bool done = false;
+        [webView takeSnapshotWithConfiguration:snapshotConfiguration.get() completionHandler:^(NSImage *image, NSError *error) {
+            EXPECT_NULL(error);
+            snapshot = [image CGImageForProposedRect:nil context:nil hints:nil];
+            done = true;
+        }];
+        Util::run(&done);
+        return snapshot;
+    };
+
+    RetainPtr unselectedSnapshot = snapshotExcludingSelection();
+    [webView objectByEvaluatingJavaScript:@"getSelection().selectAllChildren(document.body)"];
+    [webView waitForNextPresentationUpdate];
+    RetainPtr selectedSnapshot = snapshotExcludingSelection();
+
+    CGImagePixelReader unselectedReader { unselectedSnapshot.get() };
+    CGImagePixelReader selectedReader { selectedSnapshot.get() };
+    ASSERT_EQ(unselectedReader.width(), selectedReader.width());
+    ASSERT_EQ(unselectedReader.height(), selectedReader.height());
+
+    // Sample the attachment background beside the icon and near the right corners, away from the title text.
+    CGFloat scale = unselectedReader.width() / attachmentRect.size.width;
+    CGFloat width = attachmentRect.size.width;
+    CGFloat height = attachmentRect.size.height;
+    for (auto [x, y] : { std::pair { 4.0, 40.0 }, { width - 10, 6.0 }, { width - 10, height - 6 } }) {
+        auto unselected = unselectedReader.at(x * scale, y * scale);
+        auto selected = selectedReader.at(x * scale, y * scale);
+        EXPECT_EQ(unselected, selected) << "at (" << x << ", " << y << "): " << unselected.debugDescription().utf8().legacyCStringPointer() << " vs. " << selected.debugDescription().utf8().legacyCStringPointer();
+    }
+}
+
+#endif // PLATFORM(MAC)
 
 #if PLATFORM(MAC) && ENABLE(IPC_TESTING_API)
 

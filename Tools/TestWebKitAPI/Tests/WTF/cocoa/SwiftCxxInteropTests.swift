@@ -355,7 +355,7 @@ struct SwiftCxxInteropTests {
     func unexpectedThrowsItsError() async throws {
         let unexpected = Cxx.makeIntUnexpected(.TooLarge)
 
-        #expect(!unexpected.has_value())
+        #expect(unexpected.has_value() == false)
 
         let thrown = try #require(throws: CxxUnexpected<Cxx.ProbeError>.self) {
             _ = try unexpected.value

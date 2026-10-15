@@ -97,14 +97,15 @@ private:
             return emptyString();
 
         if (!m_contiguousBuffer && (!m_containsOnlyASCII || *m_containsOnlyASCII))
-            m_contiguousBuffer = m_scriptBuffer.buffer()->makeContiguous();
+            m_contiguousBuffer = protect(m_scriptBuffer.buffer())->makeContiguous();
         if (!m_containsOnlyASCII) {
-            m_containsOnlyASCII = charactersAreAllASCII(m_contiguousBuffer->span());
+            m_containsOnlyASCII = charactersAreAllASCII(protect(m_contiguousBuffer)->span());
             if (*m_containsOnlyASCII)
-                m_scriptHash = StringHasher::computeHashAndMaskTop8Bits(m_contiguousBuffer->span());
+                m_scriptHash = StringHasher::computeHashAndMaskTop8Bits(protect(m_contiguousBuffer)->span());
         }
+        // m_contiguousBuffer keeps the returned characters alive.
         if (*m_containsOnlyASCII)
-            return byteCast<Latin1Character>(m_contiguousBuffer->span());
+            SUPPRESS_UNCOUNTED_ARG return byteCast<Latin1Character>(m_contiguousBuffer->span());
 
         if (!m_cachedScriptString) {
             m_cachedScriptString = m_scriptBuffer.toString();

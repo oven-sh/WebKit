@@ -860,11 +860,14 @@ shouldBe(JSON.stringify(Intl.DateTimeFormat('zh', { era: 'short', year: 'numeric
     shouldBe(year.value, "2021")
 }
 
-shouldThrow(() => {
+{
+    let reads = 0;
     Function.prototype.__defineGetter__('prototype', function () {
-        this.call(0x1234);
+        reads++;
+        return Object.prototype;
     });
-    
+
     const dateTimeFormat = new Intl.DateTimeFormat();
-    1 instanceof dateTimeFormat.format;
-}, TypeError)
+    shouldBe(1 instanceof dateTimeFormat.format, false);
+    shouldBe(reads, 0);
+}

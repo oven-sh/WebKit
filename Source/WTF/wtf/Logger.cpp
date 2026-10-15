@@ -82,9 +82,7 @@ const Logger& emptyLogger()
 #if USE(OS_LOG)
 void Logger::osLog(WTFLogChannel& channel, const UTF8CString& message)
 {
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-    SUPPRESS_UNRETAINED_LOCAL os_log(channel.osLogChannel, "%{public}s", message.legacyCStringPointer());
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+    SUPPRESS_UNRETAINED_LOCAL SAFE_OS_LOG(channel.osLogChannel, "%{public}s", message);
 }
 #endif // USE(OS_LOG)
 

@@ -45,7 +45,7 @@ struct OpacityParameters {
 
     Parameter value;
 
-    static OpacityParameters NODELETE passthroughForInterpolation();
+    static OpacityParameters LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return true; }
@@ -58,7 +58,7 @@ struct OpacityParameters {
 
     bool operator==(const OpacityParameters&) const = default;
 };
-using OpacityFunction = FunctionNotation<CSSValueOpacity, OpacityParameters>;
+using OpacityFunction = FunctionNotation<CSSValueID::Opacity, OpacityParameters>;
 DEFINE_TYPE_WRAPPER_GET(OpacityParameters, value);
 
 // MARK: - Conversion

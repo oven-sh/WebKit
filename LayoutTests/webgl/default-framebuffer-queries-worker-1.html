@@ -13,7 +13,10 @@ description("Tests that the queries involving the default framebuffer of an Offs
 
 jsTestIsAsync = true;
 startBufferingOutput();
-var worker = startWorker("resources/default-framebuffer-queries-worker.js#1-4");
+// Workers do not have internals.settings. The worker gets the settings of the page when it starts.
+if (window.internals)
+    internals.settings.setWebGLErrorsToConsoleEnabled(false);
+startWorker("resources/default-framebuffer-queries-worker.js#1-4");
 </script>
 </body>
 </html>

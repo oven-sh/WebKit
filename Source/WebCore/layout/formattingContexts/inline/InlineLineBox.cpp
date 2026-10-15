@@ -26,6 +26,7 @@
 #include "config.h"
 #include "InlineLineBox.h"
 
+#include "InlineFormattingContext.h"
 #include "InlineFormattingUtils.h"
 #include "InlineLevelBoxInlines.h"
 #include "LayoutBoxGeometry.h"
@@ -56,7 +57,7 @@ void LineBox::addInlineLevelBox(InlineLevelBox&& inlineLevelBox)
     m_nonRootInlineLevelBoxList.append(WTF::move(inlineLevelBox));
 }
 
-InlineRect LineBox::logicalRectForTextRun(const Line::Run& run) const
+InlineRect LineBox::logicalRectForTextRun(const LineRun& run) const
 {
     ASSERT(run.isText() || run.isSoftLineBreak());
     auto* ancestorInlineBox = &parentInlineBox(run);

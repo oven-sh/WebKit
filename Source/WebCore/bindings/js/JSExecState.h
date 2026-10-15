@@ -27,6 +27,7 @@
 #pragma once
 
 #include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSMicrotask.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSSourceCode.h>
@@ -126,6 +127,12 @@ public:
     {
         JSExecState currentState(&lexicalGlobalObject);
         return JSC::loadModule(&lexicalGlobalObject, WTF::move(sourceCode), WTF::move(scriptFetcher));
+    }
+
+    static JSC::JSPromise* loadModule(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::Identifier& moduleKey, JSC::SourceCode sourceCode, RefPtr<JSC::ScriptFetcher> scriptFetcher)
+    {
+        JSExecState currentState(&lexicalGlobalObject);
+        return JSC::loadModule(&lexicalGlobalObject, moduleKey, WTF::move(sourceCode), WTF::move(scriptFetcher));
     }
 
     static JSC::JSPromise* linkAndEvaluateModule(JSC::JSGlobalObject& lexicalGlobalObject, const JSC::Identifier& moduleKey, RefPtr<JSC::ScriptFetcher> scriptFetcher, NakedPtr<JSC::Exception>& returnedException)

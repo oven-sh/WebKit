@@ -142,7 +142,10 @@ bool ContentChangeObserver::isVisuallyHidden(const Node& node)
     if (style->display() == Style::DisplayType::None)
         return true;
 
-    if (style->usedVisibility() == Visibility::Hidden)
+    if (CheckedPtr renderer = node.renderer()) {
+        if (renderer->usedStyle().visibility() == UsedVisibility::Hidden)
+            return true;
+    } else if (style->visibility() == Visibility::Hidden || style->isForceHidden())
         return true;
 
     if (style->opacity().isTransparent())
@@ -290,7 +293,7 @@ static bool isObservedPropertyForTransition(AnimatableCSSProperty property)
 {
     return WTF::switchOn(property,
         [] (CSSPropertyID propertyId) {
-            return propertyId == CSSPropertyLeft || propertyId == CSSPropertyOpacity;
+            return propertyId == CSSPropertyID::Left || propertyId == CSSPropertyID::Opacity;
         },
         [] (const AtomString&) {
             return false;

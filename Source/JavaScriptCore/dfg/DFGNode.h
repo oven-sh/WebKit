@@ -115,7 +115,7 @@ struct MultiDeleteByOffsetData {
     Vector<DeleteByVariant, 2> variants;
 
     bool writesStructures() const;
-    bool NODELETE allVariantsStoreEmpty() const;
+    bool LEGACY_NODELETE allVariantsStoreEmpty() const;
 };
 
 struct MultiGetByValData {
@@ -496,7 +496,7 @@ public:
     }
 
     void remove(Graph&);
-    void NODELETE removeWithoutChecks();
+    void LEGACY_NODELETE removeWithoutChecks();
 
     void convertToCheckStructure(RegisteredStructureSet* set)
     {
@@ -533,14 +533,14 @@ public:
     }
     
     void replaceWith(Graph&, Node* other);
-    void NODELETE replaceWithWithoutChecks(Node* other);
+    void LEGACY_NODELETE replaceWithWithoutChecks(Node* other);
 
-    void NODELETE convertToIdentity();
-    void NODELETE convertToIdentityOn(Node*);
+    void LEGACY_NODELETE convertToIdentity();
+    void LEGACY_NODELETE convertToIdentityOn(Node*);
 
     void convertToGetByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
-    void NODELETE convertToPutByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
-    void NODELETE convertToInByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
+    void LEGACY_NODELETE convertToPutByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
+    void LEGACY_NODELETE convertToInByIdMaybeMegamorphic(Graph&, CacheableIdentifier);
 
     bool mustGenerate() const
     {
@@ -952,32 +952,32 @@ public:
         m_opInfo = static_cast<uint32_t>(true);
     }
 
-    void NODELETE convertToNewArrayBuffer(FrozenValue* immutableButterfly);
-    void NODELETE convertToNewArrayWithSize();
-    void NODELETE convertToNewArrayWithButterfly(Graph&, Node* butterfly);
-    void NODELETE convertToNewArrayWithSizeAndStructure(Graph&, RegisteredStructure);
+    void LEGACY_NODELETE convertToNewArrayBuffer(FrozenValue* immutableButterfly);
+    void LEGACY_NODELETE convertToNewArrayWithSize();
+    void LEGACY_NODELETE convertToNewArrayWithButterfly(Graph&, Node* butterfly);
+    void LEGACY_NODELETE convertToNewArrayWithSizeAndStructure(Graph&, RegisteredStructure);
 
-    void NODELETE convertToNewBoundFunction(FrozenValue*);
+    void LEGACY_NODELETE convertToNewBoundFunction(FrozenValue*);
 
-    void NODELETE convertToDirectCall(FrozenValue*);
+    void LEGACY_NODELETE convertToDirectCall(FrozenValue*);
 
-    void NODELETE convertToCallWasm(FrozenValue*);
+    void LEGACY_NODELETE convertToCallWasm(FrozenValue*);
 
 #if USE(BUN_JSC_ADDITIONS)
-    void NODELETE convertToCallFFI(FrozenValue*);
+    void LEGACY_NODELETE convertToCallFFI(FrozenValue*);
 
     JSFFIFunction* ffiFunction();
     FFI::Signature& ffiSignature();
 #endif
 
-    void NODELETE convertToCallDOM(Graph&);
+    void LEGACY_NODELETE convertToCallDOM(Graph&);
 
-    void NODELETE convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp);
-    void NODELETE convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp);
-    void NODELETE convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp);
-    void NODELETE convertToRegExpMatchFast(Node* globalObjectNode);
-    void NODELETE convertToRegExpSearch(Node* globalObjectNode);
-    void NODELETE convertToRegExpTestInline(FrozenValue* globalObject, FrozenValue* regExp);
+    void LEGACY_NODELETE convertToRegExpExecNonGlobalOrStickyWithoutChecks(FrozenValue* regExp);
+    void LEGACY_NODELETE convertToRegExpExecStickyWithoutChecks(FrozenValue* regExp);
+    void LEGACY_NODELETE convertToRegExpMatchFastGlobalWithoutChecks(FrozenValue* regExp);
+    void LEGACY_NODELETE convertToRegExpMatchFast(Node* globalObjectNode);
+    void LEGACY_NODELETE convertToRegExpSearch(Node* globalObjectNode);
+    void LEGACY_NODELETE convertToRegExpTestInline(FrozenValue* globalObject, FrozenValue* regExp);
 
     enum DescriptorSlot : unsigned {
         EnumerableSlot = 0,
@@ -1159,7 +1159,7 @@ public:
         }
     }
     
-    bool NODELETE hasVariableAccessData(Graph&);
+    bool LEGACY_NODELETE hasVariableAccessData(Graph&);
     bool accessesStack(Graph& graph)
     {
         return hasVariableAccessData(graph);
@@ -1418,7 +1418,7 @@ public:
         return op() == PutHint;
     }
     
-    PromotedLocationDescriptor NODELETE promotedLocationDescriptor();
+    PromotedLocationDescriptor LEGACY_NODELETE promotedLocationDescriptor();
     
     // This corrects the arithmetic node flags, so that irrelevant bits are
     // ignored. In particular, anything other than ArithMul or ValueMul does not need
@@ -2310,6 +2310,14 @@ public:
     {
         ASSERT(hasCellOperand());
         return m_opInfo.as<FrozenValue*>();
+    }
+
+    // CheckIsConstant can carry the exit kind to use in opInfo2. It defaults to BadConstantValue.
+    ExitKind checkIsConstantExitKind()
+    {
+        ASSERT(op() == CheckIsConstant);
+        auto kind = static_cast<ExitKind>(m_opInfo2.as<unsigned>());
+        return kind == ExitKindUnset ? BadConstantValue : kind;
     }
 
     FrozenValue* cellOperand2()

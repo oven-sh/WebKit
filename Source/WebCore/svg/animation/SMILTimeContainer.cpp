@@ -28,6 +28,7 @@
 #include "SMILTimeContainer.h"
 
 #include "DocumentPage.h"
+#include "ElementAncestorIteratorInlines.h"
 #include "ElementIterator.h"
 #include "Page.h"
 #include "SVGElementTypeHelpers.h"
@@ -237,7 +238,7 @@ void SMILTimeContainer::updateDocumentOrderIndexes()
 
 struct PriorityCompare {
     PriorityCompare(SMILTime elapsed) : m_elapsed(elapsed) {}
-    bool NODELETE operator()(auto& a, auto& b)
+    bool LEGACY_NODELETE operator()(auto& a, auto& b)
     {
         // FIXME: This should also consider possible timing relations between the elements.
         SMILTime aBegin = a->intervalBegin();
@@ -292,6 +293,15 @@ void SMILTimeContainer::updateAnimations(SMILTime elapsed, bool seekToTime)
     Vector<Ref<SVGSMILElement>> animationsToApply;
     SMILTime earliestFireTime = SMILTime::unresolved();
 
+    // https://w3c.github.io/svgwg/svg2-draft/struct.html#ConditionalProcessing
+    auto isDisabledByConditionalProcessing = [](const SVGSMILElement& animation) {
+        for (Ref element : lineageOfType<SVGElement>(animation)) {
+            if (!element->isValid())
+                return true;
+        }
+        return false;
+    };
+
     for (auto& animations : scheduledAnimations) {
         // Advance every animation's current interval to `elapsed` before sorting. An animation
         // whose interval only restarts at (or before) the current time -- e.g. a sync-base
@@ -312,6 +322,9 @@ void SMILTimeContainer::updateAnimations(SMILTime elapsed, bool seekToTime)
             ASSERT(animation->timeContainer() == this);
             ASSERT(animation->targetElement());
             ASSERT(animation->hasValidAttributeName());
+
+            if (isDisabledByConditionalProcessing(animation))
+                continue;
 
             // Results are accumulated to the first animation that animates and contributes to a particular element/attribute pair.
             if (!firstAnimation) {

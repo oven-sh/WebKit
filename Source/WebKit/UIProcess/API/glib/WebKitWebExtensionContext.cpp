@@ -314,7 +314,7 @@ const gchar* webkit_web_extension_context_get_base_uri(WebKitWebExtensionContext
     g_return_val_if_fail(context->priv->extension, nullptr);
 
     WebKitWebExtensionContextPrivate* priv = context->priv;
-    if (!priv->baseURI.isNull())
+    if (!priv->baseURI.isNull() && (priv->baseURI == priv->context->baseURL()))
         return priv->baseURI.legacyCStringPointer();
 
     auto baseURI = priv->context->baseURL();
@@ -345,7 +345,7 @@ void webkit_web_extension_context_set_base_uri(WebKitWebExtensionContext* contex
     g_return_if_fail(baseURL.isValid());
     g_return_if_fail(WTF::URLParser::maybeCanonicalizeScheme(baseURL.protocol()));
     g_return_if_fail(WebKit::WebExtensionMatchPattern::extensionSchemes().contains(baseURL.protocol().toStringWithoutCopying()));
-    g_return_if_fail(WebCore::LegacySchemeRegistry::isBuiltinScheme(baseURL.protocol().toStringWithoutCopying()));
+    g_return_if_fail(!WebCore::LegacySchemeRegistry::isBuiltinScheme(baseURL.protocol().toStringWithoutCopying()));
     g_return_if_fail(baseURL.path().isEmpty() || baseURL.path() == "/");
 
     WebKitWebExtensionContextPrivate* priv = context->priv;
@@ -372,7 +372,7 @@ const gchar* webkit_web_extension_context_get_options_page_uri(WebKitWebExtensio
     g_return_val_if_fail(context->priv->extension, nullptr);
 
     WebKitWebExtensionContextPrivate* priv = context->priv;
-    if (!priv->optionsPageURI.isNull())
+    if (!priv->optionsPageURI.isNull() && (priv->optionsPageURI == priv->context->optionsPageURL()))
         return priv->optionsPageURI.legacyCStringPointer();
 
     auto optionsPageURI = priv->context->optionsPageURL();
@@ -448,7 +448,7 @@ const gchar* webkit_web_extension_context_get_override_new_tab_page_uri(WebKitWe
     g_return_val_if_fail(context->priv->extension, nullptr);
 
     WebKitWebExtensionContextPrivate* priv = context->priv;
-    if (!priv->overrideNewTabPageURI.isNull())
+    if (!priv->overrideNewTabPageURI.isNull() && (priv->overrideNewTabPageURI == priv->context->overrideNewTabPageURL()))
         return priv->overrideNewTabPageURI.legacyCStringPointer();
 
     auto overrideNewTabPageURI = priv->context->overrideNewTabPageURL();

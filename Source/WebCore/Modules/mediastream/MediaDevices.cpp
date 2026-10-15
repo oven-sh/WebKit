@@ -249,7 +249,6 @@ static bool hasInvalidGetDisplayMediaConstraint(const MediaConstraints& constrai
             break;
         }
 
-        case MediaConstraintType::DisplaySurface:
         case MediaConstraintType::LogicalSurface: {
             auto& boolConstraint = downcast<BooleanConstraint>(constraint);
             bool value;
@@ -259,6 +258,7 @@ static bool hasInvalidGetDisplayMediaConstraint(const MediaConstraints& constrai
 
         case MediaConstraintType::FacingMode:
         case MediaConstraintType::DeviceId:
+        case MediaConstraintType::DisplaySurface:
         case MediaConstraintType::GroupId: {
             auto& stringConstraint = downcast<StringConstraint>(constraint);
             Vector<String> values;
@@ -340,7 +340,7 @@ static inline bool checkSpeakerAccess(const Document& document)
         && isFeaturePolicyAllowingSpeakerSelection(document);
 }
 
-static inline bool NODELETE exposeSpeakersWithoutMicrophoneAccess(const Document& document)
+static inline bool LEGACY_NODELETE exposeSpeakersWithoutMicrophoneAccess(const Document& document)
 {
     return document.frame() && document.frame()->settings().exposeSpeakersWithoutMicrophoneEnabled();
 }

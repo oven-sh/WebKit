@@ -98,20 +98,20 @@ FontBaseline BaselineAlignment::dominantBaseline(WritingMode writingMode)
     return writingMode.prefersCentralBaseline() ? FontBaseline::Central : FontBaseline::Alphabetic;
 }
 
-LayoutUnit BaselineAlignment::synthesizedBaseline(const RenderBox& box, FontBaseline baselineType, WritingMode writingModeForSynthesis, LineDirection lineDirection, BaselineSynthesisEdge edge)
+LayoutUnit BaselineAlignment::synthesizedBaseline(const RenderBox& box, FontBaseline baselineType, WritingMode writingModeForSynthesis, BoxAxis lineDirection, BaselineSynthesisEdge edge)
 {
-    auto boxSize = lineDirection == LineDirection::Horizontal ? box.borderBoxHeight() : box.borderBoxWidth();
+    auto boxSize = lineDirection == BoxAxis::Horizontal ? box.borderBoxHeight() : box.borderBoxWidth();
     if (edge == BaselineSynthesisEdge::ContentBox)
-        boxSize -= lineDirection == LineDirection::Horizontal ? box.verticalBorderAndPaddingExtent() : box.horizontalBorderAndPaddingExtent();
+        boxSize -= lineDirection == BoxAxis::Horizontal ? box.verticalBorderAndPaddingExtent() : box.horizontalBorderAndPaddingExtent();
     else if (edge == BaselineSynthesisEdge::MarginBox)
-        boxSize += lineDirection == LineDirection::Horizontal ? box.verticalMarginExtent() : box.horizontalMarginExtent();
+        boxSize += lineDirection == BoxAxis::Horizontal ? box.verticalMarginExtent() : box.horizontalMarginExtent();
 
     if (baselineType == FontBaseline::Alphabetic) {
         // When synthesizing the alphabetic baseline for a box we are determining the distance
         // to the line-under edge. For a box with vertical-lr writing mode the location
         // of the line-under edge should be the same as the box's block-start edge. For
         // vertical-rl writing mode we need the box's size since they are on opposiate sides.
-        auto shouldTreatAsHorizontal = lineDirection == LineDirection::Horizontal || writingModeForSynthesis.computedWritingMode() == StyleWritingMode::VerticalRl;
+        auto shouldTreatAsHorizontal = lineDirection == BoxAxis::Horizontal || writingModeForSynthesis.computedWritingMode() == StyleWritingMode::VerticalRl;
         return shouldTreatAsHorizontal ? boxSize : LayoutUnit();
     }
     return boxSize / 2;

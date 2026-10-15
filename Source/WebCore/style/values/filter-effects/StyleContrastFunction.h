@@ -45,7 +45,7 @@ struct Contrast {
 
     Parameter value;
 
-    static Contrast NODELETE passthroughForInterpolation();
+    static Contrast LEGACY_NODELETE passthroughForInterpolation();
 
     constexpr bool requiresRepaintForCurrentColorChange() const { return false; }
     constexpr bool affectsOpacity() const { return false; }
@@ -58,7 +58,7 @@ struct Contrast {
 
     bool operator==(const Contrast&) const = default;
 };
-using ContrastFunction = FunctionNotation<CSSValueContrast, Contrast>;
+using ContrastFunction = FunctionNotation<CSSValueID::Contrast, Contrast>;
 DEFINE_TYPE_WRAPPER_GET(Contrast, value);
 
 // MARK: - Conversion

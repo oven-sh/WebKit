@@ -481,6 +481,21 @@ TEST(LocalNetworkAccess, TheAllowPathsDoNotConsultThePermission)
 // An undetermined connection space consults the local-network feature, not the loopback one. A frame
 // allowed only loopback-network is therefore refused, which is the fail-closed choice but is worth
 // pinning because the refusal message names both features and cannot tell you which was consulted.
+// A blob: or data: URL has no host to resolve, so its address space is always undetermined, which
+// would otherwise refuse it as fail-closed. Asserted from a non-secure client with permissions policy
+// denied, so that any step after the scheme check would refuse it.
+TEST(LocalNetworkAccess, AURLWithoutANetworkHostIsNeverALocalNetworkRequest)
+{
+    auto clientOrigin = SecurityOriginData::fromURL(URL { "http://example.com/"_s });
+    for (auto& string : { "blob:http://example.com/7b3a4c1e-2f6d-4b8a-9e0c-1d2f3a4b5c6d"_s, "data:text/plain,hello"_s }) {
+        URL url { string };
+        ResourceRequest request { URL { url } };
+        auto requirement = checkLocalNetworkAccess(request, url, IPAddressSpace::Unknown, IPAddressSpace::Public, false, ClientOrigin { clientOrigin, clientOrigin }, false, false);
+        ASSERT_TRUE(requirement.has_value());
+        EXPECT_EQ(LocalNetworkAccessRequirement::None, *requirement);
+    }
+}
+
 TEST(LocalNetworkAccess, AnUndeterminedConnectionConsultsTheLocalNetworkFeature)
 {
     ResourceRequest request { URL { "https://example.com/resource"_s } };

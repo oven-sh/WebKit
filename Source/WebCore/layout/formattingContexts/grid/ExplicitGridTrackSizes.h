@@ -25,6 +25,7 @@
 
 #pragma once
 
+#include <wtf/Range.h>
 #include <wtf/Vector.h>
 
 namespace WebCore {
@@ -40,6 +41,8 @@ namespace Layout {
 struct ExplicitGridTrackSizes {
     Vector<Style::GridTrackSize> columnTrackSizes;
     Vector<Style::GridTrackSize> rowTrackSizes;
+    WTF::Range<size_t> columnAutoRepeatTracksIndexes;
+    WTF::Range<size_t> rowAutoRepeatTracksIndexes;
 
     size_t columnsCount() const { return columnTrackSizes.size(); }
     size_t rowsCount() const { return rowTrackSizes.size(); }

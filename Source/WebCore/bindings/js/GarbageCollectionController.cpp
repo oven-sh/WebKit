@@ -33,6 +33,7 @@
 #include <JavaScriptCore/DeferGCInlines.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/HeapInlines.h>
+#include <JavaScriptCore/HeapProfiler.h>
 #include <JavaScriptCore/HeapSnapshotBuilder.h>
 #include <JavaScriptCore/JSLock.h>
 #include <JavaScriptCore/VM.h>

@@ -178,7 +178,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
 
         auto programSource = programStr.data;
         if (SourceProfiler::g_profilerHook) [[unlikely]] {
-            SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+            SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
             auto source = makeSource(programSource, callerBaselineCodeBlock->source().provider()->sourceOrigin(), sourceTaintedOrigin);
             SourceProfiler::profile(SourceProfiler::Type::Eval, source);
         }
@@ -201,7 +201,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
         TDZEnvironment variablesUnderTDZ;
         PrivateNameEnvironment privateNameEnvironment;
         JSScope::collectClosureVariablesUnderTDZ(callerScopeChain, variablesUnderTDZ, privateNameEnvironment);
-        SourceTaintedOrigin sourceTaintedOrigin = computeNewSourceTaintedOriginFromStack(vm, callFrame);
+        SourceTaintedness sourceTaintedOrigin = computeNewSourceTaintednessFromStack(vm, callFrame);
 
         UnlinkedCodeBlock* callerUnlinkedCodeBlock = callerBaselineCodeBlock->unlinkedCodeBlock();
 
@@ -226,7 +226,7 @@ JSValue eval(CallFrame* callFrame, JSValue thisValue, JSScope* callerScopeChain,
             return { };
 
         // Skip the eval cache if tainted since another eval call could have a different taintedness.
-        if (sourceTaintedOrigin == SourceTaintedOrigin::Untainted)
+        if (!sourceTaintedOrigin.couldBeTainted())
             callerBaselineCodeBlock->directEvalCodeCache().set(globalObject, callerBaselineCodeBlock, cacheKey, eval);
     }
 
@@ -770,6 +770,55 @@ private:
     mutable HandlerInfo* m_handler;
 };
 
+// Optimized CodeBlocks only record the innermost handler at each call site, and none at all for
+// exception checks that jump to an in-frame catch, so consult the bytecode's full handler table.
+static std::optional<bool> isCatchingHandlerUserCatchClause(UnlinkedCodeBlock* unlinkedCodeBlock, BytecodeIndex bytecodeIndex)
+{
+    unsigned offset = bytecodeIndex.offset();
+    // Handlers are ordered innermost first.
+    for (size_t i = 0; i < unlinkedCodeBlock->numberOfExceptionHandlers(); ++i) {
+        auto& handler = unlinkedCodeBlock->exceptionHandler(i);
+        if (offset < handler.start || offset >= handler.end)
+            continue;
+        switch (handler.type()) {
+        case HandlerType::Finally:
+        case HandlerType::SynthesizedFinally:
+            continue;
+        case HandlerType::Catch:
+            return !unlinkedCodeBlock->isBuiltinFunction();
+        case HandlerType::SynthesizedCatch:
+            return false;
+        }
+    }
+    return std::nullopt;
+}
+
+bool Interpreter::isExceptionCaughtByUserCatchClause()
+{
+    AssertNoGC assertNoGC;
+    VM& vm = this->vm();
+    bool result = false;
+    StackVisitor::visit(vm.topCallFrame, vm, [&](StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
+        if (visitor->isNativeCalleeFrame())
+            return IterationStatus::Done;
+
+        if (CodeBlock* codeBlock = visitor->codeBlock()) {
+            if (auto isUserCatchClause = isCatchingHandlerUserCatchClause(codeBlock->unlinkedCodeBlock(), visitor->bytecodeIndex())) {
+                result = *isUserCatchClause;
+                return IterationStatus::Done;
+            }
+        } else if (JSC::isRemoteFunction(visitor->callFrame()->jsCallee()))
+            return IterationStatus::Done;
+
+        if (visitor->isInlinedDFGFrame())
+            return IterationStatus::Continue;
+        // Native code reaches JS only through a VM entry, so stopping there means a host frame is
+        // only ever visited as the thrower, never as a caller that could catch the throw.
+        return visitor->callerIsEntryFrame() ? IterationStatus::Done : IterationStatus::Continue;
+    });
+    return result;
+}
+
 CatchInfo::CatchInfo(const HandlerInfo* handler, CodeBlock* codeBlock)
 {
     m_valid = !!handler;
@@ -1097,7 +1146,7 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     StringView programSource = program->source().view();
     // Skip JSONP if the program is tainted. We want there to be a tainted
     // frame on the stack in case the program does an eval via a setter.
-    if (source.provider()->sourceTaintedOrigin() != SourceTaintedOrigin::Untainted)
+    if (source.provider()->couldBeTainted())
         goto failedJSONP;
 
     if (programSource.isNull())
@@ -1351,7 +1400,6 @@ ALWAYS_INLINE JSValue Interpreter::executeCallImpl(VM& vm, JSObject* function, c
             functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(function), functionScope, CodeSpecializationKind::CodeForCall, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(scope, scope.exception());
             ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
@@ -1447,7 +1495,6 @@ JSObject* Interpreter::executeConstruct(JSObject* constructor, const CallData& c
             constructData.js.functionExecutable->prepareForExecution<FunctionExecutable>(vm, uncheckedDowncast<JSFunction>(constructor), scope, CodeSpecializationKind::CodeForConstruct, newCodeBlock);
             RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, nullptr);
             ASSERT(newCodeBlock);
-            newCodeBlock->m_shouldAlwaysBeInlined = false;
         }
 
         {
@@ -1484,7 +1531,6 @@ CodeBlock* Interpreter::prepareForCachedCall(CachedCall& cachedCall, JSFunction*
     RETURN_IF_EXCEPTION(throwScope, { });
 
     ASSERT(newCodeBlock);
-    newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     cachedCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
     newCodeBlock->linkIncomingCall(nullptr, &cachedCall);
@@ -1502,7 +1548,6 @@ CodeBlock* Interpreter::prepareForMicrotaskCall(MicrotaskCall& microtaskCall, JS
     RETURN_IF_EXCEPTION_WITH_TRAPS_DEFERRED(throwScope, { });
 
     ASSERT(newCodeBlock);
-    newCodeBlock->m_shouldAlwaysBeInlined = false;
 
     microtaskCall.m_addressForCall = newCodeBlock->jitCode()->addressForCall();
     newCodeBlock->linkIncomingCall(nullptr, &microtaskCall);

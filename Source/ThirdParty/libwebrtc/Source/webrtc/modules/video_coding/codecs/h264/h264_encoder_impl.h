@@ -137,8 +137,6 @@ class H264EncoderImpl : public VideoEncoder {
   std::vector<uint8_t> tl0sync_limit_;
 
   // Determine whether the frame should be sampled for PSNR.
-  // TODO(webrtc:388070060): Remove after rollout.
-  const PsnrExperiment psnr_experiment_;
   FrameSampler psnr_frame_sampler_;
 };
 

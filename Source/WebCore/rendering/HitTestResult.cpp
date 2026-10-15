@@ -43,6 +43,7 @@
 #include "HTMLTextAreaElement.h"
 #include "HTMLVideoElement.h"
 #include "ImageOverlay.h"
+#include "InlineIteratorLineBox.h"
 #include "LocalFrame.h"
 #include "LocalFrameInlines.h"
 #include "OriginAccessPatterns.h"
@@ -159,7 +160,7 @@ HitTestResult& HitTestResult::operator=(const HitTestResult& other)
 
 HitTestResult& HitTestResult::operator=(HitTestResult&&) = default;
 
-static Node* NODELETE moveOutOfUserAgentShadowTree(Node& node)
+static Node* LEGACY_NODELETE moveOutOfUserAgentShadowTree(Node& node)
 {
     if (node.isInShadowTree()) {
         if (ShadowRoot* root = node.containingShadowRoot()) {

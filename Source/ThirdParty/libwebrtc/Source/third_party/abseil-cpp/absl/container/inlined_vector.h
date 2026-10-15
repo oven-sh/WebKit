@@ -41,12 +41,14 @@
 #include <cstring>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <type_traits>
 #include <utility>
 
 #include "absl/algorithm/algorithm.h"
 #include "absl/base/attributes.h"
+#include "absl/base/config.h"
 #include "absl/base/internal/hardening.h"
 #include "absl/base/internal/iterator_traits.h"
 #include "absl/base/macros.h"
@@ -893,8 +895,8 @@ class ABSL_ATTRIBUTE_WARN_UNUSED InlinedVector {
     // Assumption check: we shouldn't be told to use memcpy to implement move
     // assignment unless we have trivially destructible elements and an
     // allocator that does nothing fancy.
-    static_assert(std::is_trivially_destructible_v<value_type>, "");
-    static_assert(std::is_same_v<A, std::allocator<value_type>>, "");
+    static_assert(std::is_trivially_destructible_v<value_type>);
+    static_assert(std::is_same_v<A, std::allocator<value_type>>);
 
     // Throw away our existing heap allocation, if any. There is no need to
     // destroy the existing elements one by one because we know they are

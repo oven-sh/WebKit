@@ -43,14 +43,16 @@
 
 @end
 
-@implementation WebNavigationData
+@implementation WebNavigationData {
+    RetainPtr<WebNavigationDataPrivate> _private;
+}
 
 - (id)initWithURLString:(NSString *)url title:(NSString *)title originalRequest:(NSURLRequest *)request response:(NSURLResponse *)response hasSubstituteData:(BOOL)hasSubstituteData clientRedirectSource:(NSString *)redirectSource
 {
     self = [super init];
     if (!self)
         return nil;
-    _private = [[WebNavigationDataPrivate alloc] init];
+    _private = adoptNS([[WebNavigationDataPrivate alloc] init]);
     
     _private->url = url;
     _private->title = title;
@@ -90,13 +92,6 @@
 - (NSString *)clientRedirectSource
 {
     return _private->clientRedirectSource.get();
-}
-
-- (void)dealloc
-{
-    // Retaining the member just to release it would be pointless.
-    SUPPRESS_UNRETAINED_ARG [_private release];
-    [super dealloc];
 }
 
 @end

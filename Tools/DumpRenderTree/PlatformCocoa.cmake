@@ -1,71 +1,72 @@
 if (WEBKIT_SDK_IS_MACOS)
 
+set(TestRunnerShared_DIR ${TOOLS_DIR}/TestRunnerShared)
+
 # FIXME: Remove once source files are fixed. https://bugs.webkit.org/show_bug.cgi?id=312034
 WEBKIT_ADD_TARGET_CXX_FLAGS(DumpRenderTree -Wno-unused-parameter)
+# Aligned with Xcode (GCC_WARN_ABOUT_DEPRECATED_FUNCTIONS).
+WEBKIT_ADD_TARGET_CXX_FLAGS(DumpRenderTree -Wno-deprecated-declarations)
 
-find_library(QUARTZ_LIBRARY Quartz)
 find_library(CARBON_LIBRARY Carbon)
-find_library(CORESERVICES_LIBRARY CoreServices)
-
-add_definitions(-DJSC_API_AVAILABLE\\\(...\\\)=)
-add_definitions(-DJSC_CLASS_AVAILABLE\\\(...\\\)=)
-
-# FIXME: We shouldn't need to define NS_RETURNS_RETAINED.
-add_definitions(-iframework ${QUARTZ_LIBRARY}/Frameworks -iframework ${CORESERVICES_LIBRARY}/Frameworks -DNS_RETURNS_RETAINED=)
-
-link_directories(../../WebKitLibraries)
-include_directories(../../WebKitLibraries)
 
 set_property(TARGET DumpRenderTree PROPERTY CODE_SIGN_ENTITLEMENTS
     ${DumpRenderTree_DIR}/mac/Configurations/DumpRenderTree.entitlements)
 
+# Embed Info.plist in the binary, as a standalone executable.
+set(PRODUCT_NAME DumpRenderTree)
+set(PRODUCT_BUNDLE_IDENTIFIER com.apple.WebKit.DumpRenderTree)
+configure_file("${DumpRenderTree_DIR}/mac/Info.plist"
+               "${CMAKE_CURRENT_BINARY_DIR}/DumpRenderTree-Info.plist")
+unset(PRODUCT_NAME)
+unset(PRODUCT_BUNDLE_IDENTIFIER)
+
+target_link_options(DumpRenderTree PRIVATE
+    "LINKER:-sectcreate,__TEXT,__info_plist,${CMAKE_CURRENT_BINARY_DIR}/DumpRenderTree-Info.plist")
+set_property(TARGET DumpRenderTree APPEND PROPERTY LINK_DEPENDS
+    "${CMAKE_CURRENT_BINARY_DIR}/DumpRenderTree-Info.plist")
+
+list(APPEND DumpRenderTree_FRAMEWORKS WebKit)
+
 list(APPEND DumpRenderTree_LIBRARIES
     ${CARBON_LIBRARY}
-    ${QUARTZ_LIBRARY}
-    WebKit
+)
+
+list(APPEND DumpRenderTree_PRIVATE_LIBRARIES
+    "-framework Cocoa"
+    "-framework OpenGL"
+    "-framework QuartzCore"
 )
 
 list(APPEND DumpRenderTree_INCLUDE_DIRECTORIES
+    ${WebKitLegacy_FRAMEWORK_HEADERS_DIR}
+    ${CMAKE_SOURCE_DIR}/WebKitLibraries
     ${DumpRenderTree_DIR}/cg
     ${DumpRenderTree_DIR}/cf
     ${DumpRenderTree_DIR}/cocoa
     ${DumpRenderTree_DIR}/mac
-    ${DumpRenderTree_DIR}/mac/InternalHeaders/WebKit
-    ${DumpRenderTree_DIR}/TestNetscapePlugIn
+    ${DumpRenderTree_DIR}/mac/InternalHeaders
     ${WEBCORE_DIR}/testing/cocoa
     ${WEBKITLEGACY_DIR}
-    ${WebKitTestRunner_SHARED_DIR}/cocoa
-    ${WebKitTestRunner_SHARED_DIR}/mac
-    ${WebKitTestRunner_SHARED_DIR}/spi
+    ${WEBKITLEGACY_DIR}/mac/WebView
+    ${TestRunnerShared_DIR}/cocoa
+    ${TestRunnerShared_DIR}/mac
+    ${TestRunnerShared_DIR}/spi
 )
 
-# Common ${DumpRenderTree_SOURCES} from CMakeLists.txt are C++ source files.
-list(APPEND DumpRenderTree_Cpp_SOURCES
-    ${DumpRenderTree_SOURCES}
-)
-
-list(APPEND DumpRenderTree_ObjC_SOURCES
+list(APPEND DumpRenderTree_SOURCES
+    DefaultPolicyDelegate.mm
     DumpRenderTreeFileDraggingSource.m
 
-    mac/AppleScriptController.m
-    mac/NavigationController.m
-    mac/ObjCPlugin.m
-    mac/ObjCPluginFunction.m
-    mac/TextInputControllerMac.m
-)
-
-list(APPEND DumpRenderTree_Cpp_SOURCES
     cg/PixelDumpSupportCG.cpp
-)
 
-list(APPEND DumpRenderTree_ObjCpp_SOURCES
-    DefaultPolicyDelegate.mm
     cocoa/UIScriptControllerCocoa.mm
+
     mac/AccessibilityCommonMac.mm
     mac/AccessibilityControllerMac.mm
     mac/AccessibilityNotificationHandler.mm
     mac/AccessibilityTextMarkerMac.mm
     mac/AccessibilityUIElementMac.mm
+    mac/AppleScriptController.m
     mac/DumpRenderTree.mm
     mac/DumpRenderTreeDraggingInfo.mm
     mac/DumpRenderTreeMain.mm
@@ -78,27 +79,26 @@ list(APPEND DumpRenderTree_ObjCpp_SOURCES
     mac/HistoryDelegate.mm
     mac/MockGeolocationProvider.mm
     mac/MockWebNotificationProvider.mm
+    mac/NavigationController.m
     mac/ObjCController.m
+    mac/ObjCPlugin.m
+    mac/ObjCPluginFunction.m
     mac/PixelDumpSupportMac.mm
     mac/PolicyDelegate.mm
     mac/ResourceLoadDelegate.mm
     mac/TestRunnerMac.mm
+    mac/TextInputControllerMac.m
     mac/UIDelegate.mm
     mac/UIScriptControllerMac.mm
     mac/WorkQueueItemMac.mm
-    ${WebKitTestRunner_SHARED_DIR}/cocoa/ClassMethodSwizzler.mm
-    ${WebKitTestRunner_SHARED_DIR}/cocoa/LayoutTestSpellChecker.mm
-)
 
-set(DumpRenderTree_SOURCES
-    ${DumpRenderTree_Cpp_SOURCES}
-    ${DumpRenderTree_ObjC_SOURCES}
-    ${DumpRenderTree_ObjCpp_SOURCES}
+    ${TestRunnerShared_DIR}/cocoa/ClassMethodSwizzler.mm
+    ${TestRunnerShared_DIR}/cocoa/InstanceMethodSwizzler.mm
+    ${TestRunnerShared_DIR}/cocoa/LayoutTestSpellChecker.mm
+    ${TestRunnerShared_DIR}/cocoa/ModifierKeys.mm
+    ${TestRunnerShared_DIR}/cocoa/PoseAsClass.mm
+    ${TestRunnerShared_DIR}/mac/NSPasteboardAdditions.mm
 )
-
-foreach (_file ${DumpRenderTree_ObjC_SOURCES})
-    set_source_files_properties(${_file} PROPERTIES COMPILE_FLAGS "-std=c99")
-endforeach ()
 
 set(DumpRenderTree_RESOURCES
     AHEM____.TTF

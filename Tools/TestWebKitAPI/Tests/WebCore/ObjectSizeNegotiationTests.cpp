@@ -166,16 +166,16 @@ TEST(ObjectSizeNegotiation, ZoomIsCarriedOnlyByAStatedSize)
 
 TEST(ObjectSizeNegotiation, DensityCorrected)
 {
-    // A 2x 'srcset' candidate has a multiplier of 0.5, halving its raw natural dimensions.
-    EXPECT_EQ(widthOnly(100), widthOnly(200).densityCorrected(0.5));
-    EXPECT_EQ(heightOnly(50), heightOnly(100).densityCorrected(0.5));
-    EXPECT_EQ(FloatSize(100, 50), defaultSizingAlgorithm(NaturalDimensions::fixed(200, 100).densityCorrected(0.5), SpecifiedSize::none(), defaultObjectSize).size());
+    // A 2x 'srcset' candidate has a density of 2, halving its raw natural dimensions.
+    EXPECT_EQ(widthOnly(100), widthOnly(200).densityCorrected(2));
+    EXPECT_EQ(heightOnly(50), heightOnly(100).densityCorrected(2));
+    EXPECT_EQ(FloatSize(100, 50), defaultSizingAlgorithm(NaturalDimensions::fixed(200, 100).densityCorrected(2), SpecifiedSize::none(), defaultObjectSize).size());
 
     // Only the dimensions scale: an aspect ratio is scale invariant, and the specified size
     // and default object size are already in the caller's coordinate space.
-    EXPECT_EQ(aspectRatioOnly({ 1, 1 }), aspectRatioOnly({ 1, 1 }).densityCorrected(0.5));
-    EXPECT_EQ(FloatSize(150, 150), resolveContainConstraint(aspectRatioOnly({ 1, 1 }).densityCorrected(0.5), defaultObjectSize).size());
-    EXPECT_EQ(FloatSize(100, 40), defaultSizingAlgorithm(NaturalDimensions::fixed(200, 100).densityCorrected(0.5), { 100, 40 }, defaultObjectSize).size());
+    EXPECT_EQ(aspectRatioOnly({ 1, 1 }), aspectRatioOnly({ 1, 1 }).densityCorrected(2));
+    EXPECT_EQ(FloatSize(150, 150), resolveContainConstraint(aspectRatioOnly({ 1, 1 }).densityCorrected(2), defaultObjectSize).size());
+    EXPECT_EQ(FloatSize(100, 40), defaultSizingAlgorithm(NaturalDimensions::fixed(200, 100).densityCorrected(2), { 100, 40 }, defaultObjectSize).size());
 }
 
 TEST(ObjectSizeNegotiation, OrientedNaturalDimensions)

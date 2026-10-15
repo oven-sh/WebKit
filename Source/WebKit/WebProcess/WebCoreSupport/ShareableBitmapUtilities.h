@@ -25,27 +25,16 @@
 
 #pragma once
 
-#include <WebCore/FloatSize.h>
+#include <WebCore/RenderImage.h>
 #include <wtf/Forward.h>
 #include <wtf/RefPtr.h>
 
 namespace WebCore {
-class RenderImage;
 class ShareableBitmap;
 }
 
 namespace WebKit {
 
-enum class UseSnapshotForTransparentImages : bool { No, Yes };
-enum class AllowAnimatedImages : bool { No, Yes };
-
-struct CreateShareableBitmapFromImageOptions {
-    std::optional<WebCore::FloatSize> screenSizeInPixels;
-    AllowAnimatedImages allowAnimatedImages { AllowAnimatedImages::Yes };
-    UseSnapshotForTransparentImages useSnapshotForTransparentImages { UseSnapshotForTransparentImages::No };
-};
-
-RefPtr<WebCore::ShareableBitmap> createShareableBitmap(WebCore::RenderImage&, CreateShareableBitmapFromImageOptions&& = { });
-Ref<NativePromise<Ref<WebCore::ShareableBitmap>, void>> createShareableBitmapAsync(WebCore::RenderImage&, CreateShareableBitmapFromImageOptions&& = { });
+Ref<NativePromise<Ref<WebCore::ShareableBitmap>, void>> createShareableBitmapAsync(WebCore::RenderImage&, WebCore::CreateShareableBitmapFromImageOptions&& = { });
 
 };

@@ -65,7 +65,7 @@ public:
     virtual ~PageClientImpl();
 
     // FIXME: Eventually WebViewImpl should become the PageClient.
-    void NODELETE setImpl(WebViewImpl&);
+    void LEGACY_NODELETE setImpl(WebViewImpl&);
 
     void viewWillMoveToAnotherWindow();
 
@@ -229,7 +229,7 @@ private:
     void showPDFHUD(PDFPluginIdentifier) final;
 
 #if ENABLE(FULLSCREEN_API)
-    WebFullScreenManagerProxyClient& NODELETE fullScreenManagerProxyClient() final;
+    WebFullScreenManagerProxyClient& LEGACY_NODELETE fullScreenManagerProxyClient() final;
 #endif
 
 #if ENABLE(FULLSCREEN_API)
@@ -358,6 +358,7 @@ private:
     void positionInformationDidChange(const InteractionInformationAtPosition&, std::optional<WebCore::FrameIdentifier>) override;
 
     bool isViewVisible(NSView *, NSWindow *) const final;
+    bool isPageClientImpl() const final { return true; }
 
     WeakObjCPtr<NSView> m_view;
     WeakPtr<WebViewImpl> m_impl;
@@ -369,5 +370,9 @@ private:
 };
 
 } // namespace WebKit
+
+SPECIALIZE_TYPE_TRAITS_BEGIN(WebKit::PageClientImpl)
+    static bool isType(const WebKit::PageClient& client) { return client.isPageClientImpl(); }
+SPECIALIZE_TYPE_TRAITS_END()
 
 #endif // PLATFORM(MAC)

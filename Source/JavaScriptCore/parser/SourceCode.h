@@ -82,7 +82,7 @@ public:
     friend bool operator==(const SourceCode&, const SourceCode&) = default;
 };
 
-inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin sourceTaintedOrigin, String filename = String(), const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
+inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness sourceTaintedOrigin, String filename = String(), const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
 {
     // The provider is the only place an inline <script>'s start is recorded; SourceCode reads it
     // back from there so the two cannot disagree.
@@ -90,7 +90,7 @@ inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOri
 }
 
 #if USE(BUN_JSC_ADDITIONS)
-inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin sourceTaintedOrigin, String filename, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness sourceTaintedOrigin, String filename, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
 {
     return SourceCode(StringSourceProvider::create(source, sourceOrigin, WTF::move(filename), sourceTaintedOrigin, startPosition, sourceType, provenance));
 }

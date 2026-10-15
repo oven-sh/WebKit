@@ -2973,6 +2973,14 @@ static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize bor
 #endif
 }
 
+- (BOOL)_allowScalingToRevealFocusedElement
+{
+    if (!PAL::currentUserInterfaceIdiomIsSmallScreen())
+        return NO;
+
+    return self.traitCollection.horizontalSizeClass != UIUserInterfaceSizeClassRegular || self.traitCollection.verticalSizeClass != UIUserInterfaceSizeClassRegular;
+}
+
 - (void)_zoomToRevealFocusedElement
 {
     _revealFocusedElementDeferrer = nullptr;
@@ -2990,7 +2998,7 @@ static inline WebCore::FloatSize tapHighlightBorderRadius(WebCore::FloatSize bor
         fontSize:_focusedElementInformation.nodeFontSize
         minimumScale:_focusedElementInformation.minimumScaleFactor
         maximumScale:_focusedElementInformation.maximumScaleFactorIgnoringAlwaysScalable
-        allowScaling:_focusedElementInformation.allowsUserScalingIgnoringAlwaysScalable && PAL::currentUserInterfaceIdiomIsSmallScreen()
+        allowScaling:_focusedElementInformation.allowsUserScalingIgnoringAlwaysScalable && self._allowScalingToRevealFocusedElement
         forceScroll:[self requiresAccessoryView]];
 }
 
@@ -5954,7 +5962,7 @@ static void logTextInteraction(const char* methodName, UIGestureRecognizer *loup
     _usingMouseDragForSelection = [_mouseInteraction mouseTouchGestureRecognizer]._wk_hasRecognizedOrEnded;
 #endif
     ++_suppressNonEditableSingleTapTextInteractionCount;
-    protect(_page)->selectTextWithGranularityAtPoint(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)] {
+    protect(_page)->selectTextWithGranularityAtPoint(std::nullopt, WebCore::IntPoint(point), toWKTextGranularity(granularity), self._hasFocusedElement, [view = retainPtr(self), selectionHandler = makeBlockPtr(completionHandler)](bool) {
         selectionHandler();
         view->_usingGestureForSelection = NO;
         --view->_suppressNonEditableSingleTapTextInteractionCount;
@@ -7393,7 +7401,7 @@ static UITextAutocapitalizationType toUITextAutocapitalize(WebCore::Autocapitali
 
 - (void)_updateTextInputTraits:(id<UITextInputTraits>)traits
 {
-    traits.secureTextEntry = _focusedElementInformation.elementType == WebKit::InputType::Password || [_formInputSession forceSecureTextEntry];
+    traits.secureTextEntry = _focusedElementInformation.elementType == WebKit::InputType::Password || _focusedElementInformation.hasEverBeenPasswordField || [_formInputSession forceSecureTextEntry];
 
     switch (_focusedElementInformation.enterKeyHint) {
     case WebCore::EnterKeyHint::Enter:
@@ -10928,12 +10936,16 @@ static std::optional<WebCore::DragOperation> coreDragOperationForUIDropOperation
     if (!session.allowsMoveOperation)
         dragOperationMask.remove(WebCore::DragOperation::Move);
 
+    OptionSet<WebCore::DragApplicationFlags> flags;
+    if (session.localDragSession && session.localDragSession == _dragDropInteractionState.dragSession())
+        flags.add(WebCore::DragApplicationFlags::IsSource);
+
     return {
         session,
         WebCore::roundedIntPoint(client),
         WebCore::roundedIntPoint(global),
         dragOperationMask,
-        { },
+        flags,
         WebKit::coreDragDestinationActionMask(dragDestinationAction),
         _page->webPageIDInMainFrameProcess()
     };
@@ -12447,9 +12459,7 @@ static WebKit::DocumentEditingContextRequest toWebRequest(id request)
 
         if (!linkedOnOrAfterSDKWithBehavior(SDKAlignedBehavior::SendsNativeMouseEvents)
             && WTF::IOSApplication::isEssentialSkeleton()) { // <rdar://problem/62694519>
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
-            os_log_error(OS_LOG_DEFAULT, "WARNING: This application has been observed to ignore mouse events in web content; touch events will be sent until it is built against the iOS 13.4 SDK, but after that, the web content must respect mouse or pointer events in addition to touch events in order to behave correctly when a trackpad or mouse is used.");
-WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
+            SAFE_OS_LOG_ERROR(OS_LOG_DEFAULT, "WARNING: This application has been observed to ignore mouse events in web content; touch events will be sent until it is built against the iOS 13.4 SDK, but after that, the web content must respect mouse or pointer events in addition to touch events in order to behave correctly when a trackpad or mouse is used.");
             return NO;
         }
 

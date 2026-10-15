@@ -21,6 +21,9 @@
 #ifndef _PLATFORM_H
 #define _PLATFORM_H
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/uconfig.h"
 #include "unicode/uvernum.h"
 

@@ -28,6 +28,7 @@
 
 #include "FormattingContextBoxIterator.h"
 #include "InlineWalker.h"
+#include "LayoutDescendantIterator.h"
 #include "LayoutElementBox.h"
 #include "LayoutInlineTextBox.h"
 #include "RenderBlock.h"
@@ -73,7 +74,7 @@ static std::unique_ptr<Style::ComputedStyle> firstLineStyleFor(const RenderObjec
     return Style::ComputedStyle::clonePtr(firstLineStyle.get());
 }
 
-static Layout::Box::IsAnonymous NODELETE isAnonymous(const RenderObject& renderer)
+static Layout::Box::IsAnonymous LEGACY_NODELETE isAnonymous(const RenderObject& renderer)
 {
     return renderer.isAnonymous() ? Layout::Box::IsAnonymous::Yes : Layout::Box::IsAnonymous::No;
 }
@@ -155,7 +156,8 @@ void BoxTreeUpdater::tearDown()
 
     Vector<CheckedRef<Layout::Box>> boxesToDetach;
     for (CheckedRef constLayoutBox : formattingContextBoxes(rootLayoutBox())) {
-        CheckedRef layoutBox = const_cast<Layout::Box&>(constLayoutBox.get());
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST CheckedRef layoutBox = const_cast<Layout::Box&>(constLayoutBox.get());
         CheckedPtr renderer = layoutBox->rendererForIntegration();
         if (!renderer)
             continue;
@@ -302,7 +304,8 @@ void BoxTreeUpdater::insertChild(UniqueRef<Layout::Box> childBox, RenderObject& 
     CheckedPtr beforeChildBox = beforeChild ? beforeChild->layoutBox() : nullptr;
 
     childRenderer.setLayoutBox(childBox);
-    parentBox->insertChild(WTF::move(childBox), const_cast<Layout::Box*>(beforeChildBox.get()));
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST parentBox->insertChild(WTF::move(childBox), const_cast<Layout::Box*>(beforeChildBox.get()));
 }
 
 static void updateContentCharacteristic(const RenderText& rendererText, Layout::InlineTextBox& inlineTextBox)
@@ -333,7 +336,8 @@ static void updateContentCharacteristic(const RenderText& rendererText, Layout::
 
 void BoxTreeUpdater::updateStyle(const RenderObject& renderer)
 {
-    CheckedPtr layoutBox = const_cast<Layout::Box*>(renderer.layoutBox());
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST CheckedPtr layoutBox = const_cast<Layout::Box*>(renderer.layoutBox());
     if (!layoutBox) {
         ASSERT_NOT_REACHED();
         return;
@@ -402,15 +406,25 @@ const Layout::Box& BoxTreeUpdater::insert(const RenderElement& parent, RenderObj
     return *child.layoutBox();
 }
 
-UniqueRef<Layout::Box> BoxTreeUpdater::remove(const RenderElement& parent, RenderObject& child)
+void BoxTreeUpdater::remove(const RenderElement& parent, RenderObject& child)
 {
     UNUSED_PARAM(parent);
     ASSERT(child.layoutBox());
 
-    CheckedPtr layoutBox = child.layoutBox();
-    child.clearLayoutBox();
+    auto removedBox = [&] {
+        CheckedPtr layoutBox = child.layoutBox();
+        child.clearLayoutBox();
+        return layoutBox->removeFromParent();
+    }();
 
-    return layoutBox->removeFromParent();
+#if ASSERT_ENABLED
+    // Nothing may refer to the removed boxes, except the renderers in the subtree, which the boxes unlink on destruction.
+    ASSERT(!removedBox->checkedPtrCount());
+    if (CheckedPtr removedElementBox = dynamicDowncast<Layout::ElementBox>(removedBox.get())) {
+        for (auto& descendant : Layout::descendantsOfType<Layout::Box>(*removedElementBox))
+            ASSERT(descendant.checkedPtrCount() == (descendant.rendererForIntegration() ? 1u : 0u));
+    }
+#endif
 }
 
 const Layout::ElementBox& BoxTreeUpdater::rootLayoutBox() const

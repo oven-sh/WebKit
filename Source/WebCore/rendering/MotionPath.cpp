@@ -31,6 +31,7 @@
 #include "PathOperation.h"
 #include "PathTraversalState.h"
 #include "RenderBlock.h"
+#include "RenderElementInlines.h"
 #include "RenderObjectInlines.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "TransformOperationData.h"
@@ -50,7 +51,7 @@ static FloatRoundedRect containingBlockRectForRenderer(const RenderObject& rende
         [&](const Style::BoxPath& offsetPath) -> FloatRoundedRect {
             auto referenceBox = offsetPath.referenceBox();
             auto referenceRect = container.referenceBoxRect(referenceBox);
-            auto borderShape = BorderShape::shapeForBorderRect(container.style(), LayoutRect(referenceRect));
+            auto borderShape = BorderShape::shapeForBorderRect(container.usedStyle(), LayoutRect(referenceRect));
             return borderShape.deprecatedPixelSnappedRoundedRect(protect(container.document())->deviceScaleFactor());
         },
         [&](const auto& offsetPath) -> FloatRoundedRect {
@@ -64,7 +65,7 @@ static FloatRoundedRect containingBlockRectForRenderer(const RenderObject& rende
     );
 }
 
-static FloatPoint NODELETE normalPositionForOffsetPath(const Style::OffsetPath& offsetPath, const FloatRect& referenceRect)
+static FloatPoint LEGACY_NODELETE normalPositionForOffsetPath(const Style::OffsetPath& offsetPath, const FloatRect& referenceRect)
 {
     if (WTF::holdsAlternative<Style::RayPath>(offsetPath) || WTF::holdsAlternative<Style::BasicShapePath>(offsetPath))
         return referenceRect.center();
@@ -113,7 +114,7 @@ std::optional<MotionPathData> MotionPath::motionPathDataForRenderer(const Render
 
     MotionPathData data;
     data.containingBlockBoundingRect = containingBlockRectForRenderer(renderer, *container, offsetPath);
-    data.cornerCurvatures = BorderShape::shapeForBorderRect(container->style(), container->borderBoxRect()).cornerCurvatures();
+    data.cornerCurvatures = BorderShape::shapeForBorderRect(container->usedStyle(), container->borderBoxRect()).cornerCurvatures();
     data.offsetFromContainingBlock = offsetFromContainer(renderer, *container, data.containingBlockBoundingRect.rect());
 
     auto zoom = renderer.style().usedZoomForLength();
@@ -189,12 +190,12 @@ bool MotionPath::needsUpdateAfterContainingBlockLayout(const Style::OffsetPath& 
         || WTF::holdsAlternative<Style::BasicShapePath>(offsetPath);
 }
 
-FloatPoint NODELETE MotionPathData::currentOffset() const
+FloatPoint LEGACY_NODELETE MotionPathData::currentOffset() const
 {
     return FloatPoint(usedStartingPosition - offsetFromContainingBlock);
 }
 
-FloatRoundedRect NODELETE MotionPathData::offsetRect() const
+FloatRoundedRect LEGACY_NODELETE MotionPathData::offsetRect() const
 {
     auto rect = containingBlockBoundingRect;
     auto shiftedPoint = offsetFromContainingBlock;

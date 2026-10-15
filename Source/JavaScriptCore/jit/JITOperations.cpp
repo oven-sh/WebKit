@@ -889,11 +889,10 @@ static ALWAYS_INLINE JSValue inByValMegamorphic(JSGlobalObject* globalObject, VM
         RELEASE_AND_RETURN(scope, jsBoolean(CommonSlowPaths::opInByVal(globalObject, baseValue, subscript, profile)));
     }
 
-    Identifier propertyName = subscript.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, { });
+    auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript.asCell());
+    UniquedStringImpl* uid = const_cast<UniquedStringImpl*>(propertyName.data);
 
     JSObject* baseObject = asObject(baseValue);
-    UniquedStringImpl* uid = propertyName.impl();
     if (!canUseMegamorphicInById(vm, uid)) [[unlikely]] {
         dataLogLnIf(verbose, " ", __LINE__);
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm)) {
@@ -2011,12 +2010,11 @@ ALWAYS_INLINE static void putByValMegamorphic(JSGlobalObject* globalObject, VM& 
         return;
     }
 
-    Identifier propertyName = subscript.toPropertyKey(globalObject);
-    RETURN_IF_EXCEPTION(scope, void());
+    auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript.asCell());
+    UniquedStringImpl* uid = const_cast<UniquedStringImpl*>(propertyName.data);
 
     PutPropertySlot slot(baseValue, isStrict);
 
-    UniquedStringImpl* uid = propertyName.impl();
     if (!canUseMegamorphicPutById(vm, uid)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))
             repatchPutBySlowPathCall(callFrame->codeBlock(), *propertyCache, kind);
@@ -3018,12 +3016,6 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
     if (level == DFG::CannotCompile)
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     
-    if (bytecodeIndex) {
-        // If we're attempting to OSR from a loop, assume that this should be
-        // separately optimized.
-        codeBlock->m_shouldAlwaysBeInlined = false;
-    }
-
     if (Options::verboseOSR()) [[unlikely]] {
         dataLog(
             *codeBlock, ": Entered optimize with bytecodeIndex = ", bytecodeIndex,
@@ -3057,13 +3049,6 @@ JSC_DEFINE_JIT_OPERATION(operationOptimize, UGPRPair, (VM* vmPointer, uint32_t b
     if (debugger && (debugger->isStepping() || codeBlock->baselineAlternative()->hasDebuggerRequests())) [[unlikely]] {
         CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("debugger is stepping or has requests"));
         updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
-        OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
-    }
-
-    if (codeBlock->m_shouldAlwaysBeInlined) {
-        CODEBLOCK_LOG_EVENT(codeBlock, "delayOptimizeToDFG", ("should always be inlined"));
-        updateAllPredictionsAndOptimizeAfterWarmUp(codeBlock);
-        dataLogLnIf(Options::verboseOSR(), "Choosing not to optimize ", *codeBlock, " yet, because m_shouldAlwaysBeInlined == true.");
         OPERATION_RETURN(scope, encodeResult(nullptr, nullptr));
     }
 
@@ -3745,17 +3730,8 @@ static ALWAYS_INLINE JSValue getByValMegamorphic(JSGlobalObject* globalObject, V
 
     JSObject* baseObject = asObject(baseValue);
 
-    GCOwnedDataScope<AtomStringImpl*> propertyName;
-    Identifier propertyKey;
-    UniquedStringImpl* uid = nullptr;
-    if (subscript.isString()) {
-        propertyName = asString(subscript)->toAtomString(globalObject);
-        uid = propertyName.data;
-    } else {
-        propertyKey = subscript.toPropertyKey(globalObject);
-        uid = propertyKey.impl();
-    }
-    RETURN_IF_EXCEPTION(scope, { });
+    auto propertyName = CacheableIdentifier::getCacheableIdentifier(subscript.asCell());
+    UniquedStringImpl* uid = const_cast<UniquedStringImpl*>(propertyName.data);
 
     if (!canUseMegamorphicGetByIdExcludingIndex(vm, uid)) [[unlikely]] {
         if (propertyCache && propertyCache->considerRepatchingCacheMegamorphic(vm))

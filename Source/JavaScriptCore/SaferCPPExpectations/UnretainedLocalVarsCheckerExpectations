@@ -1,4 +1,5 @@
 API/JSAPIGlobalObject.mm
+[ macOS ] API/JSManagedValue.mm
 API/JSValue.mm
 API/JSVirtualMachine.mm
 API/ObjCCallbackFunction.mm

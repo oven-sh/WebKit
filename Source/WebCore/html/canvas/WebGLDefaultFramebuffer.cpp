@@ -152,9 +152,28 @@ std::optional<ScopedWebGLRestoreFramebuffer> WebGLDefaultFramebuffer::prepareFor
     return ScopedWebGLRestoreFramebuffer { context };
 }
 
-bool WebGLDefaultFramebuffer::reshape(IntSize size)
+void WebGLDefaultFramebuffer::setSize(IntSize size)
 {
+    if (size == m_size)
+        return;
     m_size = size;
+    m_needsReshape = true;
+}
+
+bool WebGLDefaultFramebuffer::ensureSize()
+{
+    if (!m_needsReshape)
+        return true;
+    if (!reshape())
+        return false;
+    m_needsReshape = false;
+    return true;
+}
+
+bool WebGLDefaultFramebuffer::reshape()
+{
+    IntSize size = m_size;
+    m_storageSize = size;
     Ref context = m_context.get();
     Ref gl = *context->graphicsContextGL();
     auto& attributes = context->attributes();
@@ -205,6 +224,9 @@ bool WebGLDefaultFramebuffer::reshape(IntSize size)
     if (gl->checkFramebufferStatus(GraphicsContextGL::FRAMEBUFFER) != GraphicsContextGL::FRAMEBUFFER_COMPLETE)
         return false;
 
+    // The storage is not necessarily reallocated, for example when it is reallocated to the size it
+    // already has, so the clears must not be affected by the state the application set.
+    ScopedDisableRasterizerDiscard scopedRasterizerDiscard { context };
     ScopedDisableScissorTest scopedScissor { context };
     ScopedClearColorAndMask scopedColor { context, 0, 0, 0, 0, true, true, true, true };
     ScopedClearDepthAndMask scopedDepth { context, 1.0f, true, hasDepth() };
@@ -215,7 +237,10 @@ bool WebGLDefaultFramebuffer::reshape(IntSize size)
         depthStencilMask |= GraphicsContextGL::DEPTH_BUFFER_BIT;
     if (hasStencil())
         depthStencilMask |= GraphicsContextGL::STENCIL_BUFFER_BIT;
-    gl->clear(GraphicsContextGL::COLOR_BUFFER_BIT | depthStencilMask);
+    {
+        ScopedEnableDrawBuffer0 scopedDrawBuffer { context, *this };
+        gl->clear(GraphicsContextGL::COLOR_BUFFER_BIT | depthStencilMask);
+    }
 
     // If m_fbo is distinct from GraphicsContextGL FBO 0, clear color of FBO 0.
     if (m_fbo) {

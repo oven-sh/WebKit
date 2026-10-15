@@ -29,6 +29,7 @@
 #include "ExceptionCode.h"
 #include "LibWebRTCMacros.h"
 #include "LibWebRTCUtils.h"
+#include <wtf/CheckedRef.h>
 
 WTF_IGNORE_WARNINGS_IN_THIRD_PARTY_CODE_BEGIN
 
@@ -51,16 +52,16 @@ public:
     {
     }
 
-    void OnSuccess(webrtc::SessionDescriptionInterface* sessionDescription) final { protect(m_endpoint)->createSessionDescriptionSucceeded(std::unique_ptr<webrtc::SessionDescriptionInterface>(sessionDescription)); }
-    void OnFailure(webrtc::RTCError error) final { protect(m_endpoint)->createSessionDescriptionFailed(toExceptionCode(error.type()), error.message()); }
+    void OnSuccess(webrtc::SessionDescriptionInterface* sessionDescription) final { m_endpoint->createSessionDescriptionSucceeded(std::unique_ptr<webrtc::SessionDescriptionInterface>(sessionDescription)); }
+    void OnFailure(webrtc::RTCError error) final { m_endpoint->createSessionDescriptionFailed(toExceptionCode(error.type()), error.message()); }
 
     // This observer is a member of the endpoint and forwards its refcount to it, so it must not
     // protect the endpoint here: Release() derives kDroppedLastRef from the endpoint's refcount.
-    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint.AddRef(); }
-    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint.Release(); }
+    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint->AddRef(); }
+    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint->Release(); }
 
 private:
-    Endpoint& m_endpoint;
+    const CheckedRef<Endpoint> m_endpoint;
 };
 
 template<typename Endpoint>
@@ -73,20 +74,20 @@ public:
 
     // This observer is a member of the endpoint and forwards its refcount to it, so it must not
     // protect the endpoint here: Release() derives kDroppedLastRef from the endpoint's refcount.
-    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint.AddRef(); }
-    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint.Release(); }
+    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint->AddRef(); }
+    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint->Release(); }
 
 private:
     void OnSetLocalDescriptionComplete(webrtc::RTCError error) final
     {
         if (!error.ok()) {
-            protect(m_endpoint)->setLocalSessionDescriptionFailed(toExceptionCode(error.type()), error.message());
+            m_endpoint->setLocalSessionDescriptionFailed(toExceptionCode(error.type()), error.message());
             return;
         }
-        protect(m_endpoint)->setLocalSessionDescriptionSucceeded();
+        m_endpoint->setLocalSessionDescriptionSucceeded();
     }
 
-    Endpoint& m_endpoint;
+    const CheckedRef<Endpoint> m_endpoint;
 };
 
 template<typename Endpoint>
@@ -99,20 +100,20 @@ public:
 
     // This observer is a member of the endpoint and forwards its refcount to it, so it must not
     // protect the endpoint here: Release() derives kDroppedLastRef from the endpoint's refcount.
-    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint.AddRef(); }
-    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint.Release(); }
+    SUPPRESS_UNCOUNTED_ARG void AddRef() const { m_endpoint->AddRef(); }
+    webrtc::RefCountReleaseStatus Release() const { SUPPRESS_UNCOUNTED_ARG return m_endpoint->Release(); }
 
 private:
     void OnSetRemoteDescriptionComplete(webrtc::RTCError error) final
     {
         if (!error.ok()) {
-            protect(m_endpoint)->setRemoteSessionDescriptionFailed(toExceptionCode(error.type()), error.message());
+            m_endpoint->setRemoteSessionDescriptionFailed(toExceptionCode(error.type()), error.message());
             return;
         }
-        protect(m_endpoint)->setRemoteSessionDescriptionSucceeded();
+        m_endpoint->setRemoteSessionDescriptionSucceeded();
     }
 
-    Endpoint& m_endpoint;
+    const CheckedRef<Endpoint> m_endpoint;
 };
 
 } // namespace WebCore

@@ -32,10 +32,11 @@
 #import <WebCore/UserAgent.h>
 #import <pal/spi/cf/CFNetworkSPI.h>
 #import <wtf/BlockPtr.h>
+#import <wtf/Borrow.h>
 #import <wtf/NeverDestroyed.h>
 #import <wtf/cocoa/SpanCocoa.h>
 
-static RetainPtr<SecTrustRef>& NODELETE allowedLocalTestServerTrust()
+static RetainPtr<SecTrustRef>& LEGACY_NODELETE allowedLocalTestServerTrust()
 {
     static NeverDestroyed<RetainPtr<SecTrustRef>> serverTrust;
     return serverTrust.get();
@@ -81,7 +82,7 @@ namespace WebKit::PCM {
 
 enum class LoadTaskIdentifierType { };
 using LoadTaskIdentifier = ObjectIdentifier<LoadTaskIdentifierType>;
-static HashMap<LoadTaskIdentifier, RetainPtr<NSURLSessionDataTask>>& NODELETE taskMap()
+static HashMap<LoadTaskIdentifier, RetainPtr<NSURLSessionDataTask>>& LEGACY_NODELETE taskMap()
 {
     static NeverDestroyed<HashMap<LoadTaskIdentifier, RetainPtr<NSURLSessionDataTask>>> map;
     return map.get();
@@ -104,7 +105,8 @@ static NSURLSession *statelessSessionWithoutRedirectsSingleton(const Application
                 configuration.get()._sourceApplicationBundleIdentifier = bundleIdentifiers.first.createNSString().get();
                 configuration.get()._sourceApplicationSecondaryIdentifier = bundleIdentifiers.second.createNSString().get();
             }, [&] (const Vector<uint8_t>& auditToken) {
-                configuration.get()._sourceApplicationAuditTokenData = [NSData dataWithBytes:auditToken.span().data() length:auditToken.size()];
+                Borrow borrowedAuditToken = auditToken;
+                configuration.get()._sourceApplicationAuditTokenData = [NSData dataWithBytes:borrowedAuditToken->span().data() length:borrowedAuditToken->size()];
             }
         );
 

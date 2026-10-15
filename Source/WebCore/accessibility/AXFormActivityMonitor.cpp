@@ -35,8 +35,10 @@
 #include "Color.h"
 #include "ColorSerialization.h"
 #include "ComposedTreeIterator.h"
+#include "ContainerNodeInlines.h"
 #include "ElementAncestorIteratorInlines.h"
 #include "ElementInlines.h"
+#include "FrameDestructionObserverInlines.h"
 #include "HTMLBodyElement.h"
 #include "HTMLFormControlElement.h"
 #include "HTMLInputElement.h"
@@ -44,6 +46,7 @@
 #include "HTMLNames.h"
 #include "HTMLSelectElement.h"
 #include "Logging.h"
+#include "RenderElementInlines.h"
 #include "RenderText.h"
 #include "TypedElementDescendantIteratorInlines.h"
 #include "ValidatedFormListedElement.h"
@@ -456,7 +459,7 @@ static std::optional<Color> renderedTextColor(Element& message)
             continue;
 
         CheckedPtr renderer = text->renderer();
-        if (!renderer || isVisibilityHidden(renderer->style()))
+        if (!renderer || isVisibilityHidden(*renderer))
             continue;
 
         auto color = protect(renderer->style())->visitedDependentColor();
@@ -471,6 +474,10 @@ static std::optional<Color> renderedTextColor(Element& message)
 static bool couldHoldMessage(Element& element)
 {
     if (is<HTMLFormControlElement>(element) || element.isLink())
+        return false;
+
+    // A field's own text, and text in an editor the page built, is not a message.
+    if (element.isInUserAgentShadowTree() || element.hasEditableStyle())
         return false;
 
     // Text inside a label names a control, not an error message.

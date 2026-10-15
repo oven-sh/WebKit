@@ -127,8 +127,9 @@ static ALWAYS_INLINE JSObject* constructObjectWithNewTarget(JSGlobalObject* glob
     // 1. If NewTarget is neither undefined nor the active function, then
     if (newTarget && newTarget != objectConstructor) {
         // a. Return ? OrdinaryCreateFromConstructor(NewTarget, "%ObjectPrototype%").
-        JSGlobalObject* functionGlobalObject = getFunctionRealm(globalObject, asObject(newTarget));
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        JSGlobalObject* functionGlobalObject = tryGetFunctionRealm(asObject(newTarget));
+        if (!functionGlobalObject)
+            functionGlobalObject = globalObject;
         Structure* baseStructure = functionGlobalObject->objectStructureForObjectConstructor();
         Structure* objectStructure = InternalFunction::createSubclassStructure(globalObject, asObject(newTarget), baseStructure);
         RETURN_IF_EXCEPTION(scope, nullptr);
@@ -1285,7 +1286,7 @@ JSC_DEFINE_HOST_FUNCTION(objectConstructorIs, (JSGlobalObject* globalObject, Cal
     return JSValue::encode(jsBoolean(sameValue(globalObject, callFrame->argument(0), callFrame->argument(1))));
 }
 
-static CachedPropertyNamesKind NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
+static CachedPropertyNamesKind LEGACY_NODELETE inferCachedPropertyNamesKind(PropertyNameMode propertyNameMode, DontEnumPropertiesMode dontEnumPropertiesMode)
 {
     switch (propertyNameMode) {
     case PropertyNameMode::Strings:

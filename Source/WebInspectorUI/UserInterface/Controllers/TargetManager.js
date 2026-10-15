@@ -194,11 +194,12 @@ WI.TargetManager = class TargetManager extends WI.Object
         switch (type) {
         case InspectorBackend.Enum.Target.TargetInfoType.Page:
             return new WI.PageTarget(parentTarget, targetId, WI.UIString("Page"), connection, {isProvisional, isPaused});
+        // `Target.TargetInfo` has no URL.
         case InspectorBackend.Enum.Target.TargetInfoType.Worker:
-            return new WI.WorkerTarget(parentTarget, targetId, WI.UIString("Worker"), connection, {isPaused});
+            return new WI.WorkerTarget(parentTarget, targetId, null, WI.UIString("Worker"), connection, {isPaused});
         case "serviceworker": // COMPATIBILITY (iOS 13): "serviceworker" was renamed to "service-worker".
         case InspectorBackend.Enum.Target.TargetInfoType.ServiceWorker:
-            return new WI.WorkerTarget(parentTarget, targetId, WI.UIString("ServiceWorker"), connection, {isPaused});
+            return new WI.WorkerTarget(parentTarget, targetId, null, WI.UIString("ServiceWorker"), connection, {isPaused});
         case InspectorBackend.Enum.Target.TargetInfoType.Frame:
             // FIXME: <https://webkit.org/b/298977> Consider setting a more meaningful name for the frame target.
             return new WI.FrameTarget(parentTarget, targetId, WI.UIString("Frame"), connection, {isProvisional, isPaused});

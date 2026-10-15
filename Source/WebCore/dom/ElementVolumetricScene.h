@@ -44,6 +44,9 @@ public:
     static void requestVolumetricScene(Element&, DOMPromiseDeferred<void>&&);
     static void exitVolumetricScene(Element&);
 
+    // Only true once the scene is opened, unlike the presentation mode which turns Volumetric while the request is still pending.
+    static bool inVolumetricScene(const Element&);
+
     static void documentVisibilityDidChange(Element&);
 
     // Not on the exit request: the volume still holds the hosting claim until it actually closes.
@@ -57,6 +60,7 @@ private:
     static std::optional<ModelPresentationMode> presentationMode(const Element&);
     static void setPresentationMode(Element&, ModelPresentationMode);
     static bool isPresentedInVolumetricScene(const Element&);
+    static void setInVolumetricScene(Element&, bool);
 };
 
 } // namespace WebCore

@@ -95,8 +95,8 @@ void WebExtensionContextProxy::dispatchDevToolsPanelsThemeChangedEvent(Inspector
     setInspectorAppearance(appearance);
 
     enumerateNamespaceObjects([&](auto& namespaceObject) {
-        auto& panels = namespaceObject.devtools().panels();
-        panels.onThemeChanged().invokeListenersWithArgument(panels.themeName());
+        Ref panels = protect(namespaceObject.devtools())->panels();
+        protect(panels->onThemeChanged())->invokeListenersWithArgument(panels->themeName());
     });
 }
 

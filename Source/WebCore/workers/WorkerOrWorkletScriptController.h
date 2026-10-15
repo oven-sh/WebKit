@@ -58,7 +58,7 @@ class WorkerConsoleClient;
 class WorkerOrWorkletGlobalScope;
 class WorkerScriptFetcher;
 
-class WorkerOrWorkletScriptController final : public CanMakeCheckedPtr<WorkerOrWorkletScriptController> {
+class WorkerOrWorkletScriptController final : public CanMakeThreadSafeCheckedPtr<WorkerOrWorkletScriptController> {
     WTF_MAKE_TZONE_ALLOCATED(WorkerOrWorkletScriptController);
     WTF_MAKE_NONCOPYABLE(WorkerOrWorkletScriptController);
     WTF_OVERRIDE_DELETE_FOR_CHECKED_PTR(WorkerOrWorkletScriptController);
@@ -91,8 +91,8 @@ public:
 
     // Called on Worker thread when JS exits with termination exception caused by forbidExecution() request,
     // or by Worker thread termination code to prevent future entry into JS.
-    WEBCORE_EXPORT void NODELETE forbidExecution();
-    bool NODELETE isExecutionForbidden() const;
+    WEBCORE_EXPORT void LEGACY_NODELETE forbidExecution();
+    bool LEGACY_NODELETE isExecutionForbidden() const;
 
     JSC::VM& vm() { return *m_vm; }
 

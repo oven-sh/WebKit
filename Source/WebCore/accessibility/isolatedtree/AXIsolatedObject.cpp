@@ -37,6 +37,7 @@
 #include "AXTextRun.h"
 #include "AXUtilities.h"
 #include "AccessibilityNodeObject.h"
+#include "AccessibilityObjectInlines.h"
 #include "DateComponents.h"
 #include "Element.h"
 #include "HTMLNames.h"
@@ -469,13 +470,13 @@ void AXIsolatedObject::setSelectedChildren(const AccessibilityChildrenVector& se
     AX_ASSERT(selectedChildren.isEmpty() || selectedChildren[0]->isAXIsolatedObjectInstance());
 
     auto childrenIDs = axIDs(selectedChildren);
-    performFunctionOnMainThread([selectedChildrenIDs = WTF::move(childrenIDs), protectedThis = Ref { *this }] (auto* object) {
+    performFunctionOnMainThread([selectedChildrenIDs = WTF::move(childrenIDs)](auto* object) {
         if (selectedChildrenIDs.isEmpty()) {
             object->setSelectedChildren({ });
             return;
         }
 
-        CheckedPtr axObjectCache = protectedThis->axObjectCache();
+        CheckedPtr axObjectCache = object->axObjectCache();
         if (!axObjectCache)
             return;
 
@@ -686,13 +687,13 @@ void AXIsolatedObject::setSelected(bool value)
 void AXIsolatedObject::setSelectedRows(AccessibilityChildrenVector&& selectedRows)
 {
     auto rowIDs = axIDs(selectedRows);
-    performFunctionOnMainThread([selectedRowIDs = WTF::move(rowIDs), protectedThis = Ref { *this }] (auto* object) {
+    performFunctionOnMainThread([selectedRowIDs = WTF::move(rowIDs)](auto* object) {
         if (selectedRowIDs.isEmpty()) {
             object->setSelectedRows({ });
             return;
         }
 
-        CheckedPtr axObjectCache = protectedThis->axObjectCache();
+        CheckedPtr axObjectCache = object->axObjectCache();
         if (!axObjectCache)
             return;
 
@@ -777,7 +778,7 @@ RefPtr<AXCoreObject> AXIsolatedObject::accessibilityHitTest(const IntPoint& poin
         bool shouldCache;
     };
     auto hitTestOnMainThread = [axID = objectID(), treeID = treeID(), point] -> std::optional<HitTestResult> {
-        if (WeakPtr<AXObjectCache> cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
+        if (CheckedPtr cache = AXTreeStore<AXObjectCache>::axObjectCacheForID(treeID)) {
             RefPtr object = cache->objectForID(axID);
             auto pageRelativePoint = cache->mapScreenPointToPagePoint(point);
             if (RefPtr hitTestResult = object ? object->accessibilityHitTest(pageRelativePoint) : nullptr) {
@@ -844,7 +845,8 @@ RefPtr<AXIsolatedObject> AXIsolatedObject::approximateHitTest(const IntPoint& po
     adjustedPoint.moveBy(-remoteFrameOffset());
 #endif
 
-    if (!bounds.contains(adjustedPoint) && !bounds.isEmpty()) {
+    bool containsPoint = bounds.contains(adjustedPoint);
+    if (!containsPoint && !bounds.isEmpty() && !isExpanded()) {
         // If our bounds are empty, we cannot possibly contain the hit-point. However, this may happen
         // because we haven't got geometry for |this| yet, but maybe our children contain the hit-point,
         // so check them before exiting. If our bounds are not empty and we don't contain the hit-point,
@@ -852,11 +854,13 @@ RefPtr<AXIsolatedObject> AXIsolatedObject::approximateHitTest(const IntPoint& po
         //
         // This early-exit makes the assumption that parents always contain their children's bounds, which
         // is generally true, but not always. This is OK since it's an approximate hit-test, but maybe we
-        // can improve this heuristic in the future.
+        // can improve this heuristic in the future. An expanded object can have a popup outside its
+        // bounds, such as the picker of a select, so check its children.
         return nullptr;
     }
 
-    AXIsolatedObject* mutableThis = const_cast<AXIsolatedObject*>(this);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST AXIsolatedObject* mutableThis = const_cast<AXIsolatedObject*>(this);
     auto children = mutableThis->unignoredChildren();
     for (int i = children.size() - 1; i >= 0; --i) {
         RefPtr child = downcast<AXIsolatedObject>(children[i].ptr());
@@ -890,7 +894,7 @@ RefPtr<AXIsolatedObject> AXIsolatedObject::approximateHitTest(const IntPoint& po
             return hitChild;
     }
 
-    if (bounds.isEmpty())
+    if (!containsPoint)
         return nullptr;
 
     RefPtr result = mutableThis;
@@ -1629,7 +1633,7 @@ AffineTransform AXIsolatedObject::frameScreenTransform() const
 }
 #endif
 
-static Seconds NODELETE relativeFrameTimeout(bool shouldServeInitialFrame)
+static Seconds LEGACY_NODELETE relativeFrameTimeout(bool shouldServeInitialFrame)
 {
     // If the request demands that we don't serve the (probably somewhat inaccurate) initial frame, use a much
     // longer timeout (5 seconds). In practice, at the time of writing, this should only be true for tests.
@@ -1687,8 +1691,9 @@ FloatRect AXIsolatedObject::relativeFrame() const
         // If we are an exposable-to-accessibility table, we must have at least one valid row, so see if
         // our row(s) have cached geometry we can use. For tables, this will probably be more accurate
         // than the ancestor bounding-box fallback below.
-        for (const auto& child : const_cast<AXIsolatedObject*>(this)->unignoredChildren()) {
-            if (std::optional cachedFrame = downcast<AXIsolatedObject>(child)->cachedRelativeFrame())
+        // FIXME: Remove suppression once rdar://189998365 is fixed.
+        SUPPRESS_MEMORY_UNSAFE_CAST for (const auto& child : const_cast<AXIsolatedObject*>(this)->unignoredChildren()) {
+            if (std::optional cachedFrame = downcast<AXIsolatedObject>(child).cachedRelativeFrame())
                 relativeFrame.unite(*cachedFrame);
         }
     }
@@ -1715,7 +1720,7 @@ FloatRect AXIsolatedObject::relativeFrame() const
             // Prefer ARIA labels first, fall back to native labels if none provide geometry.
             auto uniteLabelsIntoRect = [&rectFromLabels](const AccessibilityChildrenVector& labels) {
                 for (const auto& label : labels) {
-                    std::optional frame = downcast<AXIsolatedObject>(label)->cachedRelativeFrame();
+                    std::optional frame = downcast<AXIsolatedObject>(label).cachedRelativeFrame();
                     if (!frame)
                         continue;
                     if (!rectFromLabels)
@@ -1768,7 +1773,8 @@ FloatRect AXIsolatedObject::relativeFrame() const
 FloatRect AXIsolatedObject::relativeFrameFromChildren() const
 {
     FloatRect rect;
-    for (const auto& child : const_cast<AXIsolatedObject*>(this)->unignoredChildren())
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST for (const auto& child : const_cast<AXIsolatedObject*>(this)->unignoredChildren())
         rect.unite(child->relativeFrame());
     return rect;
 }
@@ -2547,12 +2553,14 @@ AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::relatedObjects(AXRel
 
 String AXIsolatedObject::innerHTML() const
 {
-    return const_cast<AXIsolatedObject*>(this)->getOrRetrievePropertyValue<String>(AXProperty::InnerHTML);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<AXIsolatedObject*>(this)->getOrRetrievePropertyValue<String>(AXProperty::InnerHTML);
 }
 
 String AXIsolatedObject::outerHTML() const
 {
-    return const_cast<AXIsolatedObject*>(this)->getOrRetrievePropertyValue<String>(AXProperty::OuterHTML);
+    // FIXME: Remove suppression once rdar://189998365 is fixed.
+    SUPPRESS_MEMORY_UNSAFE_CAST return const_cast<AXIsolatedObject*>(this)->getOrRetrievePropertyValue<String>(AXProperty::OuterHTML);
 }
 
 AXCoreObject::AccessibilityChildrenVector AXIsolatedObject::rowHeaders()

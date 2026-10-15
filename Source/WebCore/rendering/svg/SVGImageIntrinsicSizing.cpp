@@ -26,6 +26,7 @@
 #include "SVGImageElement.h"
 #include "SVGImageElementSizing.h"
 #include "SVGLengthContext.h"
+#include "SVGPreserveAspectRatioValue.h"
 #include "StyleComputedStyle+GettersInlines.h"
 #include "StyleImage.h"
 
@@ -88,7 +89,7 @@ FloatRect calculateSVGImageObjectBoundingBox(const SVGImageElement& imageElement
     return { imageElement.x().value(lengthContext), imageElement.y().value(lengthContext), concreteWidth, concreteHeight };
 }
 
-NaturalDimensions svgImageNaturalDimensions(const Style::Image& styleImage, const RenderElement& renderer)
+NaturalDimensions calculateSVGImageNaturalDimensions(const Style::Image& styleImage, const RenderElement& renderer)
 {
     if (styleImage.errorOccurred()) {
         if (RefPtr cachedImage = styleImage.cachedImage()) {
@@ -99,12 +100,32 @@ NaturalDimensions svgImageNaturalDimensions(const Style::Image& styleImage, cons
     return styleImage.naturalDimensions(renderer, SVGImageElementSizing { });
 }
 
-FloatSize svgImageRenderingSize(const Style::Image& styleImage, const RenderElement& renderer, FloatSize containerSize)
+SVGImagePlacement calculateSVGImagePlacement(const Style::Image& styleImage, const RenderElement& renderer, const SVGPreserveAspectRatioValue& preserveAspectRatio, const FloatRect& positioningRectangle)
 {
-    if (styleImage.drawsSVGImage())
-        return containerSize;
-    auto naturalDimensions = svgImageNaturalDimensions(styleImage, renderer);
-    return { naturalDimensions.width.value_or(0), naturalDimensions.height.value_or(0) };
+    // "The dimensions of the positioning rectangle ... define the specified size for the embedded object. A concrete
+    // object size and final position must be determined for the object using the Default Sizing Algorithm"
+    // https://svgwg.org/svg2-draft/embedded.html#Placement
+    // FIXME: Apply 'object-fit' and 'object-position'.
+    auto concreteObjectSize = styleImage.negotiate(renderer, SVGImageElementSizing { { positioningRectangle.width(), positioningRectangle.height() } });
+    FloatRect objectRect { positioningRectangle.location(), concreteObjectSize.size() };
+
+    // "The 'preserveAspectRatio' attribute determines how the referenced image is scaled and positioned to fit into
+    // the concrete object size."
+    // https://svgwg.org/svg2-draft/embedded.html#ImageElement
+    auto imageRenderingRectangle = [&] -> FloatRect {
+        auto naturalDimensions = calculateSVGImageNaturalDimensions(styleImage, renderer);
+        auto naturalAspectRatio = naturalDimensions.width && naturalDimensions.height ? std::optional<FloatSize> { { *naturalDimensions.width, *naturalDimensions.height } } : naturalDimensions.aspectRatio;
+        if (!naturalAspectRatio || naturalAspectRatio->isEmpty() || objectRect.isEmpty())
+            return objectRect;
+
+        auto transform = preserveAspectRatio.getCTM(0, 0, naturalAspectRatio->width(), naturalAspectRatio->height(), objectRect.width(), objectRect.height());
+        auto rectangle = transform.mapRect(FloatRect { { }, *naturalAspectRatio });
+        rectangle.moveBy(objectRect.location());
+        return rectangle;
+    }();
+
+    auto destination = intersection(imageRenderingRectangle, positioningRectangle);
+    return { imageRenderingRectangle, destination, { destination.location() - toFloatSize(imageRenderingRectangle.location()), destination.size() } };
 }
 
 } // namespace WebCore

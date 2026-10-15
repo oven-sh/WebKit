@@ -38,7 +38,8 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <JavaScriptCore/LineColumn.h>
 #include <JavaScriptCore/SourceCharacters.h>
 #include <JavaScriptCore/SourceOrigin.h>
-#include <JavaScriptCore/SourceTaintedOrigin.h>
+#include <JavaScriptCore/SourceTaintedness.h>
+#include <optional>
 #include <span>
 #include <wtf/Lock.h>
 #include <wtf/Noncopyable.h>
@@ -73,6 +74,7 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
 #if USE(BUN_JSC_ADDITIONS)
     BunTranspiledModule,
 #endif
+    CSS,
 };
 
 #if USE(BUN_JSC_ADDITIONS)
@@ -145,10 +147,11 @@ class JS_EXPORT_PRIVATE SourceProvider : public ThreadSafeRefCounted<SourceProvi
 public:
     static const intptr_t nullID = 1;
 
-    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin, const TextPosition& startPosition, SourceProviderSourceType);
+    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedness, const TextPosition& startPosition, SourceProviderSourceType);
 #if USE(BUN_JSC_ADDITIONS)
-    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin, const TextPosition& startPosition, SourceProviderSourceType, SourceProvenance);
+    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedness, const TextPosition& startPosition, SourceProviderSourceType, SourceProvenance);
 #endif
+
     JS_EXPORT_PRIVATE virtual ~SourceProvider();
 
     JS_EXPORT_PRIVATE virtual unsigned hash() const = 0;
@@ -186,6 +189,7 @@ public:
         case SourceProviderSourceType::Module:
         case SourceProviderSourceType::JSON:
         case SourceProviderSourceType::Text:
+        case SourceProviderSourceType::CSS:
 #if USE(BUN_JSC_ADDITIONS)
         case SourceProviderSourceType::BunTranspiledModule:
 #endif
@@ -204,10 +208,11 @@ public:
 
     void setSourceURLDirective(const String& sourceURLDirective) { m_sourceURLDirective = sourceURLDirective; }
     void setSourceMappingURLDirective(const String& sourceMappingURLDirective) { m_sourceMappingURLDirective = sourceMappingURLDirective; }
-    void setSourceTaintedOrigin(SourceTaintedOrigin taintedness) { m_taintedness = taintedness; }
+    void setSourceTaintedOrigin(SourceTaintKind kind, SourceTaintedOrigin taintedness) { m_taintedness[kind] = taintedness; }
 
-    SourceTaintedOrigin sourceTaintedOrigin() const { return m_taintedness; }
-    bool couldBeTainted() const { return m_taintedness != SourceTaintedOrigin::Untainted; }
+    SourceTaintedness taintedness() const { return m_taintedness; }
+    SourceTaintedOrigin sourceTaintedOrigin(SourceTaintKind kind) const { return m_taintedness[kind]; }
+    bool LEGACY_NODELETE couldBeTainted() const { return m_taintedness.couldBeTainted(); }
 
     JS_EXPORT_PRIVATE void lockUnderlyingBuffer();
     JS_EXPORT_PRIVATE void unlockUnderlyingBuffer();
@@ -291,7 +296,7 @@ private:
     JS_EXPORT_PRIVATE virtual void lockUnderlyingBufferImpl();
     JS_EXPORT_PRIVATE virtual void unlockUnderlyingBufferImpl();
 
-    JS_EXPORT_PRIVATE void NODELETE getID();
+    JS_EXPORT_PRIVATE void LEGACY_NODELETE getID();
 
     std::atomic<unsigned> m_lockingCount { 0 };
     SourceProviderSourceType m_sourceType;
@@ -303,7 +308,7 @@ private:
     String m_sourceMappingURLDirective;
     TextPosition m_startPosition;
     SourceID m_id { 0 };
-    SourceTaintedOrigin m_taintedness;
+    SourceTaintedness m_taintedness;
 #if USE(BUN_JSC_ADDITIONS)
     SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
 #endif
@@ -319,13 +324,13 @@ DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(StringSourceProvider);
 class StringSourceProvider : public SourceProvider {
     WTF_DEPRECATED_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(StringSourceProvider, StringSourceProvider);
 public:
-    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
+    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedness taintedness, const TextPosition& startPosition = TextPosition(), SourceProviderSourceType sourceType = SourceProviderSourceType::Program)
     {
         return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType));
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedness taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
     {
         return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType, provenance));
     }
@@ -342,14 +347,14 @@ public:
     }
 
 protected:
-    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)
+    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType)
         : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType)
         , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
     {
     }
 
 #if USE(BUN_JSC_ADDITIONS)
-    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
         : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, provenance)
         , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
     {

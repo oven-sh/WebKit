@@ -14,7 +14,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -49,7 +48,6 @@
 #include "pc/data_channel_controller.h"
 #include "pc/jsep_transport_controller.h"
 #include "pc/media_options.h"
-#include "pc/media_session.h"
 #include "pc/media_stream_observer.h"
 #include "pc/rtp_receiver.h"
 #include "pc/rtp_transceiver.h"
@@ -170,8 +168,10 @@ class SdpOfferAnswerHandler : public SdpStateProvider {
       const PeerConnectionInterface::RTCConfiguration& configuration);
   void UpdateCachedIceCredentials(std::vector<IceParameters> credentials);
   bool AddIceCandidate(const IceCandidate* candidate);
-  void AddIceCandidate(std::unique_ptr<IceCandidate> candidate,
-                       std::function<void(RTCError)> callback);
+  void AddIceCandidate(
+      std::unique_ptr<IceCandidate> candidate,
+      absl::AnyInvocable<void(RTCError, absl::AnyInvocable<void() &&>) &&>
+          callback);
   bool RemoveIceCandidate(const IceCandidate* candidate);
   // Adds a locally generated candidate to the local description.
   void AddLocalIceCandidate(const IceCandidate* candidate);
@@ -225,6 +225,9 @@ class SdpOfferAnswerHandler : public SdpStateProvider {
   class ImplicitCreateSessionDescriptionObserver;
 
   friend class ImplicitCreateSessionDescriptionObserver;
+  class CreateSessionDescriptionObserverOperationWrapper;
+
+  friend class CreateSessionDescriptionObserverOperationWrapper;
   class SetSessionDescriptionObserverAdapter;
 
   friend class SetSessionDescriptionObserverAdapter;
@@ -313,6 +316,15 @@ class SdpOfferAnswerHandler : public SdpStateProvider {
       scoped_refptr<SetLocalDescriptionObserverInterface> observer);
   void DoSetRemoteDescription(
       std::unique_ptr<RemoteDescriptionOperation> operation);
+
+  // Fire `OnSessionDescription{Success,Failure}` for the given action through
+  // the tracer if one is attached.
+  void TraceCreateSessionDescriptionComplete(
+      SdpType type,
+      const SessionDescriptionInterface* desc,
+      const RTCError& error);
+  void TraceSetLocalDescriptionComplete(const RTCError& error);
+  void TraceSetRemoteDescriptionComplete(const RTCError& error);
 
   // Called after a DoSetRemoteDescription operation completes.
   void SetRemoteDescriptionPostProcess(bool was_answer)

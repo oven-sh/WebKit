@@ -21,6 +21,9 @@
 #ifndef __UCASEMAP_H__
 #define __UCASEMAP_H__
 
+// WebKit: treat this vendored ICU header as a system header, like installed ICU headers.
+#pragma clang system_header
+
 #include "unicode/utypes.h"
 #include "unicode/stringoptions.h"
 #include "unicode/ustring.h"

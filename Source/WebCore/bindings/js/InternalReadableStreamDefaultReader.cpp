@@ -167,7 +167,7 @@ void InternalReadableStreamDefaultReader::onClosedPromiseRejection(Function<void
     domPromise->whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto result) {
         if (isFulfilled || !globalObject)
             return;
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+        RefPtr scriptExecutionContext = globalObject->scriptExecutionContext();
         if (!scriptExecutionContext || scriptExecutionContext->activeDOMObjectsAreStopped())
             return;
         callback(*globalObject, result);
@@ -200,7 +200,7 @@ void InternalReadableStreamDefaultReader::onClosedPromiseResolution(Function<voi
     domPromise->whenSettledWithResult([callback = WTF::move(callback)](auto* globalObject, bool isFulfilled, auto) {
         if (!globalObject)
             return;
-        auto* scriptExecutionContext = globalObject->scriptExecutionContext();
+        RefPtr scriptExecutionContext = globalObject->scriptExecutionContext();
         if (!scriptExecutionContext || scriptExecutionContext->activeDOMObjectsAreStopped())
             return;
         if (isFulfilled)

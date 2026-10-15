@@ -26,20 +26,25 @@
 #pragma once
 
 #include <WebCore/DisplayListRecorder.h>
+#include <wtf/RefCounted.h>
 #include <wtf/TZoneMalloc.h>
 
 namespace WebCore {
 
 namespace DisplayList {
 
-class RecorderImpl : public Recorder {
+class RecorderImpl : public Recorder, public RefCounted<RecorderImpl> {
     WTF_MAKE_TZONE_ALLOCATED_EXPORT(RecorderImpl, WEBCORE_EXPORT);
     WTF_MAKE_NONCOPYABLE(RecorderImpl);
 public:
-    WEBCORE_EXPORT RecorderImpl(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace& = ColorSpace::SRGB(), DrawGlyphsMode = DrawGlyphsMode::Normal);
-    RecorderImpl(const FloatRect& initialClip)
-        : RecorderImpl(GraphicsContextState::initialIndeterminate(), initialClip, { }, ColorSpace::SRGB(), DrawGlyphsMode::Normal)
+    static Ref<RecorderImpl> create(const GraphicsContextState& state, const FloatRect& initialClip, const AffineTransform& transform, const ColorSpace& colorSpace = ColorSpace::SRGB(), DrawGlyphsMode drawGlyphsMode = DrawGlyphsMode::Normal)
     {
+        return adoptRef(*new RecorderImpl(state, initialClip, transform, colorSpace, drawGlyphsMode));
+    }
+
+    static Ref<RecorderImpl> create(const FloatRect& initialClip)
+    {
+        return create(GraphicsContextState::initialIndeterminate(), initialClip, { });
     }
 
     WEBCORE_EXPORT virtual ~RecorderImpl();
@@ -124,6 +129,8 @@ public:
     WEBCORE_EXPORT void drawPlaceholder(Function<void(GraphicsContext&)>&&);
 
 private:
+    WEBCORE_EXPORT RecorderImpl(const GraphicsContextState&, const FloatRect& initialClip, const AffineTransform&, const ColorSpace&, DrawGlyphsMode);
+
     void appendStateChangeItemIfNecessary() final;
 
     Vector<Item> m_items;

@@ -49,6 +49,11 @@ String BasicCredential::type() const
     case Type::DigitalCredential:
         return "digital"_s;
 
+#if ENABLE(PROOF_OF_POSSESSION)
+    case Type::ProofOfPossession:
+        return "proof-of-possession"_s;
+#endif
+
     case Type::PublicKey:
         return "public-key"_s;
     }

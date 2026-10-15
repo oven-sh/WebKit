@@ -178,7 +178,7 @@ static RetainPtr<NSAttributedString> attributedStringWithAttachmentForFileWrappe
         return adoptNS([[NSAttributedString alloc] initWithString:@" "]).autorelease();
 
     RetainPtr attachment = adoptNS([[PlatformNSTextAttachment alloc] initWithFileWrapper:fileWrapper]);
-    return [NSAttributedString attributedStringWithAttachment:attachment.get()];
+    return [NSAttributedString attributedStringWithAttachment:checked_objc_cast<NSTextAttachment>(attachment.get())];
 }
 
 static RetainPtr<NSAttributedString> attributedStringWithAttachmentForElement(const HTMLImageElement& element)
@@ -424,7 +424,7 @@ static void updateAttributes(const Node* node, const Style::ComputedStyle& style
     else
         [attributes removeObjectForKey:NSForegroundColorAttributeName];
 
-    auto backgroundColor = style.visitedDependentBackgroundColorApplyingColorFilter();
+    auto backgroundColor = style.visitedDependentUsedBackgroundColorApplyingColorFilter();
     if (backgroundColor.isVisible())
         [attributes setObject:cocoaColor(backgroundColor).get() forKey:NSBackgroundColorAttributeName];
     else

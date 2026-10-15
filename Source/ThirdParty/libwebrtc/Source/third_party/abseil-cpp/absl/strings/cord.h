@@ -177,7 +177,7 @@ enum class CordMemoryAccounting {
 // Additionally, the API provides iterator utilities to iterate through Cord
 // data via chunks or character bytes.
 //
-class Cord {
+class ABSL_ATTRIBUTE_TRIVIAL_ABI Cord {
  private:
   template <typename T>
   using EnableIfString = std::enable_if_t<std::is_same_v<T, std::string>, int>;
@@ -190,10 +190,12 @@ class Cord {
 
   // Creates a Cord from an existing Cord. Cord is copyable and efficiently
   // movable. The moved-from state is valid but unspecified.
-  Cord(const Cord& src);
-  Cord(Cord&& src) noexcept;
-  Cord& operator=(const Cord& x);
-  Cord& operator=(Cord&& x) noexcept;
+  // Moves need to be declared since they are otherwise inhibited via the
+  // declaration of the destructor.
+  Cord(const Cord&) = default;
+  Cord(Cord&&) = default;
+  Cord& operator=(const Cord&) = default;
+  Cord& operator=(Cord&&) = default;
 
   // Creates a Cord from a `src` string. This constructor is marked explicit to
   // prevent implicit Cord constructions from arguments convertible to an
@@ -915,13 +917,12 @@ class Cord {
   // to the representation.
   //
   // InlineRep holds either a tree pointer, or an array of kMaxInline bytes.
-  class InlineRep {
+  class ABSL_ATTRIBUTE_TRIVIAL_ABI InlineRep {
    public:
     static constexpr unsigned char kMaxInline = cord_internal::kMaxInline;
-    static_assert(kMaxInline >= sizeof(absl::cord_internal::CordRep*), "");
+    static_assert(kMaxInline >= sizeof(absl::cord_internal::CordRep*));
 
-    constexpr InlineRep() : data_() {}
-    explicit InlineRep(InlineData::DefaultInitType init) : data_(init) {}
+    InlineRep() = default;
     InlineRep(const InlineRep& src);
     InlineRep(InlineRep&& src);
     InlineRep& operator=(const InlineRep& src);
@@ -1124,7 +1125,6 @@ class Cord {
   void CopyToArrayImpl(char* absl_nonnull dst) const;
 };
 
-
 // allow a Cord to be logged
 extern std::ostream& operator<<(std::ostream& out, const Cord& cord);
 
@@ -1182,8 +1182,7 @@ constexpr Cord::InlineRep::InlineRep(absl::string_view sv,
                                      CordRep* absl_nullable rep)
     : data_(sv, rep) {}
 
-inline Cord::InlineRep::InlineRep(const Cord::InlineRep& src)
-    : data_(InlineData::kDefaultInit) {
+inline Cord::InlineRep::InlineRep(const Cord::InlineRep& src) {
   if (CordRep* tree = src.tree()) {
     EmplaceTree(CordRep::Ref(tree), src.data_,
                 CordzUpdateTracker::kConstructorCord);
@@ -1285,7 +1284,7 @@ inline size_t Cord::InlineRep::size() const {
 
 inline cord_internal::CordRepFlat* absl_nonnull
 Cord::InlineRep::MakeFlatWithExtraCapacity(size_t extra) {
-  static_assert(cord_internal::kMinFlatLength >= sizeof(data_), "");
+  static_assert(cord_internal::kMinFlatLength >= sizeof(data_));
   size_t len = data_.inline_size();
   auto* result = CordRepFlat::New(len + extra);
   result->length = len;
@@ -1365,7 +1364,7 @@ inline void Cord::InlineRep::MaybeRemoveEmptyCrcNode() {
   ResetToEmpty();
 }
 
-constexpr inline Cord::Cord() noexcept {}
+constexpr inline Cord::Cord() noexcept : contents_() {}
 
 inline Cord::Cord(absl::string_view src)
     : Cord(src, CordzUpdateTracker::kConstructorString) {}
@@ -1379,11 +1378,6 @@ constexpr Cord::Cord(strings_internal::StringConstant<T>)
                     : &cord_internal::ConstInitExternalStorage<
                           strings_internal::StringConstant<T>>::value) {}
 
-inline Cord& Cord::operator=(const Cord& x) {
-  contents_ = x.contents_;
-  return *this;
-}
-
 template <typename T, Cord::EnableIfString<T>>
 Cord& Cord::operator=(T&& src) {
   if (src.size() <= cord_internal::kMaxBytesToCopy) {
@@ -1393,17 +1387,8 @@ Cord& Cord::operator=(T&& src) {
   }
 }
 
-inline Cord::Cord(const Cord& src) : contents_(src.contents_) {}
-
-inline Cord::Cord(Cord&& src) noexcept : contents_(std::move(src.contents_)) {}
-
 inline void Cord::swap(Cord& other) noexcept {
   contents_.Swap(&other.contents_);
-}
-
-inline Cord& Cord::operator=(Cord&& x) noexcept {
-  contents_ = std::move(x.contents_);
-  return *this;
 }
 
 extern template Cord::Cord(std::string&& src);

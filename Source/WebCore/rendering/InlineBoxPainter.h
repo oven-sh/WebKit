@@ -32,8 +32,8 @@
 namespace WebCore {
 
 class Color;
-class LegacyInlineFlowBox;
 class RenderBoxModelObject;
+class UsedStyle;
 struct PaintInfo;
 template<typename> struct FillLayerToPaint;
 
@@ -45,7 +45,6 @@ enum class ShadowStyle : bool;
 
 class InlineBoxPainter {
 public:
-    InlineBoxPainter(const LegacyInlineFlowBox&, PaintInfo&, const LayoutPoint& paintOffset);
     InlineBoxPainter(const LayoutIntegration::InlineContent&, const InlineDisplay::Box&, PaintInfo&, const LayoutPoint& paintOffset);
     ~InlineBoxPainter();
 
@@ -64,6 +63,7 @@ private:
     void paintBoxShadow(Style::ShadowStyle, const LayoutRect& paintRect);
 
     const Style::ComputedStyle& style() const;
+    UsedStyle usedStyle() const;
     // FIXME: Make RenderBoxModelObject functions const.
     RenderBoxModelObject& renderer() const { return const_cast<RenderBoxModelObject&>(m_renderer); }
     bool isHorizontal() const { return m_isHorizontal; }

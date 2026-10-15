@@ -61,21 +61,17 @@ NSString* CommandsMixin::encoderStateName() const
     }
 }
 
-bool CommandsMixin::computedSizeOverflows(const Buffer& buffer, uint64_t offset, uint64_t& size)
+std::optional<uint64_t> CommandsMixin::bufferRangeSize(const Buffer& buffer, uint64_t offset, std::optional<uint64_t> size)
 {
-    if (size == WGPU_WHOLE_SIZE) {
-        auto localSize = checkedDifference<uint64_t>(buffer.initialSize(), offset);
-        if (localSize.hasOverflowed())
-            return true;
+    auto bufferSize = buffer.initialSize();
+    if (offset > bufferSize)
+        return std::nullopt;
 
-        size = localSize.value();
-    }
+    auto rangeSize = size.value_or(bufferSize - offset);
+    if (rangeSize > bufferSize - offset)
+        return std::nullopt;
 
-    auto sum = checkedSum<uint64_t>(offset, size);
-    if (sum.hasOverflowed() || sum.value() > buffer.initialSize())
-        return true;
-
-    return false;
+    return rangeSize;
 }
 
 } // namespace WebGPU::Metal

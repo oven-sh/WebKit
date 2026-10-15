@@ -120,8 +120,7 @@ private:
     }
 
     id errorCallback = ^(NSString *error) {
-        backendDispatcher()->reportProtocolError(protocol_requestId, BackendDispatcher::ServerError, error);
-        backendDispatcher()->sendPendingErrors();
+        backendDispatcher()->sendErrorResponse(protocol_requestId, BackendDispatcher::ServerError, error);
     };
 
 ${successCallback}

@@ -173,7 +173,10 @@ LocalSampleBufferDisplayLayer::LocalSampleBufferDisplayLayer(RetainPtr<AVSampleB
     , m_sampleBufferDisplayLayer(WTF::move(sampleBufferDisplayLayer))
     , m_processingQueue(WorkQueue::create("LocalSampleBufferDisplayLayer queue"_s))
 #if !RELEASE_LOG_DISABLED
-    , m_frameRateMonitor([this](auto info) { onIrregularFrameRateNotification(info.frameTime, info.lastFrameTime); })
+    , m_frameRateMonitor([weakThis = ThreadSafeWeakPtr { *this }](auto info) {
+        if (RefPtr protectedThis = weakThis)
+            protectedThis->onIrregularFrameRateNotification(info.frameTime, info.lastFrameTime);
+    })
 #endif
 {
     ASSERT(isMainThread());

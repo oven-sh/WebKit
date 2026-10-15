@@ -70,7 +70,7 @@ public:
     static Ref<DragImageLoader> create(DataTransfer&, const Document&);
     void startLoading(CachedResourceHandle<CachedImage>&);
     void stopLoading(CachedResourceHandle<CachedImage>&);
-    void NODELETE moveToDataTransfer(DataTransfer&);
+    void LEGACY_NODELETE moveToDataTransfer(DataTransfer&);
 
     // CachedResourceClient.
     void ref() const final { RefCounted::ref(); }
@@ -93,9 +93,9 @@ DataTransfer::DataTransfer(StoreMode mode, std::unique_ptr<Pasteboard> pasteboar
     : m_storeMode(mode)
     , m_pasteboard(WTF::move(pasteboard))
 #if ENABLE(DRAG_SUPPORT)
-    , m_type(type)
     , m_dropEffect("uninitialized"_s)
     , m_effectAllowed(WTF::move(effectAllowed))
+    , m_type(type)
     , m_shouldUpdateDragImage(false)
 #endif
 {
@@ -146,7 +146,7 @@ static String normalizeType(const String& type)
         return type;
 
     auto lowercaseType = type.trim(isASCIIWhitespace).convertToASCIILowercase();
-    if (lowercaseType == "text"_s || lowercaseType.startsWith(textPlainContentTypeAtom()))
+    if (lowercaseType == "text"_s || lowercaseType == textPlainContentTypeAtom() || lowercaseType.startsWith("text/plain;"_s))
         return textPlainContentTypeAtom();
     if (lowercaseType == "url"_s || lowercaseType.startsWith("text/uri-list;"_s))
         return "text/uri-list"_s;
@@ -597,7 +597,7 @@ void DataTransfer::setDragImage(Ref<Element>&& element, int x, int y)
         return;
 
     CachedResourceHandle<CachedImage> image;
-    if (auto* imageElement = dynamicDowncast<HTMLImageElement>(element.get()); imageElement && !imageElement->isConnected())
+    if (RefPtr imageElement = dynamicDowncast<HTMLImageElement>(element); imageElement && !imageElement->isConnected())
         image = imageElement->cachedImage();
 
     m_dragLocation = IntPoint(x, y);

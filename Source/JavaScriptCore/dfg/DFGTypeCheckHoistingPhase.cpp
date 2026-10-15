@@ -70,7 +70,7 @@ struct CheckData {
     {
     }
 
-    void NODELETE disableCheckArrayHoisting()
+    void LEGACY_NODELETE disableCheckArrayHoisting()
     {
         m_arrayModeIsValid = false;
         m_arrayModeHoistingOkay = false;
@@ -231,7 +231,7 @@ public:
     }
 
 private:
-    void NODELETE clearVariableVotes()
+    void LEGACY_NODELETE clearVariableVotes()
     { 
         for (unsigned i = m_graph.m_variableAccessData.size(); i--;) {
             VariableAccessData* variable = &m_graph.m_variableAccessData[i];
@@ -264,6 +264,21 @@ private:
                     break;
                 }
 
+                case MultiGetByOffset:
+                case MultiPutByOffset:
+                case MultiDeleteByOffset: {
+                    // Don't count these uses, but do not hoist a check that would contravene the
+                    // structures they were profiled with.
+                    Node* child = node->child1().node();
+                    if (child->op() != GetLocal)
+                        break;
+                    VariableAccessData* variable = child->variableAccessData();
+                    if (!shouldConsiderForHoisting<StructureTypeCheck>(variable))
+                        break;
+                    noticeStructuresAccessedBy(variable, node);
+                    break;
+                }
+
                 case ArrayifyToStructure:
                 case Arrayify:
                 case GetByOffset:
@@ -293,12 +308,9 @@ private:
                 case GetTypedArrayByteOffsetAsInt52:
                 case Phantom:
                 case MovHint:
-                case MultiGetByOffset:
-                case MultiPutByOffset:
-                case MultiDeleteByOffset:
                     // Don't count these uses.
                     break;
-                    
+
                 case SetLocal: {
                     // Find all uses of the source of the SetLocal. If any of them are a
                     // kind of CheckStructure, then we should notice them to ensure that
@@ -315,6 +327,15 @@ private:
                                 break;
                             
                             noticeStructureCheck(variable, subNode->structureSet());
+                            break;
+                        }
+                        case MultiGetByOffset:
+                        case MultiPutByOffset:
+                        case MultiDeleteByOffset: {
+                            if (subNode->child1() != source)
+                                break;
+
+                            noticeStructuresAccessedBy(variable, subNode);
                             break;
                         }
                         default:
@@ -500,7 +521,7 @@ private:
     }
 
     template <typename TypeCheck>
-    bool NODELETE shouldConsiderForHoisting(VariableAccessData* variable)
+    bool LEGACY_NODELETE shouldConsiderForHoisting(VariableAccessData* variable)
     {
         if (!variable->shouldUnboxIfPossible())
             return false;
@@ -528,6 +549,34 @@ private:
             return;
         }
         noticeStructureCheck(variable, set.at(0));
+    }
+
+    void noticeStructuresAccessedBy(VariableAccessData* variable, Node* node)
+    {
+        StructureSet structures;
+        switch (node->op()) {
+        case MultiGetByOffset:
+            for (const MultiGetByOffsetCase& getCase : node->multiGetByOffsetData().cases)
+                structures.merge(getCase.set().toStructureSet());
+            break;
+        case MultiPutByOffset:
+            for (const PutByVariant& variant : node->multiPutByOffsetData().variants)
+                structures.merge(variant.oldStructure());
+            break;
+        case MultiDeleteByOffset:
+            for (const DeleteByVariant& variant : node->multiDeleteByOffsetData().variants)
+                structures.add(variant.oldStructure());
+            break;
+        default:
+            RELEASE_ASSERT_NOT_REACHED();
+            break;
+        }
+
+        if (structures.size() != 1) {
+            noticeStructureCheck(variable, RegisteredStructure());
+            return;
+        }
+        noticeStructureCheck(variable, m_graph.registerStructure(structures.onlyStructure()));
     }
 
     void noticeCheckArray(VariableAccessData* variable, ArrayMode arrayMode)
@@ -574,12 +623,12 @@ bool performTypeCheckHoisting(Graph& graph)
 }
 
 struct ArrayTypeCheck {
-    static bool NODELETE isValidToHoist(CheckData& checkData)
+    static bool LEGACY_NODELETE isValidToHoist(CheckData& checkData)
     {
         return checkData.m_arrayModeIsValid;
     }
 
-    static void NODELETE disableHoisting(CheckData& checkData)
+    static void LEGACY_NODELETE disableHoisting(CheckData& checkData)
     {
         checkData.disableCheckArrayHoisting();
     }
@@ -590,40 +639,40 @@ struct ArrayTypeCheck {
         return !checkData.m_arrayMode.structureWouldPassArrayModeFiltering(value.asCell()->structure());
     }
 
-    static bool NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
+    static bool LEGACY_NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
     {
         return variable->voteRatio() >= Options::checkArrayVoteRatioForHoisting();
     }
 
-    static bool NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
+    static bool LEGACY_NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
     {
         return variable->checkArrayHoistingFailed();
     }
 };
 
 struct StructureTypeCheck {
-    static bool NODELETE isValidToHoist(CheckData& checkData)
+    static bool LEGACY_NODELETE isValidToHoist(CheckData& checkData)
     {
         return checkData.m_structure;
     }
 
-    static void NODELETE disableHoisting(CheckData& checkData)
+    static void LEGACY_NODELETE disableHoisting(CheckData& checkData)
     {
         checkData.m_structure = nullptr;
     }
 
-    static bool NODELETE isContravenedByValue(CheckData& checkData, JSValue value)
+    static bool LEGACY_NODELETE isContravenedByValue(CheckData& checkData, JSValue value)
     {
         ASSERT(value.isCell());
         return checkData.m_structure != value.asCell()->structure();
     }
 
-    static bool NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
+    static bool LEGACY_NODELETE hasEnoughVotesToHoist(VariableAccessData* variable)
     {
         return variable->voteRatio() >= Options::structureCheckVoteRatioForHoisting();
     }
 
-    static bool NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
+    static bool LEGACY_NODELETE hoistingPreviouslyFailed(VariableAccessData* variable)
     {
         return variable->structureCheckHoistingFailed();
     }

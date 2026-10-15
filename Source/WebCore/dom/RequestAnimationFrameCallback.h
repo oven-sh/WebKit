@@ -51,7 +51,7 @@ public:
     virtual CallbackResult<void> invoke(double highResTimeMs) = 0;
     virtual CallbackResult<void> invokeRethrowingException(double highResTimeMs) = 0;
 
-    int m_id;
+    unsigned m_id;
     bool m_firedOrCancelled;
 
     // Allow a little more than 60fps to make sure we can at least hit that frame rate.

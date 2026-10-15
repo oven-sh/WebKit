@@ -26,6 +26,8 @@
 #include "config.h"
 #include "ASTUnaryExpression.h"
 
+#include "Types.h"
+
 #include <wtf/PrintStream.h>
 
 namespace WGSL::AST {
