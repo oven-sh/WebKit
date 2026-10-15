@@ -75,6 +75,12 @@ public:
         m_characterWidths = CharacterClassWidths::Unknown;
     }
 
+    // What a copy of this costs, or a set operation with it.
+    size_t size() const
+    {
+        return m_matches8.size() + m_ranges8.size() + m_matches32.size() + m_ranges32.size();
+    }
+
     void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
@@ -2670,10 +2676,68 @@ public:
             if (term.quantityType != QuantifierType::Greedy || term.quantityMinCount > 1 || term.quantityMaxCount != quantifyInfinite || hasObservableCaptures)
                 return;
             term.parentheses.isTailLoop = true;
+            matchRunsInTailLoop(*term.parentheses.disjunction);
         }
 
         for (auto& nested : term.parentheses.disjunction->m_alternatives)
             markTailLoops(*nested);
+    }
+
+    // In the tail loop /(?:--|[\w-]|\\.)*/, take a character of [\w-] that no earlier alternative can start with: one of \w. There
+    // the earlier alternatives fail and [\w-] matches, which is an iteration. So after [\w-] has matched, a run of \w can be matched
+    // without going around the loop: /(?:--|[\w-]\w*|\\.)*/. Nothing backtracks into a tail loop, so nothing can tell how many
+    // iterations matched the run. (A set of first characters that is too large only makes the run shorter.)
+    void matchRunsInTailLoop(PatternDisjunction& disjunction)
+    {
+        // What the alternatives so far can start with.
+        std::optional<CharacterClassConstructor> starts;
+        std::optional<OptionSet<Flags>> flags;
+
+        // An alternative costs time in proportion to `starts`, which would make a loop of N alternatives cost N * N.
+        // The alternatives that are left stay as they were written.
+        constexpr size_t maximumSizeOfStarts = 1024;
+
+        for (auto& alternative : disjunction.m_alternatives) {
+            if (alternative->m_terms.isEmpty() || (starts && starts->size() > maximumSizeOfStarts))
+                return;
+            PatternTerm& first = alternative->m_terms[0];
+            bool isCharacter = first.type == PatternTerm::Type::PatternCharacter;
+            bool isCharacterClass = first.type == PatternTerm::Type::CharacterClass && !first.characterClass->hasStrings();
+            if ((!isCharacter && !isCharacterClass) || first.quantityType != QuantifierType::FixedCount || !first.quantityMaxCount || first.matchDirection() != Forward)
+                return;
+            if (!flags) {
+                flags = first.m_currentFlags;
+                starts.emplace(first.ignoreCase(), m_pattern.compileMode());
+            } else if (*flags != first.m_currentFlags)
+                return;
+
+            if (isCharacterClass && !first.invert() && alternative->m_terms.size() == 1 && first.quantityMaxCount == 1) {
+                // Both sets are closed under case folding already, if the pattern ignores case.
+                CharacterClassConstructor run(false, CompileMode::UnicodeSets);
+                run.append(first.characterClass);
+                CharacterClassConstructor startsSoFar = *starts;
+                auto earlier = startsSoFar.charClass();
+                run.combiningSetOp(CharacterClassSetOp::Subtraction);
+                run.append(earlier.get());
+                auto runClass = run.charClass();
+                if (!runClass->m_matches8.isEmpty() || !runClass->m_ranges8.isEmpty() || !runClass->m_matches32.isEmpty() || !runClass->m_ranges32.isEmpty()) {
+                    CharacterClass* used = runClass->m_anyCharacter ? m_pattern.anyCharacterClass() : runClass.get();
+                    PatternTerm runTerm(used, false, first.m_currentFlags, Forward);
+                    runTerm.quantify(quantifyInfinite, QuantifierType::Greedy);
+                    starts->append(first.characterClass);
+                    alternative->m_terms.append(runTerm); // `first` is gone.
+                    m_pattern.m_userCharacterClasses.append(WTF::move(runClass));
+                    continue;
+                }
+            }
+
+            if (isCharacter)
+                starts->putChar(first.patternCharacter);
+            else if (first.invert())
+                starts->appendInverted(first.characterClass);
+            else
+                starts->append(first.characterClass);
+        }
     }
 
     // Auto-possessification optimization
