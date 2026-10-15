@@ -4691,7 +4691,7 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
             if (m_propertyCache.accessType == AccessType::GetById) {
                 bool allGetters = !cases.empty();
                 for (auto& accessCase : cases) {
-                    if (accessCase->type() != AccessCase::Getter || accessCase->viaGlobalProxy() || accessCase->usesPolyProto()) {
+                    if (accessCase->type() != AccessCase::Getter || accessCase->viaGlobalProxy() || accessCase->usesPolyProto() || !canUseMegamorphicGetByIdFastPath(accessCase->structure())) {
                         allGetters = false;
                         break;
                     }
@@ -4706,6 +4706,9 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                     return nullptr;
 
                 if (accessCase->viaGlobalProxy())
+                    return nullptr;
+
+                if (!canUseMegamorphicGetByIdFastPath(accessCase->structure()))
                     return nullptr;
 
                 if (accessCase->usesPolyProto())
@@ -4727,6 +4730,9 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                     return nullptr;
 
                 if (accessCase->viaGlobalProxy())
+                    return nullptr;
+
+                if (!canUseMegamorphicGetFastPath(accessCase->structure()))
                     return nullptr;
 
                 if (accessCase->usesPolyProto())
@@ -4807,6 +4813,9 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                 if (accessCase->viaGlobalProxy())
                     return nullptr;
 
+                if (!canUseMegamorphicGetFastPath(accessCase->structure()))
+                    return nullptr;
+
                 if (accessCase->usesPolyProto())
                     ++numberOfUndesiredMegamorphicAccessVariants;
             }
@@ -4829,6 +4838,9 @@ RefPtr<AccessCase> InlineCacheCompiler::tryFoldToMegamorphic(CodeBlock* codeBloc
                     return nullptr;
 
                 if (accessCase->viaGlobalProxy())
+                    return nullptr;
+
+                if (!canUseMegamorphicGetFastPath(accessCase->structure()))
                     return nullptr;
 
                 if (accessCase->usesPolyProto())
