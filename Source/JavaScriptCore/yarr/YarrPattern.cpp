@@ -2557,6 +2557,101 @@ public:
         }
     }
 
+    // (?:[0-9]|[a-z]|_) matches what (?:[0-9a-z_]) matches. Where two of the alternatives match the same character, backtracking
+    // from the first to the second only gets to the same state again.
+    //
+    // Only alternatives next to each other are merged, so the order in which the others are tried stays. A run of nothing but
+    // literals is left to the passes that are made for lists of strings.
+    //
+    // charClass() can take time in proportion to the square of what it is given, so a long run becomes several classes.
+    static constexpr size_t maximumSizeOfMergedClass = 1024;
+
+    static size_t sizeOfCharacterClass(const CharacterClass& characterClass)
+    {
+        return characterClass.m_matches8.size() + characterClass.m_ranges8.size() + characterClass.m_matches32.size() + characterClass.m_ranges32.size();
+    }
+
+    void mergeSingleCharacterAlternatives()
+    {
+        mergeSingleCharacterAlternatives(*m_pattern.m_body);
+    }
+
+    void mergeSingleCharacterAlternatives(PatternDisjunction& disjunction)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return;
+
+        for (auto& alternative : disjunction.m_alternatives) {
+            for (auto& term : alternative->m_terms) {
+                if (term.type == PatternTerm::Type::ParenthesesSubpattern || term.type == PatternTerm::Type::ParentheticalAssertion)
+                    mergeSingleCharacterAlternatives(*term.parentheses.disjunction);
+            }
+        }
+
+        // How the search for the start of a match is compiled depends on the alternatives of the body.
+        if (&disjunction == m_pattern.m_body)
+            return;
+
+        auto singleCharacterTerm = [](PatternAlternative& alternative) -> PatternTerm* {
+            if (alternative.m_terms.size() != 1)
+                return nullptr;
+            PatternTerm& term = alternative.m_terms[0];
+            if (term.quantityType != QuantifierType::FixedCount || term.quantityMaxCount != 1)
+                return nullptr;
+            if (term.type == PatternTerm::Type::PatternCharacter)
+                return &term;
+            if (term.type == PatternTerm::Type::CharacterClass && !term.invert() && !term.characterClass->hasStrings())
+                return &term;
+            return nullptr;
+        };
+
+        auto& alternatives = disjunction.m_alternatives;
+        size_t kept = 0;
+        for (size_t begin = 0; begin < alternatives.size();) {
+            size_t end = begin + 1;
+            PatternTerm* first = singleCharacterTerm(*alternatives[begin]);
+            bool hasCharacterClass = first && first->type == PatternTerm::Type::CharacterClass;
+            if (first) {
+                auto sizeOfTerm = [](PatternTerm& term) {
+                    return term.type == PatternTerm::Type::CharacterClass ? sizeOfCharacterClass(*term.characterClass) : 1;
+                };
+                size_t size = sizeOfTerm(*first);
+                for (; end < alternatives.size(); ++end) {
+                    PatternTerm* term = singleCharacterTerm(*alternatives[end]);
+                    if (!term || term->m_currentFlags != first->m_currentFlags || term->matchDirection() != first->matchDirection())
+                        break;
+                    size += sizeOfTerm(*term);
+                    if (size > maximumSizeOfMergedClass)
+                        break;
+                    hasCharacterClass |= term->type == PatternTerm::Type::CharacterClass;
+                }
+            }
+
+            bool merges = end - begin > 1 && hasCharacterClass;
+            if (merges) {
+                CharacterClassConstructor merged(first->ignoreCase(), m_pattern.compileMode());
+                for (size_t i = begin; i < end; ++i) {
+                    PatternTerm& term = alternatives[i]->m_terms[0];
+                    if (term.type == PatternTerm::Type::PatternCharacter)
+                        merged.putChar(term.patternCharacter);
+                    else
+                        merged.append(term.characterClass);
+                }
+                auto characterClass = merged.charClass();
+                CharacterClass* used = characterClass->m_anyCharacter ? m_pattern.anyCharacterClass() : characterClass.get();
+                *first = PatternTerm(used, false, first->m_currentFlags, first->matchDirection());
+                m_pattern.m_userCharacterClasses.append(WTF::move(characterClass));
+            }
+
+            for (size_t i = begin, keptEnd = merges ? begin + 1 : end; i < keptEnd; ++i, ++kept) {
+                if (kept != i)
+                    alternatives[kept] = WTF::move(alternatives[i]);
+            }
+            begin = end;
+        }
+        alternatives.shrink(kept);
+    }
+
     // checkForTerminalParentheses() explains why a greedy * or + group at the end of the pattern needs no state from earlier
     // iterations: nothing after it can fail, so nothing backtracks into an iteration that has matched. That is as true of the last
     // term of each of its alternatives: what comes after it is the end of the iteration, and then another iteration or none. It
@@ -3976,6 +4071,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     }
 
     constructor.dropMinimumOfGroupsThatCanAlwaysMatchEmpty();
+    constructor.mergeSingleCharacterAlternatives();
     constructor.recomputeStartsWithBOL();
     constructor.checkForTerminalParentheses();
     constructor.optimizeDotStarWrappedExpressions();
