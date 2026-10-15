@@ -2557,6 +2557,46 @@ public:
         }
     }
 
+    // checkForTerminalParentheses() explains why a greedy * or + group at the end of the pattern needs no state from earlier
+    // iterations: nothing after it can fail, so nothing backtracks into an iteration that has matched. That is as true of the last
+    // term of each of its alternatives: what comes after it is the end of the iteration, and then another iteration or none. It
+    // is also true of the last term of a group that runs once and is itself in such a position. In
+    //     /(?:\w+|(?:\[[^\]]*\])+|:\w+(?:\(|\w|\))*)*/
+    // all three groups that repeat are.
+    //
+    // One thing after such a group can fail: an enclosing group rejects an iteration that matched the empty string. Then this
+    // group has matched the empty string too, so none of its iterations has completed, and it has nothing else to try.
+    //
+    // Unlike isTerminal this does not change the frame, and the interpreter does not look at it. There, backtracking into a
+    // terminal group is a crash.
+    void markTailLoops()
+    {
+        for (auto& alternative : m_pattern.m_body->m_alternatives)
+            markTailLoops(*alternative);
+    }
+
+    void markTailLoops(PatternAlternative& alternative)
+    {
+        if (!isSafeToRecurse()) [[unlikely]]
+            return;
+        if (alternative.m_terms.isEmpty())
+            return;
+        PatternTerm& term = alternative.m_terms.last();
+        if (term.type != PatternTerm::Type::ParenthesesSubpattern || term.matchDirection() != Forward || term.parentheses.isCopy || term.parentheses.isStringList)
+            return;
+
+        if (term.quantityMaxCount != 1) {
+            // A failed iteration leaves the captures it has set. Only a ParenContext puts back those of the iteration before.
+            bool hasObservableCaptures = (term.capture() || term.containsAnyCaptures()) && capturesAreObservable();
+            if (term.quantityType != QuantifierType::Greedy || term.quantityMinCount > 1 || term.quantityMaxCount != quantifyInfinite || hasObservableCaptures)
+                return;
+            term.parentheses.isTailLoop = true;
+        }
+
+        for (auto& nested : term.parentheses.disjunction->m_alternatives)
+            markTailLoops(*nested);
+    }
+
     // Auto-possessification optimization
     //
     // "Possessive Quantifier" is yet another quantifier type supported in non-JS RegExp engines (e.g. PCRE2).
@@ -3942,6 +3982,7 @@ ErrorCode YarrPattern::compile(StringView patternString)
     constructor.optimizeBOL();
     constructor.factorAndWrapAlternatives();
     constructor.optimizePossessiveQuantifiers();
+    constructor.markTailLoops();
 
     if (hasError(constructor.error()))
         return constructor.error();
@@ -4230,6 +4271,9 @@ void PatternTerm::dump(PrintStream& out, YarrPattern* thisPattern, unsigned nest
 
         if (parentheses.isTerminal)
             out.print(",terminal");
+
+        if (parentheses.isTailLoop)
+            out.print(",tail-loop");
 
         if (parentheses.isStringList)
             out.print(",string-list");
