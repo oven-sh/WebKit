@@ -101,7 +101,11 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorCaptureStackTrace, (JSGlobalObject* glo
     // skip this function.
     const size_t framesToSkip = 1;
 
+#if USE(BUN_JSC_ADDITIONS)
+    vm.interpreter.getStackTrace(object, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller, nullptr, nullptr, Interpreter::CallerMatch::Activation);
+#else
     vm.interpreter.getStackTrace(object, stackTrace, framesToSkip, globalObject->stackTraceLimit().value_or(0), caller);
+#endif
 
     if (auto* errorInstance = dynamicDowncast<ErrorInstance>(object)) {
         errorInstance->setStackPropertyProvidedByCapturedStackTrace();

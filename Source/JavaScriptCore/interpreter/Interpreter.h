@@ -172,11 +172,30 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         NEVER_INLINE void debug(CallFrame*, DebugHookType, JSValue data);
         static String stackTraceAsString(VM&, const Vector<StackFrame>&);
 
+#if USE(BUN_JSC_ADDITIONS)
+        // Which frame `caller` names in getStackTrace(). The trace starts below that frame.
+        enum class CallerMatch : bool {
+            // The topmost frame whose callee is `caller`.
+            Callee,
+            // Error.captureStackTrace(object, caller): the topmost activation of `caller`. That is the frame whose
+            // callee is `caller`, and for a generator, an async generator and an async function that awaits also the
+            // frame of a body function that runs its code, on the stack or awaiting. A `caller` that is not a function
+            // with activations (a bound function, a Proxy, any other object) does not limit the trace.
+            Activation,
+        };
+        void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr, CallerMatch = CallerMatch::Callee);
+#else
         void getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip = 0, size_t maxStackSize = std::numeric_limits<size_t>::max(), JSCell* caller = nullptr, JSCell* ownerOfCallLinkInfo = nullptr, CallLinkInfo* = nullptr);
+#endif
         bool isExceptionCaughtByUserCatchClause();
 
     private:
+#if USE(BUN_JSC_ADDITIONS)
+        // With activationToFind the trace starts below the first awaiting activation of it, and has no frame without one.
+        void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize, JSFunction* activationToFind = nullptr);
+#else
         void getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* initialGenerator, size_t maxStackSize);
+#endif
         enum ExecutionFlag { Normal, InitializeAndReturn };
 
         CodeBlock* prepareForCachedCall(CachedCall&, JSFunction*);

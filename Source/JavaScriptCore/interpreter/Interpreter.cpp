@@ -482,7 +482,58 @@ bool Interpreter::isOpcode(Opcode opcode)
 #endif // ASSERT_ENABLED
 
 
+#if USE(BUN_JSC_ADDITIONS)
+// The code of a generator, of an async generator and of an async function that awaits runs in a body function that
+// each call of the function makes. The body function is the callee of the frame while that code runs, and of the
+// frame in the await chain. The function itself has a frame only while an async function runs up to its first
+// await, and that frame is hidden (ImplementationVisibility::Private).
+static JSFunction* functionWithBodyFunction(JSCell* cell)
+{
+    auto* function = dynamicDowncast<JSFunction>(cell);
+    if (!function || function->isHostFunction())
+        return nullptr;
+    return isGeneratorOrAsyncFunctionWrapperParseMode(function->jsExecutable()->parseMode()) ? function : nullptr;
+}
+
+// Only a function has activations. A bound function, a remote function and a Proxy run another function and are never
+// looked for on the stack, as V8 looks for nothing but a JSFunction.
+static bool hasActivations(JSCell* cell)
+{
+    if (auto* function = dynamicDowncast<JSFunction>(cell))
+        return !function->inherits<JSBoundFunction>() && !function->inherits<JSRemoteFunction>();
+    return cell->inherits<InternalFunction>();
+}
+
+// Whether a call of `function` made the body function `callee`, as far as that can be told: nothing ties a body
+// function to the function. The executable of the body was linked against the source of the function's executable
+// (UnlinkedFunctionExecutable::startOffset() is relative to that source), and the scope the function closes over is
+// on the scope chain of the body. Two closures of one function expression made in one scope are not told apart.
+static bool isBodyFunctionOf(JSCell* callee, JSFunction* function)
+{
+    auto* body = dynamicDowncast<JSFunction>(callee);
+    if (!body || body->isHostFunction())
+        return false;
+    FunctionExecutable* bodyExecutable = body->jsExecutable();
+    if (!isGeneratorOrAsyncFunctionBodyParseMode(bodyExecutable->parseMode()))
+        return false;
+    const SourceCode& bodySource = bodyExecutable->source();
+    const SourceCode& source = function->jsExecutable()->source();
+    if (bodySource.provider() != source.provider())
+        return false;
+    if (bodySource.startOffset() - static_cast<int>(bodyExecutable->unlinkedExecutable()->startOffset()) != source.startOffset())
+        return false;
+    JSScope* functionScope = function->scope();
+    for (JSScope* scope = body->scope(); scope; scope = scope->next()) {
+        if (scope == functionScope)
+            return true;
+    }
+    return false;
+}
+
+void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize, JSFunction* activationToFind)
+#else
 void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results, JSAsyncFunctionGenerator* generator, size_t maxStackSize)
+#endif
 {
     RELEASE_ASSERT(Options::useAsyncStackTrace());
     ASSERT(generator);
@@ -560,9 +611,37 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     };
 
     JSAsyncFunctionGenerator* currentGenerator = getParentGenerator(generator);
+#if USE(BUN_JSC_ADDITIONS)
+    // Generators that await each other make the chain a cycle, and then only maxStackSize ends the walk. A walk that
+    // adds no frame, or that has no limit, ends when it is back at a generator it passed (Brent's cycle detection).
+    bool endsAtCycle = activationToFind || maxStackSize == std::numeric_limits<size_t>::max();
+    JSAsyncFunctionGenerator* passedGenerator = nullptr;
+    size_t stepsSincePassedGenerator = 0;
+    size_t stepsToNextPassedGenerator = 1;
+#endif
     while (currentGenerator && results.size() < maxStackSize) {
         JSValue nextValue = currentGenerator->internalField(static_cast<unsigned>(JSAsyncFunctionGenerator::Field::Next)).get();
         JSFunction* asyncFunction = dynamicDowncast<JSFunction>(nextValue);
+#if USE(BUN_JSC_ADDITIONS)
+        if (endsAtCycle) {
+            if (currentGenerator == passedGenerator)
+                break;
+            if (++stepsSincePassedGenerator == stepsToNextPassedGenerator) {
+                passedGenerator = currentGenerator;
+                stepsSincePassedGenerator = 0;
+                stepsToNextPassedGenerator *= 2;
+            }
+        }
+        if (activationToFind) {
+            // Still above the activation the trace starts below.
+            if (asyncFunction && isBodyFunctionOf(asyncFunction, activationToFind)) {
+                activationToFind = nullptr;
+                endsAtCycle = maxStackSize == std::numeric_limits<size_t>::max();
+            }
+            currentGenerator = getParentGenerator(currentGenerator);
+            continue;
+        }
+#endif
         if (asyncFunction && !asyncFunction->isHostOrPrivateBuiltinFunction()) {
             if (FunctionExecutable* executable = asyncFunction->jsExecutable()) {
                 // If a CodeBlock doesn't already exist, the stack trace will only show the filename and won't show line column
@@ -577,13 +656,25 @@ void Interpreter::getAsyncStackTrace(JSCell* owner, Vector<StackFrame>& results,
     }
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo, CallerMatch callerMatch)
+#else
 void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size_t framesToSkip, size_t maxStackSize, JSCell* caller, JSCell* ownerOfCallLinkInfo, CallLinkInfo* callLinkInfo)
+#endif
 {
     AssertNoGC assertNoGC;
     VM& vm = this->vm();
     CallFrame* callFrame = vm.topCallFrame;
     if (!callFrame || !maxStackSize)
         return;
+
+#if USE(BUN_JSC_ADDITIONS)
+    bool matchActivation = callerMatch == CallerMatch::Activation && caller;
+    if (matchActivation && !hasActivations(caller)) {
+        caller = nullptr;
+        matchActivation = false;
+    }
+#endif
 
     size_t skippedFrames = 0;
 
@@ -641,6 +732,22 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
         }
     };
 
+#if USE(BUN_JSC_ADDITIONS)
+    // `caller`, when its code runs in a body function.
+    JSFunction* callerWithBodyFunction = matchActivation ? functionWithBodyFunction(caller) : nullptr;
+    // The callee of a skipped frame that is a body function of `caller`. An async function runs its body function from
+    // its own frame until the first await, so the frame below tells which function's call made this body function.
+    JSCell* undecidedBodyFunction = nullptr;
+    EntryFrame* undecidedBodyFunctionEntryFrame = nullptr;
+    // The trace starts below a frame that `entryFrame` ran. What awaits that entry comes after that frame.
+    auto startBelowFrameOf = [&](EntryFrame* entryFrame) {
+        foundCaller = true;
+        asyncStackTraceOriginGenerator = nullptr;
+        previousEntryFrame = entryFrame;
+        previousEntryFrameStackTraceInsertPos = results.size();
+    };
+#endif
+
     StackVisitor::visit(callFrame, vm, [&] (StackVisitor& visitor) ALWAYS_INLINE_LAMBDA {
         if (results.size() >= maxStackSize)
             return IterationStatus::Done;
@@ -649,6 +756,44 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             skippedFrames++;
             return IterationStatus::Continue;
         }
+
+#if USE(BUN_JSC_ADDITIONS)
+        if (!foundCaller && matchActivation) {
+            JSCell* callee = visitor->callee().isNativeCallee() ? nullptr : visitor->callee().asCell();
+            EntryFrame* entryFrame = visitor->entryFrame();
+            bool isBelowActivation = false;
+            if (undecidedBodyFunction) {
+                JSFunction* function = entryFrame == undecidedBodyFunctionEntryFrame && callee ? functionWithBodyFunction(callee) : nullptr;
+                // Unless this is the frame of the function whose call made the body function above, that body function
+                // was resumed or is a generator's, and its frame was the activation.
+                if (!function || !isBodyFunctionOf(undecidedBodyFunction, function)) {
+                    startBelowFrameOf(undecidedBodyFunctionEntryFrame);
+                    isBelowActivation = true;
+                }
+                undecidedBodyFunction = nullptr;
+            }
+            if (!isBelowActivation) {
+                if (callee == caller)
+                    startBelowFrameOf(entryFrame);
+                else if (callerWithBodyFunction) {
+                    if (callee && isBodyFunctionOf(callee, callerWithBodyFunction)) {
+                        undecidedBodyFunction = callee;
+                        undecidedBodyFunctionEntryFrame = entryFrame;
+                    }
+                    // When no frame is an activation of `caller`, one that awaits can be: keep track of what is awaited,
+                    // as for a frame that is in the trace.
+                    if (Options::useAsyncStackTrace()) {
+                        if (entryFrame != previousEntryFrame && previousEntryFrame)
+                            updateAsyncStackTraceOriginGenerator();
+                        if (!visitor->isImplementationVisibilityPrivate())
+                            previousEntryFrame = entryFrame;
+                    }
+                }
+                skippedFrames++;
+                return IterationStatus::Continue;
+            }
+        }
+#endif
 
         if (!foundCaller) {
             if (!visitor->callee().isNativeCallee() && visitor->callee().asCell() == caller)
@@ -691,8 +836,12 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
     });
 
 #if USE(BUN_JSC_ADDITIONS)
+    // Nothing is below that body function: it was resumed, and its frame was the activation.
+    if (undecidedBodyFunction)
+        startBelowFrameOf(undecidedBodyFunctionEntryFrame);
+
     // Add the single async frame if it exists and we have space
-    if (maxStackSize > results.size()) {
+    if (maxStackSize > results.size() && (foundCaller || !matchActivation)) {
         const auto& appender = vm.onAppendStackTrace();
         if (appender)
             appender(vm, owner, results, maxStackSize - results.size());
@@ -706,7 +855,12 @@ void Interpreter::getStackTrace(JSCell* owner, Vector<StackFrame>& results, size
             updateAsyncStackTraceOriginGenerator();
         if (asyncStackTraceOriginGenerator) {
             Vector<StackFrame> asyncFrames;
+#if USE(BUN_JSC_ADDITIONS)
+            // Without an activation of `caller` on the stack, the trace starts below the first one that awaits.
+            getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize, foundCaller ? nullptr : callerWithBodyFunction);
+#else
             getAsyncStackTrace(owner, asyncFrames, asyncStackTraceOriginGenerator, maxStackSize);
+#endif
             if (!asyncFrames.isEmpty())
                 results.insertVector(asyncStackTraceInsertPos, asyncFrames);
         }
