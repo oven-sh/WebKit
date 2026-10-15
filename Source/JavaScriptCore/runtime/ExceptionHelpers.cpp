@@ -422,4 +422,11 @@ Exception* throwStackOverflowError(JSGlobalObject* globalObject, ThrowScope& sco
     return throwException(globalObject, scope, createStackOverflowError(globalObject));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+Exception* throwNonStaticCodeError(JSGlobalObject* globalObject, ThrowScope& scope)
+{
+    return throwException(globalObject, scope, createEvalError(globalObject, "Code generation from strings disallowed for this context"_s));
+}
+#endif
+
 } // namespace JSC

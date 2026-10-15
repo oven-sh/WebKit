@@ -75,6 +75,16 @@ enum class JS_EXPORT_PRIVATE SourceProviderSourceType : uint8_t {
 #endif
 };
 
+#if USE(BUN_JSC_ADDITIONS)
+// Where a provider's text came from. Said when the provider is made, and never changed. For Options::disallowNonStaticCode().
+enum class SourceProvenance : bool {
+    // It was a JavaScript value, or nobody said that it was not.
+    GeneratedAtRuntime,
+    // Builtins, and what the embedder read from where the program is stored.
+    Static,
+};
+#endif
+
 using BytecodeCacheGenerator = Function<RefPtr<CachedBytecode>()>;
 
 // What a line start table holds: see EncodedLineStarts. The sources that have one text and the code compiled from it
@@ -136,6 +146,9 @@ public:
     static const intptr_t nullID = 1;
 
     JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin, const TextPosition& startPosition, SourceProviderSourceType);
+#if USE(BUN_JSC_ADDITIONS)
+    JS_EXPORT_PRIVATE SourceProvider(const SourceOrigin&, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin, const TextPosition& startPosition, SourceProviderSourceType, SourceProvenance);
+#endif
     JS_EXPORT_PRIVATE virtual ~SourceProvider();
 
     JS_EXPORT_PRIVATE virtual unsigned hash() const = 0;
@@ -147,6 +160,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
     JS_EXPORT_PRIVATE virtual size_t memoryCost() const { return 0; }
     JS_EXPORT_PRIVATE virtual void didGenerateUnlinkedCodeBlock(VM&, const SourceCodeKey&, UnlinkedCodeBlock*) const { }
+
+    SourceProvenance provenance() const { return m_provenance; }
 #endif
 
     StringView getRange(int start, int end) const LIFETIME_BOUND
@@ -289,6 +304,9 @@ private:
     TextPosition m_startPosition;
     SourceID m_id { 0 };
     SourceTaintedOrigin m_taintedness;
+#if USE(BUN_JSC_ADDITIONS)
+    SourceProvenance m_provenance { SourceProvenance::GeneratedAtRuntime };
+#endif
 
     std::atomic<bool> m_sourceCodeDumped { false };
     Lock m_sourceCodeDumpLock;
@@ -306,6 +324,13 @@ public:
         return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType));
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static Ref<StringSourceProvider> create(const String& source, const SourceOrigin& sourceOrigin, String sourceURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    {
+        return adoptRef(*new StringSourceProvider(source, sourceOrigin, taintedness, WTF::move(sourceURL), startPosition, sourceType, provenance));
+    }
+#endif
+
     unsigned hash() const override
     {
         return m_source.get().hash();
@@ -322,6 +347,14 @@ protected:
         , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
     {
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    StringSourceProvider(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedOrigin taintedness, String&& sourceURL, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+        : SourceProvider(sourceOrigin, WTF::move(sourceURL), String(), taintedness, startPosition, sourceType, provenance)
+        , m_source(source.isNull() ? *StringImpl::empty() : *source.impl())
+    {
+    }
+#endif
 
 private:
     const Ref<StringImpl> m_source;
@@ -341,7 +374,11 @@ public:
 
 private:
     BuiltinsSourceProvider(const String& source, std::span<const unsigned> starts)
+#if USE(BUN_JSC_ADDITIONS)
+        : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program, SourceProvenance::Static)
+#else
         : StringSourceProvider(source, { }, SourceTaintedOrigin::Untainted, String(), TextPosition(), SourceProviderSourceType::Program)
+#endif
         , m_starts(starts)
     {
     }

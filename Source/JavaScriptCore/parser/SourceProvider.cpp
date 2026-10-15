@@ -46,6 +46,14 @@ SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& source
 {
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+SourceProvider::SourceProvider(const SourceOrigin& sourceOrigin, String&& sourceURL, String&& preRedirectURL, SourceTaintedOrigin taintedness, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+    : SourceProvider(sourceOrigin, WTF::move(sourceURL), WTF::move(preRedirectURL), taintedness, startPosition, sourceType)
+{
+    m_provenance = provenance;
+}
+#endif
+
 SourceProvider::~SourceProvider() = default;
 
 void SourceProvider::lockUnderlyingBuffer()
