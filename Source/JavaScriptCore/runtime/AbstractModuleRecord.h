@@ -376,6 +376,10 @@ protected:
 
 private:
     struct ResolveQuery;
+#if USE(BUN_JSC_ADDITIONS)
+    // False until the VM creates a record with live exports: then this has no code for them.
+    template<bool someRecordHasLiveExports>
+#endif
     static Resolution resolveExportImpl(JSGlobalObject*, const ResolveQuery&);
     std::optional<Resolution> NODELETE tryGetCachedResolution(UniquedStringImpl* exportName);
     void cacheResolution(UniquedStringImpl* exportName, const Resolution&);
