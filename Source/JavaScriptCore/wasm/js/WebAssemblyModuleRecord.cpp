@@ -232,9 +232,10 @@ void WebAssemblyModuleRecord::initializeImports(JSGlobalObject* globalObject, JS
             AbstractModuleRecord* importedRecord = resolution.moduleRecord;
 #if USE(BUN_JSC_ADDITIONS)
             bool isLiveExport = resolution.isLiveExport(vm);
-            if (isLiveExport) [[unlikely]]
-                value = importedRecord->getLiveExport(globalObject, resolution.localName);
-            else {
+            if (isLiveExport) [[unlikely]] {
+                // As in JSModuleEnvironment::getOwnPropertySlot().
+                value = importedModule == importedRecord ? importedRecord->getLiveExport(globalObject, resolution.localName) : importedRecord->getReexportedLiveExport(globalObject, resolution.localName);
+            } else {
                 // The snapshot below reads the binding's slot directly, so a lazy export has to be filled in first.
                 SyntheticModuleRecord::materializeLazyExport(globalObject, importedRecord, resolution.localName);
             }
