@@ -50,6 +50,7 @@ namespace JSC {
     macro(add) \
     macro(applyFunction) \
     macro(assert) \
+    macro(bindFunction) \
     macro(callFunction) \
     macro(charCodeAt) \
     macro(executor) \

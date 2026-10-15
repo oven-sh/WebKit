@@ -35,7 +35,7 @@ public:
         return prototype;
     }
 
-    void addFunctionProperties(VM&, JSGlobalObject*, JSFunction** callFunction, JSFunction** applyFunction, JSFunction** hasInstanceSymbolFunction);
+    void addFunctionProperties(VM&, JSGlobalObject*, JSFunction** callFunction, JSFunction** applyFunction, JSFunction** bindFunction, JSFunction** hasInstanceSymbolFunction);
 
     inline static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 

@@ -1156,8 +1156,9 @@ void JSGlobalObject::init(VM& vm)
         });
     JSFunction* callFunction = nullptr;
     JSFunction* applyFunction = nullptr;
+    JSFunction* bindFunction = nullptr;
     JSFunction* hasInstanceSymbolFunction = nullptr;
-    m_functionPrototype->addFunctionProperties(vm, this, &callFunction, &applyFunction, &hasInstanceSymbolFunction);
+    m_functionPrototype->addFunctionProperties(vm, this, &callFunction, &applyFunction, &bindFunction, &hasInstanceSymbolFunction);
     m_objectProtoToStringFunction.initLater(
         [] (const Initializer<JSFunction>& init) {
             init.set(JSFunction::create(init.vm, init.owner, 0, init.vm.propertyNames->toString.string(), objectProtoFuncToString, ImplementationVisibility::Public, ObjectToStringIntrinsic));
@@ -1928,6 +1929,7 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::callFunction)].set(vm, this, callFunction);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::applyFunction)].set(vm, this, applyFunction);
+    m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::bindFunction)].set(vm, this, bindFunction);
 
     {
         JSValue hasOwnPropertyFunction = uncheckedDowncast<JSFunction>(objectPrototype()->get(this, vm.propertyNames->hasOwnProperty));

@@ -126,6 +126,7 @@ class JSGlobalObject;
     v(Object, nullptr) \
     v(Array, nullptr) \
     v(applyFunction, nullptr) \
+    v(bindFunction, nullptr) \
     v(callFunction, nullptr) \
     v(hasOwnPropertyFunction, nullptr) \
     v(reflectConstructFunction, nullptr) \
