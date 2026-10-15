@@ -473,6 +473,13 @@ namespace JSC {
     {
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    inline BindFunctionCallDotNode::BindFunctionCallDotNode(const JSTokenLocation& location, ExpressionNode* base, const Identifier& ident, DotType type, ArgumentsNode* args, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall)
+        : FunctionCallDotNode(location, base, ident, type, args, divot, divotStart, divotEnd, isOptionalCall)
+    {
+    }
+#endif
+
     inline ReflectConstructFunctionCallDotNode::ReflectConstructFunctionCallDotNode(const JSTokenLocation& location, ExpressionNode* base, const Identifier& ident, DotType type, ArgumentsNode* args, const JSTextPosition& divot, const JSTextPosition& divotStart, const JSTextPosition& divotEnd, bool isOptionalCall)
         : FunctionCallDotNode(location, base, ident, type, args, divot, divotStart, divotEnd, isOptionalCall)
     {

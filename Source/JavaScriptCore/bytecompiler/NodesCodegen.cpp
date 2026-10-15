@@ -2311,6 +2311,24 @@ RegisterID* FunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, Regi
     return ret;
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+// fn.@bind(...) is FunctionCallDotNode with the bindFunction constant in place of the property of fn.
+RegisterID* BindFunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
+{
+    RefPtr<RegisterID> function = generator.tempDestination(dst);
+    RefPtr<RegisterID> returnValue = generator.finalDestination(dst, function.get());
+    CallArguments callArguments(generator, m_args);
+    generator.emitNode(callArguments.thisRegister(), m_base);
+    if (m_base->isOptionalChainBase())
+        generator.emitOptionalCheck(callArguments.thisRegister());
+    generator.emitExpressionInfo(subexpressionDivot(), subexpressionStart(), subexpressionEnd());
+    generator.moveLinkTimeConstant(function.get(), LinkTimeConstant::bindFunction);
+    RegisterID* ret = generator.emitCallInTailPosition(returnValue.get(), function.get(), NoExpectedFunction, callArguments, divot(), divotStart(), divotEnd(), DebuggableCall::Yes);
+    generator.emitProfileType(returnValue.get(), divotStart(), divotEnd());
+    return ret;
+}
+#endif
+
 static constexpr size_t maxDistanceToInnermostCallOrApply = 2;
 
 RegisterID* CallFunctionCallDotNode::emitBytecode(BytecodeGenerator& generator, RegisterID* dst)
