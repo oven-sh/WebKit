@@ -27,6 +27,7 @@
 #include "JSModuleNamespaceObject.h"
 
 #include "AbstractModuleRecord.h"
+#include "CodeCache.h"
 #include "CyclicModuleRecord.h"
 #include "JSCInlines.h"
 #include "JSModuleEnvironment.h"
@@ -65,6 +66,15 @@ JSModuleNamespaceObject::JSModuleNamespaceObject(VM& vm, Structure* structure, A
             WriteBarrier { pair.second.moduleRecord, WriteBarrierEarlyInit },
         });
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    m_isDeferredOrLive = isDeferred;
+    if (vm.codeCache()->hasModuleRecordWithLiveExports()) [[unlikely]] {
+        m_isDeferredOrLive |= moduleRecord->hasLiveExports();
+        for (auto& entry : m_exports.values())
+            m_isDeferredOrLive |= entry.moduleRecord->hasLiveExports();
+    }
+#endif
 }
 
 void JSModuleNamespaceObject::finishCreation(JSGlobalObject* globalObject, bool shouldPreventExtensions)
@@ -164,14 +174,18 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
 
     slot.setIsTaintedByOpaqueObject();
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (m_isDeferredOrLive) [[unlikely]] {
+        std::optional<bool> result = getOwnPropertySlotIfDeferredOrLive(globalObject, propertyName, slot);
+        RETURN_IF_EXCEPTION(scope, false);
+        if (result)
+            return *result;
+    }
+#else
     if (m_isDeferred && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) [[unlikely]] {
         ensureDeferredNamespaceEvaluation(globalObject);
         RETURN_IF_EXCEPTION(scope, false);
     }
-
-#if USE(BUN_JSC_ADDITIONS)
-    if (m_moduleRecord->hasLiveExports()) [[unlikely]]
-        RELEASE_AND_RETURN(scope, getOwnPropertySlotForLiveExports(globalObject, propertyName, slot));
 #endif
 
     auto iterator = m_exports.find(propertyName.uid());
@@ -197,15 +211,6 @@ bool JSModuleNamespaceObject::getOwnPropertySlotCommon(JSGlobalObject* globalObj
             exportEntry.moduleRecord->getModuleNamespace(globalObject);
             RETURN_IF_EXCEPTION(scope, false);
         }
-#if USE(BUN_JSC_ADDITIONS)
-        else if (exportEntry.moduleRecord->hasLiveExports()) [[unlikely]] {
-            // Re-exported from a live record. Its module environment may have no binding with this name.
-            JSValue value = exportEntry.moduleRecord->getReexportedLiveExport(globalObject, exportEntry.localName);
-            RETURN_IF_EXCEPTION(scope, false);
-            slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
-            return true;
-        }
-#endif
         JSModuleEnvironment* environment = exportEntry.moduleRecord->moduleEnvironment();
         ScopeOffset scopeOffset;
         JSValue value = getValue(environment, exportEntry.localName, scopeOffset);
@@ -267,6 +272,36 @@ static bool canForwardToLiveExportsSource(JSGlobalObject* globalObject, ThrowSco
         return true;
     throwStackOverflowError(globalObject, scope);
     return false;
+}
+
+// Returns nothing if the property is to be looked up as in any other namespace object.
+std::optional<bool> JSModuleNamespaceObject::getOwnPropertySlotIfDeferredOrLive(JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (m_isDeferred && slot.internalMethodType() != PropertySlot::InternalMethodType::VMInquiry) {
+        ensureDeferredNamespaceEvaluation(globalObject);
+        RETURN_IF_EXCEPTION(scope, std::nullopt);
+    }
+
+    if (m_moduleRecord->hasLiveExports())
+        RELEASE_AND_RETURN(scope, getOwnPropertySlotForLiveExports(globalObject, propertyName, slot));
+
+    if (slot.internalMethodType() != PropertySlot::InternalMethodType::Get && slot.internalMethodType() != PropertySlot::InternalMethodType::GetOwnProperty)
+        return std::nullopt;
+    auto iterator = m_exports.find(propertyName.uid());
+    if (iterator == m_exports.end())
+        return std::nullopt;
+    ExportEntry& exportEntry = iterator->value;
+    if (!exportEntry.moduleRecord->hasLiveExports() || exportEntry.localName == vm.propertyNames->starNamespacePrivateName)
+        return std::nullopt;
+
+    // Re-exported from a live record. Its module environment may have no binding with this name.
+    JSValue value = exportEntry.moduleRecord->getReexportedLiveExport(globalObject, exportEntry.localName);
+    RETURN_IF_EXCEPTION(scope, std::nullopt);
+    slot.setValue(this, static_cast<unsigned>(PropertyAttribute::DontDelete), value);
+    return true;
 }
 
 // The namespace object of a live record forwards to liveExportsSource(), writes included.
