@@ -1131,6 +1131,12 @@ JSValue Interpreter::executeProgram(const SourceCode& source, JSGlobalObject*, J
     if (vm.disallowVMEntryCount) [[unlikely]]
         return VM::checkVMEntryPermission();
 
+#if USE(BUN_JSC_ADDITIONS)
+    // Earlier than ScriptExecutable::prepareForExecutionImpl: a program acts before it has a CodeBlock. JSONP needs none, and its global declarations come first.
+    if (Options::disallowNonStaticCode() && source.provider()->provenance() != SourceProvenance::Static) [[unlikely]]
+        return throwNonStaticCodeError(globalObject, throwScope);
+#endif
+
     // First check if the "program" is actually just a JSON object. If so,
     // we'll handle the JSON object here. Else, we'll handle real JS code
     // below at failedJSONP.

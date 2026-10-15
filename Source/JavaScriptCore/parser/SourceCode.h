@@ -89,6 +89,13 @@ inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOri
     return SourceCode(StringSourceProvider::create(source, sourceOrigin, WTF::move(filename), sourceTaintedOrigin, startPosition, sourceType));
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+inline SourceCode makeSource(const String& source, const SourceOrigin& sourceOrigin, SourceTaintedness sourceTaintedOrigin, String filename, const TextPosition& startPosition, SourceProviderSourceType sourceType, SourceProvenance provenance)
+{
+    return SourceCode(StringSourceProvider::create(source, sourceOrigin, WTF::move(filename), sourceTaintedOrigin, startPosition, sourceType, provenance));
+}
+#endif
+
 inline SourceCode SourceCode::subExpression(unsigned openBrace, unsigned closeBrace) const
 {
     return SourceCode(RefPtr<SourceProvider> { provider() }, openBrace, closeBrace + 1);
