@@ -878,10 +878,23 @@ private:
         return false;
     }
 
+    bool takesWhatMayBeForeign(FunctionID id) const
+    {
+        for (TypeID type : m_program.at(id).parameterTypes) {
+            if (!type)
+                continue;
+            for (LayoutID view : m_program.at(type).views) {
+                if (m_program.at(view).admitsForeignObjects)
+                    return true;
+            }
+        }
+        return false;
+    }
+
     // `type`: of the value that is replaced.
     void callAndFinish(FunctionID id, std::span<const ValueID> captures, ValueID thisValue, std::span<const ValueID> given, TypeID type, Yields yields)
     {
-        if (FunctionID written = m_program.at(id).writtenEntry; written && holdsSomething(id, thisValue, given))
+        if (FunctionID written = m_program.at(id).writtenEntry; written && (holdsSomething(id, thisValue, given) || (m_program.at(written).has(FunctionLogsMisfits) && takesWhatMayBeForeign(id))))
             id = written;
         // By the language an async function throws nothing to its caller: what it refuses of what it is handed rejects. Who does not know the function goes through its general entry: there the unwinder sees to it.
         TypeID promiseType = typeOfPromiseOf(m_program, m_program.at(id));
@@ -2312,7 +2325,8 @@ static Function createGenericEntrypoint(const Program& program, FunctionID id, F
         cast.assertedType = asserted;
         cast.children[0] = value;
         cast.immediates[1] = static_cast<uint32_t>(reason);
-        if (!secondBody || asserted || !type || (reason == CastReason::As && !program.at(type).views.isEmpty()))
+        bool isOpenByNature = type && program.at(type).admitsForeignObjects(program) && !program.isOpenedForLog(program.at(type));
+        if (!secondBody || asserted || !type || (reason == CastReason::As && !program.at(type).views.isEmpty() && !(program.logsTypeErrors && isOpenByNature)))
             return append(WTF::move(cast));
         cast.immediates[1] = static_cast<uint32_t>(CastReason::Claim);
         ValueID result = append(WTF::move(cast));

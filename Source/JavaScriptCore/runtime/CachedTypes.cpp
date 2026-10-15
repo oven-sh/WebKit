@@ -5966,18 +5966,18 @@ struct BytecodeLinkEncoder::Impl {
     {
         MacroAssembler::useOnlyFeaturesOfBuildTarget();
         if (!MacroAssembler::supportsFloatingPointRounding()) {
-            dataLogLn("AOT: the engine was built for a CPU that cannot round floating point numbers (SSE4.1), for which B3 calls a function by its address");
+            fail("this build targets a CPU without SSE4.1, which the ahead-of-time compiler needs"_s);
             return { };
         }
         ImmutableIntrinsics::ensureShared(vm);
         if (omittedFunctions[0] || omittedFunctions[1] || omittedFunctions[2]) {
-            dataLogLn("AOT: the compiler needs all of the program's code: ", omittedFunctions[0], " functions have no bytecode (is the bytecode depth limited?), ", omittedFunctions[1], " were not placed, ", omittedFunctions[2], " have no key");
+            fail(makeString("internal error: "_s, omittedFunctions[0], " functions have no bytecode, "_s, omittedFunctions[1], " were not placed and "_s, omittedFunctions[2], " have no key"_s));
             return { };
         }
         for (auto& function : functionsToCompile) {
             for (bool isConstruct : { false, true }) {
                 if (isConstruct ? function.forConstruct : function.forCall)
-                    dataLogLn("AOT: cannot compile `", function.executable->ecmaName().string(), "` @", modules[function.module].entryOffset + 1, ":", function.key.start, ":", static_cast<uint32_t>(function.key.kind) << 1 | isConstruct, ": it is not in the typed program");
+                    fail(makeString("internal error: the function `"_s, function.executable->ecmaName().string(), "` is not in the typed program"_s), pathOf(function.module));
             }
         }
         if (!functionsToCompile.isEmpty())
@@ -6010,7 +6010,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (hasNoEffects(codeBlock))
                 continue;
-            dataLogLn("AOT: cannot compile module ", index, " `", modules[index].source.provider()->sourceOrigin().url().string(), "`: it is not in the typed program");
+            fail("internal error: the module is not in the typed program"_s, pathOf(index));
             isAllInTypedProgram = false;
         }
         if (!isAllInTypedProgram)
@@ -6062,7 +6062,7 @@ struct BytecodeLinkEncoder::Impl {
             }
             if (!isTypedEntry(index) || !AOT::Typed::compile(vm, *typedProgram, typedEntryOf(index), code)) {
                 declined.add(jobs[index].codeBlock);
-                dataLogLn("AOT: cannot compile `` @", jobs[index].key.module, ":", jobs[index].key.start, ":", jobs[index].key.kind, ": ", code.whyDeclined);
+                fail(makeString("internal error: the entry function of a module was not compiled"_s, code.whyDeclined.isEmpty() ? ""_s : ": "_s, code.whyDeclined), pathOf(jobs[index].module));
                 return;
             }
             code.info.convention = AOT::conventionOf(jobs[index].codeBlock);
@@ -6201,7 +6201,7 @@ struct BytecodeLinkEncoder::Impl {
             if (!declined.isEmpty())
                 return { };
             if (numberOfEntriesWithModule != typedProgram->entries.size()) {
-                dataLogLn("AOT: ", typedProgram->entries.size(), " entry functions, and ", numberOfEntriesWithModule, " modules for them to run in the place of");
+                fail(makeString("internal error: the typed program has "_s, typedProgram->entries.size(), " entry functions for "_s, numberOfEntriesWithModule, " modules"_s));
                 return { };
             }
             uint32_t numberOfTypedFunctions = typedProgram->functions.size();
@@ -6216,6 +6216,38 @@ struct BytecodeLinkEncoder::Impl {
             });
             auto nameOf = [&](AOT::Typed::FunctionID id) {
                 return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
+            };
+            auto giveBackRoom = [](auto& self, AOT::CompiledCode& code) -> void {
+                code.bytes.shrinkToFit();
+                code.instructions.shrinkToFit();
+                code.dataInCode.shrinkToFit();
+                auto& info = code.info;
+                info.indexReferences.shrinkToFit();
+                info.spreadSites.shrinkToFit();
+                info.inlineFrames.shrinkToFit();
+                info.stubCalls.shrinkToFit();
+                info.argumentMoves.shrinkToFit();
+                info.sites.shrinkToFit();
+                info.knownCallees.shrinkToFit();
+                info.siteConstants.shrinkToFit();
+                info.plans.shrinkToFit();
+                info.quotableSites.shrinkToFit();
+                info.constructSites.shrinkToFit();
+                info.sitesThatConstruct.shrinkToFit();
+                info.callSites.shrinkToFit();
+                info.identifierIndices.shrinkToFit();
+                info.typedIdentifierIndices.shrinkToFit();
+                info.typedIdentifierNames.shrinkToFit();
+                info.typedCatchEntrypointsForCallSites.shrinkToFit();
+                info.faultingAccesses.shrinkToFit();
+                info.typedPositions.shrinkToFit();
+                info.typedSourceNames.shrinkToFit();
+                info.constantIndices.shrinkToFit();
+                info.constructionStarts.shrinkToFit();
+                info.quotes.shrinkToFit();
+                for (auto& continuation : code.continuations)
+                    self(self, continuation);
+                code.continuations.shrinkToFit();
             };
             auto compileTypedFunctions = [&] {
                 for (;;) {
@@ -6235,6 +6267,7 @@ struct BytecodeLinkEncoder::Impl {
                     result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
                     if (result->isCompiled)
                         AOT::ImageBuilder::clearStubCalls(result->code);
+                    giveBackRoom(giveBackRoom, result->code);
                     typedResults[function] = WTF::move(result);
                 }
                 builder.compileRegExpsUntilAllAreRequested();
@@ -6317,7 +6350,9 @@ struct BytecodeLinkEncoder::Impl {
                     auto& declined = typedProgram->at(id);
                     LineColumn position = typedProgram->lineColumnFor(declined.module, declined.position);
                     String path = declined.module ? String::fromUTF8(typedProgram->string(typedProgram->modules[declined.module.index()].displayPath)) : String();
-                    dataLogLn("AOT: `", nameOf(id), "` (", path, ":", position.line, ":", position.column, ") was not compiled: ", result->code.whyDeclined);
+                    bool isBodyOfModule = declined.kind == AOT::Typed::Format::FunctionKind::Module || declined.has(AOT::Typed::Format::FunctionIsCodeOfModule);
+                    String what = isBodyOfModule ? String("the top-level code"_s) : makeString('`', nameOf(id), '`');
+                    fail(makeString(what, " cannot be compiled ahead of time: "_s, result->code.whyDeclined), WTF::move(path), position);
                     ++numberOfDeclinedFunctions;
                     continue;
                 }
@@ -6368,11 +6403,20 @@ struct BytecodeLinkEncoder::Impl {
         }
         endPhase("regular expressions"_s);
         Vector<uint8_t> image = builder.finish();
+        if (!builder.whyFailed().isNull())
+            fail(builder.whyFailed());
         endPhase("writing the image"_s);
         reportableSites = builder.takeReportableSites();
         return image;
     }
     Vector<FunctionReportableSites> reportableSites;
+    Vector<BuildError> buildErrors;
+    void fail(String message, String path = { }, LineColumn position = { }) { buildErrors.append(BuildError { WTF::move(message), WTF::move(path), position }); }
+    String pathOf(size_t module) const
+    {
+        auto& url = modules[module].source.provider()->sourceOrigin().url();
+        return url.protocolIsFile() ? url.fileSystemPath() : url.string();
+    }
 
     struct FunctionToCompile {
         unsigned module;
@@ -6461,11 +6505,11 @@ bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::s
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");
     m_impl->typedModules = Vector<uint32_t, 1>(modules);
     if (!m_impl->typedProgram) {
-        dataLogLn("AOT: ", whyFailed);
+        m_impl->fail(makeString("internal error: the typed program cannot be read: "_s, whyFailed));
         return false;
     }
     if (m_impl->typedProgram->entries.size() != modules.size()) {
-        dataLogLn("AOT: ", m_impl->typedProgram->entries.size(), " entry functions, and ", modules.size(), " modules for them to run in the place of");
+        m_impl->fail(makeString("internal error: the typed program has "_s, m_impl->typedProgram->entries.size(), " entry functions for "_s, modules.size(), " modules"_s));
         m_impl->typedProgram = nullptr;
         return false;
     }
@@ -6487,7 +6531,7 @@ bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::s
     }
     auto findings = AOT::Typed::optimize(*m_impl->typedProgram);
     for (auto& finding : findings)
-        dataLogLn("AOT: the types do not hold: ", finding);
+        m_impl->fail(makeString("internal error: the types of the program do not hold: "_s, finding));
     if (!findings.isEmpty()) {
         // It has no placement. Whoever goes on after the refusal must not find it and compile it.
         m_impl->typedProgram = nullptr;
@@ -6507,6 +6551,15 @@ void installImageCompiler()
 {
 #if ENABLE(AOT) && (CPU(ARM64) || CPU(X86_64))
     g_compilerHooks.compileImage = [](void* impl) { return static_cast<BytecodeLinkEncoder::Impl*>(impl)->compileImage(); };
+#endif
+}
+
+auto BytecodeLinkEncoder::takeBuildErrors() -> Vector<BuildError>
+{
+#if ENABLE(AOT)
+    return std::exchange(m_impl->buildErrors, { });
+#else
+    return { };
 #endif
 }
 

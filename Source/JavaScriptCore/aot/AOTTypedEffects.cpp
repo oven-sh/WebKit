@@ -154,8 +154,33 @@ static bool coerces(const Type& from, const Type& to)
     return from.hasObjects() && !to.views.isEmpty();
 }
 
+static void findFieldsThatAreAnyObjectInSomeMember(Program& program)
+{
+    Vector<Vector<StringID, 2>> namesOfSuchFields(program.layouts.size());
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        for (auto& field : program.layouts[i].fields) {
+            if (!field.type || program.at(field.type).anyObject || program.at(field.type).admitsForeignObjects(program))
+                namesOfSuchFields[i].append(field.name);
+        }
+    }
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        auto& view = program.layouts[i];
+        for (LayoutID member : view.members) {
+            if (member.index() == i)
+                continue;
+            for (StringID name : namesOfSuchFields[member.index()]) {
+                for (auto& field : view.fields) {
+                    if (field.name == name)
+                        field.isAnyObjectInSomeMember = true;
+                }
+            }
+        }
+    }
+}
+
 void findViewsRetaggedTo(Program& program)
 {
+    findFieldsThatAreAnyObjectInSomeMember(program);
     // As Coercion in AOTTypedObject.cpp goes about it.
     unsigned numberOfLayouts = program.layouts.size();
     BitVector isSpecialization(numberOfLayouts);
@@ -249,7 +274,7 @@ Writes writesOfElementRead(const Program& program, const Type& type)
 
 bool claimMayMakeObjects(const Program& program, const Function& function, const Value& value)
 {
-    if ((value.castReason() != CastReason::Claim && value.castReason() != CastReason::Flow) || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
+    if ((value.castReason() != CastReason::Claim && value.castReason() != CastReason::Flow && value.castReason() != CastReason::Store) || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
         return false;
     auto& from = program.typeOf(function, value.child(0));
     return (from.anyObject || from.admitsForeignObjects(program)) && writesOfElementRead(program, program.at(value.type)) != Writes::Nothing;
@@ -262,8 +287,8 @@ bool fieldReadMayMakeObjects(const Program& program, const Function& function, c
     auto access = fieldOf(program, program.typeOf(function, value.child(0)), value.string());
     if (!access)
         return false;
-    TypeID held = program.at(access->layout).fields[access->field].type;
-    return !held || program.at(held).anyObject;
+    auto& field = program.at(access->layout).fields[access->field];
+    return !field.type || program.at(field.type).anyObject || program.at(field.type).admitsForeignObjects(program) || field.isAnyObjectInSomeMember;
 }
 
 Writes writesOfCast(const Program& program, const Function& function, const Value& value)
@@ -277,8 +302,8 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     case CastReason::Upcast:
         return Writes::Pure;
     case CastReason::Claim:
-        return claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::Store:
+        return claimMayMakeObjects(program, function, value) ? Writes::RuntimeState : Writes::Nothing;
     case CastReason::NonNull:
         return Writes::Nothing;
     case CastReason::Flow:
@@ -319,7 +344,7 @@ bool castWritesShapeWords(const Program& program, const Function& function, cons
         return narrowingMayRetag(program, program.at(value.type)) || (program.castsMayRetag && claimMayMakeObjects(program, function, value));
     if (!program.castsMayRetag)
         return false;
-    if (value.castReason() == CastReason::Claim)
+    if (value.castReason() == CastReason::Claim || value.castReason() == CastReason::Store)
         return claimMayMakeObjects(program, function, value);
     auto& from = program.typeOf(function, value.child(0));
     // Also of an object of the program that a plain object leads to.

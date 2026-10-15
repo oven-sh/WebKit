@@ -1642,6 +1642,10 @@ Operand Lowering::lowerLanguageOperation(ValueID id, const Value& value)
         callICStub(stub, Void, { { in<Boxed>(value.arguments[0]).value(), firstStubOperandGPR }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[2]).value(), GPRInfo::argumentGPR2 } }, std::nullopt, effectsOfBuiltinCall(value));
         return ensure(undefined(), m_program.at(m_program.types.undefined), type);
     }
+    case LanguageOperation::CloneObjectAfter:
+        if (value.arguments.size() == 1)
+            return ensure(finishObjectLiteral(in<CellPointer>(value.arguments[0])), m_program.at(m_program.types.object), type);
+        break;
     case LanguageOperation::CloneObject:
         if (!m_isCarryingOutMergeGroup) {
             if (auto group = findMergeGroup(m_currentIndexInBlock)) {
@@ -1953,6 +1957,7 @@ Operand Lowering::lower(ValueID id, const Value& value)
                 if (row.isWhole && !Options::validateAOTTypedFacts())
                     fail("a birth that was settled to be whole has no literal"_s);
             }
+            room = std::max(room, roomInLineOfLiteral(m_program, m_function, id, false, roomForCastsOf(id)));
             return ensure(countPlainAllocation(PlainAllocationKind::Object, id, newEmptyObject(room)), m_program.at(m_program.types.object), type);
         }
     case Opcode::Add:
@@ -2461,8 +2466,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
 #endif
     proc.code().setChargesForCalleeSaves();
     proc.code().setLaysRareBlocksInGaps();
-    if (auto& outlining = OutliningOptions::asked(); outlining && outlining->takesRareCode)
-        proc.code().setNotesStartOfRareCode();
+    proc.code().setNotesStartOfRareCode();
     if (Options::aotMapFilePath()) [[unlikely]]
         proc.setNeedsPCToOriginMap();
     context.nilTestMarker = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers&, const StackmapGenerationParams&) { });
@@ -2506,7 +2510,7 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
             return;
         AllowMacroScratchRegisterUsage allowScratch(jit);
         // A general entry calls its function, which tests at once.
-        bool isLeftToCallee = function.isGenericEntrypoint() && function.inlineFrames.size() <= 1;
+        bool isLeftToCallee = function.isGenericEntrypoint() && function.inlineFrames.size() <= 1 && program.generalEntriesWhoseFunctionAsks.get(id.index());
         static_assert(maxFrameSizeWithoutStackCheck <= 256);
         fitsByProof = context.emitsCalls && !isLeftToCallee && program.isEnteredWithRoomOnStack(id) && code.frameSize() <= maxFrameSizeWithoutStackCheck;
         isLeftToCallee |= fitsByProof;
@@ -2555,9 +2559,6 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     mergeIdenticalBlocks(proc.code());
     if (context.hasNoFrame(proc.code()) || (isX86() && !proc.code().calleeSaveRegisterAtOffsetList().registerCount()))
         returnInPlaceOfJumpingToAReturn(proc.code());
-    uint8_t regionsForOutlining = OutliningOptions::isFromTypedLowering | (program.isHotByText(id) ? 0 : OutliningOptions::isNotHotByText) | (program.isColdByGraph(id) ? OutliningOptions::isColdByGraph : 0);
-    const bool keepsRecords = Options::keepAOTInstructionRecordsForTesting() || OutliningOptions::asked();
-    context.notesCode = keepsRecords;
     CCallHelpers jit;
 #if CPU(X86_64)
     jit.m_assembler.noteLinkedJumps();
@@ -2602,7 +2603,9 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     info.calleeSaveRegisters = proc.calleeSaveRegisterAtOffsetList();
     constexpr unsigned maxFrameSizeInBytes = std::numeric_limits<uint16_t>::max() * stackAlignmentBytes();
     bool savedRegistersAreTooFar = info.calleeSaveRegisters.registerCount() && -info.calleeSaveRegisters.at(0).offset() / static_cast<ptrdiff_t>(sizeof(CPURegister)) > static_cast<ptrdiff_t>(ImageFrame::maxCalleeSavesStart);
-    if (info.frameSizeInBytes > maxFrameSizeInBytes || savedRegistersAreTooFar) {
+    static const char* const limitForTesting = byteCast<char>(Options::aotImageLimitToExceedForTesting());
+    bool isOverForTesting = limitForTesting && !strcmp(limitForTesting, program.entries.contains(id) ? "frameSize" : "functionFrameSize");
+    if (info.frameSizeInBytes > maxFrameSizeInBytes || savedRegistersAreTooFar || isOverForTesting) {
         result.whyDeclined = makeString("it holds so many values at once that its frame on the stack would be "_s, info.frameSizeInBytes, " bytes, and "_s, maxFrameSizeInBytes, " is the most: a very large object or array literal does that"_s);
         return false;
     }
@@ -2727,24 +2730,22 @@ static bool compilePart(const Program& program, FunctionID id, const Function& f
     if (Options::aotMapFilePath()) [[unlikely]]
         result.bytesByOperation = makeString(bytesByOperation(proc.pcToOriginMap(), linkBuffer, info.codeSize), context.literalsForMap.isEmpty() ? ""_s : "\nV"_s, context.literalsForMap.toString());
     result.bytes.append(std::span { static_cast<const uint8_t*>(start), static_cast<size_t>(info.codeSize) });
-    if (keepsRecords) {
-        auto offsetOf = [&](CCallHelpers::Label label) {
-            return static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
-        };
-        if (proc.code().notesStartOfRareCode())
-            result.startOfRareCode = std::min<uint32_t>(offsetOf(proc.code().startOfRareCode()), info.codeSize);
-        for (auto& data : context.dataInCode)
-            result.dataInCode.append({ offsetOf(data.start), data.numberOfWords, false });
-        for (auto [table, numberOfEntries] : proc.code().tablesInCode())
-            result.dataInCode.append({ offsetOf(table), numberOfEntries, true });
-        std::ranges::sort(result.dataInCode, { }, &DataInCode::offset);
+    auto offsetOf = [&](CCallHelpers::Label label) {
+        return static_cast<uint32_t>(static_cast<uint8_t*>(linkBuffer.locationOf<JSEntryPtrTag>(label).untaggedPtr()) - static_cast<uint8_t*>(start));
+    };
+    result.startOfRareCode = std::min<uint32_t>(offsetOf(proc.code().startOfRareCode()), info.codeSize);
+    for (auto& data : context.dataInCode)
+        result.dataInCode.append({ offsetOf(data.start), data.numberOfWords, false });
+    for (auto [table, numberOfEntries] : proc.code().tablesInCode())
+        result.dataInCode.append({ offsetOf(table), numberOfEntries, true });
+    std::ranges::sort(result.dataInCode, { }, &DataInCode::offset);
 #if CPU(X86_64)
-        result.instructions = recordsOfInstructions(result.bytes.span(), result.dataInCode.span());
+    result.instructions = recordsOfInstructions(result.bytes.span(), result.dataInCode.span());
 #endif
-        result.hasNotes = true;
-    }
+    result.hasNotes = true;
     result.info = WTF::move(info);
-    result.regionsForOutlining = regionsForOutlining;
+    result.rareCodeMayBeOutlined = true;
+    result.allCodeMayBeOutlined = program.isColdByGraph(id);
     hasFrame = !context.hasNoFrame(proc.code());
     return true;
 }

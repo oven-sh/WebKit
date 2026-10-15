@@ -778,10 +778,8 @@ struct TmpData {
 #if USE(BUN_JSC_ADDITIONS)
     uint32_t allocationFailedAtEpoch { 0 };
     uint32_t evictionFailedAtEpoch { 0 };
-#if USE(BUN_JSC_ADDITIONS)
     uint64_t clobberedRegs { 0 };
     bool hasClobberedRegs { false };
-#endif
 #endif
     uint32_t splitAroundClobbersMetadataIndex : 31 { 0 };
     uint32_t hasColdUse : 1 { 0 };
@@ -2675,9 +2673,7 @@ private:
         Width width = widthForConflicts<bank>(tmp);
 #if USE(BUN_JSC_ADDITIONS)
         uint32_t failedAtEpoch = tmpData.allocationFailedAtEpoch;
-#if USE(BUN_JSC_ADDITIONS)
         uint64_t clobbered = clobberedRegs(tmpData);
-#endif
 #endif
 
         auto tryAllocateToReg = [&](Reg r) {
@@ -2686,10 +2682,8 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
             if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
                 return false;
-#if USE(BUN_JSC_ADDITIONS)
             if (clobbered >> r.index() & 1)
                 return false;
-#endif
 #endif
             LiveRange& liveRange = tmpData.liveRange;
             RegisterRange& regRanges = m_regRanges[r];
@@ -2797,9 +2791,7 @@ private:
         Width width = widthForConflicts<bank>(tmp);
 #if USE(BUN_JSC_ADDITIONS)
         uint32_t failedAtEpoch = tmpData.evictionFailedAtEpoch;
-#if USE(BUN_JSC_ADDITIONS)
         uint64_t clobbered = clobberedRegs(tmpData);
-#endif
 #endif
         for (Reg r : m_allowedRegistersInPriorityOrder[bank]) {
             if (!mayTake(tmpData, r))
@@ -2807,10 +2799,8 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
             if (failedAtEpoch && m_epochOfLastRemoval[r.index()] <= failedAtEpoch)
                 continue;
-#if USE(BUN_JSC_ADDITIONS)
             if (clobbered >> r.index() & 1)
                 continue;
-#endif
 #endif
             SpillCost conflictsSpillCost(0);
             m_visited.clear();
@@ -3115,9 +3105,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         originalData.allocationFailedAtEpoch = 0;
         originalData.evictionFailedAtEpoch = 0;
-#if USE(BUN_JSC_ADDITIONS)
         originalData.hasClobberedRegs = false;
-#endif
 #endif
         originalData.useDefCost.subtractSaturating(loopData.useDefCost);
 
@@ -3326,9 +3314,7 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         tmpData.allocationFailedAtEpoch = 0;
         tmpData.evictionFailedAtEpoch = 0;
-#if USE(BUN_JSC_ADDITIONS)
         tmpData.hasClobberedRegs = false;
-#endif
 #endif
         tmpData.splitAroundClobbersMetadataIndex = m_aroundClobbersMetadata.size();
         setStageAndEnqueue(tmp, tmpData, Stage::TryAllocate);
@@ -4080,17 +4066,9 @@ private:
                     if (Options::airGreedyRegAllocRecordsFalseMoveForTesting() && away)
                         m_movesRoundClobbers.append({ block->index(), indexAhead, false, away, home });
                 }
-#if USE(BUN_JSC_ADDITIONS)
                 insert(block, indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
 #else
-                m_insertionSets[block].insert(indexAhead, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-#endif
-#else
-#if USE(BUN_JSC_ADDITIONS)
-                insert(block, instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-#else
                 m_insertionSets[block].insert(instIndex, ClobberMoveFrom, move, inst.origin, metadata.originalTmp, arg);
-#endif
 #endif
 #if USE(BUN_JSC_ADDITIONS)
                 insert(block, instIndex + 1, ClobberMoveTo, move, inst.origin, arg, metadata.originalTmp);
@@ -4376,11 +4354,9 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
     std::array<uint32_t, Reg::maxIndex() + 1> m_epochOfLastRemoval { };
     uint32_t m_removalEpoch { 1 };
-#if USE(BUN_JSC_ADDITIONS)
     Vector<Point> m_clobberPoints;
     Vector<uint64_t> m_clobberedRegsAtPoint;
     uint64_t m_allClobberedRegs { 0 };
-#endif
 #endif
     GenerationalSet<uint8_t, SaVector> m_visited;
     PriorityQueue<TmpPriority> m_queue;

@@ -200,7 +200,6 @@ struct Value {
     BuiltinID readsMethodFor() const { return hasWordOfKnownPlace() ? BuiltinID() : BuiltinID(immediates[1]); }
     // Of PutById: it stands for a pair of an `Initialize`, and for which. See initialStoresOf().
     bool isInitialStore() const { return immediates[1] != Format::none && !hasWordOfKnownPlace(); }
-    static constexpr uint32_t atKnownPlace = 1u << 30;
     static constexpr uint32_t numberOfKnownPlaces = 62;
     static constexpr uint32_t isFirstStore = 0x200;
     static constexpr uint32_t goesByName = 0x400;
@@ -570,6 +569,7 @@ struct Field {
     // Also set, with a test that nothing passes, for a field that no operation gets at through this layout: a member may have the
     // property somewhere else. Only the first stores to an object that has just been made of the layout go by such a field.
     bool isLackedBySomeMember { false };
+    bool isAnyObjectInSomeMember { false };
     ShapeTest membersWithIt;
     bool isElsewhereInSomeMember { false };
     // From placement on: see fieldIsPinned in AOTTypedData.h. Of a field of a layout that objects are made as.
@@ -646,6 +646,7 @@ struct Layout {
     // The program is seen to freeze or seal objects that are looked at as a type this is a member of. A store to a field tests for that.
     // Freezing an object of any other layout is refused.
     bool mayBeFrozen { false };
+    bool isStoredToOnlyAtBirth { false };
     bool mayGiveUp { false };
     // As a view. The checker has seen an object that the program has not laid out, which honestly is of the type, get into a place of the
     // type: an object of the host, of a class of a `.d.ts` file or of JavaScript. It can be neither copied nor turned away. So all that a
@@ -1012,7 +1013,7 @@ public:
     void dump(PrintStream&, FunctionID) const;
     void dump(PrintStream&, const Type&) const;
 
-    Vector<uint8_t> buffer;
+    std::span<const uint8_t> buffer;
     Vector<std::span<const uint8_t>> strings;
     Vector<Layout> layouts;
     Vector<Variable> variables;
@@ -1138,6 +1139,7 @@ public:
     // From optimize() on: the functions that only direct calls reach and that no call is left of. They have no code.
     BitVector functionsWithoutCalls;
     BitVector functionsEnteredWithRoomOnStack;
+    BitVector generalEntriesWhoseFunctionAsks;
     bool isEnteredWithRoomOnStack(FunctionID id) const { return functionsEnteredWithRoomOnStack.get(id.index()); }
     bool hasCode(FunctionID id) const { return !functionsWithoutCalls.get(id.index()); }
     struct ModuleEvaluation {

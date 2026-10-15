@@ -60,6 +60,11 @@ static CCallHelpers::Label* stubLabels()
     return labels->data();
 }
 static Vector<std::pair<CCallHelpers::Call, Stub>>* s_callsBetweenStubs;
+struct StackTestAheadOfEntering {
+    CCallHelpers::Jump doesNotFit;
+    CCallHelpers::Label behind;
+};
+static Vector<StackTestAheadOfEntering>* s_stackTestsAheadOfEntering;
 static Vector<CCallHelpers::Label>* s_returnsIntoAdapters;
 static Vector<CCallHelpers::Label>* s_returnsFromFindingTargets;
 #if CPU(ARM64)
@@ -76,6 +81,12 @@ static CCallHelpers::Label& returnFromCallWithList() { static NeverDestroyed<CCa
 static void callStubFromStub(CCallHelpers& jit, Stub stub)
 {
     s_callsBetweenStubs->append({ jit.nearCall(), stub });
+}
+
+static void testStackAheadOfEntering(CCallHelpers& jit)
+{
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, CCallHelpers::stackPointerRegister, Address(instanceGPR, Instance::offsetOfTrapAwareSoftStackLimit()));
+    s_stackTestsAheadOfEntering->append({ doesNotFit, jit.label() });
 }
 
 static void jumpToEntry(CCallHelpers& jit, GPRReg data, Entry entry)
@@ -491,7 +502,7 @@ static GPRReg numberOfColdOperationGPR()
 }
 
 #if CPU(X86_64)
-static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsValue = false, bool checksException = true, bool suppliesInstance = true, bool returnsDouble = false, bool savesFPRs = true, GPRReg number = T9)
+static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsValue = false, bool checksException = true, bool suppliesInstance = true, bool returnsDouble = false, bool savesFPRs = true, GPRReg number = T9, GPRReg firstArgumentIsIn = InvalidGPRReg, GPRReg valueGoesTo = InvalidGPRReg, const Function<void()>& aheadOfReturn = nullptr)
 {
     RELEASE_ASSERT(!isLeaf);
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -506,6 +517,8 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
         jit.store64(saved[i], Address(sp, i * 8));
     for (unsigned i = 0; i < numberOfFPRs; ++i)
         jit.storeDouble(static_cast<FPRReg>(X86Registers::xmm0 + i), Address(sp, (numberOfGPRs + i) * 8));
+    if (firstArgumentIsIn != InvalidGPRReg)
+        jit.move(firstArgumentIsIn, A1);
     if (suppliesInstance)
         jit.move(instanceGPR, A0);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), operationGPR);
@@ -518,7 +531,11 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
     } else
         jit.move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
     for (unsigned i = 0; i < numberOfGPRs; ++i) {
-        if (!returnsValue || saved[i] != GPRInfo::returnValueGPR)
+        if (saved[i] == valueGoesTo)
+            jit.store64(GPRInfo::returnValueGPR, Address(sp, i * 8));
+    }
+    for (unsigned i = 0; i < numberOfGPRs; ++i) {
+        if (!returnsValue || saved[i] != GPRInfo::returnValueGPR || valueGoesTo != InvalidGPRReg)
             jit.load64(Address(sp, i * 8), saved[i]);
     }
     static_assert(FPRInfo::returnValueFPR == X86Registers::xmm0);
@@ -530,6 +547,8 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
         return;
     }
     Jump exception = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+    if (aheadOfReturn)
+        aheadOfReturn();
     jit.ret();
     exception.link(&jit);
     loadInstance(jit, T9);
@@ -603,7 +622,7 @@ static void generateColdCallFunction(CCallHelpers& jit)
 }
 static void generateLeafColdCallFunction(CCallHelpers& jit) { jit.breakpoint(); }
 #else
-static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsValue = false, bool checksException = true, bool suppliesInstance = true, bool returnsDouble = false, bool savesFPRs = true, std::optional<unsigned> numberOfValuesInArguments = std::nullopt, GPRReg firstArgumentIsIn = InvalidGPRReg, GPRReg secondArgumentIsIn = InvalidGPRReg)
+static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsValue = false, bool checksException = true, bool suppliesInstance = true, bool returnsDouble = false, bool savesFPRs = true, std::optional<unsigned> numberOfValuesInArguments = std::nullopt, GPRReg firstArgumentIsIn = InvalidGPRReg, GPRReg secondArgumentIsIn = InvalidGPRReg, GPRReg valueGoesTo = InvalidGPRReg, const Function<void()>& aheadOfReturn = nullptr)
 {
     constexpr GPRReg fp = GPRInfo::callFrameRegister;
     constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
@@ -642,9 +661,12 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
         jit.loadPtr(Address(scratch, VM::exceptionOffset()), scratch);
     } else
         jit.move(returnsValue ? GPRInfo::returnValueGPR2 : GPRInfo::returnValueGPR, scratch);
-    if (returnsValue)
+    if (valueGoesTo != InvalidGPRReg)
+        jit.store64(GPRInfo::returnValueGPR, Address(sp, (valueGoesTo - ARM64Registers::x0) * 8));
+    bool valueStaysInPlace = returnsValue && valueGoesTo == InvalidGPRReg;
+    if (valueStaysInPlace)
         jit.load64(Address(sp, 8), ARM64Registers::x1);
-    for (unsigned i = returnsValue ? 2 : 0; i < numberOfGPRs; i += 2)
+    for (unsigned i = valueStaysInPlace ? 2 : 0; i < numberOfGPRs; i += 2)
         jit.loadPair64(sp, TrustedImm32(i * 8), static_cast<GPRReg>(ARM64Registers::x0 + i), static_cast<GPRReg>(ARM64Registers::x0 + i + 1));
     static_assert(FPRInfo::returnValueFPR == ARM64Registers::q0);
     RELEASE_ASSERT(savesFPRs || !returnsDouble);
@@ -656,6 +678,8 @@ static void generateColdOperation(CCallHelpers& jit, bool isLeaf, bool returnsVa
     Jump exception;
     if (checksException)
         exception = jit.branchTestPtr(CCallHelpers::NonZero, scratch);
+    if (aheadOfReturn)
+        aheadOfReturn();
     if (isLeaf) {
         jit.move(CCallHelpers::linkRegister, scratch);
         jit.popPair(fp, CCallHelpers::linkRegister);
@@ -1743,6 +1767,7 @@ static void generateLazyConstant(CCallHelpers& jit, bool isLeaf, ptrdiff_t table
 static void generateCallModuleFunction(CCallHelpers& jit)
 {
     static_assert(ClosureWord::numberOfOffsetBits == 32);
+    testStackAheadOfEntering(jit);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfTypedFunctions()), T11);
     jit.load32(CCallHelpers::BaseIndex(T11, A1, CCallHelpers::TimesEight), T11);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfCode()), T9);
@@ -1812,11 +1837,10 @@ static void loadBaseAndOffsetOfSubstring(CCallHelpers& jit, GPRReg string, GPRRe
     jit.urshift64(TrustedImm32(16), offset);
 }
 
-void emitCharactersOfSubstring(CCallHelpers& jit)
+static void emitCharactersOfSubstring(CCallHelpers& jit, GPRReg offset)
 {
     constexpr GPRReg base = T9;
     constexpr GPRReg flags = T9;
-    constexpr GPRReg offset = T10;
     constexpr GPRReg string = T12;
     constexpr GPRReg data = T12;
     constexpr GPRReg length = T13;
@@ -1831,6 +1855,11 @@ void emitCharactersOfSubstring(CCallHelpers& jit)
     jit.lshift64(TrustedImm32(1), offset);
     isNarrow.link(&jit);
     jit.addPtr(offset, data);
+}
+
+void emitCharactersOfSubstring(CCallHelpers& jit)
+{
+    emitCharactersOfSubstring(jit, T10);
 }
 
 static void generateCodeUnitOfRope(CCallHelpers& jit, bool isLeaf)
@@ -1886,6 +1915,49 @@ static void generateCharactersOfSubstring(CCallHelpers& jit)
     emitCharactersOfSubstring(jit);
     jit.ret();
 }
+
+static void generateCharactersOfRope(CCallHelpers& jit, bool isLeaf)
+{
+    constexpr GPRReg fiber = T9;
+    constexpr GPRReg flags = T9;
+    constexpr GPRReg string = T12;
+    constexpr GPRReg data = T12;
+    constexpr GPRReg length = T13;
+#if CPU(ARM64)
+    constexpr GPRReg scratch = ARM64Registers::x17;
+#else
+    constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
+#endif
+    static_assert(noOverlap(T9, T10, T12, T13, scratch));
+    auto loadCharactersOfImpl = [&] {
+        jit.load32(Address(fiber, StringImpl::lengthMemoryOffset()), length);
+        jit.loadPtr(Address(fiber, StringImpl::dataOffset()), data);
+        jit.load32(Address(fiber, StringImpl::flagsOffset()), flags);
+    };
+    jit.loadPtr(Address(string, JSString::offsetOfValue()), fiber);
+    Jump isFlat = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSString::isRopeInPointer));
+    Jump isNoSubstring = jit.branchTestPtr(CCallHelpers::Zero, fiber, TrustedImm32(JSRopeString::isSubstringInPointer));
+    emitCharactersOfSubstring(jit, scratch);
+    returnToTypedCaller(jit, isLeaf);
+
+    isFlat.link(&jit);
+    loadCharactersOfImpl();
+    returnToTypedCaller(jit, isLeaf);
+
+    isNoSubstring.link(&jit);
+    jit.move(TrustedImm32(static_cast<unsigned>(Entry::operationAOTTypedFlatten) * sizeof(void*)), T9);
+#if CPU(ARM64)
+    generateColdOperation(jit, isLeaf, true, true, true, false, true, std::nullopt, string, InvalidGPRReg, fiber, [&] { loadCharactersOfImpl(); });
+#else
+    generateColdOperation(jit, isLeaf, true, true, true, false, true, T9, string, fiber, [&] { loadCharactersOfImpl(); });
+#endif
+}
+static void generateCharactersOfRope(CCallHelpers& jit) { generateCharactersOfRope(jit, false); }
+#if CPU(ARM64)
+static void generateLeafCharactersOfRope(CCallHelpers& jit) { generateCharactersOfRope(jit, true); }
+#else
+static void generateLeafCharactersOfRope(CCallHelpers& jit) { jit.breakpoint(); }
+#endif
 
 // `fiber`: what the string in `string` points to; then its characters, if they have 8 bits and it is flat or a part of a flat one: what slice, substring and trim yield. `string` is kept.
 static void loadCharacters8(CCallHelpers& jit, GPRReg string, GPRReg fiber, GPRReg scratch, CCallHelpers::JumpList& isLeftToOperation)
@@ -2506,10 +2578,14 @@ static void toEntryWord(CCallHelpers& jit, GPRReg instance, GPRReg result, GPRRe
 #endif
 }
 
+enum class StackIsTested : bool { No, Yes };
+
 // The address of the code, of a ClosureWord.
-static void toAddressOfCode(CCallHelpers& jit, GPRReg word, GPRReg scratch)
+static void toAddressOfCode(CCallHelpers& jit, GPRReg word, GPRReg scratch, StackIsTested stackIsTested = StackIsTested::No)
 {
     ASSERT(noOverlap(word, scratch, instanceGPR));
+    if (stackIsTested == StackIsTested::No)
+        testStackAheadOfEntering(jit);
     static_assert(ClosureWord::numberOfOffsetBits == 32);
     jit.loadPtr(Address(instanceGPR, Instance::offsetOfCode()), scratch);
 #if CPU(ARM64)
@@ -6825,6 +6901,50 @@ static void generatePollAtPrologue(CCallHelpers& jit)
     s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ThrowStackOverflowAtPrologue });
 }
 
+static void generatePollAheadOfEntering(CCallHelpers& jit)
+{
+    constexpr GPRReg sp = CCallHelpers::stackPointerRegister;
+#if CPU(X86_64)
+    constexpr GPRReg scratch = CCallHelpers::s_scratchRegister;
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp, scratch);
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, scratch, Address(instanceGPR, Instance::offsetOfSoftStackLimit()));
+    jit.subPtr(TrustedImm32(sizeof(void*)), sp);
+#else
+    constexpr GPRReg returnAddressOfSite = ARM64Registers::x16;
+    constexpr GPRReg scratch = ARM64Registers::x17;
+    Jump doesNotFit = jit.branchPtr(CCallHelpers::Below, sp, Address(instanceGPR, Instance::offsetOfSoftStackLimit()));
+    jit.pushPair(returnAddressOfSite, CCallHelpers::linkRegister);
+#endif
+    preservingRegistersOfCaller(jit, false, [&](unsigned) {
+        jit.move(instanceGPR, A0);
+        jit.loadPtr(Address(instanceGPR, Instance::offsetOfRuntimeTable()), T11);
+        jit.loadPtr(Address(T11, static_cast<unsigned>(Entry::operationAOTTypedPollSlow) * sizeof(void*)), T11);
+        jit.call(T11, OperationPtrTag);
+    });
+#if CPU(X86_64)
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), scratch);
+    Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, Address(scratch, VM::exceptionOffset()));
+    jit.ret();
+    hasThrown.link(&jit);
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+    generateHandleException(jit);
+    doesNotFit.link(&jit);
+    jit.addPtr(TrustedImm32(sizeof(void*)), sp);
+#else
+    jit.loadPtr(Address(instanceGPR, Instance::offsetOfVM()), returnAddressOfSite);
+    jit.loadPtr(Address(returnAddressOfSite, VM::exceptionOffset()), returnAddressOfSite);
+    jit.popPair(CCallHelpers::linkRegister, scratch);
+    Jump hasThrown = jit.branchTestPtr(CCallHelpers::NonZero, returnAddressOfSite);
+    jit.farJump(scratch, NoPtrTag);
+    hasThrown.link(&jit);
+    generateHandleException(jit);
+    doesNotFit.link(&jit);
+    jit.move(returnAddressOfSite, CCallHelpers::linkRegister);
+#endif
+    s_callsBetweenStubs->append({ jit.nearTailCall(), Stub::ThrowStackOverflow });
+}
+
 static void generateHandleExceptionAtPrologue(CCallHelpers& jit)
 {
     jit.emitFunctionEpilogue();
@@ -7617,12 +7737,13 @@ static void enterClosure(CCallHelpers& jit, unsigned count, CCallHelpers::JumpLi
 
     // It takes its arguments in memory: a rest parameter, `arguments`. They are all it looks at there.
     takesList.link(&jit);
+    testStackAheadOfEntering(jit);
     jit.emitFunctionPrologue();
     if (count)
         jit.subPtr(TrustedImm32(WTF::roundUpToMultipleOf<stackAlignmentBytes()>(count * sizeof(Register))), CCallHelpers::stackPointerRegister);
     for (unsigned i = 0; i < count; ++i)
         jit.store64(argumentGPR(i), Address(CCallHelpers::stackPointerRegister, i * sizeof(Register)));
-    toAddressOfCode(jit, T11, T13);
+    toAddressOfCode(jit, T11, T13, StackIsTested::Yes);
     jit.move(TrustedImm32(count), argumentGPR(0));
     jit.move(CCallHelpers::stackPointerRegister, argumentGPR(1));
     jit.call(T11, JSEntryPtrTag);
@@ -11046,6 +11167,8 @@ std::optional<RegisterSet> registersChangedBy(Stub stub)
         numberOfTemporaries = 3;
         break;
     case Stub::CharactersOfSubstring:
+    case Stub::CharactersOfRope:
+    case Stub::LeafCharactersOfRope:
         if (!isARM64())
             return std::nullopt;
         numberOfTemporaries = 5;
@@ -11212,7 +11335,7 @@ std::optional<RegisterSet> registersChangedBy(Stub stub)
     RegisterSet result = RegisterSet::macroClobberedGPRs();
     for (unsigned i = 0; i < numberOfTemporaries; ++i)
         result.add(stubTemporaryGPRs[i], IgnoreVectors);
-    if (stub == Stub::CharactersOfSubstring)
+    if (stub == Stub::CharactersOfSubstring || stub == Stub::CharactersOfRope || stub == Stub::LeafCharactersOfRope)
         result.remove(stubTemporaryGPRs[2]);
     if (stub == Stub::PushDoubleToFullVector || stub == Stub::LeafPushDoubleToFullVector) {
         result.add(A2, IgnoreVectors);
@@ -11405,6 +11528,8 @@ const StubBlob& stubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes
         CCallHelpers::Label* labels = stubLabels();
         Vector<std::pair<CCallHelpers::Call, Stub>> callsBetweenStubs;
         s_callsBetweenStubs = &callsBetweenStubs;
+        Vector<StackTestAheadOfEntering> stackTestsAheadOfEntering;
+        s_stackTestsAheadOfEntering = &stackTestsAheadOfEntering;
         Vector<CCallHelpers::Label> returnsIntoAdapters;
         s_returnsIntoAdapters = &returnsIntoAdapters;
         Vector<CCallHelpers::Label> returnsFromFindingTargets;
@@ -11577,6 +11702,14 @@ const StubBlob& stubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes
                 }
             }
             RELEASE_ASSERT(thunkLabels.size() == numberOfThunks);
+            for (auto& test : stackTestsAheadOfEntering) {
+                test.doesNotFit.link(&jit);
+#if CPU(ARM64)
+                jit.move(CCallHelpers::linkRegister, ARM64Registers::x16);
+#endif
+                callStubFromStub(jit, Stub::PollAheadOfEntering);
+                jit.jump().linkTo(test.behind, &jit);
+            }
         }
 #endif
 
@@ -11718,6 +11851,61 @@ void StubCalls::jumpToFunction(CCallHelpers& jit, uint32_t knownCallee)
     m_pending.append({ jit.nearTailCall(), Stub::Call, true, StubCall::noCallSite, knownCallee });
 }
 
+static void answerAtOnceWhereHeldValueFits(CCallHelpers& jit, const ArgumentMoves& words, CCallHelpers::JumpList& fits)
+{
+    constexpr GPRReg scratch = T11;
+    size_t first = 2;
+    while (first < words.size() && static_cast<ArgumentSource>(words[first] & 0xff) != ArgumentSource::FitsByKind)
+        first += 2;
+    if (first == words.size())
+        return;
+    GPRReg value = static_cast<GPRReg>(words[first] >> 8);
+    uint64_t kinds = words[first + 1];
+    RELEASE_ASSERT(value != scratch);
+    Jump isNoCell = jit.branchIfNotCell(value);
+    if (kinds >> FitsByKind::shiftOfTypes || kinds & FitsByKind::Object) {
+        jit.load8(Address(value, JSCell::typeInfoTypeOffset()), scratch);
+        for (uint64_t types = kinds >> FitsByKind::shiftOfTypes; types; types >>= 8)
+            fits.append(jit.branch32(CCallHelpers::Equal, scratch, TrustedImm32(static_cast<int32_t>(types & 0xff))));
+        if (kinds & FitsByKind::Object)
+            fits.append(jit.branch32(CCallHelpers::AboveOrEqual, scratch, TrustedImm32(ObjectType)));
+    }
+    if (kinds & FitsByKind::Function)
+        fits.append(jit.branchTest8(CCallHelpers::NonZero, Address(value, JSCell::typeInfoFlagsOffset()), TrustedImm32(TypeOfYieldsFunction)));
+    for (size_t i = first + 2; i < words.size(); i += 2) {
+        if (static_cast<ArgumentSource>(words[i] & 0xff) != ArgumentSource::FitsByShape)
+            continue;
+        uint32_t last = static_cast<uint32_t>(words[i + 1]);
+        uint32_t count = static_cast<uint32_t>(words[i + 1] >> 32);
+        if (count == 1) {
+            fits.append(jit.branch32(CCallHelpers::Equal, Address(value, Typed::offsetOfShapeWord), TrustedImm32(static_cast<int32_t>(0u - last))));
+            continue;
+        }
+        jit.load32(Address(value, Typed::offsetOfShapeWord), scratch);
+        jit.add32(TrustedImm32(static_cast<int32_t>(last)), scratch);
+        fits.append(jit.branch32(CCallHelpers::Below, scratch, TrustedImm32(static_cast<int32_t>(count))));
+    }
+    if (!(kinds & (FitsByKind::Undefined | FitsByKind::Null | FitsByKind::Boolean | FitsByKind::Number))) {
+        isNoCell.link(&jit);
+        return;
+    }
+    Jump isCellThatMayNotFit = jit.jump();
+    isNoCell.link(&jit);
+    if ((kinds & FitsByKind::Undefined) && (kinds & FitsByKind::Null)) {
+        jit.move(value, scratch);
+        jit.and64(TrustedImm32(~JSValue::UndefinedTag), scratch);
+        fits.append(jit.branch64(CCallHelpers::Equal, scratch, TrustedImm32(JSValue::ValueNull)));
+    } else if (kinds & FitsByKind::Undefined)
+        fits.append(jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueUndefined)));
+    else if (kinds & FitsByKind::Null)
+        fits.append(jit.branch64(CCallHelpers::Equal, value, TrustedImm32(JSValue::ValueNull)));
+    if (kinds & FitsByKind::Number)
+        fits.append(jit.branchIfNumber(value));
+    if (kinds & FitsByKind::Boolean)
+        fits.append(jit.branchIfBoolean(value, scratch));
+    isCellThatMayNotFit.link(&jit);
+}
+
 ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>& all)
 {
     ArgumentThunks result;
@@ -11731,6 +11919,8 @@ ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>& all)
     for (auto* moves : all) {
         auto& words = *moves;
         labels.append(jit.label());
+        CCallHelpers::JumpList fits;
+        answerAtOnceWhereHeldValueFits(jit, words, fits);
         Vector<std::pair<GPRReg, GPRReg>, 8> pending;
         for (size_t i = 2; i < words.size(); i += 2) {
             if (static_cast<ArgumentSource>(words[i] & 0xff) == ArgumentSource::Register)
@@ -11772,6 +11962,8 @@ ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>& all)
             GPRReg destination = static_cast<GPRReg>(words[i] >> 8);
             switch (static_cast<ArgumentSource>(words[i] & 0xff)) {
             case ArgumentSource::Register:
+            case ArgumentSource::FitsByKind:
+            case ArgumentSource::FitsByShape:
                 break;
             case ArgumentSource::Stack32:
                 jit.load32(CCallHelpers::Address(GPRInfo::callFrameRegister, static_cast<int32_t>(words[i + 1]) + wrongSlot), destination);
@@ -11788,6 +11980,10 @@ ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>& all)
             jumps.tailCall(jit, static_cast<Stub>(words[0]));
         else
             jumps.tailCall(jit, static_cast<Stub>(words[0]), static_cast<uint32_t>(words[1]));
+        if (!fits.empty()) {
+            fits.link(&jit);
+            returnToTypedCaller(jit, static_cast<Stub>(words[0]) == Stub::LeafHoldToType);
+        }
     }
     jit.padBeforePatch();
     Vector<uint32_t> storage(WTF::roundUpToMultipleOf<sizeof(uint32_t)>(jit.m_assembler.codeSize()) / sizeof(uint32_t));

@@ -419,7 +419,7 @@ String StackFrame::functionName(VM& vm) const
             if (jsFrame.isTyped()) {
                 if (AOT::typedFunctionCodeType(jsFrame.aotTypedFunction()) == ModuleCode)
                     return "module code"_str;
-                String name = AOT::typedFunctionName(jsFrame.aotTypedFunction());
+                String name = AOT::typedFunctionName(jsFrame.aotTypedFunction(), jsFrame.m_isAsyncFrame);
                 if (!jsFrame.m_isAsyncFrame)
                     return name;
                 return name.isEmpty() || AOT::typedFunctionHasGivenName(jsFrame.aotTypedFunction()) ? emptyString() : makeString("async "_s, name);

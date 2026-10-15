@@ -128,7 +128,6 @@ class ShadowRealmPrototype;
 class SourceCodeKey;
 class SourceOrigin;
 class StringConstructor;
-class Symbol;
 class SymbolTable;
 class WrapperMap;
 class WrapForValidIteratorPrototype;
@@ -1275,7 +1274,6 @@ public:
     template<typename Type> inline Type linkTimeConstantConcurrently(LinkTimeConstant) const;
 
     JS_EXPORT_PRIVATE void setAuditFunction(VM&, JSObject*);
-    JS_EXPORT_PRIVATE void setAuditTag(VM&, Symbol* privateName);
 
     inline JSObject* asyncGeneratorPrototypeNextFunction() const;
     inline JSObject* asyncIteratorPrototypeSymbolAsyncIteratorFunction() const;

@@ -932,6 +932,111 @@ bool Lowering::resultBecomesItsType(const Type& guarantee, const Type& type) con
     return value.opcode == Opcode::CallBuiltin || fieldReadMayMakeObjects(m_program, m_function, value) || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
 }
 
+std::optional<ArgumentMoves> Lowering::testsOfThunkThatHoldsTo(const Type& type) const
+{
+    constexpr GPRReg value = GPRInfo::returnValueGPR;
+    constexpr unsigned maxRanges = 2;
+    uint64_t kinds = 0;
+    unsigned numberOfTypes = 0;
+    bool hasRoom = true;
+    auto addType = [&](JSType jsType) {
+        for (unsigned i = 0; i < numberOfTypes; ++i) {
+            if ((kinds >> (FitsByKind::shiftOfTypes + 8 * i) & 0xff) == static_cast<uint64_t>(jsType))
+                return;
+        }
+        if (numberOfTypes == FitsByKind::maxTypes) {
+            hasRoom = false;
+            return;
+        }
+        kinds |= static_cast<uint64_t>(jsType) << (FitsByKind::shiftOfTypes + 8 * numberOfTypes++);
+    };
+    if (type.primitives & Primitive::Undefined)
+        kinds |= FitsByKind::Undefined;
+    if (type.primitives & Primitive::Null)
+        kinds |= FitsByKind::Null;
+    if ((type.primitives & Primitive::Boolean) == Primitive::Boolean)
+        kinds |= FitsByKind::Boolean;
+    else if (type.primitives & Primitive::Boolean)
+        return std::nullopt;
+    if (type.primitives & Primitive::Double)
+        kinds |= FitsByKind::Number;
+    else if (type.primitives & Primitive::Int)
+        return std::nullopt;
+    if (type.primitives & Primitive::String)
+        addType(StringType);
+    if (type.primitives & Primitive::Symbol)
+        addType(SymbolType);
+    if (type.primitives & Primitive::BigInt)
+        addType(HeapBigIntType);
+    Vector<uint64_t, maxRanges> ranges;
+    if (type.anyObject || type.admitsForeignObjects(m_program))
+        kinds |= FitsByKind::Object;
+    else if (type.hasObjects()) {
+        if (type.anyFunction)
+            kinds |= FitsByKind::Function;
+        for (uint16_t index : type.engineClasses)
+            addType(m_builtins.classes()[index].type);
+        Vector<ShapeTest, 4> tests;
+        for (LayoutID view : type.views)
+            tests.append(m_program.at(view).test);
+        for (auto& merged : merged(tests)) {
+            if (merged.test.passesNothing())
+                continue;
+            if (merged.bits || !merged.test.isRange() || ranges.size() == maxRanges)
+                return std::nullopt;
+            ranges.append(merged.test.last() | static_cast<uint64_t>(merged.test.count) << 32);
+        }
+    }
+    if (!hasRoom || (!kinds && ranges.isEmpty()))
+        return std::nullopt;
+    ArgumentMoves tests;
+    appendArgumentMove(tests, value, ArgumentSource::FitsByKind, kinds);
+    for (uint64_t range : ranges)
+        appendArgumentMove(tests, value, ArgumentSource::FitsByShape, range);
+    return tests;
+}
+
+Boxed Lowering::holdByThunk(Boxed given, TypeID type, ArgumentMoves&& moves)
+{
+    bool isOffUsualPath = !m_out.m_block->frequency();
+    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    applyEffects(patchpoint, { Writes::Nothing, true });
+    patchpoint->append(ConstrainedValue(given.value(), ValueRep::reg(GPRInfo::returnValueGPR)));
+    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    RegisterSet changed = *registersChangedBy(Stub::HoldToType);
+    changed.add(GPRInfo::argumentGPR1, IgnoreVectors);
+    changed.add(GPRInfo::argumentGPR2, IgnoreVectors);
+    if (!hasStubsForFunctionsWithoutFrame) {
+        if (!isOffUsualPath || LoweringContext::coldSitesForceFrame() || m_watchingHandler) {
+            m_context.emitsCalls = true;
+            patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        } else
+            m_context.holdsColdSites = true;
+    }
+    patchpoint->clobberLate(changed);
+    patchpoint->clobberEarly(isARM64() ? changed : RegisterSet::macroClobberedGPRs());
+    appendArgumentMove(moves, GPRInfo::argumentGPR1, ArgumentSource::Register, GPRInfo::returnValueGPR);
+    appendArgumentMove(moves, GPRInfo::argumentGPR2, ArgumentSource::Constant, type.index());
+    CallSite site { nextSite() };
+    patchpoint->setGenerator([context = &m_context, site, moves = WTF::move(moves)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        bool hasNoFrame = context->hasNoFrame(params.proc().code());
+        bool isLeaf = hasStubsForFunctionsWithoutFrame && hasNoFrame;
+        bool makesFrame = !hasStubsForFunctionsWithoutFrame && hasNoFrame;
+#if CPU(ARM64)
+        if (isLeaf)
+            jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
+        if (makesFrame)
+            jit.emitFunctionPrologue();
+        context->stubCalls.call(jit, isLeaf ? Stub::LeafHoldToType : Stub::HoldToType, site, moves);
+        if (makesFrame)
+            jit.emitFunctionEpilogueWithEmptyFrame();
+    });
+    unwindToLandingPad(patchpoint, site);
+    return Boxed(patchpoint);
+}
+
 Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& type)
 {
     if (m_fusedCasts && &type == &m_fusedCasts->type && !m_fusedCasts->areBeingCarriedOut)
@@ -951,6 +1056,12 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
         m_out.appendTo(misfit);
         join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(HoldOrBecome, effects, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(given.index())), type, rep));
         return join.finish();
+    }
+    if (m_currentBlock && (!m_out.m_block->frequency() || (m_program.isColdByGraph(m_id) && !m_isInLoop)) && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields
+        && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty() && repOf(guarantee) == Rep::JSValue && !(guarantee.primitives & Primitive::Absent) && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
+        && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
+        if (auto tests = testsOfThunkThatHoldsTo(type))
+            return convert(holdByThunk(remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type, WTF::move(*tests)), type, repOf(type));
     }
     bool isInColdBlockOfColdText = !m_out.m_block->frequency() && m_currentBlock && (m_program.isColdByGraph(m_id) || (goesGenerallyWhereTextIsCold() && !m_holdsWhatStrangerYields));
     if ((m_program.isColdByGraph(m_id) || isInColdBlockOfColdText) && !m_isInLoop && !m_function.isBodyOfSeveralSites

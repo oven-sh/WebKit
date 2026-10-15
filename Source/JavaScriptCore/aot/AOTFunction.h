@@ -115,7 +115,7 @@ struct FunctionRef::Location {
 
 // Functions compiled from types have no executable. Stack frames report them from Typed::Data, which lives in the image: no cells, no
 // Instance, usable on any thread.
-JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function);
+JS_EXPORT_PRIVATE String typedFunctionName(uint32_t function, bool asWritten = false);
 JS_EXPORT_PRIVATE CodeType typedFunctionCodeType(uint32_t function);
 JS_EXPORT_PRIVATE bool typedFunctionIsConstructor(uint32_t function);
 JS_EXPORT_PRIVATE bool isCompiledClassObject(JSFunction*);
@@ -133,6 +133,8 @@ JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
 JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE String nameOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE void keepTypeErrorsThrown();
+JS_EXPORT_PRIVATE String typeErrorsThrown();
 JS_EXPORT_PRIVATE bool isSloppyPlainClosure(JSCell*);
 JS_EXPORT_PRIVATE unsigned lengthOfSlimClosure(JSObject*);
 JS_EXPORT_PRIVATE Structure* cachedBoundFunctionStructure(JSObject*);

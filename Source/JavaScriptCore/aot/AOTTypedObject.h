@@ -982,7 +982,6 @@ struct State {
     JSString* string(VM&, uint32_t);
     JSString* makeAndKeepStringConstant(VM&, uint32_t);
     JSString* makeStringConstant(VM&, uint32_t);
-    uint32_t numberOfStringsMade() const { return m_numberOfStringsMade; }
     const LayoutData& layoutOfShape(uint32_t shape) const { return *data.at<LayoutData>(data.at<uint32_t>(data.layoutsOffset)[shape]); }
     const AllocationData& allocation(uint32_t number) const { return data.at<AllocationData>(data.allocationsOffset)[number]; }
     // By TypeID.

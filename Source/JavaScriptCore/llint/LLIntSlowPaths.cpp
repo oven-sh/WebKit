@@ -1281,7 +1281,7 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_id)
     LLINT_CHECK_EXCEPTION();
     if (!couldDelete && bytecode.m_ecmaMode.isStrict())
         LLINT_THROW(createTypeError(globalObject, UnableToDeletePropertyError));
-    if (!couldDelete && baseObject->noteIfRefusedByLockAlone(vm, codeBlock->identifier(bytecode.m_property).impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction()) && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+    if (!couldDelete && baseObject->noteIfRefusedByLockAlone(vm, codeBlock->identifier(bytecode.m_property).impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction(), true) && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
         LLINT_THROW(createTypeError(globalObject, withAOTErrorNote(UnableToDeletePropertyError)));
     LLINT_RETURN(jsBoolean(couldDelete));
 }
@@ -1677,7 +1677,7 @@ LLINT_SLOW_PATH_DECL(slow_path_del_by_val)
         LLINT_CHECK_EXCEPTION();
         couldDelete = JSCell::deleteProperty(baseObject, globalObject, property);
         LLINT_CHECK_EXCEPTION();
-        if (!couldDelete && !bytecode.m_ecmaMode.isStrict() && baseObject->noteIfRefusedByLockAlone(vm, property.impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction()) && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+        if (!couldDelete && !bytecode.m_ecmaMode.isStrict() && baseObject->noteIfRefusedByLockAlone(vm, property.impl(), codeBlock->unlinkedCodeBlock()->isBuiltinFunction(), true) && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
             LLINT_THROW(createTypeError(globalObject, withAOTErrorNote(UnableToDeletePropertyError)));
     }
     LLINT_CHECK_EXCEPTION();

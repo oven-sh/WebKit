@@ -4327,6 +4327,9 @@ public:
         auto hasOnlyDecodedForm = [&](uint32_t index) {
             return isConstant.get(index) && !charactersAreAllASCII(byteCast<Latin1Character>(strings[index])) && !isPrivateName(strings[index]) && !isEnginePrivateName(strings[index]);
         };
+        auto isName = [&](uint32_t index) {
+            return index < m_program.identifierNumbers.size() && m_program.identifierNumbers[index];
+        };
         Vector<uint32_t> byLastCharacters;
         for (uint32_t index = 0; index < strings.size(); ++index) {
             if (!hasOnlyDecodedForm(index))
@@ -4344,7 +4347,7 @@ public:
         for (size_t i = byLastCharacters.size(); i-- > 1;) {
             auto tail = strings[byLastCharacters[i - 1]];
             auto whole = strings[byLastCharacters[i]];
-            if (tail.size() <= whole.size() && equalSpans(tail, whole.last(tail.size())))
+            if (tail.size() <= whole.size() && equalSpans(tail, whole.last(tail.size())) && (!isName(byLastCharacters[i - 1]) || isName(holders[byLastCharacters[i]])))
                 holders[byLastCharacters[i - 1]] = holders[byLastCharacters[i]];
         }
         Vector<uint32_t> gaps(FillWith { }, strings.size(), 0);
@@ -4423,6 +4426,8 @@ public:
                         charactersCompared += inner.size();
                         if (!beginsWith(rest, inner))
                             continue;
+                        if (isName(part) && !isName(whole))
+                            continue;
                         if (holders[part] != part)
                             break;
                         holders[part] = whole;
@@ -4473,6 +4478,18 @@ public:
                     textsOfFunctions[i].append(value.immediates[0]);
             }
         });
+        size_t sizeAheadOfNames = m_result.size();
+        for (uint32_t functionIndex : functionsInSourceOrder) {
+            for (uint32_t text : textsOfFunctions[functionIndex]) {
+                if (isName(text))
+                    layText(text);
+            }
+        }
+        for (uint32_t index = 0; index < strings.size(); ++index) {
+            if (isName(index))
+                layText(index);
+        }
+        dataLogLnIf(Options::verboseAOTCompilation(), "AOT: the texts of names: ", m_result.size() - sizeAheadOfNames, " bytes");
         for (uint32_t functionIndex : functionsInSourceOrder) {
             auto& function = m_program.functions[functionIndex];
             if (function.name)
@@ -4502,6 +4519,8 @@ public:
                 facts |= Data::stringIsASCII | (identifier ? 0 : StringHasher::computeHashAndMaskTop8Bits(characters));
             if (identifier)
                 facts |= Data::stringHasIdentifierNumber | identifier;
+            if (!characters.empty() && isASCIIDigit(characters[0]))
+                facts |= Data::stringBeginsWithDigit;
             stringFacts.append(facts);
         }
         header.stringFactsOffset = append(stringFacts);
@@ -5643,7 +5662,7 @@ private:
         data.declaredLine = layout.declaredLine;
         data.size = layout.size;
         data.sizeWithRoomToSpecialize = layout.sizeWithRoomToSpecialize;
-        data.mayBeFrozen = layout.mayBeFrozen;
+        data.mayBeFrozen = layout.mayBeFrozen || layout.isStoredToOnlyAtBirth;
         data.mayGiveUp = layout.mayGiveUp;
         data.isLaidOut = layout.isLaidOut;
         data.isEvaluatedOnce = layout.isEvaluatedOnce;
@@ -5728,9 +5747,42 @@ private:
 
 } // anonymous namespace
 
+static void findRecordsStoredToOnlyAtBirth(Program& program)
+{
+    BitVector isStoredTo;
+    isStoredTo.ensureSize(program.layouts.size());
+    for (auto& function : program.functions) {
+        for (auto& block : function.blocks) {
+            for (size_t index = 0; index < block.values.size(); ++index) {
+                auto& value = function.at(block.values[index]);
+                if (value.opcode != Opcode::PutById && value.opcode != Opcode::PutField && value.opcode != Opcode::PutByVal)
+                    continue;
+                if (isInitializingStore(program, function, block, index))
+                    continue;
+                for (LayoutID view : program.at(function.at(value.child(0)).type).views) {
+                    for (LayoutID member : program.at(view).members)
+                        isStoredTo.quickSet(member.index());
+                }
+            }
+        }
+    }
+    unsigned count = 0;
+    unsigned records = 0;
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        auto& layout = program.layouts[i];
+        if (layout.kind != LayoutKind::Record)
+            continue;
+        ++records;
+        layout.isStoredToOnlyAtBirth = !isStoredTo.quickGet(i);
+        count += layout.isStoredToOnlyAtBirth;
+    }
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT placement: records that compiled code stores to only at their birth: ", count, " of ", records);
+}
+
 void place(Program& program)
 {
     Placement(program).run();
+    findRecordsStoredToOnlyAtBirth(program);
     numberRowsOfBirths(program);
 }
 

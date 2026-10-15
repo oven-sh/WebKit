@@ -870,42 +870,73 @@ private:
         }
     }
 
-    ValueID definitionAtTail(Definitions& definitions, BlockID block)
+    ValueID definitionAtHead(Definitions& definitions, BlockID asked)
     {
-        auto found = definitions.atTail.find(block.index());
-        if (found != definitions.atTail.end())
-            return found->value;
-        return definitionAtHead(definitions, block);
-    }
-
-    ValueID definitionAtHead(Definitions& definitions, BlockID block)
-    {
-        auto found = definitions.atHead.find(block.index());
-        if (found != definitions.atHead.end())
-            return found->value;
-        auto& predecessors = m_predecessors[block.index()];
-        RELEASE_ASSERT(!predecessors.isEmpty());
-        unsigned numberOfEdges = 0;
-        for (BlockID predecessor : predecessors) {
-            for (auto& target : m_body.at(predecessor).terminator.targets)
-                numberOfEdges += target.block == block;
-        }
-        if (numberOfEdges == 1) {
-            ValueID definition = definitionAtTail(definitions, predecessors[0]);
-            definitions.atHead.add(block.index(), definition);
-            return definition;
-        }
-        ValueID phi = addParameter(m_body, block, definitions.type);
-        m_body.at(phi).takePredictionOf(m_body.at(definitions.variable));
-        definitions.atHead.add(block.index(), phi);
-        for (BlockID predecessor : predecessors) {
-            ValueID incoming = definitionAtTail(definitions, predecessor);
-            for (auto& target : m_body.at(predecessor).terminator.targets) {
-                if (target.block == block)
-                    target.arguments.append(incoming);
+        struct Pending {
+            BlockID block;
+            ValueID phi;
+            unsigned answered { 0 };
+        };
+        Vector<Pending, 32> pending;
+        ValueID answer;
+        auto askAtHead = [&](BlockID block) {
+            auto found = definitions.atHead.find(block.index());
+            if (found != definitions.atHead.end()) {
+                answer = found->value;
+                return true;
             }
+            auto& predecessors = m_predecessors[block.index()];
+            RELEASE_ASSERT(!predecessors.isEmpty());
+            unsigned numberOfEdges = 0;
+            for (BlockID predecessor : predecessors) {
+                for (auto& target : m_body.at(predecessor).terminator.targets)
+                    numberOfEdges += target.block == block;
+            }
+            ValueID phi;
+            if (numberOfEdges != 1) {
+                phi = addParameter(m_body, block, definitions.type);
+                m_body.at(phi).takePredictionOf(m_body.at(definitions.variable));
+                definitions.atHead.add(block.index(), phi);
+            }
+            pending.append(Pending { block, phi });
+            return false;
+        };
+        auto askAtTail = [&](BlockID block) {
+            auto found = definitions.atTail.find(block.index());
+            if (found != definitions.atTail.end()) {
+                answer = found->value;
+                return true;
+            }
+            return askAtHead(block);
+        };
+        if (askAtHead(asked))
+            return answer;
+        bool isAnswered = false;
+        while (!pending.isEmpty()) {
+            BlockID block = pending.last().block;
+            ValueID phi = pending.last().phi;
+            auto& predecessors = m_predecessors[block.index()];
+            if (isAnswered) {
+                unsigned index = pending.last().answered++;
+                if (phi) {
+                    for (auto& target : m_body.at(predecessors[index]).terminator.targets) {
+                        if (target.block == block)
+                            target.arguments.append(answer);
+                    }
+                }
+            }
+            if (pending.last().answered < (phi ? predecessors.size() : 1)) {
+                isAnswered = askAtTail(predecessors[pending.last().answered]);
+                continue;
+            }
+            if (phi)
+                answer = phi;
+            else
+                definitions.atHead.add(block.index(), answer);
+            pending.removeLast();
+            isAnswered = true;
         }
-        return phi;
+        return answer;
     }
 
     // The value that uses it. None: the terminator of the block.

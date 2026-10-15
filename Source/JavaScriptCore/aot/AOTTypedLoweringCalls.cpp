@@ -323,6 +323,20 @@ void Lowering::requireOrThrowAt(Word32 condition, ThrowKind kind, std::optional<
     });
 }
 
+static bool constantsDifferFromSiteToSite(Entry entry)
+{
+    switch (entry) {
+    case Entry::operationAOTTypedSetByName:
+    case Entry::operationAOTTypedSetByNameSloppy:
+    case Entry::operationAOTTypedDefineByName:
+    case Entry::operationAOTTypedNewArrayBufferFromData:
+    case Entry::operationAOTTypedEnsureStorage:
+        return true;
+    default:
+        return false;
+    }
+}
+
 LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffects effects, const Vector<LValue, 8>& arguments)
 {
     bool withInstance = takesInstance(entry);
@@ -383,7 +397,7 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
             patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
         else if (returnsDouble)
             patchpoint->resultConstraints = { ValueRep::reg(FPRInfo::returnValueFPR) };
-        patchpoint->setGenerator([context = &m_context, stubChecksException, withInstance, returnsValue, returnsDouble, immediate, site, argumentsAreTakenWhereTheyAre](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        patchpoint->setGenerator([context = &m_context, stubChecksException, withInstance, returnsValue, returnsDouble, immediate, site, argumentsAreTakenWhereTheyAre, setsConstantsAtSite = constantsDifferFromSiteToSite(entry)](CCallHelpers& jit, const StackmapGenerationParams& params) {
             AllowMacroScratchRegisterUsage allowScratch(jit);
             bool isLeaf = context->hasNoFrame(params.proc().code());
 #if CPU(ARM64)
@@ -413,6 +427,11 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
             ArgumentMoves moves;
             unsigned numberOfChildren = argumentsAreTakenWhereTheyAre ? params.value()->numChildren() : 0;
             unsigned destinationIndex = withInstance;
+            RegisterSet holdsArgument;
+            for (unsigned i = 0; i < numberOfChildren; ++i) {
+                if (const ValueRep& rep = params[params.size() - numberOfChildren + i]; rep.isGPR())
+                    holdsArgument.add(rep.gpr(), IgnoreVectors);
+            }
             for (unsigned i = 0; i < numberOfChildren; ++i) {
                 B3::Type typeOfChild = params.value()->child(i)->type();
                 if (typeOfChild == Double)
@@ -425,7 +444,10 @@ LValue Lowering::callEntry(Entry entry, LType type, bool mayThrow, OperationEffe
                     continue;
                 }
                 if (rep.isConstant()) {
-                    appendArgumentMove(moves, destination, ArgumentSource::Constant, rep.value());
+                    if (setsConstantsAtSite && !holdsArgument.contains(destination, IgnoreVectors))
+                        jit.move(CCallHelpers::TrustedImm64(rep.value()), destination);
+                    else
+                        appendArgumentMove(moves, destination, ArgumentSource::Constant, rep.value());
                     continue;
                 }
                 RELEASE_ASSERT(rep.isStack() && !isLeaf);
@@ -904,6 +926,48 @@ Lowering::CharactersOfSubstring Lowering::charactersOfSubstring(CellPointer stri
             emitCharactersOfSubstring(jit);
         else
             context->stubCalls.call(jit, Stub::CharactersOfSubstring, CallSite { });
+    });
+    auto result = [&](int32_t index) {
+        return m_out.m_block->appendNew<B3::ExtractValue>(m_proc, m_out.origin(), Int64, patchpoint, index);
+    };
+    return { result(0), m_out.castToInt32(result(1)), m_out.castToInt32(result(2)) };
+}
+
+Lowering::CharactersOfSubstring Lowering::charactersOfRope(CellPointer string)
+{
+    RELEASE_ASSERT(!m_watchingHandler);
+    PatchpointValue* patchpoint = m_out.patchpoint(m_proc.addTuple({ Int64, Int64, Int64 }));
+    applyEffects(patchpoint, effectsOfOperation<operationAOTTypedFlatten>());
+    patchpoint->append(ConstrainedValue(string.value(), ValueRep::reg(stubTemporaryGPRs[3])));
+    patchpoint->resultConstraints = { ValueRep::reg(stubTemporaryGPRs[3]), ValueRep::reg(stubTemporaryGPRs[0]), ValueRep::reg(stubTemporaryGPRs[4]) };
+    if (auto changed = registersChangedBy(Stub::CharactersOfRope)) {
+        patchpoint->clobberLate(*changed);
+        changed->exclude(RegisterSet { stubTemporaryGPRs[3] });
+        patchpoint->clobberEarly(*changed);
+    } else
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    if (!hasStubsForFunctionsWithoutFrame) {
+        if (LoweringContext::coldSitesForceFrame()) {
+            m_context.emitsCalls = true;
+            patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        } else
+            m_context.holdsColdSites = true;
+    }
+    CallSite site { nextSite() };
+    patchpoint->setGenerator([context = &m_context, site](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        bool hasNoFrame = context->hasNoFrame(params.proc().code());
+        bool isLeaf = hasStubsForFunctionsWithoutFrame && hasNoFrame;
+        bool makesFrame = !hasStubsForFunctionsWithoutFrame && hasNoFrame;
+#if CPU(ARM64)
+        if (isLeaf)
+            jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
+        if (makesFrame)
+            jit.emitFunctionPrologue();
+        context->stubCalls.call(jit, isLeaf ? Stub::LeafCharactersOfRope : Stub::CharactersOfRope, site);
+        if (makesFrame)
+            jit.emitFunctionEpilogueWithEmptyFrame();
     });
     auto result = [&](int32_t index) {
         return m_out.m_block->appendNew<B3::ExtractValue>(m_proc, m_out.origin(), Int64, patchpoint, index);

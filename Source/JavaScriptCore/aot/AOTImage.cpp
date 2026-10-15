@@ -575,7 +575,7 @@ NEVER_INLINE auto ImageBuilder::compileRegExp(VM& vm, const RegExpRequest& reque
         result.numSubpatterns = yarrPattern.m_numSubpatterns;
         result.minimumSize = yarrPattern.m_body->m_minimumSize;
         result.specificPattern = yarrPattern.m_specificPattern;
-        result.keepsMoreOfPattern = !yarrPattern.m_captureGroupNames.isEmpty() || !yarrPattern.m_namedGroupToParenIndices.isEmpty() || !yarrPattern.m_anchoredWords.isEmpty();
+        result.keepsMoreOfPattern = !yarrPattern.m_captureGroupNames.isEmpty() || !yarrPattern.m_namedGroupToParenIndices.isEmpty();
     }
     result.sourceIsPattern = RegExp::sourceIsPattern(pattern);
     return WTF::move(result);
@@ -1103,7 +1103,7 @@ Vector<uint8_t> ImageBuilder::finish()
         Vector<Visit> visits;
         auto refuse = [&](uint32_t function, ASCIILiteral why) {
             auto& key = m_functions[function].key;
-            dataLogLn("AOT: @", key.module, ":", key.start, ":", key.kind, " is reached from a function that does not ask whether the stack has room, and ", why);
+            m_whyFailed = makeString("internal error: @"_s, key.module, ':', key.start, ':', key.kind, " is reached from a function that does not check for stack overflow, and "_s, why);
         };
         auto frameOf = [&](uint32_t function) {
             auto& info = m_functions[function].code.info;
@@ -1222,7 +1222,7 @@ Vector<uint8_t> ImageBuilder::finish()
             first = std::min(first, offset);
         return first;
     };
-    if (auto& options = OutliningOptions::asked()) {
+    {
         Vector<std::pair<uint32_t, uint32_t>> entries;
         for (auto& entry : entriesInsideFunctions) {
             if (uint32_t index = indexOfFunctionWithKey(entry.function); index != ImageFunction::noSuchFunction)
@@ -1230,7 +1230,7 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         outlining = chooseWindows(WTF::map(m_functions, [](const Function& function) {
             return &function.code;
-        }), WTF::move(entries), *options);
+        }), WTF::move(entries));
         endStep("choosing what is outlined"_s);
     }
     static const char* const outlinesForTesting = byteCast<char>(Options::aotOutlineForTesting());
@@ -1711,7 +1711,7 @@ Vector<uint8_t> ImageBuilder::finish()
             }
         });
         if (sizeOfVeneers + sizeOfStubs + imageStubsAlignment >= stubCallReachSlack) {
-            dataLogLn("AOT: the program has too much machine code for an image: the calls of functions that are too far away for a call need ", sizeOfVeneers.load(), " bytes, and the limit is ", stubCallReachSlack - stubs.bytes.size() - imageStubsAlignment);
+            m_whyFailed = makeString("the program has too much machine code: calls between functions that are too far apart need "_s, sizeOfVeneers.load(), " bytes, and the limit is "_s, stubCallReachSlack - stubs.bytes.size() - imageStubsAlignment);
             return { };
         }
     }
@@ -1816,7 +1816,7 @@ Vector<uint8_t> ImageBuilder::finish()
     // As many as there can be in what the offsets of the header can address.
     static_assert(maxStubCopiesPerImage * stubCallReach > std::numeric_limits<uint32_t>::max());
     if (stubsAt.size() > maxStubCopiesPerImage) {
-        dataLogLn("AOT: the program has too much machine code for an image: ", codeSize, " bytes need ", stubsAt.size(), " copies of the stubs, and the limit is ", maxStubCopiesPerImage);
+        m_whyFailed = makeString("the program has too much machine code: "_s, codeSize, " bytes need "_s, stubsAt.size(), " copies of the runtime's stubs, and the limit is "_s, maxStubCopiesPerImage);
         return { };
     }
 
@@ -2153,11 +2153,15 @@ Vector<uint8_t> ImageBuilder::finish()
         }
         size_t sizeOfTables = codeSize - before;
         UncheckedKeyHashMap<String, std::pair<size_t, unsigned>> regExpBodiesPlaced;
-        for (auto& regExp : m_regExps) {
-            std::array<size_t, 2> at;
-            std::array<Vector<size_t>, 2> targets;
-            std::array<Vector<size_t>, 2> routineTargets;
-            for (unsigned i = 0; i < 2; ++i) {
+        regExpPlacement.grow(m_regExps.size());
+        ownedRegExpTableTargets.grow(m_regExps.size());
+        regExpRoutineTargets.grow(m_regExps.size());
+        for (unsigned i = 0; i < 2; ++i) {
+            for (size_t number = 0; number < m_regExps.size(); ++number) {
+                auto& regExp = m_regExps[number];
+                auto& at = regExpPlacement[number];
+                auto& targets = ownedRegExpTableTargets[number];
+                auto& routineTargets = regExpRoutineTargets[number];
                 if (!regExp.code[i].bytes.isEmpty()) {
                     auto& body = regExp.code[i];
                     Vector<uint8_t> content;
@@ -2187,13 +2191,12 @@ Vector<uint8_t> ImageBuilder::finish()
                         addNumber(call.offset);
                         addBytes(body.routines[call.routine].span());
                     }
-                    auto placed = regExpBodiesPlaced.add(String { byteCast<Latin1Character>(content.span()) }, std::pair<size_t, unsigned> { regExpPlacement.size(), i });
+                    auto placed = regExpBodiesPlaced.add(String { byteCast<Latin1Character>(content.span()) }, std::pair<size_t, unsigned> { number, i });
                     if (!placed.isNewEntry) {
                         auto [index, width] = placed.iterator->value;
-                        bool isOfThisExpression = index == regExpPlacement.size();
-                        at[i] = isOfThisExpression ? at[width] : regExpPlacement[index][width];
-                        targets[i] = isOfThisExpression ? targets[width] : ownedRegExpTableTargets[index][width];
-                        routineTargets[i] = isOfThisExpression ? routineTargets[width] : regExpRoutineTargets[index][width];
+                        at[i] = regExpPlacement[index][width];
+                        targets[i] = ownedRegExpTableTargets[index][width];
+                        routineTargets[i] = regExpRoutineTargets[index][width];
                         if (map) [[unlikely]]
                             map->println("XD\t", at[i], "\t", body.bytes.size(), "\t", i ? 16 : 8, "\t", regExp.flags.toRaw(), "\t", onOneLineOfMap(regExp.pattern));
                         continue;
@@ -2250,12 +2253,12 @@ Vector<uint8_t> ImageBuilder::finish()
                 if (map && !regExp.hasNoCode) [[unlikely]]
                     map->println("X\t", at[i], "\t", regExp.code[i].bytes.size(), "\t", i ? 16 : 8, "\t", regExp.flags.toRaw(), "\t", onOneLineOfMap(regExp.pattern));
             }
-            regExpPlacement.append(at);
-            ownedRegExpTableTargets.append(WTF::move(targets));
-            regExpRoutineTargets.append(WTF::move(routineTargets));
+        }
+        for (size_t number = 0; number < m_regExps.size(); ++number) {
+            auto& regExp = m_regExps[number];
+            auto& at = regExpPlacement[number];
             ImageRegExp record { };
             record.hash = ImageRegExp::hashOf(regExp.pattern, regExp.flags);
-            record.text = safeCast<uint32_t>(regExpText.size());
             record.length = regExp.pattern.length();
             record.is8Bit = regExp.pattern.is8Bit();
             record.flags = regExp.flags.toRaw();
@@ -2268,15 +2271,21 @@ Vector<uint8_t> ImageBuilder::finish()
             record.hasNoCode = regExp.hasNoCode;
             record.sourceIsPattern = regExp.sourceIsPattern;
             imageRegExps.append(record);
-            if (auto offset = regExp.pattern.containsOnlyASCII() && regExp.pattern.is8Bit() ? offsetInTypedData(regExp.pattern) : std::nullopt) {
-                imageRegExps.last().text = *offset;
-                regExpTextIsInTypedData.set(imageRegExps.size() - 1);
-            } else if (regExp.pattern.is8Bit())
-                regExpText.append(asBytes(regExp.pattern.span8()));
-            else {
-                regExpText.insertFill(regExpText.size(), 0, regExpText.size() % 2);
-                imageRegExps.last().text = safeCast<uint32_t>(regExpText.size());
-                regExpText.append(asBytes(regExp.pattern.span16()));
+        }
+        for (bool isKeptAsText : { false, true }) {
+            for (size_t number = 0; number < m_regExps.size(); ++number) {
+                auto& regExp = m_regExps[number];
+                if ((regExp.pattern.length() > ImageRegExp::minLengthKeptAsTextOfImage) != isKeptAsText)
+                    continue;
+                if (auto offset = regExp.pattern.containsOnlyASCII() && regExp.pattern.is8Bit() ? offsetInTypedData(regExp.pattern) : std::nullopt) {
+                    imageRegExps[number].text = *offset;
+                    regExpTextIsInTypedData.set(number);
+                    continue;
+                }
+                if (!regExp.pattern.is8Bit())
+                    regExpText.insertFill(regExpText.size(), 0, regExpText.size() % 2);
+                imageRegExps[number].text = safeCast<uint32_t>(regExpText.size());
+                regExpText.append(regExp.pattern.is8Bit() ? asBytes(regExp.pattern.span8()) : asBytes(regExp.pattern.span16()));
             }
         }
     }
@@ -2615,7 +2624,7 @@ Vector<uint8_t> ImageBuilder::finish()
             return value >> numberOfBits || (limitForTesting && !strcmp(limitForTesting, name));
         };
         if (isOver("index", index, ImageFunction::numberOfIndexBits) || isOver("frame", functionFrame[index], ImageFunction::numberOfFrameBits) || isOver("callSites", functionCallSites[index], ImageFunction::numberOfCallSitesBits) || isOver("slots", info.numSlots, ImageFunction::numberOfSlotsBits)) {
-            dataLogLn("AOT: the program is too large for an image: the record of function ", index, " cannot hold its number, the number of its frame (", functionFrame[index], "), where its call sites are (", functionCallSites[index], ") or how many cache slots it has (", info.numSlots, ")");
+            m_whyFailed = makeString("the program is too large: it has more functions, kinds of stack frame, call sites or inline cache slots than an executable can describe (function "_s, index, ": frame "_s, functionFrame[index], ", call sites from "_s, functionCallSites[index], ", "_s, info.numSlots, " slots)"_s);
             return { };
         }
         record.index = safeCast<uint32_t>(index);
@@ -3810,9 +3819,14 @@ Vector<uint8_t> buildAOTFile(VM& vm, std::span<const SourceCode> sources, bool i
             dataLogLn("AOT: the typed program is empty");
             return { };
         }
-        if (!encoder.setTypedProgram(typedProgram, modules.span()))
-            return { };
-        linked = encoder.finish();
+        if (encoder.setTypedProgram(typedProgram, modules.span()))
+            linked = encoder.finish();
+        for (auto& error : encoder.takeBuildErrors()) {
+            if (error.path.isEmpty())
+                dataLogLn("AOT: ", error.message);
+            else
+                dataLogLn("AOT: ", error.message, " (", error.path, ":", error.position.line, ":", error.position.column, ")");
+        }
     }
     auto sizeOfImage = aotImageSize(linked.aotImage.span());
     if (!linked.payload || !sizeOfImage)

@@ -745,9 +745,6 @@ void run(const TestConfig* config)
     RUN(testBranchEqualFoldPtr(0));
     RUN(testBranchLoadPtr());
     RUN(testBranchLoad32());
-#if USE(BUN_JSC_ADDITIONS)
-    RUN(testMemoryNumberingWhenWalkRemovesEdgeIntoJoin());
-#endif
     RUN(testBranchLoad8S());
     RUN(testBranchLoad8Z());
     RUN(testBranchLoad16S());
@@ -848,6 +845,9 @@ void run(const TestConfig* config)
 
     addLoadTests(config, tasks);
     addTupleTests(config, tasks);
+#if USE(BUN_JSC_ADDITIONS)
+    addBunTests(config, tasks);
+#endif
 
     RUN(testSpillGP());
     RUN(testSpillFP());
@@ -1595,6 +1595,9 @@ int main(int argc, char** argv)
     JSC::Config::configureForTesting();
 
     WTF::initializeMainThread();
+#if USE(BUN_JSC_ADDITIONS)
+    JSC::installCompilers();
+#endif
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
     });

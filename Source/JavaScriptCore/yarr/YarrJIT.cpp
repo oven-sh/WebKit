@@ -2954,6 +2954,11 @@ class YarrGenerator final : public YarrJITInfo {
         // This flag is used to null out the subsequent pattern characters, when
         // multiple are fused to match as a group.
         bool m_isDeadCode { false };
+#if USE(BUN_JSC_ADDITIONS)
+        bool m_isInAlternativeNeverTriedAgain { false };
+        bool m_takesIndexFromMatchStart { false };
+        unsigned m_claimedByAlternative { 0 };
+#endif
 
         // Currently used in the case of some of the more complex management of
         // 'm_checkedOffset', to cache the offset used in this alternative, to avoid
@@ -4376,6 +4381,23 @@ class YarrGenerator final : public YarrJITInfo {
         const MacroAssembler::RegisterID character = m_regs.regT0;
         const MacroAssembler::RegisterID countRegister = m_regs.regT1;
 
+#if USE(BUN_JSC_ADDITIONS)
+        if (op.m_isInAlternativeNeverTriedAgain) {
+            if (isLatin1(ch) || m_charSize != CharSize::Char8) {
+                MacroAssembler::JumpList endsRun;
+                MacroAssembler::Label nextCharacter(&m_jit);
+                endsRun.append(atEndOfInput());
+                endsRun.append(jumpIfCharNotEquals(ch, op.m_checkedOffset - term->inputPosition, character, term->ignoreCase()));
+                m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
+                if (term->quantityMaxCount == quantifyInfinite)
+                    m_jit.jump(nextCharacter);
+                endsRun.link(&m_jit);
+            }
+            defineReentryLabel(op);
+            return;
+        }
+
+#endif
         m_jit.move(MacroAssembler::TrustedImm32(0), countRegister);
 
         // Unless have a 16 bit pattern character and an 8 bit string - short circuit
@@ -4444,6 +4466,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if USE(BUN_JSC_ADDITIONS)
         if (m_forImage && m_backtrackingState.isEmpty())
             return;
+        if (op.m_isInAlternativeNeverTriedAgain) {
+            takeIndexFromMatchStart(op);
+            return;
+        }
 #endif
         m_backtrackingState.link(*this, op);
 
@@ -4781,9 +4807,209 @@ class YarrGenerator final : public YarrJITInfo {
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    void takeIndexFromMatchStart(const YarrOp& op)
+    {
+        if (!op.m_takesIndexFromMatchStart)
+            return;
+        m_backtrackingState.link(*this, op);
+        getMatchStart(m_regs.index);
+        if (op.m_claimedByAlternative)
+            m_jit.add32(MacroAssembler::Imm32(op.m_claimedByAlternative), m_regs.index);
+        m_backtrackingState.fallthrough();
+    }
+
+    using SpansOfCharacters = Vector<std::pair<char32_t, char32_t>, 16>;
+
+    static bool findSpansOfCharacters(const PatternTerm& term, SpansOfCharacters& spans)
+    {
+        constexpr char32_t last = 0x10ffff;
+        if (term.type == PatternTerm::Type::PatternCharacter) {
+            char32_t ch = term.patternCharacter;
+            if (!term.ignoreCase()) {
+                spans.append({ ch, ch });
+                return true;
+            }
+            if (!isASCII(ch))
+                return false;
+            spans.append({ toASCIIUpper(ch), toASCIIUpper(ch) });
+            if (toASCIILower(ch) != toASCIIUpper(ch))
+                spans.append({ toASCIILower(ch), toASCIILower(ch) });
+            return true;
+        }
+        const CharacterClass& characterClass = *term.characterClass;
+        if (characterClass.hasStrings())
+            return false;
+        if (characterClass.m_anyCharacter)
+            spans.append({ 0, last });
+        else if (!characterClass.hasSingleCharacters()) {
+            if (characterClass.m_table)
+                return false;
+        } else {
+            for (char32_t ch : characterClass.m_matches8)
+                spans.append({ ch, ch });
+            for (char32_t ch : characterClass.m_matches32)
+                spans.append({ ch, ch });
+            for (auto range : characterClass.m_ranges8)
+                spans.append({ range.begin, range.end });
+            for (auto range : characterClass.m_ranges32)
+                spans.append({ range.begin, range.end });
+            std::ranges::sort(spans);
+        }
+        if (!term.invert())
+            return true;
+        SpansOfCharacters others;
+        char32_t next = 0;
+        bool reachedLast = false;
+        for (auto [begin, end] : spans) {
+            if (begin > next)
+                others.append({ next, begin - 1 });
+            if (end >= last) {
+                reachedLast = true;
+                break;
+            }
+            next = std::max<char32_t>(next, end + 1);
+        }
+        if (!reachedLast)
+            others.append({ next, last });
+        spans = WTF::move(others);
+        return true;
+    }
+
+    static bool matchNoCharacterInCommon(const PatternTerm& one, const PatternTerm& other)
+    {
+        SpansOfCharacters spansOfOne;
+        SpansOfCharacters spansOfOther;
+        if (!findSpansOfCharacters(one, spansOfOne) || !findSpansOfCharacters(other, spansOfOther))
+            return false;
+        for (auto [begin, end] : spansOfOne) {
+            for (auto [otherBegin, otherEnd] : spansOfOther) {
+                if (begin <= otherEnd && otherBegin <= end)
+                    return false;
+            }
+        }
+        return true;
+    }
+
+    bool isBorderOfGroupTakenOnce(size_t i) const
+    {
+        const YarrOp& op = m_ops[i];
+        switch (op.m_op) {
+        case YarrOpCode::ParenthesesSubpatternOnceBegin:
+        case YarrOpCode::ParenthesesSubpatternOnceEnd:
+            return op.m_direction == Forward && op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
+        case YarrOpCode::SimpleNestedAlternativeBegin:
+        case YarrOpCode::SimpleNestedAlternativeEnd:
+            return op.m_direction == Forward && !op.m_dispatch && op.m_term->type == PatternTerm::Type::ParenthesesSubpattern && op.m_term->quantityType == QuantifierType::FixedCount && op.m_term->quantityMaxCount == 1 && op.m_term->parentheses.disjunction->m_alternatives.size() == 1;
+        default:
+            return false;
+        }
+    }
+
+    bool givesBackInVain(size_t counted, size_t end) const
+    {
+        const PatternTerm& term = *m_ops[counted].m_term;
+        if (term.possessive() && m_ops[counted + 1].m_op == YarrOpCode::Term)
+            return true;
+        for (size_t i = counted + 1; i < end; ++i) {
+            if (isBorderOfGroupTakenOnce(i))
+                continue;
+            if (m_ops[i].m_op != YarrOpCode::Term)
+                return false;
+            const PatternTerm& follower = *m_ops[i].m_term;
+            if (follower.type == PatternTerm::Type::AssertionEOL)
+                return i + 1 == end && !follower.multiline();
+            if (follower.type != PatternTerm::Type::PatternCharacter && follower.type != PatternTerm::Type::CharacterClass)
+                return false;
+            if (follower.quantityType == QuantifierType::FixedCount && follower.quantityMinCount) {
+                const PatternTerm* first = &follower;
+                for (size_t next = i + 1; next < end && m_ops[next].m_op == YarrOpCode::Term; ++next) {
+                    const PatternTerm& other = *m_ops[next].m_term;
+                    if ((other.type != PatternTerm::Type::PatternCharacter && other.type != PatternTerm::Type::CharacterClass) || other.quantityType != QuantifierType::FixedCount)
+                        break;
+                    if (other.inputPosition < first->inputPosition)
+                        first = &other;
+                }
+                return matchNoCharacterInCommon(term, *first);
+            }
+            if (!matchNoCharacterInCommon(term, follower))
+                return false;
+        }
+        return true;
+    }
+
+    void findAlternativesNeverTriedAgain()
+    {
+        if (!m_forImage || m_failureReason || m_pattern.eitherUnicode() || m_executionMode != ExecutionMode::IncludeSubpatterns)
+            return;
+        bool everyOpIsKnown = true;
+        for (size_t head = 0; head < m_ops.size(); ++head) {
+            YarrOpCode code = m_ops[head].m_op;
+            if (code == YarrOpCode::BodyAlternativeEnd || code == YarrOpCode::MatchFailed)
+                continue;
+            if (code != YarrOpCode::BodyAlternativeBegin && code != YarrOpCode::BodyAlternativeNext) {
+                everyOpIsKnown = false;
+                continue;
+            }
+            size_t end = m_ops[head].m_nextOp;
+            size_t firstCounted = notFound;
+            bool isNeverTriedAgain = true;
+            for (size_t i = head + 1; i < end && isNeverTriedAgain; ++i) {
+                const YarrOp& op = m_ops[i];
+                if (isBorderOfGroupTakenOnce(i))
+                    continue;
+                if (op.m_op != YarrOpCode::Term || op.m_direction != Forward) {
+                    isNeverTriedAgain = false;
+                    break;
+                }
+                const PatternTerm& term = *op.m_term;
+                switch (term.type) {
+                case PatternTerm::Type::AssertionBOL:
+                case PatternTerm::Type::AssertionEOL:
+                case PatternTerm::Type::AssertionWordBoundary:
+                    break;
+                case PatternTerm::Type::PatternCharacter:
+                case PatternTerm::Type::CharacterClass: {
+                    if (term.quantityType == QuantifierType::FixedCount)
+                        break;
+                    isNeverTriedAgain = term.quantityType == QuantifierType::Greedy && !term.quantityMinCount && (term.quantityMaxCount == 1 || term.quantityMaxCount == quantifyInfinite) && givesBackInVain(i, end);
+                    if (firstCounted == notFound)
+                        firstCounted = i;
+                    break;
+                }
+                default:
+                    isNeverTriedAgain = false;
+                    break;
+                }
+            }
+            if (!isNeverTriedAgain) {
+                everyOpIsKnown = false;
+                head = end - 1;
+                continue;
+            }
+            if (firstCounted != notFound) {
+                for (size_t i = firstCounted; i < end; ++i) {
+                    if (m_ops[i].m_op != YarrOpCode::Term)
+                        continue;
+                    const PatternTerm& term = *m_ops[i].m_term;
+                    if ((term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass) && term.quantityType != QuantifierType::FixedCount)
+                        m_ops[i].m_isInAlternativeNeverTriedAgain = true;
+                }
+                const YarrOp& behind = m_ops[end];
+                bool indexIsDead = behind.m_op == YarrOpCode::BodyAlternativeEnd && behind.m_nextOp == notFound && m_ops[end + 1].m_op == YarrOpCode::MatchFailed;
+                m_ops[firstCounted].m_takesIndexFromMatchStart = !indexIsDead;
+                m_ops[firstCounted].m_claimedByAlternative = m_ops[head].m_alternative->m_minimumSize;
+            }
+            head = end - 1;
+        }
+        if (everyOpIsKnown)
+            m_callFrameSizeInBytes = 0;
+    }
+
     bool keepsNoCount(const YarrOp& op) const
     {
         const PatternTerm& term = *op.m_term;
+        if (op.m_isInAlternativeNeverTriedAgain)
+            return true;
         if (!m_forImage || !term.m_isNeverBacktrackedInto || term.quantityMaxCount != quantifyInfinite || op.m_direction != Forward)
             return false;
 #if ENABLE(YARR_JIT_UNICODE_EXPRESSIONS)
@@ -4818,7 +5044,8 @@ class YarrGenerator final : public YarrJITInfo {
             else
 #endif
                 m_jit.add32(MacroAssembler::TrustedImm32(1), m_regs.index);
-            m_jit.jump(nextCharacter);
+            if (term->quantityMaxCount == quantifyInfinite)
+                m_jit.jump(nextCharacter);
             if (!endsRunBehindOneUnit.empty()) {
                 endsRunBehindOneUnit.link(&m_jit);
                 m_jit.sub32(MacroAssembler::TrustedImm32(1), m_regs.index);
@@ -4943,6 +5170,10 @@ class YarrGenerator final : public YarrJITInfo {
 #if USE(BUN_JSC_ADDITIONS)
         if (m_forImage && m_backtrackingState.isEmpty())
             return;
+        if (op.m_isInAlternativeNeverTriedAgain) {
+            takeIndexFromMatchStart(op);
+            return;
+        }
         RELEASE_ASSERT(!keepsNoCount(op));
 #endif
         m_backtrackingState.link(*this, op);
@@ -10160,6 +10391,7 @@ public:
         opCompileBody(m_pattern.m_body);
 
 #if USE(BUN_JSC_ADDITIONS)
+        findAlternativesNeverTriedAgain();
 #if ENABLE(YARR_JIT_BACKREFERENCES_FOR_16BIT_EXPRS)
         if (m_forImage && m_decode16BitForBackreferencesWithCalls && m_pattern.m_comparesBackreferences && !upperRangesBeyondBMP())
             m_failureReason = JITFailureReason::DecodeSurrogatePair;

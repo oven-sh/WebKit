@@ -1148,6 +1148,8 @@ Operand Lowering::lowerAssign(ValueID result, const Value& value)
         });
         m_out.appendTo(continuation);
     }
+    if (isNew && hasOneUse(into))
+        target = finishObjectLiteral(target);
     join.add(yieldAsTableSays(target, m_program.at(m_program.types.object), value, type));
     if (noObject && !isGeneralArmOnOffer(noObject)) {
         m_out.appendTo(noObject);

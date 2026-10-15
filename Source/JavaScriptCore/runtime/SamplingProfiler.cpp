@@ -73,6 +73,48 @@ using UnprocessedStackFrame = SamplingProfiler::UnprocessedStackFrame;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(SamplingProfiler);
 
+#if ENABLE(AOT) && CPU(X86_64) && OS(LINUX)
+extern "C" char __executable_start;
+extern "C" char etext;
+
+SUPPRESS_ASAN static void* returnAddressOfNativeWithoutFrame(VM& vm, void* machinePC, void* machineFrame, void* machineStackPointer, const StackBounds& stack)
+{
+    constexpr size_t maxNumberOfSlots = 64;
+    constexpr uint32_t maxLengthOfCall = 7;
+    auto isInTextOfHost = [](const void* address) {
+        return address >= static_cast<const void*>(&__executable_start) && address < static_cast<const void*>(&etext);
+    };
+    auto* slot = static_cast<void* const*>(machineStackPointer);
+    auto* record = static_cast<void* const*>(machineFrame);
+    if (isInTextOfHost(machinePC) || !stack.contains(machineStackPointer) || !stack.contains(machineFrame) || std::bit_cast<uintptr_t>(slot) % sizeof(void*) || std::bit_cast<uintptr_t>(record) % sizeof(void*) || slot >= record)
+        return nullptr;
+    AOT::ImageAddressInfo returnsTo = AOT::classifyAddress(record[1]);
+    if (returnsTo.kind == AOT::ImageAddressInfo::NotInImage)
+        return nullptr;
+    for (auto* end = std::min(record, slot + maxNumberOfSlots); slot < end; ++slot) {
+        if (isInTextOfHost(*slot))
+            return nullptr;
+        AOT::ImageAddressInfo info = AOT::classifyAddress(*slot);
+        if (info.kind != AOT::ImageAddressInfo::Function || info.offset < maxLengthOfCall)
+            continue;
+        AOT::FunctionRef function { vm.m_aotInstances[0], info.index };
+        if (AOT::tryCallSiteAt(*function.info().function(), info.offset))
+            continue;
+        auto* pc = static_cast<const uint8_t*>(*slot);
+        bool isBehindCall = pc[-5] == 0xe8
+            || (pc[-2] == 0xff && ((pc[-1] & 0xf8) == 0xd0 || (pc[-1] & 0xf8) == 0x10))
+            || (pc[-6] == 0xff && (pc[-5] == 0x15 || (pc[-5] & 0xf8) == 0x90))
+            || (pc[-3] == 0xff && (pc[-2] & 0xf8) == 0x50)
+            || (pc[-4] == 0xff && pc[-3] == 0x54 && pc[-2] == 0x24)
+            || (pc[-7] == 0xff && pc[-6] == 0x94 && pc[-5] == 0x24);
+        if (!isBehindCall)
+            continue;
+        return returnsTo.kind == AOT::ImageAddressInfo::Function && returnsTo.index == info.index ? nullptr : *slot;
+    }
+    return nullptr;
+}
+#endif
+
 ALWAYS_INLINE static void reportStats()
 {
     if (sReportStats && sNumTotalWalks && static_cast<uint64_t>(sNumTotalWalks) % sNumWalkReportingFrequency == 0) {
@@ -500,7 +542,15 @@ void SamplingProfiler::takeSample(Seconds& stackTraceProcessingTime)
 
             void* framePC = machinePC;
 #if ENABLE(AOT)
-            if (AOT::hasCode() && (callFrame != machineFrame || AOT::classifyAddress(machinePC).kind == AOT::ImageAddressInfo::NotInImage)) {
+            void* leftByCallOfNative = nullptr;
+#if CPU(X86_64) && OS(LINUX)
+            if (AOT::hasCode() && !Options::useJIT() && !topFrameIsLLInt && AOT::kindOfAddress(machinePC) == AOT::ImageAddressInfo::NotInImage)
+                leftByCallOfNative = returnAddressOfNativeWithoutFrame(m_vm, machinePC, machineFrame, machineStackPointer, m_jscExecutionThread->stack());
+#endif
+            if (leftByCallOfNative) {
+                callFrame = static_cast<CallFrame*>(machineFrame);
+                framePC = leftByCallOfNative;
+            } else if (AOT::hasCode() && (callFrame != machineFrame || AOT::classifyAddress(machinePC).kind == AOT::ImageAddressInfo::NotInImage)) {
                 if (auto innermost = AOT::innermostFrame(machineFrame, machinePC, machineLinkRegister, callFrame, m_jscExecutionThread->stack())) {
                     callFrame = static_cast<CallFrame*>(innermost->frame);
                     framePC = innermost->pc;

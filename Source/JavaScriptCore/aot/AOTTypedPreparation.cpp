@@ -1589,6 +1589,38 @@ static void printSitesOfPassForOneBody(ASCIILiteral what, size_t bodies, std::in
     dataLogLn(out.toString());
 }
 
+static bool isMadeOfNumbersAndConstants(const Program& program, const Function& function, ValueID id, unsigned& valuesLeftToLookAt)
+{
+    if (!valuesLeftToLookAt)
+        return false;
+    --valuesLeftToLookAt;
+    auto& value = function.at(id);
+    switch (value.opcode) {
+    case Opcode::String:
+        return true;
+    case Opcode::ToString:
+        return isMadeOfNumbersAndConstants(program, function, value.child(0), valuesLeftToLookAt);
+    case Opcode::Add:
+        if (program.at(value.type).isString())
+            return isMadeOfNumbersAndConstants(program, function, value.child(0), valuesLeftToLookAt) && isMadeOfNumbersAndConstants(program, function, value.child(1), valuesLeftToLookAt);
+        break;
+    case Opcode::Strcat:
+        return std::ranges::all_of(value.arguments, [&](ValueID part) {
+            return isMadeOfNumbersAndConstants(program, function, part, valuesLeftToLookAt);
+        });
+    default:
+        break;
+    }
+    auto& type = program.typeOf(function, id);
+    return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+}
+
+static bool isMadeOfNumbersAndConstants(const Program& program, const Function& function, ValueID id)
+{
+    unsigned valuesLeftToLookAt = 64;
+    return isMadeOfNumbersAndConstants(program, function, id, valuesLeftToLookAt);
+}
+
 static void giveConcatenationsOneBody(Program& program)
 {
     constexpr unsigned maxOperands = 6;
@@ -1603,6 +1635,7 @@ static void giveConcatenationsOneBody(Program& program)
         if ((program.isHotByText(FunctionID(i)) && !program.isHotOnlyInItsLoops(FunctionID(i))) || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
+        std::optional<BitVector> keys;
         for (unsigned b = 0; b < function.blocks.size(); ++b) {
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
@@ -1614,6 +1647,12 @@ static void giveConcatenationsOneBody(Program& program)
                     break;
                 if (isInCopyOfHotOriginal(program, function, value, false))
                     continue;
+                if (isMadeOfNumbersAndConstants(program, function, id)) {
+                    if (!keys)
+                        keys = computeMapKeyValues(program, FunctionID(i), function);
+                    if (keys->get(id.index()))
+                        continue;
+                }
                 StringBuilder signature;
                 signature.append(value.type.index());
                 for (ValueID argument : value.arguments)
@@ -1622,7 +1661,7 @@ static void giveConcatenationsOneBody(Program& program)
             }
         }
     });
-    enum : unsigned { CallsBody, IsHotByText, HasTooManyParts, IsInLoop, IsCopiedFromHot, NumberOfReasons };
+    enum : unsigned { CallsBody, IsHotByText, HasTooManyParts, IsInLoop, IsCopiedFromHot, IsKey, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     for (unsigned i = 0; Options::verboseAOTCompilation() && i < count; ++i) {
         auto& function = program.functions[i];
@@ -1634,7 +1673,7 @@ static void giveConcatenationsOneBody(Program& program)
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
                 if (value.opcode == Opcode::Strcat)
-                    ++numbers[isHot ? IsHotByText : value.arguments.size() > maxOperands ? HasTooManyParts : isInLoop.get(b) ? IsInLoop : isInCopyOfHotOriginal(program, function, value, false) ? IsCopiedFromHot : CallsBody];
+                    ++numbers[isHot ? IsHotByText : value.arguments.size() > maxOperands ? HasTooManyParts : isInLoop.get(b) ? IsInLoop : isInCopyOfHotOriginal(program, function, value, false) ? IsCopiedFromHot : isMadeOfNumbersAndConstants(program, function, id) && computeMapKeyValues(program, FunctionID(i), function).get(id.index()) ? IsKey : CallsBody];
             }
         }
     }
@@ -1687,7 +1726,7 @@ static void giveConcatenationsOneBody(Program& program)
         for (auto& ofFunction : sites)
             taken += ofFunction.size();
         RELEASE_ASSERT(numbers[CallsBody] == taken);
-        printSitesOfPassForOneBody("concatenations"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "the function is hot by the text"_s, numbers[IsHotByText] }, { "more than six parts"_s, numbers[HasTooManyParts] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsCopiedFromHot] } });
+        printSitesOfPassForOneBody("concatenations"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "the function is hot by the text"_s, numbers[IsHotByText] }, { "more than six parts"_s, numbers[HasTooManyParts] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsCopiedFromHot] }, { "a key"_s, numbers[IsKey] } });
     }
     program.functions.appendVector(WTF::move(bodies));
 }
@@ -1734,6 +1773,24 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         for (auto& argument : value.arguments)
             functor(argument);
     };
+    auto makesObjectWithoutPrototype = [&](const Function& function, const Value& value) {
+        if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 1 || function.at(value.arguments[0]).opcode != Opcode::Null)
+            return false;
+        auto& builtin = builtins.at(value.builtin());
+        return builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "create"_s;
+    };
+    auto isArithmetic = [&](const Function& function, const Value& value) {
+        if (value.opcode != Opcode::CallBuiltin)
+            return false;
+        auto& builtin = builtins.at(value.builtin());
+        if (builtin.effects != Effect::Pure || builtin.implementation.kind != BuiltinImplementation::Inline)
+            return false;
+        bool result = program.at(value.type).hasOnlyPrimitives(Primitive::Number | Primitive::Boolean);
+        forEachOperand(value, [&](ValueID operand) {
+            result &= program.typeOf(function, operand).hasOnlyPrimitives(Primitive::Number | Primitive::Boolean);
+        });
+        return result;
+    };
     unsigned count = program.functions.size();
     struct Site {
         ValueID value;
@@ -1746,6 +1803,15 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         if (program.isCalledNearLoops(FunctionID(i)) || function.blocks.isEmpty())
             return;
         std::optional<BitVector> isInLoop;
+        std::optional<BitVector> keys;
+        auto isKeyMadeHere = [&](ValueID key) {
+            auto& made = function.at(key);
+            if (made.opcode != Opcode::Add && (made.opcode != Opcode::Strcat || !isMadeOfNumbersAndConstants(program, function, key)))
+                return false;
+            if (!keys)
+                keys = computeMapKeyValues(program, FunctionID(i), function);
+            return keys->get(key.index());
+        };
         bool hasHandlers = function.blocks.containsIf([](auto& block) {
             return block.terminator.kind == TerminatorKind::Invoke;
         });
@@ -1753,6 +1819,10 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             for (ValueID id : function.blocks[b].values) {
                 auto& value = function.at(id);
                 if (!isCandidate(value) || isDescribedByLiteral(function, value))
+                    continue;
+                if (value.opcode == Opcode::Add ? isKeyMadeHere(id) : value.opcode == Opcode::CallBuiltin && !value.arguments.isEmpty() && isKeyMadeHere(value.arguments[0]))
+                    continue;
+                if (isArithmetic(function, value) || makesObjectWithoutPrototype(function, value))
                     continue;
                 if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                     continue;
@@ -1796,7 +1866,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
             }
         }
     }
-    enum : unsigned { CallsBody, OccursOnce, IsNearLoops, IsGetterOrSetter, IsOperation, IsOfOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsBesideHandlers, IsInLoop, IsLeft, NumberOfReasons };
+    enum : unsigned { CallsBody, OccursOnce, IsNearLoops, IsGetterOrSetter, IsOperation, IsOfOtherKind, IsPush, HasTooManyOperands, IsDescribedByLiteral, IsArithmetic, IsBirth, IsBesideHandlers, IsInLoop, IsLeft, NumberOfReasons };
     std::array<uint64_t, NumberOfReasons> numbers { };
     for (unsigned i = 0; Options::verboseAOTCompilation() && i < count; ++i) {
         auto& function = program.functions[i];
@@ -1841,6 +1911,10 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
                     }
                 } else if (isDescribedByLiteral(function, value))
                     reason = IsDescribedByLiteral;
+                else if (isArithmetic(function, value))
+                    reason = IsArithmetic;
+                else if (makesObjectWithoutPrototype(function, value))
+                    reason = IsBirth;
                 else if (hasHandlers && (function.blocks[b].terminator.kind != TerminatorKind::Invoke || id != function.blocks[b].values.last()))
                     reason = IsBesideHandlers;
                 else if (isInLoop.get(b))
@@ -1923,7 +1997,7 @@ static void giveCallsOfBuiltinsOneBody(Program& program)
         }
     });
     if (Options::verboseAOTCompilation())
-        printSitesOfPassForOneBody("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[IsOfOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "beside handlers"_s, numbers[IsBesideHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsLeft] } });
+        printSitesOfPassForOneBody("calls of built-ins"_s, bodies.size(), { { "call a body"_s, numbers[CallsBody] }, { "a signature that occurs once"_s, numbers[OccursOnce] }, { "the function is called near loops"_s, numbers[IsNearLoops] }, { "a getter or a setter"_s, numbers[IsGetterOrSetter] }, { "an operation of the engine"_s, numbers[IsOperation] }, { "a function, a constructor, a constant"_s, numbers[IsOfOtherKind] }, { "push"_s, numbers[IsPush] }, { "more than six operands, or a second or third child"_s, numbers[HasTooManyOperands] }, { "defineProperty with a literal"_s, numbers[IsDescribedByLiteral] }, { "arithmetic"_s, numbers[IsArithmetic] }, { "an object born without a prototype"_s, numbers[IsBirth] }, { "beside handlers"_s, numbers[IsBesideHandlers] }, { "in a loop"_s, numbers[IsInLoop] }, { "copied from what is hot"_s, numbers[IsLeft] } });
     program.functions.appendVector(WTF::move(bodies));
 }
 
@@ -3403,7 +3477,7 @@ static void findFunctionsEnteredWithRoomOnStack(Program& program, const BitVecto
     BitVector isCandidate(count);
     for (unsigned i = 0; i < count; ++i) {
         auto& function = program.functions[i];
-        if (isReachedOtherwise.get(i) || program.functionsWithoutCalls.get(i) || function.blocks.isEmpty() || function.isGenericEntrypoint() || program.genericEntrypoints.contains(i))
+        if (isReachedOtherwise.get(i) || program.functionsWithoutCalls.get(i) || function.blocks.isEmpty())
             continue;
         if (function.resumeFunction || function.startFunction || function.declaredAs & (functionIsAsync | functionIsGenerator) || function.has(FunctionIsHalfOfHiddenCoroutine) || function.has(FunctionHasUnknownCallers))
             continue;
@@ -3464,6 +3538,11 @@ static void findFunctionsEnteredWithRoomOnStack(Program& program, const BitVecto
         }
     }
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", isCandidate.bitCount(), " functions are entered with room on the stack: they do not ask");
+    program.generalEntriesWhoseFunctionAsks = BitVector(count);
+    for (auto [index, entry] : program.genericEntrypoints) {
+        if (!isCandidate.get(index))
+            program.generalEntriesWhoseFunctionAsks.set(entry.index());
+    }
     program.functionsEnteredWithRoomOnStack = WTF::move(isCandidate);
 }
 
@@ -4738,6 +4817,11 @@ Vector<String> optimize(Program& program)
     if (!Options::auditAOTTypedAssertions())
         splitOffWorkers(program);
     didFinish("- splitOffWorkers"_s);
+    forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
+        auto& function = program.functions[i];
+        function.values.shrinkToFit();
+        function.blocks.shrinkToFit();
+    });
     // Each function is worked on as a copy. What it takes from others, to inline them, is as it was read, whoever gets there first.
     prepareForInlining(program);
     didFinish("- prepareForInlining"_s);
@@ -4810,6 +4894,8 @@ Vector<String> optimize(Program& program)
                     numberOfModuleEvaluationsLeft.fetch_add(asksForModuleEvaluation(function.at(value), evaluatesModule), std::memory_order_relaxed);
             }
         }
+        function.values.shrinkToFit();
+        function.blocks.shrinkToFit();
         optimized[i] = makeUniqueWithoutFastMallocCheck<Function>(WTF::move(function));
     });
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: ", numberOfModuleEvaluationsLeft.load() + numberOfModuleEvaluationsRemoved.load(), " requests to evaluate a module, ", numberOfModuleEvaluationsRemoved.load(), " behind another for the same module");

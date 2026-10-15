@@ -270,6 +270,9 @@ template<typename Func>
 void checkDisassembly(Compilation& compilation, NOESCAPE const Func& func, const UTF8CString& failText)
 {
     auto disassembly = compilation.disassembly();
+#if USE(BUN_JSC_ADDITIONS) && !ENABLE(DISASSEMBLER)
+    return;
+#endif
     if (func(disassembly))
         return;
     
@@ -967,9 +970,6 @@ void testBranchNotEqualFoldPtr(intptr_t value);
 void testBranchEqualFoldPtr(intptr_t value);
 void testBranchLoadPtr();
 void testBranchLoad32();
-#if USE(BUN_JSC_ADDITIONS)
-void testMemoryNumberingWhenWalkRemovesEdgeIntoJoin();
-#endif
 void testBranchLoad8S();
 void testBranchLoad8Z();
 void testBranchLoad16S();
@@ -1392,6 +1392,9 @@ void addShrTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addAtomicTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addLoadTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
 void addTupleTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
+#if USE(BUN_JSC_ADDITIONS)
+void addBunTests(const TestConfig*, Deque<RefPtr<SharedTask<void()>>>&);
+#endif
 
 void testCSEStoreWithLoop();
 void testCSELoadAfterStoreDiamond(bool flag);

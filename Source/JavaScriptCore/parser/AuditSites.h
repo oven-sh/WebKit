@@ -27,7 +27,7 @@ enum class AuditedValueClass : uint16_t {
     BigInt = 1 << 7,
     Object = 1 << 8,
     Function = 1 << 9,
-    // No class of its own: an object that has the private name JSGlobalObject::setAuditTag() was given.
+    // No class of its own: a plain object with a property that is not enumerable, as the audit's tag is, or whose prototype is a plain object.
     TaggedObject = 1 << 10,
 };
 

@@ -304,6 +304,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(WriteBarrier) \
     v(ToBoolean) \
     v(CharactersOfSubstring) \
+    v(CharactersOfRope) \
+    v(LeafCharactersOfRope) \
     v(CodeUnitOfRope) \
     v(LeafCodeUnitOfRope) \
     v(StrictEqual) \
@@ -407,6 +409,7 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(AppendSpread) \
     v(HandleException) \
     v(PollAtPrologue) \
+    v(PollAheadOfEntering) \
     v(HandleExceptionAtPrologue) \
     v(ThrowStackOverflowAtPrologue) \
     v(ThrowStackOverflow) \
@@ -456,7 +459,6 @@ static_assert(static_cast<unsigned>(Stub::TypedStringMadeOnceInBlock7) == static
 ASCIILiteral nameOf(Stub);
 static constexpr Stub askingReceiver(Stub stub) { return static_cast<Stub>(static_cast<unsigned>(stub) - 1); }
 static_assert(askingReceiver(Stub::MapGet) == Stub::MapGetAskingReceiver && askingReceiver(Stub::MapHas) == Stub::MapHasAskingReceiver && askingReceiver(Stub::MapSet) == Stub::MapSetAskingReceiver && askingReceiver(Stub::SetHas) == Stub::SetHasAskingReceiver && askingReceiver(Stub::SetAdd) == Stub::SetAddAskingReceiver && askingReceiver(Stub::MapSetWithStringKey) == Stub::MapSetWithStringKeyAskingReceiver && askingReceiver(Stub::SetAddWithStringKey) == Stub::SetAddWithStringKeyAskingReceiver && askingReceiver(Stub::MapGetWithStringKey) == Stub::MapGetWithStringKeyAskingReceiver && askingReceiver(Stub::MapHasWithStringKey) == Stub::MapHasWithStringKeyAskingReceiver && askingReceiver(Stub::SetHasWithStringKey) == Stub::SetHasWithStringKeyAskingReceiver);
-static constexpr unsigned shortLiteralLengthBits = 4;
 static constexpr bool isHelper(Stub stub) { return stub >= Stub::HelperNewArray && stub <= Stub::HelperAddStrings; }
 static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegisters <= 4);
 // For code compiled from types. Each is followed by its variant for a caller without a frame.
@@ -519,7 +521,17 @@ struct StubCall {
 
 std::optional<unsigned> thunkFor(Stub, uint32_t t9Value);
 
-enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant };
+enum class ArgumentSource : uint8_t { Register, Stack32, Stack64, Constant, FitsByKind, FitsByShape };
+namespace FitsByKind {
+static constexpr uint64_t Undefined = 1 << 0;
+static constexpr uint64_t Null = 1 << 1;
+static constexpr uint64_t Boolean = 1 << 2;
+static constexpr uint64_t Number = 1 << 3;
+static constexpr uint64_t Object = 1 << 4;
+static constexpr uint64_t Function = 1 << 5;
+static constexpr unsigned shiftOfTypes = 8;
+static constexpr unsigned maxTypes = 4;
+}
 using ArgumentMoves = Vector<uint64_t, 8>;
 inline void appendArgumentMove(ArgumentMoves& moves, GPRReg destination, ArgumentSource source, uint64_t payload)
 {
@@ -593,21 +605,6 @@ private:
         uint32_t scale;
     };
     Vector<Reference, 2> m_references;
-};
-
-struct ListDescriptor {
-    enum Kind : uint32_t {
-        Value,
-        Spread,
-        Passed,
-    };
-    static constexpr unsigned maxItems = 13;
-    static_assert(5 + 2 * maxItems <= 32 && maxItems < 16);
-
-    uint32_t firstVarArg() const { return bits >> 1; }
-    Kind kindOf(unsigned index) const { return static_cast<Kind>(bits >> (5 + 2 * index) & 3); }
-
-    uint32_t bits;
 };
 
 struct PackedSite {

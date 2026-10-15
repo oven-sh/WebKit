@@ -1919,6 +1919,7 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
             return ensureProperty(cell, name, emitGetById(box(cell), name), type);
         if (field->isElsewhereInSomeMember) {
             auto ask = [&] {
+                SetForScope holdsWhatExtraPropertyYields(m_holdsWhatExtraPropertyYields, true);
                 return ensure(AOT_TYPED_OPERATION(GetExtra, cell, word32(name.index() | nameMayBeOfOwnField)), type);
             };
             return byOwnFieldOfMember(cell, view, *field, joinedAs(type), [&](LayoutID, const Field& own) {
@@ -1934,6 +1935,7 @@ Operand Lowering::lowerGetById(ValueID result, const Value& value)
         }, [&] {
             if (!suppliesAlone)
                 return askMarkedObject(cell, name, type);
+            SetForScope holdsWhatExtraPropertyYields(m_holdsWhatExtraPropertyYields, true);
             return ensure(AOT_TYPED_OPERATION(GetExtra, cell, word32(name.index())), type);
         });
     };
@@ -2374,7 +2376,7 @@ void Lowering::findRowOf(ObjectLiteral& literal) const
             names.append(row.names[i]);
     }
     uint32_t numberByPass = m_function.at(id).numberOfRowOfBirth();
-    literal.roomInLine = numberByPass != Format::none ? m_program.numberedRows[numberByPass].inlineCapacity : roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty());
+    literal.roomInLine = numberByPass != Format::none ? m_program.numberedRows[numberByPass].inlineCapacity : roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty(), roomForCastsOf(id));
     literal.row = numberOfRowFor(names.span(), literal.roomInLine, literal.hasNullPrototype);
 }
 
@@ -2643,7 +2645,124 @@ static unsigned roomToBecomeRecord(const Program& program, std::span<const Strin
     return WTF::roundUpToMultipleOf<sizeof(EncodedJSValue)>(size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
 }
 
-unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& function, ValueID id, bool hasFields, const UsersInBlocks* users)
+static unsigned roomToBecomeWhatItIsCastTo(const Program& program, const Type& type)
+{
+    size_t size = JSFinalObject::allocationSize(0);
+    auto look = [&](LayoutID record) {
+        auto& layout = program.at(record);
+        if (layout.kind == LayoutKind::Record && layout.shape && (!layout.admitsForeignObjects || layout.isOpenedForLog) && layout.sizeWithRoomToSpecialize <= JSFinalObject::allocationSize(JSFinalObject::maxInlineCapacity))
+            size = std::max<size_t>(size, layout.sizeWithRoomToSpecialize);
+    };
+    for (LayoutID view : type.views) {
+        if (program.at(view).shape) {
+            look(view);
+            continue;
+        }
+        for (LayoutID member : program.at(view).members)
+            look(member);
+    }
+    return WTF::roundUpToMultipleOf<sizeof(EncodedJSValue)>(size - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
+}
+
+static ValueID literalBehind(const Program& program, const Function& function, ValueID id)
+{
+    auto isObjectAssign = [](const Value& value) {
+        if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
+            return false;
+        auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+        return implementation.kind == BuiltinImplementation::Inline && implementation.inlined == InlineBuiltin::ObjectAssign;
+    };
+    auto isFinishOfLiteral = [](const Value& value) {
+        if (value.opcode != Opcode::CallBuiltin || value.arguments.size() != 1)
+            return false;
+        auto& implementation = Builtins::singleton().at(value.builtin()).implementation;
+        return implementation.kind == BuiltinImplementation::Operation && implementation.operation == LanguageOperation::CloneObjectAfter;
+    };
+    for (;;) {
+        auto& value = function.at(id);
+        if (value.opcode == Opcode::Cast && value.castReason() == CastReason::Upcast) {
+            id = value.child(0);
+            continue;
+        }
+        if (isObjectAssign(value) || isFinishOfLiteral(value)) {
+            id = value.arguments[0];
+            continue;
+        }
+        if (value.opcode == Opcode::CallDirect && program.at(value.function()).isBodyOfSeveralSites) {
+            auto& body = program.at(value.function());
+            auto& call = body.at(body.blocks[0].terminator.value);
+            if (isObjectAssign(call) && body.at(call.arguments[0]).opcode == Opcode::Parameter && body.at(call.arguments[0]).parameterIndex() < value.arguments.size()) {
+                id = value.arguments[body.at(call.arguments[0]).parameterIndex()];
+                continue;
+            }
+        }
+        return id;
+    }
+}
+
+Lowering::RoomForCasts Lowering::findRoomForCasts(const Program& program, const Function& function)
+{
+    RoomForCasts rooms;
+    for (auto& block : function.blocks) {
+        for (ValueID id : block.values) {
+            auto& value = function.at(id);
+            if (value.opcode != Opcode::Cast)
+                continue;
+            auto reason = value.castReason();
+            if (reason != CastReason::As && reason != CastReason::Store && ((reason != CastReason::Claim && reason != CastReason::Flow) || value.string()))
+                continue;
+            ValueID literal = literalBehind(program, function, value.child(0));
+            if (function.at(literal).opcode != Opcode::NewObject)
+                continue;
+            if (unsigned room = roomToBecomeWhatItIsCastTo(program, program.at(value.type))) {
+                auto& known = rooms.add(literal.index(), 0).iterator->value;
+                known = std::max(known, room);
+            }
+        }
+    }
+    return rooms;
+}
+
+bool Lowering::hasOneUse(ValueID literal) const
+{
+    if (!m_numbersOfUsesOfLiterals) {
+        m_numbersOfUsesOfLiterals.emplace();
+        auto note = [&](ValueID child) {
+            if (m_function.at(child).opcode == Opcode::NewObject)
+                ++m_numbersOfUsesOfLiterals->add(child.index(), 0).iterator->value;
+        };
+        for (auto& block : m_function.blocks) {
+            for (ValueID id : block.values)
+                m_function.at(id).forEachChild(note);
+            const_cast<Terminator&>(block.terminator).forEachChild([&](ValueID& child) {
+                note(child);
+            });
+        }
+    }
+    return m_numbersOfUsesOfLiterals->get(literal.index()) == 1;
+}
+
+CellPointer Lowering::finishObjectLiteral(CellPointer object)
+{
+    LBasicBlock hasPropertiesOutOfLine = newColdBlock();
+    Join join(m_out, Rep::Cell, b3TypeOf(Rep::Cell));
+    LBasicBlock isFinished = m_out.newBlock();
+    m_out.branch(m_out.isNull(m_out.loadPtr(object.value(), m_heaps.JSObject_butterfly)), usually(isFinished), rarely(hasPropertiesOutOfLine));
+    m_out.appendTo(isFinished);
+    join.add(object);
+    m_out.appendTo(hasPropertiesOutOfLine);
+    join.add(AOT_TYPED_OPERATION(FinishObjectLiteral, object));
+    return join.finish().as<CellPointer>();
+}
+
+unsigned Lowering::roomForCastsOf(ValueID id) const
+{
+    if (!m_roomForCasts)
+        m_roomForCasts = findRoomForCasts(m_program, m_function);
+    return m_roomForCasts->get(id.index());
+}
+
+unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& function, ValueID id, bool hasFields, unsigned roomForCasts, const UsersInBlocks* users, unsigned* roomBesideCasts)
 {
     auto& builtins = Builtins::singleton();
     auto withoutUpcasts = [&](ValueID value) {
@@ -2686,6 +2805,10 @@ unsigned Lowering::roomInLineOfLiteral(const Program& program, const Function& f
     }
     if (inlineCapacity)
         inlineCapacity = std::max(inlineCapacity, roomToBecomeRecord(program, names.span()));
+    if (roomBesideCasts)
+        *roomBesideCasts = capacityThatFillsTheCell(inlineCapacity);
+    if (roomForCasts > JSFinalObject::defaultInlineCapacity || (inlineCapacity && roomForCasts > inlineCapacity) || (!inlineCapacity && hasFields && roomForCasts))
+        inlineCapacity = std::max<unsigned>(roomForCasts, std::min<unsigned>(names.size() + numberOfKeys, JSFinalObject::maxInlineCapacity));
     return capacityThatFillsTheCell(inlineCapacity);
 }
 
@@ -2710,6 +2833,7 @@ void Lowering::numberRowsOfBirths(Program& program)
     struct Birth {
         ValueID id;
         unsigned room;
+        unsigned roomBesideCasts;
         bool hasNullPrototype;
         unsigned numberOfNamesAtBirth;
         Vector<StringID, 8> names;
@@ -2734,6 +2858,7 @@ void Lowering::numberRowsOfBirths(Program& program)
         }
         if (isBirth.isEmpty())
             return;
+        RoomForCasts roomForCasts = findRoomForCasts(program, function);
         UncheckedKeyHashMap<uint32_t, UsersInBlocks, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> usersOfBirths;
         for (unsigned block = 0; block < function.blocks.size(); ++block) {
             for (ValueID user : function.blocks[block].values) {
@@ -2775,7 +2900,8 @@ void Lowering::numberRowsOfBirths(Program& program)
                 }
                 if (!isNamedBySite)
                     continue;
-                unsigned room = roomInLineOfLiteral(program, function, id, !fields.isEmpty(), &users);
+                unsigned roomBesideCasts = 0;
+                unsigned room = roomInLineOfLiteral(program, function, id, !fields.isEmpty(), roomForCasts.get(id.index()), &users, &roomBesideCasts);
                 unsigned numberOfNamesAtBirth = names.size();
                 size_t roomForNames = std::max<size_t>(names.size(), room);
                 Vector<unsigned> blocksOfStores;
@@ -2792,15 +2918,21 @@ void Lowering::numberRowsOfBirths(Program& program)
                     names.append(store.string());
                     blocksOfStores.append(users[k].block);
                 }
-                birthsOfFunctions[i].append(Birth { id, room, hasNullPrototype, numberOfNamesAtBirth, WTF::move(names), WTF::move(blocksOfStores) });
+                birthsOfFunctions[i].append(Birth { id, room, roomBesideCasts, hasNullPrototype, numberOfNamesAtBirth, WTF::move(names), WTF::move(blocksOfStores) });
             }
         }
     });
     unsigned births = 0;
+    unsigned birthsWithRoomForCasts = 0;
+    size_t slotsForCasts = 0;
     for (unsigned i = 0; i < program.functions.size(); ++i) {
         auto& function = program.functions[i];
         for (auto& birth : birthsOfFunctions[i]) {
             ++births;
+            if (unsigned beside = birth.roomBesideCasts ? birth.roomBesideCasts : JSFinalObject::defaultInlineCapacity; birth.room > beside) {
+                ++birthsWithRoomForCasts;
+                slotsForCasts += birth.room - beside;
+            }
             uint32_t number = program.ensureNumberOfRow(birth.names.span().first(birth.numberOfNamesAtBirth), birth.room, birth.hasNullPrototype);
             if (function.at(birth.id).opcode == Opcode::NewObject) {
                 function.values[birth.id.index()].immediates[1] = number;
@@ -2835,7 +2967,7 @@ void Lowering::numberRowsOfBirths(Program& program)
         for (StringID name : program.numberedRows[number].names)
             program.numbersOfRowsByName.add(name.index() + 1, Vector<uint32_t, 1>()).iterator->value.append(number);
     }
-    dataLogLnIf(Options::verboseAOTCompilation(), "AOT passes: rows by number: ", program.numberedRows.size(), " rows of ", births, " births; of them rows of this: ", program.numberedRows.size() - program.firstNumberOfRowsOfThis);
+    dataLogLnIf(Options::verboseAOTCompilation(), "AOT passes: rows by number: ", program.numberedRows.size(), " rows of ", births, " births; of them rows of this: ", program.numberedRows.size() - program.firstNumberOfRowsOfThis, "; births with the room of what they are cast to: ", birthsWithRoomForCasts, ", ", slotsForCasts * sizeof(EncodedJSValue), " B more in all, one object a site");
 }
 
 void numberRowsOfBirths(Program& program)
@@ -3006,7 +3138,7 @@ void Lowering::lowerObjectLiteral(const ObjectLiteral& literal)
     if (literal.row != Format::none)
         inlineCapacity = literal.roomInLine;
     else if (!literal.newTarget)
-        inlineCapacity = roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty());
+        inlineCapacity = roomInLineOfLiteral(m_program, m_function, id, !literal.fields.isEmpty(), roomForCastsOf(id));
     else {
         Vector<StringID, 16> names;
         unsigned numberOfKeys = 0;
@@ -3737,7 +3869,7 @@ std::optional<size_t> Lowering::indexOfUseThatMakes(ValueID id) const
             uses += child == id;
         });
         if (uses)
-            return uses == 1 && makesItsFirstArgument(user) && user.arguments.size() >= 2 && user.arguments[0] == id ? std::optional(k) : std::nullopt;
+            return uses == 1 && makesItsFirstArgument(user) && user.arguments.size() >= 2 && user.arguments[0] == id && !roomForCastsOf(id) ? std::optional(k) : std::nullopt;
     }
     return std::nullopt;
 }
@@ -4421,7 +4553,10 @@ void Lowering::lowerPutById(ValueID, const Value& value)
             bool createsInPlace = m_program.at(expectedField->stored).primitives & Primitive::Absent && !inheritsByItsLayout(m_program, view, name);
             LBasicBlock isStored = createsInPlace && expectedField->store == Store::Int32OrElsewhere ? m_out.newBlock() : nullptr;
             CellPointer cell = withFieldOrElse(object, view, *expectedField, otherwise, createsInPlace);
-            if (mayBeFrozen(view))
+            bool mayHaveIntegrity = mayBeFrozen(view) || m_program.at(view).members.containsIf([&](LayoutID member) {
+                return m_program.at(member).isStoredToOnlyAtBirth;
+            });
+            if (mayHaveIntegrity)
                 orElse(lacksBits(orderWordOf(cell), orderWordIsFrozen), otherwise);
             didEmitWrite(Writes::Fields);
             guardPinnedFields(view, *expectedField, stored);
@@ -4433,7 +4568,7 @@ void Lowering::lowerPutById(ValueID, const Value& value)
                 m_out.appendTo(creates);
                 Operand numberInPlace = isStored ? fitOrElse(get(stored), typeOf(stored), numbersKeptInPlace(), otherwise) : Operand { };
                 auto unlessAsked = [&] {
-                    if (uint32_t bits = (mayInherit(m_program, view, name) ? orderWordHasExtraProperties : 0) | (mayBeFrozen(view) ? orderWordIsNotExtensible : 0))
+                    if (uint32_t bits = (mayInherit(m_program, view, name) ? orderWordHasExtraProperties : 0) | (mayHaveIntegrity ? orderWordIsNotExtensible : 0))
                         orElse(lacksBits(orderWordOf(cell), bits), otherwise);
                 };
                 OperationEffects effects { Writes::Fields, false, false, true };

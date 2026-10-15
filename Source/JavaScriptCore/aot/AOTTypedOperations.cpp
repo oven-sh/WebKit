@@ -74,6 +74,13 @@ static ALWAYS_INLINE const Identifier& nameAt(Instance* instance, uint32_t index
     return instance->typed->name(*instance->vm, index);
 }
 
+static ALWAYS_INLINE std::optional<uint32_t> indexNamedBy(Instance* instance, uint32_t number, const Identifier& name)
+{
+    if (!(instance->typed->data.stringFacts(number) & Typed::Data::stringBeginsWithDigit)) [[likely]]
+        return std::nullopt;
+    return parseIndex(name);
+}
+
 static void fill(MarkedArgumentBuffer& buffer, uint32_t count, const EncodedJSValue* values)
 {
     for (uint32_t i = 0; i < count; ++i)
@@ -1239,6 +1246,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObject, JSCell*, (Instance* insta
     OPERATION_RETURN(scope, cloneObjectForSpread(globalObject, JSValue::decode(source)));
 }
 
+static PropertyOffset offsetOfPropertyInOrder(Structure* structure, size_t place)
+{
+    size_t inlineCapacity = structure->inlineCapacity();
+    return static_cast<PropertyOffset>(place < inlineCapacity ? place : firstOutOfLineOffset + (place - inlineCapacity));
+}
+
 static Instance::CopyForMore planCopyForMore(Instance* instance, JSGlobalObject* globalObject, VM& vm, Structure* source, uint64_t more)
 {
     if (!source->canPerformFastPropertyEnumerationCommon() || !checkStructureForClone(source) || !source->didTransition())
@@ -1255,9 +1268,9 @@ static Instance::CopyForMore planCopyForMore(Instance* instance, JSGlobalObject*
     }
     needed += defined[0] && !isValidOffset(source->get(vm, defined[0]));
     Vector<UniquedStringImpl*, 16> names;
-    bool isInOrder = !source->outOfLineCapacity();
+    bool isInOrder = true;
     source->forEachProperty(vm, [&](const PropertyTableEntry& entry) {
-        isInOrder &= !entry.attributes() && static_cast<size_t>(entry.offset()) == names.size();
+        isInOrder &= !entry.attributes() && entry.offset() == offsetOfPropertyInOrder(source, names.size());
         names.append(entry.key());
         return isInOrder;
     });
@@ -1332,6 +1345,40 @@ static JSObject* tryCopyExcluding(Instance* instance, JSGlobalObject* globalObje
     return rest;
 }
 
+static JSFinalObject* copyWithEveryPropertyInLine(VM& vm, JSObject* object, Structure* structure, Structure* ofCopy)
+{
+    JSFinalObject* copy = JSFinalObject::create(vm, ofCopy);
+    auto* to = copy->inlineStorageUnsafe();
+    size_t count = structure->inlineSize() + structure->outOfLineSize();
+    for (size_t place = 0; place < count; ++place)
+        to[place].setWithoutWriteBarrier(object->getDirect(offsetOfPropertyInOrder(structure, place)));
+    return copy;
+}
+
+static JSObject* withEveryPropertyInLine(Instance* instance, JSObject* object)
+{
+    Structure* structure = object->structure();
+    if (object->type() != FinalObjectType || !structure->outOfLineSize() || hasIndexedProperties(structure->indexingType()))
+        return object;
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = globalObject->vm();
+    Instance::CopyForMore plan;
+    if (auto* known = instance->copyForMore(structure, 0))
+        plan = *known;
+    else {
+        DeferGC deferGC(vm);
+        plan = *instance->setCopyForMore(structure, 0, planCopyForMore(instance, globalObject, vm, structure, 0));
+    }
+    if (!plan.structure || plan.structure->inlineCapacity() == structure->inlineCapacity())
+        return object;
+    return copyWithEveryPropertyInLine(vm, object, structure, plan.structure);
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedFinishObjectLiteral, JSCell*, (Instance* instance, JSCell* object))
+{
+    return withEveryPropertyInLine(instance, asObject(object));
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectForMore, JSCell*, (Instance* instance, EncodedJSValue encodedSource, uint64_t more, EncodedJSValue first, EncodedJSValue second))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
@@ -1350,13 +1397,9 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCloneObjectForMore, JSCell*, (Instance
         if (Structure* ofCopy = plan.structure) {
             auto offsets = plan.offsets;
             JSFinalObject* copy;
-            if (ofCopy->inlineCapacity() != structure->inlineCapacity()) {
-                copy = JSFinalObject::create(vm, ofCopy);
-                auto* to = copy->inlineStorageUnsafe();
-                auto* from = object->inlineStorageUnsafe();
-                for (PropertyOffset offset = 0; offset <= structure->maxOffset(); ++offset)
-                    to[offset].setWithoutWriteBarrier(from[offset].get());
-            } else if (unsigned propertyCapacity = object->butterfly() ? structure->outOfLineCapacity() : 0) {
+            if (ofCopy->inlineCapacity() != structure->inlineCapacity())
+                copy = copyWithEveryPropertyInLine(vm, object, structure, ofCopy);
+            else if (unsigned propertyCapacity = object->butterfly() ? structure->outOfLineCapacity() : 0) {
                 DeferGC deferGC(vm);
                 Butterfly* butterfly = Butterfly::createUninitialized(vm, nullptr, 0, propertyCapacity, false, 0);
                 memcpy(butterfly->propertyStorage() - propertyCapacity, object->butterfly()->propertyStorage() - propertyCapacity, propertyCapacity * sizeof(EncodedJSValue));
@@ -3254,7 +3297,7 @@ static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalO
         bool hasIndex = false;
         for (unsigned i = 0; i < count; ++i) {
             const Identifier& name = nameAt(instance, numbersOfNames[i]);
-            hasIndex |= !!parseIndex(name);
+            hasIndex |= !!indexNamedBy(instance, numbersOfNames[i], name);
             names.append(name.impl());
         }
         // Null: a name comes twice.
@@ -3279,7 +3322,7 @@ static JSObject* newObjectWithFields(Instance* instance, JSGlobalObject* globalO
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& name = nameAt(instance, numbersOfNames[i]);
         JSValue value = JSValue::decode(values[i]);
-        if (auto index = parseIndex(name)) {
+        if (auto index = indexNamedBy(instance, numbersOfNames[i], name)) {
             object->putDirectIndex(globalObject, *index, value);
             RETURN_IF_EXCEPTION(scope, nullptr);
             areInOrder = false;
@@ -3439,7 +3482,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedTryCreateThisWithStores, JSCell*, (Ins
     Vector<UniquedStringImpl*, 16> names;
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& name = nameAt(instance, static_cast<uint32_t>(valuesThenNames[count + i]));
-        if (parseIndex(name))
+        if (indexNamedBy(instance, static_cast<uint32_t>(valuesThenNames[count + i]), name))
             OPERATION_RETURN(scope, nullptr);
         names.append(name.impl());
     }
@@ -3479,7 +3522,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedCreateThisWithStores, JSCell*, (Instan
     Vector<UniquedStringImpl*, 16> stored;
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& name = nameAt(instance, numbersOfNames[i] & ~isStoredTo);
-        mayBeAtOnce = mayBeAtOnce && !parseIndex(name);
+        mayBeAtOnce = mayBeAtOnce && !indexNamedBy(instance, numbersOfNames[i] & ~isStoredTo, name);
         names.append(name.impl());
         if (numbersOfNames[i] & isStoredTo)
             stored.append(name.impl());
@@ -3553,7 +3596,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedGiveThisItsRow, void, (Instance* insta
     Vector<UniquedStringImpl*, 16> names;
     for (unsigned i = 0; i < count; ++i) {
         const Identifier& name = nameAt(instance, numbersOfNames[i]);
-        if (parseIndex(name))
+        if (indexNamedBy(instance, numbersOfNames[i], name))
             OPERATION_RETURN(scope);
         names.append(name.impl());
     }

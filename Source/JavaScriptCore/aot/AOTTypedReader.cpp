@@ -17,7 +17,7 @@ class Reader {
 public:
     Reader(Program& program)
         : m_program(program)
-        , m_buffer(program.buffer.span())
+        , m_buffer(program.buffer)
     {
     }
 
@@ -824,6 +824,7 @@ private:
             if (Options::auditAOTTypedAssertions()) [[unlikely]]
                 function.assertedParameterTypes.append(assertedTypeAt(word));
         }
+        function.values.reserveInitialCapacity(slice(m_values, source.values).size());
         for (auto& from : slice(m_values, source.values)) {
             Value value;
             if (static_cast<uint32_t>(from.opcode) >= numberOfFormatOpcodes) {
@@ -913,6 +914,7 @@ private:
             value.rep = repOf(m_program.at(value.type));
             function.values.append(WTF::move(value));
         }
+        function.blocks.reserveInitialCapacity(slice(m_blocks, source.blocks).size());
         for (auto& from : slice(m_blocks, source.blocks)) {
             Block block;
             readValues(from.parameters, block.parameters);
@@ -952,13 +954,7 @@ private:
 std::unique_ptr<Program> Program::tryRead(std::span<const uint8_t> bytes, ASCIILiteral& whyFailed)
 {
     auto program = makeUnique<Program>();
-    program->buffer.grow(bytes.size());
-    constexpr size_t bytesAtATime = MB;
-    forEachIndexInParallel((bytes.size() + bytesAtATime - 1) / bytesAtATime, [&](unsigned i) {
-        size_t start = i * bytesAtATime;
-        size_t size = std::min(bytesAtATime, bytes.size() - start);
-        memcpySpan(program->buffer.mutableSpan().subspan(start, size), bytes.subspan(start, size));
-    });
+    program->buffer = bytes;
     whyFailed = Reader(*program).run();
     if (!whyFailed.isNull())
         return nullptr;

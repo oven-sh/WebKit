@@ -497,6 +497,11 @@ public:
         std::array<uint32_t, numberOfRegions> regionEnds { };
         Vector<uint8_t> aotImage;
     };
+    struct BuildError {
+        String message;
+        String path;
+        LineColumn position;
+    };
 
     // The shared string table is required. Destroy it, as it is used, on its VM's thread with the VM's lock held.
     JS_EXPORT_PRIVATE BytecodeLinkEncoder(VM&, EncoderStringTable*, Hints&&);
@@ -511,6 +516,7 @@ public:
     // A module is named by the order of the calls that add one.
     JS_EXPORT_PRIVATE bool setTypedProgram(std::span<const uint8_t>, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings = { });
     JS_EXPORT_PRIVATE Result finish();
+    JS_EXPORT_PRIVATE Vector<BuildError> takeBuildErrors();
     JS_EXPORT_PRIVATE VM& vm() const;
 
 private:

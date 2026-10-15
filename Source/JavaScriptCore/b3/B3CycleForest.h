@@ -21,8 +21,6 @@ class CycleForest {
 public:
     static constexpr unsigned none = UINT_MAX;
 
-    enum class HeaderChoice : uint8_t { OnlyEntry, AbovePoll };
-
     struct Cycle {
         BasicBlock* header() const { return entries[0]; }
         bool isReducible() const { return entries.size() == 1; }
@@ -32,7 +30,7 @@ public:
         unsigned depth { 1 };
     };
 
-    explicit CycleForest(Procedure&, HeaderChoice = HeaderChoice::OnlyEntry);
+    explicit CycleForest(Procedure&);
 
     unsigned size() const { return m_cycles.size(); }
     const Cycle& operator[](unsigned index) const LIFETIME_BOUND { return m_cycles[index]; }

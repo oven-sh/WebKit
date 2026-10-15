@@ -397,6 +397,7 @@ JSPromise* evaluateModule(Instance& instance, JSArray* cell, JSValue innerModule
     if (JSPromise* promise = module.topLevelCapability())
         return promise;
     JSPromise* capability = JSPromise::create(vm, globalObject->promiseStructure());
+    capability->markAsHandled();
     module.setTopLevelCapability(capability);
 
     ModuleEvaluation evaluation;

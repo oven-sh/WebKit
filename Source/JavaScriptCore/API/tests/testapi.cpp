@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include "APICast.h"
+#include "InitializeThreading.h"
 #include "JSGlobalObjectInlines.h"
 #include "MarkedVector.h"
 #include <JavaScriptCore/JSContextRefPrivate.h>
@@ -1206,6 +1207,9 @@ void configureJSCForTesting()
 {
     JSC::Config::configureForTesting();
     JSC::Options::machExceptionHandlerSandboxPolicy = JSC::Options::SandboxPolicy::Allow;
+#if USE(BUN_JSC_ADDITIONS)
+    JSC::installCompilers();
+#endif
 }
 
 #define RUN(test) do {                                 \

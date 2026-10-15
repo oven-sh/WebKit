@@ -14,55 +14,12 @@
 #include <wtf/DataLog.h>
 #include <wtf/FastBitVector.h>
 #include <wtf/MathExtras.h>
-#include <wtf/NeverDestroyed.h>
 
 namespace JSC { namespace AOT {
 
-const std::optional<OutliningOptions>& OutliningOptions::asked()
-{
-    static const NeverDestroyed<std::optional<OutliningOptions>> result = []() -> std::optional<OutliningOptions> {
-        const char* text = getenv("AOT_SWITCH_OUTLINE");
-        OutliningOptions options;
-        if (!text) {
-            options.region |= isColdByGraph;
-            options.takesRareCode = true;
-            options.mayEndInCall = true;
-            options.speaks = false;
-            return options;
-        }
-        if (!strcmp(text, "off"))
-            return std::nullopt;
-        const char* rest = text;
-        auto takes = [&](char wanted) {
-            if (*rest != wanted)
-                return false;
-            ++rest;
-            return true;
-        };
-        char whole = takes('a') ? 'a' : takes('t') ? 't' : takes('g') ? 'g' : 0;
-        options.takesFunctionsWhole = whole;
-        options.takesRareCode = whole != 'a' && takes('l');
-        bool isWellFormed = whole || options.takesRareCode;
-        isWellFormed = isWellFormed && takes(',') && *rest != '0';
-        options.leastLength = 0;
-        while (isWellFormed && isASCIIDigit(*rest) && options.leastLength < 100)
-            options.leastLength = options.leastLength * 10 + (*rest++ - '0');
-        isWellFormed = isWellFormed && options.leastLength >= 2 && options.leastLength <= 24 && takes(',');
-        options.mayEndInCall = isWellFormed && takes('k');
-        isWellFormed = isWellFormed && (options.mayEndInCall || takes('s')) && (!*rest || !strcmp(rest, ",count"));
-        if (!isWellFormed) {
-            dataLogLn("AOT: AOT_SWITCH_OUTLINE is not off | <a|t|g|l|tl|gl>,<least length, 2 to 24>,<s|k>[,count]: ", text);
-            exit(1);
-        }
-        options.region |= whole == 't' ? isNotHotByText : whole == 'g' ? isColdByGraph : 0;
-        options.onlyCounts = *rest;
-        return options;
-    }();
-    return result.get();
-}
-
 namespace {
 
+constexpr unsigned shortestWindow = 2;
 constexpr unsigned longestWindow = 24;
 constexpr int64_t leastSaving = 64;
 constexpr unsigned numberOfShards = 256;
@@ -166,10 +123,9 @@ void fillWithZeroesOnPool(Vector<T>& vector, size_t size)
 
 class Chooser {
 public:
-    Chooser(const Vector<const CompiledCode*>& functions, Vector<std::pair<uint32_t, uint32_t>>&& entries, const OutliningOptions& options)
+    Chooser(const Vector<const CompiledCode*>& functions, Vector<std::pair<uint32_t, uint32_t>>&& entries)
         : m_functions(functions)
         , m_entries(WTF::move(entries))
-        , m_options(options)
     {
     }
 
@@ -180,7 +136,7 @@ public:
         if (m_numberOfUnits) {
             findRuns();
             findLongestThatMayRepeat();
-            for (unsigned length = longestWindow; length >= m_options.leastLength; --length)
+            for (unsigned length = longestWindow; length >= shortestWindow; --length)
                 takeWindowsOf(length);
         }
         Typed::forEachIndexInParallel(m_functions.size(), [&](unsigned function) {
@@ -193,7 +149,7 @@ public:
 private:
     bool isInRegion(const CompiledCode& code) const
     {
-        if (!m_options.takes(code.regionsForOutlining) || code.bytes.isEmpty() || !code.continuations.isEmpty())
+        if (!code.rareCodeMayBeOutlined || code.bytes.isEmpty() || !code.continuations.isEmpty())
             return false;
         return !isARM64() || !code.info.hasNoFrame;
     }
@@ -331,7 +287,7 @@ private:
                 RELEASE_ASSERT(call.offset == instruction.offset && instruction.length == sizeOfNearCall);
                 if (call.stub == Stub::PollAtPrologue)
                     pollAtPrologue = instruction.offset;
-                if (!m_options.mayEndInCall || call.isTailCall || (isARM64() && call.function != StubCall::noFunction))
+                if (call.isTailCall || (isARM64() && call.function != StubCall::noFunction))
                     break;
                 m_flags[unit] = MayStandInWindow | IsCall;
                 m_sums[unit + 1] = numberOf(info, call);
@@ -375,11 +331,9 @@ private:
             for (unit = m_firstUnit[function]; m_offsets[unit] < offset; ++unit)
                 m_flags[unit] &= ~MayStandInWindow;
         }
-        if (isARM64() || !m_options.takesEverything()) {
-            for (unit = m_firstUnit[function + 1]; unit-- > m_firstUnit[function] && m_offsets[unit] >= startOfGuests;)
-                m_flags[unit] &= ~MayStandInWindow;
-        }
-        if (!m_options.takesWhole(code.regionsForOutlining)) {
+        for (unit = m_firstUnit[function + 1]; unit-- > m_firstUnit[function] && m_offsets[unit] >= startOfGuests;)
+            m_flags[unit] &= ~MayStandInWindow;
+        if (!code.allCodeMayBeOutlined) {
             for (unit = m_firstUnit[function]; unit < m_firstUnit[function + 1] && m_offsets[unit] < code.startOfRareCode; ++unit)
                 m_flags[unit] &= ~MayStandInWindow;
         }
@@ -405,9 +359,9 @@ private:
     {
         unsigned numberOfChunks = (m_numberOfUnits + unitsInChunk - 1) / unitsInChunk;
         Vector<Vector<uint32_t>> candidates(numberOfChunks);
-        for (unsigned length = m_options.leastLength; length <= longestWindow; ++length) {
+        for (unsigned length = shortestWindow; length <= longestWindow; ++length) {
             auto forEachCandidateIn = [&](unsigned chunk, const auto& functor) {
-                if (length > m_options.leastLength) {
+                if (length > shortestWindow) {
                     for (uint32_t unit : candidates[chunk])
                         functor(unit);
                     return;
@@ -639,7 +593,7 @@ private:
         uint64_t places = 0;
         uint64_t sizeOfBodies = 0;
         uint64_t withOneCaller = 0;
-        if (!m_options.speaks && !Options::verboseAOTCompilation())
+        if (!Options::verboseAOTCompilation())
             return;
         for (unsigned length = 0; length <= longestWindow; ++length) {
             saved += m_saved[length];
@@ -649,7 +603,7 @@ private:
             sizeOfBodies += body.length + (body.endsInCall ? 0 : sizeOfReturn);
             withOneCaller += body.onlyCaller != Outlining::none;
         }
-        dataLogLn("AOT: outlining: ", m_numberOfUnits, " instructions in ", m_numberOfFunctions, " of ", m_functions.size(), " functions: ", m_result.bodies.size(), " bodies of ", sizeOfBodies, " bytes, ", withOneCaller, " of them called by one function, ", places, " places, ", saved, " bytes saved", m_options.onlyCounts ? ": counted only" : "");
+        dataLogLn("AOT: outlining: ", m_numberOfUnits, " instructions in ", m_numberOfFunctions, " of ", m_functions.size(), " functions: ", m_result.bodies.size(), " bodies of ", sizeOfBodies, " bytes, ", withOneCaller, " of them called by one function, ", places, " places, ", saved, " bytes saved");
         dataLogLn("AOT: outlining: ", m_numberOfFunctionsNotWalked, " functions of the region, ", m_bytesNotWalked, " bytes, could not be walked and are left alone; the search held at most ", m_peak, " bytes");
         uint64_t numberThatMayStand = 0;
         uint64_t bytesThatMayStand = 0;
@@ -664,7 +618,7 @@ private:
             if (auto [functions, bytes] = m_notWalkedByCause[cause]; functions)
                 dataLogLn("AOT: outlining: not walked: ", functions, " functions, ", bytes, " bytes: ", cause ? wordsOfCausesOfNoWalk[cause] : "the walk meets nothing: the function is marked as rewritten, or as one whose notes were not kept"_s);
         }
-        for (unsigned length = longestWindow; length >= m_options.leastLength; --length) {
+        for (unsigned length = longestWindow; length >= shortestWindow; --length) {
             if (m_bodies[length])
                 dataLogLn("AOT: outlining: windows of ", length, ": ", m_bodies[length], " bodies, ", m_places[length], " places, ", m_saved[length], " bytes saved");
         }
@@ -672,7 +626,6 @@ private:
 
     const Vector<const CompiledCode*>& m_functions;
     Vector<std::pair<uint32_t, uint32_t>> m_entries;
-    const OutliningOptions& m_options;
     Outlining m_result;
     Vector<uint32_t> m_firstUnit;
     Vector<Walked> m_walked;
@@ -704,12 +657,9 @@ private:
 
 } // anonymous namespace
 
-Outlining chooseWindows(const Vector<const CompiledCode*>& functions, Vector<std::pair<uint32_t, uint32_t>>&& entriesInsideFunctions, const OutliningOptions& options)
+Outlining chooseWindows(const Vector<const CompiledCode*>& functions, Vector<std::pair<uint32_t, uint32_t>>&& entriesInsideFunctions)
 {
-    Outlining result = Chooser(functions, WTF::move(entriesInsideFunctions), options).run();
-    if (options.onlyCounts)
-        return { };
-    return result;
+    return Chooser(functions, WTF::move(entriesInsideFunctions)).run();
 }
 
 } } // namespace JSC::AOT

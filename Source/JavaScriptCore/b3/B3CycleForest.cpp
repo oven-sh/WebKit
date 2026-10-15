@@ -17,10 +17,9 @@ namespace JSC { namespace B3 {
 
 class CycleForest::Builder {
 public:
-    Builder(Procedure& proc, CycleForest& forest, HeaderChoice choice)
+    Builder(Procedure& proc, CycleForest& forest)
         : m_proc(proc)
         , m_forest(forest)
-        , m_choice(choice)
         , m_number(proc.size(), 0u)
         , m_lowest(proc.size(), 0u)
         , m_isOnStack(proc.size(), false)
@@ -137,7 +136,7 @@ private:
 
     BasicBlock* chooseHeader(unsigned cycle, std::span<BasicBlock* const> members, const Vector<BasicBlock*, 2>& entries)
     {
-        if (entries.size() == 1 && m_choice == HeaderChoice::OnlyEntry)
+        if (entries.size() == 1)
             return entries[0];
         auto isBetter = [&](BasicBlock* candidate, BasicBlock* best) {
             if (!best)
@@ -251,7 +250,6 @@ private:
 
     Procedure& m_proc;
     CycleForest& m_forest;
-    HeaderChoice m_choice;
     IndexMap<BasicBlock*, unsigned> m_number;
     IndexMap<BasicBlock*, unsigned> m_lowest;
     IndexMap<BasicBlock*, bool> m_isOnStack;
@@ -263,10 +261,10 @@ private:
     bool m_didFindPolls { false };
 };
 
-CycleForest::CycleForest(Procedure& proc, HeaderChoice choice)
+CycleForest::CycleForest(Procedure& proc)
     : m_innermost(proc.size(), none)
 {
-    Builder builder(proc, *this, choice);
+    Builder builder(proc, *this);
     builder.run();
 }
 

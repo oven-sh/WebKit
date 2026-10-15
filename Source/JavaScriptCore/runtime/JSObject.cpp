@@ -858,7 +858,7 @@ bool JSObject::putInlineSlow(JSGlobalObject* globalObject, PropertyName property
     if (structure()->hasImmutableProperties() && !isThisValueAltered(slot, this)) [[unlikely]] {
         JSValue held;
         bool isByLockAlone = isRefusedByLockAlone(vm, propertyName.uid(), held);
-        if (isByLockAlone && held == value)
+        if (isByLockAlone && (held == value || (propertyName == vm.propertyNames->underscoreProto && !value.isObject() && !value.isNull())))
             return true;
         if (!slot.isStrictMode() && (!isByLockAlone || slot.context() == PutPropertySlot::ReflectSet))
             return false;
@@ -2330,6 +2330,10 @@ bool JSObject::setPrototypeWithCycleCheck(VM& vm, JSGlobalObject* globalObject, 
 
 bool JSObject::setPrototype(JSObject* object, JSGlobalObject* globalObject, JSValue prototype, bool shouldThrowIfCantSet)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (object->structure()->hasImmutableShape() && object->structure()->compiledLayout()) [[unlikely]]
+        return object->methodTable()->setPrototype(object, globalObject, prototype, shouldThrowIfCantSet);
+#endif
     return object->setPrototypeWithCycleCheck(globalObject->vm(), globalObject, prototype, shouldThrowIfCantSet);
 }
 
@@ -2506,6 +2510,10 @@ bool JSObject::hasEnumerableProperty(JSGlobalObject* globalObject, unsigned prop
 // ECMA 8.6.2.5
 bool JSObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, DeletePropertySlot& slot)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (cell->structure()->hasImmutableShape() && cell->structure()->compiledLayout()) [[unlikely]]
+        return cell->methodTable()->deleteProperty(cell, globalObject, propertyName, slot);
+#endif
     JSObject* thisObject = uncheckedDowncast<JSObject>(cell);
     VM& vm = globalObject->vm();
 
@@ -2904,6 +2912,12 @@ void JSObject::getPropertyNames(JSGlobalObject* globalObject, PropertyNameArrayB
 
 void JSObject::getOwnPropertyNames(JSObject* object, JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (object->structure()->hasImmutableShape() && object->structure()->compiledLayout()) [[unlikely]] {
+        object->methodTable()->getOwnPropertyNames(object, globalObject, propertyNames, mode);
+        return;
+    }
+#endif
     object->getOwnIndexedPropertyNames(globalObject, propertyNames, mode);
     object->getOwnNonIndexPropertyNames(globalObject, propertyNames, mode);
 }
@@ -2982,6 +2996,12 @@ void JSObject::getOwnIndexedPropertyNames(JSGlobalObject*, PropertyNameArrayBuil
 
 void JSObject::getOwnNonIndexPropertyNames(JSGlobalObject* globalObject, PropertyNameArrayBuilder& propertyNames, DontEnumPropertiesMode mode)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (structure()->hasImmutableShape() && structure()->compiledLayout()) [[unlikely]] {
+        methodTable()->getOwnPropertyNames(this, globalObject, propertyNames, mode);
+        return;
+    }
+#endif
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -3277,6 +3297,10 @@ bool JSObject::makePropertiesImmutable(VM& vm, TransitionKind transitionKind)
 
 bool JSObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (object->structure()->hasImmutableShape() && object->structure()->compiledLayout()) [[unlikely]]
+        return object->methodTable()->preventExtensions(object, globalObject);
+#endif
     VM& vm = globalObject->vm();
     if (!object->isStructureExtensible()) {
         // We've already set the internal [[PreventExtensions]] field to false.
@@ -4533,6 +4557,10 @@ bool JSObject::defineOwnNonIndexProperty(JSGlobalObject* globalObject, PropertyN
 
 bool JSObject::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool throwException)
 {
+#if USE(BUN_JSC_ADDITIONS) && ENABLE(AOT)
+    if (object->structure()->hasImmutableShape() && object->structure()->compiledLayout()) [[unlikely]]
+        return object->methodTable()->defineOwnProperty(object, globalObject, propertyName, descriptor, throwException);
+#endif
     // If it's an array index, then use the indexed property storage.
     if (std::optional<uint32_t> index = parseIndex(propertyName)) {
         // c. Let succeeded be the result of calling the default [[DefineOwnProperty]] internal method (8.12.9) on A passing P, Desc, and false as arguments.

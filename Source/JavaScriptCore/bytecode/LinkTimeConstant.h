@@ -165,7 +165,6 @@ class JSGlobalObject;
 
 #define JSC_FOREACH_LINK_TIME_CONSTANTS_WITHOUT_NAMES(v) \
     v(auditFunction, nullptr) \
-    v(auditTag, nullptr) \
 
 #define DECLARE_LINK_TIME_CONSTANT(name, code) name,
 enum class LinkTimeConstant : int32_t {

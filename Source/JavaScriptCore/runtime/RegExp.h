@@ -221,7 +221,6 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #endif
 
     bool hasValidAtom() const { return !m_atom.isNull(); }
-    bool isAnchoredWord(StringView) const;
     const String& atom() const LIFETIME_BOUND { return m_atom; }
     Yarr::SpecificPattern specificPattern() const { return m_specificPattern; }
 
@@ -291,9 +290,6 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
-
-        FixedVector<String> m_anchoredWords;
-        FixedVector<unsigned> m_firstLengthWord;
     };
 
     String m_patternString;

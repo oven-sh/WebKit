@@ -610,13 +610,13 @@ public:
     JS_EXPORT_PRIVATE ASCIILiteral putDirectToCompiledObject(VM&, PropertyName, JSValue, unsigned attributes);
     JS_EXPORT_PRIVATE bool reifyIfSlimClosure(VM&);
     JS_EXPORT_PRIVATE void noteRefusalByLock(VM&, UniquedStringImpl* name = nullptr, ASCIILiteral kind = { }, bool isAnswered = false);
-    JS_EXPORT_PRIVATE bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl* name, bool isAnswered);
+    JS_EXPORT_PRIVATE bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl* name, bool isAnswered, bool isDelete = false);
     JS_EXPORT_PRIVATE String wordsOfRefusalByLock(VM&, UniquedStringImpl* name, ASCIILiteral otherwise);
     JS_EXPORT_PRIVATE bool isRefusedByLockAlone(VM&, UniquedStringImpl* name, JSValue& held);
     bool isLockedBuiltin() const { return structure()->hasImmutableProperties() || structure()->inheritorsMayOverrideReadOnlyProperties() || isGlobalObject() || type() == GlobalProxyType; }
 #else
     void noteRefusalByLock(VM&, UniquedStringImpl* = nullptr, ASCIILiteral = { }, bool = false) { }
-    bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl*, bool) { return false; }
+    bool noteIfRefusedByLockAlone(VM&, UniquedStringImpl*, bool, bool = false) { return false; }
     String wordsOfRefusalByLock(VM&, UniquedStringImpl*, ASCIILiteral otherwise) { return otherwise; }
     bool isRefusedByLockAlone(VM&, UniquedStringImpl*, JSValue&) { return false; }
     bool isLockedBuiltin() const { return false; }

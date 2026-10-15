@@ -1566,9 +1566,10 @@ void BytecodeGenerator::emitAudit(RegisterID* value, uint32_t id, OptionSet<Audi
 
     if (passes.contains(AuditedValueClass::TaggedObject) && fails.contains(AuditedValueClass::Object)) {
         Ref<Label> isNoObject = newLabel();
-        emitJumpIfFalse(emitIsObject(newTemporary(), value), isNoObject.get());
-        RefPtr<RegisterID> tag = moveLinkTimeConstant(nullptr, LinkTimeConstant::auditTag);
-        emitJumpIfTrue(emitHasPrivateName(newTemporary(), value, tag.get()), done.get());
+        emitJumpIfFalse(emitIsCellWithType(newTemporary(), value, FinalObjectType), isNoObject.get());
+        emitJumpIfTrue(emitHasStructureWithFlags(newTemporary(), value, Structure::s_hasNonEnumerablePropertiesBits), done.get());
+        RefPtr<RegisterID> prototype = emitGetPrototypeOf(newTemporary(), value);
+        emitJumpIfTrue(emitIsCellWithType(newTemporary(), prototype.get(), FinalObjectType), done.get());
         emitLabel(isNoObject.get());
     }
 

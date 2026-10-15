@@ -8441,6 +8441,9 @@ static void testGPRInfoConsistency()
 // Using WTF_IGNORES_THREAD_SAFETY_ANALYSIS because the function is still holding crashLock when exiting.
 void run(const char* filter) WTF_IGNORES_THREAD_SAFETY_ANALYSIS
 {
+#if USE(BUN_JSC_ADDITIONS)
+    JSC::installCompilers();
+#endif
     JSC::initialize([] {
         JSC::Options::useJITCage() = false;
     });

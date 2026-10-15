@@ -755,9 +755,6 @@ struct YarrPattern {
     UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
     Vector<unsigned> m_duplicateNamedGroupForSubpatternId;
     String m_atom;
-#if USE(BUN_JSC_ADDITIONS)
-    Vector<String> m_anchoredWords;
-#endif
 
 private:
 #if USE(BUN_JSC_ADDITIONS)

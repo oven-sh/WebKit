@@ -191,13 +191,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     int* offsetVector = ovector.data();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (m_specificPattern == Yarr::SpecificPattern::AnchoredWordList) {
-            if (startOffset || !isAnchoredWord(s))
-                return -1;
-            offsetVector[0] = 0;
-            offsetVector[1] = s.length();
-            return 0;
-        }
         if (hasValidAtom()) {
             size_t found = s.find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
             if (found == notFound)
@@ -269,20 +262,6 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
 #endif
 
     return result;
-}
-
-ALWAYS_INLINE bool RegExp::isAnchoredWord(StringView string) const
-{
-    ASSERT(m_specificPattern == Yarr::SpecificPattern::AnchoredWordList);
-    auto& firstLengthWord = m_rareData->m_firstLengthWord;
-    unsigned length = string.length();
-    if (length + 1 >= firstLengthWord.size())
-        return false;
-    for (unsigned i = firstLengthWord[length]; i < firstLengthWord[length + 1]; ++i) {
-        if (string == m_rareData->m_anchoredWords[i])
-            return true;
-    }
-    return false;
 }
 
 ALWAYS_INLINE bool RegExp::hasMatchOnlyCodeFor(Yarr::CharSize charSize)
@@ -369,11 +348,6 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
         return throwError();
 
     if constexpr (matchFrom == Yarr::MatchFrom::VMThread) {
-        if (m_specificPattern == Yarr::SpecificPattern::AnchoredWordList) {
-            if (startOffset || !isAnchoredWord(s))
-                return MatchResult::failed();
-            return MatchResult { 0, s.length() };
-        }
         if (hasValidAtom()) {
             size_t found = StringView(s).find(vm.adaptiveStringSearcherTables(), atom(), startOffset);
             if (found == notFound)

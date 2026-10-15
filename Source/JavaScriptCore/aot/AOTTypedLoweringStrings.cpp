@@ -246,8 +246,6 @@ Lowering::Characters Lowering::charactersOf(const StringReceiver& receiver, LBas
         return *characters;
     LBasicBlock flat = m_out.newBlock();
     LBasicBlock rope = newColdBlock();
-    LBasicBlock substring = newColdBlock();
-    LBasicBlock notSubstring = newColdBlock();
     LBasicBlock continuation = m_out.newBlock();
     Vector<ValueFromBlock, 3> data;
     Vector<ValueFromBlock, 3> flags;
@@ -267,8 +265,16 @@ Lowering::Characters Lowering::charactersOf(const StringReceiver& receiver, LBas
     m_out.appendTo(flat);
     yieldAllOf(fiber);
 
-    // Through a pointer of its own: a load is taken for an earlier one from the same place that is said never to change.
     m_out.appendTo(rope);
+    if (!ifRope && !m_watchingHandler) {
+        CharactersOfSubstring opened = charactersOfRope(receiver.string);
+        yield(Pointer(opened.data), Word32(opened.flags), Word32(opened.length));
+        m_out.appendTo(continuation);
+        return { Pointer(m_out.phi(Int64, data)), Word32(m_out.phi(Int32, flags)), zeroExtended(Word32(m_out.phi(Int32, lengths))), receiver.string };
+    }
+    LBasicBlock substring = newColdBlock();
+    LBasicBlock notSubstring = newColdBlock();
+    // Through a pointer of its own: a load is taken for an earlier one from the same place that is said never to change.
     CellPointer string(m_out.opaque(receiver.string.value()));
     Pointer current = loadField<Pointer>(string, m_heaps.JSRopeString_fiber0);
     m_out.branch(lacksBits(current, JSRopeString::isSubstringInPointer).value(), unsure(notSubstring), unsure(substring));
@@ -668,6 +674,16 @@ BitVector computeMapKeyValues(const Program& program, FunctionID id, const Funct
             auto& value = function.at(id);
             if (value.opcode == Opcode::GetByVal || value.opcode == Opcode::PutByVal) {
                 keys.set(value.child(1).index());
+                continue;
+            }
+            if (value.opcode == Opcode::CallDirect && !value.isJumpToContinuation() && program.at(value.function()).isBodyOfSeveralSites) {
+                auto& body = program.at(value.function());
+                BitVector keysOfBody = computeMapKeyValues(program, value.function(), body);
+                auto& parameters = body.blocks[0].parameters;
+                for (unsigned i = 0; i < std::min(parameters.size(), value.arguments.size()); ++i) {
+                    if (keysOfBody.get(parameters[i].index()))
+                        keys.set(value.arguments[i].index());
+                }
                 continue;
             }
             if (value.opcode != Opcode::CallBuiltin || value.arguments.isEmpty())
@@ -1438,12 +1454,17 @@ CellPointer Lowering::lowerStrcat(const Value& value)
     return concatenateAsRopes(value.arguments.span());
 }
 
+static bool isNumberOrNil(const Type& type)
+{
+    return type.primitives & Primitive::Number && type.hasOnlyPrimitives(Primitive::Number | Primitive::UndefinedOrNull);
+}
+
 // Of strings and numbers: it runs no code of the program.
 bool Lowering::isConcatenation(const Value& value) const
 {
     auto isStringOrNumber = [&](ValueID id) {
         auto& type = m_program.at(m_function.at(id).type);
-        return type.isString() || type.isNumber();
+        return type.isString() || isNumberOrNil(type);
     };
     switch (value.opcode) {
     case Opcode::ToString:
@@ -1489,7 +1510,7 @@ bool Lowering::collectPartsOfConcatenation(const BitVector& isInBlock, ValueID i
         lookedThrough.shrink(numberLookedThrough);
     }
     parts.append(id);
-    return value.opcode == Opcode::String || m_program.at(value.type).isNumber();
+    return value.opcode == Opcode::String || isNumberOrNil(m_program.at(value.type));
 }
 
 // `a.id + "," + b.id`: the parts of the last Add or Strcat are what stands behind the ToString, Add and Strcat of its block that nothing else uses. Those are lowered nowhere, like a constant that is fetched where it is needed.
@@ -1920,6 +1941,10 @@ std::optional<Operand> Lowering::tryLookupWithSunkKey(ValueID key, const Type& t
             Number number = operand.as<Number>();
             Word32 low = low32(truncateToInteger(number));
             boxed = select(equal(toNumber(low), number), boxInt32(low), box(purified(number)));
+        } else if (operand.rep == Rep::OptionalDouble) {
+            Number number = assumedNumber(operand.as<OptionalNumber>());
+            Word32 low = low32(truncateToInteger(number));
+            boxed = select(equal(toNumber(low), number), boxInt32(low), convertTo<Boxed>(operand, typeOfPart));
         } else
             boxed = convertTo<Boxed>(operand, typeOfPart);
         m_out.store64(boxed.value(), m_out.address(m_heaps.AOTTyped_argumentBuffer, buffer, i * sizeof(EncodedJSValue)));
@@ -1971,7 +1996,7 @@ CellPointer Lowering::concatenateInOnePiece(const PartsOfConcatenation& parts)
     bool hasConstant = false;
     bool hasOtherStrings = false;
     for (ValueID part : parts) {
-        if (typeOf(part).isNumber()) {
+        if (isNumberOrNil(typeOf(part))) {
             room -= maxLengthOfInt32;
             ++numberOfNumbers;
         } else if (auto text = constantASCIIText(part)) {
@@ -1996,12 +2021,16 @@ CellPointer Lowering::concatenateInOnePiece(const PartsOfConcatenation& parts)
     for (ValueID part : parts) {
         auto& type = typeOf(part);
         Operand operand = get(part);
-        if (type.isNumber()) {
+        if (isNumberOrNil(type)) {
             if (operand.rep == Rep::Double) {
                 // Minus zero reads "0".
                 Number number = operand.as<Number>();
                 Word32 low = low32(truncateToInteger(number));
                 passed.append(select(equal(toNumber(low), number), boxInt32(low), box(purified(number))));
+            } else if (operand.rep == Rep::OptionalDouble) {
+                Number number = assumedNumber(operand.as<OptionalNumber>());
+                Word32 low = low32(truncateToInteger(number));
+                passed.append(select(equal(toNumber(low), number), boxInt32(low), convertTo<Boxed>(operand, type)));
             } else
                 passed.append(convertTo<Boxed>(operand, type));
             continue;
@@ -2282,7 +2311,18 @@ Word32 Lowering::isStringWithText(ValueID id, ValueID constant, std::span<const 
     m_out.appendTo(isNotAsLong);
     join.add(boolean(false));
     m_out.appendTo(isAsLong);
-    join.add(hasTextAt(receiver, integer(0), constant, text));
+    if (text.size() > maxLengthOfTextComparedInPlace) {
+        join.add(hasTextAt(receiver, integer(0), constant, text));
+        return join.finish().as<Word32>();
+    }
+    Characters characters = charactersOf(receiver);
+    join.add(either<Word32>(hasBits(characters.flags, StringImpl::flagIs8Bit()), [&] {
+        Word32 result = hasText(characters.data, text);
+        ensureStillAliveHere(characters.owner);
+        return result;
+    }, [&] {
+        return Word32(AOT_TYPED_OPERATION(StringIsText, receiver.string, word32(m_function.at(stringConstantOf(constant)).string().index())));
+    }));
     return join.finish().as<Word32>();
 }
 
@@ -2608,7 +2648,8 @@ void Lowering::lowerBranchOnText()
         LBasicBlock next = i + 1 < cases.size() ? newColdBlock() : otherwise;
         m_out.branch(equal(characters.length, integer(lengthOf(cases[i]))).value(), unsure(isAsLong), unsure(next));
         m_out.appendTo(isAsLong);
-        m_out.branch(AOT_TYPED_OPERATION(StringHasAt, receiver.string, in<CellPointer>(cases[i].constant), word32(0)).value(), unsure(cases[i].taken), unsure(next));
+        Word32 isSame = cases[i].text.empty() ? Word32(AOT_TYPED_OPERATION(StringHasAt, receiver.string, in<CellPointer>(cases[i].constant), word32(0))) : Word32(AOT_TYPED_OPERATION(StringIsText, receiver.string, word32(m_function.at(stringConstantOf(cases[i].constant)).string().index())));
+        m_out.branch(isSame.value(), unsure(cases[i].taken), unsure(next));
         if (i + 1 < cases.size())
             m_out.appendTo(next);
     }

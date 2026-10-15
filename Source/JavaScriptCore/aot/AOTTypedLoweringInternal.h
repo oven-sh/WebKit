@@ -174,7 +174,6 @@ struct OperationSignature<Result SYSV_ABI(Parameters...)> : OperationSignature<R
 
 struct LoweringContext {
     StubCalls stubCalls;
-    bool notesCode { false };
     struct NotedData {
         CCallHelpers::Label start;
         unsigned numberOfWords;
@@ -182,8 +181,6 @@ struct LoweringContext {
     Vector<NotedData> dataInCode;
     void noteDataInCode(CCallHelpers& jit, size_t numberOfWords)
     {
-        if (!notesCode)
-            return;
         dataInCode.append({ jit.labelIgnoringWatchpoints(), static_cast<unsigned>(numberOfWords) });
     }
     RefPtr<B3::StackmapGenerator> numberBoxingGenerator;
@@ -633,6 +630,8 @@ private:
     // what the operation vouches for by itself, in any representation that holds it. Yields it in repOf(type). Within the type: no code
     // but the conversion. The position of the TypeError is that of the value that is being lowered, which ends its block where a handler watches.
     Operand ensure(Operand, const Type& guarantee, const Type&);
+    std::optional<ArgumentMoves> testsOfThunkThatHoldsTo(const Type&) const;
+    Boxed holdByThunk(Boxed, TypeID, ArgumentMoves&& tests);
     // Nothing is vouched for.
     Operand ensure(Boxed value, const Type& type) { return ensure(value, m_program.at(m_program.types.anything), type); }
     // The same for array[index] of a contiguous array. A plain-data element is converted on the slow path, stored back, and the read goes on.
@@ -1012,7 +1011,14 @@ private:
     void lowerObjectLiteral(const ObjectLiteral&);
     // 0 stays 0: the engine's default.
     static unsigned capacityThatFillsTheCell(unsigned inlineCapacity);
-    static unsigned roomInLineOfLiteral(const Program&, const Function&, ValueID birth, bool hasFields, const UsersInBlocks* users = nullptr);
+    using RoomForCasts = UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>;
+    static RoomForCasts findRoomForCasts(const Program&, const Function&);
+    unsigned roomForCastsOf(ValueID literal) const;
+    bool hasOneUse(ValueID literal) const;
+    mutable std::optional<UncheckedKeyHashMap<uint32_t, unsigned, WTF::IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>>> m_numbersOfUsesOfLiterals;
+    CellPointer finishObjectLiteral(CellPointer);
+    mutable std::optional<RoomForCasts> m_roomForCasts;
+    static unsigned roomInLineOfLiteral(const Program&, const Function&, ValueID birth, bool hasFields, unsigned roomForCasts, const UsersInBlocks* users = nullptr, unsigned* roomBesideCasts = nullptr);
     static void numberRowsOfBirths(Program&);
     friend void numberRowsOfBirths(Program&);
     // `stores`: a bit for each that is stored and not defined. Then `group` says where each stands.
@@ -1177,6 +1183,7 @@ private:
         LValue length;
     };
     CharactersOfSubstring charactersOfSubstring(CellPointer);
+    CharactersOfSubstring charactersOfRope(CellPointer);
     Integer allocationFor(const Value& newObject);
     std::optional<uint32_t> constantAllocation(const Value& newObject) const;
     bool layoutVariesByDiscriminant(const Allocation&) const;
@@ -1626,6 +1633,7 @@ private:
     UncheckedKeyHashMap<LValue, LValue> m_wordsOfNumbers;
     bool m_fieldIsPresent { false };
     bool m_holdsWhatStrangerYields { false };
+    bool m_holdsWhatExtraPropertyYields { false };
     struct IntegerOfNumber {
         LValue number;
         LValue integer;

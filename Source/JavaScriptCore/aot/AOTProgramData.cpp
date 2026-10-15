@@ -675,7 +675,7 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         if (codeBlock && (!key.name().isEmpty() || key.functionConstructorParametersEndPosition() != -1))
             codeBlock = nullptr;
         if (!codeBlock) {
-            dataLogLn("AOT: the code of a module could not be decoded");
+            dataLogLnIf(Options::verboseAOTCompilation(), "AOT: the code of a module could not be decoded");
             ok = false;
             continue;
         }

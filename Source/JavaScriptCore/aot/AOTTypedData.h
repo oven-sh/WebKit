@@ -170,7 +170,6 @@ static constexpr uint32_t maxFieldsInOrder = (1 << 12) - 1;
 static constexpr uint32_t orderWordOf(uint32_t order, uint32_t count) { return order | count << 16; }
 static constexpr uint32_t orderOf(uint32_t orderWord) { return orderWord & 0xffff; }
 static constexpr uint32_t countOf(uint32_t orderWord) { return orderWord >> 16 & maxFieldsInOrder; }
-static constexpr uint32_t oneMoreProperty = 1 << 16;
 // It has properties its layout has no field for. They are kept aside, by the object.
 static constexpr uint32_t orderWordHasExtraProperties = 1u << 28;
 // Object.freeze(), seal() and preventExtensions(). Only objects of layouts the program is seen to hand to one of them can be: stores to
@@ -665,6 +664,7 @@ struct Data {
     static constexpr uint32_t stringIsPrivateName = 1u << 25;
     static constexpr uint32_t stringIsEnginePrivateName = 1u << 26;
     static constexpr uint32_t stringHasIdentifierNumber = 1u << 27;
+    static constexpr uint32_t stringBeginsWithDigit = 1u << 28;
 
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
     uint32_t lengthOfFunction(uint32_t function) const { return functionLengthsAreBytes ? at<uint8_t>(functionLengthsOffset)[function] : at<uint16_t>(functionLengthsOffset)[function]; }

@@ -145,6 +145,7 @@ struct Slot;
     v(operationAOTTypedNewObjectLiteral) \
     v(operationAOTTypedCloneObject) \
     v(operationAOTTypedCloneObjectForMore) \
+    v(operationAOTTypedFinishObjectLiteral) \
     v(operationAOTTypedTryCopyRecordAs) \
     v(operationAOTTypedTryCopyRecordAsAt) \
     v(operationAOTTypedTryMergeRecordsAs) \
@@ -439,6 +440,7 @@ AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedNewObjectWithRoom, Runtime
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewObjectLiteral, RuntimeState, JSCell*, (Instance*, Slot* cache, uint32_t count, uint32_t hasNullPrototypeAndInlineCapacity, const EncodedJSValue* values, uint32_t rowOfNames));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObject, Heap, JSCell*, (Instance*, EncodedJSValue source, uint32_t keepsLayout));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedCloneObjectForMore, Heap, JSCell*, (Instance*, EncodedJSValue source, uint64_t more, EncodedJSValue first, EncodedJSValue second));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedFinishObjectLiteral, RuntimeState, JSCell*, (Instance*, JSCell* object));
 // Typed::Object::tryCopyAs(). The first of the values is the source, then the names, which are what NamesOfCopy says; one that is stored first is followed by its value. Null: not done.
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTryCopyRecordAs, RuntimeState, JSCell*, (Instance*, uint32_t shape, uint32_t namesAre, uint32_t count, const EncodedJSValue* values));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedTryCopyRecordAsAt, RuntimeState, JSCell*, (Instance*, Slot* cache, uint32_t firstShape, uint32_t secondShape, uint32_t shape, uint32_t namesAre, uint32_t count, const EncodedJSValue* values));

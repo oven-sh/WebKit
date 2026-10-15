@@ -127,7 +127,7 @@ public:
     {
         if (m_program.buffer.size() < sizeof(Format::Header))
             return;
-        auto& header = *reinterpret_cast<const Format::Header*>(m_program.buffer.span().data());
+        auto& header = *reinterpret_cast<const Format::Header*>(m_program.buffer.data());
         m_words = section<uint32_t>(header.words);
         m_bytes = section<uint8_t>(header.bytes);
         m_strings = section<Format::String>(header.strings);
@@ -263,6 +263,8 @@ private:
     static constexpr unsigned maxSizeToGoBothWays = 256;
     static constexpr unsigned maxNumberOfBranchesGoneBothWays = 3;
     static constexpr double maxNumberHandedToBuiltin = 1 << 24;
+    static constexpr unsigned maxNumberOfObjectsSized = 4096;
+    static constexpr unsigned costOfWhatIsTooLargeToSay = std::numeric_limits<unsigned>::max();
 
     struct Note {
         uint32_t origin { 0 };
@@ -298,7 +300,7 @@ private:
     template<typename T>
     std::span<const T> section(Format::Section section) const
     {
-        auto buffer = m_program.buffer.span();
+        auto buffer = m_program.buffer;
         if (section.offsetInBytes % alignof(T) || static_cast<uint64_t>(section.offsetInBytes) + static_cast<uint64_t>(section.count) * sizeof(T) > buffer.size())
             return { };
         return { reinterpret_cast<const T*>(buffer.data() + section.offsetInBytes), section.count };
@@ -768,20 +770,91 @@ private:
         return call(method, array, { });
     }
 
+    unsigned m_looked { 0 };
+
+    uint64_t sizeOfWalk(JSValue value, UncheckedKeyHashMap<JSObject*, uint64_t>& known)
+    {
+        constexpr uint64_t most = std::numeric_limits<uint32_t>::max();
+        if (!value || !value.isObject())
+            return 0;
+        JSObject* object = asObject(value);
+        if (object->isCallable())
+            return 1;
+        auto found = known.find(object);
+        if (found != known.end())
+            return std::min(found->value, most);
+        if (known.size() >= maxNumberOfObjectsSized || !m_vm.isSafeToRecurse())
+            return most;
+        known.add(object, std::numeric_limits<uint64_t>::max());
+        uint64_t size = 1;
+        ++m_looked;
+        Vector<PropertyOffset, 16> offsets;
+        object->structure()->forEachProperty(m_vm, [&](const PropertyTableEntry& entry) -> bool {
+            if (!(entry.attributes() & PropertyAttribute::DontEnum) && !entry.key()->isSymbol())
+                offsets.append(entry.offset());
+            return true;
+        });
+        for (PropertyOffset offset : offsets) {
+            ++m_looked;
+            size = std::min(size + 1 + sizeOfWalk(object->getDirect(offset), known), most);
+            if (size == most)
+                return most;
+        }
+        if (hasIndexedProperties(object->indexingType())) {
+            for (unsigned i = 0, length = object->getVectorLength(); i < length; ++i) {
+                ++m_looked;
+                if (object->canGetIndexQuickly(i))
+                    size = std::min(size + sizeOfWalk(object->getIndexQuickly(i), known), most);
+                if (size == most)
+                    return most;
+            }
+        }
+        known.set(object, size);
+        return size;
+    }
+
     unsigned costOf(JSValue value)
     {
         if (!value || !value.isCell())
             return 0;
         if (value.isString())
             return asString(value)->length() / 64;
+        if (!value.isObject())
+            return 0;
+        UncheckedKeyHashMap<JSObject*, uint64_t> known;
+        uint64_t size = sizeOfWalk(value, known);
+        if (size >= std::numeric_limits<uint32_t>::max())
+            return costOfWhatIsTooLargeToSay;
+        uint64_t cost = size / 64;
         if (auto* array = dynamicDowncast<JSArray>(value))
-            return array->length() / 4;
-        return 0;
+            cost += array->length() / 4;
+        return static_cast<unsigned>(cost);
+    }
+
+    bool refuseWhatIsTooLargeToSay()
+    {
+        m_stepsLeft -= std::min(m_stepsLeft, std::max(m_looked, 1u));
+        return false;
+    }
+
+    bool isCheapToConvert(JSValue value)
+    {
+        if (!value || !value.isObject())
+            return true;
+        m_looked = 0;
+        unsigned cost = costOf(value);
+        if (cost == costOfWhatIsTooLargeToSay)
+            return refuseWhatIsTooLargeToSay();
+        m_stepsLeft -= std::min(m_stepsLeft, cost);
+        return m_stepsLeft;
     }
 
     bool fillArguments(MarkedArgumentBuffer& list, JSValue thisValue, std::span<const JSValue> arguments)
     {
+        m_looked = 0;
         unsigned cost = costOf(thisValue);
+        if (cost == costOfWhatIsTooLargeToSay)
+            return refuseWhatIsTooLargeToSay();
         for (JSValue argument : arguments) {
             if (argument && argument.isNumber() && argument.asNumber() > maxNumberHandedToBuiltin && std::isfinite(argument.asNumber()))
                 return false;
@@ -790,7 +863,10 @@ private:
                 if (length && length.isNumber() && length.asNumber() > maxNumberHandedToBuiltin)
                     return false;
             }
-            cost += costOf(argument);
+            unsigned costOfArgument = costOf(argument);
+            if (costOfArgument == costOfWhatIsTooLargeToSay)
+                return refuseWhatIsTooLargeToSay();
+            cost += std::min(costOfArgument, costOfWhatIsTooLargeToSay - cost);
             list.append(toStored(argument));
         }
         m_stepsLeft -= std::min(m_stepsLeft, cost);
@@ -917,7 +993,7 @@ private:
 
     std::optional<String> toText(JSValue value)
     {
-        if (!value)
+        if (!value || !isCheapToConvert(value))
             return std::nullopt;
         JSValue string = attempt([&]() -> JSValue {
             return value.toString(m_globalObject);
@@ -1029,7 +1105,7 @@ private:
             return index < arguments.size() && arguments[index] && arguments[index].isObject();
         };
         if (is("DefineField"_s) || is("PutByValDirect"_s) || is("PrivateFieldAdd"_s) || is("DefineMethod"_s)) {
-            if (!isObject(0) || !argument(1))
+            if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
             return attempt([&]() -> JSValue {
                 auto name = argument(1).toPropertyKey(m_globalObject);
@@ -1074,7 +1150,7 @@ private:
                 return { };
             return attempt([&]() -> JSValue {
                 for (JSValue key : arguments.subspan(1)) {
-                    if (!key)
+                    if (!key || !isCheapToConvert(key))
                         return m_unknown;
                     auto name = key.toPropertyKey(m_globalObject);
                     if (hasException())
@@ -1087,7 +1163,7 @@ private:
         if (is("ForInKeys"_s))
             return argument(0) && argument(0).isUndefinedOrNull() ? newArray({ }) : call(m_objectKeys, jsUndefined(), std::array { argument(0) });
         if (is("HasEnumerableProperty"_s)) {
-            if (!isObject(0) || !argument(1))
+            if (!isObject(0) || !argument(1) || !isCheapToConvert(argument(1)))
                 return { };
             return attempt([&]() -> JSValue {
                 auto name = argument(1).toPropertyKey(m_globalObject);
@@ -1198,14 +1274,14 @@ private:
             return jsNumber(result(JSC::toInt32(child(0).toNumber(m_globalObject)), JSC::toInt32(child(1).toNumber(m_globalObject))));
         };
         auto compare = [&](auto&& holds) -> JSValue {
-            if (!child(0) || !child(1))
+            if (!child(0) || !child(1) || !isCheapToConvert(child(0)) || !isCheapToConvert(child(1)))
                 return { };
             return attempt([&]() -> JSValue {
                 return jsBoolean(holds(child(0), child(1)));
             });
         };
         auto keyed = [&](auto&& functor) -> JSValue {
-            if (!child(0) || !child(1))
+            if (!child(0) || !child(1) || !isCheapToConvert(child(1)))
                 return { };
             return attempt([&]() -> JSValue {
                 auto name = child(1).toPropertyKey(m_globalObject);
@@ -1328,12 +1404,12 @@ private:
             if (isChoice(child(0)) || isChoice(child(1))) {
                 return forEachChoice(child(0), child(1), [&](JSValue a, JSValue b) {
                     return attempt([&] {
-                        return jsAdd(m_globalObject, a, b);
+                        return isCheapToConvert(a) && isCheapToConvert(b) ? jsAdd(m_globalObject, a, b) : JSValue();
                     });
                 });
             }
             return attempt([&] {
-                return jsAdd(m_globalObject, child(0), child(1));
+                return isCheapToConvert(child(0)) && isCheapToConvert(child(1)) ? jsAdd(m_globalObject, child(0), child(1)) : JSValue();
             });
         case Format::Opcode::Sub:
             return compute([](double a, double b) { return a - b; });
@@ -1394,18 +1470,18 @@ private:
             if (isChoice(child(0))) {
                 return forEachChoice(child(0), jsUndefined(), [&](JSValue a, JSValue) {
                     return attempt([&]() -> JSValue {
-                        return a.toString(m_globalObject);
+                        return isCheapToConvert(a) ? JSValue(a.toString(m_globalObject)) : JSValue();
                     });
                 });
             }
             return attempt([&]() -> JSValue {
-                return child(0).toString(m_globalObject);
+                return isCheapToConvert(child(0)) ? JSValue(child(0).toString(m_globalObject)) : JSValue();
             });
         case Format::Opcode::ToPropertyKey:
             if (!child(0))
                 return { };
             return attempt([&] {
-                return child(0).toPropertyKeyValue(m_globalObject);
+                return isCheapToConvert(child(0)) ? child(0).toPropertyKeyValue(m_globalObject) : JSValue();
             });
         case Format::Opcode::IsUndefinedOrNull:
             return child(0) ? jsBoolean(child(0).isUndefinedOrNull()) : JSValue();
@@ -1418,7 +1494,7 @@ private:
                         return { };
                     result = forEachChoice(result, part, [&](JSValue a, JSValue b) {
                         return attempt([&] {
-                            return jsAdd(m_globalObject, a, b);
+                            return isCheapToConvert(a) && isCheapToConvert(b) ? jsAdd(m_globalObject, a, b) : JSValue();
                         });
                     });
                 }
@@ -1427,7 +1503,7 @@ private:
             return attempt([&]() -> JSValue {
                 JSString* result = jsEmptyString(m_vm);
                 for (JSValue part : parts) {
-                    if (!part)
+                    if (!part || !isCheapToConvert(part))
                         return m_unknown;
                     JSString* text = part.toString(m_globalObject);
                     if (hasException())

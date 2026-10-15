@@ -132,7 +132,8 @@ struct CompiledCode {
     bool isRewritten { false };
     bool hasNotes { false };
     bool stubCallsAreCleared { false };
-    uint8_t regionsForOutlining { 0 };
+    bool rareCodeMayBeOutlined { false };
+    bool allCodeMayBeOutlined { false };
     uint32_t startOfRareCode { std::numeric_limits<uint32_t>::max() };
     // See Typed::SplitFunction.
     Vector<CompiledCode> continuations;
@@ -165,6 +166,7 @@ public:
     void didRequestAllRegExps();
     void compileRegExpsUntilAllAreRequested();
     Vector<uint8_t> finish();
+    const String& whyFailed() const { return m_whyFailed; }
     Vector<FunctionReportableSites> takeReportableSites() { return std::exchange(m_reportableSites, { }); }
 
 private:
@@ -175,6 +177,7 @@ private:
         String nameForMap;
     };
     Lock m_lock;
+    String m_whyFailed;
     Vector<Function> m_functions;
     Vector<ImageEnvironment> m_environments;
     uint32_t m_environmentsSize { 0 };
