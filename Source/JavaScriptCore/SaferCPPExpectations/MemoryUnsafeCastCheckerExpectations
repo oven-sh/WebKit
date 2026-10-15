@@ -65,6 +65,7 @@ inspector/agents/InspectorDebuggerAgent.cpp
 [ macOS ] inspector/agents/JSGlobalObjectDebuggerAgent.cpp
 interpreter/CallFrame.cpp
 interpreter/CallFrame.h
+interpreter/Interpreter.cpp
 [ macOS ] jit/AssemblyHelpersSpoolers.h
 [ macOS ] jit/GCAwareJITStubRoutine.cpp
 [ macOS ] jit/JITCode.cpp
@@ -129,6 +130,7 @@ runtime/JSNativeStdFunction.h
 [ macOS ] runtime/JSObject.cpp
 [ macOS ] runtime/JSObject.h
 [ macOS ] runtime/JSObjectInlines.h
+runtime/JSRemoteFunction.cpp
 runtime/JSSourceCode.cpp
 runtime/JSString.cpp
 runtime/JSString.h

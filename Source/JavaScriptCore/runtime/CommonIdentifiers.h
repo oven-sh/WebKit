@@ -54,6 +54,7 @@
     macro(Object) \
     macro(PluralRules) \
     macro(Promise) \
+    macro(ShadowRealm) \
     macro(Reflect) \
     macro(RegExp) \
     macro(RelativeTimeFormat) \

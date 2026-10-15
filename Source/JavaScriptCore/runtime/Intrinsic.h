@@ -177,6 +177,7 @@ namespace JSC {
     macro(IsTypedArrayViewIntrinsic) \
     macro(ArrayBufferIsViewIntrinsic) \
     macro(BoundFunctionCallIntrinsic) \
+    macro(RemoteFunctionCallIntrinsic) \
     macro(IteratorIntrinsic) \
     macro(JSMapGetIntrinsic) \
     macro(JSMapHasIntrinsic) \

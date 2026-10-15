@@ -110,6 +110,8 @@ class RegExpPrototype;
 class RegExpStringIteratorPrototype;
 class SetIteratorPrototype;
 class SetPrototype;
+class ShadowRealmConstructor;
+class ShadowRealmPrototype;
 class SourceCodeKey;
 class SourceOrigin;
 class StringConstructor;
@@ -261,6 +263,7 @@ public:
 
     WriteBarrier<ObjectConstructor> m_objectConstructor;
     WriteBarrier<ArrayConstructor> m_arrayConstructor;
+    WriteBarrier<ShadowRealmConstructor> m_shadowRealmConstructor;
     WriteBarrier<RegExpConstructor> m_regExpConstructor;
     WriteBarrier<FunctionConstructor> m_functionConstructor;
     WriteBarrier<JSPromiseConstructor> m_promiseConstructor;
@@ -343,6 +346,7 @@ public:
     WriteBarrier<ObjectPrototype> m_objectPrototype;
     WriteBarrier<FunctionPrototype> m_functionPrototype;
     WriteBarrier<ArrayPrototype> m_arrayPrototype;
+    WriteBarrier<ShadowRealmPrototype> m_shadowRealmPrototype;
     WriteBarrier<RegExpPrototype> m_regExpPrototype;
     WriteBarrier<JSIteratorPrototype> m_iteratorPrototype;
     WriteBarrier<JSIteratorHelperPrototype> m_iteratorHelperPrototype;
@@ -406,6 +410,7 @@ public:
     FunctionStructures m_ordinaryFunctions;
     WriteBarrierStructureID m_boundFunctionStructure;
 
+    WriteBarrierStructureID m_shadowRealmObjectStructure;
     WriteBarrierStructureID m_regExpStructure;
 
     WriteBarrierStructureID m_asyncFunctionStructure;
@@ -431,6 +436,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_customGetterFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_customSetterFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_nativeStdFunctionStructure;
+    LazyProperty<JSGlobalObject, Structure> m_remoteFunctionStructure;
     WriteBarrier<AsyncFunctionPrototype> m_asyncFunctionPrototype;
     WriteBarrier<AsyncGeneratorFunctionPrototype> m_asyncGeneratorFunctionPrototype;
     LazyProperty<JSGlobalObject, Structure> m_iteratorResultObjectStructure;
@@ -760,6 +766,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static JSGlobalObject* create(VM&, Structure*);
+    JS_EXPORT_PRIVATE static JSGlobalObject* createWithCustomMethodTable(VM&, Structure*, const GlobalObjectMethodTable*);
 
     DECLARE_EXPORT_INFO;
 
@@ -918,6 +925,7 @@ public:
     BigIntPrototype* bigIntPrototype() const LIFETIME_BOUND { return m_bigIntPrototype.get(); }
     JSObject* datePrototype() const LIFETIME_BOUND;
     SymbolPrototype* symbolPrototype() const LIFETIME_BOUND { return m_symbolPrototype.get(); }
+    ShadowRealmPrototype* shadowRealmPrototype() const LIFETIME_BOUND { return m_shadowRealmPrototype.get(); }
     RegExpPrototype* regExpPrototype() const LIFETIME_BOUND { return m_regExpPrototype.get(); }
     JSObject* errorPrototype() const LIFETIME_BOUND;
     JSIteratorPrototype* iteratorPrototype() const LIFETIME_BOUND { return m_iteratorPrototype.get(); }
@@ -1028,6 +1036,7 @@ public:
     Structure* nativeStdFunctionStructure() const { return m_nativeStdFunctionStructure.get(this); }
     Structure* numberObjectStructure() const { return m_numberObjectStructure.get(this); }
     Structure* regExpStructure() const { return m_regExpStructure.get(); }
+    Structure* shadowRealmStructure() const { return m_shadowRealmObjectStructure.get(); }
     Structure* generatorStructure() const { return m_generatorStructure.get(); }
     Structure* asyncFunctionGeneratorStructure() const { return m_asyncFunctionGeneratorStructure.get(); }
     Structure* asyncFromSyncIteratorStructure() const { return m_asyncFromSyncIteratorStructure.get(); }
@@ -1055,6 +1064,7 @@ public:
     Structure* regExpMatchesArrayWithIndicesStructure() const { return m_regExpMatchesArrayWithIndicesStructure.get(); }
     Structure* regExpMatchesIndicesArrayStructure() const { return m_regExpMatchesIndicesArrayStructure.get(); }
     Structure* regExpStringIteratorStructure() const { return m_regExpStringIteratorStructure.get(); }
+    Structure* remoteFunctionStructure() const { return m_remoteFunctionStructure.get(this); }
     Structure* moduleRecordStructure() const { return m_moduleRecordStructure.get(this); }
     Structure* syntheticModuleRecordStructure() const { return m_syntheticModuleRecordStructure.get(this); }
     Structure* moduleNamespaceObjectStructure() const { return m_moduleNamespaceObjectStructure.get(this); }
@@ -1271,6 +1281,7 @@ public:
 
     static bool supportsRichSourceInfo(const JSGlobalObject*) { return true; }
 
+    static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject*);
 
     static bool shouldInterruptScript(const JSGlobalObject*) { return true; }
     static bool shouldInterruptScriptBeforeTimeout(const JSGlobalObject*) { return false; }
@@ -1326,6 +1337,7 @@ public:
     void cachedFunctionExecutableForFunctionConstructor(FunctionExecutable*);
 
     static inline Structure* createStructure(VM&, JSValue prototype);
+    static inline Structure* createStructureForShadowRealm(VM&, JSValue prototype);
 
     inline void registerWeakMap(OpaqueJSWeakObjectMap*);
     inline void unregisterWeakMap(OpaqueJSWeakObjectMap*);

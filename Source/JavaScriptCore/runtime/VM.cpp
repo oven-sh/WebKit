@@ -908,6 +908,8 @@ static ThunkGenerator LEGACY_NODELETE thunkGeneratorForIntrinsic(Intrinsic intri
         return objectIsThunkGenerator;
     case BoundFunctionCallIntrinsic:
         return boundFunctionCallGenerator;
+    case RemoteFunctionCallIntrinsic:
+        return remoteFunctionCallGenerator;
     case NumberConstructorIntrinsic:
         return numberConstructorCallThunkGenerator;
     case StringConstructorIntrinsic:
@@ -1014,6 +1016,30 @@ NativeExecutable* VM::getBoundFunction(bool isJSFunction, SourceTaintedOrigin ta
     if (slowCase)
         return getOrCreate(m_slowCanConstructBoundExecutable);
     return getOrCreate(m_fastCanConstructBoundExecutable);
+}
+
+NativeExecutable* VM::getRemoteFunction(bool isJSFunction)
+{
+    bool slowCase = !isJSFunction;
+    auto getOrCreate = [&] (Weak<NativeExecutable>& slot) -> NativeExecutable* {
+        if (auto* cached = slot.get())
+            return cached;
+
+        Intrinsic intrinsic = NoIntrinsic;
+        if (!slowCase)
+            intrinsic = RemoteFunctionCallIntrinsic;
+
+        NativeExecutable* result = getHostFunction(
+            slowCase ? remoteFunctionCallGeneric : remoteFunctionCallForJSFunction,
+            ImplementationVisibility::Public, intrinsic,
+            callHostFunctionAsConstructor, nullptr, 0, String());
+        slot = Weak<NativeExecutable>(result);
+        return result;
+    };
+
+    if (slowCase)
+        return getOrCreate(m_slowRemoteFunctionExecutable);
+    return getOrCreate(m_fastRemoteFunctionExecutable);
 }
 
 CodePtr<JSEntryPtrTag> VM::getCTIInternalFunctionTrampolineFor(CodeSpecializationKind kind)

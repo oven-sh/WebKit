@@ -156,6 +156,7 @@ public:
     bool isBuiltinFunction() const;
     JS_EXPORT_PRIVATE bool LEGACY_NODELETE isHostFunctionNonInline() const;
     bool isClassConstructorFunction() const;
+    bool isRemoteFunction() const;
 
     void setFunctionName(JSGlobalObject*, JSValue name);
 

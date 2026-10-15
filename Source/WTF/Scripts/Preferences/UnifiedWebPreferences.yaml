@@ -5617,6 +5617,17 @@ SessionStorageEnabled:
     WebCore: false
   sharedPreferenceForWebProcess: true
 
+ShadowRealmEnabled:
+  type: bool
+  status: testable
+  category: javascript
+  humanReadableName: "ShadowRealm"
+  humanReadableDescription: "Expose the ShadowRealm object."
+  jscOptionName: useShadowRealm
+  sharedPreferenceForWebProcess: true
+  excludeFrom: [ WebKitLegacy, WebCore ]
+  defaultValue: false
+
 ShadowRootReferenceTargetEnabled:
   type: bool
   status: testable

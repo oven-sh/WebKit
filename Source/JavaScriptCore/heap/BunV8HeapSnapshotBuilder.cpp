@@ -354,6 +354,7 @@ unsigned BunV8HeapSnapshotBuilder::getNodeTypeIndex(JSCell* cell)
     case JSType::DerivedArrayType:
     // V8 maps scopes/contexts and Wasm Module/Instance to kObject, not kCode.
     case JSType::StrictEvalActivationType:
+    case JSType::ShadowRealmType:
     case JSType::WebAssemblyModuleType:
     case JSType::WebAssemblyInstanceType:
     case JSType::WithScopeType:

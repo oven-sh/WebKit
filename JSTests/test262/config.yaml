@@ -4,6 +4,7 @@ flags:
   SharedArrayBuffer: useSharedArrayBuffer
   Atomics: useSharedArrayBuffer
   Temporal: useTemporal
+  ShadowRealm: useShadowRealm
   json-parse-with-source: useJSONSourceTextAccess
   iterator-sequencing: useIteratorSequencing
   explicit-resource-management: useExplicitResourceManagement
@@ -13,7 +14,6 @@ flags:
 skip:
   features:
     - callable-boundary-realms
-    - ShadowRealm
     - FinalizationRegistry.prototype.cleanupSome
     - decorators
     - source-phase-imports

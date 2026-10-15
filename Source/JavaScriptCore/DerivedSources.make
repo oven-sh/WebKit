@@ -128,6 +128,7 @@ JavaScriptCore_BUILTINS_SOURCES = \
     $(JavaScriptCore)/builtins/ProxyHelpers.js \
     $(JavaScriptCore)/builtins/ReflectObject.js \
     $(JavaScriptCore)/builtins/SetPrototype.js \
+    $(JavaScriptCore)/builtins/ShadowRealmPrototype.js \
     $(JavaScriptCore)/builtins/TypedArrayConstructor.js \
     $(JavaScriptCore)/builtins/TypedArrayPrototype.js \
     $(JavaScriptCore)/builtins/WrapForValidIteratorPrototype.js \
@@ -192,6 +193,7 @@ OBJECT_LUT_HEADERS = \
     ObjectConstructor.lut.h \
     ReflectObject.lut.h \
     RegExpConstructor.lut.h \
+    ShadowRealmPrototype.lut.h \
     StringConstructor.lut.h \
     StringPrototype.lut.h \
     SymbolConstructor.lut.h \

@@ -11736,6 +11736,7 @@ IGNORE_CLANG_WARNINGS_END
         JSGlobalObject* globalObject = m_graph.globalObjectFor(m_origin.semantic);
 
         LBasicBlock notBoundFunctionCase = m_out.newBlock();
+        LBasicBlock notBoundOrRemoteFunctionCase = m_out.newBlock();
         LBasicBlock functionExecutableCase = m_out.newBlock();
         LBasicBlock nativeExecutableCase = m_out.newBlock();
         LBasicBlock testPtr = m_out.newBlock();
@@ -11751,7 +11752,11 @@ IGNORE_CLANG_WARNINGS_END
         static_assert(std::is_final_v<JSBoundFunction>, "We don't handle subclasses when comparing classInfo below");
         m_out.branch(m_out.equal(classInfo, m_out.constIntPtr(JSBoundFunction::info())), rarely(slowCase), usually(notBoundFunctionCase));
 
-        LBasicBlock lastNext = m_out.appendTo(notBoundFunctionCase, nativeExecutableCase);
+        static_assert(std::is_final_v<JSRemoteFunction>, "We don't handle subclasses when comparing classInfo below");
+        m_out.appendTo(notBoundFunctionCase, notBoundOrRemoteFunctionCase);
+        m_out.branch(m_out.equal(classInfo, m_out.constIntPtr(JSRemoteFunction::info())), rarely(slowCase), usually(notBoundOrRemoteFunctionCase));
+
+        LBasicBlock lastNext = m_out.appendTo(notBoundOrRemoteFunctionCase, nativeExecutableCase);
         LValue executable = getExecutable(function);
         m_out.branch(isType(executable, NativeExecutableType), unsure(nativeExecutableCase), unsure(functionExecutableCase));
 

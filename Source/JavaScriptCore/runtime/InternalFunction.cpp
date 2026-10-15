@@ -205,6 +205,10 @@ JSGlobalObject* tryGetFunctionRealm(JSObject* object)
             object = uncheckedDowncast<JSBoundFunction>(object)->targetFunction();
             continue;
         }
+        if (object->inherits<JSRemoteFunction>()) {
+            object = uncheckedDowncast<JSRemoteFunction>(object)->targetFunction();
+            continue;
+        }
 
         if (object->type() == ProxyObjectType) {
             auto* proxy = uncheckedDowncast<ProxyObject>(object);
