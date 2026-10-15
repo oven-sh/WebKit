@@ -937,17 +937,18 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     //  5. Once we see star links, even if we have not yet traversed that star link path, we should disable caching.
 
     using ResolveSet = WTF::UncheckedKeyHashSet<ResolveQuery, ResolveQuery::Hash, ResolveQuery::HashTraits>;
-    enum class Type { Query, IndirectFallback, GatherStars };
+    enum class Type { Query, QueryViaStarExport, IndirectFallback, GatherStars };
     struct Task {
         ResolveQuery query;
         Type type;
-        bool viaStarExport { false }; // This query was reached by following an `export *`.
     };
 
     auto typeString = [] (Type type) -> const char* {
         switch (type) {
         case Type::Query:
             return "Query";
+        case Type::QueryViaStarExport:
+            return "QueryViaStarExport";
         case Type::IndirectFallback:
             return "IndirectFallback";
         case Type::GatherStars:
@@ -965,6 +966,8 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
     bool foundStarLinks = false;
 #if USE(BUN_JSC_ADDITIONS)
     Resolution firstLiveRecordViaStarExport = Resolution::notFound();
+    // Read once: the loop below visits every module that an `export *` leads to, for every name.
+    const bool someRecordHasLiveExports = vm.codeCache()->hasModuleRecordWithLiveExports();
 #endif
 
     frames.append(Resolution::notFound());
@@ -992,7 +995,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             const auto& [starModuleName, starModuleRequestType] = *iterator;
             AbstractModuleRecord* importedModuleRecord = query.moduleRecord->hostResolveImportedModule(globalObject, Identifier::fromUid(vm, starModuleName.get()), starModuleRequestType);
             RETURN_IF_EXCEPTION(scope, false);
-            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::Query, true });
+            pendingTasks.append(Task { ResolveQuery(importedModuleRecord, query.exportName.get()), Type::QueryViaStarExport });
         }
         return true;
     };
@@ -1016,7 +1019,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
 #if USE(BUN_JSC_ADDITIONS)
         // A live export never makes a name ambiguous. The first `export *` that provides the name wins, as in Vitest.
-        if (currentTop().isLiveExport(vm) || resolution.isLiveExport(vm)) [[unlikely]]
+        if (someRecordHasLiveExports && (currentTop().isLiveExport(vm) || resolution.isLiveExport(vm))) [[unlikely]]
             return true;
 #endif
 
@@ -1037,16 +1040,17 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
             dataLog("    ", typeString(task.type), " ", task.query, "\n");
 
         switch (task.type) {
-        case Type::Query: {
+        case Type::Query:
+        case Type::QueryViaStarExport: {
             AbstractModuleRecord* moduleRecord = query.moduleRecord;
 
 #if USE(BUN_JSC_ADDITIONS)
             // A live record resolves any name to itself. The exception is a query that got here through `export *`: then it
             // only claims names it declares, otherwise it would make every name from a sibling `export *` ambiguous.
-            // The result depends on viaStarExport, which resolveSet doesn't track, so this has to run before the resolveSet check.
-            if (moduleRecord->hasLiveExports()) [[unlikely]] {
+            // The result depends on the task's type, which resolveSet doesn't track, so this has to run before the resolveSet check.
+            if (someRecordHasLiveExports && moduleRecord->hasLiveExports()) [[unlikely]] {
                 Resolution resolution { Resolution::Type::Resolved, moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
-                if (!task.viaStarExport || moduleRecord->tryGetExportEntry(query.exportName.get())) {
+                if (task.type == Type::Query || moduleRecord->tryGetExportEntry(query.exportName.get())) {
                     if (!mergeToCurrentTop(resolution))
                         return Resolution::ambiguous();
                     continue;
@@ -1158,7 +1162,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 
 #if USE(BUN_JSC_ADDITIONS)
             // A name a live record picks up from its own `export *` still resolves to the live record, not to the module that declares it.
-            if (resolution.type == Resolution::Type::Resolved && query.moduleRecord->hasLiveExports()) [[unlikely]]
+            if (someRecordHasLiveExports && resolution.type == Resolution::Type::Resolved && query.moduleRecord->hasLiveExports()) [[unlikely]]
                 resolution = Resolution { Resolution::Type::Resolved, query.moduleRecord, Identifier::fromUid(vm, query.exportName.get()) };
 #endif
 
@@ -1174,7 +1178,7 @@ auto AbstractModuleRecord::resolveExportImpl(JSGlobalObject* globalObject, const
 #if USE(BUN_JSC_ADDITIONS)
     // No module exports the name, but an `export *` led to a live record. Don't fail the link: the name reads as undefined
     // unless the record's source has it, as in Vitest.
-    if (frames[0].type == Resolution::Type::NotFound)
+    if (someRecordHasLiveExports && frames[0].type == Resolution::Type::NotFound) [[unlikely]]
         frames[0] = firstLiveRecordViaStarExport;
 #endif
     //  1. The starting point is always cacheable.
@@ -1298,7 +1302,8 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             continue;
         bool isRoot = moduleRecord == this;
 #if USE(BUN_JSC_ADDITIONS)
-        if (moduleRecord->hasLiveExports()) [[unlikely]] {
+        bool hasLiveExports = moduleRecord->hasLiveExports();
+        if (hasLiveExports) [[unlikely]] {
             sawLiveExports = true;
             if (!moduleRecord->starExportEntries().isEmpty())
                 liveRecordsWithStarExports.append(moduleRecord);
@@ -1326,7 +1331,7 @@ JSModuleNamespaceObject* AbstractModuleRecord::getModuleNamespace(JSGlobalObject
             Resolution candidate;
 #if USE(BUN_JSC_ADDITIONS)
             // Same as resolveExport(): every export of a live record resolves to (record, exportName), whatever the entry type.
-            if (moduleRecord->hasLiveExports()) [[unlikely]]
+            if (hasLiveExports) [[unlikely]]
                 candidate = { Resolution::Type::Resolved, moduleRecord, exportEntry.exportName };
             else
 #endif
