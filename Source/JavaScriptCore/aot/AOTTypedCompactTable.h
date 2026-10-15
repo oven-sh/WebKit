@@ -12,6 +12,8 @@
 #include "JSOrderedHashTable.h"
 #include "JSString.h"
 #include "MarkedBlockCage.h"
+#include "OperationResult.h"
+#include <wtf/UnalignedAccess.h>
 
 namespace JSC { namespace AOT { namespace Typed {
 
@@ -59,6 +61,9 @@ public:
     };
 
     static constexpr uint32_t initialCapacity = 4;
+    static constexpr uint32_t maxEntriesOfKnownGrowth = 64;
+    static constexpr unsigned shiftOfSizeStepInKnownGrowth = 56;
+    static std::atomic<uint64_t>* knownGrowths();
     static constexpr uint32_t maxCapacityWithTags = 8;
     static constexpr uint32_t maxCapacityWithShortSlots = 254;
     static constexpr unsigned maxIndexBitsWithShortSlots = 8;
@@ -118,7 +123,99 @@ public:
                 return;
         }
     }
+    template<typename CharacterType>
+    static ALWAYS_INLINE bool hasCharacters(const StringImpl& impl, std::span<const CharacterType> characters)
+    {
+        if (impl.length() != characters.size())
+            return false;
+        size_t length = characters.size_bytes();
+        const uint8_t* a = reinterpret_cast<const uint8_t*>(impl.span<CharacterType>().data());
+        const uint8_t* b = reinterpret_cast<const uint8_t*>(characters.data());
+        auto isSameAt = [&]<typename Word>(size_t offset, Word) ALWAYS_INLINE_LAMBDA {
+            return WTF::unalignedLoad<Word>(a + offset) == WTF::unalignedLoad<Word>(b + offset);
+        };
+        if (length >= 8) {
+            for (size_t offset = 0; offset + 8 < length; offset += 8) {
+                if (!isSameAt(offset, uint64_t()))
+                    return false;
+            }
+            return isSameAt(length - 8, uint64_t());
+        }
+        if (length >= 4)
+            return isSameAt(0, uint32_t()) && isSameAt(length - 4, uint32_t());
+        if (length >= 2)
+            return isSameAt(0, uint16_t()) && isSameAt(length - 2, uint16_t());
+        return !length || *a == *b;
+    }
+    template<typename CharacterType>
+    static ALWAYS_INLINE bool isText(const StringImpl& impl, std::span<const CharacterType> characters)
+    {
+        if (impl.is8Bit() == (sizeof(CharacterType) == 1))
+            return hasCharacters(impl, characters);
+        using OtherCharacterType = std::conditional_t<sizeof(CharacterType) == 1, char16_t, Latin1Character>;
+        size_t length = characters.size();
+        if (impl.length() != length)
+            return false;
+        const OtherCharacterType* a = impl.span<OtherCharacterType>().data();
+        const CharacterType* b = characters.data();
+        for (size_t i = 0; i < length; ++i) {
+            if (a[i] != b[i])
+                return false;
+        }
+        return true;
+    }
     enum class Quickly : uint8_t { Found, Absent, Unknown };
+    template<typename CharacterType>
+    ALWAYS_INLINE Quickly tryFindCharactersQuickly(std::span<const CharacterType> characters, unsigned hash, uint32_t& found) const
+    {
+        if (m_keysShift & keysAreWide)
+            return Quickly::Unknown;
+        auto isAt = [&](const uint32_t* keys, uint32_t entry) ALWAYS_INLINE_LAMBDA {
+            uint32_t candidate = keys[entry];
+            if (!candidate)
+                return false;
+            const StringImpl& impl = *uncheckedDowncast<JSString>(MarkedBlockCage::decode(candidate))->tryGetValueImpl();
+            return impl.existingHash() == hash && isText(impl, characters);
+        };
+        if (hasTags()) {
+            constexpr uint64_t ones = 0x0101010101010101ull;
+            const uint32_t* keys = at<uint32_t>(offsetOfIndex() + maxCapacityWithTags);
+            uint64_t difference = *at<uint64_t>(offsetOfIndex()) ^ (hash >> shiftOfShortTag) * ones;
+            uint32_t used = m_used;
+            for (uint64_t flags = (difference - ones) & ~difference & ones << 7; flags; flags &= flags - 1) {
+                found = WTF::ctz(flags) / 8;
+                if (found >= used)
+                    break;
+                if (isAt(keys, found))
+                    return Quickly::Found;
+            }
+            return Quickly::Absent;
+        }
+        const uint32_t* keys = at<uint32_t>(offsetOfKeys());
+        uint32_t mask = (1u << m_indexBits) - 1;
+        if (hasShortSlots()) {
+            const uint16_t* slots = at<uint16_t>(offsetOfIndex());
+            uint32_t tag = hash >> shiftOfShortTag << entryBitsOfShortSlot;
+            for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+                uint32_t slot = slots[i];
+                if (slot == UINT16_MAX)
+                    return Quickly::Absent;
+                found = slot ^ tag;
+                if (found < 1u << entryBitsOfShortSlot && isAt(keys, found))
+                    return Quickly::Found;
+            }
+        }
+        const uint32_t* slots = at<uint32_t>(offsetOfIndex());
+        uint32_t tag = hash >> shiftOfLongTag << entryBitsOfLongSlot;
+        for (uint32_t i = hash & mask;; i = (i + 1) & mask) {
+            uint32_t slot = slots[i];
+            if (slot == UINT32_MAX)
+                return Quickly::Absent;
+            found = slot ^ tag;
+            if (found < 1u << entryBitsOfLongSlot && isAt(keys, found))
+                return Quickly::Found;
+        }
+    }
     ALWAYS_INLINE Quickly tryFindQuickly(JSValue value, uint32_t& found) const
     {
         if (!value.isString())
@@ -239,6 +336,7 @@ private:
     void setKey(uint32_t entry, JSString*);
     void setValue(uint32_t entry, JSValue);
     template<typename Matches> std::optional<uint32_t> findWithHash(unsigned hash, NOESCAPE const Matches&) const;
+    template<typename CharacterType> std::optional<uint32_t> findCharacters(std::span<const CharacterType>) const;
     void addToIndex(uint32_t entry, unsigned hash);
     // Of a table that has no entries yet, but for the keys of that many, none of them deleted.
     void fillIndex(uint32_t count);
@@ -291,6 +389,12 @@ CompactTable::Position CompactTable::stepIterator(VM& vm, Iterator* iterator)
     return position;
 }
 
+} // namespace Typed
+struct Instance;
+// All of operationAOTTypedIterHasInFrame.
+OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepIterationInFrameGenerally(Instance*, EncodedJSValue* words);
+namespace Typed {
+
 // A `for..of` in compiled code over a Map, a Set, one of their iterators, an iterator of an array or a generator of the program, where nothing
 // can observe how it is done. No iterator is made, and no result objects. The record is what operationAOTTypedIterOpen() yields, with an int32 for the `next` method.
 class CollectionIteration {
@@ -308,6 +412,18 @@ public:
     static bool tryOpen(JSGlobalObject*, JSValue iterable, InFrame*);
     static bool isOne(InFrame* record) { return record->get(1).isInt32(); }
     static bool step(JSGlobalObject*, InFrame*);
+    // What operationAOTTypedIterHasInFrame does where mayStepQuickly() says so: a step that calls nothing and allocates nothing, or else stepIterationInFrameGenerally().
+    static OperationReturnType<size_t> JIT_OPERATION_ATTRIBUTES stepQuickly(Instance*, EncodedJSValue* words);
+    // A bit of the mode, word 1: it goes over a Set, or through an iterator of a Map or a Set that does not yield pairs. Where word 1 is no mode but a `next` method the bit says nothing, and stepQuickly()
+    // sees that.
+    static constexpr int32_t mayBeSteppedQuickly = 1024;
+    // What it is opened with in the place of that: the first step, which finds the table, is a general one, and sets the other.
+    static constexpr int32_t mayBeSteppedQuicklyOnceBegun = 2048;
+    static bool mayStepQuickly(const EncodedJSValue* words)
+    {
+        static_assert(std::endian::native == std::endian::little && mayBeSteppedQuickly >> 8 && mayBeSteppedQuickly >> 8 <= UINT8_MAX);
+        return reinterpret_cast<const uint8_t*>(words + 1)[1] & mayBeSteppedQuickly >> 8;
+    }
     static void close(JSGlobalObject*, InFrame*);
     // The mode, word 1, of a record of two words that compiled code makes in the place of `array.entries()` and steps through by itself: word 0 is the array. step() never sees one; there is nothing
     // to close. See Lowering::findEntriesOfArrays().

@@ -36,6 +36,9 @@ JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetPlainly, EncodedJSValue, (JSCe
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTHasPlainly, size_t, (JSCell* base, UniquedStringImpl*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetPlainlyAtSite, EncodedJSValue, (JSCell* base, UniquedStringImpl*, PolymorphicSlots*));
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetPlainlyAndFill, EncodedJSValue, (JSCell* base, UniquedStringImpl*, Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTGetByKeyPlainly, EncodedJSValue, (JSCell* base, JSCell* key, Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTPutByKeyPlainly, size_t, (JSCell* base, JSCell* key, EncodedJSValue, Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTHasByKeyPlainly, size_t, (JSCell* base, JSCell* key, Instance*));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLess, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareLessEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareGreater, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
@@ -44,6 +47,8 @@ JSC_DECLARE_JIT_OPERATION(operationAOTCompareEq, size_t, (Instance*, EncodedJSVa
 JSC_DECLARE_JIT_OPERATION(operationAOTCompareStrictEq, size_t, (Instance*, EncodedJSValue, EncodedJSValue));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetById, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t identifierIndex, Slot*));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutById, void, (Instance*, EncodedJSValue base, EncodedJSValue value, uint32_t identifierIndex, Slot*, uint32_t flags));
+JSC_DECLARE_JIT_OPERATION(operationAOTGetByNameAndFillTable, EncodedJSValue, (Instance*, EncodedJSValue base, uint32_t name));
+JSC_DECLARE_JIT_OPERATION(operationAOTPutByNameAndFillTable, void, (Instance*, EncodedJSValue base, EncodedJSValue value, uint32_t name, uint32_t flagBits));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByVal, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
 JSC_DECLARE_JIT_OPERATION(operationAOTPutByVal, void, (Instance*, EncodedJSValue base, EncodedJSValue property, EncodedJSValue value, uint32_t isStrict));
 JSC_DECLARE_JIT_OPERATION(operationAOTGetByValAndCache, EncodedJSValue, (Instance*, EncodedJSValue base, EncodedJSValue property));
@@ -55,6 +60,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTDeleteByValAndCacheSloppy, size_t, (Instan
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTWriteBarrier, void, (VM*, JSCell*));
 extern "C" UGPRPair SYSV_ABI findCallTarget(CallFrame* calleeFrame, CallLinkInfo*);
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance*));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM*, Instance*));
 
 } } // namespace JSC::AOT
 

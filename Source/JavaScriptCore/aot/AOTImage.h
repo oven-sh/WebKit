@@ -32,7 +32,7 @@ static constexpr size_t imagePageSize = std::max<size_t>(CeilingOnPageSize, 16 *
 static constexpr size_t imageFunctionAlignment = sizeof(uint32_t);
 static constexpr size_t imageStubsAlignment = 16;
 static constexpr unsigned maxStubCopiesPerImage = 48;
-static constexpr unsigned numberOfAdapters = 7;
+static constexpr unsigned numberOfAdapters = 8;
 static constexpr unsigned numberOfStubsThatFindTargets = 3;
 static constexpr unsigned maxReturnsIntoFramesOfHostFunctions = numberOfStubsThatFindTargets + 1;
 
@@ -100,7 +100,8 @@ struct ImageRegExp {
     uint32_t minimumSize;
     uint8_t specificPattern;
     uint8_t keepsMoreOfPattern;
-    uint8_t hasNoCode;
+    uint8_t hasNoCode : 1;
+    uint8_t textIsInPieces : 1;
     uint8_t sourceIsPattern;
 
     static constexpr unsigned maxLengthWithCode = 65536;
@@ -265,10 +266,15 @@ public:
         bool hasCode;
         bool sourceIsPattern;
         StringView text;
+        const ImageRegExp* recordOfTextInPieces;
     };
     JS_EXPORT_PRIVATE static std::optional<CodeForRegExp> codeForRegExp(const String& pattern, OptionSet<Yarr::Flags>);
+    JS_EXPORT_PRIVATE static CodeForRegExp codeOfRegExp(const ImageRegExp&);
+    JS_EXPORT_PRIVATE static const ImageRegExp* findRegExpWithTextInPieces(std::span<const StringView> leaves, unsigned length, OptionSet<Yarr::Flags>);
+    JS_EXPORT_PRIVATE static String textOfRegExp(const ImageRegExp&);
 
     static Image& of(const ImageFunction&);
+    static Image& ofRegExp(const ImageRegExp&);
     std::optional<std::pair<String, bool>> quoteAt(const ImageFunction&, unsigned bytecodeOffset) const;
     String quoteText(uint64_t start, size_t length) const;
     bool constructsAt(const ImageFunction&, unsigned bytecodeOffset) const;

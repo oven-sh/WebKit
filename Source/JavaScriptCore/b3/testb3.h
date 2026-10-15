@@ -975,6 +975,7 @@ void testBranchLoad8Z();
 void testBranchLoad16S();
 void testBranchLoad16Z();
 void testBranch8WithLoad8ZIndex();
+void testBranch16WithLoad16Z();
 void testComplex(unsigned numVars, unsigned numConstructs);
 void testBranchBitTest32TmpImm(uint32_t value, uint32_t imm);
 void testBranchBitTest32AddrImm(uint32_t value, uint32_t imm);

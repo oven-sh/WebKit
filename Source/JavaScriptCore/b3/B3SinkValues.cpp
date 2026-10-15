@@ -11,6 +11,7 @@
 #include "B3BasicBlockInlines.h"
 #include "B3Dominators.h"
 #include "B3NaturalLoops.h"
+#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3ProcedureInlines.h"
 #include "B3ValueInlines.h"
@@ -261,7 +262,7 @@ private:
         if (uses.second.block) {
             Place first = uses.first;
             Place second = uses.second;
-            if (value->opcode() != Patchpoint && value->opcode() != CCall
+            if ((value->opcode() != Patchpoint || value->as<PatchpointValue>()->pureFunctionKey) && value->opcode() != CCall
                 && leaveLoops(from.block, first) && leaveLoops(from.block, second)
                 && !m_dominators.dominates(first.block, second.block) && !m_dominators.dominates(second.block, first.block)
                 && isAtMostHalf(first.block->frequency() + second.block->frequency(), from.block)

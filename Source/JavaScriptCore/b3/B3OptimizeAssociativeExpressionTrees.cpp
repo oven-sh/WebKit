@@ -188,6 +188,27 @@ bool OptimizeAssociativeExpressionTrees::optimizeRootedTree(Value* root, Inserti
         return true;
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    static constexpr size_t mostLeavesToRebalance = 32;
+    if (leaves.size() > mostLeavesToRebalance) {
+        size_t numberOfLeavesLeft = leaves.size();
+        if (op != Mul) {
+            Vector<Value*, 4> sortedLeaves = leaves;
+            std::ranges::sort(sortedLeaves, { }, &Value::index);
+            numberOfLeavesLeft = 0;
+            for (size_t begin = 0; begin < sortedLeaves.size();) {
+                size_t end = begin + 1;
+                while (end < sortedLeaves.size() && sortedLeaves[end] == sortedLeaves[begin])
+                    ++end;
+                numberOfLeavesLeft += op != BitXor || (end - begin) % 2;
+                begin = end;
+            }
+        }
+        if (numberOfLeavesLeft > mostLeavesToRebalance)
+            return false;
+    }
+#endif
+
     // Pair up rotate halves inside XOR / OR trees so the `(x >>> N) ^ (x << (W-N))`
     // idiom (and its sigma/Sigma chained variants) lowers to a single RotR instead of a
     // pair of shifts + XOR.
@@ -369,6 +390,10 @@ bool OptimizeAssociativeExpressionTrees::run()
                 case BitOr:
                 case BitXor:
                     useCounts[child->index()]++;
+#if USE(BUN_JSC_ADDITIONS)
+                    if (child->child(0)->opcode() != child->opcode() && child->child(1)->opcode() != child->opcode())
+                        break;
+#endif
                     if (child->opcode() != value->opcode() || useCounts[child->index()] > 1) {
                         expressionTreeRoots.add(child);
                         rootOwners.add(child->owner);

@@ -390,9 +390,40 @@ void MarkedBlock::Handle::specializedSweep(FreeList* freeList, MarkedBlock::Hand
             }
             potentiallyFreeCell = index + m_atomsPerCell;
         };
-        live.forEachSetBit([&](unsigned index) {
-            handleLiveCell(index);
-        });
+        auto words = live.storage();
+        using Word = std::remove_cvref_t<decltype(words[0])>;
+        constexpr unsigned wordSize = sizeof(Word) * 8;
+        constexpr int fewestMarkedCellsToWalkRuns = 48;
+        if (m_atomsPerCell < wordSize && marksMode == MarksNotStale && header.m_biasedMarkCount - header.m_markCountBias >= fewestMarkedCellsToWalkRuns) {
+            Word everyCell = 1;
+            for (unsigned shift = m_atomsPerCell; shift < wordSize; shift *= 2)
+                everyCell |= everyCell << shift;
+            unsigned remainder = wordSize % m_atomsPerCell;
+            unsigned offset = m_startAtom % wordSize;
+            Word cellsAheadInLastWord = static_cast<Word>(1) << offset;
+            for (unsigned i = m_startAtom / wordSize; i < words.size(); ++i) {
+                Word word = words[i];
+                Word cellAheadIsAlive = word << m_atomsPerCell | cellsAheadInLastWord;
+                cellsAheadInLastWord = word >> (wordSize - m_atomsPerCell);
+                for (Word changes = (word ^ cellAheadIsAlive) & everyCell << offset; changes; changes &= changes - 1) {
+                    unsigned bit = WTF::ctz(changes);
+                    unsigned index = i * wordSize + bit;
+                    if (word >> bit & 1)
+                        pushInterval(std::bit_cast<FreeCell*>(&block.atoms()[potentiallyFreeCell]), (index - potentiallyFreeCell) * atomSize);
+                    else
+                        potentiallyFreeCell = index;
+                }
+                if (offset >= m_atomsPerCell)
+                    offset %= m_atomsPerCell;
+                offset = offset >= remainder ? offset - remainder : offset + m_atomsPerCell - remainder;
+            }
+            if (live.get(endAtom - m_atomsPerCell))
+                potentiallyFreeCell = endAtom;
+        } else {
+            live.forEachSetBit([&](unsigned index) {
+                handleLiveCell(index);
+            });
+        }
         handleLiveCell(endAtom);
 
         if (sweepMode == SweepToFreeList) {

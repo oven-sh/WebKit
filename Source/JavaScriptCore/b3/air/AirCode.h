@@ -261,7 +261,12 @@ public:
     Vector<std::unique_ptr<BasicBlock>>& blockList() LIFETIME_BOUND { return m_blocks; }
 
     // Finds the smallest index' such that at(index') != null and index' >= index.
-    JS_EXPORT_PRIVATE unsigned NODELETE findFirstBlockIndex(unsigned index) const;
+    unsigned NODELETE findFirstBlockIndex(unsigned index) const
+    {
+        while (index < size() && !at(index))
+            index++;
+        return index;
+    }
 
     // Finds the smallest index' such that at(index') != null and index' > index.
     unsigned NODELETE findNextBlockIndex(unsigned index) const;
@@ -369,6 +374,11 @@ public:
     bool placesSpillsAboveFrameRecord() const { return m_placesSpillsAboveFrameRecord; }
     unsigned bytesAboveFrameRecord() const { return m_bytesAboveFrameRecord; }
     unsigned bytesBelowFrameRecord() const { return m_frameSize - m_bytesAboveFrameRecord; }
+    void setMayPlaceCalleeSavesAtFootOfFrame() { m_mayPlaceCalleeSavesAtFootOfFrame = true; }
+    void tryToPlaceCalleeSavesAtFootOfFrame();
+    bool placesCalleeSavesAtFootOfFrame() const { return m_placesCalleeSavesAtFootOfFrame; }
+    void tryToPushRegistersInPrologue();
+    const Vector<Reg, 6>& registersPushedInPrologue() const { return m_registersPushedInPrologue; }
     bool chargesForCalleeSaves() const { return m_chargesForCalleeSaves; }
 #endif
     
@@ -411,6 +421,9 @@ private:
     bool m_mayPlaceSpillsAboveFrameRecord { false };
     bool m_placesSpillsAboveFrameRecord { false };
     unsigned m_bytesAboveFrameRecord { 0 };
+    bool m_mayPlaceCalleeSavesAtFootOfFrame { false };
+    bool m_placesCalleeSavesAtFootOfFrame { false };
+    Vector<Reg, 6> m_registersPushedInPrologue;
 #endif
     SparseCollection<StackSlot> m_stackSlots;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;

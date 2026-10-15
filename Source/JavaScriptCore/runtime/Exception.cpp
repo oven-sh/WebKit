@@ -84,7 +84,7 @@ void Exception::visitChildrenImpl(JSCell* cell, Visitor& visitor)
         frame.visitAggregate(visitor);
     size_t size = thisObject->m_stack.sizeInBytes();
 #if ENABLE(AOT)
-    if (auto* returnAddresses = thisObject->m_returnAddressesAndDidNotifyInspectorOfThrow.pointer()) {
+    if (auto* returnAddresses = thisObject->m_returnAddressesAndFlags.pointer()) {
         visitor.markAuxiliary(returnAddresses);
         visitor.appendUnbarriered(AOT::tokenOf(returnAddresses->instance));
     }
@@ -100,7 +100,7 @@ size_t Exception::estimatedSize(JSCell* cell, VM& vm)
         locker.emplace(thisObject->cellLock());
     size_t size = thisObject->m_stack.sizeInBytes();
 #if ENABLE(AOT)
-    if (auto* returnAddresses = thisObject->m_returnAddressesAndDidNotifyInspectorOfThrow.pointer())
+    if (auto* returnAddresses = thisObject->m_returnAddressesAndFlags.pointer())
         size += returnAddresses->sizeInBytes();
 #endif
     return Base::estimatedSize(cell, vm) + size;
@@ -127,7 +127,7 @@ NEVER_INLINE bool Exception::tryKeepReturnAddresses(VM& vm)
         Locker locker { cellLock() };
         if (otherFrames)
             m_stack = WTF::move(*otherFrames);
-        m_returnAddressesAndDidNotifyInspectorOfThrow.setPointer(returnAddresses);
+        m_returnAddressesAndFlags.setPointer(returnAddresses);
     }
     vm.writeBarrier(this);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
@@ -140,11 +140,15 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
     Base::finishCreation(vm);
 
 #if ENABLE(AOT)
-    if (keepsReturnAddresses() && action == StackCaptureAction::CaptureStack && tryKeepReturnAddresses(vm))
+    if (keepsReturnAddresses() && action == StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode && vm.interpreter.tryDeferStackCapture(this)) {
+        m_returnAddressesAndFlags.setType(stackCaptureIsDeferredFlag);
+        return;
+    }
+    if (keepsReturnAddresses() && action != StackCaptureAction::DoNotCaptureStack && tryKeepReturnAddresses(vm))
         return;
 #endif
     Vector<StackFrame> stackTrace;
-    if (action == StackCaptureAction::CaptureStack)
+    if (action != StackCaptureAction::DoNotCaptureStack)
         vm.interpreter.getStackTrace(this, stackTrace, 0, Options::exceptionStackTraceLimit());
 
     m_stack = WTF::move(stackTrace);
@@ -154,15 +158,50 @@ void Exception::finishCreation(VM& vm, StackCaptureAction action)
 void Exception::noteThatTopFrameIsAtSiteOfItsItem()
 {
 #if ENABLE(AOT)
-    if (auto* returnAddresses = m_returnAddressesAndDidNotifyInspectorOfThrow.pointer())
+    if (stackCaptureIsDeferred())
+        vm().finishDeferredStackCapture();
+    if (auto* returnAddresses = m_returnAddressesAndFlags.pointer())
         returnAddresses->topIsAtSiteOfItsItem = true;
 #endif
+}
+
+void Exception::finishDeferredStackCapture(VM& vm, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC)
+{
+#if ENABLE(AOT)
+    std::unique_ptr<Vector<StackFrame>> otherFrames;
+    auto* returnAddresses = vm.interpreter.getStackTraceUnderHostFunction(this, Options::exceptionStackTraceLimit(), otherFrames, hostFunction, callerFrame, returnPC);
+    {
+        Locker locker { cellLock() };
+        if (returnAddresses && otherFrames)
+            m_stack = WTF::move(*otherFrames);
+        m_returnAddressesAndFlags.setPointer(returnAddresses);
+        m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() & ~stackCaptureIsDeferredFlag);
+    }
+    vm.writeBarrier(this);
+    vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());
+#else
+    UNUSED_PARAM(vm);
+    UNUSED_PARAM(hostFunction);
+    UNUSED_PARAM(callerFrame);
+    UNUSED_PARAM(returnPC);
+#endif
+}
+
+void Exception::dropDeferredStackCapture()
+{
+    m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() & ~stackCaptureIsDeferredFlag);
 }
 
 void Exception::materializeStack()
 {
     VM& vm = this->vm();
-    auto* returnAddresses = m_returnAddressesAndDidNotifyInspectorOfThrow.pointer();
+#if ENABLE(AOT)
+    if (stackCaptureIsDeferred())
+        vm.finishDeferredStackCapture();
+#endif
+    auto* returnAddresses = m_returnAddressesAndFlags.pointer();
+    if (!returnAddresses)
+        return;
     Vector<StackFrame> stack;
     unsigned onTop = returnAddresses->hasFrameOfHostFunctionOnTop;
     stack.append(m_stack.span().first(onTop));
@@ -171,7 +210,7 @@ void Exception::materializeStack()
     {
         Locker locker { cellLock() };
         m_stack = WTF::move(stack);
-        m_returnAddressesAndDidNotifyInspectorOfThrow.setPointer(nullptr);
+        m_returnAddressesAndFlags.setPointer(nullptr);
     }
     vm.writeBarrier(this);
     vm.heap.reportExtraMemoryAllocated(this, m_stack.sizeInBytes());

@@ -146,6 +146,44 @@ Boxed Lowering::boxNumber(Number value)
         patchpoint->setGenerator(m_context.numberBoxingGenerator);
         return Boxed(patchpoint);
     }
+#elif CPU(X86_64)
+    {
+        if (value.value()->hasDouble())
+            return boxedConstant(jsNumber(purifyNaN(value.value()->asDouble())));
+        if (value.value()->opcode() == B3::IToD && value.value()->child(0)->type() == Int32)
+            return boxInt32(Word32(value.value()->child(0)));
+        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+        patchpoint->append(ConstrainedValue(value.value(), ValueRep::SomeRegister));
+        patchpoint->numGPScratchRegisters = 2;
+        patchpoint->numFPScratchRegisters = 1;
+        patchpoint->effects = Effects::none();
+        patchpoint->pureFunctionOfChildrenKey = static_cast<int32_t>(PureFunctionOfChildren::BoxNumber);
+        if (!m_context.numberBoxingGenerator) {
+            m_context.numberBoxingGenerator = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                GPRReg result = params[0].gpr();
+                FPRReg value = params[1].fpr();
+                GPRReg boxedDouble = params.gpScratch(0);
+                GPRReg difference = params.gpScratch(1);
+                FPRReg converted = params.fpScratch(0);
+                jit.moveDoubleTo64(value, boxedDouble);
+                jit.truncateDoubleToInt32(value, result);
+                jit.convertInt32ToDouble(result, converted);
+                jit.moveDoubleTo64(converted, difference);
+                jit.add64(CCallHelpers::Address(instanceGPR, Instance::offsetOfNumberTag()), result);
+                jit.xor64(boxedDouble, difference);
+                jit.sub64(CCallHelpers::Address(instanceGPR, Instance::offsetOfNumberTag()), boxedDouble);
+                if (CCallHelpers::supportsAVX())
+                    jit.m_assembler.vucomisd_rr(value, value);
+                else
+                    jit.m_assembler.ucomisd_rr(value, value);
+                jit.m_assembler.cmovq_mr(X86Assembler::ConditionP, static_cast<int>(Instance::offsetOfBoxedNaN()), instanceGPR, boxedDouble);
+                jit.m_assembler.testq_rr(difference, difference);
+                jit.m_assembler.cmovq_rr(X86Assembler::ConditionNE, boxedDouble, result);
+            });
+        }
+        patchpoint->setGenerator(m_context.numberBoxingGenerator);
+        return Boxed(patchpoint);
+    }
 #endif
     Word32 low = low32(truncateToInteger(value));
     // By the bits: negative zero is no int32, nor is what is not a number.
@@ -174,8 +212,14 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
             converted = boxNumber(assumedNumber(operand.as<OptionalNumber>()));
         else
             converted = convert(Operand(plain(from), operand.value), type.withoutPrimitives(static_cast<uint16_t>(~Primitive::Number)), plain(to));
-        if (from == Rep::Double && to == Rep::OptionalDouble)
-            converted = purified(converted.as<Number>());
+        if (from == Rep::Double && to == Rep::OptionalDouble) {
+            Number number = converted.as<Number>();
+            converted = either<Number>(equal(number, number), [&] {
+                return number;
+            }, [&] {
+                return this->number(PNaN);
+            });
+        }
         result = Operand(to, converted.value);
     }
     if (plain(to) == to && to != Rep::JSValue) {
@@ -200,6 +244,8 @@ Operand Lowering::convertOptional(Operand operand, const Type& type, Rep to)
             bits = bitsOf(operand);
         result = Operand(to, m_out.select(equal(bits, integer(markersIn(from)[i])).value(), marker.value, result->value));
     }
+    if (result && from == Rep::JSValue && to == Rep::OptionalDouble && m_out.m_block->size() && m_out.m_block->last() == result->value)
+        m_boxedBeforeUnboxing.add(result->value, operand.value);
     // A value of no type never comes about.
     return result ? *result : fromBits(integer(0), to);
 }
@@ -211,6 +257,10 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
     RELEASE_ASSERT(from != Rep::Void && to != Rep::Void);
     if (from == to)
         return operand;
+    if (to == Rep::JSValue) {
+        if (LValue boxed = m_boxedBeforeUnboxing.get(operand.value))
+            return Boxed(boxed);
+    }
     if (plain(from) != from || plain(to) != to)
         return convertOptional(operand, type, to);
     // 32 bits that are no boolean were read from a field that keeps an integer in less than a word.
@@ -265,8 +315,12 @@ Operand Lowering::convert(Operand operand, const Type& type, Rep to)
             return asCell(value);
         if (to == Rep::Int32 && type.primitives & Primitive::Boolean)
             return unboxedBoolean(value);
-        if (to == Rep::Double)
-            return select(isInt32(value), toNumber(low32(value)), unboxedDouble(value));
+        if (to == Rep::Double) {
+            Number number = select(isInt32(value), toNumber(low32(value)), unboxedDouble(value));
+            if (m_out.m_block->size() && m_out.m_block->last() == number.value())
+                m_boxedBeforeUnboxing.add(number.value(), value.value());
+            return number;
+        }
         Integer unboxed = select(isInt32(value), signExtended(low32(value)), truncateToInteger(unboxedDouble(value)));
         if (to == Rep::Int64)
             return unboxed;
@@ -333,7 +387,8 @@ Word32 Lowering::toInt32(ValueID id)
     case Rep::Int32:
         return operand.as<Word32>();
     case Rep::OptionalInt64:
-        return low32(select(isMarker(operand), integer(0), assumedInteger(operand.as<OptionalInteger>())));
+        static_assert(!static_cast<uint32_t>(undefinedInteger) && !static_cast<uint32_t>(nullInteger) && !static_cast<uint32_t>(absentInteger));
+        return low32(assumedInteger(operand.as<OptionalInteger>()));
     default:
         if (auto found = m_int32sOfNumbers.find(operand.value); found != m_int32sOfNumbers.end())
             return Word32(found->value);
@@ -343,7 +398,7 @@ Word32 Lowering::toInt32(ValueID id)
             return *ofSum;
         if (auto ofQuotient = toInt32OfQuotient(id))
             return *ofQuotient;
-        if (isInlineBuiltin(id, InlineBuiltin::MathTrunc) && m_function.at(id).arguments.size() == 1 && isNumericOperand(typeOf(m_function.at(id).arguments[0])))
+        if (isInlineBuiltin(id, InlineBuiltin::MathTrunc) && m_function.at(id).arguments.size() == 1 && hasOperandsHere(id) && isNumericOperand(typeOf(m_function.at(id).arguments[0])))
             return toInt32(m_function.at(id).arguments[0]);
         return toInt32(asNumericOperand(id));
     }

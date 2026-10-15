@@ -690,6 +690,22 @@ ALWAYS_INLINE void JSPromise::settleInlineInternalMicrotask(VM& vm, JSGlobalObje
 #endif
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+std::optional<JSPromise::InlineJob> JSPromise::tryFulfillTakingInlineJob(VM& vm, JSValue argument)
+{
+    uint16_t currentFlags = flags();
+    if ((currentFlags & (stateMask | isFirstResolvingFunctionCalledFlag)) || (currentFlags & inlineReactionKindMask) != (static_cast<uint16_t>(InlineReactionKind::InternalMicrotask) << inlineReactionKindShift))
+        return std::nullopt;
+    JSCell* cell = payloadCell();
+    if (cell && !(currentFlags & inlineReactionAsyncContextFlag))
+        return std::nullopt;
+    InlineJob job { static_cast<InternalMicrotask>((currentFlags & inlineReactionMicrotaskMask) >> inlineReactionMicrotaskShift), m_slot.get(), cell ? JSValue(cell) : jsUndefined() };
+    setSlot(vm, argument);
+    setPackedCell(vm, (currentFlags & ~(inlineReactionKindMask | inlineReactionMicrotaskMask | inlineReactionAsyncContextFlag)) | isFirstResolvingFunctionCalledFlag | static_cast<uint16_t>(Status::Fulfilled), nullptr);
+    return job;
+}
+#endif
+
 ALWAYS_INLINE void JSPromise::settleInlineHandler(VM& vm, JSGlobalObject* globalObject, Status newStatus, JSValue argument, uint16_t flagsSnapshot)
 {
     ASSERT(flagsSnapshot & isHandledFlag);

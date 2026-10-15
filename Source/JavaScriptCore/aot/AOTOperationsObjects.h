@@ -35,6 +35,7 @@ struct Slot;
     v(operationAOTMapSet) \
     v(operationAOTSetAdd) \
     v(operationAOTEnsureData) \
+    v(operationAOTNoteFilledSlots) \
 
 enum class WellKnownIdentifier : uint32_t {
     Length,
@@ -68,6 +69,7 @@ JSC_DECLARE_JIT_OPERATION(operationAOTMapSet, EncodedJSValue, (Instance*, JSCell
 JSC_DECLARE_JIT_OPERATION(operationAOTSetAdd, EncodedJSValue, (Instance*, JSCell* set, EncodedJSValue key, int32_t hash));
 
 JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance*, uint32_t index));
+JSC_DECLARE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilledSlots, void, (Data*));
 
 } } // namespace JSC::AOT
 

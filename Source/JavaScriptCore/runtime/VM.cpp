@@ -694,6 +694,9 @@ VM::~VM()
     AOT::Instance::destroyUnneededInstances(*this);
 #endif
     heap.shutDown();
+#if ENABLE(AOT)
+    AOT::PlaceTable::destroy(*this);
+#endif
 
     while (!m_microtaskQueues.isEmpty())
         m_microtaskQueues.begin()->remove();
@@ -972,6 +975,17 @@ static Ref<NativeJITCode> jitCodeForCallTrampoline(Intrinsic intrinsic)
     }
 #endif
     default: {
+#if USE(BUN_JSC_ADDITIONS)
+        if (intrinsic != NoIntrinsic) {
+            static Lock lock;
+            Locker locker { lock };
+            static NeverDestroyed<std::array<RefPtr<NativeJITCode>, 256>> byIntrinsic;
+            RefPtr<NativeJITCode>& code = byIntrinsic.get()[intrinsic];
+            if (!code)
+                code = adoptRef(*new NativeJITCode(LLInt::getCodeRef<JSEntryPtrTag>(llint_native_call_trampoline), JITType::HostCallThunk, intrinsic));
+            return *code;
+        }
+#endif
         static LazyNeverDestroyed<Ref<NativeJITCode>> result;
         static std::once_flag onceKey;
         std::call_once(onceKey, [&] {
@@ -1277,10 +1291,26 @@ bool VM::cancelTermination()
 void VM::setException(Exception* exception)
 {
     ASSERT(!isTerminationException(exception) || hasTerminationRequest());
+    if (deferredStackCapture.exception && deferredStackCapture.exception != exception) [[unlikely]]
+        finishDeferredStackCapture();
     m_exception = exception;
     m_lastException = exception;
     if (exception)
         traps().fireTrap(VMTraps::NeedExceptionHandling);
+}
+
+void VM::finishDeferredStackCapture()
+{
+    DeferredStackCapture deferred = std::exchange(deferredStackCapture, { });
+    if (deferred.exception)
+        deferred.exception->finishDeferredStackCapture(*this, deferred.hostFunction, deferred.callerFrame, deferred.returnPC);
+}
+
+void VM::dropDeferredStackCapture()
+{
+    DeferredStackCapture deferred = std::exchange(deferredStackCapture, { });
+    if (deferred.exception)
+        deferred.exception->dropDeferredStackCapture();
 }
 
 void VM::throwTerminationException()
@@ -1315,8 +1345,10 @@ void VM::throwTerminationExceptionIfNeeded()
 Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exceptionToThrow)
 {
     // The TerminationException should never be overridden.
-    if (hasPendingTerminationException())
+    if (hasPendingTerminationException()) {
+        finishDeferredStackCapture();
         return m_exception;
+    }
 
     // The TerminationException is not like ordinary exceptions that should be
     // reported to the debugger. The fact that the TerminationException uses the
@@ -1330,7 +1362,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
         return exceptionToThrow;
     }
 
-    CallFrame* throwOriginFrame = topJSCallFrame();
+    CallFrame* throwOriginFrame = globalObject->debugger() || Options::breakOnThrow() ? topJSCallFrame() : nullptr;
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = throwOriginFrame && !throwOriginFrame->isNativeCalleeFrame() ? throwOriginFrame->codeBlock() : nullptr;
         dataLog("Throwing exception in call frame ", RawPointer(throwOriginFrame), " for code block ", codeBlock, "\n");
@@ -1338,6 +1370,11 @@ Exception* VM::throwException(JSGlobalObject* globalObject, Exception* exception
     }
 
     interpreter.notifyDebuggerOfExceptionToBeThrown(*this, globalObject, throwOriginFrame, exceptionToThrow);
+
+#if ENABLE(AOT)
+    for (AOT::Instance* instance : m_aotInstances)
+        instance->forgetNewTarget();
+#endif
 
 #if USE(BUN_JSC_ADDITIONS)
     // An embedder reports an exception nobody caught after the async context it was thrown in has
@@ -1359,7 +1396,7 @@ Exception* VM::throwException(JSGlobalObject* globalObject, JSValue thrownValue)
 {
     Exception* exception = dynamicDowncast<Exception>(thrownValue);
     if (!exception)
-        exception = Exception::create(*this, thrownValue);
+        exception = Exception::create(*this, thrownValue, Exception::StackCaptureAction::CaptureStackUnlessCaughtByCompiledCode);
 
     return throwException(globalObject, exception);
 }
@@ -2374,7 +2411,29 @@ void VM::performOpportunisticallyScheduledTasks(ApproximateTime deadline, Option
     heap.sweeper().doWorkUntil(*this, deadline);
 }
 
+void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty)
+{
+    if (changed->structure()->isUncacheableDictionary())
+        nameOfProperty = nullptr;
+#if ENABLE(AOT)
+    if (m_aotPlaceTable)
+        m_aotPlaceTable->didChangePrototype(nameOfProperty);
+#endif
+    auto* megamorphicCache = this->megamorphicCache();
+    if (megamorphicCache && megamorphicCache->mayHoldFactThrough(changed) && (!nameOfProperty || megamorphicCache->mayHoldFactAbout(*nameOfProperty)))
+        endWhatIsCachedUnderTheEpoch();
+}
+
 void VM::invalidateStructureChainIntegrity(StructureChainIntegrityEvent)
+{
+#if ENABLE(AOT)
+    if (m_aotPlaceTable)
+        m_aotPlaceTable->didChangePrototype(nullptr);
+#endif
+    endWhatIsCachedUnderTheEpoch();
+}
+
+void VM::endWhatIsCachedUnderTheEpoch()
 {
     auto* megamorphicCache = this->megamorphicCache();
     if (!megamorphicCache || !megamorphicCache->bumpEpoch()) [[likely]]

@@ -147,6 +147,28 @@ public:
         return m_data[block].idomParent;
     }
     
+#if USE(BUN_JSC_ADDITIONS)
+    template<typename Functor>
+    void skipOver(NOESCAPE const Functor& isGone)
+    {
+        for (unsigned blockIndex = m_graph.numNodes(); blockIndex--;) {
+            typename Graph::Node block = m_graph.node(blockIndex);
+            if (!block)
+                continue;
+            BlockData& data = m_data[block];
+            if (m_hasKids)
+                data.idomKids.clear();
+            if (isGone(block))
+                continue;
+            typename Graph::Node parent = data.idomParent;
+            while (parent && isGone(parent))
+                parent = m_data[parent].idomParent;
+            data.idomParent = parent;
+        }
+        m_hasKids = false;
+    }
+#endif
+
     template<typename Functor>
     void forAllStrictDominatorsOf(typename Graph::Node to, NOESCAPE const Functor& functor) const
     {
@@ -346,6 +368,8 @@ private:
             // All per-DFS-number state lives in one array for locality. noDFSNumber is 0, so a
             // zero-initialized BlockData is the correct starting state for every field.
             m_data.fill(BlockData { }, numNodes + 1);
+            uint16_t* nodeToDFS = m_nodeToDFS.mutableSpan().data();
+            BlockData* blockData = m_data.mutableSpan().data();
 
             // Step 1: assign DFS numbers and record each node's parent in the DFS spanning tree.
             uint16_t count = 0;
@@ -359,18 +383,18 @@ private:
                 worklist.append({ static_cast<uint16_t>(m_graph.index(m_graph.root())), noDFSNumber });
                 while (!worklist.isEmpty()) {
                     auto item = worklist.takeLast();
-                    if (m_nodeToDFS[item.nodeIndex] != noDFSNumber)
+                    if (nodeToDFS[item.nodeIndex] != noDFSNumber)
                         continue;
                     uint16_t dfs = ++nextDFSNumber;
-                    m_nodeToDFS[item.nodeIndex] = dfs;
-                    BlockData& data = m_data[dfs];
+                    nodeToDFS[item.nodeIndex] = dfs;
+                    BlockData& data = blockData[dfs];
                     data.nodeIndex = item.nodeIndex;
                     data.parent = item.parentDFS;
                     data.semi = dfs;
                     data.label = dfs;
                     for (auto successor : m_graph.successors(m_graph.node(item.nodeIndex))) {
                         uint16_t successorIndex = m_graph.index(successor);
-                        if (m_nodeToDFS[successorIndex] == noDFSNumber)
+                        if (nodeToDFS[successorIndex] == noDFSNumber)
                             worklist.append({ successorIndex, dfs });
                     }
                 }
@@ -388,33 +412,33 @@ private:
                 // semidominator. We compress the path iteratively to avoid deep recursion.
                 Vector<uint16_t, 64> compressStack;
                 auto eval = [&](uint16_t v) -> uint16_t {
-                    if (m_data[v].ancestor == noDFSNumber)
-                        return m_data[v].label;
+                    if (blockData[v].ancestor == noDFSNumber)
+                        return blockData[v].label;
 
                     compressStack.shrink(0);
                     uint16_t u = v;
-                    while (m_data[m_data[u].ancestor].ancestor != noDFSNumber) {
+                    while (blockData[blockData[u].ancestor].ancestor != noDFSNumber) {
                         compressStack.append(u);
-                        u = m_data[u].ancestor;
+                        u = blockData[u].ancestor;
                     }
                     for (unsigned i = compressStack.size(); i--;) {
-                        BlockData& data = m_data[compressStack[i]];
+                        BlockData& data = blockData[compressStack[i]];
                         uint16_t ancestor = data.ancestor;
-                        if (m_data[m_data[ancestor].label].semi < m_data[data.label].semi)
-                            data.label = m_data[ancestor].label;
-                        data.ancestor = m_data[ancestor].ancestor;
+                        if (blockData[blockData[ancestor].label].semi < blockData[data.label].semi)
+                            data.label = blockData[ancestor].label;
+                        data.ancestor = blockData[ancestor].ancestor;
                     }
-                    return m_data[v].label;
+                    return blockData[v].label;
                 };
 
                 for (uint16_t w = count; w >= 2; --w) {
-                    BlockData& wData = m_data[w];
+                    BlockData& wData = blockData[w];
                     for (auto predecessor : m_graph.predecessors(m_graph.node(wData.nodeIndex))) {
-                        uint16_t v = m_nodeToDFS[m_graph.index(predecessor)];
+                        uint16_t v = nodeToDFS[m_graph.index(predecessor)];
                         if (v == noDFSNumber)
                             continue; // Predecessor not reachable from the root.
                         uint16_t u = eval(v);
-                        wData.semi = std::min(wData.semi, m_data[u].semi);
+                        wData.semi = std::min(wData.semi, blockData[u].semi);
                     }
                     wData.ancestor = wData.parent;
                 }
@@ -427,12 +451,12 @@ private:
             // We do not need to walk up in semidominator side. This is because semidominator is guaranteed
             // to be on the path between idom(w) -> ... -> parent(w).
             if (count >= 1)
-                m_data[1].idom = 1;
+                blockData[1].idom = 1;
             for (uint16_t w = 2; w <= count; ++w) {
-                uint16_t idom = m_data[w].parent;
-                while (idom > m_data[w].semi)
-                    idom = m_data[idom].idom;
-                m_data[w].idom = idom;
+                uint16_t idom = blockData[w].parent;
+                while (idom > blockData[w].semi)
+                    idom = blockData[idom].idom;
+                blockData[w].idom = idom;
             }
         }
 
@@ -448,18 +472,20 @@ private:
             };
             Vector<Numbers, 64> numbers;
             numbers.fill(Numbers { }, m_count + 1);
+            Numbers* numbersOf = numbers.mutableSpan().data();
+            BlockData* blockData = m_data.mutableSpan().data();
             for (uint16_t w = m_count; w >= 2; --w)
-                numbers[m_data[w].idom].size += numbers[w].size;
-            functor(m_graph.node(m_data[1].nodeIndex), nullptr, 0, numbers[1].size - 1);
+                numbersOf[blockData[w].idom].size += numbersOf[w].size;
+            functor(m_graph.node(blockData[1].nodeIndex), nullptr, 0, numbersOf[1].size - 1);
             for (uint16_t w = 2; w <= m_count; ++w) {
-                uint16_t idom = m_data[w].idom;
-                Numbers& own = numbers[w];
-                Numbers& above = numbers[idom];
+                uint16_t idom = blockData[w].idom;
+                Numbers& own = numbersOf[w];
+                Numbers& above = numbersOf[idom];
                 own.pre = above.next;
                 above.next += own.size;
                 own.next = own.pre + 1;
                 own.depth = above.depth + 1;
-                functor(m_graph.node(m_data[w].nodeIndex), m_graph.node(m_data[idom].nodeIndex), own.pre, own.pre + own.size - 1 - own.depth);
+                functor(m_graph.node(blockData[w].nodeIndex), m_graph.node(blockData[idom].nodeIndex), own.pre, own.pre + own.size - 1 - own.depth);
             }
         }
 

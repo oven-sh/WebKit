@@ -28,6 +28,9 @@
 #if ENABLE(B3_JIT)
 
 #include "B3AbstractHeapRepository.h"
+#if USE(BUN_JSC_ADDITIONS)
+#include "B3Arena.h"
+#endif
 #include "B3Origin.h"
 #include "B3PCToOriginMap.h"
 #include "B3SparseCollection.h"
@@ -37,6 +40,7 @@
 #include "PureNaN.h"
 #include "RegisterAtOffsetList.h"
 #include <wtf/Bag.h>
+#include <wtf/BitSet.h>
 #include <wtf/FastMalloc.h>
 #include <wtf/HashSet.h>
 #include <wtf/IndexedContainerIterator.h>
@@ -159,6 +163,9 @@ public:
 
     void NODELETE resetValueOwners();
     JS_EXPORT_PRIVATE void resetReachability();
+#if USE(BUN_JSC_ADDITIONS)
+    void resetReachabilityBehindContractions();
+#endif
 
     // This destroys CFG analyses. If we ask for them again, we will recompute them. Usually you
     // should call this anytime you call resetReachability().
@@ -262,12 +269,25 @@ public:
     JS_EXPORT_PRIVATE void NODELETE setOptLevel(unsigned value);
     unsigned optLevel() const { return m_optLevel; }
 
-    void setPositionIndependent(bool value = true) { m_positionIndependent = value; }
+    void setPositionIndependent(bool value = true)
+    {
+        m_positionIndependent = value;
+#if USE(BUN_JSC_ADDITIONS)
+        m_arena.setKeepsFirstChunkForThread(value);
+#endif
+    }
+#if USE(BUN_JSC_ADDITIONS)
+    Arena& arena() LIFETIME_BOUND { return m_arena; }
+    Arena* arenaOrNull() LIFETIME_BOUND { return m_positionIndependent ? &m_arena : nullptr; }
+    bool hasEverAdded(Opcode opcode) const { return m_opcodesEverAdded.get(opcode); }
+#endif
     bool positionIndependent() const { return m_positionIndependent; }
     void setMaterializesConstantsByFrequency() { m_materializesConstantsByFrequency = true; }
     bool materializesConstantsByFrequency() const { return m_materializesConstantsByFrequency; }
     void setRotatesLoops() { m_rotatesLoops = true; }
     bool rotatesLoops() const { return m_rotatesLoops; }
+    void setNamesPinnedArgumentRegistersDirectly() { m_namesPinnedArgumentRegistersDirectly = true; }
+    bool namesPinnedArgumentRegistersDirectly() const { return m_namesPinnedArgumentRegistersDirectly; }
     void setReachabilityIsFresh() { m_reachabilityIsFresh = true; }
     bool takeReachabilityIsFresh() { return std::exchange(m_reachabilityIsFresh, false); }
     // The generator that the patchpoints of all loop polls share: a phase knows a poll by it.
@@ -368,6 +388,9 @@ private:
     JS_EXPORT_PRIVATE Value* addValueImpl(Value*);
     void setBlockOrderImpl(Vector<BasicBlock*>&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    Arena m_arena;
+#endif
     SparseCollection<Variable> m_variables;
     Vector<Vector<Type>> m_tuples;
     Vector<std::unique_ptr<BasicBlock>> m_blocks;
@@ -396,9 +419,14 @@ private:
     bool m_positionIndependent { false };
     bool m_materializesConstantsByFrequency { false };
     bool m_rotatesLoops { false };
+    bool m_namesPinnedArgumentRegistersDirectly { false };
     Vector<BasicBlock*> m_blocksInPreOrder;
     Vector<BasicBlock*> m_blocksInPostOrder;
     bool m_reachabilityIsFresh { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_keepsDominatorsThroughReset { false };
+    WTF::BitSet<256> m_opcodesEverAdded;
+#endif
     RefPtr<StackmapGenerator> m_loopPollGenerator;
 #if USE(BUN_JSC_ADDITIONS)
     RefPtr<SharedTask<void(Procedure&)>> m_lastPhase;

@@ -27,6 +27,7 @@
 #include "ImmutableIntrinsics.h"
 
 #include "AOTFunction.h"
+#include "AOTImage.h"
 #include "BuiltinExecutables.h"
 #include "BuiltinNames.h"
 #include "CustomGetterSetter.h"
@@ -66,6 +67,10 @@ void ImmutableIntrinsics::ensureShared(VM& vm)
 {
     if (!vm.useImmutableIntrinsics || shared())
         return;
+#if ENABLE(AOT)
+    if (!AOT::Image::usesNumberedIntrinsics())
+        return;
+#endif
     JSGlobalObject::create(vm, JSGlobalObject::createStructure(vm, jsNull()));
     RELEASE_ASSERT(shared());
 }

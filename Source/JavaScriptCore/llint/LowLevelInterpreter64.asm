@@ -1716,7 +1716,26 @@ llintOpWithMetadata(op_get_length, OpGetLength, macro (size, get, dispatch, meta
     loadConstantOrVariableCell(size, t0, t3, .opGetLengthSlow)
     metadata(t2, t1)
     arrayProfile(OpGetLength::Metadata::m_arrayProfile, t3, t2, t5)
+    if BUN_JSC_ADDITIONS
+        bbeq JSCell::m_type[t3], StringType, .opGetLengthOfString
+    end
     performGetByIDHelper(OpGetLength, m_modeMetadata, m_valueProfile, .opGetLengthSlow, size, return)
+
+    if BUN_JSC_ADDITIONS
+    .opGetLengthOfString:
+        loadp JSString::m_fiber[t3], t0
+        btpnz t0, isRopeInPointer, .opGetLengthOfRope
+        loadi StringImpl::m_length[t0], t0
+        orq numberTag, t0
+        valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
+        return(t0)
+
+    .opGetLengthOfRope:
+        loadi JSRopeString::m_compactFibers + JSRopeString::CompactFibers::m_length[t3], t0
+        orq numberTag, t0
+        valueProfile(size, OpGetLength, m_valueProfile, t0, t2)
+        return(t0)
+    end
 
 .opGetLengthSlow:
     callSlowPath(_llint_slow_path_get_length)

@@ -29,6 +29,9 @@
 
 #if ENABLE(B3_JIT)
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "B3Arena.h"
+#endif
 #include "B3FrequentedBlock.h"
 #include "B3Opcode.h"
 #include "B3Origin.h"
@@ -48,11 +51,33 @@ template<typename> class GenericBlockInsertionSet;
 
 class BasicBlock {
     WTF_MAKE_NONCOPYABLE(BasicBlock);
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    static constexpr bool mayLiveInArena = true;
+    void* operator new(size_t size, Arena* arena) { return arena ? arena->allocate(size, alignof(BasicBlock)) : fastMalloc(size); }
+    void operator delete(void* room, Arena* arena)
+    {
+        if (!arena)
+            fastFree(room);
+    }
+    void operator delete(BasicBlock* block, std::destroying_delete_t)
+    {
+        bool isInArena = block->m_isInArena;
+        block->~BasicBlock();
+        if (!isInArena)
+            fastFree(block);
+    }
+
+    typedef Vector<Value*, 8, UnsafeVectorOverflow> ValueList;
+    typedef Vector<BasicBlock*, 2, UnsafeVectorOverflow> PredecessorList;
+    typedef Vector<FrequentedBlock, 2, UnsafeVectorOverflow> SuccessorList;
+#else
     WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED(BasicBlock);
 public:
     typedef Vector<Value*> ValueList;
     typedef Vector<BasicBlock*, 2> PredecessorList;
     typedef Vector<FrequentedBlock, 2> SuccessorList;
+#endif
 
     static constexpr unsigned uninsertedIndex = UINT_MAX;
     static const char* const dumpPrefix;
@@ -164,6 +189,9 @@ private:
     BasicBlock(unsigned index, double frequency);
 
     unsigned m_index;
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_isInArena { false };
+#endif
     ValueList m_values;
     PredecessorList m_predecessors;
     SuccessorList m_successors;

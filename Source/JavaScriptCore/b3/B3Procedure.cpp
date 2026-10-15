@@ -51,6 +51,50 @@ namespace JSC { namespace B3 {
 
 WTF_MAKE_SEQUESTERED_ARENA_ALLOCATED_IMPL(Procedure);
 
+#if USE(BUN_JSC_ADDITIONS)
+Arena::ChunkOfThread::~ChunkOfThread()
+{
+    if (chunk)
+        fastFree(chunk);
+}
+
+Arena::ChunkOfThread& Arena::chunkOfThread()
+{
+    static thread_local ChunkOfThread ofThread;
+    return ofThread;
+}
+
+Arena::~Arena()
+{
+    for (Chunk* chunk = m_chunks; chunk;) {
+        Chunk* next = chunk->next;
+        if (!next && m_keepsFirstChunkForThread && chunk->size == firstChunkSize && !chunkOfThread().chunk)
+            chunkOfThread().chunk = chunk;
+        else
+            fastFree(chunk);
+        chunk = next;
+    }
+}
+
+void* Arena::allocateSlow(size_t size, size_t alignment)
+{
+    size_t needed = sizeof(Chunk) + alignment + size;
+    Chunk* chunk = nullptr;
+    if (!m_chunks && m_keepsFirstChunkForThread && needed <= firstChunkSize)
+        chunk = std::exchange(chunkOfThread().chunk, nullptr);
+    if (!chunk) {
+        size_t chunkSize = std::max(m_chunks ? std::min(m_chunks->size * 2, maxChunkSize) : firstChunkSize, needed);
+        chunk = static_cast<Chunk*>(fastMalloc(chunkSize));
+        chunk->size = chunkSize;
+    }
+    chunk->next = m_chunks;
+    m_chunks = chunk;
+    m_head = reinterpret_cast<uintptr_t>(chunk + 1);
+    m_end = reinterpret_cast<uintptr_t>(chunk) + chunk->size;
+    return allocate(size, alignment);
+}
+#endif
+
 Procedure::Procedure(bool usesSIMD)
     : m_cfg(new CFG(*this))
     , m_lastPhaseName("initial")
@@ -79,7 +123,12 @@ void Procedure::printOrigin(PrintStream& out, Origin origin) const
 
 BasicBlock* Procedure::addBlock(double frequency)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    std::unique_ptr<BasicBlock> block(new (arenaOrNull()) BasicBlock(m_blocks.size(), frequency));
+    block->m_isInArena = !!arenaOrNull();
+#else
     std::unique_ptr<BasicBlock> block(new BasicBlock(m_blocks.size(), frequency));
+#endif
     BasicBlock* result = block.get();
     m_blocks.append(WTF::move(block));
     return result;
@@ -115,7 +164,12 @@ const Vector<Type>& Procedure::tupleForType(Type tuple) const
 
 Value* Procedure::clone(Value* value)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    SparseCollection<Value>::Pointer clone(value->cloneImpl(arenaOrNull()));
+    m_opcodesEverAdded.set(value->opcode());
+#else
     std::unique_ptr<Value> clone(value->cloneImpl());
+#endif
     clone->m_index = UINT_MAX;
     clone->owner = nullptr;
     return m_values.add(WTF::move(clone));
@@ -231,6 +285,11 @@ void Procedure::resetReachability()
         return;
     
 #if USE(BUN_JSC_ADDITIONS)
+    if (m_dominators && m_keepsDominatorsThroughReset) {
+        m_dominators->skipOver([](BasicBlock* block) {
+            return isBlockDead(block);
+        });
+    }
     IndexSet<Value*> deadPhis;
     for (auto& block : m_blocks) {
         if (!isBlockDead(block.get()))
@@ -267,6 +326,18 @@ void Procedure::resetReachability()
         }
     }
 }
+
+#if USE(BUN_JSC_ADDITIONS)
+void Procedure::resetReachabilityBehindContractions()
+{
+    m_keepsDominatorsThroughReset = true;
+    resetReachability();
+    m_keepsDominatorsThroughReset = false;
+    std::unique_ptr<Dominators> dominators = WTF::move(m_dominators);
+    invalidateCFG();
+    m_dominators = WTF::move(dominators);
+}
+#endif
 
 void Procedure::invalidateCFG()
 {
@@ -315,14 +386,46 @@ void Procedure::dump(PrintStream& out) const
         out.print(*m_byproducts);
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+template<GraphOrder order>
+static void appendBlocksInOrder(Procedure& proc, Vector<BasicBlock*>& output)
+{
+    constexpr uintptr_t isSecondVisit = 1;
+    static_assert(alignof(BasicBlock) > isSecondVisit);
+    output.reserveCapacity(proc.size());
+    Vector<uint8_t, 512> visited;
+    visited.fill(0, proc.size());
+    uint8_t* isVisited = visited.mutableSpan().data();
+    Vector<uintptr_t, 128> stack;
+    stack.append(std::bit_cast<uintptr_t>(proc[0]));
+    while (!stack.isEmpty()) {
+        uintptr_t entry = stack.takeLast();
+        if (entry & isSecondVisit) {
+            output.unsafeAppendWithoutCapacityCheck(std::bit_cast<BasicBlock*>(entry - isSecondVisit));
+            continue;
+        }
+        BasicBlock* block = std::bit_cast<BasicBlock*>(entry);
+        if (isVisited[block->index()])
+            continue;
+        isVisited[block->index()] = 1;
+        if (order == GraphOrder::PreOrder)
+            output.unsafeAppendWithoutCapacityCheck(block);
+        else
+            stack.append(entry | isSecondVisit);
+        for (const FrequentedBlock& successor : block->successors()) {
+            if (!isVisited[successor.block()->index()])
+                stack.append(std::bit_cast<uintptr_t>(successor.block()));
+        }
+    }
+}
+#endif
+
 Vector<BasicBlock*> Procedure::blocksInPreOrder()
 {
 #if USE(BUN_JSC_ADDITIONS)
     if (positionIndependent()) {
-        if (m_blocksInPreOrder.isEmpty()) {
-            m_blocksInPreOrder.reserveCapacity(size());
-            appendNodesInOrder(cfg(), GraphOrder::PreOrder, m_blocksInPreOrder);
-        }
+        if (m_blocksInPreOrder.isEmpty())
+            appendBlocksInOrder<GraphOrder::PreOrder>(*this, m_blocksInPreOrder);
         return m_blocksInPreOrder;
     }
 #endif
@@ -336,10 +439,8 @@ Vector<BasicBlock*> Procedure::blocksInPostOrder()
 {
 #if USE(BUN_JSC_ADDITIONS)
     if (positionIndependent()) {
-        if (m_blocksInPostOrder.isEmpty()) {
-            m_blocksInPostOrder.reserveCapacity(size());
-            appendNodesInOrder(cfg(), GraphOrder::PostOrder, m_blocksInPostOrder);
-        }
+        if (m_blocksInPostOrder.isEmpty())
+            appendBlocksInOrder<GraphOrder::PostOrder>(*this, m_blocksInPostOrder);
         return m_blocksInPostOrder;
     }
 #endif
@@ -478,7 +579,12 @@ RegisterAtOffsetList Procedure::calleeSaveRegisterAtOffsetList() const
 
 Value* Procedure::addValueImpl(Value* value)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    m_opcodesEverAdded.set(value->opcode());
+    return m_values.add(SparseCollection<Value>::Pointer(value));
+#else
     return m_values.add(std::unique_ptr<Value>(value));
+#endif
 }
 
 void Procedure::setBlockOrderImpl(Vector<BasicBlock*>& blocks)
@@ -534,6 +640,10 @@ void Procedure::freeUnneededB3ValuesAfterLowering()
 
     if (m_code->shouldPreserveB3Origins())
         return;
+#if USE(BUN_JSC_ADDITIONS)
+    if (positionIndependent())
+        return;
+#endif
 
     BitVector valuesToPreserve;
     valuesToPreserve.ensureSize(m_values.size());

@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "AirBasicBlock.h"
+#include "AirFormTable.h"
 #include "AirCode.h"
 #include "AirInsertionSet.h"
 #include "AirInst.h"
@@ -106,8 +107,22 @@ struct FPDefDistance {
             distance[index] = static_cast<unsigned char>(registerDistance);
     }
 
+    bool NODELETE saysNothing() const
+    {
+        static_assert(!(sizeof(distance) % sizeof(uint64_t)));
+        for (unsigned i = 0; i < sizeof(distance); i += sizeof(uint64_t)) {
+            uint64_t word;
+            memcpy(&word, distance + i, sizeof(uint64_t));
+            if (~word)
+                return false;
+        }
+        return true;
+    }
+
     bool NODELETE updateFromPrecessor(FPDefDistance& precessorDistance, unsigned constantOffset = 0)
     {
+        if (precessorDistance.saysNothing())
+            return false;
         bool changed = false;
         for (unsigned i = 0; i < MacroAssembler::numberOfFPRegisters(); ++i) {
             unsigned regDistance = precessorDistance.distance[i] + constantOffset;
@@ -131,6 +146,19 @@ void updateDistances(Inst& inst, FPDefDistance& localDistance, unsigned& distanc
         localDistance.reset(inst.args()[1].tmp().fpr());
         return;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    unsigned argIndex = 0;
+    if (const uint8_t* forms = inst.fixedForms(argIndex)) [[likely]] {
+        Arg* args = inst.args().data();
+        for (unsigned numberOfArgs = inst.args().size(); argIndex < numberOfArgs; ++argIndex) {
+            Arg& arg = args[argIndex];
+            if (arg.isTmp() && arg.tmp().isFPR() && Arg::isAnyDef(decodeFormRole(forms[argIndex])))
+                localDistance.add(arg.tmp().fpr(), distanceToBlockEnd);
+        }
+        return;
+    }
+#endif
 
     inst.forEachTmp([&] (Tmp& tmp, Arg::Role role, Bank, Width) {
         ASSERT_WITH_MESSAGE(tmp.isReg(), "This phase must be run after register allocation.");

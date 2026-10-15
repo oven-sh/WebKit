@@ -536,8 +536,8 @@ String getCalculatedDisplayName(VM& vm, JSObject* object)
     }
 
 #if ENABLE(AOT)
-    if (isSlimClosure)
-        return AOT::nameOfSlimClosure(object);
+    if (String displayName = AOT::displayNameOfClosure(object); !displayName.isNull())
+        return displayName;
 #endif
     if (auto* function = dynamicDowncast<JSFunction>(object)) {
         String actualName = function->nameWithoutGC(vm);

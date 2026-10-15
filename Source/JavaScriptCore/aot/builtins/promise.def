@@ -5,6 +5,7 @@ class Promise : JSPromiseType = promiseStructure()
 inline AwaitMayContinue
 inline AwaitedValue
 inline SuspendAsyncFunction
+inline AwaitBySavingFrame
 inline PromiseResolve
 inline PromiseThen
 inline PromiseCatch
@@ -17,6 +18,9 @@ inline GeneratorIsDone
 inline AsyncGeneratorYield
 
 runtime SuspendAsyncFunction : Heap void (JSCell* resumeClosure, EncodedJSValue awaited)
+runtime SaveFrameAndAwait : Heap JSCell* (EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra)
+runtime AwaitWithSavedFrame : Heap JSCell* (EncodedJSValue awaited, JSCell* saved)
+runtime TakeStepAtOnceOrAwait : Heap EncodedJSValue (EncodedJSValue awaited, JSCell* saved) noexcept
 runtime PromiseThen : RuntimeState void (JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived)
 runtime PromiseCatch : RuntimeState JSCell* (JSCell* promise, EncodedJSValue onRejected)
 runtime GetAsyncIteratorNext : Heap EncodedJSValue (EncodedJSValue iterator)
@@ -29,6 +33,7 @@ runtime AsyncGeneratorYield : Heap void (JSCell* resumeClosure, EncodedJSValue o
 operation AwaitMayContinue (any/-, any/-) -> boolean ; ReadsRuntimeState ; Inline(AwaitMayContinue)
 operation AwaitedValue (any/P) -> anything ; ReadsRuntimeState WritesRuntimeState ; Inline(AwaitedValue)
 operation SuspendAsyncFunction (any/K, any/KGP) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(SuspendAsyncFunction)
+operation AwaitBySavingFrame (any/KGP, any/K...) -> anything ; CallsUserCode ; Inline(AwaitBySavingFrame)
 operation AsyncGeneratorYield (any/K, any/KGP) -> undefined ; MayThrow ReadsArguments ReadsRuntimeState WritesRuntimeState ; Inline(AsyncGeneratorYield)
 operation GetAsyncIteratorNext (any) -> anything ; CallsUserCode ; Inline(GetAsyncIteratorNext)
 operation GetIteratorNext (any) -> anything ; CallsUserCode ; Inline(GetIteratorNext)

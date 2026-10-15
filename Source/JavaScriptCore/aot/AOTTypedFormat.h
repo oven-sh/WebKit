@@ -14,7 +14,7 @@ namespace JSC { namespace AOT { namespace Typed { namespace Format {
 // The program as the front end hands it over: one buffer of 32-bit words, read in place. src/aot/format.rs in Bun mirrors this file.
 
 static constexpr uint32_t magic = 0x52495442;
-static constexpr uint32_t version = 34;
+static constexpr uint32_t version = 35;
 static constexpr uint32_t none = UINT32_MAX;
 
 struct Section {
@@ -203,8 +203,10 @@ enum ShapeFlag : uint32_t {
     // Of a class: it declares a static field or method whose name is computed and may be any string. What is found on the class object
     // under a name, or on that of a class that extends it, is not known.
     ShapeHasStaticMemberOfUnknownName = 1 << 8,
+    ShapeConstructorMayBeReplaced = 1 << 9,
     ShapeMayBeReused = 1 << 10,
     ShapeIsOpenedForLog = 1 << 11,
+    ShapeAdmitsOnlyOtherLayouts = 1 << 12,
 };
 
 // Every class of the program has a shape of the kind Instance. The class object is the closure of its constructor, and is made by the run
@@ -480,6 +482,8 @@ enum class CastReason : uint32_t {
 // hangs below it: `JSON.parse(text) as T`: that is copied as well.
 enum class Freshness : uint32_t { None, TopLevel, WholeGraph };
 static constexpr unsigned freshnessShift = 8;
+static constexpr uint32_t CastNotesMisfitAtCaller = 1 << 10;
+static constexpr unsigned argumentOfMisfitAtCallerShift = 11;
 
 // In Value::prediction: the other bits number a function, not a type.
 static constexpr uint32_t PredictionIsClosure = 1u << 31;
@@ -487,6 +491,7 @@ static constexpr uint32_t PredictionIsClosure = 1u << 31;
 static constexpr uint32_t PredictionIsByKey = 1u << 30;
 static constexpr uint32_t ReceiverIsOfOneRow = 1u << 29;
 static constexpr uint32_t VariableIsInitialized = 1;
+static constexpr uint32_t CallIsInTailPosition = 1;
 
 // NewObjectWithShape: immediates[0] is the layout. children[0] and immediates[1] are both none, or a value and the name of a property:
 // of an object that `new` makes for a function it does not know. Then this is a fact. Every function of the program that declares a

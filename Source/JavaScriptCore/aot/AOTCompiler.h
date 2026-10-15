@@ -34,8 +34,10 @@ void emitStackOverflow(CCallHelpers&, StubCalls&, const CCallHelpers::JumpList&,
 void pushCalleeSaves(CCallHelpers&, const RegisterAtOffsetList&);
 void popCalleeSaves(CCallHelpers&, const RegisterAtOffsetList&);
 #endif
+void emitCollapsibleFrameReturn(CCallHelpers&);
+void dropCollapsibleCallerFrames(CCallHelpers&, GPRReg scratch);
+CCallHelpers::Jump branchIfReturnAddressIsNotInCollapsibleFrame(CCallHelpers&, GPRReg returnAddress);
 void dropPaddingAtEnd(CompiledFunctionInfo&, const void* start, B3::Air::Code&);
-void usePinnedRegistersDirectly(B3::Air::Code&);
 
 struct Node;
 

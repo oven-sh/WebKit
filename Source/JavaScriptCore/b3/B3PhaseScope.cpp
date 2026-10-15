@@ -29,6 +29,7 @@
 #if ENABLE(B3_JIT)
 
 #include "B3Common.h"
+#include "B3CompilationCohort.h"
 #include "B3Procedure.h"
 #include "B3Validate.h"
 #include <wtf/DataLog.h>
@@ -41,6 +42,9 @@ PhaseScope::PhaseScope(Procedure& procedure, ASCIILiteral name)
     , m_name(name)
     , m_timingScope("B3"_s, name)
 {
+#if USE(BUN_JSC_ADDITIONS)
+    CompilationCohort::yieldBeforePhase(name);
+#endif
     if (shouldDumpIRAtEachPhase(B3Mode)) {
         dataLog("B3 after ", procedure.lastPhaseName(), ", before ", name, ":\n");
         dataLog(procedure);

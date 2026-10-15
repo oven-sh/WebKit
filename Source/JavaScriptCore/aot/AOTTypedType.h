@@ -115,6 +115,8 @@ struct Type {
     Type withoutPrimitives(uint16_t) const;
     // Whether one of the views does: then any object is of the type. See Layout::admitsForeignObjects.
     bool admitsForeignObjects(const Program&) const;
+    bool admitsUncheckedObjects(const Program&) const;
+    bool admitsOnlyOtherLayouts(const Program&) const;
     // Whether every value of this type is one of the other. Without `foreignObjectsPass`: and every object of this type is one that the
     // other type has for what it is, not because a view admits whatever comes. For whoever makes something else of the rest.
     bool isWithin(const Type&, const Program&, bool foreignObjectsPass = true) const;

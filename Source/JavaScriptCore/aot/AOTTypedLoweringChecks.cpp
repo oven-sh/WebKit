@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "B3ArgumentRegValue.h"
 #include "B3BasicBlockInlines.h"
 #include "B3Dominators.h"
 #include "B3InsertionSetInlines.h"
@@ -50,7 +51,19 @@ Word32 Lowering::shapeWordOf(CellPointer cell)
     static_assert(offsetOfShapeWord + sizeof(uint32_t) <= MarkedBlock::atomSize);
     // Where no cast turns an object into one of another layout, it is of its shape for good.
     unsigned flags = safeIfReaches(cell, offsetOfShapeWord + sizeof(uint32_t)) | (m_program.castsMayRetag ? 0 : IsFixed);
-    return loadField<Word32>(cell, m_heaps.AOTTypedObject_shapeWord, flags);
+    Word32 word = loadField<Word32>(cell, m_heaps.AOTTypedObject_shapeWord, flags);
+    m_cellsOfShapeWords.add(word.value(), cell.value());
+    return word;
+}
+
+Word32 Lowering::blockHalfwordOf(CellPointer cell)
+{
+    unsigned flags = safeIfReaches(cell, offsetOfShapeWord + sizeof(uint32_t)) | (m_program.castsMayRetag ? 0 : IsFixed);
+#if CPU(X86_64)
+    return Word32(marked(m_out.load16ZeroExt32(m_out.address(cell.value(), m_heaps.AOTTypedObject_shapeWord, 1)), flags));
+#else
+    return Word32(marked(m_out.load16SignExt32(m_out.address(cell.value(), m_heaps.AOTTypedObject_shapeWord, 1)), flags));
+#endif
 }
 
 Word32 Lowering::orderWordOf(CellPointer cell)
@@ -62,6 +75,8 @@ Word32 Lowering::orderWordOf(CellPointer cell)
 // that depends on nothing but the word.
 Word32 Lowering::passes(Word32 shapeWord, const ShapeTest& test, LBasicBlock otherwise)
 {
+    if (test.isRange() && test.count > 1 && !test.blockByte && test.first == 1)
+        return aboveOrEqual(shapeWord, word32(0u - test.last()));
     return passes(shapeWord, MergedShapeTest { test, !test.isRange() && test.count <= 64 ? std::optional(bitsOf(test)) : std::nullopt }, otherwise);
 }
 
@@ -82,6 +97,13 @@ Word32 Lowering::passes(Word32 shapeWord, const MergedShapeTest& merged, LBasicB
         return boolean(false);
     if (test.isRange() && !merged.bits && test.count == 1)
         return equal(shapeWord, word32(0u - test.last()));
+    if (test.isRange() && !merged.bits && test.blockByte) {
+        auto found = m_cellsOfShapeWords.find(shapeWord.value());
+        if (found != m_cellsOfShapeWords.end()) {
+            Word32 expected = word32((isX86_64() ? 0xff00u : 0xffffff00u) | test.blockByte);
+            return test.passesEarlierBlocks ? aboveOrEqual(blockHalfwordOf(CellPointer(found->value)), expected) : equal(blockHalfwordOf(CellPointer(found->value)), expected);
+        }
+    }
     Word32 place = add(shapeWord, word32(test.last()));
     if (test.isRange() && !merged.bits)
         return below(place, word32(test.count));
@@ -144,8 +166,9 @@ Vector<Lowering::MergedShapeTest, 4> Lowering::merged(Vector<ShapeTest, 4> given
     std::ranges::sort(given, { }, &ShapeTest::first);
     Vector<ShapeTest, 4> tests;
     for (auto& test : given) {
-        if (!tests.isEmpty() && tests.last().isRange() && test.isRange() && test.first <= tests.last().first + tests.last().count) {
+        if (!tests.isEmpty() && tests.last().isRange() && test.isRange() && (test.first <= tests.last().first + tests.last().count || !m_program.numberOfShapesWithin(tests.last().first + tests.last().count, test.first - 1))) {
             tests.last().count = std::max(tests.last().count, test.first + test.count - tests.last().first);
+            tests.last().blockByte = 0;
             continue;
         }
         tests.append(test);
@@ -199,7 +222,26 @@ Word32 Lowering::passesOneOf(Word32 shapeWord, const Vector<LayoutID, 1>& views,
     Vector<ShapeTest, 4> tests;
     for (LayoutID view : views)
         tests.append(m_useCastTest ? m_program.at(view).castTest : m_program.at(view).test);
+    if (auto* test = views.size() > 1 ? m_program.testOfAll(views, m_useCastTest ? Program::AskedOfViews::MembersKeptByCast : Program::AskedOfViews::Members) : nullptr) {
+        unsigned oneByOne = 0;
+        for (auto& merged : merged(tests))
+            oneByOne += merged.bits ? costOfBits(*merged.bits) : costOf(merged.test, m_program);
+        if (costOf(*test, m_program) < oneByOne)
+            return passes(shapeWord, *test, otherwise);
+    }
     return passesOneOf(shapeWord, tests, otherwise);
+}
+
+void Lowering::askForSourcesOfAllAtOnce(Vector<ShapeTest, 4>& sources, const Vector<LayoutID, 1>& views) const
+{
+    auto* test = sources.size() > 1 ? m_program.testOfAll(views, Program::AskedOfViews::RetagSources) : nullptr;
+    if (!test)
+        return;
+    unsigned oneByOne = 0;
+    for (auto& merged : merged(sources))
+        oneByOne += merged.bits ? costOfBits(*merged.bits) : costOf(merged.test, m_program);
+    if (costOf(*test, m_program) < oneByOne)
+        sources = { *test };
 }
 
 // Each test branches: no answer is made into a value.
@@ -278,7 +320,15 @@ Word32 Lowering::lowerHasShapeOf(const Value& value)
     auto& layout = m_program.at(value.layout());
     Operand operand = get(value.child(0));
     auto test = [&](CellPointer cell) {
-        return passes(shapeWordOf(cell), value.immediates[1] ? ShapeTest { layout.shape, layout.shape ? 1u : 0u } : layout.test);
+        Word32 hasShape = passes(shapeWordOf(cell), value.immediates[1] == shapeTestIsExact ? ShapeTest { layout.shape, layout.shape ? 1u : 0u } : layout.test);
+        if (value.immediates[1] != shapeTestIsForThisInstance)
+            return hasShape;
+        return either<Word32>(hasShape, [&] {
+            LValue structure = structureWithID(m_out.load32(TypedPointer(m_heaps.root, m_out.add(cell.value(), m_out.constIntPtr(JSCell::structureIDOffset())))));
+            return Word32(m_out.equal(m_out.loadPtr(TypedPointer(m_heaps.root, m_out.add(structure, m_out.constIntPtr(Structure::offsetOfAOTInstance())))), m_instance));
+        }, [&] {
+            return boolean(false);
+        });
     };
     if (operand.rep == Rep::Cell)
         return test(operand.as<CellPointer>());
@@ -357,8 +407,22 @@ void Lowering::closureOfOrElse(CellPointer cell, FunctionID function, bool mustB
 {
     auto entrypoint = m_program.genericEntrypoints.find(function.index());
     auto& callee = m_program.at(function);
-    if (entrypoint == m_program.genericEntrypoints.end() || (callee.captureTypes.isEmpty() && !callee.hasManyClosures) || callee.kind == FunctionKind::Constructor || evenIfAltered) {
+    if (entrypoint == m_program.genericEntrypoints.end() || (callee.captureTypes.isEmpty() && !callee.hasManyClosures) || callee.kind == FunctionKind::Constructor) {
         orElse(isClosureOf(cell, function, mustBeAsMade, evenIfAltered), otherwise);
+        return;
+    }
+    if (evenIfAltered) {
+        LBasicBlock isAsAllocated = m_out.newBlock();
+        LBasicBlock isAltered = newColdBlock();
+        LBasicBlock isOne = m_out.newBlock();
+        m_out.branch(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(offsetOfStructureIDOfClosuresOf(callee)))).value(), usually(isAsAllocated), rarely(isAltered));
+        m_out.appendTo(isAsAllocated);
+        m_out.branch(equal(functionOfClosure(cell, m_program.makesSlimClosures(callee)), word32(entrypoint->value.index())).value(), unsure(isOne), unsure(otherwise));
+        m_out.appendTo(isAltered);
+        Integer entry(callAllocationStub(Stub::TypedClosureEntry, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false));
+        Word32 functionOfEntry(m_out.bitAnd(m_out.castToInt32(m_out.lShr(entry.value(), m_out.constInt32(ClosureWord::functionShift))), m_out.constInt32(static_cast<int32_t>(ClosureWord::functionMask))));
+        m_out.branch(logicalAnd(logicalNot(isZero(entry)), equal(functionOfEntry, word32(entrypoint->value.index()))).value(), unsure(isOne), unsure(otherwise));
+        m_out.appendTo(isOne);
         return;
     }
     orElse(equal(loadField<Word32>(cell, m_heaps.JSCell_structureID, safeIfReaches(cell, sizeof(JSCell))), Word32(loadRuntimeState32(offsetOfStructureIDOfClosuresOf(callee)))), otherwise);
@@ -405,7 +469,10 @@ void Lowering::findClosureTestsCarriedOutByBranches()
         if (block.terminator.kind != TerminatorKind::Branch || isLookedAtOtherwise.get(block.terminator.value.index()))
             continue;
         auto& condition = m_function.at(block.terminator.value);
-        if (condition.opcode == Opcode::IsClosureOf || isAwaitMayContinue(condition) || isGuardOfReceiver(condition) || isTestOfForInStamp(condition))
+        bool isRelational = condition.opcode == Opcode::Less || condition.opcode == Opcode::LessEq || condition.opcode == Opcode::Greater || condition.opcode == Opcode::GreaterEq;
+        if (isRelational && ((isNumericOperand(typeOf(condition.child(0))) && isNumericOperand(typeOf(condition.child(1)))) || successorsOf(block.terminator).size() != 2))
+            isRelational = false;
+        if (isRelational || condition.opcode == Opcode::IsClosureOf || isAwaitMayContinue(condition) || isGuardOfReceiver(condition) || isTestOfForInStamp(condition))
             m_isCarriedOutByBranch.set(block.terminator.value.index());
     }
 }
@@ -514,7 +581,7 @@ Word32 Lowering::cellFits(CellPointer cell, const Type& from, const Type& to, LB
         return loadedType;
     };
     // See Layout::admitsForeignObjects.
-    bool anyObjectFits = to.anyObject || (!m_foreignObjectsDoNotFit && to.admitsForeignObjects(m_program));
+    bool anyObjectFits = to.anyObject || (!m_foreignObjectsDoNotFit && to.admitsUncheckedObjects(m_program)) || (m_isValidatingFact && to.admitsForeignObjects(m_program));
     bool mayBeAnyObject = from.anyObject || from.admitsForeignObjects(m_program);
     bool mayBeChangedArray = false;
     Word32 result;
@@ -571,7 +638,7 @@ Word32 Lowering::nonCellFits(Boxed value, const Type& from, const Type& to)
     Word32 result;
     switch (both & Primitive::UndefinedOrNull) {
     case Primitive::UndefinedOrNull:
-        result = logicalOr(result, isUndefinedOrNull(value, from));
+        result = logicalOr(result, from.primitives & ~(cellPrimitives | Primitive::UndefinedOrNull) ? isUndefinedOrNull(value, from) : logicalNot(isCell(value, from)));
         break;
     case Primitive::Undefined:
         result = logicalOr(result, is(jsUndefined()));
@@ -899,7 +966,7 @@ void Lowering::throwTypeMismatch(Operand operand, const Type& from, const Type& 
     operand = thrown(operand, from);
     auto& current = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
     // The run time knows a type by its TypeID, and can then say which property is wrong. Nearly always it is the type of the current value.
-    if (&m_program.at(current.type) == &to) {
+    if (&m_program.at(current.type) == &to && m_program.isNamedAtRunTime(current.type)) {
         throwAt(ThrowKind::TypeMismatch, operand, current.type.index());
         m_out.unreachable();
         return;
@@ -921,7 +988,9 @@ void Lowering::throwTypeMismatch(Operand operand, const Type& from, const Type& 
 bool Lowering::resultBecomesItsType(const Type& guarantee, const Type& type) const
 {
     auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]);
-    if (!value.type || &m_program.at(value.type) != &type || !(guarantee.anyObject || guarantee.admitsForeignObjects(m_program)) || writesOfElementRead(m_program, type) == Writes::Nothing)
+    bool isReadOfWhatMayBecomeIt = value.opcode == Opcode::GetById && (readMayInstantiate(m_program, type) || fieldReadMayMakeObjects(m_program, m_function, value));
+    bool isClaimOfWhatMayBecomeIt = value.type && value.opcode == Opcode::Cast && claimMayMakeObjects(m_program, m_function, value);
+    if (!value.type || &m_program.at(value.type) != &type || !(guarantee.anyObject || guarantee.admitsForeignObjects(m_program) || isReadOfWhatMayBecomeIt || isClaimOfWhatMayBecomeIt) || writesOfElementRead(m_program, type) == Writes::Nothing)
         return false;
     if (Options::auditAOTTypedAssertions() || m_useCastTest || m_foreignObjectsDoNotFit || handlerEnteredByBranch() || m_environmentAwaitingBarrier || m_isFillingArrayAtBirth || m_isFillingReusedEnvironment || !m_fieldsAwaitingFirstStore.isEmpty())
         return false;
@@ -929,6 +998,8 @@ bool Lowering::resultBecomesItsType(const Type& guarantee, const Type& type) con
         return claimMayMakeObjects(m_program, m_function, value);
     if (m_isElementOfEntries && (value.opcode == Opcode::GetByVal || value.opcode == Opcode::IteratorValue) && keyedAccessOf(m_program, m_function, value) == KeyedAccess::Array)
         return !value.readsElementKnownByTheStores() || Options::validateAOTTypedFacts();
+    if (value.opcode == Opcode::CallDirect)
+        return m_program.at(value.function()).writes == Writes::Heap;
     return value.opcode == Opcode::CallBuiltin || fieldReadMayMakeObjects(m_program, m_function, value) || writesOf(m_program, m_function, *m_currentBlock, m_currentIndexInBlock) == Writes::Heap;
 }
 
@@ -969,7 +1040,7 @@ std::optional<ArgumentMoves> Lowering::testsOfThunkThatHoldsTo(const Type& type)
     if (type.primitives & Primitive::BigInt)
         addType(HeapBigIntType);
     Vector<uint64_t, maxRanges> ranges;
-    if (type.anyObject || type.admitsForeignObjects(m_program))
+    if (type.anyObject || type.admitsUncheckedObjects(m_program))
         kinds |= FitsByKind::Object;
     else if (type.hasObjects()) {
         if (type.anyFunction)
@@ -999,13 +1070,13 @@ std::optional<ArgumentMoves> Lowering::testsOfThunkThatHoldsTo(const Type& type)
 Boxed Lowering::holdByThunk(Boxed given, TypeID type, ArgumentMoves&& moves)
 {
     bool isOffUsualPath = !m_out.m_block->frequency();
-    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    PatchpointValue* patchpoint = m_out.patchpoint(Void);
     applyEffects(patchpoint, { Writes::Nothing, true });
-    patchpoint->append(ConstrainedValue(given.value(), ValueRep::reg(GPRInfo::returnValueGPR)));
-    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    patchpoint->append(ConstrainedValue(given.value(), ValueRep::SomeRegister));
     RegisterSet changed = *registersChangedBy(Stub::HoldToType);
     changed.add(GPRInfo::argumentGPR1, IgnoreVectors);
     changed.add(GPRInfo::argumentGPR2, IgnoreVectors);
+    changed.add(GPRInfo::returnValueGPR, IgnoreVectors);
     if (!hasStubsForFunctionsWithoutFrame) {
         if (!isOffUsualPath || LoweringContext::coldSitesForceFrame() || m_watchingHandler) {
             m_context.emitsCalls = true;
@@ -1014,12 +1085,17 @@ Boxed Lowering::holdByThunk(Boxed given, TypeID type, ArgumentMoves&& moves)
             m_context.holdsColdSites = true;
     }
     patchpoint->clobberLate(changed);
-    patchpoint->clobberEarly(isARM64() ? changed : RegisterSet::macroClobberedGPRs());
-    appendArgumentMove(moves, GPRInfo::argumentGPR1, ArgumentSource::Register, GPRInfo::returnValueGPR);
-    appendArgumentMove(moves, GPRInfo::argumentGPR2, ArgumentSource::Constant, type.index());
+    patchpoint->clobberEarly(*registersChangedBy(Stub::HoldToType));
     CallSite site { nextSite() };
-    patchpoint->setGenerator([context = &m_context, site, moves = WTF::move(moves)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+    patchpoint->setGenerator([context = &m_context, site, type, tests = WTF::move(moves)](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg held = params[0].gpr();
+        ArgumentMoves moves;
+        for (size_t i = 0; i < tests.size(); i += 2)
+            appendArgumentMove(moves, held, static_cast<ArgumentSource>(tests[i] & 0xff), tests[i + 1]);
+        if (held != GPRInfo::argumentGPR1)
+            appendArgumentMove(moves, GPRInfo::argumentGPR1, ArgumentSource::Register, held);
+        appendArgumentMove(moves, GPRInfo::argumentGPR2, ArgumentSource::Constant, type.index());
         bool hasNoFrame = context->hasNoFrame(params.proc().code());
         bool isLeaf = hasStubsForFunctionsWithoutFrame && hasNoFrame;
         bool makesFrame = !hasStubsForFunctionsWithoutFrame && hasNoFrame;
@@ -1034,7 +1110,129 @@ Boxed Lowering::holdByThunk(Boxed given, TypeID type, ArgumentMoves&& moves)
             jit.emitFunctionEpilogueWithEmptyFrame();
     });
     unwindToLandingPad(patchpoint, site);
+    return given;
+}
+
+bool Lowering::mayCastInRegister(const Type& from, const Type& to) const
+{
+    return m_currentBlock && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields && !m_watchingHandler && !handlerEnteredByBranch()
+        && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty()
+        && from.isAnything() && !(from.primitives & Primitive::Absent) && holdsCells(repOf(to)) && to.hasCells()
+        && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &to
+        && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts();
+}
+
+std::optional<ArgumentMoves> Lowering::testsOfCastInRegister(const Type& type, bool usesCastTest, bool looksAtForeignObjects) const
+{
+    constexpr unsigned maxRanges = 2;
+    uint64_t kinds = 0;
+    unsigned numberOfTypes = 0;
+    bool hasRoom = true;
+    auto addType = [&](JSType jsType) {
+        for (unsigned i = 0; i < numberOfTypes; ++i) {
+            if ((kinds >> (FitsByKind::shiftOfTypes + 8 * i) & 0xff) == static_cast<uint64_t>(jsType))
+                return;
+        }
+        if (numberOfTypes == FitsByKind::maxTypes) {
+            hasRoom = false;
+            return;
+        }
+        kinds |= static_cast<uint64_t>(jsType) << (FitsByKind::shiftOfTypes + 8 * numberOfTypes++);
+    };
+    if (type.primitives & Primitive::Undefined)
+        kinds |= FitsByKind::Undefined;
+    if (type.primitives & Primitive::Null)
+        kinds |= FitsByKind::Null;
+    if ((type.primitives & Primitive::Boolean) == Primitive::Boolean)
+        kinds |= FitsByKind::Boolean;
+    else if (type.primitives & Primitive::Boolean)
+        return std::nullopt;
+    if (type.primitives & Primitive::Double)
+        kinds |= FitsByKind::Number;
+    else if (type.primitives & Primitive::Int)
+        return std::nullopt;
+    if (type.primitives & Primitive::String)
+        addType(StringType);
+    if (type.primitives & Primitive::Symbol)
+        addType(SymbolType);
+    if (type.primitives & Primitive::BigInt)
+        addType(HeapBigIntType);
+    Vector<uint64_t, maxRanges> ranges;
+    if (type.anyObject || (!looksAtForeignObjects && type.admitsUncheckedObjects(m_program)))
+        kinds |= FitsByKind::Object;
+    else if (type.hasObjects()) {
+        if (type.anyFunction)
+            kinds |= FitsByKind::Function;
+        for (uint16_t index : type.engineClasses)
+            addType(m_builtins.classes()[index].type);
+        Vector<ShapeTest, 4> tests;
+        for (LayoutID view : type.views)
+            tests.append(usesCastTest ? m_program.at(view).castTest : m_program.at(view).test);
+        for (auto& merged : merged(tests)) {
+            if (merged.test.passesNothing())
+                continue;
+            if (merged.bits || !merged.test.isRange() || ranges.size() == maxRanges)
+                return std::nullopt;
+            RELEASE_ASSERT(merged.test.count <= FitsByShape::maxCount);
+            ranges.append(merged.test.last() | static_cast<uint64_t>(merged.test.count) << FitsByShape::shiftOfCount | static_cast<uint64_t>(merged.test.passesEarlierBlocks) << FitsByShape::shiftOfPassesEarlierBlocks | static_cast<uint64_t>(merged.test.blockByte) << FitsByShape::shiftOfBlockByte);
+        }
+    }
+    if (!hasRoom || (!(kinds & ~(FitsByKind::Undefined | FitsByKind::Null | FitsByKind::Boolean | FitsByKind::Number)) && ranges.isEmpty()))
+        return std::nullopt;
+    ArgumentMoves tests;
+    appendArgumentMove(tests, GPRInfo::returnValueGPR, ArgumentSource::FitsByKind, kinds);
+    for (uint64_t range : ranges)
+        appendArgumentMove(tests, GPRInfo::returnValueGPR, ArgumentSource::FitsByShape, range);
+    return tests;
+}
+
+Boxed Lowering::castInRegister(Boxed given, Entry operation, bool operationYieldsValue, uint32_t argument, OperationEffects effects, ArgumentMoves&& tests, bool mayBeChangedArray)
+{
+    PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+    applyEffects(patchpoint, effects);
+    patchpoint->append(ConstrainedValue(given.value(), ValueRep::ColdAny));
+    patchpoint->resultConstraints = { ValueRep::SomeRegisterWithClobber };
+    patchpoint->numGPScratchRegisters = testsOfHeldCellTakeScratch(tests);
+    patchpoint->clobber(*registersChangedBy(Stub::CastInRegister));
+    if (LoweringContext::coldSitesForceFrame()) {
+        m_context.emitsCalls = true;
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    } else if (!hasStubsForFunctionsWithoutFrame)
+        m_context.holdsColdSites = true;
+    CallSite site { nextSite() };
+    patchpoint->setGenerator([context = &m_context, site, operation, operationYieldsValue, argument, mayBeChangedArray, tests = WTF::move(tests)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        GPRReg held = params[0].gpr();
+        CCallHelpers::JumpList doesNotFit;
+        jumpUnlessHeldCellFits(jit, held, testsOfHeldCellTakeScratch(tests) ? params.gpScratch(0) : InvalidGPRReg, tests, doesNotFit);
+        CCallHelpers::Label done = jit.label();
+        ArgumentMoves moves;
+        appendArgumentMove(moves, held, ArgumentSource::FitsByKind, (tests[1] & (FitsByKind::Undefined | FitsByKind::Null | FitsByKind::Boolean | FitsByKind::Number)) | (mayBeChangedArray ? FitsByKind::ChangedArray : 0));
+        appendArgumentMove(moves, wordOfCastInRegisterGPR(), ArgumentSource::Constant, CastInRegister::word(argument, static_cast<unsigned>(operation) * sizeof(void*), operationYieldsValue, held));
+        bool isLeaf = context->hasNoFrame(params.proc().code());
+        params.addLatePath([context, site, isLeaf, doesNotFit, done, moves = WTF::move(moves)](CCallHelpers& jit) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            doesNotFit.link(&jit);
+#if CPU(ARM64)
+            if (isLeaf)
+                jit.move(CCallHelpers::linkRegister, stubTemporaryGPRs[1]);
+#endif
+            context->stubCalls.call(jit, isLeaf ? Stub::LeafCastInRegister : Stub::CastInRegister, site, moves);
+            jit.jump().linkTo(done, &jit);
+        });
+    });
     return Boxed(patchpoint);
+}
+
+bool Lowering::holdsWhatRunTimeHasMade(const Value& current) const
+{
+    auto& made = current.opcode == Opcode::Cast ? m_function.at(withoutUpcasts(current.child(0))) : current;
+    if (made.opcode == Opcode::CatchValue)
+        return true;
+    if (made.opcode != Opcode::CallBuiltin)
+        return false;
+    auto kind = m_builtins.at(made.builtin()).implementation.kind;
+    return kind == BuiltinImplementation::Generic || kind == BuiltinImplementation::Call || kind == BuiltinImplementation::Operation;
 }
 
 Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& type)
@@ -1057,11 +1255,18 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
         join.add(convert(AOT_TYPED_OPERATION_WITH_EFFECTS(HoldOrBecome, effects, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(given.index())), type, rep));
         return join.finish();
     }
-    if (m_currentBlock && (!m_out.m_block->frequency() || (m_program.isColdByGraph(m_id) && !m_isInLoop)) && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields
+    bool isOncePerActivationOfAsyncFunction = !m_isInLoop && (m_function.has(FunctionIsHalfOfAsyncFunction) || ((m_function.resumeFunction || m_function.isGenericEntrypoint()) && (m_function.declaredAs & (functionIsAsync | functionIsGenerator)) == functionIsAsync));
+    if (m_currentBlock && (!m_out.m_block->frequency() || (m_program.isColdByGraph(m_id) && !m_isInLoop) || isOncePerActivationOfAsyncFunction || m_function.at(m_currentBlock->values[m_currentIndexInBlock]).holdsWhatAwaitYields() || holdsWhatRunTimeHasMade(m_function.at(m_currentBlock->values[m_currentIndexInBlock]))) && !m_function.isBodyOfSeveralSites && !m_holdsWhatExtraPropertyYields
         && !m_environmentAwaitingBarrier && !m_isFillingArrayAtBirth && m_fieldsAwaitingFirstStore.isEmpty() && repOf(guarantee) == Rep::JSValue && !(guarantee.primitives & Primitive::Absent) && holdsCells(repOf(type)) && &m_program.at(m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type) == &type
         && !m_useCastTest && !m_foreignObjectsDoNotFit && !handlerEnteredByBranch() && !Options::auditAOTTypedAssertions() && !Options::validateAOTTypedFacts()) {
         if (auto tests = testsOfThunkThatHoldsTo(type))
             return convert(holdByThunk(remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type, WTF::move(*tests)), type, repOf(type));
+    }
+    if (mayCastInRegister(guarantee, type) && !m_useCastTest && !m_foreignObjectsDoNotFit) {
+        if (auto tests = testsOfCastInRegister(type, false, false)) {
+            bool mayBeChangedArray = !type.anyObject && !type.admitsUncheckedObjects(m_program) && std::ranges::any_of(type.engineClasses, [&](uint16_t index) { return m_builtins.classes()[index].type == ArrayType; });
+            return convert(castInRegister(remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), Entry::operationAOTTypedHoldToType, true, m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type.index(), { Writes::Nothing, true }, WTF::move(*tests), mayBeChangedArray), type, repOf(type));
+        }
     }
     bool isInColdBlockOfColdText = !m_out.m_block->frequency() && m_currentBlock && (m_program.isColdByGraph(m_id) || (goesGenerallyWhereTextIsCold() && !m_holdsWhatStrangerYields));
     if ((m_program.isColdByGraph(m_id) || isInColdBlockOfColdText) && !m_isInLoop && !m_function.isBodyOfSeveralSites
@@ -1095,7 +1300,9 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
     LBasicBlock continuation = m_out.m_block;
     m_out.appendTo(mismatch);
     if (LBasicBlock handler = handlerEnteredByBranch()) {
-        if (auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]); m_function.has(FunctionLogsMisfits) && &m_program.at(value.type) == &type) {
+        if (auto& value = m_function.at(m_currentBlock->values[m_currentIndexInBlock]); value.notesMisfitAtCaller() && &m_program.at(value.type) == &type)
+            AOT_TYPED_OPERATION(NoteMisfit, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(value.type.index()), word32(value.argumentOfMisfitAtCaller()), word32(2));
+        else if (bool isEntryWithOrdinaryTwin = m_program.logsTypeErrors && !m_function.has(FunctionLogsMisfits) && m_function.has(Format::FunctionIsHiddenInStackTraces) && !m_function.has(Format::FunctionIsBuiltin) && value.opcode == Opcode::Cast && m_function.at(value.child(0)).opcode == Opcode::Parameter; (m_function.has(FunctionLogsMisfits) || isEntryWithOrdinaryTwin) && &m_program.at(value.type) == &type) {
             auto& held = m_function.at(value.child(0));
             uint32_t first = m_function.isGenericEntrypoint() ? 2 : m_function.captureTypes.size() + m_function.has(Format::FunctionHasThis);
             uint32_t parameter = UINT32_MAX;
@@ -1103,7 +1310,7 @@ Operand Lowering::ensure(Operand operand, const Type& guarantee, const Type& typ
                 parameter = held.immediates[1] - first;
             else if (held.opcode == Opcode::GetArgument)
                 parameter = held.immediates[0];
-            AOT_TYPED_OPERATION(NoteMisfit, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(value.type.index()), word32(parameter), word32(!m_function.isGenericEntrypoint() && !m_function.has(FunctionIsEnteredByValue)));
+            AOT_TYPED_OPERATION(NoteMisfit, remade(convert(operand, guarantee, Rep::JSValue).as<Boxed>()), word32(value.type.index()), word32(parameter), word32(isEntryWithOrdinaryTwin ? 3 : !m_function.isGenericEntrypoint() && !m_function.has(FunctionIsEnteredByValue)));
         }
         m_out.jump(handler);
     } else
@@ -1264,7 +1471,7 @@ void Lowering::validateFact(Operand operand, ValueID id, const Type& type)
     ValueID source = id;
     while (m_function.at(source).opcode == Opcode::Cast && m_function.at(source).castReason() == CastReason::Upcast)
         source = m_function.at(source).child(0);
-    if (m_entriesMadeAsRecords.get(source.index()))
+    if (m_entriesMadeAsRecords.get(source.index()) || m_pairsOfEntries.contains(source.index()))
         return;
     // An environment and the frame of a coroutine have no shape word to look at.
     for (LayoutID view : type.views) {
@@ -1406,7 +1613,8 @@ static bool isPlainAccess(const MemoryValue& memory)
     return !memory.hasFence() && offset >= 0 && offset + static_cast<int64_t>(memory.accessByteSize()) <= reachOfFaultingAccess && memory.isLegalOffset(offset);
 }
 
-static void emitAccess(CCallHelpers& jit, B3::Opcode opcode, B3::Type type, bool isSignExtended, const ValueRep& value, CCallHelpers::Address address)
+template<typename AddressType>
+static void emitAccess(CCallHelpers& jit, B3::Opcode opcode, B3::Type type, bool isSignExtended, const ValueRep& value, AddressType address)
 {
     if (isSignExtended) {
         jit.load32SignedExtendTo64(address, value.gpr());
@@ -1456,11 +1664,31 @@ static void emitAccess(CCallHelpers& jit, B3::Opcode opcode, B3::Type type, bool
     }
 }
 
-void askMemoryAtLoopPolls(Procedure& proc)
+#if CPU(X86_64) && OS(LINUX)
+static PatchpointValue* handlerOfLoopPoll(LoweringContext& context, BasicBlock* slowPath, BasicBlock* continuation)
+{
+    if (slowPath->numPredecessors() != 1 || slowPath->last()->opcode() != B3::Jump || slowPath->successorBlock(0) != continuation)
+        return nullptr;
+    PatchpointValue* handler = nullptr;
+    for (B3::Value* value : *slowPath) {
+        if (value == slowPath->last() || value->opcode() == B3::Nop || value->isConstant())
+            continue;
+        if (handler || !value->as<PatchpointValue>())
+            return nullptr;
+        handler = value->as<PatchpointValue>();
+    }
+    if (!handler || handler->numChildren() || handler->type() != B3::Void || !context.sitesOfLoopPolls.contains(handler->generator()))
+        return nullptr;
+    return handler;
+}
+#endif
+
+void askMemoryAtLoopPolls(Procedure& proc, LoweringContext& context)
 {
 #if CPU(X86_64)
     if (!proc.loopPollGenerator())
         return;
+    bool didRemoveBlocks = false;
     UseCounts useCounts(proc);
     for (BasicBlock* block : proc) {
         B3::Value* branch = block->last();
@@ -1472,6 +1700,30 @@ void askMemoryAtLoopPolls(Procedure& proc)
         auto* poll = comparison->child(0)->as<PatchpointValue>();
         if (!poll || poll->generator() != proc.loopPollGenerator() || useCounts.numUses(poll) != 1 || poll->owner != block || comparison->owner != block)
             continue;
+#if OS(LINUX)
+        BasicBlock* slowPath = block->successorBlock(0);
+        BasicBlock* continuation = block->successorBlock(1);
+        if (PatchpointValue* handler = handlerOfLoopPoll(context, slowPath, continuation)) {
+            for (B3::Value*& value : *slowPath) {
+                if (value == handler)
+                    value = proc.add<B3::Value>(B3::Nop, B3::Void, handler->origin());
+            }
+            handler->setGenerator([context = &context, site = context.sitesOfLoopPolls.get(handler->generator())](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                context->loopPollTraps.append({ jit.labelIgnoringWatchpoints(), site });
+                size_t start = jit.m_assembler.codeSize();
+                jit.load32(CCallHelpers::Address(instanceGPR, Instance::offsetOfLoopPollPage() + (context->hasNoFrame(params.proc().code()) ? offsetOfLeafPollInLoopPollPage : 0)), CCallHelpers::s_scratchRegister);
+                RELEASE_ASSERT(jit.m_assembler.codeSize() - start == sizeOfLoopPoll);
+            });
+            block->appendNonTerminal(handler);
+            block->replaceLast(proc, proc.add<B3::Value>(B3::Jump, branch->origin()));
+            block->setSuccessors(B3::FrequentedBlock(continuation));
+            comparison->replaceWithNopIgnoringType();
+            poll->replaceWithNopIgnoringType();
+            didRemoveBlocks = true;
+            continue;
+        }
+#endif
         PatchpointValue* folded = proc.add<PatchpointValue>(B3::Void, branch->origin());
         folded->effects = poll->effects;
         folded->effects.terminal = true;
@@ -1491,8 +1743,14 @@ void askMemoryAtLoopPolls(Procedure& proc)
         comparison->replaceWithNopIgnoringType();
         poll->replaceWithNopIgnoringType();
     }
+    if (didRemoveBlocks) {
+        proc.resetReachability();
+        proc.invalidateCFG();
+    }
+    UNUSED_PARAM(context);
 #else
     UNUSED_PARAM(proc);
+    UNUSED_PARAM(context);
 #endif
 }
 
@@ -1667,6 +1925,46 @@ void askSignExtendedWordsIn32Bits(Procedure& proc)
     }
 }
 
+void loadDoubleConstantsFromInstance(Procedure& proc)
+{
+#if CPU(X86_64)
+    B3::Value* instance = nullptr;
+    for (B3::Value* value : *proc[0]) {
+        if (auto* argument = value->as<ArgumentRegValue>(); argument && argument->argumentReg() == Reg(instanceGPR))
+            instance = argument;
+    }
+    bool madeInstance = false;
+    InsertionSet insertionSet(proc);
+    for (BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            auto* stackmap = value->as<StackmapValue>();
+            for (unsigned i = 0; i < value->numChildren(); ++i) {
+                B3::Value*& child = value->child(i);
+                if (!child->hasDouble() || (stackmap && stackmap->constrainedChild(i).rep().isAny()))
+                    continue;
+                auto offset = Instance::offsetOfDouble(child->asDouble());
+                if (!offset)
+                    continue;
+                if (!instance) {
+                    instance = proc.add<ArgumentRegValue>(B3::Origin(), Reg(instanceGPR));
+                    madeInstance = true;
+                }
+                auto* load = insertionSet.insert<MemoryValue>(index, B3::Load, B3::Double, value->origin(), instance, static_cast<int32_t>(*offset), HeapRange());
+                load->setControlDependent(false);
+                load->setReadsMutability(B3::Mutability::Immutable);
+                child = load;
+            }
+        }
+        insertionSet.execute(block);
+    }
+    if (madeInstance)
+        proc[0]->values().insert(0, instance);
+#else
+    UNUSED_PARAM(proc);
+#endif
+}
+
 void foldNumberBoxings(Procedure& proc, LoweringContext& context)
 {
     if (!context.numberBoxingGenerator)
@@ -1794,6 +2092,71 @@ void splitBranchConditions(Procedure& proc)
         proc.invalidateCFG();
 }
 
+#if CPU(X86_64)
+static bool compareWithMemoryAtEndOfBlock(Procedure& proc, LoweringContext& context, B3::UseCountsWithoutUsingInstructions& useCounts, B3::BasicBlock* block, unsigned index, B3::Value* pointer, uint32_t nilTest)
+{
+    auto* memory = block->at(index)->as<MemoryValue>();
+    if ((memory->opcode() != Load && memory->opcode() != Load8Z && memory->opcode() != Load16Z) || memory->type() != Int32 || useCounts.numUses(memory) != 1)
+        return false;
+    B3::Value* branch = block->last();
+    if (branch->opcode() != Branch)
+        return false;
+    B3::Value* comparison = branch->child(0);
+    if ((comparison->opcode() != B3::Equal && comparison->opcode() != B3::NotEqual && comparison->opcode() != B3::AboveEqual && comparison->opcode() != B3::Below) || comparison->owner != block || useCounts.numUses(comparison) != 1 || comparison->child(0) != memory || !comparison->child(1)->hasInt32())
+        return false;
+    int32_t constant = comparison->child(1)->asInt32();
+    if (memory->opcode() == Load8Z && static_cast<uint32_t>(constant) > 0xff)
+        return false;
+    if (memory->opcode() == Load16Z && static_cast<uint32_t>(constant) > 0xffff)
+        return false;
+    for (unsigned i = index + 1; i + 1 < block->size(); ++i) {
+        B3::Value* value = block->at(i);
+        if (value == comparison)
+            continue;
+        if (value->as<MemoryValue>() || value->effects().mustExecute() || value->effects().reads || value->effects().readsPinned)
+            return false;
+    }
+    PatchpointValue* test = proc.add<PatchpointValue>(Void, memory->origin());
+    test->append(ConstrainedValue(pointer, ValueRep::SomeRegister));
+    test->effects = memory->effects();
+    test->effects.exitsSideways = true;
+    test->effects.reads = HeapRange::top();
+    test->effects.terminal = true;
+    test->setGenerator([context = &context, isByte = memory->opcode() == Load8Z, isHalfword = memory->opcode() == Load16Z, opcode = comparison->opcode(), offset = memory->offset(), constant, nilTest](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        GPRReg base = params[0].gpr();
+        bool goesToSecond = params.fallsThroughToSuccessor(0);
+        CCallHelpers::RelationalCondition condition = opcode == B3::Equal ? CCallHelpers::Equal : opcode == B3::NotEqual ? CCallHelpers::NotEqual : opcode == B3::AboveEqual ? CCallHelpers::AboveOrEqual : CCallHelpers::Below;
+        if (goesToSecond)
+            condition = CCallHelpers::invert(condition);
+        CCallHelpers::Label instruction = jit.labelIgnoringWatchpoints();
+        CCallHelpers::Jump leaves;
+        if (params.size() == 2) {
+            CCallHelpers::BaseIndex address(base, params[1].gpr(), static_cast<CCallHelpers::Scale>(cell32Shift), offset);
+            leaves = isByte ? jit.branch8(condition, address, CCallHelpers::TrustedImm32(constant)) : isHalfword ? jit.branch16(condition, address, CCallHelpers::TrustedImm32(constant)) : jit.branch32(condition, address, CCallHelpers::TrustedImm32(constant));
+            base = params[1].gpr();
+        } else {
+            CCallHelpers::Address address(base, offset);
+            leaves = isByte ? jit.branch8(condition, address, CCallHelpers::TrustedImm32(constant)) : isHalfword ? jit.branch16(condition, address, CCallHelpers::TrustedImm32(constant)) : jit.branch32(condition, address, CCallHelpers::TrustedImm32(constant));
+        }
+        context->faultingAccesses.append({ instruction, base, nilTest });
+        CCallHelpers::Jump goesOn;
+        if (!goesToSecond && !params.fallsThroughToSuccessor(1))
+            goesOn = jit.jump();
+        Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+        params.addLatePath([=](CCallHelpers& jit) {
+            leaves.linkTo(*labels[goesToSecond], &jit);
+            if (goesOn.isSet())
+                goesOn.linkTo(*labels[1], &jit);
+        });
+    });
+    context.accessesThroughPointer.add(test, 0);
+    block->replaceLast(proc, test);
+    comparison->replaceWithNopIgnoringType();
+    memory->replaceWithNopIgnoringType();
+    return true;
+}
+#endif
+
 // A test for nil whose failure throws, followed by an access through the pointer with nothing in between that anybody could see: the access is the test.
 void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
 {
@@ -1805,6 +2168,9 @@ void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
         if ((value->opcode() == ZExt32 || value->opcode() == SExt32) && value->child(0)->as<MemoryValue>())
             extensionsOf.add(value->child(0), Vector<B3::Value*, 1> { }).iterator->value.append(value);
     }
+#if CPU(X86_64)
+    B3::UseCountsWithoutUsingInstructions useCounts(proc);
+#endif
     for (B3::BasicBlock* arm : proc) {
         PatchpointValue* marker = nullptr;
         for (B3::Value* value : *arm) {
@@ -1828,6 +2194,16 @@ void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
             continue;
         for (unsigned index = 0; index < next->size(); ++index) {
             B3::Value* value = next->at(index);
+            if (auto* latePathCall = value->as<PatchpointValue>()) {
+                if (auto found = context.latePathCallAccesses.find(latePathCall->generator()); found != context.latePathCallAccesses.end() && latePathCall->child(found->value->child) == pointer) {
+                    found->value->nilTest = nilTest;
+                    block->replaceLastWithNew<B3::Value>(proc, Jump, block->last()->origin());
+                    block->setSuccessors(FrequentedBlock(next));
+                    arm->removePredecessor(block);
+                    didChange = true;
+                    break;
+                }
+            }
             auto* memory = value->as<MemoryValue>();
             if (!memory || memory->lastChild() != pointer || !isPlainAccess(*memory)) {
                 Effects effects = value->effects();
@@ -1836,6 +2212,15 @@ void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
                 continue;
             }
             bool isStore = memory->isStore();
+#if CPU(X86_64)
+            if (compareWithMemoryAtEndOfBlock(proc, context, useCounts, next, index, pointer, nilTest)) {
+                block->replaceLastWithNew<B3::Value>(proc, Jump, block->last()->origin());
+                block->setSuccessors(FrequentedBlock(next));
+                arm->removePredecessor(block);
+                didChange = true;
+                break;
+            }
+#endif
             B3::Type type = isStore ? memory->child(0)->type() : memory->type();
             bool isExtended = type == Int32 && (memory->opcode() == Load || memory->opcode() == Load8Z || memory->opcode() == Load16Z);
             Vector<B3::Value*, 1> extensions = isExtended ? extensionsOf.get(memory) : Vector<B3::Value*, 1> { };
@@ -1856,9 +2241,17 @@ void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
             access->effects.reads = HeapRange::top();
             access->setGenerator([context = &context, opcode = memory->opcode(), type, isSignExtended, offset = memory->offset(), nilTest](CCallHelpers& jit, const StackmapGenerationParams& params) {
                 CCallHelpers::Label instruction = jit.labelIgnoringWatchpoints();
+#if CPU(X86_64)
+                if (params.size() == 3) {
+                    emitAccess(jit, opcode, type, isSignExtended, params[0], CCallHelpers::BaseIndex(params[1].gpr(), params[2].gpr(), static_cast<CCallHelpers::Scale>(cell32Shift), offset));
+                    context->faultingAccesses.append({ instruction, params[2].gpr(), nilTest });
+                    return;
+                }
+#endif
                 emitAccess(jit, opcode, type, isSignExtended, params[0], CCallHelpers::Address(params[1].gpr(), offset));
                 context->faultingAccesses.append({ instruction, params[1].gpr(), nilTest });
             });
+            context.accessesThroughPointer.add(access, isStore ? 1 : 0);
             if (isStore)
                 memory->replaceWithNop();
             else if (isExtended) {
@@ -1883,6 +2276,317 @@ void useFaultsForNilTests(Procedure& proc, LoweringContext& context)
     proc.invalidateCFG();
 }
 
+static B3::Value* sourceOfWord(B3::Value* value)
+{
+    for (;;) {
+        switch (value->opcode()) {
+        case B3::Identity:
+        case B3::ZExt32:
+        case B3::Trunc:
+            value = value->child(0);
+            continue;
+        case B3::Select:
+            if (value->child(1)->isConstant()) {
+                value = value->child(2);
+                continue;
+            }
+            if (value->child(2)->isConstant()) {
+                value = value->child(1);
+                continue;
+            }
+            return value;
+        default:
+            return value;
+        }
+    }
+}
+
+static bool isCellCageBase(B3::Value* value)
+{
+#if CPU(ARM64) || CPU(X86_64)
+    return value->opcode() == B3::ArgumentReg && value->as<ArgumentRegValue>()->argumentReg() == cellCageBaseGPR;
+#else
+    auto* memory = value->as<MemoryValue>();
+    if (!memory || memory->opcode() != B3::Load || memory->offset() != Instance::offsetOfCellCageBase())
+        return false;
+    B3::Value* instance = memory->lastChild();
+    return instance->opcode() == B3::ArgumentReg && instance->as<ArgumentRegValue>()->argumentReg() == instanceGPR;
+#endif
+}
+
+struct DecodingOfWord {
+    B3::Value* base { nullptr };
+    B3::Value* word { nullptr };
+};
+
+static DecodingOfWord decodingOf(B3::Value* pointer)
+{
+    if (pointer->opcode() != B3::Opaque || pointer->child(0)->opcode() != B3::Add)
+        return { };
+    B3::Value* sum = pointer->child(0);
+    for (unsigned i = 0; i < 2; ++i) {
+        B3::Value* shifted = sum->child(i);
+        if (shifted->opcode() == B3::Shl && shifted->child(1)->isInt32(cell32Shift) && isCellCageBase(sum->child(!i)))
+            return { sum->child(!i), shifted->child(0) };
+    }
+    return { };
+}
+
+void foldDecodingsIntoAccesses(Procedure& proc, LoweringContext& context)
+{
+    if (!context.keepsCellsAliveForWords)
+        return;
+    struct Candidate {
+        Vector<B3::Value*, 4> accesses;
+        B3::Value* boxing { nullptr };
+        bool zeroReadsUndefined { false };
+        unsigned numberOfUses { 0 };
+        unsigned numberOfUsesThatGo { 0 };
+        bool isRefused { false };
+    };
+    UncheckedKeyHashMap<B3::Value*, Candidate> candidates;
+    UncheckedKeyHashMap<B3::Value*, std::pair<B3::Value*, unsigned>> loadsAwaitingUser;
+    IndexMap<B3::Value*, unsigned> epochOfWord(proc.values().size(), 0u);
+    IndexMap<B3::BasicBlock*, unsigned> epochAtEnd(proc.size(), 0u);
+    Vector<B3::Value*, 16> needless;
+    unsigned lastEpoch = 0;
+    unsigned epoch = 0;
+    auto isFresh = [&](B3::Value* word) {
+        return epochOfWord[sourceOfWord(word)] == epoch;
+    };
+    auto noteAccess = [&](B3::Value* pointer, B3::Value* access) {
+        if (pointer->opcode() != B3::Opaque)
+            return false;
+        Candidate& candidate = candidates.add(pointer, Candidate { }).iterator->value;
+        DecodingOfWord decoding = decodingOf(pointer);
+        if (!decoding.word || !isFresh(decoding.word)) {
+            candidate.isRefused = true;
+            return false;
+        }
+        candidate.accesses.append(access);
+        return true;
+    };
+#if CPU(X86_64) || CPU(ARM64)
+    auto noteBoxing = [&](B3::Value* select) {
+        bool pointerIsLast = select->child(2)->opcode() == B3::Opaque;
+        B3::Value* pointer = select->child(pointerIsLast ? 2 : 1);
+        if (pointer->opcode() != B3::Opaque)
+            return;
+        Candidate& candidate = candidates.find(pointer)->value;
+        DecodingOfWord decoding = decodingOf(pointer);
+        B3::Value* condition = select->child(0);
+        B3::Value* whenNil = select->child(pointerIsLast ? 1 : 2);
+        if (candidate.boxing || !decoding.word || !isFresh(decoding.word) || select->type() != Int64
+            || condition->opcode() != (pointerIsLast ? B3::Below : B3::AboveEqual) || !condition->child(1)->hasInt() || condition->child(1)->asInt() != undefinedCell32 + 1
+            || sourceOfWord(condition->child(0)) != sourceOfWord(decoding.word) || sourceOfWord(whenNil) != sourceOfWord(decoding.word)) {
+            candidate.isRefused = true;
+            return;
+        }
+        while (whenNil->opcode() == B3::Identity)
+            whenNil = whenNil->child(0);
+        B3::Value* ifZero = nullptr;
+        B3::Value* otherwise = nullptr;
+        if (whenNil->opcode() == B3::Select) {
+            B3::Value* test = whenNil->child(0);
+            bool comparesWithZero = (test->opcode() == B3::Equal || test->opcode() == B3::NotEqual) && test->child(1)->isInt(0) && sourceOfWord(test->child(0)) == sourceOfWord(decoding.word);
+            if (comparesWithZero || sourceOfWord(test) == sourceOfWord(decoding.word)) {
+                bool firstIsForZero = comparesWithZero && test->opcode() == B3::Equal;
+                ifZero = whenNil->child(firstIsForZero ? 1 : 2);
+                otherwise = whenNil->child(firstIsForZero ? 2 : 1);
+            }
+        }
+        if (!ifZero || !ifZero->isInt64(undefinedCell32) || otherwise->opcode() == B3::Select) {
+            candidate.isRefused = true;
+            return;
+        }
+        candidate.zeroReadsUndefined = true;
+        candidate.boxing = select;
+    };
+#endif
+    for (B3::BasicBlock* block : proc.blocksInPreOrder()) {
+        epoch = block->numPredecessors() == 1 ? epochAtEnd[block->predecessor(0)] : 0;
+        if (!epoch)
+            epoch = ++lastEpoch;
+        loadsAwaitingUser.clear();
+        for (B3::Value* value : *block) {
+            for (B3::Value* child : value->children()) {
+                if (child->opcode() == B3::Opaque)
+                    candidates.add(child, Candidate { }).iterator->value.numberOfUses++;
+                if (loadsAwaitingUser.isEmpty())
+                    continue;
+                auto found = loadsAwaitingUser.find(child);
+                if (found == loadsAwaitingUser.end())
+                    continue;
+                if (found->value.second != epoch)
+                    candidates.find(found->value.first)->value.isRefused = true;
+                loadsAwaitingUser.remove(found);
+            }
+            if (auto* memory = value->as<MemoryValue>()) {
+                if (isPlainAccess(*memory) && noteAccess(memory->lastChild(), memory) && !memory->isStore())
+                    loadsAwaitingUser.add(memory, std::pair { memory->lastChild(), epoch });
+                if (memory->opcode() == B3::Load && memory->type() == Int32)
+                    epochOfWord[memory] = epoch;
+                continue;
+            }
+            auto* patchpoint = value->as<PatchpointValue>();
+            if (!patchpoint) {
+                if (value->opcode() == B3::CCall)
+                    epoch = ++lastEpoch;
+#if CPU(X86_64) || CPU(ARM64)
+                if (value->opcode() == B3::Select)
+                    noteBoxing(value);
+#endif
+                continue;
+            }
+            if (patchpoint->generator() == context.generatorOfNothing.get()) {
+                if (patchpoint->numChildren() != 2)
+                    continue;
+                if (!isFresh(patchpoint->child(1))) {
+                    epochOfWord[sourceOfWord(patchpoint->child(1))] = epoch;
+                    continue;
+                }
+                needless.append(patchpoint);
+                if (patchpoint->child(0)->opcode() == B3::Opaque)
+                    candidates.find(patchpoint->child(0))->value.numberOfUsesThatGo++;
+                continue;
+            }
+            if (auto found = context.accessesThroughPointer.find(patchpoint); found != context.accessesThroughPointer.end()) {
+                noteAccess(patchpoint->child(found->value), patchpoint);
+                if (patchpoint->type() == Int64)
+                    epochOfWord[patchpoint] = epoch;
+                continue;
+            }
+            if (patchpoint->generator() == context.numberBoxingGenerator.get() || patchpoint->generator() == context.slotBlockFetchGenerator.get())
+                continue;
+            epoch = ++lastEpoch;
+        }
+        epochAtEnd[block] = epoch;
+    }
+    for (B3::Value* patchpoint : needless)
+        patchpoint->replaceWithNop();
+#if CPU(X86_64) || CPU(ARM64)
+    UncheckedKeyHashMap<B3::Value*, std::pair<B3::Value*, bool>> boxings;
+    for (auto& entry : candidates) {
+        B3::Value* pointer = entry.key;
+        Candidate& candidate = entry.value;
+        if (!candidate.isRefused && candidate.boxing && candidate.accesses.isEmpty() && 1 + candidate.numberOfUsesThatGo == candidate.numberOfUses) {
+            boxings.add(candidate.boxing, std::pair { pointer, candidate.zeroReadsUndefined });
+            continue;
+        }
+#if CPU(X86_64)
+        if (candidate.isRefused || candidate.boxing || candidate.accesses.isEmpty() || candidate.accesses.size() > 3 || candidate.accesses.size() + candidate.numberOfUsesThatGo != candidate.numberOfUses)
+            continue;
+        DecodingOfWord decoding = decodingOf(pointer);
+        for (B3::Value* access : candidate.accesses) {
+            if (auto* memory = access->as<MemoryValue>()) {
+                memory->lastChild() = pointer->child(0);
+                continue;
+            }
+            auto* patchpoint = access->as<PatchpointValue>();
+            patchpoint->child(context.accessesThroughPointer.get(patchpoint)) = decoding.base;
+            patchpoint->append(ConstrainedValue(decoding.word, ValueRep::SomeRegister));
+        }
+#endif
+    }
+    if (boxings.isEmpty())
+        return;
+    RefPtr<StackmapGenerator> generator = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        GPRReg result = params[0].gpr();
+        GPRReg word = params[1].gpr();
+        GPRReg base = params[2].gpr();
+        if (result != word) {
+            jit.getEffectiveAddress(CCallHelpers::BaseIndex(base, word, static_cast<CCallHelpers::Scale>(cell32Shift)), result);
+            CCallHelpers::Jump isCell = jit.branch32(CCallHelpers::AboveOrEqual, word, CCallHelpers::TrustedImm32(undefinedCell32 + 1));
+            jit.move(CCallHelpers::TrustedImm32(undefinedCell32), result);
+            jit.moveConditionallyTest32(CCallHelpers::NonZero, word, word, word, result);
+            isCell.link(&jit);
+            return;
+        }
+        CCallHelpers::Jump isCell = jit.branch32(CCallHelpers::AboveOrEqual, word, CCallHelpers::TrustedImm32(undefinedCell32 + 1));
+        CCallHelpers::JumpList done;
+        done.append(jit.branchTest32(CCallHelpers::NonZero, word));
+        jit.move(CCallHelpers::TrustedImm32(undefinedCell32), result);
+        done.append(jit.jump());
+        isCell.link(&jit);
+        jit.getEffectiveAddress(CCallHelpers::BaseIndex(base, word, static_cast<CCallHelpers::Scale>(cell32Shift)), result);
+        done.link(&jit);
+    });
+    InsertionSet insertionSet(proc);
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* select = block->at(index);
+            if (select->opcode() != B3::Select)
+                continue;
+            auto found = boxings.find(select);
+            if (found == boxings.end())
+                continue;
+            DecodingOfWord decoding = decodingOf(found->value.first);
+            PatchpointValue* boxed = insertionSet.insert<PatchpointValue>(index, Int64, select->origin());
+            boxed->effects = Effects::none();
+            boxed->effects.writesLocalState = true;
+            boxed->resultConstraints = { ValueRep::SomeRegister };
+            boxed->append(ConstrainedValue(decoding.word, ValueRep::SomeRegister));
+            boxed->append(ConstrainedValue(decoding.base, ValueRep::SomeRegister));
+            boxed->setGenerator(generator);
+            select->replaceWithIdentity(boxed);
+        }
+        insertionSet.execute(block);
+    }
+#endif
+}
+
+void branchOverUndefinedForAbsentCells(Procedure& proc)
+{
+#if CPU(X86_64)
+    if (!cell32IsPointer)
+        return;
+    auto wordOf = [](B3::Value* value) {
+        while (value->opcode() == B3::Identity || value->opcode() == B3::Opaque || value->opcode() == B3::ZExt32)
+            value = value->child(0);
+        return value;
+    };
+    RefPtr<StackmapGenerator> generator;
+    InsertionSet insertionSet(proc);
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* select = block->at(index);
+            if (select->opcode() != B3::Select || select->type() != Int64)
+                continue;
+            B3::Value* test = select->child(0);
+            bool comparesWithZero = (test->opcode() == B3::Equal || test->opcode() == B3::NotEqual) && test->child(1)->isInt(0);
+            bool firstIsForZero = comparesWithZero && test->opcode() == B3::Equal;
+            B3::Value* ifZero = select->child(firstIsForZero ? 1 : 2);
+            B3::Value* otherwise = select->child(firstIsForZero ? 2 : 1);
+            if (!ifZero->isInt64(undefinedCell32) || wordOf(otherwise)->type() != Int32 || wordOf(comparesWithZero ? test->child(0) : test) != wordOf(otherwise))
+                continue;
+            if (!generator) {
+                generator = createSharedTask<StackmapGeneratorFunction>([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                    GPRReg result = params[0].gpr();
+                    GPRReg cell = params[1].gpr();
+                    if (result != cell) {
+                        jit.move(CCallHelpers::TrustedImm32(undefinedCell32), result);
+                        jit.moveConditionallyTest32(CCallHelpers::NonZero, cell, cell, cell, result);
+                        return;
+                    }
+                    CCallHelpers::Jump isPresent = jit.branchTest32(CCallHelpers::NonZero, cell);
+                    jit.move(CCallHelpers::TrustedImm32(undefinedCell32), result);
+                    isPresent.link(&jit);
+                });
+            }
+            PatchpointValue* boxed = insertionSet.insert<PatchpointValue>(index, Int64, select->origin());
+            boxed->effects = Effects::none();
+            boxed->resultConstraints = { ValueRep::SomeRegister };
+            boxed->append(ConstrainedValue(otherwise, ValueRep::SomeRegister));
+            boxed->setGenerator(generator);
+            select->replaceWithIdentity(boxed);
+        }
+        insertionSet.execute(block);
+    }
+#else
+    UNUSED_PARAM(proc);
+#endif
+}
+
 CellPointer Lowering::nonNil(Operand operand, const Type& type, StringID name)
 {
     RELEASE_ASSERT(!(type.primitives & ~(cellPrimitives | Primitive::UndefinedOrNull)));
@@ -1903,14 +2607,25 @@ CellPointer Lowering::nonNil(Operand operand, const Type& type, StringID name)
 // What enters a place whose type is written down. A value that does not fit is for the run time to turn into one that does, or to turn
 // away. Also where a value is narrowed to a type that casts turn objects into where they are: see narrowingMayRetag(). That looks at
 // the object alone.
-Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
+Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast, std::optional<OperationEffects> effectsOfCast)
 {
     auto& to = m_program.at(cast.type);
     Rep rep = repOf(to);
     bool isNarrowing = cast.castReason() == CastReason::Flow;
     // Only an object is ever converted. A container passes on its kind: see ensureElement().
-    if (!from.hasObjects() || to.views.isEmpty() || m_program.isHeldAlready(from, to, cast.castReason()))
+    if (!from.hasObjects() || to.views.isEmpty() || m_program.isHeldAlready(from, to, cast))
         return ensure(operand, from, to);
+
+    if (mayCastInRegister(from, to) && operand.rep == Rep::JSValue) {
+        bool looksAtForeignObjects = (!isNarrowing && (cast.coercesFreshData() || m_program.annotatedPlaceLooksAtForeignObjects(to))) || m_program.isOpenedForLog(to);
+        bool usesCastTest = cast.castReason() == CastReason::As || isNarrowing;
+        if (auto tests = testsOfCastInRegister(to, usesCastTest, looksAtForeignObjects)) {
+            OperationEffects effects = effectsOfCast ? *effectsOfCast : OperationEffects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
+            CastReason reason = cast.castReason() == CastReason::As && cast.coercesFreshData() ? CastReason::AsFreshObject : cast.castReason();
+            RELEASE_ASSERT(cast.type.index() < 1u << 28 && static_cast<uint32_t>(reason) < 16);
+            return convert(castInRegister(remade(operand.as<Boxed>()), Entry::operationAOTTypedCoerce, true, cast.type.index() << 4 | static_cast<uint32_t>(reason), effects, WTF::move(*tests), false), to, rep);
+        }
+    }
 
     LBasicBlock slowPath = newColdBlock();
     OperandJoin join(*this, joinedAs(to));
@@ -1918,7 +2633,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
     // the type as it is: that lays out what a plain object refers to, and hands back the object itself. See Coercion in AOTTypedObject.cpp.
     Operand fitted;
     {
-        SetForScope isCoerced(m_foreignObjectsDoNotFit, (!isNarrowing && m_program.annotatedPlaceLooksAtForeignObjects(to)) || m_program.isOpenedForLog(to));
+        SetForScope isCoerced(m_foreignObjectsDoNotFit, (!isNarrowing && (cast.coercesFreshData() || m_program.annotatedPlaceLooksAtForeignObjects(to))) || m_program.isOpenedForLog(to));
         // Nothing becomes of what is only tested: a member that could still become more is done with here.
         SetForScope useCastTest(m_useCastTest, cast.castReason() == CastReason::As || isNarrowing);
         fitted = fitOrElse(operand, from, to, slowPath);
@@ -1926,7 +2641,7 @@ Operand Lowering::coerce(Operand operand, const Type& from, const Value& cast)
     join.add(convert(fitted, to, rep));
 
     m_out.appendTo(slowPath);
-    OperationEffects effects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
+    OperationEffects effects = effectsOfCast ? *effectsOfCast : OperationEffects { writesOfCast(m_program, m_function, cast), true, castWritesShapeWords(m_program, m_function, cast) };
     bool onlyCellsComeHere = operand.rep == Rep::JSValue && withoutCells(from).isWithin(withoutCells(to), m_program);
     Boxed passed = onlyCellsComeHere ? Boxed(partsOf(operand.as<Boxed>()).cell) : operand.rep == Rep::JSValue ? remade(operand.as<Boxed>()) : convertTo<Boxed>(operand, from);
     // An object of the program becomes what it becomes where it is, and what is no object is handed back or turned away: the value goes on as it was, and is of the type now.
@@ -1993,6 +2708,7 @@ Operand Lowering::lowerCoercion(ValueID result, const Value& cast)
         if (mayChangeObjects && mayPass(from, m_program.at(view).retagSources))
             sources.append(m_program.at(view).retagSources);
     }
+    askForSourcesOfAllAtOnce(sources, to.views);
     bool asksObjects = !sources.isEmpty() || mayCopy;
     if (!asksObjects && from.isWithin(type, m_program))
         return convert(operand, from, rep);
@@ -2196,9 +2912,79 @@ bool Lowering::mayFuseWithRead(size_t indexOfRead)
     return read.opcode == Opcode::GetById && !read.readsMethodFor() && fieldFor(typeOf(read.child(0)), read.string());
 }
 
+bool Lowering::readsLengthOfExpectedArrayOrString(size_t indexOfRead)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
+        return false;
+    auto& read = m_function.at(m_currentBlock->values[indexOfRead]);
+    if (read.opcode != Opcode::GetById || read.string() != m_length || read.isAtKnownPlace() || read.readsMethodFor() || (!m_isInLoop && !m_program.isHotByText(m_id)))
+        return false;
+    ValueID object = read.child(0);
+    auto& receiver = typeOf(object);
+    if (receiver.onlyView() || receiver == Type::function() || fieldFor(receiver, m_length) || !predictionOf(object))
+        return false;
+    if (auto expectedObject = predictionOf(object, Primitive::All); expectedObject && fieldExpectedFor(*expectedObject, m_length))
+        return false;
+    auto builtin = expectedBuiltin(BuiltinKind::Getter, object, m_length, { });
+    if (!builtin)
+        return false;
+    auto& implementation = m_builtins.at(builtin->call.builtin()).implementation;
+    return implementation.kind == BuiltinImplementation::Inline && (implementation.inlined == InlineBuiltin::ArrayLength || implementation.inlined == InlineBuiltin::StringLength);
+}
+
 static bool isConstant(Opcode opcode)
 {
     return opcode == Opcode::Undefined || opcode == Opcode::Null || opcode == Opcode::Boolean || opcode == Opcode::Integer || opcode == Opcode::Double;
+}
+
+std::optional<ValueID> Lowering::elementReadBehindComparisonWithLength(ValueID array)
+{
+    if (!m_fusedCasts || !m_fusedCasts->indexOfUse || m_fusedCasts->count || m_fusedCasts->countBehindUse || m_generalArmOnOffer || m_watchingHandler)
+        return std::nullopt;
+    auto& values = m_currentBlock->values;
+    ValueID length = values[m_fusedCasts->indexOfRead];
+    ValueID comparison = values[*m_fusedCasts->indexOfUse];
+    auto& use = m_function.at(comparison);
+    ValueID index;
+    if (use.opcode == Opcode::Less && use.child(1) == length)
+        index = use.child(0);
+    else if (use.opcode == Opcode::Greater && use.child(0) == length)
+        index = use.child(1);
+    else
+        return std::nullopt;
+    auto& terminator = m_currentBlock->terminator;
+    if (terminator.kind != TerminatorKind::Branch || terminator.value != comparison || terminator.targets.size() != 2)
+        return std::nullopt;
+    if (!typeOf(index).isInteger() || typeOf(index).integers.least < 0 || get(index).rep != Rep::Int64)
+        return std::nullopt;
+    BlockID body = terminator.targets[0].block;
+    unsigned numberOfWaysIn = 0;
+    for (auto& block : m_function.blocks) {
+        for (auto& target : block.terminator.targets)
+            numberOfWaysIn += target.block == body;
+    }
+    if (numberOfWaysIn != 1 || m_function.at(body).terminator.kind == TerminatorKind::Invoke)
+        return std::nullopt;
+    for (ValueID id : m_function.at(body).values) {
+        auto& value = m_function.at(id);
+        if (isConstant(value.opcode) || value.opcode == Opcode::LoopHint)
+            continue;
+        if (value.opcode == Opcode::GetByVal && value.child(1) == index && originOf(value.child(0)) == originOf(array))
+            return id;
+        break;
+    }
+    return std::nullopt;
+}
+
+bool Lowering::isFollowedByElementShownToBeThere(size_t index)
+{
+    auto& values = m_currentBlock->values;
+    for (++index; index < values.size(); ++index) {
+        if (isConstant(m_function.at(values[index]).opcode))
+            continue;
+        return m_elementsShownToBeThere.contains(values[index].index());
+    }
+    return false;
 }
 
 // `(t as O).flags & 3`: a written cast asserts nothing, so what is read through it is boxed and may be anything. The arms of the read know more: an integer as it is kept; `undefined`, where the object lacks the field. An operation on
@@ -2206,7 +2992,8 @@ static bool isConstant(Opcode opcode)
 // two stand constants only.
 std::optional<size_t> Lowering::indexOfUseFusedWithRead(size_t indexOfRead, unsigned numberOfCasts)
 {
-    if (!mayFuseWithRead(indexOfRead))
+    bool readsLength = !numberOfCasts && readsLengthOfExpectedArrayOrString(indexOfRead);
+    if (!readsLength && !mayFuseWithRead(indexOfRead))
         return std::nullopt;
     auto& values = m_currentBlock->values;
     ValueID operand = values[indexOfRead + numberOfCasts];
@@ -2214,12 +3001,18 @@ std::optional<size_t> Lowering::indexOfUseFusedWithRead(size_t indexOfRead, unsi
         return std::nullopt;
     // Where the field keeps numbers: there the arms have something to gain. A text would be joined to the other operand once in every arm.
     auto& read = m_function.at(values[indexOfRead]);
-    if (auto& stored = m_program.at(fieldFor(typeOf(read.child(0)), read.string())->stored); stored.hasObjects() || stored.primitives & ~(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent))
-        return std::nullopt;
+    auto* field = readsLength ? nullptr : fieldFor(typeOf(read.child(0)), read.string());
+    bool keepsMoreThanNumbers = field && (m_program.at(field->stored).hasObjects() || m_program.at(field->stored).primitives & ~(Primitive::Number | Primitive::UndefinedOrNull | Primitive::Absent));
     for (size_t index = indexOfRead + numberOfCasts + 1; index < values.size(); ++index) {
         auto& value = m_function.at(values[index]);
         if (isConstant(value.opcode))
             continue;
+        if (field && value.opcode == Opcode::ToBoolean && value.child(0) == operand && !(m_program.at(field->stored).primitives & ~(Primitive::UndefinedOrNull | Primitive::Absent)) && !typeOf(read.child(0)).admitsForeignObjects(m_program))
+            return index;
+        if (keepsMoreThanNumbers)
+            return std::nullopt;
+        if (readsLength && (value.opcode == Opcode::Add || value.opcode == Opcode::Sub || value.opcode == Opcode::Mul))
+            return std::nullopt;
         switch (value.opcode) {
         case Opcode::Add:
         case Opcode::Sub:
@@ -2298,6 +3091,18 @@ std::optional<Operand> Lowering::lowerFusedCast(size_t index)
             return placeholder(m_function.at(values[index]).rep);
         return lowerReadFusedWithUse(*read, indexOfUse, behind);
     }
+    if (unsigned behind = numberOfCastsFusedBehindArithmetic(indexOfRead); behind && index <= indexOfRead + behind) {
+        if (index < indexOfRead + behind)
+            return placeholder(m_function.at(values[index]).rep);
+        size_t numberOfAssumptions = m_assumptions.size();
+        ValueID id = values[indexOfRead];
+        auto& operation = m_function.at(id);
+        auto& wanted = m_program.at(m_function.at(values[index]).type);
+        m_assumptions.append(Assumption { id, placeholder(operation.rep), &wanted });
+        Operand result = lowerBinary(id, operation);
+        m_assumptions.shrink(numberOfAssumptions);
+        return convert(result, wanted, repOf(wanted));
+    }
     unsigned count = numberOfCastsFusedWithRead(indexOfRead);
     if (!count || index > indexOfRead + count)
         return std::nullopt;
@@ -2347,6 +3152,22 @@ unsigned Lowering::numberOfCastsFusedBehindUse(size_t indexOfUse)
     return count;
 }
 
+unsigned Lowering::numberOfCastsFusedBehindArithmetic(size_t index)
+{
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts() || m_currentBlock->terminator.kind == TerminatorKind::Invoke)
+        return 0;
+    switch (m_function.at(m_currentBlock->values[index]).opcode) {
+    case Opcode::Add:
+    case Opcode::Sub:
+    case Opcode::Mul:
+    case Opcode::Div:
+    case Opcode::Mod:
+        return numberOfCastsFusedBehindUse(index);
+    default:
+        return 0;
+    }
+}
+
 Operand Lowering::lowerReadFusedWithUse(ReadFusedWithUse read, size_t indexOfUse, unsigned numberOfCastsBehindUse)
 {
     auto& values = m_currentBlock->values;
@@ -2371,8 +3192,11 @@ std::optional<Operand> Lowering::lowerFusedUse(size_t index)
     if (m_fusedCasts)
         return std::nullopt;
     auto read = readFusedWithUse(index);
-    if (!read)
+    if (!read) {
+        if (numberOfCastsFusedBehindArithmetic(index))
+            return placeholder(m_function.at(m_currentBlock->values[index]).rep);
         return std::nullopt;
+    }
     if (numberOfCastsFusedBehindUse(index))
         return placeholder(m_function.at(m_currentBlock->values[index]).rep);
     return lowerReadFusedWithUse(*read, index, 0);
@@ -2446,7 +3270,7 @@ Operand Lowering::carryOutFusedCasts(Operand operand, const Type& from)
         if (m_fusedCasts->countBehindUse)
             m_assumptions.append(Assumption { id, placeholder(use.rep), known });
         bool isRelational = use.opcode == Opcode::Less || use.opcode == Opcode::LessEq || use.opcode == Opcode::Greater || use.opcode == Opcode::GreaterEq;
-        operand = isRelational ? Operand(lowerRelational(use)) : lowerBinary(id, use);
+        operand = use.opcode == Opcode::ToBoolean ? Operand(lowerToBoolean(use.child(0))) : isRelational ? Operand(lowerRelational(use)) : lowerBinary(id, use);
     }
     m_assumptions.shrink(numberOfAssumptions);
     return convert(operand, *known, repOf(m_fusedCasts->type));
@@ -2577,6 +3401,7 @@ void Lowering::branchOnTransitionSource(CellPointer cell, const SunkCoercion& su
     Vector<ShapeTest, 4> sources;
     for (const ShapeTest* test : sunk.sources)
         sources.append(*test);
+    askForSourcesOfAllAtOnce(sources, m_program.at(m_function.at(sunk.cast).coercedType()).views);
     branchOnPassingOneOf(shapeWordOf(cell), sources, isSource, isNoSource);
 }
 
@@ -2613,7 +3438,7 @@ Operand Lowering::lowerCastBehindCoercion(ValueID result, const Value& cast, con
 
 std::optional<Operand> Lowering::castByBody(const Value& cast, Operand operand, const Type& from, const Type& to)
 {
-    if (!isCompact() || (operand.rep != Rep::JSValue && operand.rep != Rep::Cell) || m_program.isHeldAlready(from, to, cast.castReason()))
+    if (!isCompact() || (operand.rep != Rep::JSValue && operand.rep != Rep::Cell) || m_program.isHeldAlready(from, to, cast))
         return std::nullopt;
     if (m_environmentAwaitingBarrier || m_isFillingArrayAtBirth || !m_fieldsAwaitingFirstStore.isEmpty())
         return std::nullopt;
@@ -2628,6 +3453,8 @@ std::optional<Operand> Lowering::castByBody(const Value& cast, Operand operand, 
 
 Operand Lowering::lowerCast(ValueID result, const Value& value)
 {
+    if (m_castCarriedOutByRead && m_castCarriedOutByRead->block == m_currentBlock && m_castCarriedOutByRead->index == m_currentIndexInBlock)
+        return std::exchange(m_castCarriedOutByRead, std::nullopt)->operand;
     if (value.castReason() == CastReason::Upcast) {
         if (auto found = m_pinnedReads.find(value.child(0).index()); found != m_pinnedReads.end()) {
             PinnedRead read = found->value;
@@ -2646,6 +3473,8 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
         return lowerCloneGroup(*std::exchange(m_cloneGroup, std::nullopt));
     if (m_mergeGroup && m_mergeGroup->first + 2 == m_currentIndexInBlock)
         return lowerMergeGroup(*std::exchange(m_mergeGroup, std::nullopt));
+    if (m_spreadGroup && m_spreadGroup->cast == m_currentIndexInBlock)
+        return lowerSpreadGroup(*std::exchange(m_spreadGroup, std::nullopt));
     if (auto fused = lowerFusedCast(m_currentIndexInBlock))
         return *fused;
     // But for what stands for the access of a property, which throws as the access does.
@@ -2697,7 +3526,7 @@ Operand Lowering::lowerCast(ValueID result, const Value& value)
         m_out.appendTo(continuation);
         return ensure(operand, from, to);
     }
-    if (auto* engineClass = to.hasOnlyPrimitives(Primitive::String) ? &m_builtins.stringClass() : to.onlyEngineClass(); engineClass && !value.string() && answerOfGuardAhead(value.child(0), *engineClass, AskedFor::Class).value_or(false))
+    if (auto* engineClass = to.hasOnlyPrimitives(Primitive::String) ? &m_builtins.stringClass() : to.onlyEngineClass(); engineClass && !value.string() && (value.operandClassIsProven || answerOfGuardAhead(value.child(0), *engineClass, AskedFor::Class).value_or(false)))
         return convert(operand, to, repOf(to));
     // What was made here is an object, whatever its type says: in a JavaScript function that is anything.
     if (Opcode madeBy = m_function.at(value.child(0)).opcode; to.anyObject && !value.string() && (madeBy == Opcode::NewObject || madeBy == Opcode::NewObjectWithShape || madeBy == Opcode::NewArray))
@@ -2768,7 +3597,7 @@ Word32 Lowering::isTruthy(Boxed value, const Type& type)
         });
         // The engine may keep an integral number as a double.
         auto ofDouble = [&] {
-            return greaterThan(abs(unboxedDouble(value)), number(0));
+            return isNeitherZeroNorNaN(unboxedDouble(value));
         };
         if (rest.isNever())
             join.add(ofDouble());
@@ -2822,7 +3651,7 @@ void Lowering::findLeavesFetchedLate()
             case Opcode::CallBuiltin:
                 if (isDefineField(user) || isAccessorDefinition(user))
                     late = user.arguments[1];
-                else if (looksForConstantWithoutItsCell(user) || isErrorThrownWhereMade(block, id))
+                else if (looksForConstantWithoutItsCell(user) || isErrorThrownWhereMade(block, id) || (!user.arguments.isEmpty() && isErrorThrownToHandlerThatIgnoresIt(block, id)))
                     late = user.arguments[0];
                 break;
             default:
@@ -2976,11 +3805,13 @@ Word32 Lowering::lowerToBoolean(ValueID id)
     case Rep::Int64:
         return isNotZero(operand.as<Integer>());
     case Rep::Double:
-        return greaterThan(abs(operand.as<Number>()), number(0));
+        return isNeitherZeroNorNaN(operand.as<Number>());
     case Rep::OptionalDouble:
         // What stands for `undefined` and `null` is not a number, and so not greater than zero.
-        return greaterThan(abs(assumedNumber(operand.as<OptionalNumber>())), number(0));
+        return isNeitherZeroNorNaN(assumedNumber(operand.as<OptionalNumber>()));
     case Rep::OptionalInt64:
+        if (type.integers.isWithin({ -static_cast<int64_t>(UINT32_MAX), UINT32_MAX }))
+            return Word32(m_out.notZero32(low32(assumedInteger(operand.as<OptionalInteger>())).value()));
         return logicalNot(logicalOr(isMarker(operand), isZero(assumedInteger(operand.as<OptionalInteger>()))));
     case Rep::Cell:
         return isTruthy(operand.as<CellPointer>(), type);
@@ -3018,6 +3849,72 @@ bool mayWalkPrototypeChain(const Program& program, const Function& function, con
 
 // An object of the program keeps its prototype, so its shape says what it is an instance of, but for those records. The chain of any other
 // object is walked.
+bool Lowering::instanceOfGoesByShape(const Value& value)
+{
+    if (value.opcode != Opcode::InstanceOf || value.child(0) == value.child(1) || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return false;
+    auto& named = m_function.at(value.child(1));
+    if (named.opcode != Opcode::FunctionReference)
+        return false;
+    LayoutID ofClass = m_program.at(named.function()).constructedClass;
+    if (!ofClass || !m_program.at(ofClass).instances.isRange() || m_program.at(ofClass).instancesMayBecomeRecords)
+        return false;
+    for (LayoutID at = ofClass; at; at = m_program.at(at).base) {
+        auto& layout = m_program.at(at);
+        if (!layout.isLaidOut || !layout.isEvaluatedOnce || !layout.hasFixedMembers || layout.hasStaticMemberOfUnknownName || layout.hasForeignRoot)
+            return false;
+        for (auto& method : layout.staticMethods) {
+            if (!method.name)
+                return false;
+        }
+    }
+    return !admitsRecordsWithOtherPrototype(m_program, m_program.at(m_function.at(value.child(0)).type));
+}
+
+bool Lowering::isNamedOnlyWhereInstanceOfGoesByShape(ValueID id)
+{
+    auto users = usersOf(id);
+    if (users.empty() || users.size() != numberOfUsesOf(id) || isUsedByTerminator(id))
+        return false;
+    return std::ranges::all_of(users, [&](ValueID user) {
+        return instanceOfGoesByShape(m_function.at(user));
+    });
+}
+
+Word32 Lowering::lowerInstanceOfByShape(const Value& value)
+{
+    LayoutID ofClass = m_program.at(m_function.at(value.child(1)).function()).constructedClass;
+    ShapeTest instances = m_program.at(ofClass).instances;
+    LValue operand = in<Boxed>(value.child(0)).value();
+    m_context.emitsCalls = true;
+    PatchpointValue* patchpoint = m_out.patchpoint(Int32);
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->append(ConstrainedValue(operand, ValueRep::reg(firstStubOperandGPR)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+#if CPU(X86_64)
+    for (GPRReg reg : stubTemporaryGPRs)
+        patchpoint->clobberLate(RegisterSet { reg });
+#endif
+    patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+    CallSite site { nextSite() };
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, site, numberOfClass = ofClass.index(), last = instances.count ? instances.last() : 0, count = instances.count](CCallHelpers& jit, const StackmapGenerationParams&) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.move(CCallHelpers::TrustedImm32(numberOfClass), GPRInfo::argumentGPR1);
+        if (count == 1) {
+            jit.move(CCallHelpers::TrustedImm32(Typed::shapeWordOf(last)), GPRInfo::argumentGPR2);
+            stubCalls->call(jit, Stub::InstanceOfLeafClass, site);
+            return;
+        }
+        jit.move(CCallHelpers::TrustedImm32(last), GPRInfo::argumentGPR2);
+        jit.move(CCallHelpers::TrustedImm32(count), GPRInfo::argumentGPR3);
+        stubCalls->call(jit, Stub::InstanceOfClass, site);
+    });
+    unwindToLandingPad(patchpoint, site);
+    return Word32(patchpoint);
+}
+
 Word32 Lowering::lowerIsInstanceOfClass(const Value& value)
 {
     ValueID object = value.child(0);

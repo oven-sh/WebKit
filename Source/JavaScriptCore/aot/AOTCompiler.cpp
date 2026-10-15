@@ -147,6 +147,43 @@ CCallHelpers::JumpList emitStackCheck(CCallHelpers& jit, unsigned frameSize)
 }
 
 #if CPU(ARM64)
+static constexpr uint64_t collapsibleFrameReturnCode = 0x910003bfaa1103f1ull;
+#else
+static constexpr uint64_t collapsibleFrameReturnCode = 0xc3c90000441f0f66ull;
+#endif
+
+void emitCollapsibleFrameReturn(CCallHelpers& jit)
+{
+#if CPU(ARM64)
+    jit.m_assembler.mov<64>(ARM64Registers::x17, ARM64Registers::x17);
+    jit.emitFunctionEpilogue();
+    jit.ret();
+#else
+    for (unsigned shift = 0; shift < 64; shift += 8)
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(collapsibleFrameReturnCode >> shift));
+#endif
+}
+
+CCallHelpers::Jump branchIfReturnAddressIsNotInCollapsibleFrame(CCallHelpers& jit, GPRReg returnAddress)
+{
+    return jit.branch64(CCallHelpers::NotEqual, CCallHelpers::Address(returnAddress), CCallHelpers::TrustedImm64(static_cast<int64_t>(collapsibleFrameReturnCode)));
+}
+
+void dropCollapsibleCallerFrames(CCallHelpers& jit, GPRReg scratch)
+{
+    CCallHelpers::Label again = jit.label();
+#if CPU(ARM64)
+    jit.move(CCallHelpers::linkRegister, scratch);
+#else
+    jit.loadPtr(CCallHelpers::Address(CCallHelpers::stackPointerRegister), scratch);
+#endif
+    CCallHelpers::Jump isNot = branchIfReturnAddressIsNotInCollapsibleFrame(jit, scratch);
+    jit.emitFunctionEpilogue();
+    jit.jump().linkTo(again, &jit);
+    isNot.link(&jit);
+}
+
+#if CPU(ARM64)
 static unsigned numberOfSavesMovedWithStackPointer(const RegisterAtOffsetList& list)
 {
     return list.registerCount() > 1 && list.at(0).reg().isGPR() == list.at(1).reg().isGPR() ? 2 : 1;
@@ -212,9 +249,13 @@ void emitStackOverflow(CCallHelpers& jit, StubCalls& stubCalls, const CCallHelpe
     if (doesNotFit.empty())
         return;
     doesNotFit.link(&jit);
-    if (frameSize <= maxFrameSizeToMoveFirst)
+    if (frameSize <= maxFrameSizeToMoveFirst) {
+#if CPU(X86_64) && OS(LINUX)
+        jit.m_assembler.buffer().putByte(static_cast<int8_t>(trapInstruction));
+#else
         stubCalls.call(jit, Stub::PollAtPrologue, CallSite { });
-    else
+#endif
+    } else
         stubCalls.tailCall(jit, Stub::ThrowStackOverflowAtPrologue);
 }
 
@@ -246,35 +287,6 @@ void dropPaddingAtEnd(CompiledFunctionInfo& info, const void* start, B3::Air::Co
     UNUSED_PARAM(start);
     UNUSED_PARAM(code);
 #endif
-}
-
-void usePinnedRegistersDirectly(B3::Air::Code& code)
-{
-    using namespace B3::Air;
-    Vector<std::pair<Tmp, Tmp>, 4> copies;
-    for (Inst& inst : *code[0]) {
-        if (inst.kind.opcode != Move || inst.args().size() != 2 || !inst.args()[0].isTmp() || !inst.args()[1].isTmp())
-            continue;
-        Tmp from = inst.args()[0].tmp();
-        Tmp to = inst.args()[1].tmp();
-        if (!from.isReg() || !code.isPinned(from.reg()) || from.reg() == Reg(MacroAssembler::framePointerRegister) || to.isReg())
-            continue;
-        copies.append({ to, from });
-        inst = Inst();
-    }
-    if (copies.isEmpty())
-        return;
-    code[0]->insts().removeAllMatching([](const Inst& inst) { return !inst; });
-    for (B3::Air::BasicBlock* block : code) {
-        for (Inst& inst : *block) {
-            inst.forEachTmpFast([&](Tmp& tmp) {
-                for (auto& [copy, reg] : copies) {
-                    if (tmp == copy)
-                        tmp = reg;
-                }
-            });
-        }
-    }
 }
 
 #endif // CPU(ARM64) || CPU(X86_64)

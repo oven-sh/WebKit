@@ -192,6 +192,9 @@ using JSOrWasmInstruction = Variant<const JSInstruction*, uintptr_t /* IPIntOffs
         JS_EXPORT_PRIVATE static JSCell* appendDirectAsyncCallers(VM&, JSCell* owner, Vector<StackFrame>& results, JSCell* generatorOrResumeClosure, size_t maxStackSize);
         AOT::ReturnAddressTrace* tryGetStackTraceAsReturnAddresses(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames);
         AOT::ReturnAddressTrace* tryGetStackTraceBehindConstructors(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSCell* lastConstructor);
+        bool tryDeferStackCapture(Exception*);
+        JS_EXPORT_PRIVATE bool valueThrownByHostFunctionIsIgnored();
+        AOT::ReturnAddressTrace* getStackTraceUnderHostFunction(JSCell* owner, size_t maxStackSize, std::unique_ptr<Vector<StackFrame>>& otherFrames, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC);
 #endif
 
         struct FramesAlreadyInTrace {

@@ -171,7 +171,7 @@ public:
     //
     // Describes a simple base-offset address.
     struct Address {
-        explicit Address(RegisterID base, int32_t offset = 0)
+        explicit constexpr Address(RegisterID base, int32_t offset = 0)
             : base(base)
             , offset(offset)
         {

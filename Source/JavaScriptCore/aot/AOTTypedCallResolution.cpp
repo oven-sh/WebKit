@@ -106,6 +106,10 @@ public:
             static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallNoInline"_s.span8()));
             return found;
         }())
+        , m_defineField([] {
+            static const BuiltinID found = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("DefineField"_s.span8()));
+            return found;
+        }())
     {
     }
 
@@ -252,7 +256,7 @@ private:
         value.opcode = opcode;
         value.position = m_position;
         value.inlineFrame = m_inlineFrame;
-        value.isInTailPosition = m_isInTailPosition && (opcode == Opcode::Call || opcode == Opcode::CallMethod || opcode == Opcode::CallDirect);
+        value.isInTailPosition = m_isInTailPosition && (opcode == Opcode::Call || opcode == Opcode::CallMethod || opcode == Opcode::CallDirect || opcode == Opcode::CallBuiltin);
         value.type = type;
         value.rep = repOf(m_program.at(type));
         return value;
@@ -794,10 +798,62 @@ private:
         Value cast = make(Opcode::Cast, type);
         cast.children[0] = value;
         cast.immediates[1] = static_cast<uint32_t>(reason);
+        if (reason == CastReason::As && m_literalsNobodyElseHolds.contains(value))
+            cast.immediates[1] |= static_cast<uint32_t>(Format::Freshness::TopLevel) << Format::freshnessShift;
         return appendThrowing(WTF::move(cast));
     }
 
+    ValueID heldAsParameter(FunctionID callee, ValueID value, TypeID type, CastReason reason)
+    {
+        ValueID result = held(value, type, reason);
+        if (result != value && !m_program.at(callee).has(Format::FunctionIsBuiltin | Format::FunctionIsOfBuiltinModule | Format::FunctionIsHiddenInStackTraces))
+            m_function.at(result).setParameterCheckCallee(callee);
+        return result;
+    }
+
     // Calls of a function that is known.
+
+    bool definesFieldOf(const Value& user, ValueID literal) const
+    {
+        if ((user.opcode != Opcode::Operation && user.opcode != Opcode::CallBuiltin) || user.arguments.isEmpty() || user.arguments[0] != literal)
+            return false;
+        BuiltinID entry = user.opcode == Opcode::Operation ? Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(user.string())) : user.builtin();
+        return entry && entry == m_defineField;
+    }
+
+    Vector<ValueID, 2> literalsHandedToRecordParameters(ValueID call, FunctionID callee) const
+    {
+        Vector<ValueID, 2> result;
+        auto& arguments = m_function.at(call).arguments;
+        auto& parameters = m_program.at(callee).parameterTypes;
+        for (unsigned k = 0; k < std::min<size_t>(arguments.size(), parameters.size()); ++k) {
+            ValueID literal = arguments[k];
+            if (m_function.at(literal).opcode != Opcode::NewObject || !parameters[k])
+                continue;
+            bool becomesRecord = m_program.at(parameters[k]).views.containsIf([&](LayoutID view) {
+                return m_program.at(view).kind == LayoutKind::Record && !m_program.at(view).admitsUncheckedObjects();
+            });
+            if (!becomesRecord)
+                continue;
+            bool isHeldElsewhere = false;
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    auto& user = m_function.at(id);
+                    unsigned times = 0;
+                    user.forEachChild([&](ValueID child) {
+                        times += child == literal;
+                    });
+                    isHeldElsewhere |= times > 1 || (times && id != call && !definesFieldOf(user, literal));
+                }
+                block.terminator.forEachChild([&](ValueID child) {
+                    isHeldElsewhere |= child == literal;
+                });
+            }
+            if (!isHeldElsewhere)
+                result.append(literal);
+        }
+        return result;
+    }
 
     bool mayBeCalledDirectly(FunctionID id) const
     {
@@ -837,7 +893,7 @@ private:
         RELEASE_ASSERT(captures.size() == callee.captureTypes.size());
         all.append(captures);
         if (callee.has(Format::FunctionHasThis))
-            all.append(held(thisValue, callee.thisType, CastReason::Flow));
+            all.append(heldAsParameter(id, thisValue, callee.thisType, CastReason::Flow));
         unsigned count = callee.parameterTypes.size();
         for (unsigned k = 0; k < count; ++k) {
             TypeID type = callee.parameterTypes[k];
@@ -847,9 +903,9 @@ private:
                     rest.arguments.append(given.subspan(k));
                 all.append(appendThrowing(WTF::move(rest)));
             } else if (k < given.size())
-                all.append(held(given[k], type, callee.reasonToHoldParameter(k)));
+                all.append(heldAsParameter(id, given[k], type, callee.reasonToHoldParameter(k)));
             else
-                all.append(held(append(make(Opcode::Undefined, m_program.types.undefined)), type, callee.reasonToHoldParameter(k)));
+                all.append(heldAsParameter(id, append(make(Opcode::Undefined, m_program.types.undefined)), type, callee.reasonToHoldParameter(k)));
         }
         return all;
     }
@@ -952,10 +1008,10 @@ private:
     }
 
     // What each member of the view has by the name. Nothing: it is not for here to tell, or there are too many.
-    std::optional<Cases> casesOf(LayoutID view, StringID name, MethodKind kind) const
+    std::optional<Cases> casesOf(LayoutID view, StringID name, MethodKind kind, bool isTestedForMembership = false) const
     {
         // The receiver may be any object. The lowering tells those of the members from the rest, and asks the rest.
-        if (m_program.at(view).admitsForeignObjects)
+        if (m_program.at(view).admitsForeignObjects && !isTestedForMembership)
             return std::nullopt;
         Cases cases;
         for (LayoutID member : m_program.at(view).members) {
@@ -1055,7 +1111,7 @@ private:
     {
         Value test = make(Opcode::HasShapeOf, m_program.types.boolean);
         test.children[0] = object;
-        test.immediates = { view.index(), 0u };
+        test.immediates = { view.index(), m_program.mayRunInSeveralInstances ? shapeTestIsForThisInstance : 0u };
         BlockID otherwise = branch(append(WTF::move(test)));
         m_refutedShapes[otherwise.index()] = RefutedShape { originOf(object), view };
         return otherwise;
@@ -1114,8 +1170,13 @@ private:
             view = viewExpectedOf(block, object);
         if (!view || !isObjectLayout(m_program.at(view).kind))
             return false;
-        auto cases = casesOf(view, name, kind);
+        bool needsMembershipTest = !isExpected && kind != MethodKind::Method && m_program.at(view).admitsForeignObjects;
+        auto cases = casesOf(view, name, kind, needsMembershipTest);
         if (!cases || !orderCases(*cases, view) || (isExpected && !cases->last().callee))
+            return false;
+        bool callsFunction = std::ranges::any_of(*cases, [](auto& which) { return !!which.callee; });
+        bool needsInstanceTest = !isExpected && m_program.mayRunInSeveralInstances && callsFunction;
+        if ((needsInstanceTest || needsMembershipTest) && m_refutedShapes[block.index()] == RefutedShape { originOf(object), view })
             return false;
         Arguments given;
         if (kind == MethodKind::Method)
@@ -1126,7 +1187,7 @@ private:
         open(block, index);
         ValueID receiver = object;
         BlockID otherwise;
-        if (isExpected)
+        if (isExpected || needsInstanceTest || needsMembershipTest)
             otherwise = testShape(object, view);
         // The read of a field sees to it itself.
         if ((*cases)[0].callee && (isExpected || typeOf(object).mayBeUndefinedOrNull())) {
@@ -1180,7 +1241,7 @@ private:
         ValueID object = m_function.at(read).child(0);
         StringID name = m_function.at(read).string();
         LayoutID view = typeOf(object).onlyView();
-        if (originOf(object) != originOf(original.child(1)) || !view || !isObjectLayout(m_program.at(view).kind))
+        if (originOf(object) != originOf(original.child(1)) || !view || !isObjectLayout(m_program.at(view).kind) || m_program.mayRunInSeveralInstances)
             return false;
         auto cases = casesOf(view, name, MethodKind::Method);
         // What a field holds by the time of the call is another matter.
@@ -1554,7 +1615,7 @@ private:
                 m_refuted[block.terminator.targets[1].block.index()] = Refuted { originOf(condition.child(0)), condition.function() };
             if (condition.opcode == Opcode::IsClassObjectAsDeclared)
                 m_asksClassObject[block.terminator.targets[1].block.index()] = condition.layout();
-            if (condition.opcode == Opcode::HasShapeOf && !condition.immediates[1])
+            if (condition.opcode == Opcode::HasShapeOf && condition.immediates[1] != shapeTestIsExact)
                 m_refutedShapes[block.terminator.targets[1].block.index()] = RefutedShape { originOf(condition.child(0)), condition.layout() };
             // It is a closure of no function there.
             if (condition.opcode == Opcode::IsUndefinedOrNull)
@@ -1586,7 +1647,7 @@ private:
         Value test = make(Opcode::IsClosureOf, m_program.types.boolean);
         test.children[0] = callee;
         test.immediates[0] = known.function.index();
-        if (known.other)
+        if (known.other || m_program.at(known.function).closuresAreGivenProperties)
             test.immediates[1] = closureEvenIfAltered;
         BlockID otherwise = branch(append(WTF::move(test)));
         m_refuted[otherwise.index()] = Refuted { known.definition, known.function };
@@ -1606,9 +1667,12 @@ private:
             return false;
         if (known->other && !mayBeCalledDirectlyWithClosure(known->other))
             return false;
-        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNil && !known->other)
-            return false;
         ValueID id = m_function.at(block).values[index];
+        Vector<ValueID, 2> literals;
+        if (!known->isCertain)
+            literals = literalsHandedToRecordParameters(id, known->function);
+        if (!m_mayGuess && !known->isCertain && !known->isCertainUnlessNil && !known->other && literals.isEmpty())
+            return false;
         open(block, index);
         BlockID otherwise;
         if (!known->isCertain) {
@@ -1621,7 +1685,9 @@ private:
         if (m_program.at(called).takesItsClosure)
             given.append(original.child(0));
         given.append(original.arguments.span());
+        m_literalsNobodyElseHolds = WTF::move(literals);
         callAndFinish(called, capturesOf(*known, original.child(0)).span(), original.child(1), given.span(), original.type, Yields::Result);
+        m_literalsNobodyElseHolds.clear();
         if (otherwise && known->other) {
             moveTo(otherwise);
             KnownCallee second { known->other, known->definition, { }, false, true };
@@ -1883,7 +1949,7 @@ private:
     bool constructsOrdinaryObject(FunctionID id) const
     {
         auto& callee = m_program.at(id);
-        if (callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator) || callee.resumeFunction || callee.thisType)
+        if (callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator) || callee.resumeFunction || callee.startFunction || callee.thisType)
             return false;
         // It reads `new.target` from where only the run time puts it.
         if (callee.kind == FunctionKind::Plain)
@@ -2211,6 +2277,8 @@ private:
     BuiltinID m_apply;
     BuiltinID m_isObject;
     BuiltinID m_callNoInline;
+    BuiltinID m_defineField;
+    Vector<ValueID, 2> m_literalsNobodyElseHolds;
     StringID m_addDisposableResource;
     StringID m_disposeResources;
     StringID m_usingTakesObjects;
@@ -2420,7 +2488,7 @@ void findDeclaredParents(Program& program)
         return;
     Vector<Vector<std::pair<LayoutID, FunctionID>>> found(program.functions.size());
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         auto withoutCasts = [&](ValueID id) {
             while (function.at(id).opcode == Opcode::Cast)
                 id = function.at(id).child(0);
@@ -2435,11 +2503,11 @@ void findDeclaredParents(Program& program)
                 continue;
             FunctionID constructor = constantClosure(value.arguments[0]);
             FunctionID parent = constantClosure(value.arguments[1]);
-            if (constructor && program.at(constructor).constructedClass && function.at(withoutCasts(value.arguments[1])).opcode == Opcode::GetGlobal)
-                found[i].append({ program.at(constructor).constructedClass, FunctionID() });
-            if (!constructor || !parent || program.at(parent).kind != FunctionKind::Constructor)
+            if (constructor && std::as_const(program).at(constructor).constructedClass && function.at(withoutCasts(value.arguments[1])).opcode == Opcode::GetGlobal)
+                found[i].append({ std::as_const(program).at(constructor).constructedClass, FunctionID() });
+            if (!constructor || !parent || std::as_const(program).at(parent).kind != FunctionKind::Constructor)
                 continue;
-            if (LayoutID ofClass = program.at(constructor).constructedClass; ofClass && program.at(ofClass).isEvaluatedOnce && !program.at(ofClass).base)
+            if (LayoutID ofClass = std::as_const(program).at(constructor).constructedClass; ofClass && program.at(ofClass).isEvaluatedOnce && !program.at(ofClass).base)
                 found[i].append({ ofClass, parent });
         }
     });
@@ -2460,7 +2528,7 @@ void createGenericEntrypoints(Program& program)
             program.layouts[i].type = program.types.intern(Type::view(LayoutID(i)));
     }
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        for (auto& value : program.functions[i].values) {
+        for (auto& value : std::as_const(program).functions[i].values) {
             if (value.opcode == Opcode::NewClosure || value.opcode == Opcode::NewClosureOnce)
                 WTF::atomicStore(&program.at(value.function()).hasManyClosures, true, std::memory_order_relaxed);
         }
@@ -2478,34 +2546,45 @@ void createGenericEntrypoints(Program& program)
 
     // The run time makes a closure of the constructor of every class, which is the class object, and of every method.
     BitVector isValue(program.functions.size());
+    BitVector isMethodOfClass(program.functions.size());
     for (unsigned i = 0; i < program.functions.size(); ++i) {
-        if (program.functions[i].has(Format::FunctionIsUsedAsValue))
+        if (std::as_const(program).functions[i].has(Format::FunctionIsUsedAsValue))
             isValue.set(i);
     }
     for (auto& layout : program.layouts) {
         if (layout.constructor)
             isValue.set(layout.constructor.index());
         for (auto* methods : { &layout.methods, &layout.staticMethods }) {
-            for (auto& method : *methods)
+            for (auto& method : *methods) {
                 isValue.set(method.function.index());
+                if (layout.kind == LayoutKind::Instance)
+                    isMethodOfClass.set(method.function.index());
+            }
         }
     }
     for (unsigned i = 0; i < program.functions.size(); ++i) {
-        if (!program.functions[i].has(Format::FunctionIsGeneralEntry))
+        if (!std::as_const(program).functions[i].has(Format::FunctionIsGeneralEntry))
             continue;
-        bool isWrittenForLog = program.logsTypeErrors && program.functions[i].kind != FunctionKind::Method;
+        bool servesMethodOfClass = false;
+        for (auto& value : std::as_const(program).functions[i].values) {
+            if (value.opcode != Opcode::CallDirect)
+                continue;
+            servesMethodOfClass = isMethodOfClass.get(value.function().index());
+            break;
+        }
+        bool isWrittenForLog = program.logsTypeErrors && !servesMethodOfClass;
         if (isWrittenForLog)
             program.functions[i].flags |= FunctionLogsMisfits;
         FunctionID served;
-        for (auto& value : program.functions[i].values) {
+        for (auto& value : std::as_const(program).functions[i].values) {
             if (value.opcode != Opcode::CallDirect)
                 continue;
             if (served) {
                 program.functions[served.index()].secondBody = value.function();
                 break;
             }
-            auto& entry = program.functions[i];
-            auto& candidate = program.at(value.function());
+            auto& entry = std::as_const(program).functions[i];
+            auto& candidate = std::as_const(program).at(value.function());
             bool fits = !isWrittenForLog || (entry.kind == candidate.kind && entry.length == candidate.length && entry.captureTypes == candidate.captureTypes && entry.parameterTypes.size() == candidate.parameterTypes.size()
                 && entry.has(Format::FunctionHasThis) == candidate.has(Format::FunctionHasThis) && entry.has(Format::FunctionHasRestParameter) == candidate.has(Format::FunctionHasRestParameter) && !entry.takesItsClosure && !candidate.takesItsClosure);
             if (fits && isValue.get(value.function().index()) && !candidate.rampForClosures) {
@@ -2517,17 +2596,17 @@ void createGenericEntrypoints(Program& program)
         }
     }
     for (unsigned i = 0, numberOfFunctionsAsRead = program.functions.size(); i < numberOfFunctionsAsRead; ++i) {
-        FunctionID written = program.functions[i].writtenEntry;
-        if (!written || !program.at(written).has(FunctionLogsMisfits))
+        FunctionID written = std::as_const(program).functions[i].writtenEntry;
+        if (!written || !std::as_const(program).at(written).has(FunctionLogsMisfits))
             continue;
-        Function copy = program.at(written);
+        Function copy = std::as_const(program).at(written);
         copy.flags |= FunctionIsEnteredByValue;
         program.functions[i].writtenEntry = FunctionID(program.functions.size());
         program.functions.append(WTF::move(copy));
     }
     Vector<unsigned> entered;
     for (unsigned i : isValue) {
-        if (!program.functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i))
+        if (!std::as_const(program).functions[i].isGenericEntrypoint() && !program.genericEntrypoints.contains(i))
             entered.append(i);
     }
     unsigned firstEntry = program.functions.size();
@@ -2635,7 +2714,7 @@ void createBoundFunctions(Program& program)
         FunctionID function(static_cast<uint32_t>(key >> 2));
         Vector<uint8_t> name;
         name.append("bound "_s.span8());
-        name.append(program.strings[program.at(function).name.index()]);
+        name.append(program.strings[std::as_const(program).at(function).name.index()]);
         StringID nameOfBound = program.intern(name.span());
         FunctionID bound(program.functions.size());
         program.functions.append(createBoundFunction(program, function, key & 3, nameOfBound));

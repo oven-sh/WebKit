@@ -307,6 +307,7 @@ public:
         case ALL_INT32_INDEXING_TYPES:
         case ALL_DOUBLE_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
+        case ArrayWithTypedContiguous:
             return false;
         case ALL_ARRAY_STORAGE_INDEXING_TYPES:
             return !!butterfly()->arrayStorage()->m_sparseMap;
@@ -324,6 +325,7 @@ public:
         case ALL_INT32_INDEXING_TYPES:
         case ALL_DOUBLE_INDEXING_TYPES:
         case ALL_CONTIGUOUS_INDEXING_TYPES:
+        case ArrayWithTypedContiguous:
             return false;
         case ALL_ARRAY_STORAGE_INDEXING_TYPES:
             return butterfly()->arrayStorage()->inSparseMode();
@@ -687,6 +689,12 @@ public:
     }
 
     void ensureWritable(VM& vm); // Defined in JSObjectInlines.h
+    JS_EXPORT_PRIVATE ContiguousJSValues convertTypedContiguousToContiguous(VM&);
+    JS_EXPORT_PRIVATE bool tryConvertContiguousToTypedContiguous(VM&);
+    JS_EXPORT_PRIVATE bool tryGrowTypedContiguous(VM&, unsigned leastCapacity);
+    JS_EXPORT_PRIVATE bool tryPutTypedContiguousIndex(VM&, unsigned index, JSValue);
+    static JSValue decodeTypedElement(uint32_t); // Defined in JSObjectInlines.h
+    static std::optional<uint32_t> tryEncodeTypedElement(JSValue); // Defined in JSObjectInlines.h
     // As ensureWritable(), for a caller that can do without. False: the elements are in copy-on-write storage to keep them from
     // changing (JSObject::makePropertiesImmutable()), and stay there.
     [[nodiscard]] bool tryMakeWritable(VM&); // Defined in JSObjectInlines.h

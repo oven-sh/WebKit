@@ -288,8 +288,11 @@ bool enterModule(Instance& instance, JSArray* cell)
     auto scope = DECLARE_THROW_SCOPE(vm);
     Record module(vm, cell);
     if (module.status() == Status::EvaluatingAsync || module.status() == Status::Evaluated) {
-        if (module.hasEvaluationError())
+        if (module.hasEvaluationError()) {
+            if (JSPromise* capability = module.topLevelCapability())
+                capability->markAsHandled();
             throwException(instance.globalObject, scope, module.evaluationError());
+        }
         return false;
     }
     if (module.status() == Status::Evaluating)
@@ -319,6 +322,8 @@ void didEvaluateRequiredModule(Instance& instance, JSArray* cell, JSArray* requi
     } else {
         requiredModule = Record(vm, requiredModule.cycleRoot());
         if (requiredModule.hasEvaluationError()) {
+            if (JSPromise* capability = requiredModule.topLevelCapability())
+                capability->markAsHandled();
             throwException(globalObject, scope, requiredModule.evaluationError());
             return;
         }
@@ -384,6 +389,41 @@ void didStartModuleBody(Instance& instance, JSArray* cell, JSValue promise)
     instance.typed->modulesExecutingAsync.append(cell);
 }
 
+void didImportFromHost(Instance& instance, JSPromise* promise, JSValue referrer)
+{
+    VM& vm = *instance.vm;
+    auto& imports = instance.typed->importsFromHost;
+    imports.removeAllMatching([](auto& import) {
+        return uncheckedDowncast<JSPromise>(import.promise.get())->status() != JSPromise::Status::Pending;
+    });
+    if (promise->status() != JSPromise::Status::Pending)
+        return;
+    int32_t order = referrer.isCell() ? std::max(Record(vm, uncheckedDowncast<JSArray>(referrer.asCell())).asyncEvaluationOrder(), -1) : -1;
+    imports.append({ Strong<JSObject>(vm, promise), order });
+}
+
+bool waitsForImportFromHost(Instance& instance, JSValue cell)
+{
+    VM& vm = *instance.vm;
+    if (!cell.isCell())
+        return false;
+    Record module(vm, uncheckedDowncast<JSArray>(cell.asCell()));
+    if (module.status() != Status::EvaluatingAsync)
+        return false;
+    module = Record(vm, module.cycleRoot());
+    int32_t order = module.asyncEvaluationOrder();
+    if (order < 0)
+        return false;
+    for (auto& import : instance.typed->importsFromHost) {
+        auto* promise = uncheckedDowncast<JSPromise>(import.promise.get());
+        if (promise->status() != JSPromise::Status::Pending)
+            continue;
+        if (import.referrerAsyncEvaluationOrder == order || importPromiseGatesAsyncDependency(instance, promise, module.cell()))
+            return true;
+    }
+    return false;
+}
+
 JSPromise* evaluateModule(Instance& instance, JSArray* cell, JSValue innerModuleEvaluation, JSValue ticket)
 {
     VM& vm = *instance.vm;
@@ -397,7 +437,6 @@ JSPromise* evaluateModule(Instance& instance, JSArray* cell, JSValue innerModule
     if (JSPromise* promise = module.topLevelCapability())
         return promise;
     JSPromise* capability = JSPromise::create(vm, globalObject->promiseStructure());
-    capability->markAsHandled();
     module.setTopLevelCapability(capability);
 
     ModuleEvaluation evaluation;
@@ -439,9 +478,13 @@ void asyncModuleExecutionRejected(Instance& instance, JSArray* cell, JSValue err
         module.setEvaluationError(error);
         module.setStatus(Status::Evaluated);
         module.setAsyncEvaluationOrder(orderIsDone);
-        if (JSPromise* capability = module.topLevelCapability())
+        JSArray* parents = module.asyncParentModules();
+        if (JSPromise* capability = module.topLevelCapability()) {
+            if (parents && parents->length())
+                capability->markAsHandled();
             capability->reject(vm, error);
-        if (JSArray* parents = module.asyncParentModules()) {
+        }
+        if (parents) {
             for (unsigned i = parents->length(); i--;)
                 stack.append(uncheckedDowncast<JSArray>(parents->getIndexQuickly(i).asCell()));
         }

@@ -44,6 +44,10 @@ namespace Yarr {
 struct YarrPattern;
 }
 
+namespace AOT {
+struct ImageRegExp;
+}
+
 struct RegExpRepresentation;
 class VM;
 
@@ -69,6 +73,7 @@ public:
     JS_EXPORT_PRIVATE static RegExp* create(VM&, const String& pattern, OptionSet<Yarr::Flags>);
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     static RegExp* tryCreateFromImage(VM&, const String& pattern, OptionSet<Yarr::Flags>);
+    static RegExp* createWithTextInPieces(VM&, const AOT::ImageRegExp&, OptionSet<Yarr::Flags>);
 #endif
     // A pattern already known to be valid, with what finishCreation would have computed by parsing it (bytecode cache).
     static RegExp* createFromCache(VM&, const String& pattern, OptionSet<Yarr::Flags>, unsigned numSubpatterns, String&& atom, Yarr::SpecificPattern);
@@ -96,7 +101,12 @@ public:
     bool globalOrSticky() const { return global() || sticky(); }
     bool eitherUnicode() const { return unicode() || unicodeSets(); }
 
-    const String& pattern() const LIFETIME_BOUND { return m_patternString; }
+    const String& pattern() const LIFETIME_BOUND
+    {
+        ensurePattern();
+        return m_patternString;
+    }
+    bool hasTextInPieces() const { return m_patternString.isNull(); }
 
     bool isValid() const { return !Yarr::hasError(m_constructionErrorCode); }
     ASCIILiteral errorMessage() const { return Yarr::errorMessage(m_constructionErrorCode); }
@@ -198,7 +208,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 
     DECLARE_INFO;
 
-    RegExpKey key() { return RegExpKey(m_flags, m_patternString); }
+    RegExpKey key() { return RegExpKey(m_flags, pattern()); }
 
     String escapedPattern() const;
     static bool sourceIsPattern(const String& pattern);
@@ -290,9 +300,21 @@ private:
         // The remaining elements are the subpatternIds for each of the duplicate groups.
         UncheckedKeyHashMap<String, Vector<unsigned>> m_namedGroupToParenIndices;
         WriteBarrierStructureID m_cachedGroupsStructureID;
+        const AOT::ImageRegExp* m_recordOfTextInPieces { nullptr };
     };
 
-    String m_patternString;
+    void ensurePattern() const
+    {
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+        if (hasTextInPieces()) [[unlikely]]
+            makePatternOfPieces();
+#endif
+    }
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    JS_EXPORT_PRIVATE void makePatternOfPieces() const;
+#endif
+
+    mutable String m_patternString;
     String m_atom;
     RegExpState m_state { NotCompiled };
 #if ENABLE(AOT) && ENABLE(YARR_JIT)

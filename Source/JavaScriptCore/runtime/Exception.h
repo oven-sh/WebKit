@@ -46,7 +46,8 @@ public:
 
     enum class StackCaptureAction {
         CaptureStack,
-        DoNotCaptureStack
+        DoNotCaptureStack,
+        CaptureStackUnlessCaughtByCompiledCode
     };
     JS_EXPORT_PRIVATE static Exception* create(VM&, JSValue thrownValue, StackCaptureAction = StackCaptureAction::CaptureStack);
 
@@ -64,7 +65,7 @@ public:
     JSValue value() const { return m_value.get(); }
     const Vector<StackFrame>& stack() const LIFETIME_BOUND
     {
-        if (m_returnAddressesAndDidNotifyInspectorOfThrow.pointer()) [[unlikely]]
+        if (m_returnAddressesAndFlags.pointer() || stackCaptureIsDeferred()) [[unlikely]]
             const_cast<Exception*>(this)->materializeStack();
         return m_stack;
     }
@@ -79,8 +80,12 @@ public:
 #endif
 
     JS_EXPORT_PRIVATE void noteThatTopFrameIsAtSiteOfItsItem();
-    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndDidNotifyInspectorOfThrow.type(); }
-    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndDidNotifyInspectorOfThrow.setType(true); }
+    bool didNotifyInspectorOfThrow() const { return m_returnAddressesAndFlags.type() & didNotifyInspectorOfThrowFlag; }
+    void setDidNotifyInspectorOfThrow() { m_returnAddressesAndFlags.setType(m_returnAddressesAndFlags.type() | didNotifyInspectorOfThrowFlag); }
+
+    bool stackCaptureIsDeferred() const { return m_returnAddressesAndFlags.type() & stackCaptureIsDeferredFlag; }
+    void finishDeferredStackCapture(VM&, JSFunction* hostFunction, CallFrame* callerFrame, void* returnPC);
+    void dropDeferredStackCapture();
 
 #if ENABLE(WEBASSEMBLY)
     void tryUnwrapValueForJSTag(VM&);
@@ -101,7 +106,9 @@ private:
     WriteBarrier<Unknown> m_asyncContext;
 #endif
     Vector<StackFrame> m_stack;
-    CompactPointerTuple<AOT::ReturnAddressTrace*, bool> m_returnAddressesAndDidNotifyInspectorOfThrow;
+    static constexpr uint8_t didNotifyInspectorOfThrowFlag = 1;
+    static constexpr uint8_t stackCaptureIsDeferredFlag = 2;
+    CompactPointerTuple<AOT::ReturnAddressTrace*, uint8_t> m_returnAddressesAndFlags;
 
     friend class LLIntOffsetsExtractor;
 };

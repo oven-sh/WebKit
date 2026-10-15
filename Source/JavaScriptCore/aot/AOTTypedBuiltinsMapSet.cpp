@@ -20,6 +20,7 @@
 #include "JSWeakMap.h"
 #include "JSWeakSet.h"
 #include <wtf/text/IntegerToStringConversion.h>
+#include <wtf/text/RapidHash.h>
 
 namespace JSC { namespace AOT {
 
@@ -192,17 +193,47 @@ static ALWAYS_INLINE void writeAsDecimal(uint32_t value, Latin1Character* end)
     while (value >= 100) {
         unsigned pair = value % 100 * 2;
         value /= 100;
-        *--end = pairs[pair + 1];
-        *--end = pairs[pair];
+        end -= 2;
+        memcpy(end, pairs + pair, 2);
     }
-    if (value >= 10) {
-        *--end = pairs[value * 2 + 1];
-        *--end = pairs[value * 2];
-    } else
-        *--end = '0' + value;
+    if (value >= 10)
+        memcpy(end - 2, pairs + value * 2, 2);
+    else
+        end[-1] = '0' + value;
 }
 
-static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer)
+static ALWAYS_INLINE void copyCharacters(Latin1Character* to, const Latin1Character* from, size_t length)
+{
+    if (length == 1) {
+        *to = *from;
+        return;
+    }
+    if (length > 16) {
+        memcpy(to, from, length);
+        return;
+    }
+    if (length >= 8) {
+        memcpy(to, from, 8);
+        memcpy(to + length - 8, from + length - 8, 8);
+        return;
+    }
+    if (length >= 4) {
+        memcpy(to, from, 4);
+        memcpy(to + length - 4, from + length - 4, 4);
+        return;
+    }
+    if (length >= 2) {
+        memcpy(to, from, 2);
+        memcpy(to + length - 2, from + length - 2, 2);
+    }
+}
+
+struct PiecesOfKey {
+    unsigned count { 0 };
+    JSString* lastString { nullptr };
+};
+
+static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer, PiecesOfKey& pieces)
 {
     Latin1Character* cursor = buffer.data();
     size_t room = buffer.size();
@@ -218,17 +249,28 @@ static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyP
             if (integer < 0)
                 *cursor = '-';
             writeAsDecimal(magnitude, cursor + length);
+            ++pieces.count;
         } else {
             const StringImpl* impl = part.isString() ? asString(part)->tryGetValueImpl() : nullptr;
             if (!impl || !impl->is8Bit() || impl->length() > room)
                 return std::nullopt;
             length = impl->length();
-            memcpy(cursor, impl->span8().data(), length);
+            copyCharacters(cursor, impl->span8().data(), length);
+            if (length) {
+                ++pieces.count;
+                pieces.lastString = asString(part);
+            }
         }
         cursor += length;
         room -= length;
     }
     return std::span<const Latin1Character> { buffer.data(), cursor };
+}
+
+static ALWAYS_INLINE std::optional<std::span<const Latin1Character>> flattenKeyParts(uint32_t count, const EncodedJSValue* parts, std::span<Latin1Character> buffer)
+{
+    PiecesOfKey pieces;
+    return flattenKeyParts(count, parts, buffer, pieces);
 }
 
 static constexpr size_t maxSunkKeyLength = 64;
@@ -280,55 +322,61 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTryMapOrSetLookupWithKeyParts
 
 // The parts are strings and integers: `a.id + "," + b.id`, the key of a Map more often than not. Where the result is short it is made in
 // one piece, and hashed: no string for each integer, no rope, nothing left to do when it is looked up.
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGenerally(Instance*, uint32_t count, const EncodedJSValue* parts);
+
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByText(Instance*, uint32_t count, const EncodedJSValue* parts);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedConcatenateWithIntegers, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* parts))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    static constexpr size_t maxLength = 64;
-    JSString* only = nullptr;
-    bool isOneString = true;
-    for (uint32_t i = 0; i < count && isOneString; ++i) {
-        JSValue part = JSValue::decode(parts[i]);
-        isOneString = part.isString();
-        if (isOneString && asString(part)->length())
-            isOneString = !std::exchange(only, asString(part));
+    Typed::State::KeyByParts byParts;
+    if (!Options::useAOTOperationCounters() && byParts.tryTake(count, parts)) [[likely]] {
+        if (JSString* key = instance->typed->tryFindKeyByParts(byParts)) [[likely]]
+            return { key, nullptr };
+        instance->typed->partsAskedForLast = byParts;
+    } else
+        instance->typed->partsAskedForLast.countAndKinds = 0;
+    [[clang::musttail]] return concatenateByText(instance, count, parts);
+}
+
+static NEVER_INLINE OperationReturnType<JSCell*> makeKey(Instance* instance, CallFrame* callFrame, std::span<const Latin1Character> characters, unsigned hash)
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return { instance->typed->makeKey(vm, characters, hash), nullptr };
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateByText(Instance* instance, uint32_t count, const EncodedJSValue* parts)
+{
+    std::array<Latin1Character, Typed::State::maxLengthOfMadeKey> characters;
+    PiecesOfKey pieces;
+    if (auto text = flattenKeyParts(count, parts, characters, pieces); text && text->size() >= 2 && !Options::useAOTOperationCounters()) [[likely]] {
+        if (pieces.count == 1 && pieces.lastString)
+            return { pieces.lastString, nullptr };
+        unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(*text);
+        JSString* key = instance->typed->tryFindMadeKey(*text, hash);
+        if (!key)
+            key = uncheckedDowncast<JSString>(makeKey(instance, DECLARE_CALL_FRAME(*instance->vm), *text, hash).value);
+        if (instance->typed->partsAskedForLast.countAndKinds)
+            instance->typed->rememberKeyByParts(instance->typed->partsAskedForLast, key);
+        return { key, nullptr };
     }
-    if (isOneString && only)
-        OPERATION_RETURN(scope, only);
-    std::array<uint32_t, 8> lengths;
-    size_t length = 0;
-    bool isShort = count <= lengths.size();
-    for (uint32_t i = 0; i < count && isShort; ++i) {
-        JSValue part = JSValue::decode(parts[i]);
-        if (part.isInt32()) {
-            int32_t integer = part.asInt32();
-            lengths[i] = integer < 0 ? lengthAsDecimal(0u - static_cast<uint32_t>(integer)) + 1 : lengthAsDecimal(integer);
-        } else {
-            const StringImpl* impl = part.isString() ? asString(part)->tryGetValueImpl() : nullptr;
-            isShort = impl && impl->is8Bit();
-            lengths[i] = isShort ? impl->length() : 0;
-        }
-        length += lengths[i];
-    }
-    if (isShort && length <= maxLength) {
-        static_assert(maxLength == Typed::State::maxLengthOfMadeKey);
-        std::array<Latin1Character, maxLength> characters;
-        Latin1Character* cursor = characters.data();
-        for (uint32_t i = 0; i < count; cursor += lengths[i++]) {
-            JSValue part = JSValue::decode(parts[i]);
-            if (part.isInt32()) {
-                int32_t integer = part.asInt32();
-                if (integer < 0)
-                    *cursor = '-';
-                writeAsDecimal(integer < 0 ? 0u - static_cast<uint32_t>(integer) : integer, cursor + lengths[i]);
-                continue;
-            }
-            auto source = asString(part)->tryGetValueImpl()->span8();
-            if (source.size() == 1)
-                *cursor = source[0];
-            else
-                memcpy(cursor, source.data(), source.size());
-        }
-        OPERATION_RETURN(scope, instance->typed->keyMadeOf(vm, std::span<const Latin1Character> { characters }.first(length)));
+    [[clang::musttail]] return concatenateWithIntegersGenerally(instance, count, parts);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES concatenateWithIntegersGenerally(Instance* instance, uint32_t count, const EncodedJSValue* parts)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, "operationAOTTypedConcatenateWithIntegers");
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    std::array<Latin1Character, Typed::State::maxLengthOfMadeKey> characters;
+    PiecesOfKey pieces;
+    if (auto text = flattenKeyParts(count, parts, characters, pieces)) [[likely]] {
+        if (pieces.count == 1 && pieces.lastString)
+            OPERATION_RETURN(scope, pieces.lastString);
+        OPERATION_RETURN(scope, instance->typed->keyMadeOf(vm, *text));
     }
 
     JSString* result = jsEmptyString(vm);
@@ -563,7 +611,7 @@ std::optional<Operand> Lowering::lowerInlineMapSet(InlineBuiltin which, ValueID 
             m_out.branch(m_out.equal(width, m_out.constInt32(static_cast<int32_t>(CompactTable::Width::Narrow))), unsure(isNarrow), unsure(isWide));
             m_out.appendTo(isNarrow);
             LValue index = m_out.zeroExtPtr(m_out.load32(at(values, number, 2)));
-            join.add(Boxed(m_out.select(m_out.belowOrEqual(index, m_out.constInt64(undefinedCell32)), index, decoded(index, table))));
+            join.add(Boxed(cell32IsPointer ? decoded(index, table) : m_out.select(m_out.belowOrEqual(index, m_out.constInt64(undefinedCell32)), index, decoded(index, table))));
             m_out.appendTo(isWide);
             join.add(Boxed(m_out.load64(at(values, number, 3))));
         }

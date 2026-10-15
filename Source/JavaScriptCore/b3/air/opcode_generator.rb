@@ -820,6 +820,31 @@ writeH("OpcodeUtils") {
     outp.puts "    }"
     outp.puts "}"
 
+    outp.puts "#if USE(BUN_JSC_ADDITIONS)"
+    outp.puts "ALWAYS_INLINE const uint8_t* Inst::fixedForms(unsigned& firstArgWithForm)"
+    outp.puts "{"
+    outp.puts "    switch (kind.opcode) {"
+    outp.puts "    case Opcode::Patch: {"
+    outp.puts "        const uint8_t* forms = formsOfPatch();"
+    outp.puts "        firstArgWithForm = 1;"
+    outp.puts "        return forms ? forms - 1 : nullptr;"
+    outp.puts "    }"
+    $opcodes.values.each {
+        | opcode |
+        if opcode.custom and opcode.name != "Patch"
+            outp.puts "    case Opcode::#{opcode.name}:"
+        end
+    }
+    outp.puts "        return nullptr;"
+    outp.puts "    default: {"
+    outp.puts "        size_t numOperands = m_size;"
+    outp.puts "        firstArgWithForm = 0;"
+    outp.puts "        return g_formTable + kind.opcode * #{formTableWidth} + (numOperands - 1) * numOperands / 2;"
+    outp.puts "    }"
+    outp.puts "    }"
+    outp.puts "}"
+    outp.puts "#endif"
+
     outp.puts "template<typename... Arguments>"
     outp.puts "ALWAYS_INLINE bool isValidForm(Opcode opcode, Arguments... arguments)"
     outp.puts "{"

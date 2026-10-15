@@ -8,6 +8,7 @@
 
 #if ENABLE(AOT)
 
+#include "AOTImage.h"
 #include "AOTOperationHelpers.h"
 #include "AOTSlotWatchpoint.h"
 #include "AOTTypedObject.h"
@@ -21,6 +22,10 @@
 #include "JSTypedArrayViewPrototype.h"
 #include "MegamorphicCache.h"
 #include "ObjectPropertyConditionSet.h"
+#include <wtf/OSAllocator.h>
+#if OS(LINUX)
+#include <sys/mman.h>
+#endif
 
 namespace JSC { namespace AOT {
 
@@ -197,19 +202,42 @@ static auto& propertyNameIDs(VM& vm)
     if (!table.next) [[unlikely]] {
         RELEASE_ASSERT(table.ids.isEmpty());
         table.next = 1;
+        if (Image* image = Image::withCode()) {
+            table.startOfImage = std::bit_cast<uintptr_t>(image->at<uint8_t>(0));
+            table.sizeOfImage = image->header().size;
+        }
     }
     return table;
+}
+
+template<typename Table>
+static ALWAYS_INLINE uint32_t* spareWordInHeader(const Table& table, UniquedStringImpl* uid)
+{
+    static_assert(sizeof(StringImpl) == 6 * sizeof(uint32_t));
+    const void* characters = uid->is8Bit() ? static_cast<const void*>(uid->span8().data()) : static_cast<const void*>(uid->span16().data());
+    if (std::bit_cast<uintptr_t>(characters) - table.startOfImage >= table.sizeOfImage || uid->isSymbol())
+        return nullptr;
+    return reinterpret_cast<uint32_t*>(uid) + 5;
 }
 
 static uint16_t propertyNameID(VM& vm, UniquedStringImpl* uid)
 {
     auto& table = propertyNameIDs(vm);
-    if (uint16_t id = table.ids.get(uid))
+    uint32_t* spareWord = spareWordInHeader(table, uid);
+    if (spareWord) {
+        uint32_t id = *spareWord;
+        if (id && id < table.next && table.namesWithIDInHeader[id - 1] == uid)
+            return static_cast<uint16_t>(id);
+    } else if (uint16_t id = table.ids.get(uid))
         return id;
     if (table.next >= Structure::firstReservedPropertyNameID)
         return 0;
     uint16_t id = static_cast<uint16_t>(table.next++);
-    table.ids.add(uid, id);
+    table.namesWithIDInHeader.append(spareWord ? uid : nullptr);
+    if (spareWord)
+        *spareWord = id;
+    else
+        table.ids.add(uid, id);
     return id;
 }
 
@@ -241,11 +269,12 @@ void tellNamesOfRow(VM& vm, Structure* structure, std::span<UniquedStringImpl* c
         return;
     if (!structure->propertyAccessesAreCacheable() || structure->needImpurePropertyWatchpoint() || names.size() > structure->inlineCapacity())
         return;
+    auto& ids = structure->existingAOTFields().fieldIDInSlot;
     for (unsigned slot = 0; slot < Structure::numberOfSlotsWithPropertyNameIDs; ++slot) {
-        if (structure->fieldIDInSlot(slot))
+        if (ids[slot])
             continue;
         uint16_t id = slot < names.size() ? propertyNameID(vm, names[slot]) : 0;
-        structure->setPropertyNameIDInInlineSlot(slot, id ? id : Structure::noPropertyNameID);
+        ids[slot] = id ? id : Structure::noPropertyNameID;
     }
 }
 
@@ -327,12 +356,19 @@ static Slot* findFillableEntry(Data* data, PolymorphicSlots* several, Structure*
     uint32_t attemptsSoFar = static_cast<uint32_t>(several->hasEarnedLesson) << Slot::attemptsShift;
     if (several->remainingBulkLearnAttempts)
         several->remainingBulkLearnAttempts--;
-    Slot& leaving = several->slots[PolymorphicSlots::indexFor(structure->id())];
-    if (leaving.structureID == structure->id() || (!leaving.structureID && (leaving.offset & Slot::attemptsMask) != Slot::attemptsMask)) {
-        if (!leaving.structureID && !(leaving.offset & Slot::attemptsMask))
-            leaving.offset += attemptsSoFar;
-        return &leaving;
+    if (Slot* held = several->slotOf(structure->id()))
+        return held;
+    unsigned index = PolymorphicSlots::indexFor(structure->id());
+    for (Slot* free : { &several->slots[index], &several->slots[index ^ 1] }) {
+        if (free->structureID || (free->offset & Slot::attemptsMask) == Slot::attemptsMask)
+            continue;
+        if (!(free->offset & Slot::attemptsMask))
+            free->offset += attemptsSoFar;
+        return free;
     }
+    uint32_t& random = several->owner->instance->keyedTableRandomState;
+    random = random * 1664525u + 1013904223u;
+    Slot& leaving = several->slots[index ^ random >> 31];
     stopWatching(data, &leaving);
     leaving.clear();
     leaving.offset = attemptsSoFar;
@@ -348,9 +384,118 @@ static NEVER_INLINE bool isNoLesson(PolymorphicSlots* several, JSCell* base, Str
     return true;
 }
 
+static void cacheCodeOfGetter(GetterSetter*, Instance*, uint64_t closureWord);
+static void cacheGetterShortcut(GetterSetter*, JSFunction* getter);
+
+enum class ExtraProperty : uint8_t { Accessor, Value, Absent };
+
+static std::optional<uint64_t> noteExtraProperty(VM& vm, Instance& instance, Typed::Object* object, const Identifier& ident, ExtraProperty wanted)
+{
+    JSObject* extra = object->extraProperties();
+    if (!extra || &object->state() != instance.typed || instance.typed->isCounting() || extra->structure()->isDictionary() || parseIndex(ident) || ident.isPrivateName())
+        return std::nullopt;
+    unsigned attributes;
+    PropertyOffset offset = extra->structure()->get(vm, ident.impl(), attributes);
+    uint32_t offsetAndKind = Slot::extraPropertyIsAbsent;
+    if (isValidOffset(offset)) {
+        bool isAccessor = attributes & PropertyAttribute::Accessor;
+        if (wanted != (isAccessor ? ExtraProperty::Accessor : ExtraProperty::Value) || (!isAccessor && attributes & PropertyAttribute::AccessorOrCustomAccessorOrValue))
+            return std::nullopt;
+        if (isInlineOffset(offset))
+            offsetAndKind = JSObject::offsetOfInlineStorage() + offsetInInlineStorage(offset) * sizeof(EncodedJSValue);
+        else
+            offsetAndKind = Slot::extraPropertyIsOutOfLine | static_cast<uint32_t>(-offsetInButterfly(offset) * static_cast<int32_t>(sizeof(EncodedJSValue)));
+        if (!isAccessor)
+            offsetAndKind |= Slot::extraPropertyIsValue;
+    } else if (wanted != ExtraProperty::Absent)
+        return std::nullopt;
+    instance.typed->noteExtraPropertiesOf(object, extra);
+    return Slot::extraPropertyAt(extra->structureID().bits(), offsetAndKind);
+}
+
+static bool saysAlready(const Slot* cache, Structure* structure, uint64_t description)
+{
+    return cache->structureID == structure->id() && (cache->offset & Slot::flagsMask) == Slot::compiledFieldFlags && std::bit_cast<uint64_t>(cache->pointer) == description;
+}
+
+static Slot* slotOfSiteFor(VM& vm, Data* data, Slot* cache, Structure* structure, const Identifier& ident, bool mayBePolymorphic)
+{
+    if (!mayBePolymorphic)
+        return cache->isNameOnly() || cache->isPolymorphic() ? nullptr : cache;
+    if (PolymorphicSlots* several = siteSlots(vm, data, cache, structure, ident))
+        return findFillableEntry(data, several, structure);
+    return cache;
+}
+
+static bool cacheExtraAccessorOrAbsence(JSGlobalObject* globalObject, Data* data, Slot* cache, JSCell* base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, bool mayBePolymorphic)
+{
+    VM& vm = globalObject->vm();
+    const Typed::LayoutData* layout = structureBefore->compiledLayout();
+    if ((!slot.isAccessor() && !slot.isUnset()) || !layout || !Typed::isObjectLayout(layout->kind) || base->structure() != structureBefore)
+        return false;
+    auto* object = uncheckedDowncast<Typed::Object>(base);
+    JSObject* extra = object->extraProperties();
+    if (!extra || object->fieldNamed(object->state(), ident))
+        return false;
+    if (slot.isAccessor()) {
+        if (slot.slotBase() != extra)
+            return false;
+    } else {
+        JSObject* prototype = structureBefore->storedPrototypeObject();
+        auto status = prototype ? prepareChainForCaching(globalObject, prototype, ident.impl(), nullptr) : std::optional(PrototypeChainCachingStatus { });
+        if (!status || status->flattenedDictionary || status->usesPolyProto)
+            return false;
+    }
+    auto description = noteExtraProperty(vm, *data->instance, object, ident, slot.isAccessor() ? ExtraProperty::Accessor : ExtraProperty::Absent);
+    if (!description)
+        return false;
+    if (slot.isAccessor()) {
+        GetterSetter* getterSetter = slot.getterSetter();
+        if (auto* function = dynamicDowncast<JSFunction>(getterSetter->getter()))
+            cacheGetterShortcut(getterSetter, function);
+        else if (auto* closure = dynamicDowncast<Typed::SlimClosure>(getterSetter->getter()); closure && !getterSetter->getterShortcut()) {
+            Instance* instance = closure->structure()->aotInstance();
+            cacheCodeOfGetter(getterSetter, instance, instance->typedFunctions[closure->functionIndex()]);
+        }
+    } else
+        makePrototypeChainWatchable(vm, base);
+    cache = slotOfSiteFor(vm, data, cache, structureBefore, ident, mayBePolymorphic);
+    if (!cache)
+        return false;
+    if (saysAlready(cache, structureBefore, *description) || !mayReplace(cache, structureBefore))
+        return true;
+    if (slot.isAccessor()) {
+        if (cache->hasPointer())
+            stopWatching(data, cache);
+    } else if (!watchChain(vm, globalObject, data, cache, structureBefore, nullptr, ident.impl())) {
+        countFailure(cache);
+        return true;
+    }
+    fill(vm, data, cache, structureBefore, Slot::compiledFieldFlags, std::bit_cast<void*>(*description));
+    return true;
+}
+
+static void noteExportForAllSites(JSGlobalObject* globalObject, JSCell* base, Structure* structureBefore, const Identifier& ident, const PropertySlot::ModuleNamespaceSlot& namespaceSlot)
+{
+    VM& vm = globalObject->vm();
+    ScopeOffset offset(namespaceSlot.scopeOffset);
+    size_t place = (JSLexicalEnvironment::offsetOfVariable(offset) - JSObject::offsetOfInlineStorage()) / sizeof(EncodedJSValue);
+    if (base->structure() != structureBefore || structureBefore == globalObject->moduleNamespaceObjectStructure() || place >= static_cast<size_t>(firstOutOfLineOffset))
+        return;
+    if (!canUseMegamorphicCacheForGet(vm, ident.impl()) || !namespaceSlot.environment->variableAt(offset).get())
+        return;
+    MegamorphicCache& cache = vm.ensureMegamorphicCache();
+    if (!cache.findLoad(structureBefore->id(), ident.impl()))
+        cache.initAsPermanentHit(structureBefore->id(), ident.impl(), namespaceSlot.environment, place);
+}
+
 void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Structure* structureBefore, const Identifier& ident, const PropertySlot& slot, Slot* cache, bool mayBePolymorphic)
 {
+    if (auto namespaceSlot = slot.moduleNamespaceSlot(); namespaceSlot && base == slot.slotBase())
+        noteExportForAllSites(globalObject, base.asCell(), structureBefore, ident, *namespaceSlot);
     if (SharedData::contains(cache))
+        return;
+    if (base.isCell() && cacheExtraAccessorOrAbsence(globalObject, data, cache, base.asCell(), structureBefore, ident, slot, mayBePolymorphic))
         return;
     if (slot.isUnset() && base.isObject() && structureBefore->compiledLayout() && base.asCell()->structure() == structureBefore && cacheAbsentCompiledField(globalObject, data, cache, base.asCell(), ident, mayBePolymorphic))
         return;
@@ -386,6 +531,15 @@ void cacheGetById(JSGlobalObject* globalObject, Data* data, JSValue base, Struct
     if (mayBePolymorphic && base.isCell()) {
         VM& vm = globalObject->vm();
         Structure* structure = base.asCell()->structure();
+        if (!cache->isPolymorphic() && !cache->isNameOnly() && cache->structureID && cache->structureID != structure->id() && structure->transitivelyTransitionedFrom(cache->structureID.decode())) {
+            uint32_t attemptsBefore = cache->offset & Slot::attemptsMask;
+            cache->offset = (cache->offset & ~Slot::attemptsMask) | 2u << Slot::attemptsShift;
+            if (tryCacheGetById(globalObject, data, base, structureBefore, ident, slot, cache, mayBePolymorphic)) {
+                countOperationNamed(data->instance, __func__, "moved-on");
+                return;
+            }
+            cache->offset = (cache->offset & ~Slot::attemptsMask) | attemptsBefore;
+        }
         if (PolymorphicSlots* several = siteSlots(vm, data, cache, structure, ident)) {
             // Both: the table is asked first and answers in fewer instructions; by name any number of structures is served.
             bool isServedByName = structure == structureBefore && cacheByName(vm, several, base.asCell(), structure, slot);
@@ -498,6 +652,9 @@ void cacheCompiledField(VM& vm, Data* data, Slot* cache, JSCell* cell, const Ide
             cache = findFillableEntry(data, several, structure);
         }
     }
+    auto extraValue = field ? std::nullopt : noteExtraProperty(vm, *data->instance, object, ident, ExtraProperty::Value);
+    if (extraValue && saysAlready(cache, structure, *extraValue))
+        return;
     if (!mayReplace(cache, structure))
         return;
     if (cache->hasPointer())
@@ -506,6 +663,8 @@ void cacheCompiledField(VM& vm, Data* data, Slot* cache, JSCell* cell, const Ide
     uint64_t description = static_cast<uint64_t>(*read) << Slot::fieldReadShift;
     if (field)
         description |= (field->flags & Typed::fieldIsOutOfLine ? Slot::fieldIsInExtension : 0) | field->offset;
+    else if (extraValue)
+        description = *extraValue;
     fill(vm, data, cache, structure, Slot::compiledFieldFlags, std::bit_cast<void*>(description));
 }
 
@@ -559,6 +718,18 @@ static void cacheGetterShortcut(GetterSetter* getterSetter, JSFunction* getter)
         return;
     if (auto* closure = dynamicDowncast<Typed::Closure>(getter))
         cacheCodeOfGetter(getterSetter, Instance::of(closure), closure->entry());
+}
+
+void cacheShortcutToGetter(GetterSetter* getterSetter)
+{
+    if (auto* function = dynamicDowncast<JSFunction>(getterSetter->getter())) {
+        if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
+            executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
+        cacheGetterShortcut(getterSetter, function);
+    } else if (auto* closure = dynamicDowncast<Typed::SlimClosure>(getterSetter->getter()); closure && !getterSetter->getterShortcut()) {
+        Instance* instance = closure->structure()->aotInstance();
+        cacheCodeOfGetter(getterSetter, instance, instance->typedFunctions[closure->functionIndex()]);
+    }
 }
 
 static void noteLengthOfTypedArray(JSGlobalObject* globalObject, Instance& instance, JSCell* cell, const PropertySlot& slot)
@@ -703,14 +874,7 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
         unsigned attributes;
         if (slot.slotBase()->structure()->get(vm, ident.impl(), attributes) != slot.cachedOffset() || !(attributes & PropertyAttribute::Accessor))
             return false;
-        if (auto* function = dynamicDowncast<JSFunction>(slot.getterSetter()->getter())) {
-            if (auto* executable = dynamicDowncast<FunctionExecutable>(function->executable()); executable && executable->isGeneratedForCall())
-                executable->entrypointFor(CodeSpecializationKind::CodeForCall, ArityCheckMode::MustCheckArity);
-            cacheGetterShortcut(slot.getterSetter(), function);
-        } else if (auto* closure = dynamicDowncast<Typed::SlimClosure>(slot.getterSetter()->getter()); closure && !slot.getterSetter()->getterShortcut()) {
-            Instance* instance = closure->structure()->aotInstance();
-            cacheCodeOfGetter(slot.getterSetter(), instance, instance->typedFunctions[closure->functionIndex()]);
-        }
+        cacheShortcutToGetter(slot.getterSetter());
     }
 
     // Also of a dictionary: what it has stays where it is for as long as it has the Structure.
@@ -738,13 +902,17 @@ static bool tryCacheGetById(JSGlobalObject* globalObject, Data* data, JSValue ba
     uint32_t attempts = (cache->offset & Slot::attemptsMask) >> Slot::attemptsShift;
     if (attempts == Slot::maxAttempts)
         return false;
-    if (attempts >= Slot::maxAttemptsForInheritedProperty) {
+    bool stubCountsMisses = mayBePolymorphic && cache >= data->slots && cache < data->slots + data->numSlots;
+    if (attempts >= (stubCountsMisses ? Slot::missesServedBeforeLearning + 2 : Slot::maxAttemptsForInheritedProperty)) {
         cache->offset |= Slot::attemptsMask;
         return false;
     }
-    cache->offset += 1u << Slot::attemptsShift;
-    if (!attempts)
+    if (attempts < (stubCountsMisses ? 2u : 1u)) {
+        cache->offset += 1u << Slot::attemptsShift;
         return false;
+    }
+    uint32_t attemptsWithThisOne = stubCountsMisses ? std::max(attempts, Slot::missesServedBeforeLearning) + 1 : attempts + 1;
+    cache->offset = (cache->offset & ~Slot::attemptsMask) | attemptsWithThisOne << Slot::attemptsShift;
 
     if (structure->typeInfo().prohibitsPropertyCaching() && !isOfCompiledLayout)
         return false;
@@ -802,7 +970,7 @@ static void recordCustomGetter(VM& vm, Instance& instance, Structure* structure,
     auto& record = instance.ensureCustomGetterFor(structure->id().bits(), uid);
     uint32_t lastSerial = record.lastSerial;
     uint32_t serial = lastSerial > std::numeric_limits<uint32_t>::max() - Slot::customGetterSerialStep ? 0 : lastSerial += Slot::customGetterSerialStep;
-    record = { structure->id().bits(), serial, vm.megamorphicCache()->epoch(), uid, std::bit_cast<void*>(getter.taggedPtr()), passedForReceiver, globalObject, lastSerial, { } };
+    record = { structure->id().bits(), serial, vm.megamorphicCache()->epochForFactAbout(*uid, structure->id()), uid, std::bit_cast<void*>(getter.taggedPtr()), passedForReceiver, globalObject, lastSerial, { } };
 }
 
 static NEVER_INLINE bool noteAbsentPrototypePropertyOfClosure(JSGlobalObject* globalObject, Instance& instance, JSCell* base, const Identifier& ident)
@@ -858,8 +1026,9 @@ void cacheKnownCustomGetter(VM& vm, Instance& instance, Data* data, Slot* cache,
         return;
     bool hasMovedOn = cache->structureID && cache->structureID != structure->id() && structure->transitivelyTransitionedFrom(cache->structureID.decode());
     if (PolymorphicSlots* several = hasMovedOn ? nullptr : siteSlots(vm, data, cache, structure, ident)) {
-        Slot& entry = several->slots[PolymorphicSlots::indexFor(structure->id())];
-        cache = entry.structureID && entry.structureID != structure->id() ? &entry : findFillableEntry(data, several, structure);
+        unsigned index = PolymorphicSlots::indexFor(structure->id());
+        bool bothAreTaken = !several->slotOf(structure->id()) && several->slots[index].structureID && several->slots[index ^ 1].structureID;
+        cache = bothAreTaken ? &several->slots[index] : findFillableEntry(data, several, structure);
     }
     if (cache->structureID && !hasMovedOn && !mayReplace(cache, structure))
         return;
@@ -868,10 +1037,9 @@ void cacheKnownCustomGetter(VM& vm, Instance& instance, Data* data, Slot* cache,
     fill(vm, data, cache, structure, Slot::compiledFieldFlags, std::bit_cast<void*>(Slot::knownCustomGetterAt(static_cast<uint32_t>(std::bit_cast<uintptr_t>(&known) - std::bit_cast<uintptr_t>(instance.customGetters)), known.serial)));
 }
 
-void noteInheritedSetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, const Identifier& ident, const PutPropertySlot& slot)
+void noteInheritedSetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, Structure* structure, const Identifier& ident, const PutPropertySlot& slot)
 {
     VM& vm = globalObject->vm();
-    Structure* structure = base->structure();
     JSObject* holder = slot.base();
     if (!vm.megamorphicCache() || holder == base || parseIndex(*ident.impl()))
         return;
@@ -881,7 +1049,10 @@ void noteInheritedSetter(JSGlobalObject* globalObject, Instance& instance, JSObj
         return;
     if (holder->structure()->isDictionary())
         return;
-    auto status = prepareChainForCaching(globalObject, isOfCompiledLayout ? structure->storedPrototypeObject() : base, ident.impl(), holder);
+    bool setterChangedStructure = base->structure() != structure;
+    if (setterChangedStructure && (structure->hasPolyProto() || !structure->storedPrototypeObject()))
+        return;
+    auto status = prepareChainForCaching(globalObject, isOfCompiledLayout || setterChangedStructure ? structure->storedPrototypeObject() : base, ident.impl(), holder);
     if (!status || status->flattenedDictionary || status->usesPolyProto)
         return;
     ConditionVector conditions;
@@ -890,7 +1061,26 @@ void noteInheritedSetter(JSGlobalObject* globalObject, Instance& instance, JSObj
     PropertyOffset offset = conditions.last().offset();
     if (offset > MegamorphicCache::maxOffset)
         return;
-    instance.inheritedSetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epoch(), static_cast<uint16_t>(offset), ident.impl(), holder, nullptr };
+    instance.inheritedSetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epochForFactAbout(*ident.impl(), structure->id()), static_cast<uint16_t>(offset), ident.impl(), holder, nullptr };
+}
+
+void noteNativeSetter(JSGlobalObject* globalObject, Instance& instance, JSObject* base, Structure* structure, const Identifier& ident, const PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    JSObject* holder = slot.base();
+    if (!vm.megamorphicCache() || base->structure() != structure || parseIndex(*ident.impl()))
+        return;
+    TypeInfo info = structure->typeInfo();
+    if (base->type() == GlobalProxyType || structure->compiledLayout() || !structure->propertyAccessesAreCacheable() || structure->isDictionary() || structure->needImpurePropertyWatchpoint() || info.prohibitsPropertyCaching() || info.overridesPut() || info.wouldHaveFixedProperties() || structure->hasImmutableProperties())
+        return;
+    if (holder->structure()->isDictionary())
+        return;
+    auto status = prepareChainForCaching(globalObject, base, ident.impl(), holder);
+    if (!status || status->flattenedDictionary || status->usesPolyProto)
+        return;
+    if (holder != base && !generateConditionsForPrototypePropertyHitCustom(vm, globalObject, globalObject, structure, holder, ident.impl(), static_cast<unsigned>(PropertyAttribute::None)).isValid())
+        return;
+    instance.inheritedSetterFor(structure->id().bits(), ident.impl()) = { structure->id().bits(), vm.megamorphicCache()->epochForFactAbout(*ident.impl(), structure->id()), 0, ident.impl(), holder, std::bit_cast<void*>(slot.customSetter().taggedPtr()) };
 }
 
 static bool tryCacheInstanceOf(JSGlobalObject* globalObject, Data* data, Slot* cache, JSObject* constructor, Structure* structureBefore, const PropertySlot& hasInstance, const PropertySlot& prototype)
@@ -936,7 +1126,7 @@ void cacheKeyedAccess(Slot& entry, Structure* structure, JSCell* key, std::optio
 {
     auto location = offset && structure->propertyAccessesAreCacheable() ? propertyLocation(*offset) : std::nullopt;
     entry.structureID = StructureID();
-    entry.offset = location.value_or(Slot::isGetter);
+    entry.offset = location ? *location | Instance::keyMayNotBeReplaced : Slot::isGetter;
     entry.pointer = key;
     entry.structureID = structure->id();
 }
@@ -983,12 +1173,12 @@ void cacheKeyedDelete(VM& vm, Data* data, Slot* cache, JSObject* base, Structure
 static bool tryCachePutById(JSGlobalObject*, Data*, JSValue base, Structure* oldStructure, const Identifier&, const PutPropertySlot&, bool isDirect, Slot* cache);
 
 // What Slot::pointer is for a store to the field of the name: see Slot::FieldWrite. 0: nothing is accepted without asking.
-static uint64_t fieldWriteFor(VM& vm, Typed::Object* object, const Identifier& ident)
+static uint64_t fieldWriteFor(VM& vm, Typed::Object* object, const Identifier& ident, bool takesWhateverFits = false)
 {
     using FieldWrite = Slot::FieldWrite;
     using Typed::Store;
     namespace Primitive = Typed::Primitive;
-    auto access = object->fieldAccessFor(vm, ident);
+    auto access = object->fieldAccessFor(vm, ident, takesWhateverFits);
     uint32_t description = 0;
     uint32_t typeOfAcceptedObjects = 0;
     if (access && !access->isOutOfLine && access->offset < 1u << FieldWrite::offsetBits) {
@@ -1086,7 +1276,7 @@ void cacheStoreTransition(Instance* instance, Data* data, JSCell* cell, Structur
     if (SharedData::contains(cache))
         return;
     auto* object = uncheckedDowncast<Typed::Object>(cell);
-    uint64_t fieldWrite = fieldWriteFor(vm, object, ident);
+    uint64_t fieldWrite = fieldWriteFor(vm, object, ident, true);
     const Typed::StoreTransition* transition = fieldWrite ? object->state().storeTransitionFor(oldStructure, wordsBefore, object, ident.impl(), fieldWrite) : nullptr;
     if (!transition) {
         countFailure(cache);
@@ -1097,6 +1287,18 @@ void cacheStoreTransition(Instance* instance, Data* data, JSCell* cell, Structur
     if (cache->hasPointer())
         stopWatching(data, cache);
     fill(vm, data, cache, oldStructure, Slot::pointerIsNotCell, std::bit_cast<void*>(Slot::isStoreTransition | std::bit_cast<uintptr_t>(transition)));
+}
+
+void noteKnownStoreTransition(Instance* instance, JSCell* cell, Structure* oldStructure, uint64_t wordsBefore, const Identifier& ident, uint32_t name)
+{
+    using Known = Typed::KnownStoreTransition;
+    auto* object = uncheckedDowncast<Typed::Object>(cell);
+    uint64_t fieldWrite = fieldWriteFor(*instance->vm, object, ident, true);
+    const Typed::StoreTransition* transition = fieldWrite ? object->state().storeTransitionFor(oldStructure, wordsBefore, object, ident.impl(), fieldWrite) : nullptr;
+    if (!transition)
+        return;
+    uint32_t structureID = oldStructure->id().bits();
+    static_cast<Known*>(instance->typedKnownStoreTransitions)[Known::placeOf(structureID, name, static_cast<uint32_t>(wordsBefore))] = { structureID, name, transition };
 }
 
 void cachePutById(Instance* instance, Data* data, JSValue base, Structure* oldStructure, const Identifier& ident, const PutPropertySlot& slot, bool isDirect, Slot* cache)
@@ -1335,6 +1537,16 @@ static bool canUseMegamorphicCacheForPut(VM& vm, UniquedStringImpl* uid)
     return canUseMegamorphicPutById(vm, uid);
 }
 
+bool storeMayBeCachedByStructureAndName(VM& vm, Structure* structure, UniquedStringImpl* uid)
+{
+    return canUseMegamorphicCacheForPut(vm, uid) && structure->propertyAccessesAreCacheable();
+}
+
+bool storesAreOrdinaryAlongPrototypeChain(Structure* structure)
+{
+    return canUseMegamorphicPutFastPath(structure);
+}
+
 static ALWAYS_INLINE void countFill(VM& vm, const char* kind, MegamorphicCache& cache, StructureID structureID, UniquedStringImpl* uid, const char* outcome = nullptr, StructureID newStructureID = { })
 {
     if (Options::useAOTOperationCounters()) [[unlikely]]
@@ -1469,6 +1681,80 @@ JSValue getByIdAndFillMegamorphicCache(JSGlobalObject* globalObject, JSValue bas
     }
 }
 
+struct StringComparison {
+    StringView name;
+    unsigned piecesLeft;
+    bool isEqual { true };
+};
+
+template<typename Character>
+static void compareStringPiece(jsstring_iterator* iterator, const void* characters, uint32_t length, uint32_t offset)
+{
+    auto& comparison = *static_cast<StringComparison*>(iterator->data);
+    if (comparison.piecesLeft && comparison.name.substring(offset, length) == StringView(std::span { static_cast<const Character*>(characters), length })) {
+        comparison.piecesLeft--;
+        return;
+    }
+    comparison.isEqual = false;
+    iterator->stop = 1;
+}
+
+template<typename Character>
+static void compareWholeString(jsstring_iterator* iterator, const void* characters, uint32_t length)
+{
+    compareStringPiece<Character>(iterator, characters, length, 0);
+}
+
+static bool stringEqualsName(JSString* string, StringView name, bool& hasTooManyPieces)
+{
+    constexpr unsigned minimumAveragePieceLength = 512;
+    StringComparison comparison { name, name.length() / minimumAveragePieceLength + 16 };
+    jsstring_iterator iterator { };
+    iterator.data = &comparison;
+    iterator.append8 = compareWholeString<Latin1Character>;
+    iterator.append16 = compareWholeString<char16_t>;
+    iterator.write8 = compareStringPiece<Latin1Character>;
+    iterator.write16 = compareStringPiece<char16_t>;
+    string->value(&iterator);
+    hasTooManyPieces |= !comparison.piecesLeft;
+    return comparison.isEqual;
+}
+
+std::optional<UniquedStringImpl*> findNameEqualToLongString(JSValue base, JSValue key, bool asksPrototypes)
+{
+    if (!key.isString() || asString(key)->length() <= JSString::maxLengthForOnStackResolve || !base.isObject())
+        return std::nullopt;
+    JSString* string = asString(key);
+    if (StringImpl* text = string->tryGetValueImpl(); text && text->isAtom())
+        return std::nullopt;
+    unsigned length = string->length();
+    for (JSObject* holder = asObject(base);;) {
+        Structure* structure = holder->structure();
+        TypeInfo info = structure->typeInfo();
+        if (info.overridesGetOwnPropertySlot() || info.overridesGetPrototype() || TypeInfo::hasStaticPropertyTable(holder->inlineTypeFlags()) || structure->compiledLayout())
+            return std::nullopt;
+        unsigned numberOfNames = structure->isDictionary() ? structure->numberOfPropertiesOfDictionary() : numberOfSlotsForMaxOffset(structure->maxOffset(), structure->inlineCapacity());
+        if (numberOfNames > length / 4)
+            return std::nullopt;
+        UniquedStringImpl* equalName = nullptr;
+        bool hasTooManyPieces = false;
+        structure->forEachPropertyConcurrently([&](const PropertyTableEntry& entry) {
+            UniquedStringImpl* name = entry.key();
+            if (!equalName && !hasTooManyPieces && name->length() == length && !name->isSymbol() && stringEqualsName(string, name, hasTooManyPieces))
+                equalName = name;
+            return true;
+        });
+        if (hasTooManyPieces)
+            return std::nullopt;
+        if (equalName)
+            return equalName;
+        JSValue prototype = holder->getPrototypeDirect();
+        if (!asksPrototypes || !prototype.isObject())
+            return nullptr;
+        holder = asObject(prototype);
+    }
+}
+
 bool flattenOnce(VM& vm, JSObject* object)
 {
     Structure* structure = object->structure();
@@ -1507,14 +1793,19 @@ bool hasPropertyAndFillMegamorphicCache(JSGlobalObject* globalObject, JSObject* 
     JSObject* object = baseObject;
     bool cacheable = true;
     if (Structure* structure = baseObject->structure(); structure->compiledLayout()) {
-        if (auto field = uncheckedDowncast<Typed::Object>(baseObject)->fieldAccessFor(vm, uid); field && !field->mayBeAbsent) {
+        auto* typedObject = uncheckedDowncast<Typed::Object>(baseObject);
+        Typed::State& state = typedObject->state();
+        const Typed::FieldData* field = typedObject->fieldNamed(state, uid);
+        if (field && !state.mayBeAbsent(*field)) {
             goesByStructure = true;
             if (isForGood)
                 *isForGood = true;
             return true;
         }
+        if (field && typedObject->read(*field))
+            return true;
         // No object of its Structure has the property itself. The search starts at the prototype.
-        if (Typed::Object::absenceIsByStructure(structure, uid)) {
+        if (!field && Typed::Object::absenceIsByStructure(structure, uid)) {
             cacheable = structure->hasMonoProto();
             JSValue prototype = baseObject->getPrototypeDirect();
             if (!prototype.isObject())
@@ -1674,6 +1965,675 @@ void fillAllocationCache(VM& vm, Data* data, Slot* cache, Structure* structure, 
     cache[1].offset = structure->typeInfoBlob();
     cache[1].pointer = allocator.localAllocator();
     fill(vm, data, &cache[0], structure, payload | (extra ? Slot::pointerIsCell : 0), extra);
+}
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PlaceTable);
+
+static constexpr size_t sizeOfEntries = 4 * static_cast<size_t>(PlaceTable::entriesPerPlane) * sizeof(uint32_t);
+static constexpr size_t sizeOfSlots = PlaceTable::maxNumberOfSlots * sizeof(Slot);
+static constexpr size_t sizeOfOccupied = (PlaceTable::entriesPerPlane / 64 + 4) * sizeof(uint64_t);
+
+static void* reserveForTable(size_t size)
+{
+    void* result = OSAllocator::reserveAndCommit(size, OSAllocator::FastMallocPages);
+#if OS(LINUX)
+    while (madvise(result, size, MADV_NOHUGEPAGE) == -1 && errno == EAGAIN) { }
+#endif
+    return result;
+}
+
+static bool isUnused(const Slot& slot)
+{
+    auto words = std::bit_cast<std::array<uint64_t, 2>>(slot);
+    return !words[0] && !words[1];
+}
+
+static void setBit(BitVector& bits, size_t index)
+{
+    if (index >= bits.size())
+        bits.ensureSize(std::max<size_t>(index + 1, bits.size() * 2));
+    bits.quickSet(index);
+}
+
+uint64_t PlaceTable::freeCellsFrom(uint32_t index) const
+{
+    uint32_t word = index / 64;
+    uint32_t shift = index % 64;
+    uint64_t occupied = m_occupied[word] >> shift;
+    if (shift)
+        occupied |= m_occupied[word + 1] << (64 - shift);
+    return ~occupied;
+}
+
+uint32_t PlaceTable::firstBaseThatFits(uint32_t from, std::span<const uint16_t> names) const
+{
+    uint64_t fitting = freeCellsFrom(from);
+    bool hasNamesInOverflow = false;
+    for (uint16_t listed : names) {
+        if (!fitting)
+            return 0;
+        if (listed & isInOverflow)
+            hasNamesInOverflow = true;
+        else
+            fitting &= freeCellsFrom(indexOf(from, listed));
+    }
+    for (; fitting; fitting &= fitting - 1) {
+        uint32_t base = from + WTF::ctz(fitting);
+        if (base >= m_bases.limit)
+            return 0;
+        bool fitsInOverflow = true;
+        if (hasNamesInOverflow) {
+            for (uint16_t listed : names)
+                fitsInOverflow &= !(listed & isInOverflow) || !m_entries[indexOfListed(base, listed)];
+        }
+        if (fitsInOverflow)
+            return base;
+    }
+    return 0;
+}
+
+uint32_t PlaceTable::findBase(std::span<const uint16_t> names)
+{
+    constexpr unsigned basesLookedAtAtOnce = 64;
+    constexpr unsigned maxLooksBetweenOtherRows = 4;
+    uint32_t from = m_bases.next;
+    for (unsigned looks = 0; looks < maxLooksBetweenOtherRows && from < m_bases.end; ++looks, from += basesLookedAtAtOnce) {
+        if (uint32_t base = firstBaseThatFits(from, names)) {
+            m_bases.next = base + 1;
+            m_bases.end = std::max(m_bases.end, base + 1);
+            return base;
+        }
+    }
+    m_bases.next = from < m_bases.end ? from : m_bases.first;
+    for (from = m_bases.end; from < m_bases.limit; from += basesLookedAtAtOnce) {
+        if (uint32_t base = firstBaseThatFits(from, names)) {
+            m_bases.end = base + 1;
+            return base;
+        }
+    }
+    return 0;
+}
+
+void PlaceTable::occupy(uint32_t index, uint32_t entry)
+{
+    ASSERT(entry && !m_entries[index]);
+    m_entries[index] = entry;
+    if (index < entriesPerPlane)
+        m_occupied[index / 64] |= 1ull << (index % 64);
+}
+
+uint32_t PlaceTable::vacate(uint32_t index)
+{
+    if (index < entriesPerPlane)
+        m_occupied[index / 64] &= ~(1ull << (index % 64));
+    return std::exchange(m_entries[index], 0);
+}
+
+PlaceTable::PlaceTable()
+{
+    m_entries = static_cast<uint32_t*>(reserveForTable(sizeOfEntries));
+    m_occupied = static_cast<uint64_t*>(reserveForTable(sizeOfOccupied));
+    m_bases.limit = numberOfBases;
+    m_slots = static_cast<Slot*>(reserveForTable(sizeOfSlots));
+    m_data = static_cast<Data*>(fastZeroedMalloc(sizeof(Data)));
+    m_data->hasBeenFilledSinceLastCollection = true;
+    m_data->slotEpoch = 1;
+}
+
+PlaceTable::~PlaceTable()
+{
+    delete m_data->watchpoints;
+    fastFree(m_data);
+    OSAllocator::decommitAndRelease(m_entries, sizeOfEntries);
+    OSAllocator::decommitAndRelease(m_occupied, sizeOfOccupied);
+    OSAllocator::decommitAndRelease(m_slots, sizeOfSlots);
+}
+
+PlaceTable& PlaceTable::of(VM& vm)
+{
+    if (!vm.m_aotPlaceTable) [[unlikely]] {
+        vm.m_aotPlaceTable = new PlaceTable;
+        vm.m_aotEmptyRowOfPlacesByName = vm.m_aotPlaceTable->emptyRowOfPlaces();
+    }
+    return *vm.m_aotPlaceTable;
+}
+
+void PlaceTable::destroy(VM& vm)
+{
+    delete std::exchange(vm.m_aotPlaceTable, nullptr);
+    vm.m_aotEmptyRowOfPlacesByName = nullptr;
+}
+
+void initializeRowsByName(VM& vm, Structure& structure)
+{
+    PlaceTable& table = PlaceTable::of(vm);
+    structure.setPlacesByName(table.emptyRowOfPlaces());
+}
+
+Data* PlaceTable::dataFor(Instance* instance)
+{
+    if (!m_data->instance)
+        m_data->instance = instance;
+    return m_data;
+}
+
+uint32_t PlaceTable::baseOf(Structure* structure) const
+{
+    return static_cast<uint32_t>(structure->placesByName() - emptyRowOfPlaces());
+}
+
+uint32_t PlaceTable::entryForOwnPlace(uint32_t name, PropertyOffset offset)
+{
+    if (isInlineOffset(offset))
+        return name | static_cast<uint32_t>(JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset) << 16;
+    return entryElsewhere(name, Kind::OutOfLine, offset - firstOutOfLineOffset);
+}
+
+bool PlaceTable::usesPayloadItself(Kind kind)
+{
+    return adds(kind) || kind == Kind::Accessor || kind == Kind::InheritedInObject || kind == Kind::InheritedOutOfLine || kind == Kind::ExtraAccessorInLine;
+}
+
+uint32_t PlaceTable::findIndex(Structure* structure, uint32_t name) const
+{
+    uint32_t base = baseOf(structure);
+    if (!base)
+        return 0;
+    if (uint32_t index = indexOf(base, name); isEntryOf(m_entries[index], name))
+        return index;
+    if (uint32_t index = indexOfListed(base, static_cast<uint16_t>(name | isInOverflow)); isEntryOf(m_entries[index], name))
+        return index;
+    return 0;
+}
+
+uint32_t PlaceTable::takeNumberOfRowFor(Structure* structure)
+{
+    uint32_t number;
+    if (m_freeRows.isEmpty()) {
+        number = m_rows.size();
+        m_rows.append(Row { });
+    } else
+        number = m_freeRows.takeLast();
+    m_rows[number].owner = structure;
+    m_structuresWithRowsMadeSinceLastCollection.append(structure);
+    return number;
+}
+
+uint32_t PlaceTable::makeRow(Structure* structure, uint32_t name)
+{
+    uint16_t listed = static_cast<uint16_t>(name);
+    uint32_t base = findBase(std::span { &listed, 1 });
+    if (!base)
+        return 0;
+    uint32_t number = takeNumberOfRowFor(structure);
+    m_rows[number].names.append(listed);
+    occupy(base, markOfBase);
+    payload(base) = number;
+    occupy(indexOf(base, name), entryElsewhere(name, Kind::Unknown, 0));
+    structure->setPlacesByName(emptyRowOfPlaces() + base);
+    return indexOf(base, name);
+}
+
+uint32_t PlaceTable::moveRow(uint32_t base, std::optional<uint16_t> listedToAdd)
+{
+    uint32_t numberOfRow = payload(base);
+    Vector<uint16_t, 32> names;
+    names.appendVector(m_rows[numberOfRow].names);
+    unsigned numberOfNamesMoved = names.size();
+    if (listedToAdd)
+        names.append(*listedToAdd);
+    uint32_t newBase = findBase(names.span());
+    if (!newBase)
+        return 0;
+    vacate(base);
+    payload(base) = 0;
+    occupy(newBase, markOfBase);
+    payload(newBase) = numberOfRow;
+    for (unsigned i = 0; i < numberOfNamesMoved; ++i) {
+        uint32_t from = indexOfListed(base, names[i]);
+        uint32_t to = indexOfListed(newBase, names[i]);
+        occupy(to, vacate(from));
+        if (payload(from)) {
+            payload(to) = std::exchange(payload(from), 0);
+            if (!(payload(to) & payloadIsSlots))
+                m_indicesOfAdditionsMadeSinceLastCollection.append(to);
+        }
+        if (m_dependsOnPrototypes.get(bitOf(from))) {
+            m_dependsOnPrototypes.quickClear(bitOf(from));
+            setBit(m_dependsOnPrototypes, bitOf(to));
+            m_indicesThatDependOnPrototypesByName.add(static_cast<uint16_t>(names[i] & maxName), Vector<uint32_t>()).iterator->value.append(to);
+        }
+    }
+    if (listedToAdd) {
+        occupy(indexOfListed(newBase, *listedToAdd), entryElsewhere(*listedToAdd & maxName, Kind::Unknown, 0));
+        m_rows[numberOfRow].names.append(*listedToAdd);
+    }
+    m_rows[numberOfRow].owner->setPlacesByName(emptyRowOfPlaces() + newBase);
+    return newBase;
+}
+
+uint32_t PlaceTable::ensureIndex(Structure* structure, uint32_t name, bool mayBeInOverflow)
+{
+    ASSERT(name && name <= maxName);
+    uint32_t base = baseOf(structure);
+    if (!base)
+        return makeRow(structure, name);
+    uint16_t listed = static_cast<uint16_t>(name);
+    uint32_t index = indexOf(base, name);
+    uint32_t entry = m_entries[index];
+    if (entry && entry != markOfBase && !isEntryOf(entry, name) && columnOf(entry & maxName) == columnOf(name)) {
+        if (!mayBeInOverflow)
+            return 0;
+        listed |= isInOverflow;
+        index = indexOfListed(base, listed);
+        entry = m_entries[index];
+        if (entry && !isEntryOf(entry, name) && columnInOverflowOf(entry & maxName) == columnInOverflowOf(name))
+            return 0;
+    }
+    if (isEntryOf(entry, name))
+        return index;
+    if (entry && !(listed & isInOverflow)) {
+        uint32_t baseOfHolder = entry == markOfBase ? index : index - 1 - columnOf(entry & maxName);
+        if (rowAt(baseOfHolder).names.size() <= rowAt(base).names.size() && moveRow(baseOfHolder, std::nullopt))
+            entry = 0;
+    }
+    if (!entry) {
+        rowAt(base).names.append(listed);
+        occupy(index, entryElsewhere(name, Kind::Unknown, 0));
+        return index;
+    }
+    uint32_t newBase = moveRow(base, listed);
+    return newBase ? indexOfListed(newBase, listed) : 0;
+}
+
+static std::optional<uint32_t> codeInObjectOrOutOfLine(PropertyOffset offset)
+{
+    if (isInlineOffset(offset)) {
+        uint32_t place = JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset;
+        return place < PlaceTable::firstCodeOutOfLine ? std::optional(place) : std::nullopt;
+    }
+    uint32_t code = PlaceTable::firstCodeOutOfLine + (offset - firstOutOfLineOffset);
+    return code <= UINT8_MAX ? std::optional(code) : std::nullopt;
+}
+
+void PlaceTable::setDependsOnPrototypes(uint32_t index, uint32_t name, UniquedStringImpl* uid)
+{
+    if (uid) {
+        if (m_dependsOnPrototypes.get(bitOf(index)))
+            return;
+        setBit(m_dependsOnPrototypes, bitOf(index));
+        m_namesWithEntriesThatDependOnPrototypes.add(uid, static_cast<uint16_t>(name));
+        m_indicesThatDependOnPrototypesByName.add(static_cast<uint16_t>(name), Vector<uint32_t>()).iterator->value.append(index);
+    } else if (m_dependsOnPrototypes.get(bitOf(index)))
+        m_dependsOnPrototypes.quickClear(bitOf(index));
+}
+
+bool PlaceTable::setElsewhere(Structure* structure, uint32_t name, Kind kind, uint32_t code, uint32_t newPayload, UniquedStringImpl* uid)
+{
+    if (code > UINT8_MAX)
+        return false;
+    uint32_t index = ensureIndex(structure, name);
+    if (!index)
+        return false;
+    if (payload(index) & payloadIsSlots) {
+        if (usesPayloadItself(kind))
+            return false;
+    } else if (newPayload || payload(index))
+        payload(index) = newPayload;
+    m_entries[index] = entryElsewhere(name, kind, code);
+    setDependsOnPrototypes(index, name, uid);
+    return true;
+}
+
+bool PlaceTable::setOwnPlace(Structure* structure, uint32_t name, PropertyOffset offset, bool isStoredTo)
+{
+    if ((isInlineOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : offset - firstOutOfLineOffset) > UINT8_MAX)
+        return false;
+    uint32_t index = ensureIndex(structure, name);
+    if (!index)
+        return false;
+    uint32_t before = m_entries[index];
+    uint32_t entry = entryForOwnPlace(name, offset);
+    if (isInlineOffset(offset)) {
+        bool wasStoredTo = !(before & isElsewhere) && before >> 24;
+        if (isStoredTo || wasStoredTo)
+            entry |= codeOf(entry) << 24;
+    } else if (isStoredTo || kindOf(before) == Kind::OutOfLineAndStoredTo)
+        entry = entryElsewhere(name, Kind::OutOfLineAndStoredTo, codeOf(entry));
+    m_entries[index] = entry;
+    if (payload(index) && !(payload(index) & payloadIsSlots))
+        payload(index) = 0;
+    setDependsOnPrototypes(index, name, nullptr);
+    return true;
+}
+
+bool PlaceTable::setAbsent(Structure* structure, uint32_t name, UniquedStringImpl* uid)
+{
+    uint32_t index = ensureIndex(structure, name);
+    if (!index)
+        return false;
+    uint32_t before = m_entries[index];
+    if (before & isElsewhere && adds(kindOf(before)))
+        m_entries[index] = entryElsewhere(name, kindThatAdds(true, storesAdd(kindOf(before)), whereAdded(kindOf(before))), codeOf(before));
+    else {
+        m_entries[index] = entryElsewhere(name, Kind::Absent, 0);
+        if (payload(index) && !(payload(index) & payloadIsSlots))
+            payload(index) = 0;
+    }
+    setDependsOnPrototypes(index, name, uid);
+    return true;
+}
+
+bool PlaceTable::setInherited(Structure* structure, uint32_t name, JSCell* holder, PropertyOffset offset, UniquedStringImpl* uid)
+{
+    if (!MarkedBlockCage::contains(holder))
+        return false;
+    if (isInlineOffset(offset))
+        return setElsewhere(structure, name, Kind::InheritedInObject, JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset, MarkedBlockCage::encode(holder), uid);
+    return setElsewhere(structure, name, Kind::InheritedOutOfLine, offset - firstOutOfLineOffset, MarkedBlockCage::encode(holder), uid);
+}
+
+bool PlaceTable::setInheritedInPlaceOfSlot(Structure* structure, uint32_t name, JSCell* holder, PropertyOffset offset)
+{
+    uint32_t index = findIndex(structure, name);
+    if (!index || index >= entriesPerPlane || !MarkedBlockCage::contains(holder) || (isInlineOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : offset - firstOutOfLineOffset) > UINT8_MAX)
+        return false;
+    return releaseSlotsUnlessStoresUseThem(index) && setInherited(structure, name, holder, offset, nullptr);
+}
+
+bool PlaceTable::setExtraAccessorInPlaceOfSlot(Structure* structure, uint32_t name, StructureID ofExtraProperties, uint32_t offsetInBytes)
+{
+    uint32_t index = findIndex(structure, name);
+    if (!index || index >= entriesPerPlane || offsetInBytes % sizeof(EncodedJSValue) || offsetInBytes / sizeof(EncodedJSValue) > UINT8_MAX || !releaseSlotsUnlessStoresUseThem(index))
+        return false;
+    if (!setElsewhere(structure, name, Kind::ExtraAccessorInLine, offsetInBytes / sizeof(EncodedJSValue), ofExtraProperties.bits(), nullptr))
+        return false;
+    m_indicesOfAdditionsMadeSinceLastCollection.append(index);
+    return true;
+}
+
+bool PlaceTable::releaseSlotsUnlessStoresUseThem(uint32_t index)
+{
+    if (Slot* slots = slotsAt(index)) {
+        for (Access other : { Access::Store, Access::Define }) {
+            if (!isUnused(slots[static_cast<unsigned>(other)]))
+                return false;
+        }
+        releaseSlotsAt(index);
+    }
+    return true;
+}
+
+bool PlaceTable::setAccessor(Structure* structure, uint32_t name, JSCell* holder, PropertyOffset offset, UniquedStringImpl* uid)
+{
+    auto code = codeInObjectOrOutOfLine(offset);
+    if (!code || (holder && !MarkedBlockCage::contains(holder)))
+        return false;
+    if (!holder && isInlineOffset(offset))
+        return setElsewhere(structure, name, Kind::OwnAccessorInObject, *code, 0, uid);
+    return setElsewhere(structure, name, Kind::Accessor, *code, holder ? MarkedBlockCage::encode(holder) : 0, uid);
+}
+
+bool PlaceTable::setField(Structure* structure, uint32_t name, uint64_t howTheFieldIsRead)
+{
+    uint32_t offset = static_cast<uint32_t>(howTheFieldIsRead);
+    uint32_t how = static_cast<uint32_t>(howTheFieldIsRead >> Slot::fieldReadShift);
+    if (how >> 4 || offset % sizeof(uint32_t))
+        return false;
+    Kind kind;
+    switch (static_cast<Slot::FieldRead>(how & 7)) {
+    case Slot::FieldRead::Boxed:
+        kind = Kind::FieldBoxed;
+        break;
+    case Slot::FieldRead::Cell32:
+        kind = Kind::FieldCell32;
+        break;
+    case Slot::FieldRead::Int32OrElsewhere:
+    case Slot::FieldRead::Int32:
+        kind = Kind::FieldInt32;
+        break;
+    default:
+        return false;
+    }
+    return setElsewhere(structure, name, kind, offset / sizeof(uint32_t), 0, nullptr);
+}
+
+bool PlaceTable::setAdded(Structure* structure, uint32_t name, Access access, Structure* after, PropertyOffset offset, uint32_t flags, UniquedStringImpl* uid)
+{
+    WhereAdded where = flags ? WhereAdded::InNewStorage : isInlineOffset(offset) ? WhereAdded::InObject : WhereAdded::OutOfLine;
+    uint32_t code = isInlineOffset(offset) ? JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) + offset : offset - firstOutOfLineOffset;
+    if (code > UINT8_MAX)
+        return false;
+    uint32_t index = ensureIndex(structure, name);
+    if (!index || payload(index) & payloadIsSlots || !(m_entries[index] & isElsewhere))
+        return false;
+    bool isStore = access == Access::Store;
+    ASSERT(isStore == !!uid);
+    Kind before = kindOf(m_entries[index]);
+    if (!saysAbsent(before) && !adds(before) && before != Kind::Unknown)
+        return false;
+    Kind kind = kindThatAdds(saysAbsent(before), isStore || storesAdd(before), where);
+    ASSERT(!(after->id().bits() & (flagsOfStructureAfter | payloadIsSlots)));
+    payload(index) = after->id().bits() | flags;
+    m_entries[index] = entryElsewhere(name, kind, code);
+    m_indicesOfAdditionsMadeSinceLastCollection.append(index);
+    if (isStore && !saysAbsent(kind))
+        setDependsOnPrototypes(index, name, uid);
+    return true;
+}
+
+Slot* PlaceTable::slotIfAny(Structure* structure, uint32_t name, Access access)
+{
+    uint32_t index = findIndex(structure, name);
+    Slot* slots = index ? slotsAt(index) : nullptr;
+    return slots ? slots + static_cast<unsigned>(access) : nullptr;
+}
+
+void PlaceTable::forgetWhatDependsOnPrototypes(uint32_t index)
+{
+    if (!m_dependsOnPrototypes.get(bitOf(index)))
+        return;
+    m_dependsOnPrototypes.quickClear(bitOf(index));
+    uint32_t entry = m_entries[index];
+    uint32_t name = entry & maxName;
+    if (adds(kindOf(entry)))
+        m_entries[index] = entryElsewhere(name, kindThatAdds(false, false, whereAdded(kindOf(entry))), codeOf(entry));
+    else {
+        m_entries[index] = entryElsewhere(name, Kind::Unknown, 0);
+        if (payload(index) && !(payload(index) & payloadIsSlots))
+            payload(index) = 0;
+    }
+}
+
+void PlaceTable::didChangePrototype(UniquedStringImpl* uid)
+{
+    if (m_namesWithEntriesThatDependOnPrototypes.isEmpty())
+        return;
+    if (uid) {
+        auto found = m_namesWithEntriesThatDependOnPrototypes.find(uid);
+        if (found == m_namesWithEntriesThatDependOnPrototypes.end())
+            return;
+        uint32_t name = found->value;
+        m_namesWithEntriesThatDependOnPrototypes.remove(found);
+        for (uint32_t index : m_indicesThatDependOnPrototypesByName.take(static_cast<uint16_t>(name))) {
+            if (isElsewhereEntryOf(m_entries[index], name))
+                forgetWhatDependsOnPrototypes(index);
+        }
+        return;
+    }
+    m_namesWithEntriesThatDependOnPrototypes.clear();
+    m_indicesThatDependOnPrototypesByName.clear();
+    for (size_t bit : m_dependsOnPrototypes)
+        forgetWhatDependsOnPrototypes(static_cast<uint32_t>(bit));
+}
+
+void PlaceTable::release(uint32_t base)
+{
+    uint32_t numberOfRow = payload(base);
+    Row& row = m_rows[numberOfRow];
+    for (uint16_t listed : row.names) {
+        uint32_t index = indexOfListed(base, listed);
+        vacate(index);
+        releaseSlotsAt(index);
+        if (payload(index))
+            payload(index) = 0;
+        if (m_dependsOnPrototypes.get(bitOf(index)))
+            m_dependsOnPrototypes.quickClear(bitOf(index));
+    }
+    vacate(base);
+    payload(base) = 0;
+    row = Row { };
+    m_freeRows.append(numberOfRow);
+}
+
+Slot* PlaceTable::ensureSlot(Structure* structure, uint32_t name, Access access)
+{
+    uint32_t index = ensureIndex(structure, name, true);
+    if (!index)
+        return nullptr;
+    if (!(payload(index) & payloadIsSlots)) {
+        uint32_t first;
+        if (!m_freeSlots.isEmpty())
+            first = m_freeSlots.takeLast();
+        else if (m_numberOfSlots + slotsPerPayload <= maxNumberOfSlots)
+            first = std::exchange(m_numberOfSlots, m_numberOfSlots + slotsPerPayload);
+        else
+            return nullptr;
+        if (usesPayloadItself(m_entries[index])) {
+            if (m_dependsOnPrototypes.get(bitOf(index)))
+                m_dependsOnPrototypes.quickClear(bitOf(index));
+            m_entries[index] = entryElsewhere(name, Kind::Unknown, 0);
+        }
+        payload(index) = first << 1 | payloadIsSlots;
+    }
+    return slotsAt(index) + static_cast<unsigned>(access);
+}
+
+void PlaceTable::releaseSlotsAt(uint32_t index)
+{
+    Slot* slots = slotsAt(index);
+    if (!slots)
+        return;
+    for (unsigned i = 0; i < slotsPerPayload; ++i) {
+        stopWatching(m_data, &slots[i]);
+        slots[i] = Slot { };
+    }
+    m_freeSlots.append(payload(index) >> 1);
+    payload(index) = 0;
+}
+
+void PlaceTable::releaseSlot(Structure* structure, uint32_t name, Access access)
+{
+    uint32_t index = findIndex(structure, name);
+    Slot* slots = index ? slotsAt(index) : nullptr;
+    if (!slots)
+        return;
+    Slot& slot = slots[static_cast<unsigned>(access)];
+    stopWatching(m_data, &slot);
+    slot = Slot { };
+    for (unsigned i = 0; i < slotsPerPayload; ++i) {
+        if (!isUnused(slots[i]))
+            return;
+    }
+    releaseSlotsAt(index);
+}
+
+bool PlaceTable::isWatched(Slot* slot) const
+{
+    return m_data->watchpoints && m_data->watchpoints->contains(slot);
+}
+
+void PlaceTable::forgetDeadStructuresAfter(VM& vm, Vector<uint32_t>& indices)
+{
+    indices.removeAllMatching([&](uint32_t index) {
+        uint32_t entry = m_entries[index];
+        if (!adds(kindOf(entry)) && kindOf(entry) != Kind::ExtraAccessorInLine)
+            return true;
+        Kind kindWithout = saysAbsent(kindOf(entry)) ? Kind::Absent : Kind::Unknown;
+        if (!(entry & isElsewhere) || !(entry & maxName))
+            return true;
+        if (vm.heap.isMarked(std::bit_cast<StructureID>(payload(index) & ~flagsOfStructureAfter).decode()))
+            return false;
+        m_entries[index] = entryElsewhere(entry & maxName, kindWithout, 0);
+        payload(index) = 0;
+        if (kindWithout == Kind::Unknown && m_dependsOnPrototypes.get(bitOf(index)))
+            m_dependsOnPrototypes.quickClear(bitOf(index));
+        return true;
+    });
+}
+
+void PlaceTable::finalizeUnconditionally(VM& vm, bool isEdenCollection)
+{
+    if (isEdenCollection) {
+        for (Structure* structure : m_structuresWithRowsMadeSinceLastCollection) {
+            if (vm.heap.isMarked(structure))
+                continue;
+            if (uint32_t base = baseOf(structure))
+                release(base);
+        }
+    } else {
+        for (unsigned i = 0; i < m_rows.size(); ++i) {
+            if (Structure* owner = m_rows[i].owner; owner && !vm.heap.isMarked(owner))
+                release(baseOf(owner));
+        }
+    }
+    m_structuresWithRowsMadeSinceLastCollection.shrink(0);
+    forgetDeadStructuresAfter(vm, m_indicesOfAdditionsMadeSinceLastCollection);
+    if (!isEdenCollection)
+        forgetDeadStructuresAfter(vm, m_indicesOfAdditions);
+    m_indicesOfAdditions.appendVector(m_indicesOfAdditionsMadeSinceLastCollection);
+    m_indicesOfAdditionsMadeSinceLastCollection.shrink(0);
+    if (isEdenCollection)
+        return;
+    for (auto& entry : m_indicesThatDependOnPrototypesByName) {
+        entry.value.removeAllMatching([&](uint32_t index) {
+            return !isElsewhereEntryOf(m_entries[index], entry.key) || !m_dependsOnPrototypes.get(bitOf(index));
+        });
+    }
+    for (auto& row : m_rows) {
+        if (!row.owner)
+            continue;
+        uint32_t base = baseOf(row.owner);
+        for (uint16_t listed : row.names) {
+            if (Slot* slots = slotsAt(indexOfListed(base, listed))) {
+                for (unsigned i = 0; i < slotsPerPayload; ++i)
+                    m_data->finalizeSlot(vm, slots[i]);
+            }
+        }
+    }
+    m_data->finalizeUnconditionally(vm);
+}
+
+void PlaceTable::clear()
+{
+    for (unsigned i = 0; i < m_rows.size(); ++i) {
+        if (Structure* owner = m_rows[i].owner) {
+            release(baseOf(owner));
+            owner->setPlacesByName(emptyRowOfPlaces());
+        }
+    }
+    m_structuresWithRowsMadeSinceLastCollection.shrink(0);
+    m_indicesOfAdditions.shrink(0);
+    m_indicesOfAdditionsMadeSinceLastCollection.shrink(0);
+    m_namesWithEntriesThatDependOnPrototypes.clear();
+    m_indicesThatDependOnPrototypesByName.clear();
+}
+
+void PlaceTable::didCreate(Instance* instance)
+{
+    instance->slotsOfPlaceTable = m_slots;
+    if (!m_data->instance || m_data->instance == instance)
+        return;
+    m_servesSeveralInstances = true;
+    clear();
+}
+
+void PlaceTable::willDestroy(Instance* instance)
+{
+    if (m_data->instance != instance)
+        return;
+    clear();
+    m_data->instance = nullptr;
 }
 
 } } // namespace JSC::AOT

@@ -43,8 +43,16 @@ public:
         TypeID resumeModeType;
         TypeID driverType;
         bool hasStartFunction { false };
+        bool savesItsFrame { false };
         Vector<ASCIILiteral, 16> namesByFirstUse;
     };
+
+    static bool maySaveItsFrame(const Function& function)
+    {
+        if (function.has(Format::FunctionIsGenerator | Format::FunctionIsCodeOfModule | FunctionUsesArgumentBuffer) || function.kind == FunctionKind::Module)
+            return false;
+        return true;
+    }
 
     static bool hasStartFunction(const Function& function)
     {
@@ -124,13 +132,19 @@ public:
         return both;
     }
 
-    static Numbers reserveNumbers(Program& program, FunctionID ramp, FunctionID resume)
+    static Numbers reserveNumbers(Program& program, FunctionID ramp, FunctionID resume, bool savesItsFrame)
     {
         auto& types = program.types;
-        bool isGenerator = program.at(ramp).has(Format::FunctionIsGenerator);
+        bool isGenerator = std::as_const(program).at(ramp).has(Format::FunctionIsGenerator);
         Numbers numbers;
         numbers.ramp = ramp;
         numbers.resume = resume;
+        numbers.savesItsFrame = savesItsFrame;
+        if (savesItsFrame) {
+            numbers.hasStartFunction = true;
+            numbers.driverType = types.intern(Type::engineClass(Builtins::singleton().promiseClass()));
+            return numbers;
+        }
         numbers.frameLayout = LayoutID(program.layouts.size());
         numbers.frameType = types.intern(Type::view(numbers.frameLayout));
         numbers.resumeModeType = types.intern(Type::integer({ resumeModeNormal, isGenerator ? resumeModeReturn : resumeModeThrow | CoroutineFrame::isEnteredByJobLoop }));
@@ -141,11 +155,13 @@ public:
 
     static void replaceProvisionalNames(Program& program, const Numbers& numbers, std::span<const StringID> names)
     {
-        for (auto& field : program.at(numbers.frameLayout).fields) {
-            if (field.name && field.name.index() >= firstProvisionalName)
-                field.name = names[field.name.index() - firstProvisionalName];
+        if (!numbers.savesItsFrame) {
+            for (auto& field : program.at(numbers.frameLayout).fields) {
+                if (field.name && field.name.index() >= firstProvisionalName)
+                    field.name = names[field.name.index() - firstProvisionalName];
+            }
         }
-        for (FunctionID id : { numbers.ramp, numbers.resume, program.at(numbers.ramp).startFunction }) {
+        for (FunctionID id : { numbers.ramp, numbers.resume, std::as_const(program).at(numbers.ramp).startFunction }) {
             if (!id)
                 continue;
             for (auto& value : program.at(id).values) {
@@ -165,13 +181,17 @@ public:
 
     void run()
     {
-        m_isGenerator = m_program.at(m_ramp).has(Format::FunctionIsGenerator);
-        m_isAsync = m_program.at(m_ramp).has(Format::FunctionIsAsync);
-        m_startsEagerly = m_program.at(m_ramp).has(Format::FunctionStartsEagerly);
-        m_position = m_program.at(m_ramp).position;
+        m_isGenerator = std::as_const(m_program).at(m_ramp).has(Format::FunctionIsGenerator);
+        m_isAsync = std::as_const(m_program).at(m_ramp).has(Format::FunctionIsAsync);
+        m_startsEagerly = std::as_const(m_program).at(m_ramp).has(Format::FunctionStartsEagerly);
+        m_position = std::as_const(m_program).at(m_ramp).position;
         m_hasStartFunction = m_numbers.hasStartFunction;
+        if (m_numbers.savesItsFrame) {
+            keepBodyInOneFunction();
+            return;
+        }
         if (!m_hasStartFunction && !m_isGenerator)
-            numberOfValuesInBothHalves(m_program.at(m_ramp), &m_awaitsOfFirstActivationAlone, nullptr);
+            numberOfValuesInBothHalves(std::as_const(m_program).at(m_ramp), &m_awaitsOfFirstActivationAlone, nullptr);
         createFrameLayout();
         if (m_hasStartFunction)
             copyBodyToStartFunction();
@@ -342,7 +362,7 @@ private:
 
         Layout layout;
         layout.kind = LayoutKind::Environment;
-        layout.name = m_program.at(m_ramp).name;
+        layout.name = std::as_const(m_program).at(m_ramp).name;
         layout.isCoroutineFrame = true;
         layout.type = m_frameType;
         m_program.at(m_frameLayout) = WTF::move(layout);
@@ -354,13 +374,14 @@ private:
 
     static uint32_t flagsOfHalf(const Function& ramp, uint32_t kept)
     {
-        return (ramp.flags & (kept | Format::FunctionIsCodeOfModule | Format::FunctionIsSloppy)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsHalfOfHiddenCoroutine : 0);
+        return (ramp.flags & (kept | Format::FunctionIsCodeOfModule | Format::FunctionIsSloppy)) | (ramp.has(Format::FunctionIsHiddenInStackTraces) ? FunctionIsHalfOfHiddenCoroutine : 0)
+            | (ramp.has(Format::FunctionIsAsync) && !ramp.has(Format::FunctionIsGenerator) ? FunctionIsHalfOfAsyncFunction : 0);
     }
 
     // Values keep their numbers in both copies of the body.
     void copyBodyToStartFunction()
     {
-        auto& ramp = m_program.at(m_ramp);
+        auto& ramp = std::as_const(m_program).at(m_ramp);
         m_startBody.name = ramp.name;
         m_startBody.module = ramp.module;
         m_startBody.position = ramp.position;
@@ -418,6 +439,210 @@ private:
             m_body.at(argument) = WTF::move(load);
         }
         m_body.at(m_start).values.insertVector(0, arguments);
+    }
+
+    static bool isMadeAnewWhereverAsked(const Program& program, const Value& value)
+    {
+        switch (value.opcode) {
+        case Opcode::Undefined:
+        case Opcode::Null:
+        case Opcode::Boolean:
+        case Opcode::Integer:
+        case Opcode::Double:
+        case Opcode::String:
+        case Opcode::FunctionReference:
+        case Opcode::BuiltinFunction:
+            return true;
+        case Opcode::GetGlobal: {
+            BuiltinName name = program.builtinName(value.string());
+            return Builtins::singleton().isGlobal(name) && !program.isExtended(name);
+        }
+        default:
+            return false;
+        }
+    }
+
+    static Vector<Vector<uint32_t>> liveAtHeadsOf(const Function& function, const BitVector& isAskedAbout)
+    {
+        unsigned numberOfBlocks = function.blocks.size();
+        unsigned numberOfValues = function.values.size();
+        static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
+        Vector<Vector<uint32_t>> liveAtHead(numberOfBlocks);
+        Vector<Vector<uint32_t, 2>> predecessors(numberOfBlocks);
+        Vector<uint32_t> definedIn;
+        definedIn.fill(none, numberOfValues);
+        Vector<Vector<uint32_t, 2>> usedIn(numberOfValues);
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            auto& block = function.blocks[b];
+            auto use = [&](ValueID used) {
+                if (used && (usedIn[used.index()].isEmpty() || usedIn[used.index()].last() != b))
+                    usedIn[used.index()].append(b);
+            };
+            for (ValueID parameter : block.parameters)
+                definedIn[parameter.index()] = b;
+            for (ValueID id : block.values) {
+                definedIn[id.index()] = b;
+                function.at(id).forEachChild([&](ValueID child) {
+                    use(child);
+                });
+            }
+            use(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                predecessors[target.block.index()].append(b);
+                for (ValueID argument : target.arguments)
+                    use(argument);
+            }
+        }
+        Vector<uint32_t> lastValueLiveInto;
+        lastValueLiveInto.fill(none, numberOfBlocks);
+        Vector<uint32_t> worklist;
+        for (unsigned value = 0; value < numberOfValues; ++value) {
+            worklist.appendVector(usedIn[value]);
+            while (!worklist.isEmpty()) {
+                uint32_t b = worklist.takeLast();
+                if (b == definedIn[value] || lastValueLiveInto[b] == value)
+                    continue;
+                lastValueLiveInto[b] = value;
+                if (isAskedAbout.get(b))
+                    liveAtHead[b].append(value);
+                worklist.appendVector(predecessors[b]);
+            }
+        }
+        return liveAtHead;
+    }
+
+    void keepBodyInOneFunction()
+    {
+        auto& ramp = m_program.at(m_ramp);
+        m_driverType = m_numbers.driverType;
+        auto& function = m_startBody;
+        function.name = ramp.name;
+        function.module = ramp.module;
+        function.position = ramp.position;
+        function.kind = FunctionKind::Plain;
+        function.flags = flagsOfHalf(ramp, Format::FunctionIsTyped);
+        function.resultType = m_program.types.undefined;
+        function.blocks = std::exchange(ramp.blocks, { });
+        function.values = std::exchange(ramp.values, { });
+        function.savesItsFrame = true;
+        ramp.savesItsFrame = true;
+        ramp.flags &= ~(Format::FunctionIsAsync | Format::FunctionIsGenerator | Format::FunctionStartsEagerly);
+        ramp.startFunction = m_numbers.resume;
+        for (ValueID argument : function.blocks[0].parameters)
+            m_argumentTypes.append(function.at(argument).type);
+
+        BlockID first = addBlock(function);
+        function.at(first) = std::exchange(function.blocks[0], Block { });
+        for (auto& block : function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                if (!target.block.index())
+                    target.block = first;
+            }
+        }
+        BlockID entry(0u);
+        function.at(entry).terminator.kind = TerminatorKind::Jump;
+        function.at(entry).terminator.targets.append(Target { first, { } });
+        for (TypeID type : m_argumentTypes) {
+            function.parameterTypes.append(type);
+            ValueID argument = addParameter(function, entry, type);
+            function.at(entry).terminator.targets[0].arguments.append(argument);
+        }
+        function.parameterTypes.append(m_driverType);
+        ValueID promise = addParameter(function, entry, m_driverType);
+        for (ValueID argument : Vector<ValueID>(function.at(first).parameters))
+            function.at(argument).immediates[0] = first.index();
+
+        Vector<std::pair<BlockID, ValueID>> awaits;
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            size_t index = function.blocks[b].values.findIf([&](ValueID id) {
+                return function.at(id).opcode == Opcode::Await;
+            });
+            if (index == notFound)
+                continue;
+            BlockID block(b);
+            ValueID suspension = function.at(block).values[index];
+            Value original = function.at(suspension);
+            m_position = original.position;
+            bool isHeld = original.assertedType || !m_program.at(original.type).isAnything();
+            Value awaited = operation("AwaitBySavingFrame"_s, m_program.types.anything, { original.child(0), promise });
+            ValueID comesBack = suspension;
+            if (isHeld) {
+                comesBack = addValue(function, WTF::move(awaited));
+                Value held = cast(comesBack, original.type, CastReason::Claim);
+                held.position = m_position;
+                held.assertedType = original.assertedType;
+                held.takePredictionOf(original);
+                function.at(suspension) = WTF::move(held);
+            } else {
+                awaited.position = m_position;
+                awaited.takePredictionOf(original);
+                function.at(suspension) = WTF::move(awaited);
+            }
+            BlockID behind = addBlock(function);
+            auto& from = function.at(block);
+            auto& to = function.at(behind);
+            bool isWatched = from.terminator.kind == TerminatorKind::Invoke && index + 1 == from.values.size();
+            if (isHeld)
+                to.values.append(suspension);
+            for (size_t i = index + 1; i < from.values.size(); ++i)
+                to.values.append(from.values[i]);
+            from.values.shrink(index);
+            from.values.append(comesBack);
+            to.terminator = from.terminator;
+            if (isWatched) {
+                from.terminator.targets[0] = Target { behind, { } };
+                if (!isHeld) {
+                    Target normal = to.terminator.targets[0];
+                    to.terminator = Terminator { };
+                    to.terminator.kind = TerminatorKind::Jump;
+                    to.terminator.targets.append(WTF::move(normal));
+                }
+            } else {
+                from.terminator = Terminator { };
+                from.terminator.kind = TerminatorKind::Jump;
+                from.terminator.targets.append(Target { behind, { } });
+            }
+            awaits.append({ block, comesBack });
+        }
+
+        m_position = function.position;
+        for (unsigned b = 0; b < function.blocks.size(); ++b) {
+            BlockID block(b);
+            if (function.at(block).terminator.kind != TerminatorKind::Return)
+                continue;
+            ValueID result = function.at(block).terminator.value;
+            if (!result)
+                result = append(function, block, undefined());
+            append(function, block, operation("ResolvePromise"_s, m_program.types.undefined, { promise, result }));
+            function.at(block).terminator.value = append(function, block, undefined());
+        }
+
+        BitVector isAskedAbout(function.blocks.size());
+        for (auto& [block, comesBack] : awaits) {
+            for (auto& target : function.at(block).terminator.targets)
+                isAskedAbout.set(target.block.index());
+        }
+        auto liveAtHead = liveAtHeadsOf(function, isAskedAbout);
+        BitVector isHanded(function.values.size());
+        for (auto& [block, comesBack] : awaits) {
+            isHanded.clearAll();
+            isHanded.set(promise.index());
+            isHanded.set(comesBack.index());
+            auto hand = [&](ValueID live) {
+                if (isHanded.set(live.index()) || !m_program.at(function.at(live).type).hasCells() || isMadeAnewWhereverAsked(m_program, function.at(live)))
+                    return;
+                function.at(comesBack).arguments.append(live);
+            };
+            for (auto& target : function.at(block).terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    hand(argument);
+                for (uint32_t live : liveAtHead[target.block.index()])
+                    hand(ValueID(live));
+            }
+        }
+
+        m_program.at(m_numbers.resume) = WTF::move(function);
+        buildRamp();
     }
 
     void replaceResumeModeReads()
@@ -529,6 +754,8 @@ private:
             }
             if (isHeld) {
                 Value held = cast(yielded, type, CastReason::Claim);
+                if (!isYield)
+                    held.immediates[1] |= Value::castHoldsWhatAwaitYields;
                 held.assertedType = original.assertedType;
                 held.takePredictionOf(original);
                 yielded = append(m_body, from, WTF::move(held));
@@ -1396,7 +1623,7 @@ private:
             pointOf.add(m_suspensionPoints[i].suspension.index(), i);
         BitVector isFieldRead;
         {
-            auto& resume = m_program.at(m_resume);
+            auto& resume = std::as_const(m_program).at(m_resume);
             BitVector isReached(resume.blocks.size());
             Vector<unsigned, 16> worklist { 0u };
             isReached.set(0);
@@ -1590,16 +1817,18 @@ void splitCoroutines(Program& program)
     Vector<CoroutineSplitter::Numbers> coroutines;
     Vector<uint8_t> numberOfFunctionsMadeOf(FillWith { }, numberOfFunctions, static_cast<uint8_t>(0));
     forEachIndexInParallel(numberOfFunctions, [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         if ((function.has(Format::FunctionIsAsync) || function.has(Format::FunctionIsGenerator)) && !function.blocks.isEmpty())
-            numberOfFunctionsMadeOf[i] = CoroutineSplitter::hasStartFunction(function) ? 2 : 1;
+            numberOfFunctionsMadeOf[i] = CoroutineSplitter::maySaveItsFrame(function) ? 3 : CoroutineSplitter::hasStartFunction(function) ? 2 : 1;
     });
     for (unsigned i = 0; i < numberOfFunctions; ++i) {
         if (!numberOfFunctionsMadeOf[i])
             continue;
-        coroutines.append(CoroutineSplitter::reserveNumbers(program, FunctionID(i), FunctionID(numberOfFunctionsBehind)));
-        coroutines.last().hasStartFunction = numberOfFunctionsMadeOf[i] == 2;
-        numberOfFunctionsBehind += numberOfFunctionsMadeOf[i];
+        bool savesItsFrame = numberOfFunctionsMadeOf[i] == 3;
+        coroutines.append(CoroutineSplitter::reserveNumbers(program, FunctionID(i), FunctionID(numberOfFunctionsBehind), savesItsFrame));
+        if (!savesItsFrame)
+            coroutines.last().hasStartFunction = numberOfFunctionsMadeOf[i] == 2;
+        numberOfFunctionsBehind += savesItsFrame ? 1 : numberOfFunctionsMadeOf[i];
     }
     program.functions.grow(numberOfFunctionsBehind);
     forEachIndexInParallel(coroutines.size(), [&](unsigned k) {
@@ -1621,7 +1850,7 @@ void splitCoroutines(Program& program)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         auto& function = program.functions[i];
         for (auto& value : function.values) {
-            if (value.opcode != Opcode::CallDirect || !program.at(value.function()).resumeFunction)
+            if (value.opcode != Opcode::CallDirect || (!program.at(value.function()).resumeFunction && !program.at(value.function()).startFunction))
                 continue;
             TypeID made = program.at(value.function()).resultType;
             if (!made || made == value.type || !program.at(made).isWithin(program.at(value.type), program))

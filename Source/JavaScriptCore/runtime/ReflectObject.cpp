@@ -26,8 +26,11 @@
 #include "config.h"
 #include "ReflectObject.h"
 
+#include "Interpreter.h"
 #include "JSCInlines.h"
 #include "ObjectConstructor.h"
+#include "VMInlines.h"
+#include <wtf/StackPointer.h>
 
 namespace JSC {
 
@@ -112,11 +115,17 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectConstruct, (JSGlobalObject* globalObject, 
     if (!argumentsObject)
         return JSValue::encode(throwTypeError(globalObject, scope, "Reflect.construct requires the second argument be an object"_s));
 
-    forEachInArrayLike(globalObject, argumentsObject, [&] (JSValue value) -> bool {
-        arguments.append(value);
-        return true;
-    });
+    uint64_t length = toLength(globalObject, argumentsObject);
     RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
+    if (length > maxArguments || !vm.ensureJSStackCapacityFor(static_cast<Register*>(currentStackPointer()) - length)) [[unlikely]] {
+        arguments.overflowCheckNotNeeded();
+        throwStackOverflowError(globalObject, scope);
+        return encodedJSValue();
+    }
+    for (uint64_t index = 0; index < length; ++index) {
+        arguments.append(argumentsObject->getIndex(globalObject, index));
+        RETURN_IF_EXCEPTION(scope, (arguments.overflowCheckNotNeeded(), encodedJSValue()));
+    }
     if (arguments.hasOverflowed()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return encodedJSValue();
@@ -150,8 +159,8 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectDefineProperty, (JSGlobalObject* globalObj
     JSObject* targetObject = asObject(target);
     bool isDefined = targetObject->methodTable()->defineOwnProperty(targetObject, globalObject, propertyName, descriptor, shouldThrow);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isDefined)
-        targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true);
+    if (!isDefined && targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true))
+        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->wordsOfRefusalByLock(vm, propertyName.impl(), UnconfigurablePropertyChangeAccessMechanismError)));
     return JSValue::encode(jsBoolean(isDefined));
 }
 
@@ -246,10 +255,11 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSet, (JSGlobalObject* globalObject, CallFr
     // Do not raise any readonly errors that happen in strict mode.
     bool shouldThrowIfCantSet = false;
     PutPropertySlot slot(receiver, shouldThrowIfCantSet, PutPropertySlot::ReflectSet);
-    bool isStored = targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
+    bool isIndexOfImmutableObject = receiver == target && targetObject->structure()->hasImmutableProperties() && parseIndex(propertyName);
+    bool isStored = !isIndexOfImmutableObject && targetObject->methodTable()->put(targetObject, globalObject, propertyName, callFrame->argument(2), slot);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!isStored && receiver == target)
-        targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true);
+    if (!isStored && receiver == target && targetObject->noteIfRefusedByLockAlone(vm, propertyName.impl(), true))
+        return JSValue::encode(throwTypeError(globalObject, scope, targetObject->wordsOfRefusalByLock(vm, propertyName.impl(), ReadonlyPropertyWriteError)));
     return JSValue::encode(jsBoolean(isStored));
 }
 
@@ -271,8 +281,11 @@ JSC_DEFINE_HOST_FUNCTION(reflectObjectSetPrototypeOf, (JSGlobalObject* globalObj
     bool shouldThrowIfCantSet = false;
     bool didSetPrototype = object->setPrototype(vm, globalObject, proto, shouldThrowIfCantSet);
     RETURN_IF_EXCEPTION(scope, encodedJSValue());
-    if (!didSetPrototype && object != globalObject->objectPrototype())
-        object->noteIfRefusedByLockAlone(vm, nullptr, true);
+    bool wouldInheritFromItself = false;
+    for (JSValue next = proto; !didSetPrototype && next.isObject() && !wouldInheritFromItself && asObject(next)->type() != ProxyObjectType; next = asObject(next)->getPrototypeDirect())
+        wouldInheritFromItself = asObject(next) == object;
+    if (!didSetPrototype && !wouldInheritFromItself && object != globalObject->objectPrototype() && object->noteIfRefusedByLockAlone(vm, nullptr, true))
+        return JSValue::encode(throwTypeError(globalObject, scope, object->wordsOfRefusalByLock(vm, nullptr, ReadonlyPropertyWriteError)));
     return JSValue::encode(jsBoolean(didSetPrototype));
 }
 

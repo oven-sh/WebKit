@@ -27,6 +27,9 @@
 
 #if ENABLE(B3_JIT)
 
+#if USE(BUN_JSC_ADDITIONS)
+#include "B3Arena.h"
+#endif
 #include "PureNaN.h"
 #include <climits>
 #include <wtf/BubbleSort.h>
@@ -55,7 +58,16 @@ public:
     // Insert a new block at a given index.
     BasicBlock* insert(unsigned index, double frequency = PNaN)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        std::unique_ptr<BasicBlock> block;
+        if constexpr (requires { BasicBlock::mayLiveInArena; }) {
+            block.reset(new (m_arena) BasicBlock(BasicBlock::uninsertedIndex, frequency));
+            block->m_isInArena = !!m_arena;
+        } else
+            block.reset(new BasicBlock(BasicBlock::uninsertedIndex, frequency));
+#else
         std::unique_ptr<BasicBlock> block(new BasicBlock(BasicBlock::uninsertedIndex, frequency));
+#endif
         BasicBlock* result = block.get();
         insert(BlockInsertion(index, WTF::move(block)));
         return result;
@@ -107,6 +119,11 @@ public:
         
         return true;
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+protected:
+    Arena* m_arena { nullptr };
+#endif
 
 private:
     Vector<std::unique_ptr<BasicBlock>>& m_blocks;

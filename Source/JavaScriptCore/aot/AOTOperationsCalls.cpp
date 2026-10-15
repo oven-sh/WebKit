@@ -73,6 +73,13 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTEnsureData, void, (Instance* insta
     instance->ensureDataIfThereIsRoom(index);
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTNoteFilledSlots, void, (Data* data))
+{
+    countOperationNamed(data->instance, __func__);
+    if (!data->hasBeenFilledSinceLastCollection)
+        data->noteFilled();
+}
+
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTThrowStackOverflowError, void, (Instance* instance))
 {
     countOperationNamed(instance, __func__);

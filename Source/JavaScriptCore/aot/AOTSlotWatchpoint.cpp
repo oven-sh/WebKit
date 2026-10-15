@@ -73,17 +73,20 @@ void BufferAccessorWatchpoint::handleFire(VM&, const FireDetail&)
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(GlobalPropertyWatchpoint);
 
-void GlobalPropertyWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Typed::GlobalPropertyCache& cache)
+void GlobalPropertyWatchpoint::watch(VM& vm, const ObjectPropertyCondition& condition, Typed::GlobalPropertyCache& cache, std::unique_ptr<GlobalPropertyWatchpoint>* sibling)
 {
     RELEASE_ASSERT(!m_cache);
     m_cache = &cache;
+    m_sibling = sibling;
     initialize(condition);
     install(vm);
 }
 
 void GlobalPropertyWatchpoint::handleFire(VM&, const FireDetail&)
 {
-    *std::exchange(m_cache, nullptr) = { };
+    *std::exchange(m_cache, nullptr) = { 0, 0, !!m_sibling, 0 };
+    if (m_sibling)
+        *m_sibling = nullptr;
 }
 
 SlotWatchpoint::SlotWatchpoint()

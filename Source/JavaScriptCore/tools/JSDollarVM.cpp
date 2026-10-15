@@ -2275,6 +2275,9 @@ static JSC_DECLARE_HOST_FUNCTION(functionMarkedBlockStatistics);
 static JSC_DECLARE_HOST_FUNCTION(functionDecommittedMarkedBlockPagePoison);
 #if USE(BUN_JSC_ADDITIONS)
 static JSC_DECLARE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks);
+static JSC_DECLARE_HOST_FUNCTION(functionToTypedElements);
+static JSC_DECLARE_HOST_FUNCTION(functionNewTypedElements);
+static JSC_DECLARE_HOST_FUNCTION(functionGrowTypedElements);
 #endif
 static JSC_DECLARE_HOST_FUNCTION(functionGlobalObjectCount);
 static JSC_DECLARE_HOST_FUNCTION(functionCreateModuleLoader);
@@ -4240,6 +4243,35 @@ JSC_DEFINE_HOST_FUNCTION(functionEvacuateAuxiliaryBlocks, (JSGlobalObject* globa
     if (heldStorage)
         result->putDirect(vm, Identifier::fromString(vm, "heldStorageStayed"_s), jsBoolean(storageOfTargetOf(vm, holder) == heldStorage));
     return JSValue::encode(result);
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionNewTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    VM& vm = globalObject->vm();
+    if (!MarkedBlockCage::isEnabled() || globalObject->isHavingABadTime())
+        return JSValue::encode(jsUndefined());
+    Structure* structure = Structure::nonPropertyTransition(vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), TransitionKind::AllocateTypedContiguous, nullptr);
+    JSArray* array = JSArray::tryCreateWithTypedContiguous(vm, structure, callFrame->argument(0).asUInt32(), callFrame->argument(1).asUInt32());
+    return JSValue::encode(array ? JSValue(array) : jsUndefined());
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionGrowTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    if (!object || object->indexingMode() != ArrayWithTypedContiguous)
+        return JSValue::encode(jsUndefined());
+    if (!object->tryGrowTypedContiguous(globalObject->vm(), callFrame->argument(1).asUInt32()))
+        return JSValue::encode(jsBoolean(false));
+    return JSValue::encode(jsNumber(object->butterfly()->vectorLength()));
+}
+
+JSC_DEFINE_HOST_FUNCTION(functionToTypedElements, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    DollarVMAssertScope assertScope;
+    JSObject* object = callFrame->argument(0).getObject();
+    return JSValue::encode(jsBoolean(object && isJSArray(object) && object->tryConvertContiguousToTypedContiguous(globalObject->vm())));
 }
 #endif
 
@@ -6306,6 +6338,9 @@ void JSDollarVM::finishCreation(VM& vm)
     addFunction(vm, alwaysAllow, "decommittedMarkedBlockPagePoison"_s, functionDecommittedMarkedBlockPagePoison, 0);
 #if USE(BUN_JSC_ADDITIONS)
     addFunction(vm, alwaysAllow, "evacuateAuxiliaryBlocks"_s, functionEvacuateAuxiliaryBlocks, 2);
+    addFunction(vm, alwaysAllow, "toTypedElements"_s, functionToTypedElements, 1);
+    addFunction(vm, alwaysAllow, "newTypedElements"_s, functionNewTypedElements, 2);
+    addFunction(vm, alwaysAllow, "growTypedElements"_s, functionGrowTypedElements, 2);
 #endif
 
     addFunction(vm, allowIfNotFuzz, "globalObjectCount"_s, functionGlobalObjectCount, 0);

@@ -1884,7 +1884,7 @@ static void asyncGeneratorDriverResume(VM& vm, JSValue context, JSValue resoluti
     }
 
 #if ENABLE(AOT)
-    if (context.inherits<AOT::Typed::Closure>() || context.inherits<AOT::Typed::AsyncGenerator>()) {
+    if (context.inherits<AOT::Typed::Closure>() || context.inherits<AOT::Typed::AsyncGenerator>() || context.inherits<AOT::Typed::SavedFrame>()) {
         AOT::Typed::resumeDriver(vm, asObject(context), resolution, status == JSPromise::Status::Rejected, !!microtaskCallCache);
         return;
     }
@@ -2164,7 +2164,7 @@ void runInternalMicrotask(JSGlobalObject* globalObject, VM& vm, InternalMicrotas
         AsyncContextSwapScope asyncContextScope(vm, globalObject, argument3);
 #endif
         scope.release();
-        AOT::Typed::resumeAsyncGenerator(globalObject, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected);
+        AOT::Typed::resumeAsyncGenerator(globalObject, argument2, argument1, static_cast<JSPromise::Status>(payload) == JSPromise::Status::Rejected, !!microtaskCallCache);
         return;
     }
 #endif

@@ -432,6 +432,42 @@ Vector<BasicBlock*> blocksInOptimizedOrder(Code& code)
     }
 
 #if USE(BUN_JSC_ADDITIONS)
+    if (laysInGaps && isX86()) {
+        Vector<std::pair<unsigned, BasicBlock*>, 8> insertions;
+        std::optional<unsigned> lastGapIndex;
+        unsigned instsSinceLastGap = 0;
+        for (unsigned i = 0; i < blocksInOrder.size(); ++i) {
+            BasicBlock* block = blocksInOrder[i];
+            instsSinceLastGap += block->size();
+            if (lastGapIndex && isGuard(block)) {
+                BasicBlock* rare = block->successor(block->successor(0).isRare() ? 0 : 1).block();
+                if (!done.contains(rare) && rare->size() <= 16 && instsSinceLastGap + rare->size() <= reachOfGap && hasOnlyRareWaysIn(rare)) {
+                    done.add(rare);
+                    laidInGaps.add(rare);
+                    insertions.append({ *lastGapIndex, rare });
+                    instsSinceLastGap += rare->size();
+                }
+            }
+            bool fallsThrough = false;
+            for (BasicBlock* successor : block->successorBlocks())
+                fallsThrough |= i + 1 < blocksInOrder.size() && successor == blocksInOrder[i + 1];
+            if (!fallsThrough) {
+                lastGapIndex = i;
+                instsSinceLastGap = 0;
+            }
+        }
+        if (!insertions.isEmpty()) {
+            Vector<BasicBlock*> withInsertions;
+            withInsertions.reserveInitialCapacity(blocksInOrder.size() + insertions.size());
+            unsigned next = 0;
+            for (unsigned i = 0; i < blocksInOrder.size(); ++i) {
+                withInsertions.append(blocksInOrder[i]);
+                for (; next < insertions.size() && insertions[next].first == i; ++next)
+                    withInsertions.append(insertions[next].second);
+            }
+            blocksInOrder = WTF::move(withInsertions);
+        }
+    }
     if (code.notesStartOfRareCode()) [[unlikely]]
         code.setNumberOfBlocksInChains(blocksInOrder.size());
 #endif
@@ -519,6 +555,9 @@ void optimizeBlockOrder(Code& code)
         switch (branch.kind.opcode) {
         case BranchOnFlags:
         case Branch8:
+#if CPU(X86_64)
+        case Branch16:
+#endif
         case Branch32:
         case Branch64:
         case BranchTest8:

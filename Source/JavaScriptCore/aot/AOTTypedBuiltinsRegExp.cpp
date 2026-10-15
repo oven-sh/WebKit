@@ -37,18 +37,30 @@ static ALWAYS_INLINE MatchResult matchFromStart(JSGlobalObject* globalObject, VM
     return result;
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTest, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+static ALWAYS_INLINE bool testRegExp(JSGlobalObject* globalObject, VM& vm, JSCell* cell, JSCell* subject)
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* object = uncheckedDowncast<RegExpObject>(cell);
     auto* string = uncheckedDowncast<JSString>(subject);
     RegExp* regExp = object->regExp();
     // As RegExpObject::matchInline() where `lastIndex` plays no part and to read it runs nothing.
     if (regExp->globalOrSticky() || !object->getLastIndex().isUInt32()) [[unlikely]]
-        OPERATION_RETURN(scope, object->test(globalObject, string));
+        RELEASE_AND_RETURN(scope, object->test(globalObject, string));
     auto input = string->view(globalObject);
-    OPERATION_RETURN_IF_EXCEPTION(scope, false);
-    OPERATION_RETURN(scope, !!matchFromStart(globalObject, vm, regExp, string, input));
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, !!matchFromStart(globalObject, vm, regExp, string, input));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTest, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, testRegExp(globalObject, vm, cell, subject));
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestBoxed, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(testRegExp(globalObject, vm, cell, subject))));
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpExecFound, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* subject))
@@ -74,13 +86,25 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpExecFound, EncodedJSValue, (Inst
     OPERATION_RETURN(scope, JSValue::encode(array));
 }
 
-JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestFound, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+static ALWAYS_INLINE void recordMatchFound(JSGlobalObject* globalObject, VM& vm, JSCell* cell, JSCell* subject)
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     RegExp* regExp = uncheckedDowncast<RegExpObject>(cell)->regExp();
     auto subpatternResults = regExp->ovectorSpan();
     globalObject->regExpGlobalData().recordMatch(vm, globalObject, regExp, uncheckedDowncast<JSString>(subject), MatchResult(subpatternResults[0], subpatternResults[1]), false);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestFound, size_t, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    recordMatchFound(globalObject, vm, cell, subject);
     OPERATION_RETURN(scope, true);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedRegExpTestFoundBoxed, EncodedJSValue, (Instance* instance, JSCell* cell, JSCell* subject))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    recordMatchFound(globalObject, vm, cell, subject);
+    OPERATION_RETURN(scope, JSValue::encode(jsBoolean(true)));
 }
 
 // `/source/flags`, `new RegExp("source", "flags")`: as regExpCreate(), with the RegExp looked up once.
@@ -122,7 +146,12 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSharedRegExpLiteral, JSCell*, (Instanc
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewRegExp, JSCell*, (Instance* instance, JSCell* source, uint32_t flags))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    auto pattern = uncheckedDowncast<JSString>(source)->value(globalObject);
+    auto* string = uncheckedDowncast<JSString>(source);
+    if (string->isRope() && string->length() > ImageRegExp::minLengthKeptAsTextOfImage && vm.useImmutableIntrinsics) {
+        if (RegExp* regExp = RegExpObject::tryCreateRegExpFromLongRope(vm, string, OptionSet<Yarr::Flags>::fromRaw(flags)))
+            OPERATION_RETURN(scope, RegExpObject::create(vm, globalObject->regExpStructure(), regExp));
+    }
+    auto pattern = string->value(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, regExpCreate(globalObject, JSValue(), pattern, OptionSet<Yarr::Flags>::fromRaw(flags)));
 }

@@ -178,6 +178,10 @@ struct Inst {
     template<typename Thing, typename Functor>
     void forEach(NOESCAPE const Functor&);
 
+#if USE(BUN_JSC_ADDITIONS)
+    const uint8_t* fixedForms(unsigned& firstArgWithForm);
+#endif
+
     // Reports any additional registers clobbered by this operation. Note that for efficiency,
     // extraClobberedRegs() only works for the Patch opcode.
     RegisterSet extraClobberedRegs();

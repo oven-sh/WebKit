@@ -7831,8 +7831,8 @@ static ALWAYS_INLINE unsigned NODELETE computeHash(JSBigInt::Digit* digits, unsi
     WTF::add(hasher, sign);
     for (unsigned index = 0; index < length; ++index)
         WTF::add(hasher, digits[index]);
-    // m_hash is where a typed AOT object has its shape word, whose top bit is set: see offsetOfShapeWord in AOTTypedData.h.
-    return hasher.hash() & 0x7fffffff;
+    // m_hash is where a typed AOT object has its shape word, whose top bit and bit 23 are set: see offsetOfShapeWord in AOTTypedData.h.
+    return hasher.hash() & 0x7f7fffff;
 }
 
 std::optional<unsigned> JSBigInt::concurrentHash()

@@ -42,6 +42,7 @@ void splitCoroutines(Program&);
 BitVector blocksInLoops(const Function&);
 constexpr unsigned isInNoCycle = UINT_MAX;
 Vector<unsigned> cycleOfEachBlock(const Function&);
+Vector<unsigned> cycleOfEachBlock(const Function&, Vector<unsigned>* rankOfComponent);
 bool mayLeaveConstructionToBody(const Program&, FunctionID, const Function&, const Value&);
 // For every function that is used as a value, every method and every constructor of a class: what someone calls who does not know the
 // function. It holds the arguments to the types of the parameters (Cast: As where the type is written down, else Store) and calls the function.
@@ -121,12 +122,16 @@ bool tryFindImmediateDominators(unsigned count, const NodeAt& nodeAt, const Pred
 
 // Every operand is of the type its operation needs, every argument of the type of the parameter, every value stored of the type of the
 // place. Appends what is not.
-void verify(const Program&, FunctionID, const Function&, Vector<String>& findings);
+enum class VerifierScope : uint8_t { Everything, EverythingButDefinitions, DefinitionsAlone };
+void verify(const Program&, FunctionID, const Function&, Vector<String>& findings, VerifierScope = VerifierScope::Everything);
 void verifyRegExpLiterals(const Program&, Vector<String>& findings);
 void cleanUp(const Program&, Function&);
 void compactBlocks(Function&);
 void cleanUpIfAnythingFolds(const Program&, Function&);
 bool threadOwnKeysOfForIn(const Program&, Function&);
+unsigned flattenIteratedObjectEntries(const Program&, Function&);
+unsigned fuseOwnPropertyDescriptorCopies(const Program&, Function&);
+unsigned hoistDefinePropertyIntoPredecessors(Function&);
 // Behind all passes on the function, once: the birth that a wrapper (Function::worker) has brought along and that is still there goes from the block where the ways out of the worker meet into each of them.
 void moveBirthsIntoArms(const Program&, Function&);
 void removeTrivialParameters(const Program&, Function&);
@@ -188,6 +193,7 @@ void prepareForInlining(Program&);
 // A cast whose operand is of the type goes. An object that is made, stored to and then cast to a specialization of its layout before
 // anyone has seen it is made with that. Yields how much it changed.
 unsigned simplifyCasts(const Program&, Function&);
+unsigned countInIntegers(const Program&, Function&);
 // A catch block that only closes the iterator of an array and rethrows is removed. Yields how many were.
 unsigned removeRedundantCatchBlocks(const Program&, Function&);
 // A call of a built-in method that the table binds to a function of the prelude becomes a direct call of it, behind a check that the
@@ -195,6 +201,8 @@ unsigned removeRedundantCatchBlocks(const Program&, Function&);
 unsigned resolvePreludeCalls(const Program&, Function&);
 // A call of a built-in method on a receiver of unknown class gets a fast path for the class it is speculated to be of. Yields how much it changed.
 unsigned speculateOnReceivers(const Program&, FunctionID, Function&);
+unsigned eliminateGuardsOnUnescapedReceivers(const Program&, Function&);
+void eliminateGuardsOnFreshResults(Program&);
 // What comes down to one entry of the table of built-ins says so from here on.
 void resolveBuiltins(const Program&, Function&);
 void sinkEmptyArrayLiterals(Function&);
@@ -218,6 +226,25 @@ struct FieldAccess {
 };
 // The field an access by that name comes down to: the receiver is looked at as one type of the program, which has it.
 std::optional<FieldAccess> fieldOf(const Program&, const Type& receiver, StringID name);
+class WholeNumbers {
+public:
+    WholeNumbers(const Program& program, const Function& function)
+        : m_program(program)
+        , m_function(function)
+    {
+    }
+
+    bool contains(ValueID id) { return contains(id, 8); }
+
+private:
+    bool contains(ValueID, unsigned depth);
+
+    const Program& m_program;
+    const Function& m_function;
+    bool m_hasFoundIncoming { false };
+    UncheckedKeyHashMap<unsigned, Vector<ValueID, 2>, IntHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_incoming;
+    Vector<ValueID, 8> m_assumed;
+};
 // Whether an object of a member of the view that has no own property of the name may inherit one, whether or not its layout has a field of
 // the name. Then a read, `in` and [[Set]] ask the prototype chain where the field is absent.
 bool mayInherit(const Program&, LayoutID view, StringID name);
@@ -241,6 +268,7 @@ bool isBornUnderAnyPrototype(const Program&, const Function&, ValueID object);
 // the field or makes an extra property. Otherwise the access is carried out the general way where there is no own property, which may run
 // any code. `ofUnmarkedObject`: of an object without orderWordHasExtraProperties, which has the prototype that its layout says.
 bool onlyFieldsSupply(const Program&, LayoutID view, StringID name, bool ofUnmarkedObject = false);
+bool onlyFieldsSupplyToMembers(const Program&, LayoutID view, StringID name);
 // Whether a store by the name to a member of the view that has no such field may be a shape transition to a specialization that has one,
 // instead of making an extra property: see State::specializeToStore(). An upper bound: the run time has further conditions.
 bool storeMayTransition(const Program&, LayoutID view, StringID name);
@@ -250,6 +278,20 @@ void setBornFields(const Layout&, Allocation&);
 // Whether the value at `index` in the block is a store to a field that comes right after the allocation of the object, with only such
 // stores in between: nothing has happened to the object yet.
 bool isInitializingStore(const Program&, const Function&, const Block&, size_t index);
+class UnchangingFunctionScope {
+    WTF_MAKE_NONCOPYABLE(UnchangingFunctionScope);
+public:
+    UnchangingFunctionScope();
+    ~UnchangingFunctionScope();
+
+private:
+    friend bool isInitializingStore(const Program&, const Function&, const Block&, size_t index);
+
+    UnchangingFunctionScope* m_outerScope;
+    const Block* m_blockOfInitializingStores { nullptr };
+    ValueID m_objectOfInitializingStores;
+    size_t m_lastInitializingStore { 0 };
+};
 // Of a function whose every `return` yields an object it has just made in that block, an array literal of one length or an object of one layout with one store to every field, that nothing else uses: at most four values.
 struct FreshResults {
     bool isArray { false };
@@ -303,6 +345,7 @@ bool coercionMayChangeObjects(const Program&, const Type& from, const Type& coer
 // Whether a Cast to the type for the reason Flow goes on where the test fails: an object that was made as something the type extends is
 // what a type guard or a discriminant says, and is turned into one of the type where it is. Nothing is copied or rewritten for that.
 bool narrowingMayRetag(const Program&, const Type&);
+bool readMayInstantiate(const Program&, const Type&);
 // Whether it may turn the object into one of a specialization of its layout, where it is. See Function::writesShapeWords.
 bool castWritesShapeWords(const Program&, const Function&, const Value&);
 bool claimMayMakeObjects(const Program&, const Function&, const Value&);
@@ -310,6 +353,20 @@ bool fieldReadMayMakeObjects(const Program&, const Function&, const Value&);
 // Of a CallBuiltin: whether it tests that the receiver has its original structure, and is carried out by name where it has not.
 bool hasGenericFallback(const Program&, const Function&, const Value&);
 static constexpr size_t maxLengthOfTextComparedInPlace = 32;
+static constexpr size_t maxLengthOfTextInRegister = 8;
+template<typename CharacterType>
+inline uint64_t textInRegister(std::span<const CharacterType> text)
+{
+    uint64_t packed = 0;
+    if (text.size() == 7) {
+        for (size_t i = 0; i < 4; ++i)
+            packed |= static_cast<uint64_t>(text[i]) << (8 * i) | static_cast<uint64_t>(text[3 + i]) << (32 + 8 * i);
+        return packed;
+    }
+    for (size_t i = 0; i < text.size(); ++i)
+        packed |= static_cast<uint64_t>(text[i]) << (8 * i);
+    return packed;
+}
 // What carrying out a CallBuiltin may change.
 Writes writesOfBuiltinCall(const Program&, const Function&, const Value&);
 // The same without the generic fallback.
@@ -362,6 +419,7 @@ struct SplitFunction {
 // False: it stays whole.
 bool splitFunction(const Program&, FunctionID, const Function&, const BitVector& blocksThatEmitCalls, SplitFunction&);
 Vector<size_t, 6> fieldsMadeWithAllocation(const Program&, const Function&, const Block&, size_t allocation, bool isCreateThis, bool hasNullPrototype);
+Vector<unsigned> immediateDominatorsOf(const Function&);
 bool isBornByItsRow(const Program&, const Function&, const Block&, size_t allocation);
 void numberRowsOfBirths(Program&);
 uint32_t maxSlotsOfFunction();

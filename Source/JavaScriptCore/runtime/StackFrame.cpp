@@ -231,7 +231,7 @@ bool StackFrame::isBuiltinFunction() const
         if (standsForHostFunction())
             return false;
         auto position = reportedPosition();
-        return position && position->source && AOT::ProgramData::get()->sourceName(position->source).isEmpty();
+        return position && position->source && AOT::ProgramData::get()->isSourceNameEmpty(position->source);
 #else
         return false;
 #endif

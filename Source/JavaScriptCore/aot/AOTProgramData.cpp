@@ -37,6 +37,14 @@ namespace JSC { namespace AOT {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(VMProgram);
 
+static constexpr uint32_t sourceNamesBetweenWholeOnes = 16;
+
+struct HeadOfSourceName {
+    uint16_t distanceOfBytesOfFirst;
+    uint16_t shared;
+    uint16_t restAndIsASCII;
+};
+
 namespace {
 
 void appendVarint(Vector<uint8_t>& bytes, uint64_t value)
@@ -201,10 +209,20 @@ public:
         appendVarint(stream, sites.typedPositions.size());
         PositionEncoder::State start { sites.typedPositions[0].line, sites.typedPositions[0].column, numbersOfSources[sites.typedPositions[0].source] };
         appendVarint(stream, start.source);
-        PositionEncoder encoder(stream);
+        Vector<uint8_t> positions;
+        size_t endOfLastStretch = 0;
+        PositionEncoder encoder(positions);
         bool hasSitesWithCode = sites.typedPositions.size() > 1 + sites.numberOfSitesWithoutCode;
         Vector<PositionEncoder::State, 8> states { start };
         for (unsigned site = 1; site < sites.typedPositions.size(); ++site) {
+            if (!(site % FunctionMetadata::sitesBetweenPositionCheckpoints)) {
+                size_t bytesSinceLast = positions.size() - endOfLastStretch;
+                RELEASE_ASSERT(bytesSinceLast <= std::numeric_limits<uint16_t>::max());
+                stream.append(static_cast<uint8_t>(bytesSinceLast));
+                stream.append(static_cast<uint8_t>(bytesSinceLast >> 8));
+                endOfLastStretch = positions.size();
+                states.fill(start);
+            }
             auto& position = sites.typedPositions[site];
             uint32_t frame = hasSitesWithCode ? position.frame : 0;
             while (frame >= states.size())
@@ -213,6 +231,7 @@ public:
             encoder.append({ position.line, position.column }, numbersOfSources[position.source]);
             states[frame] = encoder.state();
         }
+        stream.appendVector(positions);
         return stream;
     }
 
@@ -289,7 +308,8 @@ public:
     Vector<UnlinkedHandlerInfo> typedExceptionHandlers(uint32_t index) const
     {
         Vector<UnlinkedHandlerInfo> handlers;
-        for (auto& [site, handler] : m_reportableSites[index].typedCatchEntrypointsForCallSites) {
+        for (auto& [siteAndFlag, handler] : m_reportableSites[index].typedCatchEntrypointsForCallSites) {
+            uint32_t site = siteAndFlag & ~FunctionReportableSites::flagsOfHandler;
             if (!handlers.isEmpty() && handlers.last().end == site && handlers.last().target == handler) {
                 handlers.last().end = site + 1;
                 continue;
@@ -299,7 +319,7 @@ public:
             handlers.last().start = site;
             handlers.last().end = site + 1;
             handlers.last().target = handler;
-            handlers.last().setType(HandlerType::Catch);
+            handlers.last().setType(siteAndFlag & FunctionReportableSites::handlerTakesException ? HandlerType::Finally : siteAndFlag & FunctionReportableSites::handlerIgnoresValue ? HandlerType::SynthesizedCatch : HandlerType::Catch);
         }
         return handlers;
     }
@@ -481,16 +501,29 @@ public:
         uint32_t greatest = 0;
         uint32_t endOfLast = 0;
         for (auto& handler : handlers) {
-            RELEASE_ASSERT(handler.start >= endOfLast && handler.end > handler.start && handler.type() == HandlerType::Catch);
+            RELEASE_ASSERT(handler.start >= endOfLast && handler.end > handler.start && handler.type() != HandlerType::SynthesizedFinally);
             greatest = std::max(greatest, std::max(handler.end, handler.target));
             endOfLast = handler.end;
         }
         unsigned width = greatest <= UINT8_MAX ? 1 : greatest <= UINT16_MAX ? 2 : 4;
-        Vector<uint8_t> rowOfHandlers { static_cast<uint8_t>(width) };
+        bool someHandlerIgnoresValue = handlers.containsIf([](auto& handler) {
+            return handler.type() == HandlerType::SynthesizedCatch;
+        });
+        Vector<uint8_t> rowOfHandlers { static_cast<uint8_t>(width | (someHandlerIgnoresValue ? FunctionMetadata::someHandlerIgnoresValue : 0)) };
         for (auto& handler : handlers) {
-            for (uint32_t number : { handler.start, handler.end, handler.target }) {
+            bool takesException = handler.type() == HandlerType::Finally;
+            for (uint32_t number : { takesException ? handler.end : handler.start, takesException ? handler.start : handler.end, handler.target }) {
                 for (unsigned i = 0; i < width; ++i)
                     rowOfHandlers.append(static_cast<uint8_t>(number >> 8 * i));
+            }
+        }
+        if (someHandlerIgnoresValue) {
+            size_t startOfBits = rowOfHandlers.size();
+            rowOfHandlers.grow(startOfBits + (handlers.size() + 7) / 8);
+            zeroSpan(rowOfHandlers.mutableSpan().subspan(startOfBits));
+            for (size_t i = 0; i < handlers.size(); ++i) {
+                if (handlers[i].type() == HandlerType::SynthesizedCatch)
+                    rowOfHandlers[startOfBits + i / 8] |= 1 << i % 8;
             }
         }
         Vector<uint8_t> handlersAndPositions;
@@ -623,6 +656,7 @@ void ProgramData::release(Vector<FunctionReportableSites>& sites)
         });
         ofFunction.typedCatchEntrypointsForCallSites.clear();
         ofFunction.typedPositions.clear();
+        ofFunction.parameterCheckSites.clear();
         ofFunction.typedSourceNames.clear();
         ofFunction.constantIndices.clear();
     });
@@ -840,6 +874,49 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
             typedEntries[key.start] = madeAhead[i].closureWord;
         }
     }
+    Vector<uint8_t> parameterChecks;
+    uint32_t numberOfParameterChecks = 0;
+    {
+        using Definition = std::array<uint32_t, 4>;
+        Vector<std::tuple<uint32_t, uint32_t, Definition>> rows;
+        Vector<Definition> definitions;
+        for (size_t i = 0; i < keys.size(); ++i) {
+            if (!typedFunctions[i] || keys[i].record & ImageKey::isEntryInsideFunction)
+                continue;
+            for (auto& check : builder.reportableSitesOf(typedFunctions[i]->index).parameterCheckSites) {
+                definitions.append({ check.typedFunction, numbersOfSources[i][check.definition.source], check.definition.line, check.definition.column });
+                rows.append({ typedFunctions[i]->index, check.site, definitions.last() });
+            }
+        }
+        std::ranges::sort(rows);
+        rows.shrink(std::ranges::unique(rows).begin() - rows.begin());
+        std::ranges::sort(definitions);
+        definitions.shrink(std::ranges::unique(definitions).begin() - definitions.begin());
+        numberOfParameterChecks = rows.size();
+        auto appendNumber = [&](size_t number) {
+            for (;; number >>= 7) {
+                parameterChecks.append(static_cast<uint8_t>(number < 0x80 ? number : number | 0x80));
+                if (number < 0x80)
+                    break;
+            }
+        };
+        appendNumber(definitions.size());
+        for (auto& definition : definitions) {
+            for (uint32_t word : definition)
+                appendNumber(word);
+        }
+        uint32_t previousFunction = 0;
+        uint32_t previousSite = 0;
+        for (auto& [function, site, definition] : rows) {
+            if (function != previousFunction)
+                previousSite = 0;
+            appendNumber(function - previousFunction);
+            appendNumber(site - previousSite);
+            appendNumber(std::ranges::lower_bound(definitions, definition) - definitions.begin());
+            previousFunction = function;
+            previousSite = site;
+        }
+    }
     endStep("the typed infos and entries"_s);
     while (builder.m_out.size() % sizeof(uint64_t))
         builder.m_out.append(0);
@@ -854,6 +931,8 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
         header.rowsLeftOutAheadOfClosures = range.rowsLeftOutAheadOfClosures;
     }
     header.typedEntriesOffset = builder.append(typedEntries);
+    header.parameterChecksOffset = builder.append(parameterChecks);
+    header.numberOfParameterChecks = numberOfParameterChecks;
     header.numberOfTypedEntries = typedEntries.size();
     header.infosOffset = builder.append(builder.m_infos);
     header.indexAndFlagsOfFunctionsOffset = builder.append(builder.m_indexAndFlags);
@@ -878,14 +957,33 @@ Vector<uint8_t> ProgramData::build(VM& vm, std::span<const uint8_t> strings, std
     header.numberOfConstants = builder.m_constants.size();
     header.numberOfTopLevelCodes = builder.m_topLevelCodes.size();
     {
-        Vector<uint32_t> starts;
+        Vector<uint32_t> sorted(builder.m_sourceNames.size(), [](size_t index) {
+            return static_cast<uint32_t>(index);
+        });
+        std::ranges::sort(sorted, [&](uint32_t a, uint32_t b) {
+            return std::ranges::lexicographical_compare(builder.m_sourceNames[a].span(), builder.m_sourceNames[b].span());
+        });
+        Vector<uint32_t> places(FillWith { }, sorted.size(), 0);
         Vector<uint8_t> text;
-        for (auto& name : builder.m_sourceNames) {
-            starts.append(text.size());
-            text.append(name.span());
+        size_t placeOfBytesOfFirst = 0;
+        size_t rankOfFirst = 0;
+        for (size_t rank = 0; rank < sorted.size(); ++rank) {
+            places[sorted[rank]] = text.size();
+            auto name = builder.m_sourceNames[sorted[rank]].span();
+            RELEASE_ASSERT(name.size() < 0x8000);
+            size_t shared = 0;
+            if (rank && rank - rankOfFirst < sourceNamesBetweenWholeOnes && text.size() - placeOfBytesOfFirst < 60000) {
+                auto first = builder.m_sourceNames[sorted[rankOfFirst]].span();
+                shared = std::ranges::mismatch(name, first).in1 - name.begin();
+            } else {
+                rankOfFirst = rank;
+                placeOfBytesOfFirst = text.size() + sizeof(HeadOfSourceName);
+            }
+            HeadOfSourceName head { static_cast<uint16_t>(shared ? text.size() - placeOfBytesOfFirst : 0), static_cast<uint16_t>(shared), static_cast<uint16_t>((name.size() - shared) | (charactersAreAllASCII(name) ? 0x8000 : 0)) };
+            text.append(asBytes(singleElementSpan(head)));
+            text.append(name.subspan(shared));
         }
-        starts.append(text.size());
-        header.sourceNamesOffset = builder.append(starts);
+        header.sourceNamesOffset = builder.append(places);
         builder.m_out.appendVector(text);
         header.numberOfSources = builder.m_sourceNames.size();
     }
@@ -952,9 +1050,33 @@ const ProgramModule* ProgramData::moduleWithEntryOffset(uint32_t entryOffset) co
 String ProgramData::sourceName(uint32_t source) const
 {
     RELEASE_ASSERT(source && source <= numberOfSources);
-    auto* starts = at<uint32_t>(sourceNamesOffset);
-    auto* text = reinterpret_cast<const char8_t*>(starts + numberOfSources + 1);
-    return String::fromUTF8(std::span { text + starts[source - 1], static_cast<size_t>(starts[source] - starts[source - 1]) });
+    auto* places = at<uint32_t>(sourceNamesOffset);
+    auto* record = reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1];
+    HeadOfSourceName head;
+    memcpy(&head, record, sizeof(head));
+    size_t rest = head.restAndIsASCII & 0x7fff;
+    std::span shared { record - head.distanceOfBytesOfFirst, static_cast<size_t>(head.shared) };
+    std::span own { record + sizeof(head), rest };
+    if (head.restAndIsASCII & 0x8000) [[likely]] {
+        std::span<Latin1Character> characters;
+        String name = StringImpl::createUninitialized(shared.size() + rest, characters);
+        memcpySpan(characters, byteCast<Latin1Character>(shared));
+        memcpySpan(characters.subspan(shared.size()), byteCast<Latin1Character>(own));
+        return name;
+    }
+    Vector<char8_t, 256> name;
+    name.append(shared);
+    name.append(own);
+    return String::fromUTF8(name.span());
+}
+
+bool ProgramData::isSourceNameEmpty(uint32_t source) const
+{
+    RELEASE_ASSERT(source && source <= numberOfSources);
+    auto* places = at<uint32_t>(sourceNamesOffset);
+    HeadOfSourceName head;
+    memcpy(&head, reinterpret_cast<const char8_t*>(places + numberOfSources) + places[source - 1], sizeof(head));
+    return !head.shared && !(head.restAndIsASCII & 0x7fff);
 }
 
 std::span<const uint8_t> ProgramData::handlersOfTypedFunction(uint32_t functionIndex) const
@@ -981,6 +1103,48 @@ const uint8_t* ProgramData::positionsOfTypedFunction(uint32_t functionIndex) con
         return nullptr;
     auto handlers = handlersOfTypedFunction(functionIndex);
     return handlers.data() + handlers.size();
+}
+
+auto ProgramData::parameterCheckAt(uint32_t functionIndex, uint32_t site) const -> std::optional<ParameterCheck>
+{
+    const uint8_t* bytes = at<uint8_t>(parameterChecksOffset);
+    auto read = [&] {
+        uint32_t number = 0;
+        for (unsigned shift = 0;; shift += 7) {
+            uint8_t byte = *bytes++;
+            number |= static_cast<uint32_t>(byte & 0x7f) << shift;
+            if (!(byte & 0x80))
+                return number;
+        }
+    };
+    if (!numberOfParameterChecks)
+        return std::nullopt;
+    uint32_t numberOfDefinitions = read();
+    const uint8_t* definitions = bytes;
+    for (uint32_t remaining = numberOfDefinitions * 4; remaining--;)
+        read();
+    uint32_t function = 0;
+    uint32_t rowSite = 0;
+    for (uint32_t remaining = numberOfParameterChecks; remaining-- && function <= functionIndex;) {
+        uint32_t step = read();
+        if (step)
+            rowSite = 0;
+        function += step;
+        rowSite += read();
+        uint32_t definition = read();
+        if (function != functionIndex || rowSite != site)
+            continue;
+        bytes = definitions;
+        for (uint32_t skipped = definition * 4; skipped--;)
+            read();
+        ParameterCheck check;
+        check.typedFunction = read();
+        check.source = read();
+        check.line = read();
+        check.column = read();
+        return check;
+    }
+    return std::nullopt;
 }
 
 Vector<uint32_t> ProgramData::moduleEntryOffsets() const

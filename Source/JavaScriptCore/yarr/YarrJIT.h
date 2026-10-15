@@ -486,11 +486,13 @@ struct YarrCodeForImage {
         std::span<const uint8_t> table;
     };
     Vector<TableReference> tables;
+    enum class OwnedTableKind : uint8_t { Other, BitPlane, ClassTable, ClassTableForRoutine };
     struct OwnedTableReference {
         uint32_t offset;
         uint8_t reg;
         bool isFar;
         uint32_t table;
+        OwnedTableKind kind { OwnedTableKind::Other };
     };
     Vector<Vector<uint8_t>> ownedTables;
     Vector<OwnedTableReference> ownedTableReferences;
@@ -500,8 +502,14 @@ struct YarrCodeForImage {
     };
     Vector<Vector<uint8_t>> routines;
     Vector<RoutineCall> routineCalls;
+    struct LiteralLoad {
+        uint32_t offset;
+        uint64_t value;
+    };
+    Vector<LiteralLoad> literalLoads;
 };
 JS_EXPORT_PRIVATE std::optional<YarrCodeForImage> jitCompileForImage(YarrPattern&, StringView patternString, CharSize, VM*, ExecutionMode, StackCheck&);
+JS_EXPORT_PRIVATE void tidyBodyForImage(YarrCodeForImage&);
 
 #if ENABLE(YARR_JIT_REGEXP_TEST_INLINE)
 

@@ -5126,6 +5126,13 @@ public:
         m_assembler.addq_mr(src.offset, src.base, dest);
     }
 
+    void add64(Address a, RegisterID b, RegisterID dest)
+    {
+        ASSERT(a.base != dest);
+        move(b, dest);
+        add64(a, dest);
+    }
+
     void add64(BaseIndex src, RegisterID dest)
     {
         m_assembler.addq_mr(src.offset, src.base, src.index, src.scale, dest);
@@ -5757,6 +5764,13 @@ public:
     void or64(Address src, RegisterID dest)
     {
         m_assembler.orq_mr(src.offset, src.base, dest);
+    }
+
+    void or64(Address op1, RegisterID op2, RegisterID dest)
+    {
+        ASSERT(op1.base != dest);
+        move(op2, dest);
+        or64(op1, dest);
     }
 
     void or64(BaseIndex src, RegisterID dest)
@@ -6868,6 +6882,11 @@ public:
     {
         m_assembler.testq_rm(reg, address.offset, address.base);
         return Jump(m_assembler.jCC(x86Condition(cond)));
+    }
+
+    Jump branchTest64(ResultCondition cond, RegisterID reg, Address mask)
+    {
+        return branchTest64(cond, mask, reg);
     }
 
     Jump branchTest64(ResultCondition cond, BaseIndex address, TrustedImm32 mask = TrustedImm32(-1))

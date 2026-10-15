@@ -26,6 +26,7 @@
 #include "config.h"
 
 #include "AirCode.h"
+#include "AirFixSpillsAfterTerminals.h"
 #include "AirGenerate.h"
 #include "AirInstInlines.h"
 #include "AirSpecial.h"
@@ -3798,6 +3799,28 @@ void testSplitAroundLoopCriticalEdge()
     CHECK(invoke<int64_t>(*compilation, static_cast<int64_t>(0)) == (criticalEntry ? 10 : 2152));
 }
 
+void testFixSpillsAfterTerminalWithSameSuccessorTwice()
+{
+    B3::Procedure proc;
+    Code& code = proc.code();
+
+    BasicBlock* root = code.addBlock();
+    BasicBlock* done = code.addBlock();
+
+    Tmp result = Tmp(GPRInfo::returnValueGPR);
+    root->append(Move, nullptr, Tmp(GPRInfo::argumentGPR0), result);
+    root->append(BranchTest64, nullptr, Arg::resCond(MacroAssembler::NonZero), result, result);
+    root->append(Add64, nullptr, Arg::imm(1), result);
+    root->setSuccessors(done, done);
+    done->append(Ret64, nullptr, result);
+
+    code.resetReachability();
+    fixSpillsAfterTerminals(code);
+    CHECK(root->size() == 2);
+    CHECK(done->size() == 2);
+    CHECK(compileAndRun<int64_t>(proc, static_cast<int64_t>(41)) == 42);
+}
+
 #define PREFIX "O", Options::defaultB3OptLevel(), ": "
 
 #define RUN(test) do {                                 \
@@ -3999,6 +4022,7 @@ void run(const char* filter)
         RUN(testSplitAroundLoopNoInLoopUses());
         RUN((testSplitAroundLoopCriticalEdge<true>()));
         RUN((testSplitAroundLoopCriticalEdge<false>()));
+        RUN(testFixSpillsAfterTerminalWithSameSuccessorTwice());
 
         if (!tasks.isEmpty()) {
             anyTestsScheduled = true;

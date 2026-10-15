@@ -10,6 +10,7 @@
 
 #include "B3ArgumentRegValue.h"
 #include "B3Generate.h"
+#include "B3InsertionSetInlines.h"
 #include "B3PatchpointValue.h"
 #include "B3StackmapGenerationParams.h"
 #include "B3ValueInlines.h"
@@ -30,9 +31,9 @@ using namespace B3;
 void Emitter::findPinnedRegisters()
 {
     m_instance = registerOnEntry(instanceGPR);
-    m_numberTag = registerOnEntry(GPRInfo::numberTagRegister);
+    m_numberTag = registerOnEntry(numberTagArgumentGPR);
     m_notCellMask = registerOnEntry(GPRInfo::notCellMaskRegister);
-#if CPU(ARM64)
+#if CPU(ARM64) || CPU(X86_64)
     m_cellCageBase = registerOnEntry(cellCageBaseGPR);
 #endif
 }
@@ -691,12 +692,82 @@ public:
 void pinRegisters(Procedure& proc)
 {
     proc.pinRegister(instanceGPR);
+#if !CPU(X86_64)
     proc.pinRegister(GPRInfo::numberTagRegister);
     proc.pinRegister(GPRInfo::notCellMaskRegister);
+#endif
+#if CPU(X86_64)
+    proc.pinRegister(cellCageBaseGPR);
+#endif
 #if CPU(ARM64)
     proc.pinRegister(cellCageBaseGPR);
     if (proc.mutableGPRs().contains(ARM64Registers::x18, IgnoreVectors))
         proc.pinRegister(ARM64Registers::x18);
+#endif
+}
+
+void readTagsFromInstance(CCallHelpers& jit)
+{
+#if CPU(X86_64)
+    jit.readTagsFromMemory(CCallHelpers::Address(instanceGPR, Instance::offsetOfNumberTag()), CCallHelpers::Address(instanceGPR, Instance::offsetOfNotCellMask()));
+#else
+    UNUSED_PARAM(jit);
+#endif
+}
+
+void readTagsFromInstance(Procedure& proc)
+{
+#if CPU(X86_64)
+    B3::Value* instance = nullptr;
+    auto offsetOfTag = [](B3::Value* value) -> std::optional<ptrdiff_t> {
+        if (value->opcode() != B3::ArgumentReg)
+            return std::nullopt;
+        Reg reg = value->as<ArgumentRegValue>()->argumentReg();
+        if (reg == numberTagArgumentGPR)
+            return Instance::offsetOfNumberTag();
+        if (reg == GPRInfo::notCellMaskRegister)
+            return Instance::offsetOfNotCellMask();
+        return std::nullopt;
+    };
+    Vector<B3::Value*, 2> tags;
+    for (B3::Value* value : proc.values()) {
+        if (offsetOfTag(value))
+            tags.append(value);
+    }
+    if (tags.isEmpty())
+        return;
+    for (B3::Value* value : *proc.at(0)) {
+        if (value->opcode() == B3::ArgumentReg && value->as<ArgumentRegValue>()->argumentReg() == instanceGPR)
+            instance = value;
+    }
+    if (!instance) {
+        instance = proc.add<ArgumentRegValue>(Origin(), instanceGPR);
+        proc.at(0)->values().insert(0, instance);
+    }
+    InsertionSet insertionSet(proc);
+    for (B3::BasicBlock* block : proc) {
+        for (unsigned index = 0; index < block->size(); ++index) {
+            B3::Value* value = block->at(index);
+            if (value->opcode() == B3::Add && value->child(1)->hasInt64() && offsetOfTag(value->child(0)) == Instance::offsetOfNumberTag()) {
+                value->replaceWithIdentity(insertionSet.insert<Const64Value>(index, value->origin(), static_cast<int64_t>(static_cast<uint64_t>(value->child(1)->asInt64()) + static_cast<uint64_t>(JSValue::NumberTag))));
+                continue;
+            }
+            for (B3::Value*& child : value->children()) {
+                auto offset = offsetOfTag(child);
+                if (!offset)
+                    continue;
+                MemoryValue* load = insertionSet.insert<MemoryValue>(index, B3::Load, Int64, value->origin(), instance, static_cast<int32_t>(*offset));
+                load->setControlDependent(false);
+                load->setReadsMutability(B3::Mutability::Immutable);
+                child = load;
+            }
+        }
+        insertionSet.execute(block);
+    }
+    for (B3::Value* tag : tags)
+        tag->replaceWithNopIgnoringType();
+#else
+    UNUSED_PARAM(proc);
 #endif
 }
 
@@ -705,6 +776,9 @@ void generateHelper(CCallHelpers& jit, Stub stub)
     Procedure proc(/* usesSIMD = */ false);
     proc.setPositionIndependent();
     pinRegisters(proc);
+    proc.setLastPhase(createSharedTask<void(Procedure&)>([](Procedure& proc) {
+        readTagsFromInstance(proc);
+    }));
     Helpers helpers(proc);
     helpers.build(stub);
     for (Value* value : proc.values()) {

@@ -26,6 +26,7 @@
 #include "config.h"
 #include "StackManager.h"
 
+#include "AOTRuntime.h"
 #include "StackManagerInlines.h"
 
 namespace JSC {
@@ -36,6 +37,9 @@ CONCURRENT_SAFE void StackManager::requestStop()
     m_trapAwareSoftStackLimit.storeRelaxed(stopRequestMarker());
     for (auto& mirror : m_mirrors)
         mirror.m_trapAwareSoftStackLimit.storeRelaxed(stopRequestMarker());
+#if ENABLE(AOT)
+    AOT::setLoopPollPagesProtected(vm(), true);
+#endif
 }
 
 CONCURRENT_SAFE void StackManager::cancelStop()
@@ -47,6 +51,9 @@ CONCURRENT_SAFE void StackManager::cancelStop()
     m_trapAwareSoftStackLimit.storeRelaxed(m_softStackLimit);
     for (auto& mirror : m_mirrors)
         mirror.m_trapAwareSoftStackLimit.storeRelaxed(m_softStackLimit);
+#if ENABLE(AOT)
+    AOT::setLoopPollPagesProtected(vm(), false);
+#endif
 }
 
 void StackManager::setStackSoftLimit(void* newStackLimit)

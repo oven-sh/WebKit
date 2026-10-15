@@ -35,16 +35,40 @@ namespace JSC { namespace B3 {
 // B3::Procedure and Air::Code have a lot of collections of indexed things. This has all of the
 // logic.
 
+#if USE(BUN_JSC_ADDITIONS)
+template<typename T>
+struct SparseCollectionTraits {
+    using Deleter = std::default_delete<T>;
+};
+
+class Value;
+struct DestroyerOfValue {
+    inline void operator()(Value*) const;
+};
+template<>
+struct SparseCollectionTraits<Value> {
+    using Deleter = DestroyerOfValue;
+};
+#endif
+
 template<typename T>
 class SparseCollection {
-    typedef Vector<std::unique_ptr<T>> VectorType;
+#if USE(BUN_JSC_ADDITIONS)
+public:
+    using Pointer = std::unique_ptr<T, typename SparseCollectionTraits<T>::Deleter>;
+
+private:
+#else
+    using Pointer = std::unique_ptr<T>;
+#endif
+    typedef Vector<Pointer> VectorType;
     
 public:
     SparseCollection()
     {
     }
 
-    T* add(std::unique_ptr<T> value)
+    T* add(Pointer value)
     {
         T* result = value.get();
         
@@ -57,7 +81,7 @@ public:
 
         value->m_index = index;
         ASSERT(!m_vector[index]);
-        new (NotNull, &m_vector[index]) std::unique_ptr<T>(WTF::move(value));
+        new (NotNull, &m_vector[index]) Pointer(WTF::move(value));
 
         return result;
     }
@@ -180,7 +204,7 @@ public:
     iterator end() const { return iterator(*this, size()); }
 
 private:
-    Vector<std::unique_ptr<T>, 0, UnsafeVectorOverflow> m_vector;
+    Vector<Pointer, 0, UnsafeVectorOverflow> m_vector;
     Vector<size_t, 0, UnsafeVectorOverflow> m_indexFreeList;
 };
 

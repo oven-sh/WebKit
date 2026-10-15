@@ -54,6 +54,7 @@
 #include "B3StripMineLoops.h"
 #include "B3SpecializeSelect.h"
 #include "B3Validate.h"
+#include "B3SeparateIntegerPaths.h"
 #include "B3SinkValues.h"
 #include "B3VersionLoops.h"
 #include "CompilerTimingScope.h"
@@ -91,6 +92,10 @@ void generateToAir(Procedure& procedure)
         validate(procedure);
     
     if (procedure.optLevel() >= 2) {
+#if USE(BUN_JSC_ADDITIONS)
+        if (procedure.positionIndependent())
+            separateIntegerPaths(procedure);
+#endif
         reduceDoubleToFloat(procedure);
         if (Options::useB3SpecializeSelect())
             specializeSelect(procedure);

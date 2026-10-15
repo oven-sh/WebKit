@@ -43,6 +43,8 @@ namespace JSC {
 void genericUnwind(VM& vm, CallFrame* callFrame)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    if (vm.deferredStackCapture.exception) [[unlikely]]
+        vm.finishDeferredStackCapture();
     CallFrame* topJSCallFrame = vm.topJSCallFrame();
     if (Options::breakOnThrow()) [[unlikely]] {
         CodeBlock* codeBlock = !topJSCallFrame || topJSCallFrame->isNativeCalleeFrame() ? nullptr : topJSCallFrame->codeBlock();

@@ -1226,15 +1226,14 @@ private:
                             return static_cast<uint8_t*>(linkBuffer.locationOf<NoPtrTag>(label).untaggedPtr());
                         };
                         uint8_t* table = locationOf(tableLabel);
-                        auto setEntry = [&](size_t entry, CCallHelpers::Label label) {
-                            int32_t distance = safeCast<int32_t>(locationOf(label) - table);
-                            memcpy(table + entry * sizeof(int32_t), &distance, sizeof(int32_t));
+                        auto distanceTo = [&](CCallHelpers::Label label) {
+                            return safeCast<int32_t>(locationOf(label) - table);
                         };
-                        for (size_t entry = 0; entry < tableSize; ++entry)
-                            setEntry(entry, *labels.last());
+                        Vector<int32_t> entries(FillWith { }, tableSize, distanceTo(*labels.last()));
                         unsigned labelIndex = 0;
                         for (size_t entry : handledIndices)
-                            setEntry(entry, *labels[labelIndex++]);
+                            entries[entry] = distanceTo(*labels[labelIndex++]);
+                        performJITMemcpy<jitMemcpyRepatch>(table, entries.span().data(), tableSize * sizeof(int32_t));
                         uint8_t* instruction = locationOf(*addressLabel);
 #if CPU(ARM64)
                         uint32_t distance = safeCast<uint32_t>(table - instruction);
@@ -1242,7 +1241,7 @@ private:
                         uint32_t adr;
                         memcpy(&adr, instruction, sizeof(adr));
                         adr |= (distance & 3) << 29 | (distance >> 2) << 5;
-                        memcpy(instruction, &adr, sizeof(adr));
+                        performJITMemcpy<jitMemcpyRepatch>(instruction, &adr, sizeof(adr));
 #else
                         UNUSED_PARAM(instruction);
 #endif
@@ -1250,10 +1249,104 @@ private:
             });
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool tryBuildBitTests(const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart, unsigned end, BasicBlock* before)
+    {
+        unsigned size = end - start;
+        if (!m_proc.positionIndependent() || size < 4)
+            return false;
+        uint64_t first = cases[start].caseValue();
+        uint64_t limit = cases[end - 1].caseValue() - first;
+        if (limit >= 64)
+            return false;
+        bool needsRangeCheck = true;
+        if (hardStart && end < cases.size() && cases[end].caseValue() - 1 - first < 64) {
+            limit = cases[end].caseValue() - 1 - first;
+            needsRangeCheck = false;
+        }
+
+        struct BitTest {
+            FrequentedBlock target;
+            uint64_t mask { 0 };
+        };
+        Vector<BitTest, 3> tests;
+        uint64_t covered = 0;
+        for (unsigned i = start; i < end; ++i) {
+            FrequentedBlock target = cases[i].target();
+            if (target.block() == fallThrough.block())
+                continue;
+            size_t index = tests.findIf([&](const BitTest& test) { return test.target.block() == target.block(); });
+            if (index == notFound) {
+                if (tests.size() == 3)
+                    return false;
+                index = tests.size();
+                tests.append(BitTest { target });
+            }
+            tests[index].mask |= 1ull << (cases[i].caseValue() - first);
+            covered |= tests[index].mask;
+        }
+        std::ranges::stable_sort(tests, [](const BitTest& a, const BitTest& b) {
+            if (a.target.isRare() != b.target.isRare())
+                return b.target.isRare();
+            return std::popcount(a.mask) > std::popcount(b.mask);
+        });
+        bool coversAll = covered == (limit == 63 ? ~0ull : (1ull << (limit + 1)) - 1);
+
+        unsigned costOfTree = 4;
+        for (unsigned remaining = size; remaining > 3; remaining = (remaining + 1) / 2)
+            costOfTree += 2;
+        unsigned costOfTests = (needsRangeCheck ? 2 : 0) + !!first;
+        for (unsigned i = 0; i + coversAll < tests.size(); ++i) {
+            unsigned costOfMask = 1;
+            if (isARM64()) {
+                costOfMask = 0;
+                for (unsigned shift = 0; shift < 64; shift += 16)
+                    costOfMask += !!(tests[i].mask >> shift & 0xffff);
+            }
+            costOfTests += 2 + costOfMask;
+        }
+        if (costOfTests > costOfTree + 2)
+            return false;
+
+        Value* child = m_value->child(0);
+        Type type = child->type();
+        Value* index = first ? before->appendNew<Value>(m_proc, Sub, m_origin, child, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(first))) : child;
+        if (needsRangeCheck) {
+            BasicBlock* inRange = m_blockInsertionSet.insertAfter(m_block);
+            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, Above, m_origin, index, before->appendIntConstant(m_proc, m_origin, type, static_cast<int64_t>(limit))));
+            before->setSuccessors(fallThrough, FrequentedBlock(inRange));
+            before = inRange;
+        }
+        Value* amount = type == Int32 ? index : before->appendNew<Value>(m_proc, Trunc, m_origin, index);
+        Type typeOfMask = limit < 32 ? Int32 : Int64;
+        for (unsigned i = 0; i < tests.size(); ++i) {
+            bool isLast = i + 1 == tests.size();
+            if (isLast && coversAll)
+                break;
+            Value* shifted = before->appendNew<Value>(m_proc, ZShr, m_origin, before->appendIntConstant(m_proc, m_origin, typeOfMask, static_cast<int64_t>(tests[i].mask)), amount);
+            before->appendNew<Value>(m_proc, Branch, m_origin, before->appendNew<Value>(m_proc, BitAnd, m_origin, shifted, before->appendIntConstant(m_proc, m_origin, typeOfMask, 1)));
+            if (isLast) {
+                before->setSuccessors(tests[i].target, fallThrough);
+                return true;
+            }
+            BasicBlock* next = m_blockInsertionSet.insertAfter(m_block);
+            before->setSuccessors(tests[i].target, FrequentedBlock(next));
+            before = next;
+        }
+        before->setSuccessors(tests.isEmpty() ? fallThrough : tests.last().target);
+        before->appendNew<Value>(m_proc, Jump, m_origin);
+        return true;
+    }
+#endif
+
     void recursivelyBuildSwitch(
         const Vector<SwitchCase>& cases, FrequentedBlock fallThrough, unsigned start, bool hardStart,
         unsigned end, BasicBlock* before)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (tryBuildBitTests(cases, fallThrough, start, hardStart, end, before))
+            return;
+#endif
         Value* child = m_value->child(0);
         Type type = child->type();
         

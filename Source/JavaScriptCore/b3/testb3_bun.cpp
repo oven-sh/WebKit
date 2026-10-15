@@ -8,19 +8,28 @@
 
 #if ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)
 
+#include "AOTAirPasses.h"
+#include "AirGenerate.h"
 #include "B3BasicBlockUtils.h"
+#include "B3CompilationCohort.h"
 #include "B3CountedLoops.h"
 #include "B3CycleForest.h"
 #include "B3DuplicateTails.h"
 #include "B3EliminateDeadCode.h"
 #include "B3FoldPathConstants.h"
+#include "B3Generate.h"
 #include "B3HoistLoopInvariantValues.h"
 #include "B3InferSwitches.h"
 #include "B3NaturalLoops.h"
 #include "B3RotateLoops.h"
+#include "B3SeparateIntegerPaths.h"
 #include "B3SinkValues.h"
 #include "B3StripMineLoops.h"
+#include "B3Variable.h"
 #include "B3VersionLoops.h"
+#include "LinkBuffer.h"
+#include <wtf/SetForScope.h>
+#include <wtf/WeakRandom.h>
 
 namespace {
 
@@ -601,6 +610,76 @@ static void testFoldComparisonsWithBoundsKeepsUnrelatedComparisons()
     CHECK_EQ(run(*code, 3, nullptr, 2), (1 + 10 + 100 + 10000) + (1 + 10 + 100 + 10000) + (1000 + 10 + 3000 + 10000));
 }
 
+static void checkLoopThatCountsDown(int64_t startLessLimit, B3::Opcode relation, int64_t bound, int64_t step, bool limitIsWord, bool isFolded)
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* exit = proc.addBlock();
+    Variable* index = proc.addVariable(Int64);
+    Variable* sum = proc.addVariable(Int64);
+    Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* limit = limitIsWord ? graph.make(root, ZExt32, graph.make(root, Trunc, argument)) : argument;
+    Value* boundValue = graph.int64(root, bound);
+    graph.set(root, index, graph.make(root, Add, limit, graph.int64(root, startLessLimit)));
+    graph.set(root, sum, graph.int64(root, 0));
+    graph.jump(root, header);
+    graph.branch(header, graph.make(header, relation, graph.get(header, index), boundValue), body, exit);
+    graph.ret(exit, graph.get(exit, sum));
+    BasicBlock* block = body;
+    addIfComparisonHolds(graph, block, sum, graph.make(block, Below, graph.get(block, index), limit), 1, 1000);
+    addIfComparisonHolds(graph, block, sum, graph.make(block, AboveEqual, graph.get(block, index), limit), 2000, 10);
+    addIfComparisonHolds(graph, block, sum, graph.make(block, Above, limit, graph.get(block, index)), 100, 3000);
+    addIfComparisonHolds(graph, block, sum, graph.make(block, GreaterEqual, graph.get(block, index), limit), 4000, 0);
+    graph.increase(block, index, step);
+    graph.jump(block, header);
+    proc.resetReachability();
+    fixSSA(proc);
+    validate(proc);
+    CHECK(rotateLoops(proc));
+    fixSSA(proc);
+    validate(proc);
+
+    CHECK_EQ(foldComparisonsWithBounds(proc), isFolded);
+    validate(proc);
+    CHECK_EQ(numberOfValuesInLoops(proc, Below), isFolded ? 0u : 1u);
+    CHECK_EQ(numberOfValuesInLoops(proc, AboveEqual), isFolded ? 0u : 1u);
+    CHECK_EQ(numberOfValuesInLoops(proc, Above), isFolded ? 0u : 1u);
+    auto code = compileProc(proc);
+    for (int64_t given : { static_cast<int64_t>(-3), static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2), static_cast<int64_t>(7), static_cast<int64_t>(100) }) {
+        int64_t limitAtRunTime = limitIsWord ? static_cast<int64_t>(static_cast<uint32_t>(given)) : given;
+        if (limitAtRunTime > 1000)
+            continue;
+        int64_t expected = 0;
+        for (int64_t i = limitAtRunTime + startLessLimit; holds(relation, i, bound); i += step) {
+            expected += holds(Below, i, limitAtRunTime) ? 1 : 1000;
+            expected += holds(AboveEqual, i, limitAtRunTime) ? 2000 : 10;
+            expected += holds(Above, limitAtRunTime, i) ? 100 : 3000;
+            expected += holds(GreaterEqual, i, limitAtRunTime) ? 4000 : 0;
+        }
+        CHECK_EQ(invoke<int64_t>(*code, given), expected);
+    }
+}
+
+static void testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow()
+{
+    checkLoopThatCountsDown(-1, GreaterEqual, 0, -1, true, true);
+    checkLoopThatCountsDown(-1, GreaterThan, -1, -1, true, true);
+    checkLoopThatCountsDown(-2, GreaterEqual, 1, -1, true, true);
+    checkLoopThatCountsDown(-1, GreaterThan, 0, -3, true, true);
+}
+
+static void testFoldComparisonsKeepsWhatLoopThatCountsDownMayNotBeBelow()
+{
+    checkLoopThatCountsDown(0, GreaterEqual, 0, -1, true, false);
+    checkLoopThatCountsDown(1, GreaterEqual, 0, -1, true, false);
+    checkLoopThatCountsDown(-1, GreaterEqual, -1, -1, true, false);
+    checkLoopThatCountsDown(-1, GreaterThan, -2, -1, true, false);
+    checkLoopThatCountsDown(-1, GreaterEqual, 0, -1, false, false);
+}
+
 static void testFoldComparisonsWithBoundsRequiresRelationOnEntry()
 {
     Procedure proc;
@@ -1146,13 +1225,22 @@ static void testStripMineLoopsRequiresPollGenerator()
 {
     Procedure proc;
     Graph graph { proc };
+    PollState state;
     TopTestedLoop loop(graph);
-    graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
-    loop.endBody(loop.body);
+    BasicBlock* block = appendPoll(graph, loop.body, state);
+    PatchpointValue* limit = loop.body->at(loop.body->size() - 4)->as<PatchpointValue>();
+    graph.increase(block, loop.sum, graph.get(block, loop.index));
+    loop.endBody(block);
     loop.rotate();
 
+    RefPtr<StackmapGenerator> generator = proc.loopPollGenerator();
+    CHECK(limit->generator() == generator);
+    proc.setLoopPollGenerator(nullptr);
+    limit->setGenerator(RefPtr<StackmapGenerator>());
     CHECK(!stripMineLoops(proc));
-    checkSumsIntegersBelowBound(proc);
+    limit->setGenerator(generator);
+    CHECK_EQ(run(*compileProc(proc), 10), 45);
+    CHECK_EQ(state.numberOfPolls, 10);
 }
 
 static void testStripMineLoopsSkipsLoopWithTwoPolls()
@@ -1297,6 +1385,29 @@ static void testSinkValuesClonesValueForTwoRareUsers()
     CHECK_EQ(invoke<int64_t>(*code, 1, 5, nullptr), 25);
     CHECK_EQ(invoke<int64_t>(*code, 2, 5, nullptr), 50);
     CHECK_EQ(invoke<int64_t>(*code, 3, 5, nullptr), 5);
+}
+
+static void testSinkValuesClonesPatchpointForTwoRareUsersOnlyIfItIsPureFunctionOfKey()
+{
+    for (uint64_t key : { 7, 0 }) {
+        Procedure proc;
+        Graph graph { proc };
+        BranchToRareBlocks blocks(graph);
+        PatchpointValue* patchpoint = graph.emptyPatchpoint(blocks.root, Int64);
+        patchpoint->pureFunctionKey = key;
+        blocks.finish(graph, patchpoint, graph.make(blocks.secondRare, Add, patchpoint, blocks.operand), blocks.operand);
+
+        CHECK_EQ(sinkValues(proc), !!key);
+        validate(proc);
+        CHECK_EQ(numberOfValues(blocks.root, Patchpoint), key ? 0u : 1u);
+        CHECK_EQ(numberOfValues(blocks.next, Patchpoint), 0u);
+        CHECK_EQ(numberOfValues(blocks.firstRare, Patchpoint), key ? 1u : 0u);
+        CHECK_EQ(numberOfValues(blocks.secondRare, Patchpoint), key ? 1u : 0u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 5, nullptr), 0);
+        CHECK_EQ(invoke<int64_t>(*code, 2, 5, nullptr), 5);
+        CHECK_EQ(invoke<int64_t>(*code, 3, 5, nullptr), 5);
+    }
 }
 
 static void testSinkValuesKeepsValueUsedOnHotPath()
@@ -1996,6 +2107,428 @@ static void testComparisonsFoldedByIntegerRange()
     CHECK(!answerOfComparison(Below, 16, false, anything));
 }
 
+template<typename T>
+static void testRangeOfShiftByAnyAmount(B3::Opcode opcode, int32_t amount, bool isPositionIndependent)
+{
+    using UnsignedT = std::make_unsigned_t<T>;
+    constexpr bool is32 = sizeof(T) == 4;
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    auto integer = [&](int32_t value) {
+        return is32 ? graph.int32(root, value) : graph.int64(root, value);
+    };
+    Value* argument = cCallArgumentValues<int64_t>(proc, root)[0];
+    Value* shifted = graph.make(root, opcode, is32 ? graph.make(root, Trunc, argument) : argument, graph.int32(root, amount));
+    Value* isLess = graph.make(root, LessThan, shifted, integer(-8));
+    Value* lowByte = graph.make(root, BitAnd, shifted, integer(255));
+    graph.ret(root, graph.make(root, Add, graph.make(root, ZExt32, isLess), graph.make(root, Shl, is32 ? graph.make(root, ZExt32, lowByte) : lowByte, graph.int32(root, 1))));
+    proc.setPositionIndependent(isPositionIndependent);
+    auto code = compileProc(proc, 2);
+
+    unsigned amountTaken = amount & (sizeof(T) * 8 - 1);
+    for (int64_t input : { static_cast<int64_t>(0), static_cast<int64_t>(5), static_cast<int64_t>(-1), static_cast<int64_t>(-9), static_cast<int64_t>(-1000), static_cast<int64_t>(0x7fffffff), static_cast<int64_t>(-0x80000000ll), std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min() }) {
+        T operand = static_cast<T>(input);
+        T expected;
+        if (opcode == Shl)
+            expected = static_cast<T>(static_cast<UnsignedT>(operand) << amountTaken);
+        else if (opcode == SShr)
+            expected = operand >> amountTaken;
+        else
+            expected = static_cast<T>(static_cast<UnsignedT>(operand) >> amountTaken);
+        CHECK_EQ(invoke<int64_t>(*code, input), (expected < -8) + 2 * static_cast<int64_t>(expected & 255));
+    }
+}
+
+static void testRangesOfShiftsByAnyAmount()
+{
+    for (B3::Opcode opcode : { Shl, SShr, ZShr }) {
+        for (int32_t amount : { 0, 1, 31, 32, 33, 63, 64, 65, 96, 128, -1, -32, -64, -128 }) {
+            for (bool isPositionIndependent : { true, false }) {
+                testRangeOfShiftByAnyAmount<int32_t>(opcode, amount, isPositionIndependent);
+                testRangeOfShiftByAnyAmount<int64_t>(opcode, amount, isPositionIndependent);
+            }
+        }
+    }
+}
+
+static void testTruncOfWordShiftedLeftAndBackByAnyAmount()
+{
+    for (int32_t amount : { 0, 1, 12, 30, 31, 32, 33, 60, 63, 64, 76, -1, -4, -33, -52, -60, -64 }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* word = graph.make(root, SExt32, graph.make(root, Trunc, cCallArgumentValues<int64_t>(proc, root)[0]));
+        Value* shifted = graph.make(root, SShr, graph.make(root, Shl, word, graph.int32(root, amount)), graph.int32(root, amount));
+        graph.ret(root, graph.make(root, SExt32, graph.make(root, Trunc, shifted)));
+        auto code = compileProc(proc, 2);
+
+        unsigned amountTaken = amount & 63;
+        for (int32_t input : { 0, 1, -1, 7, 8, -9, 0x12345678, std::numeric_limits<int32_t>::max(), std::numeric_limits<int32_t>::min() }) {
+            int64_t expected = static_cast<int64_t>(static_cast<uint64_t>(static_cast<int64_t>(input)) << amountTaken) >> amountTaken;
+            CHECK_EQ(invoke<int64_t>(*code, static_cast<int64_t>(input)), static_cast<int64_t>(static_cast<int32_t>(expected)));
+        }
+    }
+}
+
+struct NumberKeptAsWord {
+    explicit NumberKeptAsWord(Graph& graph, double frequencyOfOtherPath = 0.001)
+        : root(graph.proc.addBlock())
+        , integerPath(graph.proc.addBlock())
+        , otherPath(graph.proc.addBlock(frequencyOfOtherPath))
+        , join(graph.proc.addBlock())
+    {
+        auto arguments = cCallArgumentValues<int32_t, double, int64_t*>(graph.proc, root);
+        word = arguments[0];
+        other = arguments[1];
+        pointer = arguments[2];
+        Value* isOther = graph.make(root, LessThan, word, graph.int32(root, -1000));
+        if (frequencyOfOtherPath < 0.5)
+            graph.branch(root, isOther, rarely(otherPath), FrequentedBlock(integerPath));
+        else
+            graph.branch(root, isOther, otherPath, integerPath);
+        number = graph.phi(join, Double);
+        graph.upsilon(integerPath, graph.make(integerPath, IToD, word), number);
+        graph.jump(integerPath, join);
+        graph.upsilon(otherPath, other, number);
+        graph.jump(otherPath, join);
+    }
+
+    Value* truncate(Graph& graph, BasicBlock* block, Value* value)
+    {
+        PatchpointValue* result = block->appendNew<PatchpointValue>(graph.proc, Int64, Origin());
+        result->effects = Effects::none();
+        result->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+        result->appendSomeRegister(value);
+        result->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+        });
+        return result;
+    }
+
+    bool separate(Graph& graph)
+    {
+        graph.proc.resetReachability();
+        validate(graph.proc);
+        bool result = separateIntegerPaths(graph.proc);
+        validate(graph.proc);
+        reduceStrengthOnce(graph.proc, true);
+        eliminateDeadCode(graph.proc);
+        validate(graph.proc);
+        return result;
+    }
+
+    unsigned numberOfDoublesOnLikelyPaths(Graph& graph)
+    {
+        unsigned result = 0;
+        for (BasicBlock* block : graph.proc) {
+            if (block->frequency() < 0.5)
+                continue;
+            for (Value* value : *block)
+                result += value->type() == Double && value != other && !value->isConstant();
+        }
+        return result;
+    }
+
+    BasicBlock* root;
+    BasicBlock* integerPath;
+    BasicBlock* otherPath;
+    BasicBlock* join;
+    Value* word;
+    Value* other;
+    Value* pointer;
+    Value* number;
+};
+
+static void testSeparateIntegerPathsFoldsConversionBackToInteger()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    BasicBlock* isWhole = proc.addBlock();
+    BasicBlock* isNotWhole = proc.addBlock(0.001);
+    Value* truncated = blocks.truncate(graph, blocks.join, blocks.number);
+    graph.branch(blocks.join, graph.make(blocks.join, Equal, graph.make(blocks.join, IToD, truncated), blocks.number), FrequentedBlock(isWhole), rarely(isNotWhole));
+    graph.ret(isWhole, truncated);
+    graph.ret(isNotWhole, graph.int64(isNotWhole, -1));
+
+    CHECK(blocks.separate(graph));
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
+    CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 7, 0.5, nullptr), 7);
+    CHECK_EQ(invoke<int64_t>(*code, -1000, 0.5, nullptr), -1000);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 12.0, nullptr), 12);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 12.5, nullptr), -1);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, std::numeric_limits<double>::quiet_NaN(), nullptr), -1);
+}
+
+static void testSeparateIntegerPathsFollowsSumsIntoLaterBlocks()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    BasicBlock* next = proc.addBlock();
+    BasicBlock* isSmall = proc.addBlock();
+    BasicBlock* isLarge = proc.addBlock();
+    Value* sum = graph.make(blocks.join, Add, blocks.number, graph.number(blocks.join, 1));
+    graph.jump(blocks.join, next);
+    graph.branch(next, graph.make(next, LessThan, sum, graph.number(next, 10)), isSmall, isLarge);
+    graph.ret(isSmall, graph.int64(isSmall, 1));
+    graph.ret(isLarge, graph.int64(isLarge, 2));
+
+    CHECK(blocks.separate(graph));
+    CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 8, 0.0, nullptr), 1);
+    CHECK_EQ(invoke<int64_t>(*code, 9, 0.0, nullptr), 2);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 8.5, nullptr), 1);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 9.5, nullptr), 2);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, std::numeric_limits<double>::quiet_NaN(), nullptr), 2);
+}
+
+static void testSeparateIntegerPathsCopiesNothingBehindLastUse()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    Value* truncated = blocks.truncate(graph, blocks.join, blocks.number);
+    graph.store(blocks.join, truncated, blocks.pointer, 0, firstHeap);
+    graph.store(blocks.join, graph.int64(blocks.join, 5), blocks.pointer, 8, firstHeap);
+    graph.ret(blocks.join, graph.int64(blocks.join, 9));
+
+    CHECK(blocks.separate(graph));
+    CHECK_EQ(numberOfValues(proc, Store), 2u);
+    CHECK_EQ(numberOfValues(proc, Return), 1u);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
+    auto code = compileProc(proc);
+    int64_t stored[2] = { 0, 0 };
+    CHECK_EQ(invoke<int64_t>(*code, 3, 0.0, stored), 9);
+    CHECK_EQ(stored[0], 3);
+    CHECK_EQ(stored[1], 5);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 6.75, stored), 9);
+    CHECK_EQ(stored[0], 6);
+}
+
+static void testSeparateIntegerPathsStopsAtCallSite()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    graph.callLikePatchpoint(blocks.join)->effects.writes = HeapRange::top();
+    graph.ret(blocks.join, blocks.truncate(graph, blocks.join, blocks.number));
+
+    CHECK(!blocks.separate(graph));
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 2u);
+    auto code = compileProc(proc);
+    CHECK_EQ(invoke<int64_t>(*code, 3, 0.0, nullptr), 3);
+    CHECK_EQ(invoke<int64_t>(*code, -1001, 6.75, nullptr), 6);
+}
+
+static void testSeparateIntegerPathsKeepsJoinOfLikelyPaths()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph, 8);
+    graph.ret(blocks.join, blocks.truncate(graph, blocks.join, blocks.number));
+
+    CHECK(!blocks.separate(graph));
+    CHECK_EQ(numberOfValues(proc, Phi), 1u);
+}
+
+static void testSeparateIntegerPathsKeepsNumberThatStaysDouble()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    graph.ret(blocks.join, graph.make(blocks.join, BitwiseCast, graph.make(blocks.join, Sqrt, blocks.number)));
+
+    CHECK(!blocks.separate(graph));
+    CHECK_EQ(numberOfValues(proc, Phi), 1u);
+}
+
+static void testSeparateIntegerPathsLeavesJoinOfOnePath()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* number = graph.phi(join, Double);
+    graph.upsilon(root, graph.make(root, IToD, cCallArgumentValues<int32_t>(proc, root)[0]), number);
+    graph.jump(root, join);
+    PatchpointValue* truncated = join->appendNew<PatchpointValue>(proc, Int64, Origin());
+    truncated->effects = Effects::none();
+    truncated->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+    truncated->appendSomeRegister(number);
+    truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+    });
+    graph.ret(join, truncated);
+
+    proc.resetReachability();
+    validate(proc);
+    CHECK(!separateIntegerPaths(proc));
+    validate(proc);
+    CHECK_EQ(numberOfBlocks(proc), 2u);
+}
+
+static void testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy()
+{
+    for (bool usesAbsoluteValue : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        NumberKeptAsWord blocks(graph);
+        BasicBlock* isTruthy = proc.addBlock();
+        BasicBlock* isFalsy = proc.addBlock();
+        if (usesAbsoluteValue)
+            graph.branch(blocks.join, graph.make(blocks.join, GreaterThan, graph.make(blocks.join, Abs, blocks.number), graph.number(blocks.join, 0)), isTruthy, isFalsy);
+        else
+            graph.branch(blocks.join, graph.make(blocks.join, EqualOrUnordered, blocks.number, graph.number(blocks.join, 0)), isFalsy, isTruthy);
+        graph.ret(isTruthy, graph.int64(isTruthy, 1));
+        graph.ret(isFalsy, graph.int64(isFalsy, 0));
+
+        CHECK(blocks.separate(graph));
+        CHECK_EQ(blocks.numberOfDoublesOnLikelyPaths(graph), 0u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 1.5, nullptr), 0);
+        CHECK_EQ(invoke<int64_t>(*code, 5, 0.0, nullptr), 1);
+        CHECK_EQ(invoke<int64_t>(*code, -5, 0.0, nullptr), 1);
+        CHECK_EQ(invoke<int64_t>(*code, -1001, 0.0, nullptr), 0);
+        CHECK_EQ(invoke<int64_t>(*code, -1001, -0.0, nullptr), 0);
+        CHECK_EQ(invoke<int64_t>(*code, -1001, -2.5, nullptr), 1);
+        CHECK_EQ(invoke<int64_t>(*code, -1001, std::numeric_limits<double>::quiet_NaN(), nullptr), 0);
+    }
+}
+
+static void testSeparateIntegerPathsOfTwoNumbersReadOneBehindTheOther()
+{
+    Procedure proc;
+    Graph graph { proc };
+    NumberKeptAsWord blocks(graph);
+    BasicBlock* secondIntegerPath = proc.addBlock();
+    BasicBlock* secondOtherPath = proc.addBlock(0.001);
+    BasicBlock* secondJoin = proc.addBlock();
+    BasicBlock* isLess = proc.addBlock();
+    BasicBlock* isNotLess = proc.addBlock();
+    Value* secondWord = graph.load(blocks.join, Int32, blocks.pointer, 0, firstHeap);
+    graph.branch(blocks.join, graph.make(blocks.join, LessThan, secondWord, graph.int32(blocks.join, -1000)), rarely(secondOtherPath), FrequentedBlock(secondIntegerPath));
+    Value* secondNumber = graph.phi(secondJoin, Double);
+    graph.upsilon(secondIntegerPath, graph.make(secondIntegerPath, IToD, secondWord), secondNumber);
+    graph.jump(secondIntegerPath, secondJoin);
+    graph.upsilon(secondOtherPath, graph.load(secondOtherPath, Double, blocks.pointer, 8, firstHeap), secondNumber);
+    graph.jump(secondOtherPath, secondJoin);
+    graph.branch(secondJoin, graph.make(secondJoin, LessThan, blocks.number, secondNumber), isLess, isNotLess);
+    graph.ret(isLess, graph.int64(isLess, 1));
+    graph.ret(isNotLess, graph.int64(isNotLess, 2));
+
+    CHECK(blocks.separate(graph));
+    unsigned numberOfComparisonsOfDoublesOnLikelyPaths = 0;
+    for (BasicBlock* block : proc) {
+        if (block->frequency() < 0.5)
+            continue;
+        for (Value* value : *block)
+            numberOfComparisonsOfDoublesOnLikelyPaths += value->opcode() == LessThan && value->child(0)->type() == Double;
+    }
+    CHECK_EQ(numberOfComparisonsOfDoublesOnLikelyPaths, 0u);
+    auto code = compileProc(proc);
+    struct {
+        int64_t word;
+        double other;
+    } second;
+    auto run = [&](int32_t word, double other, int32_t secondWord, double secondOther) {
+        second.word = secondWord;
+        second.other = secondOther;
+        return invoke<int64_t>(*code, word, other, &second);
+    };
+    double notANumber = std::numeric_limits<double>::quiet_NaN();
+    CHECK_EQ(run(3, 0, 4, 0), 1);
+    CHECK_EQ(run(4, 0, 4, 0), 2);
+    CHECK_EQ(run(-1001, 3.5, 4, 0), 1);
+    CHECK_EQ(run(-1001, 4.5, 4, 0), 2);
+    CHECK_EQ(run(3, 0, -1001, 3.5), 1);
+    CHECK_EQ(run(4, 0, -1001, 3.5), 2);
+    CHECK_EQ(run(-1001, 3.25, -1001, 3.5), 1);
+    CHECK_EQ(run(-1001, notANumber, 4, 0), 2);
+    CHECK_EQ(run(3, 0, -1001, notANumber), 2);
+}
+
+static void testSeparateIntegerPathsInsideLoop()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* header = proc.addBlock(10);
+    BasicBlock* integerPath = proc.addBlock(10);
+    BasicBlock* otherPath = proc.addBlock(0.01);
+    BasicBlock* join = proc.addBlock(10);
+    BasicBlock* done = proc.addBlock();
+    auto arguments = cCallArgumentValues<int32_t*, double, int64_t>(proc, root);
+    Value* words = arguments[0];
+    Value* other = arguments[1];
+    Value* count = arguments[2];
+    Value* index = graph.phi(header, Int64);
+    Value* sum = graph.phi(header, Int64);
+    graph.upsilon(root, graph.int64(root, 0), index);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, header);
+    Value* word = graph.load(header, Int32, graph.make(header, Add, words, graph.make(header, Shl, index, graph.int32(header, 2))), 0, firstHeap);
+    graph.branch(header, graph.make(header, LessThan, word, graph.int32(header, -1000)), rarely(otherPath), FrequentedBlock(integerPath));
+    Value* number = graph.phi(join, Double);
+    graph.upsilon(integerPath, graph.make(integerPath, IToD, word), number);
+    graph.jump(integerPath, join);
+    graph.upsilon(otherPath, other, number);
+    graph.jump(otherPath, join);
+    PatchpointValue* truncated = join->appendNew<PatchpointValue>(proc, Int64, Origin());
+    truncated->effects = Effects::none();
+    truncated->pureFunctionOfChildrenKey = keyOfTruncationToInt64;
+    truncated->appendSomeRegister(number);
+    truncated->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+    });
+    Value* nextSum = graph.make(join, Add, sum, truncated);
+    Value* nextIndex = graph.make(join, Add, index, graph.int64(join, 1));
+    graph.upsilon(join, nextIndex, index);
+    graph.upsilon(join, nextSum, sum);
+    graph.branch(join, graph.make(join, LessThan, nextIndex, count), header, done);
+    graph.ret(done, nextSum);
+
+    proc.resetReachability();
+    validate(proc);
+    CHECK(separateIntegerPaths(proc));
+    validate(proc);
+    reduceStrengthOnce(proc, true);
+    eliminateDeadCode(proc);
+    validate(proc);
+    CHECK_EQ(numberOfValues(proc, Patchpoint), 1u);
+    auto code = compileProc(proc);
+    int32_t given[5] = { 1, -1001, 20, -1001, 300 };
+    CHECK_EQ(invoke<int64_t>(*code, given, 4000.75, 5), 8321);
+    CHECK_EQ(invoke<int64_t>(*code, given, 4000.75, 1), 1);
+    CHECK_EQ(invoke<int64_t>(*code, given, -0.5, 2), 1);
+}
+
+static void testComparisonsOfConvertedIntegersWithUnorderedResults()
+{
+    for (bool usesAbsoluteValue : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        Value* number = graph.make(root, IToD, cCallArgumentValues<int32_t>(proc, root)[0]);
+        Value* isTruthy = usesAbsoluteValue
+            ? graph.make(root, GreaterThan, graph.make(root, Abs, number), graph.number(root, 0))
+            : graph.make(root, Equal, graph.make(root, EqualOrUnordered, number, graph.number(root, 0)), graph.int32(root, 0));
+        graph.ret(root, graph.make(root, ZExt32, isTruthy));
+        reduceStrengthOnce(proc, true);
+        eliminateDeadCode(proc);
+        CHECK_EQ(numberOfValues(proc, IToD), 0u);
+        auto code = compileProc(proc);
+        CHECK_EQ(invoke<int64_t>(*code, 0), 0);
+        CHECK_EQ(invoke<int64_t>(*code, 1), 1);
+        CHECK_EQ(invoke<int64_t>(*code, -1), 1);
+        CHECK_EQ(invoke<int64_t>(*code, std::numeric_limits<int32_t>::min()), 1);
+    }
+}
+
 static void testDoubleToIntegerConversionsOfConvertedIntegers()
 {
     for (int32_t key : { keyOfTruncationToInt64, keyOfConversionToInt32, 0 }) {
@@ -2323,7 +2856,13 @@ static void testDuplicateTailsThreadsJumpOnConstantPhi()
 
         CHECK(blocks.left->last()->opcode() == Jump);
         CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
-        CHECK(blocks.right->successorBlock(0) == blocks.tail);
+        if (onlyDecidedTests)
+            CHECK(blocks.right->successorBlock(0) == blocks.tail);
+        else {
+            CHECK(blocks.right->last()->opcode() == Branch);
+            CHECK(blocks.right->successorBlock(0) == blocks.taken);
+            CHECK(blocks.right->successorBlock(1) == blocks.notTaken);
+        }
         auto code = compileProc(proc);
         int64_t memory[1];
         CHECK_EQ(invoke<int64_t>(*code, 1, 1, memory), 20);
@@ -2350,6 +2889,313 @@ static void testDuplicateTailsThreadsJumpDecidedByDominatingBranch()
         CHECK_EQ(invoke<int64_t>(*code, 5, 0, memory), testsTheOpposite ? 20 : 10);
         CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), testsTheOpposite ? 10 : 20);
     }
+}
+
+static void testDuplicateTailsFollowsTestsOfOneValue()
+{
+    for (bool onlyDecidedTests : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* secondTest = proc.addBlock();
+        BasicBlock* thirdTest = proc.addBlock();
+        Value* phi = graph.phi(blocks.tail, Int64);
+        graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+        graph.upsilon(blocks.left, graph.int64(blocks.left, 8), phi);
+        graph.upsilon(blocks.right, blocks.second, phi);
+        graph.branch(blocks.tail, graph.make(blocks.tail, BitAnd, phi, graph.int64(blocks.tail, 1)), blocks.taken, secondTest);
+        graph.branch(secondTest, graph.make(secondTest, BitAnd, phi, graph.int64(secondTest, 2)), blocks.taken, thirdTest);
+        graph.branch(thirdTest, graph.make(thirdTest, BitAnd, phi, graph.int64(thirdTest, 4)), blocks.taken, blocks.notTaken);
+        blocks.duplicate(graph, onlyDecidedTests);
+
+        CHECK(blocks.left->last()->opcode() == Jump);
+        CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
+        auto code = compileProc(proc);
+        int64_t memory[1];
+        CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 8, memory), 20);
+    }
+}
+
+static void testDuplicateTailsFollowsTestsThroughPhisOnThePath()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* aside = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    Value* joined = graph.phi(join, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 2), phi);
+    graph.upsilon(blocks.right, blocks.second, phi);
+    graph.upsilon(blocks.tail, graph.make(blocks.tail, BitXor, phi, graph.int64(blocks.tail, 2)), joined);
+    graph.branch(blocks.tail, graph.make(blocks.tail, BitAnd, phi, graph.int64(blocks.tail, 1)), aside, join);
+    graph.upsilon(aside, graph.int64(aside, 1), joined);
+    graph.store(aside, blocks.second, blocks.pointer, 0, firstHeap);
+    graph.jump(aside, join);
+    graph.branch(join, joined, blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
+
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == blocks.notTaken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 10);
+}
+
+static void testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* test = proc.addBlock();
+    graph.branch(blocks.root, graph.make(blocks.root, Equal, blocks.first, graph.int64(blocks.root, 5)), blocks.left, blocks.right);
+    graph.jump(blocks.tail, test);
+    graph.branch(test, graph.make(test, Equal, blocks.first, graph.int64(test, 5)), blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
+
+    CHECK(blocks.left->successorBlock(0) == blocks.taken);
+    CHECK(blocks.right->successorBlock(0) == blocks.notTaken);
+    CHECK_EQ(numberOfValues(proc, Branch), 1u);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 5, 0, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 6, 0, memory), 20);
+}
+
+static void testDuplicateTailsFollowsPhiHandedOnByBlockThatJumps()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* chooser = proc.addBlock();
+    BasicBlock* aside = proc.addBlock();
+    BasicBlock* test = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    Value* joined = graph.phi(test, Int64);
+    graph.branch(blocks.root, blocks.first, chooser, aside);
+    graph.branch(chooser, blocks.second, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 1), phi);
+    graph.upsilon(blocks.right, graph.int64(blocks.right, 0), phi);
+    graph.upsilon(blocks.tail, phi, joined);
+    graph.jump(blocks.tail, test);
+    graph.upsilon(aside, blocks.second, joined);
+    graph.jump(aside, test);
+    graph.branch(test, joined, blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
+
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == blocks.taken);
+    CHECK(blocks.right->last()->opcode() == Jump);
+    CHECK(blocks.right->successorBlock(0) == blocks.notTaken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 3, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+}
+
+static void testDuplicateTailsStopsFollowingAtUndecidedTest()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* secondTest = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 0), phi);
+    graph.upsilon(blocks.right, blocks.second, phi);
+    graph.branch(blocks.tail, phi, blocks.taken, secondTest);
+    graph.branch(secondTest, graph.make(secondTest, Equal, blocks.second, graph.int64(secondTest, 5)), blocks.taken, blocks.notTaken);
+    blocks.duplicate(graph);
+
+    CHECK(blocks.left->last()->opcode() == Jump);
+    CHECK(blocks.left->successorBlock(0) == secondTest);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 6, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 6, memory), 10);
+}
+
+static void testDuplicateTailsFollowsTestsBehindTestCopiedUndecided()
+{
+    for (bool onlyDecidedTests : { false, true }) {
+        Procedure proc;
+        Graph graph { proc };
+        TailWithTwoPredecessors blocks(graph);
+        BasicBlock* repeated = proc.addBlock();
+        BasicBlock* asked = proc.addBlock();
+        BasicBlock* other = proc.addBlock();
+        Value* phi = graph.phi(blocks.tail, Int32);
+        Value* flag = graph.make(blocks.root, BitAnd, blocks.first, graph.int64(blocks.root, 1));
+        graph.branch(blocks.root, flag, blocks.right, blocks.left);
+        graph.upsilon(blocks.left, graph.make(blocks.left, Equal, blocks.second, graph.int64(blocks.left, 5)), phi);
+        graph.upsilon(blocks.right, graph.make(blocks.right, Above, blocks.second, graph.int64(blocks.right, 100)), phi);
+        graph.branch(blocks.tail, phi, repeated, asked);
+        graph.branch(repeated, graph.make(repeated, Equal, blocks.second, graph.int64(repeated, 5)), blocks.taken, other);
+        graph.branch(asked, flag, other, blocks.notTaken);
+        graph.ret(other, graph.int64(other, 30));
+        blocks.duplicate(graph, onlyDecidedTests);
+
+        auto behindJumps = [](BasicBlock* block) {
+            while (block->size() == 1 && block->last()->opcode() == Jump)
+                block = block->successorBlock(0);
+            return block;
+        };
+        if (onlyDecidedTests) {
+            CHECK(blocks.left->successorBlock(0) == blocks.tail);
+            CHECK(blocks.right->successorBlock(0) == blocks.tail);
+        } else {
+            CHECK(blocks.left->last()->opcode() == Branch);
+            CHECK(behindJumps(blocks.left->successorBlock(0)) == blocks.taken);
+            CHECK(behindJumps(blocks.left->successorBlock(1)) == blocks.notTaken);
+            CHECK(blocks.right->last()->opcode() == Branch);
+            CHECK(behindJumps(blocks.right->successorBlock(0)) == repeated);
+            CHECK(behindJumps(blocks.right->successorBlock(1)) == other);
+            CHECK_EQ(numberOfValues(proc, Branch), 4u);
+        }
+        auto code = compileProc(proc);
+        int64_t memory[1];
+        CHECK_EQ(invoke<int64_t>(*code, 0, 5, memory), 10);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 6, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 20);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 200, memory), 30);
+        CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 30);
+    }
+}
+
+static void testDuplicateTailsFollowsTestsBehindDecidedAndCopiedTests()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* join = proc.addBlock();
+    BasicBlock* aside = proc.addBlock();
+    BasicBlock* repeated = proc.addBlock();
+    BasicBlock* other = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    Value* joined = graph.phi(join, Int32);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.int64(blocks.left, 0), phi);
+    graph.upsilon(blocks.right, blocks.second, phi);
+    graph.upsilon(blocks.tail, graph.make(blocks.tail, Equal, blocks.second, graph.int64(blocks.tail, 5)), joined);
+    graph.branch(blocks.tail, phi, aside, join);
+    graph.upsilon(aside, graph.make(aside, Above, blocks.second, graph.int64(aside, 100)), joined);
+    graph.jump(aside, join);
+    graph.branch(join, joined, repeated, blocks.notTaken);
+    graph.branch(repeated, graph.make(repeated, NotEqual, blocks.second, graph.int64(repeated, 5)), other, blocks.taken);
+    graph.ret(other, graph.int64(other, 30));
+    blocks.duplicate(graph);
+
+    CHECK(blocks.left->last()->opcode() == Branch);
+    BasicBlock* behind = blocks.left->successorBlock(0);
+    while (behind->size() == 1 && behind->last()->opcode() == Jump)
+        behind = behind->successorBlock(0);
+    CHECK(behind == blocks.taken);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 6, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 5, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 30);
+}
+
+static bool duplicateTailsMakesVariables(Graph& graph, TailWithTwoPredecessors& blocks)
+{
+    graph.jump(blocks.left, blocks.tail);
+    graph.jump(blocks.right, blocks.tail);
+    graph.proc.resetReachability();
+    validate(graph.proc);
+    graph.proc.setPositionIndependent();
+    duplicateTails(graph.proc, false);
+    graph.proc.setPositionIndependent(false);
+    validate(graph.proc);
+    bool result = !graph.proc.variables().isEmpty();
+    fixSSA(graph.proc);
+    validate(graph.proc);
+    return result;
+}
+
+static void testDuplicateTailsKeepsPhiThatOnlyItsBlockUses()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    Value* phi = graph.phi(blocks.tail, Int32);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, graph.make(blocks.left, Equal, blocks.second, graph.int64(blocks.left, 5)), phi);
+    graph.upsilon(blocks.right, graph.make(blocks.right, Above, blocks.second, graph.int64(blocks.right, 100)), phi);
+    graph.branch(blocks.tail, phi, blocks.taken, blocks.notTaken);
+    CHECK(!duplicateTailsMakesVariables(graph, blocks));
+
+    CHECK(blocks.left->last()->opcode() == Branch);
+    CHECK(blocks.right->last()->opcode() == Branch);
+    CHECK_EQ(numberOfValues(proc, Phi), 0u);
+    CHECK_EQ(numberOfValues(proc, Upsilon), 0u);
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 5, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 200, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 5, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 200, memory), 10);
+}
+
+static void testDuplicateTailsDemotesPhiThatAnotherBlockUses()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* user = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, blocks.right);
+    graph.upsilon(blocks.left, blocks.second, phi);
+    graph.upsilon(blocks.right, graph.make(blocks.right, Add, blocks.second, graph.int64(blocks.right, 1)), phi);
+    graph.branch(blocks.tail, phi, user, blocks.notTaken);
+    graph.ret(user, phi);
+    CHECK(duplicateTailsMakesVariables(graph, blocks));
+
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 7, memory), 7);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 7, memory), 8);
+    CHECK_EQ(invoke<int64_t>(*code, 0, -1ll, memory), 20);
+}
+
+static void testDuplicateTailsDemotesPhiWhoseUpsilonStandsAheadOfBranch()
+{
+    Procedure proc;
+    Graph graph { proc };
+    TailWithTwoPredecessors blocks(graph);
+    BasicBlock* middle = proc.addBlock();
+    Value* phi = graph.phi(blocks.tail, Int64);
+    graph.branch(blocks.root, blocks.first, blocks.left, middle);
+    graph.upsilon(middle, graph.make(middle, Add, blocks.second, graph.int64(middle, 1)), phi);
+    graph.branch(middle, graph.make(middle, BitAnd, blocks.second, graph.int64(middle, 1)), blocks.tail, blocks.right);
+    graph.upsilon(blocks.left, blocks.second, phi);
+    graph.upsilon(blocks.right, graph.make(blocks.right, Sub, blocks.second, graph.int64(blocks.right, 4)), phi);
+    graph.branch(blocks.tail, phi, blocks.taken, blocks.notTaken);
+    CHECK(duplicateTailsMakesVariables(graph, blocks));
+
+    auto code = compileProc(proc);
+    int64_t memory[1];
+    CHECK_EQ(invoke<int64_t>(*code, 1, 3, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 1, 0, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 1, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, -1ll, memory), 20);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 2, memory), 10);
+    CHECK_EQ(invoke<int64_t>(*code, 0, 4, memory), 20);
 }
 
 static void testDuplicateTailsKeepsUndecidedTest()
@@ -2468,7 +3314,7 @@ static void testSwitchInPositionIndependentCode()
         auto code = compileProc(proc);
         CHECK_EQ(proc.code().tablesInCode().size(), testCase.hasTableInCode ? 1u : 0u);
         if (testCase.hasTableInCode)
-            CHECK_EQ(proc.code().tablesInCode()[0].second, testCase.degree);
+            CHECK_EQ(proc.code().tablesInCode()[0].second, testCase.degree + 1);
         for (unsigned i = 0; i < testCase.degree; ++i)
             CHECK_EQ(invoke<int64_t>(*code, i + 10), static_cast<int64_t>(i * 3 + 1));
         for (int64_t other : { static_cast<int64_t>(-1), static_cast<int64_t>(0), static_cast<int64_t>(9), static_cast<int64_t>(testCase.degree + 10), static_cast<int64_t>(1) << 40, std::numeric_limits<int64_t>::min() })
@@ -2846,6 +3692,49 @@ static void testCachedBlockOrdersAreInvalidated()
     }
 }
 
+static void testCompilationCohortRunsEachPhaseForAllMembers()
+{
+    constexpr unsigned size = 4;
+    using Step = std::pair<unsigned, unsigned>;
+    CompilationCohort cohort;
+    for (unsigned round = 0; round < 2; ++round) {
+        Vector<Step> steps;
+        cohort.run(size, [&](unsigned member) {
+            steps.append({ 0, member });
+            CompilationCohort::yieldBeforePhase("first"_s);
+            steps.append({ 1, member });
+            if (member == 2) {
+                CompilationCohort::yieldBeforePhase("extra"_s);
+                steps.append({ 2, member });
+            }
+            CompilationCohort::yieldBeforePhase("last"_s);
+            steps.append({ 3, member });
+        });
+        if (CompilationCohort::interleavesMembers)
+            CHECK(steps == (Vector<Step> { { 0, 0 }, { 0, 1 }, { 0, 2 }, { 0, 3 }, { 1, 0 }, { 1, 1 }, { 1, 2 }, { 1, 3 }, { 3, 0 }, { 3, 1 }, { 3, 3 }, { 2, 2 }, { 3, 2 } }));
+        else
+            CHECK(steps == (Vector<Step> { { 0, 0 }, { 1, 0 }, { 3, 0 }, { 0, 1 }, { 1, 1 }, { 3, 1 }, { 0, 2 }, { 1, 2 }, { 2, 2 }, { 3, 2 }, { 0, 3 }, { 1, 3 }, { 3, 3 } }));
+    }
+    CompilationCohort::yieldBeforePhase("outsideOfCohort"_s);
+}
+
+static void testCompilationCohortCompilesProcedures()
+{
+    constexpr unsigned size = CompilationCohort::maxSize;
+    std::array<std::unique_ptr<Compilation>, size> compilations;
+    CompilationCohort cohort;
+    cohort.run(size, [&](unsigned member) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t>(proc, root);
+        graph.ret(root, graph.make(root, Mul, graph.make(root, Add, arguments[0], graph.int64(root, member)), graph.int64(root, 3)));
+        compilations[member] = compileProc(proc);
+    });
+    for (unsigned member = 0; member < size; ++member)
+        CHECK_EQ(invoke<int64_t>(*compilations[member], 5), static_cast<int64_t>((5 + member) * 3));
+}
+
 static void testUseCountsDuplicateChild()
 {
     Procedure proc;
@@ -2943,7 +3832,7 @@ static void testZeroExtensionClearsUpperHalfInPositionIndependentCode()
     }
 }
 
-static void buildSumOfTwoSignExtendedLoads(Graph& graph)
+static void buildXorOfTwoSignExtendedLoads(Graph& graph)
 {
     BasicBlock* root = graph.proc.addBlock();
     auto arguments = cCallArgumentValues<int32_t*, int64_t>(graph.proc, root);
@@ -2951,7 +3840,7 @@ static void buildSumOfTwoSignExtendedLoads(Graph& graph)
     Value* index = arguments[1];
     Value* atOffset = graph.make(root, SExt32, graph.load(root, Int32, pointer, 4, firstHeap));
     Value* atIndex = graph.make(root, SExt32, graph.load(root, Int32, graph.make(root, Add, pointer, graph.make(root, Shl, index, graph.int32(root, 2))), 0, firstHeap));
-    graph.ret(root, graph.make(root, Add, atOffset, atIndex));
+    graph.ret(root, graph.make(root, BitXor, atOffset, atIndex));
 }
 
 static void testSignExtendingLoad32()
@@ -2959,7 +3848,7 @@ static void testSignExtendingLoad32()
     {
         Procedure proc;
         Graph graph { proc };
-        buildSumOfTwoSignExtendedLoads(graph);
+        buildXorOfTwoSignExtendedLoads(graph);
         lowerToAirForTesting(proc);
         unsigned numberOfExtendingLoads = 0;
         for (Air::BasicBlock* block : proc.code()) {
@@ -2972,12 +3861,190 @@ static void testSignExtendingLoad32()
     }
     Procedure proc;
     Graph graph { proc };
-    buildSumOfTwoSignExtendedLoads(graph);
+    buildXorOfTwoSignExtendedLoads(graph);
     auto code = compileProc(proc);
     int32_t memory[3] = { -5, std::numeric_limits<int32_t>::min(), std::numeric_limits<int32_t>::max() };
-    CHECK_EQ(invoke<int64_t>(*code, memory, 0), static_cast<int64_t>(std::numeric_limits<int32_t>::min()) - 5);
-    CHECK_EQ(invoke<int64_t>(*code, memory, 1), 2 * static_cast<int64_t>(std::numeric_limits<int32_t>::min()));
-    CHECK_EQ(invoke<int64_t>(*code, memory, 2), -1);
+    for (int64_t index = 0; index < 3; ++index)
+        CHECK_EQ(invoke<int64_t>(*code, memory, index), static_cast<int64_t>(memory[1]) ^ static_cast<int64_t>(memory[index]));
+}
+
+static void testDominatorsAfterLoopHeaderBecomesJump()
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* outerHeader = proc.addBlock();
+    BasicBlock* header = proc.addBlock();
+    BasicBlock* left = proc.addBlock();
+    BasicBlock* right = proc.addBlock();
+    BasicBlock* join = proc.addBlock();
+    BasicBlock* body = proc.addBlock();
+    BasicBlock* latch = proc.addBlock();
+    BasicBlock* outerTest = proc.addBlock();
+    BasicBlock* outerLatch = proc.addBlock();
+    BasicBlock* done = proc.addBlock();
+
+    auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+    Value* words = arguments[0];
+    auto decrement = [&](BasicBlock* block, int32_t offset) {
+        Value* result = graph.make(block, Sub, graph.load(block, Int64, words, offset, firstHeap), graph.int64(block, 1));
+        graph.store(block, result, words, offset, firstHeap);
+        return graph.make(block, GreaterThan, result, graph.int64(block, 0));
+    };
+    graph.jump(root, outerHeader);
+    graph.store(outerHeader, graph.make(outerHeader, Add, graph.load(outerHeader, Int64, words, 0, firstHeap), graph.int64(outerHeader, 1)), words, 0, firstHeap);
+    graph.jump(outerHeader, header);
+    graph.branch(header, arguments[1], left, right);
+    graph.jump(left, join);
+    graph.jump(right, join);
+    graph.jump(join, body);
+    graph.branch(body, decrement(body, 8), latch, outerTest);
+    graph.jump(latch, header);
+    graph.branch(outerTest, decrement(outerTest, 16), outerLatch, done);
+    graph.jump(outerLatch, outerHeader);
+    graph.ret(done, graph.load(done, Int64, words, 0, firstHeap));
+
+    proc.resetReachability();
+    proc.setOptLevel(2);
+    proc.setPositionIndependent();
+    proc.dominators();
+    reduceStrength(proc);
+    proc.setPositionIndependent(false);
+    validate(proc);
+
+    auto code = compileProc(proc);
+    int64_t memory[3] = { 0, 3, 2 };
+    CHECK_EQ(invoke<int64_t>(*code, memory, 1), 2);
+    CHECK_EQ(memory[1], -1);
+    CHECK_EQ(memory[2], 0);
+}
+
+template<typename Functor>
+static void checkReadStaysBelowNullCheck(const Functor& appendRead)
+{
+    Procedure proc;
+    Graph graph { proc };
+    BasicBlock* root = proc.addBlock();
+    BasicBlock* loop = proc.addBlock();
+    BasicBlock* isNull = proc.addBlock();
+    BasicBlock* next = proc.addBlock();
+    BasicBlock* done = proc.addBlock();
+
+    auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+    Value* pointer = arguments[0];
+    Value* remaining = graph.phi(loop, Int64);
+    Value* sum = graph.phi(loop, Int64);
+    Value* nextSum = graph.phi(next, Int64);
+    graph.upsilon(root, arguments[1], remaining);
+    graph.upsilon(root, graph.int64(root, 0), sum);
+    graph.jump(root, loop);
+
+    graph.upsilon(loop, sum, nextSum);
+    graph.branch(loop, pointer, next, isNull);
+
+    Value* read = appendRead(graph, isNull, pointer);
+    graph.upsilon(isNull, graph.make(isNull, Add, sum, read), nextSum);
+    graph.jump(isNull, next);
+
+    Value* nextRemaining = graph.make(next, Sub, remaining, graph.int64(next, 1));
+    graph.upsilon(next, nextRemaining, remaining);
+    graph.upsilon(next, graph.make(next, Add, nextSum, graph.int64(next, 1)), sum);
+    graph.branch(next, nextRemaining, loop, done);
+
+    graph.ret(done, nextSum);
+
+    proc.resetReachability();
+    foldPathConstants(proc);
+    hoistLoopInvariantValues(proc);
+    validate(proc);
+    CHECK_EQ(numberOfValues(root, read->opcode()), 0u);
+    CHECK_EQ(numberOfValues(isNull, read->opcode()), 1u);
+
+    auto code = compileProc(proc);
+    int64_t words[2] = { 5, 6 };
+    CHECK_EQ(invoke<int64_t>(*code, words, 3), 2);
+}
+
+static void testHoistableLoadStaysBelowNullCheckOfItsBase()
+{
+    for (bool addsOffset : { false, true }) {
+        checkReadStaysBelowNullCheck([&](Graph& graph, BasicBlock* block, Value* pointer) -> Value* {
+            Value* address = addsOffset ? graph.make(block, Add, pointer, graph.int64(block, 8)) : pointer;
+            MemoryValue* load = graph.load(block, Int64, address, 0, firstHeap);
+            load->setControlDependent(false);
+            return load;
+        });
+    }
+}
+
+static void testHoistablePatchpointStaysBelowNullCheckOfItsOperand()
+{
+    checkReadStaysBelowNullCheck([](Graph& graph, BasicBlock* block, Value* pointer) -> Value* {
+        PatchpointValue* patchpoint = graph.emptyPatchpoint(block, Int64);
+        patchpoint->append(pointer, ValueRep::SomeRegister);
+        return patchpoint;
+    });
+}
+
+static void testLow32BitsOfLoad64WithScaledIndex()
+{
+    Procedure proc;
+    BasicBlock* root = proc.addBlock();
+    auto arguments = cCallArgumentValues<int64_t*, int64_t>(proc, root);
+    Value* offset = root->appendNew<Value>(proc, Shl, Origin(), arguments[1], root->appendNew<Const32Value>(proc, Origin(), 3));
+    Value* address = root->appendNew<Value>(proc, Add, Origin(), arguments[0], offset);
+    Value* word = root->appendNew<MemoryValue>(proc, Load, Int64, Origin(), address);
+    Value* low = root->appendNew<Value>(proc, BitAnd, Origin(), word, root->appendNew<Const64Value>(proc, Origin(), 0xffffffff));
+    root->appendNew<Value>(proc, Return, Origin(), low);
+
+    auto code = compileProc(proc);
+    int64_t words[2] = { 0x1111111122222222, 0x3333333344444444 };
+    CHECK_EQ(invoke<int64_t>(*code, words, 0), 0x22222222);
+    CHECK_EQ(invoke<int64_t>(*code, words, 1), 0x44444444);
+}
+
+static void testSelectOnInt64WithZeroLowHalf()
+{
+    for (unsigned optLevel : { 1u, 2u }) {
+        Procedure proc;
+        Graph graph { proc };
+        BasicBlock* root = proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t, int64_t, int64_t>(proc, root);
+        Value* predicate = graph.make(root, Div, arguments[0], arguments[2]);
+        Value* ifTrue = graph.make(root, Div, arguments[1], arguments[2]);
+        graph.ret(root, graph.select(root, predicate, ifTrue, arguments[3]));
+        auto code = compileProc(proc, optLevel);
+        for (int64_t value : { static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(-1), static_cast<int64_t>(1ll << 32), static_cast<int64_t>(3ll << 32), static_cast<int64_t>(-1ll << 32), static_cast<int64_t>(0xfffe000000000000ull), std::numeric_limits<int64_t>::min() })
+            CHECK_EQ(invoke<int64_t>(*code, value, 7, 1, 9), value ? 7 : 9);
+    }
+}
+
+static void testDeclaredWidthsOf64BitSources()
+{
+    auto declaredWidths = [](Air::Inst inst) {
+        Vector<Width> widths;
+        inst.forEachArg([&](Air::Arg&, Air::Arg::Role, Bank, Width width) {
+            widths.append(width);
+        });
+        return widths;
+    };
+    Air::Tmp a(GPRInfo::regT0);
+    Air::Tmp b(GPRInfo::regT1);
+    Air::Tmp c(GPRInfo::regT2);
+    Air::Arg condition = Air::Arg::resCond(MacroAssembler::NonZero);
+
+    Vector<Width> widths = declaredWidths(Air::Inst(Air::ExtractRegister64, nullptr, a, b, Air::Arg::imm(8), c));
+    CHECK_EQ(widths[0], Width64);
+    CHECK_EQ(widths[1], Width64);
+    CHECK_EQ(widths[3], Width64);
+
+    widths = declaredWidths(Air::Inst(Air::MoveConditionallyTest64, nullptr, condition, a, b, c, c));
+    CHECK_EQ(widths[1], Width64);
+    CHECK_EQ(widths[2], Width64);
+
+    widths = declaredWidths(Air::Inst(Air::MoveConditionallyTest64, nullptr, condition, a, b, c, c, c));
+    CHECK_EQ(widths[1], Width64);
+    CHECK_EQ(widths[2], Width64);
 }
 
 static void testMul64ByImmediate()
@@ -3079,15 +4146,2250 @@ static void testLoopPhasesAreOptIn()
     graph.increase(loop.body, loop.sum, graph.get(loop.body, loop.index));
     loop.endBody(loop.body);
 
-    bool headerEndsInBranch = false;
+    unsigned numberOfBranches = 0;
     proc.setLastPhase(createSharedTask<void(Procedure&)>([&](Procedure& optimized) {
-        B3::NaturalLoops& loops = optimized.naturalLoops();
-        CHECK_EQ(loops.numLoops(), 1u);
-        headerEndsInBranch = loops.loop(0).header()->last()->opcode() == Branch;
+        CHECK_EQ(optimized.naturalLoops().numLoops(), 1u);
+        numberOfBranches = numberOfValues(optimized, Branch);
     }));
     auto code = compileProc(proc, 2);
-    CHECK(headerEndsInBranch);
+    CHECK_EQ(numberOfBranches, 1u);
     CHECK_EQ(run(*code, 10), 45);
+}
+
+namespace {
+
+constexpr HeapRange thirdHeap { 12, 13 };
+constexpr HeapRange allHeaps { 10, 13 };
+
+B3::Opcode relationWithSwappedOperands(B3::Opcode relation)
+{
+    switch (relation) {
+    case LessThan:
+        return GreaterThan;
+    case LessEqual:
+        return GreaterEqual;
+    case GreaterThan:
+        return LessThan;
+    case GreaterEqual:
+        return LessEqual;
+    case Below:
+        return Above;
+    case BelowEqual:
+        return AboveEqual;
+    case Above:
+        return Below;
+    case AboveEqual:
+        return BelowEqual;
+    default:
+        return relation;
+    }
+}
+
+B3::Opcode negatedRelation(B3::Opcode relation)
+{
+    switch (relation) {
+    case Equal:
+        return NotEqual;
+    case NotEqual:
+        return Equal;
+    case LessThan:
+        return GreaterEqual;
+    case LessEqual:
+        return GreaterThan;
+    case GreaterThan:
+        return LessEqual;
+    case GreaterEqual:
+        return LessThan;
+    case Below:
+        return AboveEqual;
+    case BelowEqual:
+        return Above;
+    case Above:
+        return BelowEqual;
+    case AboveEqual:
+        return Below;
+    default:
+        RELEASE_ASSERT_NOT_REACHED();
+        return relation;
+    }
+}
+
+struct RandomProgramState {
+    PollState poll;
+    int64_t effectHash { 0 };
+    std::array<int64_t, 3> failedCheckOperands { };
+};
+
+int64_t JIT_OPERATION_ATTRIBUTES randomProgramCallee(RandomProgramState* state, int64_t operand)
+{
+    state->effectHash = static_cast<int64_t>(static_cast<uint64_t>(state->effectHash) * 3 + 1000 + static_cast<uint64_t>(operand));
+    return static_cast<int64_t>(static_cast<uint64_t>(operand) + 5);
+}
+
+struct PatchpointModel {
+    enum class Kind : uint8_t { Nothing, Constant, AddConstant, LoadWord, IncrementWord, TruncateDouble, Observable, PollLimit, PollHandler };
+
+    Kind kind { Kind::Nothing };
+    int64_t immediate { 0 };
+};
+
+using PatchpointModels = HashMap<Value*, PatchpointModel>;
+
+bool hasCallSite(Value* value)
+{
+    if (value->opcode() == CCall)
+        return true;
+    if (value->opcode() != Patchpoint)
+        return false;
+    Effects effects = value->effects();
+    return effects.exitsSideways || effects.writes || effects.writesPinned || effects.fence;
+}
+
+class RandomProgram {
+public:
+    static constexpr unsigned wordsPerRegion = 16;
+    static constexpr unsigned numberOfWords = 3 * wordsPerRegion;
+    static constexpr unsigned numberOfSmallWords = 8;
+    static constexpr unsigned numberOfGuardWords = 16;
+    static constexpr int64_t failedCheckResult = -77;
+
+    RandomProgram(Procedure& proc, unsigned seed, RandomProgramState& state, bool hasCallShapes, bool isForPlainPipeline, bool isForLevel0, PatchpointModels* models = nullptr)
+        : m_graph { proc }
+        , m_proc(proc)
+        , m_random(seed)
+        , m_coldOperandRandom(seed + 0x85ebca6bu)
+        , m_state(state)
+        , m_hasCallShapes(hasCallShapes)
+        , m_isForPlainPipeline(isForPlainPipeline)
+        , m_isForLevel0(isForLevel0)
+        , m_models(models)
+    {
+        m_block = m_proc.addBlock();
+        auto arguments = cCallArgumentValues<int64_t, int64_t*, int64_t>(m_proc, m_block);
+        m_arguments = { arguments[0], arguments[2] };
+        m_pointer = arguments[1];
+        unsigned numberOfVariables = 3 + pick(10);
+        for (unsigned i = 0; i < numberOfVariables; ++i) {
+            m_variables.append(m_proc.addVariable(Int64));
+            set(m_variables[i], i < m_arguments.size() ? m_arguments[i] : constant());
+        }
+        m_pointerOrNull = m_graph.select(m_block, make(chance(50) ? LessThan : NotEqual, m_arguments[pick(2)], constant()), m_pointer, int64(0));
+        m_statementsLeft = 8 + pick(28);
+        while (m_statementsLeft)
+            statements(3);
+        Value* hash = int64(0);
+        for (Variable* variable : m_variables)
+            hash = make(Add, make(Mul, hash, int64(31)), get(variable));
+        m_graph.ret(m_block, hash);
+        m_proc.resetReachability();
+        validate(m_proc);
+    }
+
+private:
+    static constexpr double loopFrequencyScale = 8;
+    static constexpr double rareFrequencyScale = 1.0 / 256;
+
+    struct Loop {
+        BasicBlock* continueTarget { nullptr };
+        BasicBlock* breakTarget { nullptr };
+        BasicBlock* headerForExtraLatch { nullptr };
+        Variable* index { nullptr };
+        int64_t delta { 0 };
+    };
+
+    struct Place {
+        Value* base;
+        int32_t offset;
+        HeapRange range;
+    };
+
+    using Model = PatchpointModel::Kind;
+
+    template<typename T>
+    T* modeled(T* patchpoint, Model kind, int64_t immediate = 0)
+    {
+        if (m_models)
+            m_models->add(patchpoint, PatchpointModel { kind, immediate });
+        return patchpoint;
+    }
+
+    unsigned pick(unsigned limit) { return m_random.getUint32(limit); }
+    bool chance(unsigned percent) { return pick(100) < percent; }
+
+    BasicBlock* newBlock(double scale = 1) { return m_proc.addBlock(m_frequency * scale); }
+    Value* int32(int32_t value) { return m_graph.int32(m_block, value); }
+    Value* int64(int64_t value) { return m_graph.int64(m_block, value); }
+    Value* make(B3::Opcode opcode, Value* child) { return m_graph.make(m_block, opcode, child); }
+    Value* make(B3::Opcode opcode, Value* left, Value* right) { return m_graph.make(m_block, opcode, left, right); }
+    Value* get(Variable* variable) { return m_graph.get(m_block, variable); }
+    void set(Variable* variable, Value* value) { m_graph.set(m_block, variable, value); }
+    void jump(BasicBlock* target) { m_graph.jump(m_block, target); }
+    void branch(Value* predicate, FrequentedBlock taken, FrequentedBlock notTaken) { m_graph.branch(m_block, predicate, taken, notTaken); }
+    Variable* randomVariable() { return m_variables[pick(m_variables.size())]; }
+
+    Value* constant()
+    {
+        static constexpr int64_t constants[] = {
+            0, 1, -1, 2, 3, 5, 7, 8, 15, 16, 31, 32, 63, 64, 255, 256, 1000, -2, -8, -128, 0x7fffffff, -0x80000000ll, 0xffffffffll, 0x100000000ll,
+            0x123456789abcdefll, std::numeric_limits<int64_t>::max(), std::numeric_limits<int64_t>::min()
+        };
+        return int64(constants[pick(std::size(constants))]);
+    }
+
+    Value* randomLoopIndex()
+    {
+        Vector<Variable*, 4> indices;
+        for (auto& loop : m_loops) {
+            if (loop.index)
+                indices.append(loop.index);
+        }
+        if (indices.isEmpty())
+            return nullptr;
+        Variable* index = chance(70) ? indices.last() : indices[pick(indices.size())];
+        Value* result = get(index);
+        if (index->type() == Int32)
+            return make(chance(50) ? SExt32 : ZExt32, result);
+        return result;
+    }
+
+    Value* leaf()
+    {
+        switch (pick(10)) {
+        case 0:
+        case 1:
+            return constant();
+        case 2:
+        case 3:
+        case 4:
+            return get(randomVariable());
+        case 5:
+            return m_arguments[pick(m_arguments.size())];
+        case 6:
+            if (!m_available.isEmpty())
+                return m_available[pick(m_available.size())];
+            return constant();
+        case 7:
+        case 8:
+            if (Value* index = randomLoopIndex())
+                return index;
+            return get(randomVariable());
+        default:
+            return load(0);
+        }
+    }
+
+    Value* expression(unsigned depth)
+    {
+        static constexpr B3::Opcode arithmetic[] = { Add, Sub, Mul, BitAnd, BitOr, BitXor };
+        if (!depth || chance(20))
+            return leaf();
+        --depth;
+        switch (pick(15)) {
+        case 0:
+        case 1:
+        case 2:
+        case 3: {
+            B3::Opcode opcode = arithmetic[pick(std::size(arithmetic))];
+            Value* left = expression(depth);
+            Value* right = expression(depth);
+            return make(opcode, left, right);
+        }
+        case 4: {
+            static constexpr B3::Opcode shifts[] = { Shl, SShr, ZShr };
+            B3::Opcode opcode = shifts[pick(std::size(shifts))];
+            Value* value = expression(depth);
+            Value* amount = chance(70) ? int32(pick(64)) : make(Trunc, expression(depth));
+            return make(opcode, value, amount);
+        }
+        case 5:
+            return make(ZExt32, condition(depth));
+        case 6: {
+            Value* predicate = condition(depth);
+            Value* ifTrue = expression(depth);
+            Value* ifFalse = expression(depth);
+            return m_graph.select(m_block, predicate, ifTrue, ifFalse);
+        }
+        case 7:
+        case 8: {
+            B3::Opcode opcode = arithmetic[pick(std::size(arithmetic))];
+            Value* left = make(Trunc, expression(depth));
+            Value* right = make(Trunc, expression(depth));
+            Value* result = make(opcode, left, right);
+            return make(chance(50) ? SExt32 : ZExt32, result);
+        }
+        case 9: {
+            Value* left = expression(depth);
+            Value* right = expression(depth);
+            return m_block->appendNew<Value>(m_proc, chill(chance(50) ? Div : Mod), Origin(), left, right);
+        }
+        case 10: {
+            Value* result = doubleExpression(depth + 1);
+            switch (pick(4)) {
+            case 0:
+                return make(BitwiseCast, result);
+            case 1:
+                return make(SExt32, convertToInteger(result, Int32, keyOfConversionToInt32));
+            case 2:
+                return convertToInteger(result, Int64, keyOfTruncationToInt64);
+            default:
+                return convertToInteger(result, Int64, 0);
+            }
+        }
+        case 11:
+        case 12:
+            return load(depth);
+        case 13:
+            switch (pick(4)) {
+            case 0:
+                return make(Opaque, expression(depth));
+            case 1:
+                return make(Identity, expression(depth));
+            default:
+                return make(Neg, expression(depth));
+            }
+        default:
+            return make(SExt32, make(chance(50) ? SExt8 : SExt16, make(Trunc, expression(depth))));
+        }
+    }
+
+    Value* doubleExpression(unsigned depth)
+    {
+        static constexpr double numbers[] = { 0, -0.0, 0.5, 1, -1, 2, 1.5, 100, 2147483647, 2147483648.0, -2147483648.0, -2147483649.0, 4294967296.0, 1e10 };
+        static constexpr B3::Opcode opcodes[] = { Add, Sub, Mul };
+        unsigned kind = pick(10);
+        if (depth && kind < 3) {
+            B3::Opcode opcode = opcodes[pick(std::size(opcodes))];
+            Value* left = doubleExpression(depth - 1);
+            Value* right = doubleExpression(depth - 1);
+            return make(opcode, left, right);
+        }
+        if (depth && kind < 4)
+            return make(chance(50) ? Neg : Abs, doubleExpression(depth - 1));
+        if (kind < 6)
+            return m_graph.number(m_block, numbers[pick(std::size(numbers))]);
+        if (kind < 9)
+            return make(IToD, make(Trunc, expression(depth)));
+        return make(IToD, expression(depth));
+    }
+
+    Value* convertToInteger(Value* number, Type type, int32_t key)
+    {
+        PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, type, Origin());
+        result->effects = Effects::none();
+        result->pureFunctionOfChildrenKey = key;
+        result->appendSomeRegister(number);
+        result->setGenerator([](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            jit.truncateDoubleToInt64(params[1].fpr(), params[0].gpr());
+        });
+        return modeled(result, Model::TruncateDouble);
+    }
+
+    Value* condition(unsigned depth)
+    {
+        static constexpr B3::Opcode relations[] = { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual };
+        switch (pick(8)) {
+        case 0: {
+            B3::Opcode relation = relations[pick(std::size(relations))];
+            Value* left = make(Trunc, expression(depth));
+            Value* right = chance(50) ? int32(static_cast<int32_t>(pick(20)) - 4) : make(Trunc, expression(depth));
+            return make(relation, left, right);
+        }
+        case 1: {
+            B3::Opcode relation = relations[pick(6)];
+            Value* left = doubleExpression(depth);
+            Value* right = doubleExpression(depth);
+            return make(relation, left, right);
+        }
+        case 2:
+            return make(chance(50) ? NotEqual : Equal, make(BitAnd, expression(depth), int64(1ll << pick(10))), int64(0));
+        case 3:
+            if (depth)
+                return make(BitXor, condition(depth - 1), int32(1));
+            [[fallthrough]];
+        default: {
+            B3::Opcode relation = relations[pick(std::size(relations))];
+            Value* left = expression(depth);
+            Value* right = chance(40) ? constant() : expression(depth);
+            return make(relation, left, right);
+        }
+        }
+    }
+
+    Place place(unsigned region, unsigned depth)
+    {
+        int32_t offset = region * wordsPerRegion * sizeof(int64_t);
+        HeapRange range = !region ? firstHeap : region == 1 ? secondHeap : thirdHeap;
+        if (chance(15))
+            range = region < 2 && chance(50) ? bothHeaps : allHeaps;
+        else if (chance(5))
+            range = HeapRange::top();
+        if (chance(55))
+            return { m_pointer, static_cast<int32_t>(offset + pick(chance(60) ? 3 : wordsPerRegion) * sizeof(int64_t)), range };
+        Value* index = chance(60) ? randomLoopIndex() : nullptr;
+        if (!index)
+            index = expression(depth);
+        return { wordAddress(index), offset, range };
+    }
+
+    Value* wordAddress(Value* index)
+    {
+        return make(Add, m_pointer, make(Shl, make(BitAnd, index, int64(wordsPerRegion - 1)), int32(3)));
+    }
+
+    Value* load(unsigned depth)
+    {
+        static constexpr B3::Opcode narrowLoads[] = { Load8Z, Load8S, Load16Z, Load16S };
+        unsigned region = pick(3);
+        Place where = place(region, depth);
+        unsigned width = pick(100);
+        MemoryValue* result;
+        if (width < 70)
+            result = m_graph.load(m_block, Int64, where.base, where.offset, where.range);
+        else if (width < 90)
+            result = m_graph.load(m_block, Int32, where.base, where.offset + (chance(50) ? 4 : 0), where.range);
+        else
+            result = m_block->appendNew<MemoryValue>(m_proc, narrowLoads[pick(std::size(narrowLoads))], Origin(), where.base, where.offset + static_cast<int32_t>(2 * pick(4)), where.range);
+        if (region == 2 && chance(50))
+            result->setReadsMutability(Mutability::Immutable);
+        if (chance(30))
+            result->setControlDependent(false);
+        if (result->type() == Int32)
+            return make(chance(50) ? SExt32 : ZExt32, result);
+        return result;
+    }
+
+    Value* loadSmallWord()
+    {
+        MemoryValue* result = m_graph.load(m_block, Int32, m_pointer, (2 * wordsPerRegion + pick(numberOfSmallWords)) * sizeof(int64_t), thirdHeap);
+        if (chance(50))
+            result->setReadsMutability(Mutability::Immutable);
+        if (chance(30))
+            result->setControlDependent(false);
+        return make(ZExt32, result);
+    }
+
+    void store()
+    {
+        Place where = place(pick(2), 1);
+        Value* value = expression(2);
+        unsigned width = pick(100);
+        if (width < 70)
+            m_graph.store(m_block, value, where.base, where.offset, where.range);
+        else if (width < 90)
+            m_graph.store(m_block, make(Trunc, value), where.base, where.offset + (chance(50) ? 4 : 0), where.range);
+        else
+            m_block->appendNew<MemoryValue>(m_proc, chance(50) ? Store8 : Store16, Origin(), make(Trunc, value), where.base, where.offset + static_cast<int32_t>(2 * pick(4)), where.range);
+    }
+
+    void opaqueUse(Value* value)
+    {
+        PatchpointValue* result = modeled(m_graph.emptyPatchpoint(m_block), Model::Nothing);
+        result->effects.writesLocalState = true;
+        result->append(ConstrainedValue(value, ValueRep::ColdAny));
+        result->setGenerator([](CCallHelpers&, const StackmapGenerationParams&) { });
+    }
+
+    Value* opaqueZero()
+    {
+        return modeled(m_graph.emptyPatchpoint(m_block, Int64), Model::Constant, 0);
+    }
+
+    using ColdOperands = Vector<Value*, 3>;
+
+    ColdOperands coldOperands()
+    {
+        ColdOperands result;
+        if (!m_hasCallShapes)
+            return result;
+        auto variable = [&] {
+            return get(m_variables[m_coldOperandRandom.getUint32(m_variables.size())]);
+        };
+        for (unsigned count = m_coldOperandRandom.getUint32(4); count--;) {
+            Value* value = variable();
+            switch (m_coldOperandRandom.getUint32(6)) {
+            case 0:
+                value = make(Trunc, value);
+                break;
+            case 1:
+                value = make(Add, value, variable());
+                break;
+            case 2:
+                value = make(IToD, value);
+                break;
+            case 3: {
+                uint64_t bits = m_coldOperandRandom.getUint32();
+                value = int64(static_cast<int64_t>(bits << m_coldOperandRandom.getUint32(33)));
+                break;
+            }
+            default:
+                break;
+            }
+            result.append(value);
+        }
+        return result;
+    }
+
+    static Vector<bool, 3> appendColdOperands(StackmapValue* stackmap, const ColdOperands& operands, bool inArgumentRegisters = false)
+    {
+        Vector<bool, 3> isInt32;
+        unsigned nextGPR = 1;
+        unsigned nextFPR = 0;
+        for (Value* operand : operands) {
+            ValueRep rep = ValueRep::ColdAny;
+            if (inArgumentRegisters && operand->type() == Double)
+                rep = ValueRep::reg(FPRInfo::toArgumentRegister(nextFPR++));
+            else if (inArgumentRegisters)
+                rep = ValueRep::reg(GPRInfo::toArgumentRegister(nextGPR++));
+            stackmap->append(ConstrainedValue(operand, rep));
+            isInt32.append(operand->type() == Int32);
+        }
+        return isInt32;
+    }
+
+    Value* observablePatchpoint(Value* operand)
+    {
+        ColdOperands cold = coldOperands();
+        bool isCallShaped = m_hasCallShapes && m_coldOperandRandom.getUint32(100) < 35;
+        bool hasTwoSuccessors = m_hasCallShapes && m_coldOperandRandom.getUint32(100) < 15;
+        bool isTerminal = hasTwoSuccessors && !m_isForLevel0;
+        PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, Int64, Origin());
+        result->append(ConstrainedValue(operand, isCallShaped ? ValueRep::reg(GPRInfo::argumentGPR0) : ValueRep::SomeRegister));
+        Vector<bool, 3> isInt32 = appendColdOperands(result, cold, isCallShaped);
+        RegisterSet lateClobbers;
+        if (isCallShaped) {
+            if (!isTerminal || !m_isForPlainPipeline)
+                result->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+            lateClobbers = RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters());
+        }
+        result->effects = Effects::none();
+        switch (pick(7)) {
+        case 0:
+            result->effects.writesLocalState = true;
+            break;
+        case 1:
+            result->effects.exitsSideways = true;
+            result->effects.reads = HeapRange::top();
+            break;
+        case 2:
+            result->effects.reads = firstHeap;
+            result->effects.writes = firstHeap;
+            break;
+        case 3:
+            result->effects.fence = true;
+            break;
+        case 4:
+            result->effects.writesPinned = true;
+            break;
+        case 5:
+            result->effects.writesLocalState = true;
+            result->effects.readsLocalState = true;
+            break;
+        default:
+            result->effects = Effects::forCall();
+            break;
+        }
+        for (unsigned i = 0; i < GPRInfo::numberOfArgumentRegisters; ++i) {
+            if (chance(50))
+                lateClobbers.add(GPRInfo::toArgumentRegister(i));
+        }
+        result->clobberLate(lateClobbers);
+        result->clobber(RegisterSet::macroClobberedGPRs());
+        result->effects.terminal = isTerminal;
+        result->numGPScratchRegisters = isCallShaped ? 0 : 3;
+        lateClobbers.exclude(RegisterSet::macroClobberedGPRs());
+        if (!m_hasCallShapes)
+            lateClobbers = { };
+        int32_t number = ++m_observablePatchpointCount;
+        modeled(result, Model::Observable, number);
+        result->setGenerator([number, isInt32, lateClobbers, isCallShaped, isTerminal, state = &m_state](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg address = isCallShaped ? GPRInfo::argumentGPR4 : params.gpScratch(0);
+            GPRReg order = isCallShaped ? GPRInfo::argumentGPR5 : params.gpScratch(1);
+            GPRReg twice = isCallShaped ? GPRInfo::nonPreservedNonArgumentGPR0 : params.gpScratch(2);
+            jit.move(CCallHelpers::TrustedImmPtr(&state->effectHash), address);
+            jit.load64(CCallHelpers::Address(address), order);
+            jit.add64(order, order, twice);
+            jit.add64(twice, order);
+            jit.add64(CCallHelpers::TrustedImm32(number), order);
+            jit.add64(params[1].gpr(), order);
+            for (unsigned i = 0; i < isInt32.size(); ++i) {
+                params[2 + i].emitRestore(jit, twice);
+                if (isInt32[i])
+                    jit.zeroExtend32ToWord(twice, twice);
+                jit.add64(order, order);
+                jit.add64(twice, order);
+            }
+            jit.store64(order, CCallHelpers::Address(address));
+            jit.move(params[1].gpr(), twice);
+            jit.add64(CCallHelpers::TrustedImm32(3), params[1].gpr(), params[0].gpr());
+            jit.move(CCallHelpers::TrustedImm64(0x0bad0bad0bad0badll), order);
+            lateClobbers.forEach([&](Reg reg) {
+                if (reg.isFPR())
+                    jit.move64ToDouble(order, reg.fpr());
+                else if (reg.gpr() != params[0].gpr() && reg.gpr() != twice && reg.gpr() != order)
+                    jit.move(order, reg.gpr());
+            });
+            if (!isTerminal)
+                return;
+            CCallHelpers::Jump toRareSuccessor = jit.branchTest64(CCallHelpers::NonZero, twice, CCallHelpers::TrustedImm32(1));
+            CCallHelpers::Jump toUsualSuccessor;
+            if (!params.fallsThroughToSuccessor(0))
+                toUsualSuccessor = jit.jump();
+            Vector<Box<CCallHelpers::Label>> labels = params.successorLabels();
+            params.addLatePath([=](CCallHelpers& jit) {
+                toRareSuccessor.linkTo(*labels[1], &jit);
+                if (toUsualSuccessor.isSet())
+                    toUsualSuccessor.linkTo(*labels[0], &jit);
+            });
+        });
+        if (hasTwoSuccessors) {
+            BasicBlock* usual = newBlock();
+            BasicBlock* rare = newBlock(rareFrequencyScale);
+            BasicBlock* next = newBlock();
+            if (isTerminal)
+                m_block->setSuccessors(FrequentedBlock(usual), rarely(rare));
+            else
+                branch(make(BitAnd, operand, int64(1)), rarely(rare), FrequentedBlock(usual));
+            Variable* outcome = m_proc.addVariable(Int64);
+            m_block = usual;
+            set(outcome, result);
+            jump(next);
+            m_block = rare;
+            set(outcome, int64(1 + m_coldOperandRandom.getUint32(1000)));
+            jump(next);
+            m_block = next;
+            return get(outcome);
+        }
+        return result;
+    }
+
+    Value* movablePatchpoint(unsigned depth)
+    {
+        switch (pick(5)) {
+        case 0: {
+            unsigned region = pick(3);
+            int32_t offset = (region * wordsPerRegion + pick(3)) * sizeof(int64_t);
+            PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, Int64, Origin());
+            result->append(ConstrainedValue(m_pointer, ValueRep::SomeRegister));
+            result->effects = Effects::none();
+            result->effects.reads = !region ? firstHeap : region == 1 ? secondHeap : thirdHeap;
+            result->setGenerator([offset](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.load64(CCallHelpers::Address(params[1].gpr(), offset), params[0].gpr());
+            });
+            return modeled(result, Model::LoadWord, offset);
+        }
+        case 1: {
+            uint64_t key = 1 + pick(3);
+            PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, Int64, Origin());
+            result->effects = Effects::none();
+            result->pureFunctionKey = key;
+            result->setGenerator([key](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.move(CCallHelpers::TrustedImm32(static_cast<int32_t>(key * 11)), params[0].gpr());
+            });
+            return modeled(result, Model::Constant, key * 11);
+        }
+        default: {
+            int32_t key = chance(50) ? 0 : 100 + pick(2);
+            Value* operand = expression(depth);
+            PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, Int64, Origin());
+            result->append(ConstrainedValue(operand, ValueRep::SomeRegister));
+            result->effects = Effects::none();
+            result->pureFunctionOfChildrenKey = key;
+            if (!key && chance(30))
+                result->effects.readsLocalState = true;
+            if (!key && chance(30))
+                result->effects.readsPinned = true;
+            result->setGenerator([key](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                jit.add64(CCallHelpers::TrustedImm32(key + 3), params[1].gpr(), params[0].gpr());
+            });
+            return modeled(result, Model::AddConstant, key + 3);
+        }
+        }
+    }
+
+    void storeBurst()
+    {
+        unsigned count = 6 + pick(10);
+        for (unsigned i = 0; i < count; ++i) {
+            unsigned region = pick(2);
+            HeapRange range = chance(70) ? (region ? secondHeap : firstHeap) : chance(50) ? bothHeaps : allHeaps;
+            m_graph.store(m_block, chance(50) ? constant() : get(randomVariable()), m_pointer, (region * wordsPerRegion + pick(wordsPerRegion)) * sizeof(int64_t), range);
+        }
+    }
+
+    void patchpoint()
+    {
+        switch (pick(8)) {
+        case 0:
+            modeled(m_graph.callLikePatchpoint(m_block), Model::Nothing);
+            return;
+        case 1: {
+            unsigned region = pick(2);
+            int32_t offset = (region * wordsPerRegion + pick(chance(60) ? 3 : wordsPerRegion)) * sizeof(int64_t);
+            PatchpointValue* result = m_block->appendNew<PatchpointValue>(m_proc, Void, Origin());
+            result->append(ConstrainedValue(m_pointer, ValueRep::SomeRegister));
+            result->effects = Effects::none();
+            result->effects.reads = region ? secondHeap : firstHeap;
+            result->effects.writes = result->effects.reads;
+            result->clobber(RegisterSet::macroClobberedGPRs());
+            if (chance(50))
+                result->clobberLate(RegisterSet::argumentGPRs());
+            result->setGenerator([offset](CCallHelpers& jit, const StackmapGenerationParams& params) {
+                AllowMacroScratchRegisterUsage allowScratch(jit);
+                jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(params[0].gpr(), offset));
+            });
+            modeled(result, Model::IncrementWord, offset);
+            return;
+        }
+        case 2:
+            switch (pick(3)) {
+            case 0:
+                m_block->appendNew<FenceValue>(m_proc, Origin());
+                return;
+            case 1:
+                m_block->appendNew<Value>(m_proc, Nop, Origin());
+                return;
+            default: {
+                Value* operand = expression(1);
+                Value* result = m_block->appendNew<CCallValue>(m_proc, Int64, Origin(),
+                    m_block->appendNew<ConstPtrValue>(m_proc, Origin(), tagCFunction<OperationPtrTag>(randomProgramCallee)),
+                    m_block->appendNew<ConstPtrValue>(m_proc, Origin(), &m_state), operand);
+                if (chance(50))
+                    m_available.append(result);
+                else
+                    set(randomVariable(), result);
+                return;
+            }
+            }
+        case 3:
+        case 4:
+        case 5: {
+            Value* result = observablePatchpoint(expression(1));
+            if (chance(50))
+                m_available.append(result);
+            else if (chance(70))
+                set(randomVariable(), result);
+            return;
+        }
+        default: {
+            Value* result = movablePatchpoint(1);
+            if (chance(50))
+                m_available.append(result);
+            else
+                set(randomVariable(), result);
+            return;
+        }
+        }
+    }
+
+    void check()
+    {
+        Value* left = expression(2);
+        ColdOperands cold = coldOperands();
+        CheckValue* result = m_block->appendNew<CheckValue>(m_proc, Check, Origin(), make(Equal, left, constant()));
+        Vector<bool, 3> isInt32 = appendColdOperands(result, cold);
+        result->setGenerator([isInt32, state = &m_state](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg operands = InvalidGPRReg;
+            for (unsigned i = 0; i < GPRInfo::numberOfArgumentRegisters && operands == InvalidGPRReg; ++i) {
+                GPRReg candidate = GPRInfo::toArgumentRegister(i);
+                bool isFree = candidate != GPRInfo::returnValueGPR;
+                for (unsigned j = 0; j < isInt32.size(); ++j)
+                    isFree &= !params[j].isGPR() || params[j].gpr() != candidate;
+                if (isFree)
+                    operands = candidate;
+            }
+            jit.move(CCallHelpers::TrustedImmPtr(state->failedCheckOperands.data()), operands);
+            for (bool storesRegisters : { true, false }) {
+                for (unsigned i = 0; i < isInt32.size(); ++i) {
+                    if (params[i].isReg() != storesRegisters)
+                        continue;
+                    CCallHelpers::Address slot(operands, static_cast<int32_t>(i * sizeof(int64_t)));
+                    if (params[i].isFPR()) {
+                        jit.storeDouble(params[i].fpr(), slot);
+                        continue;
+                    }
+                    GPRReg source = GPRInfo::returnValueGPR;
+                    if (params[i].isGPR())
+                        source = params[i].gpr();
+                    else
+                        params[i].emitRestore(jit, source);
+                    if (isInt32[i])
+                        jit.store32(source, slot);
+                    else
+                        jit.store64(source, slot);
+                }
+            }
+            jit.move(CCallHelpers::TrustedImm64(failedCheckResult), GPRInfo::returnValueGPR);
+            params.code().emitEpilogue(jit);
+        });
+    }
+
+    PatchpointValue* appendPollHandler(Type type)
+    {
+        PatchpointValue* handler = modeled(m_block->appendNew<PatchpointValue>(m_proc, type, Origin()), Model::PollHandler);
+        handler->effects = Effects::none();
+        handler->effects.reads = HeapRange::top();
+        handler->effects.writes = HeapRange::top();
+        handler->numGPScratchRegisters = 1;
+        handler->clobber(RegisterSet::macroClobberedGPRs());
+        handler->setGenerator([state = &m_state.poll, hasResult = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            GPRReg scratch = params.gpScratch(0);
+            jit.move(CCallHelpers::TrustedImmPtr(state), scratch);
+            jit.add64(CCallHelpers::TrustedImm32(1), CCallHelpers::Address(scratch, OBJECT_OFFSETOF(PollState, numberOfStops)));
+            jit.store64(CCallHelpers::TrustedImm32(0), CCallHelpers::Address(scratch, OBJECT_OFFSETOF(PollState, limit)));
+            if (hasResult)
+                jit.move(CCallHelpers::TrustedImm32(0), params[0].gpr());
+        });
+        return handler;
+    }
+
+    void poll()
+    {
+        enum class PollVariant { None, LimitUsedTwice, NonConstantComparand, ConditionUsedTwice, SlowPathNotRare, SharedSlowPath, NoHandler, TwoHandlers, HandlerResultUsed, HandlerUsesLoopValue, ConditionInOtherBlock, SwappedOperands, Count };
+        PollVariant variant = chance(70) ? PollVariant::None : static_cast<PollVariant>(1 + pick(static_cast<unsigned>(PollVariant::Count) - 1));
+
+        BasicBlock* slowPath = newBlock(rareFrequencyScale);
+        BasicBlock* continuation = newBlock();
+        if (variant == PollVariant::SharedSlowPath) {
+            BasicBlock* next = newBlock();
+            branch(condition(1), rarely(slowPath), FrequentedBlock(next));
+            m_block = next;
+        }
+        Value* loopValue = variant == PollVariant::HandlerUsesLoopValue ? make(Add, get(randomVariable()), int64(1)) : nullptr;
+        PatchpointValue* limit = modeled(appendPollLimit(m_graph, m_block, m_state.poll), Model::PollLimit);
+        if (variant == PollVariant::LimitUsedTwice)
+            opaqueUse(limit);
+        if (variant == PollVariant::ConditionInOtherBlock) {
+            BasicBlock* next = newBlock();
+            jump(next);
+            m_block = next;
+        }
+        Value* zero = variant == PollVariant::NonConstantComparand ? opaqueZero() : int64(0);
+        Value* predicate = variant == PollVariant::SwappedOperands ? make(GreaterThan, zero, limit) : make(LessThan, limit, zero);
+        if (variant == PollVariant::ConditionUsedTwice)
+            opaqueUse(predicate);
+        branch(predicate, FrequentedBlock(slowPath, variant == PollVariant::SlowPathNotRare ? FrequencyClass::Normal : FrequencyClass::Rare), FrequentedBlock(continuation));
+
+        m_block = slowPath;
+        if (variant != PollVariant::NoHandler) {
+            PatchpointValue* handler = appendPollHandler(variant == PollVariant::HandlerResultUsed ? Int64 : Void);
+            if (loopValue)
+                handler->append(ConstrainedValue(loopValue, ValueRep::ColdAny));
+            if (variant == PollVariant::HandlerResultUsed)
+                opaqueUse(handler);
+            if (variant == PollVariant::TwoHandlers)
+                appendPollHandler(Void);
+        }
+        jump(continuation);
+        m_block = continuation;
+    }
+
+    void returnStatement()
+    {
+        m_graph.ret(m_block, expression(1));
+        m_block = newBlock();
+    }
+
+    void exitLoop()
+    {
+        Loop& loop = m_loops[chance(85) ? m_loops.size() - 1 : pick(m_loops.size())];
+        switch (pick(5)) {
+        case 0:
+        case 1:
+            jump(loop.breakTarget);
+            break;
+        case 2:
+        case 3:
+            if (loop.headerForExtraLatch && chance(30)) {
+                Value* index = get(loop.index);
+                set(loop.index, make(Add, index, index->type() == Int32 ? int32(static_cast<int32_t>(loop.delta)) : int64(loop.delta)));
+                jump(loop.headerForExtraLatch);
+            } else
+                jump(loop.continueTarget);
+            break;
+        default:
+            m_graph.ret(m_block, expression(1));
+            break;
+        }
+        m_block = newBlock();
+    }
+
+    void branchArm(BasicBlock* block, double scale, unsigned depth, BasicBlock* join)
+    {
+        SetForScope frequency(m_frequency, m_frequency * scale);
+        size_t availableValueCount = m_available.size();
+        bool isRare = scale < 0.1;
+        m_block = block;
+        statements(depth);
+        if (!m_loops.isEmpty() && chance(isRare ? 50 : 15))
+            exitLoop();
+        else if (chance(isRare ? 25 : 4))
+            returnStatement();
+        jump(join);
+        m_available.shrink(availableValueCount);
+    }
+
+    void ifStatement(unsigned depth)
+    {
+        Value* predicate = condition(2);
+        unsigned shape = pick(100);
+        bool thenIsRare = shape < 25;
+        bool hasElse = chance(50);
+        bool elseIsRare = hasElse && shape >= 25 && shape < 35;
+        double scaleOfThen = thenIsRare ? rareFrequencyScale : 0.5;
+        double scaleOfElse = elseIsRare ? rareFrequencyScale : 0.5;
+        BasicBlock* thenBlock = newBlock(scaleOfThen);
+        BasicBlock* join = newBlock();
+        BasicBlock* elseBlock = hasElse ? newBlock(scaleOfElse) : join;
+        branch(predicate, FrequentedBlock(thenBlock, thenIsRare ? FrequencyClass::Rare : FrequencyClass::Normal), FrequentedBlock(elseBlock, elseIsRare ? FrequencyClass::Rare : FrequencyClass::Normal));
+        branchArm(thenBlock, scaleOfThen, depth, join);
+        if (hasElse)
+            branchArm(elseBlock, scaleOfElse, depth, join);
+        m_block = join;
+    }
+
+    void switchStatement(unsigned depth)
+    {
+        Value* subject = expression(2);
+        if (chance(60))
+            subject = make(BitAnd, subject, int64(7));
+        unsigned numberOfCases = 2 + pick(7);
+        int64_t firstCase = pick(4);
+        int64_t stride = 1 + pick(2);
+        double scale = 1.0 / (numberOfCases + 1);
+        BasicBlock* join = newBlock();
+        Vector<BasicBlock*, 10> arms;
+        Vector<int64_t, 10> caseValues;
+        for (unsigned i = 0; i <= numberOfCases; ++i)
+            arms.append(newBlock(scale));
+        for (unsigned i = 0; i < numberOfCases; ++i)
+            caseValues.append(firstCase + i * stride);
+        if (chance(10))
+            caseValues[pick(numberOfCases)] = chance(50) ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
+        for (unsigned begin = 0; begin < numberOfCases;) {
+            unsigned end = chance(60) ? numberOfCases : begin + 1 + pick(numberOfCases - begin);
+            BasicBlock* next = end < numberOfCases ? newBlock() : arms.last();
+            if (chance(50)) {
+                SwitchValue* switchValue = m_block->appendNew<SwitchValue>(m_proc, Origin(), subject);
+                switchValue->setFallThrough(FrequentedBlock(next));
+                for (unsigned i = begin; i < end; ++i)
+                    switchValue->appendCase(SwitchCase(caseValues[i], FrequentedBlock(chance(10) ? arms[pick(arms.size())] : arms[i])));
+            } else {
+                for (unsigned i = begin; i < end; ++i) {
+                    BasicBlock* nextTest = i + 1 < end ? newBlock() : next;
+                    Value* tested = chance(6) ? expression(1) : subject;
+                    int64_t caseValue = chance(6) ? caseValues[pick(numberOfCases)] : caseValues[i];
+                    if (chance(20))
+                        branch(make(NotEqual, tested, int64(caseValue)), FrequentedBlock(nextTest), FrequentedBlock(arms[i]));
+                    else
+                        branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(arms[i]), FrequentedBlock(nextTest));
+                    m_block = nextTest;
+                    if (chance(8))
+                        set(randomVariable(), expression(1));
+                }
+            }
+            m_block = next;
+            begin = end;
+        }
+        for (BasicBlock* block : arms)
+            branchArm(block, scale, std::min(depth, 1u), join);
+        m_block = join;
+    }
+
+    void longEqualityChain()
+    {
+        Value* subject = make(BitAnd, expression(2), int64(255));
+        Value* otherSubject = expression(1);
+        unsigned numberOfTests = 125 + pick(60);
+        unsigned stride = chance(50) ? 1 : 3;
+        unsigned oddTestIndex = chance(50) ? pick(numberOfTests) : numberOfTests;
+        unsigned oddTestKind = pick(3);
+        BasicBlock* join = newBlock();
+        Vector<BasicBlock*, 5> arms;
+        for (unsigned i = 0; i < 5; ++i)
+            arms.append(newBlock(0.2));
+        for (unsigned i = 0; i < numberOfTests; ++i) {
+            BasicBlock* next = i + 1 < numberOfTests ? newBlock() : arms.last();
+            Value* tested = subject;
+            int64_t caseValue = i * stride % 256;
+            if (i == oddTestIndex) {
+                if (!oddTestKind)
+                    tested = otherSubject;
+                else
+                    caseValue = oddTestKind == 1 ? std::numeric_limits<int64_t>::min() : std::numeric_limits<int64_t>::max();
+            }
+            branch(make(Equal, tested, int64(caseValue)), FrequentedBlock(arms[pick(4)]), FrequentedBlock(next));
+            m_block = next;
+        }
+        for (BasicBlock* block : arms)
+            branchArm(block, 0.2, 0, join);
+        m_block = join;
+    }
+
+    void boundsCheckedAccess()
+    {
+        bool reliesOnBoundsCheck = chance(50);
+        Value* index = randomLoopIndex();
+        if (!index || (reliesOnBoundsCheck && chance(30)))
+            index = reliesOnBoundsCheck ? expression(1) : make(BitAnd, expression(1), int64(31));
+        if (chance(25))
+            index = make(Add, index, int64(pick(3)));
+        Value* length;
+        switch (pick(4)) {
+        case 0:
+        case 1:
+            length = loadSmallWord();
+            break;
+        case 2:
+            length = int64(pick(reliesOnBoundsCheck ? wordsPerRegion + 1 : 40));
+            break;
+        default:
+            length = make(BitAnd, get(randomVariable()), int64(31));
+            break;
+        }
+        if (reliesOnBoundsCheck && !length->hasInt64())
+            length = make(BitAnd, length, int64(wordsPerRegion - 1));
+        BasicBlock* outOfBounds = newBlock(rareFrequencyScale);
+        BasicBlock* inBounds = newBlock();
+        BasicBlock* join = newBlock();
+        if (chance(50))
+            branch(make(AboveEqual, index, length), rarely(outOfBounds), FrequentedBlock(inBounds));
+        else
+            branch(make(Below, index, length), FrequentedBlock(inBounds), rarely(outOfBounds));
+
+        m_block = outOfBounds;
+        switch (pick(4)) {
+        case 0:
+            m_graph.ret(m_block, int64(-1));
+            m_block = newBlock();
+            break;
+        case 1:
+            if (!m_loops.isEmpty())
+                exitLoop();
+            break;
+        case 2:
+            set(randomVariable(), expression(1));
+            break;
+        default:
+            break;
+        }
+        jump(join);
+
+        m_block = inBounds;
+        unsigned region = pick(3);
+        int32_t offset = region * wordsPerRegion * sizeof(int64_t);
+        HeapRange range = !region ? firstHeap : region == 1 ? secondHeap : thirdHeap;
+        Value* address = reliesOnBoundsCheck ? make(Add, m_pointer, make(Shl, index, int32(3))) : wordAddress(index);
+        if (region < 2 && chance(40))
+            m_graph.store(m_block, expression(1), address, offset, range);
+        else {
+            Variable* variable = randomVariable();
+            set(variable, make(Add, get(variable), m_graph.load(m_block, Int64, address, offset, range)));
+        }
+        jump(join);
+        m_block = join;
+    }
+
+    void nullCheckedAccess()
+    {
+        Value* pointer = chance(70) ? m_pointerOrNull : m_graph.select(m_block, condition(1), m_pointer, int64(0));
+        BasicBlock* isNull = newBlock(chance(50) ? rareFrequencyScale : 0.5);
+        BasicBlock* isNotNull = newBlock();
+        BasicBlock* join = newBlock();
+        FrequentedBlock ifNull(isNull, chance(50) ? FrequencyClass::Rare : FrequencyClass::Normal);
+        if (chance(50))
+            branch(make(Equal, pointer, int64(0)), ifNull, FrequentedBlock(isNotNull));
+        else
+            branch(pointer, FrequentedBlock(isNotNull), ifNull);
+
+        m_block = isNull;
+        if (chance(30))
+            set(randomVariable(), expression(1));
+        else if (chance(20) && !m_loops.isEmpty())
+            exitLoop();
+        jump(join);
+
+        m_block = isNotNull;
+        unsigned region = pick(3);
+        int32_t offset = (region * wordsPerRegion + pick(chance(60) ? 3 : wordsPerRegion)) * sizeof(int64_t);
+        HeapRange range = !region ? firstHeap : region == 1 ? secondHeap : thirdHeap;
+        if (region < 2 && chance(30))
+            m_graph.store(m_block, expression(1), pointer, offset, range);
+        else {
+            Variable* variable = randomVariable();
+            MemoryValue* loaded = m_graph.load(m_block, Int64, pointer, offset, range);
+            if (region == 2 && chance(50))
+                loaded->setReadsMutability(Mutability::Immutable);
+            set(variable, make(BitXor, get(variable), loaded));
+        }
+        jump(join);
+        m_block = join;
+    }
+
+    void countedLoop(unsigned depth)
+    {
+        enum class Bound { Constant, Invariant, Variable, ImmutableLoad, Load };
+        enum class Next { Plain, WrapsInt32, Saturates };
+
+        bool is32 = chance(30);
+        bool countsDown = chance(25);
+        bool isBottomTested = chance(30);
+        bool isGuarded = isBottomTested && chance(60);
+        bool isLong = m_loops.isEmpty() && chance(3);
+        int64_t mask = isLong ? (1 << 17) - 1 : m_loops.isEmpty() ? 31 : m_loops.size() == 1 ? 7 : 3;
+        int64_t step = chance(70) ? 1 : 2 + pick(2);
+        Bound boundKind = static_cast<Bound>(pick(5));
+        Next nextKind = is32 ? Next::Plain : chance(12) ? Next::WrapsInt32 : chance(8) ? Next::Saturates : Next::Plain;
+        bool mayAdvanceTwice = chance(8);
+        bool hasSecondEntry = !isBottomTested && chance(4);
+        bool mutatesBound = boundKind == Bound::Variable && chance(30);
+        bool pollsInHeader = !isBottomTested && chance(10);
+        bool pollsInBody = !pollsInHeader && chance(35);
+        bool hasVariableStep = !is32 && nextKind == Next::Plain && chance(6);
+
+        bool canUseExactTest = step == 1 && !hasVariableStep && !mayAdvanceTwice && !hasSecondEntry && !mutatesBound && (!isBottomTested || isGuarded);
+        B3::Opcode relation;
+        if (canUseExactTest && (boundKind == Bound::Constant || boundKind == Bound::Invariant) && chance(12))
+            relation = NotEqual;
+        else if (countsDown)
+            relation = canUseExactTest && chance(20) ? Above : chance(50) ? GreaterThan : GreaterEqual;
+        else if (!mutatesBound && chance(30))
+            relation = chance(50) ? Below : BelowEqual;
+        else
+            relation = chance(60) ? LessThan : LessEqual;
+
+        int64_t boundMask = countsDown ? 3 : mask;
+        int64_t constantBound = relation == NotEqual && countsDown ? 0 : pick(boundMask + 1);
+        if (relation == NotEqual && countsDown)
+            boundKind = Bound::Constant;
+        auto maskedExpression = [&](int64_t mask) {
+            Value* result = make(BitAnd, expression(2), int64(mask));
+            if (mask > maxIterationsPerStrip && chance(70))
+                return make(BitOr, result, int64(maxIterationsPerStrip));
+            return result;
+        };
+        Value* invariantBound = nullptr;
+        Variable* boundVariable = nullptr;
+        int32_t boundOffset = 0;
+        switch (boundKind) {
+        case Bound::Constant:
+            break;
+        case Bound::Invariant:
+            invariantBound = maskedExpression(boundMask);
+            break;
+        case Bound::Variable:
+            boundVariable = m_proc.addVariable(Int64);
+            set(boundVariable, maskedExpression(boundMask));
+            break;
+        case Bound::ImmutableLoad:
+            boundOffset = (2 * wordsPerRegion + pick(wordsPerRegion)) * sizeof(int64_t);
+            break;
+        case Bound::Load:
+            boundOffset = pick(2 * wordsPerRegion) * sizeof(int64_t);
+            break;
+        }
+
+        Variable* index = m_proc.addVariable(is32 ? Int32 : Int64);
+        int64_t delta = countsDown ? -step : step;
+        auto integer = [&](int64_t value) {
+            return is32 ? int32(static_cast<int32_t>(value)) : int64(value);
+        };
+        auto toIndexType = [&](Value* value) {
+            return is32 ? make(Trunc, value) : value;
+        };
+        auto bound = [&]() -> Value* {
+            switch (boundKind) {
+            case Bound::Constant:
+                return integer(constantBound);
+            case Bound::Invariant:
+                return toIndexType(invariantBound);
+            case Bound::Variable:
+                return toIndexType(get(boundVariable));
+            case Bound::ImmutableLoad:
+                return toIndexType(make(BitAnd, m_graph.load(m_block, Int64, m_pointer, boundOffset, thirdHeap), int64(boundMask)));
+            case Bound::Load:
+                return toIndexType(make(BitAnd, m_graph.load(m_block, Int64, m_pointer, boundOffset, bothHeaps), int64(boundMask)));
+            }
+            RELEASE_ASSERT_NOT_REACHED();
+            return nullptr;
+        };
+        auto test = [&](BasicBlock* staying, BasicBlock* leaving) {
+            Value* left = get(index);
+            Value* right = bound();
+            B3::Opcode opcode = relation;
+            if (chance(20)) {
+                std::swap(left, right);
+                opcode = relationWithSwappedOperands(opcode);
+            }
+            FrequentedBlock stay(staying);
+            FrequentedBlock exit(leaving, chance(10) ? FrequencyClass::Rare : FrequencyClass::Normal);
+            if (chance(25))
+                branch(make(negatedRelation(opcode), left, right), exit, stay);
+            else
+                branch(make(opcode, left, right), stay, exit);
+        };
+        auto advance = [&] {
+            Value* current = get(index);
+            if (hasVariableStep) {
+                Value* amount = make(BitOr, make(BitAnd, expression(1), int64(3)), int64(1));
+                set(index, make(countsDown ? Sub : Add, current, amount));
+                return;
+            }
+            Value* next = countsDown && chance(50) ? make(Sub, current, integer(step)) : make(Add, current, integer(delta));
+            switch (nextKind) {
+            case Next::Plain:
+                set(index, next);
+                return;
+            case Next::WrapsInt32:
+                set(index, make(SExt32, make(Trunc, next)));
+                return;
+            case Next::Saturates: {
+                int64_t limit = countsDown ? -(1ll << 40) : 1ll << 40;
+                BasicBlock* saturated = newBlock(rareFrequencyScale);
+                BasicBlock* usual = newBlock();
+                BasicBlock* join = newBlock();
+                branch(make(countsDown ? LessThan : GreaterThan, next, int64(limit)), rarely(saturated), FrequentedBlock(usual));
+                m_block = saturated;
+                set(index, int64(limit));
+                jump(join);
+                m_block = usual;
+                set(index, next);
+                jump(join);
+                m_block = join;
+                return;
+            }
+            }
+        };
+
+        if (countsDown)
+            set(index, toIndexType(maskedExpression(mask)));
+        else
+            set(index, relation == NotEqual || chance(60) ? integer(0) : chance(50) ? integer(pick(4)) : toIndexType(make(BitAnd, expression(1), int64(3))));
+
+        BasicBlock* exit = newBlock();
+        size_t availableValueCount = m_available.size();
+        {
+            SetForScope frequency(m_frequency, m_frequency * loopFrequencyScale);
+            SetForScope isInLongLoop(m_isInLongLoop, isLong);
+            BasicBlock* header = isBottomTested ? nullptr : newBlock();
+            BasicBlock* body = newBlock();
+            BasicBlock* latch = newBlock();
+            if (isGuarded)
+                test(body, exit);
+            else if (isBottomTested)
+                jump(body);
+            else if (hasSecondEntry)
+                branch(condition(1), FrequentedBlock(body), FrequentedBlock(header));
+            else
+                jump(header);
+            if (header) {
+                m_block = header;
+                if (pollsInHeader)
+                    poll();
+                test(body, exit);
+            }
+
+            m_block = body;
+            if (pollsInBody)
+                poll();
+            m_loops.append(Loop { latch, exit, nextKind == Next::Plain && !hasVariableStep ? header : nullptr, index, delta });
+            statements(isLong ? 0 : depth);
+            m_loops.removeLast();
+            if (mayAdvanceTwice) {
+                BasicBlock* again = newBlock(0.5);
+                BasicBlock* join = newBlock();
+                branch(condition(1), FrequentedBlock(again), FrequentedBlock(join));
+                m_block = again;
+                set(index, make(Add, get(index), integer(delta)));
+                jump(join);
+                m_block = join;
+            }
+            if (mutatesBound)
+                set(boundVariable, make(Add, get(boundVariable), int64(countsDown ? 1 : -1)));
+            jump(latch);
+
+            m_available.shrink(availableValueCount);
+            m_block = latch;
+            advance();
+            if (header)
+                jump(header);
+            else
+                test(body, exit);
+        }
+        m_available.shrink(availableValueCount);
+        m_block = exit;
+    }
+
+    void fuelBoundedLoop(unsigned depth)
+    {
+        static constexpr B3::Opcode relations[] = { Equal, NotEqual, LessThan, GreaterThan, LessEqual, GreaterEqual, Above, Below, AboveEqual, BelowEqual };
+        static constexpr int64_t steps[] = { 0, 1, -1, 2, -2, 3, maxIterationsPerStrip, -maxIterationsPerStrip, maxIterationsPerStrip + 1, -maxIterationsPerStrip - 1, 100000, 1ll << 40, std::numeric_limits<int64_t>::min(), std::numeric_limits<int64_t>::max() };
+        enum class Next { AddStep, AddStepToOtherValue, AddNonConstant, DoubleIndex, SubtractFromBound, WrapsInt32, SaturateAtInt64Limit, Count };
+
+        B3::Opcode relation = relations[pick(std::size(relations))];
+        int64_t step = steps[pick(std::size(steps))];
+        Next nextKind = chance(50) ? Next::AddStep : static_cast<Next>(pick(static_cast<unsigned>(Next::Count)));
+        bool isBottomTested = chance(40);
+        bool isGuarded = isBottomTested && chance(50);
+        bool boundIsInvariant = chance(75);
+        bool spendsFuelFirst = chance(50);
+
+        Variable* fuel = m_proc.addVariable(Int64);
+        Variable* index = m_proc.addVariable(Int64);
+        Variable* boundVariable = m_proc.addVariable(Int64);
+        set(fuel, make(Add, make(BitAnd, expression(1), int64(m_loops.isEmpty() ? 31 : 3)), int64(1)));
+        set(index, expression(2));
+        Value* invariantBound = expression(2);
+        set(boundVariable, invariantBound);
+
+        auto bound = [&] {
+            return boundIsInvariant ? invariantBound : get(boundVariable);
+        };
+        auto test = [&](BasicBlock* staying, BasicBlock* leaving) {
+            Value* left = get(index);
+            Value* right = bound();
+            if (chance(25))
+                branch(make(negatedRelation(relation), left, right), FrequentedBlock(leaving), FrequentedBlock(staying));
+            else
+                branch(make(relation, left, right), FrequentedBlock(staying), FrequentedBlock(leaving));
+        };
+        auto spendFuel = [&](BasicBlock* exit) {
+            BasicBlock* next = newBlock();
+            set(fuel, make(Sub, get(fuel), int64(1)));
+            branch(make(Equal, get(fuel), int64(0)), FrequentedBlock(exit, chance(50) ? FrequencyClass::Rare : FrequencyClass::Normal), FrequentedBlock(next));
+            m_block = next;
+        };
+
+        BasicBlock* exit = newBlock();
+        size_t availableValueCount = m_available.size();
+        {
+            SetForScope frequency(m_frequency, m_frequency * loopFrequencyScale);
+            BasicBlock* header = isBottomTested ? nullptr : newBlock();
+            BasicBlock* body = newBlock();
+            BasicBlock* latch = newBlock();
+            if (isGuarded)
+                test(body, exit);
+            else if (chance(8))
+                branch(condition(1), FrequentedBlock(latch), FrequentedBlock(header ? header : body));
+            else
+                jump(header ? header : body);
+            if (header) {
+                m_block = header;
+                test(body, exit);
+            }
+            m_block = body;
+            if (spendsFuelFirst)
+                spendFuel(exit);
+            if (chance(35))
+                poll();
+            m_loops.append(Loop { latch, exit, nullptr, index, 0 });
+            statements(depth);
+            m_loops.removeLast();
+            if (!boundIsInvariant && chance(50))
+                set(boundVariable, expression(1));
+            jump(latch);
+
+            m_available.shrink(availableValueCount);
+            m_block = latch;
+            if (!spendsFuelFirst)
+                spendFuel(exit);
+            Value* current = get(index);
+            switch (nextKind) {
+            case Next::AddStep:
+                set(index, make(Add, current, int64(step)));
+                break;
+            case Next::AddStepToOtherValue:
+                set(index, make(Add, get(randomVariable()), int64(step)));
+                break;
+            case Next::AddNonConstant:
+                set(index, make(Add, current, expression(1)));
+                break;
+            case Next::DoubleIndex:
+                set(index, make(Add, current, current));
+                break;
+            case Next::SubtractFromBound:
+                set(index, make(Sub, bound(), current));
+                break;
+            case Next::WrapsInt32:
+                set(index, make(SExt32, make(Trunc, make(Add, current, int64(step)))));
+                break;
+            case Next::SaturateAtInt64Limit: {
+                int64_t limit = chance(50) ? std::numeric_limits<int64_t>::max() : chance(50) ? std::numeric_limits<int64_t>::min() : 20;
+                Value* next = make(Add, current, int64(step));
+                BasicBlock* saturated = newBlock(rareFrequencyScale);
+                BasicBlock* usual = newBlock();
+                BasicBlock* join = newBlock();
+                branch(make(step < 0 ? LessThan : GreaterThan, next, int64(limit)), rarely(saturated), FrequentedBlock(usual));
+                m_block = saturated;
+                set(index, int64(limit));
+                jump(join);
+                m_block = usual;
+                set(index, next);
+                jump(join);
+                m_block = join;
+                break;
+            }
+            case Next::Count:
+                RELEASE_ASSERT_NOT_REACHED();
+            }
+            if (header)
+                jump(header);
+            else
+                test(body, exit);
+        }
+        m_available.shrink(availableValueCount);
+        m_block = exit;
+    }
+
+    void flagTestedAfterJoin(unsigned depth)
+    {
+        Variable* flag = randomVariable();
+        int64_t first = pick(3);
+        int64_t second = pick(3);
+        BasicBlock* thenBlock = newBlock(0.5);
+        BasicBlock* elseBlock = newBlock(0.5);
+        BasicBlock* join = newBlock();
+        Value* tested = expression(1);
+        branch(make(chance(50) ? LessThan : Equal, tested, constant()), FrequentedBlock(thenBlock), FrequentedBlock(elseBlock));
+        m_block = thenBlock;
+        set(flag, int64(first));
+        jump(join);
+        m_block = elseBlock;
+        set(flag, chance(70) ? int64(second) : expression(1));
+        jump(join);
+        m_block = join;
+        BasicBlock* taken = newBlock(0.5);
+        BasicBlock* after = newBlock();
+        Value* seen = get(flag);
+        if (chance(30))
+            seen = make(chance(50) ? Add : BitXor, seen, int64(1));
+        static constexpr B3::Opcode relations[] = { Equal, NotEqual, LessThan, GreaterEqual, Below };
+        Value* predicate = chance(30) ? seen : make(relations[pick(std::size(relations))], seen, int64(pick(3)));
+        if (chance(20))
+            predicate = make(Equal, predicate, predicate->type() == Int32 ? int32(0) : int64(0));
+        branch(predicate, FrequentedBlock(taken), FrequentedBlock(after));
+        branchArm(taken, 0.5, depth, after);
+        m_block = after;
+    }
+
+    void branchToSameBlock()
+    {
+        BasicBlock* next = newBlock();
+        branch(condition(1), FrequentedBlock(next), FrequentedBlock(next));
+        m_block = next;
+    }
+
+    void whileLoop(unsigned depth)
+    {
+        Variable* fuel = m_proc.addVariable(Int64);
+        set(fuel, make(Add, make(BitAnd, expression(1), int64(m_loops.isEmpty() ? 15 : 3)), int64(1)));
+        BasicBlock* exit = newBlock();
+        size_t availableValueCount = m_available.size();
+        {
+            SetForScope frequency(m_frequency, m_frequency * loopFrequencyScale);
+            BasicBlock* header = newBlock();
+            BasicBlock* body = newBlock();
+            BasicBlock* end = newBlock();
+            if (chance(8))
+                branch(condition(1), FrequentedBlock(chance(50) ? body : end), FrequentedBlock(header));
+            else
+                jump(header);
+            m_block = header;
+            if (chance(80))
+                branch(condition(2), FrequentedBlock(body), FrequentedBlock(exit, chance(15) ? FrequencyClass::Rare : FrequencyClass::Normal));
+            else
+                jump(body);
+            m_block = body;
+            if (chance(30))
+                poll();
+            m_loops.append(Loop { end, exit, nullptr, nullptr, 0 });
+            statements(depth);
+            m_loops.removeLast();
+            jump(end);
+            m_block = end;
+            set(fuel, make(Sub, get(fuel), int64(1)));
+            branch(make(NotEqual, get(fuel), int64(0)), FrequentedBlock(header), FrequentedBlock(exit));
+        }
+        m_available.shrink(availableValueCount);
+        m_block = exit;
+    }
+
+    void statements(unsigned depth)
+    {
+        unsigned count = 1 + pick(5);
+        for (unsigned i = 0; i < count && m_statementsLeft; ++i) {
+            --m_statementsLeft;
+            statement(depth);
+        }
+    }
+
+    void statement(unsigned depth)
+    {
+        unsigned kind = pick(100);
+        bool mayNestLoop = depth && m_loops.size() < 3 && !m_isInLongLoop;
+        if (kind < 1)
+            storeBurst();
+        else if (kind < 10)
+            store();
+        else if (kind < 16)
+            m_available.append(expression(2));
+        else if (kind < 22)
+            patchpoint();
+        else if (kind < 23)
+            check();
+        else if (kind < 40 && depth)
+            ifStatement(depth - 1);
+        else if (kind < 56 && mayNestLoop)
+            countedLoop(depth - 1);
+        else if (kind < 61 && mayNestLoop)
+            fuelBoundedLoop(depth - 1);
+        else if (kind < 65 && mayNestLoop)
+            whileLoop(depth - 1);
+        else if (kind < 71 && depth)
+            switchStatement(depth - 1);
+        else if (kind < 75 && depth)
+            flagTestedAfterJoin(depth - 1);
+        else if (kind < 76) {
+            if (depth == 3 && chance(25))
+                longEqualityChain();
+            else
+                branchToSameBlock();
+        }
+        else if (kind < 82)
+            boundsCheckedAccess();
+        else if (kind < 86)
+            nullCheckedAccess();
+        else
+            set(randomVariable(), expression(3));
+    }
+
+    Graph m_graph;
+    Procedure& m_proc;
+    WeakRandom m_random;
+    WeakRandom m_coldOperandRandom;
+    RandomProgramState& m_state;
+    bool m_hasCallShapes;
+    bool m_isForPlainPipeline;
+    bool m_isForLevel0;
+    PatchpointModels* m_models;
+    BasicBlock* m_block { nullptr };
+    double m_frequency { 1 };
+    unsigned m_statementsLeft { 0 };
+    int32_t m_observablePatchpointCount { 0 };
+    bool m_isInLongLoop { false };
+    std::array<Value*, 2> m_arguments;
+    Value* m_pointer { nullptr };
+    Value* m_pointerOrNull { nullptr };
+    Vector<Variable*, 12> m_variables;
+    Vector<Value*> m_available;
+    Vector<Loop, 4> m_loops;
+};
+
+class RandomProgramEvaluator {
+public:
+    RandomProgramEvaluator(Procedure& proc, const PatchpointModels& models, RandomProgramState& state)
+        : m_proc(proc)
+        , m_models(models)
+        , m_state(state)
+    {
+        m_values.fill(0, proc.values().size());
+        m_variables.fill(0, proc.variables().size());
+    }
+
+    int64_t run(int64_t first, int64_t* pointer, int64_t second)
+    {
+        m_arguments = { static_cast<uint64_t>(first), std::bit_cast<uint64_t>(pointer), static_cast<uint64_t>(second) };
+        BasicBlock* block = m_proc.at(0);
+        for (;;) {
+            for (Value* value : *block)
+                evaluate(value);
+            if (m_isDone)
+                return m_result;
+            block = block->successorBlock(m_successor);
+        }
+    }
+
+private:
+    uint64_t in(Value* value, unsigned index) const { return m_values[value->child(index)->index()]; }
+    double number(Value* value, unsigned index) const { return std::bit_cast<double>(in(value, index)); }
+    int64_t integer(Value* value, unsigned index) const
+    {
+        uint64_t bits = in(value, index);
+        return value->child(index)->type() == Int32 ? static_cast<int32_t>(bits) : static_cast<int64_t>(bits);
+    }
+
+    void set(Value* value, uint64_t bits) { m_values[value->index()] = value->type() == Int32 ? static_cast<uint32_t>(bits) : bits; }
+    void set(Value* value, double result) { m_values[value->index()] = std::bit_cast<uint64_t>(result); }
+
+    void finish(int64_t result)
+    {
+        m_isDone = true;
+        m_result = result;
+    }
+
+    template<typename T>
+    static T& at(uint64_t address) { return *std::bit_cast<T*>(address); }
+
+    static int64_t truncate(double value)
+    {
+        constexpr double limit = 9223372036854775808.0;
+        if (value >= -limit && value < limit)
+            return static_cast<int64_t>(value);
+        if (isX86() || value < 0)
+            return std::numeric_limits<int64_t>::min();
+        return value != value ? 0 : std::numeric_limits<int64_t>::max();
+    }
+
+    template<typename Functor>
+    void arithmetic(Value* value, const Functor& functor)
+    {
+        if (value->type() == Double)
+            set(value, functor(number(value, 0), number(value, 1)));
+        else
+            set(value, functor(in(value, 0), in(value, 1)));
+    }
+
+    template<typename Functor>
+    void compare(Value* value, const Functor& functor)
+    {
+        if (value->child(0)->type() == Double)
+            set(value, static_cast<uint64_t>(functor(number(value, 0), number(value, 1))));
+        else
+            set(value, static_cast<uint64_t>(functor(integer(value, 0), integer(value, 1))));
+    }
+
+    template<typename Functor>
+    void compareUnsigned(Value* value, const Functor& functor) { set(value, static_cast<uint64_t>(functor(in(value, 0), in(value, 1)))); }
+
+    void evaluatePatchpoint(Value* value)
+    {
+        PatchpointModel model = m_models.get(value);
+        switch (model.kind) {
+        case PatchpointModel::Kind::Nothing:
+            return;
+        case PatchpointModel::Kind::Constant:
+            set(value, static_cast<uint64_t>(model.immediate));
+            return;
+        case PatchpointModel::Kind::AddConstant:
+            set(value, in(value, 0) + static_cast<uint64_t>(model.immediate));
+            return;
+        case PatchpointModel::Kind::LoadWord:
+            set(value, at<uint64_t>(in(value, 0) + model.immediate));
+            return;
+        case PatchpointModel::Kind::IncrementWord:
+            ++at<uint64_t>(in(value, 0) + model.immediate);
+            return;
+        case PatchpointModel::Kind::TruncateDouble:
+            set(value, static_cast<uint64_t>(truncate(number(value, 0))));
+            return;
+        case PatchpointModel::Kind::Observable: {
+            uint64_t hash = static_cast<uint64_t>(m_state.effectHash) * 3 + static_cast<uint64_t>(model.immediate) + in(value, 0);
+            for (unsigned i = 1; i < value->numChildren(); ++i)
+                hash = hash * 2 + in(value, i);
+            m_state.effectHash = static_cast<int64_t>(hash);
+            set(value, in(value, 0) + 3);
+            m_successor = static_cast<unsigned>(in(value, 0) & 1);
+            return;
+        }
+        case PatchpointModel::Kind::PollLimit:
+            ++m_state.poll.numberOfPolls;
+            set(value, static_cast<uint64_t>(m_state.poll.limit));
+            return;
+        case PatchpointModel::Kind::PollHandler:
+            ++m_state.poll.numberOfStops;
+            m_state.poll.limit = 0;
+            if (value->type() != Void)
+                set(value, static_cast<uint64_t>(0));
+            return;
+        }
+    }
+
+    void evaluate(Value* value)
+    {
+        if (m_isDone)
+            return;
+        switch (value->opcode()) {
+        case Nop:
+        case Fence:
+            return;
+        case Identity:
+        case Opaque:
+        case BitwiseCast:
+        case Trunc:
+        case ZExt32:
+            set(value, in(value, 0));
+            return;
+        case Const32:
+            set(value, static_cast<uint64_t>(value->asInt32()));
+            return;
+        case Const64:
+            set(value, static_cast<uint64_t>(value->asInt64()));
+            return;
+        case ConstDouble:
+            set(value, value->asDouble());
+            return;
+        case ArgumentReg:
+            for (unsigned i = 0; i < m_arguments.size(); ++i) {
+                if (value->as<ArgumentRegValue>()->argumentReg() == Reg(GPRInfo::toArgumentRegister(i)))
+                    set(value, m_arguments[i]);
+            }
+            return;
+        case B3::Get:
+            set(value, m_variables[value->as<VariableValue>()->variable()->index()]);
+            return;
+        case B3::Set:
+            m_variables[value->as<VariableValue>()->variable()->index()] = in(value, 0);
+            return;
+        case Add:
+            arithmetic(value, [](auto left, auto right) { return left + right; });
+            return;
+        case Sub:
+            arithmetic(value, [](auto left, auto right) { return left - right; });
+            return;
+        case Mul:
+            arithmetic(value, [](auto left, auto right) { return left * right; });
+            return;
+        case Div:
+            RELEASE_ASSERT(value->kind().isChill() && value->type() == Int64);
+            set(value, static_cast<uint64_t>(chillDiv(integer(value, 0), integer(value, 1))));
+            return;
+        case Mod:
+            RELEASE_ASSERT(value->kind().isChill() && value->type() == Int64);
+            set(value, static_cast<uint64_t>(chillMod(integer(value, 0), integer(value, 1))));
+            return;
+        case Neg:
+            if (value->type() == Double)
+                set(value, -number(value, 0));
+            else
+                set(value, -in(value, 0));
+            return;
+        case Abs:
+            set(value, std::fabs(number(value, 0)));
+            return;
+        case BitAnd:
+            set(value, in(value, 0) & in(value, 1));
+            return;
+        case BitOr:
+            set(value, in(value, 0) | in(value, 1));
+            return;
+        case BitXor:
+            set(value, in(value, 0) ^ in(value, 1));
+            return;
+        case Shl:
+            set(value, in(value, 0) << (in(value, 1) & (value->type() == Int32 ? 31 : 63)));
+            return;
+        case SShr:
+            set(value, static_cast<uint64_t>(integer(value, 0) >> (in(value, 1) & (value->type() == Int32 ? 31 : 63))));
+            return;
+        case ZShr:
+            set(value, in(value, 0) >> (in(value, 1) & (value->type() == Int32 ? 31 : 63)));
+            return;
+        case SExt8:
+            set(value, static_cast<uint64_t>(static_cast<int64_t>(static_cast<int8_t>(in(value, 0)))));
+            return;
+        case SExt16:
+            set(value, static_cast<uint64_t>(static_cast<int64_t>(static_cast<int16_t>(in(value, 0)))));
+            return;
+        case SExt32:
+            set(value, static_cast<uint64_t>(integer(value, 0)));
+            return;
+        case IToD:
+            set(value, static_cast<double>(integer(value, 0)));
+            return;
+        case Equal:
+            compare(value, [](auto left, auto right) { return left == right; });
+            return;
+        case NotEqual:
+            compare(value, [](auto left, auto right) { return left != right; });
+            return;
+        case LessThan:
+            compare(value, [](auto left, auto right) { return left < right; });
+            return;
+        case GreaterThan:
+            compare(value, [](auto left, auto right) { return left > right; });
+            return;
+        case LessEqual:
+            compare(value, [](auto left, auto right) { return left <= right; });
+            return;
+        case GreaterEqual:
+            compare(value, [](auto left, auto right) { return left >= right; });
+            return;
+        case Above:
+            compareUnsigned(value, [](uint64_t left, uint64_t right) { return left > right; });
+            return;
+        case Below:
+            compareUnsigned(value, [](uint64_t left, uint64_t right) { return left < right; });
+            return;
+        case AboveEqual:
+            compareUnsigned(value, [](uint64_t left, uint64_t right) { return left >= right; });
+            return;
+        case BelowEqual:
+            compareUnsigned(value, [](uint64_t left, uint64_t right) { return left <= right; });
+            return;
+        case Select:
+            set(value, in(value, 0) ? in(value, 1) : in(value, 2));
+            return;
+        case Load: {
+            uint64_t address = in(value, 0) + value->as<MemoryValue>()->offset();
+            set(value, value->type() == Int32 ? at<uint32_t>(address) : at<uint64_t>(address));
+            return;
+        }
+        case Load8Z:
+            set(value, static_cast<uint64_t>(at<uint8_t>(in(value, 0) + value->as<MemoryValue>()->offset())));
+            return;
+        case Load8S:
+            set(value, static_cast<uint64_t>(static_cast<int64_t>(at<int8_t>(in(value, 0) + value->as<MemoryValue>()->offset()))));
+            return;
+        case Load16Z:
+            set(value, static_cast<uint64_t>(at<uint16_t>(in(value, 0) + value->as<MemoryValue>()->offset())));
+            return;
+        case Load16S:
+            set(value, static_cast<uint64_t>(static_cast<int64_t>(at<int16_t>(in(value, 0) + value->as<MemoryValue>()->offset()))));
+            return;
+        case Store: {
+            uint64_t address = in(value, 1) + value->as<MemoryValue>()->offset();
+            if (value->child(0)->type() == Int32)
+                at<uint32_t>(address) = static_cast<uint32_t>(in(value, 0));
+            else
+                at<uint64_t>(address) = in(value, 0);
+            return;
+        }
+        case Store8:
+            at<uint8_t>(in(value, 1) + value->as<MemoryValue>()->offset()) = static_cast<uint8_t>(in(value, 0));
+            return;
+        case Store16:
+            at<uint16_t>(in(value, 1) + value->as<MemoryValue>()->offset()) = static_cast<uint16_t>(in(value, 0));
+            return;
+        case CCall:
+            set(value, static_cast<uint64_t>(randomProgramCallee(std::bit_cast<RandomProgramState*>(in(value, 1)), static_cast<int64_t>(in(value, 2)))));
+            return;
+        case Patchpoint:
+            evaluatePatchpoint(value);
+            return;
+        case Check:
+            if (!in(value, 0))
+                return;
+            for (unsigned i = 1; i < value->numChildren(); ++i)
+                m_state.failedCheckOperands[i - 1] = static_cast<int64_t>(in(value, i));
+            finish(RandomProgram::failedCheckResult);
+            return;
+        case Jump:
+            m_successor = 0;
+            return;
+        case Branch:
+            m_successor = !in(value, 0);
+            return;
+        case Switch: {
+            SwitchValue* switchValue = value->as<SwitchValue>();
+            m_successor = switchValue->numCaseValues();
+            for (unsigned i = 0; i < switchValue->numCaseValues(); ++i) {
+                if (switchValue->caseValue(i) == integer(value, 0))
+                    m_successor = i;
+            }
+            return;
+        }
+        case Return:
+            finish(static_cast<int64_t>(in(value, 0)));
+            return;
+        default:
+            dataLogLn("The evaluator does not know ", deepDump(m_proc, value));
+            RELEASE_ASSERT_NOT_REACHED();
+        }
+    }
+
+    Procedure& m_proc;
+    const PatchpointModels& m_models;
+    RandomProgramState& m_state;
+    Vector<uint64_t> m_values;
+    Vector<uint64_t> m_variables;
+    std::array<uint64_t, 3> m_arguments { };
+    unsigned m_successor { 0 };
+    bool m_isDone { false };
+    int64_t m_result { 0 };
+};
+
+class RandomProgramChecker {
+public:
+    explicit RandomProgramChecker(unsigned seed, bool hasCallShapes = true)
+        : m_seed(seed)
+        , m_hasCallShapes(hasCallShapes)
+        , m_random(seed + 0x9e3779b9u)
+    {
+    }
+
+    void run()
+    {
+        Version reference;
+        reference.name = "at level 0"_s;
+        RandomProgram(reference.proc, m_seed, reference.state, m_hasCallShapes, true, true);
+        m_callSiteCount = numberOfValues(reference.proc, hasCallSite);
+        m_hasChecks = numberOfValues(reference.proc, Check);
+        checkCycleForest(reference.proc);
+        reference.code = compileProc(reference.proc, 0);
+
+        Version evaluated;
+        evaluated.name = "when evaluated"_s;
+        PatchpointModels models;
+        RandomProgram(evaluated.proc, m_seed, evaluated.state, m_hasCallShapes, true, false, &models);
+
+        Version versions[5];
+        for (auto& version : std::span(versions).first(4)) {
+            RandomProgram(version.proc, m_seed, version.state, m_hasCallShapes, !compilesAsDriverDoes, &version == &versions[2]);
+            version.proc.setPositionIndependent();
+            version.proc.setMaterializesConstantsByFrequency();
+            version.proc.setRotatesLoops();
+            if (chance(70)) {
+                version.proc.code().setChargesForCalleeSaves();
+                version.proc.code().setLaysRareBlocksInGaps();
+                version.proc.code().setNotesStartOfRareCode();
+            }
+            if (chance(50)) {
+                version.proc.pinRegister(GPRInfo::numberTagRegister);
+                version.proc.pinRegister(GPRInfo::notCellMaskRegister);
+            }
+            version.proc.setLastPhase(createSharedTask<void(Procedure&)>([&](Procedure& optimized) {
+                didRunPhase(optimized, version.name);
+            }));
+        }
+        versions[0].name = "at level 2"_s;
+        versions[0].code = compileAsDriverDoes(versions[0].proc, 2);
+        versions[1].name = "at level 1"_s;
+        versions[1].code = compileAsDriverDoes(versions[1].proc, 1);
+        versions[2].name = "after a random subset of the phases, then at level 0"_s;
+        runRandomPhases(versions[2].proc, versions[2].name);
+        versions[2].code = compileAsDriverDoes(versions[2].proc, 0);
+        versions[3].name = "after a random subset of the phases, then at level 2"_s;
+        runRandomPhases(versions[3].proc, versions[3].name);
+        versions[3].code = compileAsDriverDoes(versions[3].proc, 2);
+        versions[4].name = "at level 2, not position-independent"_s;
+        RandomProgram(versions[4].proc, m_seed, versions[4].state, m_hasCallShapes, true, false);
+        versions[4].code = compileProc(versions[4].proc, 2);
+
+        static constexpr int64_t arguments[] = { 0, 1, -1, 2, 5, 13, 31, 100, 65537, 0x7fffffff, -0x80000000ll, 0x123456789ll, std::numeric_limits<int64_t>::min() };
+        for (unsigned round = 0; round < 6; ++round) {
+            Vector<int64_t> memory(RandomProgram::numberOfWords);
+            for (unsigned i = 0; i < memory.size(); ++i) {
+                bool isSmall = i >= 2 * RandomProgram::wordsPerRegion && i < 2 * RandomProgram::wordsPerRegion + RandomProgram::numberOfSmallWords;
+                if (isSmall || m_random.getUint32(3))
+                    memory[i] = m_random.getUint32(40);
+                else
+                    memory[i] = static_cast<int64_t>(static_cast<uint64_t>(m_random.getUint32()) << 32 | m_random.getUint32());
+            }
+            int64_t first = arguments[m_random.getUint32(std::size(arguments))];
+            int64_t second = arguments[m_random.getUint32(std::size(arguments))];
+            int64_t limit = round & 1 ? -1 : 0;
+
+            reference.call(first, second, memory, limit);
+            evaluated.evaluate(models, first, second, memory, limit);
+            if (!evaluated.agreesWith(reference))
+                fail(differenceBetween(reference, evaluated, first, second, round));
+            for (auto& version : versions) {
+                version.call(first, second, memory, limit);
+                if (version.agreesWith(reference))
+                    continue;
+                fail(differenceBetween(reference, version, first, second, round));
+            }
+        }
+    }
+
+private:
+#if ENABLE(AOT)
+    static constexpr bool compilesAsDriverDoes = true;
+#else
+    static constexpr bool compilesAsDriverDoes = false;
+#endif
+
+    std::unique_ptr<Compilation> compileAsDriverDoes(Procedure& proc, unsigned level)
+    {
+#if ENABLE(AOT)
+        proc.setOptLevel(level);
+        generateToAir(proc);
+        AOT::Typed::placeResultsOfInvokes(proc.code());
+        Air::prepareForGeneration(proc.code());
+        if (level) {
+            AOT::Typed::resequenceMovesBeforePatches(proc.code());
+            AOT::Typed::mergeIdenticalBlocks(proc.code());
+            if (chance(50))
+                AOT::Typed::returnInPlaceOfJumpingToAReturn(proc.code());
+        }
+        CCallHelpers jit;
+        generate(proc, jit);
+        LinkBuffer linkBuffer(jit, nullptr);
+        return makeUnique<Compilation>(FINALIZE_CODE(linkBuffer, JITCompilationPtrTag, nullptr, "Compilation"), proc.releaseByproducts());
+#else
+        return compileProc(proc, level);
+#endif
+    }
+
+    struct Version {
+        void prepare(const Vector<int64_t>& initialMemory, int64_t limit)
+        {
+            memory.fill(guardWord, initialMemory.size() + 2 * RandomProgram::numberOfGuardWords);
+            for (unsigned i = 0; i < initialMemory.size(); ++i)
+                memory[RandomProgram::numberOfGuardWords + i] = initialMemory[i];
+            state = { };
+            state.poll.limit = limit;
+        }
+
+        void call(int64_t first, int64_t second, const Vector<int64_t>& initialMemory, int64_t limit)
+        {
+            prepare(initialMemory, limit);
+            result = invoke<int64_t>(*code, first, memory.mutableSpan().subspan(RandomProgram::numberOfGuardWords).data(), second);
+        }
+
+        void evaluate(const PatchpointModels& models, int64_t first, int64_t second, const Vector<int64_t>& initialMemory, int64_t limit)
+        {
+            prepare(initialMemory, limit);
+            result = RandomProgramEvaluator(proc, models, state).run(first, memory.mutableSpan().subspan(RandomProgram::numberOfGuardWords).data(), second);
+        }
+
+        bool hasIntactGuards() const
+        {
+            for (unsigned i = 0; i < RandomProgram::numberOfGuardWords; ++i) {
+                if (memory[i] != guardWord || memory[memory.size() - 1 - i] != guardWord)
+                    return false;
+            }
+            return true;
+        }
+
+        bool agreesWith(const Version& reference) const
+        {
+            return result == reference.result && memory == reference.memory && hasIntactGuards()
+                && state.effectHash == reference.state.effectHash && state.failedCheckOperands == reference.state.failedCheckOperands;
+        }
+
+        static constexpr int64_t guardWord = 0x5a5a5a5a5a5a5a5all;
+
+        ASCIILiteral name;
+        Procedure proc;
+        RandomProgramState state;
+        std::unique_ptr<Compilation> code;
+        Vector<int64_t> memory;
+        int64_t result { 0 };
+    };
+
+    static String differenceBetween(const Version& reference, const Version& version, int64_t first, int64_t second, unsigned round)
+    {
+        return makeString("called with "_s, first, " and "_s, second, " in round "_s, round, " returned "_s, reference.result, ' ', reference.name, " but "_s, version.result, ' ', version.name, "; effect hashes: "_s, reference.state.effectHash, " and "_s, version.state.effectHash, "; memory: "_s, toString(listDump(reference.memory)), " and "_s, toString(listDump(version.memory)));
+    }
+
+    NO_RETURN_DUE_TO_CRASH void fail(const String& what)
+    {
+        crashLock.lock();
+        RandomProgramState state;
+        Procedure proc;
+        RandomProgram(proc, m_seed, state, m_hasCallShapes, true, true);
+        dataLogLn("The random program with seed ", m_seed, " ", what, ":\n", proc);
+        CRASH();
+    }
+
+    void didRunPhase(Procedure& proc, ASCIILiteral name)
+    {
+        validate(proc);
+        if (!m_hasChecks && numberOfValues(proc, hasCallSite) > m_callSiteCount)
+            fail(makeString("has more call sites than it started with "_s, name));
+    }
+
+    void checkCycleForest(Procedure& proc)
+    {
+        CycleForest forest(proc);
+        auto require = [&](bool condition, ASCIILiteral what) {
+            if (!condition)
+                fail(makeString("has an invalid cycle forest: "_s, what));
+        };
+        auto reaches = [&](BasicBlock* from, BasicBlock* to, const auto& mayPass) {
+            IndexSet<BasicBlock*> seen;
+            Vector<BasicBlock*> worklist { from };
+            while (!worklist.isEmpty()) {
+                for (BasicBlock* successor : worklist.takeLast()->successorBlocks()) {
+                    if (successor == to)
+                        return true;
+                    if (mayPass(successor) && seen.add(successor))
+                        worklist.append(successor);
+                }
+            }
+            return false;
+        };
+
+        bool isReducible = true;
+        for (unsigned cycle = 0; cycle < forest.size(); ++cycle) {
+            auto& entries = forest[cycle].entries;
+            BasicBlock* header = forest[cycle].header();
+            unsigned parent = forest[cycle].parent;
+            auto isMember = [&](BasicBlock* block) {
+                return forest.contains(cycle, block);
+            };
+            isReducible &= forest[cycle].isReducible();
+            require(isMember(header), "a header is outside its cycle"_s);
+            require(forest[cycle].depth == forest.depth(parent) + 1, "a cycle is not one deeper than its parent"_s);
+            require(reaches(header, header, isMember), "a header does not reach itself"_s);
+            for (BasicBlock* block : proc) {
+                if (!isMember(block)) {
+                    require(!entries.contains(block), "an entry is outside its cycle"_s);
+                    continue;
+                }
+                require(parent == CycleForest::none || (forest.contains(parent, block) && block != forest[parent].header()), "a cycle is not inside its parent"_s);
+                require(block == header || (reaches(header, block, isMember) && reaches(block, header, isMember)), "a cycle is not strongly connected"_s);
+                bool hasOutsidePredecessor = false;
+                for (BasicBlock* predecessor : block->predecessors())
+                    hasOutsidePredecessor |= !isMember(predecessor);
+                require(entries.contains(block) == (hasOutsidePredecessor || block == header), "the entries of a cycle are not the blocks with outside predecessors"_s);
+                if (forest.innermost(block) == cycle && block != header) {
+                    require(!reaches(block, block, [&](BasicBlock* other) {
+                        return isMember(other) && other != header;
+                    }), "an inner cycle is missing"_s);
+                }
+            }
+        }
+        for (BasicBlock* block : proc) {
+            if (forest.innermost(block) == CycleForest::none) {
+                require(!reaches(block, block, [](BasicBlock*) {
+                    return true;
+                }), "a cycle is missing"_s);
+            }
+        }
+
+        IndexMap<BasicBlock*, unsigned> position(proc.size(), UINT_MAX);
+        unsigned positionCount = 0;
+        for (BasicBlock* block : forest.blocksInPostOrder()) {
+            require(position[block] == UINT_MAX, "a block is in the post order twice"_s);
+            position[block] = positionCount++;
+        }
+        require(positionCount == numberOfBlocks(proc), "a block is missing from the post order"_s);
+        for (BasicBlock* block : proc) {
+            for (BasicBlock* successor : block->successorBlocks()) {
+                unsigned cycle = forest.innermost(successor);
+                unsigned common = forest.nearestCommon(forest.innermost(block), cycle);
+                BasicBlock* target = successor;
+                if (cycle == common) {
+                    if (forest.isHeader(successor))
+                        continue;
+                } else {
+                    while (forest[cycle].parent != common)
+                        cycle = forest[cycle].parent;
+                    target = forest[cycle].header();
+                }
+                require(position[target] < position[block], "a block comes before one of its successors in the post order"_s);
+            }
+        }
+
+        if (!isReducible)
+            return;
+        B3::NaturalLoops& loops = proc.naturalLoops();
+        require(loops.numLoops() == forest.size(), "the number of cycles differs from the number of natural loops"_s);
+        for (BasicBlock* block : proc) {
+            const B3::NaturalLoop* loop = loops.innerMostLoopOf(block);
+            unsigned cycle = forest.innermost(block);
+            require(!!loop == (cycle != CycleForest::none), "a block is in a cycle but not in a natural loop, or vice versa"_s);
+            require(!loop || loop->header() == forest[cycle].header(), "a cycle and its natural loop have different headers"_s);
+        }
+    }
+
+    bool chance(unsigned percent) { return m_random.getUint32(100) < percent; }
+
+    template<typename Functor>
+    bool maybe(unsigned percent, Procedure& proc, ASCIILiteral name, const Functor& phase)
+    {
+        if (!chance(percent))
+            return false;
+        bool result = true;
+        if constexpr (std::is_void_v<decltype(phase())>)
+            phase();
+        else
+            result = phase();
+        didRunPhase(proc, name);
+        return result;
+    }
+
+    void runRandomPhases(Procedure& proc, ASCIILiteral name)
+    {
+        auto always = [&](const auto& phase) {
+            return maybe(100, proc, name, phase);
+        };
+        auto sometimes = [&](const auto& phase) {
+            return maybe(50, proc, name, phase);
+        };
+        auto often = [&](const auto& phase) {
+            return maybe(75, proc, name, phase);
+        };
+        auto runFixSSA = [&] { return fixSSA(proc); };
+        auto runHoisting = [&] { return hoistLoopInvariantValues(proc); };
+        auto runFoldPathConstants = [&] { return foldPathConstants(proc); };
+        auto runSimplifyTerminals = [&] { return simplifyTerminals(proc); };
+        auto runEliminateDeadCode = [&] { return eliminateDeadCode(proc); };
+        auto runEliminatePhiCycles = [&] { return eliminateRedundantPhiCycles(proc); };
+        auto runFoldComparisonsWithBounds = [&] { return foldComparisonsWithBounds(proc); };
+
+        proc.setOptLevel(2);
+        proc.resetReachability();
+        sometimes([&] { return reduceStrength(proc, ReduceStrengthPass::Initial); });
+        sometimes([&] { return inferSwitches(proc); });
+        sometimes([&] { duplicateTails(proc); });
+        always(runFixSSA);
+        sometimes(runFoldPathConstants);
+        sometimes(runSimplifyTerminals);
+        sometimes(runEliminatePhiCycles);
+        sometimes(runHoisting);
+        if (often([&] { return rotateLoops(proc); })) {
+            always(runFixSSA);
+            sometimes(runHoisting);
+            sometimes(runFoldPathConstants);
+            sometimes(runSimplifyTerminals);
+            sometimes(runEliminateDeadCode);
+        }
+        if (often(runFoldComparisonsWithBounds)) {
+            sometimes(runSimplifyTerminals);
+            sometimes(runEliminateDeadCode);
+        }
+        Vector<BasicBlock*> headersOfVersionsTestedAtTheTop;
+        if (often([&] { return versionLoops(proc, headersOfVersionsTestedAtTheTop); })) {
+            always(runFixSSA);
+            sometimes(runEliminatePhiCycles);
+            sometimes([&] { return narrowPhisOfExtendedWords(proc); });
+            sometimes([&] { return foldComparisonsWithWhatIsOutOfRange(proc); });
+            sometimes(runEliminateDeadCode);
+            if (!headersOfVersionsTestedAtTheTop.isEmpty() && often([&] { return rotateLoops(proc, &headersOfVersionsTestedAtTheTop); })) {
+                always(runFixSSA);
+                sometimes(runFoldPathConstants);
+                sometimes(runSimplifyTerminals);
+                sometimes(runEliminateDeadCode);
+                if (sometimes(runFoldComparisonsWithBounds)) {
+                    sometimes(runSimplifyTerminals);
+                    sometimes(runEliminateDeadCode);
+                }
+            }
+        }
+        if (often([&] { return stripMineLoops(proc); }))
+            sometimes(runHoisting);
+        sometimes([&] { return sinkValues(proc); });
+    }
+
+    unsigned m_seed;
+    bool m_hasCallShapes;
+    WeakRandom m_random;
+    unsigned m_callSiteCount { 0 };
+    bool m_hasChecks { false };
+};
+
+} // anonymous namespace
+
+static void testRandomPrograms(unsigned part)
+{
+    constexpr unsigned numberOfParts = 16;
+    constexpr unsigned numberOfProgramsInPart = 60;
+    unsigned firstSeed = (Options::defaultB3OptLevel() * numberOfParts + part) * numberOfProgramsInPart;
+    for (unsigned i = 0; i < numberOfProgramsInPart; ++i)
+        RandomProgramChecker(firstSeed + i).run();
+}
+
+static void testRandomProgramsThatOnceFailed()
+{
+    for (unsigned seed : { 198695u, 209039u, 343103u, 371708u, 471095u, 537269u, 835893u, 872292u, 1108466u, 1306836u, 1516518u, 1694723u, 1931155u, 2322767u, 2531676u, 3410061u, 3489678u }) {
+        RandomProgramChecker(seed, false).run();
+        RandomProgramChecker(seed, true).run();
+    }
 }
 
 void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& tasks)
@@ -3104,6 +6406,8 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testFoldComparisonsWithBounds());
     RUN(testFoldComparisonsWithBoundsKeepsUnrelatedComparisons());
     RUN(testFoldComparisonsWithBoundsRequiresRelationOnEntry());
+    RUN(testFoldComparisonsWithWhatLoopThatCountsDownStartsBelow());
+    RUN(testFoldComparisonsKeepsWhatLoopThatCountsDownMayNotBeBelow());
     RUN(testAnalyzeCountedLoop());
     RUN(testEliminateRedundantPhiCycles());
     RUN(testNarrowPhisOfExtendedWords());
@@ -3127,6 +6431,7 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testStripMineLoopsSkipsPollWithSharedLimit());
     RUN(testSinkValuesMovesValueIntoRareUser());
     RUN(testSinkValuesClonesValueForTwoRareUsers());
+    RUN(testSinkValuesClonesPatchpointForTwoRareUsersOnlyIfItIsPureFunctionOfKey());
     RUN(testSinkValuesKeepsValueUsedOnHotPath());
     RUN(testSinkValuesKeepsValueWhoseUserIsAsFrequent());
     RUN(testSinkValuesKeepsValueUsedInSameBlock());
@@ -3154,7 +6459,20 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testDoubleComparisonsOfNonIntegersAreKept());
     RUN(testBitwiseDoubleComparisonsRespectNegativeZero());
     RUN(testComparisonsFoldedByIntegerRange());
+    RUN(testRangesOfShiftsByAnyAmount());
+    RUN(testTruncOfWordShiftedLeftAndBackByAnyAmount());
     RUN(testDoubleToIntegerConversionsOfConvertedIntegers());
+    RUN(testSeparateIntegerPathsFoldsConversionBackToInteger());
+    RUN(testSeparateIntegerPathsFollowsSumsIntoLaterBlocks());
+    RUN(testSeparateIntegerPathsCopiesNothingBehindLastUse());
+    RUN(testSeparateIntegerPathsStopsAtCallSite());
+    RUN(testSeparateIntegerPathsKeepsJoinOfLikelyPaths());
+    RUN(testSeparateIntegerPathsKeepsNumberThatStaysDouble());
+    RUN(testSeparateIntegerPathsLeavesJoinOfOnePath());
+    RUN(testSeparateIntegerPathsOfNumberAskedWhetherItIsTruthy());
+    RUN(testSeparateIntegerPathsOfTwoNumbersReadOneBehindTheOther());
+    RUN(testSeparateIntegerPathsInsideLoop());
+    RUN(testComparisonsOfConvertedIntegersWithUnorderedResults());
     RUN(testPurePatchpointsAreValueNumbered());
     RUN(testReduceStrengthMergesBlockChain());
     RUN(testReduceStrengthEliminatesSingleValuePhi());
@@ -3164,6 +6482,16 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testMoveConstantsPositionIndependentDoubles());
     RUN(testDuplicateTailsThreadsJumpOnConstantPhi());
     RUN(testDuplicateTailsThreadsJumpDecidedByDominatingBranch());
+    RUN(testDuplicateTailsFollowsTestsOfOneValue());
+    RUN(testDuplicateTailsFollowsTestsThroughPhisOnThePath());
+    RUN(testDuplicateTailsFollowsTestsBehindJoinThatOnlyJumps());
+    RUN(testDuplicateTailsFollowsPhiHandedOnByBlockThatJumps());
+    RUN(testDuplicateTailsStopsFollowingAtUndecidedTest());
+    RUN(testDuplicateTailsFollowsTestsBehindTestCopiedUndecided());
+    RUN(testDuplicateTailsFollowsTestsBehindDecidedAndCopiedTests());
+    RUN(testDuplicateTailsKeepsPhiThatOnlyItsBlockUses());
+    RUN(testDuplicateTailsDemotesPhiThatAnotherBlockUses());
+    RUN(testDuplicateTailsDemotesPhiWhoseUpsilonStandsAheadOfBranch());
     RUN(testDuplicateTailsKeepsUndecidedTest());
     RUN(testDuplicateTailsSkipsTailWithPatchpoint());
     RUN(testDuplicateTailsSkipsLoopHeader());
@@ -3181,14 +6509,39 @@ void addBunTests(const TestConfig* config, Deque<RefPtr<SharedTask<void()>>>& ta
     RUN(testBreakCriticalEdgesPadFrequency());
     RUN(testResetReachabilityRemovesUpsilonsOfDeadPhis());
     RUN(testCachedBlockOrdersAreInvalidated());
+    RUN(testCompilationCohortRunsEachPhaseForAllMembers());
+    RUN(testCompilationCohortCompilesProcedures());
     RUN(testUseCountsDuplicateChild());
     RUN(testRedundantZeroExtension());
     RUN(testZeroExtensionClearsUpperHalfInPositionIndependentCode());
     RUN(testSignExtendingLoad32());
+    RUN(testDominatorsAfterLoopHeaderBecomesJump());
+    RUN(testHoistableLoadStaysBelowNullCheckOfItsBase());
+    RUN(testHoistablePatchpointStaysBelowNullCheckOfItsOperand());
+    RUN(testLow32BitsOfLoad64WithScaledIndex());
+    RUN(testSelectOnInt64WithZeroLowHalf());
+    RUN(testDeclaredWidthsOf64BitSources());
     RUN(testMul64ByImmediate());
     RUN(testLoopPhasesArraySum());
     RUN(testLoopPhasesFoldTestsImpliedByLoopCondition());
     RUN(testLoopPhasesAreOptIn());
+    RUN(testRandomPrograms(0));
+    RUN(testRandomPrograms(1));
+    RUN(testRandomPrograms(2));
+    RUN(testRandomPrograms(3));
+    RUN(testRandomPrograms(4));
+    RUN(testRandomPrograms(5));
+    RUN(testRandomPrograms(6));
+    RUN(testRandomPrograms(7));
+    RUN(testRandomPrograms(8));
+    RUN(testRandomPrograms(9));
+    RUN(testRandomPrograms(10));
+    RUN(testRandomPrograms(11));
+    RUN(testRandomPrograms(12));
+    RUN(testRandomPrograms(13));
+    RUN(testRandomPrograms(14));
+    RUN(testRandomPrograms(15));
+    RUN(testRandomProgramsThatOnceFailed());
 }
 
 #endif // ENABLE(B3_JIT) && USE(BUN_JSC_ADDITIONS)

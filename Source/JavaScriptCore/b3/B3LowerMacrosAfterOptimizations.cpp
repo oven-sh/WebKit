@@ -58,6 +58,13 @@ public:
 
     bool run()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        bool mayFindSomething = false;
+        for (Opcode opcode : { Abs, Ceil, Floor, FTrunc, Neg, PurifyNaN, RotL, MemoryCopy, MemoryFill })
+            mayFindSomething |= m_proc.hasEverAdded(opcode);
+        if (!mayFindSomething)
+            return false;
+#endif
         for (BasicBlock* block : m_proc) {
             m_block = block;
             processCurrentBlock();

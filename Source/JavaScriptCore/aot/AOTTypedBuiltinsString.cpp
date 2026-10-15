@@ -18,6 +18,7 @@
 #include "ParseInt.h"
 #include <wtf/UnalignedAccess.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
+#include <wtf/text/RapidHash.h>
 
 namespace JSC { namespace AOT {
 
@@ -192,6 +193,20 @@ JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedCharactersToCompareWithTexts,
     return characters.data();
 }
 
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsTextInRegister, size_t, (Instance*, JSCell* cell, uint64_t text))
+{
+    auto* string = uncheckedDowncast<JSString>(cell);
+    unsigned length = string->length();
+    RELEASE_ASSERT(length && length <= Typed::maxLengthOfTextInRegister);
+    std::array<char16_t, Typed::maxLengthOfTextInRegister> units;
+    string->resolveToBuffer(std::span { units }.first(length));
+    for (unsigned i = 0; i < length; ++i) {
+        if (!isLatin1(units[i]))
+            return false;
+    }
+    return Typed::textInRegister(std::span<const char16_t> { units }.first(length)) == text;
+}
+
 // What Stub::StringIsText leaves: a rope, which stays one, and 16 bits. The text is all ASCII.
 JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedStringIsText, size_t, (Instance* instance, JSCell* cell, uint32_t text))
 {
@@ -282,7 +297,7 @@ enum class LetterCase : uint8_t { Lower, Upper };
 
 // ASCII text is converted here, in two loops without a branch. Anything else is left to WTF.
 template<LetterCase letterCase>
-static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm, JSString* string)
+static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm, Typed::State* state, JSString* string)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
     {
@@ -300,6 +315,12 @@ static ALWAYS_INLINE JSString* convertCase(JSGlobalObject* globalObject, VM& vm,
             if (!isNotASCII) {
                 if (!changes)
                     return string;
+                if (state && length >= 2 && length <= Typed::State::maxLengthOfTextInCase) {
+                    std::array<Latin1Character, Typed::State::maxLengthOfTextInCase> converted;
+                    for (size_t i = 0; i < length; ++i)
+                        converted[i] = letterCase == LetterCase::Lower ? toASCIILower(characters[i]) : toASCIIUpper(characters[i]);
+                    return state->textInCase(vm, std::span<const Latin1Character> { converted }.first(length));
+                }
                 std::span<Latin1Character> buffer;
                 Ref impl = StringImpl::createUninitialized(length, buffer);
                 Latin1Character* converted = buffer.data();
@@ -418,17 +439,60 @@ static JSString* concatenateStringBuilder(Instance* instance, JSGlobalObject* gl
     }
 }
 
+static NEVER_INLINE OperationReturnType<void*> JIT_OPERATION_ATTRIBUTES flushStringBuilderGenerally(Instance*, JSCell* prefix, const Latin1Character* buffer, uint32_t length, EncodedJSValue operand);
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringBuilderFlush, void*, (Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length, EncodedJSValue operand))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (!prefix && !operand && length >= 2 && length <= Typed::State::maxLengthOfMadeKey && !Options::useAOTOperationCounters()) [[likely]] {
+        std::span characters { buffer, length };
+        if (JSString* key = instance->typed->tryFindMadeKey(characters, RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters)))
+            return { key, nullptr };
+    }
+    [[clang::musttail]] return flushStringBuilderGenerally(instance, prefix, buffer, length, operand);
+}
+
+static OperationReturnType<void*> JIT_OPERATION_ATTRIBUTES flushStringBuilderGenerally(Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length, EncodedJSValue operand)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, "operationAOTTypedStringBuilderFlush");
+    auto scope = DECLARE_THROW_SCOPE(vm);
     JSString* result = concatenateStringBuilder(instance, globalObject, prefix, buffer, length, JSValue::decode(operand));
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     OPERATION_RETURN(scope, std::bit_cast<void*>(std::bit_cast<uintptr_t>(result) | static_cast<uintptr_t>(stringBuilderLengthBias(result->length())) << 48));
 }
 
+static NEVER_INLINE OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilderGenerally(Instance*, JSCell* prefix, const Latin1Character* buffer, uint32_t length);
+
+static NEVER_INLINE OperationReturnType<JSCell*> makeKeyOfStringBuilder(Instance* instance, CallFrame* callFrame, std::span<const Latin1Character> characters, unsigned hash)
+{
+    VM& vm = *instance->vm;
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    return { instance->typed->makeKey(vm, characters, hash), nullptr };
+}
+
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringBuilderFinish, JSCell*, (Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length))
 {
-    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (!prefix && length >= 2 && length <= Typed::State::maxLengthOfMadeKey && !Options::useAOTOperationCounters()) [[likely]] {
+        std::span characters { buffer, length };
+        unsigned hash = RapidHash::computeHashAndMaskTop8Bits<Latin1Character>(characters);
+        if (JSString* key = instance->typed->tryFindMadeKey(characters, hash)) [[likely]]
+            return { key, nullptr };
+        return makeKeyOfStringBuilder(instance, DECLARE_CALL_FRAME(*instance->vm), characters, hash);
+    }
+    [[clang::musttail]] return finishStringBuilderGenerally(instance, prefix, buffer, length);
+}
+
+static OperationReturnType<JSCell*> JIT_OPERATION_ATTRIBUTES finishStringBuilderGenerally(Instance* instance, JSCell* prefix, const Latin1Character* buffer, uint32_t length)
+{
+    JSGlobalObject* globalObject = instance->globalObject;
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    countOperationNamed(instance, "operationAOTTypedStringBuilderFinish");
+    auto scope = DECLARE_THROW_SCOPE(vm);
     OPERATION_RETURN(scope, concatenateStringBuilder(instance, globalObject, prefix, buffer, length, { }));
 }
 
@@ -470,14 +534,20 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringLocaleCompare, size_t, (Instance
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringToLowerCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Lower>(globalObject, vm, uncheckedDowncast<JSString>(cell)));
+    JSString* converted = convertCase<LetterCase::Lower>(globalObject, vm, instance->typed, uncheckedDowncast<JSString>(cell));
+    if (converted && converted != cell)
+        instance->noteCaseConversion(cell, converted, false);
+    OPERATION_RETURN(scope, converted);
 }
 
 // As stringProtoFuncToUpperCase().
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedStringToUpperCase, JSCell*, (Instance* instance, JSCell* cell))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    OPERATION_RETURN(scope, convertCase<LetterCase::Upper>(globalObject, vm, uncheckedDowncast<JSString>(cell)));
+    JSString* converted = convertCase<LetterCase::Upper>(globalObject, vm, instance->typed, uncheckedDowncast<JSString>(cell));
+    if (converted && converted != cell)
+        instance->noteCaseConversion(cell, converted, true);
+    OPERATION_RETURN(scope, converted);
 }
 
 namespace Typed {
@@ -836,10 +906,21 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             return ensure(integer(length), Type::integer({ length, length }), type);
         }
     }
-    StringReceiver receiver = stringReceiver(nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
-    receiver.id = value.child(0);
+    bool readsAtIndex = which == InlineBuiltin::StringAt || which == InlineBuiltin::StringCharAt || which == InlineBuiltin::StringCharCodeAt || which == InlineBuiltin::StringCodePointAt;
+    const PartOfString* part = readsAtIndex || which == InlineBuiltin::StringLength ? partOfStringMadeBy(value.child(0)) : nullptr;
+    const OpenedString* openedCapturedVariable = readsAtIndex && !part ? openedString(value.child(0)) : nullptr;
+    if (openedCapturedVariable && (!openedCapturedVariable->cellOfCapturedVariable || !openedCapturedVariable->isOpened || get(value.child(0)).rep == Rep::Cell || !typeOf(value.child(0)).mayBeUndefinedOrNull()))
+        openedCapturedVariable = nullptr;
+    auto heldInCapturedVariable = [&] {
+        return Boxed(m_out.m_block->appendNew<VariableValue>(m_proc, B3::Get, m_out.origin(), openedCapturedVariable->cellOfCapturedVariable));
+    };
+    StringReceiver receiver = part ? part->base : stringReceiver(openedCapturedVariable ? asCell(heldInCapturedVariable()) : nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName)));
+    if (!part)
+        receiver.id = value.child(0);
     switch (which) {
     case InlineBuiltin::StringLength: {
+        if (part)
+            return ensure(lengthOf(*part), Type::integer(Range::length()), type);
         if (auto length = lengthReadBefore(value.child(0)))
             return ensure(*length, Type::integer(Range::length()), type);
         Integer length = stringLength(receiver);
@@ -856,7 +937,7 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         LBasicBlock outside = newColdBlock();
         Join join(m_out, rep, b3TypeOf(rep));
         std::optional<Word32> unitOffFlat;
-        if (which == InlineBuiltin::StringCharCodeAt && !charactersOfOpenedString(receiver)) {
+        if (which == InlineBuiltin::StringCharCodeAt && !part && !charactersOfOpenedString(receiver)) {
             LBasicBlock flat = m_out.newBlock();
             LBasicBlock rope = newColdBlock();
             LBasicBlock isInside = m_out.newBlock();
@@ -898,7 +979,9 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         Integer index;
         if (!unitOffFlat) {
             characters = charactersOf(receiver);
-            if (auto length = lengthReadBefore(value.child(0)))
+            if (part)
+                characters.length = lengthOf(*part);
+            else if (auto length = lengthReadBefore(value.child(0)))
                 characters.length = *length;
             else if (isOnTrunk())
                 didReadLength(value.child(0), characters.length);
@@ -922,6 +1005,10 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
                 index = Integer(m_out.phi(Int64, asGiven, atStart));
             } else
                 orElse(below(index, characters.length), outside);
+            if (part) {
+                index = add(index, part->from);
+                characters.length = add(characters.length, part->from);
+            }
         }
         bool keepsCodeUnit = ((which == InlineBuiltin::StringCharCodeAt && rep == Rep::Double) || (which == InlineBuiltin::StringCodePointAt && rep == Rep::OptionalInt64)) && isOnTrunk();
         bool keepsCodeUnitOfString = (which == InlineBuiltin::StringCharAt || which == InlineBuiltin::StringAt) && isOnTrunk();
@@ -945,6 +1032,15 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
         }
 
         m_out.appendTo(outside);
+        if (openedCapturedVariable) {
+            LBasicBlock isNil = newColdBlock();
+            LBasicBlock isString = newColdBlock();
+            Boxed held = heldInCapturedVariable();
+            m_out.branch(isCell(held, typeOf(value.child(0))).value(), unsure(isString), unsure(isNil));
+            m_out.appendTo(isNil);
+            throwNullish(held, m_program.stringOf(m_builtins.at(value.builtin()).nameName), asCell(held));
+            m_out.appendTo(isString);
+        }
         if (which == InlineBuiltin::StringCharCodeAt) {
             if (keepsCodeUnit)
                 codeUnits.append(m_out.anchor(m_out.constInt64(INT64_MIN)));
@@ -980,6 +1076,26 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
             if (isOnTrunk())
                 didReadLength(value.child(0), length);
         }
+        auto isNeverAPlace = [&](ValueID id) {
+            return typeOf(id).isInteger() && typeOf(id).integers.most < 0;
+        };
+        LBasicBlock arePlaces = nullptr;
+        ValueFromBlock startAsGiven;
+        ValueFromBlock endAsGiven;
+        if (which != InlineBuiltin::StringSubstr && !isNeverAPlace(arguments[0]) && (arguments.size() == 1 || !isNeverAPlace(arguments[1]))) {
+            auto truncated = [&](ValueID id) {
+                Operand operand = get(id);
+                return operand.rep == Rep::Int64 ? operand.as<Integer>() : truncateToInteger(operand.as<Number>());
+            };
+            Integer start = truncated(arguments[0]);
+            Integer end = arguments.size() > 1 ? truncated(arguments[1]) : length;
+            arePlaces = m_out.newBlock();
+            LBasicBlock areNotPlaces = newColdBlock();
+            startAsGiven = m_out.anchor(start.value());
+            endAsGiven = m_out.anchor(end.value());
+            m_out.branch(logicalAnd(belowOrEqual(start, end), belowOrEqual(end, length)).value(), usually(arePlaces), rarely(areNotPlaces));
+            m_out.appendTo(areNotPlaces);
+        }
         Integer from = placeInString(arguments[0], length, which != InlineBuiltin::StringSubstring);
         Integer to = length;
         if (arguments.size() > 1) {
@@ -993,6 +1109,20 @@ Operand Lowering::lowerStringBuiltin(InlineBuiltin which, ValueID result, const 
                 to = select(isReversed, from, to);
                 from = least;
             }
+        }
+        if (arePlaces) {
+            ValueFromBlock startAsPlaced = m_out.anchor(from.value());
+            ValueFromBlock endAsPlaced = m_out.anchor(to.value());
+            m_out.jump(arePlaces);
+            m_out.appendTo(arePlaces);
+            from = Integer(m_out.phi(Int64, startAsGiven, startAsPlaced));
+            to = Integer(m_out.phi(Int64, endAsGiven, endAsPlaced));
+        }
+        // In an arm, beside which the call is carried out in another way, these values are not there for what comes behind the two.
+        if (isOnTrunk()) {
+            m_partsOfStrings.set(result.index(), PartOfString { receiver, length, from, to });
+            if (m_partsOfStringsThatAreOnlyLookedAt.get(result.index()))
+                return Operand(value.rep, nullptr);
         }
         return ensure(partOfString(receiver, length, from, to), stringType, type);
     }

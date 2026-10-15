@@ -39,7 +39,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue value = JSValue::decode(encodedValue);
     if (value.isUndefinedOrNull())
-        OPERATION_RETURN(scope, constructEmptyArray(globalObject, nullptr));
+        OPERATION_RETURN(scope, instance->emptyKeyList);
     JSObject* object = value.toObject(globalObject);
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     if (object->structure()->isDictionary()) [[unlikely]]
@@ -57,7 +57,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
         auto* ofProgram = uncheckedDowncast<Typed::Object>(object);
         if (JSCellButterfly* keys = inheritsNone ? ofProgram->keys(vm) : nullptr) {
             if (&ofProgram->state() == instance->typed)
-                instance->typedKeyLists[Typed::shapeWordOf(ofProgram->shape()) % Instance::numberOfTypedKeyLists] = { ofProgram->orderWord(), Typed::shapeWordOf(ofProgram->shape()), keys };
+                instance->typedKeyLists[Instance::indexOfTypedKeyList(Typed::shapeWordOf(ofProgram->shape()), ofProgram->orderWord())] = { ofProgram->orderWord(), Typed::shapeWordOf(ofProgram->shape()), keys };
             OPERATION_RETURN(scope, JSArray::createWithButterfly(vm, nullptr, globalObject->originalArrayStructureForIndexingType(keys->indexingMode()), keys->toButterfly()));
         }
     }
@@ -67,6 +67,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedForInKeys, JSCell*, (Instance* instanc
     OPERATION_RETURN_IF_EXCEPTION(scope, nullptr);
     uint32_t indexedLength = enumerator->indexedLength();
     uint32_t numberOfNames = enumerator->sizeOfPropertyNames();
+    if (!indexedLength && !numberOfNames)
+        OPERATION_RETURN(scope, instance->emptyKeyList);
     if (mayShare && !indexedLength && numberOfNames && enumerator->endStructurePropertyIndex() == numberOfNames && enumerator->cachedStructureID() == object->structureID())
         OPERATION_RETURN(scope, ownPropertyKeys(globalObject, object, PropertyNameMode::Strings, DontEnumPropertiesMode::Exclude));
 
@@ -173,13 +175,9 @@ std::optional<Operand> Lowering::lowerInlineLanguage(InlineBuiltin which, ValueI
         auto& engineClass = m_builtins.classes()[value.engineClass()];
         auto holdsOf = [&](CellPointer cell) {
             Word32 isOriginal = hasOriginalStructure(cell, engineClass);
-            if (!value.takesArrayAsMade())
-                return isOriginal;
-            return either<Word32>(isOriginal, [&] {
-                return boolean(true);
-            }, [&] {
-                return isArrayAsMade(cell);
-            });
+            if (value.receiverHasOriginalStructure) [[unlikely]]
+                validateReceiverHasOriginalStructure(isOriginal, cell, result);
+            return isOriginal;
         };
         Operand operand = get(arguments[0]);
         if (operand.rep == Rep::Cell)

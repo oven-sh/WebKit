@@ -6,6 +6,8 @@
 #include "config.h"
 #include "AOTTypedPasses.h"
 
+#include "AOTTypedThreads.h"
+
 #if ENABLE(AOT)
 
 namespace JSC { namespace AOT { namespace Typed {
@@ -176,6 +178,11 @@ private:
         if (TypeID prediction = m_function.at(receiver).prediction) {
             Type expected = m_program.at(prediction).withoutPrimitives(Primitive::UndefinedOrNull);
             speculated = expected.isString() ? &m_builtins.stringClass() : expected.onlyEngineClass();
+            if (!speculated) {
+                speculated = m_builtins.classSpeculatedFor(name);
+                if (speculated && !(isStringClass(*speculated) ? expected.primitives & Primitive::String : expected.anyObject || expected.engineClasses.contains(speculated->index)))
+                    speculated = nullptr;
+            }
         } else
             speculated = m_builtins.classSpeculatedFor(name);
         if (!speculated)
@@ -301,7 +308,15 @@ private:
         if (refuted.engineClass == engineClass->index && refuted.receiver == originOf(site->receiver))
             return false;
 
-        BuiltinID entry = applicableEntry(m_builtins.findForInstance(BuiltinKind::Method, *engineClass, name), argumentTypes.span());
+        BuiltinID first = m_builtins.findForInstance(BuiltinKind::Method, *engineClass, name);
+        BuiltinID entry = applicableEntry(first, argumentTypes.span());
+        if (!entry && !isKnown && engineClass->type == RegExpObjectType && !m_isColdByText.isEmpty() && m_isColdByText[block.index()] && (m_function.at(id).opcode == Opcode::CallMethod || m_function.at(id).opcode == Opcode::Call)) {
+            Vector<Type, 4> strings;
+            strings.fill(m_program.at(m_program.types.string), argumentTypes.size());
+            entry = applicableEntry(first, strings.span());
+            if (entry && methodAskedByStub(entry, m_function.at(id).arguments) == MethodAskedByStub::None)
+                return false;
+        }
         if (!entry || m_builtins.at(entry).implementation.kind == BuiltinImplementation::Generic)
             return false;
         FunctionID callee;
@@ -337,8 +352,6 @@ private:
         Value guard = make(Opcode::CallBuiltin, m_program.types.boolean);
         guard.immediates = { m_builtins.hasOriginalStructureOperation().index(), engineClass->index };
         guard.arguments.append(site->receiver);
-        if (callee && engineClass->type == ArrayType && !(m_builtins.at(entry).usesOfThis & (OperandUse::WritesProperties | OperandUse::WritesContents)))
-            guard.children[2] = site->receiver;
         BlockID slow = branch(append(WTF::move(guard)));
 
         if (callee)
@@ -432,6 +445,10 @@ private:
             return numberOfArguments == 1 ? MethodAskedByStub::SetHas : MethodAskedByStub::None;
         case InlineBuiltin::SetAdd:
             return numberOfArguments == 1 ? MethodAskedByStub::SetAdd : MethodAskedByStub::None;
+        case InlineBuiltin::RegExpExec:
+            return numberOfArguments == 1 ? MethodAskedByStub::RegExpExec : MethodAskedByStub::None;
+        case InlineBuiltin::RegExpTest:
+            return numberOfArguments == 1 ? MethodAskedByStub::RegExpTest : MethodAskedByStub::None;
         default:
             return MethodAskedByStub::None;
         }
@@ -611,6 +628,7 @@ private:
         value.opcode = opcode;
         value.position = m_position;
         value.inlineFrame = m_inlineFrame;
+        value.isInTailPosition = m_isInTailPosition && (opcode == Opcode::Call || opcode == Opcode::CallMethod || opcode == Opcode::CallDirect || opcode == Opcode::CallBuiltin);
         value.type = type;
         value.rep = repOf(m_program.at(type));
         return value;
@@ -623,6 +641,7 @@ private:
         ValueID id = m_function.at(block).values[index];
         m_position = m_function.at(id).position;
         m_inlineFrame = m_function.at(id).inlineFrame;
+        m_isInTailPosition = m_function.at(id).isInTailPosition;
         m_inliningDepth = m_function.at(id).opcode == Opcode::Construct ? Format::none : m_function.at(id).immediates[1];
         m_isWatched = m_function.at(block).terminator.kind == TerminatorKind::Invoke && index + 1 == m_function.at(block).values.size();
         m_after = addBlock();
@@ -738,12 +757,494 @@ private:
     uint32_t m_position { 0 };
     uint32_t m_inlineFrame { 0 };
     uint32_t m_inliningDepth { Format::none };
+    bool m_isInTailPosition { false };
     bool m_isWatched { false };
     Target m_handler;
     BlockID m_after;
     // Where values are added.
     BlockID m_block;
     bool m_lastMayThrow { false };
+};
+
+class ReceiverGuardElimination {
+public:
+    ReceiverGuardElimination(const Program& program, Function& function)
+        : m_program(program)
+        , m_function(function)
+        , m_builtins(Builtins::singleton())
+    {
+    }
+
+    unsigned run()
+    {
+        collectReceivers();
+        if (m_receivers.isEmpty())
+            return 0;
+        findUses();
+        computePredecessors();
+        unsigned eliminated = 0;
+        for (auto& receiver : m_receivers)
+            eliminated += eliminate(receiver);
+        return eliminated;
+    }
+
+    uint32_t classOfFreshResult()
+    {
+        uint32_t engineClass = Format::none;
+        collectReceivers();
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& block = m_function.blocks[b];
+            if (block.terminator.kind != TerminatorKind::Return)
+                continue;
+            if (!block.terminator.value)
+                return Format::none;
+            ValueID allocation = rootOf(block.terminator.value);
+            uint32_t allocatedClass = allocatedClassOf(m_function.at(allocation));
+            if (allocatedClass == Format::none || (engineClass != Format::none && allocatedClass != engineClass) || !m_builtins.classes()[allocatedClass].canCheckOriginalStructure())
+                return Format::none;
+            engineClass = allocatedClass;
+            ensureReceiver(allocation, allocatedClass).returns.append({ b, static_cast<unsigned>(block.values.size()) });
+        }
+        if (engineClass == Format::none)
+            return Format::none;
+        findUses();
+        computePredecessors();
+        for (auto& receiver : m_receivers) {
+            if (receiver.returns.isEmpty())
+                continue;
+            if (receiver.definition.block == none)
+                return Format::none;
+            propagateEscapes(receiver);
+            for (Place place : receiver.returns) {
+                if (isAfterEscape(place))
+                    return Format::none;
+            }
+        }
+        return engineClass;
+    }
+
+    void removeUnreachableBlocks()
+    {
+        BitVector isReached;
+        Vector<unsigned, 16> worklist { 0u };
+        while (!worklist.isEmpty()) {
+            unsigned block = worklist.takeLast();
+            if (isReached.set(block))
+                continue;
+            for (auto& target : m_function.blocks[block].terminator.targets)
+                worklist.append(target.block.index());
+        }
+        Value undefinedValue;
+        undefinedValue.opcode = Opcode::Undefined;
+        undefinedValue.type = m_program.types.undefined;
+        undefinedValue.rep = repOf(m_program.at(undefinedValue.type));
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            if (isReached.get(b))
+                continue;
+            for (ValueID id : m_function.blocks[b].values)
+                m_function.at(id) = undefinedValue;
+            for (ValueID id : m_function.blocks[b].parameters)
+                m_function.at(id) = undefinedValue;
+            m_function.blocks[b] = Block { };
+        }
+        compactBlocks(m_function);
+    }
+
+private:
+    static constexpr unsigned none = UINT_MAX;
+
+    struct Place {
+        unsigned block { none };
+        unsigned index { none };
+    };
+
+    struct Guard {
+        ValueID id;
+        Place place;
+        bool holds { true };
+        BitVector failureRegion;
+    };
+
+    struct Call {
+        ValueID id;
+        Place place;
+    };
+
+    struct Receiver {
+        ValueID allocation;
+        uint32_t engineClass { Format::none };
+        Place definition;
+        Vector<Guard, 2> guards;
+        Vector<Call, 4> calls;
+        Vector<Place, 1> returns;
+        Vector<ValueID, 2> casts;
+        Vector<Place, 4> escapes;
+    };
+
+    bool isGuard(const Value& value) const
+    {
+        return value.opcode == Opcode::CallBuiltin && value.builtin() == m_builtins.hasOriginalStructureOperation();
+    }
+
+    ValueID rootOf(ValueID id)
+    {
+        if (m_roots.isEmpty())
+            m_roots.fill(ValueID(), m_function.values.size());
+        ValueID& known = m_roots[id.index()];
+        if (known)
+            return known;
+        ValueID root = id;
+        for (;;) {
+            root = m_program.originOf(m_function, root);
+            auto& value = m_function.at(root);
+            if (value.opcode != Opcode::CallBuiltin)
+                break;
+            auto& result = m_builtins.at(value.builtin()).result;
+            ValueID operand;
+            if (result.kinds == BuiltinResult::This && !result.arguments)
+                operand = value.child(0);
+            else if (!result.kinds && hasOneBitSet(result.arguments) && getLSBSet(result.arguments) < value.arguments.size())
+                operand = value.arguments[getLSBSet(result.arguments)];
+            if (!operand)
+                break;
+            root = operand;
+        }
+        m_roots[id.index()] = root;
+        return root;
+    }
+
+    static bool returnsFreshObject(const Builtin& builtin)
+    {
+        if (builtin.kind == BuiltinKind::Constructor || builtin.implementation.kind == BuiltinImplementation::Prelude)
+            return true;
+        if (builtin.implementation.kind != BuiltinImplementation::Inline)
+            return false;
+        switch (builtin.implementation.inlined) {
+        case InlineBuiltin::ArrayOf:
+        case InlineBuiltin::ArrayWithLength:
+        case InlineBuiltin::ArrayFrom:
+        case InlineBuiltin::NewArrayWithCapacity:
+        case InlineBuiltin::NewArrayWithSpecies:
+        case InlineBuiltin::NewContiguousArray:
+        case InlineBuiltin::NewDoubleArray:
+        case InlineBuiltin::TruncateNewArray:
+        case InlineBuiltin::StringSplit:
+        case InlineBuiltin::ObjectEntries:
+        case InlineBuiltin::ObjectGetOwnPropertyNames:
+        case InlineBuiltin::ObjectGetOwnPropertySymbols:
+        case InlineBuiltin::ObjectKeys:
+        case InlineBuiltin::ObjectValues:
+        case InlineBuiltin::ReflectOwnKeys:
+        case InlineBuiltin::RegExpNew:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    uint32_t allocatedClassOf(const Value& value) const
+    {
+        auto classOf = [&](BuiltinID entry) -> uint32_t {
+            auto& builtin = m_builtins.at(entry);
+            if (builtin.result.kinds != BuiltinResult::Instance || builtin.result.arguments || !returnsFreshObject(builtin))
+                return Format::none;
+            return builtin.result.engineClass;
+        };
+        switch (value.opcode) {
+        case Opcode::NewArray:
+        case Opcode::CreateRest:
+            return m_builtins.arrayClass().index;
+        case Opcode::CallBuiltin:
+            return m_builtins.at(value.builtin()).implementation.kind == BuiltinImplementation::Prelude ? Format::none : classOf(value.builtin());
+        case Opcode::CallDirect:
+            for (unsigned i = 0; i < m_program.preludeFunctions.size(); ++i) {
+                if (m_program.preludeFunctions[i] != value.function())
+                    continue;
+                BuiltinID entry = m_builtins.entryCarriedOutBy(static_cast<PreludeFunction>(i));
+                return entry ? classOf(entry) : Format::none;
+            }
+            if (value.function().index() < m_program.classesOfFreshResults.size() && !value.constructs && m_program.classesOfFreshResults[value.function().index()] != UINT16_MAX)
+                return m_program.classesOfFreshResults[value.function().index()];
+            return Format::none;
+        default:
+            return Format::none;
+        }
+    }
+
+    void collectReceivers()
+    {
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& values = m_function.blocks[b].values;
+            for (unsigned i = 0; i < values.size(); ++i) {
+                auto& value = m_function.at(values[i]);
+                if (value.opcode != Opcode::CallBuiltin || value.engineClass() == Format::none || !m_builtins.classes()[value.engineClass()].canCheckOriginalStructure())
+                    continue;
+                bool isGuardValue = isGuard(value);
+                if (!isGuardValue && !hasGenericFallback(m_program, m_function, value))
+                    continue;
+                ValueID allocation = rootOf(isGuardValue ? value.arguments[0] : value.child(0));
+                if (allocatedClassOf(m_function.at(allocation)) != value.engineClass())
+                    continue;
+                if (isGuardValue)
+                    ensureReceiver(allocation, value.engineClass()).guards.append(Guard { values[i], { b, i }, true, { } });
+                else
+                    ensureReceiver(allocation, value.engineClass()).calls.append(Call { values[i], { b, i } });
+            }
+        }
+    }
+
+    Receiver& ensureReceiver(ValueID allocation, uint32_t engineClass)
+    {
+        if (m_receiverIndex.isEmpty())
+            m_receiverIndex.fill(none, m_function.values.size());
+        unsigned& number = m_receiverIndex[allocation.index()];
+        if (number == none) {
+            number = m_receivers.size();
+            m_receivers.append(Receiver { allocation, engineClass, { }, { }, { }, { }, { }, { } });
+        }
+        return m_receivers[number];
+    }
+
+    bool doesNotEscapeThrough(ValueID id, const Value& user, const Receiver& receiver)
+    {
+        auto aliasesReceiver = [&](ValueID operand) {
+            return operand && rootOf(operand) == receiver.allocation;
+        };
+        switch (user.opcode) {
+        case Opcode::Cast:
+            return rootOf(id) == receiver.allocation;
+        case Opcode::GetById:
+        case Opcode::InById:
+        case Opcode::StrictEq:
+        case Opcode::LogicalNot:
+        case Opcode::ToBoolean:
+        case Opcode::TypeOf:
+        case Opcode::TypeOfIs:
+        case Opcode::IsUndefinedOrNull:
+        case Opcode::IsInstanceOfClass:
+        case Opcode::IteratorOpen:
+            return true;
+        case Opcode::CallMethod: {
+            for (ValueID argument : user.arguments) {
+                if (aliasesReceiver(argument))
+                    return false;
+            }
+            BuiltinName name = m_program.builtinName(user.string());
+            BuiltinID entry = name ? m_builtins.findForInstance(BuiltinKind::Method, m_builtins.classes()[receiver.engineClass], name) : BuiltinID();
+            if (!entry)
+                return false;
+            uint16_t uses = 0;
+            for (; entry; entry = m_builtins.next(entry))
+                uses |= m_builtins.at(entry).usesOfThis;
+            return !(uses & (OperandUse::WritesProperties | OperandUse::Keeps | OperandUse::Calls | OperandUse::MayBeResult | OperandUse::HandsToUserCode));
+        }
+        case Opcode::GetByVal:
+            return !aliasesReceiver(user.child(1));
+        case Opcode::PutByVal: {
+            auto& key = m_program.typeOf(m_function, user.child(1));
+            return receiver.engineClass == m_builtins.arrayClass().index && !aliasesReceiver(user.child(1)) && !aliasesReceiver(user.child(2)) && key.isInteger() && key.integers.isWithin(Range::length());
+        }
+        case Opcode::CallBuiltin: {
+            if (isGuard(user))
+                return true;
+            auto& builtin = m_builtins.at(user.builtin());
+            if (aliasesReceiver(user.child(1)) || aliasesReceiver(user.child(2)) || (aliasesReceiver(user.child(0)) && !builtin.takesReceiver()))
+                return false;
+            uint16_t uses = aliasesReceiver(user.child(0)) ? builtin.usesOfThis : 0;
+            bool isPassedAsArgument = false;
+            for (unsigned i = 0; i < user.arguments.size(); ++i) {
+                if (!aliasesReceiver(user.arguments[i]))
+                    continue;
+                isPassedAsArgument = true;
+                uses |= builtin.usesOfArgument(i);
+            }
+            if (uses & (OperandUse::WritesProperties | OperandUse::Keeps | OperandUse::Calls | OperandUse::HandsToUserCode))
+                return false;
+            if (uses & OperandUse::MayBeResult && rootOf(id) != receiver.allocation)
+                return false;
+            if (!(uses & OperandUse::WritesContents))
+                return true;
+            if (builtin.kind == BuiltinKind::Operation)
+                return true;
+            return builtin.takesReceiver() && !isPassedAsArgument && user.engineClass() == receiver.engineClass;
+        }
+        default:
+            return false;
+        }
+    }
+
+    void findUses()
+    {
+        Vector<unsigned, 4> used;
+        auto note = [&](ValueID operand) {
+            unsigned number = m_receiverIndex[rootOf(operand).index()];
+            if (number != none && !used.contains(number))
+                used.append(number);
+        };
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            auto& block = m_function.blocks[b];
+            for (unsigned i = 0; i < block.values.size(); ++i) {
+                ValueID id = block.values[i];
+                if (unsigned number = m_receiverIndex[id.index()]; number != none)
+                    m_receivers[number].definition = { b, i };
+                used.shrink(0);
+                std::as_const(m_function.at(id)).forEachChild(note);
+                for (unsigned number : used) {
+                    if (!doesNotEscapeThrough(id, m_function.at(id), m_receivers[number]))
+                        m_receivers[number].escapes.append({ b, i });
+                    else if (m_function.at(id).opcode == Opcode::Cast)
+                        m_receivers[number].casts.append(id);
+                }
+            }
+            used.shrink(0);
+            block.terminator.forEachChild(note);
+            for (unsigned number : used)
+                m_receivers[number].escapes.append({ b, static_cast<unsigned>(block.values.size()) });
+        }
+    }
+
+    void computePredecessors()
+    {
+        m_predecessors.resize(m_function.blocks.size());
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            for (auto& target : m_function.blocks[b].terminator.targets)
+                m_predecessors[target.block.index()].append(b);
+        }
+    }
+
+    void computeFailureRegion(Guard& guard)
+    {
+        auto& terminator = m_function.blocks[guard.place.block].terminator;
+        if (terminator.kind != TerminatorKind::Branch || terminator.value != guard.id || terminator.targets[0].block == terminator.targets[1].block)
+            return;
+        unsigned first = terminator.targets[1].block.index();
+        if (m_predecessors[first].size() != 1)
+            return;
+        auto& region = guard.failureRegion;
+        region.set(first);
+        Vector<unsigned, 8> worklist { first };
+        while (!worklist.isEmpty()) {
+            for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
+                unsigned next = target.block.index();
+                if (region.get(next))
+                    continue;
+                bool isWithin = true;
+                for (unsigned predecessor : m_predecessors[next])
+                    isWithin &= region.get(predecessor);
+                if (!isWithin)
+                    continue;
+                region.set(next);
+                worklist.append(next);
+            }
+        }
+    }
+
+    bool isAfterEscape(Place place) const
+    {
+        if (m_isReachableAfterEscape.get(place.block))
+            return true;
+        for (Place escape : m_escapes) {
+            if (escape.block == place.block && escape.index < place.index)
+                return true;
+        }
+        return false;
+    }
+
+    void propagateEscapes(Receiver& receiver)
+    {
+        for (auto& guard : receiver.guards)
+            computeFailureRegion(guard);
+        for (bool changed = true; changed;) {
+            changed = false;
+            m_isReachableAfterEscape.clearAll();
+            m_escapes.shrink(0);
+            Vector<unsigned, 8> worklist;
+            auto pushSuccessors = [&](unsigned block) {
+                for (auto& target : m_function.blocks[block].terminator.targets)
+                    worklist.append(target.block.index());
+            };
+            for (Place escape : receiver.escapes) {
+                bool isInFailureRegion = false;
+                for (auto& guard : receiver.guards)
+                    isInFailureRegion |= guard.holds && guard.failureRegion.get(escape.block);
+                if (isInFailureRegion)
+                    continue;
+                m_escapes.append(escape);
+                pushSuccessors(escape.block);
+            }
+            while (!worklist.isEmpty()) {
+                unsigned block = worklist.takeLast();
+                if (block == receiver.definition.block || m_isReachableAfterEscape.set(block))
+                    continue;
+                pushSuccessors(block);
+            }
+            for (auto& guard : receiver.guards) {
+                if (!guard.holds || !isAfterEscape(guard.place))
+                    continue;
+                guard.holds = false;
+                changed = true;
+            }
+        }
+    }
+
+    unsigned eliminate(Receiver& receiver)
+    {
+        if (receiver.definition.block == none)
+            return 0;
+        propagateEscapes(receiver);
+        unsigned eliminated = 0;
+        for (auto& guard : receiver.guards) {
+            if (!guard.holds)
+                continue;
+            auto& value = m_function.at(guard.id);
+            if (Options::validateAOTTypedFacts()) [[unlikely]] {
+                value.receiverHasOriginalStructure = true;
+                continue;
+            }
+            value.opcode = Opcode::Boolean;
+            value.children = { };
+            value.arguments.clear();
+            value.immediates = { 1, Format::none };
+            if (auto& terminator = m_function.blocks[guard.place.block].terminator; terminator.kind == TerminatorKind::Branch && terminator.value == guard.id) {
+                terminator.kind = TerminatorKind::Jump;
+                terminator.value = ValueID();
+                terminator.targets.shrink(1);
+            }
+            ++eliminated;
+        }
+        for (auto& call : receiver.calls) {
+            if (isAfterEscape(call.place))
+                continue;
+            auto& value = m_function.at(call.id);
+            value.receiverHasOriginalStructure = true;
+            ValueID read = std::exchange(value.children[1], ValueID());
+            if (!read || m_function.at(read).opcode != Opcode::GetById || m_function.at(read).readsMethodFor() != value.builtin())
+                continue;
+            Value undefinedValue;
+            undefinedValue.opcode = Opcode::Undefined;
+            undefinedValue.position = m_function.at(read).position;
+            undefinedValue.inlineFrame = m_function.at(read).inlineFrame;
+            undefinedValue.type = m_program.types.undefined;
+            undefinedValue.rep = repOf(m_program.at(undefinedValue.type));
+            m_function.at(read) = WTF::move(undefinedValue);
+            ++eliminated;
+        }
+        for (ValueID cast : receiver.casts) {
+            auto* engineClass = m_program.at(m_function.at(cast).type).onlyEngineClass();
+            m_function.at(cast).operandClassIsProven = engineClass && engineClass->index == receiver.engineClass;
+        }
+        return eliminated;
+    }
+
+    const Program& m_program;
+    Function& m_function;
+    const Builtins& m_builtins;
+    Vector<ValueID> m_roots;
+    Vector<unsigned> m_receiverIndex;
+    Vector<Receiver, 2> m_receivers;
+    Vector<Vector<unsigned, 2>> m_predecessors;
+    BitVector m_isReachableAfterEscape;
+    Vector<Place, 4> m_escapes;
 };
 
 } // anonymous namespace
@@ -759,6 +1260,43 @@ unsigned speculateOnReceivers(const Program& program, FunctionID id, Function& f
     if (!program.isHotOutsideItsLoops(id) && function.kind != FunctionKind::Module)
         speculation.leaveColdTextToStubs();
     return speculation.run();
+}
+
+unsigned eliminateGuardsOnUnescapedReceivers(const Program& program, Function& function)
+{
+    return ReceiverGuardElimination(program, function).run();
+}
+
+void eliminateGuardsOnFreshResults(Program& program)
+{
+    unsigned count = program.functions.size();
+    program.classesOfFreshResults.fill(UINT16_MAX, count);
+    for (unsigned round = 0; round < 4; ++round) {
+        Vector<uint16_t> found = program.classesOfFreshResults;
+        forEachIndexInParallel(count, [&](unsigned i) {
+            auto& function = program.functions[i];
+            if (found[i] != UINT16_MAX || function.blocks.isEmpty() || function.declaredAs || !function.resultTypes.isEmpty() || function.flags & (FunctionIsHalfOfHiddenCoroutine | FunctionIsHalfOfAsyncFunction))
+                return;
+            if (function.kind != FunctionKind::Plain && function.kind != FunctionKind::Arrow && function.kind != FunctionKind::Method)
+                return;
+            if (uint32_t engineClass = ReceiverGuardElimination(program, function).classOfFreshResult(); engineClass != Format::none)
+                found[i] = static_cast<uint16_t>(engineClass);
+        });
+        if (found == program.classesOfFreshResults)
+            break;
+        program.classesOfFreshResults = WTF::move(found);
+    }
+    forEachIndexInParallel(count, [&](unsigned i) {
+        auto& function = program.functions[i];
+        bool callsSuchFunction = function.values.containsIf([&](auto& value) {
+            return value.opcode == Opcode::CallDirect && value.function().index() < count && program.classesOfFreshResults[value.function().index()] != UINT16_MAX;
+        });
+        if (function.blocks.isEmpty() || !callsSuchFunction)
+            return;
+        ReceiverGuardElimination guards(program, function);
+        if (guards.run())
+            guards.removeUnreachableBlocks();
+    });
 }
 
 } } } // namespace JSC::AOT::Typed

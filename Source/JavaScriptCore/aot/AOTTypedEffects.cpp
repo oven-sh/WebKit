@@ -58,16 +58,45 @@ static std::optional<uint32_t> fieldStoredTo(const Program& program, const Funct
     }
 }
 
+static thread_local UnchangingFunctionScope* currentUnchangingFunctionScope;
+
+UnchangingFunctionScope::UnchangingFunctionScope()
+    : m_outerScope(std::exchange(currentUnchangingFunctionScope, this))
+{
+}
+
+UnchangingFunctionScope::~UnchangingFunctionScope()
+{
+    currentUnchangingFunctionScope = m_outerScope;
+}
+
 bool isInitializingStore(const Program& program, const Function& function, const Block& block, size_t index)
 {
     ValueID object = function.at(block.values[index]).child(0);
     if (!object || function.at(object).opcode != Opcode::NewObjectWithShape)
         return false;
-    bool isForFunction = isBornUnderAnyPrototype(program, function, object);
+    auto* scope = currentUnchangingFunctionScope;
+    bool isKnownUpToLast = scope && scope->m_blockOfInitializingStores == &block && scope->m_objectOfInitializingStores == object;
+    if (isKnownUpToLast && index <= scope->m_lastInitializingStore)
+        return true;
+    LayoutID made = function.at(object).layout();
+    std::optional<bool> isForFunction;
     for (size_t i = index + 1; i--;) {
-        if (block.values[i] == object)
+        ValueID id = block.values[i];
+        if (id == object || (isKnownUpToLast && i == scope->m_lastInitializingStore)) {
+            if (scope) {
+                scope->m_blockOfInitializingStores = &block;
+                scope->m_objectOfInitializingStores = object;
+                scope->m_lastInitializingStore = index;
+            }
             return true;
-        if (!fieldStoredTo(program, function, object, function.at(block.values[i]), isForFunction))
+        }
+        auto& store = function.at(id);
+        if (store.opcode == Opcode::PutField && store.layout() == made && store.child(0) == object && store.child(1) != object)
+            continue;
+        if (!isForFunction)
+            isForFunction = isBornUnderAnyPrototype(program, function, object);
+        if (!fieldStoredTo(program, function, object, store, *isForFunction))
             return false;
     }
     return false;
@@ -121,11 +150,12 @@ void assignAllocations(Program& program)
                 allocation.layout = function.at(object).layout();
                 auto& layout = program.at(allocation.layout);
                 if (layout.kind == LayoutKind::Record) {
+                    BitVector isInOrder;
                     for (size_t next = at + 1; next < block.values.size(); ++next) {
                         auto field = fieldStoredTo(program, function, object, function.at(block.values[next]), false);
                         if (!field)
                             break;
-                        if (!allocation.order.contains(*field))
+                        if (!isInOrder.set(*field))
                             allocation.order.append(static_cast<uint16_t>(*field));
                     }
                     allocation.born = static_cast<uint16_t>(allocation.order.size());
@@ -163,14 +193,74 @@ static void findFieldsThatAreAnyObjectInSomeMember(Program& program)
                 namesOfSuchFields[i].append(field.name);
         }
     }
+    Vector<uint32_t> lastViewWithName(FillWith { }, program.strings.size(), UINT32_MAX);
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        auto& view = program.layouts[i];
+        bool hasUnnamedField = false;
+        for (LayoutID member : view.members) {
+            if (member.index() == i)
+                continue;
+            for (StringID name : namesOfSuchFields[member.index()]) {
+                if (name)
+                    lastViewWithName[name.index()] = i;
+                else
+                    hasUnnamedField = true;
+            }
+        }
+        for (auto& field : view.fields) {
+            if (field.name ? lastViewWithName[field.name.index()] == i : hasUnnamedField)
+                field.isAnyObjectInSomeMember = true;
+        }
+    }
+}
+
+static constexpr size_t maxMembersCheckedAtRead = 32;
+
+static void findFieldsThatMayHoldConvertibleRecords(Program& program)
+{
+    BitVector hasConvertibleMember(program.layouts.size());
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        if (program.layouts[i].members.size() <= maxMembersCheckedAtRead && program.layouts[i].members.containsIf([&](LayoutID member) { return !program.at(member).specializations.isEmpty(); }))
+            hasConvertibleMember.set(i);
+    }
+    if (hasConvertibleMember.isEmpty())
+        return;
+    Vector<Vector<std::pair<StringID, TypeID>, 1>> convertibleFields(program.layouts.size());
+    for (unsigned i = 0; i < program.layouts.size(); ++i) {
+        for (auto& field : program.layouts[i].fields) {
+            if (field.type && program.at(field.type).views.containsIf([&](LayoutID view) { return hasConvertibleMember.get(view.index()); }))
+                convertibleFields[i].append({ field.name, field.type });
+        }
+    }
+    UncheckedKeyHashMap<uint64_t, bool> cache;
+    auto mayHoldConvertible = [&](TypeID held, TypeID own) {
+        return cache.ensure((static_cast<uint64_t>(held.index()) << 32 | own.index()) + 1, [&] {
+            BitVector isMemberOfOwnType(program.layouts.size());
+            for (LayoutID view : program.at(own).views) {
+                for (LayoutID member : program.at(view).members)
+                    isMemberOfOwnType.set(member.index());
+            }
+            for (LayoutID view : program.at(held).views) {
+                if (!hasConvertibleMember.get(view.index()))
+                    continue;
+                for (LayoutID layout : program.at(view).members) {
+                    if (isMemberOfOwnType.get(layout.index()))
+                        continue;
+                    if (program.at(layout).specializations.containsIf([&](LayoutID specialization) { return isMemberOfOwnType.get(specialization.index()); }))
+                        return true;
+                }
+            }
+            return false;
+        }).iterator->value;
+    };
     for (unsigned i = 0; i < program.layouts.size(); ++i) {
         auto& view = program.layouts[i];
         for (LayoutID member : view.members) {
             if (member.index() == i)
                 continue;
-            for (StringID name : namesOfSuchFields[member.index()]) {
+            for (auto [name, held] : convertibleFields[member.index()]) {
                 for (auto& field : view.fields) {
-                    if (field.name == name)
+                    if (field.name == name && !field.isAnyObjectInSomeMember && field.type && field.type != held && !program.at(field.type).views.isEmpty() && mayHoldConvertible(held, field.type))
                         field.isAnyObjectInSomeMember = true;
                 }
             }
@@ -178,21 +268,80 @@ static void findFieldsThatAreAnyObjectInSomeMember(Program& program)
     }
 }
 
+static void findFieldsThatMayBecomeTheirTypeInSomeMember(Program& program)
+{
+    BitVector namesOfSuchFields;
+    for (auto& view : program.layouts) {
+        for (auto& field : view.fields) {
+            field.isTypedOtherwiseInSomeView = false;
+            field.mayBecomeItsTypeInSomeMember = false;
+            if (field.type && readMayInstantiate(program, program.at(field.type)))
+                namesOfSuchFields.set(field.name.index());
+        }
+    }
+    if (namesOfSuchFields.isEmpty())
+        return;
+    forEachIndexInParallel(program.layouts.size(), [&](unsigned i) {
+        auto& view = program.layouts[i];
+        for (auto& field : view.fields) {
+            if (!namesOfSuchFields.get(field.name.index()) || (field.type && !program.at(field.type).hasObjects()))
+                continue;
+            for (LayoutID id : view.members) {
+                auto& member = program.layouts[id.index()];
+                if (&member == &view)
+                    continue;
+                if (auto index = member.fieldNamed(field.name); index && member.fields[*index].type != field.type)
+                    WTF::atomicStore(&member.fields[*index].isTypedOtherwiseInSomeView, true, std::memory_order_relaxed);
+            }
+        }
+    });
+    forEachIndexInParallel(program.layouts.size(), [&](unsigned i) {
+        auto& view = program.layouts[i];
+        for (auto& field : view.fields) {
+            if (!field.type || !readMayInstantiate(program, program.at(field.type)))
+                continue;
+            field.mayBecomeItsTypeInSomeMember = std::ranges::any_of(view.members, [&](LayoutID id) {
+                auto& member = program.layouts[id.index()];
+                auto index = member.fieldNamed(field.name);
+                return index && (member.fields[*index].isTypedOtherwiseInSomeView || member.fields[*index].type != field.type);
+            });
+        }
+    });
+}
+
 void findViewsRetaggedTo(Program& program)
 {
     findFieldsThatAreAnyObjectInSomeMember(program);
+    findFieldsThatMayHoldConvertibleRecords(program);
     // As Coercion in AOTTypedObject.cpp goes about it.
     unsigned numberOfLayouts = program.layouts.size();
     BitVector isSpecialization(numberOfLayouts);
+    BitVector isInstantiation(numberOfLayouts);
+    auto hasFieldsOf = [](const Layout& layout, const Layout& other) {
+        return std::ranges::all_of(other.fields, [&](const Field& field) {
+            return field.flags & fieldIsNeverStored || layout.fieldNamed(field.name);
+        });
+    };
     for (auto& layout : program.layouts) {
-        for (LayoutID specialization : layout.specializations)
+        for (LayoutID specialization : layout.specializations) {
             isSpecialization.set(specialization.index());
+            if (hasFieldsOf(layout, program.at(specialization)) && hasFieldsOf(program.at(specialization), layout))
+                isInstantiation.set(specialization.index());
+        }
     }
+    auto& instantiatedTo = program.viewsInstantiatedTo;
+    instantiatedTo.clearAll();
+    instantiatedTo.ensureSize(numberOfLayouts);
     auto& retaggedTo = program.viewsRetaggedTo;
     retaggedTo.clearAll();
     retaggedTo.ensureSize(numberOfLayouts);
     for (unsigned i = 0; i < numberOfLayouts; ++i) {
         auto& layout = program.layouts[i];
+        bool hasInstantiation = layout.isAllocated ? isInstantiation.get(i) : std::ranges::any_of(layout.members, [&](LayoutID member) {
+            return isInstantiation.get(member.index());
+        });
+        if (hasInstantiation)
+            instantiatedTo.set(i);
         if (layout.isAllocated) {
             if (isSpecialization.get(i))
                 retaggedTo.set(i);
@@ -205,13 +354,14 @@ void findViewsRetaggedTo(Program& program)
             }
         }
     }
+    findFieldsThatMayBecomeTheirTypeInSomeMember(program);
     auto& leftAlone = program.viewsLeftAlone;
     leftAlone.clearAll();
     if (Options::auditAOTTypedAssertions()) [[unlikely]]
         return;
     leftAlone.ensureSize(numberOfLayouts);
     for (unsigned i = 0; i < numberOfLayouts; ++i) {
-        if (!retaggedTo.get(i) && !isSpecialization.get(i) && !program.layouts[i].isOpenedForLog)
+        if (!retaggedTo.get(i) && !isSpecialization.get(i) && !program.layouts[i].checksForeignObjects())
             leftAlone.set(i);
     }
     // The largest set that holds: a view goes out of it where something can be made of what a field holds: a plain object is copied where the type of the field admits none as it is, and whatever can be made of an object
@@ -266,10 +416,30 @@ static Writes writesOfMakingObjects(const Type& from, const Type& to)
 Writes writesOfElementRead(const Program& program, const Type& type)
 {
     for (LayoutID view : type.views) {
-        if (program.at(view).kind == LayoutKind::Record && (!program.at(view).admitsForeignObjects || program.at(view).isOpenedForLog))
+        if (program.at(view).kind == LayoutKind::Record && (!program.at(view).admitsForeignObjects || program.at(view).checksForeignObjects()))
             return Writes::RuntimeState;
     }
     return Writes::Nothing;
+}
+
+static bool mayHoldRecordConvertibleTo(const Program& program, const Type& from, const Type& to)
+{
+    if (&from == &to || !narrowingMayRetag(program, to))
+        return false;
+    auto isMemberOfTarget = [&](LayoutID layout) {
+        return to.views.containsIf([&](LayoutID view) {
+            return program.at(view).members.contains(layout);
+        });
+    };
+    for (LayoutID view : from.views) {
+        if (program.at(view).members.size() > maxMembersCheckedAtRead)
+            continue;
+        for (LayoutID layout : program.at(view).members) {
+            if (!program.at(layout).specializations.isEmpty() && !isMemberOfTarget(layout) && program.at(layout).specializations.containsIf(isMemberOfTarget))
+                return true;
+        }
+    }
+    return false;
 }
 
 bool claimMayMakeObjects(const Program& program, const Function& function, const Value& value)
@@ -277,7 +447,7 @@ bool claimMayMakeObjects(const Program& program, const Function& function, const
     if ((value.castReason() != CastReason::Claim && value.castReason() != CastReason::Flow && value.castReason() != CastReason::Store) || value.string() || value.accessedName() || Options::auditAOTTypedAssertions())
         return false;
     auto& from = program.typeOf(function, value.child(0));
-    return (from.anyObject || from.admitsForeignObjects(program)) && writesOfElementRead(program, program.at(value.type)) != Writes::Nothing;
+    return (from.anyObject || from.admitsForeignObjects(program) || mayHoldRecordConvertibleTo(program, from, program.at(value.type))) && writesOfElementRead(program, program.at(value.type)) != Writes::Nothing;
 }
 
 bool fieldReadMayMakeObjects(const Program& program, const Function& function, const Value& value)
@@ -288,7 +458,9 @@ bool fieldReadMayMakeObjects(const Program& program, const Function& function, c
     if (!access)
         return false;
     auto& field = program.at(access->layout).fields[access->field];
-    return !field.type || program.at(field.type).anyObject || program.at(field.type).admitsForeignObjects(program) || field.isAnyObjectInSomeMember;
+    if (field.type == value.type ? field.mayBecomeItsTypeInSomeMember : readMayInstantiate(program, program.at(value.type)))
+        return true;
+    return !field.type || program.at(field.type).anyObject || program.at(field.type).admitsForeignObjects(program) || field.isAnyObjectInSomeMember || mayHoldRecordConvertibleTo(program, program.at(field.type), program.at(value.type));
 }
 
 Writes writesOfCast(const Program& program, const Function& function, const Value& value)
@@ -325,6 +497,13 @@ Writes writesOfCast(const Program& program, const Function& function, const Valu
     if (coercionMayChangeObjects(program, from, to, value.coercesFreshData()))
         writes = std::max(writes, writesOfMakingObjects(from, to));
     return writes;
+}
+
+bool readMayInstantiate(const Program& program, const Type& type)
+{
+    return type.views.containsIf([&](LayoutID view) {
+        return program.viewsInstantiatedTo.get(view.index());
+    });
 }
 
 bool narrowingMayRetag(const Program& program, const Type& type)
@@ -503,7 +682,7 @@ public:
 
         for (unsigned i = 0; i < numberOfFunctions; ++i) {
             FunctionID id(i);
-            auto& function = m_program.at(id);
+            auto& function = m_program.functions.withSameValues(i);
             function.writes = m_effects[ofAnyCall(id)].writes;
             function.writesShapeWords = m_effects[ofAnyCall(id)].writesShapeWords;
             function.writesIfItReturns = m_effects[ofCallThatReturns(id)].writes;
@@ -600,7 +779,8 @@ private:
     // Without what the functions it calls by name change: what is summed up for those is noted to be part of it.
     void sumUpBody(FunctionID id, Effects& ofAny, Effects& ofReturning, Vector<std::pair<unsigned, unsigned>>& parts)
     {
-        auto& function = m_program.at(id);
+        UnchangingFunctionScope unchangingFunctionScope;
+        auto& function = std::as_const(m_program).at(id);
         Effects most = changes(Writes::Heap);
         if (function.blocks.isEmpty()) {
             ofAny = most;
@@ -886,7 +1066,7 @@ static void reportStoresThatMayAskPrototypeChain(Program& program)
     unsigned numberThatRise = 0;
     unsigned numberThatRiseIfTheyReturn = 0;
     for (unsigned i = 0; i < program.functions.size(); ++i) {
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         unsigned before = numberOfStores;
         for (auto& block : function.blocks) {
             for (size_t index = 0; index < block.values.size(); ++index) {

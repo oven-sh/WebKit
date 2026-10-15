@@ -9,6 +9,7 @@
 
 #include "AOTConvention.h"
 #include "CCallHelpers.h"
+#include <wtf/BitVector.h>
 #include <wtf/Vector.h>
 
 namespace JSC {
@@ -59,16 +60,24 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(CallInternalFunction) \
     v(ConstructInternalFunction) \
     v(CallList) \
+    v(TailCallList) \
+    v(CheckCallable) \
+    v(CheckCallableNamed) \
     v(Enter) \
     v(EnterModule) \
     v(EnterClosure) \
     v(EnterSlimClosure) \
     v(EnterResume) \
+    v(EnterSavedFrame) \
+    v(LaySavedFrameOnStack) \
     v(CallValue) \
     v(CallValueWithoutThis) \
     v(CallValueNamed) \
     v(CallMethod) \
+    v(CallMethodReadThroughGetter) \
+    v(CallMethodReadPastEntries) \
     v(CallMethodRead) \
+    v(CallMethodByName) \
     v(ApplyArray) \
     v(SpreadArray) \
     v(ConstructClosure) \
@@ -114,10 +123,16 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafColdOperationDouble) \
     v(ColdCallFunction) \
     v(LeafColdCallFunction) \
+    v(ColdCallFunctionForValue) \
+    v(LeafColdCallFunctionForValue) \
     v(PlainOperation) \
     v(PlainOperationWithInstance) \
     v(DidCreateTypedField) \
     v(LeafDidCreateTypedField) \
+    v(CreateTypedFieldOutOfLine) \
+    v(LeafCreateTypedFieldOutOfLine) \
+    v(DidCreateRunOfTypedFields) \
+    v(LeafDidCreateRunOfTypedFields) \
     v(PutPropertiesWithStorage) \
     v(RememberElement) \
     v(LeafRememberElement) \
@@ -202,13 +217,48 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafTypedStringInBlock7) \
     v(TypedStringMadeOnceInBlock7) \
     v(LeafTypedStringMadeOnceInBlock7) \
+    v(ValueIsText) \
+    v(LeafValueIsText) \
     v(StringIsText) \
     v(LeafStringIsText) \
+    v(ValueIsTextOfLength1) \
+    v(LeafValueIsTextOfLength1) \
+    v(StringIsTextOfLength1) \
+    v(LeafStringIsTextOfLength1) \
+    v(ValueIsTextOfLength2) \
+    v(LeafValueIsTextOfLength2) \
+    v(StringIsTextOfLength2) \
+    v(LeafStringIsTextOfLength2) \
+    v(ValueIsTextOfLength3) \
+    v(LeafValueIsTextOfLength3) \
+    v(StringIsTextOfLength3) \
+    v(LeafStringIsTextOfLength3) \
+    v(ValueIsTextOfLength4) \
+    v(LeafValueIsTextOfLength4) \
+    v(StringIsTextOfLength4) \
+    v(LeafStringIsTextOfLength4) \
+    v(ValueIsTextOfLength5) \
+    v(LeafValueIsTextOfLength5) \
+    v(StringIsTextOfLength5) \
+    v(LeafStringIsTextOfLength5) \
+    v(ValueIsTextOfLength6) \
+    v(LeafValueIsTextOfLength6) \
+    v(StringIsTextOfLength6) \
+    v(LeafStringIsTextOfLength6) \
+    v(ValueIsTextOfLength7) \
+    v(LeafValueIsTextOfLength7) \
+    v(StringIsTextOfLength7) \
+    v(LeafStringIsTextOfLength7) \
+    v(ValueIsTextOfLength8) \
+    v(LeafValueIsTextOfLength8) \
+    v(StringIsTextOfLength8) \
+    v(LeafStringIsTextOfLength8) \
     v(StringReplaceRegExpStringThatMayFindNothing) \
     v(NewRegExpLiteral) \
     v(UncheckedNewRegExpLiteral) \
     v(RegExpExecThatAsksBodyFirst) \
     v(RegExpTestThatAsksBodyFirst) \
+    v(RegExpTestBoxedThatAsksBodyFirst) \
     v(StringToLowerCase) \
     v(StringToUpperCase) \
     v(UncheckedStringToLowerCase) \
@@ -217,6 +267,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(UncheckedNewTypedArray) \
     v(HoldToType) \
     v(LeafHoldToType) \
+    v(CastInRegister) \
+    v(LeafCastInRegister) \
     v(StringStartsWithText) \
     v(LeafStringStartsWithText) \
     v(StringEndsWithText) \
@@ -247,12 +299,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafTypedBuiltinCell) \
     v(TypedClosureEntry) \
     v(LeafTypedClosureEntry) \
-    v(IsArrayAsMade) \
-    v(LeafIsArrayAsMade) \
     v(TypedNewPromise) \
     v(LeafTypedNewPromise) \
     v(AwaitMayContinue) \
     v(LeafAwaitMayContinue) \
+    v(AwaitBySavingFrame) \
+    v(ResolvePromiseBehindAwait) \
     v(ArrayLiteral0) \
     v(LeafArrayLiteral0) \
     v(ArrayLiteral1) \
@@ -285,6 +337,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafEmptyArrayWithRoom) \
     v(ArrayOfValues) \
     v(LeafArrayOfValues) \
+    v(ArrayInTheMakingOfValues) \
+    v(LeafArrayInTheMakingOfValues) \
+    v(ArrayInTheMakingOfDoubles) \
+    v(LeafArrayInTheMakingOfDoubles) \
+    v(ArrayInTheMakingOfInt32s) \
+    v(LeafArrayInTheMakingOfInt32s) \
     v(EmptyArrayAtSite) \
     v(LeafEmptyArrayAtSite) \
     v(PushToFullVector) \
@@ -295,12 +353,22 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LeafPartOfString) \
     v(StoreElement) \
     v(LeafStoreElement) \
+    v(StoreElementOfDouble) \
+    v(LeafStoreElementOfDouble) \
     v(LoadElement) \
     v(LeafLoadElement) \
+    v(LoadElementAsDoubleOrNil) \
+    v(LeafLoadElementAsDoubleOrNil) \
+    v(ArrayElementAs) \
+    v(LeafArrayElementAs) \
+    v(ArrayElement) \
+    v(LeafArrayElement) \
     v(ArraySlice) \
     v(LeafArraySlice) \
     v(ArrayCopy) \
     v(LeafArrayCopy) \
+    v(CreateArguments) \
+    v(LeafCreateArguments) \
     v(WriteBarrier) \
     v(ToBoolean) \
     v(CharactersOfSubstring) \
@@ -338,6 +406,12 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(LessEqBehindInt32Test) \
     v(GreaterBehindInt32Test) \
     v(GreaterEqBehindInt32Test) \
+    v(AddOfDoubleAsDouble) \
+    v(MulOfDoubleAsDouble) \
+    v(SubOfDoubleAsDouble) \
+    v(SubOfDoubleOnRightAsDouble) \
+    v(DivOfDoubleAsDouble) \
+    v(DivOfDoubleOnRightAsDouble) \
     v(GetByValAtIndex) \
     v(GetByVal) \
     v(PutByValAtIndex) \
@@ -345,10 +419,97 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(GetLength) \
     v(GetById) \
     v(PutById) \
+    v(PutByIdOfDouble) \
+    v(GetByIdAsDouble) \
+    v(GetByIdAsDoubleOrUndefined) \
+    v(GetByIdAsDoubleOrNull) \
+    v(GetByIdAsDoubleOrNil) \
+    v(GetByIdAsBoolean) \
+    v(GetByIdAsBooleanOrUndefined) \
+    v(GetByIdAsBooleanOrNull) \
+    v(GetByIdAsBooleanOrNil) \
+    v(GetByIdAsString) \
+    v(GetByIdAsStringOrUndefined) \
+    v(GetByIdAsStringOrNull) \
+    v(GetByIdAsStringOrNil) \
+    v(GetByNameGenerally) \
+    v(GetThroughSlotByName) \
+    v(GetThroughAccessorByName) \
+    v(GetThroughOwnAccessorByName) \
+    v(GetThroughExtraAccessorByName) \
+    v(ReadAbsentByName) \
+    v(ReadOutOfLineByName) \
+    v(ReadInheritedInObjectByName) \
+    v(ReadInheritedOutOfLineByName) \
+    v(ReadFieldCell32ByName) \
+    v(ReadFieldInt32ByName) \
+    v(ReadFieldBoxedByName) \
+    v(ReadOwnAccessorByName) \
+    v(ReadAccessorByName) \
+    v(ReadExtraAccessorByName) \
+    v(ReadThroughSlotsByName) \
+    v(ReadFieldCell32ByNameKeepingTwo) \
+    v(ReadFieldInt32ByNameKeepingTwo) \
+    v(ReadFieldBoxedByNameKeepingTwo) \
+    v(ReadOwnAccessorByNameKeepingTwo) \
+    v(ReadAccessorByNameKeepingTwo) \
+    v(ReadExtraAccessorByNameKeepingTwo) \
+    v(ReadThroughSlotsByNameKeepingTwo) \
+    v(ReadFieldCell32ByNameWithinFrame) \
+    v(ReadFieldInt32ByNameWithinFrame) \
+    v(ReadFieldBoxedByNameWithinFrame) \
+    v(ReadOwnAccessorByNameWithinFrame) \
+    v(ReadAccessorByNameWithinFrame) \
+    v(ReadExtraAccessorByNameWithinFrame) \
+    v(ReadThroughSlotsByNameWithinFrame) \
+    v(GetByName) \
+    v(GetByNameKeepingTwo) \
+    v(GetByNameWithinFrame) \
+    v(GetByNameBelowNumberOfColumns) \
+    v(GetByNameBelowNumberOfColumnsKeepingTwo) \
+    v(GetLengthByName) \
+    v(GetLengthByNameKeepingTwo) \
+    v(AddInObjectByName) \
+    v(AddOutOfLineByName) \
+    v(ReplaceOutOfLineByName) \
+    v(PutByNameGenerally) \
+    v(PutThroughSlotByName) \
+    v(PutByNameWithNewStorage) \
+    v(PutByNameAddsStorage) \
+    v(PutByNameAddsStorageKeepingTwo) \
+    v(PutByNameThroughSlots) \
+    v(PutByNameThroughSlotsKeepingTwo) \
+    v(PutByName) \
+    v(PutByNameKeepingTwo) \
+    v(PutByNameBelowNumberOfColumns) \
+    v(PutByNameBelowNumberOfColumnsKeepingTwo) \
+    v(PutByNameSloppyGenerally) \
+    v(PutThroughSlotByNameSloppy) \
+    v(PutByNameSloppyWithNewStorage) \
+    v(PutByNameSloppyAddsStorage) \
+    v(PutByNameSloppyAddsStorageKeepingTwo) \
+    v(PutByNameSloppyThroughSlots) \
+    v(PutByNameSloppyThroughSlotsKeepingTwo) \
+    v(PutByNameSloppy) \
+    v(PutByNameSloppyKeepingTwo) \
+    v(PutByNameSloppyBelowNumberOfColumns) \
+    v(PutByNameSloppyBelowNumberOfColumnsKeepingTwo) \
+    v(DefineByNameGenerally) \
+    v(DefineThroughSlotByName) \
+    v(DefineByNameWithNewStorage) \
+    v(DefineByNameAddsStorage) \
+    v(DefineByNameAddsStorageKeepingTwo) \
+    v(DefineByNameThroughSlots) \
+    v(DefineByNameThroughSlotsKeepingTwo) \
+    v(DefineByName) \
+    v(DefineByNameKeepingTwo) \
+    v(DefineByNameBelowNumberOfColumns) \
+    v(DefineByNameBelowNumberOfColumnsKeepingTwo) \
     v(TryGetByNameAndRow) \
     v(TryPutByNameAndRow) \
     v(DefineOwnProperty) \
     v(GetByValCached) \
+    v(GetByValCachedOfCells) \
     v(PutByValCached) \
     v(PutByValCachedSloppy) \
     v(PrivateGet) \
@@ -360,6 +521,8 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(DeleteByValCachedSloppy) \
     v(InstanceOf) \
     v(InstanceOfCached) \
+    v(InstanceOfClass) \
+    v(InstanceOfLeafClass) \
     v(MapGetAskingReceiver) \
     v(MapGet) \
     v(MapHasAskingReceiver) \
@@ -405,10 +568,18 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(SetHasOrCallValue) \
     v(SetAddOrCallMethod) \
     v(SetAddOrCallValue) \
+    v(RegExpExecOrCallMethod) \
+    v(RegExpExecOrCallValue) \
+    v(RegExpTestOrCallMethod) \
+    v(RegExpTestOrCallValue) \
     v(TakeElements) \
+    v(SuspendAtFirstAwait) \
     v(AppendSpread) \
     v(HandleException) \
+    v(HandleExceptionKeepingRegisters) \
     v(PollAtPrologue) \
+    v(PollAtLoop) \
+    v(LeafPollAtLoop) \
     v(PollAheadOfEntering) \
     v(HandleExceptionAtPrologue) \
     v(ThrowStackOverflowAtPrologue) \
@@ -425,6 +596,10 @@ static constexpr unsigned maxCodeGranuleShift = 12;
     v(FrontEndNewObjectLiteral) \
     v(FrontEndCompareStrictEq) \
     v(FrontEndCompareEq) \
+    v(NewMap) \
+    v(FrontEndTypedPutExtra) \
+    v(FrontEndTypedGetExtra) \
+    v(FrontEndTypedConstruct) \
     FOR_EACH_AOT_HELPER(v) \
     v(NewArrayWithFastPath) \
     v(ValueAddWithFastPath) \
@@ -464,6 +639,7 @@ static_assert(maxLiteralPropertiesInRegisters <= 6 && maxArrayElementsInRegister
 // For code compiled from types. Each is followed by its variant for a caller without a frame.
 // What Stub::ArrayOfDoubles and Stub::ArrayOfInt32s are handed: the length, and above it the capacity, which is odd.
 static constexpr unsigned capacityShiftInArrayOfNumbers = 8;
+static constexpr uint32_t arrayOfNumbersIsInTheMaking = 0x100;
 static constexpr unsigned arraySiteBornShift = 8;
 static constexpr uint32_t arraySiteInterval = 64;
 static constexpr unsigned maxCapacityOfArrayOfNumbers = 127;
@@ -529,6 +705,7 @@ static constexpr uint64_t Boolean = 1 << 2;
 static constexpr uint64_t Number = 1 << 3;
 static constexpr uint64_t Object = 1 << 4;
 static constexpr uint64_t Function = 1 << 5;
+static constexpr uint64_t ChangedArray = 1 << 6;
 static constexpr unsigned shiftOfTypes = 8;
 static constexpr unsigned maxTypes = 4;
 }
@@ -544,6 +721,25 @@ struct ArgumentThunks {
     Vector<StubCall> jumps;
 };
 ArgumentThunks generateArgumentThunks(const Vector<const ArgumentMoves*>&);
+void jumpUnlessHeldCellFits(CCallHelpers&, GPRReg value, GPRReg scratch, const ArgumentMoves& tests, CCallHelpers::JumpList& doesNotFit);
+bool testsOfHeldCellTakeScratch(const ArgumentMoves& tests);
+GPRReg wordOfCastInRegisterGPR();
+namespace FitsByShape {
+static constexpr unsigned shiftOfCount = 32;
+static constexpr uint64_t maxCount = (1ull << 23) - 1;
+static constexpr unsigned shiftOfPassesEarlierBlocks = 55;
+static constexpr unsigned shiftOfBlockByte = 56;
+}
+namespace CastInRegister {
+static constexpr unsigned shiftOfOperation = 32;
+static constexpr unsigned shiftOfRegister = 56;
+static constexpr unsigned shiftOfYieldsValue = 48;
+static constexpr uint64_t yieldsValue = 1ull << shiftOfYieldsValue;
+inline uint64_t word(uint32_t argument, unsigned offsetOfOperation, bool operationYieldsValue, GPRReg held)
+{
+    return argument | static_cast<uint64_t>(offsetOfOperation) << shiftOfOperation | (operationYieldsValue ? yieldsValue : 0) | static_cast<uint64_t>(held) << shiftOfRegister;
+}
+}
 struct OutlinedPlace {
     uint32_t offset;
     uint32_t length;
@@ -574,6 +770,9 @@ void emitCharactersOfSubstring(CCallHelpers&);
 GPRReg defaultOperandRegister(Stub);
 bool preservesOperandRegister(Stub);
 std::optional<RegisterSet> registersChangedBy(Stub);
+Stub formOfStubThatKeeps(Stub, const RegisterSet& live);
+Stub formOfStubForName(Stub, uint32_t name);
+void setNumberOfNamesUsedOftenEnoughForStubOfTheirOwn(unsigned);
 void dumpRegistersChangedByStubs(PrintStream&);
 
 struct StubBlob {
@@ -584,7 +783,8 @@ struct StubBlob {
     Vector<unsigned> returnsFromFindingTargets;
     Vector<std::pair<String, unsigned>> names;
 };
-const StubBlob& stubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes);
+std::unique_ptr<StubBlob> createStubBlob(unsigned codeGranuleShift, bool functionLengthsAreBytes, const BitVector& thunksThatAreCalled);
+bool thunkIsMadeOnlyIfCalled(unsigned thunk);
 
 struct IndexReference {
     uint32_t offset;
@@ -685,6 +885,48 @@ static constexpr size_t codeOffsetUnit = sizeof(uint32_t);
 static constexpr size_t stubCallReach = 96 * MB;
 #endif
 static constexpr size_t offsetOfReturnAddressInTrap = sizeOfNearCall - 1;
+#if CPU(X86_64) && OS(LINUX)
+static constexpr size_t sizeOfLoopPoll = 7;
+static constexpr ptrdiff_t offsetOfLeafPollInLoopPollPage = 4;
+#else
+static constexpr size_t sizeOfLoopPoll = 0;
+#endif
+#if CPU(X86_64)
+static constexpr uint8_t trapInstruction = 0xf4;
+#if OS(LINUX)
+static constexpr size_t sizeOfCallAtPrologue = 1;
+#else
+static constexpr size_t sizeOfCallAtPrologue = sizeOfNearCall;
+#endif
+inline bool trapAtPrologueMakesFrameRecord(const uint8_t* trap)
+{
+    return trap[-4] == 0x55 && trap[-3] == 0x48 && trap[-2] == 0x89 && trap[-1] == 0xe5 && trap[1] == 0x5d;
+}
+
+inline uint8_t* behindStackCheckThatGoesTo(uint8_t* startOfFunction, uint8_t* arm)
+{
+#if OS(LINUX)
+    if (static_cast<size_t>(arm - startOfFunction) > 4 && trapAtPrologueMakesFrameRecord(arm))
+        arm -= 4;
+#endif
+    constexpr unsigned sizeOfConditionalJump = 6;
+    constexpr unsigned sizeOfShortJump = 2;
+    auto relative = [](uint8_t* at) { int32_t value; memcpy(&value, at, sizeof(value)); return value; };
+    uint8_t* instruction = startOfFunction;
+    if (*instruction == 0xe9)
+        instruction += sizeOfNearCall + relative(instruction + 1);
+    else if (*instruction == 0xeb)
+        instruction += sizeOfShortJump + static_cast<int8_t>(instruction[1]);
+    constexpr unsigned maxBytesInStackCheck = 40;
+    for (unsigned i = 0; i < maxBytesInStackCheck; ++i, ++instruction) {
+        if (instruction[0] == 0x0f && instruction[1] == 0x82 && instruction + sizeOfConditionalJump + relative(instruction + 2) == arm)
+            return instruction + sizeOfConditionalJump;
+        if (instruction[0] == 0x72 && instruction + sizeOfShortJump + static_cast<int8_t>(instruction[1]) == arm)
+            return instruction + sizeOfShortJump;
+    }
+    return nullptr;
+}
+#endif
 static constexpr size_t sizeOfVeneer = 3 * sizeof(uint32_t);
 static constexpr size_t stubCallReachSlack = 24 * MB;
 void writeVeneer(uint8_t* base, size_t veneer, size_t target);

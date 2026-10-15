@@ -139,6 +139,8 @@ std::optional<Writes> writesOfInlineMathNumber(InlineBuiltin which, std::span<co
         // question whether something is the number that is not one does it give the wrong answer.
         case Rep::OptionalDouble:
             return writesIf(!converts && !asksForNaN, Writes::Pure);
+        case Rep::JSValue:
+            return writesIf(!converts, Writes::Pure);
         default:
             return std::nullopt;
         }
@@ -280,6 +282,53 @@ void Lowering::findNumbersJoinedWithIntegers(const Vector<BlockID>& order)
                 m_leastOfNumbersJoinedWithIntegers.add(id.index(), *least);
         }
     }
+}
+
+void Lowering::findJoinsOfConstantsTakenAsNumbers()
+{
+    auto& joins = m_isJoinOfConstantsTakenAsNumber;
+    for (unsigned i = 1; i < m_function.blocks.size(); ++i) {
+        for (ValueID id : m_function.blocks[i].parameters) {
+            if (m_function.at(id).rep == Rep::Int64)
+                joins.set(id.index());
+        }
+    }
+    if (joins.isEmpty())
+        return;
+    BitVector isUsed;
+    BitVector isHandedConstant;
+    for (auto& block : m_function.blocks) {
+        if (block.terminator.value)
+            joins.clear(block.terminator.value.index());
+        for (auto& target : block.terminator.targets) {
+            auto& parameters = m_function.at(target.block).parameters;
+            for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                joins.clear(target.arguments[i].index());
+                if (i >= parameters.size())
+                    continue;
+                if (m_function.at(target.arguments[i]).opcode == Opcode::Integer)
+                    isHandedConstant.set(parameters[i].index());
+                else
+                    joins.clear(parameters[i].index());
+            }
+        }
+    }
+    joins.filter(isHandedConstant);
+    for (auto& block : m_function.blocks) {
+        if (joins.isEmpty())
+            return;
+        for (ValueID id : block.values) {
+            auto& value = m_function.at(id);
+            bool takesNumbers = value.rep == Rep::Double && (value.opcode == Opcode::Add || value.opcode == Opcode::Sub || value.opcode == Opcode::Mul || value.opcode == Opcode::Div)
+                && !(typeOf(value.child(0)).isInteger() && typeOf(value.child(1)).isInteger()) && isNumericOperand(typeOf(value.child(0))) && isNumericOperand(typeOf(value.child(1)));
+            value.forEachChild([&](ValueID child) {
+                if (!takesNumbers)
+                    joins.clear(child.index());
+                isUsed.set(child.index());
+            });
+        }
+    }
+    joins.filter(isUsed);
 }
 
 void Lowering::findNumbersJoinedWithInt32(const Vector<BlockID>& order)
@@ -501,8 +550,9 @@ Integer Lowering::divide(Integer x, Range dividends, Integer y, Range divisors)
 // Math.floor, ceil, trunc or round of x / y. The double nearest to x / y is on the same side of every integer as x / y itself up to 2^53, and of every integer and a half up to 2^51.
 std::optional<Integer> Lowering::roundedQuotient(InlineBuiltin which, ValueID argument, bool yieldsInteger)
 {
-    auto& quotient = m_function.at(m_program.originOf(m_function, argument));
-    if (quotient.opcode != Opcode::Div)
+    ValueID origin = m_program.originOf(m_function, argument);
+    auto& quotient = m_function.at(origin);
+    if (quotient.opcode != Opcode::Div || !hasOperandsHere(origin))
         return std::nullopt;
     int64_t limit = which == InlineBuiltin::MathRound ? maxExactInteger >> 2 : maxExactInteger;
     if (!isExactInteger(typeOf(quotient.child(0)), limit) || !isExactInteger(typeOf(quotient.child(1)), limit))
@@ -558,7 +608,7 @@ std::optional<Integer> Lowering::roundedQuotient(InlineBuiltin which, ValueID ar
 std::optional<Word32> Lowering::toInt32OfQuotient(ValueID id)
 {
     auto& quotient = m_function.at(id);
-    if (quotient.opcode != Opcode::Div || !isExactInteger(typeOf(quotient.child(0))) || !isExactInteger(typeOf(quotient.child(1))))
+    if (quotient.opcode != Opcode::Div || !hasOperandsHere(id) || !isExactInteger(typeOf(quotient.child(0))) || !isExactInteger(typeOf(quotient.child(1))))
         return std::nullopt;
     Integer x = in<Integer>(quotient.child(0));
     Integer y = in<Integer>(quotient.child(1));
@@ -788,20 +838,34 @@ std::optional<Operand> Lowering::lowerInlineMathNumber(InlineBuiltin which, Valu
                 return yieldBoolean(isWithin(assumedInteger(operand.as<OptionalInteger>()), safeIntegers), type);
             return yieldBoolean(logicalNot(isMarker(operand)), type);
         }
-        Number x = operand.rep == Rep::Double ? operand.as<Number>() : assumedNumber(operand.as<OptionalNumber>());
-        switch (which) {
-        case InlineBuiltin::IsNaN:
-        case InlineBuiltin::NumberIsNaN:
-            return yieldBoolean(notEqualOrUnordered(x, x), type);
-        case InlineBuiltin::IsFinite:
-        case InlineBuiltin::NumberIsFinite:
-            return yieldBoolean(isFinite(x), type);
-        case InlineBuiltin::NumberIsInteger:
-            return yieldBoolean(isFiniteInteger(x), type);
-        // What is within the range is finite.
-        default:
-            return yieldBoolean(logicalAnd(equal(trunc(x), x), lessThanOrEqual(abs(x), number(static_cast<double>(safeIntegers.most)))), type);
+        auto answerFor = [&](Number x) {
+            switch (which) {
+            case InlineBuiltin::IsNaN:
+            case InlineBuiltin::NumberIsNaN:
+                return notEqualOrUnordered(x, x);
+            case InlineBuiltin::IsFinite:
+            case InlineBuiltin::NumberIsFinite:
+                return isFinite(x);
+            case InlineBuiltin::NumberIsInteger:
+                return isFiniteInteger(x);
+            // What is within the range is finite.
+            default:
+                return logicalAnd(equal(trunc(x), x), lessThanOrEqual(abs(x), number(static_cast<double>(safeIntegers.most))));
+            }
+        };
+        if (operand.rep == Rep::JSValue) {
+            Boxed value = operand.as<Boxed>();
+            return yieldBoolean(either<Word32>(isInt32(value), [&] {
+                return boolean(!asksForNaN);
+            }, [&] {
+                return either<Word32>(isNumber(value), [&] {
+                    return answerFor(unboxedDouble(value));
+                }, [&] {
+                    return boolean(false);
+                });
+            }), type);
         }
+        return yieldBoolean(answerFor(operand.rep == Rep::Double ? operand.as<Number>() : assumedNumber(operand.as<OptionalNumber>())), type);
     }
     case InlineBuiltin::ToNumber:
         if (arguments.isEmpty())

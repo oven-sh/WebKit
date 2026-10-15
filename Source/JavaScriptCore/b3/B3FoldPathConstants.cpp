@@ -32,9 +32,12 @@
 #include "B3CaseCollectionInlines.h"
 #include "B3Dominators.h"
 #include "B3InsertionSet.h"
+#include "B3MemoryValue.h"
+#include "B3PatchpointValue.h"
 #include "B3PhaseScope.h"
 #include "B3SwitchValue.h"
 #include "B3ValueInlines.h"
+#include <wtf/IndexSet.h>
 
 namespace JSC { namespace B3 {
 
@@ -110,25 +113,25 @@ public:
         for (unsigned i = overrides.size(); i--;)
             firstOverridePlusOne[overrides[i].first->index()] = i + 1;
 
-        for (auto& [value, override] : overrides) {
-            if (!override.hasValue)
-                continue;
-            override.valueNode = m_insertionSet.insertIntConstant(0, value, override.value);
-            m_insertionSet.execute(override.block);
-        }
-
-        auto getOverride = [&] (BasicBlock* block, Value* value) -> Override {
+        Vector<Override*, 16> overridesWithNewConstants;
+        auto findOverride = [&] (BasicBlock* block, Value* value) -> Override* {
             unsigned index = value->index();
             if (index >= firstOverridePlusOne.size() || !firstOverridePlusOne[index])
-                return Override();
-            Override result;
+                return nullptr;
+            Override* result = nullptr;
             for (unsigned i = firstOverridePlusOne[index] - 1; i < overrides.size() && overrides[i].first == value; ++i) {
                 Override& override = overrides[i].second;
-                if (dominators.dominates(override.block, block) && override.isBetterThan(result))
-                    result = override;
+                if (dominators.dominates(override.block, block) && override.isBetterThan(result ? *result : Override()))
+                    result = &override;
             }
             return result;
         };
+        auto getOverride = [&] (BasicBlock* block, Value* value) -> Override {
+            Override* result = findOverride(block, value);
+            return result ? *result : Override();
+        };
+
+        IndexSet<Value*> dependsOnOverride;
 
         for (BasicBlock* block : m_proc) {
             for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
@@ -166,17 +169,52 @@ public:
                 }
 
                 for (Value*& child : value->children()) {
-                    Override override = getOverride(block, child);
-                    if (override.valueNode)
-                        child = override.valueNode;
+                    Override* override = findOverride(block, child);
+                    if (!override || !override->hasValue)
+                        continue;
+                    if (!override->valueNode) {
+                        override->valueNode = m_proc.addIntConstant(child->origin(), child->type(), override->value);
+                        overridesWithNewConstants.append(override);
+                    }
+                    child = override->valueNode;
+                    dependsOnOverride.add(value);
                 }
             }
             m_insertionSet.execute(block);
         }
+        for (Override* override : overridesWithNewConstants) {
+            m_insertionSet.insertValue(0, override->valueNode);
+            m_insertionSet.execute(override->block);
+        }
+
+        if (!dependsOnOverride.isEmpty())
+            makeAccessesControlDependent(dependsOnOverride);
 
         if (changed) {
             m_proc.resetReachability();
             m_proc.invalidateCFG();
+        }
+    }
+
+    void makeAccessesControlDependent(IndexSet<Value*>& dependsOnOverride)
+    {
+        for (BasicBlock* block : m_proc.blocksInPreOrder()) {
+            for (Value* value : *block) {
+                bool depends = dependsOnOverride.contains(value);
+                for (Value* child : value->children())
+                    depends |= dependsOnOverride.contains(child);
+                if (!depends)
+                    continue;
+                if (auto* memory = value->as<MemoryValue>())
+                    memory->setControlDependent(true);
+                else if (auto* patchpoint = value->as<PatchpointValue>())
+                    patchpoint->effects.controlDependent = true;
+                Effects effects = value->effects();
+                if (value->opcode() == Phi || effects.mustExecute() || effects.controlDependent)
+                    dependsOnOverride.remove(value);
+                else
+                    dependsOnOverride.add(value);
+            }
         }
     }
 #else

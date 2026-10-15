@@ -607,7 +607,7 @@ void findOperandsOnlyCalled(Program& program)
     Vector<Vector<unsigned>> callees(count);
     Vector<uint8_t> numbersSaid(FillWith { }, count, static_cast<uint8_t>(0));
     forEachIndexInParallel(count, [&](unsigned i) {
-        auto& function = program.functions[i];
+        auto& function = program.functions.withSameValues(i);
         function.capturesOnlyCalled.clearAll();
         function.parametersOnlyCalled.clearAll();
         if (!program.hasCode(FunctionID(i)) || function.blocks.isEmpty() || getsAtArgumentsPastItsOperands(program, function))
@@ -656,7 +656,7 @@ void findOperandsOnlyCalled(Program& program)
     for (bool changed = true; changed;) {
         bool isFirstRound = !numberOfRounds++;
         forEachIndexInParallel(count, [&](unsigned i) {
-            auto& function = program.functions[i];
+            auto& function = std::as_const(program).functions[i];
             notOnlyCalled[i] = 0;
             isScanned[i] = 0;
             if (function.parametersOnlyCalled.isEmpty() && function.capturesOnlyCalled.isEmpty())
@@ -677,7 +677,7 @@ void findOperandsOnlyCalled(Program& program)
             if (!notOnlyCalled[i])
                 continue;
             changed = true;
-            auto& function = program.functions[i];
+            auto& function = program.functions.withSameValues(i);
             Vector<Operand, 16> said;
             forEachOperandSaid(function, [&](ValueID, Operand operand) {
                 said.append(operand);
@@ -767,7 +767,7 @@ void findClosuresInFrames(Program& program)
         return;
     Vector<uint8_t> mayLieInFrames(FillWith { }, program.functions.size(), static_cast<uint8_t>(0));
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
-        mayLieInFrames[i] = canStackAllocateClosuresOf(program, program.functions[i]);
+        mayLieInFrames[i] = canStackAllocateClosuresOf(program, std::as_const(program).functions[i]);
     });
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
@@ -823,7 +823,7 @@ void findClosuresInFrames(Program& program)
                     auto is = [&](ValueID operand) {
                         return originOf(program, function, operand) == alias;
                     };
-                    if (!isUsedOnlyAsCallee(program, function, user, is))
+                    if (user.mustBeProperTailCall || !isUsedOnlyAsCallee(program, function, user, is))
                         isEscaping.quickSet(alias.index());
                 });
             }
@@ -942,6 +942,8 @@ void findEnvironmentsInFrames(Program& program, Vector<String>& findings)
                     break;
                 case Opcode::CallDirect:
                     markOperandEscaped(id);
+                    if (value.mustBeProperTailCall)
+                        value.forEachChild(markOperandEscaped);
                     break;
                 case Opcode::GetCapture:
                 case Opcode::AssertNotAllocated:
@@ -1108,7 +1110,7 @@ void reuseEnvironments(Program& program)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!program.hasCode(FunctionID(i)))
             return;
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         holdsCandidates[i] = function.values.containsIf([&](const Value& value) {
             if (!value.type || hasCandidateForView.quickGet(value.type.index()))
                 return true;
@@ -1160,7 +1162,7 @@ void reuseEnvironments(Program& program)
                     break;
                 case Opcode::CallDirect: {
                     giveUp(id);
-                    auto& callee = program.at(value.function());
+                    auto& callee = std::as_const(program).at(value.function());
                     if (callee.has(FunctionUsesArgumentBuffer) || callee.isGenericEntrypoint()) {
                         value.forEachChild(giveUp);
                         break;
@@ -1186,7 +1188,7 @@ void reuseEnvironments(Program& program)
                         value.forEachChild(escapes);
                         break;
                     }
-                    auto& captureTypes = program.at(value.function()).captureTypes;
+                    auto& captureTypes = std::as_const(program).at(value.function()).captureTypes;
                     for (unsigned k = 0; k < value.arguments.size(); ++k)
                         giveUpUnlessHeldAs(value.arguments[k], k < captureTypes.size() ? captureTypes[k] : TypeID());
                     break;
@@ -1306,7 +1308,7 @@ void reuseEnvironments(Program& program)
     forEachIndexInParallel(program.functions.size(), [&](unsigned i) {
         if (!holdsCandidates[i])
             return;
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         auto isKnownWorthIt = [&](LayoutID layout) {
             return WTF::atomicLoad(&isWorthIt[layout.index()], std::memory_order_relaxed);
         };

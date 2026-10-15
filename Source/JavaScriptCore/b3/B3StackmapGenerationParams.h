@@ -121,11 +121,19 @@ public:
             });
     }
 
+    template<typename Functor>
+    void addNearbyLatePath(CCallHelpers& jit, const Functor& functor) const
+    {
+        context().nearbyLatePaths.append({ static_cast<unsigned>(context().latePaths.size()), static_cast<uint32_t>(jit.m_assembler.buffer().codeSize()) });
+        addLatePath(functor);
+    }
+
 private:
     friend class CheckSpecial;
     friend class PatchpointSpecial;
     
     StackmapGenerationParams(StackmapValue*, const Vector<ValueRep>& reps, Air::GenerationContext&);
+    StackmapGenerationParams(StackmapValue*, Vector<ValueRep>&& reps, Air::GenerationContext&);
 
     StackmapValue* m_value;
     Vector<ValueRep> m_reps;

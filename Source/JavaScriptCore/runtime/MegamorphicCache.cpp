@@ -26,7 +26,10 @@
 #include "config.h"
 #include "MegamorphicCache.h"
 
+#include "JSCellInlines.h"
+#include "JSObject.h"
 #include "ProgramExecutable.h"
+#include "StructureInlines.h"
 
 #include <wtf/TZoneMallocInlines.h>
 
@@ -34,6 +37,22 @@ namespace JSC {
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(MegamorphicCache);
 WTF_MAKE_TZONE_ALLOCATED_IMPL(MegamorphicCache);
+
+void MegamorphicCache::notePrototypesOf(StructureID structureID)
+{
+    for (Structure* structure = structureID.decode();;) {
+        if (structure->hasPolyProto()) {
+            m_objectsOfFacts.fill(~0ull);
+            return;
+        }
+        JSValue prototype = structure->storedPrototype();
+        if (!prototype.isObject())
+            return;
+        unsigned bit = bitOfObject(prototype.asCell());
+        m_objectsOfFacts[bit / 64] |= 1ull << (bit % 64);
+        structure = prototype.asCell()->structure();
+    }
+}
 
 void MegamorphicCache::takeOutDead(Heap& heap)
 {

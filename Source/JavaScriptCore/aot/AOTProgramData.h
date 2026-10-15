@@ -46,6 +46,12 @@ struct TypedSitePosition {
     uint32_t frame;
 };
 
+struct ParameterCheckSite {
+    uint32_t site;
+    uint32_t typedFunction;
+    TypedSitePosition definition;
+};
+
 struct FunctionReportableSites {
     static constexpr uint32_t notTyped = UINT32_MAX;
     struct Construction {
@@ -58,11 +64,15 @@ struct FunctionReportableSites {
     Vector<uint32_t> identifierIndices;
     Vector<uint32_t> typedIdentifierIndices;
     Vector<String> typedIdentifierNames;
+    static constexpr uint32_t handlerTakesException = 1u << 31;
+    static constexpr uint32_t handlerIgnoresValue = 1u << 30;
+    static constexpr uint32_t flagsOfHandler = handlerTakesException | handlerIgnoresValue;
     Vector<std::pair<uint32_t, uint32_t>> typedCatchEntrypointsForCallSites;
     // Of a function compiled from types: its number in Typed::Data, and its positions by call-site number. Entry 0 is the function's start.
     uint32_t typedFunction { notTyped };
     uint32_t stateNumber { 0 };
     Vector<TypedSitePosition> typedPositions;
+    Vector<ParameterCheckSite> parameterCheckSites;
     uint32_t numberOfSitesWithoutCode { 0 };
     Vector<UTF8CString> typedSourceNames;
     Vector<uint32_t> constantIndices;
@@ -125,10 +135,18 @@ struct ProgramData {
     const uint32_t* functionMetadataOffsets() const { return at<uint32_t>(functionMetadataTableOffset); }
     std::span<const uint8_t> handlersOfTypedFunction(uint32_t functionIndex) const;
     const uint8_t* positionsOfTypedFunction(uint32_t functionIndex) const;
+    struct ParameterCheck {
+        uint32_t typedFunction;
+        uint32_t source;
+        uint32_t line;
+        uint32_t column;
+    };
+    std::optional<ParameterCheck> parameterCheckAt(uint32_t functionIndex, uint32_t site) const;
     // By function of the program that was compiled from types: its ClosureWord. Zero: it has no code. Only from firstFunctionClosuresGoBy on; ahead of those stand the rows of the first functions of the program, which Stub::CallModuleFunction calls by their number plus rowsLeftOutAheadOfClosures. There is nothing at an index under rowsLeftOutAheadOfClosures.
     const uint64_t* closureWords() const { return reinterpret_cast<const uint64_t*>(reinterpret_cast<uintptr_t>(at<uint64_t>(typedEntriesOffset)) - rowsLeftOutAheadOfClosures * sizeof(uint64_t)); }
     uint64_t closureWordOf(uint32_t function) const { return function >= firstFunctionClosuresGoBy && function - rowsLeftOutAheadOfClosures < numberOfTypedEntries ? closureWords()[function] : 0; }
     JS_EXPORT_PRIVATE String sourceName(uint32_t) const;
+    JS_EXPORT_PRIVATE bool isSourceNameEmpty(uint32_t) const;
     JS_EXPORT_PRIVATE Vector<uint32_t> moduleEntryOffsets() const;
     std::span<const ImageKey> imageKeys() const;
 
@@ -157,6 +175,8 @@ struct ProgramData {
     uint32_t numberOfSources;
     uint32_t imageKeysOffset;
     uint32_t imageKeyCapacity;
+    uint32_t parameterChecksOffset;
+    uint32_t numberOfParameterChecks;
 };
 
 class VMProgram {

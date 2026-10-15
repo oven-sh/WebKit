@@ -122,6 +122,9 @@ class LowerToAir {
 public:
     LowerToAir(Procedure& procedure)
         : m_valueToTmp(procedure.values().size())
+#if USE(BUN_JSC_ADDITIONS)
+        , m_tmpRequests(procedure.values().size(), TmpRequest::None)
+#endif
         , m_phiToTmp(procedure.values().size())
         , m_blockToBlock(procedure.size())
         , m_useCounts(procedure)
@@ -178,6 +181,14 @@ public:
                     ensureTupleTmps(value, m_tupleValueToTmps);
                 break;
             }
+#if USE(BUN_JSC_ADDITIONS)
+            case ArgumentReg: {
+                Reg reg = value->as<ArgumentRegValue>()->argumentReg();
+                if (m_procedure.namesPinnedArgumentRegistersDirectly() && reg.isGPR() && m_code.isPinned(reg) && reg != Reg(MacroAssembler::framePointerRegister))
+                    m_valueToTmp[value] = Tmp(reg);
+                break;
+            }
+#endif
             default:
                 break;
             }
@@ -219,12 +230,16 @@ public:
                 m_value = block->at(i);
                 if (m_locked.contains(m_value))
                     continue;
-                m_insts.append(Vector<Inst>());
+                m_insts.beginGroup();
                 if (B3LowerToAirInternal::verbose)
                     dataLog("Lowering ", deepDump(m_procedure, m_value), ":\n");
+#if USE(BUN_JSC_ADDITIONS)
+                lowerAndNoteIfTmpIsUnrequested();
+#else
                 lower();
+#endif
                 if (B3LowerToAirInternal::verbose) {
-                    for (Inst& inst : m_insts.last())
+                    for (Inst& inst : m_insts.last().mutableSpan().subspan(m_insts.starts.last()))
                         dataLog("    ", inst, "\n");
                 }
             }
@@ -237,10 +252,190 @@ public:
         Air::InsertionSet insertionSet(m_code);
         for (Inst& inst : m_prologue)
             insertionSet.insertInst(0, WTF::move(inst));
+#if USE(BUN_JSC_ADDITIONS)
+        replaceDefinitionsOfUnrequestedTmpsWithPadding();
+#endif
         insertionSet.execute(m_code[0]);
     }
 
 private:
+#if USE(BUN_JSC_ADDITIONS)
+    enum class TmpRequest : uint8_t { None, Tentative, Firm };
+
+    struct TentativeRequest {
+        Value* requester;
+        Value* requested;
+    };
+
+    struct DefinitionOfUnrequestedTmp {
+        Value* value;
+        Air::BasicBlock* block;
+        unsigned begin;
+        unsigned end;
+    };
+
+    ALWAYS_INLINE void noteTmpRequest(Value* value)
+    {
+        if (m_tentativeRequester) [[unlikely]] {
+            noteTentativeTmpRequest(value);
+            return;
+        }
+        m_tmpRequests[value] = TmpRequest::Firm;
+    }
+
+    NEVER_INLINE void noteTentativeTmpRequest(Value* value)
+    {
+        if (value == m_tentativeRequester) {
+            m_didRequestOwnTmp = true;
+            return;
+        }
+        TmpRequest& request = m_tmpRequests[value];
+        if (request == TmpRequest::Firm)
+            return;
+        request = TmpRequest::Tentative;
+        m_tentativeRequests.append({ m_tentativeRequester, value });
+    }
+
+    static bool requestsTentativelyWhileUnrequested(Value* value)
+    {
+        switch (value->opcode()) {
+        case Add:
+        case Sub:
+        case Neg:
+        case Shl:
+        case SShr:
+        case ZShr:
+        case BitAnd:
+        case BitOr:
+        case BitXor:
+        case SExt8:
+        case SExt16:
+        case SExt32:
+        case ZExt32:
+        case Equal:
+        case NotEqual:
+        case LessThan:
+        case GreaterThan:
+        case LessEqual:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            return true;
+        default:
+            return false;
+        }
+    }
+
+    void lowerAndNoteIfTmpIsUnrequested()
+    {
+        TmpRequest requestBeforeLowering = m_tmpRequests[m_value];
+        if (requestBeforeLowering == TmpRequest::Firm) {
+            lower();
+            return;
+        }
+        unsigned flushesBeforeLowering = m_numberOfFlushes;
+        unsigned begin = m_insts.insts.size();
+        bool isTentativeRequester = requestsTentativelyWhileUnrequested(m_value);
+        if (isTentativeRequester) {
+            m_tentativeRequester = m_value;
+            m_didRequestOwnTmp = false;
+            lower();
+            m_tentativeRequester = nullptr;
+        } else {
+            lower();
+            m_didRequestOwnTmp = m_tmpRequests[m_value] == TmpRequest::Firm;
+            m_tmpRequests[m_value] = requestBeforeLowering;
+        }
+        if (m_numberOfFlushes != flushesBeforeLowering || (isTentativeRequester && !m_didRequestOwnTmp)) [[unlikely]] {
+            m_tmpRequests[m_value] = TmpRequest::Firm;
+            return;
+        }
+        if ((m_didRequestOwnTmp || m_value->type().isTuple()) && m_insts.insts.size() != begin)
+            m_definitionsBeingAppended.append({ m_value, nullptr, begin, static_cast<unsigned>(m_insts.insts.size()) });
+    }
+
+    bool definesOnly(Inst& inst, Tmp tmp)
+    {
+        if (inst.hasNonArgEffects())
+            return false;
+        bool result = true;
+        inst.forEachArg([&](Arg& arg, Arg::Role role, Bank, Width) {
+            if (Arg::isAnyDef(role) && role != Arg::Scratch && !(arg.isTmp() && arg.tmp() == tmp))
+                result = false;
+        });
+        return result;
+    }
+
+    bool isNamedByWhatStays(const DefinitionOfUnrequestedTmp& definition, Tmp tmp)
+    {
+        bool result = false;
+        for (unsigned index = definition.begin; index < definition.end; ++index) {
+            Inst& inst = definition.block->at(index);
+            if (definesOnly(inst, tmp))
+                continue;
+            inst.forEachTmpFast([&](Tmp& named) {
+                result |= named == tmp;
+            });
+        }
+        return result;
+    }
+
+    void replaceDefinitionsOfUnrequestedTmpsWithPadding()
+    {
+        if (!m_tentativeRequests.isEmpty()) {
+            for (auto& definition : m_definitions) {
+                if (m_tmpRequests[definition.value] == TmpRequest::Firm || !requestsTentativelyWhileUnrequested(definition.value))
+                    continue;
+                Tmp tmp = m_valueToTmp[definition.value];
+                for (unsigned index = definition.begin; index < definition.end; ++index) {
+                    if (!definesOnly(definition.block->at(index), tmp)) {
+                        m_tmpRequests[definition.value] = TmpRequest::Firm;
+                        break;
+                    }
+                }
+            }
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                for (auto& request : m_tentativeRequests) {
+                    if (m_tmpRequests[request.requester] == TmpRequest::Firm && m_tmpRequests[request.requested] != TmpRequest::Firm) {
+                        m_tmpRequests[request.requested] = TmpRequest::Firm;
+                        changed = true;
+                    }
+                }
+            }
+        }
+        for (auto& definition : m_definitions) {
+            if (m_tmpRequests[definition.value] == TmpRequest::Firm)
+                continue;
+            if (definition.value->type().isTuple()) {
+                const auto& tmps = m_tupleValueToTmps.find(definition.value)->value;
+                uint64_t extracted = m_extractedComponents.get(definition.value);
+                for (unsigned index = definition.begin; index < definition.end; ++index) {
+                    Inst& inst = definition.block->at(index);
+                    if (inst.kind.opcode == Air::Patch || inst.args().size() != 2 || !inst.args()[1].isTmp())
+                        continue;
+                    size_t component = tmps.find(inst.args()[1].tmp());
+                    if (component < 63 && !(extracted >> component & 1) && !isNamedByWhatStays(definition, tmps[component]) && definesOnly(inst, tmps[component]))
+                        inst = Inst(Air::Padding, inst.origin);
+                }
+                continue;
+            }
+            Tmp tmp = m_valueToTmp[definition.value];
+            bool isConstant = definition.value->opcode() == Const64 || definition.value->opcode() == Const32;
+            if (!isConstant && isNamedByWhatStays(definition, tmp))
+                continue;
+            for (unsigned index = definition.begin; index < definition.end; ++index) {
+                Inst& inst = definition.block->at(index);
+                if (isConstant || definesOnly(inst, tmp))
+                    inst = Inst(Air::Padding, inst.origin);
+            }
+        }
+    }
+
+#endif
     bool NODELETE shouldCopyPropagate(Value* value)
     {
         switch (value->opcode()) {
@@ -432,14 +627,24 @@ private:
     // doesn't prevent us from trying loadPromise on the same value.
     Tmp tmp(Value* value)
     {
+#if USE(BUN_JSC_ADDITIONS)
+        noteTmpRequest(value);
+#endif
         Tmp& tmp = m_valueToTmp[value];
         if (!tmp) {
+#if USE(BUN_JSC_ADDITIONS)
+            Value* requested = value;
+#endif
             while (shouldCopyPropagate(value))
                 value = value->child(0);
 
             if (value->opcode() == FramePointer)
                 return Tmp(GPRInfo::callFrameRegister);
 
+#if USE(BUN_JSC_ADDITIONS)
+            if (value != requested)
+                m_tentativeRequests.append({ requested, value });
+#endif
             Tmp& realTmp = m_valueToTmp[value];
             if (!realTmp) {
                 realTmp = m_code.newTmp(value->resultBank());
@@ -472,6 +677,10 @@ private:
         case Patchpoint:
         case B3::CCall:
         case BottomTuple: {
+#if USE(BUN_JSC_ADDITIONS)
+            if (tupleValue != m_value)
+                m_extractedComponents.set(tupleValue, std::numeric_limits<uint64_t>::max());
+#endif
             return m_tupleValueToTmps.find(tupleValue)->value;
         }
         default:
@@ -1705,7 +1914,7 @@ private:
     template<typename... Arguments>
     void append(Air::Kind kind, Arguments&&... arguments)
     {
-        m_insts.last().append(Inst(kind, m_value, std::forward<Arguments>(arguments)...));
+        m_insts.last().constructAndAppend(kind, m_value, std::forward<Arguments>(arguments)...);
     }
     
     template<typename... Arguments>
@@ -1727,11 +1936,25 @@ private:
     {
         // Now append the instructions. m_insts contains them in reverse order, so we process
         // it in reverse.
-        for (unsigned i = m_insts.size(); i--;) {
-            for (Inst& inst : m_insts[i])
-                target->appendInst(WTF::move(inst));
+        Air::BasicBlock::InstList& list = target->insts();
+#if USE(BUN_JSC_ADDITIONS)
+        ++m_numberOfFlushes;
+        for (auto& definition : m_definitionsBeingAppended) {
+            unsigned begin = list.size() + m_insts.insts.size() - definition.end;
+            m_definitions.append({ definition.value, target, begin, begin + definition.end - definition.begin });
         }
-        m_insts.shrink(0);
+        m_definitionsBeingAppended.shrink(0);
+#endif
+        list.reserveCapacity(std::max<size_t>(list.size() + m_insts.insts.size(), 16));
+        unsigned end = m_insts.insts.size();
+        for (unsigned i = m_insts.starts.size(); i--;) {
+            unsigned start = m_insts.starts[i];
+            for (unsigned index = start; index < end; ++index)
+                list.unsafeAppendWithoutCapacityCheck(WTF::move(m_insts.insts[index]));
+            end = start;
+        }
+        m_insts.insts.shrink(0);
+        m_insts.starts.shrink(0);
     }
     
     Air::BasicBlock* newBlock()
@@ -1754,7 +1977,7 @@ private:
         nextBlock->successors() = block->successors();
         block->successors().clear();
         
-        m_insts.append(Vector<Inst>());
+        m_insts.beginGroup();
     }
     
     template<typename T, typename... Arguments>
@@ -2010,6 +2233,8 @@ private:
 
                 auto tryCompareLoadImm = [&] (
                     Width width, B3::Opcode loadOpcode, Arg::Signedness signedness) -> Inst {
+                    if (left->opcode() != loadOpcode)
+                        return Inst();
                     if (rightImm && rightImm.isRepresentableAs(width, signedness)) {
                         if (Inst result = tryCompare(width, loadPromise(left, loadOpcode), rightImm)) {
                             commitInternal(left);
@@ -2059,14 +2284,18 @@ private:
                     // Now handle compares that involve a load. It's not obvious that it's better to
                     // handle this before the immediate cases or not. Probably doesn't matter.
 
-                    if (Inst result = tryCompare(width, loadPromise(left), tmpPromise(right))) {
-                        commitInternal(left);
-                        return result;
+                    if (left->opcode() == Load) {
+                        if (Inst result = tryCompare(width, loadPromise(left), tmpPromise(right))) {
+                            commitInternal(left);
+                            return result;
+                        }
                     }
                 
-                    if (Inst result = tryCompare(width, tmpPromise(left), loadPromise(right))) {
-                        commitInternal(right);
-                        return result;
+                    if (right->opcode() == Load) {
+                        if (Inst result = tryCompare(width, tmpPromise(left), loadPromise(right))) {
+                            commitInternal(right);
+                            return result;
+                        }
                     }
                 }
 
@@ -2167,7 +2396,7 @@ private:
                 }
                 
                 auto tryTestLoadImm = [&] (Width width, Arg::Signedness signedness, B3::Opcode loadOpcode) -> Inst {
-                    if (!hasRightConst)
+                    if (!hasRightConst || left->opcode() != loadOpcode)
                         return Inst();
                     // Signed loads will create high bits, so if the immediate has high bits
                     // then we cannot proceed. Consider BitAnd(Load8S(ptr), 0x101). This cannot
@@ -2228,14 +2457,18 @@ private:
                     // Now handle test's that involve a load.
                     
                     Width width = value->child(0)->resultWidth();
-                    if (Inst result = tryTest(width, loadPromise(left), tmpPromise(right))) {
-                        commitInternal(left);
-                        return result;
+                    if (left->opcode() == Load) {
+                        if (Inst result = tryTest(width, loadPromise(left), tmpPromise(right))) {
+                            commitInternal(left);
+                            return result;
+                        }
                     }
                     
-                    if (Inst result = tryTest(width, tmpPromise(left), loadPromise(right))) {
-                        commitInternal(right);
-                        return result;
+                    if (right->opcode() == Load) {
+                        if (Inst result = tryTest(width, tmpPromise(left), loadPromise(right))) {
+                            commitInternal(right);
+                            return result;
+                        }
                     }
                 }
 
@@ -2919,6 +3152,13 @@ private:
                     }
                     return Inst();
                 case Width16:
+#if CPU(X86_64)
+                    if (isValidForm(Branch16, Arg::RelCond, left.kind(), right.kind())) {
+                        return left.inst(right.inst(
+                            Branch16, m_value, relCond,
+                            left.consume(*this), right.consume(*this)));
+                    }
+#endif
                     return Inst();
                 case Width32:
                     if (isValidForm(Branch32, Arg::RelCond, left.kind(), right.kind())) {
@@ -4227,6 +4467,12 @@ private:
             }
 
             if (right->isInt64(0xffffffff) || right->isInt32(0xffffffff)) {
+#if USE(BUN_JSC_ADDITIONS)
+                if (ArgPromise address = loadPromise(left); address.peek() && !address.peek().isValidForm(Move32, Width32)) {
+                    append(Move32, tmp(left), tmp(m_value));
+                    return;
+                }
+#endif
                 appendUnOp<Move32, Move32>(left);
                 return;
             }
@@ -5901,6 +6147,10 @@ private:
         }
 
         case ArgumentReg: {
+#if USE(BUN_JSC_ADDITIONS)
+            if (m_valueToTmp[m_value].isReg())
+                return;
+#endif
             m_prologue.append(Inst(
                 moveForType(m_value->type()), m_value,
                 Tmp(m_value->as<ArgumentRegValue>()->argumentReg()),
@@ -6251,7 +6501,7 @@ private:
             Vector<Arg, 8> args;
             args.append(Arg::special(m_patchpointSpecial));
 
-            Vector<Inst> after;
+            Vector<Inst, 2> after;
             auto generateResultOperand = [&] (Type type, ValueRep rep, Tmp tmp) {
                 switch (rep.kind()) {
                 case ValueRep::WarmAny:
@@ -6260,6 +6510,10 @@ private:
                 case ValueRep::SomeRegister:
                 case ValueRep::SomeEarlyRegister:
                 case ValueRep::SomeLateRegister:
+                    args.append(tmp);
+                    return;
+                case ValueRep::SomeRegisterWithClobber:
+                    moveToTmp(relaxedMoveForType(type), immOrTmpOrZeroReg(patchpointValue->child(0)), tmp);
                     args.append(tmp);
                     return;
                 case ValueRep::Register: {
@@ -6298,7 +6552,7 @@ private:
                 args.append(m_code.newTmp(FP));
 
             m_insts.last().append(Inst(Patch, patchpointValue, WTF::move(args)));
-            m_insts.last().appendVector(after);
+            m_insts.last().appendVector(WTF::move(after));
             return;
         }
 
@@ -6306,7 +6560,12 @@ private:
             Value* tupleValue = m_value->child(0);
             unsigned index = m_value->as<ExtractValue>()->index();
 
+#if USE(BUN_JSC_ADDITIONS)
+            const auto& tmps = m_tupleValueToTmps.find(tupleValue)->value;
+            m_extractedComponents.add(tupleValue, 0).iterator->value |= static_cast<uint64_t>(1) << std::min(index, 63u);
+#else
             const auto& tmps = tmpsForTuple(tupleValue);
+#endif
             append(relaxedMoveForType(m_value->type()), tmps[index], tmp(m_value));
             return;
         }
@@ -6842,6 +7101,16 @@ private:
     
     IndexSet<Value*> m_locked; // These are values that will have no Tmp in Air.
     IndexMap<Value*, Tmp> m_valueToTmp; // These are values that must have a Tmp in Air. We say that a Value* with a non-null Tmp is "pinned".
+#if USE(BUN_JSC_ADDITIONS)
+    IndexMap<Value*, TmpRequest> m_tmpRequests;
+    Value* m_tentativeRequester { nullptr };
+    bool m_didRequestOwnTmp { false };
+    unsigned m_numberOfFlushes { 0 };
+    Vector<TentativeRequest> m_tentativeRequests;
+    Vector<DefinitionOfUnrequestedTmp> m_definitionsBeingAppended;
+    Vector<DefinitionOfUnrequestedTmp> m_definitions;
+    UncheckedKeyHashMap<Value*, uint64_t> m_extractedComponents;
+#endif
     IndexMap<Value*, Tmp> m_phiToTmp; // Each Phi gets its own Tmp.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tupleValueToTmps; // This is the same as m_valueToTmp for Values that are Tuples.
     UncheckedKeyHashMap<Value*, Vector<Tmp>> m_tuplePhiToTmps; // This is the same as m_phiToTmp for Phis that are Tuples.
@@ -6856,7 +7125,14 @@ private:
     BlockWorklist m_fastWorklist;
     Dominators& m_dominators;
 
-    Vector<Vector<Inst, 4>> m_insts;
+    struct InstsInGroups {
+        void beginGroup() { starts.append(insts.size()); }
+        Vector<Inst>& last() LIFETIME_BOUND { return insts; }
+
+        Vector<Inst> insts;
+        Vector<unsigned> starts;
+    };
+    InstsInGroups m_insts;
     Vector<Inst> m_prologue;
     
     B3::BasicBlock* m_block;

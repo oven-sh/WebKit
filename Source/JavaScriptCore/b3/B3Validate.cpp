@@ -1038,8 +1038,11 @@ private:
             VALIDATE(role == ConstraintRole::Use, ("At ", *context, ": ", value));
             break;
         case ValueRep::SomeRegisterWithClobber:
-            VALIDATE(role == ConstraintRole::Use, ("At ", *context, ": ", value));
             VALIDATE(context->as<PatchpointValue>(), ("At ", *context));
+            if (role == ConstraintRole::Def) {
+                VALIDATE(context->type().isNumeric() && context->numChildren(), ("At ", *context));
+                VALIDATE(context->child(0)->type() == context->type(), ("At ", *context));
+            }
             break;
         case ValueRep::SomeEarlyRegister:
             VALIDATE(role == ConstraintRole::Def, ("At ", *context, ": ", value));

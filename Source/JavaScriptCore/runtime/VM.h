@@ -59,6 +59,7 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 #include <wtf/MallocPtr.h>
 #include <wtf/ObjectIdentifier.h>
 #include <wtf/ScopedLambda.h>
+#include <wtf/SegmentedVector.h>
 #include <wtf/ThreadSafeRefCountedWithSuppressingSaferCPPChecking.h>
 #include <wtf/text/AdaptiveStringSearcher.h>
 
@@ -125,6 +126,7 @@ class HeapProfiler;
 class IntlCache;
 enum Intrinsic : uint8_t;
 class JSDestructibleObjectHeapCellType;
+class JSFunction;
 class JSGlobalObject;
 class JSSentinel;
 struct CallSiteData;
@@ -183,6 +185,7 @@ using ErrorInfoFunctionJSValue = WTF::Function<JSValue(VM&, Vector<StackFrame>& 
 
 #if ENABLE(FTL_JIT)
 namespace AOT {
+class PlaceTable;
 class VMProgram;
 class RuntimeTable;
 struct Instance;
@@ -505,11 +508,22 @@ public:
     std::unique_ptr<JITSizeStatistics> jitSizeStatistics;
 #if ENABLE(AOT)
     std::unique_ptr<AOT::RuntimeTable> m_aotRuntimeTable;
+    AOT::PlaceTable* m_aotPlaceTable { nullptr };
+    const uint32_t* m_aotEmptyRowOfPlacesByName { nullptr };
 #endif
     Vector<AOT::Instance*, 1> m_aotInstances;
     uintptr_t m_structureIDBase { 0 };
     static constexpr ptrdiff_t offsetOfStructureIDBase() { return OBJECT_OFFSETOF(VM, m_structureIDBase); }
     Vector<AOT::Instance*> m_aotInstancesToDestroy;
+    struct DeferredStackCapture {
+        Exception* exception { nullptr };
+        JSFunction* hostFunction { nullptr };
+        CallFrame* callerFrame { nullptr };
+        void* returnPC { nullptr };
+    };
+    DeferredStackCapture deferredStackCapture;
+    JS_EXPORT_PRIVATE void finishDeferredStackCapture();
+    JS_EXPORT_PRIVATE void dropDeferredStackCapture();
     std::unique_ptr<AOT::VMProgram> m_aotProgram;
 
     bool useImmutableIntrinsics { Options::useImmutableIntrinsics() };
@@ -688,6 +702,9 @@ public:
     } jsonStringifyHints;
     struct {
         UncheckedKeyHashMap<RefPtr<UniquedStringImpl>, uint16_t> ids;
+        SegmentedVector<RefPtr<UniquedStringImpl>, 512> namesWithIDInHeader;
+        uintptr_t startOfImage { 0 };
+        uintptr_t sizeOfImage { 0 };
         uint32_t next { 0 };
     } aotPropertyNameIDs;
     KeyAtomStringCache keyAtomStringCache;
@@ -1040,6 +1057,8 @@ public:
         Prototype,
     };
     JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent);
+    JS_EXPORT_PRIVATE void invalidateStructureChainIntegrity(StructureChainIntegrityEvent, JSObject* changed, UniquedStringImpl* nameOfProperty = nullptr);
+    void endWhatIsCachedUnderTheEpoch();
 
 #if ENABLE(REGEXP_TRACING)
     using RTTraceList = ListHashSet<RegExp*>;
@@ -1408,6 +1427,8 @@ private:
 
     void clearException()
     {
+        if (deferredStackCapture.exception) [[unlikely]]
+            finishDeferredStackCapture();
 #if ENABLE(EXCEPTION_SCOPE_VERIFICATION)
         m_needExceptionCheck = false;
         clearNativeStackTraceOfLastThrow();

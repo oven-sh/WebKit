@@ -420,13 +420,25 @@ Pointer Lowering::slotAddress(unsigned slot, SlotAddressIsFor use)
     return Pointer(m_out.add(data, m_out.constIntPtr(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias)));
 }
 
-LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate, OperationEffects effects)
+LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue, GPRReg>, 4>& operands, std::optional<std::pair<GPRReg, uint32_t>> immediate, OperationEffects effects, std::optional<std::pair<unsigned, GPRReg>> slot, LValue number)
 {
     m_context.emitsCalls = true;
+    LValue data = slot ? loadICData() : nullptr;
     PatchpointValue* patchpoint = m_out.patchpoint(type);
     applyEffects(patchpoint, effects);
     for (auto& [value, reg] : operands)
         patchpoint->append(ConstrainedValue(value, ValueRep::reg(reg)));
+    unsigned indexOfData = (type != Void) + operands.size();
+    int32_t offsetOfSlot = 0;
+    GPRReg slotGPR = InvalidGPRReg;
+    if (slot) {
+        patchpoint->append(ConstrainedValue(data, ValueRep::SomeRegister));
+        patchpoint->clobberLate(RegisterSet { slot->second });
+        offsetOfSlot = static_cast<int32_t>(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + slot->first * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias);
+        slotGPR = slot->second;
+    }
+    if (number)
+        patchpoint->append(ConstrainedValue(number, ValueRep::reg(FPRInfo::fpRegT0)));
     patchpoint->clobber(RegisterSet::macroClobberedGPRs());
     patchpoint->clobberLate(RegisterSet { callMarkerGPR });
     if (auto declared = registersChangedBy(stub)) {
@@ -444,8 +456,20 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
     if (type != Void)
         patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
     CallSite site { nextSite() };
-    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site](CCallHelpers& jit, const StackmapGenerationParams&) {
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, immediate, site, indexOfData, offsetOfSlot, slotGPR, yieldsValue = type != Void](CCallHelpers& jit, const StackmapGenerationParams& params) {
         AllowMacroScratchRegisterUsage allowScratch(jit);
+        if (slotGPR != InvalidGPRReg)
+            jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[indexOfData].gpr(), slotGPR);
+        if (immediate && immediate->first == stubImmediateGPR) {
+            RegisterSet live = RegisterSet::registersToSaveForCCall(params.usedRegisters());
+            if (yieldsValue)
+                live.remove(GPRInfo::returnValueGPR);
+            Stub called = formOfStubThatKeeps(stub, live);
+            if (!thunkFor(called, immediate->second))
+                called = formOfStubForName(called, immediate->second);
+            stubCalls->call(jit, called, immediate->second, site);
+            return;
+        }
         if (immediate)
             jit.move(CCallHelpers::TrustedImm32(immediate->second), immediate->first);
         stubCalls->call(jit, stub, site);
@@ -457,13 +481,14 @@ LValue Lowering::callICStub(Stub stub, LType type, const Vector<std::pair<LValue
 // The length of an array, a string or a typed array is no property that a slot could say the place of.
 Boxed Lowering::emitGetLength(Boxed base)
 {
+    if (auto number = numberForTableOf(m_length))
+        return Boxed(callICStub(Stub::GetLengthByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
     if (m_context.sites.size() >= std::min<uint32_t>(SharedData::maxSlots, FunctionInfo::maxEncodedSlots))
         return AOT_TYPED_OPERATION(GetByName, base, word32(m_length.index()));
     Site site { };
     site.identifierAndExtra = static_cast<uint32_t>(WellKnownIdentifier::Length);
     m_context.sites.append(site);
-    Pointer address = slotAddress(m_context.sites.size() - 1);
-    return Boxed(callICStub(Stub::GetLength, Int64, { { base.value(), firstStubOperandGPR }, { address.value(), GPRInfo::argumentGPR1 } }));
+    return Boxed(callICStub(Stub::GetLength, Int64, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { static_cast<unsigned>(m_context.sites.size() - 1), GPRInfo::argumentGPR1 }));
 }
 
 TypedPointer Lowering::knownPlaceIn(CellPointer cell, const Value& access)
@@ -754,18 +779,36 @@ Boxed Lowering::emitCachedGetById(Boxed base, StringID name, bool isCalled)
     m_out.jump(continuation);
     ValueFromBlock slow;
     inColdBlock(own, [&] {
-        slow = m_out.anchor(emitCachedGetByIdOnItsOwn(base, name).value());
+        slow = m_out.anchor(emitCachedGetByIdOnItsOwn(base, name, true).value());
         m_out.jump(continuation);
     });
     m_out.appendTo(continuation);
     return Boxed(m_out.phi(Int64, fast, slow));
 }
 
-Boxed Lowering::emitCachedGetByIdOnItsOwn(Boxed base, StringID name)
+std::optional<uint32_t> Lowering::numberForTableOf(StringID name)
 {
+    uint32_t identifier = name.index() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[name.index()] : 0;
+    if (!identifier || identifier > PlaceTable::maxName || (m_program.runsOnce(m_id) && !m_isInLoop))
+        return std::nullopt;
+    if (!m_context.identifiers.contains(name))
+        m_context.identifiers.append(name);
+    return PlaceTable::nameOfIdentifierNumbered(identifier);
+}
+
+Boxed Lowering::emitCachedGetByIdOnItsOwn(Boxed base, StringID name, bool isInRun)
+{
+    if (auto number = isInRun ? std::nullopt : numberForTableOf(name))
+        return Boxed(callICStub(Stub::GetByName, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { stubImmediateGPR, *number }));
     auto slot = allocateSite(name, 0);
     if (uint32_t identifier = !slot && name.index() < m_program.identifierNumbers.size() ? m_program.identifierNumbers[name.index()] : 0) {
         LValue found = callICStub(Stub::TryGetByNameAndRow, Int64, { { base.value(), firstStubOperandGPR } }, std::pair { GPRInfo::argumentGPR1, identifier }, { Writes::Nothing, false });
+        constexpr bool mayThrow = OperationSignature<std::remove_pointer_t<decltype(operationAOTTypedGetByName)>>::mayThrow;
+        if (Vector<LValue, 8> arguments { base.value(), word32(name.index()).value() }; canCallOnLatePath(Entry::operationAOTTypedGetByName, mayThrow, arguments)) {
+            return Boxed(callOnLatePath(Entry::operationAOTTypedGetByName, mayThrow, effectsOfOperation<operationAOTTypedGetByName>(), arguments, { }, createSharedTask<CCallHelpers::JumpList(CCallHelpers&, GPRReg, std::span<const GPRReg>)>([](CCallHelpers& jit, GPRReg result, std::span<const GPRReg>) {
+                return CCallHelpers::JumpList(jit.branchTest64(CCallHelpers::Zero, result));
+            }), found));
+        }
         LBasicBlock generally = newColdBlock();
         LBasicBlock continuation = m_out.newBlock();
         ValueFromBlock fast = m_out.anchor(found);
@@ -778,7 +821,90 @@ Boxed Lowering::emitCachedGetByIdOnItsOwn(Boxed base, StringID name)
     }
     if (!slot)
         return AOT_TYPED_OPERATION(GetByName, base, word32(name.index()));
-    return Boxed(callICStub(Stub::GetById, Int64, { { base.value(), firstStubOperandGPR }, { slotAddress(*slot).value(), GPRInfo::argumentGPR1 } }));
+    return Boxed(callICStub(Stub::GetById, Int64, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR1 }));
+}
+
+std::optional<Stub> Lowering::stubThatReadsByNameAs(const Type& type) const
+{
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsDouble) + 1 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 2 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNull) && static_cast<unsigned>(Stub::GetByIdAsDouble) + 3 == static_cast<unsigned>(Stub::GetByIdAsDoubleOrNil));
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsString) + 1 == static_cast<unsigned>(Stub::GetByIdAsStringOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsString) + 2 == static_cast<unsigned>(Stub::GetByIdAsStringOrNull) && static_cast<unsigned>(Stub::GetByIdAsString) + 3 == static_cast<unsigned>(Stub::GetByIdAsStringOrNil));
+    static_assert(static_cast<unsigned>(Stub::GetByIdAsBoolean) + 1 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrUndefined) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 2 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNull) && static_cast<unsigned>(Stub::GetByIdAsBoolean) + 3 == static_cast<unsigned>(Stub::GetByIdAsBooleanOrNil));
+    unsigned variant = (type.primitives & Primitive::Undefined ? 1 : 0) | (type.primitives & Primitive::Null ? 2 : 0);
+    Type rest = type.withoutPrimitives(Primitive::UndefinedOrNull);
+    if (rest == m_program.at(m_program.types.number))
+        return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsDouble) + variant);
+    if (rest == m_program.at(m_program.types.string))
+        return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsString) + variant);
+    if (rest == m_program.at(m_program.types.boolean))
+        return static_cast<Stub>(static_cast<unsigned>(Stub::GetByIdAsBoolean) + variant);
+    return std::nullopt;
+}
+
+std::optional<Operand> Lowering::getByIdHeldTo(Boxed base, StringID name, TypeID held)
+{
+    auto& type = m_program.at(held);
+    auto stub = stubThatReadsByNameAs(type);
+    if (!stub || m_fusedCasts || m_watchingHandler || handlerEnteredByBranch() || m_program.logsTypeErrors || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    if (name == m_length || m_builtins.callOrApply(m_program.builtinName(name)) || bindIfNamed(name) || bufferAccessorNamed(name) || isNamedLastIndex(name) || runOfCurrentAccess(name))
+        return std::nullopt;
+    auto slot = allocateSite(name, 0);
+    if (!slot)
+        return std::nullopt;
+    m_context.emitsCalls = true;
+    Rep rep = repOf(type);
+    LValue data = loadICData();
+    PatchpointValue* patchpoint = m_out.patchpoint(b3TypeOf(rep));
+    applyEffects(patchpoint, OperationEffects { });
+    patchpoint->append(ConstrainedValue(base.value(), ValueRep::reg(firstStubOperandGPR)));
+    patchpoint->append(ConstrainedValue(data, ValueRep::SomeRegister));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+#if CPU(X86_64)
+    for (GPRReg reg : stubTemporaryGPRs)
+        patchpoint->clobberLate(RegisterSet { reg });
+#endif
+    patchpoint->resultConstraints = { b3TypeOf(rep) == Double ? ValueRep::reg(FPRInfo::fpRegT0) : ValueRep::reg(GPRInfo::returnValueGPR) };
+    CallSite site { nextSite() };
+    int32_t offsetOfSlot = static_cast<int32_t>(static_cast<intptr_t>(AOT::Data::offsetOfSlots() + *slot * sizeof(AOT::Slot)) - AOT::BiasedDataPointer::bias);
+    patchpoint->setGenerator([context = &m_context, stub = *stub, site, offsetOfSlot, words = throwSiteWords(ThrowKind::TypeMismatch, Rep::JSValue, static_cast<unsigned>(firstStubOperandGPR), held.index(), std::nullopt)](CCallHelpers& jit, const StackmapGenerationParams& params) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.addPtr(CCallHelpers::TrustedImm32(offsetOfSlot), params[2].gpr(), GPRInfo::argumentGPR1);
+        context->throwSitesAtCalls.append({ jit.labelIgnoringWatchpoints(), words });
+        context->stubCalls.call(jit, stub, site);
+    });
+    unwindToLandingPad(patchpoint, site);
+    if (holdsCells(rep))
+        return convert(Boxed(patchpoint), type, rep);
+    return Operand(rep, patchpoint);
+}
+
+Operand Lowering::getByIdAndHold(Boxed base, StringID name, const Type& type, const Function* definedAs)
+{
+    if (TypeID given = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type; given && &m_program.at(given) == &type) {
+        if (auto held = getByIdHeldTo(base, name, given))
+            return *held;
+    }
+    return ensure(emitGetById(base, name, false, definedAs), type);
+}
+
+std::optional<Operand> Lowering::readByNameForCastBehind(ValueID result, const Value& read)
+{
+    auto& values = m_currentBlock->values;
+    size_t next = m_currentIndexInBlock + 1;
+    if (m_fusedCasts || next >= values.size() || read.rep != Rep::JSValue || read.readsMethodFor() || numberOfUsesOf(result) != 1 || m_function.at(read.child(0)).opcode == Opcode::GetGlobal)
+        return std::nullopt;
+    auto& cast = m_function.at(values[next]);
+    if (cast.opcode != Opcode::Cast || cast.child(0) != result || cast.string() || typeOf(result).isWithin(m_program.at(cast.type), m_program))
+        return std::nullopt;
+    if (cast.castReason() != CastReason::As && cast.castReason() != CastReason::Claim && cast.castReason() != CastReason::Store && cast.castReason() != CastReason::Flow)
+        return std::nullopt;
+    auto held = getByIdHeldTo(in<Boxed>(read.child(0)), read.string(), cast.type);
+    if (!held)
+        return std::nullopt;
+    m_castCarriedOutByRead = CastCarriedOutByRead { m_currentBlock, next, *held };
+    return placeholder(read.rep);
 }
 
 void Lowering::emitPutById(Boxed base, StringID name, Boxed value)
@@ -825,9 +951,20 @@ void Lowering::setByName(Boxed base, StringID name, Boxed value)
         AOT_TYPED_OPERATION(SetByName, base, word32(name.index()), value);
 }
 
+void Lowering::emitPutByNameThroughTable(Stub stub, Boxed base, uint32_t identifier, Boxed value)
+{
+    callICStub(stub, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::pair { stubImmediateGPR, identifier });
+}
+
 void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value, bool onlyThroughStub, unsigned flagsOfSite)
 {
     bool isSloppy = isInSloppyCode();
+    auto* boxingOfValue = value.value()->as<PatchpointValue>();
+    bool storesNumberJustBoxed = boxingOfValue && boxingOfValue->generator() == m_context.numberBoxingGenerator.get();
+    if (auto number = flagsOfSite || onlyThroughStub || storesNumberJustBoxed ? std::nullopt : numberForTableOf(name)) {
+        emitPutByNameThroughTable(isSloppy ? Stub::PutByNameSloppy : Stub::PutByName, base, *number, value);
+        return;
+    }
     unsigned isStrict = isSloppy ? 0 : 2;
     auto slot = allocateSite(name, isStrict | flagsOfSite);
     if (!slot && flagsOfSite && !isSloppy) {
@@ -849,8 +986,12 @@ void Lowering::emitCachedPutByIdOnItsOwn(Boxed base, StringID name, Boxed value,
         setByName(base, name, value);
         return;
     }
-    auto throughStub = [&](SlotAddressIsFor use) {
-        callICStub(Stub::PutById, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 }, { slotAddress(*slot, use).value(), GPRInfo::argumentGPR2 } });
+    auto throughStub = [&](SlotAddressIsFor) {
+        if (auto* boxing = value.value()->as<PatchpointValue>(); boxing && boxing->generator() == m_context.numberBoxingGenerator.get()) {
+            callICStub(Stub::PutByIdOfDouble, Void, { { base.value(), firstStubOperandGPR } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 }, boxing->child(0));
+            return;
+        }
+        callICStub(Stub::PutById, Void, { { base.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 });
     };
     if (onlyThroughStub || (!m_isInLoop && (m_function.isTyped() || !m_program.isHotOutsideItsLoops(m_id)))) {
         throughStub(SlotAddressIsFor::UsualPath);
@@ -905,8 +1046,8 @@ std::optional<Word32> Lowering::emitDeleteByVal(Boxed base, Boxed key)
     m_context.sites.append(Site { });
     m_context.sites.append(Site { });
     if (isInSloppyCode())
-        return Word32(callICStub(Stub::DeleteByValCachedSloppy, Int32, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { slotAddress(m_context.sites.size() - 2).value(), GPRInfo::argumentGPR2 } }));
-    callICStub(Stub::DeleteByValCached, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 }, { slotAddress(m_context.sites.size() - 2).value(), GPRInfo::argumentGPR2 } });
+        return Word32(callICStub(Stub::DeleteByValCachedSloppy, Int32, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { static_cast<unsigned>(m_context.sites.size() - 2), GPRInfo::argumentGPR2 }));
+    callICStub(Stub::DeleteByValCached, Void, { { base.value(), firstStubOperandGPR }, { key.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { static_cast<unsigned>(m_context.sites.size() - 2), GPRInfo::argumentGPR2 });
     return boolean(true);
 }
 
@@ -917,10 +1058,14 @@ bool Lowering::emitDefineByName(Boxed object, StringID name, Boxed value)
         return isASCIIDigit(character);
     });
     constexpr unsigned isDirectAndStrict = 3;
+    if (auto number = mayBeIndex ? std::nullopt : numberForTableOf(name)) {
+        emitPutByNameThroughTable(Stub::DefineByName, object, *number, value);
+        return true;
+    }
     auto slot = mayBeIndex ? std::nullopt : allocateSite(name, isDirectAndStrict);
     if (!slot)
         return false;
-    callICStub(Stub::PutById, Void, { { object.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 }, { slotAddress(*slot).value(), GPRInfo::argumentGPR2 } });
+    callICStub(Stub::PutById, Void, { { object.value(), firstStubOperandGPR }, { value.value(), GPRInfo::argumentGPR1 } }, std::nullopt, { }, std::pair { *slot, GPRInfo::argumentGPR2 });
     return true;
 }
 

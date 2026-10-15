@@ -172,7 +172,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
             onEveryWayFrom.fill(~0ull, loop.size());
             for (bool changed = true; changed;) {
                 changed = false;
-                for (unsigned i = loop.size(); i--;) {
+                for (unsigned i = 0; i < loop.size(); ++i) {
                     uint64_t common = ~0ull;
                     bool goesOn = false;
                     for (FrequentedBlock successor : loop.at(i)->successors()) {
@@ -246,7 +246,13 @@ bool hoistLoopInvariantValues(Procedure& proc)
     // Pre-order ensures that we visit our dominators before we visit ourselves. Otherwise we'd miss some
     // hoisting opportunities in complex CFGs.
     for (BasicBlock* block : proc.blocksInPreOrder()) {
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<const NaturalLoop*, 8> blockLoops;
+        for (const NaturalLoop* loop = loops.innerMostLoopOf(block); loop; loop = loops.innerMostOuterLoop(*loop))
+            blockLoops.append(loop);
+#else
         Vector<const NaturalLoop*> blockLoops = loops.loopsOf(block);
+#endif
         if (blockLoops.isEmpty())
             continue;
 
@@ -285,6 +291,17 @@ bool hoistLoopInvariantValues(Procedure& proc)
                     if (!ok)
                         continue;
 
+#if USE(BUN_JSC_ADDITIONS)
+                    if (effects.readsPinned && data[loop].writesPinned)
+                        continue;
+
+                    if (effects.readsLocalState && data[loop].writesLocalState)
+                        continue;
+
+                    if (effects.readsMutability != Mutability::Immutable && data[loop].writes.overlaps(effects.reads))
+                        continue;
+#endif
+
                     if (effects.controlDependent || trappingLoad) {
                         // The block is backward-dominating the pre-header.
                         // The value needs to be guaranteed to run on every iteration.
@@ -304,6 +321,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
                         }
                     }
 
+#if !USE(BUN_JSC_ADDITIONS)
                     if (effects.readsPinned && data[loop].writesPinned)
                         continue;
 
@@ -312,6 +330,7 @@ bool hoistLoopInvariantValues(Procedure& proc)
 
                     if (effects.readsMutability != Mutability::Immutable && data[loop].writes.overlaps(effects.reads))
                         continue;
+#endif
 
                     data[loop].preHeader->appendNonTerminal(value);
                     value = proc.add<Value>(Nop, Void, value->origin());

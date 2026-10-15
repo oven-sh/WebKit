@@ -180,7 +180,11 @@ void RegExp::finishCreation(VM& vm)
     auto code = vm.useImmutableIntrinsics ? AOT::Image::codeForRegExp(m_patternString, m_flags) : std::nullopt;
     m_sourceIsPattern = code && code->sourceIsPattern;
     if (code && !code->keepsMoreOfPattern) {
-        if (m_patternString.length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage)
+        if (code->recordOfTextInPieces) {
+            m_rareData = makeUnique<RareData>();
+            m_rareData->m_recordOfTextInPieces = code->recordOfTextInPieces;
+            m_patternString = String();
+        } else if (m_patternString.length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage)
             m_patternString = code->text.is8Bit() ? String(StringImpl::createWithoutCopyingWithHash(code->text.span8(), m_patternString.hash())) : String(StringImpl::createWithoutCopyingWithHash(code->text.span16(), m_patternString.hash()));
         m_specificPattern = code->specificPattern;
         m_numSubpatterns = code->numSubpatterns;
@@ -329,6 +333,23 @@ RegExp* RegExp::tryCreateFromImage(VM& vm, const String& patternString, OptionSe
 }
 #endif
 
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+RegExp* RegExp::createWithTextInPieces(VM& vm, const AOT::ImageRegExp& record, OptionSet<Yarr::Flags> flags)
+{
+    auto code = AOT::Image::codeOfRegExp(record);
+    RELEASE_ASSERT(!code.keepsMoreOfPattern);
+    RegExp* regExp = new (NotNull, allocateCell<RegExp>(vm)) RegExp(vm, String(), flags);
+    regExp->Base::finishCreation(vm);
+    regExp->m_sourceIsPattern = code.sourceIsPattern;
+    regExp->m_rareData = makeUnique<RareData>();
+    regExp->m_rareData->m_recordOfTextInPieces = &record;
+    regExp->m_specificPattern = code.specificPattern;
+    regExp->m_numSubpatterns = code.numSubpatterns;
+    regExp->m_ovector = FixedVector<int>(regExp->offsetVectorBaseForNamedCaptures());
+    return regExp;
+}
+#endif
+
 RegExp* RegExp::create(VM& vm, const String& patternString, OptionSet<Yarr::Flags> flags)
 {
     return vm.regExpCache()->lookupOrCreate(vm, patternString, flags);
@@ -357,6 +378,7 @@ void RegExp::byteCodeCompileIfNecessary(VM* vm)
     if (m_regExpBytecode)
         return;
 
+    ensurePattern();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -383,9 +405,15 @@ bool RegExp::startsInterpreted(std::optional<StringView> subject) const
 
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
 // Without a Yarr::YarrPattern: finishCreation() made none either.
+void RegExp::makePatternOfPieces() const
+{
+    if (m_rareData && m_rareData->m_recordOfTextInPieces)
+        m_patternString = AOT::Image::textOfRegExp(*m_rareData->m_recordOfTextInPieces);
+}
+
 bool RegExp::takeCodeFromImage(VM& vm)
 {
-    auto code = AOT::Image::codeForRegExp(m_patternString, m_flags);
+    auto code = hasTextInPieces() && m_rareData && m_rareData->m_recordOfTextInPieces ? std::optional { AOT::Image::codeOfRegExp(*m_rareData->m_recordOfTextInPieces) } : AOT::Image::codeForRegExp(m_patternString, m_flags);
     if (!code || code->keepsMoreOfPattern || !code->hasCode)
         return false;
     if (!hasCode())
@@ -409,6 +437,7 @@ void RegExp::compile(VM* vm, Yarr::CharSize charSize, std::optional<StringView> 
     if (vm->useImmutableIntrinsics && takeCodeFromImage(*vm))
         return;
 #endif
+    ensurePattern();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -478,7 +507,7 @@ const WTF::BitSet<256>* RegExp::firstCharacterBitmap(FirstCharacterFilterPositio
 {
     ASSERT_UNUSED(position, position == FirstCharacterFilterPosition::AtStart ? !globalOrSticky() : sticky());
     const auto& result = m_firstCharacterBitmap.ensure([&] {
-        auto bitmap = Yarr::computeFirstCharacterBitmap(m_patternString, m_flags);
+        auto bitmap = Yarr::computeFirstCharacterBitmap(pattern(), m_flags);
         if (!bitmap || bitmap->isFull()) {
             WTF::BitSet<256> full;
             full.setAll();
@@ -530,6 +559,7 @@ void RegExp::compileMatchOnly(VM* vm, Yarr::CharSize charSize, std::optional<Str
 #else
     constexpr bool willUseInterpreter = false;
 #endif
+    ensurePattern();
     Yarr::YarrPattern pattern(m_patternString, m_flags, m_constructionErrorCode, willUseInterpreter ? Yarr::ExecutionMode::IncludeSubpatterns : Yarr::ExecutionMode::MatchOnly);
     if (hasError(m_constructionErrorCode)) {
         m_state = ParseError;
@@ -962,6 +992,7 @@ bool RegExp::sourceIsPattern(const String& pattern)
 
 String RegExp::escapedPattern() const
 {
+    ensurePattern();
 #if ENABLE(AOT) && ENABLE(YARR_JIT)
     if (m_sourceIsPattern)
         return m_patternString;

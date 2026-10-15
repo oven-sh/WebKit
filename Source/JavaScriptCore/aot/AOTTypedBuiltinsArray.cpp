@@ -140,8 +140,29 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayJoin, JSCell*, (Instance* instanc
         OPERATION_RETURN(scope, joiner.tryJoin<Int32Shape>(globalObject, butterfly.contiguous().data(), length));
     case ALL_DOUBLE_INDEXING_TYPES:
         OPERATION_RETURN(scope, joiner.tryJoin(globalObject, butterfly.contiguousDouble().data(), length));
-    case ALL_CONTIGUOUS_INDEXING_TYPES:
-        OPERATION_RETURN(scope, joiner.tryJoin<ContiguousShape>(globalObject, butterfly.contiguous().data(), length));
+    case ALL_CONTIGUOUS_INDEXING_TYPES: {
+        auto* elements = butterfly.contiguous().data();
+        uint64_t units = 0;
+        bool areAllStrings = length >= 2;
+        for (unsigned i = 0; i < length && areAllStrings; ++i) {
+            JSValue element = elements[i].get();
+            areAllStrings = element && element.isString();
+            if (areAllStrings)
+                units += asString(element)->length();
+        }
+        if (areAllStrings && units >= 16384 && units / length >= 256) {
+            JSString* between = separator ? uncheckedDowncast<JSString>(separator) : vm.smallStrings.singleCharacterString(',');
+            JSRopeString::RopeBuilder<RecordOverflow> builder(vm);
+            for (unsigned i = 0; i < length; ++i) {
+                if (i)
+                    builder.append(between);
+                builder.append(asString(elements[i].get()));
+            }
+            if (!builder.hasOverflowed())
+                OPERATION_RETURN(scope, builder.release());
+        }
+        OPERATION_RETURN(scope, joiner.tryJoin<ContiguousShape>(globalObject, elements, length));
+    }
     default:
         RELEASE_ASSERT_NOT_REACHED();
     }
@@ -298,12 +319,26 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedArrayUnshift, EncodedJSValue, (Instanc
     OPERATION_RETURN(scope, JSValue::encode(jsNumber(length + 1)));
 }
 
-// The values are boxed. One that the indexing type has no room for makes the array one that keeps values.
+static constexpr uint32_t valuesAreRawNumbers = 1u << 8;
+
+// The values are boxed, or raw numbers and what stands for `undefined` and `null` among them. One that the indexing type has no room for makes the array one that keeps values.
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithIndexingType, JSCell*, (Instance* instance, uint32_t count, const EncodedJSValue* values, uint32_t indexingType))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    bool areRaw = indexingType & valuesAreRawNumbers;
+    indexingType &= ~valuesAreRawNumbers;
+    auto valueAt = [&](uint32_t i) {
+        if (!areRaw)
+            return JSValue::decode(values[i]);
+        uint64_t bits = static_cast<uint64_t>(values[i]);
+        if (bits == Typed::nullDouble)
+            return jsNull();
+        if (bits == Typed::undefinedDouble || bits == Typed::absentDouble)
+            return jsUndefined();
+        return jsNumber(purifyNaN(std::bit_cast<double>(bits)));
+    };
     for (uint32_t i = 0; i < count; ++i) {
-        JSValue value = JSValue::decode(values[i]);
+        JSValue value = valueAt(i);
         bool fits = indexingType == ArrayWithContiguous || (indexingType == ArrayWithInt32 ? value.isInt32() : value.isNumber() && value.asNumber() == value.asNumber());
         if (!fits)
             indexingType = ArrayWithContiguous;
@@ -316,7 +351,7 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedNewArrayWithIndexingType, JSCell*, (In
     }
     IndexingType made = array->indexingType();
     for (uint32_t i = 0; i < count; ++i)
-        array->initializeIndex(initializationScope, i, JSValue::decode(values[i]), made);
+        array->initializeIndex(initializationScope, i, valueAt(i), made);
     OPERATION_RETURN(scope, array);
 }
 
@@ -445,10 +480,22 @@ LValue Lowering::allocateStorage(LValue size, LBasicBlock slowPath)
 // Nothing but holes, up to the capacity. To the block for a length that is none, or too large to be allocated in place.
 CellPointer Lowering::allocateArrayWithHoles(Integer length, IndexingType indexingType, LBasicBlock slowPath, bool isInTheMaking)
 {
+    if (isInTheMaking) {
+        static_assert(static_cast<unsigned>(Stub::ArrayInTheMakingOfValues) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfValues) && static_cast<unsigned>(Stub::ArrayInTheMakingOfDoubles) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfDoubles) && static_cast<unsigned>(Stub::ArrayInTheMakingOfInt32s) + 1 == static_cast<unsigned>(Stub::LeafArrayInTheMakingOfInt32s));
+        Stub stub = indexingType == ArrayWithDouble ? Stub::ArrayInTheMakingOfDoubles : indexingType == ArrayWithInt32 ? Stub::ArrayInTheMakingOfInt32s : Stub::ArrayInTheMakingOfValues;
+#if CPU(ARM64)
+        constexpr GPRReg lengthGPR = stubTemporaryGPRs[5];
+#else
+        constexpr GPRReg lengthGPR = GPRInfo::argumentGPR3;
+#endif
+        LValue array = callAllocationStub(stub, { { length.value(), lengthGPR } }, effectsOfOperation<operationAOTTypedNewArrayOfNumbers>(), true);
+        orElse(m_out.notZero64(array), slowPath);
+        return CellPointer(array);
+    }
     LBasicBlock fill = m_out.newBlock();
     LBasicBlock filled = m_out.newBlock();
     // Zero once arrays are no longer allocated with their original structures.
-    LValue header = changing64(isInTheMaking ? Instance::offsetOfArrayInTheMakingHeaders() + Instance::indexOfArrayInTheMaking(indexingType) * sizeof(uint64_t) : Instance::offsetOfNewArrayHeader(indexingType));
+    LValue header = changing64(Instance::offsetOfNewArrayHeader(indexingType));
     orElse(m_out.notZero64(header), slowPath);
     // With the header the butterfly is a multiple of 16 bytes.
     LValue vectorLength = m_out.bitOr(length.value(), m_out.constInt64(1));
@@ -510,9 +557,27 @@ CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type
     constexpr unsigned maxInlineLength = Program::maxLengthOfArrayLiteralMadeInline;
     unsigned length = elements.size();
     IndexingType indexingType = indexingTypeOfLiteral(elements, type);
+    bool areNumbersOrMarkers = indexingTypeAtBirth(type) == ArrayWithDouble && std::ranges::all_of(elements, [&](ValueID element) {
+        return typeOf(element).isNumber() || get(element).rep == Rep::OptionalDouble;
+    });
+    if (areNumbersOrMarkers)
+        indexingType = ArrayWithDouble;
     if (indexingType == ArrayWithContiguous && length <= maxInlineLength)
         return newArray(elements);
+    auto numberOrMarker = [&](ValueID element) {
+        Operand operand = get(element);
+        return operand.rep == Rep::OptionalDouble ? assumedNumber(operand.as<OptionalNumber>()) : in<Number>(element);
+    };
     auto outOfLine = [&] {
+        if (indexingType == ArrayWithDouble && length) {
+            Vector<LValue, 16> raw;
+            for (ValueID element : elements)
+                raw.append((get(element).rep == Rep::OptionalDouble || typeOf(element).isInteger() ? numberOrMarker(element) : purified(numberOrMarker(element))).value());
+            LValue slot = transientBuffer(length * sizeof(EncodedJSValue));
+            for (unsigned i = 0; i < length; ++i)
+                m_out.storeDouble(raw[i], m_out.address(m_heaps.AOTTyped_argumentBuffer, slot, i * sizeof(EncodedJSValue)));
+            return AOT_TYPED_OPERATION(NewArrayWithIndexingType, word32(length), Pointer(slot), word32(indexingType | valuesAreRawNumbers));
+        }
         auto [count, list] = argumentBuffer(elements);
         return AOT_TYPED_OPERATION(NewArrayWithIndexingType, count, list, word32(indexingType));
     };
@@ -527,7 +592,7 @@ CellPointer Lowering::newArrayOfType(const Arguments& elements, const Type& type
             stored.append(boxInt32(low32(in<Integer>(element))).value());
             continue;
         }
-        Number number = in<Number>(element);
+        Number number = numberOrMarker(element);
         // Among doubles it would read as a hole.
         if (!typeOf(element).isInteger())
             orElse(equal(number, number), slowPath);
@@ -650,9 +715,20 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
         auto& body = m_program.at(value.function());
         return body.blocks.size() == 1 && body.blocks[0].parameters.size() == 2 && body.blocks[0].values.size() == 1 && isOperation(body.at(body.blocks[0].values[0]));
     };
+    if (!std::exchange(m_didFindArrayPushes, true)) {
+        for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
+            for (ValueID id : m_function.blocks[b].values) {
+                auto& value = m_function.at(id);
+                if (isAppendSpread(value))
+                    m_blocksWithAppendSpread.set(b);
+                if (isInlineBuiltin(id, InlineBuiltin::ArrayPush))
+                    m_arrayPushesByReceiver.add(originOf(value.child(0)).index(), Vector<std::pair<BlockID, unsigned>, 1> { }).iterator->value.append({ BlockID(b), static_cast<unsigned>(value.arguments.size()) });
+            }
+        }
+    }
     InitialCapacity room;
     ValueID array = literal;
-    for (size_t i = m_currentIndexInBlock + 1; i < m_currentBlock->values.size(); ++i) {
+    for (size_t i = m_currentIndexInBlock + 1; i < m_currentBlock->values.size() && m_blocksWithAppendSpread.get(m_currentBlockID.index()); ++i) {
         ValueID id = m_currentBlock->values[i];
         auto& value = m_function.at(id);
         if (!isAppendSpread(value) || originOf(value.arguments[0]) != array)
@@ -668,12 +744,10 @@ std::optional<Lowering::InitialCapacity> Lowering::inferInitialCapacity(ValueID 
 
     Vector<BlockID, 4> pushBlocks;
     unsigned pushedCount = 0;
-    for (unsigned b = 0; b < m_function.blocks.size(); ++b) {
-        for (ValueID id : m_function.blocks[b].values) {
-            if (!isInlineBuiltin(id, InlineBuiltin::ArrayPush) || originOf(m_function.at(id).child(0)) != literal)
-                continue;
-            pushBlocks.append(BlockID(b));
-            pushedCount += m_function.at(id).arguments.size();
+    if (auto pushes = m_arrayPushesByReceiver.find(literal.index()); pushes != m_arrayPushesByReceiver.end()) {
+        for (auto [block, numberOfElements] : pushes->value) {
+            pushBlocks.append(block);
+            pushedCount += numberOfElements;
         }
     }
     if (pushBlocks.isEmpty())
@@ -749,17 +823,6 @@ CellPointer Lowering::newArrayLiteral(ValueID id)
         auto& implementation = m_builtins.at(value.builtin()).implementation;
         return implementation.kind == BuiltinImplementation::Operation && implementation.operation == LanguageOperation::AppendSpread;
     };
-    unsigned numberOfSpreads = 0;
-    for (auto& value : m_function.values) {
-        if (!isAppendSpread(value))
-            continue;
-        ValueID target = originOf(value.arguments[0]);
-        while (isAppendSpread(m_function.at(target)))
-            target = originOf(m_function.at(target).arguments[0]);
-        numberOfSpreads += target == id;
-    }
-    if (numberOfSpreads == inferred->arrays.size())
-        m_literalsWithRoomForAllSpreads.set(id.index());
     static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoom) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoom));
     static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoomFor1) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoomFor1));
     static_assert(static_cast<unsigned>(Stub::EmptyArrayWithRoomFor3) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayWithRoomFor3));
@@ -941,7 +1004,8 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
         return newArrayOfType(value.arguments, type);
     static_assert(static_cast<unsigned>(Stub::EmptyArrayAtSite) + 1 == static_cast<unsigned>(Stub::LeafEmptyArrayAtSite));
     bool hasStubs = indexingTypeAtBirth(type) == ArrayWithContiguous;
-    if (hasStubs) {
+    auto entries = mostPushedInLoopOverCollection(id);
+    if (hasStubs && !entries) {
         ++m_context.numberOfEmptyArrayLiteralsMadeByStub;
         return CellPointer(callAllocationStub(Stub::EmptyArrayAtSite, { { m_out.constInt64(value.vectorLengthHintOffset()), stubTemporaryGPRs[0] } }, effectsOfOperation<operationAOTTypedNewArray>(), true));
     }
@@ -963,7 +1027,7 @@ CellPointer Lowering::newArrayLiteralWithAllocationSite(ValueID id)
     m_out.jump(isCounted);
     m_out.appendTo(isCounted);
     LValue capacity = m_out.bitAnd(m_out.phi(Int32, asItWas, reviewed), m_out.constInt32(ArraySite::capacityMask));
-    if (auto entries = mostPushedInLoopOverCollection(id)) {
+    if (entries) {
         LValue room = m_out.select(m_out.isZero32(capacity), m_out.constInt32(vectorLengthOfArrayLiteral(0)), capacity);
         LValue bound = m_out.bitOr(entries->value(), m_out.int32One);
         capacity = m_out.select(m_out.below(bound, room), bound, room);
@@ -1154,148 +1218,18 @@ LBasicBlock Lowering::appendSpread(const Value& value)
     if (!holdsCells(iterable.rep) || !typeOf(value.arguments[1]).hasObjects())
         return nullptr;
     LBasicBlock otherwise = newUnlikelyBlock();
-    if (m_function.at(literal).opcode != Opcode::NewArray || (!m_isInLoop && !m_program.isHotByText(m_id) && !m_spreadsCarriedOutAtBirth.contains(m_currentBlock->values[m_currentIndexInBlock].index()))) {
-        if (iterable.rep != Rep::Cell)
-            orElse(isCell(iterable.as<Boxed>(), typeOf(value.arguments[1])), otherwise);
-        CellPointer array = iterable.rep == Rep::Cell ? iterable.as<CellPointer>() : asCell(iterable.as<Boxed>());
-        orElse(equal(typeOfCell(array), word32(ArrayType)), otherwise);
-        orElse(isZero(publicLength(butterflyOf(array))), otherwise);
-        didEmitWrite(effectsOfBuiltinCall(value).writes);
-        m_spreadIsLeftToStub = true;
-        return otherwise;
-    }
-    if (auto isBornForIt = m_spreadsCarriedOutAtBirth.getOptional(m_currentBlock->values[m_currentIndexInBlock].index())) {
+    if (auto isBornForIt = m_spreadsCarriedOutAtBirth.getOptional(m_currentBlock->values[m_currentIndexInBlock].index()); isBornForIt && m_function.at(literal).opcode == Opcode::NewArray) {
         orElse(Word32(*isBornForIt), otherwise);
         didEmitWrite(effectsOfBuiltinCall(value).writes);
         return otherwise;
     }
-    IndexingType indexingType = indexingTypeOfLiteral(m_function.at(literal).arguments, arrayTypeAtBirth(literal));
-    auto& elements = elementsOf(indexingType);
-    bool holdsValues = indexingType == ArrayWithContiguous;
-
-    CellPointer target = asCell(in<Boxed>(value.arguments[0]));
-    CellPointer source;
-    if (iterable.rep == Rep::Cell)
-        source = iterable.as<CellPointer>();
-    else {
+    if (iterable.rep != Rep::Cell)
         orElse(isCell(iterable.as<Boxed>(), typeOf(value.arguments[1])), otherwise);
-        source = asCell(iterable.as<Boxed>());
-    }
-    if (typeOf(value.arguments[1]).onlyEngineClass() != &m_builtins.arrayClass())
-        orElse(equal(typeOfCell(source), word32(ArrayType)), otherwise);
-    orElse(equal(indexingModeOf(target, IndexingShapeAndWritabilityMask), word32(indexingType & IndexingShapeMask)), otherwise);
-    Word32 shape = indexingModeOf(source, IndexingShapeMask);
-    Word32 fits = equal(shape, word32(indexingType & IndexingShapeMask));
-    if (holdsValues)
-        fits = logicalOr(fits, equal(shape, word32(Int32Shape)));
-    orElse(fits, otherwise);
-
-    Pointer from = butterflyOf(source);
-    Integer count = publicLength(from);
-    orElse(belowOrEqual(count, integer(maxLengthToCopyOneByOne)), otherwise);
-    Pointer old = butterflyOf(target);
-    Integer length = publicLength(old);
-    Integer newLength = add(length, count);
-    // With room for what the text still has for it.
-    unsigned toCome = numberOfElementsPushedTo(m_currentBlock->values[m_currentIndexInBlock]);
-    Integer needed = add(newLength, integer(toCome));
-    LBasicBlock grow = m_out.newBlock();
-    LBasicBlock moveLoop = m_out.newBlock();
-    LBasicBlock move = m_out.newBlock();
-    LBasicBlock hasRoom = m_out.newBlock();
-    LBasicBlock copyLoop = m_out.newBlock();
-    LBasicBlock copy = m_out.newBlock();
-    LBasicBlock copied = m_out.newBlock();
-    LBasicBlock publish = m_out.newBlock();
-    LBasicBlock done = m_out.newBlock();
+    CellPointer array = iterable.rep == Rep::Cell ? iterable.as<CellPointer>() : asCell(iterable.as<Boxed>());
+    orElse(equal(typeOfCell(array), word32(ArrayType)), otherwise);
+    orElse(isZero(publicLength(butterflyOf(array))), otherwise);
     didEmitWrite(effectsOfBuiltinCall(value).writes);
-    ValueFromBlock inPlace = m_out.anchor(old.value());
-    Word32 hasRoomInPlace = belowOrEqual(needed, vectorLength(old));
-    if (m_literalsWithRoomForAllSpreads.get(literal.index()))
-        orElse(hasRoomInPlace, otherwise);
-    m_out.branch(hasRoomInPlace.value(), unsure(hasRoom), unsure(grow));
-
-    // With the header the butterfly is a multiple of 16 bytes. The last slot is beyond the length if that is even.
-    m_out.appendTo(grow);
-    LValue capacity = m_out.bitOr(needed.value(), m_out.constInt64(1));
-    LValue size = m_out.add(m_out.shl(capacity, m_out.constInt32(3)), m_out.constIntPtr(sizeof(IndexingHeader)));
-    LValue storage = allocateStorage(size, otherwise);
-    LValue grown = m_out.add(storage, m_out.constIntPtr(sizeof(IndexingHeader)));
-    m_out.store32(m_out.castToInt32(length.value()), grown, m_heaps.Butterfly_publicLength);
-    m_out.store32(m_out.castToInt32(capacity), grown, m_heaps.Butterfly_vectorLength);
-    // What is between the length and the capacity is kept clear.
-    if (!toCome)
-        m_out.store64(m_out.constInt64(holeIn(indexingType)), TypedPointer(elements, m_out.add(storage, m_out.shl(capacity, m_out.constInt32(3)))));
-    else {
-        LBasicBlock clearLoop = m_out.newBlock();
-        LBasicBlock clear = m_out.newBlock();
-        LBasicBlock cleared = m_out.newBlock();
-        ValueFromBlock firstCleared = m_out.anchor(newLength.value());
-        m_out.jump(clearLoop);
-        m_out.appendTo(clearLoop);
-        LValue slot = m_out.phi(pointerType(), firstCleared);
-        m_out.branch(m_out.below(slot, capacity), unsure(clear), unsure(cleared));
-        m_out.appendTo(clear);
-        m_out.store64(m_out.constInt64(holeIn(indexingType)), m_out.baseIndex(elements, grown, slot, FTL::ScaleEight));
-        m_out.addIncomingToPhi(slot, m_out.anchor(m_out.add(slot, m_out.intPtrOne)));
-        m_out.jump(clearLoop);
-        m_out.appendTo(cleared);
-    }
-    ValueFromBlock firstMoved = m_out.anchor(m_out.intPtrZero);
-    m_out.jump(moveLoop);
-    m_out.appendTo(moveLoop);
-    LValue moved = m_out.phi(pointerType(), firstMoved);
-    ValueFromBlock outOfPlace = m_out.anchor(grown);
-    m_out.branch(m_out.below(moved, length.value()), unsure(move), unsure(hasRoom));
-    m_out.appendTo(move);
-    m_out.store64(m_out.load64(m_out.baseIndex(elements, old.value(), moved, FTL::ScaleEight)), m_out.baseIndex(elements, grown, moved, FTL::ScaleEight));
-    m_out.addIncomingToPhi(moved, m_out.anchor(m_out.add(moved, m_out.intPtrOne)));
-    m_out.jump(moveLoop);
-
-    m_out.appendTo(hasRoom);
-    LValue butterfly = m_out.phi(pointerType(), inPlace, outOfPlace);
-    LValue to = m_out.add(butterfly, m_out.shl(length.value(), m_out.constInt32(3)));
-    ValueFromBlock firstCopied = m_out.anchor(m_out.intPtrZero);
-    m_out.jump(copyLoop);
-    m_out.appendTo(copyLoop);
-    LValue index = m_out.phi(pointerType(), firstCopied);
-    m_out.branch(m_out.below(index, count.value()), unsure(copy), unsure(copied));
-    m_out.appendTo(copy);
-    LValue element = m_out.load64(m_out.baseIndex(elements, from.value(), index, FTL::ScaleEight));
-    LValue isHole = m_out.equal(element, m_out.constInt64(holeIn(indexingType)));
-    if (holdsValues)
-        element = m_out.select(isHole, undefined().value(), element);
-    else {
-        // What has been stored beyond the length is cleared again: there everything reads as a hole.
-        LBasicBlock clearLoop = newColdBlock();
-        LBasicBlock clear = newColdBlock();
-        LBasicBlock isElement = m_out.newBlock();
-        ValueFromBlock reached = m_out.anchor(index);
-        m_out.branch(isHole, rarely(clearLoop), usually(isElement));
-        m_out.appendTo(clearLoop);
-        LValue left = m_out.phi(pointerType(), reached);
-        m_out.branch(m_out.isZero64(left), unsure(otherwise), unsure(clear));
-        m_out.appendTo(clear);
-        LValue previous = m_out.sub(left, m_out.intPtrOne);
-        m_out.store64(m_out.constInt64(holeIn(indexingType)), m_out.baseIndex(elements, to, previous, FTL::ScaleEight));
-        m_out.addIncomingToPhi(left, m_out.anchor(previous));
-        m_out.jump(clearLoop);
-        m_out.appendTo(isElement);
-    }
-    m_out.store64(element, m_out.baseIndex(elements, to, index, FTL::ScaleEight));
-    m_out.addIncomingToPhi(index, m_out.anchor(m_out.add(index, m_out.intPtrOne)));
-    m_out.jump(copyLoop);
-
-    m_out.appendTo(copied);
-    ensureStillAliveHere(source);
-    m_out.store32(m_out.castToInt32(newLength.value()), butterfly, m_heaps.Butterfly_publicLength);
-    m_out.branch(m_out.equal(butterfly, old.value()), unsure(done), unsure(publish));
-    m_out.appendTo(publish);
-    fenceAfterInitialization();
-    m_out.storePtr(butterfly, target.value(), m_heaps.JSObject_butterfly);
-    m_out.jump(done);
-    m_out.appendTo(done);
-    barrier(target);
+    m_spreadIsLeftToStub = true;
     return otherwise;
 }
 
@@ -1336,7 +1270,8 @@ Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
     StringID name = m_program.stringOf(m_builtins.at(value.builtin()).nameName);
     CellPointer array = nonNil(value.child(0), name);
     Rep rep = repOf(type);
-    LBasicBlock doubles = m_out.newBlock();
+    bool mayYieldNumber = type.primitives & Primitive::Number;
+    LBasicBlock doubles = mayYieldNumber ? m_out.newBlock() : nullptr;
     LBasicBlock notDoubles = m_out.newBlock();
     LBasicBlock absent = m_out.newBlock();
     LBasicBlock slowPath = newColdBlock();
@@ -1346,16 +1281,19 @@ Operand Lowering::lowerArrayAt(const Value& value, const Type& type)
     Pointer butterfly = butterflyOf(array);
     Integer length = publicLength(butterfly);
     Integer index = select(lessThan(given, integer(0)), add(given, length), given);
-    m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(doubles), unsure(notDoubles));
+    if (mayYieldNumber) {
+        m_out.branch(equal(shape, word32(DoubleShape)).value(), unsure(doubles), unsure(notDoubles));
 
-    m_out.appendTo(doubles);
-    orElse(below(index, length), absent);
-    Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
-    orElse(equal(asDouble, asDouble), absent);
-    join.add(elementOfDoubles(asDouble, type));
+        m_out.appendTo(doubles);
+        orElse(below(index, length), absent);
+        Number asDouble(m_out.loadDouble(m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), index.value())));
+        orElse(equal(asDouble, asDouble), absent);
+        join.add(elementOfDoubles(asDouble, type));
+    } else
+        m_out.jump(notDoubles);
 
     m_out.appendTo(notDoubles);
-    orElse(logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))), slowPath);
+    orElse(mayYieldNumber ? logicalOr(equal(shape, word32(ContiguousShape)), equal(shape, word32(Int32Shape))) : equal(shape, word32(ContiguousShape)), slowPath);
     orElse(below(index, length), absent);
     Boxed element(m_out.load64(m_out.baseIndex(m_heaps.indexedContiguousProperties, butterfly.value(), index.value())));
     addIfNumber(join, element, type);
@@ -1924,8 +1862,9 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         Rep rep = repOf(type);
         LBasicBlock hasElements = m_out.newBlock();
         LBasicBlock hasNone = m_out.newBlock();
+        bool mayYieldNumber = type.primitives & Primitive::Number;
         LBasicBlock values = m_out.newBlock();
-        LBasicBlock doubles = m_out.newBlock();
+        LBasicBlock doubles = mayYieldNumber ? m_out.newBlock() : nullptr;
         LBasicBlock slowPath = newColdBlock();
         Join join(m_out, rep, b3TypeOf(rep));
         didEmitWrite(Writes::Heap);
@@ -1933,14 +1872,17 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         Word32 mode = indexingModeOf(array, IndexingShapeAndWritabilityMask);
         Word32 isDouble = equal(mode, word32(DoubleShape));
         static_assert(Int32Shape + 2 == DoubleShape && DoubleShape + 2 == ContiguousShape);
-        orElse(belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)), slowPath);
+        orElse(mayYieldNumber ? belowOrEqual(binary<Word32>(&Output::sub, mode, word32(Int32Shape)), word32(ContiguousShape - Int32Shape)) : equal(mode, word32(ContiguousShape)), slowPath);
         Pointer butterfly = butterflyOf(array);
         Integer length = publicLength(butterfly);
         m_out.branch(isZero(length).value(), rarely(hasNone), usually(hasElements));
 
         m_out.appendTo(hasElements);
         Integer last = add(length, integer(-1));
-        m_out.branch(isDouble.value(), unsure(doubles), unsure(values));
+        if (mayYieldNumber)
+            m_out.branch(isDouble.value(), unsure(doubles), unsure(values));
+        else
+            m_out.jump(values);
 
         // For a hole the array is asked the general way. What is between the length and the capacity is kept clear.
         m_out.appendTo(values);
@@ -1952,13 +1894,15 @@ std::optional<Operand> Lowering::lowerInlineArray(InlineBuiltin which, ValueID r
         addIfNumber(join, element, type);
         join.add(ensure(element, type));
 
-        m_out.appendTo(doubles);
-        TypedPointer slotOfDouble = m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), last.value());
-        Number asDouble(m_out.loadDouble(slotOfDouble));
-        orElse(equal(asDouble, asDouble), slowPath);
-        storeField(butterfly, m_heaps.Butterfly_publicLength, low32(last));
-        m_out.storeDouble(m_out.constDouble(PNaN), slotOfDouble);
-        join.add(elementOfDoubles(asDouble, type));
+        if (mayYieldNumber) {
+            m_out.appendTo(doubles);
+            TypedPointer slotOfDouble = m_out.baseIndex(m_heaps.indexedDoubleProperties, butterfly.value(), last.value());
+            Number asDouble(m_out.loadDouble(slotOfDouble));
+            orElse(equal(asDouble, asDouble), slowPath);
+            storeField(butterfly, m_heaps.Butterfly_publicLength, low32(last));
+            m_out.storeDouble(m_out.constDouble(PNaN), slotOfDouble);
+            join.add(elementOfDoubles(asDouble, type));
+        }
 
         m_out.appendTo(hasNone);
         join.add(ensure(undefined(), m_program.at(m_program.types.undefined), type));

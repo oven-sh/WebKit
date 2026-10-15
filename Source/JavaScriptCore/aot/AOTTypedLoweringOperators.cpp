@@ -115,6 +115,62 @@ Number Lowering::asNumericOperand(ValueID id)
     return select(equal(bitsOf(optional), integer(bitsOfMarker(Primitive::Null, Rep::OptionalDouble))), this->number(0), number);
 }
 
+std::optional<Operand> Lowering::arithmeticOnNumberAndValueByStub(const Value& value, const Type& type, OperationEffects effects)
+{
+    TypeID wanted = m_function.at(m_currentBlock->values[m_currentIndexInBlock]).type;
+    if (repOf(type) != Rep::Double || !type.isNumber() || !wanted || &m_program.at(wanted) != &type)
+        return std::nullopt;
+    if (m_useCastTest || handlerEnteredByBranch() || Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts())
+        return std::nullopt;
+    ValueID a = value.child(0);
+    ValueID b = value.child(1);
+    auto isRawNumber = [&](ValueID id) {
+        return get(id).rep == Rep::Double && typeOf(id).isNumber();
+    };
+    bool numberIsOnRight = isRawNumber(b) && get(a).rep == Rep::JSValue;
+    if (!numberIsOnRight && !(isRawNumber(a) && get(b).rep == Rep::JSValue))
+        return std::nullopt;
+    Stub stub;
+    switch (value.opcode) {
+    case Opcode::Add:
+        stub = Stub::AddOfDoubleAsDouble;
+        break;
+    case Opcode::Mul:
+        stub = Stub::MulOfDoubleAsDouble;
+        break;
+    case Opcode::Sub:
+        stub = numberIsOnRight ? Stub::SubOfDoubleOnRightAsDouble : Stub::SubOfDoubleAsDouble;
+        break;
+    case Opcode::Div:
+        stub = numberIsOnRight ? Stub::DivOfDoubleOnRightAsDouble : Stub::DivOfDoubleAsDouble;
+        break;
+    default:
+        return std::nullopt;
+    }
+    uint32_t typeAndWhetherNumberIsOnRight = wanted.index() | (numberIsOnRight ? 1u << 31 : 0);
+    m_context.emitsCalls = true;
+    PatchpointValue* patchpoint = m_out.patchpoint(Double);
+    applyEffects(patchpoint, effects);
+    patchpoint->append(ConstrainedValue(in<Number>(numberIsOnRight ? b : a).value(), ValueRep::reg(FPRInfo::fpRegT0)));
+    patchpoint->append(ConstrainedValue(in<Boxed>(numberIsOnRight ? a : b).value(), ValueRep::reg(GPRInfo::argumentGPR1)));
+    patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+    patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+    patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+#if CPU(X86_64)
+    for (GPRReg reg : stubTemporaryGPRs)
+        patchpoint->clobberLate(RegisterSet { reg });
+#endif
+    patchpoint->resultConstraints = { ValueRep::reg(FPRInfo::fpRegT0) };
+    CallSite site { nextSite() };
+    patchpoint->setGenerator([stubCalls = &m_context.stubCalls, stub, typeAndWhetherNumberIsOnRight, site](CCallHelpers& jit, const StackmapGenerationParams&) {
+        AllowMacroScratchRegisterUsage allowScratch(jit);
+        jit.move(CCallHelpers::TrustedImm32(typeAndWhetherNumberIsOnRight), GPRInfo::argumentGPR2);
+        stubCalls->call(jit, stub, site);
+    });
+    unwindToLandingPad(patchpoint, site);
+    return Operand(Rep::Double, patchpoint);
+}
+
 Operand Lowering::lowerBinary(ValueID result, const Value& value)
 {
     ValueID a = value.child(0);
@@ -171,6 +227,8 @@ Operand Lowering::lowerBinary(ValueID result, const Value& value)
     }
 
     auto generally = [&] {
+        if (auto raw = arithmeticOnNumberAndValueByStub(value, type, effects))
+            return *raw;
         Boxed x = in<Boxed>(a);
         Boxed y = in<Boxed>(b);
         Boxed boxed;
@@ -750,8 +808,23 @@ Operand Lowering::lowerStepByOne(InlineBuiltin which, ValueID result, const Valu
     }, generally);
 }
 
+void Lowering::branchOnRelational(const Value& value, LBasicBlock holds, LBasicBlock doesNotHold)
+{
+    SetForScope indexOfComparison(m_currentIndexInBlock, m_currentBlock->values.size() - 1);
+    Word32 answer;
+    if (auto fused = lowerFusedUse(m_currentIndexInBlock))
+        answer = fused->as<Word32>();
+    else {
+        m_successorsOfRelational = std::pair { holds, doesNotHold };
+        answer = lowerRelational(value);
+    }
+    if (answer.value())
+        m_out.branch(answer.value(), unsure(holds), unsure(doesNotHold));
+}
+
 Word32 Lowering::lowerRelational(const Value& value)
 {
+    auto successors = std::exchange(m_successorsOfRelational, std::nullopt);
     if (auto answer = compareWithIntegerConstant(value))
         return *answer;
     ValueID a = value.child(0);
@@ -873,11 +946,12 @@ Word32 Lowering::lowerRelational(const Value& value)
     }
     if (!areExpectedToBeNumbers({ a, b }))
         return generally();
-    return ifNumbersAsExpected({ a, b }, Rep::Int32, true, [&](LBasicBlock) {
+    Operand answer = ifNumbersAsExpected({ a, b }, Rep::Int32, true, [&](LBasicBlock) {
         return lowerRelational(value);
     }, [&] {
         return lowerRelational(value);
-    }, generally).as<Word32>();
+    }, generally, true, successors);
+    return successors ? Word32() : answer.as<Word32>();
 }
 
 unsigned Lowering::numberOfComparisonsWithIntegers(ValueID id)
@@ -891,7 +965,8 @@ unsigned Lowering::numberOfComparisonsWithIntegers(ValueID id)
                     continue;
                 for (unsigned i = 0; i < 2; ++i) {
                     auto& count = m_numberOfComparisonsWithIntegers[value.child(i).index()];
-                    if (m_function.at(value.child(i)).rep == Rep::Double && m_function.at(value.child(1 - i)).opcode == Opcode::Integer && count < UINT8_MAX)
+                    Rep rep = m_function.at(value.child(i)).rep;
+                    if ((rep == Rep::Double || rep == Rep::OptionalDouble) && m_function.at(value.child(1 - i)).opcode == Opcode::Integer && count < UINT8_MAX)
                         ++count;
                 }
             }
@@ -968,7 +1043,7 @@ void Lowering::didDefineNumber(ValueID id, const Value& value, Number number)
     }
     // What was kept as an integer. `undefined` becomes what is not a number, `null` 0.
     // A read and a cast may have yielded a placeholder: see lowerFusedCast().
-    if (value.opcode == Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::GetById) {
+    if (value.rep == Rep::Double && value.opcode == Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::Cast && m_function.at(value.child(0)).opcode != Opcode::GetById) {
         Operand from = m_values[value.child(0).index()];
         auto least = leastIfIntegerOrNaN(id);
         if ((from.rep == Rep::Int64 || from.rep == Rep::OptionalInt64) && least) {
@@ -999,12 +1074,101 @@ std::optional<Integer> Lowering::integerOfNumber(ValueID id)
     return Integer(iterator->value.integer);
 }
 
+void Lowering::findRepeatedComparisonsWithIntegers(const Vector<BlockID>& order)
+{
+    if (Options::auditAOTTypedAssertions())
+        return;
+    struct Comparison {
+        ValueID id;
+        BlockID block;
+    };
+    UncheckedKeyHashMap<uint32_t, Vector<Comparison, 4>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> comparisonsOf;
+    for (BlockID block : order) {
+        for (ValueID id : m_function.at(block).values) {
+            auto& value = m_function.at(id);
+            if (value.opcode != Opcode::StrictEq)
+                continue;
+            for (unsigned i = 0; i < 2; ++i) {
+                ValueID operand = value.child(i);
+                if (m_function.at(value.child(1 - i)).opcode != Opcode::Integer || m_function.at(operand).rep != Rep::JSValue || isFetchedWhereNeeded(operand))
+                    continue;
+                comparisonsOf.add(operand.index(), Vector<Comparison, 4>()).iterator->value.append(Comparison { id, block });
+                break;
+            }
+        }
+    }
+    constexpr unsigned mostFirstComparisons = 8;
+    for (auto& comparisons : comparisonsOf.values()) {
+        if (comparisons.size() < 2)
+            continue;
+        Vector<Comparison, mostFirstComparisons> firsts;
+        for (auto& comparison : comparisons) {
+            const Comparison* first = nullptr;
+            for (auto& candidate : firsts) {
+                if (dominates(candidate.block, comparison.block))
+                    first = &candidate;
+            }
+            if (first) {
+                m_firstOfRepeatedComparisons.add(first->id.index(), first->id.index());
+                m_firstOfRepeatedComparisons.add(comparison.id.index(), first->id.index());
+            } else if (firsts.size() < mostFirstComparisons)
+                firsts.append(comparison);
+        }
+    }
+}
+
+Integer Lowering::integerEqualTo(Boxed value)
+{
+    LBasicBlock isWhole = m_out.newBlock();
+    LBasicBlock isOther = newColdBlock();
+    Join join(m_out, Rep::Int64, Int64);
+    m_out.branch(isInt32(value).value(), usually(isWhole), rarely(isOther));
+    m_out.appendTo(isWhole);
+    join.add(signExtended(low32(value)));
+    m_out.appendTo(isOther);
+    join.add(Integer(AOT_TYPED_OPERATION(IntegerEqualTo, value).value()));
+    return join.finish().as<Integer>();
+}
+
+std::optional<Word32> Lowering::compareWithIntegerFoundEarlier(ValueID a, ValueID b)
+{
+    if (m_firstOfRepeatedComparisons.isEmpty() || m_currentIndexInBlock >= m_currentBlock->values.size() || m_out.m_block != m_unconditionalBlock)
+        return std::nullopt;
+    ValueID comparison = m_currentBlock->values[m_currentIndexInBlock];
+    auto& compared = m_function.at(comparison);
+    if (compared.opcode != Opcode::StrictEq || compared.child(0) != a || compared.child(1) != b)
+        return std::nullopt;
+    auto first = m_firstOfRepeatedComparisons.find(comparison.index());
+    if (first == m_firstOfRepeatedComparisons.end())
+        return std::nullopt;
+    auto [operand, constant] = m_function.at(b).opcode == Opcode::Integer ? std::pair { a, b } : std::pair { b, a };
+    Operand value = get(operand);
+    if (value.rep != Rep::JSValue)
+        return std::nullopt;
+    Integer wanted = integer(m_function.at(constant).integer());
+    if (first->value == comparison.index()) {
+        Integer found = integerEqualTo(value.as<Boxed>());
+        m_integersFoundByComparisons.add(comparison.index(), std::pair { value.value, found.value() });
+        return equal(found, wanted);
+    }
+    auto found = m_integersFoundByComparisons.find(first->value);
+    if (found == m_integersFoundByComparisons.end() || found->value.first != value.value)
+        return std::nullopt;
+    return equal(Integer(found->value.second), wanted);
+}
+
 Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
 {
     if (!m_pinnedReads.isEmpty()) {
         for (auto [read, text] : { std::pair { a, b }, std::pair { b, a } }) {
             if (auto found = m_pinnedReads.find(read.index()); found != m_pinnedReads.end())
                 return isPinnedTo(found->value, text);
+        }
+    }
+    if (!m_elementsReadAsNumbers.isEmpty()) {
+        for (auto [element, number] : { std::pair { a, b }, std::pair { b, a } }) {
+            if (auto found = m_elementsReadAsNumbers.find(element.index()); found != m_elementsReadAsNumbers.end())
+                return equal(Number(found->value), in<Number>(number));
         }
     }
     if (auto areEqual = areKeptCodeUnitsEqual(a, b))
@@ -1028,6 +1192,8 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
         if (auto asInteger = integerOfNumber(number))
             return equal(*asInteger, get(other).as<Integer>());
     }
+    if (auto isEqual = compareWithIntegerFoundEarlier(a, b))
+        return *isEqual;
     auto kept = [&](ValueID id) -> const IntegerOfNumber* {
         auto found = m_integersOfNumbers.find(id.index());
         return found != m_integersOfNumbers.end() && get(id).value == found->value.number ? &found->value : nullptr;
@@ -1082,6 +1248,17 @@ Word32 Lowering::lowerStrictEq(ValueID a, ValueID b)
     for (auto [string, other] : { std::pair { a, b }, std::pair { b, a } }) {
         if (!typeOf(string).isString())
             continue;
+        if (auto text = constantASCIIText(string); text && !text->empty() && text->size() <= maxLengthOfTextComparedInPlace && !m_isInLoop && holdsCells(get(other).rep)) {
+            LBasicBlock isText = m_out.newBlock();
+            LBasicBlock isOther = m_out.newBlock();
+            Join join(m_out, Rep::Int32, Int32);
+            branchOnTextByOneCall(other, string, *text, isText, isOther);
+            m_out.appendTo(isText);
+            join.add(boolean(true));
+            m_out.appendTo(isOther);
+            join.add(boolean(false));
+            return join.finish().as<Word32>();
+        }
         return ifAsExpected({ { other, &m_program.at(m_program.types.string) } }, Rep::Int32, [&](LBasicBlock) {
             return lowerStrictEq(a, b);
         }, [&] {
@@ -1290,7 +1467,7 @@ Word32 Lowering::toBooleanGenerally(ValueID id)
         });
         // What is left of the numbers is kept as a double.
         when(isNumber(value), [&] {
-            return greaterThan(abs(unboxedDouble(value)), number(0));
+            return isNeitherZeroNorNaN(unboxedDouble(value));
         });
     }
     m_out.jump(otherwise);
@@ -1317,7 +1494,11 @@ CellPointer Lowering::toStringCell(ValueID id)
         LBasicBlock isOther = newColdBlock();
         Join join(m_out, Rep::Cell, Int64);
         auto& int32Type = m_program.at(m_program.types.int32);
-        join.add(integerToString(integralOrElse(operand.as<Number>(), Range::int32(), isOther), int32Type));
+        if (auto exact = integerOfNumber(id)) {
+            orElse(isWithin(*exact, Range::int32()), isOther);
+            join.add(integerToString(*exact, int32Type));
+        } else
+            join.add(integerToString(integralOrElse(operand.as<Number>(), Range::int32(), isOther), int32Type));
         m_out.appendTo(isOther);
         join.add(AOT_TYPED_OPERATION(DoubleToString, operand.as<Number>()));
         return join.finish().as<CellPointer>();
@@ -1356,6 +1537,16 @@ CellPointer Lowering::toStringCell(ValueID id)
         return join.finish().as<CellPointer>();
     }
     if (isStringOrNil(type)) {
+        constexpr bool mayThrow = OperationSignature<std::remove_pointer_t<decltype(operationAOTTypedToString)>>::mayThrow;
+        if (!m_decoded.contains(boxed.value()) && canCallOnLatePath(Entry::operationAOTTypedToString, mayThrow, { boxed.value() })) {
+            return CellPointer(callOnLatePath(Entry::operationAOTTypedToString, mayThrow, OperationEffects { Writes::RuntimeState, true }, { boxed.value() }, { }, createSharedTask<CCallHelpers::JumpList(CCallHelpers&, GPRReg, std::span<const GPRReg>)>([](CCallHelpers& jit, GPRReg result, std::span<const GPRReg>) {
+#if CPU(ARM64)
+                return CCallHelpers::JumpList(jit.branchTest64(CCallHelpers::NonZero, result, CCallHelpers::TrustedImm64(JSValue::OtherTag)));
+#else
+                return CCallHelpers::JumpList(jit.branchIfNotCell(result));
+#endif
+            }), boxed.value()));
+        }
         return either<CellPointer>(isCell(boxed), [&] {
             return asCell(boxed);
         }, generally);

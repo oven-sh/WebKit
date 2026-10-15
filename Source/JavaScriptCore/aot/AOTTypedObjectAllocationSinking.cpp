@@ -977,6 +977,8 @@ private:
 
     void escapeOperands(ValueID id)
     {
+        if (m_tracked.isEmpty() && m_mode != Mode::Rewrite)
+            return;
         Vector<ValueID, 8> operands;
         std::as_const(m_function.at(id)).forEachChild([&](ValueID child) {
             operands.append(child);

@@ -217,7 +217,7 @@ inline void Structure::didCachePropertyReplacement(VM& vm, PropertyOffset offset
 #if USE(BUN_JSC_ADDITIONS)
     // Nobody has asked whether the property keeps its value. Whoever asks from now on is told that none of them does: ensurePropertyReplacementWatchpointSet().
     if (vm.m_aotProgram && typeInfo().type() != GlobalObjectType && !propertyReplacementWatchpointSet(offset)) {
-        aotFields().isReplacedWithoutNotice = true;
+        setIsReplacedWithoutNotice(true);
         return;
     }
 #endif

@@ -35,6 +35,7 @@
 #include "AirEliminateDeadCode.h"
 #include "AirFixObviousSpills.h"
 #include "AirFixPartialRegisterStalls.h"
+#include "AirForwardRegisterCopies.h"
 #include "AirGenerationContext.h"
 #include "AirLogRegisterPressure.h"
 #include "AirLowerAfterRegAlloc.h"
@@ -106,7 +107,9 @@ void prepareForGeneration(Code& code)
     // FIXME: Add Air optimizations.
     // https://bugs.webkit.org/show_bug.cgi?id=150456
 
+#if !USE(BUN_JSC_ADDITIONS)
     eliminateDeadCode(code);
+#endif
 
     // Register allocation for all the Tmps that do not have a corresponding machine
     // register. After this phase, every Tmp has a reg.
@@ -122,11 +125,19 @@ void prepareForGeneration(Code& code)
     // This replaces uses of spill slots with registers or constants if possible. It
     // does this by minimizing the amount that we perturb the already-chosen register
     // allocation. It may extend the live ranges of registers though.
+#if USE(BUN_JSC_ADDITIONS)
+    RegisterSet namedOrClobberedRegisters = fixObviousSpills(code);
+#else
     fixObviousSpills(code);
+#endif
 
     // This does first-fit allocation of stack slots using an interference graph plus a
     // bunch of other optimizations.
+#if USE(BUN_JSC_ADDITIONS)
+    allocateStackByGraphColoring(code, WTF::move(namedOrClobberedRegisters));
+#else
     allocateStackByGraphColoring(code);
+#endif
 
     // This turns all Stack and CallArg Args into Addr args that use the frame pointer.
     lowerStackArgs(code);
@@ -134,6 +145,11 @@ void prepareForGeneration(Code& code)
     // If we coalesced moves then we can unbreak critical edges. This is the main reason for this
     // phase.
     simplifyCFG(code);
+
+#if USE(BUN_JSC_ADDITIONS)
+    if (code.chargesForCalleeSaves() && code.needsUsedRegisters())
+        forwardRegisterCopies(code);
+#endif
 
     // Not worth a whole-graph liveness scan just for the dead assignments it also kills, so this runs
     // only for the used-register set that B3::StackmapValue reports to a patchpoint's generator.
@@ -212,6 +228,26 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
 
     Disassembler* disassembler = code.disassembler();
 
+#if USE(BUN_JSC_ADDITIONS)
+    BitVector emittedLatePaths;
+    auto emitNearbyLatePaths = [&] {
+        constexpr uint32_t maxDistance = 96;
+        if (!isX86() || !code.laysRareBlocksInGaps() || disassembler)
+            return;
+        for (unsigned i = 0; i < context.nearbyLatePaths.size(); ++i) {
+            auto [index, recordedOffset] = context.nearbyLatePaths[i];
+            if (jit.m_assembler.buffer().codeSize() - recordedOffset > maxDistance)
+                continue;
+            if (shouldPreserveB3Origins)
+                pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
+            Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
+            latePath->run(jit, context);
+            emittedLatePaths.set(index);
+        }
+        context.nearbyLatePaths.shrink(0);
+    };
+#endif
+
     for (BasicBlock* block : code) {
         context.currentBlock = block;
         context.indexInBlock = UINT_MAX;
@@ -266,6 +302,9 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             code.emitEpilogue(jit);
             if (disassembler)
                 disassembler->addInst(&block->last(), start, jit.labelIgnoringWatchpoints());
+#if USE(BUN_JSC_ADDITIONS)
+            emitNearbyLatePaths();
+#endif
             continue;
         }
 
@@ -281,11 +320,18 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
             switch (block->numSuccessors()) {
             case 1:
                 link(jump, block->successorBlock(0));
+#if USE(BUN_JSC_ADDITIONS)
+                emitNearbyLatePaths();
+#endif
                 break;
             case 2:
                 link(jump, block->successorBlock(0));
-                if (block->successorBlock(1) != code.findNextBlock(block))
+                if (block->successorBlock(1) != code.findNextBlock(block)) {
                     link(jit.jump(), block->successorBlock(1));
+#if USE(BUN_JSC_ADDITIONS)
+                    emitNearbyLatePaths();
+#endif
+                }
                 break;
             default:
                 RELEASE_ASSERT_NOT_REACHED();
@@ -317,11 +363,22 @@ static void generateWithAlreadyAllocatedRegisters(Code& code, CCallHelpers& jit)
     if (disassembler)
         disassembler->startLatePath(jit);
 
+#if USE(BUN_JSC_ADDITIONS)
+    for (unsigned index = 0; index < context.latePaths.size(); ++index) {
+        if (emittedLatePaths.get(index))
+            continue;
+        if (code.shouldPreserveB3Origins())
+            pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), std::get<0>(context.latePaths[index]));
+        Ref<GenerationContext::LatePath> latePath = std::get<1>(context.latePaths[index]);
+        latePath->run(jit, context);
+    }
+#else
     for (auto& [origin, latePath] : context.latePaths) {
         if (code.shouldPreserveB3Origins())
             pcToOriginMap.appendItem(jit.labelIgnoringWatchpoints(), origin);
         latePath->run(jit, context);
     }
+#endif
 
     if (disassembler)
         disassembler->endLatePath(jit);

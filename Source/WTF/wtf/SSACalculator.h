@@ -226,6 +226,12 @@ public:
     template<typename Functor>
     void computePhis(NOESCAPE const Functor& functor)
     {
+        computePhis([](Variable*) { }, functor);
+    }
+
+    template<typename BeforeVariable, typename Functor>
+    void computePhis(NOESCAPE const BeforeVariable& beforeVariable, NOESCAPE const Functor& functor)
+    {
         ensureDominanceFrontiers();
 
         CFG& cfg = this->cfg();
@@ -237,6 +243,7 @@ public:
         IndexMap<Node, unsigned> visited(cfg.numNodes(), 0);
         for (Variable& variable : m_variables) {
             unsigned epoch = variable.index() + 1;
+            beforeVariable(&variable);
             worklist.shrink(0);
             worklist.appendVector(variable.m_blocksWithDefs);
             while (!worklist.isEmpty()) {
@@ -372,7 +379,7 @@ private:
 
         // "A Simple, Fast Dominance Algorithm", Cooper, Harvey, and Kennedy, 2001.
         // https://www.cs.tufts.edu/~nr/cs257/archive/keith-cooper/dom14.pdf
-        m_dominanceFrontiers = cfg.template newMap<Vector<Node>>();
+        m_dominanceFrontiers = cfg.template newMap<Vector<Node, 2>>();
         for (unsigned blockIndex = 0; blockIndex < cfg.numNodes(); ++blockIndex) {
             Node block = cfg.node(blockIndex);
             if (!block || cfg.predecessors(block).size() < 2)
@@ -381,7 +388,7 @@ private:
             for (Node predecessor : cfg.predecessors(block)) {
                 Node runner = predecessor;
                 while (runner && runner != idomBlock) {
-                    Vector<Node>& frontier = m_dominanceFrontiers[runner];
+                    auto& frontier = m_dominanceFrontiers[runner];
                     if (frontier.isEmpty() || frontier.last() != block)
                         frontier.append(block);
                     runner = dominators.idom(runner);
@@ -394,7 +401,7 @@ private:
     Bag<Def> m_defs;
     Bag<Def> m_phis;
     IndexMap<Node, BlockData> m_data;
-    IndexMap<Node, Vector<Node>> m_dominanceFrontiers;
+    IndexMap<Node, Vector<Node, 2>> m_dominanceFrontiers;
     bool m_dominanceFrontiersComputed { false };
 };
 

@@ -42,20 +42,34 @@ void lowerStackArgs(Code& code)
     // Now we need to deduce how much argument area we need. We always reserve the conservative
     // register bytes for Bank::FP because CallArgs do not record which bank they are.
     unsigned conservativeCallArgBytes = code.usesSIMD() ? conservativeRegisterBytes(Bank::FP) : conservativeRegisterBytesWithoutVectors(Bank::FP);
+    struct Site {
+        unsigned blockIndex;
+        unsigned instIndex;
+    };
+    Vector<Site> sites;
     for (BasicBlock* block : code) {
-        for (Inst& inst : *block) {
+        unsigned blockSize = block->size();
+        for (unsigned instIndex = 0; instIndex < blockSize; ++instIndex) {
+            Inst& inst = block->at(instIndex);
+            bool isSite = isARM64() && (inst.kind.opcode == Lea32 || inst.kind.opcode == Lea64);
             for (Arg& arg : inst.args()) {
                 if (arg.isCallArg()) {
                     ASSERT(arg.offset() >= 0);
                     code.requestCallArgAreaSizeInBytes(arg.offset() + conservativeCallArgBytes);
-                }
+                    isSite = true;
+                } else if (arg.isStack())
+                    isSite = true;
             }
+            if (isSite)
+                sites.append(Site { block->index(), instIndex });
         }
     }
 
     code.setFrameSize(code.frameSize() + code.callArgAreaSizeInBytes());
 #if USE(BUN_JSC_ADDITIONS)
     code.tryToPlaceSpillsAboveFrameRecord();
+    code.tryToPlaceCalleeSavesAtFootOfFrame();
+    code.tryToPushRegistersInPrologue();
 #endif
 
     // Finally, transform the code to use Addr's instead of StackSlot's. This is a lossless
@@ -63,11 +77,13 @@ void lowerStackArgs(Code& code)
     // offset-from-FP refers to.
 
     InsertionSet insertionSet(code);
-    for (BasicBlock* block : code) {
+    for (size_t site = 0; site < sites.size();) {
+        BasicBlock* block = code[sites[site].blockIndex];
         // FIXME We can keep track of the last large offset which was materialized in this block, and reuse the register
         // if it hasn't been clobbered instead of renetating imm+add+addr every time. https://bugs.webkit.org/show_bug.cgi?id=171387
 
-        for (unsigned instIndex = 0; instIndex < block->size(); ++instIndex) {
+        for (; site < sites.size() && sites[site].blockIndex == block->index(); ++site) {
+            unsigned instIndex = sites[site].instIndex;
             Inst& inst = block->at(instIndex);
             bool extendedOffsetAddrRegInUse = false;
 
@@ -203,19 +219,6 @@ void lowerStackArgs(Code& code)
                 }
                 // Fall through to handle remainder of the original or modified inst, including potential ZDef handling.
             }
-
-            // The scan below only ever acts on Stack and CallArg operands, and after register
-            // allocation most instructions have neither. Checking that does not need the Arg roles,
-            // and iterating args() directly can only over-approximate what forEachArg reports.
-            bool mayHaveStackArg = false;
-            for (Arg& arg : inst.args()) {
-                if (arg.isStack() || arg.isCallArg()) {
-                    mayHaveStackArg = true;
-                    break;
-                }
-            }
-            if (!mayHaveStackArg)
-                continue;
 
             inst.forEachArg(
                 [&] (Arg& arg, Arg::Role role, Bank, Width width) {

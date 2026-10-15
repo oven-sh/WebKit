@@ -12,6 +12,7 @@
 #include "AOTTypedObject.h"
 #include "AsyncContextSwapScope.h"
 #include "AsyncGeneratorPrototype.h"
+#include "B3StackmapGenerationParams.h"
 #include "JSAsyncFromSyncIterator.h"
 #include "JSCInlines.h"
 #include "JSPromise.h"
@@ -35,6 +36,10 @@ static ALWAYS_INLINE void resumeWhenSettled(JSGlobalObject* globalObject, VM& vm
     }
     if (Typed::driveAsyncIterator(globalObject, vm, awaited.asCell(), asObject(resumeClosure)))
         return;
+    if (awaited.asCell()->type() != JSPromiseType && isDefinitelyNonThenable(asObject(awaited), globalObject)) {
+        globalObject->queueMicrotask(vm, task, static_cast<uint8_t>(JSPromise::Status::Fulfilled), jsUndefined(), awaited, resumeClosure, AsyncContextSwapScope::current(vm, globalObject));
+        return;
+    }
     JSPromise::resolveWithInternalMicrotaskForAsyncAwait(globalObject, vm, awaited, task, resumeClosure);
 }
 
@@ -48,9 +53,61 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedSuspendAsyncFunction, void, (Instance*
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedParkAsyncFunction, void, (Instance* instance, JSCell* resumeClosure, EncodedJSValue awaited))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
-    vm.writeBarrier(uncheckedDowncast<Typed::Closure>(resumeClosure)->environment());
+    vm.writeBarrier(*reinterpret_cast<JSCell* const*>(reinterpret_cast<const uint8_t*>(resumeClosure) + Typed::Closure::offsetOfCaptures()));
     resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, resumeClosure);
     OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedSuspendAtFirstAwait, void, (Instance* instance, JSCell* frame, EncodedJSValue awaited, uint64_t request))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    auto word = [](JSCell* cell, ptrdiff_t offset) -> uint64_t& {
+        return *reinterpret_cast<uint64_t*>(reinterpret_cast<uint8_t*>(cell) + offset);
+    };
+    word(frame, ResumeClosureRequest::wordOfFrameOf(request) * sizeof(uint64_t)) = 0;
+    JSCell* resumeClosure = instance->typed->allocate(vm, ClosureRequest::allocationOf(request));
+    word(resumeClosure, JSObject::butterflyOffset()) = 0;
+    word(resumeClosure, JSCallee::offsetOfScopeChain()) = std::bit_cast<uint64_t>(instance->globalObject);
+    word(resumeClosure, JSFunction::offsetOfExecutableOrRareData()) = std::bit_cast<uint64_t>(instance->typedExecutables[ResumeClosureRequest::executableOf(request)]);
+    word(resumeClosure, Typed::Closure::offsetOfCaptures()) = std::bit_cast<uint64_t>(frame);
+    WTF::storeStoreFence();
+    word(resumeClosure, Typed::Closure::offsetOfEntry()) = instance->typedFunctions[ClosureRequest::functionOf(request)] | 1ULL << ClosureWord::isNotCallableBit;
+    WTF::storeStoreFence();
+    word(frame, ResumeClosureRequest::wordOfFrameOf(request) * sizeof(uint64_t)) = std::bit_cast<uint64_t>(resumeClosure);
+    vm.writeBarrier(frame);
+    resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, resumeClosure);
+    OPERATION_RETURN(scope);
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedSaveFrameAndAwait, JSCell*, (Instance* instance, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    Typed::SavedFrame* saved = Typed::SavedFrame::save(vm, *instance, std::bit_cast<uint64_t*>(frame), std::bit_cast<const uint64_t*>(bottom), std::bit_cast<void*>(resumeAddress), std::bit_cast<const uint64_t*>(extra));
+    resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
+    if (scope.exception()) [[unlikely]]
+        saved->willBeLaidOnStack();
+    OPERATION_RETURN(scope, saved->promise());
+}
+
+JSC_DEFINE_JIT_OPERATION(operationAOTTypedAwaitWithSavedFrame, JSCell*, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
+{
+    AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    vm.writeBarrier(saved);
+    if (!awaited)
+        OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
+    resumeWhenSettled(globalObject, vm, JSValue::decode(awaited), InternalMicrotask::AOTAsyncFunctionResume, saved);
+    if (scope.exception()) [[unlikely]]
+        uncheckedDowncast<Typed::SavedFrame>(saved)->willBeLaidOnStack();
+    OPERATION_RETURN(scope, uncheckedDowncast<Typed::SavedFrame>(saved)->promise());
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTTypedTakeStepAtOnceOrAwait, EncodedJSValue, (Instance* instance, EncodedJSValue awaited, JSCell* saved))
+{
+    VM& vm = *instance->vm;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    AOTOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    JSObject* result = driveAsyncFromSyncIteratorAtOnceOrWithDriver(instance->globalObject, uncheckedDowncast<JSAsyncFromSyncIterator>(JSValue::decode(awaited)), asObject(saved));
+    return result ? JSValue::encode(result) : JSValue::encode(JSValue());
 }
 
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseThen, void, (Instance* instance, JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived))
@@ -71,8 +128,11 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedPromiseCatch, JSCell*, (Instance* inst
 JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncGeneratorYield, void, (Instance* instance, JSCell* resumeClosure, EncodedJSValue operand))
 {
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
+    if (uncheckedDowncast<Typed::AsyncGenerator>(resumeClosure)->tryToYieldInPlace(*instance, vm, JSValue::decode(operand)))
+        OPERATION_RETURN(scope);
     uncheckedDowncast<Typed::AsyncGenerator>(resumeClosure)->willSuspendAtYield();
     resumeWhenSettled(globalObject, vm, JSValue::decode(operand), InternalMicrotask::AOTAsyncGeneratorResume, resumeClosure);
+    uncheckedDowncast<Typed::AsyncGenerator>(resumeClosure)->willSuspendAtAwait();
     OPERATION_RETURN(scope);
 }
 
@@ -121,8 +181,8 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedAsyncIteratorNext, EncodedJSValue, (In
     AOT_OPERATION_BEGIN_WITHOUT_CALLER(instance);
     JSValue iterator = JSValue::decode(encodedIterator);
     JSValue sent = JSValue::decode(encodedSent);
-    if (auto* generator = dynamicDowncast<Typed::AsyncGenerator>(iterator))
-        OPERATION_RETURN(scope, JSValue::encode(generator->enqueueDriver(globalObject, sent ? sent : jsUndefined())));
+    if (iterator.asCell()->type() != JSAsyncFromSyncIteratorType)
+        OPERATION_RETURN(scope, JSValue::encode(uncheckedDowncast<Typed::AsyncGenerator>(iterator)->enqueueDriver(globalObject, sent ? sent : jsUndefined())));
     auto* wrapper = uncheckedDowncast<JSAsyncFromSyncIterator>(iterator);
     if (!sent || wrapper->iterationMode() != IterationMode::Generic)
         OPERATION_RETURN(scope, encodedIterator);
@@ -149,6 +209,7 @@ std::optional<Writes> writesOfInlinePromise(InlineBuiltin which, std::span<const
         return Writes::RuntimeState;
     // Reading `constructor` or `then` of what is awaited runs code.
     case InlineBuiltin::SuspendAsyncFunction:
+    case InlineBuiltin::AwaitBySavingFrame:
     case InlineBuiltin::GetAsyncIteratorNext:
     case InlineBuiltin::AsyncIteratorNext:
     case InlineBuiltin::GetIteratorNext:
@@ -302,10 +363,107 @@ void Lowering::branchOnAwaitMayContinue(const Value& value, BlockID goesOn, LBas
     m_out.jump(mayContinue);
 }
 
+bool Lowering::isResumeClosureMadeByStub(size_t index)
+{
+    if (!isResumeClosureMadeWhereItSuspends(index))
+        return false;
+    auto& values = m_currentBlock->values;
+    auto& resume = m_program.at(m_function.at(values[index]).function());
+    auto& store = m_function.at(values[index + 1]);
+    ValueID awaited = m_function.at(values[index + 2]).arguments[1];
+    return FunctionTables::kindOfExecutable(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false) == FunctionTables::kindOfExecutable(static_cast<uint8_t>(FunctionKind::Plain), false)
+        && m_program.at(store.layout()).fields[store.field()].offset == ResumeClosureRequest::wordOfFrameForStub * sizeof(uint64_t)
+        && m_program.allocationOfClosure(1) <= ResumeClosureRequest::maxAllocationForStub
+        && !isLeftToItsFirstUse(awaited) && !isFetchedWhereNeeded(awaited);
+}
+
 std::optional<Operand> Lowering::lowerInlinePromise(InlineBuiltin which, ValueID result, const Value& value, Writes)
 {
     static constexpr unsigned flagsShift = CompactPointerTuple<JSCell*, uint16_t>::maxNumberOfBitsInPointer;
     auto& type = typeOf(result);
+    if (which == InlineBuiltin::AwaitBySavingFrame) {
+        RELEASE_ASSERT(m_function.savesItsFrame && value.arguments.size() >= 2);
+        m_context.emitsCalls = true;
+        m_context.savesItsFrame = true;
+        Boxed awaited = in<Boxed>(value.arguments[0]);
+        Vector<LValue, 16> kept;
+        kept.append(in<CellPointer>(value.arguments[1]).value());
+        for (unsigned i = 2; i < value.arguments.size(); ++i) {
+            Operand operand = get(value.arguments[i]);
+            if (holdsCells(operand.rep))
+                kept.append(operand.value);
+        }
+        PatchpointValue* patchpoint = m_out.patchpoint(Int64);
+        applyEffects(patchpoint, { Writes::Heap, true });
+        patchpoint->effects.writes = HeapRange::top();
+        patchpoint->append(ConstrainedValue(awaited.value(), ValueRep::reg(GPRInfo::argumentGPR1)));
+        for (LValue cell : kept)
+            patchpoint->append(ConstrainedValue(cell, ValueRep::LateColdAny));
+        patchpoint->clobber(RegisterSet::macroClobberedGPRs());
+        patchpoint->clobberLate(RegisterSet { callMarkerGPR });
+        patchpoint->clobberLate(RegisterSet::registersToSaveForCCall(RegisterSet::allScalarRegisters()));
+        for (GPRReg reg : stubTemporaryGPRs)
+            patchpoint->clobberLate(RegisterSet { reg });
+        patchpoint->resultConstraints = { ValueRep::reg(GPRInfo::returnValueGPR) };
+        CallSite site { nextSite() };
+        patchpoint->setGenerator([context = &m_context, site, numberKept = kept.size()](CCallHelpers& jit, const StackmapGenerationParams& params) {
+            AllowMacroScratchRegisterUsage allowScratch(jit);
+            Vector<uint32_t, 8> places { 0u };
+            uint32_t placeOfPromise = 0;
+            for (unsigned i = 0; i < numberKept; ++i) {
+                const ValueRep& rep = params[2 + i];
+                uint32_t place = SavedFrame::placeInRegister;
+                if (rep.isStack())
+                    place = SavedFrame::placeInFrame(rep.offsetFromFP());
+                else if (rep.isGPR()) {
+                    if (rep.gpr() == GPRInfo::numberTagRegister || rep.gpr() == GPRInfo::notCellMaskRegister)
+                        continue;
+                    RELEASE_ASSERT(rep.gpr() == SavedFrame::registerKept);
+                } else {
+                    RELEASE_ASSERT(rep.isConstant() && i);
+                    continue;
+                }
+                if (!i)
+                    placeOfPromise = place;
+                while (places.size() <= 1 + place / 32)
+                    places.append(0);
+                places[1 + place / 32] |= 1u << (place % 32);
+            }
+            places[0] = places.size() - 1;
+            uint32_t row = context->plans.size();
+            for (uint32_t earlier : context->rowsOfSavedFrames) {
+                if (equalSpans(context->plans.subspan(earlier, std::min<size_t>(places.size(), context->plans.size() - earlier)), places.span())) {
+                    row = earlier;
+                    break;
+                }
+            }
+            if (row == context->plans.size()) {
+                context->rowsOfSavedFrames.append(row);
+                context->plans.appendVector(places);
+            }
+            RegisterAtOffsetList saves = params.code().calleeSaveRegisterAtOffsetList();
+            RELEASE_ASSERT(!saves.registerCount() || (isX86_64() && saves.registerCount() == 1 && saves.at(0).reg().isGPR() && saves.at(0).reg().gpr() == SavedFrame::registerKept && saves.at(0).offset() == -static_cast<ptrdiff_t>(sizeof(CPURegister))));
+            auto word = SavedFrame::wordOfSite(row, placeOfPromise, saves.registerCount());
+            RELEASE_ASSERT(word);
+            jit.move(CCallHelpers::TrustedImm32(*word), stubImmediateGPR);
+            context->stubCalls.call(jit, Stub::AwaitBySavingFrame, site);
+        });
+        unwindToLandingPad(patchpoint, site);
+        return ensure(Boxed(patchpoint), type);
+    }
+    if (which == InlineBuiltin::SuspendAsyncFunction && m_currentIndexInBlock >= 2 && isResumeClosureMadeWhereItSuspends(m_currentIndexInBlock - 2)) {
+        auto& made = m_function.at(value.arguments[0]);
+        auto& resume = m_program.at(made.function());
+        auto& store = m_function.at(m_currentBlock->values[m_currentIndexInBlock - 1]);
+        auto& field = m_program.at(store.layout()).fields[store.field()];
+        unsigned executable = FunctionTables::kindOfExecutable(static_cast<uint8_t>(resume.kind) | resume.declaredAs, false);
+        uint32_t allocation = m_program.allocationOfClosure(1);
+        if (isResumeClosureMadeByStub(m_currentIndexInBlock - 2))
+            callICStub(Stub::SuspendAtFirstAwait, Void, { { in<CellPointer>(made.arguments[0]).value(), GPRInfo::argumentGPR1 }, { in<Boxed>(value.arguments[1]).value(), GPRInfo::argumentGPR2 } }, std::pair { stubImmediateGPR, ResumeClosureRequest::encodeForStub(made.function().index(), allocation) }, effectsOfBuiltinCall(value));
+        else
+            AOT_TYPED_OPERATION_WITH_EFFECTS(SuspendAtFirstAwait, effectsOfBuiltinCall(value), in<CellPointer>(made.arguments[0]), in<Boxed>(value.arguments[1]), integer(static_cast<int64_t>(ResumeClosureRequest::encode(made.function().index(), executable, allocation, field.offset / sizeof(uint64_t)))));
+        return ensure(undefined(), m_program.at(m_program.types.undefined), type);
+    }
     if (which == InlineBuiltin::SuspendAsyncFunction) {
         CellPointer closure = in<CellPointer>(value.arguments[0]);
         Boxed awaited = in<Boxed>(value.arguments[1]);

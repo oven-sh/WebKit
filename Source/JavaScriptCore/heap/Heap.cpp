@@ -715,6 +715,8 @@ void Heap::reconcileWeakReferencesAtGCEnd()
     });
     for (AOT::Instance* instance : vm().m_aotInstances)
         instance->finalizeUnconditionally(collectionScope == CollectionScope::Eden);
+    if (AOT::PlaceTable* table = vm().m_aotPlaceTable)
+        table->finalizeUnconditionally(vm(), collectionScope == CollectionScope::Eden);
     if (auto* program = vm().m_aotProgram.get())
         program->didFinishCollection();
 #endif
@@ -3164,7 +3166,7 @@ void Heap::addCoreConstraints()
                 for (AOT::Instance* instance : vm().m_aotInstances) {
                     if (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))) {
                         instance->visit(visitor, newOnly);
-                        if (instance->typed && !instance->typed->isOfLockedRealm)
+                        if (instance->typed && (!instance->typed->isOfLockedRealm || instance->globalObject->aotInstance() != instance))
                             instance->typed->visit(visitor);
                     }
                 }
@@ -3177,7 +3179,9 @@ void Heap::addCoreConstraints()
             MAKE_MARKING_CONSTRAINT_EXECUTOR_PAIR(([this] (auto& visitor) {
                 SetRootMarkReasonScope rootScope(visitor, RootMarkReason::CodeBlocks);
                 for (AOT::Instance* instance : vm().m_aotInstances) {
-                    if (instance->typed && instance->typed->isOfLockedRealm)
+                    if (!instance->typed || !instance->typed->isOfLockedRealm)
+                        continue;
+                    if (instance->globalObject->aotInstance() == instance || (visitor.isMarked(instance->loader()) && (!instance->loaderWasCleared() || visitor.isMarked(AOT::tokenOf(instance)))))
                         instance->typed->visit(visitor);
                 }
             })),

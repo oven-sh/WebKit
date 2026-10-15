@@ -69,6 +69,9 @@ public:
 };
 
 template <typename T> class GCSegmentedArrayIterator;
+#if USE(BUN_JSC_ADDITIONS)
+class CompiledLayoutVisitor;
+#endif
 
 template <typename T>
 class GCSegmentedArray {
@@ -76,6 +79,9 @@ class GCSegmentedArray {
     WTF_MAKE_NONCOPYABLE(GCSegmentedArray);
     friend class GCSegmentedArrayIterator<T>;
     friend class GCSegmentedArrayIterator<const T>;
+#if USE(BUN_JSC_ADDITIONS)
+    friend class CompiledLayoutVisitor;
+#endif
 public:
     GCSegmentedArray();
     ~GCSegmentedArray();

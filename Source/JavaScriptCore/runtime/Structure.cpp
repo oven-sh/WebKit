@@ -52,6 +52,12 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_BEGIN
 
 namespace JSC {
 
+#if ENABLE(AOT)
+namespace AOT {
+void initializeRowsByName(VM&, Structure&);
+}
+#endif
+
 template<typename DetailsFunc>
 void Structure::checkOffsetConsistency(PropertyTable* propertyTable, NOESCAPE const DetailsFunc& detailsFunc) const
 {
@@ -252,8 +258,15 @@ Structure::Structure(VM& vm, JSGlobalObject* globalObject, JSValue prototype, co
     , m_transitionWatchpointSet(IsWatched)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (hasAOTFields())
+    if (hasAOTFields()) {
         new (NotNull, &existingAOTFields()) AOTFields();
+#if ENABLE(AOT)
+        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
+            existingAOTFields().placesByName = emptyRow;
+        else
+            AOT::initializeRowsByName(vm, *this);
+#endif
+    }
 #endif
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
     bool hasStaticNonConfigurableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontDelete));
@@ -297,6 +310,9 @@ const ClassInfo Structure::s_info = { "Structure"_s, nullptr, nullptr, nullptr, 
 
 #if USE(BUN_JSC_ADDITIONS)
 constinit const Structure::AOTFields Structure::s_emptyAOTFields { };
+#if ENABLE(AOT) && CPU(ADDRESS64)
+static_assert(sizeof(Structure) + sizeof(Structure::AOTFields) == 176);
+#endif
 #endif
 
 Structure::Structure(VM& vm, CreatingEarlyCellTag)
@@ -309,8 +325,15 @@ Structure::Structure(VM& vm, CreatingEarlyCellTag)
     , m_transitionWatchpointSet(IsWatched)
 {
 #if USE(BUN_JSC_ADDITIONS)
-    if (hasAOTFields())
+    if (hasAOTFields()) {
         new (NotNull, &existingAOTFields()) AOTFields();
+#if ENABLE(AOT)
+        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
+            existingAOTFields().placesByName = emptyRow;
+        else
+            AOT::initializeRowsByName(vm, *this);
+#endif
+    }
 #endif
     TypeInfo typeInfo { StructureType, StructureFlags };
     bool hasStaticNonEnumerableProperty = m_classInfo->hasStaticPropertyWithAnyOfAttributes(static_cast<uint8_t>(PropertyAttribute::DontEnum));
@@ -364,6 +387,10 @@ Structure::Structure(VM& vm, StructureVariant variant, Structure* previous)
         new (NotNull, &existingAOTFields()) AOTFields();
 #if ENABLE(AOT)
         existingAOTFields().aotInstance = previous->existingAOTFields().aotInstance;
+        if (const uint32_t* emptyRow = vm.m_aotEmptyRowOfPlacesByName) [[likely]]
+            existingAOTFields().placesByName = emptyRow;
+        else
+            AOT::initializeRowsByName(vm, *this);
 #endif
     }
 #endif
@@ -462,12 +489,14 @@ Structure* Structure::createWithProperties(VM& vm, Structure* empty, std::span<U
     RELEASE_ASSERT(empty->maxOffset() == invalidOffset && !empty->isDictionary() && !empty->hasPolyProto());
     DeferGC deferGC(vm);
     Structure* result = Structure::create(vm, empty->globalObject(), empty->storedPrototype(), empty->typeInfo(), empty->classInfoForCells(), empty->indexingType(), empty->inlineCapacity());
+    if (!names.empty())
+        result->pin(Locker { result->m_lock }, vm, PropertyTable::create(vm, names.size()));
     for (UniquedStringImpl* name : names) {
-        if (JSC::isValidOffset(result->get(vm, name)))
-            return nullptr;
-        result->addPropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+        auto added = result->addOrReplacePropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
             result->setMaxOffset(vm, newMaxOffset);
         });
+        if (!std::get<2>(added))
+            return nullptr;
     }
     result->setDidTransition(!names.empty());
     return result;
@@ -519,15 +548,16 @@ Structure* Structure::addPropertiesTransition(VM& vm, Structure* structure, std:
     }
     Structure* transition = Structure::create(vm, structure, deferred);
     transition->copyPropertyNameIDsFrom(*structure);
-    PropertyTable* table = structure->copyPropertyTableForPinning(vm);
+    PropertyTable* known = structure->propertyTableOrNull();
+    PropertyTable* table = known ? known->copy(vm, known->size() + names.size()) : structure->copyPropertyTableForPinning(vm);
     transition->pin(Locker { transition->m_lock }, vm, table);
     transition->setMaxOffset(vm, structure->maxOffset());
     for (UniquedStringImpl* name : names) {
-        if (JSC::isValidOffset(transition->get(vm, name)))
-            return nullptr;
-        transition->addPropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
+        auto added = transition->addOrReplacePropertyWithoutTransition(vm, name, 0, [&](const GCSafeConcurrentJSLocker&, PropertyOffset, PropertyOffset newMaxOffset) {
             transition->setMaxOffset(vm, newMaxOffset);
         });
+        if (!std::get<2>(added))
+            return nullptr;
     }
     transition->checkOffsetConsistency();
     return transition;
@@ -1274,6 +1304,8 @@ Structure* Structure::flattenDictionaryStructure(VM& vm, JSObject* object)
         // Copies out our values from their hashed locations, compacting property table offsets as we go.
         PropertyOffset offset = table->renumberPropertyOffsets(object, m_inlineCapacity, values);
         setMaxOffset(vm, offset);
+        if (mayBePrototype()) [[unlikely]]
+            vm.invalidateStructureChainIntegrity(VM::StructureChainIntegrityEvent::Change);
         ASSERT(transitionOffset() == invalidOffset);
         
         // Copies in our values to their compacted locations.
@@ -1354,7 +1386,7 @@ WatchpointSet* Structure::ensurePropertyReplacementWatchpointSet(VM& vm, Propert
     StructureRareData* rareData = structure->rareData();
     auto result = rareData->m_replacementWatchpointSets.add(offset, nullptr);
 #if USE(BUN_JSC_ADDITIONS)
-    if (result.isNewEntry && (aotFieldsOrEmpty().isReplacedWithoutNotice || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
+    if (result.isNewEntry && (isReplacedWithoutNotice() || (vm.m_aotProgram && typeInfo().type() == FinalObjectType && !mayBePrototype()))) {
         result.iterator->value = WatchpointSet::create(IsInvalidated);
         return result.iterator->value.get();
     }
@@ -1648,6 +1680,10 @@ void Structure::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     
     visitor.append(thisObject->m_realm);
 #if ENABLE(AOT)
+    if constexpr (std::is_same_v<Visitor, SlotVisitor>) {
+        if (hasAOTFields())
+            thisObject->markingStampAndFlags() = (thisObject->markingStampAndFlags() & ~markingStampMask) | markingStampFor(visitor.markingVersion());
+    }
     if (thisObject->aotFieldsOrEmpty().aotInstance) [[unlikely]] {
         visitor.appendUnbarriered(AOT::ownerOf(thisObject->aotFieldsOrEmpty().aotInstance));
         visitor.appendUnbarriered(AOT::tokenOf(thisObject->aotFieldsOrEmpty().aotInstance));
@@ -2059,6 +2095,9 @@ void dumpTransitionKind(PrintStream& out, TransitionKind kind)
         break;
     case TransitionKind::BecomeDerivedArray:
         kindName = "BecomeDerivedArray";
+        break;
+    case TransitionKind::AllocateTypedContiguous:
+        kindName = "AllocateTypedContiguous";
         break;
     case TransitionKind::BecomePrototype:
         kindName = "BecomePrototype";

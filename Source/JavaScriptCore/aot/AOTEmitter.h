@@ -248,7 +248,13 @@ protected:
 
     ~Emitter()
     {
-        B3::AbstractHeapRepository::giveBackToThread(WTF::move(m_heapsOfThread));
+        giveBackHeapsToThread();
+    }
+
+    void giveBackHeapsToThread()
+    {
+        if (m_heapsOfThread)
+            B3::AbstractHeapRepository::giveBackToThread(WTF::move(m_heapsOfThread));
     }
 
     void findPinnedRegisters();
@@ -343,6 +349,8 @@ protected:
 };
 
 void pinRegisters(B3::Procedure&);
+void readTagsFromInstance(B3::Procedure&);
+void readTagsFromInstance(CCallHelpers&);
 void generateHelper(CCallHelpers&, Stub);
 
 } } // namespace JSC::AOT

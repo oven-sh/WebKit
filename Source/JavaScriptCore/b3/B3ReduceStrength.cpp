@@ -638,23 +638,41 @@ public:
                 m_changed = false;
                 m_changedCFG = false;
                 simplifyCFG();
-                handleChangedCFGIfNecessary();
+                handleChangedCFGIfNecessary(true);
                 m_changedCFG = false;
+#if USE(BUN_JSC_ADDITIONS)
+                bool changedCFG = std::exchange(m_changed, false);
+                if (m_proc.positionIndependent()) {
+                    m_liveUpsilons.removeAllMatching([&](UpsilonValue* upsilon) {
+                        return m_proc.values()[upsilon->index()] != upsilon || upsilon->opcode() != Upsilon;
+                    });
+                    simplifySSA(&m_liveUpsilons);
+                } else
+                    simplifySSA();
+#else
                 simplifySSA();
+#endif
 
                 // A second value walk is only worthwhile when the CFG/SSA cleanup above exposed
                 // new opportunities: merged blocks enabling Check CSE, or a folded Phi turning
                 // Branch(Phi) into Branch(Identity).
 #if USE(BUN_JSC_ADDITIONS)
+                bool changedSSA = m_changed;
+                m_changed |= changedCFG;
                 if (m_changed && !(m_proc.positionIndependent() && m_pass == ReduceStrengthPass::Initial)) {
 #else
                 if (m_changed) {
 #endif
-                    m_valueForConstant.clear();
-                    reduceAllBlocksStrength();
+#if USE(BUN_JSC_ADDITIONS)
+                    if (!m_proc.positionIndependent() || m_firstWalkChangedSomething || changedSSA)
+#endif
+                    {
+                        m_valueForConstant.clear();
+                        reduceAllBlocksStrength();
+                    }
                     m_changedCFG = false;
                     simplifyCFG();
-                    handleChangedCFGIfNecessary();
+                    handleChangedCFGIfNecessary(true);
                     m_changedCFG = false;
                 }
 
@@ -663,7 +681,7 @@ public:
         } else {
             m_changedCFG = false;
             simplifyCFG();
-            handleChangedCFGIfNecessary();
+            handleChangedCFGIfNecessary(true);
             result |= m_changed;
 #if USE(BUN_JSC_ADDITIONS)
             if (m_numbersMemory && result)
@@ -681,7 +699,7 @@ public:
 
         simplifyCFG();
 
-        handleChangedCFGIfNecessary();
+        handleChangedCFGIfNecessary(true);
         // handleChangedCFGIfNecessary() can't reset m_changedCFG.
         m_changedCFG = false;
 
@@ -696,12 +714,27 @@ public:
         // "hoist" @thing. On the other hand, if we run DCE before CSE, we will kill @dead and
         // keep @thing. That's better, since we usually want things to stay wherever the client
         // put them. We're not actually smart enough to move things around at random.
+#if USE(BUN_JSC_ADDITIONS)
+        m_liveUpsilons.shrink(0);
+        m_changed |= eliminateDeadCodeImpl(m_proc, &m_liveUpsilons);
+        m_valueForConstant.clear();
+
+        simplifySSA(&m_liveUpsilons);
+#else
         m_changed |= eliminateDeadCodeImpl(m_proc);
         m_valueForConstant.clear();
 
         simplifySSA();
+#endif
 
+#if USE(BUN_JSC_ADDITIONS)
+        bool changedBefore = std::exchange(m_changed, false);
         reduceAllBlocksStrength();
+        m_firstWalkChangedSomething = m_changed;
+        m_changed |= changedBefore;
+#else
+        reduceAllBlocksStrength();
+#endif
 
         return m_changed;
     }
@@ -730,6 +763,9 @@ public:
         m_numbersMemory = m_proc.optLevel() >= 1 && m_proc.positionIndependent();
         if (m_numbersMemory) {
             m_heapEpochs.clear();
+            m_factsAboutConditions.fill(0, m_proc.values().size());
+            m_newFactsAboutConditions.shrink(0);
+            m_startsOfFactLayers.shrink(0);
             m_memoryStateAtTail.fill(MemoryState { }, m_proc.size());
             noteWritesOfLoops();
         }
@@ -753,14 +789,26 @@ public:
     // in any other child order gives the first but not the second.
     void reduceAllBlocksStrengthInDominatorPreOrder()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<BasicBlock*, 64> lastChild;
+        Vector<BasicBlock*, 64> childBefore;
+        lastChild.fill(nullptr, m_proc.size());
+        childBefore.fill(nullptr, m_proc.size());
+#else
         // Three children is the common case: a diamond head dominates both arms and the join.
         Vector<Vector<BasicBlock*, 3>> children(m_proc.size());
+#endif
         BasicBlock* root = nullptr;
         for (BasicBlock* block : m_proc.blocksInPostOrder() | std::views::reverse) {
             BasicBlock* parent = m_dominators->idom(block);
             ASSERT(parent != block);
+#if USE(BUN_JSC_ADDITIONS)
+            if (parent)
+                childBefore[block->index()] = std::exchange(lastChild[parent->index()], block);
+#else
             if (parent)
                 children[parent->index()].append(block);
+#endif
             else {
                 ASSERT(!root);
                 root = block;
@@ -777,8 +825,10 @@ public:
             if (!block) {
                 m_layeredCSE.dropLastLayer();
 #if USE(BUN_JSC_ADDITIONS)
-                if (m_numbersMemory)
+                if (m_numbersMemory) {
                     m_heapEpochs.dropLastLayer();
+                    dropLastLayerOfFacts();
+                }
 #endif
                 if (m_trackWasmGCAccesses)
                     m_wasmGCMap.dropLastLayer();
@@ -806,9 +856,14 @@ public:
             if (m_trackWasmGCAccesses)
                 endWasmGCBlock(block);
 
+#if USE(BUN_JSC_ADDITIONS)
+            for (BasicBlock* child = lastChild[block->index()]; child; child = childBefore[child->index()])
+                stack.append(child);
+#else
             auto& kids = children[block->index()];
             for (unsigned i = kids.size(); i--;)
                 stack.append(kids[i]);
+#endif
         }
     }
 
@@ -823,7 +878,29 @@ private:
                     deepDump(m_proc, block->at(m_index)), "\n");
             }
             m_value = m_block->at(m_index);
+#if USE(BUN_JSC_ADDITIONS)
+            for (Value*& child : m_value->children()) {
+                if (child->opcode() == Identity)
+                    child = child->foldIdentity();
+            }
+            if (m_numbersMemory && !m_trackWasmGCAccesses) {
+                switch (m_value->opcode()) {
+                case Nop:
+                case Phi:
+                case Upsilon:
+                case Jump:
+                case Oops:
+                case Return:
+                case Set:
+                case Get:
+                    continue;
+                default:
+                    break;
+                }
+            }
+#else
             m_value->performSubstitution();
+#endif
 
             HeapRange writesBeforeReduction;
             if (m_trackWasmGCAccesses)
@@ -2609,7 +2686,7 @@ private:
                 // Turn this: Trunc(SShr(Shl(SExt32(@a), $12), $12))
                 // Into this: @a
                 if (sshrArg0->opcode() == Shl && sshrArg0->child(1)->hasInt32()
-                    && sshrArg0->child(1)->asInt32() == shiftAmountConstant && shiftAmountConstant < 31
+                    && sshrArg0->child(1)->asInt32() == shiftAmountConstant && shiftAmountConstant >= 0 && shiftAmountConstant < 31
                     && sshrArg0->child(0)->opcode() == SExt32) {
                     replaceWithIdentity(sshrArg0->child(0)->child(0));
                     break;
@@ -3459,7 +3536,11 @@ private:
                 // If a check for the same property dominates us, we can kill the branch. This sort
                 // of makes sense here because it's cheap, but hacks like this show that we're going
                 // to need SCCP.
+#if USE(BUN_JSC_ADDITIONS)
+                if (m_numbersMemory ? factsAbout(m_value->child(0)) & IsZero : !!m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
+#else
                 if (m_layeredCSE.find(ValueKey(Check, Void, m_value->child(0)))) {
+#endif
                     // The Check would have side-exited if child(0) was non-zero. So, it must be
                     // zero here.
                     m_block->taken().block()->removePredecessor(m_block);
@@ -3470,8 +3551,9 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
             if (m_numbersMemory && m_value->opcode() == Branch && m_block->taken().block() != m_block->notTaken().block()) {
                 Value* condition = representativeOfCondition(m_value->child(0), false);
-                bool isZero = !!m_layeredCSE.find(ValueKey(Check, Void, condition));
-                if (isZero || m_layeredCSE.find(ValueKey(Branch, Void, condition))) {
+                unsigned facts = factsAbout(condition);
+                bool isZero = condition != m_value->child(0) && facts & IsZero;
+                if (isZero || facts & IsNotZero) {
                     (isZero ? m_block->taken() : m_block->notTaken()).block()->removePredecessor(m_block);
                     m_value->replaceWithJump(m_block, isZero ? m_block->notTaken() : m_block->taken());
                     m_changedCFG = true;
@@ -4733,6 +4815,7 @@ private:
                 replaceWithNew<Value>(Trunc, m_value->origin(), whole);
             return true;
         }
+        case EqualOrUnordered:
         case Equal:
         case NotEqual:
         case LessThan:
@@ -4742,8 +4825,15 @@ private:
             Value* left = m_value->child(0);
             Value* right = m_value->child(1);
             if (left->type() == Double) {
+                if (opcode == GreaterThan && left->opcode() == Abs && right->hasDouble() && !right->asDouble() && wholeNumberFor(left->child(0))) {
+                    Value* whole = wholeNumberAsInteger(left->child(0));
+                    replaceWithNew<Value>(NotEqual, m_value->origin(), whole, m_insertionSet.insert<Const64Value>(m_index, m_value->origin(), 0));
+                    return true;
+                }
                 if (!wholeNumberFor(left) || !wholeNumberFor(right))
                     return false;
+                if (opcode == EqualOrUnordered)
+                    opcode = Equal;
                 Value* wholeLeft = wholeNumberAsInteger(left);
                 Value* wholeRight = wholeNumberAsInteger(right);
                 if (answersForOneInteger(opcode, wholeLeft, wholeRight))
@@ -4828,6 +4918,11 @@ private:
     }
 #endif
 
+    static int32_t shiftAmountOf(Value* shift)
+    {
+        return shift->child(1)->asInt32() & (shift->type() == Int32 ? 31 : 63);
+    }
+
     IntRange rangeFor(Value* value, unsigned timeToLive = 5)
     {
         if (!timeToLive)
@@ -4848,21 +4943,21 @@ private:
         case SShr:
             if (value->child(1)->hasInt32()) {
                 DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).sShr(
-                    value->child(1)->asInt32(), value->type()));
+                    shiftAmountOf(value), value->type()));
             }
             break;
 
         case ZShr:
             if (value->child(1)->hasInt32()) {
                 DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).zShr(
-                    value->child(1)->asInt32(), value->type()));
+                    shiftAmountOf(value), value->type()));
             }
             break;
 
         case Shl:
             if (value->child(1)->hasInt32()) {
                 DUMP_INT_RANGE_AND_RETURN(rangeFor(value->child(0), timeToLive - 1).shl(
-                    value->child(1)->asInt32(), value->type()));
+                    shiftAmountOf(value), value->type()));
             }
             break;
 
@@ -5208,9 +5303,42 @@ private:
         return true;
     }
 
+    enum FactAboutCondition : uint8_t {
+        IsZero = 1,
+        IsNotZero = 2,
+    };
+
+    unsigned factsAbout(Value* condition) const
+    {
+        unsigned index = condition->index();
+        return index < m_factsAboutConditions.size() ? m_factsAboutConditions[index] : 0;
+    }
+
+    bool addFact(Value* condition, FactAboutCondition fact)
+    {
+        unsigned index = condition->index();
+        if (index >= m_factsAboutConditions.size())
+            m_factsAboutConditions.insertFill(m_factsAboutConditions.size(), 0, index + 1 - m_factsAboutConditions.size());
+        uint8_t& facts = m_factsAboutConditions[index];
+        if (facts & fact)
+            return false;
+        facts |= fact;
+        m_newFactsAboutConditions.append(index << 2 | fact);
+        return true;
+    }
+
+    void dropLastLayerOfFacts()
+    {
+        unsigned start = m_startsOfFactLayers.takeLast();
+        for (unsigned i = m_newFactsAboutConditions.size(); i-- > start;)
+            m_factsAboutConditions[m_newFactsAboutConditions[i] >> 2] &= ~(m_newFactsAboutConditions[i] & 3);
+        m_newFactsAboutConditions.shrink(start);
+    }
+
     void beginMemoryNumbering(BasicBlock* block)
     {
         m_heapEpochs.startLayer();
+        m_startsOfFactLayers.append(m_newFactsAboutConditions.size());
 
         MemoryState state;
         unsigned callEpoch = 0;
@@ -5243,12 +5371,57 @@ private:
         Value* branch = predecessor->last();
         if (branch->opcode() != Branch || predecessor->taken().block() == predecessor->notTaken().block())
             return;
-        m_layeredCSE.add(ValueKey(predecessor->taken().block() == block ? Branch : Check, Void, representativeOfCondition(branch->child(0), true)), branch);
+        addFact(representativeOfCondition(branch->child(0), true), predecessor->taken().block() == block ? IsNotZero : IsZero);
+    }
+
+    static ALWAYS_INLINE ValueKey keyOf(Value* value)
+    {
+        switch (value->opcode()) {
+        case Add:
+        case Sub:
+        case Mul:
+        case BitAnd:
+        case BitOr:
+        case BitXor:
+        case Shl:
+        case SShr:
+        case ZShr:
+        case Equal:
+        case NotEqual:
+        case LessThan:
+        case LessEqual:
+        case GreaterThan:
+        case GreaterEqual:
+        case Above:
+        case Below:
+        case AboveEqual:
+        case BelowEqual:
+            return ValueKey(value->kind(), value->type(), value->child(0), value->child(1));
+        case Opaque:
+        case SExt32:
+        case ZExt32:
+        case Trunc:
+        case IToD:
+        case BitwiseCast:
+            return ValueKey(value->kind(), value->type(), value->child(0));
+        case Load:
+        case Load8Z:
+        case Load16Z:
+        case Load8S:
+        case Load16S:
+        case Store:
+        case Store8:
+        case Store16:
+        case Branch:
+            return ValueKey();
+        default:
+            return value->key();
+        }
     }
 
     Value* representativeOfCondition(Value* condition, bool mayAdd)
     {
-        ValueKey key = condition->key();
+        ValueKey key = keyOf(condition);
         if (!key || condition->isConstant())
             return condition;
         return (mayAdd ? m_layeredCSE.findOrAdd(key, condition) : m_layeredCSE.find(key)).value_or(condition);
@@ -5375,7 +5548,15 @@ private:
         if (value->opcode() == Identity || value->isConstant())
             return;
 
-        ValueKey key = value->key();
+        if (value->kind() == Kind(Check)) {
+            if (!addFact(value->child(0), IsZero)) {
+                m_value->replaceWithNop();
+                m_changed = true;
+            }
+            return;
+        }
+
+        ValueKey key = keyOf(value);
         if (!key) {
             if (value != m_value)
                 return;
@@ -5815,6 +5996,30 @@ private:
         m_wasmGCArraySpan = HeapRange(begin, end);
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    bool hasSomethingForSimplifyCFG()
+    {
+        for (BasicBlock* block : m_proc) {
+            unsigned numSuccessors = block->numSuccessors();
+            if (!numSuccessors)
+                continue;
+            BasicBlock* firstSuccessor = block->successorBlock(0);
+            bool allSame = true;
+            for (BasicBlock* successor : block->successorBlocks()) {
+                if (successor != block && successor->size() == 1 && successor->last()->opcode() == Jump && successor->successorBlock(0) != successor)
+                    return true;
+                allSame &= successor == firstSuccessor;
+            }
+            if (numSuccessors > 1) {
+                if (allSame)
+                    return true;
+            } else if (block->last()->opcode() == Jump && firstSuccessor != block && firstSuccessor->numPredecessors() == 1)
+                return true;
+        }
+        return false;
+    }
+#endif
+
     void simplifyCFG()
     {
         if (B3ReduceStrengthInternal::verbose) {
@@ -5842,6 +6047,8 @@ private:
         // iterations needed to kill a lot of code.
 
 #if USE(BUN_JSC_ADDITIONS)
+        if (!hasSomethingForSimplifyCFG())
+            return;
         LargePredecessorLists<BasicBlock> lists;
 #endif
         for (BasicBlock* block : m_proc.blocksInPostOrder()) {
@@ -5929,6 +6136,9 @@ private:
                         dataLogLnIf(B3ReduceStrengthInternal::verbose, "Changing ", pointerDump(block), "'s terminal to a Jump.");
                         block->last()->replaceWithJump(block, FrequentedBlock(firstSuccessor));
                         m_changedCFG = true;
+#if USE(BUN_JSC_ADDITIONS)
+                        m_madeBlockJumpOnly |= block->size() == 1;
+#endif
                     }
                 }
             }
@@ -5985,11 +6195,21 @@ private:
         }
     }
 
-    void handleChangedCFGIfNecessary()
+    void handleChangedCFGIfNecessary(bool isBehindSimplifyCFG = false)
     {
+        UNUSED_PARAM(isBehindSimplifyCFG);
         if (m_changedCFG) {
+#if USE(BUN_JSC_ADDITIONS)
+            if (isBehindSimplifyCFG && m_proc.positionIndependent() && !std::exchange(m_madeBlockJumpOnly, false))
+                m_proc.resetReachabilityBehindContractions();
+            else {
+                m_proc.resetReachability();
+                m_proc.invalidateCFG();
+            }
+#else
             m_proc.resetReachability();
             m_proc.invalidateCFG();
+#endif
             // Dominators and natural loops are not valid anymore, and we don't need them yet.
             m_dominators = nullptr;
             m_naturalLoops = nullptr;
@@ -5999,8 +6219,13 @@ private:
 
     void checkPredecessorValidity()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_validatesIRAtEachPhase) [[likely]]
+            return;
+#else
         if (!shouldValidateIRAtEachPhase())
             return;
+#endif
 
         for (BasicBlock* block : m_proc) {
             for (BasicBlock* successor : block->successorBlocks())
@@ -6008,7 +6233,11 @@ private:
         }
     }
 
+#if USE(BUN_JSC_ADDITIONS)
+    void simplifySSA(const Vector<UpsilonValue*>* allUpsilons = nullptr)
+#else
     void simplifySSA()
+#endif
     {
         // This runs Aycock and Horspool's algorithm on our Phi functions [1]. For most CFG patterns,
         // this can take a suboptimal arrangement of Phi functions and make it optimal, as if you had
@@ -6038,21 +6267,27 @@ private:
 #if USE(BUN_JSC_ADDITIONS)
         IndexMap<Value*, Value*> onlyChild(m_proc.values().size(), nullptr);
         Vector<Value*, 32> phis;
-        for (Value* value : m_proc.values()) {
-            UpsilonValue* upsilon = value->as<UpsilonValue>();
-            if (!upsilon)
-                continue;
+        auto look = [&](UpsilonValue* upsilon) ALWAYS_INLINE_LAMBDA {
             Value* phi = upsilon->phi();
             Value* child = upsilon->child(0);
             Value*& only = onlyChild[phi];
             if (child == phi || child == only || only == phi)
-                continue;
+                return;
             if (only) {
                 only = phi;
-                continue;
+                return;
             }
             only = child;
             phis.append(phi);
+        };
+        if (allUpsilons) {
+            for (UpsilonValue* upsilon : *allUpsilons)
+                look(upsilon);
+        } else {
+            for (Value* value : m_proc.values()) {
+                if (UpsilonValue* upsilon = value->as<UpsilonValue>())
+                    look(upsilon);
+            }
         }
         bool found = false;
         for (Value* phi : phis)
@@ -6060,11 +6295,18 @@ private:
         if (!found)
             return;
         m_changed = true;
-        for (Value* value : m_proc.values()) {
-            if (UpsilonValue* upsilon = value->as<UpsilonValue>()) {
-                Value* only = onlyChild[upsilon->phi()];
-                if (only && only != upsilon->phi())
-                    upsilon->replaceWithNop();
+        auto drop = [&](UpsilonValue* upsilon) ALWAYS_INLINE_LAMBDA {
+            Value* only = onlyChild[upsilon->phi()];
+            if (only && only != upsilon->phi())
+                upsilon->replaceWithNop();
+        };
+        if (allUpsilons) {
+            for (UpsilonValue* upsilon : *allUpsilons)
+                drop(upsilon);
+        } else {
+            for (Value* value : m_proc.values()) {
+                if (UpsilonValue* upsilon = value->as<UpsilonValue>())
+                    drop(upsilon);
             }
         }
         for (Value* phi : phis) {
@@ -6116,7 +6358,22 @@ private:
     unsigned m_index { 0 };
     Value* m_value { nullptr };
     Dominators* m_dominators { nullptr };
+#if USE(BUN_JSC_ADDITIONS)
+    struct MixingValueKeyHash {
+        static unsigned hash(const ValueKey& key)
+        {
+            uint64_t low = key.childIndex(0) | static_cast<uint64_t>(key.childIndex(1)) << 32;
+            uint64_t high = key.childIndex(2) | static_cast<uint64_t>(key.childIndex(3)) << 32;
+            uint64_t mixed = (low + (static_cast<uint64_t>(key.kind().hash()) << 32 | key.type().hash())) * 0x9e3779b97f4a7c15ull;
+            mixed = ((mixed ^ mixed >> 32) + high) * 0xbf58476d1ce4e5b9ull;
+            return static_cast<unsigned>(mixed >> 32);
+        }
+        static bool equal(const ValueKey& a, const ValueKey& b) { return a == b; }
+    };
+    LayeredHashMap<ValueKey, Value*, MixingValueKeyHash> m_layeredCSE;
+#else
     LayeredHashMap<ValueKey, Value*> m_layeredCSE;
+#endif
 #if USE(BUN_JSC_ADDITIONS)
     bool m_numbersMemory { false };
     MemoryState m_memoryState;
@@ -6125,6 +6382,11 @@ private:
     const NaturalLoops* m_loopsForMemoryNumbering { nullptr };
     Vector<WritesOfLoop> m_writesOfLoops;
     LayeredHashMap<unsigned, unsigned, DefaultHash<unsigned>, WTF::UnsignedWithZeroKeyHashTraits<unsigned>> m_heapEpochs;
+    const bool m_validatesIRAtEachPhase { shouldValidateIRAtEachPhase() };
+    Vector<UpsilonValue*> m_liveUpsilons;
+    Vector<uint8_t, 1024> m_factsAboutConditions;
+    Vector<unsigned, 64> m_newFactsAboutConditions;
+    Vector<unsigned, 64> m_startsOfFactLayers;
 #endif
 
     bool m_trackWasmGCAccesses { false };
@@ -6141,6 +6403,10 @@ private:
     Vector<BitVector> m_wasmGCBlockWrites; // Slots each block inside a loop writes.
     bool m_changed { false };
     bool m_changedCFG { false };
+#if USE(BUN_JSC_ADDITIONS)
+    bool m_firstWalkChangedSomething { false };
+    bool m_madeBlockJumpOnly { false };
+#endif
 };
 
 } // anonymous namespace

@@ -88,12 +88,13 @@ class GlobalPropertyWatchpoint final : public AdaptiveInferredPropertyValueWatch
     WTF_MAKE_TZONE_ALLOCATED(GlobalPropertyWatchpoint);
 public:
     bool isWatching() const { return m_cache; }
-    void watch(VM&, const ObjectPropertyCondition&, Typed::GlobalPropertyCache&);
+    void watch(VM&, const ObjectPropertyCondition&, Typed::GlobalPropertyCache&, std::unique_ptr<GlobalPropertyWatchpoint>* sibling = nullptr);
 
 private:
     void handleFire(VM&, const FireDetail&) final;
 
     Typed::GlobalPropertyCache* m_cache { nullptr };
+    std::unique_ptr<GlobalPropertyWatchpoint>* m_sibling { nullptr };
 };
 
 using SlotWatchpointMap = UncheckedKeyHashMap<Slot*, FixedVector<SlotWatchpoint>>;

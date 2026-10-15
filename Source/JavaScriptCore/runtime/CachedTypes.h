@@ -515,6 +515,11 @@ public:
     // A program compiled from its types. Its entry functions run in the place of the top-level code of the modules, one each, in that order.
     // A module is named by the order of the calls that add one.
     JS_EXPORT_PRIVATE bool setTypedProgram(std::span<const uint8_t>, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings = { });
+    struct PreparedTypedProgram;
+    JS_EXPORT_PRIVATE static PreparedTypedProgram* readTypedProgram(std::span<const uint8_t>);
+    JS_EXPORT_PRIVATE static void optimizeTypedProgram(PreparedTypedProgram&, std::span<const uint8_t> replacedStrings);
+    JS_EXPORT_PRIVATE static void discardTypedProgram(PreparedTypedProgram*);
+    JS_EXPORT_PRIVATE bool setTypedProgram(PreparedTypedProgram*, std::span<const uint32_t> modules);
     JS_EXPORT_PRIVATE Result finish();
     JS_EXPORT_PRIVATE Vector<BuildError> takeBuildErrors();
     JS_EXPORT_PRIVATE VM& vm() const;

@@ -72,7 +72,7 @@ static std::optional<Receiver> receiverWithStructureID(JSType type)
 Word32 Lowering::hasOriginalStructure(CellPointer cell, const EngineClass& engineClass)
 {
     if (engineClass.type == ArrayType)
-        return Word32(isOriginalArray(cell.value()));
+        return isPlainArray(cell);
     if (engineClass.index == m_builtins.stringClass().index)
         return equal(typeOfCell(cell), word32(StringType));
     Word32 structureID = loadField<Word32>(cell, m_heaps.JSCell_structureID);
@@ -91,9 +91,18 @@ Word32 Lowering::hasOriginalStructure(CellPointer cell, const EngineClass& engin
     });
 }
 
-Word32 Lowering::isArrayAsMade(CellPointer cell)
+void Lowering::validateReceiverHasOriginalStructure(Word32 holds, CellPointer receiver, ValueID at)
 {
-    return Word32(m_out.castToInt32(callAllocationStub(Stub::IsArrayAsMade, { { cell.value(), stubTemporaryGPRs[0] } }, { Writes::Nothing, false }, false, true)));
+    LBasicBlock doesNotHold = newColdBlock();
+    LBasicBlock continuation = m_out.newBlock();
+    m_out.branch(holds.value(), usually(continuation), rarely(doesNotHold));
+    m_out.appendTo(doesNotHold);
+    {
+        SetForScope isReporting(m_isReportingThatFactDoesNotHold, true);
+        AOT_TYPED_OPERATION(FactDoesNotHold, box(receiver), word32(m_id.index()), word32(at.index()));
+    }
+    m_out.jump(continuation);
+    m_out.appendTo(continuation);
 }
 
 bool Lowering::isGuardOfReceiver(const Value& value) const
@@ -125,20 +134,13 @@ void Lowering::branchOnOriginalStructure(const Value& value, const Terminator& t
         m_out.appendTo(isCellCase);
         cell = asCell(boxed);
     }
-    Word32 holds = hasOriginalStructure(cell, m_builtins.classes()[value.engineClass()]);
-    if (value.takesArrayAsMade()) {
-        LBasicBlock hasAnother = newColdBlock();
-        m_out.branch(holds.value(), unsure(isOriginal), unsure(hasAnother));
-        m_out.appendTo(hasAnother);
-        holds = isArrayAsMade(cell);
-    }
-    m_out.branch(holds.value(), unsure(isOriginal), unsure(hasChanged));
+    m_out.branch(hasOriginalStructure(cell, m_builtins.classes()[value.engineClass()]).value(), unsure(isOriginal), unsure(hasChanged));
     if (terminator.targets[0].block == terminator.targets[1].block)
         return;
     for (unsigned i = 0; i < 2; ++i) {
         BlockID target = terminator.targets[i].block;
         if (target.index() && numberOfPredecessorsOf(target) == 1)
-            m_receiversAsked.set(target.index(), ReceiverAsked { receiverBehindCasts(value.arguments[0]), value.engineClass(), !i, value.takesArrayAsMade() });
+            m_receiversAsked.set(target.index(), ReceiverAsked { receiverBehindCasts(value.arguments[0]), value.engineClass(), !i });
     }
 }
 
@@ -150,8 +152,6 @@ std::optional<bool> Lowering::answerOfGuardAhead(ValueID receiver, const EngineC
     if (found == m_receiversAsked.end() || found->value.engineClass != engineClass.index || found->value.receiver != receiverBehindCasts(receiver))
         return std::nullopt;
     if (askedFor == AskedFor::Structure) {
-        if (found->value.isOriginal && found->value.mayOnlyBeAsMade)
-            return std::nullopt;
         for (size_t i = 0; i < m_currentIndexInBlock; ++i) {
             switch (m_function.at(m_currentBlock->values[i]).opcode) {
             case Opcode::CallDirect:
@@ -390,9 +390,13 @@ Operand Lowering::lowerCallBuiltin(ValueID result, const Value& value)
             });
         }
     }
+    if (value.receiverHasOriginalStructure && value.child(0) && Options::validateAOTTypedFacts()) [[unlikely]] {
+        CellPointer receiver = nonNil(value.child(0), m_program.stringOf(m_builtins.at(value.builtin()).nameName));
+        validateReceiverHasOriginalStructure(hasOriginalStructure(receiver, *typeOf(value.child(0)).onlyEngineClass()), receiver, result);
+    }
     if (!hasGenericFallback(m_program, m_function, value))
         return lowerResolvedBuiltin(result, value);
-    auto answer = answerOfGuardAhead(value.child(0), *typeOf(value.child(0)).onlyEngineClass(), AskedFor::Structure);
+    auto answer = value.receiverHasOriginalStructure ? std::optional<bool>(true) : answerOfGuardAhead(value.child(0), *typeOf(value.child(0)).onlyEngineClass(), AskedFor::Structure);
     if (answer.value_or(true)) {
         if (auto searched = lowerArraySearchAsOneCall(result, value))
             return *searched;
@@ -463,6 +467,13 @@ Operand Lowering::lowerResolvedBuiltin(ValueID result, const Value& value)
 {
     auto& builtin = m_builtins.at(value.builtin());
     auto& type = typeOf(result);
+    if (value.copiesOwnPropertyDescriptors() && builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "getOwnPropertyDescriptors"_s)
+        return ensure(AOT_TYPED_OPERATION_WITH_EFFECTS(OwnPropertyDescriptorsUnlessCopied, effectsOfBuiltinCall(value), in<Boxed>(value.arguments[0])), type);
+    if (value.copiesOwnPropertyDescriptors() && builtin.kind == BuiltinKind::StaticFunction && builtin.holder == "Object"_s && builtin.name == "defineProperties"_s) {
+        Boxed target = in<Boxed>(value.arguments[0]);
+        AOT_TYPED_OPERATION_WITH_EFFECTS(CopyOwnPropertyDescriptors, effectsOfBuiltinCall(value), target, in<Boxed>(value.children[2]), in<Boxed>(value.arguments[1]));
+        return ensure(target, type);
+    }
     switch (builtin.implementation.kind) {
     case BuiltinImplementation::Inline:
         if (auto inlined = lowerInline(builtin.implementation.inlined, result, value))

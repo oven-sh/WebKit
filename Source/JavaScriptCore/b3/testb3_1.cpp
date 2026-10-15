@@ -750,6 +750,7 @@ void run(const TestConfig* config)
     RUN(testBranchLoad16S());
     RUN(testBranchLoad16Z());
     RUN(testBranch8WithLoad8ZIndex());
+    RUN(testBranch16WithLoad16Z());
 
     RUN(testComplex(64, 128));
     RUN(testComplex(4, 128));

@@ -37,6 +37,7 @@
 #include <wtf/Scope.h>
 #include "AOTImage.h"
 #include "AOTProgram.h"
+#include "B3CompilationCohort.h"
 #include "BaselineJITCode.h"
 #include "BuiltinNames.h"
 #include "BuiltinExecutables.h"
@@ -6087,9 +6088,9 @@ struct BytecodeLinkEncoder::Impl {
                     identifierIndices.add(identifier.impl(), 0).iterator->value++;
             }
             if (typedProgram) {
-                for (AOT::Typed::StringID name : typedProgram->genericAccessIdentifiers()) {
+                for (auto [name, uses] : typedProgram->genericAccessIdentifiersAndNumberOfUses()) {
                     Identifier identifier = Identifier::fromString(vm, String::fromUTF8(typedProgram->string(name)));
-                    identifierIndices.add(identifier.impl(), 0).iterator->value++;
+                    identifierIndices.add(identifier.impl(), 0).iterator->value += uses;
                     typedIdentifiers.append({ name, WTF::move(identifier) });
                 }
             }
@@ -6103,8 +6104,14 @@ struct BytecodeLinkEncoder::Impl {
                     return order == std::weak_ordering::less;
                 return a.first->isSymbol() < b.first->isSymbol();
             });
-            for (uint32_t number = 0; number < inOrder.size(); ++number)
+            constexpr uint32_t usesThatPayForStubOfOneName = 48;
+            constexpr unsigned numberOfNamesWithStubWhateverTheirUses = 256;
+            unsigned numberOfNamesUsedOften = 0;
+            for (uint32_t number = 0; number < inOrder.size(); ++number) {
                 identifierIndices.set(inOrder[number].first, number + 1);
+                numberOfNamesUsedOften += inOrder[number].second >= usesThatPayForStubOfOneName;
+            }
+            AOT::setNumberOfNamesUsedOftenEnoughForStubOfTheirOwn(std::max(numberOfNamesUsedOften, numberOfNamesWithStubWhateverTheirUses));
             AOT::setProgramIdentifierIndices(&identifierIndices);
             builder.setProgramIdentifierIndices(&identifierIndices, inOrder.size() + 1);
             if (typedProgram) {
@@ -6211,9 +6218,14 @@ struct BytecodeLinkEncoder::Impl {
                 return static_cast<uint64_t>(UINT32_MAX - typedProgram->functions[index].values.size()) << 32 | index;
             });
             std::ranges::sort(sizesAndNumbers);
-            Vector<uint32_t> largestFirst(numberOfTypedFunctions, [&](size_t index) {
-                return static_cast<uint32_t>(sizesAndNumbers[index]);
-            });
+            Vector<uint32_t> largestFirst;
+            largestFirst.reserveInitialCapacity(numberOfTypedFunctions);
+            for (uint64_t sizeAndNumber : sizesAndNumbers) {
+                AOT::Typed::FunctionID id(static_cast<uint32_t>(sizeAndNumber));
+                // An entry is compiled in the place of the code of its module.
+                if (!typedProgram->isEntry(id) && typedProgram->hasCode(id))
+                    largestFirst.append(id.index());
+            }
             auto nameOf = [&](AOT::Typed::FunctionID id) {
                 return String::fromUTF8(typedProgram->string(typedProgram->at(id).name));
             };
@@ -6249,26 +6261,41 @@ struct BytecodeLinkEncoder::Impl {
                     self(self, continuation);
                 code.continuations.shrinkToFit();
             };
+            auto compileTypedFunction = [&](uint32_t function) {
+                AOT::Typed::FunctionID id(function);
+                auto result = makeUnique<TypedResult>();
+                if (Options::aotFunctionToDump()) [[unlikely]]
+                    result->code.mayBeDumped = nameOf(id) == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
+                result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
+                if (result->isCompiled)
+                    AOT::ImageBuilder::clearStubCalls(result->code);
+                giveBackRoom(giveBackRoom, result->code);
+                typedResults[function] = WTF::move(result);
+            };
+            auto cohortSizeAt = [&](uint32_t next) -> uint32_t {
+                constexpr size_t maxNumberOfValuesInCohort = 500;
+                if (next >= largestFirst.size())
+                    return 1;
+                size_t numberOfValues = std::max<size_t>(typedProgram->functions[largestFirst[next]].values.size(), 1);
+                return std::clamp<size_t>(maxNumberOfValuesInCohort / numberOfValues, 1, B3::CompilationCohort::maxSize);
+            };
             auto compileTypedFunctions = [&] {
+                B3::CompilationCohort cohort;
                 for (;;) {
                     if (builder.compileOneRequestedRegExp())
                         continue;
-                    uint32_t next = nextTypedFunction++;
-                    if (next >= numberOfTypedFunctions)
+                    uint32_t size = cohortSizeAt(nextTypedFunction.load(std::memory_order_relaxed));
+                    uint32_t first = nextTypedFunction.fetch_add(size);
+                    if (first >= largestFirst.size())
                         break;
-                    uint32_t function = largestFirst[next];
-                    AOT::Typed::FunctionID id(function);
-                    // An entry is compiled in the place of the code of its module.
-                    if (typedProgram->isEntry(id) || !typedProgram->hasCode(id))
+                    size = std::min<uint32_t>(size, largestFirst.size() - first);
+                    if (size == 1) {
+                        compileTypedFunction(largestFirst[first]);
                         continue;
-                    auto result = makeUnique<TypedResult>();
-                    if (Options::aotFunctionToDump()) [[unlikely]]
-                        result->code.mayBeDumped = nameOf(id) == StringView::fromLatin1(byteCast<char>(Options::aotFunctionToDump()));
-                    result->isCompiled = AOT::Typed::compile(vm, *typedProgram, id, result->code);
-                    if (result->isCompiled)
-                        AOT::ImageBuilder::clearStubCalls(result->code);
-                    giveBackRoom(giveBackRoom, result->code);
-                    typedResults[function] = WTF::move(result);
+                    }
+                    cohort.run(size, [&](unsigned member) {
+                        compileTypedFunction(largestFirst[first + member]);
+                    });
                 }
                 builder.compileRegExpsUntilAllAreRequested();
             };
@@ -6496,23 +6523,73 @@ void BytecodeLinkEncoder::setPrelinkedModuleGraph(std::span<const uint8_t> blob,
     m_impl->graphModuleIndices = WTF::move(graphModuleIndices);
 }
 
+struct BytecodeLinkEncoder::PreparedTypedProgram {
+    WTF_DEPRECATED_MAKE_STRUCT_FAST_ALLOCATED(PreparedTypedProgram);
+#if ENABLE(AOT)
+    std::unique_ptr<AOT::Typed::Program> program;
+#endif
+    Vector<String> failures;
+    bool isPlaced { false };
+};
+
 bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::span<const uint32_t> modules, std::span<const uint8_t> replacedStrings)
 {
+    auto* prepared = readTypedProgram(bytes);
+    optimizeTypedProgram(*prepared, replacedStrings);
+    return setTypedProgram(prepared, modules);
+}
+
+auto BytecodeLinkEncoder::readTypedProgram(std::span<const uint8_t> bytes) -> PreparedTypedProgram*
+{
+    auto* prepared = new PreparedTypedProgram;
 #if ENABLE(AOT)
     ASCIILiteral whyFailed;
     MonotonicTime start = MonotonicTime::now();
-    m_impl->typedProgram = AOT::Typed::Program::tryRead(bytes, whyFailed);
+    prepared->program = AOT::Typed::Program::tryRead(bytes, whyFailed);
     dataLogLnIf(Options::verboseAOTCompilation(), "AOT: reading the program took ", static_cast<unsigned>((MonotonicTime::now() - start).milliseconds()), " ms");
+    if (!prepared->program)
+        prepared->failures.append(makeString("internal error: the typed program cannot be read: "_s, whyFailed));
+#else
+    UNUSED_PARAM(bytes);
+#endif
+    return prepared;
+}
+
+void BytecodeLinkEncoder::discardTypedProgram(PreparedTypedProgram* prepared)
+{
+    delete prepared;
+}
+
+bool BytecodeLinkEncoder::setTypedProgram(PreparedTypedProgram* adopted, std::span<const uint32_t> modules)
+{
+    std::unique_ptr<PreparedTypedProgram> prepared(adopted);
+#if ENABLE(AOT)
     m_impl->typedModules = Vector<uint32_t, 1>(modules);
-    if (!m_impl->typedProgram) {
-        m_impl->fail(makeString("internal error: the typed program cannot be read: "_s, whyFailed));
+    for (auto& failure : prepared->failures)
+        m_impl->fail(WTF::move(failure));
+    if (!prepared->program)
+        return false;
+    if (!prepared->isPlaced) {
+        m_impl->fail("internal error: the typed program was handed over before it was placed"_s);
         return false;
     }
-    if (m_impl->typedProgram->entries.size() != modules.size()) {
-        m_impl->fail(makeString("internal error: the typed program has "_s, m_impl->typedProgram->entries.size(), " entry functions for "_s, modules.size(), " modules"_s));
-        m_impl->typedProgram = nullptr;
+    if (prepared->program->entries.size() != modules.size()) {
+        m_impl->fail(makeString("internal error: the typed program has "_s, prepared->program->entries.size(), " entry functions for "_s, modules.size(), " modules"_s));
         return false;
     }
+    m_impl->typedProgram = WTF::move(prepared->program);
+    return true;
+#else
+    UNUSED_PARAM(modules);
+    return false;
+#endif
+}
+
+void BytecodeLinkEncoder::optimizeTypedProgram(PreparedTypedProgram& prepared, std::span<const uint8_t> replacedStrings)
+{
+#if ENABLE(AOT)
+    if (!prepared.program)
+        return;
     // Pairs of a string and what to put in its place, each a length in four bytes and the bytes.
     while (replacedStrings.size() >= sizeof(uint32_t)) {
         auto take = [&]() -> std::span<const uint8_t> {
@@ -6527,23 +6604,21 @@ bool BytecodeLinkEncoder::setTypedProgram(std::span<const uint8_t> bytes, std::s
         };
         auto from = take();
         auto to = take();
-        m_impl->typedProgram->replaceString(from, to);
+        prepared.program->replaceString(from, to);
     }
-    auto findings = AOT::Typed::optimize(*m_impl->typedProgram);
+    auto findings = AOT::Typed::optimize(*prepared.program);
     for (auto& finding : findings)
-        m_impl->fail(makeString("internal error: the types of the program do not hold: "_s, finding));
+        prepared.failures.append(makeString("internal error: the types of the program do not hold: "_s, finding));
     if (!findings.isEmpty()) {
         // It has no placement. Whoever goes on after the refusal must not find it and compile it.
-        m_impl->typedProgram = nullptr;
-        return false;
+        prepared.program = nullptr;
+        return;
     }
-    AOT::Typed::place(*m_impl->typedProgram);
-    return true;
+    AOT::Typed::place(*prepared.program);
+    prepared.isPlaced = true;
 #else
-    UNUSED_PARAM(bytes);
-    UNUSED_PARAM(modules);
+    UNUSED_PARAM(prepared);
     UNUSED_PARAM(replacedStrings);
-    return false;
 #endif
 }
 

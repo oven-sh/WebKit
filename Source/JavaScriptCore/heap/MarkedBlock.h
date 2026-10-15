@@ -263,6 +263,7 @@ public:
         AlignedMemoryAllocator* m_alignedMemoryAllocator { nullptr };
         BlockDirectory* m_directory { nullptr };
         MarkedBlock* const m_block { nullptr };
+        void* m_verifierMemo { nullptr };
 
         // WeakSet is rarely accessed so keep it after the other members.
         WeakSet m_weakSet;
@@ -298,7 +299,7 @@ public:
         // m_vm must remain a pointer (instead of a reference) because JSCLLIntOffsetsExtractor
         // will fail otherwise.
         VM* const m_vm;
-        Subspace* m_subspace;
+        size_t m_cellSize { 0 };
 
         CountingLock m_lock;
     
@@ -334,7 +335,7 @@ public:
 
         WTF::BitSet<atomsPerBlock> m_marks;
         WTF::BitSet<atomsPerBlock> m_newlyAllocated;
-        void* m_verifierMemo { nullptr };
+        Subspace* m_subspace;
     };
     
 private:
@@ -561,7 +562,7 @@ inline size_t MarkedBlock::Handle::cellSize()
 
 inline size_t MarkedBlock::cellSize()
 {
-    return handle().cellSize();
+    return header().m_cellSize;
 }
 
 inline CellAttributes MarkedBlock::Handle::attributes() const
@@ -707,13 +708,13 @@ inline bool MarkedBlock::hasAnyMarked() const
 
 inline void MarkedBlock::setVerifierMemo(void* p)
 {
-    header().m_verifierMemo = p;
+    handle().m_verifierMemo = p;
 }
 
 template<typename T>
 T MarkedBlock::verifierMemo() const
 {
-    return std::bit_cast<T>(header().m_verifierMemo);
+    return std::bit_cast<T>(header().m_handle.m_verifierMemo);
 }
 
 } // namespace JSC

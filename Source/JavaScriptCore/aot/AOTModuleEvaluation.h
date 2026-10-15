@@ -28,6 +28,8 @@ JSArray* newImportTicket(Instance&, JSValue referrer);
 void setImportPromise(Instance&, JSArray* ticket, JSValue promise);
 JSPromise* evaluateModule(Instance&, JSArray* module, JSValue innerModuleEvaluation, JSValue ticket);
 void didStartModuleBody(Instance&, JSArray* module, JSValue promise);
+void didImportFromHost(Instance&, JSPromise*, JSValue referrer);
+bool waitsForImportFromHost(Instance&, JSValue module);
 void asyncModuleExecutionFulfilled(Instance&, JSArray* module);
 void asyncModuleExecutionRejected(Instance&, JSArray* module, JSValue error);
 

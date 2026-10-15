@@ -95,7 +95,7 @@ private:
             return false;
         if (m_function.kind != FunctionKind::Plain && m_function.kind != FunctionKind::Arrow && m_function.kind != FunctionKind::Method)
             return false;
-        if (m_function.has(FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer) || m_function.declaredAs || m_function.resumeFunction || m_function.startFunction || m_program.isResumeFunction(m_function))
+        if (m_function.has(FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer) || m_function.declaredAs || m_function.resumeFunction || m_function.startFunction || m_function.savesItsFrame || m_program.isResumeFunction(m_function))
             return false;
         for (auto& block : m_function.blocks) {
             auto& terminator = block.terminator;

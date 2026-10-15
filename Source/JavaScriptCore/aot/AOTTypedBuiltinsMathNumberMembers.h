@@ -26,3 +26,6 @@
     void findNumbersJoinedWithInt32(const Vector<BlockID>& order);
     BitVector m_hasInt32Phi;
     UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_int32Phis;
+    void findJoinsOfConstantsTakenAsNumbers();
+    BitVector m_isJoinOfConstantsTakenAsNumber;
+    UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_numberPhis;

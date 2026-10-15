@@ -66,14 +66,24 @@ void fixSpillsAfterTerminals(Code& code)
             instsToMove.append(block->at(i));
         RELEASE_ASSERT(instsToMove.size());
 
+#if USE(BUN_JSC_ADDITIONS)
+        Vector<BasicBlock*, 2> plantedIn;
+#endif
         for (FrequentedBlock& frequentedSuccessor : block->successors()) {
             BasicBlock* successor = frequentedSuccessor.block();
+#if USE(BUN_JSC_ADDITIONS)
+            if (plantedIn.contains(successor))
+                continue;
+#endif
             // If successor's only predecessor is block, we can plant the spill inside
             // the successor. Otherwise, we must split the critical edge and create
             // a new block for the spill.
             if (successor->numPredecessors() == 1) {
                 insertionSet.insertInsts(0, instsToMove);
                 insertionSet.execute(successor);
+#if USE(BUN_JSC_ADDITIONS)
+                plantedIn.append(successor);
+#endif
             } else {
                 BasicBlock* newBlock = blockInsertionSet.insertBefore(successor, successor->frequency());
                 for (const Inst& inst : instsToMove)

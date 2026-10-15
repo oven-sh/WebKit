@@ -69,6 +69,10 @@ std::optional<Operand> Lowering::lowerInlineErrorJSONGlobal(InlineBuiltin which,
     auto& arguments = value.arguments;
     OperationEffects effects { writes, true };
     Type errorClass = Type::engineClass(m_builtins.classes()[m_builtins.at(value.builtin()).result.engineClass]);
+    if (isErrorThrownToHandlerThatIgnoresIt(*m_currentBlock, result)) {
+        m_isFetchedLate.set(result.index());
+        return Operand(value.rep, nullptr);
+    }
     // A frame that stacks leave out is listed where it is at the very top. Under the frame of the engine's function it is not.
     uint32_t inlineFrame = m_function.at(result).inlineFrame;
     auto& maker = inlineFrame ? m_program.at(m_function.inlineFrames[inlineFrame].callee) : m_function;
@@ -98,6 +102,26 @@ bool Lowering::isErrorThrownWhereMade(const Block& block, ValueID id)
     if (m_program.isHiddenInStackTraces(maker) && !m_program.standsForBuiltin(maker))
         return false;
     return value.arguments.size() == 1 && m_function.at(value.arguments[0]).opcode == Opcode::String;
+}
+
+bool Lowering::isErrorThrownToHandlerThatIgnoresIt(const Block& block, ValueID id)
+{
+    auto& value = m_function.at(id);
+    if (value.opcode != Opcode::CallBuiltin || numberOfUsesOf(id) != 1)
+        return false;
+    auto* thrower = &block.terminator;
+    if (thrower->kind == TerminatorKind::Invoke && block.values.last() == id)
+        thrower = &m_function.at(thrower->targets[0].block).terminator;
+    if (thrower->kind != TerminatorKind::Throw || thrower->targets.isEmpty() || thrower->value != id)
+        return false;
+    auto& implementation = m_builtins.at(value.builtin()).implementation;
+    if (implementation.kind != BuiltinImplementation::Inline || familyOf(implementation.inlined) != BuiltinFamily::ErrorJSONGlobal)
+        return false;
+    if (Options::auditAOTTypedAssertions() || Options::validateAOTTypedFacts()) [[unlikely]]
+        return false;
+    if (value.arguments.size() > 1 || (!value.arguments.isEmpty() && !typeOf(value.arguments[0]).hasOnlyPrimitives(Primitive::String | Primitive::UndefinedOrNull)))
+        return false;
+    return ignoresCaughtValue(thrower->targets[0].block);
 }
 
 void Lowering::throwNewError(const Value& error)

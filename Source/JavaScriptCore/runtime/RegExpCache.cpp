@@ -60,7 +60,7 @@ RegExp* RegExpCache::lookupOrCreate(VM& vm, const String& patternString, OptionS
     vm.addRegExpToTrace(regExp);
 #endif
 
-    if (!regExp->isValid())
+    if (!regExp->isValid() || regExp->hasTextInPieces())
         return regExp;
 
     {
@@ -100,6 +100,8 @@ void RegExpCache::finalize(Handle<Unknown> handle, void*)
 
 void RegExpCache::addToStrongCache(RegExp* regExp)
 {
+    if (regExp->hasTextInPieces())
+        return;
     String pattern = regExp->pattern();
     if (pattern.length() > maxStrongCacheablePatternLength)
         return;

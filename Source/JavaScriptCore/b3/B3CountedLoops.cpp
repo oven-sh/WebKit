@@ -254,6 +254,24 @@ std::optional<bool> outcomeOfComparisonWithBound(const CountedLoop& loop, Opcode
     return std::nullopt;
 }
 
+static std::optional<bool> outcomeOfComparisonWithWhatStartIsBelow(const CountedLoop& loop, Opcode opcode, Value* left, Value* right)
+{
+    if (!invertedRelation(opcode))
+        return std::nullopt;
+    Value* limit = right;
+    if (right == loop.inductionVariable) {
+        opcode = flippedRelation(opcode);
+        limit = left;
+    } else if (left != loop.inductionVariable)
+        return std::nullopt;
+    if (loop.increases() || loop.isUnsigned() || loop.saturation || !loop.bound->hasInt64() || loop.bound->asInt64() < (loop.admitsEqual() ? 0 : -1))
+        return std::nullopt;
+    Value* start = loop.start;
+    if (limit->opcode() != ZExt32 || start->opcode() != Add || start->child(0) != limit || !start->child(1)->hasInt64() || start->child(1)->asInt64() >= 0)
+        return std::nullopt;
+    return opcode == LessThan || opcode == LessEqual || opcode == Below || opcode == BelowEqual;
+}
+
 bool foldComparisonsWithBounds(Procedure& proc)
 {
     PhaseScope phaseScope(proc, "foldComparisonsWithBounds"_s);
@@ -278,6 +296,8 @@ bool foldComparisonsWithBounds(Procedure& proc)
                 if (value->numChildren() != 2)
                     continue;
                 auto outcome = outcomeOfComparisonWithBound(*countedLoop, value->opcode(), value->child(0), value->child(1), countedLoop->bound);
+                if (!outcome)
+                    outcome = outcomeOfComparisonWithWhatStartIsBelow(*countedLoop, value->opcode(), value->child(0), value->child(1));
                 if (!outcome)
                     continue;
                 value->replaceWithIdentity(insertionSet.insertIntConstant(index, value, *outcome));

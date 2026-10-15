@@ -436,6 +436,10 @@ void installOperationFrontEnds(VM& vm, void** entries)
 #undef AOT_INSTALL_HELPER
     AOT_INSTALL_FRONT_END(CompareStrictEq)
     AOT_INSTALL_FRONT_END(CompareEq)
+    install(Entry::operationAOTTypedPutExtra, Entry::RawTypedPutExtra, Stub::FrontEndTypedPutExtra);
+    install(Entry::operationAOTTypedGetExtra, Entry::RawTypedGetExtra, Stub::FrontEndTypedGetExtra);
+    install(Entry::operationAOTTypedConstruct, Entry::RawTypedConstruct, Stub::FrontEndTypedConstruct);
+    entries[static_cast<unsigned>(Entry::HostFunctionThatIsNoConstructor)] = std::bit_cast<void*>(&callHostFunctionAsConstructor);
 #undef AOT_INSTALL_FRONT_END
 }
 

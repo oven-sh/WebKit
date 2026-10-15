@@ -53,6 +53,19 @@ public:
 
     void run()
     {
+#if USE(BUN_JSC_ADDITIONS)
+        if (!m_procedure.hasEverAdded(DoubleToFloat) && !m_procedure.hasEverAdded(FloatToDouble)) {
+            for (BasicBlock* block : m_procedure) {
+                for (Value* value : *block) {
+                    for (Value*& child : value->children()) {
+                        if (child->opcode() == Identity)
+                            child = child->foldIdentity();
+                    }
+                }
+            }
+            return;
+        }
+#endif
         if (!findCandidates())
             return;
 

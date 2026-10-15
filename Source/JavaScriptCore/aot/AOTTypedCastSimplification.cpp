@@ -27,7 +27,7 @@ public:
 
     unsigned run()
     {
-        unsigned changed = 0;
+        unsigned changed = narrowBlockParameters();
         // An allocation that is made with another layout leaves behind the cast that asked for it.
         for (;;) {
             unsigned changedNow = removeCasts();
@@ -117,6 +117,13 @@ private:
         return view && isMember(m_function.at(operand).layout(), view);
     }
 
+    bool predictionSaysMoreThanType(const Value& cast, ValueID operand) const
+    {
+        if (!cast.hasPredictionUnlike(m_function.at(operand)))
+            return false;
+        return cast.predictedClosure || cast.predictedByKey || !typeOf(operand).isWithin(m_program.at(cast.prediction), m_program);
+    }
+
     // A cast whose operand is of the type tests nothing. Its users take the operand, or, where they would see less by the type of
     // that or by what is expected of it, it stays as a way to look at it.
     unsigned removeCasts()
@@ -143,11 +150,11 @@ private:
                 ValueID operand = resolve(cast.child(0));
                 // What it tests is the value, however that is looked at.
                 if (cast.castReason() != CastReason::Upcast) {
-                    while (m_function.at(operand).opcode == Opcode::Cast && m_function.at(operand).castReason() == CastReason::Upcast && !m_function.at(operand).hasPredictionUnlike(m_function.at(resolve(m_function.at(operand).child(0)))))
+                    while (m_function.at(operand).opcode == Opcode::Cast && m_function.at(operand).castReason() == CastReason::Upcast && !predictionSaysMoreThanType(m_function.at(operand), resolve(m_function.at(operand).child(0))))
                         operand = resolve(m_function.at(operand).child(0));
                     cast.children[0] = operand;
                 }
-                if (!m_program.isHeldAlready(typeOf(operand), typeOf(id), cast.castReason()) && !testsObjectMadeHere(cast, operand))
+                if (!m_program.isHeldAlready(typeOf(operand), typeOf(id), cast) && !testsObjectMadeHere(cast, operand))
                     continue;
                 // Its operand is always of its type, as far as that is an object. It goes if the operand is of the type after `as`, or if
                 // nothing can be made of what is not.
@@ -159,7 +166,7 @@ private:
                 // With the name of a property it turns away `undefined` and `null` whatever its type says. So does `x!`.
                 if ((cast.accessedName() || cast.castReason() == CastReason::NonNull) && typeOf(operand).mayBeUndefinedOrNull())
                     continue;
-                if (!cast.hasPredictionUnlike(m_function.at(operand)) && mayTakeOperand(id, typeOf(operand), typeOf(id))) {
+                if (!predictionSaysMoreThanType(cast, operand) && mayTakeOperand(id, typeOf(operand), typeOf(id))) {
                     m_replaced[id.index()] = operand;
                     block.values[i] = ValueID();
                     removedAny = true;
@@ -224,7 +231,7 @@ private:
     {
         // A closure that is made once stays the one its variable holds for as long as the environment lives, whatever runs in between.
         auto isRepeatable = [&](ValueID id) {
-            return onlyTests(m_function.at(id)) || (m_function.at(id).opcode == Opcode::Cast && m_function.at(id).castReason() == CastReason::Coerce) || m_function.at(id).opcode == Opcode::NewClosureOnce;
+            return onlyTests(m_function.at(id)) || (m_function.at(id).opcode == Opcode::Cast && (m_function.at(id).castReason() == CastReason::Coerce || m_function.at(id).castReason() == CastReason::As)) || m_function.at(id).opcode == Opcode::NewClosureOnce;
         };
         unsigned numberOfCasts = 0;
         unsigned numberOfTests = 0;
@@ -236,6 +243,43 @@ private:
         }
         if (numberOfCasts < 2 && !numberOfTests)
             return 0;
+        resetReplacements();
+        auto keyOf = [&](ValueID id) {
+            auto& cast = m_function.at(id);
+            // No program has so many types that the two bits on top mean anything else.
+            if (cast.opcode == Opcode::NewClosureOnce)
+                return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | 3u << 30 | cast.field();
+            uint32_t type = cast.castReason() == CastReason::Coerce ? cast.coercedType().index() | 1u << 31 : cast.type.index();
+            return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | type;
+        };
+        static constexpr unsigned mostTestsToCompare = 64;
+        if (numberOfTests <= mostTestsToCompare) {
+            Vector<uint64_t, 32> keys;
+            Vector<std::pair<ValueID, ValueID>, 16> tests;
+            for (auto& block : m_function.blocks) {
+                for (ValueID id : block.values) {
+                    if (!isRepeatable(id))
+                        continue;
+                    keys.append(keyOf(id));
+                    if (onlyTests(m_function.at(id)))
+                        tests.append({ beforeTests(id), id });
+                }
+            }
+            std::ranges::sort(keys);
+            bool mayChange = std::ranges::adjacent_find(keys) != keys.end();
+            for (unsigned b = 0; b < m_function.blocks.size() && !mayChange && !tests.isEmpty(); ++b) {
+                for (ValueID id : m_function.blocks[b].values) {
+                    auto& value = m_function.at(id);
+                    if (value.opcode != Opcode::GetById && value.opcode != Opcode::PutById && value.opcode != Opcode::InById && value.opcode != Opcode::CallMethod)
+                        continue;
+                    ValueID tested = beforeTests(value.child(0));
+                    for (auto& [of, test] : tests)
+                        mayChange |= of == tested && mayGoBy(value, test);
+                }
+            }
+            if (!mayChange)
+                return 0;
+        }
 
         unsigned numberOfBlocks = m_function.blocks.size();
         static constexpr unsigned unknown = UINT_MAX;
@@ -297,19 +341,10 @@ private:
         for (unsigned i = 1; i < order.size(); ++i)
             dominated[dominator[order[i]]].append(order[i]);
 
-        resetReplacements();
         unsigned changed = 0;
         // By operand and type: the cast that has passed on every way here.
         UncheckedKeyHashMap<uint64_t, ValueID, IntHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>> passed;
         Vector<uint64_t> added;
-        auto keyOf = [&](ValueID id) {
-            auto& cast = m_function.at(id);
-            // No program has so many types that the two bits on top mean anything else.
-            if (cast.opcode == Opcode::NewClosureOnce)
-                return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | 3u << 30 | cast.field();
-            uint32_t type = cast.castReason() == CastReason::Coerce ? cast.coercedType().index() | 1u << 31 : cast.type.index();
-            return static_cast<uint64_t>(resolve(cast.child(0)).index()) << 32 | type;
-        };
         // By the value before all tests: the test it has passed on every way here that says the most of it. And what was there before.
         UncheckedKeyHashMap<uint32_t, ValueID, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> knownAs;
         Vector<std::pair<uint32_t, ValueID>> knownBefore;
@@ -396,6 +431,155 @@ private:
         }
         if (changed)
             rewrite();
+        return changed;
+    }
+
+    ValueID withoutUpcasts(ValueID value) const
+    {
+        while (m_function.at(value).opcode == Opcode::Cast && m_function.at(value).castReason() == CastReason::Upcast)
+            value = m_function.at(value).child(0);
+        return value;
+    }
+
+    TypeID commonType(TypeID first, TypeID second) const
+    {
+        if (!first || first == second)
+            return second;
+        auto& a = m_program.at(first);
+        auto& b = m_program.at(second);
+        if (b.isWithin(a, m_program, false))
+            return first;
+        if (a.isWithin(b, m_program, false))
+            return second;
+        if (a.isInteger() && b.isInteger()) {
+            for (TypeID candidate : { m_program.types.int32, m_program.types.integer }) {
+                if (a.isWithin(m_program.at(candidate), m_program) && b.isWithin(m_program.at(candidate), m_program))
+                    return candidate;
+            }
+        }
+        return { };
+    }
+
+    unsigned narrowBlockParameters()
+    {
+        unsigned numberOfBlocks = m_function.blocks.size();
+        bool hasCandidate = false;
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                auto& parameters = m_function.at(target.block).parameters;
+                for (unsigned i = 0; i < target.arguments.size() && i < parameters.size() && !hasCandidate; ++i)
+                    hasCandidate = m_function.at(withoutUpcasts(target.arguments[i])).type != m_function.at(parameters[i]).type;
+            }
+        }
+        if (!hasCandidate)
+            return 0;
+
+        static constexpr unsigned none = UINT_MAX;
+        Vector<unsigned> firstParameter(numberOfBlocks);
+        Vector<unsigned> numberOf(FillWith { }, m_function.values.size(), none);
+        unsigned numberOfParameters = 0;
+        for (unsigned b = 0; b < numberOfBlocks; ++b) {
+            firstParameter[b] = numberOfParameters;
+            for (ValueID parameter : m_function.blocks[b].parameters)
+                numberOf[parameter.index()] = numberOfParameters++;
+        }
+        Vector<Vector<ValueID, 2>> given(numberOfParameters);
+        BitVector staysAsDeclared(numberOfParameters);
+        for (unsigned k = 0; k < m_function.blocks[0].parameters.size(); ++k)
+            staysAsDeclared.set(k);
+        BitVector isReachable(numberOfBlocks);
+        Vector<unsigned, 16> worklist { 0u };
+        isReachable.set(0);
+        while (!worklist.isEmpty()) {
+            for (auto& target : m_function.blocks[worklist.takeLast()].terminator.targets) {
+                unsigned b = target.block.index();
+                if (!isReachable.set(b))
+                    worklist.append(b);
+                unsigned count = m_function.blocks[b].parameters.size();
+                for (unsigned i = 0; i < count; ++i) {
+                    if (target.arguments.size() != count)
+                        staysAsDeclared.set(firstParameter[b] + i);
+                    else
+                        given[firstParameter[b] + i].append(withoutUpcasts(target.arguments[i]));
+                }
+            }
+        }
+
+        Vector<TypeID> found(numberOfParameters);
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (unsigned b = 1; b < numberOfBlocks; ++b) {
+                auto& parameters = m_function.blocks[b].parameters;
+                for (unsigned i = 0; i < parameters.size(); ++i) {
+                    unsigned k = firstParameter[b] + i;
+                    if (staysAsDeclared.get(k))
+                        continue;
+                    TypeID declared = m_function.at(parameters[i]).type;
+                    TypeID common = found[k];
+                    bool fails = !declared;
+                    for (ValueID argument : given[k]) {
+                        unsigned other = numberOf[argument.index()];
+                        if (other == k)
+                            continue;
+                        bool isNarrowed = other != none && !staysAsDeclared.get(other);
+                        TypeID type = isNarrowed ? found[other] : m_function.at(argument).type;
+                        if (isNarrowed && !type)
+                            continue;
+                        common = type ? commonType(common, type) : TypeID();
+                        if (!common) {
+                            fails = true;
+                            break;
+                        }
+                    }
+                    if (!fails && common)
+                        fails = common == declared || !m_program.at(common).isWithin(m_program.at(declared), m_program, false);
+                    if (fails) {
+                        staysAsDeclared.set(k);
+                        changed = true;
+                    } else if (common != found[k]) {
+                        found[k] = common;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        unsigned changed = 0;
+        for (unsigned b = 1; b < numberOfBlocks; ++b) {
+            unsigned at = !m_function.blocks[b].values.isEmpty() && m_function.at(m_function.blocks[b].values[0]).opcode == Opcode::CatchValue ? 1 : 0;
+            for (unsigned i = 0; i < m_function.blocks[b].parameters.size(); ++i) {
+                unsigned k = firstParameter[b] + i;
+                if (staysAsDeclared.get(k) || !found[k])
+                    continue;
+                ValueID parameter = m_function.blocks[b].parameters[i];
+                Value narrowed = m_function.at(parameter);
+                narrowed.type = found[k];
+                narrowed.rep = repOf(m_program.at(found[k]));
+                ValueID made(m_function.values.size());
+                m_function.values.append(WTF::move(narrowed));
+                m_function.blocks[b].parameters[i] = made;
+                auto& declared = m_function.at(parameter);
+                declared.opcode = Opcode::Cast;
+                declared.children = { made };
+                declared.immediates = { Format::none, static_cast<uint32_t>(CastReason::Upcast) };
+                m_function.blocks[b].values.insert(at++, parameter);
+                ++changed;
+            }
+        }
+        if (!changed)
+            return 0;
+        for (auto& block : m_function.blocks) {
+            for (auto& target : block.terminator.targets) {
+                unsigned b = target.block.index();
+                if (target.arguments.size() != m_function.blocks[b].parameters.size())
+                    continue;
+                for (unsigned i = 0; i < target.arguments.size(); ++i) {
+                    unsigned k = firstParameter[b] + i;
+                    if (!staysAsDeclared.get(k) && found[k])
+                        target.arguments[i] = withoutUpcasts(target.arguments[i]);
+                }
+            }
+        }
         return changed;
     }
 
@@ -758,9 +942,11 @@ private:
                 allocation.layout = m_function.at(object).layout();
                 allocation.constructedBy = m_function.allocations[m_function.at(object).allocation()].constructedBy;
                 allocation.discriminant = m_function.allocations[m_function.at(object).allocation()].discriminant;
+                UnchangingFunctionScope unchangingFunctionScope;
+                BitVector isInOrder;
                 for (size_t next = i + 1; next < block.values.size() && isInitializingStore(m_program, m_function, block, next); ++next) {
                     uint16_t field = *layout.fieldNamed(fieldStoredTo(m_function.at(block.values[next])).name);
-                    if (!allocation.order.contains(field))
+                    if (!isInOrder.set(field))
                         allocation.order.append(field);
                 }
                 allocation.born = allocation.order.size();
@@ -781,6 +967,194 @@ private:
 unsigned simplifyCasts(const Program& program, Function& function)
 {
     return CastSimplification(program, function).run();
+}
+
+unsigned countInIntegers(const Program& program, Function& function)
+{
+    static constexpr int64_t greatestStep = 1024;
+    unsigned numberOfBlocks = function.blocks.size();
+    bool hasCandidate = false;
+    for (unsigned b = 1; b < numberOfBlocks && !hasCandidate; ++b) {
+        for (ValueID parameter : function.blocks[b].parameters)
+            hasCandidate |= function.at(parameter).type == program.types.number;
+    }
+    if (!hasCandidate)
+        return 0;
+
+    Vector<Vector<const Arguments*, 2>> waysIn(numberOfBlocks);
+    Vector<unsigned> definingBlock(FillWith { }, function.values.size(), UINT_MAX);
+    for (unsigned b = 0; b < numberOfBlocks; ++b) {
+        auto& block = function.blocks[b];
+        for (ValueID id : block.values)
+            definingBlock[id.index()] = b;
+        for (auto& target : block.terminator.targets)
+            waysIn[target.block.index()].append(&target.arguments);
+    }
+    auto reaches = [&](unsigned from, unsigned to, unsigned barrier, unsigned otherBarrier) {
+        if (from == barrier || from == otherBarrier)
+            return false;
+        BitVector seen(numberOfBlocks);
+        Vector<unsigned, 16> worklist { from };
+        seen.set(from);
+        while (!worklist.isEmpty()) {
+            unsigned block = worklist.takeLast();
+            if (block == to)
+                return true;
+            for (auto& target : function.blocks[block].terminator.targets) {
+                unsigned next = target.block.index();
+                if (next != barrier && next != otherBarrier && !seen.set(next))
+                    worklist.append(next);
+            }
+        }
+        return false;
+    };
+
+    unsigned changed = 0;
+    for (unsigned b = 1; b < numberOfBlocks; ++b) {
+        auto& block = function.blocks[b];
+        auto& terminator = block.terminator;
+        if (terminator.kind != TerminatorKind::Branch || terminator.targets.size() != 2 || definingBlock[terminator.value.index()] != b)
+            continue;
+        for (unsigned index = 0; index < block.parameters.size(); ++index) {
+            ValueID parameter = block.parameters[index];
+            if (function.at(parameter).type != program.types.number)
+                continue;
+            auto isCounter = [&](ValueID id) {
+                return id == parameter || (function.at(id).opcode == Opcode::ToNumeric && function.at(id).child(0) == parameter);
+            };
+            auto& test = function.at(terminator.value);
+            bool counterIsFirst = test.child(0) && isCounter(test.child(0));
+            if (!test.child(1) || (!counterIsFirst && !isCounter(test.child(1))))
+                continue;
+            ValueID bound = test.child(counterIsFirst ? 1 : 0);
+            auto& typeOfBound = program.typeOf(function, bound);
+            if (!typeOfBound.isInteger() || isCounter(bound))
+                continue;
+            Opcode relation = test.opcode;
+            if (!counterIsFirst) {
+                switch (relation) {
+                case Opcode::Less:
+                    relation = Opcode::Greater;
+                    break;
+                case Opcode::LessEq:
+                    relation = Opcode::GreaterEq;
+                    break;
+                case Opcode::Greater:
+                    relation = Opcode::Less;
+                    break;
+                case Opcode::GreaterEq:
+                    relation = Opcode::LessEq;
+                    break;
+                default:
+                    break;
+                }
+            }
+            std::array<std::optional<int64_t>, 2> leastBehind;
+            std::array<std::optional<int64_t>, 2> mostBehind;
+            switch (relation) {
+            case Opcode::Less:
+                mostBehind[0] = typeOfBound.integers.most - 1;
+                leastBehind[1] = typeOfBound.integers.least;
+                break;
+            case Opcode::LessEq:
+                mostBehind[0] = typeOfBound.integers.most;
+                leastBehind[1] = typeOfBound.integers.least + 1;
+                break;
+            case Opcode::Greater:
+                leastBehind[0] = typeOfBound.integers.least + 1;
+                mostBehind[1] = typeOfBound.integers.most;
+                break;
+            case Opcode::GreaterEq:
+                leastBehind[0] = typeOfBound.integers.least;
+                mostBehind[1] = typeOfBound.integers.most - 1;
+                break;
+            default:
+                continue;
+            }
+
+            struct Step {
+                ValueID value;
+                std::optional<int64_t> least;
+                std::optional<int64_t> most;
+            };
+            Vector<Step, 2> steps;
+            Vector<TypeID, 4> candidates;
+            Range entering = Range::empty();
+            bool isRegular = true;
+            for (auto* arguments : waysIn[b]) {
+                if (arguments->size() != block.parameters.size()) {
+                    isRegular = false;
+                    break;
+                }
+                ValueID argument = arguments->at(index);
+                if (argument == parameter)
+                    continue;
+                auto& value = function.at(argument);
+                if (auto& type = program.at(value.type); type.isInteger()) {
+                    entering = entering.hull(type.integers);
+                    if (!candidates.contains(value.type))
+                        candidates.append(value.type);
+                    continue;
+                }
+                bool isStep = (value.opcode == Opcode::Add || value.opcode == Opcode::Sub) && isCounter(value.child(0)) && function.at(value.child(1)).opcode == Opcode::Integer && value.type == program.types.number;
+                int64_t by = isStep ? function.at(value.child(1)).integer() : 0;
+                if (by < 1 || by > greatestStep) {
+                    isRegular = false;
+                    break;
+                }
+                bool goesUp = value.opcode == Opcode::Add;
+                unsigned at = definingBlock[argument.index()];
+                std::optional<unsigned> side;
+                for (unsigned i = 0; i < 2; ++i) {
+                    unsigned target = terminator.targets[i].block.index();
+                    unsigned other = terminator.targets[1 - i].block.index();
+                    if (!(goesUp ? mostBehind[i] : leastBehind[i]) || target == other || target == b || waysIn[target].size() != 1)
+                        continue;
+                    if (at != UINT_MAX && at != b && !reaches(other, at, b, target))
+                        side = i;
+                }
+                if (!side) {
+                    isRegular = false;
+                    break;
+                }
+                if (goesUp)
+                    steps.append({ argument, std::nullopt, *mostBehind[*side] + by });
+                else
+                    steps.append({ argument, *leastBehind[*side] - by, std::nullopt });
+            }
+            if (!isRegular || entering.isEmpty() || steps.isEmpty())
+                continue;
+            if (!candidates.contains(function.at(bound).type))
+                candidates.append(function.at(bound).type);
+            TypeID found;
+            for (TypeID candidate : candidates) {
+                Range range = program.at(candidate).integers;
+                bool holds = entering.isWithin(range);
+                for (auto& step : steps)
+                    holds &= (!step.least || *step.least >= range.least) && (!step.most || *step.most <= range.most);
+                if (holds) {
+                    found = candidate;
+                    break;
+                }
+            }
+            if (!found)
+                continue;
+            auto retype = [&](Value& value) {
+                value.type = found;
+                value.rep = repOf(program.at(found));
+                value.takePredictionOf(Value { });
+            };
+            retype(function.at(parameter));
+            for (auto& step : steps)
+                retype(function.at(step.value));
+            for (auto& value : function.values) {
+                if (value.opcode == Opcode::ToNumeric && value.child(0) == parameter)
+                    retype(value);
+            }
+            ++changed;
+        }
+    }
+    return changed;
 }
 
 } } } // namespace JSC::AOT::Typed

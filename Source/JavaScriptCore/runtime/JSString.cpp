@@ -444,6 +444,32 @@ const String& JSRopeString::resolveRopeWithoutGC() const
     });
 }
 
+bool JSString::tryCollectLeaves(Vector<StringView, 32>& leaves) const
+{
+    static constexpr size_t maxLeaves = 1 << 16;
+    Vector<const JSString*, 32> pending { this };
+    while (!pending.isEmpty()) {
+        const JSString* current = pending.takeLast();
+        if (!current->isRope()) {
+            leaves.append(StringView { current->tryGetValueImpl() });
+            continue;
+        }
+        auto* rope = static_cast<const JSRopeString*>(current);
+        if (rope->isSubstring()) {
+            leaves.append(StringView { rope->substringBase()->tryGetValueImpl() }.substring(rope->substringOffset(), rope->length()));
+            continue;
+        }
+        if (leaves.size() + pending.size() > maxLeaves)
+            return false;
+        if (JSString* fiber = rope->fiber2())
+            pending.append(fiber);
+        if (JSString* fiber = rope->fiber1())
+            pending.append(fiber);
+        pending.append(rope->fiber0());
+    }
+    return true;
+}
+
 void JSRopeString::outOfMemory(JSGlobalObject* nullOrGlobalObjectForOOM) const
 {
     ASSERT(isRope());

@@ -22,6 +22,7 @@
 #include "config.h"
 #include "RegExpConstructor.h"
 
+#include "AOTImage.h"
 #include "GetterSetter.h"
 #include "JSCInlines.h"
 #include "NumberPrototype.h"
@@ -327,6 +328,21 @@ RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, cons
 RegExpObject* regExpCreate(JSGlobalObject* globalObject, JSValue newTarget, JSValue patternArg, JSValue flagsArg)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+
+#if ENABLE(AOT) && ENABLE(YARR_JIT)
+    if (VM& vm = globalObject->vm(); vm.useImmutableIntrinsics && patternArg.isString() && asString(patternArg)->isRope() && asString(patternArg)->length() > AOT::ImageRegExp::minLengthKeptAsTextOfImage) {
+        auto flags = toFlags(globalObject, flagsArg);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (RegExp* regExp = RegExpObject::tryCreateRegExpFromLongRope(vm, asString(patternArg), flags)) {
+            Structure* structure = getRegExpStructure(globalObject, newTarget);
+            RETURN_IF_EXCEPTION(scope, nullptr);
+            return RegExpObject::create(vm, structure, regExp, areLegacyFeaturesEnabled(globalObject, newTarget));
+        }
+        String flatPattern = patternArg.toWTFString(globalObject);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        RELEASE_AND_RETURN(scope, regExpCreate(globalObject, newTarget, flatPattern, flags));
+    }
+#endif
 
     String pattern = patternArg.isUndefined() ? emptyString() : patternArg.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, nullptr);

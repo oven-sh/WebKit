@@ -21,11 +21,12 @@ namespace {
 // not. This makes sure there is none: it goes once over a function and compares types that are given. It finds out no type.
 class Verifier {
 public:
-    Verifier(const Program& program, FunctionID id, const Function& function, Vector<String>& findings)
+    Verifier(const Program& program, FunctionID id, const Function& function, Vector<String>& findings, VerifierScope scope)
         : m_program(program)
         , m_id(id)
         , m_function(function)
         , m_findings(findings)
+        , m_scope(scope)
         , m_newObjectOfClass(program.find("NewObjectOfClass"_s.span8()).value_or(StringID()))
     {
     }
@@ -34,7 +35,8 @@ public:
     {
         if (m_function.blocks.isEmpty())
             return;
-        verifyEntry();
+        if (m_scope != VerifierScope::DefinitionsAlone)
+            verifyEntry();
         // What nothing gets to is never run, and not lowered.
         BitVector isReached;
         Vector<unsigned> worklist { 0u };
@@ -50,30 +52,36 @@ public:
             if (!isReached.get(b))
                 continue;
             auto& block = m_function.blocks[b];
-            for (ValueID id : block.values)
-                verify(id, m_function.at(id));
-            verify(block.terminator);
+            if (m_scope != VerifierScope::DefinitionsAlone) {
+                for (ValueID id : block.values)
+                    verify(id, m_function.at(id));
+                verify(block.terminator);
+            }
             if (block.terminator.kind == TerminatorKind::Invoke && block.values.isEmpty())
-                failAtEndOf(b, "ends in an Invoke and has no value for it to watch"_s);
+                failAtEndOf(b, "ends in an Invoke but has no value for it to guard"_s);
             if (block.terminator.kind == TerminatorKind::Invoke && block.terminator.targets.size() != 2) {
                 failAtEndOf(b, "ends in an Invoke that does not have two targets"_s);
                 hasInvokeWithoutTwoTargets = true;
             }
             for (auto& target : block.terminator.targets) {
                 if (target.arguments.size() != m_function.at(target.block).parameters.size())
-                    failAtEndOf(b, "passes a block another number of arguments than it has parameters"_s);
+                    failAtEndOf(b, "passes a block a different number of arguments than it has parameters"_s);
             }
         }
         if (hasInvokeWithoutTwoTargets)
             return;
-        verifyInitialStores(isReached);
-        verifyDefinitions(isReached);
+        if (m_scope != VerifierScope::DefinitionsAlone)
+            verifyInitialStores(isReached);
+        if (m_scope != VerifierScope::EverythingButDefinitions)
+            verifyDefinitions(isReached);
+        if (m_scope == VerifierScope::DefinitionsAlone)
+            return;
         for (unsigned v = 0; v < m_function.values.size(); ++v) {
             auto& value = m_function.values[v];
             if (!value.type)
                 fail(ValueID(v), "has no type"_s);
             else if (value.rep != repOf(m_program.at(value.type)))
-                fail(ValueID(v), "is not kept the way its type says"_s);
+                fail(ValueID(v), "does not have the representation that its type requires"_s);
         }
     }
 
@@ -120,7 +128,8 @@ private:
 
     void need(ValueID user, ValueID operand, const Type& needed, ASCIILiteral as)
     {
-        if (!typeOf(operand).isWithin(needed, m_program))
+        auto& type = typeOf(operand);
+        if (&type != &needed && !type.isWithin(needed, m_program))
             fail(user, operand, needed, as);
     }
 
@@ -135,7 +144,7 @@ private:
     void needOneClassObject(ValueID id, LayoutID layout)
     {
         if (m_program.at(layout).kind == LayoutKind::Instance && !(m_program.at(layout).constructor && m_program.at(layout).isLaidOut && m_program.at(layout).isEvaluatedOnce))
-            fail(id, "names a class that is not laid out or not evaluated once"_s);
+            fail(id, "names a class that has no layout or is not evaluated exactly once"_s);
     }
 
     // GetField and PutField go by where the field is, untested. The type of the operand vouches for that, but for a layout that admits
@@ -145,14 +154,14 @@ private:
         need(id, value.child(0), Type::view(value.layout()), "an object"_s);
         auto& layout = m_program.at(value.layout());
         if (layout.fields[value.field()].flags & fieldIsNeverStored)
-            fail(id, "names a field that nothing stores, which has no place"_s);
+            fail(id, "names a field that is never stored, so it has no slot"_s);
         if (!layout.admitsForeignObjects)
             return;
         ValueID made = value.child(0);
         while (m_function.at(made).opcode == Opcode::Cast)
             made = m_function.at(made).child(0);
         if (m_function.at(made).opcode != Opcode::NewObjectWithShape || (m_function.at(made).layout() != value.layout() && !std::ranges::binary_search(layout.members, m_function.at(made).layout())))
-            fail(id, "names a field of what may be no object of the layout"_s);
+            fail(id, "names a field of a value that may not have the layout"_s);
     }
 
     // The lowering carries them out together, and only so are the fields counted among the keys of the object: see Lowering::lowerInitialStores(). So the
@@ -177,29 +186,29 @@ private:
                 uint32_t index = store.initialStoreIndex();
                 auto list = initialStoresOf(store.inlineFrame ? m_program.at(m_function.inlineFrames[store.inlineFrame].callee) : m_function);
                 if (index >= list.size() || (!store.inlineFrame && list[index] != id)) {
-                    fail(id, "is no initial store of the function it is from"_s);
+                    fail(id, "is not an initial store of the function it comes from"_s);
                     continue;
                 }
                 if (index && (!i || !isInitialStore(block.values[i - 1], store, index - 1)))
-                    fail(id, "is an initial store that does not follow the one before it"_s);
+                    fail(id, "is an initial store that does not directly follow the previous one"_s);
                 if (index + 1 < list.size() && (i + 1 == block.values.size() || !isInitialStore(block.values[i + 1], store, index + 1)))
-                    fail(id, "is an initial store that the next one does not follow"_s);
+                    fail(id, "is an initial store that is not directly followed by the next one"_s);
                 if (i + 1 == block.values.size() && block.terminator.kind == TerminatorKind::Invoke)
-                    fail(id, "is an initial store that a handler watches"_s);
+                    fail(id, "is an initial store inside the range of an exception handler"_s);
                 for (uint32_t earlier = 0; earlier < index && earlier < i; ++earlier) {
                     if (m_function.at(block.values[i - 1 - earlier]).string() == store.string())
-                        fail(id, "is an initial store to a name that was stored to"_s);
+                        fail(id, "is an initial store to a name that was already stored"_s);
                 }
                 // In a copy the receiver may be known to be of a layout that lacks a field of the list.
                 if (store.inlineFrame)
                     continue;
                 LayoutID view = typeOf(store.child(0)).onlyView();
                 if (!view || !fieldOf(m_program, typeOf(store.child(0)), store.string()) || inheritsByItsLayout(m_program, view, store.string()))
-                    fail(id, "is an initial store to what is no field, or to what may be inherited"_s);
+                    fail(id, "is an initial store to a name that is not a field or may be inherited"_s);
                 bool hasThis = m_function.kind == FunctionKind::Plain && m_function.has(Format::FunctionHasThis) && !m_function.has(FunctionUsesArgumentBuffer) && !m_function.isGenericEntrypoint();
                 auto& entry = m_function.blocks[0].parameters;
                 if (!hasThis || !m_function.thisType || m_function.captureTypes.size() >= entry.size() || store.child(0) != entry[m_function.captureTypes.size()])
-                    fail(id, "is an initial store to what is not `this` of a plain function"_s);
+                    fail(id, "is an initial store to a value other than `this` of a plain function"_s);
             }
         }
     }
@@ -230,20 +239,18 @@ private:
         auto nodeOfWatchedValue = [&](unsigned block) {
             return numberOfBlocks + block;
         };
-        Vector<Vector<unsigned, 2>> successors(numberOfNodes);
-        Vector<Vector<unsigned, 2>> predecessors(numberOfNodes);
-        for (unsigned b = 0; b < numberOfBlocks; ++b) {
-            if (!isReached.get(b))
-                continue;
-            auto& targets = m_function.blocks[b].terminator.targets;
-            if (hasWatchedValue(b)) {
-                successors[b] = { nodeOfWatchedValue(b), targets[1].block.index() };
-                successors[nodeOfWatchedValue(b)] = { targets[0].block.index() };
-                continue;
-            }
-            for (auto& target : targets)
-                successors[b].append(target.block.index());
-        }
+        auto numberOfSuccessors = [&](unsigned node) -> unsigned {
+            if (node >= numberOfBlocks)
+                return 1;
+            return hasWatchedValue(node) ? 2 : m_function.blocks[node].terminator.targets.size();
+        };
+        auto successorAt = [&](unsigned node, unsigned index) -> unsigned {
+            if (node >= numberOfBlocks)
+                return m_function.blocks[node - numberOfBlocks].terminator.targets[0].block.index();
+            if (hasWatchedValue(node))
+                return index ? m_function.blocks[node].terminator.targets[1].block.index() : nodeOfWatchedValue(node);
+            return m_function.blocks[node].terminator.targets[index].block.index();
+        };
 
         Vector<unsigned> order;
         BitVector isVisited;
@@ -251,23 +258,36 @@ private:
         Vector<std::pair<unsigned, unsigned>> stack { { 0u, 0u } };
         while (!stack.isEmpty()) {
             auto [node, next] = stack.last();
-            if (next == successors[node].size()) {
+            if (next == numberOfSuccessors(node)) {
                 order.append(node);
                 stack.removeLast();
                 continue;
             }
             ++stack.last().second;
-            unsigned successor = successors[node][next];
+            unsigned successor = successorAt(node, next);
             if (!isVisited.set(successor))
                 stack.append({ successor, 0u });
         }
         order.reverse();
         Vector<unsigned> place;
         place.fill(none, numberOfNodes);
+        struct Predecessors {
+            std::span<const unsigned> operator[](unsigned node) const { return all.span().subspan(first[node], first[node + 1] - first[node]); }
+            Vector<unsigned> first;
+            Vector<unsigned> all;
+        } predecessors;
+        predecessors.first.fill(0, numberOfNodes + 2);
         for (unsigned i = 0; i < order.size(); ++i) {
             place[order[i]] = i;
-            for (unsigned successor : successors[order[i]])
-                predecessors[successor].append(order[i]);
+            for (unsigned k = 0; k < numberOfSuccessors(order[i]); ++k)
+                ++predecessors.first[successorAt(order[i], k) + 2];
+        }
+        for (unsigned node = 0; node < numberOfNodes; ++node)
+            predecessors.first[node + 2] += predecessors.first[node + 1];
+        predecessors.all.grow(predecessors.first[numberOfNodes + 1]);
+        for (unsigned node : order) {
+            for (unsigned k = 0; k < numberOfSuccessors(node); ++k)
+                predecessors.all[predecessors.first[successorAt(node, k) + 1]++] = node;
         }
 
         Vector<unsigned> dominator;
@@ -297,26 +317,29 @@ private:
                 }
             }
         }
-        Vector<Vector<unsigned, 2>> dominated(numberOfNodes);
-        for (unsigned i = 1; i < order.size(); ++i)
-            dominated[dominator[order[i]]].append(order[i]);
+        Vector<unsigned> firstDominated;
+        Vector<unsigned> nextDominated;
+        firstDominated.fill(none, numberOfNodes);
+        nextDominated.fill(none, numberOfNodes);
+        for (unsigned i = order.size(); i-- > 1;)
+            nextDominated[order[i]] = std::exchange(firstDominated[dominator[order[i]]], order[i]);
         Vector<unsigned> enter;
         Vector<unsigned> leave;
         enter.fill(0, numberOfNodes);
         leave.fill(0, numberOfNodes);
         unsigned clock = 0;
         enter[0] = clock++;
-        stack.append({ 0u, 0u });
+        stack.append({ 0u, firstDominated[0] });
         while (!stack.isEmpty()) {
             auto [node, next] = stack.last();
-            if (next == dominated[node].size()) {
+            if (next == none) {
                 leave[node] = clock++;
                 stack.removeLast();
                 continue;
             }
-            ++stack.last().second;
-            enter[dominated[node][next]] = clock++;
-            stack.append({ dominated[node][next], 0u });
+            stack.last().second = nextDominated[next];
+            enter[next] = clock++;
+            stack.append({ next, firstDominated[next] });
         }
 
         // Where a value is defined: the node, and its place there. A parameter is at 0, the first value of the block at 1.
@@ -345,12 +368,12 @@ private:
         auto use = [&](ValueID operand, ValueID user, unsigned block, unsigned node, unsigned at) {
             unsigned definedIn = nodeOf[operand.index()];
             if (definedIn == none) {
-                fail(operand, user, block, "is defined nowhere that is reached"_s);
+                fail(operand, user, block, "has no reachable definition"_s);
                 return;
             }
             bool isDefined = definedIn == node ? placeInNode[operand.index()] < at : enter[definedIn] <= enter[node] && leave[node] <= leave[definedIn];
             if (!isDefined)
-                fail(operand, user, block, "is not defined on every way there"_s);
+                fail(operand, user, block, "is not defined on every path to its use"_s);
         };
         for (unsigned b = 0; b < numberOfBlocks; ++b) {
             if (!isReached.get(b))
@@ -402,17 +425,17 @@ private:
             fail(id, "has no valid inline frame"_s);
         switch (value.opcode) {
         case Opcode::PutModuleVariable:
-            need(id, value.child(0), m_program.variables[value.variable().index()].type, "what the variable holds"_s);
+            need(id, value.child(0), m_program.variables[value.variable().index()].type, "the variable's value"_s);
             break;
         case Opcode::PutStaticField:
-            need(id, value.child(0), m_program.at(value.layout()).staticFields[value.immediates[1]].type, "what the static field holds"_s);
+            need(id, value.child(0), m_program.at(value.layout()).staticFields[value.immediates[1]].type, "the static field's value"_s);
             break;
         case Opcode::LogicalNot:
-            need(id, value.child(0), m_program.types.boolean, "what is negated"_s);
+            need(id, value.child(0), m_program.types.boolean, "the negated operand"_s);
             break;
         case Opcode::NewObjectWithShape:
             if (m_program.at(value.type) != Type::view(value.layout()))
-                fail(id, "is not of the layout it is made with"_s);
+                fail(id, "does not have the layout it is created with"_s);
             // The child says how large the object is made, and nothing of any type.
             if (!!value.child(0) != (m_function.allocations[value.allocation()].discriminant != UINT16_MAX))
                 fail(id, "has a child and no discriminant, or a discriminant and no child"_s);
@@ -420,34 +443,34 @@ private:
             break;
         case Opcode::IsInstanceOfClass:
             if (m_program.at(value.layout()).kind != LayoutKind::Instance)
-                fail(id, "asks for the objects of what is no class"_s);
+                fail(id, "requests the instances of a layout that is not a class"_s);
             needOneClassObject(id, value.layout());
             break;
         // The closure of a constructor is the class object.
         case Opcode::FunctionReference:
             if (auto& function = m_program.at(value.function()); function.kind == FunctionKind::Constructor && !(function.constructedClass && m_program.at(function.constructedClass).isEvaluatedOnce))
-                fail(id, "is the one class object of a class that is not evaluated once"_s);
+                fail(id, "is the unique class object of a class that is not evaluated exactly once"_s);
             break;
         case Opcode::GetField:
             needObjectWithFieldsOf(id, value);
             if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsClosureMadeOnce)
-                fail(id, "reads where a closure that is made once is kept"_s);
+                fail(id, "reads the slot of a closure that is created once"_s);
             break;
         case Opcode::PutField:
             needObjectWithFieldsOf(id, value);
-            need(id, value.child(1), m_program.at(value.layout()).fields[value.field()].type, "what the field holds"_s);
+            need(id, value.child(1), m_program.at(value.layout()).fields[value.field()].type, "the field's value"_s);
             if (m_program.at(value.layout()).fields[value.field()].flags & fieldHoldsClosureMadeOnce)
-                need(id, value.child(1), m_program.at(m_program.types.undefined), "what a variable starts with that a closure that is made once is kept in"_s);
+                need(id, value.child(1), m_program.at(m_program.types.undefined), "the initial value of a variable that holds a closure created once"_s);
             break;
         case Opcode::GetById:
             if (value.isAtKnownPlace() && value.knownPlace() >= Value::numberOfKnownPlaces)
-                fail(id, "names a place that no object has in line"_s);
+                fail(id, "names an inline slot that no object has"_s);
             break;
         case Opcode::PutById:
             if ((value.isAtKnownPlace() || value.isFirstStoreToThis()) && value.knownPlace() >= Value::numberOfKnownPlaces)
-                fail(id, "names a place that no object has in line"_s);
+                fail(id, "names an inline slot that no object has"_s);
             if (auto access = fieldOf(m_program, typeOf(value.child(0)), value.string()))
-                need(id, value.child(1), m_program.at(access->layout).fields[access->field].type, "what the field holds"_s);
+                need(id, value.child(1), m_program.at(access->layout).fields[access->field].type, "the field's value"_s);
             break;
         case Opcode::NewClosure:
         case Opcode::NewClosureOnce: {
@@ -457,16 +480,16 @@ private:
             if (callee.kind == FunctionKind::Constructor) {
                 LayoutID environment = callee.constructedClass ? m_program.at(callee.constructedClass).environment : LayoutID();
                 if (!environment)
-                    fail(id, "is another class object of a class that is evaluated once"_s);
+                    fail(id, "is a second class object of a class that is evaluated once"_s);
                 else if (value.opcode != Opcode::NewClosure || value.arguments.size() != 1)
-                    fail(id, "is a class object that does not capture the environment of its class and nothing else"_s);
+                    fail(id, "is a class object that does not capture exactly the environment of its class"_s);
                 // That very type: the lowering goes by it for what the cell holds, and the run time hands the word on to the members.
                 else if (typeOf(value.arguments[0]) != Type::view(environment))
                     fail(id, value.arguments[0], Type::view(environment), "the environment of a class"_s);
                 break;
             }
             if (value.arguments.size() != callee.captureTypes.size()) {
-                fail(id, "captures more or less than its function takes"_s);
+                fail(id, "captures a different number of values than its function expects"_s);
                 break;
             }
             for (unsigned i = 0; i < value.arguments.size(); ++i)
@@ -475,17 +498,17 @@ private:
                 break;
             LayoutID environment = typeOf(value.child(0)).onlyView();
             if (!environment || typeOf(value.child(0)) != Type::view(environment) || m_program.at(environment).kind != LayoutKind::Environment || value.field() >= m_program.at(environment).fields.size()) {
-                fail(id, "is kept in what is no variable of an environment"_s);
+                fail(id, "is stored in something other than an environment variable"_s);
                 break;
             }
             auto& field = m_program.at(environment).fields[value.field()];
             if (!(field.flags & fieldHoldsClosureMadeOnce) || field.onlyFunction != value.function())
-                fail(id, "is kept in a variable that is not said to hold closures of its function only"_s);
+                fail(id, "is stored in a variable that is not declared to hold only closures of its function"_s);
             break;
         }
         case Opcode::GetCapture:
             if (value.captureIndex() >= m_program.at(value.function()).captureTypes.size() || value.type != m_program.at(value.function()).captureTypes[value.captureIndex()])
-                fail(id, "is not of the type of what its function captures there"_s);
+                fail(id, "does not have the type that its function captures at that position"_s);
             break;
         case Opcode::GetArgument:
         case Opcode::CreateRest:
@@ -494,7 +517,7 @@ private:
         case Opcode::CallForwardVarargs:
         case Opcode::ConstructSuperForwardVarargs:
             if (!m_function.has(FunctionUsesArgumentBuffer))
-                fail(id, "is in a function that does not take its arguments in memory"_s);
+                fail(id, "is in a function that does not receive its arguments in memory"_s);
             break;
         case Opcode::CallDirect: {
             auto& callee = m_program.at(value.function());
@@ -522,9 +545,9 @@ private:
                 auto& type = m_program.at(value.type);
                 auto& coercedTo = m_program.at(value.coercedType());
                 if (!coercedTo.isWithin(type, m_program))
-                    fail(id, "coerces to a type that its own does not take in"_s);
+                    fail(id, "coerces to a type that its own type does not include"_s);
                 if (coercedTo.hasObjects() && !typeOf(value.child(0)).withoutPrimitives(Primitive::All).isWithin(type, m_program))
-                    fail(id, value.child(0), type, "an object that a coercion may leave as it is"_s);
+                    fail(id, value.child(0), type, "an object that a coercion may leave unchanged"_s);
             }
             break;
         // The run time makes the object, so no allocation says that the layout has objects.
@@ -540,7 +563,7 @@ private:
             if (value.string() == m_newObjectOfClass) {
                 LayoutID made = m_program.at(value.assertedType ? value.assertedType : value.type).onlyView();
                 if (!made || m_program.at(made).kind != LayoutKind::Instance || !m_program.at(made).isAllocated)
-                    fail(id, "makes an object of what is no class that has objects"_s);
+                    fail(id, "creates an instance of a layout that is not an instantiable class"_s);
             }
             break;
         }
@@ -561,7 +584,7 @@ private:
             need(ValueID(), terminator.value, m_program.types.boolean, "a condition"_s);
             break;
         case TerminatorKind::Switch:
-            need(ValueID(), terminator.value, Type::integer(Range::full()), "what a switch goes by"_s);
+            need(ValueID(), terminator.value, Type::integer(Range::full()), "the subject of a switch"_s);
             break;
         case TerminatorKind::Return:
             // What an async function or a generator is declared to yield is not what `return` carries in its body.
@@ -577,14 +600,15 @@ private:
     FunctionID m_id;
     const Function& m_function;
     Vector<String>& m_findings;
+    VerifierScope m_scope;
     StringID m_newObjectOfClass;
 };
 
 } // anonymous namespace
 
-void verify(const Program& program, FunctionID id, const Function& function, Vector<String>& findings)
+void verify(const Program& program, FunctionID id, const Function& function, Vector<String>& findings, VerifierScope scope)
 {
-    Verifier(program, id, function, findings).run();
+    Verifier(program, id, function, findings, scope).run();
 }
 
 void verifyRegExpLiterals(const Program& program, Vector<String>& findings)

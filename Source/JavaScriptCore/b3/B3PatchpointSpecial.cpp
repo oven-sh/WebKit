@@ -54,6 +54,8 @@ void PatchpointSpecial::forEachArg(Inst& inst, NOESCAPE const ScopedLambda<Inst:
         Arg::Role role;
         if (patchpoint->resultConstraints[argIndex - 1].kind() == ValueRep::SomeEarlyRegister)
             role = Arg::EarlyDef;
+        else if (patchpoint->resultConstraints[argIndex - 1].kind() == ValueRep::SomeRegisterWithClobber)
+            role = Arg::UseDef;
         else
             role = Arg::Def;
 
@@ -154,12 +156,15 @@ MacroAssembler::Jump PatchpointSpecial::generate(Inst& inst, CCallHelpers& jit, 
     unsigned offset = 1;
 
     Type type = value->type();
-    while (offset <= procedure.resultCount(type))
+    const unsigned resultCount = procedure.resultCount(type);
+    const unsigned numChildren = value->numChildren();
+    reps.reserveInitialCapacity(resultCount + numChildren);
+    while (offset <= resultCount)
         reps.append(repForArg(*context.code, inst.args()[offset++]));
-    reps.appendVector(repsImpl(context, 0, offset, inst));
-    offset += value->numChildren();
+    for (unsigned i = 0; i < numChildren; ++i)
+        reps.append(repForArg(*context.code, inst.args()[offset++]));
 
-    StackmapGenerationParams params(value, reps, context);
+    StackmapGenerationParams params(value, WTF::move(reps), context);
 
     for (unsigned i = value->numGPScratchRegisters; i--;)
         params.m_gpScratch.append(inst.args()[offset++].gpr());

@@ -18,6 +18,8 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
 {
     BitVector isHandler(m_function.blocks.size());
     BitVector isRefused(m_function.blocks.size());
+    BitVector hasUnmarkedClaim(m_function.blocks.size());
+    Vector<std::pair<ValueID, unsigned>, 4> markedClaims;
     for (BlockID id : order) {
         auto& block = m_function.at(id);
         if (block.terminator.kind == TerminatorKind::Throw && !block.terminator.targets.isEmpty())
@@ -29,10 +31,35 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
         bool isClaim = !block.values.isEmpty() && target.arguments.isEmpty();
         if (isClaim) {
             auto& last = m_function.at(block.values.last());
-            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string() && (m_function.isGenericEntrypoint() || m_function.has(Format::FunctionIsHiddenInStackTraces) || !claimMayMakeObjects(m_program, m_function, last));
+            isClaim = last.opcode == Opcode::Cast && last.castReason() == CastReason::Claim && !last.string() && (m_function.isGenericEntrypoint() || m_function.has(Format::FunctionIsHiddenInStackTraces) || last.notesMisfitAtCaller() || !claimMayMakeObjects(m_program, m_function, last));
+            if (last.notesMisfitAtCaller())
+                markedClaims.append({ block.values.last(), target.block.index() });
+            else
+                hasUnmarkedClaim.set(target.block.index());
         }
         if (!isClaim)
             isRefused.set(target.block.index());
+    }
+    if (!markedClaims.isEmpty()) {
+        BitVector isUsed(m_function.values.size());
+        auto use = [&](ValueID child) {
+            isUsed.set(child.index());
+        };
+        for (BlockID id : order) {
+            auto& block = m_function.at(id);
+            for (ValueID value : block.values)
+                m_function.at(value).forEachChild(use);
+            if (block.terminator.value)
+                use(block.terminator.value);
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments)
+                    use(argument);
+            }
+        }
+        for (auto [claim, handler] : markedClaims) {
+            if (isUsed.get(claim.index()))
+                isRefused.set(handler);
+        }
     }
     isHandler.exclude(isRefused);
     if (isHandler.isEmpty() || Options::auditAOTTypedAssertions())
@@ -42,7 +69,8 @@ void Lowering::findHandlersEnteredByBranch(const Vector<BlockID>& order)
         isParameterOfEntry.set(parameter.index());
     for (unsigned index : isHandler) {
         auto& handler = m_function.blocks[index];
-        if (!handler.parameters.isEmpty() || handler.values.isEmpty() || m_function.at(handler.values[0]).opcode != Opcode::CatchValue || handler.terminator.kind != TerminatorKind::Return || exceptionCaughtIn(BlockID(index)))
+        bool isPassThrough = handler.terminator.kind == TerminatorKind::Jump && handler.values.size() == 1 && handler.terminator.targets[0].arguments.isEmpty() && !hasUnmarkedClaim.get(index);
+        if (!handler.parameters.isEmpty() || handler.values.isEmpty() || m_function.at(handler.values[0]).opcode != Opcode::CatchValue || (handler.terminator.kind != TerminatorKind::Return && !isPassThrough) || exceptionCaughtIn(BlockID(index)))
             continue;
         BitVector isThere = isParameterOfEntry;
         bool isClosed = true;
@@ -129,6 +157,19 @@ ValueID Lowering::exceptionCaughtIn(BlockID handler) const
     return { };
 }
 
+bool Lowering::ignoresCaughtValue(BlockID handler)
+{
+    bool catches = false;
+    for (ValueID id : m_function.at(handler).values) {
+        if (m_function.at(id).opcode != Opcode::CatchValue)
+            continue;
+        if (numberOfUsesOf(id))
+            return false;
+        catches = true;
+    }
+    return catches;
+}
+
 Boxed Lowering::catchException(BlockID handler)
 {
     Boxed caught = exceptionCaughtIn(handler) ? AOT_TYPED_OPERATION(CatchException) : AOT_TYPED_OPERATION(Catch);
@@ -137,7 +178,7 @@ Boxed Lowering::catchException(BlockID handler)
     LBasicBlock continuation = m_out.newBlock();
     m_out.branch(m_out.isZero64(caught.value()), rarely(isTermination), usually(continuation));
     m_out.appendTo(isTermination);
-    AOT_TYPED_OPERATION(Throw, undefined());
+    AOT_TYPED_OPERATION(ThrowToHandlerInFunction, undefined());
     m_out.unreachable();
     m_out.appendTo(continuation);
     return caught;

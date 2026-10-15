@@ -207,7 +207,7 @@ std::optional<Word32> Lowering::lowerRelationalWithLikelyInteger(const Value& va
 std::optional<Word32> Lowering::toInt32OfSum(ValueID id)
 {
     auto& value = m_function.at(id);
-    if (value.opcode != Opcode::Add && value.opcode != Opcode::Sub)
+    if ((value.opcode != Opcode::Add && value.opcode != Opcode::Sub) || !hasOperandsHere(id))
         return std::nullopt;
     ValueID a = value.child(0);
     ValueID b = value.child(1);

@@ -31,7 +31,9 @@
         int64_t constant { 0 };
     };
     std::optional<InitialCapacity> inferInitialCapacity(ValueID literal);
-    BitVector m_literalsWithRoomForAllSpreads;
+    bool m_didFindArrayPushes { false };
+    UncheckedKeyHashMap<uint32_t, Vector<std::pair<BlockID, unsigned>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_arrayPushesByReceiver;
+    BitVector m_blocksWithAppendSpread;
     UncheckedKeyHashMap<uint32_t, LValue, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_spreadsCarriedOutAtBirth;
     bool m_isFillingArrayAtBirth { false };
     void updateVectorLengthHint(CellPointer array, ValueID receiver);

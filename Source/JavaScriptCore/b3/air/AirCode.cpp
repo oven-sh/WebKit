@@ -32,6 +32,7 @@
 #include "AirCCallSpecial.h"
 #include "AirCFG.h"
 #include "AirDominators.h"
+#include "AirInstInlines.h"
 #include "AirNaturalLoops.h"
 #include "AllowMacroScratchRegisterUsageIf.h"
 #include "B3BasicBlockUtils.h"
@@ -257,6 +258,98 @@ void Code::tryToPlaceSpillsAboveFrameRecord()
     m_bytesAboveFrameRecord = above;
     m_frameSize = above + below;
 }
+
+void Code::tryToPlaceCalleeSavesAtFootOfFrame()
+{
+    constexpr unsigned maxFrameSize = 496;
+    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFootOfFrame || m_callArgAreaSize || !m_calleeSaveStackSlot || m_frameSize > maxFrameSize)
+        return;
+    unsigned saved = m_calleeSaveStackSlot->byteSize();
+    if (m_calleeSaveStackSlot->offsetFromFP() != -static_cast<intptr_t>(saved) || saved != m_uncorrectedCalleeSaveRegisterAtOffsetList.registerCount() * sizeof(CPURegister))
+        return;
+    for (const RegisterAtOffset& entry : m_uncorrectedCalleeSaveRegisterAtOffsetList) {
+        if (!entry.reg().isGPR())
+            return;
+    }
+    for (StackSlot* slot : m_stackSlots) {
+        if (slot != m_calleeSaveStackSlot && saved % slot->alignment())
+            return;
+    }
+    for (StackSlot* slot : m_stackSlots) {
+        if (slot != m_calleeSaveStackSlot)
+            slot->setOffsetFromFP(slot->offsetFromFP() + saved);
+    }
+    m_calleeSaveStackSlot->setOffsetFromFP(-static_cast<intptr_t>(m_frameSize));
+    m_placesCalleeSavesAtFootOfFrame = true;
+}
+
+void Code::tryToPushRegistersInPrologue()
+{
+    constexpr unsigned maxFrameSize = 496;
+    constexpr unsigned maxInstructions = 16;
+    constexpr unsigned maxPushes = 6;
+    constexpr intptr_t wordSize = sizeof(CPURegister);
+    if (!isX86_64() || !m_mayPlaceCalleeSavesAtFootOfFrame || m_callArgAreaSize || m_frameSize > maxFrameSize || (m_calleeSaveStackSlot && !m_placesCalleeSavesAtFootOfFrame) || m_entrypoints.size() > 1)
+        return;
+    BasicBlock* entry = at(0);
+    if (!entry || entry->numPredecessors())
+        return;
+    std::array<Reg, MacroAssembler::numberOfRegisters()> valueAtEntryIn;
+    for (unsigned i = 0; i < valueAtEntryIn.size(); ++i)
+        valueAtEntryIn[i] = Reg::fromIndex(i);
+    valueAtEntryIn[Reg(MacroAssembler::stackPointerRegister).index()] = Reg();
+    valueAtEntryIn[Reg(MacroAssembler::framePointerRegister).index()] = Reg();
+    auto isGPR = [](const Arg& arg) {
+        return arg.isReg() && arg.reg().isGPR();
+    };
+    for (unsigned index = 0; index < entry->size() && index < maxInstructions && m_registersPushedInPrologue.size() < maxPushes; ++index) {
+        Inst& inst = entry->at(index);
+        bool isMove = inst.kind.opcode == Move && inst.args().size() == 2 && isGPR(inst.args()[0]);
+        if (isMove && isGPR(inst.args()[1])) {
+            valueAtEntryIn[inst.args()[1].reg().index()] = valueAtEntryIn[inst.args()[0].reg().index()];
+            continue;
+        }
+        if (isMove && inst.args()[1].isStack()) {
+            StackSlot* slot = inst.args()[1].stackSlot();
+            Reg source = valueAtEntryIn[inst.args()[0].reg().index()];
+            intptr_t from = slot->offsetFromFP();
+            intptr_t to = -wordSize * static_cast<intptr_t>(m_registersPushedInPrologue.size() + 1);
+            if (!source || !slot->isSpill() || slot->byteSize() != wordSize || inst.args()[1].offset() || from > to)
+                return;
+            auto liesIn = [](StackSlot* other, intptr_t word) {
+                return other->offsetFromFP() >= word && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) <= word + wordSize;
+            };
+            auto touches = [](StackSlot* other, intptr_t word) {
+                return other->offsetFromFP() < word + wordSize && other->offsetFromFP() + static_cast<intptr_t>(other->byteSize()) > word;
+            };
+            for (StackSlot* other : m_stackSlots) {
+                if ((touches(other, from) && !liesIn(other, from)) || (touches(other, to) && !liesIn(other, to)))
+                    return;
+            }
+            if (from != to) {
+                for (StackSlot* other : m_stackSlots) {
+                    if (liesIn(other, from))
+                        other->setOffsetFromFP(other->offsetFromFP() - from + to);
+                    else if (liesIn(other, to))
+                        other->setOffsetFromFP(other->offsetFromFP() - to + from);
+                }
+            }
+            m_registersPushedInPrologue.append(source);
+            inst = Inst(Nop, inst.origin);
+            continue;
+        }
+        if (inst.kind.opcode == Patch || inst.isTerminal())
+            return;
+        for (Arg& arg : inst.args()) {
+            if (arg.isStack() || arg.isCallArg())
+                return;
+        }
+        inst.forEachTmp([&](Tmp& tmp, Arg::Role role, Bank, Width) {
+            if (Arg::isAnyDef(role) && tmp.isGPR())
+                valueAtEntryIn[tmp.reg().index()] = Reg();
+        });
+    }
+}
 #endif
 
 RegisterAtOffsetList Code::calleeSaveRegisterAtOffsetList() const
@@ -317,13 +410,6 @@ void Code::dump(PrintStream& out) const
     RegisterAtOffsetList calleeSaveRegisters = this->calleeSaveRegisterAtOffsetList();
     if (calleeSaveRegisters.registerCount())
         out.print(tierName, "Callee saves: ", calleeSaveRegisters, "\n");
-}
-
-unsigned Code::findFirstBlockIndex(unsigned index) const
-{
-    while (index < size() && !at(index))
-        index++;
-    return index;
 }
 
 unsigned Code::findNextBlockIndex(unsigned index) const

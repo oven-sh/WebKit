@@ -107,6 +107,7 @@ public:
     friend class JSRopeString;
     friend class MarkStack;
     friend class SlotVisitor;
+    friend class CompiledLayoutVisitor;
     friend class SmallStrings;
 
     typedef JSCell Base;
@@ -252,6 +253,7 @@ public:
     GCOwnedDataScope<const String&> tryGetValueWithoutGC() const;
     StringImpl* getValueImpl() const;
     StringImpl* tryGetValueImpl() const;
+    JS_EXPORT_PRIVATE bool tryCollectLeaves(Vector<StringView, 32>&) const;
     ALWAYS_INLINE unsigned length() const;
 
     JSValue NODELETE toPrimitive(JSGlobalObject*, PreferredPrimitiveType) const;
@@ -376,6 +378,7 @@ private:
 // from JSStringSubspace::
 class JSRopeString final : public JSString {
     friend class JSString;
+    friend class CompiledLayoutVisitor;
     friend class RegExpObject;
     friend class RegExpSubstringGlobalAtomCache;
 public:

@@ -58,7 +58,8 @@ One declaration per line. `#` starts a comment.
       WHAT is a variant of `Intrinsic` in intrinsics.rs, which says what the front end emits for each:
       Operation(NAME) | HasJSType(FIRST, LAST) | Builtin(HOLDER.NAME) | Builtin(FUNCTION) | Construct(GLOBAL) | IsNullish | Undefined |
       Int(N, C++ EXPRESSION) | Bool(B) | Double(Infinity) | Call | Apply | ArrayPush | PutByValDirect[(private)] | GetOwnProperty[(private)] |
-      ArgumentCount | Argument | LinkTimeConstant | LinkedFunction | PublicGlobal | PrivateGlobal | PrivateName | Macro | Define | Directive
+      ArgumentCount | Argument | LinkTimeConstant | LinkedFunction | PublicGlobal | PrivateGlobal | ReplaceablePrivateGlobal | PrivateName |
+      Macro | Define | Directive
       The front end needs the number N; the engine's name for it is the expression. The family's .cpp expands
       FOR_EACH_AOT_TYPED_<FAMILY>_CONSTANT(v) with v(N, (EXPRESSION)) into a static_assert for each.
       src/codegen/builtins-manifest.ts fails if src/js spells a name in a position that has no line.
@@ -593,7 +594,7 @@ for text in WELL_KNOWN_OPERATIONS:
         errors.append('there is no operation %s' % text)
 
 js_type_names, link_time_constant_names, intrinsic_rows, intrinsic_prefixes, checked_constants = [], [], {}, [], {}
-BARE_INTRINSICS = ['IsNullish', 'Undefined', 'Call', 'Apply', 'ArrayPush', 'ArgumentCount', 'Argument', 'PrivateGlobal', 'PrivateName', 'Macro', 'Define', 'Directive', 'LinkedFunction']
+BARE_INTRINSICS = ['IsNullish', 'Undefined', 'Call', 'Apply', 'ArrayPush', 'ArgumentCount', 'Argument', 'PrivateGlobal', 'ReplaceablePrivateGlobal', 'PrivateName', 'Macro', 'Define', 'Directive', 'LinkedFunction']
 for where, name, is_prefix, position, what, payload in intrinsics:
     parts = [part.strip() for part in (payload or '').split(',') if part.strip()]
     holder, _, function = (payload or '').rpartition('.')
@@ -680,13 +681,12 @@ lists += ''.join('#define AOT_TYPED_BUILTIN_NAME_%s %d\n' % (text, name_numbers[
 lists += ''.join('#define AOT_TYPED_ENGINE_CLASS_%s %d\n' % (text, class_numbers[text]) for text in WELL_KNOWN_CLASSES)
 lists += ''.join('#define AOT_TYPED_BUILTIN_%s %d\n' % (text, operation_numbers[text]) for text in WELL_KNOWN_OPERATIONS)
 
-trusted = '// %s\n\n' % NOTICE
+trusted = '// %s\n\n#![allow(dead_code)]\n\n' % NOTICE
 trusted += '/// Every built-in the engine\'s table has an entry for, by holder, the names separated by one space. `""`: global functions, constructors and the intrinsics of the prelude. `@@name`: a well-known symbol.\n'
 trusted += 'pub(super) const BUILTINS: &[(&str, &str)] = &[\n%s];\n' % ''.join('    ("%s", "%s"),\n' % (holder, ' '.join(sorted(names[holder]))) for holder in sorted(names))
 trusted += 'pub(super) const REPLACEABLE_GLOBALS: &[&str] = &[%s];\n' % ', '.join('"%s"' % name for name in sorted(replaceable))
 trusted += '''
 /// What a built-in may do with an operand. The letters of the header of generate-aot-builtins.py, in their order.
-#[allow(dead_code)]
 pub(super) mod uses {
     /// Creates, replaces or deletes own named properties, or makes one an accessor.
     pub(in super::super) const WRITES_PROPERTIES: u16 = 1;
@@ -709,7 +709,6 @@ pub(super) mod uses {
     pub(in super::super) const EVERYTHING: u16 = 511;
 }
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum BuiltinKind {
     /// A global function.
@@ -727,7 +726,6 @@ pub(super) enum BuiltinKind {
 }
 
 /// `Number`, `Integer`, `TypedArray`: the static type of the argument is within that. `ToX`: ToX of it runs no user code.
-#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Pattern {
     Any,
@@ -739,7 +737,6 @@ pub(super) enum Pattern {
     ToPropertyKey,
 }
 
-#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Arity {
     Required,
@@ -748,7 +745,6 @@ pub(super) enum Arity {
 }
 
 /// Whether every object the entry can return was made by the call and is held by nothing else.
-#[allow(dead_code)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(super) enum Fresh {
     No,
@@ -758,7 +754,6 @@ pub(super) enum Fresh {
 }
 
 /// True of the built-in whenever the arguments fit the patterns and the receiver is of the holder's class.
-#[allow(dead_code)]
 pub(super) struct BuiltinEntry {
     pub(super) kind: BuiltinKind,
     /// As in `BUILTINS`.
@@ -770,7 +765,6 @@ pub(super) struct BuiltinEntry {
 }
 
 /// The entries of one built-in are adjacent, in the order in which the engine tries them: the first that fits applies.
-#[allow(dead_code)]
 pub(super) const BUILTIN_ENTRIES: &[BuiltinEntry] = &[
 %s];
 ''' % ''.join('    %s,\n' % row for row in uses_rows)
@@ -832,6 +826,7 @@ pub(crate) enum Intrinsic {
     PublicGlobal(&'static str),
     /// `Op::FreeGet` of the name behind `PRIVATE_NAME_PREFIX`.
     PrivateGlobal,
+    ReplaceablePrivateGlobal,
     /// The key is the name behind `PRIVATE_NAME_PREFIX`.
     PrivateName,
     /// `Manifest::macro_for_call` says what the call stands for.

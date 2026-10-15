@@ -57,8 +57,10 @@ JSC_DEFINE_JIT_OPERATION(operationAOTTypedDeleteByValSloppy, size_t, (Instance* 
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
     bool isDeleted = JSCell::deleteProperty(object, globalObject, property);
     OPERATION_RETURN_IF_EXCEPTION(scope, 0);
-    if (!isDeleted)
-        object->noteIfRefusedByLockAlone(vm, property.impl(), true, true);
+    if (!isDeleted && object->noteIfRefusedByLockAlone(vm, property.impl(), true, true)) {
+        throwTypeError(globalObject, scope, object->wordsOfRefusalByLock(vm, property.impl(), UnableToDeletePropertyError));
+        OPERATION_RETURN(scope, 0);
+    }
     OPERATION_RETURN(scope, isDeleted);
 }
 

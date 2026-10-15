@@ -205,6 +205,9 @@ void Value::replaceWithOops()
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 {
     unsigned index = m_index;
+#if USE(BUN_JSC_ADDITIONS)
+    bool isInArena = m_isInArena;
+#endif
 
     this->~Value();
 
@@ -212,11 +215,17 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner)
 
     this->m_index = index;
     this->owner = owner;
+#if USE(BUN_JSC_ADDITIONS)
+    m_isInArena = isInArena;
+#endif
 }
 
 void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 {
     unsigned index = m_index;
+#if USE(BUN_JSC_ADDITIONS)
+    bool isInArena = m_isInArena;
+#endif
 
     this->~Value();
 
@@ -224,6 +233,9 @@ void Value::replaceWith(Kind kind, Type type, BasicBlock* owner, Value* value)
 
     this->m_index = index;
     this->owner = owner;
+#if USE(BUN_JSC_ADDITIONS)
+    m_isInArena = isInArena;
+#endif
 }
 
 void Value::dump(PrintStream& out) const

@@ -39,8 +39,8 @@ public:
     MarkedBlockCageManager()
     {
         size_t size = static_cast<size_t>(Options::markedBlockCageSizeInMB()) * MB;
-        if (!hasOneBitSet(size) || size > MarkedBlockCage::maxSize) {
-            dataLogLn("markedBlockCageSizeInMB is not 0 or a power of two of at most ", MarkedBlockCage::maxSize / MB, ": ", Options::markedBlockCageSizeInMB());
+        if (!hasOneBitSet(size) || size > 32 * GB) {
+            dataLogLn("markedBlockCageSizeInMB is not 0 or a power of two of at most ", 32 * GB / MB, ": ", Options::markedBlockCageSizeInMB());
             exit(EXIT_FAILURE);
         }
 
@@ -84,7 +84,7 @@ public:
     {
         uintptr_t offset = std::bit_cast<uintptr_t>(block) - g_jscConfig.startOfMarkedBlockCage;
         size_t place = offset / MarkedBlock::blockSize;
-        size_t index = place >= m_placeOfFirstBlock ? place - m_placeOfFirstBlock + 1 : place + m_firstWrappedBlock - 1;
+        size_t index = indexOf(place);
 
         Locker locker { m_lock };
         RELEASE_ASSERT(place && index < m_firstUnusedBlock && !(offset % MarkedBlock::blockSize), offset, m_firstUnusedBlock);
@@ -117,10 +117,16 @@ public:
         m_firstDecommittedFreeBlock = std::min(m_firstDecommittedFreeBlock, first);
     }
 
+    size_t sizeInBytes() const { return m_blockCount * MarkedBlock::blockSize; }
+
 private:
     static constexpr size_t blocksPerCommit = MB / MarkedBlock::blockSize;
     static constexpr size_t minBlocksPerMapping = 4 * MB / MarkedBlock::blockSize;
     static constexpr size_t maxBlocksPerMapping = 32 * MB / MarkedBlock::blockSize;
+#if OS(LINUX)
+    static constexpr uintptr_t firstWindow = 2;
+    static constexpr uint32_t numberOfWindows = 3966;
+#endif
 
     static uintptr_t tryReserve(size_t size)
     {
@@ -134,7 +140,7 @@ private:
         void* address = nullptr;
 #if OS(LINUX)
         for (unsigned attempt = 0; attempt < 16 && !address; ++attempt) {
-            void* wanted = std::bit_cast<void*>((128 + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % 1024)) * MarkedBlockCage::maxSize);
+            void* wanted = std::bit_cast<void*>((firstWindow + static_cast<uintptr_t>(cryptographicallyRandomNumber<uint32_t>() % numberOfWindows)) * MarkedBlockCage::maxSize);
             void* reserved = OSAllocator::tryReserveUncommitted(size, OSAllocator::FastMallocPages, wanted, false);
             if (!reserved)
                 return 0;
@@ -181,14 +187,26 @@ private:
         return std::bit_cast<void*>(g_jscConfig.startOfMarkedBlockCage + place * MarkedBlock::blockSize);
     }
 
+    size_t indexOf(size_t place) const
+    {
+        return place >= m_placeOfFirstBlock ? place - m_placeOfFirstBlock + 1 : place + m_firstWrappedBlock - 1;
+    }
+
+    size_t endOfRunFrom(size_t begin, size_t end) const
+    {
+        if (begin < m_firstWrappedBlock)
+            end = std::min(end, m_firstWrappedBlock);
+        return end;
+    }
+
     template<typename Functor>
     void forEachRun(size_t begin, size_t end, const Functor& functor) const
     {
-        size_t middle = std::clamp(m_firstWrappedBlock, begin, end);
-        if (begin < middle)
-            functor(blockAt(begin), (middle - begin) * MarkedBlock::blockSize);
-        if (middle < end)
-            functor(blockAt(middle), (end - middle) * MarkedBlock::blockSize);
+        while (begin < end) {
+            size_t endOfRun = endOfRunFrom(begin, end);
+            functor(blockAt(begin), (endOfRun - begin) * MarkedBlock::blockSize);
+            begin = endOfRun;
+        }
     }
 
     static size_t findBlock(const BitVector& blocks, size_t start)
@@ -228,8 +246,7 @@ private:
     bool mapMoreBlocks()
     {
         size_t count = std::min(std::clamp(m_mappedBlockCount / 4, minBlocksPerMapping, maxBlocksPerMapping), m_blockCount - m_mappedBlockCount);
-        if (m_mappedBlockCount < m_firstWrappedBlock)
-            count = std::min(count, m_firstWrappedBlock - m_mappedBlockCount);
+        count = endOfRunFrom(m_mappedBlockCount, m_mappedBlockCount + count) - m_mappedBlockCount;
         if (!count || !tryMap(blockAt(m_mappedBlockCount), count * MarkedBlock::blockSize))
             return false;
         m_mappedBlockCount += count;
@@ -291,7 +308,7 @@ void MarkedBlockCage::require()
 void MarkedBlockCage::logExhaustion()
 {
     if (isRequired())
-        dataLogLn("FATAL: MarkedBlocks fill the ", g_jscConfig.sizeOfMarkedBlockCage / MB, " MB of address space that a program compiled with 32-bit references has for them (markedBlockCageSizeInMB). Compiled with useAOTWideReferences=1 it has no such limit.");
+        dataLogLn("FATAL: MarkedBlocks fill the ", s_markedBlockCageManager->sizeInBytes() / MB, " MB of address space that a program compiled with 32-bit references has for them (markedBlockCageSizeInMB). Compiled with useAOTWideReferences=1 it has no such limit.");
 }
 
 } // namespace JSC

@@ -34,9 +34,9 @@ public:
         forEachIndexInParallel(count, [&](unsigned i) {
             Function none;
             Inlining inlining(program, FunctionID(i), none);
-            sizes[i] = inlining.sizeOf(program.functions[i], UINT_MAX);
+            sizes[i] = inlining.sizeOf(std::as_const(program).functions[i], UINT_MAX);
             neverReturn[i] = inlining.neverReturnsIn(FunctionID(i));
-            if (!program.functions[i].blocks.isEmpty())
+            if (!std::as_const(program).functions[i].blocks.isEmpty())
                 facts[i] = { inlining.isAccessor(FunctionID(i)), inlining.returnsMethodTable(FunctionID(i)), inlining.parametersCalledBy(FunctionID(i)), inlining.parametersCalledInLoopsBy(FunctionID(i)) };
         });
         program.factsForInlining = WTF::move(facts);
@@ -46,6 +46,14 @@ public:
 
     unsigned run()
     {
+        bool hasCallToLookAt = m_caller.blocks.containsIf([&](auto& block) {
+            return block.values.containsIf([&](ValueID id) {
+                auto& value = m_caller.at(id);
+                return value.opcode == Opcode::CallDirect && value.immediates[1] != behindItsHead && !value.isCallWhoseCopyWasDeclined();
+            });
+        });
+        if (!hasCallToLookAt)
+            return 0;
         unsigned replaced = 0;
         unsigned size = sizeOf(m_caller, UINT_MAX);
         m_copiedFrom.fill(none, m_caller.blocks.size());
@@ -80,6 +88,9 @@ public:
                 bool isTooDeep = depthOf(m_caller.at(call)) >= maxDepth + (isHandedFunctionItCalls(callee, m_caller.at(call)) || isHandedGeneratorItIterates(m_program.at(callee), m_caller.at(call)));
                 // The call is one of the worker from here on: it is looked at again.
                 if (m_program.at(callee).nilOfResults && takeApartResultOrNil(m_program, m_caller, call)) {
+                    didChangeCaller();
+                    m_numberOfValuesSearchedForResults = 0;
+                    m_readsOfResults.clear();
                     ++replaced;
                     --k;
                     continue;
@@ -95,7 +106,7 @@ public:
                 if (!mayBeCopied(m_program.at(callee), m_caller.at(call)) || consumesFactoryResult(callee))
                     continue;
                 bool callerIsHot = m_program.isHotByText(m_id) && (m_currentBlockIsInLoop || !m_program.isHotOnlyInItsLoops(m_id));
-                if (m_program.at(callee).worker && !isMerelyRead(m_caller, call))
+                if (m_program.at(callee).worker && !isMerelyRead(call))
                     continue;
                 if (isOwnWorker(callee))
                     continue;
@@ -165,6 +176,7 @@ public:
                 }
                 unsigned first = m_caller.blocks.size();
                 copyIn(block, k, callee, head);
+                didChangeCaller();
                 m_caller.inlineFrames.last().licence = given;
                 if (isMoved)
                     m_movedFrames.set(m_caller.inlineFrames.size() - 1);
@@ -560,12 +572,93 @@ private:
         return methods >= minFactoryMethods;
     }
 
-    static bool isMerelyRead(const Function& caller, ValueID result)
+    enum class UseOfObject : uint8_t { Reads, IsAlias, IsAnother };
+
+    static UseOfObject useOfObject(const Function& caller, const Value& value, ValueID object)
     {
+        switch (value.opcode) {
+        case Opcode::GetField:
+        case Opcode::IsUndefinedOrNull:
+        case Opcode::IteratorOpen:
+            return UseOfObject::Reads;
+        case Opcode::GetById:
+            return value.readsMethodFor() ? UseOfObject::IsAnother : UseOfObject::Reads;
+        case Opcode::GetByVal:
+            return value.child(0) != object || value.child(1) == object || caller.at(value.child(1)).opcode != Opcode::Integer ? UseOfObject::IsAnother : UseOfObject::Reads;
+        case Opcode::Cast:
+            return value.castReason() != CastReason::Upcast && value.castReason() != CastReason::Flow && value.castReason() != CastReason::NonNull ? UseOfObject::IsAnother : UseOfObject::IsAlias;
+        default:
+            return UseOfObject::IsAnother;
+        }
+    }
+
+    void didChangeCaller()
+    {
+        m_timesAskedSinceCallerChanged = 0;
+        m_firstUser.shrink(0);
+    }
+
+    void findUsers()
+    {
+        unsigned count = m_caller.values.size();
+        m_firstUser.fill(0, count + 1);
+        m_isUsedByTerminator.clearAll();
+        m_isUsedByTerminator.ensureSize(count);
+        for (auto& block : m_caller.blocks) {
+            if (block.terminator.value)
+                m_isUsedByTerminator.quickSet(block.terminator.value.index());
+            for (auto& target : block.terminator.targets) {
+                for (ValueID argument : target.arguments) {
+                    if (argument)
+                        m_isUsedByTerminator.quickSet(argument.index());
+                }
+            }
+            for (ValueID user : block.values) {
+                std::as_const(m_caller).at(user).forEachChild([&](ValueID child) {
+                    if (child)
+                        ++m_firstUser[child.index()];
+                });
+            }
+        }
+        uint32_t next = 0;
+        for (auto& first : m_firstUser)
+            first = std::exchange(next, next + first);
+        m_users.resize(next);
+        for (auto& block : m_caller.blocks) {
+            for (ValueID user : block.values) {
+                std::as_const(m_caller).at(user).forEachChild([&](ValueID child) {
+                    if (child)
+                        m_users[m_firstUser[child.index()]++] = user;
+                });
+            }
+        }
+        for (unsigned i = count; i; --i)
+            m_firstUser[i] = m_firstUser[i - 1];
+        m_firstUser[0] = 0;
+    }
+
+    bool isMerelyRead(ValueID result)
+    {
+        static constexpr unsigned timesAskedWithoutUsers = 2;
+        bool knowsUsers = m_timesAskedSinceCallerChanged++ >= timesAskedWithoutUsers;
+        if (knowsUsers && m_firstUser.isEmpty())
+            findUsers();
         Vector<ValueID, 4> aliases { result };
         for (unsigned next = 0; next < aliases.size(); ++next) {
             ValueID object = aliases[next];
-            for (auto& block : caller.blocks) {
+            if (knowsUsers) {
+                if (m_isUsedByTerminator.quickGet(object.index()))
+                    return false;
+                for (ValueID user : m_users.span().subspan(m_firstUser[object.index()], m_firstUser[object.index() + 1] - m_firstUser[object.index()])) {
+                    UseOfObject use = useOfObject(m_caller, m_caller.at(user), object);
+                    if (use == UseOfObject::IsAnother)
+                        return false;
+                    if (use == UseOfObject::IsAlias)
+                        aliases.append(user);
+                }
+                continue;
+            }
+            for (auto& block : m_caller.blocks) {
                 if (block.terminator.value == object)
                     return false;
                 for (auto& target : block.terminator.targets) {
@@ -573,34 +666,18 @@ private:
                         return false;
                 }
                 for (ValueID user : block.values) {
-                    auto& value = caller.at(user);
+                    auto& value = std::as_const(m_caller).at(user);
                     bool uses = false;
                     value.forEachChild([&](ValueID child) {
                         uses |= child == object;
                     });
                     if (!uses)
                         continue;
-                    switch (value.opcode) {
-                    case Opcode::GetField:
-                    case Opcode::IsUndefinedOrNull:
-                    case Opcode::IteratorOpen:
-                        continue;
-                    case Opcode::GetById:
-                        if (value.readsMethodFor())
-                            return false;
-                        continue;
-                    case Opcode::GetByVal:
-                        if (value.child(0) != object || value.child(1) == object || caller.at(value.child(1)).opcode != Opcode::Integer)
-                            return false;
-                        continue;
-                    case Opcode::Cast:
-                        if (value.castReason() != CastReason::Upcast && value.castReason() != CastReason::Flow && value.castReason() != CastReason::NonNull)
-                            return false;
-                        aliases.append(user);
-                        continue;
-                    default:
+                    UseOfObject use = useOfObject(m_caller, value, object);
+                    if (use == UseOfObject::IsAnother)
                         return false;
-                    }
+                    if (use == UseOfObject::IsAlias)
+                        aliases.append(user);
                 }
             }
         }
@@ -700,7 +777,7 @@ private:
         if (m_program.numberOfDirectCalls[callee.index()] != 1 || m_program.genericEntrypoints.contains(callee.index()))
             return false;
         // A ramp is copied nowhere either.
-        return (m_program.at(m_id).resumeFunction || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
+        return (m_program.at(m_id).resumeFunction || m_program.at(m_id).startFunction || sizeOf(m_program.at(m_id), smallSize + 1) > smallSize) && sizeOf(m_program.at(callee), maxMoved + 1) <= maxMoved;
     }
 
     // Whatever it returns is an object that it has made, or that a function it calls has.
@@ -997,6 +1074,22 @@ private:
         unsigned size { 0 };
     };
 
+    bool isOpenReadOfField(const Function& function, const Value& value) const
+    {
+        if (value.opcode != Opcode::GetById)
+            return false;
+        auto& receiver = m_program.typeOf(function, value.child(0));
+        LayoutID view = receiver.onlyView();
+        if (!view || !m_program.at(view).admitsForeignObjects || m_program.at(view).members.isEmpty())
+            return false;
+        auto access = fieldOf(m_program, receiver, value.string());
+        if (!access || !onlyFieldsSupplyToMembers(m_program, access->layout, value.string()))
+            return false;
+        return std::ranges::all_of(m_program.at(view).members, [&](LayoutID member) {
+            return !!m_program.at(member).fieldNamed(value.string());
+        });
+    }
+
     // The blocks next to the entry that test and read and may come to return without leaving them. They are copied in the place of a call
     // of a function that is not: what leaves them calls it, and it starts over. Nobody can tell that such a value was carried out twice.
     // Without a size there is none.
@@ -1014,7 +1107,8 @@ private:
                     auto& value = function.at(block.values[i]);
                     if (!isTest(value.opcode) && !readsMemory(value.opcode))
                         return std::nullopt;
-                    if (writesOf(m_program, function, block, i) > Writes::RuntimeState || (value.opcode == Opcode::Cast && castWritesShapeWords(m_program, function, value)))
+                    bool isOpenRead = isOpenReadOfField(function, value);
+                    if (!isOpenRead && (writesOf(m_program, function, block, i) > Writes::RuntimeState || (value.opcode == Opcode::Cast && castWritesShapeWords(m_program, function, value))))
                         return std::nullopt;
                     size += countsForSize(value.opcode);
                 }
@@ -1457,11 +1551,30 @@ private:
         });
     }
 
+    bool saysCallNoInline(FunctionID id) const
+    {
+        return m_saysCallNoInline.ensure(id.index(), [&] {
+            static const BuiltinID callNoInline = Builtins::singleton().find(BuiltinKind::Operation, { }, Builtins::singleton().nameOf("CallNoInline"_s.span8()));
+            for (auto& value : m_program.at(id).values) {
+                if (value.opcode == Opcode::Operation ? Builtins::singleton().find(BuiltinKind::Operation, { }, m_program.builtinName(value.string())) == callNoInline : value.opcode == Opcode::CallBuiltin && value.builtin() == callNoInline)
+                    return true;
+            }
+            return false;
+        }).iterator->value;
+    }
+    mutable UncheckedKeyHashMap<uint32_t, bool, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_saysCallNoInline;
+
     bool mayBeCopied(const Function& callee, const Value& call) const
     {
         if (callee.blocks.isEmpty() || callee.kind == FunctionKind::Module || callee.has(Format::FunctionIsAsync | Format::FunctionIsGenerator | FunctionIsGenericEntrypoint | FunctionUsesArgumentBuffer | FunctionLogsMisfits))
             return false;
+        if (m_program.logsTypeErrors && callee.has(Format::FunctionIsHiddenInStackTraces) && !callee.has(Format::FunctionIsBuiltin) && hasHandlers(callee))
+            return false;
         if (m_caller.inlineFrames.size() > maxInlineFrames)
+            return false;
+        if (callee.savesItsFrame && m_program.at(m_id).startFunction != call.function())
+            return false;
+        if (callee.has(Format::FunctionIsBuiltin) && !m_program.standsForBuiltin(callee) && saysCallNoInline(call.function()))
             return false;
         // Whatever is live into a handler is kept in memory, and that is every variable of a loop the handler goes back into.
         if (!m_isTakingOwnBody && !isOwnWorker(call.function()) && m_program.at(m_id).startFunction != call.function() && hasHandlers(callee) && !hasHandlers(m_caller) && !isHandedGeneratorItIterates(callee, call))
@@ -1552,7 +1665,13 @@ private:
                     yielded.append(addValue(WTF::move(parameter)));
                     m_caller.at(after).parameters.append(yielded.last());
                 }
-                for (auto& user : m_caller.values) {
+                for (; m_numberOfValuesSearchedForResults < m_caller.values.size(); ++m_numberOfValuesSearchedForResults) {
+                    auto& user = m_caller.values[m_numberOfValuesSearchedForResults];
+                    if (user.opcode == Opcode::ResultAt)
+                        m_readsOfResults.add(user.child(0).index(), Vector<uint32_t, 2> { }).iterator->value.append(m_numberOfValuesSearchedForResults);
+                }
+                for (uint32_t index : m_readsOfResults.take(call.index())) {
+                    auto& user = m_caller.values[index];
                     if (user.opcode != Opcode::ResultAt || user.child(0) != call)
                         continue;
                     Value upcast;
@@ -1617,8 +1736,6 @@ private:
             m_caller.at(rest).terminator.kind = TerminatorKind::Jump;
             m_caller.at(rest).terminator.targets.append(Target { after, Arguments { result } });
         }
-        unsigned end = m_caller.blocks.size();
-
         Vector<ValueID> map(callee.values.size());
         for (unsigned i = 0; i < arguments.size(); ++i) {
             ValueID parameter = callee.blocks[0].parameters[i];
@@ -1679,6 +1796,29 @@ private:
                     continue;
                 }
                 copied.forEachChild(mapped);
+                if (head && isOpenReadOfField(callee, callee.at(value))) {
+                    Value test;
+                    test.opcode = Opcode::HasShapeOf;
+                    test.position = copied.position;
+                    test.inlineFrame = inlineFrame;
+                    test.type = m_program.types.boolean;
+                    test.rep = repOf(m_program.at(test.type));
+                    test.children[0] = copied.child(0);
+                    test.immediates = { m_program.typeOf(callee, callee.at(value).child(0)).onlyView().index(), m_program.mayRunInSeveralInstances ? shapeTestIsForThisInstance : 0u };
+                    ValueID isMember = addValue(WTF::move(test));
+                    BlockID behindTest = addBlock(copiedFrom);
+                    if (neverReturnsInCallee.get(i))
+                        m_neverReturns.set(behindTest.index());
+                    m_caller.at(made).values.append(isMember);
+                    auto& branch = m_caller.at(made).terminator;
+                    branch.kind = TerminatorKind::Branch;
+                    branch.value = isMember;
+                    branch.targets.append(Target { behindTest, { } });
+                    branch.targets.append(Target { rest, { } });
+                    made = behindTest;
+                    m_caller.at(made).values.append(map[value.index()]);
+                    continue;
+                }
                 if (copied.opcode == Opcode::NewObjectWithShape)
                     copied.immediates[1] = m_caller.allocationOf(Allocation(callee.allocations[copied.allocation()]));
                 else if (copied.opcode == Opcode::CallDirect || copied.opcode == Opcode::CallMethod || copied.opcode == Opcode::Call || copied.opcode == Opcode::Operation)
@@ -1727,7 +1867,7 @@ private:
         jump.kind = TerminatorKind::Jump;
         jump.targets.append(Target { BlockID(first), { } });
         if (isWatched)
-            watch(first, end, copiedFrom, handler);
+            watch(first, m_caller.blocks.size(), copiedFrom, handler);
     }
 
     // What was copied in the place of a call that a handler watches is watched by it: whatever may throw ends its block, and what is
@@ -1776,6 +1916,12 @@ private:
     BitVector m_isInLoopOfCaller;
     bool m_currentBlockIsInLoopOfCaller { false };
     bool m_isTakingOwnBody { false };
+    unsigned m_timesAskedSinceCallerChanged { 0 };
+    Vector<uint32_t> m_firstUser;
+    Vector<ValueID> m_users;
+    BitVector m_isUsedByTerminator;
+    unsigned m_numberOfValuesSearchedForResults { 0 };
+    UncheckedKeyHashMap<uint32_t, Vector<uint32_t, 2>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_readsOfResults;
     UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_neverReturnsIn;
     UncheckedKeyHashMap<uint32_t, Head, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_heads;
     UncheckedKeyHashMap<uint32_t, BitVector, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_parametersCalledInLoopsBy;

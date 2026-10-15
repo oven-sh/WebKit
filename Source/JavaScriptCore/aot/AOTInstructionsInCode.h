@@ -3,6 +3,7 @@
 #if ENABLE(AOT)
 
 #include "AOTImage.h"
+#include <array>
 #include <span>
 
 namespace JSC::AOT {
@@ -30,7 +31,7 @@ struct DecodedInstruction {
     uint8_t placeOfModRM;
 };
 
-inline DecodedInstruction decodeInstruction(const uint8_t* bytes, size_t available)
+inline DecodedInstruction decodeInstructionSlow(const uint8_t* bytes, size_t available)
 {
     constexpr DecodedInstruction unknown { 0, 0 };
     static constexpr uint32_t isKnown[7][8] = {
@@ -164,10 +165,123 @@ inline DecodedInstruction decodeInstruction(const uint8_t* bytes, size_t availab
     return { static_cast<uint8_t>(at), static_cast<uint8_t>(place) };
 }
 
+struct X86OpcodeTraits {
+    static constexpr uint8_t immediateMask = 7;
+    static constexpr uint8_t hasModRM = 8;
+    static constexpr uint8_t hasWideImmediate = 16;
+    static constexpr uint8_t isFast = 32;
+
+    static constexpr std::array<uint8_t, 256> makeFirstMap()
+    {
+        constexpr uint32_t isKnown[8] = { 0x02022b2b, 0x2a2b2b0b, 0xffff0000, 0xffff0308, 0x02ffabfb, 0xff00030a, 0x220a12ca, 0x80d00b00 };
+        constexpr uint32_t hasModRMInFirstMap[8] = { 0x0f0f0f0f, 0x0f0f0f0f, 0x00000000, 0x00000a08, 0x0000ffff, 0x00000000, 0xff0f00c3, 0xc0c00000 };
+        std::array<uint8_t, 256> result { };
+        for (unsigned opcode = 0; opcode < 256; ++opcode) {
+            if (!(isKnown[opcode >> 5] >> (opcode & 31) & 1))
+                continue;
+            if (opcode == 0x0f || opcode == 0xc4 || opcode == 0xc5 || opcode == 0xf6 || opcode == 0xf7 || (opcode >= 0xa0 && opcode <= 0xa3))
+                continue;
+            unsigned immediate = 0;
+            uint8_t traits = isFast;
+            if (opcode < 0x40)
+                immediate = (opcode & 7) == 4 ? 1 : (opcode & 7) == 5 ? 4 : 0;
+            else if (opcode == 0x68 || opcode == 0x69 || opcode == 0x81 || opcode == 0xa9 || opcode == 0xc7)
+                immediate = 4;
+            else if (opcode == 0x6a || opcode == 0x6b || (opcode >= 0x70 && opcode <= 0x7f) || opcode == 0x80 || opcode == 0x83 || opcode == 0xa8 || (opcode >= 0xb0 && opcode <= 0xb7)
+                || opcode == 0xc0 || opcode == 0xc1 || opcode == 0xc6 || opcode == 0xcd || (opcode >= 0xe0 && opcode <= 0xe7) || opcode == 0xeb)
+                immediate = 1;
+            else if (opcode >= 0xb8 && opcode <= 0xbf) {
+                immediate = 4;
+                traits |= hasWideImmediate;
+            } else if (opcode == 0xc2 || opcode == 0xca)
+                immediate = 2;
+            else if (opcode == 0xc8)
+                immediate = 3;
+            else if (opcode == 0xe8 || opcode == 0xe9)
+                immediate = 4;
+            if (hasModRMInFirstMap[opcode >> 5] >> (opcode & 31) & 1)
+                traits |= hasModRM;
+            result[opcode] = traits | immediate;
+        }
+        return result;
+    }
+
+    static constexpr std::array<uint8_t, 256> makeSecondMap()
+    {
+        constexpr uint32_t isKnown[8] = { 0x80770800, 0x00025700, 0xfff3ffff, 0x40ffffff, 0xffffffff, 0xf5cbc00c, 0x7fbeff77, 0x7f3eff7f };
+        constexpr uint32_t hasNoModRMInSecondMap[8] = { 0x00004be0, 0x00ff0000, 0x00000000, 0x00800000, 0x0000ffff, 0x00000707, 0x0000ff00, 0x00000000 };
+        std::array<uint8_t, 256> result { };
+        for (unsigned opcode = 0; opcode < 256; ++opcode) {
+            if (!(isKnown[opcode >> 5] >> (opcode & 31) & 1))
+                continue;
+            if (opcode == 0x38 || opcode == 0x3a)
+                continue;
+            unsigned immediate = 0;
+            if (opcode >= 0x80 && opcode <= 0x8f)
+                immediate = 4;
+            else if ((opcode >= 0x70 && opcode <= 0x73) || opcode == 0xa4 || opcode == 0xac || opcode == 0xba || opcode == 0xc2 || (opcode >= 0xc4 && opcode <= 0xc6))
+                immediate = 1;
+            uint8_t traits = isFast;
+            if (!(hasNoModRMInSecondMap[opcode >> 5] >> (opcode & 31) & 1))
+                traits |= hasModRM;
+            result[opcode] = traits | immediate;
+        }
+        return result;
+    }
+
+    static constexpr std::array<uint8_t, 256> makeBytesAfterModRM()
+    {
+        std::array<uint8_t, 256> result { };
+        for (unsigned modRM = 0; modRM < 0xc0; ++modRM) {
+            unsigned mode = modRM >> 6;
+            unsigned bytes = mode == 1 ? 1 : mode == 2 ? 4 : 0;
+            if ((modRM & 7) == 4)
+                ++bytes;
+            else if (!mode && (modRM & 7) == 5)
+                bytes = 4;
+            result[modRM] = bytes;
+        }
+        return result;
+    }
+};
+
+inline DecodedInstruction decodeInstruction(const uint8_t* bytes, size_t available)
+{
+    static constexpr std::array<uint8_t, 256> firstMap = X86OpcodeTraits::makeFirstMap();
+    static constexpr std::array<uint8_t, 256> secondMap = X86OpcodeTraits::makeSecondMap();
+    static constexpr std::array<uint8_t, 256> bytesAfterModRM = X86OpcodeTraits::makeBytesAfterModRM();
+
+    if (available < 15) [[unlikely]]
+        return decodeInstructionSlow(bytes, available);
+    unsigned at = 0;
+    bool isWide = false;
+    if ((bytes[0] & 0xf0) == 0x40)
+        isWide = bytes[at++] & 8;
+    uint8_t traits = firstMap[bytes[at]];
+    if (bytes[at] == 0x0f)
+        traits = secondMap[bytes[++at]];
+    if (!(traits & X86OpcodeTraits::isFast)) [[unlikely]]
+        return decodeInstructionSlow(bytes, available);
+    ++at;
+    unsigned place = 0;
+    if (traits & X86OpcodeTraits::hasModRM) {
+        place = at;
+        uint8_t modRM = bytes[at++];
+        at += bytesAfterModRM[modRM];
+        if (modRM < 0x40 && (modRM & 7) == 4 && (bytes[place + 1] & 7) == 5)
+            at += 4;
+    }
+    at += traits & X86OpcodeTraits::immediateMask;
+    if (isWide && (traits & X86OpcodeTraits::hasWideImmediate))
+        at += 4;
+    return { static_cast<uint8_t>(at), static_cast<uint8_t>(place) };
+}
+
 inline Vector<uint8_t> recordsOfInstructions(std::span<const uint8_t> bytes, std::span<const DataInCode> data)
 {
     Vector<uint8_t> records;
     size_t size = bytes.size();
+    records.reserveInitialCapacity(size / 3 + 8);
     size_t range = 0;
     for (size_t at = 0; at < size;) {
         size_t endOfInstructions = range < data.size() ? data[range].offset : size;
@@ -242,7 +356,7 @@ inline void writeInt32(uint8_t* at, int64_t value)
 
 #if CPU(X86_64)
 
-inline bool regFieldExtendsOpcode(unsigned map, uint8_t opcode, bool hasVex)
+inline constexpr bool regFieldExtendsOpcode(unsigned map, uint8_t opcode, bool hasVex)
 {
     if (hasVex)
         return map == 2 && opcode >= 0x71 && opcode <= 0x73;
@@ -266,7 +380,7 @@ inline bool regFieldExtendsOpcode(unsigned map, uint8_t opcode, bool hasVex)
     return false;
 }
 
-inline bool isLegacyPrefix(uint8_t byte)
+inline constexpr bool isLegacyPrefix(uint8_t byte)
 {
     switch (byte) {
     case 0x66: case 0xf2: case 0xf3: case 0xf0: case 0x2e: case 0x36: case 0x3e: case 0x26: case 0x64: case 0x65: case 0x67:
@@ -276,7 +390,7 @@ inline bool isLegacyPrefix(uint8_t byte)
     }
 }
 
-inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsigned placeOfModRM)
+inline Cause classifySlow(const uint8_t* bytes, InstructionInCode& instruction, unsigned placeOfModRM)
 {
     constexpr unsigned stackPointer = 4;
     unsigned length = instruction.length;
@@ -396,6 +510,131 @@ inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsi
     return Cause::None;
 }
 
+struct X86OpcodeClasses {
+    static constexpr uint8_t isFast = 1;
+    static constexpr uint8_t isEnd = 2;
+    static constexpr uint8_t namesStackPointer = 4;
+    static constexpr uint8_t hasRegisterInOpcode = 8;
+    static constexpr uint8_t regFieldExtendsOpcode = 16;
+    static constexpr uint8_t isJump = 32;
+    static constexpr uint8_t isConditionalJump = 64;
+    static constexpr uint8_t hasWideDistance = 128;
+
+    static constexpr std::array<uint8_t, 256> makeFirstMap()
+    {
+        std::array<uint8_t, 256> result { };
+        for (unsigned opcode = 0; opcode < 256; ++opcode) {
+            if (isLegacyPrefix(opcode) || (opcode & 0xf0) == 0x40 || opcode == 0x0f || opcode == 0xc4 || opcode == 0xc5)
+                continue;
+            if (opcode == 0xe8 || (opcode >= 0xa0 && opcode <= 0xa3) || opcode == 0xff || opcode == 0x8f)
+                continue;
+            uint8_t classes = isFast;
+            if (opcode == 0xe9)
+                classes |= isJump | hasWideDistance;
+            else if (opcode == 0xeb)
+                classes |= isJump;
+            else if (opcode >= 0x70 && opcode <= 0x7f)
+                classes |= isConditionalJump;
+            else if (opcode == 0xc3 || opcode == 0xc2 || opcode == 0xcc || opcode == 0xf4)
+                classes |= isEnd;
+            else if ((opcode >= 0x50 && opcode <= 0x5f) || opcode == 0x68 || opcode == 0x6a || opcode == 0x9c || opcode == 0x9d || opcode == 0xc9)
+                classes |= namesStackPointer;
+            else if ((opcode >= 0xb0 && opcode <= 0xbf) || (opcode >= 0x91 && opcode <= 0x97))
+                classes |= hasRegisterInOpcode;
+            if (InstructionsInCodeInternal::regFieldExtendsOpcode(1, opcode, false))
+                classes |= regFieldExtendsOpcode;
+            result[opcode] = classes;
+        }
+        return result;
+    }
+
+    static constexpr std::array<uint8_t, 256> makeSecondMap()
+    {
+        std::array<uint8_t, 256> result { };
+        for (unsigned opcode = 0; opcode < 256; ++opcode) {
+            if (opcode == 0x38 || opcode == 0x3a)
+                continue;
+            uint8_t classes = isFast;
+            if (opcode >= 0x80 && opcode <= 0x8f)
+                classes |= isConditionalJump | hasWideDistance;
+            else if (opcode == 0x0b)
+                classes |= isEnd;
+            else if (opcode >= 0xc8 && opcode <= 0xcf)
+                classes |= hasRegisterInOpcode;
+            if (InstructionsInCodeInternal::regFieldExtendsOpcode(2, opcode, false))
+                classes |= regFieldExtendsOpcode;
+            result[opcode] = classes;
+        }
+        return result;
+    }
+};
+
+inline Cause classify(const uint8_t* bytes, InstructionInCode& instruction, unsigned placeOfModRM)
+{
+    static constexpr std::array<uint8_t, 256> firstMap = X86OpcodeClasses::makeFirstMap();
+    static constexpr std::array<uint8_t, 256> secondMap = X86OpcodeClasses::makeSecondMap();
+    constexpr unsigned stackPointer = 4;
+
+    unsigned length = instruction.length;
+    unsigned at = 0;
+    unsigned r = 0;
+    unsigned b = 0;
+    if ((bytes[0] & 0xf0) == 0x40) {
+        r = bytes[0] >> 2 & 1;
+        b = bytes[0] & 1;
+        at = 1;
+    }
+    unsigned firstOpcodeByte = at;
+    uint8_t classes = 0;
+    if (at < length) [[likely]] {
+        classes = firstMap[bytes[at]];
+        if (bytes[at] == 0x0f && at + 1 < length)
+            classes = secondMap[bytes[++at]];
+    }
+    if (!(classes & X86OpcodeClasses::isFast)) [[unlikely]]
+        return classifySlow(bytes, instruction, placeOfModRM);
+    uint8_t opcode = bytes[at];
+    if (classes & (X86OpcodeClasses::isJump | X86OpcodeClasses::isConditionalJump | X86OpcodeClasses::isEnd)) {
+        if (classes & X86OpcodeClasses::isEnd) {
+            instruction.kind = Kind::End;
+            return Cause::None;
+        }
+        unsigned width = classes & X86OpcodeClasses::hasWideDistance ? 4 : 1;
+        if (firstOpcodeByte || at + 1 + width != length)
+            return Cause::JumpWithAPrefix;
+        int64_t distance = width == 1 ? static_cast<int8_t>(bytes[length - 1]) : readInt32(bytes + length - 4);
+        int64_t target = static_cast<int64_t>(instruction.offset) + length + distance;
+        if (target < 0 || target > std::numeric_limits<uint32_t>::max())
+            return Cause::TargetOutOfTheFunction;
+        instruction.kind = classes & X86OpcodeClasses::isJump ? Kind::Jump : Kind::ConditionalJump;
+        instruction.target = static_cast<uint32_t>(target);
+        return Cause::None;
+    }
+    bool namesStackPointer = classes & X86OpcodeClasses::namesStackPointer;
+    if (classes & X86OpcodeClasses::hasRegisterInOpcode)
+        namesStackPointer = ((opcode & 7) | b << 3) == stackPointer;
+    if (placeOfModRM) {
+        if (placeOfModRM != at + 1 || placeOfModRM >= length)
+            return Cause::PlaceOfModRMIsWrong;
+        uint8_t modRM = bytes[placeOfModRM];
+        unsigned mode = modRM >> 6;
+        if (!(classes & X86OpcodeClasses::regFieldExtendsOpcode) && ((modRM >> 3 & 7) | r << 3) == stackPointer)
+            namesStackPointer = true;
+        if (mode == 3)
+            namesStackPointer |= ((modRM & 7) | b << 3) == stackPointer;
+        else if ((modRM & 7) == 4) {
+            if (placeOfModRM + 1 >= length)
+                return Cause::InstructionIsNotKnown;
+            uint8_t sib = bytes[placeOfModRM + 1];
+            if (!(!mode && (sib & 7) == 5))
+                namesStackPointer |= ((sib & 7) | b << 3) == stackPointer;
+        } else if (!mode && (modRM & 7) == 5)
+            return Cause::PCRelativeOperand;
+    }
+    instruction.kind = namesStackPointer ? Kind::Pinned : Kind::Plain;
+    return Cause::None;
+}
+
 #elif CPU(ARM64)
 
 inline bool namesLinkRegister(uint32_t word)
@@ -480,6 +719,11 @@ Cause tryToWalk(const Code& code, const Functor& functor)
     size_t reference = 0;
     size_t range = 0;
     size_t at = 0;
+    constexpr size_t never = std::numeric_limits<size_t>::max();
+    size_t nextCall = calls.isEmpty() ? never : calls[0].offset;
+    size_t nextFault = faults.isEmpty() ? never : faults[0].codeOffset;
+    size_t nextReference = references.isEmpty() ? never : references[0].offset;
+    const bool hasRanges = !ranges.isEmpty();
     auto isStartOfData = [&](uint32_t offset) {
         auto found = std::ranges::lower_bound(ranges, offset, { }, [](auto& data) {
             return data.offset;
@@ -488,14 +732,18 @@ Cause tryToWalk(const Code& code, const Functor& functor)
     };
     auto step = [&](InstructionInCode& instruction, bool isOpaque, unsigned placeOfModRM) {
         UNUSED_PARAM(placeOfModRM);
-        while (range < ranges.size() && ranges[range].offset + ranges[range].numberOfWords * sizeof(uint32_t) <= at)
-            ++range;
-        bool isInData = range < ranges.size() && ranges[range].offset <= at;
-        if (call < calls.size() && calls[call].offset == at) {
+        bool isInData = false;
+        if (hasRanges) [[unlikely]] {
+            while (range < ranges.size() && ranges[range].offset + ranges[range].numberOfWords * sizeof(uint32_t) <= at)
+                ++range;
+            isInData = range < ranges.size() && ranges[range].offset <= at;
+        }
+        if (nextCall == at) {
             if (isOpaque || isInData || instruction.length != sizeOfNearCall)
                 return Cause::StubCallIsNoInstruction;
             instruction.kind = Kind::StubCall;
             instruction.target = static_cast<uint32_t>(call++);
+            nextCall = call < calls.size() ? calls[call].offset : never;
         } else if (isInData) {
             if (instruction.length != sizeof(uint32_t) || (at - ranges[range].offset) % sizeof(uint32_t))
                 return Cause::DataIsNotInWords;
@@ -523,24 +771,27 @@ Cause tryToWalk(const Code& code, const Functor& functor)
                 return Cause::AddressOfNoRange;
         }
         bool isKey = false;
-        if (fault < faults.size() && faults[fault].codeOffset == at) {
+        if (nextFault == at) {
             ++fault;
+            nextFault = fault < faults.size() ? faults[fault].codeOffset : never;
             isKey = true;
         }
 #if CPU(X86_64)
-        if (reference < references.size() && references[reference].offset == at + instruction.length) {
+        if (nextReference == at + instruction.length) {
             ++reference;
+            nextReference = reference < references.size() ? references[reference].offset : never;
             isKey = true;
         }
 #else
-        if (reference < references.size() && references[reference].offset + sizeof(uint32_t) == at) {
+        if (nextReference != never && nextReference + sizeof(uint32_t) == at) {
             ++reference;
+            nextReference = reference < references.size() ? references[reference].offset : never;
             isKey = true;
-        } else if (reference < references.size() && references[reference].offset == at)
+        } else if (nextReference == at)
             isKey = true;
 #endif
         if (isKey && instruction.kind != Kind::End) {
-            if (instruction.kind != Kind::Plain && instruction.kind != Kind::Pinned)
+            if (instruction.kind != Kind::Plain && instruction.kind != Kind::Pinned && instruction.kind != Kind::StubCall)
                 return Cause::KeyOnABranch;
             instruction.kind = Kind::Pinned;
         }

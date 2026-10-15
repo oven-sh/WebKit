@@ -79,10 +79,22 @@ public:
 private:
     using ValuesForConstant = UncheckedKeyHashMap<ValueKey, Vector<Value*, 1>>;
 
+    struct UseOfConstant {
+        BasicBlock* block;
+        Value* user;
+        Value** child;
+        unsigned indexOfUser;
+    };
+
+    struct PlaceOfConstant {
+        BasicBlock* block;
+        unsigned index;
+    };
+
     // On the dominator tree above the uses of a constant, bottom up: materialize it at a block, or separately in the subtrees below the
     // block, whichever runs less often in total.
     template<typename Filter>
-    void placeByFrequency(NOESCAPE const Filter& filter, IndexMap<BasicBlock*, Vector<Value*>>& materializations, UncheckedKeyHashMap<Value*, BasicBlock*>& materializationBlocks, ValuesForConstant& valuesForConstant)
+    void placeByFrequency(NOESCAPE const Filter& filter, const Vector<UseOfConstant>& usesInOrder, IndexMap<BasicBlock*, Vector<Value*>>& materializations, UncheckedKeyHashMap<Value*, BasicBlock*>& materializationBlocks, ValuesForConstant& valuesForConstant)
     {
         Dominators& dominators = m_proc.dominators();
 
@@ -138,19 +150,16 @@ private:
         };
         Vector<Vector<Use, 2>> usesOfConstants;
         Vector<Vector<Use, 2>> usesAsImmediates;
-        for (BasicBlock* block : m_proc) {
-            for (Value* value : *block) {
-                for (Value*& child : value->children()) {
-                    if (!filter(child))
-                        continue;
-                    auto result = indexForConstant.add({ child->key(), stretch[block] }, usesOfConstants.size());
-                    if (result.isNewEntry) {
-                        usesOfConstants.append(Vector<Use, 2> { });
-                        usesAsImmediates.append(Vector<Use, 2> { });
-                    }
-                    (isTakenAsImmediate(value, child) ? usesAsImmediates : usesOfConstants)[result.iterator->value].append(Use { block, &child });
-                }
+        for (const UseOfConstant& use : usesInOrder) {
+            Value* child = *use.child;
+            if (!filter(child))
+                continue;
+            auto result = indexForConstant.add({ child->key(), stretch[use.block] }, usesOfConstants.size());
+            if (result.isNewEntry) {
+                usesOfConstants.append(Vector<Use, 2> { });
+                usesAsImmediates.append(Vector<Use, 2> { });
             }
+            (isTakenAsImmediate(use.user, child) ? usesAsImmediates : usesOfConstants)[result.iterator->value].append(Use { use.block, use.child });
         }
 
         IndexMap<BasicBlock*, unsigned> preOrderIndex(m_proc.size(), 0u);
@@ -453,37 +462,49 @@ private:
         auto isPlacedByFrequency = [&](const Value* value) {
             return m_proc.materializesConstantsByFrequency() && value->opcode() != ArgumentReg;
         };
+        Vector<UseOfConstant> usesInOrder;
+        Vector<PlaceOfConstant> placesInOrder;
+        for (BasicBlock* block : m_proc) {
+            for (unsigned index = 0; index < block->size(); ++index) {
+                Value* value = block->at(index);
+                if (filter(value))
+                    placesInOrder.append({ block, index });
+                for (Value*& child : value->children()) {
+                    if (filter(child))
+                        usesInOrder.append({ block, value, &child, index });
+                }
+            }
+        }
+
         if (m_proc.materializesConstantsByFrequency()) {
             placeByFrequency([&](const Value* value) {
-                return filter(value) && isPlacedByFrequency(value);
-            }, materializations, materializationBlocks, valuesForConstantByFrequency);
+                return isPlacedByFrequency(value);
+            }, usesInOrder, materializations, materializationBlocks, valuesForConstantByFrequency);
         }
 
         // We determine where things get materialized based on where they are used.
-        for (BasicBlock* block : m_proc) {
-            for (Value* value : *block) {
-                for (Value*& child : value->children()) {
-                    if (!filter(child) || isPlacedByFrequency(child))
-                        continue;
+        for (const UseOfConstant& use : usesInOrder) {
+            BasicBlock* block = use.block;
+            Value*& child = *use.child;
+            if (isPlacedByFrequency(child))
+                continue;
 
-                    ValueKey key = child->key();
-                    auto result = valueForConstant.add(key, child);
-                    if (result.isNewEntry) {
-                        // Assume that this block is where we want to materialize the value.
-                        child->owner = block;
-                        continue;
-                    }
-
-                    // Make 'value' use the canonical constant rather than the one it was using.
-                    child = result.iterator->value;
-
-                    // Determine the least common dominator. That's the lowest place in the CFG where
-                    // we could materialize the constant while still having only one materialization
-                    // in the resulting code.
-                    while (!dominators.dominates(child->owner, block))
-                        child->owner = dominators.idom(child->owner);
-                }
+            ValueKey key = child->key();
+            auto result = valueForConstant.add(key, child);
+            if (result.isNewEntry) {
+                // Assume that this block is where we want to materialize the value.
+                child->owner = block;
+                continue;
             }
+
+            // Make 'value' use the canonical constant rather than the one it was using.
+            child = result.iterator->value;
+
+            // Determine the least common dominator. That's the lowest place in the CFG where
+            // we could materialize the constant while still having only one materialization
+            // in the resulting code.
+            while (!dominators.dominates(child->owner, block))
+                child->owner = dominators.idom(child->owner);
         }
 
         // Make sure that each basic block knows what to materialize. This also refines the
@@ -502,23 +523,23 @@ private:
 
         // Get rid of Value's that are fast constants but aren't canonical. Also remove the canonical
         // ones from the CFG, since we're going to reinsert them elsewhere.
-        for (BasicBlock* block : m_proc) {
-            for (Value*& value : *block) {
-                if (!filter(value))
-                    continue;
-
-                if (materializationBlocks.contains(value))
-                    value = m_proc.add<Value>(Nop, value->origin());
-                else
-                    value->replaceWithNopIgnoringType();
-            }
+        for (PlaceOfConstant place : placesInOrder) {
+            Value*& value = place.block->at(place.index);
+            if (materializationBlocks.contains(value))
+                value = m_proc.add<Value>(Nop, value->origin());
+            else
+                value->replaceWithNopIgnoringType();
         }
 
         // Now make sure that we move constants to where they are supposed to go. Again, we do this
         // based on uses.
+        size_t nextUse = 0;
         for (BasicBlock* block : m_proc) {
-            for (unsigned valueIndex = 0; valueIndex < block->size(); ++valueIndex) {
-                Value* value = block->at(valueIndex);
+            while (nextUse < usesInOrder.size() && usesInOrder[nextUse].block == block) {
+                Value* value = usesInOrder[nextUse].user;
+                unsigned valueIndex = usesInOrder[nextUse].indexOfUser;
+                while (nextUse < usesInOrder.size() && usesInOrder[nextUse].user == value)
+                    ++nextUse;
                 
                 // This finds the outermost (best) block last. So, the functor overrides the result
                 // each time it finds something acceptable.

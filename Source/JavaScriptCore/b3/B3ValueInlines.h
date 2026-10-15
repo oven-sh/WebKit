@@ -320,10 +320,18 @@ ALWAYS_INLINE size_t Value::computeAdjacencyListOffset() const
 #undef VALUE_TYPE_SIZE
 }
 
+#if USE(BUN_JSC_ADDITIONS)
+ALWAYS_INLINE Value* Value::cloneImpl(Arena* arena) const
+#else
 ALWAYS_INLINE Value* Value::cloneImpl() const
+#endif
 {
     ASSERT(!kind().isCloningForbidden());
+#if USE(BUN_JSC_ADDITIONS)
+#define VALUE_TYPE_CLONE(ValueType) allocateCloneIn<ValueType>(arena, *static_cast<const ValueType*>(this))
+#else
 #define VALUE_TYPE_CLONE(ValueType) allocate<ValueType>(*static_cast<const ValueType*>(this))
+#endif
     DISPATCH_ON_KIND(VALUE_TYPE_CLONE);
 #undef VALUE_TYPE_CLONE
 }

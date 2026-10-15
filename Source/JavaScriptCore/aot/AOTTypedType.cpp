@@ -100,13 +100,33 @@ bool Type::admitsForeignObjects(const Program& program) const
     return false;
 }
 
+bool Type::admitsUncheckedObjects(const Program& program) const
+{
+    for (LayoutID view : views) {
+        if (program.at(view).admitsUncheckedObjects())
+            return true;
+    }
+    return false;
+}
+
+bool Type::admitsOnlyOtherLayouts(const Program& program) const
+{
+    bool admitsThem = false;
+    for (LayoutID view : views) {
+        if (program.at(view).admitsForeignObjects && !program.at(view).admitsOnlyOtherLayouts)
+            return false;
+        admitsThem |= program.at(view).admitsOnlyOtherLayouts;
+    }
+    return admitsThem;
+}
+
 bool Type::isWithin(const Type& other, const Program& program, bool foreignObjectsPass) const
 {
     if (primitives & ~other.primitives)
         return false;
     if (primitives & Primitive::Int && !integers.isWithin(other.integers))
         return false;
-    if (other.anyObject || (foreignObjectsPass && other.admitsForeignObjects(program)))
+    if (other.anyObject || (foreignObjectsPass && other.admitsUncheckedObjects(program)))
         return true;
     if (anyObject || (anyFunction && !other.anyFunction))
         return false;
@@ -116,13 +136,14 @@ bool Type::isWithin(const Type& other, const Program& program, bool foreignObjec
     }
     for (LayoutID view : views) {
         // It stands for any object.
-        if (program.at(view).admitsForeignObjects)
+        if (program.at(view).admitsUncheckedObjects())
             return false;
+        bool holdsOtherLayouts = program.at(view).admitsOnlyOtherLayouts;
         // The members say which objects there are of a view of objects. An environment is of its own layout and no other.
         bool goesByMembers = isObjectLayout(program.at(view).kind);
         bool isWithinOne = false;
         for (LayoutID otherView : other.views)
-            isWithinOne |= view == otherView || (goesByMembers && std::ranges::includes(program.at(otherView).members, program.at(view).members));
+            isWithinOne |= view == otherView || (goesByMembers && std::ranges::includes(program.at(otherView).members, program.at(view).members) && (!holdsOtherLayouts || program.at(otherView).admitsOnlyOtherLayouts));
         if (!isWithinOne)
             return false;
     }

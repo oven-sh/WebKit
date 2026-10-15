@@ -470,6 +470,7 @@ private:
         m_globalObject = JSGlobalObject::create(m_vm, JSGlobalObject::createStructure(m_vm, jsNull()));
         m_globalObject->setEvalEnabled(false, "The evaluator of texts compiles nothing"_s);
         m_unknown = constructEmptyObject(m_vm, m_globalObject->nullPrototypeObjectStructure());
+        m_unknown->methodTable()->preventExtensions(m_unknown, m_globalObject);
         m_regExpConstructor = m_globalObject->regExpConstructor();
         auto remove = [&](ASCIILiteral holder, bool fromPrototype, ASCIILiteral name) {
             JSValue function = attempt([&]() -> JSValue {
@@ -863,7 +864,7 @@ private:
                 if (length && length.isNumber() && length.asNumber() > maxNumberHandedToBuiltin)
                     return false;
             }
-            unsigned costOfArgument = costOf(argument);
+            unsigned costOfArgument = costOf(toStored(argument));
             if (costOfArgument == costOfWhatIsTooLargeToSay)
                 return refuseWhatIsTooLargeToSay();
             cost += std::min(costOfArgument, costOfWhatIsTooLargeToSay - cost);

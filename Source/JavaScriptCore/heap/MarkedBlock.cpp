@@ -124,6 +124,47 @@ void MarkedBlock::Handle::unsweepWithNoNewlyAllocated()
     m_directory->didFinishUsingBlock(this);
 }
 
+template<typename Word>
+static void fillWithEachNthBit(std::span<Word> words, size_t n, size_t start)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    ASSERT(n && n < wordSize);
+    Word pattern = 1;
+    for (size_t shift = n; shift < wordSize; shift *= 2)
+        pattern |= pattern << shift;
+    size_t firstWord = start / wordSize;
+    for (size_t i = 0; i < firstWord; ++i)
+        words[i] = 0;
+    size_t offset = start % wordSize;
+    words[firstWord] = pattern << offset;
+    size_t remainder = wordSize % n;
+    offset %= n;
+    for (size_t i = firstWord + 1; i < words.size(); ++i) {
+        offset = offset >= remainder ? offset - remainder : offset + n - remainder;
+        words[i] = pattern << offset;
+    }
+}
+
+template<typename Word>
+static void clearBits(std::span<Word> words, size_t start, size_t end)
+{
+    constexpr size_t wordSize = sizeof(Word) * 8;
+    if (start >= end)
+        return;
+    size_t firstWord = start / wordSize;
+    size_t lastWord = (end - 1) / wordSize;
+    Word keptInFirst = (static_cast<Word>(1) << (start % wordSize)) - 1;
+    Word keptInLast = end % wordSize ? ~static_cast<Word>(0) << (end % wordSize) : 0;
+    if (firstWord == lastWord) {
+        words[firstWord] &= keptInFirst | keptInLast;
+        return;
+    }
+    words[firstWord] &= keptInFirst;
+    for (size_t i = firstWord + 1; i < lastWord; ++i)
+        words[i] = 0;
+    words[lastWord] &= keptInLast;
+}
+
 void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatingMode mode)
 {
     Locker locker { blockHeader().m_lock };
@@ -164,12 +205,23 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
     // allocated from our free list are not currently marked, so we need another
     // way to tell what's live vs dead. 
     
-    blockHeader().m_newlyAllocated.clearAll();
+    auto newlyAllocated = blockHeader().m_newlyAllocated.storage();
+    static_assert(!(endAtom % (sizeof(newlyAllocated[0]) * 8)));
+    bool fillsByWords = m_atomsPerCell < sizeof(newlyAllocated[0]) * 8;
     blockHeader().m_newlyAllocatedVersion = heap()->objectSpace().newlyAllocatedVersion();
-    blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    if (fillsByWords)
+        fillWithEachNthBit(newlyAllocated, m_atomsPerCell, m_startAtom);
+    else {
+        blockHeader().m_newlyAllocated.clearAll();
+        blockHeader().m_newlyAllocated.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+    }
 
     ASSERT(freeList.cellSize() == m_atomsPerCell * atomSize);
     bool needsZapping = m_attributes.destruction != DoesNotNeedDestruction;
+#if ASSERT_ENABLED
+    WTF::BitSet<atomsPerBlock> expected;
+    expected.setEachNthBit(m_atomsPerCell, m_startAtom, endAtom);
+#endif
     freeList.forEachInterval(
         [&](char* intervalStart, char* intervalEnd) {
             if (needsZapping || MarkedBlockInternal::verbose) {
@@ -180,8 +232,12 @@ void MarkedBlock::Handle::stopAllocating(const FreeList& freeList, StopAllocatin
                         std::bit_cast<HeapCell*>(cell)->zap(HeapCell::StopAllocating);
                 }
             }
-            blockHeader().m_newlyAllocated.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+            clearBits(newlyAllocated, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+#if ASSERT_ENABLED
+            expected.clearEachNthBit(m_atomsPerCell, block().candidateAtomNumber(intervalStart), block().candidateAtomNumber(intervalEnd));
+#endif
         });
+    ASSERT(expected == blockHeader().m_newlyAllocated);
     
     m_isFreeListed = false;
     directory()->didFinishUsingBlock(this);
@@ -435,6 +491,7 @@ void MarkedBlock::Handle::didAddToDirectory(BlockDirectory* directory, unsigned 
     
     size_t cellSize = directory->cellSize();
     m_atomsPerCell = (cellSize + atomSize - 1) / atomSize;
+    blockHeader().m_cellSize = m_atomsPerCell * atomSize;
 
     // Discount the payload atoms at the front so that m_startAtom can start on an atom such that
     // m_atomsPerCell increments from m_startAtom will get us exactly to endAtom when we have filled

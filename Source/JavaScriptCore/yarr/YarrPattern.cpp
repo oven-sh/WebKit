@@ -37,6 +37,7 @@
 #include <wtf/BitSet.h>
 #include <wtf/DataLog.h>
 #if USE(BUN_JSC_ADDITIONS)
+#include <wtf/HashMap.h>
 #include <wtf/HashSet.h>
 #include <wtf/Hasher.h>
 #endif
@@ -2538,9 +2539,7 @@ public:
                     }
                     continue;
                 }
-                if (term.type == PatternTerm::Type::NamedBackReference)
-                    m_pattern.m_comparesBackreferences = true;
-                if (term.type != PatternTerm::Type::NumberedBackReference)
+                if (term.type != PatternTerm::Type::NumberedBackReference && term.type != PatternTerm::Type::NamedBackReference)
                     continue;
                 bool mayBeKnown = isTakenOnce(term) && term.matchDirection() == Forward && alternative->matchDirection() == Forward && !m_pattern.m_numDuplicateNamedCaptureGroups;
                 bool isKnown = mayBeKnown && wasJustCaptured(place, term.backReferenceSubpatternId, 8);
@@ -2811,7 +2810,528 @@ public:
                 }
             }
         }
+#if USE(BUN_JSC_ADDITIONS)
+
+        m_characterSpans.append(CharacterSpans());
+        for (auto& alternative : m_pattern.m_body->m_alternatives)
+            markPossessiveTerms(*alternative, nullptr);
+        m_characterSpans.clear();
+        m_characterSpansIndexes.clear();
+#endif
     }
+
+#if USE(BUN_JSC_ADDITIONS)
+    using CharacterSpans = Vector<std::pair<char32_t, char32_t>, 4>;
+
+    struct FirstCharacterSet {
+        Vector<unsigned, 8> spanIndexes;
+        const CharacterClass* wordClassWithNoBoundaryHere { nullptr };
+        bool includesEndOfInput { false };
+        bool reachedEndOfGroup { false };
+        bool reachedEndOfPattern { false };
+    };
+
+    struct Continuation {
+        const PatternAlternative* alternative;
+        unsigned nextTermIndex;
+        const PatternTerm* repeatedGroup;
+        const Continuation* outer;
+    };
+
+    static constexpr unsigned unknownCharacterSpans = 0;
+    static constexpr unsigned firstCharacterBudget = 96;
+    static constexpr unsigned maxAlternativesForDeterminism = 2048;
+    static constexpr unsigned maxAlternativesComparedPairwise = 16;
+    static constexpr unsigned maxSpansSweptForDeterminism = 8192;
+    static constexpr unsigned maxFixedPrefixCompared = 32;
+
+    static bool buildCharacterSpans(const PatternTerm& term, CharacterSpans& spans)
+    {
+        constexpr char32_t lastCodePoint = 0x10ffff;
+        if (term.type == PatternTerm::Type::PatternCharacter) {
+            char32_t ch = term.patternCharacter;
+            if (!term.ignoreCase()) {
+                spans.append({ ch, ch });
+                return true;
+            }
+            if (!isASCII(ch))
+                return false;
+            spans.append({ toASCIIUpper(ch), toASCIIUpper(ch) });
+            if (toASCIILower(ch) != toASCIIUpper(ch))
+                spans.append({ toASCIILower(ch), toASCIILower(ch) });
+            return true;
+        }
+
+        const CharacterClass& characterClass = *term.characterClass;
+        if (characterClass.hasStrings())
+            return false;
+        CharacterSpans members;
+        if (characterClass.m_anyCharacter)
+            members.append({ 0, lastCodePoint });
+        else if (!characterClass.hasSingleCharacters()) {
+            if (characterClass.m_table)
+                return false;
+        } else {
+            for (char32_t ch : characterClass.m_matches8)
+                members.append({ ch, ch });
+            for (char32_t ch : characterClass.m_matches32)
+                members.append({ ch, ch });
+            for (auto range : characterClass.m_ranges8)
+                members.append({ range.begin, range.end });
+            for (auto range : characterClass.m_ranges32)
+                members.append({ range.begin, range.end });
+            std::ranges::sort(members);
+        }
+
+        char32_t nextExcluded = 0;
+        bool coversLastCodePoint = false;
+        for (auto [begin, end] : members) {
+            if (term.invert()) {
+                if (begin > nextExcluded)
+                    spans.append({ nextExcluded, begin - 1 });
+            } else if (!spans.isEmpty() && begin <= spans.last().second + 1)
+                spans.last().second = std::max(spans.last().second, end);
+            else
+                spans.append({ begin, end });
+            if (end >= lastCodePoint) {
+                coversLastCodePoint = true;
+                break;
+            }
+            nextExcluded = std::max<char32_t>(nextExcluded, end + 1);
+        }
+        if (term.invert() && !coversLastCodePoint)
+            spans.append({ nextExcluded, lastCodePoint });
+        return true;
+    }
+
+    unsigned characterSpansIndex(const PatternTerm& term)
+    {
+        uint64_t key = term.type == PatternTerm::Type::PatternCharacter
+            ? 1ull << 63 | static_cast<uint64_t>(term.patternCharacter) << 1 | term.ignoreCase()
+            : static_cast<uint64_t>(std::bit_cast<uintptr_t>(term.characterClass)) << 1 | term.invert();
+        auto result = m_characterSpansIndexes.add(key, unknownCharacterSpans);
+        if (result.isNewEntry) {
+            CharacterSpans spans;
+            if (buildCharacterSpans(term, spans)) {
+                result.iterator->value = m_characterSpans.size();
+                m_characterSpans.append(WTF::move(spans));
+            }
+        }
+        return result.iterator->value;
+    }
+
+    unsigned lineTerminatorSpansIndex()
+    {
+        PatternTerm lineTerminator(m_pattern.newlineCharacterClass(), false, m_flags);
+        return characterSpansIndex(lineTerminator);
+    }
+
+    static bool spansOverlap(const CharacterSpans& one, const CharacterSpans& other)
+    {
+        const CharacterSpans& shorter = one.size() <= other.size() ? one : other;
+        const CharacterSpans& longer = one.size() <= other.size() ? other : one;
+        for (auto [begin, end] : shorter) {
+            auto found = std::lower_bound(longer.begin(), longer.end(), begin, [](const auto& span, char32_t value) {
+                return span.second < value;
+            });
+            if (found != longer.end() && found->first <= end)
+                return true;
+        }
+        return false;
+    }
+
+    bool setsOverlap(const FirstCharacterSet& one, const FirstCharacterSet& other) const
+    {
+        if (one.includesEndOfInput && other.includesEndOfInput)
+            return true;
+        for (unsigned index : one.spanIndexes) {
+            for (unsigned otherIndex : other.spanIndexes) {
+                if (index == otherIndex || spansOverlap(m_characterSpans[index], m_characterSpans[otherIndex]))
+                    return true;
+            }
+        }
+        return false;
+    }
+
+    const CharacterClass* wordClassForBoundary(const PatternTerm& term)
+    {
+        return m_pattern.eitherUnicode() && term.ignoreCase() ? m_pattern.wordUnicodeIgnoreCaseCharCharacterClass() : m_pattern.wordcharCharacterClass();
+    }
+
+    bool matchesOnlyOneSideOfWordClass(const PatternTerm& term, CharacterClass* wordClass, bool matchesWordCharacters)
+    {
+        unsigned index = characterSpansIndex(term);
+        unsigned otherSide = characterSpansIndex(PatternTerm(wordClass, matchesWordCharacters, m_flags));
+        return index != unknownCharacterSpans && otherSide != unknownCharacterSpans && !spansOverlap(m_characterSpans[index], m_characterSpans[otherSide]);
+    }
+
+    static bool isFixedCharacterTerm(const PatternTerm& term)
+    {
+        return (term.type == PatternTerm::Type::PatternCharacter || term.type == PatternTerm::Type::CharacterClass) && term.quantityType == QuantifierType::FixedCount && term.quantityMaxCount && term.matchDirection() == Forward;
+    }
+
+    const CharacterClass* wordClassWithNoBoundaryBetween(const PatternTerm& previous, const PatternTerm& term)
+    {
+        if (!isFixedCharacterTerm(previous))
+            return nullptr;
+        auto* wordClass = const_cast<CharacterClass*>(wordClassForBoundary(term));
+        for (bool matchesWordCharacters : { true, false }) {
+            if (matchesOnlyOneSideOfWordClass(term, wordClass, matchesWordCharacters) && matchesOnlyOneSideOfWordClass(previous, wordClass, matchesWordCharacters))
+                return wordClass;
+        }
+        return nullptr;
+    }
+
+    bool collectFirstCharacters(const PatternAlternative& alternative, unsigned firstTermIndex, const Continuation* continuation, bool passedAssertion, unsigned& budget, FirstCharacterSet& result)
+    {
+        if (!isSafeToRecurse() || alternative.matchDirection() != Forward) [[unlikely]]
+            return false;
+
+        auto& terms = alternative.m_terms;
+        for (unsigned i = firstTermIndex; i < terms.size(); ++i) {
+            const PatternTerm& term = terms[i];
+            if (!budget--)
+                return false;
+            switch (term.type) {
+            case PatternTerm::Type::AssertionWordBoundary:
+                if (!term.invert() && result.wordClassWithNoBoundaryHere == wordClassForBoundary(term))
+                    return true;
+                [[fallthrough]];
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::ParentheticalAssertion:
+                passedAssertion = true;
+                continue;
+            case PatternTerm::Type::AssertionEOL:
+                result.includesEndOfInput = true;
+                if (term.multiline()) {
+                    unsigned index = lineTerminatorSpansIndex();
+                    if (index == unknownCharacterSpans)
+                        return false;
+                    result.spanIndexes.append(index);
+                }
+                return true;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass: {
+                if (term.matchDirection() != Forward)
+                    return false;
+                if (!term.quantityMaxCount)
+                    continue;
+                unsigned index = characterSpansIndex(term);
+                if (index == unknownCharacterSpans)
+                    return false;
+                result.spanIndexes.append(index);
+                if (term.quantityMinCount)
+                    return true;
+                continue;
+            }
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                if (term.matchDirection() != Forward)
+                    return false;
+                if (!term.quantityMaxCount)
+                    continue;
+                Continuation afterGroup { &alternative, i + 1, term.quantityMaxCount > 1 ? &term : nullptr, continuation };
+                for (auto& nested : term.parentheses.disjunction->m_alternatives) {
+                    if (!collectFirstCharacters(*nested, 0, &afterGroup, passedAssertion, budget, result))
+                        return false;
+                }
+                if (term.quantityMinCount)
+                    return true;
+                continue;
+            }
+            default:
+                return false;
+            }
+        }
+
+        if (!continuation) {
+            result.reachedEndOfPattern = true;
+            return !passedAssertion;
+        }
+        if (!continuation->alternative) {
+            result.reachedEndOfGroup = true;
+            return true;
+        }
+        if (continuation->repeatedGroup) {
+            Continuation endOfGroup { nullptr, 0, nullptr, nullptr };
+            for (auto& nested : continuation->repeatedGroup->parentheses.disjunction->m_alternatives) {
+                if (!collectFirstCharacters(*nested, 0, &endOfGroup, passedAssertion, budget, result))
+                    return false;
+            }
+        }
+        return collectFirstCharacters(*continuation->alternative, continuation->nextTermIndex, continuation->outer, passedAssertion, budget, result);
+    }
+
+    bool collectFirstCharactersOfGroup(const PatternTerm& group, FirstCharacterSet& result)
+    {
+        unsigned budget = firstCharacterBudget;
+        Continuation endOfGroup { nullptr, 0, nullptr, nullptr };
+        for (auto& nested : group.parentheses.disjunction->m_alternatives) {
+            if (!collectFirstCharacters(*nested, 0, &endOfGroup, false, budget, result))
+                return false;
+        }
+        return !result.reachedEndOfGroup;
+    }
+
+    bool fixedPrefixesDiffer(const PatternAlternative& one, const PatternAlternative& other)
+    {
+        auto isAssertion = [](const PatternTerm& term) {
+            return term.type == PatternTerm::Type::AssertionBOL || term.type == PatternTerm::Type::AssertionEOL || term.type == PatternTerm::Type::AssertionWordBoundary;
+        };
+        unsigned index = 0;
+        unsigned otherIndex = 0;
+        unsigned taken = 0;
+        unsigned otherTaken = 0;
+        for (unsigned position = 0; position < maxFixedPrefixCompared; ++position) {
+            while (index < one.m_terms.size() && isAssertion(one.m_terms[index]))
+                ++index;
+            while (otherIndex < other.m_terms.size() && isAssertion(other.m_terms[otherIndex]))
+                ++otherIndex;
+            if (index == one.m_terms.size() || otherIndex == other.m_terms.size())
+                return false;
+            const PatternTerm& term = one.m_terms[index];
+            const PatternTerm& otherTerm = other.m_terms[otherIndex];
+            if (!isFixedCharacterTerm(term) || !isFixedCharacterTerm(otherTerm))
+                return false;
+            unsigned spans = characterSpansIndex(term);
+            unsigned otherSpans = characterSpansIndex(otherTerm);
+            if (spans == unknownCharacterSpans || otherSpans == unknownCharacterSpans)
+                return false;
+            if (spans != otherSpans && !spansOverlap(m_characterSpans[spans], m_characterSpans[otherSpans]))
+                return true;
+            if (term.quantityMaxCount == ++taken) {
+                ++index;
+                taken = 0;
+            }
+            if (otherTerm.quantityMaxCount == ++otherTaken) {
+                ++otherIndex;
+                otherTaken = 0;
+            }
+        }
+        return false;
+    }
+
+    static std::optional<unsigned> fixedSizeOfAlternative(const PatternAlternative& alternative)
+    {
+        unsigned size = 0;
+        for (auto& term : alternative.m_terms) {
+            if (!isFixedCharacterTerm(term) || term.quantityMaxCount > maxFixedPrefixCompared)
+                return std::nullopt;
+            size += term.quantityMaxCount.value();
+        }
+        return size;
+    }
+
+    static const PatternTerm* fixedCharacterTermAt(const PatternAlternative& alternative, unsigned position)
+    {
+        for (auto& term : alternative.m_terms) {
+            if (!isFixedCharacterTerm(term))
+                return nullptr;
+            if (position < term.quantityMaxCount.value())
+                return &term;
+            position -= term.quantityMaxCount.value();
+        }
+        return nullptr;
+    }
+
+    bool alternativesNeverNeedRetry(PatternDisjunction& disjunction, const Continuation& afterGroup, const PatternTerm* termBeforeGroup)
+    {
+        auto& alternatives = disjunction.m_alternatives;
+        if (alternatives.size() > maxAlternativesForDeterminism)
+            return false;
+        Vector<std::optional<FirstCharacterSet>, 8> firstCharacters;
+        Vector<std::optional<unsigned>, 8> fixedSizes;
+        Continuation endOfGroup { nullptr, 0, nullptr, nullptr };
+        for (auto& nested : alternatives) {
+            FirstCharacterSet first;
+            unsigned budget = firstCharacterBudget;
+            if (collectFirstCharacters(*nested, 0, &endOfGroup, false, budget, first) && !first.reachedEndOfGroup)
+                firstCharacters.append(WTF::move(first));
+            else
+                firstCharacters.append(std::nullopt);
+            fixedSizes.append(fixedSizeOfAlternative(*nested));
+        }
+
+        auto continuationRejects = [&](const PatternTerm& next, const PatternTerm* previous) {
+            unsigned index = characterSpansIndex(next);
+            if (index == unknownCharacterSpans)
+                return false;
+            FirstCharacterSet nextCharacters;
+            nextCharacters.spanIndexes.append(index);
+            FirstCharacterSet following;
+            following.wordClassWithNoBoundaryHere = previous ? wordClassWithNoBoundaryBetween(*previous, next) : nullptr;
+            unsigned budget = firstCharacterBudget;
+            const PatternAlternative& anyAlternative = *alternatives[0];
+            return collectFirstCharacters(anyAlternative, anyAlternative.m_terms.size(), &afterGroup, false, budget, following) && !following.reachedEndOfPattern && !setsOverlap(nextCharacters, following);
+        };
+
+        bool needsLongestFirst = false;
+        auto pairNeverNeedsRetry = [&](unsigned one, unsigned other) {
+            unsigned earlier = std::min(one, other);
+            unsigned later = std::max(one, other);
+            if (fixedPrefixesDiffer(*alternatives[earlier], *alternatives[later]))
+                return true;
+            if (!fixedSizes[later])
+                return false;
+            if (fixedSizes[earlier] && *fixedSizes[earlier] == *fixedSizes[later])
+                return true;
+            bool earlierIsShorter = fixedSizes[earlier] && *fixedSizes[earlier] < *fixedSizes[later];
+            unsigned shorter = earlierIsShorter ? earlier : later;
+            unsigned longer = earlierIsShorter ? later : earlier;
+            unsigned size = *fixedSizes[shorter];
+            const PatternTerm* next = fixedCharacterTermAt(*alternatives[longer], size);
+            if (!next)
+                return false;
+            const PatternTerm* previous = size ? fixedCharacterTermAt(*alternatives[shorter], size - 1) : termBeforeGroup;
+            if (!continuationRejects(*next, previous))
+                return false;
+            needsLongestFirst |= earlierIsShorter;
+            return true;
+        };
+
+        unsigned pairsCompared = 0;
+        if (alternatives.size() <= maxAlternativesComparedPairwise) {
+            for (unsigned i = 1; i < alternatives.size(); ++i) {
+                for (unsigned j = 0; j < i; ++j) {
+                    if (firstCharacters[i] && firstCharacters[j] && !setsOverlap(*firstCharacters[i], *firstCharacters[j]))
+                        continue;
+                    if (!pairNeverNeedsRetry(i, j))
+                        return false;
+                }
+            }
+        } else {
+            struct OwnedSpan {
+                char32_t begin;
+                char32_t end;
+                unsigned alternative;
+            };
+            Vector<OwnedSpan> spans;
+            for (unsigned i = 0; i < alternatives.size(); ++i) {
+                if (!firstCharacters[i] || firstCharacters[i]->includesEndOfInput) {
+                    for (unsigned j = 0; j < alternatives.size(); ++j) {
+                        if (j != i && (++pairsCompared > maxSpansSweptForDeterminism || !pairNeverNeedsRetry(i, j)))
+                            return false;
+                    }
+                    continue;
+                }
+                for (unsigned index : firstCharacters[i]->spanIndexes) {
+                    for (auto [begin, end] : m_characterSpans[index])
+                        spans.append({ begin, end, i });
+                }
+                if (spans.size() > maxSpansSweptForDeterminism)
+                    return false;
+            }
+            std::ranges::sort(spans, { }, &OwnedSpan::begin);
+            Vector<OwnedSpan, 8> open;
+            for (auto& span : spans) {
+                open.removeAllMatching([&](auto& other) {
+                    return other.end < span.begin;
+                });
+                for (auto& other : open) {
+                    if (other.alternative == span.alternative)
+                        continue;
+                    if (++pairsCompared > maxSpansSweptForDeterminism || !pairNeverNeedsRetry(span.alternative, other.alternative))
+                        return false;
+                }
+                open.append(span);
+            }
+        }
+
+        if (!needsLongestFirst)
+            return true;
+        for (auto& size : fixedSizes) {
+            if (!size)
+                return false;
+        }
+        std::stable_sort(alternatives.begin(), alternatives.end(), [](auto& one, auto& other) {
+            return *fixedSizeOfAlternative(*one) > *fixedSizeOfAlternative(*other);
+        });
+        for (auto& nested : alternatives)
+            nested->m_isLastAlternative = false;
+        alternatives.last()->m_isLastAlternative = true;
+        return true;
+    }
+
+    bool markPossessiveTerms(PatternAlternative& alternative, const Continuation* continuation)
+    {
+        if (!isSafeToRecurse() || alternative.matchDirection() != Forward) [[unlikely]]
+            return false;
+
+        bool isDeterministic = true;
+        auto& terms = alternative.m_terms;
+        for (unsigned i = 0; i < terms.size(); ++i) {
+            PatternTerm& term = terms[i];
+            auto startsUnlikeWhatFollows = [&](const FirstCharacterSet& first) {
+                FirstCharacterSet following;
+                following.wordClassWithNoBoundaryHere = first.wordClassWithNoBoundaryHere;
+                unsigned budget = firstCharacterBudget;
+                return collectFirstCharacters(alternative, i + 1, continuation, false, budget, following) && !setsOverlap(first, following);
+            };
+            switch (term.type) {
+            case PatternTerm::Type::AssertionBOL:
+            case PatternTerm::Type::AssertionEOL:
+            case PatternTerm::Type::AssertionWordBoundary:
+                break;
+            case PatternTerm::Type::PatternCharacter:
+            case PatternTerm::Type::CharacterClass: {
+                if (term.quantityType == QuantifierType::FixedCount)
+                    break;
+                if (term.quantityType == QuantifierType::Greedy && term.matchDirection() == Forward && !term.m_possessive) {
+                    FirstCharacterSet own;
+                    unsigned index = characterSpansIndex(term);
+                    if (index != unknownCharacterSpans) {
+                        own.spanIndexes.append(index);
+                        own.wordClassWithNoBoundaryHere = i ? wordClassWithNoBoundaryBetween(terms[i - 1], term) : nullptr;
+                        term.m_possessive = startsUnlikeWhatFollows(own);
+                    }
+                }
+                isDeterministic &= term.m_possessive;
+                break;
+            }
+            case PatternTerm::Type::ParentheticalAssertion:
+                for (auto& nested : term.parentheses.disjunction->m_alternatives)
+                    markPossessiveTerms(*nested, nullptr);
+                break;
+            case PatternTerm::Type::ParenthesesSubpattern: {
+                Continuation afterGroup { &alternative, i + 1, term.quantityMaxCount > 1 ? &term : nullptr, continuation };
+                bool groupIsDeterministic = term.matchDirection() == Forward;
+                for (auto& nested : term.parentheses.disjunction->m_alternatives)
+                    groupIsDeterministic &= markPossessiveTerms(*nested, &afterGroup);
+                if (groupIsDeterministic && term.parentheses.disjunction->m_alternatives.size() > 1)
+                    groupIsDeterministic = alternativesNeverNeedRetry(*term.parentheses.disjunction, afterGroup, i && term.quantityMaxCount == 1 ? &terms[i - 1] : nullptr);
+                if (groupIsDeterministic && term.quantityType != QuantifierType::FixedCount) {
+                    FirstCharacterSet first;
+                    groupIsDeterministic = term.quantityType == QuantifierType::Greedy && collectFirstCharactersOfGroup(term, first) && startsUnlikeWhatFollows(first);
+                }
+                if (groupIsDeterministic
+                    && term.quantityType == QuantifierType::Greedy
+                    && term.quantityMinCount <= 1
+                    && term.quantityMaxCount == quantifyInfinite
+                    && (term.capture() ? term.parentheses.lastSubpatternId == term.parentheses.subpatternId : !term.containsAnyCaptures())
+                    && !term.parentheses.isCopy
+                    && !term.parentheses.isTerminal
+                    && !term.parentheses.isStringList)
+                    term.m_possessive = true;
+                if (groupIsDeterministic
+                    && term.quantityMaxCount == 1
+                    && (term.quantityType == QuantifierType::Greedy || term.parentheses.disjunction->m_alternatives.size() > 1)
+                    && (term.capture() ? term.parentheses.lastSubpatternId == term.parentheses.subpatternId : !term.containsAnyCaptures())
+                    && !term.parentheses.isCopy
+                    && !term.parentheses.isStringList)
+                    term.m_possessive = true;
+                isDeterministic &= groupIsDeterministic;
+                break;
+            }
+            default:
+                isDeterministic = false;
+                break;
+            }
+        }
+        return isDeterministic;
+    }
+
+    Vector<CharacterSpans> m_characterSpans;
+    HashMap<uint64_t, unsigned> m_characterSpansIndexes;
+#endif
 
     // m_startsWithBOL means "every match of this alternative begins at the start of the input", which
     // is what optimizeBOL() turns into onceThrough. This pass is the authoritative source of the flag,

@@ -80,6 +80,8 @@ enum class TransitionKind : uint8_t {
 
     NoteFixedProperties = 22,
     NoteFixedAndImmutableProperties = 23,
+
+    AllocateTypedContiguous = 24,
 };
 
 static constexpr auto FirstNonPropertyTransitionKind = TransitionKind::AllocateUndecided;
@@ -91,6 +93,7 @@ inline bool changesIndexingType(TransitionKind transition)
     case TransitionKind::AllocateInt32:
     case TransitionKind::AllocateDouble:
     case TransitionKind::AllocateContiguous:
+    case TransitionKind::AllocateTypedContiguous:
     case TransitionKind::AllocateArrayStorage:
     case TransitionKind::AllocateSlowPutArrayStorage:
     case TransitionKind::SwitchToSlowPutArrayStorage:
@@ -115,8 +118,11 @@ inline IndexingType newIndexingType(IndexingType oldType, TransitionKind transit
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || oldType == CopyOnWriteArrayWithDouble);
         return (oldType & ~IndexingShapeAndWritabilityMask) | DoubleShape;
     case TransitionKind::AllocateContiguous:
-        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || oldType == CopyOnWriteArrayWithContiguous);
+        ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasTypedContiguous(oldType) || oldType == CopyOnWriteArrayWithContiguous);
         return (oldType & ~IndexingShapeAndWritabilityMask) | ContiguousShape;
+    case TransitionKind::AllocateTypedContiguous:
+        ASSERT(hasContiguous(oldType) && !isCopyOnWrite(oldType));
+        return (oldType & ~IndexingShapeAndWritabilityMask) | TypedContiguousShape;
     case TransitionKind::AllocateArrayStorage:
         ASSERT(!hasIndexedProperties(oldType) || hasUndecided(oldType) || hasInt32(oldType) || hasDouble(oldType) || hasContiguous(oldType));
         return (oldType & ~IndexingShapeAndWritabilityMask) | ArrayStorageShape;

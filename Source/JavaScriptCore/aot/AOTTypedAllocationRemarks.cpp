@@ -355,7 +355,7 @@ void convertAllocationAssertions(Program& program, Vector<String>& findings)
         return;
     BitVector isAssertion(program.functions.size());
     for (unsigned i = 0; i < program.functions.size(); ++i) {
-        auto& function = program.functions[i];
+        auto& function = std::as_const(program).functions[i];
         if (function.name != *name || function.isGenericEntrypoint())
             continue;
         if (isAllocationAssertion(function))

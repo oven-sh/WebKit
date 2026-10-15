@@ -56,6 +56,7 @@ public:
             if (static_cast<uint64_t>(string.offset) + string.length > bytes.size())
                 return "a string lies outside the program"_s;
             m_program.strings.append(bytes.subspan(string.offset, string.length));
+            m_program.mayRunInSeveralInstances |= equalSpans(m_program.strings.last(), "ModuleGraph"_s.span8());
             m_program.noteString(StringID(m_program.strings.size() - 1));
         }
         for (auto& declared : section<Format::DeclaredType>(m_header->declaredTypes))
@@ -71,108 +72,128 @@ public:
         types.object = types.intern(Type::object());
         types.anything = types.intern(Type::anything());
         types.integer = types.intern(Type::integer(Range::full()));
-        for (auto& shape : section<Format::Shape>(m_header->shapes)) {
-            Layout layout;
-            layout.kind = static_cast<LayoutKind>(shape.kind);
-            layout.name = StringID(shape.name);
-            layout.base = LayoutID(shape.base);
-            layout.constructor = FunctionID(shape.constructor);
-            if (layout.kind == LayoutKind::Environment && shape.flags & Format::ShapeMayBeReused)
-                layout.reuseVariable = VariableID(shape.environment);
-            else
-                layout.environment = LayoutID(shape.environment);
-            layout.isAllocated = shape.flags & Format::ShapeIsAllocated;
-            if (shape.declaredPath != Format::none && shape.declaredPath >= m_program.strings.size())
-                return "the path a shape is declared at is no string of the program"_s;
-            layout.declaredPath = StringID(shape.declaredPath);
-            layout.declaredLine = shape.declaredLine;
-            layout.mayBeFrozen = shape.flags & Format::ShapeMayBeFrozen;
-            layout.isLaidOut = shape.flags & Format::ShapeIsLaidOut;
-            layout.isEvaluatedOnce = shape.flags & Format::ShapeIsEvaluatedOnce;
-            layout.hasForeignRoot = shape.flags & Format::ShapeHasForeignRoot;
-            layout.hasFixedMembers = shape.flags & Format::ShapeHasFixedMembers;
-            layout.mayHaveOtherPrototype = shape.flags & Format::ShapeMayHaveOtherPrototype;
-            layout.hasStaticMemberOfUnknownName = shape.flags & Format::ShapeHasStaticMemberOfUnknownName;
-            layout.admitsForeignObjects = shape.flags & Format::ShapeAdmitsForeignObjects;
-            layout.isOpenedForLog = shape.flags & Format::ShapeIsOpenedForLog;
-            if (layout.isOpenedForLog && (!layout.admitsForeignObjects || !m_program.logsTypeErrors))
-                return "a shape is opened for the log, and admits no foreign objects or the program keeps no log"_s;
-            for (uint32_t member : slice(m_words, shape.members))
-                layout.members.append(LayoutID(member));
-            for (uint32_t member : slice(m_words, shape.membersByFit))
-                layout.membersByFit.append(LayoutID(member));
-            for (uint32_t specialization : slice(m_words, shape.specializations))
-                layout.specializations.append(LayoutID(specialization));
-            for (auto& from : slice(m_fields, shape.fields)) {
-                Field field;
-                field.name = StringID(from.name);
-                field.type = typeReliedOn(from.declaredType);
-                field.flags = (from.flags & (fieldIsOptional | fieldIsImmutable)) | (from.flags & Format::FieldIsMethod ? fieldIsMethod : 0) | (from.flags & Format::FieldIsAnnotated ? fieldIsAnnotated : 0);
-                if (layout.kind == LayoutKind::Environment && from.flags & Format::FieldIsNeverSeenUninitialized)
-                    field.flags |= fieldIsNeverSeenUninitialized | (from.flags & Format::FieldIsStoredOnce ? fieldIsStoredOnce : 0);
-                if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsNeverStored)
-                    field.flags |= fieldIsNeverStored;
-                if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsExpectedInt32)
-                    field.flags |= fieldIsExpectedInt32;
-                if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsSetAtCreation)
-                    field.flags |= fieldIsSetAtCreation;
-                if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldMayBeSetAtCreation)
-                    field.flags |= fieldMayBeSetAtCreation;
-                if (from.flags & Format::FieldDoesNotAdmitUndefined)
-                    field.flags |= fieldDoesNotAdmitUndefined;
-                if (from.flags & Format::FieldIsAbsentAtBirth) {
-                    if (layout.kind != LayoutKind::Instance || !(from.flags & Format::FieldIsOptional))
-                        return "a field that is absent at birth is not an optional field of a class"_s;
-                    field.flags |= fieldIsAbsentAtBirth;
+        auto shapes = section<Format::Shape>(m_header->shapes);
+        m_program.layouts.grow(shapes.size());
+        Vector<ASCIILiteral> whyShapesFailed(shapes.size());
+        Vector<Vector<std::pair<LayoutID, uint32_t>>> keysThatAreSymbolsOfShapes(shapes.size());
+        forEachIndexInParallel(shapes.size(), [&](unsigned index) {
+            whyShapesFailed[index] = [&]() -> ASCIILiteral {
+                auto& shape = shapes[index];
+                Layout layout;
+                layout.kind = static_cast<LayoutKind>(shape.kind);
+                layout.name = StringID(shape.name);
+                layout.base = LayoutID(shape.base);
+                layout.constructor = FunctionID(shape.constructor);
+                if (layout.kind == LayoutKind::Environment && shape.flags & Format::ShapeMayBeReused)
+                    layout.reuseVariable = VariableID(shape.environment);
+                else
+                    layout.environment = LayoutID(shape.environment);
+                layout.isAllocated = shape.flags & Format::ShapeIsAllocated;
+                if (shape.declaredPath != Format::none && shape.declaredPath >= m_program.strings.size())
+                    return "the path a shape is declared at is no string of the program"_s;
+                layout.declaredPath = StringID(shape.declaredPath);
+                layout.declaredLine = shape.declaredLine;
+                layout.mayBeFrozen = shape.flags & Format::ShapeMayBeFrozen;
+                layout.isLaidOut = shape.flags & Format::ShapeIsLaidOut;
+                layout.isEvaluatedOnce = shape.flags & Format::ShapeIsEvaluatedOnce;
+                layout.hasForeignRoot = shape.flags & Format::ShapeHasForeignRoot;
+                layout.hasFixedMembers = shape.flags & Format::ShapeHasFixedMembers;
+                layout.mayHaveOtherPrototype = shape.flags & Format::ShapeMayHaveOtherPrototype;
+                layout.hasStaticMemberOfUnknownName = shape.flags & Format::ShapeHasStaticMemberOfUnknownName;
+                layout.constructorMayBeReplaced = shape.flags & Format::ShapeConstructorMayBeReplaced;
+                layout.admitsForeignObjects = shape.flags & Format::ShapeAdmitsForeignObjects;
+                layout.isOpenedForLog = shape.flags & Format::ShapeIsOpenedForLog;
+                if (layout.isOpenedForLog && (!layout.admitsForeignObjects || !m_program.logsTypeErrors))
+                    return "a shape is opened for the log, and admits no foreign objects or the program keeps no log"_s;
+            layout.admitsOnlyOtherLayouts = shape.flags & Format::ShapeAdmitsOnlyOtherLayouts;
+            if (layout.admitsOnlyOtherLayouts && !layout.admitsForeignObjects)
+                return "a shape admits only other layouts, and admits no foreign objects"_s;
+                for (uint32_t member : slice(m_words, shape.members))
+                    layout.members.append(LayoutID(member));
+                for (uint32_t member : slice(m_words, shape.membersByFit))
+                    layout.membersByFit.append(LayoutID(member));
+                for (uint32_t specialization : slice(m_words, shape.specializations))
+                    layout.specializations.append(LayoutID(specialization));
+                auto fields = slice(m_fields, shape.fields);
+                layout.fields.reserveInitialCapacity(fields.size());
+                for (auto& from : fields) {
+                    Field field;
+                    field.name = StringID(from.name);
+                    field.type = typeReliedOn(from.declaredType);
+                    field.flags = (from.flags & (fieldIsOptional | fieldIsImmutable)) | (from.flags & Format::FieldIsMethod ? fieldIsMethod : 0) | (from.flags & Format::FieldIsAnnotated ? fieldIsAnnotated : 0);
+                    if (layout.kind == LayoutKind::Environment && from.flags & Format::FieldIsNeverSeenUninitialized)
+                        field.flags |= fieldIsNeverSeenUninitialized | (from.flags & Format::FieldIsStoredOnce ? fieldIsStoredOnce : 0);
+                    if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsNeverStored)
+                        field.flags |= fieldIsNeverStored;
+                    if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsExpectedInt32)
+                        field.flags |= fieldIsExpectedInt32;
+                    if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldIsSetAtCreation)
+                        field.flags |= fieldIsSetAtCreation;
+                    if (layout.kind != LayoutKind::Environment && from.flags & Format::FieldMayBeSetAtCreation)
+                        field.flags |= fieldMayBeSetAtCreation;
+                    if (from.flags & Format::FieldDoesNotAdmitUndefined)
+                        field.flags |= fieldDoesNotAdmitUndefined;
+                    if (from.flags & Format::FieldIsAbsentAtBirth) {
+                        if (layout.kind != LayoutKind::Instance || !(from.flags & Format::FieldIsOptional))
+                            return "a field that is absent at birth is not an optional field of a class"_s;
+                        field.flags |= fieldIsAbsentAtBirth;
+                    }
+                    if (from.flags & Format::FieldIsNeverSeenAbsent) {
+                        if (!isObjectLayout(layout.kind) || from.flags & (Format::FieldIsOptional | Format::FieldIsNeverStored))
+                            return "a field that is never seen absent is not a required field of an object"_s;
+                        // All stores go by name through the run time then, which counts a field among the keys when it finds it absent.
+                        if (!Options::auditAOTTypedAssertions())
+                            field.flags |= fieldIsNeverSeenAbsent | fieldIsNeverSeenAbsentAsWritten;
+                    }
+                    // The stores that make an object what it is born as are carried out the general way then, like any other.
+                    if (layout.kind != LayoutKind::Environment && Options::auditAOTTypedAssertions()) [[unlikely]]
+                        field.flags &= ~fieldIsImmutable;
+                    auto literals = slice(m_words, from.literals);
+                    if (literals.size() % 3)
+                        return "the literals of a field are not whole"_s;
+                    for (size_t i = 0; i < literals.size(); i += 3) {
+                        bool isNumber = literals[i] == static_cast<uint32_t>(Format::LiteralKind::Number);
+                        if (!isNumber && (literals[i] != static_cast<uint32_t>(Format::LiteralKind::String) || literals[i + 1] >= m_program.strings.size()))
+                            return "a literal of a field is neither a string of the program nor a number"_s;
+                        field.literals.append(isNumber ? Literal { StringID(), std::bit_cast<double>(static_cast<uint64_t>(literals[i + 2]) << 32 | literals[i + 1]) } : Literal { StringID(literals[i + 1]), 0 });
+                    }
+                    if (from.typeText != Format::none && from.typeText >= m_program.strings.size())
+                        return "the type text of a field is no string of the program"_s;
+                    field.typeText = StringID(from.typeText);
+                    if (from.onlyFunction != Format::none && from.onlyFunction >= numberOfFunctions)
+                        return "the only function of a field is no function of the program"_s;
+                    field.onlyFunction = FunctionID(from.onlyFunction);
+                    field.onlyFunctionIsFact = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionIsFact;
+                    field.onlyFunctionOrNil = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionOrNil;
+                    layout.fields.append(WTF::move(field));
                 }
-                if (from.flags & Format::FieldIsNeverSeenAbsent) {
-                    if (!isObjectLayout(layout.kind) || from.flags & (Format::FieldIsOptional | Format::FieldIsNeverStored))
-                        return "a field that is never seen absent is not a required field of an object"_s;
-                    // All stores go by name through the run time then, which counts a field among the keys when it finds it absent.
-                    if (!Options::auditAOTTypedAssertions())
-                        field.flags |= fieldIsNeverSeenAbsent | fieldIsNeverSeenAbsentAsWritten;
+                for (auto& method : slice(m_methods, shape.methods)) {
+                    bool isStatic = method.flags & Format::MethodIsStatic;
+                    if (method.name == Format::none) {
+                        // The type of the variable vouches for that.
+                        if (method.flags & Format::MethodKeyIsSymbol && !Options::auditAOTTypedAssertions())
+                            keysThatAreSymbolsOfShapes[index].append({ LayoutID(index), method.key });
+                        else
+                            (isStatic ? layout.hasStaticMemberOfUnknownName : layout.hasMethodOfUnknownName) = true;
+                    }
+                    (isStatic ? layout.staticMethods : layout.methods).append(Method { StringID(method.name), FunctionID(method.function), method.kind, method.key, !!(method.flags & Format::MethodMayBeReplaced) });
                 }
-                // The stores that make an object what it is born as are carried out the general way then, like any other.
-                if (layout.kind != LayoutKind::Environment && Options::auditAOTTypedAssertions()) [[unlikely]]
-                    field.flags &= ~fieldIsImmutable;
-                auto literals = slice(m_words, from.literals);
-                if (literals.size() % 3)
-                    return "the literals of a field are not whole"_s;
-                for (size_t i = 0; i < literals.size(); i += 3) {
-                    bool isNumber = literals[i] == static_cast<uint32_t>(Format::LiteralKind::Number);
-                    if (!isNumber && (literals[i] != static_cast<uint32_t>(Format::LiteralKind::String) || literals[i + 1] >= m_program.strings.size()))
-                        return "a literal of a field is neither a string of the program nor a number"_s;
-                    field.literals.append(isNumber ? Literal { StringID(), std::bit_cast<double>(static_cast<uint64_t>(literals[i + 2]) << 32 | literals[i + 1]) } : Literal { StringID(literals[i + 1]), 0 });
-                }
-                if (from.typeText != Format::none && from.typeText >= m_program.strings.size())
-                    return "the type text of a field is no string of the program"_s;
-                field.typeText = StringID(from.typeText);
-                if (from.onlyFunction != Format::none && from.onlyFunction >= numberOfFunctions)
-                    return "the only function of a field is no function of the program"_s;
-                field.onlyFunction = FunctionID(from.onlyFunction);
-                field.onlyFunctionIsFact = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionIsFact;
-                field.onlyFunctionOrNil = field.onlyFunction && layout.kind == LayoutKind::Environment && from.onlyFunctionFlags & Format::OnlyFunctionOrNil;
-                layout.fields.append(WTF::move(field));
-            }
-            for (auto& method : slice(m_methods, shape.methods)) {
-                bool isStatic = method.flags & Format::MethodIsStatic;
-                if (method.name == Format::none) {
-                    // The type of the variable vouches for that.
-                    if (method.flags & Format::MethodKeyIsSymbol && !Options::auditAOTTypedAssertions())
-                        m_keysThatAreSymbols.append({ LayoutID(m_program.layouts.size()), method.key });
-                    else
-                        (isStatic ? layout.hasStaticMemberOfUnknownName : layout.hasMethodOfUnknownName) = true;
-                }
-                (isStatic ? layout.staticMethods : layout.methods).append(Method { StringID(method.name), FunctionID(method.function), method.kind, method.key, !!(method.flags & Format::MethodMayBeReplaced) });
-            }
-            auto staticFields = slice(m_words, shape.staticFields);
-            for (size_t i = 0; i + 1 < staticFields.size(); i += 2)
-                layout.staticFields.append(StaticField { StringID(staticFields[i]), typeReliedOn(staticFields[i + 1]) });
-            layout.indexFields();
-            m_program.layouts.append(WTF::move(layout));
+                auto staticFields = slice(m_words, shape.staticFields);
+                for (size_t i = 0; i + 1 < staticFields.size(); i += 2)
+                    layout.staticFields.append(StaticField { StringID(staticFields[i]), typeReliedOn(staticFields[i + 1]) });
+                layout.indexFields();
+                m_program.layouts[index] = WTF::move(layout);
+                return { };
+            }();
+        });
+        for (ASCIILiteral whyFailed : whyShapesFailed) {
+            if (!whyFailed.isNull())
+                return whyFailed;
         }
+        for (auto& keys : keysThatAreSymbolsOfShapes)
+            m_keysThatAreSymbols.appendVector(keys);
         for (auto& layout : m_program.layouts)
-            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !layout.isOpenedForLog && !Options::auditAOTTypedAssertions();
+            layout.mayGiveUp = layout.kind == LayoutKind::Record && layout.isAllocated && layout.admitsForeignObjects && !layout.checksForeignObjects() && !Options::auditAOTTypedAssertions();
         for (auto& view : m_program.layouts) {
             if (view.admitsForeignObjects)
                 continue;
@@ -180,6 +201,10 @@ public:
                 if (member.index() < m_program.layouts.size())
                     m_program.layouts[member.index()].mayGiveUp = false;
             }
+        }
+        for (auto& layout : m_program.layouts) {
+            if (layout.mayGiveUp)
+                layout.mayBeFrozen = false;
         }
         // Every store goes by name through the run time then, which holds the value to the field of the object's own layout. Typed code
         // stores through a view what the field of the VIEW takes. An ordinary image has room for that, because the fields share a slot that
@@ -230,18 +255,29 @@ public:
                 field.place = m_program.numberOfStaticFieldPlaces++;
             }
         }
-        for (auto& from : section<Format::Module>(m_header->modules)) {
-            Module module;
-            module.path = StringID(from.path);
-            module.initializer = FunctionID(from.initializer);
-            if (from.displayPath != Format::none && from.displayPath >= m_program.strings.size())
-                return "the display path of a module is no string of the program"_s;
-            module.displayPath = StringID(from.displayPath);
-            module.lineTableSize = from.lineTable.count;
-            if (!readLineTable(slice(bytes, from.lineTable), module))
-                return "the line table of a module is malformed"_s;
-            module.printed = slice(bytes, from.printed);
-            m_program.modules.append(WTF::move(module));
+        auto modules = section<Format::Module>(m_header->modules);
+        m_program.modules.grow(modules.size());
+        Vector<ASCIILiteral> whyModulesFailed(modules.size());
+        forEachIndexInParallel(modules.size(), [&](unsigned index) {
+            whyModulesFailed[index] = [&]() -> ASCIILiteral {
+                auto& from = modules[index];
+                Module module;
+                module.path = StringID(from.path);
+                module.initializer = FunctionID(from.initializer);
+                if (from.displayPath != Format::none && from.displayPath >= m_program.strings.size())
+                    return "the display path of a module is no string of the program"_s;
+                module.displayPath = StringID(from.displayPath);
+                module.lineTableSize = from.lineTable.count;
+                if (!readLineTable(slice(bytes, from.lineTable), module))
+                    return "the line table of a module is malformed"_s;
+                module.printed = slice(bytes, from.printed);
+                m_program.modules[index] = WTF::move(module);
+                return { };
+            }();
+        });
+        for (ASCIILiteral whyFailed : whyModulesFailed) {
+            if (!whyFailed.isNull())
+                return whyFailed;
         }
         auto functions = section<Format::Function>(m_header->functions);
         m_program.functions.reserveInitialCapacity(2 * functions.size());
@@ -249,7 +285,7 @@ public:
         Vector<Vector<std::pair<LayoutID, uint32_t>>> closuresMadeOnce(functions.size());
         forEachIndexInParallel(functions.size(), [&](unsigned i) {
             m_program.functions[i] = read(functions[i]);
-            auto& function = m_program.functions[i];
+            auto& function = std::as_const(m_program).functions[i];
             for (auto& value : function.values) {
                 if (value.opcode != Opcode::NewClosureOnce)
                     continue;
@@ -317,14 +353,14 @@ public:
             uint32_t visibility = builtinFunctions[i + 2];
             if (i && id <= builtinFunctions[i - 3])
                 return "the builtin functions are not in the order of their numbers"_s;
-            if (index >= m_program.functions.size() || !m_program.functions[index].captureTypes.isEmpty())
+            if (index >= m_program.functions.size() || !std::as_const(m_program).functions[index].captureTypes.isEmpty())
                 return "a builtin function is no function of the program that captures nothing"_s;
             if (visibility > static_cast<uint32_t>(ImplementationVisibility::PrivateRecursive))
                 return "a builtin function has no such visibility"_s;
             m_program.functions[index].flags |= Format::FunctionIsUsedAsValue;
             m_program.builtinFunctions.append({ id, FunctionID(index), visibility });
         }
-        for (auto& function : m_program.functions) {
+        for (auto& function : std::as_const(m_program).functions) {
             if (function.has(Format::FunctionIsOfBuiltinModule) && function.module && !m_program.modules[function.module.index()].initializer)
                 m_program.filesOfBuiltinFunctions.set(function.module.index());
         }
@@ -767,6 +803,8 @@ private:
             value.assertedType = assertedTypeAt(from.type);
             return;
         case Opcode::Cast:
+            if (value.notesMisfitAtCaller() && (!m_program.logsTypeErrors || value.castReason() != CastReason::Claim))
+                m_failed = true;
             if (value.castReason() != CastReason::Upcast)
                 value.assertedType = assertedTypeAt(from.type);
             return;
@@ -860,6 +898,14 @@ private:
                 m_failed = true;
                 break;
             }
+            if (value.opcode == Opcode::Call || value.opcode == Opcode::CallMethod || value.opcode == Opcode::CallDirect || value.opcode == Opcode::Operation) {
+                if (value.immediates[1] != Format::none && value.immediates[1] != Format::CallIsInTailPosition) {
+                    m_failed = true;
+                    break;
+                }
+                value.isInTailPosition = value.immediates[1] == Format::CallIsInTailPosition;
+                value.immediates[1] = Format::none;
+            }
             if (value.opcode == Opcode::StrictEq && value.immediates[0] != Format::none) {
                 m_failed = true;
                 break;
@@ -894,7 +940,7 @@ private:
                 value.prediction = typeAt(from.prediction);
             // The type a cast holds its operand to is the type of the cast, but for a coercion.
             if (value.opcode == Opcode::Cast) {
-                if (uint32_t freshness = from.immediates[1] >> Format::freshnessShift; (from.immediates[1] & 0xff) > static_cast<uint32_t>(CastReason::Coerce)
+                if (uint32_t freshness = from.immediates[1] >> Format::freshnessShift & 3; (from.immediates[1] & 0xff) > static_cast<uint32_t>(CastReason::Coerce)
                     || freshness > static_cast<uint32_t>(Format::Freshness::WholeGraph) || (freshness && value.castReason() != CastReason::Coerce && !(value.castReason() == CastReason::As && freshness == static_cast<uint32_t>(Format::Freshness::TopLevel))))
                     m_failed = true;
                 TypeID coercedTo = value.castReason() == CastReason::Coerce ? typeAt(from.immediates[0]) : TypeID();

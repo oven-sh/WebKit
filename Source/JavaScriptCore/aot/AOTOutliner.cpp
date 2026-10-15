@@ -303,7 +303,12 @@ private:
                 break;
             case InstructionInCode::Kind::Pinned:
             case InstructionInCode::Kind::AddressOfTable:
+                break;
             case InstructionInCode::Kind::End:
+#if CPU(X86_64) && OS(LINUX)
+                if (code.bytes[instruction.offset] == trapInstruction && !std::ranges::binary_search(info.faultingAccesses, instruction.offset, { }, &CompiledFunctionInfo::FaultingAccess::codeOffset))
+                    pollAtPrologue = instruction.offset;
+#endif
                 break;
             }
             ++unit;

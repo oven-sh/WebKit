@@ -18,6 +18,8 @@ runtime RegExpExec : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string
 runtime RegExpTest : RuntimeState size_t (JSCell* regExp, JSCell* string)
 runtime RegExpExecFound : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)
 runtime RegExpTestFound : RuntimeState size_t (JSCell* regExp, JSCell* string)
+runtime RegExpTestBoxed : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)
+runtime RegExpTestFoundBoxed : RuntimeState EncodedJSValue (JSCell* regExp, JSCell* string)
 runtime NewRegExpLiteral : RuntimeState JSCell* (uint32_t source, uint32_t flags, uint32_t offset)
 runtime SharedRegExpLiteral : RuntimeState JSCell* (uint32_t offset, uint32_t source, uint32_t flags)
 runtime NewRegExp : RuntimeState JSCell* (JSCell* source, uint32_t flags)

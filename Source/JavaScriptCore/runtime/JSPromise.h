@@ -264,6 +264,14 @@ public:
     void setSlot(VM& vm, JSValue value) { m_slot.set(vm, this, value); }
     void clearSlot() { m_slot.clear(); }
 #if USE(BUN_JSC_ADDITIONS)
+    struct InlineJob {
+        InternalMicrotask task;
+        JSValue context;
+        JSValue asyncContext;
+    };
+    std::optional<InlineJob> tryFulfillTakingInlineJob(VM&, JSValue argument);
+#endif
+#if USE(BUN_JSC_ADDITIONS)
 private:
 #endif
 

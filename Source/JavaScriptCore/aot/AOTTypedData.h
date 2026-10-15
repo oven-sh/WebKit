@@ -8,6 +8,7 @@
 #if ENABLE(AOT)
 
 #include "JSCJSValue.h"
+#include "MarkedBlockCage.h"
 #include <span>
 #include <wtf/StdLibExtras.h>
 #include <wtf/Vector.h>
@@ -123,7 +124,8 @@ inline bool refersToNumberBox(int32_t word) { return word > nullInt32 && word < 
 
 // Store::Cell32 and Store::OptionalCell32. Every cell the type of such a slot admits is in a MarkedBlock, so it is 16-byte aligned and within the
 // MarkedBlockCage: MarkedBlockCage::encode() and decode(). What is no cell is the low half of its JSValue, which is below every index.
-static constexpr unsigned cell32Shift = 3;
+static constexpr unsigned cell32Shift = MarkedBlockCage::shift;
+static constexpr bool cell32IsPointer = false;
 static constexpr uint32_t absentCell32 = 0;
 static constexpr uint32_t nullCell32 = 2;
 static constexpr uint32_t undefinedCell32 = 10;
@@ -220,11 +222,14 @@ struct RuntimeShapeTest {
     uint32_t shapeOfView;
     // For error messages: the type's name (a string index, may be the empty string), and the offset in Data of its ViewFields.
     // The offset is 0 when shapeOfView is set: then the LayoutData lists the fields.
-    uint32_t name;
+    uint32_t name : 31;
+    uint32_t hasDeclaredPlace : 1;
     uint32_t fields;
     // Where the type is declared: a string, or UINT32_MAX, and the line. See Format::Shape.
     uint32_t declaredPath;
     uint32_t declaredLine;
+    static constexpr uint32_t sizeWhereViewHasShape = 16;
+    static constexpr uint32_t sizeWithoutDeclaredPlace = 24;
 };
 
 // The properties an interface or type alias declares, when no object is allocated as that type. Only error messages read this.
@@ -277,12 +282,16 @@ struct RuntimeType {
     static constexpr uint8_t hasOneIntegerBit = 16;
     static constexpr uint8_t hasIntegersBit = 32;
     static constexpr uint8_t isOpenedForLogBit = 64;
+    static constexpr uint8_t admitsOnlyOtherLayoutsBit = 128;
     bool allowsAnyObject() const { return bits & allowsAnyObjectBit; }
     bool allowsAnyFunction() const { return bits & allowsAnyFunctionBit; }
     // One of the views does: any object is of the type. The views say which objects of the program are accessed in place, and what `as`
     // makes of a plain object. See Layout::admitsForeignObjects in AOTTypedIR.h.
-    bool admitsForeignObjects() const { return bits & (admitsForeignObjectsBit | isOpenedForLogBit); }
+    bool admitsForeignObjects() const { return bits & (admitsForeignObjectsBit | isOpenedForLogBit | admitsOnlyOtherLayoutsBit); }
     bool isOpenedForLog() const { return bits & isOpenedForLogBit; }
+    bool admitsOnlyOtherLayouts() const { return bits & admitsOnlyOtherLayoutsBit; }
+    bool checksForeignObjects() const { return bits & (isOpenedForLogBit | admitsOnlyOtherLayoutsBit); }
+    bool admitsUncheckedObjects() const { return bits & (admitsForeignObjectsBit | isOpenedForLogBit); }
     bool admitsForeignObjectsByNature() const { return bits & admitsForeignObjectsBit; }
     uint32_t numberOfViews() const { return viewsCount; }
     uint32_t numberOfJSTypes() const { return jsTypesCount; }
@@ -308,10 +317,16 @@ struct RuntimeType {
 
 // A string or a number that a literal type stands for.
 struct LiteralData {
-    uint32_t isNumber;
-    uint32_t string;
-    double number;
+    static constexpr uint32_t tagOfString = 0xfffe0000;
+    uint32_t low;
+    uint32_t high;
+    static LiteralData ofString(uint32_t string) { return { string, tagOfString }; }
+    static LiteralData ofNumber(double number) { return { static_cast<uint32_t>(std::bit_cast<uint64_t>(number)), static_cast<uint32_t>(std::bit_cast<uint64_t>(number) >> 32) }; }
+    bool isNumber() const { return high != tagOfString; }
+    uint32_t string() const { return low; }
+    double number() const { return std::bit_cast<double>(static_cast<uint64_t>(high) << 32 | low); }
 };
+static_assert(sizeof(LiteralData) == 8);
 
 struct FieldTypes {
     // The offsets of RuntimeTypes in Data. What the slot holds, which is the widest of the types of the fields that share it: no more than
@@ -371,12 +386,13 @@ static constexpr uint32_t methodTakesEnvironment = 2;
 static constexpr uint32_t methodMayBeReplaced = 4;
 
 struct MethodData {
-    uint32_t name;
+    uint32_t name : 24;
+    uint32_t kind : 4; // Format::MethodKind
+    uint32_t flags : 4;
     // The generic entrypoint.
     uint32_t function;
-    uint32_t kind; // Format::MethodKind
-    uint32_t flags;
 };
+static_assert(sizeof(MethodData) == 8);
 
 struct ClassData {
     uint32_t base;
@@ -389,6 +405,22 @@ struct ClassData {
     uint32_t firstStaticFieldPlace;
 };
 static_assert(sizeof(ClassData) == 32);
+
+struct RareLayoutData {
+    uint32_t sizeWithRoomToSpecialize;
+    uint32_t numberOfSpecializations;
+    uint32_t specializationsOffset;
+    uint32_t extensionSize;
+    uint32_t discriminant;
+    uint32_t fieldsByNameOffset;
+    uint32_t literalsWithoutFieldOffset;
+};
+
+struct MessageLayoutData {
+    uint32_t typeTextsOffset;
+    uint32_t declaredPath;
+    uint32_t declaredLine;
+};
 
 struct LayoutData {
     static constexpr uint32_t noBase = UINT32_MAX;
@@ -409,6 +441,9 @@ struct LayoutData {
     uint8_t hasPrototypeAheadOfClassObject : 1;
     uint8_t makesClassObjectWhenChanged : 1;
     uint8_t mayBeMadeByNew : 1;
+    uint8_t constructorMayBeReplaced : 1;
+    uint8_t hasRareData : 1;
+    uint8_t hasMessageData : 1;
     uint32_t index;
     uint32_t shape;
     uint32_t name;
@@ -419,20 +454,24 @@ struct LayoutData {
         uint32_t numberOfDescribedVariables;
     };
     int32_t referencesOffset;
-    uint32_t sizeWithRoomToSpecialize;
     uint32_t ordersOffset;
-    uint32_t numberOfSpecializations;
-    uint32_t extensionSize;
-    uint32_t specializationsOffset;
-    uint32_t discriminant;
-    uint32_t fieldsByNameOffset;
-    uint32_t typeTextsOffset;
-    uint32_t literalsWithoutFieldOffset;
-    uint32_t declaredPath;
-    uint32_t declaredLine;
+    const RareLayoutData& rareData() const { return reinterpret_cast<const RareLayoutData*>(this)[-1]; }
+    RareLayoutData& rareData() { return const_cast<RareLayoutData&>(const_cast<const LayoutData*>(this)->rareData()); }
+    const MessageLayoutData& messageData() const { return reinterpret_cast<const MessageLayoutData*>(reinterpret_cast<const uint8_t*>(this) - (hasRareData ? sizeof(RareLayoutData) : 0))[-1]; }
+    MessageLayoutData& messageData() { return const_cast<MessageLayoutData&>(const_cast<const LayoutData*>(this)->messageData()); }
+    uint32_t typeTextsOffset() const { return hasMessageData ? messageData().typeTextsOffset : 0; }
+    uint32_t declaredPath() const { return hasMessageData ? messageData().declaredPath : UINT32_MAX; }
+    uint32_t declaredLine() const { return hasMessageData ? messageData().declaredLine : 0; }
+    uint32_t sizeWithRoomToSpecialize() const { return hasRareData ? rareData().sizeWithRoomToSpecialize : size; }
+    uint32_t numberOfSpecializations() const { return hasRareData ? rareData().numberOfSpecializations : 0; }
+    uint32_t specializationsOffset() const { return hasRareData ? rareData().specializationsOffset : 0; }
+    uint32_t extensionSize() const { return hasRareData ? rareData().extensionSize : 0; }
+    uint32_t discriminant() const { return hasRareData ? rareData().discriminant : noBase; }
+    uint32_t fieldsByNameOffset() const { return hasRareData ? rareData().fieldsByNameOffset : 0; }
+    uint32_t literalsWithoutFieldOffset() const { return hasRareData ? rareData().literalsWithoutFieldOffset : 0; }
     bool isClass() const { return kind == LayoutKind::Instance; }
-    const ClassData& classData() const { return reinterpret_cast<const ClassData*>(this)[-1]; }
-    ClassData& classData() { return reinterpret_cast<ClassData*>(this)[-1]; }
+    const ClassData& classData() const { return reinterpret_cast<const ClassData*>(reinterpret_cast<const uint8_t*>(this) - (hasRareData ? sizeof(RareLayoutData) : 0) - (hasMessageData ? sizeof(MessageLayoutData) : 0))[-1]; }
+    ClassData& classData() { return const_cast<ClassData&>(const_cast<const LayoutData*>(this)->classData()); }
     uint32_t base() const { return isClass() ? classData().base : noBase; }
     const FieldData* fields() const { return reinterpret_cast<const FieldData*>(this + 1); }
     std::span<const MethodData> methods() const { return { reinterpret_cast<const MethodData*>(fields() + numberOfFields), isClass() ? classData().numberOfMethods : 0 }; }
@@ -441,10 +480,12 @@ struct LayoutData {
     std::span<const FieldData> staticFields() const { return { variables(), isClass() ? classData().numberOfStaticFields : 0 }; }
     std::span<const VariableData> describedVariables() const { return { reinterpret_cast<const VariableData*>(reinterpret_cast<const uint8_t*>(this) + sizeOfEnvironment), numberOfDescribedVariables }; }
 };
-static_assert(sizeof(LayoutData) == 76 && offsetof(LayoutData, index) == 4 && offsetof(LayoutData, sizeWithRoomToSpecialize) == LayoutData::sizeOfEnvironment);
+static_assert(sizeof(LayoutData) == 36 && offsetof(LayoutData, index) == 4 && offsetof(LayoutData, ordersOffset) == LayoutData::sizeOfEnvironment);
 
 struct AllocationData {
-    uint32_t shape;
+    uint32_t shape : 31;
+    // A site may pick it by a discriminant that is no constant: see Instance::TypedAllocation::fieldTemplate.
+    uint32_t usesFieldTemplate : 1;
     // orderWordOf(order, born).
     uint32_t orderWord;
     // In bytes: that of the layout, or with room to be specialized.
@@ -452,9 +493,8 @@ struct AllocationData {
     // The function, by the number of its general entry, whose one closure has as its `prototype` the prototype of the objects.
     // LayoutData::noBase: Object.prototype, or that of the class.
     uint32_t constructedBy;
-    // A site may pick it by a discriminant that is no constant: see Instance::TypedAllocation::fieldTemplate.
-    uint32_t usesFieldTemplate;
 };
+static_assert(sizeof(AllocationData) == 16);
 
 // The byte of a function at Data::functionKindsOffset: its Format::FunctionKind, and for a generic entrypoint what the function is
 // declared as, which decides what its closures are as objects.
@@ -465,6 +505,7 @@ static constexpr uint8_t functionIsGenerator = 16;
 static constexpr uint8_t functionIsHiddenInStackTraces = 32;
 // A plain function that asks for `new.target`, and its generic entrypoint: see State::newTarget.
 static constexpr uint8_t functionReadsNewTarget = 64;
+static constexpr uint8_t moduleIsCommonJS = functionReadsNewTarget;
 // See Format::FunctionIsOfBuiltinModule. Also its generic entrypoint.
 static constexpr uint8_t functionIsOfBuiltinModule = 128;
 // Which of Instance::typedClosureStructureIDs a closure of the function has.
@@ -521,7 +562,9 @@ struct Data {
 
     uint32_t magic;
     uint32_t numberOfStrings;
-    uint32_t stringsOffset; // Pairs of offset and length.
+    uint32_t stringsOffset; // Right behind this header, a word each: the offset above the length. Length 0: what is above it numbers a pair of offset and length at listedStringsOffset.
+    static constexpr unsigned bitsOfStringLength = 8;
+    uint32_t listedStringsOffset;
     // A bit per string: some operation compares it or takes it for a key.
     uint32_t atomStringsOffset;
     // The constants of the program that are not ASCII, as the engine holds them. Threes, in the order of the first: the number of the string, the offset of its characters, their number, with isDecodedTo16Bits.
@@ -586,6 +629,7 @@ struct Data {
     uint32_t functionLengthsOffset; // For each from firstFunctionClosuresGoBy to endOfFunctionsClosuresGoBy, its `length` property: in 8 bits where functionLengthsAreBytes, else in 16. The offset is of where that of function 0 would stand.
     uint32_t moduleEvaluationsOffset;
     uint32_t slimClosuresOffset;
+    uint32_t givenNamesOffset;
     uint32_t firstFunctionClosuresGoBy;
     uint32_t endOfFunctionsClosuresGoBy;
     uint32_t rowsLeftOutAheadOfClosures;
@@ -631,6 +675,7 @@ struct Data {
     // time lets it go on. See State::assertionFailed().
     uint32_t isCompiledForAudit;
     uint32_t logsTypeErrors;
+    uint32_t mayRunInSeveralInstances;
     uint32_t numberOfWordsOfSites;
     uint32_t sitesOffset;
     // The program was compiled with Options::countAOTTypedAllocations(): every allocation calls the run time, which counts.
@@ -667,6 +712,15 @@ struct Data {
     static constexpr uint32_t stringBeginsWithDigit = 1u << 28;
 
     template<typename T> const T* at(uint32_t offset) const { return reinterpret_cast<const T*>(reinterpret_cast<const uint8_t*>(this) + offset); }
+    uint32_t offsetOfClass(uint32_t index) const
+    {
+        const uint32_t* groups = at<uint32_t>(classesOffset);
+        uint32_t members = groups[index / 32 * 2];
+        uint32_t bit = 1u << index % 32;
+        if (!(members & bit))
+            return 0;
+        return groups[(numberOfLayoutIndices + 31) / 32 * 2 + groups[index / 32 * 2 + 1] + std::popcount(members & (bit - 1))];
+    }
     uint32_t lengthOfFunction(uint32_t function) const { return functionLengthsAreBytes ? at<uint8_t>(functionLengthsOffset)[function] : at<uint16_t>(functionLengthsOffset)[function]; }
     std::span<const uint32_t> row(uint32_t number) const
     {
@@ -674,20 +728,27 @@ struct Data {
         return { starts + starts[number], starts[number + 1] - starts[number] };
     }
     bool isEntryPoint(uint32_t entryOffsetOfModule) const { return std::ranges::binary_search(std::span { at<uint32_t>(entryPointsOffset), numberOfEntryPoints }, entryOffsetOfModule); }
+    std::array<uint32_t, 2> offsetAndSizeOfString(uint32_t index) const
+    {
+        uint32_t word = at<uint32_t>(stringsOffset)[index];
+        if (uint32_t size = word & ((1u << bitsOfStringLength) - 1)) [[likely]]
+            return { word >> bitsOfStringLength, size };
+        return at<std::array<uint32_t, 2>>(listedStringsOffset)[word >> bitsOfStringLength];
+    }
     std::span<const uint8_t> string(uint32_t index) const
     {
-        const uint32_t* pair = at<uint32_t>(stringsOffset) + 2 * index;
-        if (!pair[0]) [[unlikely]]
+        auto [offset, size] = offsetAndSizeOfString(index);
+        if (!offset) [[unlikely]]
             return encodedFormOfDecodedString(index);
-        return { at<uint8_t>(pair[0]), pair[1] };
+        return { at<uint8_t>(offset), size };
     }
     std::span<const uint8_t> stringInImage(uint32_t index) const
     {
-        const uint32_t* pair = at<uint32_t>(stringsOffset) + 2 * index;
-        return { at<uint8_t>(pair[0]), pair[1] };
+        auto [offset, size] = offsetAndSizeOfString(index);
+        return { at<uint8_t>(offset), size };
     }
-    bool hasOnlyDecodedForm(uint32_t index) const { return !at<uint32_t>(stringsOffset)[2 * index]; }
-    uint32_t sizeOfString(uint32_t index) const { return at<uint32_t>(stringsOffset)[2 * index + 1]; }
+    bool hasOnlyDecodedForm(uint32_t index) const { return !offsetAndSizeOfString(index)[0]; }
+    uint32_t sizeOfString(uint32_t index) const { return offsetAndSizeOfString(index)[1]; }
     JS_EXPORT_PRIVATE std::span<const uint8_t> encodedFormOfDecodedString(uint32_t index) const;
     bool isAtomString(uint32_t index) const { return at<uint32_t>(atomStringsOffset)[index / 32] >> index % 32 & 1; }
     uint32_t stringFacts(uint32_t index) const { return at<uint32_t>(stringFactsOffset)[index]; }

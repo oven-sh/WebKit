@@ -13,6 +13,7 @@
 #include "WriteBarrier.h"
 #include <optional>
 #include <span>
+#include <wtf/ScopedLambda.h>
 #include <wtf/StackBounds.h>
 #include <wtf/Vector.h>
 #include <wtf/text/WTFString.h>
@@ -94,6 +95,7 @@ struct FunctionRef {
     };
     enum class ConstructPosition : bool { AtDivot, AtStart };
     JS_EXPORT_PRIVATE std::optional<ReportedPosition> reportedPositionFor(BytecodeIndex, ConstructPosition = ConstructPosition::AtDivot) const;
+    std::optional<ReportedPosition> decodeReportedPositionFor(BytecodeIndex, ConstructPosition) const;
     JS_EXPORT_PRIVATE bool constructsAt(BytecodeIndex) const;
 
     static constexpr uint32_t none = std::numeric_limits<uint32_t>::max();
@@ -133,6 +135,8 @@ JS_EXPORT_PRIVATE bool typedFunctionRejectsWhatItThrows(uint32_t function);
 JS_EXPORT_PRIVATE String nameOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE unsigned lengthOfTypedClosure(const JSFunction*);
 JS_EXPORT_PRIVATE String nameOfSlimClosure(JSObject*);
+JS_EXPORT_PRIVATE String writtenNameOfClosure(JSObject*);
+JS_EXPORT_PRIVATE String displayNameOfClosure(JSObject*);
 JS_EXPORT_PRIVATE void keepTypeErrorsThrown();
 JS_EXPORT_PRIVATE String typeErrorsThrown();
 JS_EXPORT_PRIVATE bool isSloppyPlainClosure(JSCell*);
@@ -151,6 +155,7 @@ struct RangeOfClosureWords {
 RangeOfClosureWords rangeOfClosureWordsIn(std::span<const uint8_t> image);
 // Whether the cell is a closure of the function, whichever of its entrypoints each of the two goes by.
 JS_EXPORT_PRIVATE bool isClosureOfTypedFunction(JSCell*, uint32_t function);
+JS_EXPORT_PRIVATE JSObject* withEveryPropertyInLine(JSGlobalObject*, JSObject*);
 
 namespace Typed {
 
@@ -158,6 +163,7 @@ namespace Typed {
 // as the program data names it (ProgramModule::entryOffset: SourceProvider::aotModuleID() less one). False where there is no image.
 JS_EXPORT_PRIVATE bool isEntryPoint(uint32_t module);
 JS_EXPORT_PRIVATE bool isModuleNamespace(JSCell*);
+JS_EXPORT_PRIVATE void detachModuleNamespace(JSGlobalObject*, JSObject*);
 Identifier tryMakeIdentifier(VM&, uint32_t identifier);
 // For the host's registry of its own modules. Whether the image has the module of this number: false where there is no image.
 JS_EXPORT_PRIVATE bool hasBuiltinModule(JSGlobalObject*, uint32_t id);
@@ -179,6 +185,9 @@ JS_EXPORT_PRIVATE DeclaredAs declaredAs(JSCell*);
 JS_EXPORT_PRIVATE bool isOfBuiltinModule(JSCell*);
 // What a compiled generator function or async generator function returns. It is no JSGenerator.
 JS_EXPORT_PRIVATE bool isGeneratorObject(JSCell*);
+JS_EXPORT_PRIVATE void reifyClassPrototypeIfNeeded(JSObject*);
+JS_EXPORT_PRIVATE bool forEachOwnPropertyOfCompiledObject(JSObject*, const ScopedLambda<bool(UniquedStringImpl&, JSValue)>&);
+std::optional<bool> hasOwnPropertyOfCompiledObject(JSObject*, UniquedStringImpl*);
 // After `prototype` has been stored to a function with putDirect(), which goes past the function's own methods. Any cell will do.
 JS_EXPORT_PRIVATE void didChangePrototypeProperty(VM&, JSCell* function);
 // For the host, right after it has made a global object that the built-ins table calls replaceable, before anything else sees it.
@@ -296,6 +305,7 @@ class FramesOfSites {
 public:
     explicit FramesOfSites(const ImageFunction&);
     unsigned next();
+    void skip(uint64_t numberOfSites);
 
 private:
     const uint8_t* m_inlineFrames { nullptr };

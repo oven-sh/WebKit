@@ -137,6 +137,8 @@ private:
         }
         if (value.inlineFrame)
             m_out.print(" frame ", value.inlineFrame);
+        if (FunctionID callee = value.parameterCheckCallee())
+            m_out.print(" parameter of f", callee.index());
         if (value.isInTailPosition)
             m_out.print(" tail");
     }
@@ -181,9 +183,9 @@ private:
             index(layout.constructor.index());
             m_out.print(" environment ");
             index(layout.environment.index());
-            m_out.print(layout.isLaidOut ? " laid out" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasForeignRoot ? " foreign root" : "", layout.hasFixedMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasStaticMemberOfUnknownName ? " unknown static names" : "");
+            m_out.print(layout.isLaidOut ? " laid out" : "", layout.isEvaluatedOnce ? " evaluated once" : "", layout.hasForeignRoot ? " foreign root" : "", layout.hasFixedMembers ? " fixed members" : "", layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.hasStaticMemberOfUnknownName ? " unknown static names" : "", layout.constructorMayBeReplaced ? " replaceable constructor" : "");
         }
-        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.isOpenedForLog ? " opened-for-the-log" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
+        m_out.print(layout.kind != LayoutKind::Instance && layout.mayHaveOtherPrototype ? " other prototypes" : "", layout.isAllocated ? " allocated" : "", layout.mayBeFrozen ? " frozen" : "", layout.admitsForeignObjects ? " foreign" : "", layout.isOpenedForLog ? " opened-for-the-log" : "", layout.admitsOnlyOtherLayouts ? " other-layouts-only" : "", layout.mayGiveUp ? " gives-up" : "", "\n");
         auto layouts = [&](ASCIILiteral what, const Vector<LayoutID>& list) {
             if (list.isEmpty())
                 return;
@@ -379,6 +381,8 @@ private:
             m_out.print(" ", builtin.holder, builtin.holder.isEmpty() ? "" : ".", builtin.name, "#", value.builtin().index());
             if (value.builtin() == Builtins::singleton().hasOriginalStructureOperation() && value.engineClass() != Format::none)
                 m_out.print(" ", Builtins::singleton().classes()[value.engineClass()].text);
+            if (value.receiverHasOriginalStructure)
+                m_out.print(" as made");
             break;
         }
         default:
@@ -632,32 +636,60 @@ void Program::dump(PrintStream& out, const Type& type) const
 
 void Functions::listValuesInOrder()
 {
-    unsigned count = m_functions.size();
     m_isListed.clear();
-    m_firstInOrder.fill(0, count + 1);
-    forEachIndexInParallel(count, [&](unsigned i) {
+    listForgottenValuesInOrder();
+}
+
+void Functions::listForgottenValuesInOrder()
+{
+    unsigned count = m_functions.size();
+    while (m_isListed.size() < count)
+        m_isListed.append(0);
+    Vector<uint32_t> forgotten;
+    for (unsigned i = 0; i < count; ++i) {
+        if (!m_isListed[i])
+            forgotten.append(i);
+    }
+    if (forgotten.isEmpty())
+        return;
+    if (forgotten.size() == count)
+        m_valuesInOrder.clear();
+    m_firstInOrder.grow(count);
+    m_numberInOrder.grow(count);
+    m_contents.grow(count);
+    forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
         uint32_t number = 0;
-        for (auto& block : m_functions[i].blocks)
+        for (auto& block : m_functions[forgotten[k]].blocks)
             number += block.values.size();
-        m_firstInOrder[i + 1] = number;
+        m_numberInOrder[forgotten[k]] = number;
     });
-    for (unsigned i = 0; i < count; ++i)
-        m_firstInOrder[i + 1] += m_firstInOrder[i];
-    m_valuesInOrder.clear();
-    m_valuesInOrder.growWithoutInitializing(m_firstInOrder[count]);
+    uint32_t end = m_valuesInOrder.size();
+    for (uint32_t i : forgotten) {
+        m_firstInOrder[i] = end;
+        end += m_numberInOrder[i];
+    }
+    m_valuesInOrder.growWithoutInitializing(end);
     auto ids = m_valuesInOrder.items<&ValueInOrder::id>();
     auto opcodes = m_valuesInOrder.items<&ValueInOrder::opcode>();
-    forEachIndexInParallel(count, [&](unsigned i) {
+    forEachIndexInParallel(forgotten.size(), [&](unsigned k) {
+        uint32_t i = forgotten[k];
         auto& function = m_functions[i];
         uint32_t next = m_firstInOrder[i];
+        Contents contents;
         for (auto& block : function.blocks) {
             for (ValueID id : block.values) {
                 ids[next] = id;
                 opcodes[next++] = function.at(id).opcode;
             }
+            contents.terminatorKinds |= 1u << static_cast<unsigned>(block.terminator.kind);
         }
+        for (auto& value : function.values) {
+            contents.opcodes.add(value.opcode);
+            contents.holdsPredictedClosure |= !!value.predictedClosure;
+        }
+        m_contents[i] = contents;
+        m_isListed[i] = 1;
     });
-    m_isListed.fill(1, count);
 }
 
 } } } // namespace JSC::AOT::Typed

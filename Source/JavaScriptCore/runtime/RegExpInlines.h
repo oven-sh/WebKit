@@ -166,7 +166,7 @@ ALWAYS_INLINE int RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalObject, VM
     m_rtMatchTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    if (s.length() - startOffset < m_minimumSize)
+    if (static_cast<int32_t>(s.length() - startOffset) < static_cast<int32_t>(m_minimumSize))
         return -1;
 
     noteUse<matchFrom>(vm);
@@ -326,7 +326,7 @@ ALWAYS_INLINE MatchResult RegExp::matchInlineOnce(JSGlobalObject* nullOrGlobalOb
     m_rtMatchOnlyTotalSubjectStringLen += (double)(s.length() - startOffset);
 #endif
 
-    if (s.length() - startOffset < m_minimumSize)
+    if (static_cast<int32_t>(s.length() - startOffset) < static_cast<int32_t>(m_minimumSize))
         return MatchResult::failed();
 
     noteUse<matchFrom>(vm);

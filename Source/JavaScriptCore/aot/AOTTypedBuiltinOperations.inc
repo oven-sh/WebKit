@@ -92,6 +92,9 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedObjectAssignToNew, Heap, JSCell*, (
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetOwnPropertyDescriptor, Heap, EncodedJSValue, (Instance*, EncodedJSValue object, EncodedJSValue key));
 AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedObjectCreate, Heap, JSCell*, (Instance*, JSCell* prototype));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSuspendAsyncFunction, Heap, void, (Instance*, JSCell* resumeClosure, EncodedJSValue awaited));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSaveFrameAndAwait, Heap, JSCell*, (Instance*, EncodedJSValue awaited, uint64_t frame, uint64_t bottom, uint64_t resumeAddress, uint64_t extra));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedAwaitWithSavedFrame, Heap, JSCell*, (Instance*, EncodedJSValue awaited, JSCell* saved));
+AOT_DECLARE_NOEXCEPT_TYPED_OPERATION(operationAOTTypedTakeStepAtOnceOrAwait, Heap, EncodedJSValue, (Instance*, EncodedJSValue awaited, JSCell* saved));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPromiseThen, RuntimeState, void, (Instance*, JSCell* promise, EncodedJSValue onFulfilled, EncodedJSValue onRejected, JSCell* derived));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedPromiseCatch, RuntimeState, JSCell*, (Instance*, JSCell* promise, EncodedJSValue onRejected));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedGetAsyncIteratorNext, Heap, EncodedJSValue, (Instance*, EncodedJSValue iterator));
@@ -104,6 +107,8 @@ AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpExec, RuntimeState, EncodedJS
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpTest, RuntimeState, size_t, (Instance*, JSCell* regExp, JSCell* string));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpExecFound, RuntimeState, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpTestFound, RuntimeState, size_t, (Instance*, JSCell* regExp, JSCell* string));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpTestBoxed, RuntimeState, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
+AOT_DECLARE_TYPED_OPERATION(operationAOTTypedRegExpTestFoundBoxed, RuntimeState, EncodedJSValue, (Instance*, JSCell* regExp, JSCell* string));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewRegExpLiteral, RuntimeState, JSCell*, (Instance*, uint32_t source, uint32_t flags, uint32_t offset));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedSharedRegExpLiteral, RuntimeState, JSCell*, (Instance*, uint32_t offset, uint32_t source, uint32_t flags));
 AOT_DECLARE_TYPED_OPERATION(operationAOTTypedNewRegExp, RuntimeState, JSCell*, (Instance*, JSCell* source, uint32_t flags));

@@ -48,7 +48,7 @@
     void appendStringOrNilToStringBuilder(const StackStringBuilder&, Boxed);
     void copyLatin1Characters(Pointer destination, Pointer source, Integer length);
     void appendToStringBuilder(const StackStringBuilder&, std::span<const ValueID> operands, bool isFinal);
-    CellPointer finishStringBuilder(const StackStringBuilder&, bool mayBeEmpty);
+    CellPointer finishStringBuilder(const StackStringBuilder&, bool mayBeEmpty, bool goesOnLiving = false);
     void initializeStringBuildersOnEdge(const Target&);
     void materializeFinalStringBuilderStates(const Block&);
     std::optional<Operand> tryLowerWithStringBuilder(ValueID, const Value&);
@@ -79,12 +79,33 @@
         B3::Variable* flags;
         // The loop reads its characters. Else only its length, and only that is there: a rope is not made flat to be asked how long it is, and a function that asks no more changes nothing.
         bool isOpened { false };
+        B3::Variable* cellOfCapturedVariable { nullptr };
     };
     // By loop, as m_loops.
     Vector<Vector<OpenedString, 2>> m_stringsOpenedInFrontOfLoops;
     void findStringsReadInLoops();
+    BitVector m_readsOfOpenedCapturedVariables;
+    UncheckedKeyHashMap<uint32_t, Vector<std::pair<unsigned, unsigned>, 1>, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_stringsOpenedAgainAfter;
+    bool isReadOfCapturedStringVariable(ValueID) const;
+    bool mayStoreToCapturedVariable(const Block&, size_t index, const Value& read) const;
+    bool findStoresToCapturedVariableInLoop(const Loop&, const Value& read, Vector<ValueID, 4>& stores) const;
+    void open(const OpenedString&);
+    void openStringsAgainAfter(ValueID);
     void openStringsInFrontOfLoopsEnteredBy(const Terminator&);
     const OpenedString* openedString(ValueID) const;
+    // What slice(), substring() or substr() yielded earlier in the function: the characters of the base from the one place to the other: none, if they are the wrong way round.
+    struct PartOfString {
+        StringReceiver base;
+        Integer lengthOfBase;
+        Integer from;
+        Integer to;
+    };
+    UncheckedKeyHashMap<uint32_t, PartOfString, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> m_partsOfStrings;
+    // Nothing in the function does more with them than ask for the length, for a character, or whether it is a text.
+    BitVector m_partsOfStringsThatAreOnlyLookedAt;
+    void findPartsOfStringsThatAreOnlyLookedAt();
+    const PartOfString* partOfStringMadeBy(ValueID) const;
+    Integer lengthOf(const PartOfString&);
     std::optional<Characters> charactersOfOpenedString(const StringReceiver&);
     // `s === "text"` that nothing uses but the Branch of its block: see lowerBranchOnText().
     struct ComparisonWithText {
@@ -98,6 +119,9 @@
     static constexpr size_t maxLengthOfTextComparedAtEverySite = 32;
     Word32 isTextOfLengthByStub(const StringReceiver&, ValueID constant, std::span<const uint8_t> text);
     Word32 isTextByStub(CellPointer string, ValueID constant);
+    static constexpr unsigned maxNumberOfTextsComparedByOneCallEach = 2;
+    void branchOnTextByOneCall(ValueID subject, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
+    void branchOnTextByOneCall(LValue, bool isString, ValueID constant, std::span<const uint8_t> text, LBasicBlock isText, LBasicBlock isOther);
     Characters charactersOfStringOfLength(const StringReceiver&, size_t length, LBasicBlock isNotAsLong, LBasicBlock otherwise);
     void lowerBranchOnText();
     unsigned numberOfPredecessorsOf(BlockID);

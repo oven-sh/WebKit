@@ -7,6 +7,7 @@
 #include "AOTRuntime.h"
 #include "CompilerHooks.h"
 #include "HeapIterationScope.h"
+#include "JSGlobalLexicalEnvironment.h"
 #include "JSModuleEnvironment.h"
 #include "JSModuleRecord.h"
 #include "JSModuleLoader.h"
@@ -37,12 +38,14 @@
 #include "AOTOperations.h"
 #include "AOTProgram.h"
 #include "AOTThunks.h"
+#include "AOTTypedCompactTable.h"
 #include "AOTTypedObject.h"
 #include "CCallHelpers.h"
 #include "CallLinkInfo.h"
 #include "CodeBlock.h"
 #include "DFGOperations.h"
 #include "HeapAnalyzer.h"
+#include "JITExceptions.h"
 #include "JITOperations.h"
 #include "JITThunks.h"
 #include "JSAsyncFunction.h"
@@ -218,7 +221,7 @@ RuntimeTable::RuntimeTable(VM& vm)
     set(Entry::VirtualCall, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualCall)));
     set(Entry::VirtualConstruct, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualConstruct)));
     set(Entry::VirtualTailCall, tagCodePtr<JITThunkPtrTag>(stubAddress(Stub::VirtualTailCall)));
-    set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationLookupExceptionHandler));
+    set(Entry::LookupExceptionHandler, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTLookupExceptionHandler));
     set(Entry::ThrowStackOverflowError, tagCFunctionPtr<void*, OperationPtrTag>(operationAOTThrowStackOverflowError));
     set(Entry::NativeCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_native_call_trampoline).taggedPtr());
     set(Entry::InternalFunctionCallTrampoline, LLInt::getCodePtr<JSEntryPtrTag>(llint_internal_function_call_trampoline).taggedPtr());
@@ -519,6 +522,8 @@ struct Instance::Collections {
     Vector<RefPtr<UniquedStringImpl>> namesOfCopiesExcludingThatWent;
     std::pair<Structure*, uint64_t> keyOfLastCopyForMore { nullptr, 0 };
     const Instance::CopyForMore* lastCopyForMore { nullptr };
+    UncheckedKeyHashMap<std::tuple<const void*, Structure*, Structure*, Structure*>, std::unique_ptr<Instance::SpreadLiteralPlan>> spreadLiteralPlans;
+    const Instance::SpreadLiteralPlan* lastSpreadLiteralPlan { nullptr };
     UncheckedKeyHashMap<std::pair<Structure*, const uint32_t*>, Instance::PropertyRunTarget> propertyRunTargets;
     UncheckedKeyHashMap<String, std::unique_ptr<uint32_t>> canonicalPropertyRuns;
     UncheckedKeyHashMap<std::tuple<Structure*, Structure*, const IdentifierSet*>, Instance::CopiedProperties> copiedProperties;
@@ -533,6 +538,7 @@ struct Instance::Collections {
         hasAddedWeakEntriesSinceLastCollection = true;
     }
     UncheckedKeyHashMap<JSFunction*, unsigned> learnedInlineCapacities;
+    UncheckedKeyHashMap<uint32_t, uint8_t, IntHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> learnedRoomOfRows;
     JSModuleLoader* loader { nullptr };
     UncheckedKeyHashMap<uint32_t, ScriptExecutable*> topLevelExecutables;
     UncheckedKeyHashMap<uint32_t, JSArray*, DefaultHash<uint32_t>, WTF::UnsignedWithZeroKeyHashTraits<uint32_t>> templateObjects;
@@ -627,6 +633,34 @@ Instance* Instance::of(JSFunction* function)
     return &ensure(structure->realm());
 }
 
+#if CPU(X86_64) && OS(LINUX)
+static Lock s_loopPollPagesLock;
+
+static Vector<std::pair<VM*, void*>>& loopPollPages()
+{
+    static NeverDestroyed<Vector<std::pair<VM*, void*>>> pages;
+    return pages;
+}
+
+static void setLoopPollPageProtected(void* page, bool isProtected)
+{
+    RELEASE_ASSERT(!mprotect(page, WTF::pageSize(), isProtected ? PROT_NONE : PROT_READ | PROT_WRITE));
+}
+
+void setLoopPollPagesProtected(VM& vm, bool isProtected)
+{
+    Locker locker { s_loopPollPagesLock };
+    for (auto& [owner, page] : loopPollPages()) {
+        if (owner == &vm)
+            setLoopPollPageProtected(page, isProtected);
+    }
+}
+#else
+void setLoopPollPagesProtected(VM&, bool)
+{
+}
+#endif
+
 Instance& Instance::ensure(JSModuleLoader* loader)
 {
     if (Instance* instance = loader->aotInstance())
@@ -665,7 +699,6 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     instance->keyedReads = static_cast<KeyedRead*>(OSAllocator::reserveAndCommit(sizeOfKeyedTables, OSAllocator::FastMallocPages));
     instance->keyedAdditions = reinterpret_cast<KeyedAddition*>(instance->keyedReads + numberOfKeyedReads);
     instance->keyedHas = reinterpret_cast<Slot*>(instance->keyedAdditions + numberOfKeyedAdditions);
-    instance->keyedStores = instance->keyedHas + numberOfKeyedHas;
     static_assert(!(numberOfNamedFields * sizeof(NamedField) % (16 * KB)));
     instance->namedFieldReads = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
     instance->namedFieldWrites = static_cast<NamedField*>(OSAllocator::reserveAndCommit(numberOfNamedFields * sizeof(NamedField), OSAllocator::FastMallocPages));
@@ -692,10 +725,23 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->code = static_cast<const uint8_t*>(image->code());
         instance->codeGranules = image->at<uint32_t>(image->header().codeGranulesOffset);
         instance->subsequentFunctionStarts = image->at<uint32_t>(image->header().functionStartsOffset) + 1;
+        for (uint32_t inAdapter : image->header().returnsIntoAdapters) {
+            const uint8_t* address = instance->code + image->header().stubCopies[0] + inAdapter;
+            if (address > stubAddress(Stub::EnterSavedFrame) && address <= stubAddress(Stub::LaySavedFrameOnStack))
+                instance->returnAddressOfSavedFrames = address;
+        }
+        RELEASE_ASSERT(instance->returnAddressOfSavedFrames);
     }
     instance->structureIDBase = JSC::structureIDBase();
     instance->cellCageBase = MarkedBlockCage::base();
+    instance->numberTag = JSValue::NumberTag;
+    instance->notCellMask = JSValue::NotCellMask;
     instance->numberBoxBase = Typed::NumberBoxTable::base();
+    instance->boxedNaN = JSValue::encode(jsNaN());
+    for (int integer = Instance::leastIntegerKeptAsDouble; integer <= Instance::greatestIntegerKeptAsDouble; ++integer)
+        instance->integersKeptAsDoubles[integer - Instance::leastIntegerKeptAsDouble] = integer;
+    for (size_t i = 0; i < std::size(Instance::bitsOfOtherDoublesKept); ++i)
+        instance->otherDoubles[i] = Instance::bitsOfOtherDoublesKept[i];
     instance->fieldIDAtDirectLocationBase = instance->structureIDBase + Structure::offsetOfFieldIDInSlot() - JSObject::offsetOfInlineStorage() / sizeof(EncodedJSValue) * sizeof(uint16_t);
     {
         auto idOf = [](Structure* structure) { return structure->id().bits(); };
@@ -735,6 +781,7 @@ Instance& Instance::ensure(JSModuleLoader* loader)
         instance->collections->arraysLackInheritedElements.install(globalObject->arrayPrototypeChainIsSaneWatchpointSet(), instance->arraysLackInheritedElements);
         instance->auxiliarySpace = &vm.auxiliarySpace();
         instance->cellSpace = &vm.cellSpace();
+        instance->knownGrowthsOfCompactTables = Typed::CompactTable::knownGrowths();
         instance->arrayAllocator = subspaceFor<JSArray>(vm)->allocatorFor(sizeof(JSArray), AllocatorForMode::EnsureAllocator).localAllocator();
         instance->ropeStringAllocator = subspaceFor<JSRopeString>(vm)->allocatorFor(sizeof(JSRopeString), AllocatorForMode::EnsureAllocator).localAllocator();
         RELEASE_ASSERT(static_cast<LocalAllocator*>(instance->arrayAllocator)->cellSize() == sizeof(JSArray));
@@ -778,9 +825,25 @@ Instance& Instance::ensure(JSModuleLoader* loader)
     if (instance->typed)
         instance->typed->adoptClosuresOfRealm(vm);
     vm.traps().registerMirror(instance->stackMirror);
+#if CPU(X86_64) && OS(LINUX)
+    if (instance->typed) {
+        Locker locker { s_loopPollPagesLock };
+        void* page = reinterpret_cast<char*>(instance) + offsetOfLoopPollPage();
+        loopPollPages().append({ &vm, page });
+        if (instance->stackMirror.trapAwareSoftStackLimit() == reinterpret_cast<void*>(StackManager::StopRequestMarkerValue))
+            setLoopPollPageProtected(page, true);
+    }
+#endif
     instance->barrierThreshold = vm.heap.barrierThreshold();
     instance->mutatorShouldBeFenced = vm.heap.mutatorShouldBeFenced();
     vm.m_aotInstances.append(instance);
+    PlaceTable::of(vm).didCreate(instance);
+    for (unsigned kind = 0; kind < PlaceTable::numberOfKinds; ++kind) {
+        for (unsigned form = 0; form < std::size(instance->handlersOfReadsByName); ++form)
+            instance->handlersOfReadsByName[form][kind] = stubAddress(handlerOfReadByName(form, static_cast<PlaceTable::Kind>(kind)));
+        for (unsigned variant = 0; variant < std::size(instance->handlersOfStoresByName); ++variant)
+            instance->handlersOfStoresByName[variant][kind] = stubAddress(handlerOfStoreByName(variant, static_cast<PlaceTable::Kind>(kind)));
+    }
     microtaskQueueingDidChange(vm);
     if (instance->typed && !globalObject->hasImmutableIntrinsics() && globalObject->aotInstance())
         instance->typed->captureBuiltinsOfRealm();
@@ -836,10 +899,30 @@ uint64_t Instance::prepareModuleCode(ModuleProgramExecutable* executable, JSScop
     if (typed && !typed->moduleRecord && scope->type() == ModuleEnvironmentType && typed->data.isEntryPoint(executable->programModule()->entryOffset)) {
         // An object of the program says what it is laid out as, not whose it is, and compiled code takes the variables of the modules from the Instance it runs in.
         for (Instance* other : vm.m_aotInstances) {
-            if (other == this || !other->typed || !other->typed->moduleRecord)
+            if (other == this || !other->typed || !other->typed->moduleRecord || (typed->data.mayRunInSeveralInstances && other->globalObject == globalObject))
                 continue;
             throwSyntaxError(globalObject, throwScope, withAOTErrorNote(makeString("The module "_s, executable->source().provider()->sourceURL(), " was compiled ahead of time and has been loaded already: another realm or loader cannot load it again"_s)));
             return 0;
+        }
+        JSGlobalLexicalEnvironment* lexical = globalObject->globalLexicalEnvironment();
+        for (JSScope* overlay = loader()->moduleScope(); overlay != lexical; overlay = overlay->next()) {
+            Vector<Identifier> names;
+            {
+                SymbolTable* table = uncheckedDowncast<JSLexicalEnvironment>(overlay)->symbolTable();
+                ConcurrentJSLocker locker(table->m_lock);
+                for (auto entry = table->begin(locker); entry != table->end(locker); ++entry) {
+                    if (!entry->key->isSymbol())
+                        names.append(Identifier::fromUid(vm, entry->key.get()));
+                }
+            }
+            for (auto& name : names) {
+                bool shadowsGlobal = lexical->symbolTable()->contains(name.impl()) || globalObject->hasProperty(globalObject, name);
+                RETURN_IF_EXCEPTION(throwScope, 0);
+                if (!shadowsGlobal)
+                    continue;
+                throwTypeError(globalObject, throwScope, withAOTErrorNote(makeString("The `globals` of a Bun.ModuleGraph cannot replace the global \""_s, name.string(), "\" for a module that was compiled ahead of time"_s)));
+                return 0;
+            }
         }
         typed->moduleRecord = uncheckedDowncast<JSModuleEnvironment>(scope)->moduleRecord();
         typed->importMeta = nullptr;
@@ -904,6 +987,12 @@ void* taggedSlimClosureEntrypoint()
 CodePtr<JSEntryPtrTag> resumeEntrypoint()
 {
     static void* entrypoint = tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterResume));
+    return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
+}
+
+CodePtr<JSEntryPtrTag> savedFrameEntrypoint()
+{
+    static void* entrypoint = tagCodePtr<JSEntryPtrTag>(stubAddress(Stub::EnterSavedFrame));
     return CodePtr<JSEntryPtrTag>::fromTaggedPtr(entrypoint);
 }
 
@@ -1013,9 +1102,19 @@ void Instance::freeDataMemory(void* pointer, size_t size)
 void Instance::destroy(Instance* instance)
 {
     delete instance->typed;
+#if CPU(X86_64) && OS(LINUX)
+    {
+        Locker locker { s_loopPollPagesLock };
+        loopPollPages().removeFirstMatching([&](auto& entry) {
+            return entry.second == reinterpret_cast<char*>(instance) + offsetOfLoopPollPage();
+        });
+    }
+#endif
     instance->vm->traps().unregisterMirror(instance->stackMirror);
     instance->vm->m_aotInstances.removeFirst(instance);
     instance->vm->m_aotInstancesToDestroy.removeFirst(instance);
+    if (PlaceTable* table = instance->vm->m_aotPlaceTable)
+        table->willDestroy(instance);
     while (!instance->collections->all.isEmpty())
         Data::destroy(instance->collections->all.last());
     size_t environmentsSize = instance->collections->environmentsSize;
@@ -1024,6 +1123,7 @@ void Instance::destroy(Instance* instance)
     fastFree(instance->cachedReturnAddresses);
     delete instance->collections;
     fastFree(instance->customGetters);
+    fastFree(instance->propertyRuns);
     OSAllocator::decommitAndRelease(instance->namedFieldReads, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->namedFieldWrites, numberOfNamedFields * sizeof(NamedField));
     OSAllocator::decommitAndRelease(instance->keyedReads, sizeOfKeyedTables);
@@ -1157,8 +1257,12 @@ SUPPRESS_ASAN FunctionRef callerFunction(const CallFrame* callFrame)
 JSCell* callerOwnerCell(const CallFrame* callFrame)
 {
     FunctionRef function = callerFunction(callFrame);
-    if (!function)
-        return nullptr;
+    if (!function) {
+        if (!hasCode() || kindOfAddress(removeCodePtrTag(reinterpret_cast<const FrameRecord*>(callFrame)->returnAddress)) != ImageAddressInfo::Stub)
+            return nullptr;
+        Instance* instance = tryInstanceForFrame(callFrame);
+        return instance ? instance->globalObject : nullptr;
+    }
     // What was compiled from types has no bytecode to make a code block of.
     if (!function.unlinkedCodeBlockIfExists() && !(function.metadata() && function.metadata()->find(FunctionMetadata::Scalars)))
         return function.instance->globalObject;
@@ -1373,10 +1477,22 @@ Instance::CachedAddressInfo* Instance::allocateCachedReturnAddresses()
 const Instance::PlaceInUnwinding& Instance::findPlaceInUnwinding(const CachedAddressInfo& asked)
 {
     auto& place = placesInUnwinding()[&asked - cachedReturnAddresses];
-    auto& info = FunctionRef { this, asked.function }.info();
+    FunctionRef function { this, asked.function };
+    auto& info = function.info();
     place.state = PlaceInUnwinding::IsNotLeft;
-    if (!info.isTyped || !info.hasNoHandlers || typedFunctionRejectsWhatItThrows(info.typedFunction()))
+    if (!info.isTyped)
         return place;
+    if (!info.hasNoHandlers) {
+        if (asked.site >= CachedAddressInfo::hasNoSite)
+            return place;
+        UnlinkedHandlerInfo madeHere;
+        uint32_t callSiteBits = info.hasInlineFrames ? PackedSite::bits(asked.site) : asked.site;
+        if (auto* handler = function.handlerFor(CallSiteIndex(callSiteBits).bytecodeIndex().offset(), madeHere)) {
+            place.offsetOfHandlerInImage = static_cast<uint32_t>(std::bit_cast<uintptr_t>(function.catchEntrypointAddress(handler->target)) - startOfImageCode());
+            place.state = handler->type() == HandlerType::Finally ? PlaceInUnwinding::HasHandlerThatTakesException : handler->type() == HandlerType::SynthesizedCatch ? PlaceInUnwinding::HasHandlerThatIgnoresValue : PlaceInUnwinding::HasHandler;
+            return place;
+        }
+    }
     const ImageFrame& frame = Image::of(*info.function()).frameOf(*info.function());
     for (uint64_t mask = ImageFunction::unpackRegisters(frame.calleeSaveRegisters); mask; mask &= mask - 1) {
         unsigned index = WTF::ctz(mask);
@@ -1385,8 +1501,162 @@ const Instance::PlaceInUnwinding& Instance::findPlaceInUnwinding(const CachedAdd
     }
     place.savedRegisters = frame.calleeSaveRegisters;
     place.savedRegistersStart = frame.calleeSavesStart;
-    place.state = PlaceInUnwinding::IsLeftByWhateverIsThrown;
+    place.state = typedFunctionRejectsWhatItThrows(info.typedFunction()) ? PlaceInUnwinding::RejectsPromise : PlaceInUnwinding::IsLeftByWhateverIsThrown;
     return place;
+}
+
+struct HandlerInCompiledCode {
+    CallFrame* frame { nullptr };
+    void* code { nullptr };
+    bool takesException { false };
+};
+
+static ALWAYS_INLINE HandlerInCompiledCode findHandlerInCompiledCallers(VM& vm, Instance& instance, CallFrame* frameOfStub)
+{
+    using Place = Instance::PlaceInUnwinding;
+    if (instance.callSiteOverrides || frameOfStub->callerFrameOrEntryFrame() == vm.topEntryFrame) [[unlikely]]
+        return { };
+    const Instance::CachedAddressInfo* cachedReturnAddresses = instance.ensureCachedReturnAddresses();
+    const Place* places = instance.placesInUnwinding();
+    CPURegister* calleeSaveRegistersBuffer = vmEntryRecord(vm.topEntryFrame)->calleeSaveRegistersBuffer;
+    std::span<const int8_t> bufferSlotsByRegIndex = RegisterSet::vmCalleeSaveBufferSlotsByRegIndex();
+    void* returnPC = removeCodePtrTag(frameOfStub->rawReturnPC());
+    CallFrame* callFrame = frameOfStub->callerFrame();
+    CallFrame* frameLeft = nullptr;
+    static void* const rejectInFrame = removeCodePtrTag(rejectInFrameThunk());
+    for (;; returnPC = removeCodePtrTag(callFrame->rawReturnPC()), frameLeft = callFrame, callFrame = callFrame->callerFrame()) {
+        const Instance::CachedAddressInfo* found = instance.findCachedReturnAddress(returnPC);
+        if (!found) [[unlikely]] {
+            if (returnPC == instance.returnAddressOfSavedFrames && frameLeft)
+                return { frameLeft, rejectInFrame, false };
+            ImageAddressInfo what = classifyAddress(returnPC);
+            if (what.kind == ImageAddressInfo::Stub && what.index != ImageAddressInfo::frameMayBeOfHostFunction && callFrame->callerFrameOrEntryFrame() != vm.topEntryFrame)
+                continue;
+            if (what.kind != ImageAddressInfo::Function)
+                return { };
+            found = &resolve(FunctionRef { &instance, what.index }, returnPC, what.offset);
+        }
+        const Place* place = &places[found - cachedReturnAddresses];
+        if (place->state == Place::IsNotKnown) [[unlikely]]
+            place = &instance.findPlaceInUnwinding(*found);
+        if (place->state == Place::HasHandler || place->state == Place::HasHandlerThatTakesException || place->state == Place::HasHandlerThatIgnoresValue)
+            return { callFrame, std::bit_cast<void*>(startOfImageCode() + place->offsetOfHandlerInImage), place->state == Place::HasHandlerThatTakesException };
+        if (place->state == Place::IsNotLeft)
+            return { };
+        const CPURegister* slot = reinterpret_cast<const CPURegister*>(callFrame->registers()) - place->savedRegistersStart;
+        for (uint64_t mask = ImageFunction::unpackRegisters(place->savedRegisters); mask; mask &= mask - 1, ++slot)
+            calleeSaveRegistersBuffer[bufferSlotsByRegIndex[WTF::ctz(mask)]] = *slot;
+        if (place->state == Place::RejectsPromise)
+            return { callFrame, rejectInFrame, false };
+    }
+}
+
+static NEVER_INLINE bool valueIsTakenByCompiledCallerOf(VM& vm, Instance& instance, CallFrame* callFrame)
+{
+    using Place = Instance::PlaceInUnwinding;
+    const Instance::CachedAddressInfo* cachedReturnAddresses = instance.ensureCachedReturnAddresses();
+    const Place* places = instance.placesInUnwinding();
+    for (;;) {
+        if (callFrame->callerFrameOrEntryFrame() == vm.topEntryFrame)
+            return false;
+        void* returnPC = removeCodePtrTag(callFrame->rawReturnPC());
+        if (returnPC == instance.returnAddressOfSavedFrames)
+            return true;
+        callFrame = callFrame->callerFrame();
+        const Instance::CachedAddressInfo* found = instance.findCachedReturnAddress(returnPC);
+        if (!found) [[unlikely]] {
+            ImageAddressInfo what = classifyAddress(returnPC);
+            if (what.kind == ImageAddressInfo::Stub && what.index != ImageAddressInfo::frameMayBeOfHostFunction)
+                continue;
+            if (what.kind != ImageAddressInfo::Function)
+                return false;
+            found = &resolve(FunctionRef { &instance, what.index }, returnPC, what.offset);
+        }
+        const Place* place = &places[found - cachedReturnAddresses];
+        if (place->state == Place::IsNotKnown) [[unlikely]]
+            place = &instance.findPlaceInUnwinding(*found);
+        if (place->state == Place::HasHandler || place->state == Place::HasHandlerThatIgnoresValue || place->state == Place::RejectsPromise)
+            return true;
+        if (place->state == Place::IsNotLeft)
+            return false;
+    }
+}
+
+bool Instance::nearestHandlerIgnoresValue(VM& vm, CallFrame* callFrame, void* returnPC)
+{
+    const PlaceInUnwinding* places = placesInUnwinding();
+    for (;; returnPC = removeCodePtrTag(callFrame->rawReturnPC()), callFrame = callFrame->callerFrame()) {
+        const CachedAddressInfo* found = findCachedReturnAddress(returnPC);
+        if (!found) [[unlikely]] {
+            ImageAddressInfo what = classifyAddress(returnPC);
+            if (what.kind == ImageAddressInfo::Stub && what.index != ImageAddressInfo::frameMayBeOfHostFunction && callFrame->callerFrameOrEntryFrame() != vm.topEntryFrame)
+                continue;
+            if (what.kind != ImageAddressInfo::Function)
+                return false;
+            found = &resolve(FunctionRef { this, what.index }, returnPC, what.offset);
+        }
+        const PlaceInUnwinding* place = &places[found - cachedReturnAddresses];
+        if (place->state == PlaceInUnwinding::IsNotKnown) [[unlikely]]
+            place = &findPlaceInUnwinding(*found);
+        if (place->state != PlaceInUnwinding::IsLeftByWhateverIsThrown)
+            return place->state == PlaceInUnwinding::HasHandlerThatIgnoresValue;
+    }
+}
+
+JSC_DEFINE_NOEXCEPT_JIT_OPERATION(operationAOTLookupExceptionHandler, UGPRPair, (VM* vmPointer, Instance* instance))
+{
+    VM& vm = *vmPointer;
+    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+    Exception* exception = vm.exceptionForInspection();
+    bool isAtSiteOfItsItem = std::exchange(instance->thrownValueIsAtSiteOfItsItem, false);
+    bool needsException = false;
+    Exception* passedOn = nullptr;
+    if (exception)
+        instance->thrownValue = 0;
+    else {
+        JSValue thrown = JSValue::decode(instance->thrownValue);
+        needsException = instance->globalObject->debugger() || Options::breakOnThrow();
+        if (thrown.isCell() && thrown.asCell()->type() == CellType)
+            passedOn = uncheckedDowncast<Exception>(thrown.asCell());
+    }
+    HandlerInCompiledCode handler;
+    if (!exception || !vm.isTerminationException(exception)) [[likely]]
+        handler = findHandlerInCompiledCallers(vm, *instance, callFrame);
+    if (passedOn && handler.code && !needsException) {
+        if (!handler.takesException)
+            instance->thrownValue = JSValue::encode(passedOn->value());
+        return makeUGPRPair(std::bit_cast<UCPURegister>(handler.code), std::bit_cast<UCPURegister>(handler.frame));
+    }
+    bool stackIsNotCapturedYet = (!exception && !passedOn) || (exception && vm.deferredStackCapture.exception == exception);
+    bool nobodyReadsStack = stackIsNotCapturedYet && handler.code && !needsException && (!handler.takesException || valueIsTakenByCompiledCallerOf(vm, *instance, handler.frame));
+    if (vm.deferredStackCapture.exception) {
+        if (nobodyReadsStack && vm.deferredStackCapture.exception == exception)
+            vm.dropDeferredStackCapture();
+        else {
+            JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+            vm.finishDeferredStackCapture();
+        }
+    }
+    if (handler.code && (exception || !(handler.takesException || needsException))) [[likely]]
+        return makeUGPRPair(std::bit_cast<UCPURegister>(handler.code), std::bit_cast<UCPURegister>(handler.frame));
+    JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+    if (!exception) {
+        JSValue thrown = JSValue::decode(std::exchange(instance->thrownValue, 0));
+        RELEASE_ASSERT(thrown);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Exception* made = throwException(instance->globalObject, scope, passedOn ? thrown : JSValue(Exception::create(vm, thrown, nobodyReadsStack ? Exception::StackCaptureAction::DoNotCaptureStack : Exception::StackCaptureAction::CaptureStack)));
+        if (isAtSiteOfItsItem)
+            made->noteThatTopFrameIsAtSiteOfItsItem();
+        if (handler.code && handler.takesException && !needsException) {
+            auto topScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+            instance->thrownValue = JSValue::encode(made);
+            topScope.clearException();
+        }
+    }
+    if (handler.code)
+        return makeUGPRPair(std::bit_cast<UCPURegister>(handler.code), std::bit_cast<UCPURegister>(handler.frame));
+    genericUnwind(vm, callFrame);
+    return makeUGPRPair(0, 0);
 }
 
 const Instance::CachedAddressInfo* Instance::resolveReturnAddress(const void* returnAddress)
@@ -1671,6 +1941,24 @@ static uint64_t readVarint(const uint8_t*& at)
 
 auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, ConstructPosition constructPosition) const -> std::optional<ReportedPosition>
 {
+    struct Remembered {
+        uint32_t functionPlusOne;
+        uint32_t offsetAndConstructPosition;
+        ReportedPosition position;
+    };
+    static thread_local std::array<Remembered, 16> allRemembered;
+    uint32_t offsetAndConstructPosition = bytecodeIndex.offset() << 1 | static_cast<uint32_t>(constructPosition);
+    Remembered& remembered = allRemembered[(index * 31 + bytecodeIndex.offset()) % allRemembered.size()];
+    if (remembered.functionPlusOne == index + 1 && remembered.offsetAndConstructPosition == offsetAndConstructPosition)
+        return remembered.position;
+    auto position = decodeReportedPositionFor(bytecodeIndex, constructPosition);
+    if (position && !(bytecodeIndex.offset() >> 31))
+        remembered = { index + 1, offsetAndConstructPosition, *position };
+    return position;
+}
+
+auto FunctionRef::decodeReportedPositionFor(BytecodeIndex bytecodeIndex, ConstructPosition constructPosition) const -> std::optional<ReportedPosition>
+{
     const uint8_t* at = programData().positionsOfTypedFunction(index);
     if (auto* metadata = at ? nullptr : this->metadata()) {
         if (const uint32_t* where = metadata->find(FunctionMetadata::ExpressionInfo))
@@ -1718,10 +2006,24 @@ auto FunctionRef::reportedPositionFor(BytecodeIndex bytecodeIndex, ConstructPosi
         result.source = source;
     }
     const State start { line, column, source };
-    if (hasEntryForEveryOffset)
+    uint64_t first = 0;
+    if (hasEntryForEveryOffset) {
         states.append(start);
+        first = 1;
+        constexpr uint64_t sitesBetween = FunctionMetadata::sitesBetweenPositionCheckpoints;
+        uint64_t numberOfCheckpoints = count ? (count - 1) / sitesBetween : 0;
+        const uint8_t* checkpoints = at;
+        at += numberOfCheckpoints * sizeof(uint16_t);
+        if (uint64_t numberAhead = std::min<uint64_t>(bytecodeIndex.offset() / sitesBetween, numberOfCheckpoints)) {
+            for (uint64_t i = 0; i < numberAhead; ++i)
+                at += checkpoints[2 * i] | checkpoints[2 * i + 1] << 8;
+            first = numberAhead * sitesBetween;
+            offset = first - 1;
+            frames->skip(first - 1);
+        }
+    }
     unsigned frame = 0;
-    for (uint64_t i = hasEntryForEveryOffset ? 1 : 0; i < count; ++i) {
+    for (uint64_t i = first; i < count; ++i) {
         uint64_t word = hasEntryForEveryOffset ? 2 : readVarint(at);
         offset += word >> 1;
         if (offset > bytecodeIndex.offset())
@@ -1769,17 +2071,22 @@ void* FunctionRef::catchEntrypointAddress(unsigned bytecodeOffset) const
 template<typename Number>
 static const UnlinkedHandlerInfo* handlerInRow(std::span<const uint8_t> row, unsigned site, UnlinkedHandlerInfo& madeHere)
 {
-    const uint8_t* endOfRow = row.data() + row.size();
-    for (const uint8_t* at = row.data() + 1; at < endOfRow; at += 3 * sizeof(Number)) {
-        Number behindLast;
-        memcpy(&behindLast, at + sizeof(Number), sizeof(Number));
-        if (site >= behindLast)
-            continue;
+    constexpr size_t sizeOfHandler = 3 * sizeof(Number);
+    bool someHandlerIgnoresValue = row[0] & FunctionMetadata::someHandlerIgnoresValue;
+    size_t numberOfHandlers = someHandlerIgnoresValue ? (row.size() - 1) * 8 / (sizeOfHandler * 8 + 1) : (row.size() - 1) / sizeOfHandler;
+    const uint8_t* ignoresValue = row.data() + 1 + numberOfHandlers * sizeOfHandler;
+    for (size_t i = 0; i < numberOfHandlers; ++i) {
         std::array<Number, 3> handler;
-        memcpy(handler.data(), at, sizeof(handler));
+        memcpy(handler.data(), row.data() + 1 + i * sizeOfHandler, sizeof(handler));
+        bool takesException = handler[0] > handler[1];
+        if (takesException)
+            std::swap(handler[0], handler[1]);
+        if (site >= handler[1])
+            continue;
         if (site < handler[0])
             return nullptr;
-        madeHere = UnlinkedHandlerInfo(handler[0], handler[1], handler[2], HandlerType::Catch);
+        bool ignores = someHandlerIgnoresValue && ignoresValue[i / 8] >> i % 8 & 1;
+        madeHere = UnlinkedHandlerInfo(handler[0], handler[1], handler[2], takesException ? HandlerType::Finally : ignores ? HandlerType::SynthesizedCatch : HandlerType::Catch);
         return &madeHere;
     }
     return nullptr;
@@ -1788,9 +2095,10 @@ static const UnlinkedHandlerInfo* handlerInRow(std::span<const uint8_t> row, uns
 const UnlinkedHandlerInfo* FunctionRef::handlerFor(unsigned bytecodeOffset, UnlinkedHandlerInfo& madeHere) const
 {
     if (auto row = programData().handlersOfTypedFunction(index); !row.empty()) {
-        if (row[0] == 1)
+        unsigned width = row[0] & ~FunctionMetadata::someHandlerIgnoresValue;
+        if (width == 1)
             return handlerInRow<uint8_t>(row, bytecodeOffset, madeHere);
-        if (row[0] == 2)
+        if (width == 2)
             return handlerInRow<uint16_t>(row, bytecodeOffset, madeHere);
         return handlerInRow<uint32_t>(row, bytecodeOffset, madeHere);
     }
@@ -1951,6 +2259,7 @@ PolymorphicSlots* Instance::makeSiteSlots(Data* owner, const Slot* slot, Uniqued
     several->identifierIndex = (owner->sites[slot - owner->slots].identifierAndExtra & ((1u << Site::identifierBits) - 1)) | PolymorphicSlots::hasNotReadCompiledField;
     several->owner = owner;
     several->remainingBulkLearnAttempts = PolymorphicSlots::maxBulkLearnAttempts;
+    several->missesUntilLesson = PolymorphicSlots::missesPerEarlyLesson;
     several->owesItsLessons = !parseIndex(*name) && name != vm->propertyNames->underscoreProto.impl();
     several->byName = PolymorphicSlots::initialByName;
     several->remainingNameTableFillFailures = PolymorphicSlots::maxNameTableFillFailures;
@@ -2011,8 +2320,12 @@ void Instance::visit(Visitor& visitor, bool newOnly)
     visitor.appendUnbarriered(typedArrayLengthAccessor);
     visitor.appendUnbarriered(typedArrayLengthGetter);
     visitor.appendUnbarriered(boundFunctionExecutable);
+    visitor.appendUnbarriered(argumentsStructure);
+    for (Structure* structure : emptyStructuresFilledByKey)
+        visitor.appendUnbarriered(structure);
     for (Structure* structure : arrayInTheMakingStructures)
         visitor.appendUnbarriered(structure);
+    visitor.appendUnbarriered(structureOfTypedContiguousArrays);
     visitor.appendUnbarriered(bufferStructure);
     visitor.appendUnbarriered(bufferAccessorHolder);
     visitor.appendUnbarriered(collections->token);
@@ -2053,6 +2366,15 @@ const uint32_t* Instance::canonicalPropertyRun(std::span<UniquedStringImpl* cons
     return collections->canonicalPropertyRuns.ensure(String { bytes }, [] {
         return makeUniqueWithoutFastMallocCheck<uint32_t>(0u);
     }).iterator->value.get();
+}
+
+bool Instance::hasPropertyRunTarget(Structure* structure, std::span<UniquedStringImpl* const> names)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.hasPropertyRunTarget(structure, names);
+    std::span bytes { reinterpret_cast<const Latin1Character*>(names.data()), names.size_bytes() };
+    auto found = collections->canonicalPropertyRuns.find<StringViewHashTranslator>(StringView { bytes });
+    return found != collections->canonicalPropertyRuns.end() && collections->propertyRunTargets.contains({ structure, found->value.get() });
 }
 
 const Instance::PropertyRunTarget& Instance::propertyRunTarget(Structure* structure, const uint32_t* run, const ScopedLambda<void(Vector<UniquedStringImpl*, 16>&)>& collectNames)
@@ -2198,8 +2520,27 @@ void Instance::noteOutOfLineProperty(Structure* structure)
         return realmInstance.noteOutOfLineProperty(structure);
     if (structure->inlineCapacity() >= maxLearnedInlineCapacity)
         return;
-    if (JSFunction* constructor = constructorOfObjectsWith(structure))
+    if (JSFunction* constructor = constructorOfObjectsWith(structure)) {
         learnInlineCapacity(constructor, structure);
+        return;
+    }
+    Structure* first = structure;
+    while (Structure* previous = first->previousID())
+        first = previous;
+    size_t sizeOfCell = MarkedSpace::optimalSizeFor(JSFinalObject::allocationSize(std::min<unsigned>(maxLearnedInlineCapacity, structure->inlineSize() + structure->outOfLineSize())));
+    unsigned wanted = (sizeOfCell - JSFinalObject::allocationSize(0)) / sizeof(EncodedJSValue);
+    uint32_t numberPlusOne = first->numberOfRowPlusOne();
+    if (!numberPlusOne || rows[numberPlusOne - 1].structureID != first->id())
+        return;
+    uint32_t number = numberPlusOne - 1;
+    collections->learnedRoomOfRows.set(number, wanted);
+    zeroBytes(rows[number]);
+    collections->filledRows.removeFirst(number);
+}
+
+unsigned Instance::learnedRoomOfRow(uint32_t number)
+{
+    return collections->learnedRoomOfRows.isEmpty() ? 0 : collections->learnedRoomOfRows.get(number);
 }
 
 void Instance::noteRunOfProperties(Structure* from, Structure* to)
@@ -2358,6 +2699,35 @@ const Instance::CopyForMore* Instance::setCopyForMore(Structure* source, uint64_
     return &collections->copiesForMore.set(std::pair { source, more }, copy).iterator->value;
 }
 
+const Instance::SpreadLiteralPlan* Instance::spreadLiteralPlan(const void* site, const SpreadLiteralPlan::Sources& sources)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.spreadLiteralPlan(site, sources);
+    if (auto* last = collections->lastSpreadLiteralPlan; last && last->site == site && last->sources == sources)
+        return last;
+    auto found = collections->spreadLiteralPlans.find(std::tuple { site, sources[0], sources[1], sources[2] });
+    if (found == collections->spreadLiteralPlans.end())
+        return nullptr;
+    collections->lastSpreadLiteralPlan = found->value.get();
+    return found->value.get();
+}
+
+const Instance::SpreadLiteralPlan* Instance::addSpreadLiteralPlan(SpreadLiteralPlan&& plan)
+{
+    if (Instance& realmInstance = ensure(globalObject); &realmInstance != this)
+        return realmInstance.addSpreadLiteralPlan(WTF::move(plan));
+    constexpr unsigned maxSize = 4096;
+    if (collections->spreadLiteralPlans.size() >= maxSize)
+        collections->spreadLiteralPlans.clear();
+    collections->lastSpreadLiteralPlan = nullptr;
+    collections->hasAddedWeakEntriesSinceLastCollection = true;
+    for (Structure* source : plan.sources)
+        noteCellAdded(source);
+    noteCellAdded(plan.structure);
+    std::tuple key { plan.site, plan.sources[0], plan.sources[1], plan.sources[2] };
+    return collections->spreadLiteralPlans.set(key, makeUniqueWithoutFastMallocCheck<SpreadLiteralPlan>(WTF::move(plan))).iterator->value.get();
+}
+
 bool Instance::isArrayInTheMaking(JSCell* cell) const
 {
     Structure* structure = cell->structure();
@@ -2377,20 +2747,37 @@ Structure* Instance::arrayInTheMakingStructure(IndexingType indexingType)
     return arrayInTheMakingStructures[indexOfArrayInTheMaking(indexingType)];
 }
 
+Structure* Instance::typedContiguousArrayStructure()
+{
+    if (!structureOfTypedContiguousArrays && !globalObject->isHavingABadTime() && MarkedBlockCage::isEnabled()) {
+        Structure* structure = Structure::nonPropertyTransition(*vm, globalObject->originalArrayStructureForIndexingType(ArrayWithContiguous), TransitionKind::AllocateTypedContiguous, nullptr);
+        structureOfTypedContiguousArrays = structure;
+        newArrayWithTypedContiguousHeader = static_cast<uint64_t>(structure->typeInfoBlob()) << 32 | structure->id().bits();
+        vm->writeBarrier(globalObject);
+    }
+    return newArrayWithTypedContiguousHeader ? structureOfTypedContiguousArrays : nullptr;
+}
+
 void Instance::didHaveBadTime()
 {
+    newArrayWithTypedContiguousHeader = 0;
     newArrayWithInt32Header = 0;
     newArrayWithDoubleHeader = 0;
     newArrayWithContiguousHeader = 0;
     zeroSpan(std::span { newCopyOnWriteArrayHeaders });
+    inlineAllocations[static_cast<unsigned>(InlineAllocation::Arguments)].allocator = nullptr;
 }
 
 void Instance::noteOwnPropertyPlace(uint32_t structureID, UniquedStringImpl* uid, uint32_t place)
 {
     auto& names = collections->namesOfOwnPropertyPlaces;
     if (names.size() >= 4 * numberOfOwnPropertyPlaces) [[unlikely]] {
-        zeroSpan(std::span { ownPropertyPlaces });
-        hasOwnPropertyPlaces = false;
+        Vector<RefPtr<UniquedStringImpl>> namesInTable;
+        for (auto& entry : ownPropertyPlaces) {
+            if (entry.structureID)
+                namesInTable.append(entry.uid);
+        }
+        names = WTF::move(namesInTable);
     }
     if (!hasOwnPropertyPlaces)
         names.shrink(0);
@@ -2459,7 +2846,7 @@ void Instance::validateKeyedTables()
                 fail("keyedReads"_s, i, "the object has no plain value where the entry says"_s, structure, key);
             continue;
         }
-        if (flags != (Slot::isGetter | Slot::pointerIsCell))
+        if (flags != (Slot::isGetter | Slot::pointerIsCell) && flags != keyIsAbsentForGood)
             continue;
         bool isMemo = (read.epoch & ~epochIsValidated) == (epoch | epochIsOfDictionary);
         if (isMemo ? !structure->isDictionary() || std::bit_cast<uintptr_t>(read.holder) != structure->numberOfPropertiesOfDictionary() : read.epoch != epoch && read.epoch != MegamorphicCache::permanentEpoch)
@@ -2501,9 +2888,9 @@ void Instance::validateKeyedTables()
         if (has != !!(entry.offset >> keyedHasAnswerShift & 1))
             fail("keyedHas"_s, i, "the answer is the other one"_s, structure, key);
     }
-    for (unsigned i = 0; i < numberOfKeyedStores; ++i) {
-        auto& entry = keyedStores[i];
-        if (!entry.structureID || entry.offset & Slot::flagsMask & ~Slot::isIndirect)
+    for (unsigned i = 0; i < numberOfKeyedReads; ++i) {
+        auto& entry = keyedReads[i].slot;
+        if (!entry.structureID || entry.offset & Slot::flagsMask & ~Slot::isIndirect || entry.offset & keyMayNotBeReplaced)
             continue;
         Structure* structure = entry.structureID.decode();
         JSCell* key = static_cast<JSCell*>(entry.pointer);
@@ -2513,7 +2900,7 @@ void Instance::validateKeyedTables()
         unsigned attributes;
         PropertyOffset own = placeIn(structure, uid.get(), attributes);
         if (!isAt(entry.offset, own) || attributes & (PropertyAttribute::ReadOnly | PropertyAttribute::Accessor | PropertyAttribute::CustomAccessor | PropertyAttribute::CustomValue))
-            fail("keyedStores"_s, i, "the object has no plain value that may be written where the entry says"_s, structure, key);
+            fail("keyedReads"_s, i, "the object has no plain value that may be written where the entry says"_s, structure, key);
     }
     for (unsigned i = 0; i < numberOfKeyedAdditions; ++i) {
         auto& addition = keyedAdditions[i];
@@ -2563,16 +2950,100 @@ static void takeOutOfKeyedTable(VM& vm, std::span<Entry> table, bool isAtEndOfCo
     }
 }
 
+void Instance::forgetNewTarget()
+{
+    if (typed)
+        typed->newTarget = { };
+}
+
+void Instance::sweepKeyedTables()
+{
+    keyedScratchEntry.fill(0);
+    Heap& heap = vm->heap;
+    MegamorphicCache* cache = vm->megamorphicCache();
+    uint32_t currentEpoch = cache ? cache->epoch() : MegamorphicCache::invalidEpoch;
+    auto isLive = [&](StructureID structureID) {
+        return heap.isMarked(structureID.decode());
+    };
+    auto holds = [&](uint32_t epoch) {
+        return epoch == currentEpoch || epoch == MegamorphicCache::permanentEpoch;
+    };
+    auto namesLiveCells = [&](const Slot& slot) {
+        return isLive(slot.structureID) && heap.isMarked(static_cast<JSCell*>(slot.pointer));
+    };
+    for (KeyedRead& read : std::span { keyedReads, numberOfKeyedReads }) {
+        if (!read.slot.structureID)
+            continue;
+        uint32_t flags = read.slot.offset & Slot::flagsMask;
+        bool stays = namesLiveCells(read.slot) && flags != Slot::isGetter;
+        if (stays && flags & Slot::isGetter && flags & Slot::pointerIsCell) {
+            uint32_t epoch = read.epoch & ~epochIsValidated;
+            if (epoch & epochIsOfDictionary)
+                stays = (epoch & ~epochIsOfDictionary) == currentEpoch;
+            else
+                stays = holds(epoch) && (!read.holder || heap.isMarked(read.holder));
+        }
+        if (!stays)
+            zeroBytes(read);
+    }
+    for (Slot& entry : std::span { keyedHas, numberOfKeyedHas }) {
+        if (!entry.structureID)
+            continue;
+        uint32_t flags = entry.offset & Slot::flagsMask;
+        if (!namesLiveCells(entry) || (flags ? flags != keyedHasIsLookedUp : !holds(entry.offset & ((1u << keyedHasAnswerShift) - 1))))
+            zeroBytes(entry);
+    }
+    for (KeyedAddition& addition : std::span { keyedAdditions, numberOfKeyedAdditions }) {
+        if (!addition.slot.structureID)
+            continue;
+        if (!namesLiveCells(addition.slot) || !isLive(addition.newStructureID) || (addition.epoch != currentEpoch && addition.epoch != MegamorphicCache::invalidEpoch))
+            zeroBytes(addition);
+    }
+    if (hasOwnPropertyAnswers) {
+        hasOwnPropertyAnswers = false;
+        for (uint64_t& answer : ownPropertyAnswers) {
+            if (!answer)
+                continue;
+            if (isLive(std::bit_cast<StructureID>(static_cast<uint32_t>(answer))))
+                hasOwnPropertyAnswers = true;
+            else
+                answer = 0;
+        }
+    }
+    if (hasOwnPropertyPlaces) {
+        hasOwnPropertyPlaces = false;
+        for (OwnPropertyPlace& entry : ownPropertyPlaces) {
+            if (!entry.structureID)
+                continue;
+            if (isLive(std::bit_cast<StructureID>(entry.structureID)))
+                hasOwnPropertyPlaces = true;
+            else
+                zeroBytes(entry);
+        }
+    }
+}
+
 void Instance::clearCachesValidatedByMegamorphicCacheEpoch(bool isAtEndOfCollection)
 {
+    if (propertyRuns)
+        zeroSpan(std::span { propertyRuns, numberOfPropertyRuns });
     if (customGetters) {
+        auto isMarked = [&](JSCell* cell) { return !cell || vm->heap.isMarked(cell); };
         for (auto& record : std::span { customGetters, numberOfCustomGetters }) {
+            if (!record.structureID)
+                continue;
+            if (isAtEndOfCollection && isMarked(std::bit_cast<StructureID>(record.structureID).decode()) && isMarked(record.passedForReceiver) && isMarked(record.globalObject))
+                continue;
             uint32_t lastSerial = record.lastSerial;
             record = { };
             record.lastSerial = lastSerial;
         }
     }
     zeroSpan(std::span { inheritedSetters });
+    if (isAtEndOfCollection) {
+        sweepKeyedTables();
+        return;
+    }
     takeOutOfKeyedTable(*vm, std::span { keyedReads, numberOfKeyedReads }, isAtEndOfCollection);
     takeOutOfKeyedTable(*vm, std::span { keyedHas, numberOfKeyedHas }, false, false);
     takeOutOfKeyedTable(*vm, std::span { keyedAdditions, numberOfKeyedAdditions }, false, false);
@@ -2598,15 +3069,14 @@ void Instance::finalizeUnconditionally(bool newOnly)
     if (typed) {
         typed->forgetPlansOfCoercionsOfDeadStructures(*vm, newOnly);
         typed->forgetMadeKeysThatAreDead(*vm);
+        typed->forgetExtraPropertyReads();
     }
-    if (std::exchange(hasOwnPropertyAnswers, false))
-        zeroSpan(std::span { ownPropertyAnswers });
-    if (std::exchange(hasOwnPropertyPlaces, false))
-        zeroSpan(std::span { ownPropertyPlaces });
     if (std::exchange(hasHeirsOfPrototypes, false))
         zeroSpan(std::span { heirsOfPrototypes });
     if (std::exchange(hasThisAllocations, false))
         zeroSpan(std::span { thisAllocations });
+    if (std::exchange(hasCaseConversions, false))
+        zeroBytes(caseConversions);
     zeroSpan(std::span { emptyStructuresOfLiterals });
     collections->filledRows.removeAllMatching([&](uint32_t number) {
         if (vm->heap.isMarked(rows[number].structureID.decode()))
@@ -2615,7 +3085,6 @@ void Instance::finalizeUnconditionally(bool newOnly)
         return true;
     });
     clearCachesValidatedByMegamorphicCacheEpoch(true);
-    takeOutOfKeyedTable(*vm, std::span { keyedStores, numberOfKeyedStores }, true);
     for (PolymorphicSlots* several : collections->allSiteSlots) {
         if (newOnly && !several->owner->hasBeenFilledSinceLastCollection) {
             if (Options::validateAOTTypedFacts()) [[unlikely]] {
@@ -2687,6 +3156,10 @@ void Instance::finalizeUnconditionally(bool newOnly)
         collections->copiesForMore.removeIf([&](auto& entry) {
             return !vm->heap.isMarked(entry.key.first) || (entry.value.structure && !vm->heap.isMarked(entry.value.structure));
         });
+        collections->lastSpreadLiteralPlan = nullptr;
+        collections->spreadLiteralPlans.removeIf([&](auto& entry) {
+            return (entry.value->structure && !vm->heap.isMarked(entry.value->structure)) || std::ranges::any_of(entry.value->sources, [&](Structure* source) { return source && !vm->heap.isMarked(source); });
+        });
         collections->copyStructures.removeIf([&](auto& entry) {
             return !vm->heap.isMarked(entry.key) || (entry.value && !vm->heap.isMarked(entry.value));
         });
@@ -2744,6 +3217,8 @@ void Data::finalizeSlot(VM& vm, Slot& slot)
             dead = !vm.heap.isMarked(static_cast<JSCell*>(slot.pointer));
         else if (hasTransition(slot))
             dead = !vm.heap.isMarked(slot.newStructureID.decode());
+        else if (slot.readsExtraProperty())
+            dead = !vm.heap.isMarked(slot.structureIDOfExtraProperties().decode());
     }
     if (dead) {
         if (Options::useAOTOperationCounters()) [[unlikely]]
@@ -2876,5 +3351,12 @@ bool JITCode::contains(void* address)
 }
 
 } } // namespace JSC::AOT
+
+extern "C" JS_EXPORT_PRIVATE bool JSC__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*);
+extern "C" bool JSC__AOT__entryPointIsCommonJS(JSC::JSGlobalObject* globalObject)
+{
+    JSC::AOT::Instance* instance = globalObject->aotInstance();
+    return instance && instance->typed && instance->typed->entryPointIsCommonJS;
+}
 
 #endif // ENABLE(AOT)
