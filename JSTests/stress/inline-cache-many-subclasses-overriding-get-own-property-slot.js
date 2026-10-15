@@ -1,10 +1,11 @@
+// Sites that meet more structures than an inline cache lists, where a class of the objects overrides getOwnPropertySlot.
+// This checks what such sites read. It passes too when they are folded to a megamorphic case that cannot serve them:
+// the accesses are then slower, not different, and a script cannot see which it was.
+
 function shouldBe(actual, expected) {
     if (actual !== expected)
-        throw new Error(`expected ${expected} but got ${actual}`);
+        throw new Error(`expected ${String(expected)} but got ${String(actual)}`);
 }
-
-// Instances of these have a class that overrides getOwnPropertySlot. Map is here for comparison: its instances do not.
-const bases = [Error, RegExp, Uint8Array, String, Map];
 
 function make(Base, id) {
     return class extends Base {
@@ -16,43 +17,76 @@ function make(Base, id) {
     };
 }
 
-function byId(object) { return object.field; }
-function getter(object) { return object.getter; }
-function missing(object) { return object.absent; }
-function byVal(object, key) { return object[key]; }
-function inById(object) { return "field" in object; }
-function inByIdMissing(object) { return "absent" in object; }
-function inByVal(object, key) { return key in object; }
-for (const f of [byId, getter, missing, byVal, inById, inByIdMissing, inByVal])
-    noInline(f);
+// Fresh code each time, so fresh inline caches, and one site for each key: a site that gives up does not take another with it.
+function makeSites() {
+    const sites = {
+        byId: new Function("object", "return object.field;"),
+        getter: new Function("object", "return object.getter;"),
+        byIdAbsent: new Function("object", "return object.absent;"),
+        byVal: new Function("object", "key", "return object[key];"),
+        byValAbsent: new Function("object", "key", "return object[key];"),
+        inById: new Function("object", "return 'field' in object;"),
+        inByIdAbsent: new Function("object", "return 'absent' in object;"),
+        inByVal: new Function("object", "key", "return key in object;"),
+        inByValAbsent: new Function("object", "key", "return key in object;"),
+    };
+    for (const name in sites)
+        noInline(sites[name]);
+    return sites;
+}
 
-// Each site meets one more class at a time, in the end more than an inline cache lists.
-for (const Base of bases) {
+// Map is here for comparison: its instances are ordinary objects.
+for (const Base of [Error, RegExp, Uint8Array, String, Map]) {
+    const sites = makeSites();
     const instances = [];
     for (let id = 0; id < 12; ++id) {
         instances.push(new (make(Base, id)));
         for (let i = 0; i < testLoopCount / 100; ++i) {
             for (let j = 0; j <= id; ++j) {
                 const object = instances[j];
-                shouldBe(byId(object), j);
-                shouldBe(getter(object), j + 1000);
-                shouldBe(missing(object), undefined);
-                shouldBe(byVal(object, "field"), j);
-                shouldBe(byVal(object, "absent"), undefined);
-                shouldBe(inById(object), true);
-                shouldBe(inByIdMissing(object), false);
-                shouldBe(inByVal(object, "field"), true);
-                shouldBe(inByVal(object, "absent"), false);
+                shouldBe(sites.byId(object), j);
+                shouldBe(sites.getter(object), j + 1000);
+                shouldBe(sites.byIdAbsent(object), undefined);
+                shouldBe(sites.byVal(object, "field"), j);
+                shouldBe(sites.byValAbsent(object, "absent"), undefined);
+                shouldBe(sites.inById(object), true);
+                shouldBe(sites.inByIdAbsent(object), false);
+                shouldBe(sites.inByVal(object, "field"), true);
+                shouldBe(sites.inByValAbsent(object, "absent"), false);
             }
         }
     }
 }
 
+// A few such values among many ordinary objects.
+{
+    const sites = makeSites();
+    const values = [];
+    for (let id = 0; id < 20; ++id) {
+        const object = { };
+        object["own" + id] = 0;
+        object.field = id;
+        values.push([object, id]);
+    }
+    String.prototype.field = "string";
+    Symbol.prototype.field = "symbol";
+    Array.prototype.field = "array";
+    values.splice(2, 0, ["text", "string"], [Symbol("s"), "symbol"], [Array.prototype, "array"], [Object.assign(new Error, { field: "error" }), "error"]);
+    for (let i = 0; i < testLoopCount / 10; ++i) {
+        for (const [value, expected] of values) {
+            shouldBe(sites.byId(value), expected);
+            shouldBe(sites.byVal(value, "field"), expected);
+        }
+    }
+}
+
 // What an Error makes on demand is still there at such a site.
-function stackOf(object) { return object.stack; }
-noInline(stackOf);
-for (let id = 0; id < 12; ++id) {
-    const C = make(Error, id);
-    for (let i = 0; i < testLoopCount / 100; ++i)
-        shouldBe(typeof stackOf(new C), "string");
+{
+    const stackOf = new Function("object", "return object.stack;");
+    noInline(stackOf);
+    for (let id = 0; id < 12; ++id) {
+        const C = make(Error, id);
+        for (let i = 0; i < testLoopCount / 100; ++i)
+            shouldBe(typeof stackOf(new C), "string");
+    }
 }
