@@ -44,6 +44,7 @@
 #include <wtf/SetForScope.h>
 #include <wtf/SystemTracing.h>
 #include <wtf/TZoneMallocInlines.h>
+#include <wtf/Threading.h>
 
 namespace JSC {
 
@@ -777,6 +778,11 @@ NEVER_INLINE void Collector::resumeThePeriphery()
     });
     // Before any mutator runs again.
     m_collectorSlotVisitor->setMutatorsAreStopped(false);
+
+#if USE(BUN_JSC_ADDITIONS) && OS(WINDOWS)
+    // Until 323742@main there was one SpinBackoff::spinOnce() here, which is a yield on Windows.
+    Thread::yield();
+#endif
 
     if (std::exchange(m_isCompilerThreadsSuspended, false))
         resumeCompilerThreads();
