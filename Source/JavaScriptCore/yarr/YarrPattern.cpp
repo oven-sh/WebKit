@@ -75,6 +75,72 @@ public:
         m_characterWidths = CharacterClassWidths::Unknown;
     }
 
+    size_t size() const
+    {
+        return m_matches8.size() + m_ranges8.size() + m_matches32.size() + m_ranges32.size();
+    }
+
+    // Adds the characters of `characterClass` that `excluded` doesn't have, in time proportional to size(). A set operation
+    // goes through every code point of both sets: a million steps for [\S].
+    void appendDifference(const CharacterClass& characterClass, const CharacterClassConstructor& excluded)
+    {
+        ASSERT(m_setOp == CharacterClassSetOp::Default);
+        ASSERT(!m_isCaseInsensitive);
+
+        // Matches and ranges are each in order. This gives both, by where they begin.
+        auto forEachInOrder = [](const Vector<char32_t>& matches, const Vector<CharacterRange>& ranges, auto&& functor) {
+            size_t matchesIndex = 0;
+            size_t rangesIndex = 0;
+            while (matchesIndex < matches.size() || rangesIndex < ranges.size()) {
+                if (rangesIndex == ranges.size() || (matchesIndex < matches.size() && matches[matchesIndex] < ranges[rangesIndex].begin)) {
+                    functor(matches[matchesIndex], matches[matchesIndex]);
+                    ++matchesIndex;
+                } else {
+                    functor(ranges[rangesIndex].begin, ranges[rangesIndex].end);
+                    ++rangesIndex;
+                }
+            }
+        };
+
+        auto appendDifferenceOfTables = [&](const Vector<char32_t>& matches, const Vector<CharacterRange>& ranges,
+            const Vector<char32_t>& excludedMatches, const Vector<CharacterRange>& excludedRanges,
+            Vector<char32_t>& destMatches, Vector<CharacterRange>& destRanges) {
+
+            // `excluded` isn't coalesced, so a match can be inside a range.
+            Vector<CharacterRange> holes;
+            forEachInOrder(excludedMatches, excludedRanges, [&](char32_t begin, char32_t end) {
+                if (!holes.isEmpty() && begin <= holes.last().end)
+                    holes.last().end = std::max(holes.last().end, end);
+                else
+                    holes.append(CharacterRange(begin, end));
+            });
+
+            auto add = [&](char32_t begin, char32_t end) {
+                if (begin == end)
+                    addSorted(destMatches, begin);
+                else
+                    addSortedRange(destRanges, begin, end);
+            };
+
+            size_t firstHole = 0;
+            forEachInOrder(matches, ranges, [&](char32_t begin, char32_t end) {
+                while (firstHole < holes.size() && holes[firstHole].end < begin)
+                    ++firstHole;
+                char32_t next = begin;
+                for (size_t i = firstHole; i < holes.size() && holes[i].begin <= end; ++i) {
+                    if (holes[i].begin > next)
+                        add(next, holes[i].begin - 1);
+                    next = std::max<char32_t>(next, holes[i].end + 1);
+                }
+                if (next <= end)
+                    add(next, end);
+            });
+        };
+
+        appendDifferenceOfTables(characterClass.m_matches8, characterClass.m_ranges8, excluded.m_matches8, excluded.m_ranges8, m_matches8, m_ranges8);
+        appendDifferenceOfTables(characterClass.m_matches32, characterClass.m_ranges32, excluded.m_matches32, excluded.m_ranges32, m_matches32, m_ranges32);
+    }
+
     void LEGACY_NODELETE combiningSetOp(CharacterClassSetOp setOp)
     {
         ASSERT(m_setOp == CharacterClassSetOp::Default || m_setOp == setOp);
@@ -2686,10 +2752,72 @@ public:
             if (term.quantityType != QuantifierType::Greedy || term.quantityMinCount > 1 || term.quantityMaxCount != quantifyInfinite || hasObservableCaptures)
                 return;
             term.parentheses.isTailLoop = true;
+            matchRunsInTailLoop(*term.parentheses.disjunction);
         }
 
         for (auto& nested : term.parentheses.disjunction->m_alternatives)
             markTailLoops(*nested);
+    }
+
+    // In the tail loop /(?:--|[\w-]|\\.)*/, take a character of [\w-] that no earlier alternative can start with: one of \w. There
+    // the earlier alternatives fail and [\w-] matches, which is an iteration. So after [\w-] has matched, a run of \w can be matched
+    // without going around the loop: /(?:--|[\w-]\w*|\\.)*/. Nothing backtracks into a tail loop, so nothing can tell how many
+    // iterations matched the run. (A set of first characters that is too large only makes the run shorter.)
+    void matchRunsInTailLoop(PatternDisjunction& disjunction)
+    {
+        // What the alternatives so far can start with.
+        std::optional<CharacterClassConstructor> starts;
+        std::optional<OptionSet<Flags>> flags;
+
+        // An alternative costs time in proportion to the sizes of `starts` and of its class. That would be N * N for a loop of N
+        // alternatives, and a class like \p{L} is large for its five characters of source. So the pass has this much to spend,
+        // about seven times what /(?:--|\p{L}|\p{N}|\\.)*/u takes. The alternatives that are left stay as they were written.
+        size_t budget = 1 << 14;
+
+        for (auto& alternative : disjunction.m_alternatives) {
+            if (alternative->m_terms.isEmpty())
+                return;
+            PatternTerm& first = alternative->m_terms[0];
+            bool isCharacter = first.type == PatternTerm::Type::PatternCharacter;
+            bool isCharacterClass = first.type == PatternTerm::Type::CharacterClass && !first.characterClass->hasStrings();
+            if ((!isCharacter && !isCharacterClass) || first.quantityType != QuantifierType::FixedCount || !first.quantityMaxCount || first.matchDirection() != Forward)
+                return;
+            if (!flags) {
+                flags = first.m_currentFlags;
+                starts.emplace(first.ignoreCase(), m_pattern.compileMode());
+            } else if (*flags != first.m_currentFlags)
+                return;
+
+            size_t cost = starts->size() + 1;
+            if (isCharacterClass)
+                cost += sizeOfCharacterClass(*first.characterClass);
+            if (cost > budget)
+                return;
+            budget -= cost;
+
+            if (isCharacterClass && !first.invert() && alternative->m_terms.size() == 1 && first.quantityMaxCount == 1) {
+                // Both sets are closed under case folding already, if the pattern ignores case.
+                CharacterClassConstructor run(false, CompileMode::UnicodeSets);
+                run.appendDifference(*first.characterClass, *starts);
+                auto runClass = run.charClass();
+                if (!runClass->m_matches8.isEmpty() || !runClass->m_ranges8.isEmpty() || !runClass->m_matches32.isEmpty() || !runClass->m_ranges32.isEmpty()) {
+                    CharacterClass* used = runClass->m_anyCharacter ? m_pattern.anyCharacterClass() : runClass.get();
+                    PatternTerm runTerm(used, false, first.m_currentFlags, Forward);
+                    runTerm.quantify(quantifyInfinite, QuantifierType::Greedy);
+                    starts->append(first.characterClass);
+                    alternative->m_terms.append(runTerm); // `first` is gone.
+                    m_pattern.m_userCharacterClasses.append(WTF::move(runClass));
+                    continue;
+                }
+            }
+
+            if (isCharacter)
+                starts->putChar(first.patternCharacter);
+            else if (first.invert())
+                starts->appendInverted(first.characterClass);
+            else
+                starts->append(first.characterClass);
+        }
     }
 
     // Auto-possessification optimization
