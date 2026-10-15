@@ -1929,7 +1929,9 @@ capitalName ## Constructor* lowerName ## Constructor = featureFlag ? capitalName
     });
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::callFunction)].set(vm, this, callFunction);
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::applyFunction)].set(vm, this, applyFunction);
+#if USE(BUN_JSC_ADDITIONS)
     m_linkTimeConstants[static_cast<unsigned>(LinkTimeConstant::bindFunction)].set(vm, this, bindFunction);
+#endif
 
     {
         JSValue hasOwnPropertyFunction = uncheckedDowncast<JSFunction>(objectPrototype()->get(this, vm.propertyNames->hasOwnProperty));
