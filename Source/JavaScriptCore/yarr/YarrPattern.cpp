@@ -2188,6 +2188,7 @@ public:
 
         ErrorCode error = ErrorCode::NoError;
         alternative->m_hasFixedSize = true;
+        alternative->m_firstFrameSlot = currentCallFrameSize.value();
         CheckedUint32 currentInputPosition = initialInputPosition;
 
         for (unsigned i = 0; i < alternative->m_terms.size(); ++i) {
@@ -2329,6 +2330,7 @@ public:
         }
 
         alternative->m_minimumSize = currentInputPosition - initialInputPosition;
+        alternative->m_callFrameSize = currentCallFrameSize.value();
         newCallFrameSize = currentCallFrameSize.value();
         return error;
     }
