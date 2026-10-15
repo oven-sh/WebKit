@@ -68,7 +68,7 @@ void FunctionPrototype::addFunctionProperties(VM& vm, JSGlobalObject* globalObje
 
     *applyFunction = putDirectBuiltinFunctionWithoutTransition(vm, globalObject, vm.propertyNames->builtinNames().applyPublicName(), functionPrototypeApplyCodeGenerator(vm), static_cast<unsigned>(PropertyAttribute::DontEnum));
     *callFunction = putDirectBuiltinFunctionWithoutTransition(vm, globalObject, vm.propertyNames->builtinNames().callPublicName(), functionPrototypeCallCodeGenerator(vm), static_cast<unsigned>(PropertyAttribute::DontEnum));
-    *bindFunction = JSFunction::create(vm, globalObject, 1, "bind"_s, functionProtoFuncBind, ImplementationVisibility::Public, FunctionBindIntrinsic);
+    *bindFunction = JSFunction::create(vm, globalObject, 1, vm.propertyNames->bind.string(), functionProtoFuncBind, ImplementationVisibility::Public, FunctionBindIntrinsic);
     putDirectWithoutTransition(vm, vm.propertyNames->bind, *bindFunction, static_cast<unsigned>(PropertyAttribute::DontEnum));
 
     putDirectCustomGetterSetterWithoutTransition(vm, vm.propertyNames->arguments, CustomGetterSetter::create(vm, argumentsGetter, callerAndArgumentsSetter), PropertyAttribute::DontEnum | PropertyAttribute::CustomAccessor);
