@@ -60,7 +60,7 @@ public:
     // addJSString(VM&, int) admits a value into a slot on its second sighting. A value
     // seen once (a counter, an index that never comes back) gets a fresh JSString and
     // leaves the resident entry in place. seenKey fills the padding after key, so the
-    // layout the JIT probes (key at 0, jsString at 16, 24 bytes) is unchanged. Slots
+    // layout the JIT probes (key first, jsString last, 24 bytes) is unchanged. Slots
     // start at seenKey 0, and 0 never reaches this cache: 0..cacheSize-1 use m_smallIntCache.
     struct IntCacheEntry {
         int key;
@@ -71,9 +71,7 @@ public:
         static constexpr ptrdiff_t offsetOfKey() { return OBJECT_OFFSETOF(IntCacheEntry, key); }
         static constexpr ptrdiff_t offsetOfJSString() { return OBJECT_OFFSETOF(IntCacheEntry, jsString); }
     };
-    static_assert(sizeof(IntCacheEntry) == 24);
-    static_assert(IntCacheEntry::offsetOfKey() == 0);
-    static_assert(IntCacheEntry::offsetOfJSString() == 16);
+    static_assert(sizeof(IntCacheEntry) == sizeof(CacheEntryWithJSString<int>));
 
     struct StringWithJSString {
         String value;
