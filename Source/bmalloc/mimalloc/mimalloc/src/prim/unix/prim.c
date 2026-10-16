@@ -946,6 +946,9 @@ bool _mi_prim_random_buf(void* buf, size_t buf_len) {
 // use pthread local storage keys to detect thread ending
 // (and used with MI_TLS_PTHREADS for the default theap)
 pthread_key_t _mi_heap_default_key = (pthread_key_t)(-1);
+// The high bit closes admission; the remaining bits count setters using the key.
+#define MI_THREAD_KEY_CLOSED ((uintptr_t)1 << (8 * sizeof(uintptr_t) - 1))
+static _Atomic(uintptr_t) mi_thread_key_users;
 
 static void mi_pthread_done(void* value) {
   if (value!=NULL) {
@@ -959,15 +962,34 @@ void _mi_prim_thread_init_auto_done(void) {
 }
 
 void _mi_prim_thread_done_auto_done(void) {
-  if (_mi_heap_default_key != (pthread_key_t)(-1)) {  // do not leak the key, see issue #809
-    pthread_key_delete(_mi_heap_default_key);
+  // Stop new setters and drain those that already loaded the key before its slot
+  // can be reused by another component (for example, ParkingLot at process exit).
+  uintptr_t users = mi_atomic_or_acq_rel(&mi_thread_key_users, MI_THREAD_KEY_CLOSED);
+  if (users & MI_THREAD_KEY_CLOSED) return;
+  while (mi_atomic_load_acquire(&mi_thread_key_users) != MI_THREAD_KEY_CLOSED) {
+    #if defined(MI_TEST_THREAD_KEY_WAIT)
+    extern void mi_test_thread_key_wait(void);
+    mi_test_thread_key_wait();
+    #endif
+    mi_atomic_yield();
+  }
+  pthread_key_t key = _mi_heap_default_key;
+  if (key != (pthread_key_t)(-1)) {  // do not leak the key, see issue #809
+    _mi_heap_default_key = (pthread_key_t)(-1);
+    pthread_key_delete(key);
   }
 }
 
 void _mi_prim_thread_associate_default_theap(mi_theap_t* theap) {
+  uintptr_t users = mi_atomic_load_acquire(&mi_thread_key_users);
+  do {
+    if (users & MI_THREAD_KEY_CLOSED) return;
+  } while (!mi_atomic_cas_weak_acq_rel(&mi_thread_key_users, &users, users + 1));
+
   if (_mi_heap_default_key != (pthread_key_t)(-1)) {  // can happen during recursive invocation on freeBSD
     pthread_setspecific(_mi_heap_default_key, theap);
   }
+  mi_atomic_decrement_acq_rel(&mi_thread_key_users);
 }
 
 #else
