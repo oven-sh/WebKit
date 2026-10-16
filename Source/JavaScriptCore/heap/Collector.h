@@ -128,6 +128,7 @@ private:
     friend class VerifierSlotVisitor;
 
     GCRequest::Ticket requestCollection(Heap& requester, GCRequest);
+    void takeConnBecauseThreadCouldNotStart(const AbstractLocker&, Heap&) WTF_REQUIRES_LOCK(*m_threadLock);
     bool isSubsumedByQueuedRequest(const GCRequest&);
 
     bool hasPendingGCRequest()
