@@ -61,9 +61,10 @@ WTF_ALLOW_UNSAFE_BUFFER_USAGE_END
 #include <wtf/OSAllocator.h>
 
 #if USE(BUN_JSC_ADDITIONS)
-// Defined by Bun: prints an error that names the sizes and the limits of the process, then exits.
+// Defined by Bun. It prints an error and exits when a limit of the process explains the failure.
+// When it returns, and in the JSC shell, where the symbol is null, the assertion after the call fires.
 // reservedBytes is 0 when every size was refused, else the size that was reserved and could not be used.
-// Null in the JSC shell, which keeps the assertions. No fallback definition: see RunLoopBun.cpp.
+// No fallback definition: see RunLoopBun.cpp.
 extern "C" __attribute__((weak)) void Bun__structureHeapReservationFailed(size_t largestTriedBytes, size_t smallestTriedBytes, size_t reservedBytes);
 #endif
 
@@ -130,10 +131,8 @@ public:
 #if USE(BUN_JSC_ADDITIONS)
         if (!g_jscConfig.startOfStructureHeap) [[unlikely]] {
             // The loop halved mappedHeapSize once more after the last size it tried.
-            if (Bun__structureHeapReservationFailed) {
+            if (Bun__structureHeapReservationFailed)
                 Bun__structureHeapReservationFailed(preferredStructureHeapSize, mappedHeapSize * 2, 0);
-                RELEASE_ASSERT_NOT_REACHED();
-            }
         }
 #endif
         RELEASE_ASSERT(g_jscConfig.startOfStructureHeap, g_jscConfig.startOfStructureHeap, preferredStructureHeapSize, mappedHeapSize);
@@ -166,10 +165,8 @@ public:
             bool isManaged = mi_manage_os_memory_ex(memory, size, false, false, true, -1, true, &structureArena);
 #if USE(BUN_JSC_ADDITIONS)
             if (!isManaged) [[unlikely]] {
-                if (Bun__structureHeapReservationFailed) {
+                if (Bun__structureHeapReservationFailed)
                     Bun__structureHeapReservationFailed(preferredStructureHeapSize, mappedHeapSize, mappedHeapSize);
-                    RELEASE_ASSERT_NOT_REACHED();
-                }
             }
 #endif
             RELEASE_ASSERT(isManaged);
