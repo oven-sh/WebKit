@@ -3323,13 +3323,13 @@ void SpeculativeJIT::compileInt32ToStringRadix10(Node* node)
     zeroExtend32ToWord(valueGPR, resultGPR);
     rapidHashMix64(resultGPR, scratch1GPR, scratch2GPR);
     and32(TrustedImm32(NumericStrings::cacheSize - 1), resultGPR);
-    if (hasOneBitSet(sizeof(NumericStrings::CacheEntryWithJSString<int>)))
-        lshift32(TrustedImm32(getLSBSet(sizeof(NumericStrings::CacheEntryWithJSString<int>))), resultGPR);
+    if (hasOneBitSet(sizeof(NumericStrings::IntCacheEntry)))
+        lshift32(TrustedImm32(getLSBSet(sizeof(NumericStrings::IntCacheEntry))), resultGPR);
     else
-        mul32(TrustedImm32(sizeof(NumericStrings::CacheEntryWithJSString<int>)), resultGPR, resultGPR);
+        mul32(TrustedImm32(sizeof(NumericStrings::IntCacheEntry)), resultGPR, resultGPR);
     addPtr(TrustedImmPtr(vm().numericStrings.intCache()), resultGPR);
-    slowCases.append(branch32(NotEqual, Address(resultGPR, NumericStrings::CacheEntryWithJSString<int>::offsetOfKey()), valueGPR));
-    loadPtr(Address(resultGPR, NumericStrings::CacheEntryWithJSString<int>::offsetOfJSString()), resultGPR);
+    slowCases.append(branch32(NotEqual, Address(resultGPR, NumericStrings::IntCacheEntry::offsetOfKey()), valueGPR));
+    loadPtr(Address(resultGPR, NumericStrings::IntCacheEntry::offsetOfJSString()), resultGPR);
     slowCases.append(branchTestPtr(Zero, resultGPR));
 
     doneCases.link(this);
