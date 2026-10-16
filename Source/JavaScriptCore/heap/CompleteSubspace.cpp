@@ -140,6 +140,10 @@ void* CompleteSubspace::tryAllocateSlow(VM& vm, size_t size, GCDeferralContext* 
     
     m_preciseAllocations.append(allocation);
     m_space.registerPreciseAllocation(allocation, /* isNewAllocation */ true);
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.heap.isSamplingAllocations()) [[unlikely]]
+        vm.heap.sampleAllocationBytes(allocation->cell(), size);
+#endif
     return allocation->cell();
 }
 
@@ -196,6 +200,13 @@ void* CompleteSubspace::reallocatePreciseAllocationNonVirtual(VM& vm, HeapCell* 
 
     m_preciseAllocations.append(allocation);
 
+#if USE(BUN_JSC_ADDITIONS)
+    if (vm.heap.isSamplingAllocations()) [[unlikely]] {
+        if (oldAllocation != allocation)
+            vm.heap.didRelocateCell(oldCell, allocation->cell());
+        vm.heap.sampleAllocationBytes(allocation->cell(), difference);
+    }
+#endif
     return allocation->cell();
 }
 
